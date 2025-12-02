@@ -23,9 +23,13 @@ var exit_thread: bool = false
 # Task Queue
 # Tasks are Dictionaries: 
 # { "type": "generate", "coord": Vector2i, "pos": Vector3 }
-# { "type": "modify", "coord": Vector2i, "rid": RID, "pos": Vector3, "brush_pos": Vector3, "radius": float, "value": float }
+# { "type": "modify", "coord": Vector2i, "rid": RID, "pos": Vector3, "brush_pos": Vector3, "radius": float, "value": float, "batch_id": int, "batch_count": int }
 # { "type": "free", "rid": RID }
 var task_queue: Array[Dictionary] = []
+
+# Batching for synchronized updates
+var modification_batch_id: int = 0
+var pending_batches: Dictionary = {}
 
 # Shaders (SPIR-V Data)
 var shader_gen_spirv: RDShaderSPIRV
@@ -113,6 +117,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float):
 	var min_chunk_z = floor(min_pos.z / CHUNK_STRIDE)
 	var max_chunk_z = floor(max_pos.z / CHUNK_STRIDE)
 	
+	var tasks_to_add = []
+
 	# Iterate over all chunks that might be touched by this modification
 	for x in range(min_chunk_x, max_chunk_x + 1):
 		for z in range(min_chunk_z, max_chunk_z + 1):
@@ -132,11 +138,21 @@ func modify_terrain(pos: Vector3, radius: float, value: float):
 						"radius": radius,
 						"value": value
 					}
-					
-					mutex.lock()
-					task_queue.append(task)
-					mutex.unlock()
-					semaphore.post()
+					tasks_to_add.append(task)
+	
+	if tasks_to_add.size() > 0:
+		modification_batch_id += 1
+		var batch_count = tasks_to_add.size()
+		
+		mutex.lock()
+		for t in tasks_to_add:
+			t["batch_id"] = modification_batch_id
+			t["batch_count"] = batch_count
+			task_queue.append(t)
+		mutex.unlock()
+		
+		for i in range(batch_count):
+			semaphore.post()
 
 func _exit_tree():
 	mutex.lock()
@@ -167,7 +183,9 @@ func update_chunks():
 		var i = task_queue.size() - 1
 		while i >= 0:
 			var t = task_queue[i]
-			if (t.type == "generate" or t.type == "modify") and t.coord == coord:
+			# Only remove generate tasks. modify tasks are left to complete 
+			# to ensure batches resolve correctly.
+			if t.type == "generate" and t.coord == coord:
 				task_queue.remove_at(i)
 			i -= 1
 		mutex.unlock()
@@ -321,7 +339,10 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh):
 	# 2. Re-Mesh
 	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
 	
-	call_deferred("complete_modification", task.coord, mesh)
+	var b_id = task.get("batch_id", -1)
+	var b_count = task.get("batch_count", 1)
+	
+	call_deferred("complete_modification", task.coord, mesh, b_id, b_count)
 
 func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, material_instance: StandardMaterial3D):
 	# Setup Output Buffers
@@ -404,7 +425,27 @@ func complete_generation(coord: Vector2i, mesh: ArrayMesh, density_buffer: RID):
 	
 	active_chunks[coord] = data
 
-func complete_modification(coord: Vector2i, mesh: ArrayMesh):
+func complete_modification(coord: Vector2i, mesh: ArrayMesh, batch_id: int = -1, batch_count: int = 1):
+	if batch_id == -1:
+		_apply_chunk_update(coord, mesh)
+		return
+	
+	if not pending_batches.has(batch_id):
+		pending_batches[batch_id] = { "received": 0, "expected": batch_count, "updates": [] }
+	
+	var batch = pending_batches[batch_id]
+	batch.received += 1
+	
+	# Store update only if chunk is still relevant
+	if active_chunks.has(coord):
+		batch.updates.append({ "coord": coord, "mesh": mesh })
+		
+	if batch.received >= batch.expected:
+		for update in batch.updates:
+			_apply_chunk_update(update.coord, update.mesh)
+		pending_batches.erase(batch_id)
+
+func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh):
 	if not active_chunks.has(coord):
 		return
 	
