@@ -4,6 +4,7 @@ extends Node3D
 const CHUNK_SIZE = 32
 # Overlap chunks by 1 unit to prevent gaps (seams)
 const CHUNK_STRIDE = CHUNK_SIZE - 1 
+const DENSITY_GRID_SIZE = 33 # 0..32
 
 # Max triangles estimation
 const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
@@ -14,17 +15,29 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var noise_frequency: float = 0.1
 
 # Threading
-var threads: Array[Thread] = []
+var compute_thread: Thread
 var mutex: Mutex
 var semaphore: Semaphore
 var exit_thread: bool = false
-var chunk_queue: Array[Vector3] = []
-var shader_spirv: RDShaderSPIRV
 
-@export var thread_count: int = 1
+# Task Queue
+# Tasks are Dictionaries: 
+# { "type": "generate", "coord": Vector2i, "pos": Vector3 }
+# { "type": "modify", "coord": Vector2i, "rid": RID, "pos": Vector3, "brush_pos": Vector3, "radius": float, "value": float }
+# { "type": "free", "rid": RID }
+var task_queue: Array[Dictionary] = []
 
-# Chunk Management
-var active_chunks: Dictionary = {} # Vector2i -> Node3D (or null if loading)
+# Shaders (SPIR-V Data)
+var shader_gen_spirv: RDShaderSPIRV
+var shader_mod_spirv: RDShaderSPIRV
+var shader_mesh_spirv: RDShaderSPIRV
+
+var terrain_material: StandardMaterial3D
+class ChunkData:
+	var node: Node3D
+	var density_buffer: RID
+	
+var active_chunks: Dictionary = {} # Vector2i -> ChunkData (or null if loading)
 
 func _ready():
 	mutex = Mutex.new()
@@ -33,36 +46,87 @@ func _ready():
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
 		if not viewer:
-			# Fallback: try to find a CharacterBody3D sibling or parent
 			viewer = get_node_or_null("../CharacterBody3D")
-
-	# Load shader resource once on main thread to pass data to the thread
-	var shader_file = load("res://marching_cubes.glsl")
-	shader_spirv = shader_file.get_spirv()
 	
-	# Create and start threads
-	for i in range(thread_count):
-		var t = Thread.new()
-		t.start(_thread_function)
-		threads.append(t)
+	if viewer:
+		print("Viewer found: ", viewer.name)
+	else:
+		print("Viewer NOT found! Terrain generation will not start.")
+
+	# Load shaders (Data only, safe on Main Thread)
+	shader_gen_spirv = load("res://gen_density.glsl").get_spirv()
+	shader_mod_spirv = load("res://modify_density.glsl").get_spirv()
+	shader_mesh_spirv = load("res://marching_cubes.glsl").get_spirv()
+	
+	# Create and start SINGLE compute thread
+	# We only use 1 thread because RIDs (Buffers) are bound to the RD instance,
+	# and sharing them across threads/devices is complex.
+	compute_thread = Thread.new()
+	compute_thread.start(_thread_function)
 
 func _process(_delta):
 	if not viewer:
 		return
 	update_chunks()
 
+func _unhandled_input(event):
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			_raycast_and_modify(1.0) # Dig (add to density -> Air)
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			_raycast_and_modify(-1.0) # Place (subtract density -> Ground)
+
+func _raycast_and_modify(value: float):
+	var camera = get_viewport().get_camera_3d()
+	if not camera: return
+	
+	var mouse_pos = get_viewport().get_mouse_position()
+	var from = camera.project_ray_origin(mouse_pos)
+	var to = from + camera.project_ray_normal(mouse_pos) * 100.0
+	
+	var space_state = get_world_3d().direct_space_state
+	var query = PhysicsRayQueryParameters3D.create(from, to)
+	var result = space_state.intersect_ray(query)
+	
+	if result:
+		var hit_pos = result.position
+		modify_terrain(hit_pos, 4.0, value) # Radius 4
+
+func modify_terrain(pos: Vector3, radius: float, value: float):
+	# Identify affected chunks. For simplicity, just the one containing 'pos'.
+	var chunk_x = floor(pos.x / CHUNK_STRIDE)
+	var chunk_z = floor(pos.z / CHUNK_STRIDE)
+	var coord = Vector2i(chunk_x, chunk_z)
+	
+	if active_chunks.has(coord):
+		var data = active_chunks[coord]
+		if data != null and data.density_buffer.is_valid():
+			var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+			
+			var task = {
+				"type": "modify",
+				"coord": coord,
+				"rid": data.density_buffer,
+				"pos": chunk_pos,
+				"brush_pos": pos,
+				"radius": radius,
+				"value": value
+			}
+			
+			mutex.lock()
+			task_queue.append(task)
+			mutex.unlock()
+			semaphore.post()
+
 func _exit_tree():
 	mutex.lock()
 	exit_thread = true
 	mutex.unlock()
 	
-	# Wake up all threads so they can exit
-	for i in range(threads.size()):
-		semaphore.post()
+	semaphore.post()
 	
-	# Wait for all threads to finish
-	for t in threads:
-		t.wait_to_finish()
+	if compute_thread and compute_thread.is_alive():
+		compute_thread.wait_to_finish()
 
 func update_chunks():
 	var p_pos = viewer.global_position
@@ -74,13 +138,33 @@ func update_chunks():
 	var chunks_to_remove = []
 	for coord in active_chunks:
 		var dist = Vector2(coord.x, coord.y).distance_to(Vector2(center_chunk.x, center_chunk.y))
-		if dist > render_distance + 2: # Add a small buffer to prevent flickering
+		if dist > render_distance + 2:
 			chunks_to_remove.append(coord)
 			
 	for coord in chunks_to_remove:
-		var node = active_chunks[coord]
-		if node:
-			node.queue_free()
+		# Cancel pending tasks for this chunk
+		mutex.lock()
+		var i = task_queue.size() - 1
+		while i >= 0:
+			var t = task_queue[i]
+			if (t.type == "generate" or t.type == "modify") and t.coord == coord:
+				task_queue.remove_at(i)
+			i -= 1
+		mutex.unlock()
+		
+		var data = active_chunks[coord]
+		if data: # ChunkData
+			if data.node:
+				data.node.queue_free()
+			
+			# Queue free buffer on thread
+			if data.density_buffer.is_valid():
+				var task = { "type": "free", "rid": data.density_buffer }
+				mutex.lock()
+				task_queue.append(task)
+				mutex.unlock()
+				semaphore.post()
+		
 		active_chunks.erase(coord)
 
 	# 2. Load new chunks
@@ -91,28 +175,40 @@ func update_chunks():
 			if active_chunks.has(coord):
 				continue
 			
-			# Check circular distance
 			if Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.y)) > render_distance:
 				continue
 
-			# Mark as loading (null placeholder)
+			# Mark as loading
 			active_chunks[coord] = null
 			
-			# Calculate World Position for this chunk
 			var chunk_pos = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
 			
+			var task = {
+				"type": "generate",
+				"coord": coord,
+				"pos": chunk_pos
+			}
+			
 			mutex.lock()
-			chunk_queue.append(chunk_pos)
+			task_queue.append(task)
 			mutex.unlock()
 			semaphore.post()
 
 func _thread_function():
-	# Create a local RenderingDevice on this thread
+	print("Thread started")
+	# Create a local RenderingDevice on this thread.
+	# This RD is unique to this thread. All GPU ops must happen here.
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd:
+		print("Failed to create local RD")
 		return
-		
-	var shader_rid = rd.shader_create_from_spirv(shader_spirv)
+
+	# Compile shaders on this device
+	var sid_gen = rd.shader_create_from_spirv(shader_gen_spirv)
+	var sid_mod = rd.shader_create_from_spirv(shader_mod_spirv)
+	var sid_mesh = rd.shader_create_from_spirv(shader_mesh_spirv)
+	
+	print("Shaders compiled. Entering loop.")
 	
 	while true:
 		semaphore.wait()
@@ -122,144 +218,227 @@ func _thread_function():
 			mutex.unlock()
 			break
 			
-		if chunk_queue.is_empty():
+		if task_queue.is_empty():
 			mutex.unlock()
 			continue
 			
-		var chunk_pos = chunk_queue.pop_front()
+		var task = task_queue.pop_front()
 		mutex.unlock()
 		
-		generate_chunk_on_thread(rd, shader_rid, chunk_pos)
-		
-	# Cleanup
+		if task.type == "generate":
+			process_generate(rd, task, sid_gen, sid_mesh)
+		elif task.type == "modify":
+			process_modify(rd, task, sid_mod, sid_mesh)
+		elif task.type == "free":
+			if task.rid.is_valid():
+				rd.free_rid(task.rid)
+				
+	# Cleanup RD
 	rd.free()
+	print("Thread exit")
 
-func generate_chunk_on_thread(rd: RenderingDevice, shader_rid: RID, offset: Vector3):
-	# 1. Setup Buffers
-	# We now output Position (3 floats) + Normal (3 floats) = 6 floats per vertex
-	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
-	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
-	var vertex_uniform = RDUniform.new()
-	vertex_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	vertex_uniform.binding = 0
-	vertex_uniform.add_id(vertex_buffer)
+func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh):
+	var chunk_pos = task.pos
+	print("Generating chunk at ", chunk_pos)
 	
-	var counter_data = PackedByteArray()
-	counter_data.resize(4) 
-	counter_data.encode_u32(0, 0)
-	var counter_buffer = rd.storage_buffer_create(4, counter_data)
-	var counter_uniform = RDUniform.new()
-	counter_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	counter_uniform.binding = 1
-	counter_uniform.add_id(counter_buffer)
+	# 1. Create Density Buffer
+	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
+	var density_buffer = rd.storage_buffer_create(density_bytes)
 	
-	# 2. Pipeline & Push Constants
-	var uniform_set = rd.uniform_set_create([vertex_uniform, counter_uniform], shader_rid, 0)
-	var pipeline = rd.compute_pipeline_create(shader_rid)
+	# 2. Run Gen Density Shader
+	var u_density = RDUniform.new()
+	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_density.binding = 0
+	u_density.add_id(density_buffer)
 	
-	var compute_list = rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
-	rd.compute_list_bind_uniform_set(compute_list, uniform_set, 0)
+	var set_gen = rd.uniform_set_create([u_density], sid_gen, 0)
+	var pipe_gen = rd.compute_pipeline_create(sid_gen)
+	var list = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(list, pipe_gen)
+	rd.compute_list_bind_uniform_set(list, set_gen, 0)
 	
-	# Send Push Constants (Offset + Noise Params)
 	var push_data = PackedFloat32Array([
-		offset.x, offset.y, offset.z, 0.0, 
-		noise_frequency, terrain_height,
-		0.0, 0.0 # Padding to reach 32 bytes (8 floats)
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, 
+		noise_frequency, terrain_height, 0.0, 0.0
 	])
-	var push_bytes = push_data.to_byte_array()
-	rd.compute_list_set_push_constant(compute_list, push_bytes, push_bytes.size())
+	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
 	
-	var groups = CHUNK_SIZE / 8
-	rd.compute_list_dispatch(compute_list, groups, groups, groups)
+	print("Density dispatch start")
+	rd.compute_list_dispatch(list, 9, 9, 9)
+	rd.compute_list_end()
+	
+	# Barrier to ensure density is written before reading
+	rd.submit()
+	print("Density submit done, syncing...")
+	rd.sync()
+	print("Density sync done")
+	
+	# 3. Run Meshing
+	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
+	
+	call_deferred("complete_generation", task.coord, mesh, density_buffer)
+
+func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh):
+	var density_buffer = task.rid
+	var chunk_pos = task.pos
+	
+	# 1. Run Modification
+	var u_density = RDUniform.new()
+	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_density.binding = 0
+	u_density.add_id(density_buffer)
+	
+	var set_mod = rd.uniform_set_create([u_density], sid_mod, 0)
+	var pipe_mod = rd.compute_pipeline_create(sid_mod)
+	var list = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
+	rd.compute_list_bind_uniform_set(list, set_mod, 0)
+	
+	var push_data = PackedFloat32Array([
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
+		task.brush_pos.x, task.brush_pos.y, task.brush_pos.z, task.radius,
+		task.value, 0.0, 0.0, 0.0
+	])
+	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
+	
+	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	
 	rd.submit()
 	rd.sync()
 	
-	# 3. Read & Build
-	var count_output_bytes = rd.buffer_get_data(counter_buffer)
-	var triangle_count = count_output_bytes.decode_u32(0)
+	# 2. Re-Mesh
+	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
 	
-	if triangle_count > 0:
-		# 3 vertices per triangle * 6 floats per vertex (pos+normal)
-		var total_floats = triangle_count * 3 * 6
-		var vertices_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
-		var vertices_floats = vertices_bytes.to_float32_array()
+	call_deferred("complete_modification", task.coord, mesh)
+
+func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, material_instance: StandardMaterial3D):
+	# Setup Output Buffers
+	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
+	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
+	
+	var counter_data = PackedByteArray()
+	counter_data.resize(4) 
+	counter_data.encode_u32(0, 0)
+	var counter_buffer = rd.storage_buffer_create(4, counter_data)
+	
+	var u_vert = RDUniform.new()
+	u_vert.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_vert.binding = 0
+	u_vert.add_id(vertex_buffer)
+	
+	var u_count = RDUniform.new()
+	u_count.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_count.binding = 1
+	u_count.add_id(counter_buffer)
+	
+	var u_dens = RDUniform.new()
+	u_dens.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_dens.binding = 2
+	u_dens.add_id(density_buffer)
+	
+	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens], sid_mesh, 0)
+	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
+	
+	var list = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
+	rd.compute_list_bind_uniform_set(list, set_mesh, 0)
+	
+	var push_data = PackedFloat32Array([
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, 
+		noise_frequency, terrain_height, 0.0, 0.0
+	])
+	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
+	
+	var groups = CHUNK_SIZE / 8
+	print("Meshing dispatch start (groups: ", groups, ")")
+	rd.compute_list_dispatch(list, groups, groups, groups)
+	rd.compute_list_end()
+	
+	rd.submit()
+	print("Meshing submit done, syncing...")
+	rd.sync()
+	print("Meshing sync done")
+	
+	# Read back
+	var count_bytes = rd.buffer_get_data(counter_buffer)
+	var tri_count = count_bytes.decode_u32(0)
+	
+	print("Chunk ", chunk_pos, " triangles: ", tri_count)
+	
+	var mesh = null
+	if tri_count > 0:
+		var total_floats = tri_count * 3 * 6
+		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
+		var vert_floats = vert_bytes.to_float32_array()
+		mesh = build_mesh(vert_floats, material_instance)
 		
-		var mesh = build_mesh(vertices_floats)
-		call_deferred("add_mesh_to_scene", mesh, offset)
-	else:
-		# Even if empty, we should "load" it (as null or empty node) so we don't retry
-		call_deferred("add_empty_chunk", offset)
-	
-	# Cleanup
 	rd.free_rid(vertex_buffer)
 	rd.free_rid(counter_buffer)
+	
+	return mesh
 
-func build_mesh(data: PackedFloat32Array) -> ArrayMesh:
-	var st = SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	
-	var mat = StandardMaterial3D.new()
-	var texture = load("res://green-grass-texture.jpg")
-	if texture:
-		mat.albedo_texture = texture
-		mat.texture_filter = StandardMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		mat.uv1_triplanar = true # Use triplanar mapping for better seamless blending on terrain
-		mat.uv1_scale = Vector3(1.00, 1.00, 1.00) # Scale the UVs to tile the texture
-	else:
-		mat.albedo_color = Color(0.2, 0.7, 0.3)
-	st.set_material(mat)
-	
-	# Data stride is 6: px, py, pz, nx, ny, nz
-	for i in range(0, data.size(), 6):
-		var v = Vector3(data[i], data[i+1], data[i+2])
-		var n = Vector3(data[i+3], data[i+4], data[i+5])
+func complete_generation(coord: Vector2i, mesh: ArrayMesh, density_buffer: RID):
+	# print("Completing generation for ", coord)
+	# If we were cancelled/removed while generating
+	if not active_chunks.has(coord):
+		# Queue free immediately
+		var task = { "type": "free", "rid": density_buffer }
+		mutex.lock()
+		task_queue.append(task)
+		mutex.unlock()
+		semaphore.post()
+		return
 		
-		st.set_normal(n)
-		st.add_vertex(v)
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+	var node = create_chunk_node(mesh, chunk_pos)
 	
-	return st.commit()
+	var data = ChunkData.new()
+	data.node = node
+	data.density_buffer = density_buffer
+	
+	active_chunks[coord] = data
 
-func add_mesh_to_scene(mesh: ArrayMesh, position: Vector3):
-	var chunk_x = round(position.x / CHUNK_STRIDE)
-	var chunk_z = round(position.z / CHUNK_STRIDE)
-	var coord = Vector2i(chunk_x, chunk_z)
-	
-	# Check if we still want this chunk
+func complete_modification(coord: Vector2i, mesh: ArrayMesh):
 	if not active_chunks.has(coord):
 		return
 	
-	# Create a StaticBody3D to hold both the mesh and collision
+	var data = active_chunks[coord]
+	# Update mesh
+	if data.node:
+		data.node.queue_free()
+		
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+	data.node = create_chunk_node(mesh, chunk_pos)
+
+func create_chunk_node(mesh: ArrayMesh, position: Vector3) -> Node3D:
+	if mesh == null:
+		return null
+		
 	var static_body = StaticBody3D.new()
 	static_body.position = position
 	add_child(static_body)
 	
-	# Visual Mesh
 	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.mesh = mesh
 	static_body.add_child(mesh_instance)
 	
-	# Collision
 	var collision_shape = CollisionShape3D.new()
 	collision_shape.shape = mesh.create_trimesh_shape()
 	static_body.add_child(collision_shape)
 	
-	active_chunks[coord] = static_body
+	return static_body
 
-func add_empty_chunk(position: Vector3):
-	var chunk_x = round(position.x / CHUNK_STRIDE)
-	var chunk_z = round(position.z / CHUNK_STRIDE)
-	var coord = Vector2i(chunk_x, chunk_z)
+func build_mesh(data: PackedFloat32Array, material_instance: StandardMaterial3D) -> ArrayMesh:
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
-	if active_chunks.has(coord):
-		# Mark as loaded but empty (could use a dummy node or just keep it null/flagged)
-		# To keep logic simple, let's just make sure we don't re-queue it.
-		# active_chunks[coord] is already null (from queueing), which means "loading/loaded".
-		# But we need to distinguish "loading" from "loaded empty" if we were strict,
-		# but here 'null' effectively means "don't queue again". 
-		# However, the cleanup loop checks `if node: node.queue_free()`. 
-		# If we leave it null, it won't be freed, but it will be erased from dict.
-		# That works.
-		pass
+	st.set_material(material_instance)
+	
+	for i in range(0, data.size(), 6):
+		var v = Vector3(data[i], data[i+1], data[i+2])
+		var n = Vector3(data[i+3], data[i+4], data[i+5])
+		st.set_normal(n)
+		st.add_vertex(v)
+	
+	return st.commit()

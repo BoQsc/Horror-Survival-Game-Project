@@ -13,8 +13,13 @@ layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
     uint triangle_count;
 } counter;
 
+// New Binding: Input Density Map
+layout(set = 0, binding = 2, std430) restrict buffer DensityBuffer {
+    float values[];
+} density_buffer;
+
 layout(push_constant) uniform PushConstants {
-    vec4 chunk_offset; // .xyz is position, .w is padding (but we send 0.0)
+    vec4 chunk_offset; // .xyz is position
     float noise_freq;
     float terrain_height;
 } params;
@@ -24,43 +29,42 @@ const float ISO_LEVEL = 0.0;
 
 #include "res://marching_cubes_lookup_table.glsl"
 
-// --- NOISE ---
-float hash(vec3 p) {
-    p = fract(p * 0.3183099 + .1);
-    p *= 17.0;
-    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-
-float noise(vec3 x) {
-    vec3 i = floor(x);
-    vec3 f = fract(x);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(mix( hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
-                   mix( hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-               mix(mix( hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
-                   mix( hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
-}
-
-// --- DENSITY ---
-float get_density(vec3 pos) {
-    vec3 world_pos = pos + params.chunk_offset.xyz;
-
-    float base_height = params.terrain_height;
-    // Use 2D noise for heightmap (ignore Y variation in noise lookup)
-    // We use a small Y offset in the noise lookup just to ensure it's not 0 if that matters, 
-    // but effectively we scan a 2D plane.
-    float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height; 
+float get_density_from_buffer(vec3 p) {
+    // p is local coordinates (0..32)
+    // The buffer is 33x33x33
+    int x = int(round(p.x));
+    int y = int(round(p.y));
+    int z = int(round(p.z));
     
-    float terrain_height = base_height + hill_height;
-    return world_pos.y - terrain_height;
+    // Clamp to safe bounds
+    x = clamp(x, 0, 32);
+    y = clamp(y, 0, 32);
+    z = clamp(z, 0, 32);
+    
+    uint index = x + (y * 33) + (z * 33 * 33);
+    return density_buffer.values[index];
 }
 
 vec3 get_normal(vec3 pos) {
-    float d = 0.01;
-    float gx = get_density(pos + vec3(d, 0, 0)) - get_density(pos - vec3(d, 0, 0));
-    float gy = get_density(pos + vec3(0, d, 0)) - get_density(pos - vec3(0, d, 0));
-    float gz = get_density(pos + vec3(0, 0, d)) - get_density(pos - vec3(0, 0, d));
-    return normalize(vec3(gx, gy, gz));
+    // Calculate gradient from the buffer
+    // We can't sample arbitrarily small delta 'd' because we are on a grid.
+    // We must sample neighbors.
+    
+    vec3 n;
+    float d = 1.0;
+    
+    float v_xp = get_density_from_buffer(pos + vec3(d, 0, 0));
+    float v_xm = get_density_from_buffer(pos - vec3(d, 0, 0));
+    float v_yp = get_density_from_buffer(pos + vec3(0, d, 0));
+    float v_ym = get_density_from_buffer(pos - vec3(0, d, 0));
+    float v_zp = get_density_from_buffer(pos + vec3(0, 0, d));
+    float v_zm = get_density_from_buffer(pos - vec3(0, 0, d));
+    
+    n.x = v_xp - v_xm;
+    n.y = v_yp - v_ym;
+    n.z = v_zp - v_zm;
+    
+    return normalize(n);
 }
 
 vec3 interpolate_vertex(vec3 p1, vec3 p2, float v1, float v2) {
@@ -79,6 +83,7 @@ void main() {
 
     vec3 pos = vec3(id);
 
+    // Sample 8 corners from the buffer
     vec3 corners[8] = vec3[](
         pos + vec3(0,0,0), pos + vec3(1,0,0), pos + vec3(1,0,1), pos + vec3(0,0,1),
         pos + vec3(0,1,0), pos + vec3(1,1,0), pos + vec3(1,1,1), pos + vec3(0,1,1)
@@ -86,7 +91,7 @@ void main() {
 
     float densities[8];
     for(int i = 0; i < 8; i++) {
-        densities[i] = get_density(corners[i]);
+        densities[i] = get_density_from_buffer(corners[i]);
     }
 
     int cubeIndex = 0;
@@ -119,15 +124,12 @@ void main() {
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
         uint idx = atomicAdd(counter.triangle_count, 1);
-        // 3 vertices per triangle * 6 floats per vertex = 18 floats per triangle
         uint start_ptr = idx * 18; 
 
         vec3 v1 = vertList[triTable[cubeIndex * 16 + i]];
         vec3 v2 = vertList[triTable[cubeIndex * 16 + i + 1]];
         vec3 v3 = vertList[triTable[cubeIndex * 16 + i + 2]];
 
-        // --- FIXED WINDING ORDER (v1 -> v3 -> v2) ---
-        
         // Vertex 1
         vec3 n1 = get_normal(v1);
         mesh_output.vertices[start_ptr + 0] = v1.x;
@@ -137,7 +139,7 @@ void main() {
         mesh_output.vertices[start_ptr + 4] = n1.y;
         mesh_output.vertices[start_ptr + 5] = n1.z;
         
-        // Vertex 3 (Swapped)
+        // Vertex 3
         vec3 n3 = get_normal(v3);
         mesh_output.vertices[start_ptr + 6] = v3.x;
         mesh_output.vertices[start_ptr + 7] = v3.y;
@@ -146,7 +148,7 @@ void main() {
         mesh_output.vertices[start_ptr + 10] = n3.y;
         mesh_output.vertices[start_ptr + 11] = n3.z;
         
-        // Vertex 2 (Swapped)
+        // Vertex 2
         vec3 n2 = get_normal(v2);
         mesh_output.vertices[start_ptr + 12] = v2.x;
         mesh_output.vertices[start_ptr + 13] = v2.y;
