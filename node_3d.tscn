@@ -39,4 +39,3 @@ shape = SubResource("CapsuleShape3D_noarx")
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 script = ExtResource("2_chunk")
 grid_size = 10
-thread_count = 3

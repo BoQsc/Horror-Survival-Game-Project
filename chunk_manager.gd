@@ -20,7 +20,7 @@ var exit_thread: bool = false
 var chunk_queue: Array[Vector3] = []
 var shader_spirv: RDShaderSPIRV
 
-@export_range(0, 4) var thread_count: int = 2
+@export var thread_count: int = 1
 
 func _ready():
 	mutex = Mutex.new()
