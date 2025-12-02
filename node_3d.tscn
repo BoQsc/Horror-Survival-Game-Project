@@ -1,4 +1,6 @@
-[gd_scene load_steps=5 format=3 uid="uid://ipiv2ivbm1cr"]
+[gd_scene load_steps=7 format=3 uid="uid://ipiv2ivbm1cr"]
+
+[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_a202f"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_4xowi"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
@@ -12,6 +14,8 @@ background_mode = 2
 sky = SubResource("Sky_a202f")
 tonemap_mode = 2
 glow_enabled = true
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_noarx"]
 
 [sub_resource type="GDScript" id="GDScript_4xowi"]
 script/source = "extends Node3D
@@ -139,8 +143,14 @@ environment = SubResource("Environment_noarx")
 transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
 shadow_enabled = true
 
-[node name="Camera3D" type="Camera3D" parent="."]
+[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
+script = ExtResource("1_a202f")
+
+[node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 37.27439, 2.0363493)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D"]
+shape = SubResource("CapsuleShape3D_noarx")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 script = SubResource("GDScript_4xowi")
