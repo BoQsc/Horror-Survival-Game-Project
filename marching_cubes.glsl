@@ -55,6 +55,14 @@ float get_density(vec3 pos) {
     return world_pos.y - terrain_height;
 }
 
+vec3 get_normal(vec3 pos) {
+    float d = 0.01;
+    float gx = get_density(pos + vec3(d, 0, 0)) - get_density(pos - vec3(d, 0, 0));
+    float gy = get_density(pos + vec3(0, d, 0)) - get_density(pos - vec3(0, d, 0));
+    float gz = get_density(pos + vec3(0, 0, d)) - get_density(pos - vec3(0, 0, d));
+    return normalize(vec3(gx, gy, gz));
+}
+
 vec3 interpolate_vertex(vec3 p1, vec3 p2, float v1, float v2) {
     if (abs(ISO_LEVEL - v1) < 0.00001) return p1;
     if (abs(ISO_LEVEL - v2) < 0.00001) return p2;
@@ -111,26 +119,40 @@ void main() {
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
         uint idx = atomicAdd(counter.triangle_count, 1);
-        uint start_ptr = idx * 9;
+        // 3 vertices per triangle * 6 floats per vertex = 18 floats per triangle
+        uint start_ptr = idx * 18; 
 
         vec3 v1 = vertList[triTable[cubeIndex * 16 + i]];
         vec3 v2 = vertList[triTable[cubeIndex * 16 + i + 1]];
         vec3 v3 = vertList[triTable[cubeIndex * 16 + i + 2]];
 
         // --- FIXED WINDING ORDER (v1 -> v3 -> v2) ---
-        // This ensures the normal points UP instead of DOWN.
         
+        // Vertex 1
+        vec3 n1 = get_normal(v1);
         mesh_output.vertices[start_ptr + 0] = v1.x;
         mesh_output.vertices[start_ptr + 1] = v1.y;
         mesh_output.vertices[start_ptr + 2] = v1.z;
+        mesh_output.vertices[start_ptr + 3] = n1.x;
+        mesh_output.vertices[start_ptr + 4] = n1.y;
+        mesh_output.vertices[start_ptr + 5] = n1.z;
         
-        // Swapped v2 and v3 here:
-        mesh_output.vertices[start_ptr + 3] = v3.x;
-        mesh_output.vertices[start_ptr + 4] = v3.y;
-        mesh_output.vertices[start_ptr + 5] = v3.z;
+        // Vertex 3 (Swapped)
+        vec3 n3 = get_normal(v3);
+        mesh_output.vertices[start_ptr + 6] = v3.x;
+        mesh_output.vertices[start_ptr + 7] = v3.y;
+        mesh_output.vertices[start_ptr + 8] = v3.z;
+        mesh_output.vertices[start_ptr + 9] = n3.x;
+        mesh_output.vertices[start_ptr + 10] = n3.y;
+        mesh_output.vertices[start_ptr + 11] = n3.z;
         
-        mesh_output.vertices[start_ptr + 6] = v2.x;
-        mesh_output.vertices[start_ptr + 7] = v2.y;
-        mesh_output.vertices[start_ptr + 8] = v2.z;
+        // Vertex 2 (Swapped)
+        vec3 n2 = get_normal(v2);
+        mesh_output.vertices[start_ptr + 12] = v2.x;
+        mesh_output.vertices[start_ptr + 13] = v2.y;
+        mesh_output.vertices[start_ptr + 14] = v2.z;
+        mesh_output.vertices[start_ptr + 15] = n2.x;
+        mesh_output.vertices[start_ptr + 16] = n2.y;
+        mesh_output.vertices[start_ptr + 17] = n2.z;
     }
 }

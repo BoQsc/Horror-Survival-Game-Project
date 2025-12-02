@@ -38,7 +38,8 @@ func spawn_chunk_grid(size: int):
 
 func generate_chunk(offset: Vector3):
 	# 1. Setup Buffers
-	var output_bytes_size = MAX_TRIANGLES * 3 * 3 * 4
+	# We now output Position (3 floats) + Normal (3 floats) = 6 floats per vertex
+	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
 	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
 	var vertex_uniform = RDUniform.new()
 	vertex_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
@@ -89,7 +90,8 @@ func generate_chunk(offset: Vector3):
 	var triangle_count = count_output_bytes.decode_u32(0)
 	
 	if triangle_count > 0:
-		var total_floats = triangle_count * 9
+		# 3 vertices per triangle * 6 floats per vertex (pos+normal)
+		var total_floats = triangle_count * 3 * 6
 		var vertices_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		var vertices_floats = vertices_bytes.to_float32_array()
 		
@@ -99,7 +101,7 @@ func generate_chunk(offset: Vector3):
 	rd.free_rid(vertex_buffer)
 	rd.free_rid(counter_buffer)
 
-func build_mesh_instance(floats: PackedFloat32Array, position: Vector3):
+func build_mesh_instance(data: PackedFloat32Array, position: Vector3):
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
@@ -107,11 +109,16 @@ func build_mesh_instance(floats: PackedFloat32Array, position: Vector3):
 	mat.albedo_color = Color(0.2, 0.7, 0.3)
 	st.set_material(mat)
 	
-	for i in range(0, floats.size(), 3):
-		var v = Vector3(floats[i], floats[i+1], floats[i+2])
+	# Data stride is 6: px, py, pz, nx, ny, nz
+	for i in range(0, data.size(), 6):
+		var v = Vector3(data[i], data[i+1], data[i+2])
+		var n = Vector3(data[i+3], data[i+4], data[i+5])
+		
+		st.set_normal(n)
 		st.add_vertex(v)
 	
-	st.generate_normals()
+	# We don't need generate_normals() anymore because we calculated them analytically!
+	# st.generate_normals() 
 	
 	var mesh = st.commit()
 	
