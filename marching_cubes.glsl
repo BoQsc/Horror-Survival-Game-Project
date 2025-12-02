@@ -13,23 +13,24 @@ layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
     uint triangle_count;
 } counter;
 
-// SETTINGS
+// --- CRITICAL: THIS IS WHAT WAS MISSING IN YOUR SCRIPT CALL ---
+layout(push_constant) uniform PushConstants {
+    vec3 chunk_offset; 
+} params;
+// -------------------------------------------------------------
+
 const int CHUNK_SIZE = 32;
 const float ISO_LEVEL = 0.0;
 
-// INCLUDES
 #include "res://marching_cubes_lookup_table.glsl"
 
-// --- NOISE FUNCTIONS ---
-
-// 1. Hash function
+// --- NOISE ---
 float hash(vec3 p) {
     p = fract(p * 0.3183099 + .1);
     p *= 17.0;
     return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
 }
 
-// 2. Value Noise (Returns 0.0 to 1.0)
 float noise(vec3 x) {
     vec3 i = floor(x);
     vec3 f = fract(x);
@@ -40,45 +41,34 @@ float noise(vec3 x) {
                    mix( hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
 }
 
-// --- DENSITY CALCULATION ---
-
+// --- DENSITY ---
 float get_density(vec3 pos) {
-    // 1. Define a base height for the ground (e.g., y=10)
+    // Add offset to make noise seamless across chunks
+    vec3 world_pos = pos + params.chunk_offset;
+
     float base_height = 10.0;
+    float hill_height = noise(world_pos * 0.1) * 10.0; 
     
-    // 2. Calculate noise amplitude (Height of the hills)
-    // We multiply noise (0..1) by 10.0, creating hills up to 10 units high.
-    float hill_height = noise(pos * 0.1) * 10.0;
-    
-    // 3. Combine them
     float terrain_height = base_height + hill_height;
-    
-    // 4. SDF Logic: 
-    // If current Y is BELOW the terrain_height, we return negative (Solid).
-    // If current Y is ABOVE the terrain_height, we return positive (Air).
-    return pos.y - terrain_height;
+    return world_pos.y - terrain_height;
 }
 
 vec3 interpolate_vertex(vec3 p1, vec3 p2, float v1, float v2) {
-    // Safety check for division by zero
     if (abs(ISO_LEVEL - v1) < 0.00001) return p1;
     if (abs(ISO_LEVEL - v2) < 0.00001) return p2;
     if (abs(v1 - v2) < 0.00001) return p1;
     return p1 + (ISO_LEVEL - v1) * (p2 - p1) / (v2 - v1);
 }
 
-// --- MAIN ---
 void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
     
-    // Boundary check
     if (id.x >= CHUNK_SIZE - 1 || id.y >= CHUNK_SIZE - 1 || id.z >= CHUNK_SIZE - 1) {
         return;
     }
 
     vec3 pos = vec3(id);
 
-    // 1. Sample Corners
     vec3 corners[8] = vec3[](
         pos + vec3(0,0,0), pos + vec3(1,0,0), pos + vec3(1,0,1), pos + vec3(0,0,1),
         pos + vec3(0,1,0), pos + vec3(1,1,0), pos + vec3(1,1,1), pos + vec3(0,1,1)
@@ -89,7 +79,6 @@ void main() {
         densities[i] = get_density(corners[i]);
     }
 
-    // 2. Determine Cube Index
     int cubeIndex = 0;
     if (densities[0] < ISO_LEVEL) cubeIndex |= 1;
     if (densities[1] < ISO_LEVEL) cubeIndex |= 2;
@@ -102,7 +91,6 @@ void main() {
 
     if (edgeTable[cubeIndex] == 0) return;
 
-    // 3. Calculate Intersection Vertices
     vec3 vertList[12];
     
     if ((edgeTable[cubeIndex] & 1) != 0)    vertList[0] = interpolate_vertex(corners[0], corners[1], densities[0], densities[1]);
@@ -118,7 +106,6 @@ void main() {
     if ((edgeTable[cubeIndex] & 1024) != 0) vertList[10] = interpolate_vertex(corners[2], corners[6], densities[2], densities[6]);
     if ((edgeTable[cubeIndex] & 2048) != 0) vertList[11] = interpolate_vertex(corners[3], corners[7], densities[3], densities[7]);
 
-    // 4. Generate Triangles
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
         uint idx = atomicAdd(counter.triangle_count, 1);
