@@ -11,6 +11,10 @@ const CHUNK_STRIDE = CHUNK_SIZE - 1
 # Max triangles estimation
 const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 
+@export var grid_size: int = 3
+@export var terrain_height: float = 10.0
+@export var noise_frequency: float = 0.1
+
 func _ready():
 	rd = RenderingServer.create_local_rendering_device()
 	
@@ -19,12 +23,12 @@ func _ready():
 	var shader_spirv: RDShaderSPIRV = shader_file.get_spirv()
 	shader_rid = rd.shader_create_from_spirv(shader_spirv)
 	
-	# Spawn a 3x3 grid of chunks centered on 0,0,0
-	spawn_chunk_grid(3)
+	# Spawn a grid of chunks centered on 0,0,0
+	spawn_chunk_grid(grid_size)
 
-func spawn_chunk_grid(grid_size: int):
-	var start = -floor(grid_size / 2.0)
-	var end = floor(grid_size / 2.0) + 1
+func spawn_chunk_grid(size: int):
+	var start = -floor(size / 2.0)
+	var end = floor(size / 2.0) + 1
 	
 	for x in range(start, end):
 		for z in range(start, end):
@@ -58,8 +62,18 @@ func generate_chunk(offset: Vector3):
 	rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
 	rd.compute_list_bind_uniform_set(compute_list, uniform_set, 0)
 	
-	# Send Push Constants (Offset)
-	var push_data = PackedFloat32Array([offset.x, offset.y, offset.z, 0.0])
+	# Send Push Constants (Offset + Noise Params)
+	# vec3 chunk_offset (12 bytes) + padding (4 bytes) -> 16 bytes
+	# float noise_freq (4 bytes)
+	# float terrain_height (4 bytes)
+	# Total used: 24 bytes.
+	# Push constants usually require alignment to 16 or 32 bytes (depending on driver/struct size).
+	# The shader compiler seems to be padding the struct to 32 bytes.
+	var push_data = PackedFloat32Array([
+		offset.x, offset.y, offset.z, 0.0, 
+		noise_frequency, terrain_height,
+		0.0, 0.0 # Padding to reach 32 bytes (8 floats)
+	])
 	var push_bytes = push_data.to_byte_array()
 	rd.compute_list_set_push_constant(compute_list, push_bytes, push_bytes.size())
 	

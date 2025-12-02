@@ -14,7 +14,9 @@ layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
 } counter;
 
 layout(push_constant) uniform PushConstants {
-    vec3 chunk_offset; 
+    vec4 chunk_offset; // .xyz is position, .w is padding (but we send 0.0)
+    float noise_freq;
+    float terrain_height;
 } params;
 
 const int CHUNK_SIZE = 32;
@@ -41,10 +43,13 @@ float noise(vec3 x) {
 
 // --- DENSITY ---
 float get_density(vec3 pos) {
-    vec3 world_pos = pos + params.chunk_offset;
+    vec3 world_pos = pos + params.chunk_offset.xyz;
 
-    float base_height = 10.0;
-    float hill_height = noise(world_pos * 0.1) * 10.0; 
+    float base_height = params.terrain_height;
+    // Use 2D noise for heightmap (ignore Y variation in noise lookup)
+    // We use a small Y offset in the noise lookup just to ensure it's not 0 if that matters, 
+    // but effectively we scan a 2D plane.
+    float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height; 
     
     float terrain_height = base_height + hill_height;
     return world_pos.y - terrain_height;
