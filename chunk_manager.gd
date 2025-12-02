@@ -1,8 +1,5 @@
 extends Node3D
 
-var rd: RenderingDevice
-var shader_rid: RID
-
 # 32 Voxels wide
 const CHUNK_SIZE = 32
 # Overlap chunks by 1 unit to prevent gaps (seams)
@@ -15,16 +12,34 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var terrain_height: float = 10.0
 @export var noise_frequency: float = 0.1
 
+# Threading
+var thread: Thread
+var mutex: Mutex
+var semaphore: Semaphore
+var exit_thread: bool = false
+var chunk_queue: Array[Vector3] = []
+var shader_spirv: RDShaderSPIRV
+
 func _ready():
-	rd = RenderingServer.create_local_rendering_device()
+	mutex = Mutex.new()
+	semaphore = Semaphore.new()
+	thread = Thread.new()
 	
-	# Load shader
+	# Load shader resource once on main thread to pass data to the thread
 	var shader_file = load("res://marching_cubes.glsl")
-	var shader_spirv: RDShaderSPIRV = shader_file.get_spirv()
-	shader_rid = rd.shader_create_from_spirv(shader_spirv)
+	shader_spirv = shader_file.get_spirv()
+	
+	thread.start(_thread_function)
 	
 	# Spawn a grid of chunks centered on 0,0,0
 	spawn_chunk_grid(grid_size)
+
+func _exit_tree():
+	mutex.lock()
+	exit_thread = true
+	mutex.unlock()
+	semaphore.post()
+	thread.wait_to_finish()
 
 func spawn_chunk_grid(size: int):
 	var start = -floor(size / 2.0)
@@ -34,9 +49,41 @@ func spawn_chunk_grid(size: int):
 		for z in range(start, end):
 			# Calculate World Position for this chunk
 			var chunk_pos = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
-			generate_chunk(chunk_pos)
+			
+			mutex.lock()
+			chunk_queue.append(chunk_pos)
+			mutex.unlock()
+			semaphore.post()
 
-func generate_chunk(offset: Vector3):
+func _thread_function():
+	# Create a local RenderingDevice on this thread
+	var rd = RenderingServer.create_local_rendering_device()
+	if not rd:
+		return
+		
+	var shader_rid = rd.shader_create_from_spirv(shader_spirv)
+	
+	while true:
+		semaphore.wait()
+		
+		mutex.lock()
+		if exit_thread:
+			mutex.unlock()
+			break
+			
+		if chunk_queue.is_empty():
+			mutex.unlock()
+			continue
+			
+		var chunk_pos = chunk_queue.pop_front()
+		mutex.unlock()
+		
+		generate_chunk_on_thread(rd, shader_rid, chunk_pos)
+		
+	# Cleanup
+	rd.free()
+
+func generate_chunk_on_thread(rd: RenderingDevice, shader_rid: RID, offset: Vector3):
 	# 1. Setup Buffers
 	# We now output Position (3 floats) + Normal (3 floats) = 6 floats per vertex
 	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
@@ -64,12 +111,6 @@ func generate_chunk(offset: Vector3):
 	rd.compute_list_bind_uniform_set(compute_list, uniform_set, 0)
 	
 	# Send Push Constants (Offset + Noise Params)
-	# vec3 chunk_offset (12 bytes) + padding (4 bytes) -> 16 bytes
-	# float noise_freq (4 bytes)
-	# float terrain_height (4 bytes)
-	# Total used: 24 bytes.
-	# Push constants usually require alignment to 16 or 32 bytes (depending on driver/struct size).
-	# The shader compiler seems to be padding the struct to 32 bytes.
 	var push_data = PackedFloat32Array([
 		offset.x, offset.y, offset.z, 0.0, 
 		noise_frequency, terrain_height,
@@ -95,13 +136,14 @@ func generate_chunk(offset: Vector3):
 		var vertices_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		var vertices_floats = vertices_bytes.to_float32_array()
 		
-		build_mesh_instance(vertices_floats, offset)
+		var mesh = build_mesh(vertices_floats)
+		call_deferred("add_mesh_to_scene", mesh, offset)
 	
 	# Cleanup
 	rd.free_rid(vertex_buffer)
 	rd.free_rid(counter_buffer)
 
-func build_mesh_instance(data: PackedFloat32Array, position: Vector3):
+func build_mesh(data: PackedFloat32Array) -> ArrayMesh:
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
@@ -117,11 +159,9 @@ func build_mesh_instance(data: PackedFloat32Array, position: Vector3):
 		st.set_normal(n)
 		st.add_vertex(v)
 	
-	# We don't need generate_normals() anymore because we calculated them analytically!
-	# st.generate_normals() 
-	
-	var mesh = st.commit()
-	
+	return st.commit()
+
+func add_mesh_to_scene(mesh: ArrayMesh, position: Vector3):
 	# Create the node in the scene
 	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.mesh = mesh
