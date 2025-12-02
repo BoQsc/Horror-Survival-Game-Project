@@ -1,6 +1,7 @@
-[gd_scene load_steps=8 format=3 uid="uid://ipiv2ivbm1cr"]
+[gd_scene load_steps=9 format=3 uid="uid://ipiv2ivbm1cr"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_a202f"]
+[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_a0tk4"]
 [ext_resource type="Script" uid="uid://c1xwl5r0i1xs2" path="res://chunk_manager.gd" id="2_chunk"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_4xowi"]
@@ -44,6 +45,7 @@ shape = SubResource("CapsuleShape3D_noarx")
 mesh = SubResource("CapsuleMesh_noarx")
 
 [node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
+script = ExtResource("2_a0tk4")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 script = ExtResource("2_chunk")
