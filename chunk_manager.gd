@@ -13,23 +13,28 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var noise_frequency: float = 0.1
 
 # Threading
-var thread: Thread
+var threads: Array[Thread] = []
 var mutex: Mutex
 var semaphore: Semaphore
 var exit_thread: bool = false
 var chunk_queue: Array[Vector3] = []
 var shader_spirv: RDShaderSPIRV
 
+@export var thread_count: int = 2
+
 func _ready():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
-	thread = Thread.new()
 	
 	# Load shader resource once on main thread to pass data to the thread
 	var shader_file = load("res://marching_cubes.glsl")
 	shader_spirv = shader_file.get_spirv()
 	
-	thread.start(_thread_function)
+	# Create and start threads
+	for i in range(thread_count):
+		var t = Thread.new()
+		t.start(_thread_function)
+		threads.append(t)
 	
 	# Spawn a grid of chunks centered on 0,0,0
 	spawn_chunk_grid(grid_size)
@@ -38,8 +43,14 @@ func _exit_tree():
 	mutex.lock()
 	exit_thread = true
 	mutex.unlock()
-	semaphore.post()
-	thread.wait_to_finish()
+	
+	# Wake up all threads so they can exit
+	for i in range(threads.size()):
+		semaphore.post()
+	
+	# Wait for all threads to finish
+	for t in threads:
+		t.wait_to_finish()
 
 func spawn_chunk_grid(size: int):
 	var start = -floor(size / 2.0)
