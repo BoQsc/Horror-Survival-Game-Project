@@ -207,7 +207,7 @@ func build_mesh(data: PackedFloat32Array) -> ArrayMesh:
 		mat.albedo_texture = texture
 		mat.texture_filter = StandardMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		mat.uv1_triplanar = true # Use triplanar mapping for better seamless blending on terrain
-		mat.uv1_scale = Vector3(0.05, 0.05, 0.05) # Scale the UVs to tile the texture
+		mat.uv1_scale = Vector3(1.00, 1.00, 1.00) # Scale the UVs to tile the texture
 	else:
 		mat.albedo_color = Color(0.2, 0.7, 0.3)
 	st.set_material(mat)
