@@ -202,7 +202,14 @@ func build_mesh(data: PackedFloat32Array) -> ArrayMesh:
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
 	var mat = StandardMaterial3D.new()
-	mat.albedo_color = Color(0.2, 0.7, 0.3)
+	var texture = load("res://green-grass-texture.jpg")
+	if texture:
+		mat.albedo_texture = texture
+		mat.texture_filter = StandardMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		mat.uv1_triplanar = true # Use triplanar mapping for better seamless blending on terrain
+		mat.uv1_scale = Vector3(0.05, 0.05, 0.05) # Scale the UVs to tile the texture
+	else:
+		mat.albedo_color = Color(0.2, 0.7, 0.3)
 	st.set_material(mat)
 	
 	# Data stride is 6: px, py, pz, nx, ny, nz
