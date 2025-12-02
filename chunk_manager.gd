@@ -8,7 +8,8 @@ const CHUNK_STRIDE = CHUNK_SIZE - 1
 # Max triangles estimation
 const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 
-@export var grid_size: int = 3
+@export var viewer: Node3D
+@export var render_distance: int = 5
 @export var terrain_height: float = 10.0
 @export var noise_frequency: float = 0.1
 
@@ -22,10 +23,19 @@ var shader_spirv: RDShaderSPIRV
 
 @export var thread_count: int = 1
 
+# Chunk Management
+var active_chunks: Dictionary = {} # Vector2i -> Node3D (or null if loading)
+
 func _ready():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
 	
+	if not viewer:
+		viewer = get_tree().get_first_node_in_group("player")
+		if not viewer:
+			# Fallback: try to find a CharacterBody3D sibling or parent
+			viewer = get_node_or_null("../CharacterBody3D")
+
 	# Load shader resource once on main thread to pass data to the thread
 	var shader_file = load("res://marching_cubes.glsl")
 	shader_spirv = shader_file.get_spirv()
@@ -35,9 +45,11 @@ func _ready():
 		var t = Thread.new()
 		t.start(_thread_function)
 		threads.append(t)
-	
-	# Spawn a grid of chunks centered on 0,0,0
-	spawn_chunk_grid(grid_size)
+
+func _process(_delta):
+	if not viewer:
+		return
+	update_chunks()
 
 func _exit_tree():
 	mutex.lock()
@@ -52,12 +64,40 @@ func _exit_tree():
 	for t in threads:
 		t.wait_to_finish()
 
-func spawn_chunk_grid(size: int):
-	var start = -floor(size / 2.0)
-	var end = floor(size / 2.0) + 1
-	
-	for x in range(start, end):
-		for z in range(start, end):
+func update_chunks():
+	var p_pos = viewer.global_position
+	var p_chunk_x = floor(p_pos.x / CHUNK_STRIDE)
+	var p_chunk_z = floor(p_pos.z / CHUNK_STRIDE)
+	var center_chunk = Vector2i(p_chunk_x, p_chunk_z)
+
+	# 1. Unload far chunks
+	var chunks_to_remove = []
+	for coord in active_chunks:
+		var dist = Vector2(coord.x, coord.y).distance_to(Vector2(center_chunk.x, center_chunk.y))
+		if dist > render_distance + 2: # Add a small buffer to prevent flickering
+			chunks_to_remove.append(coord)
+			
+	for coord in chunks_to_remove:
+		var node = active_chunks[coord]
+		if node:
+			node.queue_free()
+		active_chunks.erase(coord)
+
+	# 2. Load new chunks
+	for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
+		for z in range(center_chunk.y - render_distance, center_chunk.y + render_distance + 1):
+			var coord = Vector2i(x, z)
+			
+			if active_chunks.has(coord):
+				continue
+			
+			# Check circular distance
+			if Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.y)) > render_distance:
+				continue
+
+			# Mark as loading (null placeholder)
+			active_chunks[coord] = null
+			
 			# Calculate World Position for this chunk
 			var chunk_pos = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
 			
@@ -149,6 +189,9 @@ func generate_chunk_on_thread(rd: RenderingDevice, shader_rid: RID, offset: Vect
 		
 		var mesh = build_mesh(vertices_floats)
 		call_deferred("add_mesh_to_scene", mesh, offset)
+	else:
+		# Even if empty, we should "load" it (as null or empty node) so we don't retry
+		call_deferred("add_empty_chunk", offset)
 	
 	# Cleanup
 	rd.free_rid(vertex_buffer)
@@ -173,6 +216,14 @@ func build_mesh(data: PackedFloat32Array) -> ArrayMesh:
 	return st.commit()
 
 func add_mesh_to_scene(mesh: ArrayMesh, position: Vector3):
+	var chunk_x = round(position.x / CHUNK_STRIDE)
+	var chunk_z = round(position.z / CHUNK_STRIDE)
+	var coord = Vector2i(chunk_x, chunk_z)
+	
+	# Check if we still want this chunk
+	if not active_chunks.has(coord):
+		return
+	
 	# Create a StaticBody3D to hold both the mesh and collision
 	var static_body = StaticBody3D.new()
 	static_body.position = position
@@ -187,3 +238,21 @@ func add_mesh_to_scene(mesh: ArrayMesh, position: Vector3):
 	var collision_shape = CollisionShape3D.new()
 	collision_shape.shape = mesh.create_trimesh_shape()
 	static_body.add_child(collision_shape)
+	
+	active_chunks[coord] = static_body
+
+func add_empty_chunk(position: Vector3):
+	var chunk_x = round(position.x / CHUNK_STRIDE)
+	var chunk_z = round(position.z / CHUNK_STRIDE)
+	var coord = Vector2i(chunk_x, chunk_z)
+	
+	if active_chunks.has(coord):
+		# Mark as loaded but empty (could use a dummy node or just keep it null/flagged)
+		# To keep logic simple, let's just make sure we don't re-queue it.
+		# active_chunks[coord] is already null (from queueing), which means "loading/loaded".
+		# But we need to distinguish "loading" from "loaded empty" if we were strict,
+		# but here 'null' effectively means "don't queue again". 
+		# However, the cleanup loop checks `if node: node.queue_free()`. 
+		# If we leave it null, it won't be freed, but it will be erased from dict.
+		# That works.
+		pass

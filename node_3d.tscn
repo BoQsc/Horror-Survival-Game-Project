@@ -47,6 +47,6 @@ mesh = SubResource("CapsuleMesh_noarx")
 [node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
 script = ExtResource("2_a0tk4")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+[node name="ChunkManager" type="MeshInstance3D" parent="." node_paths=PackedStringArray("viewer")]
 script = ExtResource("2_chunk")
-grid_size = 10
+viewer = NodePath("../CharacterBody3D")
