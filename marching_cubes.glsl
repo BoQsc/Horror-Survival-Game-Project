@@ -2,17 +2,13 @@
 #version 450
 
 // We dispatch 1 thread per voxel.
-// 8x8x8 threads per workgroup is a standard optimization.
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 // BINDINGS
-// -----------------------------------------------------------
-// Binding 0: The output vertex buffer (std430 ensures tight packing)
 layout(set = 0, binding = 0, std430) restrict buffer OutputVertices {
     float vertices[]; 
 } mesh_output;
 
-// Binding 1: An atomic counter so threads know where to write
 layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
     uint triangle_count;
 } counter;
@@ -21,33 +17,58 @@ layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
 const int CHUNK_SIZE = 32;
 const float ISO_LEVEL = 0.0;
 
-// --- INCLUDES ---
-
-// Marching Cubes: import const int edgeTable[256] and const int triTable[4096]
+// INCLUDES
 #include "res://marching_cubes_lookup_table.glsl"
 
-// HELPER FUNCTIONS
-// -----------------------------------------------------------
+// --- NOISE FUNCTIONS ---
 
-// Simple noise function (Placeholder for 3D Simplex/Perlin)
+// 1. Hash function
+float hash(vec3 p) {
+    p = fract(p * 0.3183099 + .1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+// 2. Value Noise (Returns 0.0 to 1.0)
+float noise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix( hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+                   mix( hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix( hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                   mix( hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+
+// --- DENSITY CALCULATION ---
+
 float get_density(vec3 pos) {
-    // A simple sphere density function: radius 15 at center of chunk
-    float radius = 15.0;
-    vec3 center = vec3(float(CHUNK_SIZE) / 2.0);
-    return radius - distance(pos, center);
+    // 1. Define a base height for the ground (e.g., y=10)
+    float base_height = 10.0;
     
-    // In production, sample a 3D texture or improved noise here
+    // 2. Calculate noise amplitude (Height of the hills)
+    // We multiply noise (0..1) by 10.0, creating hills up to 10 units high.
+    float hill_height = noise(pos * 0.1) * 10.0;
+    
+    // 3. Combine them
+    float terrain_height = base_height + hill_height;
+    
+    // 4. SDF Logic: 
+    // If current Y is BELOW the terrain_height, we return negative (Solid).
+    // If current Y is ABOVE the terrain_height, we return positive (Air).
+    return pos.y - terrain_height;
 }
 
 vec3 interpolate_vertex(vec3 p1, vec3 p2, float v1, float v2) {
-    // Linear Interpolation formula
+    // Safety check for division by zero
+    if (abs(ISO_LEVEL - v1) < 0.00001) return p1;
+    if (abs(ISO_LEVEL - v2) < 0.00001) return p2;
+    if (abs(v1 - v2) < 0.00001) return p1;
     return p1 + (ISO_LEVEL - v1) * (p2 - p1) / (v2 - v1);
 }
 
-// MAIN EXECUTION
-// -----------------------------------------------------------
+// --- MAIN ---
 void main() {
-    // Current Voxel Position
     uvec3 id = gl_GlobalInvocationID.xyz;
     
     // Boundary check
@@ -58,8 +79,6 @@ void main() {
     vec3 pos = vec3(id);
 
     // 1. Sample Corners
-    // -------------------------------------
-    // Corners of the cube relative to 'pos'
     vec3 corners[8] = vec3[](
         pos + vec3(0,0,0), pos + vec3(1,0,0), pos + vec3(1,0,1), pos + vec3(0,0,1),
         pos + vec3(0,1,0), pos + vec3(1,1,0), pos + vec3(1,1,1), pos + vec3(0,1,1)
@@ -71,7 +90,6 @@ void main() {
     }
 
     // 2. Determine Cube Index
-    // -------------------------------------
     int cubeIndex = 0;
     if (densities[0] < ISO_LEVEL) cubeIndex |= 1;
     if (densities[1] < ISO_LEVEL) cubeIndex |= 2;
@@ -82,15 +100,11 @@ void main() {
     if (densities[6] < ISO_LEVEL) cubeIndex |= 64;
     if (densities[7] < ISO_LEVEL) cubeIndex |= 128;
 
-    // If cube is entirely inside or outside, return early
     if (edgeTable[cubeIndex] == 0) return;
 
     // 3. Calculate Intersection Vertices
-    // -------------------------------------
     vec3 vertList[12];
     
-    // Edges are defined by pairs of corners. 
-    // This mapping matches Paul Bourke's convention.
     if ((edgeTable[cubeIndex] & 1) != 0)    vertList[0] = interpolate_vertex(corners[0], corners[1], densities[0], densities[1]);
     if ((edgeTable[cubeIndex] & 2) != 0)    vertList[1] = interpolate_vertex(corners[1], corners[2], densities[1], densities[2]);
     if ((edgeTable[cubeIndex] & 4) != 0)    vertList[2] = interpolate_vertex(corners[2], corners[3], densities[2], densities[3]);
@@ -105,23 +119,15 @@ void main() {
     if ((edgeTable[cubeIndex] & 2048) != 0) vertList[11] = interpolate_vertex(corners[3], corners[7], densities[3], densities[7]);
 
     // 4. Generate Triangles
-    // -------------------------------------
-    // Iterate triTable to find which vertices make triangles
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
-        // Atomic Add to reserve space in the buffer safely
         uint idx = atomicAdd(counter.triangle_count, 1);
-        
-        // Calculate the starting index in the float array
-        // Each triangle has 3 vertices. Each vertex has 3 floats (x,y,z).
-        // Total = 9 floats per triangle.
         uint start_ptr = idx * 9;
 
         vec3 v1 = vertList[triTable[cubeIndex * 16 + i]];
         vec3 v2 = vertList[triTable[cubeIndex * 16 + i + 1]];
         vec3 v3 = vertList[triTable[cubeIndex * 16 + i + 2]];
 
-        // Write vertices
         mesh_output.vertices[start_ptr + 0] = v1.x;
         mesh_output.vertices[start_ptr + 1] = v1.y;
         mesh_output.vertices[start_ptr + 2] = v1.z;
