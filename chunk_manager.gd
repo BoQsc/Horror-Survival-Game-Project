@@ -58,6 +58,17 @@ func _ready():
 	shader_mod_spirv = load("res://modify_density.glsl").get_spirv()
 	shader_mesh_spirv = load("res://marching_cubes.glsl").get_spirv()
 	
+	# Preload material and texture
+	var texture = load("res://green-grass-texture.jpg")
+	terrain_material = StandardMaterial3D.new()
+	if texture:
+		terrain_material.albedo_texture = texture
+		terrain_material.texture_filter = StandardMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		terrain_material.uv1_triplanar = true 
+		terrain_material.uv1_scale = Vector3(1.00, 1.00, 1.00)
+	else:
+		terrain_material.albedo_color = Color(0.2, 0.7, 0.3)
+	
 	# Create and start SINGLE compute thread
 	# We only use 1 thread because RIDs (Buffers) are bound to the RD instance,
 	# and sharing them across threads/devices is complex.
@@ -93,30 +104,39 @@ func _raycast_and_modify(value: float):
 		modify_terrain(hit_pos, 4.0, value) # Radius 4
 
 func modify_terrain(pos: Vector3, radius: float, value: float):
-	# Identify affected chunks. For simplicity, just the one containing 'pos'.
-	var chunk_x = floor(pos.x / CHUNK_STRIDE)
-	var chunk_z = floor(pos.z / CHUNK_STRIDE)
-	var coord = Vector2i(chunk_x, chunk_z)
+	# Calculate bounds of the modification sphere
+	var min_pos = pos - Vector3(radius, 0, radius)
+	var max_pos = pos + Vector3(radius, 0, radius)
 	
-	if active_chunks.has(coord):
-		var data = active_chunks[coord]
-		if data != null and data.density_buffer.is_valid():
-			var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+	var min_chunk_x = floor(min_pos.x / CHUNK_STRIDE)
+	var max_chunk_x = floor(max_pos.x / CHUNK_STRIDE)
+	var min_chunk_z = floor(min_pos.z / CHUNK_STRIDE)
+	var max_chunk_z = floor(max_pos.z / CHUNK_STRIDE)
+	
+	# Iterate over all chunks that might be touched by this modification
+	for x in range(min_chunk_x, max_chunk_x + 1):
+		for z in range(min_chunk_z, max_chunk_z + 1):
+			var coord = Vector2i(x, z)
 			
-			var task = {
-				"type": "modify",
-				"coord": coord,
-				"rid": data.density_buffer,
-				"pos": chunk_pos,
-				"brush_pos": pos,
-				"radius": radius,
-				"value": value
-			}
-			
-			mutex.lock()
-			task_queue.append(task)
-			mutex.unlock()
-			semaphore.post()
+			if active_chunks.has(coord):
+				var data = active_chunks[coord]
+				if data != null and data.density_buffer.is_valid():
+					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+					
+					var task = {
+						"type": "modify",
+						"coord": coord,
+						"rid": data.density_buffer,
+						"pos": chunk_pos,
+						"brush_pos": pos,
+						"radius": radius,
+						"value": value
+					}
+					
+					mutex.lock()
+					task_queue.append(task)
+					mutex.unlock()
+					semaphore.post()
 
 func _exit_tree():
 	mutex.lock()
@@ -195,20 +215,16 @@ func update_chunks():
 			semaphore.post()
 
 func _thread_function():
-	print("Thread started")
 	# Create a local RenderingDevice on this thread.
 	# This RD is unique to this thread. All GPU ops must happen here.
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd:
-		print("Failed to create local RD")
 		return
 
 	# Compile shaders on this device
 	var sid_gen = rd.shader_create_from_spirv(shader_gen_spirv)
 	var sid_mod = rd.shader_create_from_spirv(shader_mod_spirv)
 	var sid_mesh = rd.shader_create_from_spirv(shader_mesh_spirv)
-	
-	print("Shaders compiled. Entering loop.")
 	
 	while true:
 		semaphore.wait()
@@ -235,11 +251,9 @@ func _thread_function():
 				
 	# Cleanup RD
 	rd.free()
-	print("Thread exit")
 
 func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh):
 	var chunk_pos = task.pos
-	print("Generating chunk at ", chunk_pos)
 	
 	# 1. Create Density Buffer
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
@@ -263,15 +277,12 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh):
 	])
 	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
 	
-	print("Density dispatch start")
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	
 	# Barrier to ensure density is written before reading
 	rd.submit()
-	print("Density submit done, syncing...")
 	rd.sync()
-	print("Density sync done")
 	
 	# 3. Run Meshing
 	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
@@ -351,20 +362,15 @@ func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, mater
 	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
 	
 	var groups = CHUNK_SIZE / 8
-	print("Meshing dispatch start (groups: ", groups, ")")
 	rd.compute_list_dispatch(list, groups, groups, groups)
 	rd.compute_list_end()
 	
 	rd.submit()
-	print("Meshing submit done, syncing...")
 	rd.sync()
-	print("Meshing sync done")
 	
 	# Read back
 	var count_bytes = rd.buffer_get_data(counter_buffer)
 	var tri_count = count_bytes.decode_u32(0)
-	
-	print("Chunk ", chunk_pos, " triangles: ", tri_count)
 	
 	var mesh = null
 	if tri_count > 0:
@@ -379,7 +385,6 @@ func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, mater
 	return mesh
 
 func complete_generation(coord: Vector2i, mesh: ArrayMesh, density_buffer: RID):
-	# print("Completing generation for ", coord)
 	# If we were cancelled/removed while generating
 	if not active_chunks.has(coord):
 		# Queue free immediately
