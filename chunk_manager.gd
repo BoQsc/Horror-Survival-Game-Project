@@ -173,8 +173,17 @@ func build_mesh(data: PackedFloat32Array) -> ArrayMesh:
 	return st.commit()
 
 func add_mesh_to_scene(mesh: ArrayMesh, position: Vector3):
-	# Create the node in the scene
+	# Create a StaticBody3D to hold both the mesh and collision
+	var static_body = StaticBody3D.new()
+	static_body.position = position
+	add_child(static_body)
+	
+	# Visual Mesh
 	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.mesh = mesh
-	mesh_instance.position = position
-	add_child(mesh_instance)
+	static_body.add_child(mesh_instance)
+	
+	# Collision
+	var collision_shape = CollisionShape3D.new()
+	collision_shape.shape = mesh.create_trimesh_shape()
+	static_body.add_child(collision_shape)

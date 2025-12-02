@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3 uid="uid://ipiv2ivbm1cr"]
+[gd_scene load_steps=8 format=3 uid="uid://ipiv2ivbm1cr"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_a202f"]
 [ext_resource type="Script" uid="uid://c1xwl5r0i1xs2" path="res://chunk_manager.gd" id="2_chunk"]
@@ -18,6 +18,8 @@ glow_enabled = true
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_noarx"]
 
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_noarx"]
+
 [node name="Node3D" type="Node3D"]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
@@ -27,14 +29,21 @@ environment = SubResource("Environment_noarx")
 transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
 shadow_enabled = true
 
-[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
-script = ExtResource("1_a202f")
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 48.0174, 0)
+use_collision = true
 
-[node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 37.27439, 2.0363493)
+[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 50, 0)
+script = ExtResource("1_a202f")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D"]
 shape = SubResource("CapsuleShape3D_noarx")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="CharacterBody3D"]
+mesh = SubResource("CapsuleMesh_noarx")
+
+[node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 script = ExtResource("2_chunk")
