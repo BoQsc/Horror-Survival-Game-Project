@@ -72,6 +72,7 @@ func _ready():
 	terrain_material.set_shader_parameter("texture_sand", load("res://sand-texture.jpg"))
 	terrain_material.set_shader_parameter("texture_snow", load("res://snow-texture.jpg"))
 	terrain_material.set_shader_parameter("uv_scale", 0.5) # Adjust scale as needed
+	terrain_material.set_shader_parameter("global_snow_amount", 0.0) # Default: No snow
 	
 	# Create and start SINGLE compute thread
 	# We only use 1 thread because RIDs (Buffers) are bound to the RD instance,

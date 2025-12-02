@@ -5,10 +5,47 @@ uniform sampler2D texture_rock : source_color, filter_linear_mipmap;
 uniform sampler2D texture_sand : source_color, filter_linear_mipmap;
 uniform sampler2D texture_snow : source_color, filter_linear_mipmap;
 
-uniform float uv_scale = 0.1;
+uniform float uv_scale = 0.5;
+uniform float biome_scale = 0.002; // Smaller = larger biomes
+uniform float global_snow_amount : hint_range(0.0, 1.0) = 0.0;
 
 varying vec3 world_pos;
 varying vec3 world_normal;
+
+// Simple 2D hash/noise for biomes
+vec2 hash(vec2 p) {
+	p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+	return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+}
+
+float noise(vec2 p) {
+	const float K1 = 0.366025404; // (sqrt(3)-1)/2;
+	const float K2 = 0.211324865; // (3-sqrt(3))/6;
+
+	vec2 i = floor(p + (p.x + p.y) * K1);
+	vec2 a = p - i + (i.x + i.y) * K2;
+	float m = step(a.y, a.x); 
+	vec2 o = vec2(m, 1.0 - m);
+	vec2 b = a - o + K2;
+	vec2 c = a - 1.0 + 2.0 * K2;
+
+	vec3 h = max(0.5 - vec3(dot(a, a), dot(b, b), dot(c, c)), 0.0);
+	vec3 n = h * h * h * h * vec3(dot(a, hash(i + 0.0)), dot(b, hash(i + o)), dot(c, hash(i + 1.0)));
+
+	return dot(n, vec3(70.0));
+}
+
+// Fractal Brownian Motion for more natural biome shapes
+float fbm(vec2 p) {
+	float f = 0.0;
+	float w = 0.5;
+	for (int i = 0; i < 3; i++) {
+		f += w * noise(p);
+		p *= 2.0;
+		w *= 0.5;
+	}
+	return f;
+}
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -26,43 +63,52 @@ vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos
 void fragment() {
 	vec3 normal = normalize(world_normal);
 	vec3 weights = abs(normal);
-	weights = max(weights - 0.2, 0.0); // Sharpen
+	weights = max(weights - 0.2, 0.0);
 	weights /= dot(weights, vec3(1.0));
 	
 	vec3 uv_pos = world_pos * uv_scale;
 	
-	// Sample textures
+	// Sample all textures
 	vec3 col_grass = triplanar_texture(texture_grass, weights, uv_pos).rgb;
 	vec3 col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;
 	vec3 col_sand = triplanar_texture(texture_sand, weights, uv_pos).rgb;
 	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
 	
-	float height = world_pos.y;
-	float slope = normal.y; // 1.0 is up, 0.0 is side
+	// --- Biome Logic ---
+	// Use world X/Z to pick a biome value [-1, 1]
+	float biome_val = fbm(world_pos.xz * biome_scale);
 	
-	// 1. Height Mixing (Sand -> Grass -> Snow)
-	// Base is sand
-	vec3 albedo_height = col_sand;
+	// Map biome_val to types:
+	// < -0.3  : Desert (Sand)
+	// -0.3 to 0.2 : Grass
+	// 0.2 to 0.6 : Gravel/Rock (Mountain base?)
+	// > 0.6   : Snow Biome (Tundra)
 	
-	// Grass transition
-	float grass_mix = smoothstep(11.0, 13.0, height);
-	albedo_height = mix(albedo_height, col_grass, grass_mix);
+	vec3 biome_color = col_grass; // Default
 	
-	// Snow transition
-	float snow_mix = smoothstep(17.0, 19.0, height);
-	albedo_height = mix(albedo_height, col_snow, snow_mix);
+	// Mix Sand -> Grass
+	float sand_mix = smoothstep(-0.2, -0.4, biome_val); // Fade into sand as value gets lower
+	biome_color = mix(biome_color, col_sand, sand_mix);
 	
-	// 2. Slope Mixing (Rock on steep slopes)
-	// If slope is < 0.7 (approx 45 degrees), blend in rock
-	// But snow often sticks to rocks too, so maybe rock is under snow?
-	// Let's say rock overrides grass/sand but maybe not snow at high peaks?
-	// For now, rock overrides all for simplicity on steep cliffs.
+	// Mix Grass -> Gravel (Rock)
+	float gravel_mix = smoothstep(0.2, 0.4, biome_val);
+	biome_color = mix(biome_color, col_rock, gravel_mix);
 	
-	float rock_mix = 1.0 - smoothstep(0.5, 0.8, slope);
+	// Mix Gravel -> Snow Biome
+	float snow_biome_mix = smoothstep(0.6, 0.8, biome_val);
+	biome_color = mix(biome_color, col_snow, snow_biome_mix);
 	
-	// Don't put rock on snow peaks if it's flat? 
-	// Actually steep snow mountains have rock faces. 
-	// Let's mix rock based on slope strictly.
+	// --- Slope Logic (Steep cliffs are rock) ---
+	float slope = normal.y;
+	float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
+	biome_color = mix(biome_color, col_rock, cliff_mix);
 	
-	ALBEDO = mix(albedo_height, col_rock, rock_mix);
+	// --- Dynamic Weather Snow ---
+	// Applies everywhere based on global_snow_amount
+	// Snow sticks to flat surfaces more (slope > 0.5)
+	float weather_snow = global_snow_amount * smoothstep(0.3, 0.6, slope);
+	// Also adds some noise to the snow edge
+	weather_snow *= smoothstep(0.0, 1.0, noise(world_pos.xz * 0.5) + 0.5); 
+	
+	ALBEDO = mix(biome_color, col_snow, clamp(weather_snow, 0.0, 1.0));
 }
