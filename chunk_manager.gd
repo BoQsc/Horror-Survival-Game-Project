@@ -36,7 +36,7 @@ var shader_gen_spirv: RDShaderSPIRV
 var shader_mod_spirv: RDShaderSPIRV
 var shader_mesh_spirv: RDShaderSPIRV
 
-var terrain_material: StandardMaterial3D
+var terrain_material: Material
 class ChunkData:
 	var node: Node3D
 	var density_buffer: RID
@@ -62,16 +62,16 @@ func _ready():
 	shader_mod_spirv = load("res://modify_density.glsl").get_spirv()
 	shader_mesh_spirv = load("res://marching_cubes.glsl").get_spirv()
 	
-	# Preload material and texture
-	var texture = load("res://green-grass-texture.jpg")
-	terrain_material = StandardMaterial3D.new()
-	if texture:
-		terrain_material.albedo_texture = texture
-		terrain_material.texture_filter = StandardMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-		terrain_material.uv1_triplanar = true 
-		terrain_material.uv1_scale = Vector3(1.00, 1.00, 1.00)
-	else:
-		terrain_material.albedo_color = Color(0.2, 0.7, 0.3)
+	# Setup Terrain Shader Material
+	var shader = load("res://terrain.gdshader")
+	terrain_material = ShaderMaterial.new()
+	terrain_material.shader = shader
+	
+	terrain_material.set_shader_parameter("texture_grass", load("res://green-grass-texture.jpg"))
+	terrain_material.set_shader_parameter("texture_rock", load("res://rocky-texture.jpg"))
+	terrain_material.set_shader_parameter("texture_sand", load("res://sand-texture.jpg"))
+	terrain_material.set_shader_parameter("texture_snow", load("res://snow-texture.jpg"))
+	terrain_material.set_shader_parameter("uv_scale", 0.5) # Adjust scale as needed
 	
 	# Create and start SINGLE compute thread
 	# We only use 1 thread because RIDs (Buffers) are bound to the RD instance,
@@ -344,7 +344,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh):
 	
 	call_deferred("complete_modification", task.coord, mesh, b_id, b_count)
 
-func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, material_instance: StandardMaterial3D):
+func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, material_instance: Material):
 	# Setup Output Buffers
 	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
 	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
@@ -475,7 +475,7 @@ func create_chunk_node(mesh: ArrayMesh, position: Vector3) -> Node3D:
 	
 	return static_body
 
-func build_mesh(data: PackedFloat32Array, material_instance: StandardMaterial3D) -> ArrayMesh:
+func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
