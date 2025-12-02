@@ -13,11 +13,9 @@ layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
     uint triangle_count;
 } counter;
 
-// --- CRITICAL: THIS IS WHAT WAS MISSING IN YOUR SCRIPT CALL ---
 layout(push_constant) uniform PushConstants {
     vec3 chunk_offset; 
 } params;
-// -------------------------------------------------------------
 
 const int CHUNK_SIZE = 32;
 const float ISO_LEVEL = 0.0;
@@ -43,7 +41,6 @@ float noise(vec3 x) {
 
 // --- DENSITY ---
 float get_density(vec3 pos) {
-    // Add offset to make noise seamless across chunks
     vec3 world_pos = pos + params.chunk_offset;
 
     float base_height = 10.0;
@@ -115,16 +112,20 @@ void main() {
         vec3 v2 = vertList[triTable[cubeIndex * 16 + i + 1]];
         vec3 v3 = vertList[triTable[cubeIndex * 16 + i + 2]];
 
+        // --- FIXED WINDING ORDER (v1 -> v3 -> v2) ---
+        // This ensures the normal points UP instead of DOWN.
+        
         mesh_output.vertices[start_ptr + 0] = v1.x;
         mesh_output.vertices[start_ptr + 1] = v1.y;
         mesh_output.vertices[start_ptr + 2] = v1.z;
         
-        mesh_output.vertices[start_ptr + 3] = v2.x;
-        mesh_output.vertices[start_ptr + 4] = v2.y;
-        mesh_output.vertices[start_ptr + 5] = v2.z;
+        // Swapped v2 and v3 here:
+        mesh_output.vertices[start_ptr + 3] = v3.x;
+        mesh_output.vertices[start_ptr + 4] = v3.y;
+        mesh_output.vertices[start_ptr + 5] = v3.z;
         
-        mesh_output.vertices[start_ptr + 6] = v3.x;
-        mesh_output.vertices[start_ptr + 7] = v3.y;
-        mesh_output.vertices[start_ptr + 8] = v3.z;
+        mesh_output.vertices[start_ptr + 6] = v2.x;
+        mesh_output.vertices[start_ptr + 7] = v2.y;
+        mesh_output.vertices[start_ptr + 8] = v2.z;
     }
 }

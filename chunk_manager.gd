@@ -5,15 +5,16 @@ var shader_rid: RID
 
 # 32 Voxels wide
 const CHUNK_SIZE = 32
-# We overlap chunks by 1 unit to prevent gaps (seams) between meshes
+# Overlap chunks by 1 unit to prevent gaps (seams)
 const CHUNK_STRIDE = CHUNK_SIZE - 1 
 
+# Max triangles estimation
 const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 
 func _ready():
 	rd = RenderingServer.create_local_rendering_device()
 	
-	# Load shader once
+	# Load shader
 	var shader_file = load("res://marching_cubes.glsl")
 	var shader_spirv: RDShaderSPIRV = shader_file.get_spirv()
 	shader_rid = rd.shader_create_from_spirv(shader_spirv)
@@ -57,13 +58,10 @@ func generate_chunk(offset: Vector3):
 	rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
 	rd.compute_list_bind_uniform_set(compute_list, uniform_set, 0)
 	
-	# --- PUSH CONSTANT ---
-	# We must pad the Vector3 (12 bytes) with an extra float (4 bytes) 
-	# to meet GLSL alignment requirements (Total 16 bytes).
+	# Send Push Constants (Offset)
 	var push_data = PackedFloat32Array([offset.x, offset.y, offset.z, 0.0])
 	var push_bytes = push_data.to_byte_array()
 	rd.compute_list_set_push_constant(compute_list, push_bytes, push_bytes.size())
-	# ---------------------
 	
 	var groups = CHUNK_SIZE / 8
 	rd.compute_list_dispatch(compute_list, groups, groups, groups)
