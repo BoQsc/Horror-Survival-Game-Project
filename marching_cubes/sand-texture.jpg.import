@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b7loymk84lui3"
-path="res://.godot/imported/green-grass-texture.jpg-e21af9cccb04c37e1c9a68c58688e6fe.ctex"
+uid="uid://bepkn5ubnh0le"
+path="res://.godot/imported/sand-texture.jpg-1038d591bfdfdb90a2dae0c3a11a404d.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://green-grass-texture.jpg"
-dest_files=["res://.godot/imported/green-grass-texture.jpg-e21af9cccb04c37e1c9a68c58688e6fe.ctex"]
+source_file="res://marching_cubes/sand-texture.jpg"
+dest_files=["res://.godot/imported/sand-texture.jpg-1038d591bfdfdb90a2dae0c3a11a404d.ctex"]
 
 [params]
 

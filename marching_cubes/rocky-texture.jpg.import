@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ccmfcpq77vryp"
-path="res://.godot/imported/snow-texture.jpg-5d0b634e1d93efabacce35bccfcdd66b.ctex"
+uid="uid://b6vulqpj04vd1"
+path="res://.godot/imported/rocky-texture.jpg-f648a0a58e797bb02ee1e141d74a142e.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://snow-texture.jpg"
-dest_files=["res://.godot/imported/snow-texture.jpg-5d0b634e1d93efabacce35bccfcdd66b.ctex"]
+source_file="res://marching_cubes/rocky-texture.jpg"
+dest_files=["res://.godot/imported/rocky-texture.jpg-f648a0a58e797bb02ee1e141d74a142e.ctex"]
 
 [params]
 

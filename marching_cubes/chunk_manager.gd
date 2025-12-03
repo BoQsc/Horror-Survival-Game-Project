@@ -58,19 +58,19 @@ func _ready():
 		print("Viewer NOT found! Terrain generation will not start.")
 
 	# Load shaders (Data only, safe on Main Thread)
-	shader_gen_spirv = load("res://gen_density.glsl").get_spirv()
-	shader_mod_spirv = load("res://modify_density.glsl").get_spirv()
-	shader_mesh_spirv = load("res://marching_cubes.glsl").get_spirv()
+	shader_gen_spirv = load("res://marching_cubes/gen_density.glsl").get_spirv()
+	shader_mod_spirv = load("res://marching_cubes/modify_density.glsl").get_spirv()
+	shader_mesh_spirv = load("res://marching_cubes/marching_cubes.glsl").get_spirv()
 	
 	# Setup Terrain Shader Material
-	var shader = load("res://terrain.gdshader")
+	var shader = load("res://marching_cubes/terrain.gdshader")
 	terrain_material = ShaderMaterial.new()
 	terrain_material.shader = shader
 	
-	terrain_material.set_shader_parameter("texture_grass", load("res://green-grass-texture.jpg"))
-	terrain_material.set_shader_parameter("texture_rock", load("res://rocky-texture.jpg"))
-	terrain_material.set_shader_parameter("texture_sand", load("res://sand-texture.jpg"))
-	terrain_material.set_shader_parameter("texture_snow", load("res://snow-texture.jpg"))
+	terrain_material.set_shader_parameter("texture_grass", load("res://marching_cubes/green-grass-texture.jpg"))
+	terrain_material.set_shader_parameter("texture_rock", load("res://marching_cubes/rocky-texture.jpg"))
+	terrain_material.set_shader_parameter("texture_sand", load("res://marching_cubes/sand-texture.jpg"))
+	terrain_material.set_shader_parameter("texture_snow", load("res://marching_cubes/snow-texture.jpg"))
 	terrain_material.set_shader_parameter("uv_scale", 0.5) # Adjust scale as needed
 	terrain_material.set_shader_parameter("global_snow_amount", 0.0) # Default: No snow
 	
