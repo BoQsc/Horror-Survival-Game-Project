@@ -9,6 +9,7 @@ extends Node
 
 enum Mode { TERRAIN, BUILDING }
 var current_mode: Mode = Mode.TERRAIN
+var current_block_id: int = 1
 
 var current_voxel_pos: Vector3
 var has_target: bool = false
@@ -25,6 +26,14 @@ func _process(_delta):
 func _unhandled_input(event):
 	if event.is_action_pressed("ui_focus_next"): # Tab
 		toggle_mode()
+	
+	if event is InputEventKey and event.pressed:
+		if event.keycode == KEY_1:
+			current_block_id = 1
+			update_ui()
+		elif event.keycode == KEY_2:
+			current_block_id = 2
+			update_ui()
 	
 	if event is InputEventMouseButton and event.pressed and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		if current_mode == Mode.TERRAIN:
@@ -43,9 +52,13 @@ func update_ui():
 	if current_mode == Mode.TERRAIN:
 		mode_label.text = "Mode: TERRAIN (Smooth)\nL-Click: Dig, R-Click: Place"
 	else:
-		mode_label.text = "Mode: BUILDING (Blocky)\nL-Click: Remove, R-Click: Add"
+		var block_name = "Cube" if current_block_id == 1 else "Ramp"
+		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Press 1/2)\nL-Click: Remove, R-Click: Add" % block_name
 
 func update_selection_box():
+# ... (rest of file)
+# Note: I need to make sure I don't delete 'update_selection_box' logic.
+# I will use a targeted replacement for the top part of the file.
 	var hit = raycast(10.0)
 	if hit:
 		var pos = hit.position
@@ -117,7 +130,7 @@ func handle_building_input(event):
 				else:
 					target_place.z += sign(normal.z)
 			
-			building_manager.set_voxel(target_place, 1.0)
+			building_manager.set_voxel(target_place, current_block_id)
 
 func raycast(length: float):
 	var space_state = camera.get_world_3d().direct_space_state

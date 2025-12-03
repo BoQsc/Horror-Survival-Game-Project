@@ -67,16 +67,22 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	# 16x16x16
 	var grid_size = Vector3i(16, 16, 16)
 	
+	# Convert 1-byte IDs to Floats for shader compatibility
+	var float_data = PackedFloat32Array()
+	float_data.resize(v_bytes.size())
+	for i in range(v_bytes.size()):
+		float_data[i] = float(v_bytes[i])
+	
 	# Texture
 	var fmt = RDTextureFormat.new()
 	fmt.width = grid_size.x
 	fmt.height = grid_size.y
 	fmt.depth = grid_size.z
-	fmt.format = RenderingDevice.DATA_FORMAT_R8_UINT
+	fmt.format = RenderingDevice.DATA_FORMAT_R32_SFLOAT
 	fmt.texture_type = RenderingDevice.TEXTURE_TYPE_3D
 	fmt.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	
-	var texture_rid = rd.texture_create(fmt, RDTextureView.new(), [v_bytes])
+	var texture_rid = rd.texture_create(fmt, RDTextureView.new(), [float_data.to_byte_array()])
 	
 	# Buffers
 	var max_vertices = grid_size.x * grid_size.y * grid_size.z * 24
@@ -136,6 +142,18 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	u_counter.add_id(counter_buffer)
 	uniforms.append(u_counter)
 	
+	# Index Counter (Binding 6)
+	var index_counter_data = PackedByteArray()
+	index_counter_data.resize(4)
+	index_counter_data.encode_u32(0, 0)
+	var index_counter_buffer = rd.storage_buffer_create(4, index_counter_data)
+	
+	var u_index_counter = RDUniform.new()
+	u_index_counter.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_index_counter.binding = 6
+	u_index_counter.add_id(index_counter_buffer)
+	uniforms.append(u_index_counter)
+	
 	var uniform_set = rd.uniform_set_create(uniforms, shader, 0)
 	
 	# Dispatch
@@ -156,15 +174,17 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	var counter_bytes = rd.buffer_get_data(counter_buffer)
 	var actual_vertex_count = counter_bytes.decode_u32(0)
 	
+	# Read Index Count
+	var index_counter_bytes = rd.buffer_get_data(index_counter_buffer)
+	var actual_index_count = index_counter_bytes.decode_u32(0)
+	
 	var arrays = []
 	
-	if actual_vertex_count > 0:
+	if actual_vertex_count > 0 and actual_index_count > 0:
 		var vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, actual_vertex_count * 12)
 		var normal_bytes = rd.buffer_get_data(normal_buffer, 0, actual_vertex_count * 12)
 		var uv_bytes = rd.buffer_get_data(uv_buffer, 0, actual_vertex_count * 8)
-		
-		var quad_count = actual_vertex_count / 4
-		var index_bytes = rd.buffer_get_data(index_buffer, 0, quad_count * 6 * 4)
+		var index_bytes = rd.buffer_get_data(index_buffer, 0, actual_index_count * 4)
 		
 		# Convert
 		var vertices = []
@@ -201,6 +221,7 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	rd.free_rid(uv_buffer)
 	rd.free_rid(index_buffer)
 	rd.free_rid(counter_buffer)
+	rd.free_rid(index_counter_buffer)
 	
 	return arrays
 
