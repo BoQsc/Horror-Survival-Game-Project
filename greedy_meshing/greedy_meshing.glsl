@@ -29,13 +29,26 @@ bool is_voxel_solid(ivec3 pos) {
     return texelFetch(voxel_data, pos, 0).r > 0.0;
 }
 
-void add_quad(vec3 p0, vec3 p1, vec3 p2, vec3 p3, vec3 normal, vec2 uv0, vec2 uv1, vec2 uv2, vec2 uv3) {
+// Checks if a specific face exists at 'pos' facing 'normal' direction
+// A face exists if 'pos' is solid and 'pos + normal' is empty.
+bool has_face(ivec3 pos, ivec3 normal) {
+    if (!is_voxel_solid(pos)) return false;
+    if (is_voxel_solid(pos + normal)) return false;
+    return true;
+}
+
+void add_quad(vec3 origin, vec3 u_axis, vec3 v_axis, float u_len, float v_len, vec3 normal) {
     uint v_idx = atomicAdd(vertex_count, 4);
     uint v_ptr = v_idx * 3;
     
+    // Calculate corners based on origin and axes
+    vec3 p0 = origin;
+    vec3 p1 = origin + u_axis * u_len;
+    vec3 p2 = origin + u_axis * u_len + v_axis * v_len;
+    vec3 p3 = origin + v_axis * v_len;
+    
     // Vertices (Write as floats)
-    // Input is p0->p1->p2->p3 (CCW)
-    // We Write p0->p3->p2->p1 (CW) to flip the winding order for Godot
+    // Godot CW Winding: p0 -> p3 -> p2 -> p1 (Swapping 1 and 3 from standard CCW)
     
     // Vertex 0 (p0)
     vertices[v_ptr + 0] = p0.x; vertices[v_ptr + 1] = p0.y; vertices[v_ptr + 2] = p0.z;
@@ -53,15 +66,20 @@ void add_quad(vec3 p0, vec3 p1, vec3 p2, vec3 p3, vec3 normal, vec2 uv0, vec2 uv
         normals[v_ptr + i*3 + 2] = normal.z;
     }
     
-    // UVs (Swap 1 and 3 to match vertex swap)
+    // UVs (Scalable)
+    // We map UVs to physical size so textures tile correctly
+    vec2 uv0 = vec2(0.0, 0.0);
+    vec2 uv1 = vec2(u_len, 0.0);
+    vec2 uv2 = vec2(u_len, v_len);
+    vec2 uv3 = vec2(0.0, v_len);
+    
+    // Swap uv1 and uv3 to match vertex swap
     uvs[v_idx + 0] = uv0;
     uvs[v_idx + 1] = uv3;
     uvs[v_idx + 2] = uv2;
     uvs[v_idx + 3] = uv1;
     
     // Indices
-    // Standard Quad (0,1,2) and (0,2,3)
-    // Since we swapped the vertices in the buffer, this index order now produces CW triangles on screen.
     uint quad_idx = v_idx / 4;
     uint i_idx = quad_idx * 6;
     
@@ -82,54 +100,115 @@ void main() {
         return;
     }
     
-    // If current voxel is empty, skip
-    if (!is_voxel_solid(id)) {
-        return;
-    }
-    
     vec3 pos = vec3(id);
     
-    // Corner points of the voxel
-    vec3 p000 = pos + vec3(0.0, 0.0, 0.0);
-    vec3 p100 = pos + vec3(1.0, 0.0, 0.0);
-    vec3 p010 = pos + vec3(0.0, 1.0, 0.0);
-    vec3 p110 = pos + vec3(1.0, 1.0, 0.0);
-    vec3 p001 = pos + vec3(0.0, 0.0, 1.0);
-    vec3 p101 = pos + vec3(1.0, 0.0, 1.0);
-    vec3 p011 = pos + vec3(0.0, 1.0, 1.0);
-    vec3 p111 = pos + vec3(1.0, 1.0, 1.0);
-    
-    // Check 6 neighbors and generate faces if exposed
-    // Using Explicit CCW Order (Right-Hand Rule) for all faces input to add_quad
-    // add_quad will flip them to CW.
-    
-    // +X Face (Right)
-    if (!is_voxel_solid(id + ivec3(1, 0, 0))) {
-        add_quad(p101, p100, p110, p111, vec3(1, 0, 0), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+    // 1. +X Face (Right)
+    // Merge along Z axis
+    ivec3 normal = ivec3(1, 0, 0);
+    if (has_face(id, normal)) {
+        // Check previous in merge direction (Z-1)
+        if (!has_face(id - ivec3(0,0,1), normal)) {
+            // Start of strip. Loop forward.
+            float len = 1.0;
+            for (int k = 1; k < voxel_grid_size_uniform.z - id.z; k++) {
+                if (has_face(id + ivec3(0,0,k), normal)) {
+                    len += 1.0;
+                } else {
+                    break;
+                }
+            }
+            // Origin(1,1,0), U(0,0,1), V(0,-1,0)
+            add_quad(pos + vec3(1,1,0), vec3(0,0,1), vec3(0,-1,0), len, 1.0, vec3(1,0,0));
+        }
     }
     
-    // -X Face (Left)
-    if (!is_voxel_solid(id + ivec3(-1, 0, 0))) {
-        add_quad(p000, p001, p011, p010, vec3(-1, 0, 0), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+    // 2. -X Face (Left)
+    // Merge along Z axis
+    normal = ivec3(-1, 0, 0);
+    if (has_face(id, normal)) {
+        if (!has_face(id - ivec3(0,0,1), normal)) {
+            float len = 1.0;
+            for (int k = 1; k < voxel_grid_size_uniform.z - id.z; k++) {
+                if (has_face(id + ivec3(0,0,k), normal)) {
+                    len += 1.0;
+                } else {
+                    break;
+                }
+            }
+            // Origin(0,0,0), U(0,0,1), V(0,1,0)
+            add_quad(pos, vec3(0,0,1), vec3(0,1,0), len, 1.0, vec3(-1,0,0));
+        }
     }
     
-    // +Y Face (Top)
-    if (!is_voxel_solid(id + ivec3(0, 1, 0))) {
-        add_quad(p011, p111, p110, p010, vec3(0, 1, 0), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+    // 3. +Y Face (Top)
+    // Merge along X axis
+    normal = ivec3(0, 1, 0);
+    if (has_face(id, normal)) {
+        if (!has_face(id - ivec3(1,0,0), normal)) {
+            float len = 1.0;
+            for (int k = 1; k < voxel_grid_size_uniform.x - id.x; k++) {
+                if (has_face(id + ivec3(k,0,0), normal)) {
+                    len += 1.0;
+                } else {
+                    break;
+                }
+            }
+            // Origin(0,1,1), U(1,0,0), V(0,0,-1)
+            add_quad(pos + vec3(0,1,1), vec3(1,0,0), vec3(0,0,-1), len, 1.0, vec3(0,1,0));
+        }
     }
     
-    // -Y Face (Bottom)
-    if (!is_voxel_solid(id + ivec3(0, -1, 0))) {
-        add_quad(p000, p100, p101, p001, vec3(0, -1, 0), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+    // 4. -Y Face (Bottom)
+    // Merge along X axis
+    normal = ivec3(0, -1, 0);
+    if (has_face(id, normal)) {
+        if (!has_face(id - ivec3(1,0,0), normal)) {
+            float len = 1.0;
+            for (int k = 1; k < voxel_grid_size_uniform.x - id.x; k++) {
+                if (has_face(id + ivec3(k,0,0), normal)) {
+                    len += 1.0;
+                } else {
+                    break;
+                }
+            }
+            // Origin(0,0,0), U(1,0,0), V(0,0,1)
+            add_quad(pos, vec3(1,0,0), vec3(0,0,1), len, 1.0, vec3(0,-1,0));
+        }
     }
     
-    // +Z Face (Front)
-    if (!is_voxel_solid(id + ivec3(0, 0, 1))) {
-        add_quad(p001, p101, p111, p011, vec3(0, 0, 1), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+    // 5. +Z Face (Front)
+    // Merge along X axis
+    normal = ivec3(0, 0, 1);
+    if (has_face(id, normal)) {
+        if (!has_face(id - ivec3(1,0,0), normal)) {
+            float len = 1.0;
+            for (int k = 1; k < voxel_grid_size_uniform.x - id.x; k++) {
+                if (has_face(id + ivec3(k,0,0), normal)) {
+                    len += 1.0;
+                } else {
+                    break;
+                }
+            }
+            // Origin(0,0,1), U(1,0,0), V(0,1,0)
+            add_quad(pos + vec3(0,0,1), vec3(1,0,0), vec3(0,1,0), len, 1.0, vec3(0,0,1));
+        }
     }
     
-    // -Z Face (Back)
-    if (!is_voxel_solid(id + ivec3(0, 0, -1))) {
-        add_quad(p100, p000, p010, p110, vec3(0, 0, -1), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+    // 6. -Z Face (Back)
+    // Merge along X axis
+    normal = ivec3(0, 0, -1);
+    if (has_face(id, normal)) {
+        if (!has_face(id - ivec3(1,0,0), normal)) {
+            float len = 1.0;
+            for (int k = 1; k < voxel_grid_size_uniform.x - id.x; k++) {
+                if (has_face(id + ivec3(k,0,0), normal)) {
+                    len += 1.0;
+                } else {
+                    break;
+                }
+            }
+            // Origin(0,1,0), U(1,0,0), V(0,-1,0)
+            add_quad(pos + vec3(0,1,0), vec3(1,0,0), vec3(0,-1,0), len, 1.0, vec3(0,0,-1));
+        }
     }
 }
