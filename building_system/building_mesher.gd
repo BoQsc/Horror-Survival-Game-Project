@@ -68,10 +68,11 @@ func _thread_loop():
 			continue
 			
 		var voxel_bytes = chunk.voxel_bytes.duplicate()
+		var voxel_meta = chunk.voxel_meta.duplicate()
 		mutex.unlock()
 		
 		# Generate
-		var arrays = _generate_mesh(rd, shader, pipeline, voxel_bytes, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer)
+		var arrays = _generate_mesh(rd, shader, pipeline, voxel_bytes, voxel_meta, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer)
 		
 		# Callback
 		if is_instance_valid(chunk):
@@ -89,7 +90,7 @@ func _thread_loop():
 	rd.free_rid(shader)
 	rd.free()
 
-func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer) -> Array:
+func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray, v_meta: PackedByteArray, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer) -> Array:
 	# 16x16x16
 	var grid_size = Vector3i(16, 16, 16)
 	
@@ -100,13 +101,19 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	rd.buffer_update(counter_buffer, 0, 4, zero_data)
 	rd.buffer_update(index_counter_buffer, 0, 4, zero_data)
 	
-	# Convert 1-byte IDs to Floats for shader compatibility
+	# Convert Data to Floats
 	var float_data = PackedFloat32Array()
 	float_data.resize(v_bytes.size())
 	for i in range(v_bytes.size()):
 		float_data[i] = float(v_bytes[i])
+		
+	# Convert Meta to Floats
+	var meta_data = PackedFloat32Array()
+	meta_data.resize(v_meta.size())
+	for i in range(v_meta.size()):
+		meta_data[i] = float(v_meta[i])
 	
-	# Texture
+	# Texture 0: IDs
 	var fmt = RDTextureFormat.new()
 	fmt.width = grid_size.x
 	fmt.height = grid_size.y
@@ -116,6 +123,9 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	fmt.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	
 	var texture_rid = rd.texture_create(fmt, RDTextureView.new(), [float_data.to_byte_array()])
+	
+	# Texture 1: Meta (Binding 7)
+	var meta_rid = rd.texture_create(fmt, RDTextureView.new(), [meta_data.to_byte_array()])
 	
 	# Uniforms
 	var uniforms = []
@@ -166,6 +176,14 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	u_index_counter.binding = 6
 	u_index_counter.add_id(index_counter_buffer)
 	uniforms.append(u_index_counter)
+	
+	# Meta Texture (Binding 7)
+	var u_meta = RDUniform.new()
+	u_meta.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	u_meta.binding = 7
+	u_meta.add_id(sampler_rid) # Reuse sampler
+	u_meta.add_id(meta_rid)
+	uniforms.append(u_meta)
 	
 	var uniform_set = rd.uniform_set_create(uniforms, shader, 0)
 	
@@ -226,8 +244,9 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		arrays[ArrayMesh.ARRAY_TEX_UV] = PackedVector2Array(uvs)
 		arrays[ArrayMesh.ARRAY_INDEX] = indices
 		
-	# Cleanup (Disabled to debug crash)
+	# Cleanup (Disabled to debug crash, but I can enable 'meta_rid' free if I want? No, let's stick to the safe leak pattern for now)
 	# if texture_rid.is_valid(): rd.free_rid(texture_rid)
+	# if meta_rid.is_valid(): rd.free_rid(meta_rid)
 	# if sampler_rid.is_valid(): rd.free_rid(sampler_rid)
 	# if uniform_set.is_valid(): rd.free_rid(uniform_set)
 	

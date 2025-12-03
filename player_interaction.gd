@@ -56,24 +56,17 @@ func update_ui():
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Press 1/2)\nL-Click: Remove, R-Click: Add" % block_name
 
 func update_selection_box():
-# ... (rest of file)
-# Note: I need to make sure I don't delete 'update_selection_box' logic.
-# I will use a targeted replacement for the top part of the file.
 	var hit = raycast(10.0)
 	if hit:
 		var pos = hit.position
 		var normal = hit.normal
 		
-		# Determine target voxel based on implicit action (looking at block -> highlight it)
-		# We snap to the block we are looking AT (for removal reference).
-		# The user implies "Add" by knowing they will add adjacent.
-		# To make it clear, let's just highlight the block we hit.
-		
-		# Move slightly into the object to handle float precision
-		var inside_pos = pos - normal * 0.05
-		var voxel_x = floor(inside_pos.x)
-		var voxel_y = floor(inside_pos.y)
-		var voxel_z = floor(inside_pos.z)
+		# Highlight the PLACEMENT target (Adjacent Voxel)
+		# Move slightly OUTSIDE the object along normal
+		var outside_pos = pos + normal * 0.05
+		var voxel_x = floor(outside_pos.x)
+		var voxel_y = floor(outside_pos.y)
+		var voxel_z = floor(outside_pos.z)
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		
@@ -94,43 +87,21 @@ func handle_terrain_input(event):
 			terrain_manager.modify_terrain(hit.position, 4.0, -1.0) # Place
 
 func handle_building_input(event):
-	# current_voxel_pos is the block we HIT.
+	# current_voxel_pos is the GHOST block (Placement Target)
 	
-	if event.button_index == MOUSE_BUTTON_LEFT: # Remove
-		# Remove the highlighted block
-		building_manager.set_voxel(current_voxel_pos, 0.0)
+	if event.button_index == MOUSE_BUTTON_RIGHT: # Add
+		# Place at the ghost position
+		building_manager.set_voxel(current_voxel_pos, current_block_id)
 		
-	elif event.button_index == MOUSE_BUTTON_RIGHT: # Add
-		# Add adjacent to the highlighted block
-		# We need the normal again to know WHICH adjacent
+	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove
+		# Remove requires the EXISTING block, not the ghost.
+		# Re-calculate based on raycast (Hit - Normal)
 		var hit = raycast(10.0)
 		if hit:
 			var normal = hit.normal
-			# Simple grid addition
-			# Normal might be smooth (from terrain), so we need to check dominant axis?
-			# Actually, standard math works if we are axis aligned.
-			# But if hitting smooth terrain, normal is arbitrary.
-			# Robust way:
 			var inside_pos = hit.position - normal * 0.05
-			var voxel_base = floor(inside_pos) # Should match current_voxel_pos
-			
-			# Project out
-			var outside_pos = hit.position + normal * 0.05
-			var target_place = floor(outside_pos)
-			
-			# Sanity check: ensure we aren't replacing the same block (e.g. inside object)
-			if target_place == voxel_base:
-				# This happens if we are extremely close to edge or normal is weird.
-				# Fallback: Step 1 unit in dominant axis of normal
-				var abs_n = normal.abs()
-				if abs_n.x > abs_n.y and abs_n.x > abs_n.z:
-					target_place.x += sign(normal.x)
-				elif abs_n.y > abs_n.x and abs_n.y > abs_n.z:
-					target_place.y += sign(normal.y)
-				else:
-					target_place.z += sign(normal.z)
-			
-			building_manager.set_voxel(target_place, current_block_id)
+			var target_remove = floor(inside_pos)
+			building_manager.set_voxel(target_remove, 0.0)
 
 func raycast(length: float):
 	var space_state = camera.get_world_3d().direct_space_state

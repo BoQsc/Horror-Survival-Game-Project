@@ -25,7 +25,7 @@ func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 	
 	return chunk
 
-func set_voxel(global_pos: Vector3, value: int):
+func set_voxel(global_pos: Vector3, value: int, meta: int = 0):
 	var chunk_size = BuildingChunk.SIZE
 	
 	var chunk_x = floor(global_pos.x / chunk_size)
@@ -43,7 +43,7 @@ func set_voxel(global_pos: Vector3, value: int):
 	if local_z < 0: local_z += chunk_size
 	
 	var chunk = get_chunk(chunk_coord)
-	chunk.set_voxel(Vector3i(local_x, local_y, local_z), value)
+	chunk.set_voxel(Vector3i(local_x, local_y, local_z), value, meta)
 	
 	# Trigger rebuild for this chunk
 	chunk.rebuild_mesh()

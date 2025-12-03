@@ -26,7 +26,7 @@ size = Vector3(1.01, 1.01, 1.01)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_selection"]
 transparency = 1
-albedo_color = Color(1, 1, 0, 0.4)
+albedo_color = Color(1, 1, 0, 0.8)
 shading_mode = 0
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_water"]
