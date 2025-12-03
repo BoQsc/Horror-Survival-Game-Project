@@ -85,33 +85,13 @@ func _process(_delta):
 		return
 	update_chunks()
 
-func _unhandled_input(event):
-	if event is InputEventMouseButton and event.pressed:
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			_raycast_and_modify(1.0) # Dig (add to density -> Air)
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			_raycast_and_modify(-1.0) # Place (subtract density -> Ground)
-
-func _raycast_and_modify(value: float):
-	var camera = get_viewport().get_camera_3d()
-	if not camera: return
-	
-	var mouse_pos = get_viewport().get_mouse_position()
-	var from = camera.project_ray_origin(mouse_pos)
-	var to = from + camera.project_ray_normal(mouse_pos) * 100.0
-	
-	var space_state = get_world_3d().direct_space_state
-	var query = PhysicsRayQueryParameters3D.create(from, to)
-	var result = space_state.intersect_ray(query)
-	
-	if result:
-		var hit_pos = result.position
-		modify_terrain(hit_pos, 4.0, value) # Radius 4
+# Input handling moved to player_interaction.gd
 
 func modify_terrain(pos: Vector3, radius: float, value: float):
 	# Calculate bounds of the modification sphere
 	var min_pos = pos - Vector3(radius, 0, radius)
 	var max_pos = pos + Vector3(radius, 0, radius)
+
 	
 	var min_chunk_x = floor(min_pos.x / CHUNK_STRIDE)
 	var max_chunk_x = floor(max_pos.x / CHUNK_STRIDE)
