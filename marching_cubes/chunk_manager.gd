@@ -21,10 +21,6 @@ var semaphore: Semaphore
 var exit_thread: bool = false
 
 # Task Queue
-# Tasks are Dictionaries: 
-# { "type": "generate", "coord": Vector2i, "pos": Vector3 }
-# { "type": "modify", "coord": Vector2i, "rid": RID, "pos": Vector3, "brush_pos": Vector3, "radius": float, "value": float, "batch_id": int, "batch_count": int }
-# { "type": "free", "rid": RID }
 var task_queue: Array[Dictionary] = []
 
 # Batching for synchronized updates
@@ -41,7 +37,7 @@ class ChunkData:
 	var node: Node3D
 	var density_buffer: RID
 	
-var active_chunks: Dictionary = {} # Vector2i -> ChunkData (or null if loading)
+var active_chunks: Dictionary = {} 
 
 func _ready():
 	mutex = Mutex.new()
@@ -71,12 +67,9 @@ func _ready():
 	terrain_material.set_shader_parameter("texture_rock", load("res://marching_cubes/rocky-texture.jpg"))
 	terrain_material.set_shader_parameter("texture_sand", load("res://marching_cubes/sand-texture.jpg"))
 	terrain_material.set_shader_parameter("texture_snow", load("res://marching_cubes/snow-texture.jpg"))
-	terrain_material.set_shader_parameter("uv_scale", 0.5) # Adjust scale as needed
-	terrain_material.set_shader_parameter("global_snow_amount", 0.0) # Default: No snow
+	terrain_material.set_shader_parameter("uv_scale", 0.5) 
+	terrain_material.set_shader_parameter("global_snow_amount", 0.0)
 	
-	# Create and start SINGLE compute thread
-	# We only use 1 thread because RIDs (Buffers) are bound to the RD instance,
-	# and sharing them across threads/devices is complex.
 	compute_thread = Thread.new()
 	compute_thread.start(_thread_function)
 
@@ -85,13 +78,10 @@ func _process(_delta):
 		return
 	update_chunks()
 
-# Input handling moved to player_interaction.gd
-
 func modify_terrain(pos: Vector3, radius: float, value: float):
 	# Calculate bounds of the modification sphere
 	var min_pos = pos - Vector3(radius, 0, radius)
 	var max_pos = pos + Vector3(radius, 0, radius)
-
 	
 	var min_chunk_x = floor(min_pos.x / CHUNK_STRIDE)
 	var max_chunk_x = floor(max_pos.x / CHUNK_STRIDE)
@@ -100,7 +90,6 @@ func modify_terrain(pos: Vector3, radius: float, value: float):
 	
 	var tasks_to_add = []
 
-	# Iterate over all chunks that might be touched by this modification
 	for x in range(min_chunk_x, max_chunk_x + 1):
 		for z in range(min_chunk_z, max_chunk_z + 1):
 			var coord = Vector2i(x, z)
@@ -159,24 +148,20 @@ func update_chunks():
 			chunks_to_remove.append(coord)
 			
 	for coord in chunks_to_remove:
-		# Cancel pending tasks for this chunk
 		mutex.lock()
 		var i = task_queue.size() - 1
 		while i >= 0:
 			var t = task_queue[i]
-			# Only remove generate tasks. modify tasks are left to complete 
-			# to ensure batches resolve correctly.
 			if t.type == "generate" and t.coord == coord:
 				task_queue.remove_at(i)
 			i -= 1
 		mutex.unlock()
 		
 		var data = active_chunks[coord]
-		if data: # ChunkData
+		if data: 
 			if data.node:
 				data.node.queue_free()
 			
-			# Queue free buffer on thread
 			if data.density_buffer.is_valid():
 				var task = { "type": "free", "rid": data.density_buffer }
 				mutex.lock()
@@ -197,7 +182,6 @@ func update_chunks():
 			if Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.y)) > render_distance:
 				continue
 
-			# Mark as loading
 			active_chunks[coord] = null
 			
 			var chunk_pos = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
@@ -214,16 +198,26 @@ func update_chunks():
 			semaphore.post()
 
 func _thread_function():
-	# Create a local RenderingDevice on this thread.
-	# This RD is unique to this thread. All GPU ops must happen here.
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd:
 		return
 
-	# Compile shaders on this device
 	var sid_gen = rd.shader_create_from_spirv(shader_gen_spirv)
 	var sid_mod = rd.shader_create_from_spirv(shader_mod_spirv)
 	var sid_mesh = rd.shader_create_from_spirv(shader_mesh_spirv)
+	
+	var pipe_gen = rd.compute_pipeline_create(sid_gen)
+	var pipe_mod = rd.compute_pipeline_create(sid_mod)
+	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
+	
+	# Create REUSABLE Buffers
+	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
+	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
+	
+	var counter_data = PackedByteArray()
+	counter_data.resize(4) 
+	counter_data.encode_u32(0, 0)
+	var counter_buffer = rd.storage_buffer_create(4, counter_data)
 	
 	while true:
 		semaphore.wait()
@@ -241,31 +235,37 @@ func _thread_function():
 		mutex.unlock()
 		
 		if task.type == "generate":
-			process_generate(rd, task, sid_gen, sid_mesh)
+			process_generate(rd, task, sid_gen, sid_mesh, pipe_gen, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "modify":
-			process_modify(rd, task, sid_mod, sid_mesh)
+			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
 			if task.rid.is_valid():
 				rd.free_rid(task.rid)
-				
-	# Cleanup RD
+	
+	# Cleanup
+	rd.free_rid(vertex_buffer)
+	rd.free_rid(counter_buffer)
+	rd.free_rid(pipe_gen)
+	rd.free_rid(pipe_mod)
+	rd.free_rid(pipe_mesh)
+	rd.free_rid(sid_gen)
+	rd.free_rid(sid_mod)
+	rd.free_rid(sid_mesh)
+	
 	rd.free()
 
-func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh):
+func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh, pipe_gen, pipe_mesh, vertex_buffer, counter_buffer):
 	var chunk_pos = task.pos
 	
-	# 1. Create Density Buffer
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
 	var density_buffer = rd.storage_buffer_create(density_bytes)
 	
-	# 2. Run Gen Density Shader
 	var u_density = RDUniform.new()
 	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_density.binding = 0
 	u_density.add_id(density_buffer)
 	
 	var set_gen = rd.uniform_set_create([u_density], sid_gen, 0)
-	var pipe_gen = rd.compute_pipeline_create(sid_gen)
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen)
 	rd.compute_list_bind_uniform_set(list, set_gen, 0)
@@ -279,31 +279,25 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh):
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	
-	# Barrier to ensure density is written before reading
 	rd.submit()
 	rd.sync()
 	
-	# Cleanup Gen resources
-	rd.free_rid(set_gen)
-	rd.free_rid(pipe_gen)
+	if set_gen.is_valid(): rd.free_rid(set_gen)
 	
-	# 3. Run Meshing
-	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
+	var mesh = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, terrain_material, vertex_buffer, counter_buffer)
 	
 	call_deferred("complete_generation", task.coord, mesh, density_buffer)
 
-func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh):
+func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
 	var density_buffer = task.rid
 	var chunk_pos = task.pos
 	
-	# 1. Run Modification
 	var u_density = RDUniform.new()
 	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_density.binding = 0
 	u_density.add_id(density_buffer)
 	
 	var set_mod = rd.uniform_set_create([u_density], sid_mod, 0)
-	var pipe_mod = rd.compute_pipeline_create(sid_mod)
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
@@ -321,27 +315,35 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh):
 	rd.submit()
 	rd.sync()
 	
-	# Cleanup Mod resources
-	rd.free_rid(set_mod)
-	rd.free_rid(pipe_mod)
+	if set_mod.is_valid(): rd.free_rid(set_mod)
 	
-	# 2. Re-Mesh
-	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
+	var mesh = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, terrain_material, vertex_buffer, counter_buffer)
 	
 	var b_id = task.get("batch_id", -1)
 	var b_count = task.get("batch_count", 1)
 	
 	call_deferred("complete_modification", task.coord, mesh, b_id, b_count)
 
-func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, material_instance: Material):
-	# Setup Output Buffers
-	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
-	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
+func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	
-	var counter_data = PackedByteArray()
-	counter_data.resize(4) 
-	counter_data.encode_u32(0, 0)
-	var counter_buffer = rd.storage_buffer_create(4, counter_data)
+	st.set_material(material_instance)
+	
+	for i in range(0, data.size(), 6):
+		var v = Vector3(data[i], data[i+1], data[i+2])
+		var n = Vector3(data[i+3], data[i+4], data[i+5])
+		st.set_normal(n)
+		st.add_vertex(v)
+	
+	return st.commit()
+
+func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer):
+	# Reset Counter to 0
+	var zero_data = PackedByteArray()
+	zero_data.resize(4)
+	zero_data.encode_u32(0, 0)
+	rd.buffer_update(counter_buffer, 0, 4, zero_data)
 	
 	var u_vert = RDUniform.new()
 	u_vert.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
@@ -359,7 +361,6 @@ func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, mater
 	u_dens.add_id(density_buffer)
 	
 	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens], sid_mesh, 0)
-	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 	
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
@@ -389,10 +390,8 @@ func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, mater
 		var vert_floats = vert_bytes.to_float32_array()
 		mesh = build_mesh(vert_floats, material_instance)
 		
-	rd.free_rid(vertex_buffer)
-	rd.free_rid(counter_buffer)
-	rd.free_rid(set_mesh)
-	rd.free_rid(pipe_mesh)
+	# Only free the uniform set (linking logic)
+	if set_mesh.is_valid(): rd.free_rid(set_mesh)
 	
 	return mesh
 
@@ -465,17 +464,3 @@ func create_chunk_node(mesh: ArrayMesh, position: Vector3) -> Node3D:
 	static_body.add_child(collision_shape)
 	
 	return static_body
-
-func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
-	var st = SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	
-	st.set_material(material_instance)
-	
-	for i in range(0, data.size(), 6):
-		var v = Vector3(data[i], data[i+1], data[i+2])
-		var n = Vector3(data[i+3], data[i+4], data[i+5])
-		st.set_normal(n)
-		st.add_vertex(v)
-	
-	return st.commit()
