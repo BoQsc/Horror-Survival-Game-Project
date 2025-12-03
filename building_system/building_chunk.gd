@@ -55,14 +55,16 @@ func rebuild_mesh():
 	if mesher:
 		mesher.request_mesh_generation(self)
 
-func apply_mesh(arrays: Array):
+func apply_mesh(arrays: Array, shape: Shape3D = null):
 	if arrays.size() > 0:
 		var mesh = ArrayMesh.new()
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		
 		var material = StandardMaterial3D.new()
-		material.albedo_color = Color(0.7, 0.5, 0.3) # Wood/Brick color
+		material.albedo_color = Color(1.0, 1.0, 1.0) # White so texture shows
+		material.albedo_texture = load("res://greedy_meshing/wood-block-texture.png")
 		material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		
 		mesh_instance.material_override = material
 		mesh_instance.mesh = mesh
 		
