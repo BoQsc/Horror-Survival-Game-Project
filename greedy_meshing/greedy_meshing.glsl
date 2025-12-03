@@ -31,60 +31,37 @@ bool is_voxel_solid(ivec3 pos) {
 
 void add_quad(vec3 p0, vec3 p1, vec3 p2, vec3 p3, vec3 normal, vec2 uv0, vec2 uv1, vec2 uv2, vec2 uv3) {
     uint v_idx = atomicAdd(vertex_count, 4);
-    
-    // Vertices (Write as floats)
-    // Godot uses Clockwise winding for front faces by default (or Counter-Clockwise depending on setup).
-    // Swapping p1 and p3 effectively reverses the winding order.
     uint v_ptr = v_idx * 3;
     
+    // Vertices (Write as floats)
+    // Input is p0->p1->p2->p3 (CCW)
+    // We Write p0->p3->p2->p1 (CW) to flip the winding order for Godot
+    
     // Vertex 0 (p0)
-    vertices[v_ptr + 0] = p0.x;
-    vertices[v_ptr + 1] = p0.y;
-    vertices[v_ptr + 2] = p0.z;
-    
-    // Vertex 1 (Now p3 - Swapped)
-    vertices[v_ptr + 3] = p3.x;
-    vertices[v_ptr + 4] = p3.y;
-    vertices[v_ptr + 5] = p3.z;
-    
+    vertices[v_ptr + 0] = p0.x; vertices[v_ptr + 1] = p0.y; vertices[v_ptr + 2] = p0.z;
+    // Vertex 1 (p3) - Swapped
+    vertices[v_ptr + 3] = p3.x; vertices[v_ptr + 4] = p3.y; vertices[v_ptr + 5] = p3.z;
     // Vertex 2 (p2)
-    vertices[v_ptr + 6] = p2.x;
-    vertices[v_ptr + 7] = p2.y;
-    vertices[v_ptr + 8] = p2.z;
+    vertices[v_ptr + 6] = p2.x; vertices[v_ptr + 7] = p2.y; vertices[v_ptr + 8] = p2.z;
+    // Vertex 3 (p1) - Swapped
+    vertices[v_ptr + 9] = p1.x; vertices[v_ptr + 10] = p1.y; vertices[v_ptr + 11] = p1.z;
     
-    // Vertex 3 (Now p1 - Swapped)
-    vertices[v_ptr + 9] = p1.x;
-    vertices[v_ptr + 10] = p1.y;
-    vertices[v_ptr + 11] = p1.z;
+    // Normals
+    for (int i = 0; i < 4; i++) {
+        normals[v_ptr + i*3 + 0] = normal.x;
+        normals[v_ptr + i*3 + 1] = normal.y;
+        normals[v_ptr + i*3 + 2] = normal.z;
+    }
     
-    // Normals (Write as floats)
-    // Same normal for all vertices
-    normals[v_ptr + 0] = normal.x;
-    normals[v_ptr + 1] = normal.y;
-    normals[v_ptr + 2] = normal.z;
-    
-    normals[v_ptr + 3] = normal.x;
-    normals[v_ptr + 4] = normal.y;
-    normals[v_ptr + 5] = normal.z;
-    
-    normals[v_ptr + 6] = normal.x;
-    normals[v_ptr + 7] = normal.y;
-    normals[v_ptr + 8] = normal.z;
-    
-    normals[v_ptr + 9] = normal.x;
-    normals[v_ptr + 10] = normal.y;
-    normals[v_ptr + 11] = normal.z;
-    
-    // UVs (Swap uv1 and uv3 to match vertex swap)
+    // UVs (Swap 1 and 3 to match vertex swap)
     uvs[v_idx + 0] = uv0;
     uvs[v_idx + 1] = uv3;
     uvs[v_idx + 2] = uv2;
     uvs[v_idx + 3] = uv1;
     
     // Indices
-    // 0-1-2 and 0-2-3 (Standard Quad triangulation)
-    // Since we swapped the vertex positions in the buffer, we can keep standard index order
-    // and the physical triangle winding on screen will be reversed.
+    // Standard Quad (0,1,2) and (0,2,3)
+    // Since we swapped the vertices in the buffer, this index order now produces CW triangles on screen.
     uint quad_idx = v_idx / 4;
     uint i_idx = quad_idx * 6;
     
@@ -123,6 +100,8 @@ void main() {
     vec3 p111 = pos + vec3(1.0, 1.0, 1.0);
     
     // Check 6 neighbors and generate faces if exposed
+    // Using Explicit CCW Order (Right-Hand Rule) for all faces input to add_quad
+    // add_quad will flip them to CW.
     
     // +X Face (Right)
     if (!is_voxel_solid(id + ivec3(1, 0, 0))) {
@@ -141,17 +120,16 @@ void main() {
     
     // -Y Face (Bottom)
     if (!is_voxel_solid(id + ivec3(0, -1, 0))) {
-        add_quad(p001, p000, p100, p101, vec3(0, -1, 0), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+        add_quad(p000, p100, p101, p001, vec3(0, -1, 0), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
     }
     
     // +Z Face (Front)
     if (!is_voxel_solid(id + ivec3(0, 0, 1))) {
-        add_quad(p101, p111, p011, p001, vec3(0, 0, 1), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+        add_quad(p001, p101, p111, p011, vec3(0, 0, 1), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
     }
     
     // -Z Face (Back)
     if (!is_voxel_solid(id + ivec3(0, 0, -1))) {
-        add_quad(p000, p100, p110, p010, vec3(0, 0, -1), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
+        add_quad(p100, p000, p010, p110, vec3(0, 0, -1), vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1));
     }
 }
-
