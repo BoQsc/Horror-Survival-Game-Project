@@ -9,10 +9,20 @@ var array_mesh: ArrayMesh
 var static_body: StaticBody3D
 var collision_shape: CollisionShape3D
 
-# Store voxel data persistently (as bytes for texture creation)
+# Persistent Voxel Data
 var voxel_bytes: PackedByteArray
 
+# Threading
+var thread: Thread
+var mutex: Mutex
+var semaphore: Semaphore
+var exit_thread: bool = false
+var dirty: bool = false
+
 func _ready():
+	mutex = Mutex.new()
+	semaphore = Semaphore.new()
+	
 	# Load compute shader
 	compute_shader = load("res://greedy_meshing/greedy_meshing.glsl")
 	
@@ -34,7 +44,13 @@ func _ready():
 		mesh_instance.mesh = array_mesh
 		
 		_initialize_voxel_data()
-		_generate_greedy_mesh()
+		
+		# Start Thread
+		thread = Thread.new()
+		thread.start(_thread_loop)
+		
+		# Trigger first build
+		_trigger_update()
 	else:
 		print("Failed to load compute shader!")
 
@@ -61,8 +77,6 @@ func _handle_click(add_block: bool):
 		var hit_pos = result.position
 		var normal = result.normal
 		
-		# Calculate voxel coordinate
-		# Move slightly inside the block (remove) or outside (add)
 		var target_pos = hit_pos - normal * 0.5 if not add_block else hit_pos + normal * 0.5
 		var voxel_coord = Vector3i(floor(target_pos))
 		
@@ -74,15 +88,21 @@ func _update_voxel(coord: Vector3i, value: float):
 	
 	var index = coord.x + coord.y * voxel_grid_size.x + coord.z * voxel_grid_size.x * voxel_grid_size.y
 	
-	# We are storing float32s in a byte array. Each float is 4 bytes.
+	mutex.lock()
 	var float_bytes = PackedFloat32Array([value]).to_byte_array()
 	for i in range(4):
 		voxel_bytes[index * 4 + i] = float_bytes[i]
+	mutex.unlock()
 		
-	_generate_greedy_mesh()
+	_trigger_update()
+
+func _trigger_update():
+	mutex.lock()
+	dirty = true
+	mutex.unlock()
+	semaphore.post()
 
 func _initialize_voxel_data():
-	# Create voxel data as a flat array of floats
 	var voxel_floats = PackedFloat32Array()
 	voxel_floats.resize(voxel_grid_size.x * voxel_grid_size.y * voxel_grid_size.z)
 	
@@ -94,26 +114,50 @@ func _initialize_voxel_data():
 			for z in range(voxel_grid_size.z):
 				var index = x + y * voxel_grid_size.x + z * voxel_grid_size.x * voxel_grid_size.y
 				var value = 0.0
-				
-				# Create a solid sphere
 				var pos = Vector3(x + 0.5, y + 0.5, z + 0.5)
 				if pos.distance_to(center) <= radius:
 					value = 1.0
-				
 				voxel_floats[index] = value
 	
 	voxel_bytes = voxel_floats.to_byte_array()
 
-func _generate_greedy_mesh():
-	# Create local rendering device
+func _thread_loop():
+	# Create Persistent RD on Thread
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd: return
-	
-	# Load and compile shader
+
+	# Compile Shader once
 	var shader_spirv: RDShaderSPIRV = compute_shader.get_spirv()
 	var shader = rd.shader_create_from_spirv(shader_spirv)
+	var pipeline = rd.compute_pipeline_create(shader)
 	
-	# Create Texture3D
+	while true:
+		semaphore.wait()
+		
+		mutex.lock()
+		if exit_thread:
+			mutex.unlock()
+			break
+			
+		if not dirty:
+			mutex.unlock()
+			continue
+		
+		# Copy data for processing
+		var current_voxel_bytes = voxel_bytes.duplicate()
+		dirty = false
+		mutex.unlock()
+		
+		# Generate Mesh logic
+		var arrays = _generate_mesh_on_gpu(rd, shader, pipeline, current_voxel_bytes)
+		
+		# Send back to main thread
+		call_deferred("_apply_mesh", arrays)
+	
+	rd.free()
+
+func _generate_mesh_on_gpu(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray):
+	# Texture
 	var fmt = RDTextureFormat.new()
 	fmt.width = voxel_grid_size.x
 	fmt.height = voxel_grid_size.y
@@ -122,9 +166,9 @@ func _generate_greedy_mesh():
 	fmt.texture_type = RenderingDevice.TEXTURE_TYPE_3D
 	fmt.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	
-	var texture_rid = rd.texture_create(fmt, RDTextureView.new(), [voxel_bytes])
+	var texture_rid = rd.texture_create(fmt, RDTextureView.new(), [v_bytes])
 	
-	# Prepare output buffers
+	# Buffers
 	var max_vertices = voxel_grid_size.x * voxel_grid_size.y * voxel_grid_size.z * 24
 	var max_indices = max_vertices * 2 
 	
@@ -183,7 +227,6 @@ func _generate_greedy_mesh():
 	uniforms.append(u_counter)
 	
 	var uniform_set = rd.uniform_set_create(uniforms, shader, 0)
-	var pipeline = rd.compute_pipeline_create(shader)
 	
 	# Dispatch
 	var dispatch_x = (voxel_grid_size.x + 3) / 4
@@ -209,6 +252,8 @@ func _generate_greedy_mesh():
 	var counter_bytes = rd.buffer_get_data(counter_buffer)
 	var actual_vertex_count = counter_bytes.decode_u32(0)
 	
+	var arrays = []
+	
 	if actual_vertex_count > 0:
 		var vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, actual_vertex_count * 12)
 		var normal_bytes = rd.buffer_get_data(normal_buffer, 0, actual_vertex_count * 12)
@@ -217,6 +262,7 @@ func _generate_greedy_mesh():
 		var quad_count = actual_vertex_count / 4
 		var index_bytes = rd.buffer_get_data(index_buffer, 0, quad_count * 6 * 4)
 		
+		# Process arrays on thread to save main thread time
 		var vertices = []
 		var vertices_floats = vertex_bytes.to_float32_array()
 		vertices.resize(actual_vertex_count)
@@ -237,30 +283,13 @@ func _generate_greedy_mesh():
 			
 		var indices = index_bytes.to_int32_array()
 
-		var arrays = []
 		arrays.resize(ArrayMesh.ARRAY_MAX)
 		arrays[ArrayMesh.ARRAY_VERTEX] = PackedVector3Array(vertices)
 		arrays[ArrayMesh.ARRAY_NORMAL] = PackedVector3Array(normals)
 		arrays[ArrayMesh.ARRAY_TEX_UV] = PackedVector2Array(uvs)
 		arrays[ArrayMesh.ARRAY_INDEX] = indices
-		
-		array_mesh.clear_surfaces()
-		array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		
-		var material = StandardMaterial3D.new()
-		material.albedo_color = Color(0.0, 0.7, 0.2)
-		mesh_instance.material_override = material
-		
-		# Update Collision
-		if collision_shape.shape:
-			collision_shape.shape = null
-		collision_shape.shape = array_mesh.create_trimesh_shape()
-		
-	else:
-		array_mesh.clear_surfaces()
-		collision_shape.shape = null
 	
-	# Cleanup
+	# Cleanup RIDs
 	rd.free_rid(texture_rid)
 	rd.free_rid(sampler_rid)
 	rd.free_rid(vertex_buffer)
@@ -268,4 +297,29 @@ func _generate_greedy_mesh():
 	rd.free_rid(uv_buffer)
 	rd.free_rid(index_buffer)
 	rd.free_rid(counter_buffer)
-	rd.free()
+	
+	return arrays
+
+func _apply_mesh(arrays):
+	if arrays.size() > 0:
+		array_mesh.clear_surfaces()
+		array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		
+		var material = StandardMaterial3D.new()
+		material.albedo_color = Color(0.0, 0.7, 0.2)
+		mesh_instance.material_override = material
+		
+		# This is still somewhat expensive but now only happens after async generation
+		if collision_shape.shape:
+			collision_shape.shape = null
+		collision_shape.shape = array_mesh.create_trimesh_shape()
+	else:
+		array_mesh.clear_surfaces()
+		collision_shape.shape = null
+
+func _exit_tree():
+	mutex.lock()
+	exit_thread = true
+	mutex.unlock()
+	semaphore.post()
+	thread.wait_to_finish()
