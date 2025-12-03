@@ -33,6 +33,22 @@ func _thread_loop():
 	var shader = rd.shader_create_from_spirv(shader_spirv)
 	var pipeline = rd.compute_pipeline_create(shader)
 	
+	# Create Reusable Buffers
+	var grid_size = Vector3i(16, 16, 16)
+	var max_vertices = grid_size.x * grid_size.y * grid_size.z * 24
+	var max_indices = max_vertices * 2
+	
+	var vertex_buffer = rd.storage_buffer_create(max_vertices * 12)
+	var normal_buffer = rd.storage_buffer_create(max_vertices * 12)
+	var uv_buffer = rd.storage_buffer_create(max_vertices * 8)
+	var index_buffer = rd.storage_buffer_create(max_indices * 4)
+	
+	var counter_data = PackedByteArray()
+	counter_data.resize(4)
+	counter_data.encode_u32(0, 0)
+	var counter_buffer = rd.storage_buffer_create(4, counter_data)
+	var index_counter_buffer = rd.storage_buffer_create(4, counter_data) # Reuse same 0-init data
+	
 	while true:
 		semaphore.wait()
 		
@@ -55,20 +71,34 @@ func _thread_loop():
 		mutex.unlock()
 		
 		# Generate
-		var arrays = _generate_mesh(rd, shader, pipeline, voxel_bytes)
+		var arrays = _generate_mesh(rd, shader, pipeline, voxel_bytes, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer)
 		
 		# Callback
 		if is_instance_valid(chunk):
 			chunk.call_deferred("apply_mesh", arrays)
 	
 	# Cleanup persistent resources
+	rd.free_rid(vertex_buffer)
+	rd.free_rid(normal_buffer)
+	rd.free_rid(uv_buffer)
+	rd.free_rid(index_buffer)
+	rd.free_rid(counter_buffer)
+	rd.free_rid(index_counter_buffer)
+	
 	rd.free_rid(pipeline)
 	rd.free_rid(shader)
 	rd.free()
 
-func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray) -> Array:
+func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer) -> Array:
 	# 16x16x16
 	var grid_size = Vector3i(16, 16, 16)
+	
+	# Reset Counters
+	var zero_data = PackedByteArray()
+	zero_data.resize(4)
+	zero_data.encode_u32(0, 0)
+	rd.buffer_update(counter_buffer, 0, 4, zero_data)
+	rd.buffer_update(index_counter_buffer, 0, 4, zero_data)
 	
 	# Convert 1-byte IDs to Floats for shader compatibility
 	var float_data = PackedFloat32Array()
@@ -86,20 +116,6 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	fmt.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	
 	var texture_rid = rd.texture_create(fmt, RDTextureView.new(), [float_data.to_byte_array()])
-	
-	# Buffers
-	var max_vertices = grid_size.x * grid_size.y * grid_size.z * 24
-	var max_indices = max_vertices * 2
-	
-	var vertex_buffer = rd.storage_buffer_create(max_vertices * 12)
-	var normal_buffer = rd.storage_buffer_create(max_vertices * 12)
-	var uv_buffer = rd.storage_buffer_create(max_vertices * 8)
-	var index_buffer = rd.storage_buffer_create(max_indices * 4)
-	
-	var counter_data = PackedByteArray()
-	counter_data.resize(4)
-	counter_data.encode_u32(0, 0)
-	var counter_buffer = rd.storage_buffer_create(4, counter_data)
 	
 	# Uniforms
 	var uniforms = []
@@ -144,12 +160,6 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	u_counter.binding = 5
 	u_counter.add_id(counter_buffer)
 	uniforms.append(u_counter)
-	
-	# Index Counter (Binding 6)
-	var index_counter_data = PackedByteArray()
-	index_counter_data.resize(4)
-	index_counter_data.encode_u32(0, 0)
-	var index_counter_buffer = rd.storage_buffer_create(4, index_counter_data)
 	
 	var u_index_counter = RDUniform.new()
 	u_index_counter.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
@@ -216,23 +226,14 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		arrays[ArrayMesh.ARRAY_TEX_UV] = PackedVector2Array(uvs)
 		arrays[ArrayMesh.ARRAY_INDEX] = indices
 		
-	# Cleanup
-	rd.free_rid(texture_rid)
-	rd.free_rid(sampler_rid)
-	rd.free_rid(vertex_buffer)
-	rd.free_rid(normal_buffer)
-	rd.free_rid(uv_buffer)
-	rd.free_rid(index_buffer)
-	rd.free_rid(counter_buffer)
-	rd.free_rid(index_counter_buffer)
-	rd.free_rid(uniform_set) # Fix leak
+	# Cleanup (Disabled to debug crash)
+	# if texture_rid.is_valid(): rd.free_rid(texture_rid)
+	# if sampler_rid.is_valid(): rd.free_rid(sampler_rid)
+	# if uniform_set.is_valid(): rd.free_rid(uniform_set)
 	
 	return arrays
 
 func _exit_tree():
-# ...
-# Wait, I need to fix _thread_loop too.
-# I will use a larger replace block to cover _thread_loop end.
 	mutex.lock()
 	exit_thread = true
 	mutex.unlock()
