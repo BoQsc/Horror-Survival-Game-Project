@@ -1,10 +1,10 @@
-[gd_scene load_steps=12 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=14 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
-[ext_resource type="Script" path="res://player_interaction.gd" id="3_interact"]
-[ext_resource type="Script" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
-[ext_resource type="Script" path="res://building_system/building_manager.gd" id="5_buildings"]
+[ext_resource type="Script" uid="uid://cje44f7r08sot" path="res://player_interaction.gd" id="3_interact"]
+[ext_resource type="Script" uid="uid://c1xwl5r0i1xs2" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
+[ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -19,16 +19,6 @@ sky = SubResource("Sky")
 tonemap_mode = 2
 glow_enabled = true
 
-[sub_resource type="CapsuleShape3D" id="PlayerShape"]
-
-[sub_resource type="BoxMesh" id="BoxMesh_selection"]
-size = Vector3(1.01, 1.01, 1.01)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_selection"]
-transparency = 1
-albedo_color = Color(1, 1, 0, 0.8)
-shading_mode = 0
-
 [sub_resource type="PlaneMesh" id="PlaneMesh_water"]
 size = Vector2(1000, 1000)
 
@@ -37,6 +27,16 @@ transparency = 1
 albedo_color = Color(0, 0.329412, 0.815686, 0.588235)
 metallic = 0.5
 roughness = 0.1
+
+[sub_resource type="CapsuleShape3D" id="PlayerShape"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_selection"]
+size = Vector3(1.01, 1.01, 1.01)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_selection"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(1, 1, 0, 0.8)
 
 [node name="MainGame" type="Node3D"]
 

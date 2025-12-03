@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="GPUMarchingCubes"
-run/main_scene="uid://ipiv2ivbm1cr"
+run/main_scene="uid://cubacbxdo4pih"
 config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
 
