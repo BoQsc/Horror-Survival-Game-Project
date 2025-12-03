@@ -283,6 +283,10 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh):
 	rd.submit()
 	rd.sync()
 	
+	# Cleanup Gen resources
+	rd.free_rid(set_gen)
+	rd.free_rid(pipe_gen)
+	
 	# 3. Run Meshing
 	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
 	
@@ -316,6 +320,10 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh):
 	
 	rd.submit()
 	rd.sync()
+	
+	# Cleanup Mod resources
+	rd.free_rid(set_mod)
+	rd.free_rid(pipe_mod)
 	
 	# 2. Re-Mesh
 	var mesh = run_meshing(rd, sid_mesh, density_buffer, chunk_pos, terrain_material)
@@ -383,6 +391,8 @@ func run_meshing(rd: RenderingDevice, sid_mesh, density_buffer, chunk_pos, mater
 		
 	rd.free_rid(vertex_buffer)
 	rd.free_rid(counter_buffer)
+	rd.free_rid(set_mesh)
+	rd.free_rid(pipe_mesh)
 	
 	return mesh
 

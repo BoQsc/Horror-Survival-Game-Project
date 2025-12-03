@@ -61,6 +61,9 @@ func _thread_loop():
 		if is_instance_valid(chunk):
 			chunk.call_deferred("apply_mesh", arrays)
 	
+	# Cleanup persistent resources
+	rd.free_rid(pipeline)
+	rd.free_rid(shader)
 	rd.free()
 
 func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray) -> Array:
@@ -222,10 +225,14 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	rd.free_rid(index_buffer)
 	rd.free_rid(counter_buffer)
 	rd.free_rid(index_counter_buffer)
+	rd.free_rid(uniform_set) # Fix leak
 	
 	return arrays
 
 func _exit_tree():
+# ...
+# Wait, I need to fix _thread_loop too.
+# I will use a larger replace block to cover _thread_loop end.
 	mutex.lock()
 	exit_thread = true
 	mutex.unlock()
