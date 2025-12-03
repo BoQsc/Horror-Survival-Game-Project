@@ -1,0 +1,51 @@
+[gd_scene load_steps=9 format=3 uid="uid://dj51g58j3pqad"]
+
+[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_hyta6"]
+[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_2n70d"]
+[ext_resource type="Script" uid="uid://jj3nnmbumyhb" path="res://greedy_meshing/gpu_greedy_meshing_manager.gd" id="3_5q0hh"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_hyta6"]
+sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+ground_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
+
+[sub_resource type="Sky" id="Sky_2n70d"]
+sky_material = SubResource("ProceduralSkyMaterial_hyta6")
+
+[sub_resource type="Environment" id="Environment_5q0hh"]
+background_mode = 2
+sky = SubResource("Sky_2n70d")
+tonemap_mode = 2
+glow_enabled = true
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_b2hlg"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_30qkp"]
+
+[node name="GreedyMeshing" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_5q0hh")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
+shadow_enabled = true
+
+[node name="CSGBox3D" type="CSGBox3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 26.485477, 0)
+use_collision = true
+
+[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 28.217464, 0)
+script = ExtResource("1_hyta6")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D"]
+shape = SubResource("CapsuleShape3D_b2hlg")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="CharacterBody3D"]
+mesh = SubResource("CapsuleMesh_30qkp")
+
+[node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
+script = ExtResource("2_2n70d")
+
+[node name="Node3D" type="Node3D" parent="."]
+script = ExtResource("3_5q0hh")
