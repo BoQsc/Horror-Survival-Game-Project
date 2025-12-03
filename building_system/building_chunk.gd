@@ -6,7 +6,7 @@ const SIZE = 16
 
 # Data
 var chunk_coord: Vector3i
-var voxel_bytes: PackedByteArray # 16x16x16 * 4 bytes
+var voxel_bytes: PackedByteArray # 16x16x16 * 1 byte
 var is_empty: bool = true
 
 # Visuals
@@ -20,7 +20,7 @@ var mesher: Node # BuildingMesher
 func _init(coord: Vector3i):
 	chunk_coord = coord
 	# Resize and init with 0 (Air)
-	voxel_bytes.resize(SIZE * SIZE * SIZE * 4)
+	voxel_bytes.resize(SIZE * SIZE * SIZE)
 	voxel_bytes.fill(0)
 
 func _ready():
@@ -34,21 +34,21 @@ func _ready():
 	collision_shape = CollisionShape3D.new()
 	static_body.add_child(collision_shape)
 
-func get_voxel(local_pos: Vector3i) -> float:
-	if local_pos.x < 0 or local_pos.y < 0 or local_pos.z < 0: return 0.0
-	if local_pos.x >= SIZE or local_pos.y >= SIZE or local_pos.z >= SIZE: return 0.0
+func get_voxel(local_pos: Vector3i) -> int:
+	if local_pos.x < 0 or local_pos.y < 0 or local_pos.z < 0: return 0
+	if local_pos.x >= SIZE or local_pos.y >= SIZE or local_pos.z >= SIZE: return 0
 	
 	var idx = _get_index(local_pos)
-	return voxel_bytes.decode_float(idx * 4)
+	return voxel_bytes.decode_u8(idx)
 
-func set_voxel(local_pos: Vector3i, value: float):
+func set_voxel(local_pos: Vector3i, value: int):
 	if local_pos.x < 0 or local_pos.y < 0 or local_pos.z < 0: return
 	if local_pos.x >= SIZE or local_pos.y >= SIZE or local_pos.z >= SIZE: return
 	
 	var idx = _get_index(local_pos)
-	voxel_bytes.encode_float(idx * 4, value)
+	voxel_bytes.encode_u8(idx, value)
 	
-	if value > 0.0:
+	if value > 0:
 		is_empty = false
 
 func rebuild_mesh():
@@ -68,9 +68,13 @@ func apply_mesh(arrays: Array, shape: Shape3D = null):
 		mesh_instance.material_override = material
 		mesh_instance.mesh = mesh
 		
-		if collision_shape.shape:
-			collision_shape.shape = null
-		collision_shape.shape = mesh.create_trimesh_shape()
+		# We reverted threaded physics, so we generate shape here if null
+		if shape == null:
+			if collision_shape.shape:
+				collision_shape.shape = null
+			collision_shape.shape = mesh.create_trimesh_shape()
+		else:
+			collision_shape.shape = shape
 	else:
 		mesh_instance.mesh = null
 		collision_shape.shape = null

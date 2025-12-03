@@ -72,7 +72,7 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	fmt.width = grid_size.x
 	fmt.height = grid_size.y
 	fmt.depth = grid_size.z
-	fmt.format = RenderingDevice.DATA_FORMAT_R32_SFLOAT
+	fmt.format = RenderingDevice.DATA_FORMAT_R8_UINT
 	fmt.texture_type = RenderingDevice.TEXTURE_TYPE_3D
 	fmt.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice.TEXTURE_USAGE_CAN_UPDATE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	

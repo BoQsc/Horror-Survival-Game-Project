@@ -2,22 +2,20 @@
 #version 450
 // Godot 4.x Compute Shader Template
 
-layout(binding = 0) uniform sampler3D voxel_data; // Input: 3D texture for voxel data
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout(binding = 0) uniform usampler3D voxel_data; // Input: 3D texture for voxel data
 
 layout(push_constant) uniform Params {
     ivec3 voxel_grid_size_uniform; // Input: Size of the voxel grid
 };
 
 // Output (e.g., Mesh Data)
-// std430 aligns vec3 to 16 bytes. Godot expects 12 bytes. We must use float arrays to pack tightly.
 layout(std430, binding = 1) writeonly buffer MeshVertices { float vertices[]; };
 layout(std430, binding = 2) writeonly buffer MeshNormals { float normals[]; };
 layout(std430, binding = 3) writeonly buffer MeshUVs { vec2 uvs[]; };
 layout(std430, binding = 4) writeonly buffer MeshIndices { uint indices[]; };
 layout(std430, binding = 5) coherent buffer Counter { uint vertex_count; };
-
-// Global work group size for compute shaders.
-layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 bool is_voxel_solid(ivec3 pos) {
     if (pos.x < 0 || pos.y < 0 || pos.z < 0 ||
@@ -26,7 +24,9 @@ bool is_voxel_solid(ivec3 pos) {
         pos.z >= voxel_grid_size_uniform.z) {
         return false;
     }
-    return texelFetch(voxel_data, pos, 0).r > 0.0;
+    // Access Red channel (x) as uint
+    uint val = texelFetch(voxel_data, pos, 0).x;
+    return val > 0u;
 }
 
 // Checks if a specific face exists at 'pos' facing 'normal' direction
