@@ -1,10 +1,10 @@
-[gd_scene load_steps=10 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=12 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
-[ext_resource type="Script" uid="uid://cje44f7r08sot" path="res://player_interaction.gd" id="3_interact"]
-[ext_resource type="Script" uid="uid://c1xwl5r0i1xs2" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
-[ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
+[ext_resource type="Script" path="res://player_interaction.gd" id="3_interact"]
+[ext_resource type="Script" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
+[ext_resource type="Script" path="res://building_system/building_manager.gd" id="5_buildings"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -21,6 +21,14 @@ glow_enabled = true
 
 [sub_resource type="CapsuleShape3D" id="PlayerShape"]
 
+[sub_resource type="BoxMesh" id="BoxMesh_selection"]
+size = Vector3(1.01, 1.01, 1.01)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_selection"]
+transparency = 1
+albedo_color = Color(1, 1, 0, 0.4)
+shading_mode = 0
+
 [node name="MainGame" type="Node3D"]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
@@ -29,10 +37,6 @@ environment = SubResource("Env")
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, 0.75, -0.433013, 0, 0, 0)
 shadow_enabled = true
-
-[node name="CSGBox3D" type="CSGBox3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 27.03488, 0)
-use_collision = true
 
 [node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 30, 0)
@@ -92,3 +96,8 @@ viewer = NodePath("../Player")
 
 [node name="BuildingManager" type="Node3D" parent="."]
 script = ExtResource("5_buildings")
+
+[node name="SelectionBox" type="MeshInstance3D" parent="."]
+visible = false
+mesh = SubResource("BoxMesh_selection")
+surface_material_override/0 = SubResource("StandardMaterial3D_selection")
