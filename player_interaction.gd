@@ -6,6 +6,7 @@ extends Node
 @onready var mode_label: Label = $"../../../UI/ModeLabel"
 @onready var camera: Camera3D = $".."
 @onready var selection_box: MeshInstance3D = $"../../../SelectionBox"
+@onready var player = $"../.."
 
 enum Mode { TERRAIN, BUILDING }
 var current_mode: Mode = Mode.TERRAIN
@@ -108,4 +109,5 @@ func raycast(length: float):
 	var from = camera.global_position
 	var to = from - camera.global_transform.basis.z * length
 	var query = PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = [player.get_rid()]
 	return space_state.intersect_ray(query)
