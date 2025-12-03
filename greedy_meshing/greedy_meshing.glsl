@@ -114,7 +114,7 @@ void add_ramp(vec3 pos) {
     // Origin p000. U(0,1,1). V(1,0,0).
     // U x V = (0,1,1) x (1,0,0) = (0, 1, -1). Correct (Up-North).
     vec3 slope_n = normalize(vec3(0, 1, -1));
-    add_quad(p000, vec3(0,1,1), vec3(1,0,0), 1.414, 1.0, slope_n);
+    add_quad(p000, normalize(vec3(0,1,1)), vec3(1,0,0), 1.414, 1.0, slope_n);
     
     // Back Face (+Z)
     // Normal (0,0,1).
