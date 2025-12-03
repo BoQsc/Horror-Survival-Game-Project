@@ -1,8 +1,8 @@
-[gd_scene load_steps=9 format=3 uid="uid://dj51g58j3pqad"]
+[gd_scene load_steps=9 format=3 uid="uid://mlh78pg25c1t"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_hyta6"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_2n70d"]
-[ext_resource type="Script" path="res://greedy_meshing_test_runner.gd" id="3_testr"]
+[ext_resource type="Script" path="res://greedy_meshing_large_test_runner.gd" id="3_large"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_hyta6"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
@@ -21,7 +21,7 @@ glow_enabled = true
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_30qkp"]
 
-[node name="GreedyMeshing" type="Node3D"]
+[node name="GreedyMeshingLarge" type="Node3D"]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_5q0hh")
@@ -48,4 +48,4 @@ mesh = SubResource("CapsuleMesh_30qkp")
 script = ExtResource("2_2n70d")
 
 [node name="TestRunner" type="Node3D" parent="."]
-script = ExtResource("3_testr")
+script = ExtResource("3_large")
