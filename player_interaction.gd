@@ -36,6 +36,9 @@ func _unhandled_input(event):
 		elif event.keycode == KEY_2:
 			current_block_id = 2
 			update_ui()
+		elif event.keycode == KEY_3:
+			current_block_id = 3
+			update_ui()
 	
 	if event is InputEventMouseButton:
 		if event.pressed:
@@ -63,7 +66,10 @@ func update_ui():
 	if current_mode == Mode.TERRAIN:
 		mode_label.text = "Mode: TERRAIN (Smooth)\nL-Click: Dig, R-Click: Place"
 	else:
-		var block_name = "Cube" if current_block_id == 1 else "Ramp"
+		var block_name = "Cube"
+		if current_block_id == 2: block_name = "Ramp"
+		elif current_block_id == 3: block_name = "Sphere"
+		
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
 
 func update_selection_box():

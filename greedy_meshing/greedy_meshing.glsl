@@ -168,6 +168,68 @@ void add_ramp(vec3 pos, uint r) {
     add_triangle(p100, p111, p101, right_n, vec2(0,0), vec2(1,1), vec2(1,0));
 }
 
+void add_sphere(vec3 pos) {
+    // Simple UV Sphere
+    // Radius 0.5, centered at pos + 0.5
+    vec3 center = pos + vec3(0.5, 0.5, 0.5);
+    float radius = 0.5;
+    
+    int slices = 8; // Longitude
+    int stacks = 8; // Latitude
+    
+    for (int i = 0; i < stacks; i++) {
+        float lat0 = 3.14159 * (-0.5 + float(i) / float(stacks));
+        float z0 = radius * sin(lat0);
+        float zr0 = radius * cos(lat0);
+        
+        float lat1 = 3.14159 * (-0.5 + float(i+1) / float(stacks));
+        float z1 = radius * sin(lat1);
+        float zr1 = radius * cos(lat1);
+        
+        for (int j = 0; j < slices; j++) {
+            float lng0 = 2.0 * 3.14159 * float(j) / float(slices);
+            float x0 = cos(lng0);
+            float y0 = sin(lng0);
+            
+            float lng1 = 2.0 * 3.14159 * float(j+1) / float(slices);
+            float x1 = cos(lng1);
+            float y1 = sin(lng1);
+            
+            vec3 p00 = center + vec3(x0 * zr0, z0, y0 * zr0);
+            vec3 p10 = center + vec3(x1 * zr0, z0, y1 * zr0);
+            vec3 p01 = center + vec3(x0 * zr1, z1, y0 * zr1);
+            vec3 p11 = center + vec3(x1 * zr1, z1, y1 * zr1);
+            
+            // Normals (Approximate - from center)
+            vec3 n = normalize(p00 - center); // Just using one normal for the face for flat shading look or per-vertex if we cared
+            
+            // Add 2 triangles (Quad)
+            // Triangle 1: p00 -> p01 -> p11
+            vec3 n1 = normalize(cross(p01 - p00, p11 - p00));
+             // Fix orientation if needed.
+             // p00 (bottom left), p01 (top left), p11 (top right), p10 (bottom right)
+             // p00 -> p01 -> p11 (CCW from outside? Let's check cross prod)
+             // (0,1) - (0,0) = (0,1). (1,1) - (0,0) = (1,1). cross((0,1), (1,1)) = -k (Inside).
+             // So CW: p00 -> p11 -> p01
+            
+            // Wait, standard grid:
+            // lat increasing goes UP (+Y in my local math? No, +Y is Up in Godot).
+            // I used z0 = radius * sin(lat). So Z is UP?
+            // In Godot Y is Up.
+            // Let's map: lat -> Y axis. lng -> X/Z plane.
+            // My code: vec3(x*zr, z, y*zr). So Y is z0. Correct.
+            
+            // Quad p00(bl), p10(br), p11(tr), p01(tl)
+            
+            // Tri 1: p00, p11, p01
+            add_triangle(p00, p11, p01, normalize(p00 - center), vec2(0,0), vec2(1,1), vec2(0,1));
+            
+            // Tri 2: p00, p10, p11
+            add_triangle(p00, p10, p11, normalize(p00 - center), vec2(0,0), vec2(1,0), vec2(1,1));
+        }
+    }
+}
+
 void main() {
     ivec3 id = ivec3(gl_GlobalInvocationID.xyz);
     if (id.x >= voxel_grid_size_uniform.x || id.y >= voxel_grid_size_uniform.y || id.z >= voxel_grid_size_uniform.z) return;
@@ -178,6 +240,11 @@ void main() {
     if (type == 2u) {
         uint meta = uint(round(texelFetch(voxel_meta, id, 0).r));
         add_ramp(pos, meta);
+        return;
+    }
+    
+    if (type == 3u) {
+        add_sphere(pos);
         return;
     }
     
