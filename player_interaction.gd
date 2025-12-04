@@ -143,8 +143,25 @@ func handle_building_input(event):
 		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
 		
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove
-		# Remove the block that was highlighted
-		building_manager.set_voxel(current_remove_voxel_pos, 0.0)
+		# Laser accurate removal logic (Physics-based)
+		# Ignores the 'current_remove_voxel_pos' calculated by grid-casting, 
+		# ensuring we hit the exact mesh (like ramps) and not the grid cell behind/in-front.
+		var hit = raycast(10.0)
+		
+		if hit and hit.collider:
+			# Check if we hit a building chunk (using trimesh collision)
+			if hit.collider.get_parent() is BuildingChunk:
+				# Move slightly into the object from the hit point to find the voxel
+				# -normal * 0.01 usually works, but if we are inside, or glancing...
+				# A safer bet for removal is often `position - normal * 0.01`
+				var remove_pos = hit.position - hit.normal * 0.01
+				var voxel_pos = Vector3(floor(remove_pos.x), floor(remove_pos.y), floor(remove_pos.z))
+				
+				building_manager.set_voxel(voxel_pos, 0.0)
+			else:
+				# Fallback to the grid selection if we hit something else (like terrain) 
+				# or if the user wants to remove terrain? (Not requested here)
+				pass
 
 func raycast(length: float):
 	var space_state = camera.get_world_3d().direct_space_state
