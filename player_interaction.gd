@@ -14,6 +14,7 @@ var current_block_id: int = 1
 var current_rotation: int = 0
 
 var current_voxel_pos: Vector3
+var current_remove_voxel_pos: Vector3
 var has_target: bool = false
 
 func _ready():
@@ -83,12 +84,12 @@ func update_selection_box():
 	var final_hit_pos = Vector3.ZERO
 	var final_normal = Vector3.ZERO
 	var is_voxel_hit = false
-	var hit_something = false
 	
 	# Determine which hit to use
 	if voxel_hit and terrain_hit:
 		# Bias towards voxel hit slightly to prioritize block side placement
-		if voxel_hit.distance <= terrain_hit.position.distance_to(camera.global_position) + 0.05:
+		# 0.1 margin allows selecting blocks even if slightly occluded by rough terrain mesh
+		if voxel_hit.distance <= terrain_hit.position.distance_to(camera.global_position) + 0.1:
 			is_voxel_hit = true
 		else:
 			is_voxel_hit = false
@@ -98,7 +99,9 @@ func update_selection_box():
 		is_voxel_hit = false
 	
 	if is_voxel_hit:
+		current_remove_voxel_pos = voxel_hit.voxel_pos
 		current_voxel_pos = voxel_hit.voxel_pos + voxel_hit.normal
+		
 		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		selection_box.visible = true
 		has_target = true
@@ -113,6 +116,8 @@ func update_selection_box():
 		var voxel_z = floor(check_pos.z)
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+		# For terrain hit, remove target is vaguely defined, assume same as placement for now or invalid
+		current_remove_voxel_pos = current_voxel_pos # Probably won't hit anything if empty
 		
 		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		selection_box.visible = true
@@ -131,17 +136,15 @@ func handle_terrain_input(event):
 
 func handle_building_input(event):
 	# current_voxel_pos is the GHOST block (Placement Target)
+	# current_remove_voxel_pos is the SOLID block (Removal Target)
 	
 	if event.button_index == MOUSE_BUTTON_RIGHT: # Add
 		# Place at the ghost position
 		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
 		
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove
-		# Remove requires the EXISTING block.
-		# Use DDA to find the targeted block accurately
-		var voxel_hit = raycast_voxel_grid(camera.global_position, -camera.global_transform.basis.z, 10.0)
-		if voxel_hit:
-			building_manager.set_voxel(voxel_hit.voxel_pos, 0.0)
+		# Remove the block that was highlighted
+		building_manager.set_voxel(current_remove_voxel_pos, 0.0)
 
 func raycast(length: float):
 	var space_state = camera.get_world_3d().direct_space_state
