@@ -216,19 +216,85 @@ void add_sphere(vec3 pos) {
             vec2 uv01 = vec2(u0, v1);
             vec2 uv11 = vec2(u1, v1);
             
-            // Fix winding by swapping vertices if add_triangle is CW
-            // Current add_triangle writes p0, p2, p1 (CW)
-            // If we want CCW output: A, B, C -> shader writes A, C, B (CW).
-            // Wait, if shader writes CW, and we see inside, we need to SWAP inputs?
-            // Let's try passing p00, p01, p11 (CCW) -> Shader writes p00, p11, p01 (CW).
-            // This is what we had.
-            // If we swap input to p00, p11, p01 -> Shader writes p00, p01, p11 (CCW).
+            // Fix winding by swapping vertices to CCW (p00 -> p01 -> p11)
+            // This ensures the sphere faces are Front-Facing (CCW) and not culled/inverted
             
-            // Tri 1: p00 -> p11 -> p01 (Input) -> Shader writes p00 -> p01 -> p11 (CCW Output)
-            add_triangle(p00, p11, p01, n00, n11, n01, uv00, uv11, uv01);
+            // Tri 1: p00 -> p01 -> p11 (CCW Input -> Shader writes p00 -> p11 -> p01 which is CCW relative to p00->p01)
+            // Wait, shader writes: v[0]=p0, v[1]=p2, v[2]=p1.
+            // If Input is A, B, C. Shader writes A, C, B.
+            // We want CCW Output: A, B, C.
+            // So Input must be A, C, B.
+            // Target Output: p00, p11, p01 (This is CW).
+            // Target Output: p00, p01, p11 (This is CCW).
             
-            // Tri 2: p00 -> p10 -> p11 (Input) -> Shader writes p00 -> p11 -> p10 (CCW Output)
-            add_triangle(p00, p10, p11, n00, n10, n11, uv00, uv10, uv11);
+            // My previous analysis: p00->p01->p11 is CCW?
+            // p00(bl), p01(tl), p11(tr).
+            // BL -> TL -> TR.
+            // Up, then Right.
+            // This is Clockwise.
+            
+            // So p00 -> p01 -> p11 is CW.
+            // p00 -> p11 -> p01 is CCW.
+            
+            // So we want Output: p00, p11, p01.
+            // Shader writes: A, C, B.
+            // A=p00. C=p01. B=p11.
+            // Shader writes p00, p01, p11 (CW). Bad.
+            
+            // If A=p00, C=p11, B=p01.
+            // Shader writes p00, p11, p01 (CCW). Good.
+            // So Input must be p00, p01, p11.
+            
+            // Current Code: add_triangle(p00, p11, p01...)
+            // Input A=p00, B=p11, C=p01.
+            // Shader writes A, C, B -> p00, p01, p11 (CW).
+            
+            // So I need to swap B and C.
+            // New Input: p00, p01, p11.
+            
+            // Tri 1: p00 -> p01 -> p11
+            add_triangle(p00, p01, p11, n00, n01, n11, uv00, uv01, uv11);
+            
+            // Tri 2: p00 -> p11 -> p10
+            // Target Output: p00, p11, p10 (CCW? BL -> TR -> BR. UpRight then Down. CCW).
+            // So we want Output p00, p11, p10.
+            // Shader writes A, C, B.
+            // A=p00, C=p11, B=p10.
+            // Input: p00, p10, p11.
+            
+            // Current Code: add_triangle(p00, p10, p11...)
+            // Input A=p00, B=p10, C=p11.
+            // Shader writes A, C, B -> p00, p11, p10 (CCW).
+            
+            // Wait. If Tri 2 is ALREADY CCW...
+            // Let's re-verify Tri 2.
+            // p00(bl), p10(br), p11(tr).
+            // p00 -> p11 -> p10.
+            // BL -> TR -> BR.
+            // Up+Right. Then Down.
+            // Encloses Bottom-Right.
+            // This is Clockwise!
+            
+            // So p00 -> p11 -> p10 is CW.
+            // p00 -> p10 -> p11 is CCW.
+            // BL -> BR -> TR. Right then Up. CCW.
+            
+            // So we want Output: p00, p10, p11.
+            // Shader writes A, C, B.
+            // A=p00, C=p10, B=p11.
+            // Input: p00, p11, p10.
+            
+            // Current Code: add_triangle(p00, p10, p11)
+            // Input A=p00, B=p10, C=p11.
+            // Shader writes A, C, B -> p00, p11, p10 (CW).
+            
+            // So BOTH are currently CW (Back Facing).
+            // I need to swap BOTH.
+            
+            // New Tri 1 Input: p00, p01, p11.
+            // New Tri 2 Input: p00, p11, p10.
+            
+            add_triangle(p00, p11, p10, n00, n11, n10, uv00, uv11, uv10);
         }
     }
 }
