@@ -57,22 +57,21 @@ vec3 rotate_local(vec3 p, uint r) {
     return rot_c + vec3(0.5, 0.0, 0.5);
 }
 
-void add_triangle(vec3 p0, vec3 p1, vec3 p2, vec3 normal, vec2 uv0, vec2 uv1, vec2 uv2) {
+void add_triangle(vec3 p0, vec3 p1, vec3 p2, vec3 n0, vec3 n1, vec3 n2, vec2 uv0, vec2 uv1, vec2 uv2) {
     uint v_idx = atomicAdd(vertex_count, 3);
     uint i_idx = atomicAdd(index_count, 3);
     
     uint v_ptr = v_idx * 3;
     
-    // CW: p0 -> p2 -> p1
+    // CW: p0 -> p2 -> p1 (Preserve original winding logic for compatibility)
     vertices[v_ptr + 0] = p0.x; vertices[v_ptr + 1] = p0.y; vertices[v_ptr + 2] = p0.z;
     vertices[v_ptr + 3] = p2.x; vertices[v_ptr + 4] = p2.y; vertices[v_ptr + 5] = p2.z;
     vertices[v_ptr + 6] = p1.x; vertices[v_ptr + 7] = p1.y; vertices[v_ptr + 8] = p1.z;
     
-    for (int i = 0; i < 3; i++) {
-        normals[v_ptr + i*3 + 0] = normal.x;
-        normals[v_ptr + i*3 + 1] = normal.y;
-        normals[v_ptr + i*3 + 2] = normal.z;
-    }
+    // Normals matching the vertex order (p0, p2, p1)
+    normals[v_ptr + 0] = n0.x; normals[v_ptr + 1] = n0.y; normals[v_ptr + 2] = n0.z;
+    normals[v_ptr + 3] = n2.x; normals[v_ptr + 4] = n2.y; normals[v_ptr + 5] = n2.z;
+    normals[v_ptr + 6] = n1.x; normals[v_ptr + 7] = n1.y; normals[v_ptr + 8] = n1.z;
     
     uvs[v_idx + 0] = uv0;
     uvs[v_idx + 1] = uv2;
@@ -94,7 +93,7 @@ void add_quad(vec3 origin, vec3 u_axis, vec3 v_axis, float u_len, float v_len, v
     vec3 p2 = origin + u_axis * u_len + v_axis * v_len;
     vec3 p3 = origin + v_axis * v_len;
     
-    // CW: p0 -> p3 -> p2 -> p1
+    // CW: p0 -> p3 -> p2 -> p1 (Preserve original layout)
     vertices[v_ptr + 0] = p0.x; vertices[v_ptr + 1] = p0.y; vertices[v_ptr + 2] = p0.z;
     vertices[v_ptr + 3] = p3.x; vertices[v_ptr + 4] = p3.y; vertices[v_ptr + 5] = p3.z;
     vertices[v_ptr + 6] = p2.x; vertices[v_ptr + 7] = p2.y; vertices[v_ptr + 8] = p2.z;
@@ -162,10 +161,10 @@ void add_ramp(vec3 pos, uint r) {
     add_quad(p000, p100 - p000, p001 - p000, 1.0, 1.0, bottom_n);
     
     // Left Side Triangle
-    add_triangle(p000, p001, p011, left_n, vec2(0,0), vec2(1,0), vec2(1,1));
+    add_triangle(p000, p001, p011, left_n, left_n, left_n, vec2(0,0), vec2(1,0), vec2(1,1));
     
     // Right Side Triangle
-    add_triangle(p100, p111, p101, right_n, vec2(0,0), vec2(1,1), vec2(1,0));
+    add_triangle(p100, p111, p101, right_n, right_n, right_n, vec2(0,0), vec2(1,1), vec2(1,0));
 }
 
 void add_sphere(vec3 pos) {
@@ -174,24 +173,30 @@ void add_sphere(vec3 pos) {
     vec3 center = pos + vec3(0.5, 0.5, 0.5);
     float radius = 0.5;
     
-    int slices = 8; // Longitude
-    int stacks = 8; // Latitude
+    int slices = 16;
+    int stacks = 12;
     
     for (int i = 0; i < stacks; i++) {
-        float lat0 = 3.14159 * (-0.5 + float(i) / float(stacks));
+        float v0 = float(i) / float(stacks);
+        float v1 = float(i+1) / float(stacks);
+        
+        float lat0 = 3.14159 * (-0.5 + v0);
         float z0 = radius * sin(lat0);
         float zr0 = radius * cos(lat0);
         
-        float lat1 = 3.14159 * (-0.5 + float(i+1) / float(stacks));
+        float lat1 = 3.14159 * (-0.5 + v1);
         float z1 = radius * sin(lat1);
         float zr1 = radius * cos(lat1);
         
         for (int j = 0; j < slices; j++) {
-            float lng0 = 2.0 * 3.14159 * float(j) / float(slices);
+            float u0 = float(j) / float(slices);
+            float u1 = float(j+1) / float(slices);
+            
+            float lng0 = 2.0 * 3.14159 * u0;
             float x0 = cos(lng0);
             float y0 = sin(lng0);
             
-            float lng1 = 2.0 * 3.14159 * float(j+1) / float(slices);
+            float lng1 = 2.0 * 3.14159 * u1;
             float x1 = cos(lng1);
             float y1 = sin(lng1);
             
@@ -200,32 +205,30 @@ void add_sphere(vec3 pos) {
             vec3 p01 = center + vec3(x0 * zr1, z1, y0 * zr1);
             vec3 p11 = center + vec3(x1 * zr1, z1, y1 * zr1);
             
-            // Normals (Approximate - from center)
-            vec3 n = normalize(p00 - center); // Just using one normal for the face for flat shading look or per-vertex if we cared
+            // Smooth Normals
+            vec3 n00 = normalize(p00 - center);
+            vec3 n10 = normalize(p10 - center);
+            vec3 n01 = normalize(p01 - center);
+            vec3 n11 = normalize(p11 - center);
             
-            // Add 2 triangles (Quad)
-            // Triangle 1: p00 -> p01 -> p11
-            vec3 n1 = normalize(cross(p01 - p00, p11 - p00));
-             // Fix orientation if needed.
-             // p00 (bottom left), p01 (top left), p11 (top right), p10 (bottom right)
-             // p00 -> p01 -> p11 (CCW from outside? Let's check cross prod)
-             // (0,1) - (0,0) = (0,1). (1,1) - (0,0) = (1,1). cross((0,1), (1,1)) = -k (Inside).
-             // So CW: p00 -> p11 -> p01
+            vec2 uv00 = vec2(u0, v0);
+            vec2 uv10 = vec2(u1, v0);
+            vec2 uv01 = vec2(u0, v1);
+            vec2 uv11 = vec2(u1, v1);
             
-            // Wait, standard grid:
-            // lat increasing goes UP (+Y in my local math? No, +Y is Up in Godot).
-            // I used z0 = radius * sin(lat). So Z is UP?
-            // In Godot Y is Up.
-            // Let's map: lat -> Y axis. lng -> X/Z plane.
-            // My code: vec3(x*zr, z, y*zr). So Y is z0. Correct.
+            // Fix winding by swapping vertices if add_triangle is CW
+            // Current add_triangle writes p0, p2, p1 (CW)
+            // If we want CCW output: A, B, C -> shader writes A, C, B (CW).
+            // Wait, if shader writes CW, and we see inside, we need to SWAP inputs?
+            // Let's try passing p00, p01, p11 (CCW) -> Shader writes p00, p11, p01 (CW).
+            // This is what we had.
+            // If we swap input to p00, p11, p01 -> Shader writes p00, p01, p11 (CCW).
             
-            // Quad p00(bl), p10(br), p11(tr), p01(tl)
+            // Tri 1: p00 -> p11 -> p01 (Input) -> Shader writes p00 -> p01 -> p11 (CCW Output)
+            add_triangle(p00, p11, p01, n00, n11, n01, uv00, uv11, uv01);
             
-            // Tri 1: p00, p11, p01
-            add_triangle(p00, p11, p01, normalize(p00 - center), vec2(0,0), vec2(1,1), vec2(0,1));
-            
-            // Tri 2: p00, p10, p11
-            add_triangle(p00, p10, p11, normalize(p00 - center), vec2(0,0), vec2(1,0), vec2(1,1));
+            // Tri 2: p00 -> p10 -> p11 (Input) -> Shader writes p00 -> p11 -> p10 (CCW Output)
+            add_triangle(p00, p10, p11, n00, n10, n11, uv00, uv10, uv11);
         }
     }
 }
