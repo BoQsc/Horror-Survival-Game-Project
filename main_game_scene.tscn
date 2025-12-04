@@ -36,7 +36,7 @@ size = Vector3(1.01, 1.01, 1.01)
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_selection"]
 transparency = 1
 shading_mode = 0
-albedo_color = Color(1, 1, 0, 0.8)
+albedo_color = Color(0, 0, 1, 0.5)
 
 [node name="MainGame" type="Node3D"]
 
