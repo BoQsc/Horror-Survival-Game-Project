@@ -83,11 +83,22 @@ func update_selection_box():
 		var normal = hit.normal
 		
 		# Highlight the PLACEMENT target (Adjacent Voxel)
-		# Move slightly OUTSIDE the object along normal
-		var outside_pos = pos + normal * 0.05
-		var voxel_x = floor(outside_pos.x)
-		var voxel_y = floor(outside_pos.y)
-		var voxel_z = floor(outside_pos.z)
+		
+		# 1. Determine the block we HIT (inside the mesh)
+		var hit_block_pos = floor(pos - normal * 0.01)
+		
+		# 2. Determine the placement block (adjacent)
+		# For diagonal faces (ramps), a small offset might still be inside the same block.
+		# We step out until we change grid coordinates.
+		var check_pos = pos + normal * 0.01
+		var limit = 0
+		while floor(check_pos) == hit_block_pos and limit < 20:
+			check_pos += normal * 0.05
+			limit += 1
+			
+		var voxel_x = floor(check_pos.x)
+		var voxel_y = floor(check_pos.y)
+		var voxel_z = floor(check_pos.z)
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		
