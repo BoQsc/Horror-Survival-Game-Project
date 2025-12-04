@@ -4,6 +4,7 @@
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 layout(binding = 0) uniform sampler3D voxel_data;
+layout(binding = 7) uniform sampler3D voxel_meta;
 
 layout(push_constant) uniform Params {
     ivec3 voxel_grid_size_uniform;
@@ -31,6 +32,29 @@ bool has_face_type(ivec3 pos, ivec3 normal, uint type) {
     if (get_voxel(pos) != type) return false;
     if (get_voxel(pos + normal) == type) return false;
     return true;
+}
+
+vec3 rotate_vector(vec3 v, uint r) {
+    float nx = v.x;
+    float nz = v.z;
+    
+    if (r == 1u) {
+        nx = -v.z;
+        nz = v.x;
+    } else if (r == 2u) {
+        nx = -v.x;
+        nz = -v.z;
+    } else if (r == 3u) {
+        nx = v.z;
+        nz = -v.x;
+    }
+    return vec3(nx, v.y, nz);
+}
+
+vec3 rotate_local(vec3 p, uint r) {
+    vec3 c = p - vec3(0.5, 0.0, 0.5);
+    vec3 rot_c = rotate_vector(c, r);
+    return rot_c + vec3(0.5, 0.0, 0.5);
 }
 
 void add_triangle(vec3 p0, vec3 p1, vec3 p2, vec3 normal, vec2 uv0, vec2 uv1, vec2 uv2) {
@@ -101,57 +125,47 @@ void add_quad(vec3 origin, vec3 u_axis, vec3 v_axis, float u_len, float v_len, v
     indices[i_idx + 5] = v_idx + 3;
 }
 
-void add_ramp(vec3 pos) {
-    vec3 p000 = pos + vec3(0,0,0);
-    vec3 p100 = pos + vec3(1,0,0);
-    vec3 p011 = pos + vec3(0,1,1);
-    vec3 p111 = pos + vec3(1,1,1);
-    vec3 p001 = pos + vec3(0,0,1);
-    vec3 p101 = pos + vec3(1,0,1);
+void add_ramp(vec3 pos, uint r) {
+    // Define local points 0..1
+    vec3 l000 = vec3(0,0,0);
+    vec3 l100 = vec3(1,0,0);
+    vec3 l011 = vec3(0,1,1);
+    vec3 l111 = vec3(1,1,1);
+    vec3 l001 = vec3(0,0,1);
+    vec3 l101 = vec3(1,0,1);
     
-    // Slope Face (Up/North)
-    // Normal should be (0, 1, -1) roughly.
-    // Origin p000. U(0,1,1). V(1,0,0).
-    // U x V = (0,1,1) x (1,0,0) = (0, 1, -1). Correct (Up-North).
-    vec3 slope_n = normalize(vec3(0, 1, -1));
-    add_quad(p000, vec3(0,1,1), vec3(1,0,0), 1.0, 1.0, slope_n);
+    // Rotate them
+    vec3 p000 = pos + rotate_local(l000, r);
+    vec3 p100 = pos + rotate_local(l100, r);
+    vec3 p011 = pos + rotate_local(l011, r);
+    vec3 p111 = pos + rotate_local(l111, r);
+    vec3 p001 = pos + rotate_local(l001, r);
+    vec3 p101 = pos + rotate_local(l101, r);
     
-    // Back Face (+Z)
-    // Normal (0,0,1).
-    // p001 -> p101 -> p111 -> p011
-    // U(1,0,0). V(0,1,0). U x V = (0,0,1). Correct.
-    add_quad(p001, vec3(1,0,0), vec3(0,1,0), 1.0, 1.0, vec3(0,0,1));
+    // Rotate normals
+    vec3 slope_n = rotate_vector(normalize(vec3(0, 1, -1)), r);
+    vec3 back_n = rotate_vector(vec3(0,0,1), r);
+    vec3 bottom_n = rotate_vector(vec3(0,-1,0), r);
+    vec3 left_n = rotate_vector(vec3(-1,0,0), r);
+    vec3 right_n = rotate_vector(vec3(1,0,0), r);
     
-    // Bottom Face (-Y)
-    // Normal (0,-1,0).
-    // p000 -> p100 -> p101 -> p001
-    // U(1,0,0). V(0,0,1). U x V = (0,-1,0). Correct.
-    add_quad(p000, vec3(1,0,0), vec3(0,0,1), 1.0, 1.0, vec3(0,-1,0));
+    // Slope Face
+    // Origin: p000
+    // U: p011 - p000
+    // V: p100 - p000
+    add_quad(p000, p011 - p000, p100 - p000, 1.0, 1.0, slope_n);
     
-    // Left Side (-X)
-    // Normal (-1, 0, 0).
-    // Triangle p000 -> p011 -> p001
-    // V1(0,1,1). V2(0,0,1).
-    // V1 x V2 = (1,0,0) -> +X (Wrong).
-    // Swap: p000 -> p001 -> p011
-    // V1(0,0,1). V2(0,1,1).
-    // V1 x V2 = (-1,0,0). Correct.
-    // My previous replacement instruction said swap... let's re-verify.
-    // Previous code was p000, p001, p011. This IS correct winding (-X).
-    // So why did it look wrong? Maybe add_triangle logic?
-    // add_triangle outputs CW (p0, p2, p1).
-    // Input p000, p001, p011 (CCW). Output p000, p011, p001 (CW).
-    // This *should* be visible from outside.
-    // Let's keep standard CCW input order for safety:
-    add_triangle(p000, p001, p011, vec3(-1,0,0), vec2(0,0), vec2(1,0), vec2(1,1));
+    // Back Face
+    add_quad(p001, p101 - p001, p011 - p001, 1.0, 1.0, back_n);
     
-    // Right Side (+X)
-    // Normal (1, 0, 0).
-    // Triangle p100 -> p111 -> p101
-    // V1(0,1,1). V2(0,0,1).
-    // V1 x V2 = (1,0,0). Correct.
-    // Input is CCW.
-    add_triangle(p100, p111, p101, vec3(1,0,0), vec2(0,0), vec2(1,1), vec2(1,0));
+    // Bottom Face
+    add_quad(p000, p100 - p000, p001 - p000, 1.0, 1.0, bottom_n);
+    
+    // Left Side Triangle
+    add_triangle(p000, p001, p011, left_n, vec2(0,0), vec2(1,0), vec2(1,1));
+    
+    // Right Side Triangle
+    add_triangle(p100, p111, p101, right_n, vec2(0,0), vec2(1,1), vec2(1,0));
 }
 
 void main() {
@@ -162,7 +176,8 @@ void main() {
     vec3 pos = vec3(id);
     
     if (type == 2u) {
-        add_ramp(pos);
+        uint meta = uint(round(texelFetch(voxel_meta, id, 0).r));
+        add_ramp(pos, meta);
         return;
     }
     

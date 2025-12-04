@@ -11,6 +11,7 @@ extends Node
 enum Mode { TERRAIN, BUILDING }
 var current_mode: Mode = Mode.TERRAIN
 var current_block_id: int = 1
+var current_rotation: int = 0
 
 var current_voxel_pos: Vector3
 var has_target: bool = false
@@ -36,11 +37,20 @@ func _unhandled_input(event):
 			current_block_id = 2
 			update_ui()
 	
-	if event is InputEventMouseButton and event.pressed and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-		if current_mode == Mode.TERRAIN:
-			handle_terrain_input(event)
-		elif current_mode == Mode.BUILDING and has_target:
-			handle_building_input(event)
+	if event is InputEventMouseButton:
+		if event.pressed:
+			if event.ctrl_pressed:
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					current_rotation = (current_rotation + 1) % 4
+					update_ui()
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					current_rotation = (current_rotation - 1 + 4) % 4
+					update_ui()
+			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+				if current_mode == Mode.TERRAIN:
+					handle_terrain_input(event)
+				elif current_mode == Mode.BUILDING and has_target:
+					handle_building_input(event)
 
 func toggle_mode():
 	if current_mode == Mode.TERRAIN:
@@ -54,7 +64,7 @@ func update_ui():
 		mode_label.text = "Mode: TERRAIN (Smooth)\nL-Click: Dig, R-Click: Place"
 	else:
 		var block_name = "Cube" if current_block_id == 1 else "Ramp"
-		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Press 1/2)\nL-Click: Remove, R-Click: Add" % block_name
+		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
 
 func update_selection_box():
 	var hit = raycast(10.0)
@@ -92,7 +102,7 @@ func handle_building_input(event):
 	
 	if event.button_index == MOUSE_BUTTON_RIGHT: # Add
 		# Place at the ghost position
-		building_manager.set_voxel(current_voxel_pos, current_block_id)
+		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
 		
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove
 		# Remove requires the EXISTING block, not the ghost.
