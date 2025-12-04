@@ -353,11 +353,11 @@ void add_stairs(vec3 pos, uint r) {
     // --- Common ---
     
     // 5. Bottom (Full)
-    // Origin (0,0,1). U(1,0,0). V(0,0,-1).
-    // Target Cross: Up (0,1,0). U x V = (0,1,0).
-    vec3 p_bot = pos + rotate_local(vec3(0,0,1), r);
+    // Origin (0,0,0). U(1,0,0). V(0,0,1).
+    // U x V = (0,-1,0) (Down). Matches Normal.
+    vec3 p_bot = pos + rotate_local(vec3(0,0,0), r);
     vec3 u_bot = rotate_vector(vec3(1,0,0), r);
-    vec3 v_bot = rotate_vector(vec3(0,0,-1), r);
+    vec3 v_bot = rotate_vector(vec3(0,0,1), r);
     add_quad(p_bot, u_bot, v_bot, 1.0, 1.0, r_down);
     
     // 6. Back (Full)
