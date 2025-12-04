@@ -77,32 +77,43 @@ func update_ui():
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
 
 func update_selection_box():
-	var hit = raycast(10.0)
-	if hit:
-		var pos = hit.position
-		var normal = hit.normal
+	var terrain_hit = raycast(10.0)
+	var voxel_hit = raycast_voxel_grid(camera.global_position, -camera.global_transform.basis.z, 10.0)
+	
+	var final_hit_pos = Vector3.ZERO
+	var final_normal = Vector3.ZERO
+	var is_voxel_hit = false
+	var hit_something = false
+	
+	# Determine which hit to use
+	if voxel_hit and terrain_hit:
+		# Bias towards voxel hit slightly to prioritize block side placement
+		if voxel_hit.distance <= terrain_hit.position.distance_to(camera.global_position) + 0.05:
+			is_voxel_hit = true
+		else:
+			is_voxel_hit = false
+	elif voxel_hit:
+		is_voxel_hit = true
+	elif terrain_hit:
+		is_voxel_hit = false
+	
+	if is_voxel_hit:
+		current_voxel_pos = voxel_hit.voxel_pos + voxel_hit.normal
+		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+		selection_box.visible = true
+		has_target = true
+	elif terrain_hit:
+		var pos = terrain_hit.position
+		var normal = terrain_hit.normal
 		
-		# Highlight the PLACEMENT target (Adjacent Voxel)
-		
-		# 1. Determine the block we HIT (inside the mesh)
-		var hit_block_pos = floor(pos - normal * 0.01)
-		
-		# 2. Determine the placement block (adjacent)
-		# For diagonal faces (ramps), a small offset might still be inside the same block.
-		# We step out until we change grid coordinates.
+		# Terrain placement logic
 		var check_pos = pos + normal * 0.01
-		var limit = 0
-		while floor(check_pos) == hit_block_pos and limit < 20:
-			check_pos += normal * 0.05
-			limit += 1
-			
 		var voxel_x = floor(check_pos.x)
 		var voxel_y = floor(check_pos.y)
 		var voxel_z = floor(check_pos.z)
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		
-		# Selection box is centered
 		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		selection_box.visible = true
 		has_target = true
@@ -126,14 +137,11 @@ func handle_building_input(event):
 		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
 		
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove
-		# Remove requires the EXISTING block, not the ghost.
-		# Re-calculate based on raycast (Hit - Normal)
-		var hit = raycast(10.0)
-		if hit:
-			var normal = hit.normal
-			var inside_pos = hit.position - normal * 0.05
-			var target_remove = floor(inside_pos)
-			building_manager.set_voxel(target_remove, 0.0)
+		# Remove requires the EXISTING block.
+		# Use DDA to find the targeted block accurately
+		var voxel_hit = raycast_voxel_grid(camera.global_position, -camera.global_transform.basis.z, 10.0)
+		if voxel_hit:
+			building_manager.set_voxel(voxel_hit.voxel_pos, 0.0)
 
 func raycast(length: float):
 	var space_state = camera.get_world_3d().direct_space_state
@@ -142,3 +150,79 @@ func raycast(length: float):
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.exclude = [player.get_rid()]
 	return space_state.intersect_ray(query)
+
+func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
+	# Normalize direction just in case, though usually it is.
+	direction = direction.normalized()
+	
+	var x = floor(origin.x)
+	var y = floor(origin.y)
+	var z = floor(origin.z)
+
+	var step_x = sign(direction.x)
+	var step_y = sign(direction.y)
+	var step_z = sign(direction.z)
+
+	var t_delta_x = 1.0 / abs(direction.x) if direction.x != 0 else 1e30
+	var t_delta_y = 1.0 / abs(direction.y) if direction.y != 0 else 1e30
+	var t_delta_z = 1.0 / abs(direction.z) if direction.z != 0 else 1e30
+
+	var t_max_x
+	if direction.x > 0: t_max_x = (floor(origin.x) + 1 - origin.x) * t_delta_x
+	else: t_max_x = (origin.x - floor(origin.x)) * t_delta_x
+	if abs(direction.x) < 0.00001: t_max_x = 1e30
+	
+	var t_max_y
+	if direction.y > 0: t_max_y = (floor(origin.y) + 1 - origin.y) * t_delta_y
+	else: t_max_y = (origin.y - floor(origin.y)) * t_delta_y
+	if abs(direction.y) < 0.00001: t_max_y = 1e30
+
+	var t_max_z
+	if direction.z > 0: t_max_z = (floor(origin.z) + 1 - origin.z) * t_delta_z
+	else: t_max_z = (origin.z - floor(origin.z)) * t_delta_z
+	if abs(direction.z) < 0.00001: t_max_z = 1e30
+	
+	var normal = Vector3.ZERO
+	var t = 0.0
+	
+	# Prevent infinite loops
+	var max_steps = 100
+	var steps = 0
+	
+	while t < max_dist and steps < max_steps:
+		steps += 1
+		# Check current voxel (don't check origin if inside a block? maybe we do want to)
+		# If we are inside a block, normal is inverted or zero.
+		# But usually camera is outside.
+		if building_manager.get_voxel(Vector3(x, y, z)) > 0:
+			return {
+				"voxel_pos": Vector3(x, y, z),
+				"normal": normal,
+				"position": origin + direction * t,
+				"distance": t
+			}
+			
+		if t_max_x < t_max_y:
+			if t_max_x < t_max_z:
+				x += step_x
+				t = t_max_x
+				t_max_x += t_delta_x
+				normal = Vector3(-step_x, 0, 0)
+			else:
+				z += step_z
+				t = t_max_z
+				t_max_z += t_delta_z
+				normal = Vector3(0, 0, -step_z)
+		else:
+			if t_max_y < t_max_z:
+				y += step_y
+				t = t_max_y
+				t_max_y += t_delta_y
+				normal = Vector3(0, -step_y, 0)
+			else:
+				z += step_z
+				t = t_max_z
+				t_max_z += t_delta_z
+				normal = Vector3(0, 0, -step_z)
+				
+	return null
