@@ -35,7 +35,7 @@ func _thread_loop():
 	
 	# Create Reusable Buffers
 	var grid_size = Vector3i(16, 16, 16)
-	var max_vertices = grid_size.x * grid_size.y * grid_size.z * 24
+	var max_vertices = grid_size.x * grid_size.y * grid_size.z * 128 # Increased from 24 for complex shapes
 	var max_indices = max_vertices * 2
 	
 	var vertex_buffer = rd.storage_buffer_create(max_vertices * 12)

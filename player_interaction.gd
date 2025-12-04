@@ -39,6 +39,9 @@ func _unhandled_input(event):
 		elif event.keycode == KEY_3:
 			current_block_id = 3
 			update_ui()
+		elif event.keycode == KEY_4:
+			current_block_id = 4
+			update_ui()
 	
 	if event is InputEventMouseButton:
 		if event.pressed:
@@ -69,6 +72,7 @@ func update_ui():
 		var block_name = "Cube"
 		if current_block_id == 2: block_name = "Ramp"
 		elif current_block_id == 3: block_name = "Sphere"
+		elif current_block_id == 4: block_name = "Stairs"
 		
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
 

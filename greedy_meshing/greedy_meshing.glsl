@@ -299,6 +299,102 @@ void add_sphere(vec3 pos) {
     }
 }
 
+void add_stairs(vec3 pos, uint r) {
+    // Normals (Local)
+    vec3 up = vec3(0,1,0);
+    vec3 down = vec3(0,-1,0);
+    vec3 front = vec3(0,0,-1); // "Front" faces -Z
+    vec3 back = vec3(0,0,1);
+    vec3 left = vec3(-1,0,0);
+    vec3 right = vec3(1,0,0);
+    
+    // Rotate Normals
+    vec3 r_up = rotate_vector(up, r);
+    vec3 r_down = rotate_vector(down, r);
+    vec3 r_front = rotate_vector(front, r);
+    vec3 r_back = rotate_vector(back, r);
+    vec3 r_left = rotate_vector(left, r);
+    vec3 r_right = rotate_vector(right, r);
+    
+    // --- Step 1 (Bottom/Front) ---
+    
+    // 1. Bottom Step Top (Horizontal)
+    // Origin (0, 0.5, 0). U(1,0,0). V(0,0,1) len 0.5.
+    vec3 p_st1 = pos + rotate_local(vec3(0, 0.5, 0), r);
+    vec3 u_st1 = rotate_vector(vec3(1,0,0), r);
+    vec3 v_st1 = rotate_vector(vec3(0,0,1), r);
+    add_quad(p_st1, u_st1, v_st1, 1.0, 0.5, r_up);
+    
+    // 2. Bottom Step Front (Vertical)
+    // Origin (0,0,0). U(1,0,0). V(0,1,0) len 0.5.
+    vec3 p_sf1 = pos + rotate_local(vec3(0,0,0), r);
+    vec3 u_sf1 = rotate_vector(vec3(1,0,0), r);
+    vec3 v_sf1 = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_sf1, u_sf1, v_sf1, 1.0, 0.5, r_front);
+    
+    // --- Step 2 (Top/Back) ---
+    
+    // 3. Top Step Top (Horizontal)
+    // Origin (0, 1.0, 0.5). U(1,0,0). V(0,0,1) len 0.5.
+    vec3 p_st2 = pos + rotate_local(vec3(0, 1.0, 0.5), r);
+    vec3 u_st2 = rotate_vector(vec3(1,0,0), r);
+    vec3 v_st2 = rotate_vector(vec3(0,0,1), r);
+    add_quad(p_st2, u_st2, v_st2, 1.0, 0.5, r_up);
+    
+    // 4. Top Step Front (Riser) (Vertical)
+    // Origin (0, 0.5, 0.5). U(1,0,0). V(0,1,0) len 0.5.
+    vec3 p_sf2 = pos + rotate_local(vec3(0, 0.5, 0.5), r);
+    vec3 u_sf2 = rotate_vector(vec3(1,0,0), r);
+    vec3 v_sf2 = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_sf2, u_sf2, v_sf2, 1.0, 0.5, r_front);
+    
+    // --- Common ---
+    
+    // 5. Bottom (Full)
+    // Origin (0,0,0). U(1,0,0). V(0,0,1).
+    vec3 p_bot = pos + rotate_local(vec3(0,0,0), r);
+    vec3 u_bot = rotate_vector(vec3(1,0,0), r);
+    vec3 v_bot = rotate_vector(vec3(0,0,1), r);
+    add_quad(p_bot, u_bot, v_bot, 1.0, 1.0, r_down);
+    
+    // 6. Back (Full)
+    // Origin (0,0,1). U(1,0,0). V(0,1,0).
+    vec3 p_back = pos + rotate_local(vec3(0,0,1), r);
+    vec3 u_back = rotate_vector(vec3(1,0,0), r);
+    vec3 v_back = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_back, u_back, v_back, 1.0, 1.0, r_back);
+    
+    // --- Sides ---
+    
+    // 7. Left Bottom Part (Z: 0..0.5, Y: 0..0.5)
+    // Origin (0,0,0). U(0,0,1) len 0.5. V(0,1,0) len 0.5.
+    vec3 p_l1 = pos + rotate_local(vec3(0,0,0), r);
+    vec3 u_l1 = rotate_vector(vec3(0,0,1), r);
+    vec3 v_l1 = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_l1, u_l1, v_l1, 0.5, 0.5, r_left);
+    
+    // 8. Left Top Part (Z: 0.5..1.0, Y: 0..1.0)
+    // Origin (0,0,0.5). U(0,0,1) len 0.5. V(0,1,0) len 1.0.
+    vec3 p_l2 = pos + rotate_local(vec3(0,0,0.5), r);
+    vec3 u_l2 = rotate_vector(vec3(0,0,1), r);
+    vec3 v_l2 = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_l2, u_l2, v_l2, 0.5, 1.0, r_left);
+    
+    // 9. Right Bottom Part
+    // Origin (1,0,0). U(0,0,1) len 0.5. V(0,1,0) len 0.5.
+    vec3 p_r1 = pos + rotate_local(vec3(1,0,0), r);
+    vec3 u_r1 = rotate_vector(vec3(0,0,1), r);
+    vec3 v_r1 = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_r1, u_r1, v_r1, 0.5, 0.5, r_right);
+    
+    // 10. Right Top Part
+    // Origin (1,0,0.5). U(0,0,1) len 0.5. V(0,1,0) len 1.0.
+    vec3 p_r2 = pos + rotate_local(vec3(1,0,0.5), r);
+    vec3 u_r2 = rotate_vector(vec3(0,0,1), r);
+    vec3 v_r2 = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_r2, u_r2, v_r2, 0.5, 1.0, r_right);
+}
+
 void main() {
     ivec3 id = ivec3(gl_GlobalInvocationID.xyz);
     if (id.x >= voxel_grid_size_uniform.x || id.y >= voxel_grid_size_uniform.y || id.z >= voxel_grid_size_uniform.z) return;
@@ -314,6 +410,12 @@ void main() {
     
     if (type == 3u) {
         add_sphere(pos);
+        return;
+    }
+    
+    if (type == 4u) {
+        uint meta = uint(round(texelFetch(voxel_meta, id, 0).r));
+        add_stairs(pos, meta);
         return;
     }
     
