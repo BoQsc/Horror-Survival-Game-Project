@@ -78,10 +78,10 @@ func _process(_delta):
 		return
 	update_chunks()
 
-func modify_terrain(pos: Vector3, radius: float, value: float):
-	# Calculate bounds of the modification sphere
-	var min_pos = pos - Vector3(radius, 0, radius)
-	var max_pos = pos + Vector3(radius, 0, radius)
+func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0):
+	# Calculate bounds of the modification sphere/box
+	var min_pos = pos - Vector3(radius, radius, radius)
+	var max_pos = pos + Vector3(radius, radius, radius)
 	
 	var min_chunk_x = floor(min_pos.x / CHUNK_STRIDE)
 	var max_chunk_x = floor(max_pos.x / CHUNK_STRIDE)
@@ -106,7 +106,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float):
 						"pos": chunk_pos,
 						"brush_pos": pos,
 						"radius": radius,
-						"value": value
+						"value": value,
+						"shape": shape
 					}
 					tasks_to_add.append(task)
 	
@@ -302,12 +303,38 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
 	
-	var push_data = PackedFloat32Array([
-		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
-		task.brush_pos.x, task.brush_pos.y, task.brush_pos.z, task.radius,
-		task.value, 0.0, 0.0, 0.0
-	])
-	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
+	# Push Constants:
+	# 0-16: chunk_offset (vec4)
+	# 16-32: brush_pos (vec4: xyz + radius)
+	# 32-36: brush_value (float)
+	# 36-40: shape_type (int)
+	# 40-48: padding (vec2)
+	
+	var push_data = PackedByteArray()
+	push_data.resize(48) # 12 floats/ints
+	
+	var buffer = StreamPeerBuffer.new()
+	buffer.data_array = push_data
+	
+	# Chunk Offset
+	buffer.put_float(chunk_pos.x)
+	buffer.put_float(chunk_pos.y)
+	buffer.put_float(chunk_pos.z)
+	buffer.put_float(0.0)
+	
+	# Brush Pos + Radius
+	buffer.put_float(task.brush_pos.x)
+	buffer.put_float(task.brush_pos.y)
+	buffer.put_float(task.brush_pos.z)
+	buffer.put_float(task.radius)
+	
+	# Value + Shape
+	buffer.put_float(task.value)
+	buffer.put_32(task.get("shape", 0)) # Int
+	buffer.put_float(0.0) # Padding
+	buffer.put_float(0.0) # Padding
+	
+	rd.compute_list_set_push_constant(list, buffer.data_array, buffer.data_array.size())
 	
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()

@@ -14,6 +14,8 @@ layout(push_constant) uniform PushConstants {
     vec4 chunk_offset;   // .xyz
     vec4 brush_pos;      // .xyz, .w = radius
     float brush_value;   // +1 to fill, -1 to dig
+    int shape_type;      // 0 = Sphere, 1 = Box
+    vec2 _padding;
 } params;
 
 void main() {
@@ -26,28 +28,30 @@ void main() {
     vec3 local_pos = vec3(id);
     vec3 world_pos = local_pos + params.chunk_offset.xyz;
     
-    float dist = distance(world_pos, params.brush_pos.xyz);
-    float radius = params.brush_pos.w;
+    float weight = 0.0;
     
-    if (dist < radius) {
-        // Simple hard brush or smooth? Let's do simple addition/subtraction
-        // Standard: density < 0 is air, > 0 is ground? 
-        // In our gen_density: return world_pos.y - terrain_height;
-        // So y > height (air) is positive. y < height (ground) is negative.
-        // Wait, if y=10, height=5 -> 5 (Air). if y=0, height=5 -> -5 (Ground).
-        // ISO_LEVEL is 0.0.
-        // Digging (removing ground) means making values POSITIVE (towards air).
-        // Placing (adding ground) means making values NEGATIVE.
+    if (params.shape_type == 1) {
+        // Box Shape (Hard edges)
+        // Check if point is inside the box defined by center brush_pos.xyz and radius brush_pos.w
+        vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
+        float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
         
-        // Smooth falloff
-        float falloff = 1.0 - (dist / radius);
-        falloff = clamp(falloff, 0.0, 1.0);
+        if (max_dist <= params.brush_pos.w) {
+            // Hard Set for Blocky Mode
+            density_buffer.values[index] = params.brush_value;
+        }
+    } else {
+        // Sphere Shape (Smooth falloff)
+        float dist = distance(world_pos, params.brush_pos.xyz);
+        float radius = params.brush_pos.w;
         
-        // If brush_value > 0 (dig), we add to density.
-        // If brush_value < 0 (place), we subtract.
-        
-        // Apply
-        float modification = params.brush_value * falloff * 1.0; // Speed factor
-        density_buffer.values[index] += modification;
+        if (dist < radius) {
+            float falloff = 1.0 - (dist / radius);
+            weight = clamp(falloff, 0.0, 1.0);
+            
+             // Accumulate for Smooth Mode
+            float modification = params.brush_value * weight * 1.0;
+            density_buffer.values[index] += modification;
+        }
     }
 }

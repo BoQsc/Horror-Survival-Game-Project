@@ -53,7 +53,7 @@ mesh = SubResource("PlaneMesh_water")
 surface_material_override/0 = SubResource("StandardMaterial3D_water")
 
 [node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 30, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 127.55815, 0)
 script = ExtResource("1_player")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
