@@ -17,15 +17,67 @@ var current_rotation: int = 0
 var current_voxel_pos: Vector3
 var current_remove_voxel_pos: Vector3
 var has_target: bool = false
+var voxel_grid_visualizer: MeshInstance3D
 
 func _ready():
+	# Create Grid Visualizer
+	voxel_grid_visualizer = MeshInstance3D.new()
+	var mesh = ImmediateMesh.new()
+	voxel_grid_visualizer.mesh = mesh
+	voxel_grid_visualizer.material_override = StandardMaterial3D.new()
+	voxel_grid_visualizer.material_override.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	voxel_grid_visualizer.material_override.albedo_color = Color(1, 1, 1, 0.2)
+	voxel_grid_visualizer.material_override.vertex_color_use_as_albedo = true
+	get_tree().root.add_child.call_deferred(voxel_grid_visualizer)
+	
 	update_ui()
 
 func _process(_delta):
 	if current_mode == Mode.BUILDING or (current_mode == Mode.TERRAIN and terrain_blocky_mode):
 		update_selection_box()
+		update_grid_visualizer()
 	else:
 		selection_box.visible = false
+		voxel_grid_visualizer.visible = false
+
+func update_grid_visualizer():
+	if not has_target or not terrain_blocky_mode:
+		voxel_grid_visualizer.visible = false
+		return
+
+	voxel_grid_visualizer.visible = true
+	var mesh = voxel_grid_visualizer.mesh as ImmediateMesh
+	mesh.clear_surfaces()
+	mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	
+	# Draw a 3x3x3 grid around the target voxel
+	var center = floor(current_voxel_pos)
+	var radius = 1
+	var step = 1.0
+	var color = Color(0.5, 0.5, 0.5, 0.3)
+	
+	for x in range(-radius, radius + 2):
+		for y in range(-radius, radius + 2):
+			# Z lines
+			mesh.surface_set_color(color)
+			mesh.surface_add_vertex(center + Vector3(x, y, -radius))
+			mesh.surface_add_vertex(center + Vector3(x, y, radius + 1))
+			
+	for x in range(-radius, radius + 2):
+		for z in range(-radius, radius + 2):
+			# Y lines
+			mesh.surface_set_color(color)
+			mesh.surface_add_vertex(center + Vector3(x, -radius, z))
+			mesh.surface_add_vertex(center + Vector3(x, radius + 1, z))
+			
+	for y in range(-radius, radius + 2):
+		for z in range(-radius, radius + 2):
+			# X lines
+			mesh.surface_set_color(color)
+			mesh.surface_add_vertex(center + Vector3(-radius, y, z))
+			mesh.surface_add_vertex(center + Vector3(radius + 1, y, z))
+			
+	mesh.surface_end()
 
 func _unhandled_input(event):
 	if event.is_action_pressed("ui_focus_next"): # Tab
@@ -161,13 +213,13 @@ func handle_terrain_input(event):
 				# Target the voxel inside the terrain
 				var p = hit.position - hit.normal * 0.1
 				target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
-				val = 1.0 # Dig (Positive density)
+				val = 0.5 # Dig (Positive density, 0.5 matches natural SDF slope)
 				
 			elif event.button_index == MOUSE_BUTTON_RIGHT: # Place
 				# Target the voxel outside the terrain
 				var p = hit.position + hit.normal * 0.1
 				target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
-				val = -1.0 # Place (Negative density)
+				val = -0.5 # Place (Negative density)
 			
 			if target_pos:
 				# Radius 0.6 ensures we cover the 0.5 extent from center (total size 1.0) plus margin
