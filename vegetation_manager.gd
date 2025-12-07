@@ -35,14 +35,15 @@ func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
 	
-	for x in range(chunk_stride):
-		for z in range(chunk_stride):
+	# Reduced density: Step by 4 instead of 1
+	for x in range(0, chunk_stride, 4):
+		for z in range(0, chunk_stride, 4):
 			var gx = chunk_origin_x + x
 			var gz = chunk_origin_z + z
 			
 			# 1. Check Forest Mask
 			var noise_val = forest_noise.get_noise_2d(gx, gz)
-			if noise_val < 0.2: # Only plant if noise > 0.2
+			if noise_val < 0.4: # Higher threshold = sparser forests
 				continue
 				
 			# 2. Get Height
