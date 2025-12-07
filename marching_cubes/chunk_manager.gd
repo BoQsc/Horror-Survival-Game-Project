@@ -78,11 +78,12 @@ func _ready():
 	material_terrain.set_shader_parameter("global_snow_amount", 0.0)
 	
 	# Setup Water Material
-	material_water = StandardMaterial3D.new()
-	material_water.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material_water.albedo_color = Color(0.0, 0.3, 0.8, 0.6)
-	material_water.metallic = 0.5
-	material_water.roughness = 0.1
+	material_water = ShaderMaterial.new()
+	material_water.shader = load("res://marching_cubes/water.gdshader")
+	material_water.set_shader_parameter("albedo", Color(0.0, 0.3, 0.8))
+	material_water.set_shader_parameter("albedo_deep", Color(0.0, 0.1, 0.2))
+	material_water.set_shader_parameter("beer_factor", 0.15)
+	material_water.set_shader_parameter("foam_level", 0.8)
 	
 	compute_thread = Thread.new()
 	compute_thread.start(_thread_function)

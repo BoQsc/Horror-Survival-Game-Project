@@ -51,6 +51,13 @@ func check_swimming_state():
 	var was_swimming = is_swimming
 	is_swimming = water_overlap_count > 0
 	
+	if is_swimming != was_swimming:
+		# Toggle underwater effect
+		# We assume UI is sibling of Player in MainGame
+		var ui = get_node_or_null("../UI/UnderwaterEffect")
+		if ui:
+			ui.visible = is_swimming
+			
 	if is_swimming and not was_swimming:
 		# Entered water
 		velocity.y *= 0.1 # Dampen entry impact
