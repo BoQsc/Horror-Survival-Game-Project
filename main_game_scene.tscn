@@ -5,6 +5,7 @@
 [ext_resource type="Script" uid="uid://cje44f7r08sot" path="res://player_interaction.gd" id="3_interact"]
 [ext_resource type="Script" uid="uid://c1xwl5r0i1xs2" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
+[ext_resource type="Script" path="res://vegetation_manager.gd" id="6_vegetation"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -114,6 +115,10 @@ color = Color(0, 0.25098, 0.443137, 0.392157)
 [node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer")]
 script = ExtResource("4_terrain")
 viewer = NodePath("../Player")
+
+[node name="VegetationManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
+script = ExtResource("6_vegetation")
+terrain_manager = NodePath("../TerrainManager")
 
 [node name="BuildingManager" type="Node3D" parent="."]
 script = ExtResource("5_buildings")
