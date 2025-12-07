@@ -53,7 +53,7 @@ var active_chunks: Dictionary = {}
 # Time-budgeted node creation - prevents stutters from multiple chunks completing at once
 var pending_nodes: Array[Dictionary] = []  # Queue of completed chunks waiting for node creation
 var pending_nodes_mutex: Mutex
-var frame_budget_ms: float = 4.0  # Max ms to spend on node creation per frame 
+var frame_budget_ms: float = 1.0  # Max ms to spend on node creation per frame 
 
 func _ready():
 	mutex = Mutex.new()
