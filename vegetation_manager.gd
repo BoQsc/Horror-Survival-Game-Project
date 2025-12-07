@@ -3,14 +3,16 @@ extends Node3D
 signal tree_chopped(world_position: Vector3)
 
 @export var terrain_manager: Node3D
-@export var tree_model_path: String = "res://models/rigged_animated_cinematic_quality_tree_4.glb"
+@export var tree_model_path: String = "res://models/pine_tree_-_ps1_low_poly.glb"
 @export var tree_scale: float = 1.0
-@export var tree_y_offset: float = -3.0
+@export var tree_y_offset: float = 0.0  # GLB model has Y=11.76 origin built-in
+@export var tree_rotation_fix: Vector3 = Vector3.ZERO
 @export var collision_radius: float = 0.5
 @export var collision_height: float = 8.0
 @export var collider_distance: float = 30.0  # Only trees within this distance get colliders
 
 var tree_mesh: Mesh
+var tree_base_transform: Transform3D = Transform3D()  # Orientation fix from GLB
 var forest_noise: FastNoiseLite
 var player: Node3D
 
@@ -26,12 +28,15 @@ var collider_pool: Array[StaticBody3D] = []
 const MAX_ACTIVE_COLLIDERS = 50  # Limit active colliders for performance
 
 func _ready():
-	# PERFORMANCE TEST: Use simple procedural tree instead of high-poly GLB
-	tree_mesh = create_basic_tree_mesh()
-	# tree_mesh = load_tree_mesh_from_glb(tree_model_path)
-	# if tree_mesh == null:
-	# 	push_warning("Failed to load tree model, falling back to basic mesh")
-	# 	tree_mesh = create_basic_tree_mesh()
+	# Load tree mesh from GLB model with its orientation transform
+	var glb_result = load_tree_mesh_from_glb(tree_model_path)
+	if glb_result.mesh:
+		tree_mesh = glb_result.mesh
+		tree_base_transform = glb_result.transform
+		tree_base_transform.origin = Vector3.ZERO  # Remove position, keep rotation/scale
+	else:
+		push_warning("Failed to load tree model, falling back to basic mesh")
+		tree_mesh = create_basic_tree_mesh()
 	
 	forest_noise = FastNoiseLite.new()
 	forest_noise.frequency = 0.05
@@ -90,10 +95,43 @@ func _physics_process(_delta):
 
 var collider_update_counter: int = 0
 
+func _process(delta):
+	var varied = false
+	if Input.is_key_pressed(KEY_R):
+		tree_rotation_fix.x += delta * 2.0
+		varied = true
+	if Input.is_key_pressed(KEY_T):
+		tree_rotation_fix.x -= delta * 2.0
+		varied = true
+	if Input.is_key_pressed(KEY_F):
+		tree_rotation_fix.z += delta * 2.0
+		varied = true
+	if Input.is_key_pressed(KEY_G):
+		tree_rotation_fix.z -= delta * 2.0
+		varied = true
+	if Input.is_key_pressed(KEY_Y):
+		tree_y_offset += delta * 5.0
+		varied = true
+	if Input.is_key_pressed(KEY_H):
+		tree_y_offset -= delta * 5.0
+		varied = true
+	if Input.is_key_pressed(KEY_J):
+		tree_scale += delta * 0.5
+		varied = true
+	if Input.is_key_pressed(KEY_K):
+		tree_scale -= delta * 0.5
+		varied = true
+		
+	if varied:
+		print("Tree Settings: RotFix=", tree_rotation_fix, " YOffset=", tree_y_offset, " Scale=", tree_scale)
+		_update_all_tree_transforms()
+
+
 func _update_proximity_colliders():
 	if not player:
 		player = get_tree().get_first_node_in_group("player")
 		if not player:
+			print("VegetationManager: Player not found in 'player' group!")
 			return
 	
 	var player_pos = player.global_position
@@ -177,6 +215,7 @@ func _get_collider_from_pool() -> StaticBody3D:
 	# Create new collider
 	var body = StaticBody3D.new()
 	body.add_to_group("trees")
+	body.collision_layer = 1  # Layer 1 - same as terrain
 	
 	var shape_node = CollisionShape3D.new()
 	var shape = CylinderShape3D.new()
@@ -184,6 +223,19 @@ func _get_collider_from_pool() -> StaticBody3D:
 	shape.height = collision_height
 	shape_node.shape = shape
 	body.add_child(shape_node)
+	
+	# DEBUG: Add visible mesh to see collider position
+	var mesh_instance = MeshInstance3D.new()
+	var cylinder_mesh = CylinderMesh.new()
+	cylinder_mesh.top_radius = collision_radius
+	cylinder_mesh.bottom_radius = collision_radius
+	cylinder_mesh.height = collision_height
+	mesh_instance.mesh = cylinder_mesh
+	var debug_mat = StandardMaterial3D.new()
+	debug_mat.albedo_color = Color(1, 0, 0, 0.5)
+	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mesh_instance.material_override = debug_mat
+	body.add_child(mesh_instance)
 	
 	add_child(body)
 	return body
@@ -244,8 +296,13 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			var final_scale = tree_scale * random_scale
 			var rotation_angle = randf() * TAU
 			
-			var t = Transform3D()
+			# Start with GLB's base transform (includes orientation fix)
+			var t = tree_base_transform
+			# Apply manual rotation fix
+			t.basis = t.basis * Basis.from_euler(tree_rotation_fix)
+			# Apply random Y rotation
 			t = t.rotated(Vector3.UP, rotation_angle)
+			# Apply scaling
 			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
 			t.origin = local_pos
 			
@@ -255,10 +312,14 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			tree_list.append({
 				"world_pos": world_pos,
 				"local_pos": local_pos,
+				"hit_pos": hit_pos, # Raw ground position (World)
+				"rotation_angle": rotation_angle,
+				"random_scale_factor": random_scale,
 				"index": tree_index,
 				"alive": true,
 				"scale": final_scale
 			})
+
 	
 	if valid_transforms.size() > 0:
 		mmi.multimesh.instance_count = valid_transforms.size()
@@ -271,6 +332,68 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"trees": tree_list,
 		"chunk_node": chunk_node
 	}
+
+func _update_all_tree_transforms():
+	for coord in chunk_tree_data:
+		var data = chunk_tree_data[coord]
+		var chunk_node = data.chunk_node
+		if not is_instance_valid(chunk_node):
+			continue
+			
+		var chunk_world_pos = chunk_node.global_position
+		var mmi = data.multimesh as MultiMeshInstance3D
+		var trees = data.trees
+		
+		for tree in trees:
+			if not tree.alive:
+				continue
+				
+			# Recalculate using stored raw values and current settings
+			var hit_pos = tree.get("hit_pos", tree.world_pos) # Fallback if missing
+			if not tree.has("hit_pos"):
+				# Backwards compatibility: try to infer hit_pos?
+				# For now assume world_pos - old_offset. But we don't know old offset.
+				# Just use world_pos - vector3(0, tree_y_offset, 0)
+				hit_pos = tree.world_pos # Rough approx
+				hit_pos.y -= tree_y_offset # Remove current offset
+			
+			var local_pos = hit_pos - chunk_world_pos
+			local_pos.y += tree_y_offset
+			
+			var world_pos = hit_pos
+			world_pos.y += tree_y_offset
+			
+			# Update compiled values in dict
+			tree.local_pos = local_pos
+			tree.world_pos = world_pos
+			
+			var random_scale = tree.get("random_scale_factor", 1.0)
+			var final_scale = tree_scale * random_scale
+			tree.scale = final_scale
+			
+			var rotation_angle = tree.get("rotation_angle", 0.0)
+			
+			# Rebuild transform
+			var t = tree_base_transform
+			t.basis = t.basis * Basis.from_euler(tree_rotation_fix)
+			t = t.rotated(Vector3.UP, rotation_angle)
+			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
+			t.origin = local_pos
+			
+			mmi.multimesh.set_instance_transform(tree.index, t)
+			
+			# Update collider if active
+			var key = _tree_key(coord, tree.index)
+			if active_colliders.has(key):
+				var collider = active_colliders[key]
+				collider.global_position = world_pos
+				collider.global_position.y += (collision_height * final_scale) / 2.0
+				
+				# Update shape size
+				var shape = collider.get_child(0).shape as CylinderShape3D
+				shape.radius = collision_radius * final_scale
+				shape.height = collision_height * final_scale
+
 
 func chop_tree_by_collider(collider: Node) -> bool:
 	if not collider.has_meta("tree_coord"):
@@ -306,31 +429,34 @@ func chop_tree_by_collider(collider: Node) -> bool:
 	
 	return false
 
-func load_tree_mesh_from_glb(path: String) -> Mesh:
+func load_tree_mesh_from_glb(path: String) -> Dictionary:
 	var scene = load(path)
 	if scene == null:
 		push_error("Could not load GLB: " + path)
-		return null
+		return { "mesh": null, "transform": Transform3D() }
 	
 	var instance = scene.instantiate()
-	var mesh = find_mesh_in_node(instance)
+	# Need to add to tree temporarily to get global_transform
+	add_child(instance)
+	var result = find_mesh_and_transform_in_node(instance)
 	instance.queue_free()
 	
-	if mesh:
+	if result.mesh:
 		print("Loaded tree mesh from: ", path)
+		print("Mesh transform: ", result.transform)
 	
-	return mesh
+	return result
 
-func find_mesh_in_node(node: Node) -> Mesh:
+func find_mesh_and_transform_in_node(node: Node) -> Dictionary:
 	if node is MeshInstance3D:
-		return node.mesh
+		return { "mesh": node.mesh, "transform": node.global_transform }
 	
 	for child in node.get_children():
-		var mesh = find_mesh_in_node(child)
-		if mesh:
-			return mesh
+		var result = find_mesh_and_transform_in_node(child)
+		if result.mesh:
+			return result
 	
-	return null
+	return { "mesh": null, "transform": Transform3D() }
 
 func create_basic_tree_mesh() -> Mesh:
 	var st = SurfaceTool.new()
