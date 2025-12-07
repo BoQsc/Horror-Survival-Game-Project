@@ -12,6 +12,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var viewer: Node3D
 @export var render_distance: int = 5
 @export var terrain_height: float = 10.0
+@export var water_level: float = 11.0 # Default water level
 @export var noise_frequency: float = 0.1
 
 # Threading
@@ -29,13 +30,18 @@ var pending_batches: Dictionary = {}
 
 # Shaders (SPIR-V Data)
 var shader_gen_spirv: RDShaderSPIRV
+var shader_gen_water_spirv: RDShaderSPIRV # New
 var shader_mod_spirv: RDShaderSPIRV
 var shader_mesh_spirv: RDShaderSPIRV
 
-var terrain_material: Material
+var material_terrain: Material
+var material_water: Material
+
 class ChunkData:
-	var node: Node3D
-	var density_buffer: RID
+	var node_terrain: Node3D
+	var node_water: Node3D
+	var density_buffer_terrain: RID
+	var density_buffer_water: RID
 	
 var active_chunks: Dictionary = {} 
 
@@ -55,20 +61,28 @@ func _ready():
 
 	# Load shaders (Data only, safe on Main Thread)
 	shader_gen_spirv = load("res://marching_cubes/gen_density.glsl").get_spirv()
+	shader_gen_water_spirv = load("res://marching_cubes/gen_water_density.glsl").get_spirv() # New
 	shader_mod_spirv = load("res://marching_cubes/modify_density.glsl").get_spirv()
 	shader_mesh_spirv = load("res://marching_cubes/marching_cubes.glsl").get_spirv()
 	
 	# Setup Terrain Shader Material
 	var shader = load("res://marching_cubes/terrain.gdshader")
-	terrain_material = ShaderMaterial.new()
-	terrain_material.shader = shader
+	material_terrain = ShaderMaterial.new()
+	material_terrain.shader = shader
 	
-	terrain_material.set_shader_parameter("texture_grass", load("res://marching_cubes/green-grass-texture.jpg"))
-	terrain_material.set_shader_parameter("texture_rock", load("res://marching_cubes/rocky-texture.jpg"))
-	terrain_material.set_shader_parameter("texture_sand", load("res://marching_cubes/sand-texture.jpg"))
-	terrain_material.set_shader_parameter("texture_snow", load("res://marching_cubes/snow-texture.jpg"))
-	terrain_material.set_shader_parameter("uv_scale", 0.5) 
-	terrain_material.set_shader_parameter("global_snow_amount", 0.0)
+	material_terrain.set_shader_parameter("texture_grass", load("res://marching_cubes/green-grass-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_rock", load("res://marching_cubes/rocky-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_sand", load("res://marching_cubes/sand-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_snow", load("res://marching_cubes/snow-texture.jpg"))
+	material_terrain.set_shader_parameter("uv_scale", 0.5) 
+	material_terrain.set_shader_parameter("global_snow_amount", 0.0)
+	
+	# Setup Water Material
+	material_water = StandardMaterial3D.new()
+	material_water.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material_water.albedo_color = Color(0.0, 0.3, 0.8, 0.6)
+	material_water.metallic = 0.5
+	material_water.roughness = 0.1
 	
 	compute_thread = Thread.new()
 	compute_thread.start(_thread_function)
@@ -78,7 +92,8 @@ func _process(_delta):
 		return
 	update_chunks()
 
-func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0):
+# Updated to accept layer (0=Terrain, 1=Water)
+func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0):
 	# Calculate bounds of the modification sphere/box
 	var min_pos = pos - Vector3(radius, radius, radius)
 	var max_pos = pos + Vector3(radius, radius, radius)
@@ -96,20 +111,24 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0):
 			
 			if active_chunks.has(coord):
 				var data = active_chunks[coord]
-				if data != null and data.density_buffer.is_valid():
-					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+				if data != null:
+					var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
 					
-					var task = {
-						"type": "modify",
-						"coord": coord,
-						"rid": data.density_buffer,
-						"pos": chunk_pos,
-						"brush_pos": pos,
-						"radius": radius,
-						"value": value,
-						"shape": shape
-					}
-					tasks_to_add.append(task)
+					if target_buffer.is_valid():
+						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+						
+						var task = {
+							"type": "modify",
+							"coord": coord,
+							"rid": target_buffer,
+							"pos": chunk_pos,
+							"brush_pos": pos,
+							"radius": radius,
+							"value": value,
+							"shape": shape,
+							"layer": layer # Pass layer info
+						}
+						tasks_to_add.append(task)
 	
 	if tasks_to_add.size() > 0:
 		modification_batch_id += 1
@@ -160,15 +179,20 @@ func update_chunks():
 		
 		var data = active_chunks[coord]
 		if data: 
-			if data.node:
-				data.node.queue_free()
+			if data.node_terrain: data.node_terrain.queue_free()
+			if data.node_water: data.node_water.queue_free()
 			
-			if data.density_buffer.is_valid():
-				var task = { "type": "free", "rid": data.density_buffer }
-				mutex.lock()
-				task_queue.append(task)
-				mutex.unlock()
-				semaphore.post()
+			var tasks = []
+			if data.density_buffer_terrain.is_valid():
+				tasks.append({ "type": "free", "rid": data.density_buffer_terrain })
+			if data.density_buffer_water.is_valid():
+				tasks.append({ "type": "free", "rid": data.density_buffer_water })
+				
+			mutex.lock()
+			for t in tasks: task_queue.append(t)
+			mutex.unlock()
+			
+			for t in tasks: semaphore.post()
 		
 		active_chunks.erase(coord)
 
@@ -204,10 +228,12 @@ func _thread_function():
 		return
 
 	var sid_gen = rd.shader_create_from_spirv(shader_gen_spirv)
+	var sid_gen_water = rd.shader_create_from_spirv(shader_gen_water_spirv)
 	var sid_mod = rd.shader_create_from_spirv(shader_mod_spirv)
 	var sid_mesh = rd.shader_create_from_spirv(shader_mesh_spirv)
 	
 	var pipe_gen = rd.compute_pipeline_create(sid_gen)
+	var pipe_gen_water = rd.compute_pipeline_create(sid_gen_water)
 	var pipe_mod = rd.compute_pipeline_create(sid_mod)
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 	
@@ -236,7 +262,7 @@ func _thread_function():
 		mutex.unlock()
 		
 		if task.type == "generate":
-			process_generate(rd, task, sid_gen, sid_mesh, pipe_gen, pipe_mesh, vertex_buffer, counter_buffer)
+			process_generate(rd, task, sid_gen, sid_gen_water, sid_mesh, pipe_gen, pipe_gen_water, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "modify":
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
@@ -247,51 +273,69 @@ func _thread_function():
 	rd.free_rid(vertex_buffer)
 	rd.free_rid(counter_buffer)
 	rd.free_rid(pipe_gen)
+	rd.free_rid(pipe_gen_water)
 	rd.free_rid(pipe_mod)
 	rd.free_rid(pipe_mesh)
 	rd.free_rid(sid_gen)
+	rd.free_rid(sid_gen_water)
 	rd.free_rid(sid_mod)
 	rd.free_rid(sid_mesh)
 	
 	rd.free()
 
-func process_generate(rd: RenderingDevice, task, sid_gen, sid_mesh, pipe_gen, pipe_mesh, vertex_buffer, counter_buffer):
+func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mesh, pipe_gen, pipe_gen_water, pipe_mesh, vertex_buffer, counter_buffer):
 	var chunk_pos = task.pos
-	
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
-	var density_buffer = rd.storage_buffer_create(density_bytes)
 	
-	var u_density = RDUniform.new()
-	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_density.binding = 0
-	u_density.add_id(density_buffer)
+	# 1. Terrain Generation
+	var dens_buf_terrain = rd.storage_buffer_create(density_bytes)
+	var u_density_t = RDUniform.new()
+	u_density_t.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_density_t.binding = 0
+	u_density_t.add_id(dens_buf_terrain)
 	
-	var set_gen = rd.uniform_set_create([u_density], sid_gen, 0)
+	var set_gen_t = rd.uniform_set_create([u_density_t], sid_gen, 0)
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen)
-	rd.compute_list_bind_uniform_set(list, set_gen, 0)
-	
-	var push_data = PackedFloat32Array([
-		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, 
-		noise_frequency, terrain_height, 0.0, 0.0
-	])
-	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
-	
+	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
+	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, terrain_height, 0.0, 0.0])
+	rd.compute_list_set_push_constant(list, push_data_t.to_byte_array(), push_data_t.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
-	
 	rd.submit()
 	rd.sync()
+	if set_gen_t.is_valid(): rd.free_rid(set_gen_t)
+
+	var mesh_terrain = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, material_terrain, vertex_buffer, counter_buffer)
+
+	# 2. Water Generation
+	var dens_buf_water = rd.storage_buffer_create(density_bytes)
+	var u_density_w = RDUniform.new()
+	u_density_w.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_density_w.binding = 0
+	u_density_w.add_id(dens_buf_water)
 	
-	if set_gen.is_valid(): rd.free_rid(set_gen)
+	var set_gen_w = rd.uniform_set_create([u_density_w], sid_gen_water, 0)
+	list = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(list, pipe_gen_water)
+	rd.compute_list_bind_uniform_set(list, set_gen_w, 0)
+	# Reuse push constant structure but pass water_level as terrain_height
+	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, 0.0, water_level, 0.0, 0.0])
+	rd.compute_list_set_push_constant(list, push_data_w.to_byte_array(), push_data_w.size() * 4)
+	rd.compute_list_dispatch(list, 9, 9, 9)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
+	if set_gen_w.is_valid(): rd.free_rid(set_gen_w)
 	
-	var mesh = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, terrain_material, vertex_buffer, counter_buffer)
-	
-	call_deferred("complete_generation", task.coord, mesh, density_buffer)
+	var mesh_water = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, material_water, vertex_buffer, counter_buffer)
+
+	call_deferred("complete_generation", task.coord, mesh_terrain, dens_buf_terrain, mesh_water, dens_buf_water)
 
 func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
 	var density_buffer = task.rid
 	var chunk_pos = task.pos
+	var layer = task.get("layer", 0)
 	
 	var u_density = RDUniform.new()
 	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
@@ -303,66 +347,51 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
 	
-	# Push Constants:
-	# 0-16: chunk_offset (vec4)
-	# 16-32: brush_pos (vec4: xyz + radius)
-	# 32-36: brush_value (float)
-	# 36-40: shape_type (int)
-	# 40-48: padding (vec2)
-	
 	var push_data = PackedByteArray()
-	push_data.resize(48) # 12 floats/ints
-	
+	push_data.resize(48)
 	var buffer = StreamPeerBuffer.new()
 	buffer.data_array = push_data
 	
-	# Chunk Offset
 	buffer.put_float(chunk_pos.x)
 	buffer.put_float(chunk_pos.y)
 	buffer.put_float(chunk_pos.z)
 	buffer.put_float(0.0)
 	
-	# Brush Pos + Radius
 	buffer.put_float(task.brush_pos.x)
 	buffer.put_float(task.brush_pos.y)
 	buffer.put_float(task.brush_pos.z)
 	buffer.put_float(task.radius)
 	
-	# Value + Shape
 	buffer.put_float(task.value)
-	buffer.put_32(task.get("shape", 0)) # Int
-	buffer.put_float(0.0) # Padding
-	buffer.put_float(0.0) # Padding
+	buffer.put_32(task.get("shape", 0))
+	buffer.put_float(0.0)
+	buffer.put_float(0.0)
 	
 	rd.compute_list_set_push_constant(list, buffer.data_array, buffer.data_array.size())
-	
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
-	
 	rd.submit()
 	rd.sync()
 	
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 	
-	var mesh = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, terrain_material, vertex_buffer, counter_buffer)
+	var material = material_terrain if layer == 0 else material_water
+	var mesh = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, material, vertex_buffer, counter_buffer)
 	
 	var b_id = task.get("batch_id", -1)
 	var b_count = task.get("batch_count", 1)
 	
-	call_deferred("complete_modification", task.coord, mesh, b_id, b_count)
+	call_deferred("complete_modification", task.coord, mesh, layer, b_id, b_count)
 
 func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
 	var st = SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	
 	st.set_material(material_instance)
-	
 	for i in range(0, data.size(), 6):
 		var v = Vector3(data[i], data[i+1], data[i+2])
 		var n = Vector3(data[i+3], data[i+4], data[i+5])
 		st.set_normal(n)
 		st.add_vertex(v)
-	
 	return st.commit()
 
 func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer):
@@ -417,34 +446,37 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk
 		var vert_floats = vert_bytes.to_float32_array()
 		mesh = build_mesh(vert_floats, material_instance)
 		
-	# Only free the uniform set (linking logic)
 	if set_mesh.is_valid(): rd.free_rid(set_mesh)
 	
 	return mesh
 
-func complete_generation(coord: Vector2i, mesh: ArrayMesh, density_buffer: RID):
-	# If we were cancelled/removed while generating
+func complete_generation(coord: Vector2i, mesh_t: ArrayMesh, dens_t: RID, mesh_w: ArrayMesh, dens_w: RID):
 	if not active_chunks.has(coord):
-		# Queue free immediately
-		var task = { "type": "free", "rid": density_buffer }
+		var tasks = []
+		tasks.append({ "type": "free", "rid": dens_t })
+		tasks.append({ "type": "free", "rid": dens_w })
 		mutex.lock()
-		task_queue.append(task)
+		for t in tasks: task_queue.append(t)
 		mutex.unlock()
-		semaphore.post()
+		for t in tasks: semaphore.post()
 		return
 		
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
-	var node = create_chunk_node(mesh, chunk_pos)
+	
+	var node_t = create_chunk_node(mesh_t, chunk_pos)
+	var node_w = create_chunk_node(mesh_w, chunk_pos, true) # True = is_water
 	
 	var data = ChunkData.new()
-	data.node = node
-	data.density_buffer = density_buffer
+	data.node_terrain = node_t
+	data.node_water = node_w
+	data.density_buffer_terrain = dens_t
+	data.density_buffer_water = dens_w
 	
 	active_chunks[coord] = data
 
-func complete_modification(coord: Vector2i, mesh: ArrayMesh, batch_id: int = -1, batch_count: int = 1):
+func complete_modification(coord: Vector2i, mesh: ArrayMesh, layer: int, batch_id: int = -1, batch_count: int = 1):
 	if batch_id == -1:
-		_apply_chunk_update(coord, mesh)
+		_apply_chunk_update(coord, mesh, layer)
 		return
 	
 	if not pending_batches.has(batch_id):
@@ -453,33 +485,40 @@ func complete_modification(coord: Vector2i, mesh: ArrayMesh, batch_id: int = -1,
 	var batch = pending_batches[batch_id]
 	batch.received += 1
 	
-	# Store update only if chunk is still relevant
 	if active_chunks.has(coord):
-		batch.updates.append({ "coord": coord, "mesh": mesh })
+		batch.updates.append({ "coord": coord, "mesh": mesh, "layer": layer })
 		
 	if batch.received >= batch.expected:
 		for update in batch.updates:
-			_apply_chunk_update(update.coord, update.mesh)
+			_apply_chunk_update(update.coord, update.mesh, update.layer)
 		pending_batches.erase(batch_id)
 
-func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh):
+func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh, layer: int):
 	if not active_chunks.has(coord):
 		return
-	
 	var data = active_chunks[coord]
-	# Update mesh
-	if data.node:
-		data.node.queue_free()
-		
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
-	data.node = create_chunk_node(mesh, chunk_pos)
+	
+	if layer == 0: # Terrain
+		if data.node_terrain: data.node_terrain.queue_free()
+		data.node_terrain = create_chunk_node(mesh, chunk_pos)
+	else: # Water
+		if data.node_water: data.node_water.queue_free()
+		data.node_water = create_chunk_node(mesh, chunk_pos, true)
 
-func create_chunk_node(mesh: ArrayMesh, position: Vector3) -> Node3D:
+func create_chunk_node(mesh: ArrayMesh, position: Vector3, is_water: bool = false) -> Node3D:
 	if mesh == null:
 		return null
 		
 	var static_body = StaticBody3D.new()
 	static_body.position = position
+	if is_water:
+		# Use a different collision layer/mask if needed, or simple ID.
+		# For now, stick to default so raycasts hit it.
+		static_body.add_to_group("water")
+	else:
+		static_body.add_to_group("terrain")
+		
 	add_child(static_body)
 	
 	var mesh_instance = MeshInstance3D.new()

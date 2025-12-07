@@ -8,7 +8,7 @@ extends Node
 @onready var selection_box: MeshInstance3D = $"../../../SelectionBox"
 @onready var player = $"../.."
 
-enum Mode { TERRAIN, BUILDING }
+enum Mode { TERRAIN, WATER, BUILDING }
 var current_mode: Mode = Mode.TERRAIN
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
@@ -33,7 +33,7 @@ func _ready():
 	update_ui()
 
 func _process(_delta):
-	if current_mode == Mode.BUILDING or (current_mode == Mode.TERRAIN and terrain_blocky_mode):
+	if current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
 	else:
@@ -110,13 +110,15 @@ func _unhandled_input(event):
 					current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
 			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-				if current_mode == Mode.TERRAIN:
+				if current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
 					handle_terrain_input(event)
 				elif current_mode == Mode.BUILDING and has_target:
 					handle_building_input(event)
 
 func toggle_mode():
 	if current_mode == Mode.TERRAIN:
+		current_mode = Mode.WATER
+	elif current_mode == Mode.WATER:
 		current_mode = Mode.BUILDING
 	else:
 		current_mode = Mode.TERRAIN
@@ -126,6 +128,9 @@ func update_ui():
 	if current_mode == Mode.TERRAIN:
 		var mode_str = "Blocky" if terrain_blocky_mode else "Smooth"
 		mode_label.text = "Mode: TERRAIN (%s)\nL-Click: Dig, R-Click: Place\n[G] Toggle Grid Mode" % mode_str
+	elif current_mode == Mode.WATER:
+		var mode_str = "Blocky" if terrain_blocky_mode else "Smooth"
+		mode_label.text = "Mode: WATER (%s)\nL-Click: Remove, R-Click: Add\n[G] Toggle Grid Mode" % mode_str
 	else:
 		var block_name = "Cube"
 		if current_block_id == 2: block_name = "Ramp"
@@ -135,16 +140,12 @@ func update_ui():
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
 
 func update_selection_box():
-	# If in Terrain Blocky mode, we only care about terrain hit
-	if current_mode == Mode.TERRAIN and terrain_blocky_mode:
-		var terrain_hit = raycast(10.0)
-		if terrain_hit:
-			# Calculate grid position for terrain
-			# Place: adjacent to face
-			# Remove: inside face
-			# But for visualization, we usually show the target.
-			# Let's assume we show the voxel being "looked at".
-			var pos = terrain_hit.position - terrain_hit.normal * 0.1 # Move slightly inside to get the voxel 'under' the surface
+	# If in Terrain/Water Blocky mode, we only care about hit
+	if (current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode:
+		var hit = raycast(10.0)
+		if hit:
+			# Calculate grid position
+			var pos = hit.position - hit.normal * 0.1 # Move slightly inside
 			var voxel_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 			
 			current_voxel_pos = voxel_pos
@@ -204,33 +205,36 @@ func update_selection_box():
 func handle_terrain_input(event):
 	var hit = raycast(100.0)
 	if hit:
+		var layer = 0 # Terrain
+		if current_mode == Mode.WATER:
+			layer = 1
+			
 		if terrain_blocky_mode:
 			# Blocky interaction
 			var target_pos
 			var val = 0.0
 			
-			if event.button_index == MOUSE_BUTTON_LEFT: # Dig
+			if event.button_index == MOUSE_BUTTON_LEFT: # Dig / Remove
 				# Target the voxel inside the terrain
 				var p = hit.position - hit.normal * 0.1
 				target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
-				val = 0.5 # Dig (Positive density, 0.5 matches natural SDF slope)
+				val = 0.5 # Dig (Positive density)
 				
-			elif event.button_index == MOUSE_BUTTON_RIGHT: # Place
+			elif event.button_index == MOUSE_BUTTON_RIGHT: # Place / Add
 				# Target the voxel outside the terrain
 				var p = hit.position + hit.normal * 0.1
 				target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 				val = -0.5 # Place (Negative density)
 			
 			if target_pos:
-				# Radius 0.6 ensures we cover the 0.5 extent from center (total size 1.0) plus margin
-				terrain_manager.modify_terrain(target_pos, 0.6, val, 1) # Shape 1 = Box
+				terrain_manager.modify_terrain(target_pos, 0.6, val, 1, layer) # Shape 1 = Box
 				
 		else:
 			# Smooth interaction
 			if event.button_index == MOUSE_BUTTON_LEFT:
-				terrain_manager.modify_terrain(hit.position, 4.0, 1.0, 0) # Dig
+				terrain_manager.modify_terrain(hit.position, 4.0, 1.0, 0, layer) # Dig
 			elif event.button_index == MOUSE_BUTTON_RIGHT:
-				terrain_manager.modify_terrain(hit.position, 4.0, -1.0, 0) # Place
+				terrain_manager.modify_terrain(hit.position, 4.0, -1.0, 0, layer) # Place
 
 func handle_building_input(event):
 	# current_voxel_pos is the GHOST block (Placement Target)
