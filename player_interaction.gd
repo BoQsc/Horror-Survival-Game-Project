@@ -2,14 +2,15 @@ extends Node
 
 @export var terrain_manager: Node3D
 @export var building_manager: Node3D
+@export var vegetation_manager: Node3D
 
 @onready var mode_label: Label = $"../../../UI/ModeLabel"
 @onready var camera: Camera3D = $".."
 @onready var selection_box: MeshInstance3D = $"../../../SelectionBox"
 @onready var player = $"../.."
 
-enum Mode { TERRAIN, WATER, BUILDING }
-var current_mode: Mode = Mode.TERRAIN
+enum Mode { PLAYING, TERRAIN, WATER, BUILDING }
+var current_mode: Mode = Mode.PLAYING
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
 var current_rotation: int = 0
@@ -33,7 +34,11 @@ func _ready():
 	update_ui()
 
 func _process(_delta):
-	if current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
+	if current_mode == Mode.PLAYING:
+		# No selection box in playing mode
+		selection_box.visible = false
+		voxel_grid_visualizer.visible = false
+	elif current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
 	else:
@@ -110,28 +115,34 @@ func _unhandled_input(event):
 					current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
 			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-				if current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
+				if current_mode == Mode.PLAYING:
+					handle_playing_input(event)
+				elif current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
 					handle_terrain_input(event)
 				elif current_mode == Mode.BUILDING and has_target:
 					handle_building_input(event)
 
 func toggle_mode():
-	if current_mode == Mode.TERRAIN:
+	if current_mode == Mode.PLAYING:
+		current_mode = Mode.TERRAIN
+	elif current_mode == Mode.TERRAIN:
 		current_mode = Mode.WATER
 	elif current_mode == Mode.WATER:
 		current_mode = Mode.BUILDING
 	else:
-		current_mode = Mode.TERRAIN
+		current_mode = Mode.PLAYING
 	update_ui()
 
 func update_ui():
-	if current_mode == Mode.TERRAIN:
+	if current_mode == Mode.PLAYING:
+		mode_label.text = "Mode: PLAYING\nL-Click: Interact/Chop\n[TAB] Switch Mode"
+	elif current_mode == Mode.TERRAIN:
 		var mode_str = "Blocky" if terrain_blocky_mode else "Smooth"
 		mode_label.text = "Mode: TERRAIN (%s)\nL-Click: Dig, R-Click: Place\n[G] Toggle Grid Mode" % mode_str
 	elif current_mode == Mode.WATER:
 		var mode_str = "Blocky" if terrain_blocky_mode else "Smooth"
 		mode_label.text = "Mode: WATER (%s)\nL-Click: Remove, R-Click: Add\n[G] Toggle Grid Mode" % mode_str
-	else:
+	elif current_mode == Mode.BUILDING:
 		var block_name = "Cube"
 		if current_block_id == 2: block_name = "Ramp"
 		elif current_block_id == 3: block_name = "Sphere"
@@ -203,6 +214,26 @@ func update_selection_box():
 	else:
 		selection_box.visible = false
 		has_target = false
+
+func handle_playing_input(event):
+	# PLAYING mode - interact with world objects (trees, etc.)
+	var hit = raycast(100.0, false)
+	
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		if hit:
+			print("PLAYING mode hit: ", hit.collider, " groups: ", hit.collider.get_groups() if hit.collider else "none")
+			if hit.collider and hit.collider.is_in_group("trees"):
+				print("Tree detected! Attempting to chop...")
+				if vegetation_manager:
+					if vegetation_manager.has_method("chop_tree_by_collider"):
+						var success = vegetation_manager.chop_tree_by_collider(hit.collider)
+						print("Chop result: ", success)
+					else:
+						print("ERROR: vegetation_manager doesn't have chop_tree_by_collider method")
+				else:
+					print("ERROR: vegetation_manager is not connected!")
+		else:
+			print("PLAYING mode: no hit")
 
 func handle_terrain_input(event):
 	var hit_areas = (current_mode == Mode.WATER)

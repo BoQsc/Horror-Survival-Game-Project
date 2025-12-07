@@ -1,11 +1,11 @@
-[gd_scene load_steps=14 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=13 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
 [ext_resource type="Script" uid="uid://cje44f7r08sot" path="res://player_interaction.gd" id="3_interact"]
 [ext_resource type="Script" uid="uid://c1xwl5r0i1xs2" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
-[ext_resource type="Script" path="res://vegetation_manager.gd" id="6_vegetation"]
+[ext_resource type="Script" uid="uid://dqpa1d07hh38f" path="res://vegetation_manager.gd" id="6_vegetation"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -19,15 +19,6 @@ background_mode = 2
 sky = SubResource("Sky")
 tonemap_mode = 2
 glow_enabled = true
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_water"]
-size = Vector2(1000, 1000)
-
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_water"]
-transparency = 1
-albedo_color = Color(0, 0.329412, 0.815686, 0.588235)
-metallic = 0.5
-roughness = 0.1
 
 [sub_resource type="CapsuleShape3D" id="PlayerShape"]
 
@@ -48,7 +39,6 @@ environment = SubResource("Env")
 transform = Transform3D(-0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, 0.75, -0.433013, 0, 0, 0)
 shadow_enabled = true
 
-
 [node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 127.55815, 0)
 script = ExtResource("1_player")
@@ -60,10 +50,11 @@ shape = SubResource("PlayerShape")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 script = ExtResource("2_camera")
 
-[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager")]
+[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager")]
 script = ExtResource("3_interact")
 terrain_manager = NodePath("../../../TerrainManager")
 building_manager = NodePath("../../../BuildingManager")
+vegetation_manager = NodePath("../../../VegetationManager")
 
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
