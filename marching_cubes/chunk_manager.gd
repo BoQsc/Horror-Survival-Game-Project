@@ -278,9 +278,15 @@ func update_chunks():
 		
 		active_chunks.erase(coord)
 
-	# 2. Load new chunks
+	# 2. Load new chunks (rate limited to prevent stutters)
+	var chunks_queued_this_frame = 0
+	var max_chunks_per_frame = 2  # Limit to reduce stuttering
+	
 	for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 		for z in range(center_chunk.y - render_distance, center_chunk.y + render_distance + 1):
+			if chunks_queued_this_frame >= max_chunks_per_frame:
+				return  # Stop for this frame, continue next frame
+			
 			var coord = Vector2i(x, z)
 			
 			if active_chunks.has(coord):
@@ -303,6 +309,8 @@ func update_chunks():
 			task_queue.append(task)
 			mutex.unlock()
 			semaphore.post()
+			
+			chunks_queued_this_frame += 1
 
 func _thread_function():
 	var rd = RenderingServer.create_local_rendering_device()
@@ -479,15 +487,34 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	call_deferred("complete_modification", task.coord, result, layer, b_id, b_count, cpu_density_floats)
 
 func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
-	var st = SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(material_instance)
-	for i in range(0, data.size(), 6):
-		var v = Vector3(data[i], data[i+1], data[i+2])
-		var n = Vector3(data[i+3], data[i+4], data[i+5])
-		st.set_normal(n)
-		st.add_vertex(v)
-	return st.commit()
+	if data.size() == 0:
+		return null
+	
+	var vertex_count = data.size() / 6
+	
+	# Pre-allocate arrays
+	var vertices = PackedVector3Array()
+	var normals = PackedVector3Array()
+	vertices.resize(vertex_count)
+	normals.resize(vertex_count)
+	
+	# Fill arrays directly (much faster than SurfaceTool)
+	for i in range(vertex_count):
+		var idx = i * 6
+		vertices[i] = Vector3(data[idx], data[idx + 1], data[idx + 2])
+		normals[i] = Vector3(data[idx + 3], data[idx + 4], data[idx + 5])
+	
+	# Build ArrayMesh directly
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	
+	var mesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, material_instance)
+	
+	return mesh
 
 func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer):
 	# Reset Counter to 0

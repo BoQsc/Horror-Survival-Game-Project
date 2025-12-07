@@ -217,23 +217,13 @@ func update_selection_box():
 
 func handle_playing_input(event):
 	# PLAYING mode - interact with world objects (trees, etc.)
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+		
 	var hit = raycast(100.0, false)
-	
-	if event.button_index == MOUSE_BUTTON_LEFT:
-		if hit:
-			print("PLAYING mode hit: ", hit.collider, " groups: ", hit.collider.get_groups() if hit.collider else "none")
-			if hit.collider and hit.collider.is_in_group("trees"):
-				print("Tree detected! Attempting to chop...")
-				if vegetation_manager:
-					if vegetation_manager.has_method("chop_tree_by_collider"):
-						var success = vegetation_manager.chop_tree_by_collider(hit.collider)
-						print("Chop result: ", success)
-					else:
-						print("ERROR: vegetation_manager doesn't have chop_tree_by_collider method")
-				else:
-					print("ERROR: vegetation_manager is not connected!")
-		else:
-			print("PLAYING mode: no hit")
+	if hit and hit.collider and hit.collider.is_in_group("trees"):
+		if vegetation_manager:
+			vegetation_manager.chop_tree_by_collider(hit.collider)
 
 func handle_terrain_input(event):
 	var hit_areas = (current_mode == Mode.WATER)
