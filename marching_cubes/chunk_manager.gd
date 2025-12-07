@@ -12,7 +12,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var viewer: Node3D
 @export var render_distance: int = 5
 @export var terrain_height: float = 10.0
-@export var water_level: float = 11.0 # Default water level
+@export var water_level: float = 14.0 # Raised for surface lakes
 @export var noise_frequency: float = 0.1
 
 # Threading
