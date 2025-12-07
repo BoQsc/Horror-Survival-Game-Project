@@ -5,6 +5,9 @@ extends Node3D
 var tree_mesh: Mesh
 var forest_noise: FastNoiseLite
 
+# Queue for deferred vegetation placement (wait for physics colliders)
+var pending_chunks: Array[Dictionary] = []
+
 func _ready():
 	# Create a simple placeholder mesh for the tree
 	tree_mesh = create_basic_tree_mesh()
@@ -20,20 +23,49 @@ func _ready():
 func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
 	if chunk_node == null:
 		return
-		
-	# Each chunk gets its own MultiMeshInstance
+	
+	# Queue for deferred processing - physics colliders need a frame to register
+	pending_chunks.append({
+		"coord": coord,
+		"chunk_node": chunk_node,
+		"frames_waited": 0
+	})
+
+func _physics_process(_delta):
+	if pending_chunks.is_empty():
+		return
+	
+	# Process one chunk per frame to avoid spikes
+	var item = pending_chunks[0]
+	item.frames_waited += 1
+	
+	# Wait 5 physics frames for colliders to be fully registered
+	if item.frames_waited < 5:
+		return
+	
+	pending_chunks.pop_front()
+	
+	# Check if chunk node is still valid (might have been unloaded)
+	if not is_instance_valid(item.chunk_node):
+		return
+	
+	_place_vegetation_for_chunk(item.coord, item.chunk_node)
+
+func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var mmi = MultiMeshInstance3D.new()
 	mmi.multimesh = MultiMesh.new()
 	mmi.multimesh.mesh = tree_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	# Max trees per chunk? 
-	# 32x32 = 1024 columns. Maybe 100 trees max?
-	# We will calculate valid spots first.
 	
 	var valid_transforms = []
-	var chunk_stride = 31 # Hardcoded for now, match ChunkManager
+	var chunk_stride = 31
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
+	
+	# Get chunk node's world position for coordinate conversion
+	var chunk_world_pos = chunk_node.global_position
+	
+	var space_state = get_world_3d().direct_space_state
 	
 	# Reduced density: Step by 4 instead of 1
 	for x in range(0, chunk_stride, 4):
@@ -43,42 +75,50 @@ func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
 			
 			# 1. Check Forest Mask
 			var noise_val = forest_noise.get_noise_2d(gx, gz)
-			if noise_val < 0.4: # Higher threshold = sparser forests
+			if noise_val < 0.4:
 				continue
-				
-			# 2. Get Height
-			var y = terrain_manager.get_terrain_height(gx, gz)
-			if y < -500.0: # No ground found
+			
+			# 2. Raycast to find exact terrain surface height
+			var ray_origin = Vector3(gx, 100.0, gz)  # Start high above terrain
+			var ray_end = Vector3(gx, -10.0, gz)     # End below expected terrain
+			
+			var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
+			query.collision_mask = 0xFFFFFFFF  # Hit all layers to ensure we hit terrain
+			query.collide_with_areas = false   # Don't hit water areas
+			
+			var result = space_state.intersect_ray(query)
+			if result.is_empty():
 				continue
-				
-			# 3. Check Water Level (Optional, but good)
-			# We can check if y < water_level. 
-			# For now let's just assume trees don't grow underwater 
-			# But we don't have water_level var here easily.
-			# Let's rely on height. If it's too low it might be underwater.
-			# Actually, we can check density at a slightly higher point to see if it's water?
-			# Using get_water_density(Vector3(gx, y + 1, gz))
-			var water_dens = terrain_manager.get_water_density(Vector3(gx, y + 1.0, gz))
-			if water_dens < 0.0: # Underwater
+			
+			var hit_pos = result.position
+			
+			# 3. Check if underwater using water density
+			var water_dens = terrain_manager.get_water_density(Vector3(gx, hit_pos.y + 1.0, gz))
+			if water_dens < 0.0:
 				continue
-				
-			# Place Tree
-			var t = Transform3D()
-			t.origin = Vector3(gx, y, gz)
-			# Random Rotation
-			t = t.rotated(Vector3.UP, randf() * TAU)
-			# Random Scale
+			
+			# Place Tree - convert world hit position to local coordinates
+			# since the MultiMeshInstance is a child of chunk_node
+			var local_pos = hit_pos - chunk_world_pos
+			
+			# Build transform: rotation and scale first, THEN set origin
+			# (scaling a transform also scales its origin, which would displace the tree!)
 			var s = randf_range(0.8, 1.2)
+			var rotation_angle = randf() * TAU
+			
+			var t = Transform3D()
+			t = t.rotated(Vector3.UP, rotation_angle)
 			t = t.scaled(Vector3(s, s, s))
+			t.origin = local_pos  # Set origin AFTER scaling
 			
 			valid_transforms.append(t)
-			
+	
 	if valid_transforms.size() > 0:
 		mmi.multimesh.instance_count = valid_transforms.size()
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
-			
-		# Make the trees a child of the chunk node so they unload together!
+		
+		# Make trees a child of the chunk so they unload together
 		chunk_node.add_child(mmi)
 
 func create_basic_tree_mesh() -> Mesh:

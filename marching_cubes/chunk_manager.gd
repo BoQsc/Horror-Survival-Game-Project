@@ -155,15 +155,22 @@ func get_terrain_height(global_x: float, global_z: float) -> float:
 	var ix = int(local_x)
 	var iz = int(local_z)
 	
+	var prev_density = 1.0  # Assume air above the grid
 	for iy in range(DENSITY_GRID_SIZE - 1, -1, -1):
 		var index = ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
 		var density = data.cpu_density_terrain[index]
 		
 		if density < 0.0:
-			# Found ground!
-			# For more precision, we could interpolate between this and the previous (air) voxel.
-			# But integer voxel height is fine for tree placement.
-			return float(iy)
+			# Found ground! Interpolate for accurate isosurface height.
+			# The surface is where density = 0, between iy (ground) and iy+1 (air)
+			# Linear interpolation: t = prev_density / (prev_density - density)
+			# Height = (iy + 1) - t = iy + 1 - prev_density / (prev_density - density)
+			if iy < DENSITY_GRID_SIZE - 1:
+				var t = prev_density / (prev_density - density)
+				return float(iy + 1) - t
+			else:
+				return float(iy)
+		prev_density = density
 			
 	return -1000.0 # Only air found (hole)
 
