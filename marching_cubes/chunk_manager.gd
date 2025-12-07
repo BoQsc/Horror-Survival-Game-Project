@@ -53,7 +53,15 @@ var active_chunks: Dictionary = {}
 # Time-budgeted node creation - prevents stutters from multiple chunks completing at once
 var pending_nodes: Array[Dictionary] = []  # Queue of completed chunks waiting for node creation
 var pending_nodes_mutex: Mutex
-var frame_budget_ms: float = 1.0  # Max ms to spend on node creation per frame 
+
+# Adaptive loading - throttles based on current FPS
+var target_fps: float = 60.0
+var min_acceptable_fps: float = 45.0
+var current_fps: float = 60.0
+var fps_samples: Array[float] = []
+var adaptive_frame_budget_ms: float = 2.0  # Dynamically adjusted
+var chunks_per_frame_limit: int = 2  # Dynamically adjusted
+var loading_paused: bool = false
 
 func _ready():
 	mutex = Mutex.new()
@@ -98,25 +106,69 @@ func _ready():
 	compute_thread = Thread.new()
 	compute_thread.start(_thread_function)
 
-func _process(_delta):
+func _process(delta):
 	if not viewer:
 		return
+	
+	# Track FPS
+	_update_fps_tracking(delta)
+	
+	# Adjust loading based on FPS
+	_adjust_adaptive_loading()
+	
 	update_chunks()
-	process_pending_nodes()  # Time-budgeted node creation
+	process_pending_nodes()
 
-# Process pending node creations within frame budget
+func _update_fps_tracking(delta: float):
+	var instant_fps = 1.0 / delta if delta > 0 else 60.0
+	fps_samples.append(instant_fps)
+	
+	# Keep last 30 samples (0.5 seconds at 60fps)
+	while fps_samples.size() > 30:
+		fps_samples.pop_front()
+	
+	# Calculate average FPS
+	var total = 0.0
+	for fps in fps_samples:
+		total += fps
+	current_fps = total / fps_samples.size()
+
+func _adjust_adaptive_loading():
+	if current_fps < min_acceptable_fps:
+		# FPS is too low - pause loading and minimize work
+		loading_paused = true
+		adaptive_frame_budget_ms = 0.5
+		chunks_per_frame_limit = 0
+	elif current_fps < target_fps:
+		# FPS is below target - reduce loading
+		loading_paused = false
+		var fps_ratio = current_fps / target_fps
+		adaptive_frame_budget_ms = lerp(0.5, 2.0, fps_ratio)
+		chunks_per_frame_limit = 1
+	else:
+		# FPS is good - normal loading
+		loading_paused = false
+		adaptive_frame_budget_ms = 3.0
+		chunks_per_frame_limit = 2
+
+# Process pending node creations within adaptive frame budget
 func process_pending_nodes():
 	if pending_nodes.is_empty():
 		return
 	
+	# Skip if loading is paused due to low FPS
+	if loading_paused:
+		return
+	
 	var start_time = Time.get_ticks_usec()
-	var budget_usec = frame_budget_ms * 1000.0
+	var budget_usec = adaptive_frame_budget_ms * 1000.0
+	var nodes_created = 0
 	
 	while not pending_nodes.is_empty():
 		# Check time budget
 		var elapsed = Time.get_ticks_usec() - start_time
 		if elapsed >= budget_usec:
-			break  # Out of time, continue next frame
+			break
 		
 		# Get next pending chunk
 		pending_nodes_mutex.lock()
@@ -128,6 +180,11 @@ func process_pending_nodes():
 		
 		# Create the nodes
 		_finalize_chunk_creation(item)
+		nodes_created += 1
+		
+		# Limit nodes per frame when FPS is critical
+		if nodes_created >= 1 and current_fps < target_fps:
+			break
 
 func get_water_density(global_pos: Vector3) -> float:
 	# 1. Find Chunk
@@ -310,13 +367,15 @@ func update_chunks():
 		
 		active_chunks.erase(coord)
 
-	# 2. Load new chunks (rate limited to prevent stutters)
+	# 2. Load new chunks (adaptive rate limiting based on FPS)
+	if loading_paused:
+		return  # Skip loading when FPS is too low
+	
 	var chunks_queued_this_frame = 0
-	var max_chunks_per_frame = 2  # Limit to reduce stuttering
 	
 	for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 		for z in range(center_chunk.y - render_distance, center_chunk.y + render_distance + 1):
-			if chunks_queued_this_frame >= max_chunks_per_frame:
+			if chunks_queued_this_frame >= chunks_per_frame_limit:
 				return  # Stop for this frame, continue next frame
 			
 			var coord = Vector2i(x, z)
