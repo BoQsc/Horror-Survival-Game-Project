@@ -12,7 +12,7 @@ layout(set = 0, binding = 0, std430) restrict buffer DensityBuffer {
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position
     float noise_freq; 
-    float water_level; // Acts as a bias for the 3D noise
+    float water_level; 
 } params;
 
 // Reuse the noise function for consistency
@@ -44,28 +44,23 @@ void main() {
     vec3 pos = vec3(id);
     vec3 world_pos = pos + params.chunk_offset.xyz;
     
-    // 3D Noise Water Generation
-    // We want large bodies of water (aquifers) and maybe some surface water.
-    // Base gradient: positive as we go up (air), negative as we go down (water).
-    float gradient = (world_pos.y - params.water_level) * 0.1; 
+    // Improved Water Generation
+    // Instead of full 3D Swiss Cheese which might float everywhere,
+    // let's define a perturbed surface height.
     
-    // 3D Noise: -1 to 1 (approx)
-    // Scale frequency down for larger water bodies
-    float n_val = noise(world_pos * params.noise_freq * 0.5); 
+    // Use noise to displace the water level up/down
+    float n_val = noise(world_pos * params.noise_freq); // 0..1
+    n_val = (n_val * 2.0) - 1.0; // -1..1
     
-    // Remap noise to -1..1 range for better carving
-    n_val = (n_val * 2.0) - 1.0;
+    // Amplitude of waves/hills for water surface
+    float wave_amp = 4.0; 
     
-    // Combine:
-    // If we are deep (gradient < -1), we need strong positive noise to create air pockets (caves).
-    // If we are high (gradient > 1), we need strong negative noise to create water pockets (lakes).
+    float surface_height = params.water_level + (n_val * wave_amp);
     
-    // Let's invert the logic slightly:
-    // Density < 0 = Water.
-    // Density > 0 = Air.
-    
-    // "Swiss Cheese" water:
-    float density = gradient + n_val * 2.0;
+    // Density:
+    // y < surface -> Water (Negative)
+    // y > surface -> Air (Positive)
+    float density = world_pos.y - surface_height;
     
     density_buffer.values[index] = density;
 }

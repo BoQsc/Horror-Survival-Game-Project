@@ -355,7 +355,7 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mes
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen_water)
 	rd.compute_list_bind_uniform_set(list, set_gen_w, 0)
 	# Reuse push constant structure but pass water_level as terrain_height
-	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, 0.0, water_level, 0.0, 0.0])
+	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, water_level, 0.0, 0.0])
 	rd.compute_list_set_push_constant(list, push_data_w.to_byte_array(), push_data_w.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
