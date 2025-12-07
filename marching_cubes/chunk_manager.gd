@@ -1,5 +1,7 @@
 extends Node3D
 
+signal chunk_generated(coord: Vector2i, chunk_node: Node3D)
+
 # 32 Voxels wide
 const CHUNK_SIZE = 32
 # Overlap chunks by 1 unit to prevent gaps (seams)
@@ -565,6 +567,8 @@ func complete_generation(coord: Vector2i, result_t: Dictionary, dens_t: RID, res
 	data.cpu_density_terrain = cpu_dens_t
 	
 	active_chunks[coord] = data
+	
+	chunk_generated.emit(coord, node_t)
 
 func complete_modification(coord: Vector2i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array()):
 	if batch_id == -1:
