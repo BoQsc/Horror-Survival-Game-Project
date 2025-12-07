@@ -484,17 +484,21 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk
 	var tri_count = count_bytes.decode_u32(0)
 	
 	var mesh = null
+	var shape = null
+	
 	if tri_count > 0:
 		var total_floats = tri_count * 3 * 6
 		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		var vert_floats = vert_bytes.to_float32_array()
 		mesh = build_mesh(vert_floats, material_instance)
+		if mesh:
+			shape = mesh.create_trimesh_shape()
 		
 	if set_mesh.is_valid(): rd.free_rid(set_mesh)
 	
-	return mesh
+	return { "mesh": mesh, "shape": shape }
 
-func complete_generation(coord: Vector2i, mesh_t: ArrayMesh, dens_t: RID, mesh_w: ArrayMesh, dens_w: RID, cpu_dens_w: PackedFloat32Array):
+func complete_generation(coord: Vector2i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array):
 	if not active_chunks.has(coord):
 		var tasks = []
 		tasks.append({ "type": "free", "rid": dens_t })
@@ -507,8 +511,8 @@ func complete_generation(coord: Vector2i, mesh_t: ArrayMesh, dens_t: RID, mesh_w
 		
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
 	
-	var node_t = create_chunk_node(mesh_t, chunk_pos)
-	var node_w = create_chunk_node(mesh_w, chunk_pos, true) # True = is_water
+	var node_t = create_chunk_node(result_t.mesh, result_t.shape, chunk_pos)
+	var node_w = create_chunk_node(result_w.mesh, result_w.shape, chunk_pos, true) # True = is_water
 	
 	var data = ChunkData.new()
 	data.node_terrain = node_t
@@ -519,9 +523,9 @@ func complete_generation(coord: Vector2i, mesh_t: ArrayMesh, dens_t: RID, mesh_w
 	
 	active_chunks[coord] = data
 
-func complete_modification(coord: Vector2i, mesh: ArrayMesh, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens_w: PackedFloat32Array = PackedFloat32Array()):
+func complete_modification(coord: Vector2i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens_w: PackedFloat32Array = PackedFloat32Array()):
 	if batch_id == -1:
-		_apply_chunk_update(coord, mesh, layer, cpu_dens_w)
+		_apply_chunk_update(coord, result, layer, cpu_dens_w)
 		return
 	
 	if not pending_batches.has(batch_id):
@@ -531,14 +535,14 @@ func complete_modification(coord: Vector2i, mesh: ArrayMesh, layer: int, batch_i
 	batch.received += 1
 	
 	if active_chunks.has(coord):
-		batch.updates.append({ "coord": coord, "mesh": mesh, "layer": layer, "cpu_dens": cpu_dens_w })
+		batch.updates.append({ "coord": coord, "result": result, "layer": layer, "cpu_dens": cpu_dens_w })
 		
 	if batch.received >= batch.expected:
 		for update in batch.updates:
-			_apply_chunk_update(update.coord, update.mesh, update.layer, update.cpu_dens)
+			_apply_chunk_update(update.coord, update.result, update.layer, update.cpu_dens)
 		pending_batches.erase(batch_id)
 
-func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh, layer: int, cpu_dens: PackedFloat32Array):
+func _apply_chunk_update(coord: Vector2i, result: Dictionary, layer: int, cpu_dens: PackedFloat32Array):
 	if not active_chunks.has(coord):
 		return
 	var data = active_chunks[coord]
@@ -546,14 +550,14 @@ func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh, layer: int, cpu_dens:
 	
 	if layer == 0: # Terrain
 		if data.node_terrain: data.node_terrain.queue_free()
-		data.node_terrain = create_chunk_node(mesh, chunk_pos)
+		data.node_terrain = create_chunk_node(result.mesh, result.shape, chunk_pos)
 	else: # Water
 		if data.node_water: data.node_water.queue_free()
-		data.node_water = create_chunk_node(mesh, chunk_pos, true)
+		data.node_water = create_chunk_node(result.mesh, result.shape, chunk_pos, true)
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
 
-func create_chunk_node(mesh: ArrayMesh, position: Vector3, is_water: bool = false) -> Node3D:
+func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false) -> Node3D:
 	if mesh == null:
 		return null
 		
@@ -582,7 +586,8 @@ func create_chunk_node(mesh: ArrayMesh, position: Vector3, is_water: bool = fals
 	node.add_child(mesh_instance)
 	
 	var collision_shape = CollisionShape3D.new()
-	collision_shape.shape = mesh.create_trimesh_shape()
+	# Use the pre-baked shape!
+	collision_shape.shape = shape
 	node.add_child(collision_shape)
 	
 	return node
