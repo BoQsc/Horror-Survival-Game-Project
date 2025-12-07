@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, cull_back;
+render_mode blend_mix, cull_back, depth_draw_always;
 
 uniform vec3 albedo : source_color = vec3(0.0, 0.32, 0.43);
 uniform vec3 albedo_deep : source_color = vec3(0.0, 0.1, 0.3);
