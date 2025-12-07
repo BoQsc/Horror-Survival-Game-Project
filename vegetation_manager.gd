@@ -1,6 +1,8 @@
 extends Node3D
 
 @export var terrain_manager: Node3D
+@export var tree_model_path: String = "res://models/rigged_animated_cinematic_quality_tree_4.glb"
+@export var tree_scale: float = 1.0  # Adjust if model is too big/small
 
 var tree_mesh: Mesh
 var forest_noise: FastNoiseLite
@@ -9,8 +11,11 @@ var forest_noise: FastNoiseLite
 var pending_chunks: Array[Dictionary] = []
 
 func _ready():
-	# Create a simple placeholder mesh for the tree
-	tree_mesh = create_basic_tree_mesh()
+	# Load tree mesh from GLB model
+	tree_mesh = load_tree_mesh_from_glb(tree_model_path)
+	if tree_mesh == null:
+		push_warning("Failed to load tree model, falling back to basic mesh")
+		tree_mesh = create_basic_tree_mesh()
 	
 	# Setup Forest Noise
 	forest_noise = FastNoiseLite.new()
@@ -103,12 +108,13 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			
 			# Build transform: rotation and scale first, THEN set origin
 			# (scaling a transform also scales its origin, which would displace the tree!)
-			var s = randf_range(0.8, 1.2)
+			var random_scale = randf_range(0.8, 1.2)
+			var final_scale = tree_scale * random_scale
 			var rotation_angle = randf() * TAU
 			
 			var t = Transform3D()
 			t = t.rotated(Vector3.UP, rotation_angle)
-			t = t.scaled(Vector3(s, s, s))
+			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
 			t.origin = local_pos  # Set origin AFTER scaling
 			
 			valid_transforms.append(t)
@@ -120,6 +126,39 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		
 		# Make trees a child of the chunk so they unload together
 		chunk_node.add_child(mmi)
+
+func load_tree_mesh_from_glb(path: String) -> Mesh:
+	var scene = load(path)
+	if scene == null:
+		push_error("Could not load GLB: " + path)
+		return null
+	
+	# Instance the scene to search for meshes
+	var instance = scene.instantiate()
+	
+	# Find the first MeshInstance3D in the tree
+	var mesh = find_mesh_in_node(instance)
+	
+	# Clean up the temporary instance
+	instance.queue_free()
+	
+	if mesh:
+		print("Loaded tree mesh from: ", path, " with ", mesh.get_surface_count(), " surfaces")
+	
+	return mesh
+
+func find_mesh_in_node(node: Node) -> Mesh:
+	# Check if this node is a MeshInstance3D
+	if node is MeshInstance3D:
+		return node.mesh
+	
+	# Recursively search children
+	for child in node.get_children():
+		var mesh = find_mesh_in_node(child)
+		if mesh:
+			return mesh
+	
+	return null
 
 func create_basic_tree_mesh() -> Mesh:
 	var st = SurfaceTool.new()
