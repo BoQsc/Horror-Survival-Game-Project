@@ -510,23 +510,31 @@ func create_chunk_node(mesh: ArrayMesh, position: Vector3, is_water: bool = fals
 	if mesh == null:
 		return null
 		
-	var static_body = StaticBody3D.new()
-	static_body.position = position
+	var node: CollisionObject3D
+	
 	if is_water:
-		# Use a different collision layer/mask if needed, or simple ID.
-		# For now, stick to default so raycasts hit it.
-		static_body.add_to_group("water")
+		node = Area3D.new()
+		node.add_to_group("water")
+		# Ensure it's monitorable so the player can detect it
+		node.monitorable = true
+		node.monitoring = false # Terrain chunks don't need to monitor others
 	else:
 		static_body.add_to_group("terrain")
 		
-	add_child(static_body)
+	node.position = position
+	add_child(node)
 	
 	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.mesh = mesh
-	static_body.add_child(mesh_instance)
+	# If water, we might want to ensure it's not casting shadows or has specific render flags if needed, 
+	# but the material handles most transparency.
+	if is_water:
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		
+	node.add_child(mesh_instance)
 	
 	var collision_shape = CollisionShape3D.new()
 	collision_shape.shape = mesh.create_trimesh_shape()
-	static_body.add_child(collision_shape)
+	node.add_child(collision_shape)
 	
-	return static_body
+	return node

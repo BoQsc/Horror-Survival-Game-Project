@@ -142,7 +142,8 @@ func update_ui():
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
 	if (current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode:
-		var hit = raycast(10.0)
+		var hit_areas = (current_mode == Mode.WATER)
+		var hit = raycast(10.0, hit_areas)
 		if hit:
 			# Calculate grid position
 			var pos = hit.position - hit.normal * 0.1 # Move slightly inside
@@ -157,7 +158,8 @@ func update_selection_box():
 			has_target = false
 		return
 
-	var terrain_hit = raycast(10.0)
+	var hit_areas = (current_mode == Mode.WATER)
+	var terrain_hit = raycast(10.0, hit_areas)
 	var voxel_hit = raycast_voxel_grid(camera.global_position, -camera.global_transform.basis.z, 10.0)
 	
 	var final_hit_pos = Vector3.ZERO
@@ -203,7 +205,8 @@ func update_selection_box():
 		has_target = false
 
 func handle_terrain_input(event):
-	var hit = raycast(100.0)
+	var hit_areas = (current_mode == Mode.WATER)
+	var hit = raycast(100.0, hit_areas)
 	if hit:
 		var layer = 0 # Terrain
 		if current_mode == Mode.WATER:
@@ -248,7 +251,7 @@ func handle_building_input(event):
 		# Laser accurate removal logic (Physics-based)
 		# Ignores the 'current_remove_voxel_pos' calculated by grid-casting, 
 		# ensuring we hit the exact mesh (like ramps) and not the grid cell behind/in-front.
-		var hit = raycast(10.0)
+		var hit = raycast(10.0, false) # Never hit water when removing buildings
 		
 		if hit and hit.collider:
 			# Check if we hit a building chunk (using trimesh collision)
@@ -265,12 +268,13 @@ func handle_building_input(event):
 				# or if the user wants to remove terrain? (Not requested here)
 				pass
 
-func raycast(length: float):
+func raycast(length: float, collide_areas: bool = false):
 	var space_state = camera.get_world_3d().direct_space_state
 	var from = camera.global_position
 	var to = from - camera.global_transform.basis.z * length
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.exclude = [player.get_rid()]
+	query.collide_with_areas = collide_areas
 	return space_state.intersect_ray(query)
 
 func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
