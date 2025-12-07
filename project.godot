@@ -15,9 +15,13 @@ run/main_scene="uid://cubacbxdo4pih"
 config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
 
+[autoload]
+
+DebugMenu="*res://addons/debug_menu/debug_menu.tscn"
+
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/3d-first-person-wasd-input-actions/plugin.cfg", "res://addons/camera3d_templates/plugin.cfg")
+enabled=PackedStringArray("res://addons/3d-first-person-wasd-input-actions/plugin.cfg", "res://addons/camera3d_templates/plugin.cfg", "res://addons/debug_menu/plugin.cfg")
 
 [input]
 
@@ -41,3 +45,22 @@ move_right={
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":0,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":68,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
 ]
 }
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+
+[rendering]
+
+rendering_device/staging_buffer/block_size_kb=256000
+rendering_device/staging_buffer/max_size_mb=1280
+rendering_device/staging_buffer/texture_upload_region_size_px=254
+rendering_device/staging_buffer/texture_download_region_size_px=254
+rendering_device/pipeline_cache/save_chunk_size_mb=64.000001
+rendering_device/vulkan/max_descriptors_per_pool=164
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=1
+lights_and_shadows/positional_shadow/soft_shadow_filter_quality=1
+environment/ssao/quality=0
+environment/ssil/quality=0
+environment/glow/upscale_mode=0
+occlusion_culling/use_occlusion_culling=true
