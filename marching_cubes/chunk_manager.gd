@@ -55,7 +55,7 @@ var pending_nodes: Array[Dictionary] = []  # Queue of completed chunks waiting f
 var pending_nodes_mutex: Mutex
 
 # Adaptive loading - throttles based on current FPS
-var target_fps: float = 60.0
+var target_fps: float = 75.0
 var min_acceptable_fps: float = 45.0
 var current_fps: float = 60.0
 var fps_samples: Array[float] = []
