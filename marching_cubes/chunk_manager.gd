@@ -519,7 +519,8 @@ func create_chunk_node(mesh: ArrayMesh, position: Vector3, is_water: bool = fals
 		node.monitorable = true
 		node.monitoring = false # Terrain chunks don't need to monitor others
 	else:
-		static_body.add_to_group("terrain")
+		node = StaticBody3D.new()
+		node.add_to_group("terrain")
 		
 	node.position = position
 	add_child(node)
