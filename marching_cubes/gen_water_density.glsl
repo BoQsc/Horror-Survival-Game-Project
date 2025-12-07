@@ -44,23 +44,36 @@ void main() {
     vec3 pos = vec3(id);
     vec3 world_pos = pos + params.chunk_offset.xyz;
     
-    // Improved Water Generation
-    // Instead of full 3D Swiss Cheese which might float everywhere,
-    // let's define a perturbed surface height.
+    // --- Regional Masking ---
+    // Use low-frequency 2D noise to define "Wet Regions" (Lakes/Oceans) vs "Dry Regions".
+    // 0.2 frequency of the detail noise gives large continents.
+    float mask_val = noise(vec3(world_pos.x, 0.0, world_pos.z) * (params.noise_freq * 0.1));
     
-    // Use noise to displace the water level up/down
-    float n_val = noise(world_pos * params.noise_freq); // 0..1
-    n_val = (n_val * 2.0) - 1.0; // -1..1
+    // Map 0..1 to -1..1
+    mask_val = (mask_val * 2.0) - 1.0;
     
-    // Amplitude of waves/hills for water surface
-    float wave_amp = 4.0; 
+    // Threshold: Only generate water if mask > 0.1
+    // Instead of a hard cut, we lower the water table in dry regions.
+    // If mask is high (wet), water_bias is 0.
+    // If mask is low (dry), water_bias is large negative.
     
-    float surface_height = params.water_level + (n_val * wave_amp);
+    // Create a sharp dropoff for lakes
+    float dropoff = smoothstep(0.2, -0.2, mask_val) * 100.0;
+    
+    // --- Surface Detail ---
+    // Use higher frequency noise for waves
+    float wave_val = noise(world_pos * params.noise_freq); 
+    wave_val = (wave_val * 2.0) - 1.0;
+    float wave_amp = 2.0;
+    
+    // Calculate final effective water height
+    // In dry zones, this will be (Level - 100), effectively removing it from the surface.
+    float effective_height = (params.water_level - dropoff) + (wave_val * wave_amp);
     
     // Density:
-    // y < surface -> Water (Negative)
-    // y > surface -> Air (Positive)
-    float density = world_pos.y - surface_height;
+    // y < height -> Water (Negative)
+    // y > height -> Air (Positive)
+    float density = world_pos.y - effective_height;
     
     density_buffer.values[index] = density;
 }
