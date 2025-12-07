@@ -11,9 +11,26 @@ layout(set = 0, binding = 0, std430) restrict buffer DensityBuffer {
 
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position
-    float noise_freq; // Unused for flat water, but kept for alignment
-    float water_level; // Reused terrain_height slot
+    float noise_freq; 
+    float water_level; // Acts as a bias for the 3D noise
 } params;
+
+// Reuse the noise function for consistency
+float hash(vec3 p) {
+    p = fract(p * 0.3183099 + .1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float noise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix( hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+                   mix( hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix( hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                   mix( hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
 
 void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
@@ -27,17 +44,28 @@ void main() {
     vec3 pos = vec3(id);
     vec3 world_pos = pos + params.chunk_offset.xyz;
     
-    // Water density: 
-    // < 0: Inside water (liquid)
-    // > 0: Outside (air)
-    // Surface at 0.
+    // 3D Noise Water Generation
+    // We want large bodies of water (aquifers) and maybe some surface water.
+    // Base gradient: positive as we go up (air), negative as we go down (water).
+    float gradient = (world_pos.y - params.water_level) * 0.1; 
     
-    // Simple flat plane:
-    // If world_pos.y < water_level, density should be negative.
-    // If world_pos.y > water_level, density should be positive.
+    // 3D Noise: -1 to 1 (approx)
+    // Scale frequency down for larger water bodies
+    float n_val = noise(world_pos * params.noise_freq * 0.5); 
     
-    // Example: y=5, level=10 -> 5-10 = -5 (Inside)
-    float density = world_pos.y - params.water_level;
+    // Remap noise to -1..1 range for better carving
+    n_val = (n_val * 2.0) - 1.0;
+    
+    // Combine:
+    // If we are deep (gradient < -1), we need strong positive noise to create air pockets (caves).
+    // If we are high (gradient > 1), we need strong negative noise to create water pockets (lakes).
+    
+    // Let's invert the logic slightly:
+    // Density < 0 = Water.
+    // Density > 0 = Air.
+    
+    // "Swiss Cheese" water:
+    float density = gradient + n_val * 2.0;
     
     density_buffer.values[index] = density;
 }
