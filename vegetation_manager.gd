@@ -4,44 +4,50 @@ signal tree_chopped(world_position: Vector3)
 
 @export var terrain_manager: Node3D
 @export var tree_model_path: String = "res://models/rigged_animated_cinematic_quality_tree_4.glb"
-@export var tree_scale: float = 1.0  # Adjust if model is too big/small
-@export var tree_y_offset: float = -3.0  # Negative to sink trees into ground
-@export var collision_radius: float = 0.5  # Trunk collision radius
-@export var collision_height: float = 8.0  # Trunk collision height
+@export var tree_scale: float = 1.0
+@export var tree_y_offset: float = -3.0
+@export var collision_radius: float = 0.5
+@export var collision_height: float = 8.0
+@export var collider_distance: float = 30.0  # Only trees within this distance get colliders
 
 var tree_mesh: Mesh
 var forest_noise: FastNoiseLite
+var player: Node3D
 
-# Queue for deferred vegetation placement (wait for physics colliders)
+# Queue for deferred vegetation placement
 var pending_chunks: Array[Dictionary] = []
 
-# Tree data storage per chunk: coord -> { multimesh: MMI, trees: [{pos, alive, collider}...] }
+# Tree data per chunk coord -> { multimesh, trees[], collision_container }
 var chunk_tree_data: Dictionary = {}
 
+# Pool of active colliders (reusable)
+var active_colliders: Dictionary = {}  # tree_key -> StaticBody3D
+var collider_pool: Array[StaticBody3D] = []
+const MAX_ACTIVE_COLLIDERS = 50  # Limit active colliders for performance
+
 func _ready():
-	# Load tree mesh from GLB model
 	tree_mesh = load_tree_mesh_from_glb(tree_model_path)
 	if tree_mesh == null:
 		push_warning("Failed to load tree model, falling back to basic mesh")
 		tree_mesh = create_basic_tree_mesh()
 	
-	# Setup Forest Noise
 	forest_noise = FastNoiseLite.new()
 	forest_noise.frequency = 0.05
 	forest_noise.seed = 12345
 	
 	if terrain_manager:
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
+	
+	# Find player
+	player = get_tree().get_first_node_in_group("player")
 
 func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
 	if chunk_node == null:
 		return
 	
-	# Clean up old data if chunk was regenerated
 	if chunk_tree_data.has(coord):
 		_cleanup_chunk_trees(coord)
 	
-	# Queue for deferred processing - physics colliders need a frame to register
 	pending_chunks.append({
 		"coord": coord,
 		"chunk_node": chunk_node,
@@ -50,29 +56,122 @@ func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
 
 func _cleanup_chunk_trees(coord: Vector2i):
 	if chunk_tree_data.has(coord):
+		# Return colliders to pool
 		var data = chunk_tree_data[coord]
-		# Colliders are children of chunk_node, will be freed when chunk unloads
+		for tree in data.trees:
+			var key = _tree_key(coord, tree.index)
+			if active_colliders.has(key):
+				_return_collider_to_pool(active_colliders[key])
+				active_colliders.erase(key)
 		chunk_tree_data.erase(coord)
 
 func _physics_process(_delta):
-	if pending_chunks.is_empty():
-		return
+	# Process pending chunks
+	if not pending_chunks.is_empty():
+		var item = pending_chunks[0]
+		item.frames_waited += 1
+		
+		if item.frames_waited >= 5:
+			pending_chunks.pop_front()
+			if is_instance_valid(item.chunk_node):
+				_place_vegetation_for_chunk(item.coord, item.chunk_node)
 	
-	# Process one chunk per frame to avoid spikes
-	var item = pending_chunks[0]
-	item.frames_waited += 1
+	# Update proximity colliders
+	_update_proximity_colliders()
+
+func _update_proximity_colliders():
+	if not player:
+		player = get_tree().get_first_node_in_group("player")
+		if not player:
+			return
 	
-	# Wait 5 physics frames for colliders to be fully registered
-	if item.frames_waited < 5:
-		return
+	var player_pos = player.global_position
+	var dist_sq = collider_distance * collider_distance
 	
-	pending_chunks.pop_front()
+	# Collect trees that need colliders
+	var trees_needing_colliders: Array[Dictionary] = []
 	
-	# Check if chunk node is still valid (might have been unloaded)
-	if not is_instance_valid(item.chunk_node):
-		return
+	for coord in chunk_tree_data:
+		var data = chunk_tree_data[coord]
+		for tree in data.trees:
+			if not tree.alive:
+				continue
+			
+			var tree_dist_sq = player_pos.distance_squared_to(tree.world_pos)
+			if tree_dist_sq < dist_sq:
+				trees_needing_colliders.append({
+					"coord": coord,
+					"tree": tree,
+					"dist_sq": tree_dist_sq
+				})
 	
-	_place_vegetation_for_chunk(item.coord, item.chunk_node)
+	# Sort by distance (closest first)
+	trees_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
+	
+	# Limit to MAX_ACTIVE_COLLIDERS
+	var wanted_keys: Dictionary = {}
+	for i in range(min(trees_needing_colliders.size(), MAX_ACTIVE_COLLIDERS)):
+		var item = trees_needing_colliders[i]
+		var key = _tree_key(item.coord, item.tree.index)
+		wanted_keys[key] = item
+	
+	# Remove colliders that are no longer needed
+	var keys_to_remove = []
+	for key in active_colliders:
+		if not wanted_keys.has(key):
+			keys_to_remove.append(key)
+	
+	for key in keys_to_remove:
+		_return_collider_to_pool(active_colliders[key])
+		active_colliders.erase(key)
+	
+	# Add colliders for trees that need them
+	for key in wanted_keys:
+		if not active_colliders.has(key):
+			var item = wanted_keys[key]
+			var collider = _get_collider_from_pool()
+			collider.global_position = item.tree.world_pos
+			collider.global_position.y += (collision_height * item.tree.scale) / 2.0
+			
+			# Update collision shape size if needed
+			var shape = collider.get_child(0).shape as CylinderShape3D
+			shape.radius = collision_radius * item.tree.scale
+			shape.height = collision_height * item.tree.scale
+			
+			# Store reference for chopping
+			collider.set_meta("tree_coord", item.coord)
+			collider.set_meta("tree_index", item.tree.index)
+			
+			active_colliders[key] = collider
+
+func _tree_key(coord: Vector2i, index: int) -> String:
+	return "%d_%d_%d" % [coord.x, coord.y, index]
+
+func _get_collider_from_pool() -> StaticBody3D:
+	if collider_pool.size() > 0:
+		var collider = collider_pool.pop_back()
+		collider.visible = true
+		collider.collision_layer = 1
+		return collider
+	
+	# Create new collider
+	var body = StaticBody3D.new()
+	body.add_to_group("trees")
+	
+	var shape_node = CollisionShape3D.new()
+	var shape = CylinderShape3D.new()
+	shape.radius = collision_radius
+	shape.height = collision_height
+	shape_node.shape = shape
+	body.add_child(shape_node)
+	
+	add_child(body)
+	return body
+
+func _return_collider_to_pool(collider: StaticBody3D):
+	collider.collision_layer = 0  # Disable collision
+	collider.visible = false
+	collider_pool.append(collider)
 
 func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var mmi = MultiMeshInstance3D.new()
@@ -80,34 +179,24 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.mesh = tree_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	
-	var tree_list = []  # Store tree data for this chunk
+	var tree_list = []
 	var valid_transforms = []
 	var chunk_stride = 31
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
-	
-	# Get chunk node's world position for coordinate conversion
 	var chunk_world_pos = chunk_node.global_position
-	
-	# Container for collision shapes
-	var collision_container = Node3D.new()
-	collision_container.name = "TreeColliders"
-	chunk_node.add_child(collision_container)
 	
 	var space_state = get_world_3d().direct_space_state
 	
-	# Reduced density: Step by 4 instead of 1
 	for x in range(0, chunk_stride, 4):
 		for z in range(0, chunk_stride, 4):
 			var gx = chunk_origin_x + x
 			var gz = chunk_origin_z + z
 			
-			# 1. Check Forest Mask
 			var noise_val = forest_noise.get_noise_2d(gx, gz)
 			if noise_val < 0.4:
 				continue
 			
-			# 2. Raycast to find exact terrain surface height
 			var ray_origin = Vector3(gx, 100.0, gz)
 			var ray_end = Vector3(gx, -10.0, gz)
 			
@@ -121,19 +210,16 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			
 			var hit_pos = result.position
 			
-			# 3. Check if underwater using water density
 			var water_dens = terrain_manager.get_water_density(Vector3(gx, hit_pos.y + 1.0, gz))
 			if water_dens < 0.0:
 				continue
 			
-			# Calculate positions
 			var local_pos = hit_pos - chunk_world_pos
 			local_pos.y += tree_y_offset
 			
 			var world_pos = hit_pos
 			world_pos.y += tree_y_offset
 			
-			# Build visual transform
 			var random_scale = randf_range(0.8, 1.2)
 			var final_scale = tree_scale * random_scale
 			var rotation_angle = randf() * TAU
@@ -145,18 +231,12 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			
 			valid_transforms.append(t)
 			
-			# Create collision body for this tree
-			var collider = _create_tree_collider(local_pos, final_scale)
-			collision_container.add_child(collider)
-			
-			# Store tree data
 			var tree_index = valid_transforms.size() - 1
 			tree_list.append({
 				"world_pos": world_pos,
 				"local_pos": local_pos,
 				"index": tree_index,
 				"alive": true,
-				"collider": collider,
 				"scale": final_scale
 			})
 	
@@ -164,86 +244,45 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		mmi.multimesh.instance_count = valid_transforms.size()
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
-		
 		chunk_node.add_child(mmi)
 	
-	# Store chunk data
 	chunk_tree_data[coord] = {
 		"multimesh": mmi,
 		"trees": tree_list,
 		"chunk_node": chunk_node
 	}
 
-func _create_tree_collider(local_pos: Vector3, scale: float) -> StaticBody3D:
-	var body = StaticBody3D.new()
-	body.add_to_group("trees")
-	body.position = local_pos
-	body.position.y += (collision_height * scale) / 2.0  # Center the cylinder
-	
-	var shape = CollisionShape3D.new()
-	var cylinder = CylinderShape3D.new()
-	cylinder.radius = collision_radius * scale
-	cylinder.height = collision_height * scale
-	shape.shape = cylinder
-	body.add_child(shape)
-	
-	return body
-
-# Call this to chop a tree at the given world position (from raycast hit)
-func chop_tree_at(world_pos: Vector3, search_radius: float = 2.0) -> bool:
-	for coord in chunk_tree_data:
-		var data = chunk_tree_data[coord]
-		for tree in data.trees:
-			if not tree.alive:
-				continue
-			
-			var dist = tree.world_pos.distance_to(world_pos)
-			if dist < search_radius:
-				# Found the tree! Mark as dead
-				tree.alive = false
-				
-				# Hide in MultiMesh by scaling to 0
-				var mmi = data.multimesh as MultiMeshInstance3D
-				if mmi and mmi.multimesh:
-					var t = Transform3D()
-					t = t.scaled(Vector3.ZERO)
-					t.origin = tree.local_pos
-					mmi.multimesh.set_instance_transform(tree.index, t)
-				
-				# Remove collision
-				if tree.collider and is_instance_valid(tree.collider):
-					tree.collider.queue_free()
-					tree.collider = null
-				
-				# Emit signal
-				tree_chopped.emit(tree.world_pos)
-				return true
-	
-	return false
-
-# Alternative: Chop tree by collider reference (from raycast result)
 func chop_tree_by_collider(collider: Node) -> bool:
-	for coord in chunk_tree_data:
-		var data = chunk_tree_data[coord]
-		for tree in data.trees:
-			if tree.collider == collider and tree.alive:
-				tree.alive = false
-				
-				# Hide in MultiMesh
-				var mmi = data.multimesh as MultiMeshInstance3D
-				if mmi and mmi.multimesh:
-					var t = Transform3D()
-					t = t.scaled(Vector3.ZERO)
-					t.origin = tree.local_pos
-					mmi.multimesh.set_instance_transform(tree.index, t)
-				
-				# Remove collision
-				if is_instance_valid(tree.collider):
-					tree.collider.queue_free()
-					tree.collider = null
-				
-				tree_chopped.emit(tree.world_pos)
-				return true
+	if not collider.has_meta("tree_coord"):
+		return false
+	
+	var coord = collider.get_meta("tree_coord")
+	var tree_index = collider.get_meta("tree_index")
+	
+	if not chunk_tree_data.has(coord):
+		return false
+	
+	var data = chunk_tree_data[coord]
+	for tree in data.trees:
+		if tree.index == tree_index and tree.alive:
+			tree.alive = false
+			
+			# Hide in MultiMesh
+			var mmi = data.multimesh as MultiMeshInstance3D
+			if mmi and mmi.multimesh:
+				var t = Transform3D()
+				t = t.scaled(Vector3.ZERO)
+				t.origin = tree.local_pos
+				mmi.multimesh.set_instance_transform(tree.index, t)
+			
+			# Remove collider
+			var key = _tree_key(coord, tree_index)
+			if active_colliders.has(key):
+				_return_collider_to_pool(active_colliders[key])
+				active_colliders.erase(key)
+			
+			tree_chopped.emit(tree.world_pos)
+			return true
 	
 	return false
 
@@ -258,7 +297,7 @@ func load_tree_mesh_from_glb(path: String) -> Mesh:
 	instance.queue_free()
 	
 	if mesh:
-		print("Loaded tree mesh from: ", path, " with ", mesh.get_surface_count(), " surfaces")
+		print("Loaded tree mesh from: ", path)
 	
 	return mesh
 
@@ -291,7 +330,6 @@ func create_basic_tree_mesh() -> Mesh:
 		var p2 = Vector3(cos(angle2) * trunk_radius, 0, sin(angle2) * trunk_radius)
 		var p3 = Vector3(cos(angle2) * trunk_radius, trunk_height, sin(angle2) * trunk_radius)
 		var p4 = Vector3(cos(angle1) * trunk_radius, trunk_height, sin(angle1) * trunk_radius)
-		
 		st.add_vertex(p1)
 		st.add_vertex(p2)
 		st.add_vertex(p3)
@@ -313,7 +351,6 @@ func create_basic_tree_mesh() -> Mesh:
 		var p1 = Vector3(cos(angle1) * leaves_radius, leaves_base_y, sin(angle1) * leaves_radius)
 		var p2 = Vector3(cos(angle2) * leaves_radius, leaves_base_y, sin(angle2) * leaves_radius)
 		var p_top = Vector3(0, leaves_base_y + leaves_height, 0)
-		
 		st.add_vertex(p1)
 		st.add_vertex(p2)
 		st.add_vertex(p_top)
