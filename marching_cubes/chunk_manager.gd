@@ -42,6 +42,8 @@ class ChunkData:
 	var node_water: Node3D
 	var density_buffer_terrain: RID
 	var density_buffer_water: RID
+	# CPU mirrors for physics detection
+	var cpu_density_water: PackedFloat32Array = PackedFloat32Array()
 	
 var active_chunks: Dictionary = {} 
 
@@ -92,6 +94,38 @@ func _process(_delta):
 	if not viewer:
 		return
 	update_chunks()
+
+func get_water_density(global_pos: Vector3) -> float:
+	# 1. Find Chunk
+	var x = floor(global_pos.x / CHUNK_STRIDE)
+	var z = floor(global_pos.z / CHUNK_STRIDE)
+	var coord = Vector2i(x, z)
+	
+	if not active_chunks.has(coord):
+		return 1.0 # Air (Positive is air, Negative is water)
+		
+	var data = active_chunks[coord]
+	if data == null or data.cpu_density_water.is_empty():
+		return 1.0
+		
+	# 2. Find local position
+	var chunk_origin = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
+	var local_pos = global_pos - chunk_origin
+	
+	# Clamp to grid
+	var ix = round(local_pos.x)
+	var iy = round(local_pos.y)
+	var iz = round(local_pos.z)
+	
+	if ix < 0 or ix >= DENSITY_GRID_SIZE or iy < 0 or iy >= DENSITY_GRID_SIZE or iz < 0 or iz >= DENSITY_GRID_SIZE:
+		return 1.0 # Out of bounds
+		
+	var index = int(ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE))
+	
+	if index >= 0 and index < data.cpu_density_water.size():
+		return data.cpu_density_water[index]
+		
+	return 1.0
 
 # Updated to accept layer (0=Terrain, 1=Water)
 func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0):
@@ -331,7 +365,11 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mes
 	
 	var mesh_water = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, material_water, vertex_buffer, counter_buffer)
 
-	call_deferred("complete_generation", task.coord, mesh_terrain, dens_buf_terrain, mesh_water, dens_buf_water)
+	# Readback Water Density for Physics (CPU)
+	var cpu_density_bytes = rd.buffer_get_data(dens_buf_water)
+	var cpu_density_floats = cpu_density_bytes.to_float32_array()
+
+	call_deferred("complete_generation", task.coord, mesh_terrain, dens_buf_terrain, mesh_water, dens_buf_water, cpu_density_floats)
 
 func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
 	var density_buffer = task.rid
@@ -379,10 +417,15 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	var material = material_terrain if layer == 0 else material_water
 	var mesh = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, material, vertex_buffer, counter_buffer)
 	
+	var cpu_density_floats = PackedFloat32Array()
+	if layer == 1: # Only read back water density for now as we don't use terrain density on CPU yet
+		var cpu_density_bytes = rd.buffer_get_data(density_buffer)
+		cpu_density_floats = cpu_density_bytes.to_float32_array()
+	
 	var b_id = task.get("batch_id", -1)
 	var b_count = task.get("batch_count", 1)
 	
-	call_deferred("complete_modification", task.coord, mesh, layer, b_id, b_count)
+	call_deferred("complete_modification", task.coord, mesh, layer, b_id, b_count, cpu_density_floats)
 
 func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
 	var st = SurfaceTool.new()
@@ -451,7 +494,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk
 	
 	return mesh
 
-func complete_generation(coord: Vector2i, mesh_t: ArrayMesh, dens_t: RID, mesh_w: ArrayMesh, dens_w: RID):
+func complete_generation(coord: Vector2i, mesh_t: ArrayMesh, dens_t: RID, mesh_w: ArrayMesh, dens_w: RID, cpu_dens_w: PackedFloat32Array):
 	if not active_chunks.has(coord):
 		var tasks = []
 		tasks.append({ "type": "free", "rid": dens_t })
@@ -472,12 +515,13 @@ func complete_generation(coord: Vector2i, mesh_t: ArrayMesh, dens_t: RID, mesh_w
 	data.node_water = node_w
 	data.density_buffer_terrain = dens_t
 	data.density_buffer_water = dens_w
+	data.cpu_density_water = cpu_dens_w
 	
 	active_chunks[coord] = data
 
-func complete_modification(coord: Vector2i, mesh: ArrayMesh, layer: int, batch_id: int = -1, batch_count: int = 1):
+func complete_modification(coord: Vector2i, mesh: ArrayMesh, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens_w: PackedFloat32Array = PackedFloat32Array()):
 	if batch_id == -1:
-		_apply_chunk_update(coord, mesh, layer)
+		_apply_chunk_update(coord, mesh, layer, cpu_dens_w)
 		return
 	
 	if not pending_batches.has(batch_id):
@@ -487,14 +531,14 @@ func complete_modification(coord: Vector2i, mesh: ArrayMesh, layer: int, batch_i
 	batch.received += 1
 	
 	if active_chunks.has(coord):
-		batch.updates.append({ "coord": coord, "mesh": mesh, "layer": layer })
+		batch.updates.append({ "coord": coord, "mesh": mesh, "layer": layer, "cpu_dens": cpu_dens_w })
 		
 	if batch.received >= batch.expected:
 		for update in batch.updates:
-			_apply_chunk_update(update.coord, update.mesh, update.layer)
+			_apply_chunk_update(update.coord, update.mesh, update.layer, update.cpu_dens)
 		pending_batches.erase(batch_id)
 
-func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh, layer: int):
+func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh, layer: int, cpu_dens: PackedFloat32Array):
 	if not active_chunks.has(coord):
 		return
 	var data = active_chunks[coord]
@@ -506,6 +550,8 @@ func _apply_chunk_update(coord: Vector2i, mesh: ArrayMesh, layer: int):
 	else: # Water
 		if data.node_water: data.node_water.queue_free()
 		data.node_water = create_chunk_node(mesh, chunk_pos, true)
+		if not cpu_dens.is_empty():
+			data.cpu_density_water = cpu_dens
 
 func create_chunk_node(mesh: ArrayMesh, position: Vector3, is_water: bool = false) -> Node3D:
 	if mesh == null:

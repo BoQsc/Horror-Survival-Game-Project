@@ -5,68 +5,43 @@ const SWIM_SPEED = 4.0
 const JUMP_VELOCITY = 4.5
 
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
-var water_overlap_count: int = 0
 var is_swimming: bool = false
+var terrain_manager: Node = null
 
 @onready var camera = $Camera3D
 
 func _ready():
-	# Create Water Detector
-	var area = Area3D.new()
-	area.name = "WaterDetector"
-	# Monitorable false (we don't want others to detect us via this area), Monitoring true (we detect water)
-	area.monitorable = false
-	area.monitoring = true
-	
-	var collision = CollisionShape3D.new()
-	var cap = CapsuleShape3D.new()
-	cap.radius = 0.5
-	cap.height = 1.8 # Match player height roughly
-	collision.shape = cap
-	# Move up slightly to center on body (CharacterBody usually pivots at feet or center? 
-	# Standard Godot CharacterBody3D usually pivots at feet if collision shape is moved up, 
-	# but if just Shape, it centers on origin. 
-	# Let's assume origin is at feet for now based on scene transform y=127.
-	# Actually, usually CapsuleShape is centered. 
-	# If I add it as child, it centers on Player origin. 
-	# Let's verify PlayerShape in scene.
-	
-	area.add_child(collision)
-	add_child(area)
-	
-	area.area_entered.connect(_on_water_entered)
-	area.area_exited.connect(_on_water_exited)
-
-func _on_water_entered(area):
-	if area.is_in_group("water"):
-		water_overlap_count += 1
-		check_swimming_state()
-
-func _on_water_exited(area):
-	if area.is_in_group("water"):
-		water_overlap_count -= 1
-		check_swimming_state()
-
-func check_swimming_state():
-	var was_swimming = is_swimming
-	is_swimming = water_overlap_count > 0
-	
-	if is_swimming != was_swimming:
-		# Toggle underwater effect
-		# We assume UI is sibling of Player in MainGame
-		var ui = get_node_or_null("../UI/UnderwaterEffect")
-		if ui:
-			ui.visible = is_swimming
-			
-	if is_swimming and not was_swimming:
-		# Entered water
-		velocity.y *= 0.1 # Dampen entry impact
-	elif not is_swimming and was_swimming:
-		# Exited water
-		if Input.is_action_pressed("ui_accept"): # Jumping out
-			velocity.y = JUMP_VELOCITY 
+	terrain_manager = get_node_or_null("../TerrainManager")
 
 func _physics_process(delta: float) -> void:
+	if not terrain_manager:
+		process_walking(delta)
+		move_and_slide()
+		return
+		
+	# Physics: Check Center of Mass
+	# +0.9 is approx center of 1.8m player
+	var center_pos = global_position + Vector3(0, 0.9, 0)
+	var body_density = terrain_manager.get_water_density(center_pos)
+	
+	var was_swimming = is_swimming
+	# Negative density means inside water
+	is_swimming = body_density < 0.0
+	
+	if is_swimming and not was_swimming:
+		velocity.y *= 0.1 # Dampen entry
+	elif not is_swimming and was_swimming:
+		if Input.is_action_pressed("ui_accept"):
+			velocity.y = JUMP_VELOCITY # Jump out
+	
+	# Visuals: Check Camera Eye
+	var cam_density = terrain_manager.get_water_density(camera.global_position)
+	var is_cam_underwater = cam_density < 0.0
+	
+	var ui = get_node_or_null("../UI/UnderwaterEffect")
+	if ui:
+		ui.visible = is_cam_underwater
+
 	if is_swimming:
 		process_swimming(delta)
 	else:
