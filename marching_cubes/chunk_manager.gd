@@ -47,12 +47,18 @@ class ChunkData:
 	# CPU mirrors for physics detection
 	var cpu_density_water: PackedFloat32Array = PackedFloat32Array()
 	var cpu_density_terrain: PackedFloat32Array = PackedFloat32Array()
-	
-var active_chunks: Dictionary = {} 
+
+var active_chunks: Dictionary = {}
+
+# Time-budgeted node creation - prevents stutters from multiple chunks completing at once
+var pending_nodes: Array[Dictionary] = []  # Queue of completed chunks waiting for node creation
+var pending_nodes_mutex: Mutex
+var frame_budget_ms: float = 4.0  # Max ms to spend on node creation per frame 
 
 func _ready():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
+	pending_nodes_mutex = Mutex.new()
 	
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
@@ -96,6 +102,32 @@ func _process(_delta):
 	if not viewer:
 		return
 	update_chunks()
+	process_pending_nodes()  # Time-budgeted node creation
+
+# Process pending node creations within frame budget
+func process_pending_nodes():
+	if pending_nodes.is_empty():
+		return
+	
+	var start_time = Time.get_ticks_usec()
+	var budget_usec = frame_budget_ms * 1000.0
+	
+	while not pending_nodes.is_empty():
+		# Check time budget
+		var elapsed = Time.get_ticks_usec() - start_time
+		if elapsed >= budget_usec:
+			break  # Out of time, continue next frame
+		
+		# Get next pending chunk
+		pending_nodes_mutex.lock()
+		if pending_nodes.is_empty():
+			pending_nodes_mutex.unlock()
+			break
+		var item = pending_nodes.pop_front()
+		pending_nodes_mutex.unlock()
+		
+		# Create the nodes
+		_finalize_chunk_creation(item)
 
 func get_water_density(global_pos: Vector3) -> float:
 	# 1. Find Chunk
@@ -586,23 +618,53 @@ func complete_generation(coord: Vector2i, result_t: Dictionary, dens_t: RID, res
 		mutex.unlock()
 		for t in tasks: semaphore.post()
 		return
+	
+	# Queue for time-budgeted node creation instead of immediate creation
+	pending_nodes_mutex.lock()
+	pending_nodes.append({
+		"type": "generation",
+		"coord": coord,
+		"result_t": result_t,
+		"result_w": result_w,
+		"dens_t": dens_t,
+		"dens_w": dens_w,
+		"cpu_dens_w": cpu_dens_w,
+		"cpu_dens_t": cpu_dens_t
+	})
+	pending_nodes_mutex.unlock()
+
+func _finalize_chunk_creation(item: Dictionary):
+	if item.type == "generation":
+		var coord = item.coord
 		
-	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
-	
-	var node_t = create_chunk_node(result_t.mesh, result_t.shape, chunk_pos)
-	var node_w = create_chunk_node(result_w.mesh, result_w.shape, chunk_pos, true) # True = is_water
-	
-	var data = ChunkData.new()
-	data.node_terrain = node_t
-	data.node_water = node_w
-	data.density_buffer_terrain = dens_t
-	data.density_buffer_water = dens_w
-	data.cpu_density_water = cpu_dens_w
-	data.cpu_density_terrain = cpu_dens_t
-	
-	active_chunks[coord] = data
-	
-	chunk_generated.emit(coord, node_t)
+		# Check if chunk is still wanted
+		if not active_chunks.has(coord):
+			# Free the density buffers
+			var tasks = []
+			tasks.append({ "type": "free", "rid": item.dens_t })
+			tasks.append({ "type": "free", "rid": item.dens_w })
+			mutex.lock()
+			for t in tasks: task_queue.append(t)
+			mutex.unlock()
+			for t in tasks: semaphore.post()
+			return
+		
+		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+		
+		var node_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos)
+		var node_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
+		
+		var data = ChunkData.new()
+		data.node_terrain = node_t
+		data.node_water = node_w
+		data.density_buffer_terrain = item.dens_t
+		data.density_buffer_water = item.dens_w
+		data.cpu_density_water = item.cpu_dens_w
+		data.cpu_density_terrain = item.cpu_dens_t
+		
+		active_chunks[coord] = data
+		
+		chunk_generated.emit(coord, node_t)
 
 func complete_modification(coord: Vector2i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array()):
 	if batch_id == -1:
