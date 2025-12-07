@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_hyta6"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_2n70d"]
-[ext_resource type="Script" path="res://greedy_meshing_large_test_runner.gd" id="3_large"]
+[ext_resource type="Script" uid="uid://6ni8vcn4j6p" path="res://greedy_meshing_large_test_runner.gd" id="3_large"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_hyta6"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)

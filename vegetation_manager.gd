@@ -3,6 +3,7 @@ extends Node3D
 @export var terrain_manager: Node3D
 @export var tree_model_path: String = "res://models/rigged_animated_cinematic_quality_tree_4.glb"
 @export var tree_scale: float = 1.0  # Adjust if model is too big/small
+@export var tree_y_offset: float = -3.0  # Negative to sink trees into ground
 
 var tree_mesh: Mesh
 var forest_noise: FastNoiseLite
@@ -105,6 +106,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			# Place Tree - convert world hit position to local coordinates
 			# since the MultiMeshInstance is a child of chunk_node
 			var local_pos = hit_pos - chunk_world_pos
+			local_pos.y += tree_y_offset  # Apply vertical offset (negative to sink into ground)
 			
 			# Build transform: rotation and scale first, THEN set origin
 			# (scaling a transform also scales its origin, which would displace the tree!)
