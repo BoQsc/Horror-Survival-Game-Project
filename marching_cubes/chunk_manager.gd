@@ -12,7 +12,7 @@ const DENSITY_GRID_SIZE = 33 # 0..32
 const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 
 @export var viewer: Node3D
-@export var render_distance: int = 5
+@export var render_distance: int = 5  # Visual range
 @export var terrain_height: float = 10.0
 @export var water_level: float = 14.0 # Raised for surface lakes
 @export var noise_frequency: float = 0.1
@@ -44,11 +44,16 @@ class ChunkData:
 	var node_water: Node3D
 	var density_buffer_terrain: RID
 	var density_buffer_water: RID
+	var collision_shape_terrain: CollisionShape3D  # For dynamic enable/disable
+	var terrain_shape: Shape3D  # Store the shape for lazy creation
 	# CPU mirrors for physics detection
 	var cpu_density_water: PackedFloat32Array = PackedFloat32Array()
 	var cpu_density_terrain: PackedFloat32Array = PackedFloat32Array()
 
 var active_chunks: Dictionary = {}
+
+# Collision distance - only enable collision within this range (cheaper than render_distance)
+@export var collision_distance: int = 3  # Chunks within this get collision
 
 # Time-budgeted node creation - prevents stutters from multiple chunks completing at once
 var pending_nodes: Array[Dictionary] = []  # Queue of completed chunks waiting for node creation
@@ -118,6 +123,7 @@ func _process(delta):
 	
 	update_chunks()
 	process_pending_nodes()
+	update_collision_proximity()  # Enable/disable collision based on player distance
 
 func _update_fps_tracking(delta: float):
 	var instant_fps = 1.0 / delta if delta > 0 else 60.0
@@ -150,6 +156,31 @@ func _adjust_adaptive_loading():
 		loading_paused = false
 		adaptive_frame_budget_ms = 3.0
 		chunks_per_frame_limit = 2
+
+var collision_update_counter: int = 0
+func update_collision_proximity():
+	# Only update every 30 frames to reduce overhead
+	collision_update_counter += 1
+	if collision_update_counter < 30:
+		return
+	collision_update_counter = 0
+	
+	var p_pos = viewer.global_position
+	var p_chunk_x = floor(p_pos.x / CHUNK_STRIDE)
+	var p_chunk_z = floor(p_pos.z / CHUNK_STRIDE)
+	var center_chunk = Vector2i(p_chunk_x, p_chunk_z)
+	
+	for coord in active_chunks:
+		var data = active_chunks[coord]
+		if data == null:
+			continue
+		
+		var dist = Vector2(coord.x, coord.y).distance_to(Vector2(center_chunk.x, center_chunk.y))
+		var should_have_collision = dist <= collision_distance
+		
+		# Enable/disable collision shape
+		if data.collision_shape_terrain:
+			data.collision_shape_terrain.disabled = not should_have_collision
 
 # Process pending node creations within adaptive frame budget
 func process_pending_nodes():
@@ -710,12 +741,13 @@ func _finalize_chunk_creation(item: Dictionary):
 		
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
 		
-		var node_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos)
-		var node_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
+		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos)
+		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
 		
 		var data = ChunkData.new()
-		data.node_terrain = node_t
-		data.node_water = node_w
+		data.node_terrain = result_t.node if not result_t.is_empty() else null
+		data.node_water = result_w.node if not result_w.is_empty() else null
+		data.collision_shape_terrain = result_t.collision_shape if not result_t.is_empty() else null
 		data.density_buffer_terrain = item.dens_t
 		data.density_buffer_water = item.dens_w
 		data.cpu_density_water = item.cpu_dens_w
@@ -723,7 +755,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		
 		active_chunks[coord] = data
 		
-		chunk_generated.emit(coord, node_t)
+		chunk_generated.emit(coord, data.node_terrain)
 
 func complete_modification(coord: Vector2i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array()):
 	if batch_id == -1:
@@ -752,18 +784,21 @@ func _apply_chunk_update(coord: Vector2i, result: Dictionary, layer: int, cpu_de
 	
 	if layer == 0: # Terrain
 		if data.node_terrain: data.node_terrain.queue_free()
-		data.node_terrain = create_chunk_node(result.mesh, result.shape, chunk_pos)
+		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos)
+		data.node_terrain = result_node.node if not result_node.is_empty() else null
+		data.collision_shape_terrain = result_node.collision_shape if not result_node.is_empty() else null
 		if not cpu_dens.is_empty():
 			data.cpu_density_terrain = cpu_dens
 	else: # Water
 		if data.node_water: data.node_water.queue_free()
-		data.node_water = create_chunk_node(result.mesh, result.shape, chunk_pos, true)
+		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true)
+		data.node_water = result_node.node if not result_node.is_empty() else null
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
 
-func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false) -> Node3D:
+func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false) -> Dictionary:
 	if mesh == null:
-		return null
+		return {}
 		
 	var node: CollisionObject3D
 	
@@ -790,8 +825,9 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	node.add_child(mesh_instance)
 	
 	var collision_shape = CollisionShape3D.new()
-	# Use the pre-baked shape!
-	collision_shape.shape = shape
+	if shape:
+		collision_shape.shape = shape
 	node.add_child(collision_shape)
 	
-	return node
+	# Return both node and collision_shape for tracking
+	return { "node": node, "collision_shape": collision_shape }

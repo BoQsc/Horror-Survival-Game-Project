@@ -2,18 +2,31 @@ extends CharacterBody3D
 
 const WALK_SPEED = 5.0
 const SWIM_SPEED = 4.0
+const FLY_SPEED = 15.0  # Fast flying for testing
 const JUMP_VELOCITY = 4.5
 
 var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 var is_swimming: bool = false
+var is_flying: bool = false  # Press F to toggle fly mode
 var terrain_manager: Node = null
 
 @onready var camera = $Camera3D
 
 func _ready():
 	terrain_manager = get_node_or_null("../TerrainManager")
+	print("FLY MODE: Press F to toggle fly mode")
+
+func _input(event):
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F:
+		is_flying = !is_flying
+		print("Fly mode: ", "ON" if is_flying else "OFF")
 
 func _physics_process(delta: float) -> void:
+	if is_flying:
+		process_flying(delta)
+		move_and_slide()
+		return
+	
 	if not terrain_manager:
 		process_walking(delta)
 		move_and_slide()
@@ -86,3 +99,19 @@ func process_swimming(delta: float):
 	# Space to swim up (surface) explicitly
 	if Input.is_action_pressed("ui_accept"):
 		velocity.y += 5.0 * delta
+
+func process_flying(delta: float):
+	# Noclip flying - look direction determines movement
+	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	var cam_basis = camera.global_transform.basis
+	var direction = (cam_basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	
+	velocity = Vector3.ZERO
+	if direction:
+		velocity = direction * FLY_SPEED
+	
+	# Space to go up, Shift to go down
+	if Input.is_action_pressed("ui_accept"):
+		velocity.y = FLY_SPEED
+	if Input.is_key_pressed(KEY_SHIFT):
+		velocity.y = -FLY_SPEED

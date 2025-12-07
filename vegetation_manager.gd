@@ -26,10 +26,12 @@ var collider_pool: Array[StaticBody3D] = []
 const MAX_ACTIVE_COLLIDERS = 50  # Limit active colliders for performance
 
 func _ready():
-	tree_mesh = load_tree_mesh_from_glb(tree_model_path)
-	if tree_mesh == null:
-		push_warning("Failed to load tree model, falling back to basic mesh")
-		tree_mesh = create_basic_tree_mesh()
+	# PERFORMANCE TEST: Use simple procedural tree instead of high-poly GLB
+	tree_mesh = create_basic_tree_mesh()
+	# tree_mesh = load_tree_mesh_from_glb(tree_model_path)
+	# if tree_mesh == null:
+	# 	push_warning("Failed to load tree model, falling back to basic mesh")
+	# 	tree_mesh = create_basic_tree_mesh()
 	
 	forest_noise = FastNoiseLite.new()
 	forest_noise.frequency = 0.05
@@ -66,18 +68,27 @@ func _cleanup_chunk_trees(coord: Vector2i):
 		chunk_tree_data.erase(coord)
 
 func _physics_process(_delta):
-	# Process pending chunks
+	# Process only ONE pending chunk per physics frame (rate limited)
 	if not pending_chunks.is_empty():
 		var item = pending_chunks[0]
 		item.frames_waited += 1
 		
+		# Wait 5 frames for colliders, then process
 		if item.frames_waited >= 5:
 			pending_chunks.pop_front()
 			if is_instance_valid(item.chunk_node):
+				# Place vegetation - this does raycasting so only one per frame
 				_place_vegetation_for_chunk(item.coord, item.chunk_node)
+			# Only process one chunk per frame to prevent stutter
+			return
 	
-	# Update proximity colliders
-	_update_proximity_colliders()
+	# Only update colliders if we didn't just place vegetation (spread work)
+	collider_update_counter += 1
+	if collider_update_counter >= 15:  # Increased from 10 to reduce work
+		collider_update_counter = 0
+		_update_proximity_colliders()
+
+var collider_update_counter: int = 0
 
 func _update_proximity_colliders():
 	if not player:
@@ -87,11 +98,20 @@ func _update_proximity_colliders():
 	
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
+	var chunk_stride = 31
+	var chunk_check_dist = collider_distance + chunk_stride  # Only check nearby chunks
 	
-	# Collect trees that need colliders
+	# Collect trees that need colliders (only from nearby chunks)
 	var trees_needing_colliders: Array[Dictionary] = []
 	
 	for coord in chunk_tree_data:
+		# Early-out: skip chunks too far from player
+		var chunk_center_x = coord.x * chunk_stride + chunk_stride / 2.0
+		var chunk_center_z = coord.y * chunk_stride + chunk_stride / 2.0
+		var chunk_dist = Vector2(player_pos.x, player_pos.z).distance_to(Vector2(chunk_center_x, chunk_center_z))
+		if chunk_dist > chunk_check_dist:
+			continue
+		
 		var data = chunk_tree_data[coord]
 		for tree in data.trees:
 			if not tree.alive:
