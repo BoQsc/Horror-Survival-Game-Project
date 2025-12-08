@@ -767,7 +767,9 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		mmi.multimesh.instance_count = valid_transforms.size()
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
-		chunk_node.add_child(mmi)
+	
+	# ALWAYS add to chunk and store data, even if empty (so player can place grass here)
+	chunk_node.add_child(mmi)
 	
 	chunk_grass_data[coord] = {
 		"multimesh": mmi,
@@ -959,7 +961,9 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		mmi.multimesh.instance_count = valid_transforms.size()
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
-		chunk_node.add_child(mmi)
+	
+	# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
+	chunk_node.add_child(mmi)
 	
 	chunk_rock_data[coord] = {
 		"multimesh": mmi,
