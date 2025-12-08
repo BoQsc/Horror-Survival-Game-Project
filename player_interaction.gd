@@ -217,7 +217,8 @@ func update_selection_box():
 
 func handle_playing_input(event):
 	# PLAYING mode - interact with world objects (trees, grass)
-	var hit = raycast(100.0, false)
+	# Use collide_with_areas=true to detect grass (Area3D)
+	var hit = raycast(100.0, true)
 	
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		# L-Click: Harvest/Chop
@@ -230,9 +231,10 @@ func handle_playing_input(event):
 					vegetation_manager.harvest_grass_by_collider(hit.collider)
 	
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
-		# R-Click: Place grass on terrain
-		if hit and vegetation_manager:
-			vegetation_manager.place_grass(hit.position)
+		# R-Click: Place grass on terrain (use normal raycast without areas)
+		var terrain_hit = raycast(100.0, false)
+		if terrain_hit and vegetation_manager:
+			vegetation_manager.place_grass(terrain_hit.position)
 
 func handle_terrain_input(event):
 	var hit_areas = (current_mode == Mode.WATER)

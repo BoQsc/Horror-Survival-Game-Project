@@ -40,8 +40,8 @@ const MAX_ACTIVE_COLLIDERS = 50  # Limit active colliders for performance
 
 # Grass data per chunk coord -> { multimesh, grass_list[] }
 var chunk_grass_data: Dictionary = {}
-var active_grass_colliders: Dictionary = {}  # grass_key -> StaticBody3D
-var grass_collider_pool: Array[StaticBody3D] = []
+var active_grass_colliders: Dictionary = {}  # grass_key -> Area3D
+var grass_collider_pool: Array[Area3D] = []
 const MAX_ACTIVE_GRASS_COLLIDERS = 30
 
 func _ready():
@@ -271,17 +271,20 @@ func _return_collider_to_pool(collider: StaticBody3D):
 func _grass_key(coord: Vector2i, index: int) -> String:
 	return "g_%d_%d_%d" % [coord.x, coord.y, index]
 
-func _get_grass_collider_from_pool() -> StaticBody3D:
+func _get_grass_collider_from_pool() -> Area3D:
 	if grass_collider_pool.size() > 0:
 		var collider = grass_collider_pool.pop_back()
 		collider.visible = debug_collision
 		collider.collision_layer = 1
+		collider.monitorable = true
 		return collider
 	
-	# Create new collider
-	var body = StaticBody3D.new()
+	# Create new collider - Area3D so player can walk through
+	var body = Area3D.new()
 	body.add_to_group("grass")
 	body.collision_layer = 1
+	body.monitorable = true  # Can be detected by raycasts
+	body.monitoring = false  # Doesn't need to detect others
 	
 	var shape_node = CollisionShape3D.new()
 	var shape = CylinderShape3D.new()
@@ -308,8 +311,9 @@ func _get_grass_collider_from_pool() -> StaticBody3D:
 	add_child(body)
 	return body
 
-func _return_grass_collider_to_pool(collider: StaticBody3D):
+func _return_grass_collider_to_pool(collider: Area3D):
 	collider.collision_layer = 0
+	collider.monitorable = false
 	collider.visible = false
 	grass_collider_pool.append(collider)
 
