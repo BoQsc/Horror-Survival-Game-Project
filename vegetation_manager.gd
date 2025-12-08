@@ -844,7 +844,18 @@ func place_grass(world_pos: Vector3) -> bool:
 	var mmi = data.multimesh as MultiMeshInstance3D
 	if mmi and mmi.multimesh:
 		var old_count = mmi.multimesh.instance_count
+		
+		# IMPORTANT: Save existing transforms before resizing (Godot resets them)
+		var old_transforms = []
+		for i in range(old_count):
+			old_transforms.append(mmi.multimesh.get_instance_transform(i))
+		
+		# Resize and restore
 		mmi.multimesh.instance_count = old_count + 1
+		for i in range(old_count):
+			mmi.multimesh.set_instance_transform(i, old_transforms[i])
+		
+		# Add new instance
 		mmi.multimesh.set_instance_transform(old_count, t)
 		
 		var grass_entry = {
@@ -1020,7 +1031,18 @@ func place_rock(world_pos: Vector3) -> bool:
 	var mmi = data.multimesh as MultiMeshInstance3D
 	if mmi and mmi.multimesh:
 		var old_count = mmi.multimesh.instance_count
+		
+		# IMPORTANT: Save existing transforms before resizing (Godot resets them)
+		var old_transforms = []
+		for i in range(old_count):
+			old_transforms.append(mmi.multimesh.get_instance_transform(i))
+		
+		# Resize and restore
 		mmi.multimesh.instance_count = old_count + 1
+		for i in range(old_count):
+			mmi.multimesh.set_instance_transform(i, old_transforms[i])
+		
+		# Add new instance
 		mmi.multimesh.set_instance_transform(old_count, t)
 		
 		var rock_entry = {
