@@ -156,7 +156,8 @@ func _update_proximity_colliders():
 		if not active_colliders.has(key):
 			var item = wanted_keys[key]
 			var collider = _get_collider_from_pool()
-			collider.global_position = item.tree.world_pos
+			# Use hit_pos (ground level) as base, then offset up by half height to center the cylinder on the trunk
+			collider.global_position = item.tree.hit_pos
 			collider.global_position.y += (collision_height * item.tree.scale) / 2.0
 			
 			# Update collision shape size if needed
