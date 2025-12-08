@@ -174,7 +174,7 @@ func _update_proximity_colliders():
 func _tree_key(coord: Vector2i, index: int) -> String:
 	return "%d_%d_%d" % [coord.x, coord.y, index]
 
-@export var debug_collision: bool = true
+@export var debug_collision: bool = false
 
 # ... (existing variables)
 
