@@ -15,6 +15,10 @@ var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
 var current_rotation: int = 0
 
+# PLAYING mode placeable items
+enum PlaceableItem { ROCK, GRASS }
+var current_placeable: PlaceableItem = PlaceableItem.ROCK
+
 var current_voxel_pos: Vector3
 var current_remove_voxel_pos: Vector3
 var has_target: bool = false
@@ -96,13 +100,22 @@ func _unhandled_input(event):
 			current_block_id = 1
 			update_ui()
 		elif event.keycode == KEY_2:
-			current_block_id = 2
+			if current_mode == Mode.PLAYING:
+				current_placeable = PlaceableItem.GRASS
+			else:
+				current_block_id = 2
 			update_ui()
 		elif event.keycode == KEY_3:
 			current_block_id = 3
 			update_ui()
 		elif event.keycode == KEY_4:
 			current_block_id = 4
+			update_ui()
+		elif event.keycode == KEY_1:
+			if current_mode == Mode.PLAYING:
+				current_placeable = PlaceableItem.ROCK
+			else:
+				current_block_id = 1
 			update_ui()
 	
 	if event is InputEventMouseButton:
@@ -135,7 +148,8 @@ func toggle_mode():
 
 func update_ui():
 	if current_mode == Mode.PLAYING:
-		mode_label.text = "Mode: PLAYING\nL-Click: Chop/Harvest\nR-Click: Place Grass\n[TAB] Switch Mode"
+		var item_str = "Rock" if current_placeable == PlaceableItem.ROCK else "Grass"
+		mode_label.text = "Mode: PLAYING\nL-Click: Chop/Harvest\nR-Click: Place %s\n[1] Rock [2] Grass\n[TAB] Switch Mode" % item_str
 	elif current_mode == Mode.TERRAIN:
 		var mode_str = "Blocky" if terrain_blocky_mode else "Smooth"
 		mode_label.text = "Mode: TERRAIN (%s)\nL-Click: Dig, R-Click: Place\n[G] Toggle Grid Mode" % mode_str
@@ -234,10 +248,13 @@ func handle_playing_input(event):
 					vegetation_manager.harvest_rock_by_collider(hit.collider)
 	
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
-		# R-Click: Place rock on terrain (use normal raycast without areas)
+		# R-Click: Place selected item on terrain (use normal raycast without areas)
 		var terrain_hit = raycast(100.0, false)
 		if terrain_hit and vegetation_manager:
-			vegetation_manager.place_rock(terrain_hit.position)
+			if current_placeable == PlaceableItem.ROCK:
+				vegetation_manager.place_rock(terrain_hit.position)
+			else:
+				vegetation_manager.place_grass(terrain_hit.position)
 
 func handle_terrain_input(event):
 	var hit_areas = (current_mode == Mode.WATER)
