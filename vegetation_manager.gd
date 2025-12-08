@@ -478,6 +478,10 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	}
 
 func chop_tree_by_collider(collider: Node) -> bool:
+	# Check if collider is still valid (not freed)
+	if not is_instance_valid(collider):
+		return false
+	
 	if not collider.has_meta("tree_coord"):
 		return false
 	
@@ -611,6 +615,10 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	}
 
 func harvest_grass_by_collider(collider: Node) -> bool:
+	# Check if collider is still valid (not freed)
+	if not is_instance_valid(collider):
+		return false
+	
 	if not collider.has_meta("grass_coord"):
 		return false
 	
