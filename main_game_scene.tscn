@@ -113,6 +113,8 @@ terrain_manager = NodePath("../TerrainManager")
 tree_y_offset = 9.5
 grass_scale = 0.01
 grass_collision_radius = 0.7
+rock_scale = 0.3
+rock_y_offset = 0.3
 
 [node name="BuildingManager" type="Node3D" parent="."]
 script = ExtResource("5_buildings")

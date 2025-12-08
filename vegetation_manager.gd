@@ -2,6 +2,7 @@ extends Node3D
 
 signal tree_chopped(world_position: Vector3)
 signal grass_harvested(world_position: Vector3)
+signal rock_harvested(world_position: Vector3)
 
 @export var terrain_manager: Node3D
 @export var tree_model_path: String = "res://models/pine_tree_-_ps1_low_poly.glb"
@@ -19,12 +20,22 @@ signal grass_harvested(world_position: Vector3)
 @export var grass_collision_radius: float = 0.3
 @export var grass_collision_height: float = 0.5
 
+# Rock settings
+@export var rock_model_path: String = "res://models/small_rock/simple_rock_-_ps1_low_poly.glb"
+@export var rock_scale: float = 0.5
+@export var rock_y_offset: float = 0.0
+@export var rock_collision_radius: float = 0.4
+@export var rock_collision_height: float = 0.4
+
 var tree_mesh: Mesh
 var tree_base_transform: Transform3D = Transform3D()  # Orientation fix from GLB
 var grass_mesh: Mesh
 var grass_base_transform: Transform3D = Transform3D()
+var rock_mesh: Mesh
+var rock_base_transform: Transform3D = Transform3D()
 var forest_noise: FastNoiseLite
 var grass_noise: FastNoiseLite
+var rock_noise: FastNoiseLite
 var player: Node3D
 
 # Queue for deferred vegetation placement
@@ -43,6 +54,12 @@ var chunk_grass_data: Dictionary = {}
 var active_grass_colliders: Dictionary = {}  # grass_key -> Area3D
 var grass_collider_pool: Array[Area3D] = []
 const MAX_ACTIVE_GRASS_COLLIDERS = 30
+
+# Rock data per chunk coord -> { multimesh, rock_list[] }
+var chunk_rock_data: Dictionary = {}
+var active_rock_colliders: Dictionary = {}  # rock_key -> Area3D
+var rock_collider_pool: Array[Area3D] = []
+const MAX_ACTIVE_ROCK_COLLIDERS = 30
 
 func _ready():
 	# Load tree mesh from GLB model with its orientation transform
@@ -74,6 +91,21 @@ func _ready():
 	grass_noise.frequency = 0.08  # Different pattern from trees
 	grass_noise.seed = 54321
 	
+	# Load rock mesh
+	var rock_result = load_tree_mesh_from_glb(rock_model_path)
+	if rock_result.mesh:
+		rock_mesh = rock_result.mesh
+		rock_base_transform = rock_result.transform
+		rock_base_transform.origin = Vector3.ZERO
+		print("Loaded rock model from GLB")
+	else:
+		push_warning("Failed to load rock model, using basic mesh")
+		rock_mesh = create_basic_rock_mesh()
+	
+	rock_noise = FastNoiseLite.new()
+	rock_noise.frequency = 0.06  # Different pattern from grass/trees
+	rock_noise.seed = 98765
+	
 	if terrain_manager:
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
 	
@@ -88,6 +120,8 @@ func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
 		_cleanup_chunk_trees(coord)
 	if chunk_grass_data.has(coord):
 		_cleanup_chunk_grass(coord)
+	if chunk_rock_data.has(coord):
+		_cleanup_chunk_rocks(coord)
 	
 	pending_chunks.append({
 		"coord": coord,
@@ -116,6 +150,16 @@ func _cleanup_chunk_grass(coord: Vector2i):
 				active_grass_colliders.erase(key)
 		chunk_grass_data.erase(coord)
 
+func _cleanup_chunk_rocks(coord: Vector2i):
+	if chunk_rock_data.has(coord):
+		var data = chunk_rock_data[coord]
+		for rock in data.rock_list:
+			var key = _rock_key(coord, rock.index)
+			if active_rock_colliders.has(key):
+				_return_rock_collider_to_pool(active_rock_colliders[key])
+				active_rock_colliders.erase(key)
+		chunk_rock_data.erase(coord)
+
 func _physics_process(_delta):
 	# Process only ONE pending chunk per physics frame (rate limited)
 	if not pending_chunks.is_empty():
@@ -129,6 +173,7 @@ func _physics_process(_delta):
 				# Place vegetation - this does raycasting so only one per frame
 				_place_vegetation_for_chunk(item.coord, item.chunk_node)
 				_place_grass_for_chunk(item.coord, item.chunk_node)
+				_place_rocks_for_chunk(item.coord, item.chunk_node)
 			# Only process one chunk per frame to prevent stutter
 			return
 	
@@ -138,6 +183,7 @@ func _physics_process(_delta):
 		collider_update_counter = 0
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
+		_update_rock_proximity_colliders()
 
 var collider_update_counter: int = 0
 
@@ -388,6 +434,121 @@ func _update_grass_proximity_colliders():
 			collider.set_meta("grass_index", item.grass.index)
 			
 			active_grass_colliders[key] = collider
+
+# ========== ROCK HELPER FUNCTIONS ==========
+
+func _rock_key(coord: Vector2i, index: int) -> String:
+	return "r_%d_%d_%d" % [coord.x, coord.y, index]
+
+func _get_rock_collider_from_pool() -> Area3D:
+	if rock_collider_pool.size() > 0:
+		var collider = rock_collider_pool.pop_back()
+		collider.visible = debug_collision
+		collider.collision_layer = 1
+		collider.monitorable = true
+		return collider
+	
+	# Create new collider - Area3D so player can walk through
+	var body = Area3D.new()
+	body.add_to_group("rocks")
+	body.collision_layer = 1
+	body.monitorable = true
+	body.monitoring = false
+	
+	var shape_node = CollisionShape3D.new()
+	var shape = CylinderShape3D.new()
+	shape.radius = rock_collision_radius
+	shape.height = rock_collision_height
+	shape_node.shape = shape
+	body.add_child(shape_node)
+	
+	# DEBUG: Add visible mesh
+	var mesh_instance = MeshInstance3D.new()
+	var cylinder_mesh = CylinderMesh.new()
+	cylinder_mesh.top_radius = rock_collision_radius
+	cylinder_mesh.bottom_radius = rock_collision_radius
+	cylinder_mesh.height = rock_collision_height
+	mesh_instance.mesh = cylinder_mesh
+	var debug_mat = StandardMaterial3D.new()
+	debug_mat.albedo_color = Color(0.5, 0.5, 0.5, 0.5)  # Gray for rocks
+	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mesh_instance.material_override = debug_mat
+	body.add_child(mesh_instance)
+	
+	body.visible = debug_collision
+	
+	add_child(body)
+	return body
+
+func _return_rock_collider_to_pool(collider: Area3D):
+	collider.collision_layer = 0
+	collider.monitorable = false
+	collider.visible = false
+	rock_collider_pool.append(collider)
+
+func _update_rock_proximity_colliders():
+	if not player:
+		return
+	
+	var player_pos = player.global_position
+	var dist_sq = collider_distance * collider_distance
+	var chunk_stride = 31
+	var chunk_check_dist = collider_distance + chunk_stride
+	
+	var rocks_needing_colliders: Array[Dictionary] = []
+	
+	for coord in chunk_rock_data:
+		var chunk_center_x = coord.x * chunk_stride + chunk_stride / 2.0
+		var chunk_center_z = coord.y * chunk_stride + chunk_stride / 2.0
+		var chunk_dist = Vector2(player_pos.x, player_pos.z).distance_to(Vector2(chunk_center_x, chunk_center_z))
+		if chunk_dist > chunk_check_dist:
+			continue
+		
+		var data = chunk_rock_data[coord]
+		for rock in data.rock_list:
+			if not rock.alive:
+				continue
+			
+			var rock_dist_sq = player_pos.distance_squared_to(rock.world_pos)
+			if rock_dist_sq < dist_sq:
+				rocks_needing_colliders.append({
+					"coord": coord,
+					"rock": rock,
+					"dist_sq": rock_dist_sq
+				})
+	
+	rocks_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
+	
+	var wanted_keys: Dictionary = {}
+	for i in range(min(rocks_needing_colliders.size(), MAX_ACTIVE_ROCK_COLLIDERS)):
+		var item = rocks_needing_colliders[i]
+		var key = _rock_key(item.coord, item.rock.index)
+		wanted_keys[key] = item
+	
+	var keys_to_remove = []
+	for key in active_rock_colliders:
+		if not wanted_keys.has(key):
+			keys_to_remove.append(key)
+	
+	for key in keys_to_remove:
+		_return_rock_collider_to_pool(active_rock_colliders[key])
+		active_rock_colliders.erase(key)
+	
+	for key in wanted_keys:
+		if not active_rock_colliders.has(key):
+			var item = wanted_keys[key]
+			var collider = _get_rock_collider_from_pool()
+			collider.global_position = item.rock.hit_pos
+			collider.global_position.y += rock_collision_height / 2.0
+			
+			var shape = collider.get_child(0).shape as CylinderShape3D
+			shape.radius = rock_collision_radius
+			shape.height = rock_collision_height
+			
+			collider.set_meta("rock_coord", item.coord)
+			collider.set_meta("rock_index", item.rock.index)
+			
+			active_rock_colliders[key] = collider
 
 func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var mmi = MultiMeshInstance3D.new()
@@ -702,6 +863,182 @@ func place_grass(world_pos: Vector3) -> bool:
 	
 	return false
 
+# ========== ROCK SPAWNING AND HARVESTING ==========
+
+func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
+	if not rock_mesh:
+		return
+	
+	var mmi = MultiMeshInstance3D.new()
+	mmi.multimesh = MultiMesh.new()
+	mmi.multimesh.mesh = rock_mesh
+	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	
+	var rock_list = []
+	var valid_transforms = []
+	var chunk_stride = 31
+	var chunk_origin_x = coord.x * chunk_stride
+	var chunk_origin_z = coord.y * chunk_stride
+	var chunk_world_pos = chunk_node.global_position
+	
+	var space_state = get_world_3d().direct_space_state
+	
+	# Sparse rocks - every 7 meters (less frequent than grass)
+	for x in range(0, chunk_stride, 7):
+		for z in range(0, chunk_stride, 7):
+			var gx = chunk_origin_x + x
+			var gz = chunk_origin_z + z
+			
+			var noise_val = rock_noise.get_noise_2d(gx, gz)
+			if noise_val < 0.35:  # Slightly higher threshold than grass
+				continue
+			
+			var ray_origin = Vector3(gx, 100.0, gz)
+			var ray_end = Vector3(gx, -10.0, gz)
+			
+			var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
+			query.collision_mask = 0xFFFFFFFF
+			query.collide_with_areas = false
+			
+			var result = space_state.intersect_ray(query)
+			if result.is_empty():
+				continue
+			
+			var hit_pos = result.position
+			
+			# Skip if underwater
+			var water_dens = terrain_manager.get_water_density(Vector3(gx, hit_pos.y + 0.5, gz))
+			if water_dens < 0.0:
+				continue
+			
+			# Rocks can be on steeper slopes than grass (normal.y > 0.5)
+			if result.normal.y < 0.5:
+				continue
+			
+			var local_pos = hit_pos - chunk_world_pos
+			local_pos.y += rock_y_offset
+			
+			var world_pos = hit_pos
+			world_pos.y += rock_y_offset
+			
+			var random_scale = randf_range(0.6, 1.4)
+			var final_scale = rock_scale * random_scale
+			var rotation_angle = randf() * TAU
+			
+			var t = rock_base_transform
+			t = t.rotated(Vector3.UP, rotation_angle)
+			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
+			t.origin = local_pos
+			
+			valid_transforms.append(t)
+			
+			var rock_index = valid_transforms.size() - 1
+			rock_list.append({
+				"world_pos": world_pos,
+				"local_pos": local_pos,
+				"hit_pos": hit_pos,
+				"rotation_angle": rotation_angle,
+				"index": rock_index,
+				"alive": true,
+				"scale": final_scale,
+				"placed_by_player": false
+			})
+	
+	if valid_transforms.size() > 0:
+		mmi.multimesh.instance_count = valid_transforms.size()
+		for i in range(valid_transforms.size()):
+			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
+		chunk_node.add_child(mmi)
+	
+	chunk_rock_data[coord] = {
+		"multimesh": mmi,
+		"rock_list": rock_list,
+		"chunk_node": chunk_node
+	}
+
+func harvest_rock_by_collider(collider: Node) -> bool:
+	if not is_instance_valid(collider):
+		return false
+	
+	if not collider.has_meta("rock_coord"):
+		return false
+	
+	var coord = collider.get_meta("rock_coord")
+	var rock_index = collider.get_meta("rock_index")
+	
+	if not chunk_rock_data.has(coord):
+		return false
+	
+	var data = chunk_rock_data[coord]
+	for rock in data.rock_list:
+		if rock.index == rock_index and rock.alive:
+			rock.alive = false
+			
+			var mmi = data.multimesh as MultiMeshInstance3D
+			if mmi and mmi.multimesh:
+				var t = Transform3D()
+				t = t.scaled(Vector3.ZERO)
+				t.origin = rock.local_pos
+				mmi.multimesh.set_instance_transform(rock.index, t)
+			
+			var key = _rock_key(coord, rock_index)
+			if active_rock_colliders.has(key):
+				_return_rock_collider_to_pool(active_rock_colliders[key])
+				active_rock_colliders.erase(key)
+			
+			rock_harvested.emit(rock.world_pos)
+			return true
+	
+	return false
+
+func place_rock(world_pos: Vector3) -> bool:
+	var chunk_stride = 31
+	var coord = Vector2i(floor(world_pos.x / chunk_stride), floor(world_pos.z / chunk_stride))
+	
+	if not chunk_rock_data.has(coord):
+		print("Cannot place rock - chunk not loaded")
+		return false
+	
+	var data = chunk_rock_data[coord]
+	var chunk_node = data.chunk_node
+	if not is_instance_valid(chunk_node):
+		return false
+	
+	var chunk_world_pos = chunk_node.global_position
+	var local_pos = world_pos - chunk_world_pos
+	local_pos.y += rock_y_offset
+	
+	var random_scale = randf_range(0.6, 1.4)
+	var final_scale = rock_scale * random_scale
+	var rotation_angle = randf() * TAU
+	
+	var t = rock_base_transform
+	t = t.rotated(Vector3.UP, rotation_angle)
+	t = t.scaled(Vector3(final_scale, final_scale, final_scale))
+	t.origin = local_pos
+	
+	var mmi = data.multimesh as MultiMeshInstance3D
+	if mmi and mmi.multimesh:
+		var old_count = mmi.multimesh.instance_count
+		mmi.multimesh.instance_count = old_count + 1
+		mmi.multimesh.set_instance_transform(old_count, t)
+		
+		var rock_entry = {
+			"world_pos": world_pos + Vector3(0, rock_y_offset, 0),
+			"local_pos": local_pos,
+			"hit_pos": world_pos,
+			"rotation_angle": rotation_angle,
+			"index": old_count,
+			"alive": true,
+			"scale": final_scale,
+			"placed_by_player": true
+		}
+		data.rock_list.append(rock_entry)
+		print("Placed rock at ", world_pos)
+		return true
+	
+	return false
+
 func load_tree_mesh_from_glb(path: String) -> Dictionary:
 	var scene = load(path)
 	if scene == null:
@@ -793,6 +1130,38 @@ func create_basic_grass_mesh() -> Mesh:
 	st.add_vertex(Vector3(-width/2, 0, 0))
 	st.add_vertex(Vector3(width/2, 0, 0))
 	st.add_vertex(Vector3(0, height, 0))
+	
+	st.index()
+	return st.commit()
+
+func create_basic_rock_mesh() -> Mesh:
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	
+	var rock_mat = StandardMaterial3D.new()
+	rock_mat.albedo_color = Color(0.4, 0.4, 0.4)
+	st.set_material(rock_mat)
+	
+	# Simple octahedron for rock shape
+	var size = 0.3
+	var top = Vector3(0, size, 0)
+	var bottom = Vector3(0, -size * 0.5, 0)
+	var front = Vector3(0, 0, size)
+	var back = Vector3(0, 0, -size)
+	var left = Vector3(-size, 0, 0)
+	var right = Vector3(size, 0, 0)
+	
+	# Top half
+	st.add_vertex(top); st.add_vertex(front); st.add_vertex(right)
+	st.add_vertex(top); st.add_vertex(right); st.add_vertex(back)
+	st.add_vertex(top); st.add_vertex(back); st.add_vertex(left)
+	st.add_vertex(top); st.add_vertex(left); st.add_vertex(front)
+	
+	# Bottom half
+	st.add_vertex(bottom); st.add_vertex(right); st.add_vertex(front)
+	st.add_vertex(bottom); st.add_vertex(back); st.add_vertex(right)
+	st.add_vertex(bottom); st.add_vertex(left); st.add_vertex(back)
+	st.add_vertex(bottom); st.add_vertex(front); st.add_vertex(left)
 	
 	st.index()
 	return st.commit()

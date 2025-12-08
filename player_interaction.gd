@@ -216,8 +216,8 @@ func update_selection_box():
 		has_target = false
 
 func handle_playing_input(event):
-	# PLAYING mode - interact with world objects (trees, grass)
-	# Use collide_with_areas=true to detect grass (Area3D)
+	# PLAYING mode - interact with world objects (trees, grass, rocks)
+	# Use collide_with_areas=true to detect grass/rocks (Area3D)
 	var hit = raycast(100.0, true)
 	
 	if event.button_index == MOUSE_BUTTON_LEFT:
@@ -229,12 +229,15 @@ func handle_playing_input(event):
 			elif hit.collider.is_in_group("grass"):
 				if vegetation_manager:
 					vegetation_manager.harvest_grass_by_collider(hit.collider)
+			elif hit.collider.is_in_group("rocks"):
+				if vegetation_manager:
+					vegetation_manager.harvest_rock_by_collider(hit.collider)
 	
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
-		# R-Click: Place grass on terrain (use normal raycast without areas)
+		# R-Click: Place rock on terrain (use normal raycast without areas)
 		var terrain_hit = raycast(100.0, false)
 		if terrain_hit and vegetation_manager:
-			vegetation_manager.place_grass(terrain_hit.position)
+			vegetation_manager.place_rock(terrain_hit.position)
 
 func handle_terrain_input(event):
 	var hit_areas = (current_mode == Mode.WATER)
