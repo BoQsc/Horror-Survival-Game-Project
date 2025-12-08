@@ -13,7 +13,7 @@ signal grass_harvested(world_position: Vector3)
 @export var collider_distance: float = 30.0  # Only trees within this distance get colliders
 
 # Grass settings
-@export var grass_model_path: String = "res://models/grass/1/grass.glb"
+@export var grass_model_path: String = "res://models/grass/2/grass_lowpoly.glb"
 @export var grass_scale: float = 0.5
 @export var grass_y_offset: float = 0.0
 @export var grass_collision_radius: float = 0.3
