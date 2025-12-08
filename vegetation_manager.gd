@@ -370,12 +370,13 @@ func _update_grass_proximity_colliders():
 			var item = wanted_keys[key]
 			var collider = _get_grass_collider_from_pool()
 			collider.global_position = item.grass.hit_pos
-			collider.global_position.y += (grass_collision_height * item.grass.scale) / 2.0
+			# Don't scale collision by grass visual scale - use fixed collision size
+			collider.global_position.y += grass_collision_height / 2.0
 			
-			# Update collision shape size
+			# Update collision shape size (fixed, not scaled by visual scale)
 			var shape = collider.get_child(0).shape as CylinderShape3D
-			shape.radius = grass_collision_radius * item.grass.scale
-			shape.height = grass_collision_height * item.grass.scale
+			shape.radius = grass_collision_radius
+			shape.height = grass_collision_height
 			
 			# Store reference for harvesting
 			collider.set_meta("grass_coord", item.coord)
