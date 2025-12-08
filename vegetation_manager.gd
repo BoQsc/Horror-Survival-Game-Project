@@ -13,7 +13,7 @@ signal grass_harvested(world_position: Vector3)
 @export var collider_distance: float = 30.0  # Only trees within this distance get colliders
 
 # Grass settings
-@export var grass_model_path: String = "res://models/grass/0/realistics_grass_06.glb"
+@export var grass_model_path: String = "res://models/grass/1/grass.glb"
 @export var grass_scale: float = 0.5
 @export var grass_y_offset: float = 0.0
 @export var grass_collision_radius: float = 0.3
@@ -59,19 +59,16 @@ func _ready():
 	forest_noise.frequency = 0.05
 	forest_noise.seed = 12345
 	
-	# Load grass mesh - TEMPORARILY using basic mesh to test visibility
-	# var grass_result = load_tree_mesh_from_glb(grass_model_path)
-	# if grass_result.mesh:
-	# 	grass_mesh = grass_result.mesh
-	# 	grass_base_transform = grass_result.transform
-	# 	grass_base_transform.origin = Vector3.ZERO
-	# else:
-	# 	push_warning("Failed to load grass model")
-	# 	grass_mesh = create_basic_grass_mesh()
-	
-	# TEST: Use basic mesh to see if GLB material is the problem
-	grass_mesh = create_basic_grass_mesh()
-	print("Using BASIC grass mesh for testing visibility")
+	# Load grass mesh
+	var grass_result = load_tree_mesh_from_glb(grass_model_path)
+	if grass_result.mesh:
+		grass_mesh = grass_result.mesh
+		grass_base_transform = grass_result.transform
+		grass_base_transform.origin = Vector3.ZERO
+		print("Loaded grass model from GLB")
+	else:
+		push_warning("Failed to load grass model, using basic mesh")
+		grass_mesh = create_basic_grass_mesh()
 	
 	grass_noise = FastNoiseLite.new()
 	grass_noise.frequency = 0.08  # Different pattern from trees
