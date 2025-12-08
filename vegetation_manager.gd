@@ -59,15 +59,19 @@ func _ready():
 	forest_noise.frequency = 0.05
 	forest_noise.seed = 12345
 	
-	# Load grass mesh
-	var grass_result = load_tree_mesh_from_glb(grass_model_path)
-	if grass_result.mesh:
-		grass_mesh = grass_result.mesh
-		grass_base_transform = grass_result.transform
-		grass_base_transform.origin = Vector3.ZERO
-	else:
-		push_warning("Failed to load grass model")
-		grass_mesh = create_basic_grass_mesh()
+	# Load grass mesh - TEMPORARILY using basic mesh to test visibility
+	# var grass_result = load_tree_mesh_from_glb(grass_model_path)
+	# if grass_result.mesh:
+	# 	grass_mesh = grass_result.mesh
+	# 	grass_base_transform = grass_result.transform
+	# 	grass_base_transform.origin = Vector3.ZERO
+	# else:
+	# 	push_warning("Failed to load grass model")
+	# 	grass_mesh = create_basic_grass_mesh()
+	
+	# TEST: Use basic mesh to see if GLB material is the problem
+	grass_mesh = create_basic_grass_mesh()
+	print("Using BASIC grass mesh for testing visibility")
 	
 	grass_noise = FastNoiseLite.new()
 	grass_noise.frequency = 0.08  # Different pattern from trees
@@ -516,6 +520,12 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh = MultiMesh.new()
 	mmi.multimesh.mesh = grass_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	
+	# Fix distance visibility issues
+	mmi.extra_cull_margin = 1000.0  # Very large margin
+	mmi.ignore_occlusion_culling = true  # Ignore occlusion
+	mmi.lod_bias = 100.0  # Prevent LOD from hiding mesh
+	mmi.visibility_range_end = 0.0  # 0 = infinite visibility
 	
 	var grass_list = []
 	var valid_transforms = []
