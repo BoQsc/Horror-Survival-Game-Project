@@ -135,7 +135,7 @@ func toggle_mode():
 
 func update_ui():
 	if current_mode == Mode.PLAYING:
-		mode_label.text = "Mode: PLAYING\nL-Click: Interact/Chop\n[TAB] Switch Mode"
+		mode_label.text = "Mode: PLAYING\nL-Click: Chop/Harvest\nR-Click: Place Grass\n[TAB] Switch Mode"
 	elif current_mode == Mode.TERRAIN:
 		var mode_str = "Blocky" if terrain_blocky_mode else "Smooth"
 		mode_label.text = "Mode: TERRAIN (%s)\nL-Click: Dig, R-Click: Place\n[G] Toggle Grid Mode" % mode_str
@@ -216,14 +216,23 @@ func update_selection_box():
 		has_target = false
 
 func handle_playing_input(event):
-	# PLAYING mode - interact with world objects (trees, etc.)
-	if event.button_index != MOUSE_BUTTON_LEFT:
-		return
-		
+	# PLAYING mode - interact with world objects (trees, grass)
 	var hit = raycast(100.0, false)
-	if hit and hit.collider and hit.collider.is_in_group("trees"):
-		if vegetation_manager:
-			vegetation_manager.chop_tree_by_collider(hit.collider)
+	
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		# L-Click: Harvest/Chop
+		if hit and hit.collider:
+			if hit.collider.is_in_group("trees"):
+				if vegetation_manager:
+					vegetation_manager.chop_tree_by_collider(hit.collider)
+			elif hit.collider.is_in_group("grass"):
+				if vegetation_manager:
+					vegetation_manager.harvest_grass_by_collider(hit.collider)
+	
+	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		# R-Click: Place grass on terrain
+		if hit and vegetation_manager:
+			vegetation_manager.place_grass(hit.position)
 
 func handle_terrain_input(event):
 	var hit_areas = (current_mode == Mode.WATER)
