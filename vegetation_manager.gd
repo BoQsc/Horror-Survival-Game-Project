@@ -95,38 +95,6 @@ func _physics_process(_delta):
 
 var collider_update_counter: int = 0
 
-func _process(delta):
-	var varied = false
-	if Input.is_key_pressed(KEY_R):
-		tree_rotation_fix.x += delta * 2.0
-		varied = true
-	if Input.is_key_pressed(KEY_T):
-		tree_rotation_fix.x -= delta * 2.0
-		varied = true
-	if Input.is_key_pressed(KEY_F):
-		tree_rotation_fix.z += delta * 2.0
-		varied = true
-	if Input.is_key_pressed(KEY_G):
-		tree_rotation_fix.z -= delta * 2.0
-		varied = true
-	if Input.is_key_pressed(KEY_Y):
-		tree_y_offset += delta * 5.0
-		varied = true
-	if Input.is_key_pressed(KEY_H):
-		tree_y_offset -= delta * 5.0
-		varied = true
-	if Input.is_key_pressed(KEY_J):
-		tree_scale += delta * 0.5
-		varied = true
-	if Input.is_key_pressed(KEY_K):
-		tree_scale -= delta * 0.5
-		varied = true
-		
-	if varied:
-		print("Tree Settings: RotFix=", tree_rotation_fix, " YOffset=", tree_y_offset, " Scale=", tree_scale)
-		_update_all_tree_transforms()
-
-
 func _update_proximity_colliders():
 	if not player:
 		player = get_tree().get_first_node_in_group("player")
@@ -205,10 +173,14 @@ func _update_proximity_colliders():
 func _tree_key(coord: Vector2i, index: int) -> String:
 	return "%d_%d_%d" % [coord.x, coord.y, index]
 
+@export var debug_collision: bool = true
+
+# ... (existing variables)
+
 func _get_collider_from_pool() -> StaticBody3D:
 	if collider_pool.size() > 0:
 		var collider = collider_pool.pop_back()
-		collider.visible = true
+		collider.visible = debug_collision # Use the flag
 		collider.collision_layer = 1
 		return collider
 	
@@ -236,6 +208,8 @@ func _get_collider_from_pool() -> StaticBody3D:
 	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mesh_instance.material_override = debug_mat
 	body.add_child(mesh_instance)
+	
+	body.visible = debug_collision # Set initial visibility
 	
 	add_child(body)
 	return body
@@ -332,68 +306,6 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"trees": tree_list,
 		"chunk_node": chunk_node
 	}
-
-func _update_all_tree_transforms():
-	for coord in chunk_tree_data:
-		var data = chunk_tree_data[coord]
-		var chunk_node = data.chunk_node
-		if not is_instance_valid(chunk_node):
-			continue
-			
-		var chunk_world_pos = chunk_node.global_position
-		var mmi = data.multimesh as MultiMeshInstance3D
-		var trees = data.trees
-		
-		for tree in trees:
-			if not tree.alive:
-				continue
-				
-			# Recalculate using stored raw values and current settings
-			var hit_pos = tree.get("hit_pos", tree.world_pos) # Fallback if missing
-			if not tree.has("hit_pos"):
-				# Backwards compatibility: try to infer hit_pos?
-				# For now assume world_pos - old_offset. But we don't know old offset.
-				# Just use world_pos - vector3(0, tree_y_offset, 0)
-				hit_pos = tree.world_pos # Rough approx
-				hit_pos.y -= tree_y_offset # Remove current offset
-			
-			var local_pos = hit_pos - chunk_world_pos
-			local_pos.y += tree_y_offset
-			
-			var world_pos = hit_pos
-			world_pos.y += tree_y_offset
-			
-			# Update compiled values in dict
-			tree.local_pos = local_pos
-			tree.world_pos = world_pos
-			
-			var random_scale = tree.get("random_scale_factor", 1.0)
-			var final_scale = tree_scale * random_scale
-			tree.scale = final_scale
-			
-			var rotation_angle = tree.get("rotation_angle", 0.0)
-			
-			# Rebuild transform
-			var t = tree_base_transform
-			t.basis = t.basis * Basis.from_euler(tree_rotation_fix)
-			t = t.rotated(Vector3.UP, rotation_angle)
-			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
-			t.origin = local_pos
-			
-			mmi.multimesh.set_instance_transform(tree.index, t)
-			
-			# Update collider if active
-			var key = _tree_key(coord, tree.index)
-			if active_colliders.has(key):
-				var collider = active_colliders[key]
-				collider.global_position = world_pos
-				collider.global_position.y += (collision_height * final_scale) / 2.0
-				
-				# Update shape size
-				var shape = collider.get_child(0).shape as CylinderShape3D
-				shape.radius = collision_radius * final_scale
-				shape.height = collision_height * final_scale
-
 
 func chop_tree_by_collider(collider: Node) -> bool:
 	if not collider.has_meta("tree_coord"):
