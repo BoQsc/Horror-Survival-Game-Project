@@ -494,7 +494,7 @@ func _thread_function():
 	var pipe_mod = rd.compute_pipeline_create(sid_mod)
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 	
-	# Create REUSABLE Buffers
+	# Create REUSABLE Buffers for meshing
 	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
 	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
 	
@@ -503,7 +503,18 @@ func _thread_function():
 	counter_data.encode_u32(0, 0)
 	var counter_buffer = rd.storage_buffer_create(4, counter_data)
 	
+	# In-flight chunks: dispatched but not yet read back
+	var in_flight: Array[Dictionary] = []
+	
 	while true:
+		# 1. Complete any in-flight chunks FIRST (one sync for all)
+		if in_flight.size() > 0:
+			rd.sync()  # Single sync for ALL in-flight work
+			for flight_data in in_flight:
+				_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+			in_flight.clear()
+		
+		# 2. Check for new tasks or exit
 		semaphore.wait()
 		
 		mutex.lock()
@@ -518,8 +529,13 @@ func _thread_function():
 		var task = task_queue.pop_front()
 		mutex.unlock()
 		
+		# 3. Handle task types
 		if task.type == "generate":
-			process_generate(rd, task, sid_gen, sid_gen_water, sid_mod, sid_mesh, pipe_gen, pipe_gen_water, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
+			# Dispatch all GPU work, NO sync - will be completed next iteration
+			var flight_data = _dispatch_chunk_generation(rd, task, sid_gen, sid_gen_water, sid_mod, pipe_gen, pipe_gen_water, pipe_mod)
+			if flight_data:
+				in_flight.append(flight_data)
+				rd.submit()  # Submit but don't sync - let GPU work while we process more
 		elif task.type == "modify":
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
@@ -540,13 +556,17 @@ func _thread_function():
 	
 	rd.free()
 
-func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod, sid_mesh, pipe_gen, pipe_gen_water, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
+# Dispatch generation work WITHOUT syncing - returns in-flight data for later readback
+func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod, pipe_gen, pipe_gen_water, pipe_mod) -> Dictionary:
 	var chunk_pos = task.pos
 	var coord = task.coord
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
 	
-	# 1. Terrain Generation
+	# Create density buffers (will persist until readback)
 	var dens_buf_terrain = rd.storage_buffer_create(density_bytes)
+	var dens_buf_water = rd.storage_buffer_create(density_bytes)
+	
+	# --- Dispatch Terrain Density (no sync) ---
 	var u_density_t = RDUniform.new()
 	u_density_t.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_density_t.binding = 0
@@ -560,12 +580,9 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod
 	rd.compute_list_set_push_constant(list, push_data_t.to_byte_array(), push_data_t.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
-	rd.submit()
-	rd.sync()
-	if set_gen_t.is_valid(): rd.free_rid(set_gen_t)
-
-	# 2. Water Generation
-	var dens_buf_water = rd.storage_buffer_create(density_bytes)
+	# NO sync here!
+	
+	# --- Dispatch Water Density (no sync) ---
 	var u_density_w = RDUniform.new()
 	u_density_w.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_density_w.binding = 0
@@ -575,36 +592,55 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod
 	list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen_water)
 	rd.compute_list_bind_uniform_set(list, set_gen_w, 0)
-	# Reuse push constant structure but pass water_level as terrain_height
 	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, water_level, 0.0, 0.0])
 	rd.compute_list_set_push_constant(list, push_data_w.to_byte_array(), push_data_w.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
-	rd.submit()
-	rd.sync()
-	if set_gen_w.is_valid(): rd.free_rid(set_gen_w)
+	# NO sync here!
 	
-	# 3. Apply stored modifications (if any) before meshing
+	# Apply stored modifications (these need sync, but we batch them)
 	mutex.lock()
 	var mods_for_chunk = stored_modifications.get(coord, []).duplicate()
 	mutex.unlock()
 	
 	if mods_for_chunk.size() > 0:
+		# Need to sync before modifications since they read/write density
+		rd.submit()
+		rd.sync()
 		for mod in mods_for_chunk:
 			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, chunk_pos, mod)
 	
-	# 4. Run GPU meshing (get raw vertex floats) - NO CPU mesh building here
+	# Free uniform sets
+	if set_gen_t.is_valid(): rd.free_rid(set_gen_t)
+	if set_gen_w.is_valid(): rd.free_rid(set_gen_w)
+	
+	# Return in-flight data for later readback
+	return {
+		"coord": coord,
+		"chunk_pos": chunk_pos,
+		"dens_buf_terrain": dens_buf_terrain,
+		"dens_buf_water": dens_buf_water
+	}
+
+# Complete readback and queue to CPU workers (called after sync)
+func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer):
+	var coord = flight_data.coord
+	var chunk_pos = flight_data.chunk_pos
+	var dens_buf_terrain = flight_data.dens_buf_terrain
+	var dens_buf_water = flight_data.dens_buf_water
+	
+	# Run GPU meshing (now safe to do since we synced)
 	var vert_floats_terrain = run_gpu_meshing(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	var vert_floats_water = run_gpu_meshing(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, vertex_buffer, counter_buffer)
-
-	# Readback Density for Physics (CPU)
+	
+	# Readback density for physics
 	var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
 	var cpu_density_floats_w = cpu_density_bytes_w.to_float32_array()
 	var cpu_density_bytes_t = rd.buffer_get_data(dens_buf_terrain)
 	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
 	
-	# 5. Queue to CPU workers for mesh building (heavy CPU work done in parallel)
+	# Queue to CPU workers for mesh building
 	cpu_mutex.lock()
 	cpu_task_queue.append({
 		"coord": coord,
