@@ -173,10 +173,10 @@ func _adjust_adaptive_loading():
 		adaptive_frame_budget_ms = lerp(0.5, 2.0, fps_ratio)
 		chunks_per_frame_limit = 1
 	else:
-		# FPS is good - normal loading
+		# FPS is good - still limit to prevent GPU stutters
 		loading_paused = false
 		adaptive_frame_budget_ms = 3.0
-		chunks_per_frame_limit = 2
+		chunks_per_frame_limit = 1  # Reduced from 2 to prevent GPU overload
 
 var collision_update_counter: int = 0
 func update_collision_proximity():
@@ -505,6 +505,7 @@ func _thread_function():
 	
 	# In-flight chunks: dispatched but not yet read back
 	var in_flight: Array[Dictionary] = []
+	const MAX_IN_FLIGHT = 1  # Limit to prevent GPU overload
 	
 	while true:
 		# 1. Complete any in-flight chunks FIRST (one sync for all)
@@ -536,6 +537,16 @@ func _thread_function():
 			if flight_data:
 				in_flight.append(flight_data)
 				rd.submit()  # Submit but don't sync - let GPU work while we process more
+				
+				# If at max in-flight, immediately complete to avoid GPU buildup
+				if in_flight.size() >= MAX_IN_FLIGHT:
+					rd.sync()
+					for fd in in_flight:
+						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+					in_flight.clear()
+					
+					# Deliberate delay to spread GPU load across frames (reduces stutters)
+					OS.delay_msec(16)  # ~1 frame at 60fps
 		elif task.type == "modify":
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
@@ -623,16 +634,28 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"dens_buf_water": dens_buf_water
 	}
 
-# Complete readback and queue to CPU workers (called after sync)
+# Complete readback and queue to CPU workers (called after density sync)
 func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer):
 	var coord = flight_data.coord
 	var chunk_pos = flight_data.chunk_pos
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
 	
-	# Run GPU meshing (now safe to do since we synced)
-	var vert_floats_terrain = run_gpu_meshing(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
-	var vert_floats_water = run_gpu_meshing(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, vertex_buffer, counter_buffer)
+	# Dispatch BOTH mesh shaders, THEN sync once (reduces stalls)
+	# Note: We need separate vertex/counter buffers to batch both, so we do them sequentially
+	# but with minimal sync (each mesh needs its own readback before the buffer is reused)
+	
+	# Terrain mesh
+	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
+	rd.submit()
+	rd.sync()
+	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_t)
+	
+	# Water mesh  
+	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, vertex_buffer, counter_buffer)
+	rd.submit()
+	rd.sync()
+	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_w)
 	
 	# Readback density for physics
 	var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
@@ -655,8 +678,8 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	cpu_mutex.unlock()
 	cpu_semaphore.post()
 
-# GPU-only meshing - returns raw vertex floats, doesn't build ArrayMesh
-func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
+# GPU meshing dispatch only - NO sync, returns uniform set for later cleanup
+func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer) -> RID:
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
 	zero_data.resize(4)
@@ -693,10 +716,12 @@ func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, c
 	var groups = CHUNK_SIZE / 8
 	rd.compute_list_dispatch(list, groups, groups, groups)
 	rd.compute_list_end()
+	# NO submit/sync here - caller handles it
 	
-	rd.submit()
-	rd.sync()
-	
+	return set_mesh
+
+# Readback mesh data AFTER sync has been called
+func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer, set_mesh: RID) -> PackedFloat32Array:
 	# Read back vertex data
 	var count_bytes = rd.buffer_get_data(counter_buffer)
 	var tri_count = count_bytes.decode_u32(0)
@@ -710,6 +735,13 @@ func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, c
 	if set_mesh.is_valid(): rd.free_rid(set_mesh)
 	
 	return vert_floats
+
+# Legacy function for modify path (still needs sync inline)
+func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
+	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer)
+	rd.submit()
+	rd.sync()
+	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh)
 
 # CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
 func _cpu_thread_function():
