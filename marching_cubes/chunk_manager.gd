@@ -1064,6 +1064,8 @@ func _apply_chunk_update(coord: Vector2i, result: Dictionary, layer: int, cpu_de
 		data.collision_shape_terrain = result_node.collision_shape if not result_node.is_empty() else null
 		if not cpu_dens.is_empty():
 			data.cpu_density_terrain = cpu_dens
+		# Signal vegetation manager that chunk was regenerated (so it updates its references)
+		chunk_generated.emit(coord, data.node_terrain)
 	else: # Water
 		if data.node_water: data.node_water.queue_free()
 		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true)

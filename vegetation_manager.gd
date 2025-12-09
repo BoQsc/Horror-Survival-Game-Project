@@ -61,6 +61,16 @@ var active_rock_colliders: Dictionary = {}  # rock_key -> Area3D
 var rock_collider_pool: Array[Area3D] = []
 const MAX_ACTIVE_ROCK_COLLIDERS = 30
 
+# Persistence - survives chunk unloading
+var removed_grass: Dictionary = {}  # "x_z" position hash -> true
+var removed_rocks: Dictionary = {}  # "x_z" position hash -> true
+var placed_grass: Array[Dictionary] = []  # { world_pos, scale, rotation }
+var placed_rocks: Array[Dictionary] = []  # { world_pos, scale, rotation }
+
+# Pending placements - retry when chunk becomes valid
+var pending_rock_placements: Array[Dictionary] = []
+var pending_grass_placements: Array[Dictionary] = []
+
 func _ready():
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
@@ -184,6 +194,46 @@ func _physics_process(_delta):
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
+	
+	# Process pending placements (retry when chunk becomes valid)
+	_process_pending_placements()
+
+func _process_pending_placements():
+	var chunk_stride = 31
+	
+	# Process pending rock placements
+	var completed_rocks = []
+	for i in range(pending_rock_placements.size()):
+		var placement = pending_rock_placements[i]
+		var coord = Vector2i(int(floor(placement.world_pos.x / chunk_stride)), int(floor(placement.world_pos.z / chunk_stride)))
+		
+		if chunk_rock_data.has(coord):
+			var data = chunk_rock_data[coord]
+			if data.has("chunk_node") and is_instance_valid(data.chunk_node) and data.has("multimesh") and is_instance_valid(data.multimesh):
+				# Chunk is now valid, add the rock
+				if _add_rock_to_chunk(placement.world_pos, placement.scale, placement.rotation, coord):
+					completed_rocks.append(i)
+					print("Retry: Added pending rock to chunk ", coord)
+	
+	# Remove completed placements (reverse order to preserve indices)
+	for i in range(completed_rocks.size() - 1, -1, -1):
+		pending_rock_placements.remove_at(completed_rocks[i])
+	
+	# Process pending grass placements
+	var completed_grass = []
+	for i in range(pending_grass_placements.size()):
+		var placement = pending_grass_placements[i]
+		var coord = Vector2i(int(floor(placement.world_pos.x / chunk_stride)), int(floor(placement.world_pos.z / chunk_stride)))
+		
+		if chunk_grass_data.has(coord):
+			var data = chunk_grass_data[coord]
+			if data.has("chunk_node") and is_instance_valid(data.chunk_node) and data.has("multimesh") and is_instance_valid(data.multimesh):
+				if _add_grass_to_chunk(placement.world_pos, placement.scale, placement.rotation, coord):
+					completed_grass.append(i)
+					print("Retry: Added pending grass to chunk ", coord)
+	
+	for i in range(completed_grass.size() - 1, -1, -1):
+		pending_grass_placements.remove_at(completed_grass[i])
 
 var collider_update_counter: int = 0
 
@@ -720,6 +770,11 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			
 			var hit_pos = Vector3(gx, terrain_y, gz)
 			
+			# Skip if this grass was previously removed
+			var pos_hash = _position_hash(hit_pos)
+			if removed_grass.has(pos_hash):
+				continue
+			
 			# Skip if underwater
 			var water_dens = terrain_manager.get_water_density(Vector3(gx, terrain_y + 0.5, gz))
 			if water_dens < 0.0:
@@ -754,6 +809,32 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				"placed_by_player": false
 			})
 	
+	# Add player-placed grass for this chunk
+	for placed in placed_grass:
+		var placed_coord = Vector2i(int(floor(placed.world_pos.x / chunk_stride)), int(floor(placed.world_pos.z / chunk_stride)))
+		if placed_coord == coord:
+			var local_pos = placed.world_pos - chunk_world_pos
+			local_pos.y += grass_y_offset
+			
+			var t = grass_base_transform
+			t = t.rotated(Vector3.UP, placed.rotation)
+			t = t.scaled(Vector3(placed.scale, placed.scale, placed.scale))
+			t.origin = local_pos
+			
+			valid_transforms.append(t)
+			
+			var grass_index = valid_transforms.size() - 1
+			grass_list.append({
+				"world_pos": placed.world_pos,
+				"local_pos": local_pos,
+				"hit_pos": placed.world_pos,
+				"rotation_angle": placed.rotation,
+				"index": grass_index,
+				"alive": true,
+				"scale": placed.scale,
+				"placed_by_player": true
+			})
+	
 	if valid_transforms.size() > 0:
 		mmi.multimesh.instance_count = valid_transforms.size()
 		for i in range(valid_transforms.size()):
@@ -783,17 +864,35 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 		return false
 	
 	var data = chunk_grass_data[coord]
+	
+	# Validate that data is still valid
+	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
+		# Chunk was freed, but we can still store removal for persistence
+		for grass in data.grass_list:
+			if grass.index == grass_index and grass.alive:
+				grass.alive = false
+				var pos_hash = _position_hash(grass.world_pos)
+				removed_grass[pos_hash] = true
+				grass_harvested.emit(grass.world_pos)
+				return true
+		return false
+	
 	for grass in data.grass_list:
 		if grass.index == grass_index and grass.alive:
 			grass.alive = false
 			
-			# Hide in MultiMesh
-			var mmi = data.multimesh as MultiMeshInstance3D
-			if mmi and mmi.multimesh:
-				var t = Transform3D()
-				t = t.scaled(Vector3.ZERO)
-				t.origin = grass.local_pos
-				mmi.multimesh.set_instance_transform(grass.index, t)
+			# Store removal for persistence (using position hash)
+			var pos_hash = _position_hash(grass.world_pos)
+			removed_grass[pos_hash] = true
+			
+			# Hide in MultiMesh (only if valid)
+			if data.has("multimesh") and is_instance_valid(data.multimesh):
+				var mmi = data.multimesh as MultiMeshInstance3D
+				if mmi and mmi.multimesh:
+					var t = Transform3D()
+					t = t.scaled(Vector3.ZERO)
+					t.origin = grass.local_pos
+					mmi.multimesh.set_instance_transform(grass.index, t)
 			
 			# Remove collider
 			var key = _grass_key(coord, grass_index)
@@ -806,27 +905,45 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 	
 	return false
 
+# Helper to create position hash for persistence
+func _position_hash(pos: Vector3) -> String:
+	return "%d_%d" % [int(pos.x), int(pos.z)]
+
 func place_grass(world_pos: Vector3) -> bool:
 	# Find which chunk this position belongs to
 	var chunk_stride = 31
 	var coord = Vector2i(floor(world_pos.x / chunk_stride), floor(world_pos.z / chunk_stride))
 	
-	if not chunk_grass_data.has(coord):
-		print("Cannot place grass - chunk not loaded")
-		return false
-	
-	var data = chunk_grass_data[coord]
-	var chunk_node = data.chunk_node
-	if not is_instance_valid(chunk_node):
-		return false
-	
-	var chunk_world_pos = chunk_node.global_position
-	var local_pos = world_pos - chunk_world_pos
-	local_pos.y += grass_y_offset
-	
 	var random_scale = randf_range(0.8, 1.2)
 	var final_scale = grass_scale * random_scale
 	var rotation_angle = randf() * TAU
+	
+	# Always store for persistence first
+	placed_grass.append({
+		"world_pos": world_pos,
+		"scale": final_scale,
+		"rotation": rotation_angle
+	})
+	print("Stored grass placement at ", world_pos, " for persistence")
+	
+	# Check if we can place immediately
+	if not chunk_grass_data.has(coord):
+		print("Chunk grass data not ready - queuing for retry")
+		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		return true  # Stored for later
+	
+	var data = chunk_grass_data[coord]
+	
+	# Validate chunk_node
+	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
+		print("Chunk node not valid - queuing for retry")
+		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		return true  # Stored for later
+	
+	var chunk_node = data.chunk_node
+	var chunk_world_pos = chunk_node.global_position
+	var local_pos = world_pos - chunk_world_pos
+	local_pos.y += grass_y_offset
 	
 	var t = grass_base_transform
 	t = t.rotated(Vector3.UP, rotation_angle)
@@ -834,6 +951,11 @@ func place_grass(world_pos: Vector3) -> bool:
 	t.origin = local_pos
 	
 	# Add to MultiMesh - need to expand instance count
+	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+		print("MultiMesh not valid - queuing for retry")
+		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		return true  # Stored for later
+	
 	var mmi = data.multimesh as MultiMeshInstance3D
 	if mmi and mmi.multimesh:
 		var old_count = mmi.multimesh.instance_count
@@ -862,7 +984,63 @@ func place_grass(world_pos: Vector3) -> bool:
 			"placed_by_player": true
 		}
 		data.grass_list.append(grass_entry)
-		print("Placed grass at ", world_pos)
+		
+		print("Placed grass immediately at ", world_pos)
+		return true
+	
+	return true  # Already stored for persistence
+
+func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: float, coord: Vector2i) -> bool:
+	"""Helper to add a grass instance to an existing chunk."""
+	if not chunk_grass_data.has(coord):
+		return false
+	
+	var data = chunk_grass_data[coord]
+	
+	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
+		return false
+	
+	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+		return false
+	
+	var chunk_node = data.chunk_node
+	var chunk_world_pos = chunk_node.global_position
+	var local_pos = world_pos - chunk_world_pos
+	local_pos.y += grass_y_offset
+	
+	var t = grass_base_transform
+	t = t.rotated(Vector3.UP, rotation_angle)
+	t = t.scaled(Vector3(final_scale, final_scale, final_scale))
+	t.origin = local_pos
+	
+	var mmi = data.multimesh as MultiMeshInstance3D
+	if mmi and mmi.multimesh:
+		var old_count = mmi.multimesh.instance_count
+		
+		# Save existing transforms before resizing (Godot resets them)
+		var old_transforms = []
+		for i in range(old_count):
+			old_transforms.append(mmi.multimesh.get_instance_transform(i))
+		
+		# Resize and restore
+		mmi.multimesh.instance_count = old_count + 1
+		for i in range(old_count):
+			mmi.multimesh.set_instance_transform(i, old_transforms[i])
+		
+		# Add new instance
+		mmi.multimesh.set_instance_transform(old_count, t)
+		
+		var grass_entry = {
+			"world_pos": world_pos + Vector3(0, grass_y_offset, 0),
+			"local_pos": local_pos,
+			"hit_pos": world_pos,
+			"rotation_angle": rotation_angle,
+			"index": old_count,
+			"alive": true,
+			"scale": final_scale,
+			"placed_by_player": true
+		}
+		data.grass_list.append(grass_entry)
 		return true
 	
 	return false
@@ -910,6 +1088,11 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			
 			var hit_pos = result.position
 			
+			# Skip if this rock was previously removed
+			var pos_hash = _position_hash(hit_pos)
+			if removed_rocks.has(pos_hash):
+				continue
+			
 			# Skip if underwater
 			var water_dens = terrain_manager.get_water_density(Vector3(gx, hit_pos.y + 0.5, gz))
 			if water_dens < 0.0:
@@ -948,10 +1131,39 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				"placed_by_player": false
 			})
 	
+	# Add player-placed rocks for this chunk
+	for placed in placed_rocks:
+		var placed_coord = Vector2i(int(floor(placed.world_pos.x / chunk_stride)), int(floor(placed.world_pos.z / chunk_stride)))
+		if placed_coord == coord:
+			print("Restoring player-placed rock at ", placed.world_pos, " to chunk ", coord)
+			var local_pos = placed.world_pos - chunk_world_pos
+			local_pos.y += rock_y_offset
+			
+			var t = rock_base_transform
+			t = t.rotated(Vector3.UP, placed.rotation)
+			t = t.scaled(Vector3(placed.scale, placed.scale, placed.scale))
+			t.origin = local_pos
+			
+			valid_transforms.append(t)
+			
+			var rock_index = valid_transforms.size() - 1
+			rock_list.append({
+				"world_pos": placed.world_pos,
+				"local_pos": local_pos,
+				"hit_pos": placed.world_pos,
+				"rotation_angle": placed.rotation,
+				"index": rock_index,
+				"alive": true,
+				"scale": placed.scale,
+				"placed_by_player": true
+			})
+	
 	if valid_transforms.size() > 0:
 		mmi.multimesh.instance_count = valid_transforms.size()
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
+	
+	print("Placed ", valid_transforms.size(), " rocks in chunk ", coord, " (", placed_rocks.size(), " total in persistence)")
 	
 	# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
 	chunk_node.add_child(mmi)
@@ -976,16 +1188,35 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 		return false
 	
 	var data = chunk_rock_data[coord]
+	
+	# Validate that data is still valid
+	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
+		# Chunk was freed, but we can still store removal for persistence
+		for rock in data.rock_list:
+			if rock.index == rock_index and rock.alive:
+				rock.alive = false
+				var pos_hash = _position_hash(rock.world_pos)
+				removed_rocks[pos_hash] = true
+				rock_harvested.emit(rock.world_pos)
+				return true
+		return false
+	
 	for rock in data.rock_list:
 		if rock.index == rock_index and rock.alive:
 			rock.alive = false
 			
-			var mmi = data.multimesh as MultiMeshInstance3D
-			if mmi and mmi.multimesh:
-				var t = Transform3D()
-				t = t.scaled(Vector3.ZERO)
-				t.origin = rock.local_pos
-				mmi.multimesh.set_instance_transform(rock.index, t)
+			# Store removal for persistence
+			var pos_hash = _position_hash(rock.world_pos)
+			removed_rocks[pos_hash] = true
+			
+			# Hide in MultiMesh (only if valid)
+			if data.has("multimesh") and is_instance_valid(data.multimesh):
+				var mmi = data.multimesh as MultiMeshInstance3D
+				if mmi and mmi.multimesh:
+					var t = Transform3D()
+					t = t.scaled(Vector3.ZERO)
+					t.origin = rock.local_pos
+					mmi.multimesh.set_instance_transform(rock.index, t)
 			
 			var key = _rock_key(coord, rock_index)
 			if active_rock_colliders.has(key):
@@ -999,24 +1230,64 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 
 func place_rock(world_pos: Vector3) -> bool:
 	var chunk_stride = 31
-	var coord = Vector2i(floor(world_pos.x / chunk_stride), floor(world_pos.z / chunk_stride))
-	
-	if not chunk_rock_data.has(coord):
-		print("Cannot place rock - chunk not loaded")
-		return false
-	
-	var data = chunk_rock_data[coord]
-	var chunk_node = data.chunk_node
-	if not is_instance_valid(chunk_node):
-		return false
-	
-	var chunk_world_pos = chunk_node.global_position
-	var local_pos = world_pos - chunk_world_pos
-	local_pos.y += rock_y_offset
+	var coord = Vector2i(int(floor(world_pos.x / chunk_stride)), int(floor(world_pos.z / chunk_stride)))
 	
 	var random_scale = randf_range(0.6, 1.4)
 	var final_scale = rock_scale * random_scale
 	var rotation_angle = randf() * TAU
+	
+	# Always store for persistence first
+	placed_rocks.append({
+		"world_pos": world_pos,
+		"scale": final_scale,
+		"rotation": rotation_angle
+	})
+	print("Stored rock placement at ", world_pos, " for persistence (", placed_rocks.size(), " total)")
+	
+	# Check if we can place immediately
+	if not chunk_rock_data.has(coord):
+		print("Chunk rock data not ready - queuing for retry")
+		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		return true
+	
+	var data = chunk_rock_data[coord]
+	
+	# Validate chunk_node
+	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
+		print("Chunk node not valid - queuing for retry")
+		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		return true
+	
+	# Validate multimesh
+	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+		print("MultiMesh not valid - queuing for retry")
+		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		return true
+	
+	# Can place immediately
+	if _add_rock_to_chunk(world_pos, final_scale, rotation_angle, coord):
+		print("Placed rock immediately at ", world_pos)
+		return true
+	
+	return true
+
+func _add_rock_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: float, coord: Vector2i) -> bool:
+	"""Helper to add a rock instance to an existing chunk."""
+	if not chunk_rock_data.has(coord):
+		return false
+	
+	var data = chunk_rock_data[coord]
+	
+	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
+		return false
+	
+	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+		return false
+	
+	var chunk_node = data.chunk_node
+	var chunk_world_pos = chunk_node.global_position
+	var local_pos = world_pos - chunk_world_pos
+	local_pos.y += rock_y_offset
 	
 	var t = rock_base_transform
 	t = t.rotated(Vector3.UP, rotation_angle)
@@ -1027,7 +1298,7 @@ func place_rock(world_pos: Vector3) -> bool:
 	if mmi and mmi.multimesh:
 		var old_count = mmi.multimesh.instance_count
 		
-		# IMPORTANT: Save existing transforms before resizing (Godot resets them)
+		# Save existing transforms before resizing (Godot resets them)
 		var old_transforms = []
 		for i in range(old_count):
 			old_transforms.append(mmi.multimesh.get_instance_transform(i))
@@ -1051,7 +1322,6 @@ func place_rock(world_pos: Vector3) -> bool:
 			"placed_by_player": true
 		}
 		data.rock_list.append(rock_entry)
-		print("Placed rock at ", world_pos)
 		return true
 	
 	return false
