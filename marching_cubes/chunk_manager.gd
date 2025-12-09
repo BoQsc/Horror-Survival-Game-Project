@@ -67,6 +67,23 @@ var active_chunks: Dictionary = {}
 var pending_nodes: Array[Dictionary] = []  # Queue of completed chunks waiting for node creation
 var pending_nodes_mutex: Mutex
 
+# Two-phase loading system
+# Phase 1 (Initial Load): Fast/aggressive at game start for loading screen
+# Phase 2 (Exploration): Slower/throttled when player explores
+var initial_load_phase: bool = true
+var initial_load_target_chunks: int = 0  # Calculated at startup based on render_distance
+var chunks_loaded_initial: int = 0
+
+## Delay between chunk generation during initial game load (ms). 
+## Initial load ends after ~π×render_distance² chunks (e.g., ~78 chunks for render_distance=5).
+## Set to 0 for fastest loading. Higher values = slower but smoother loading.
+@export_range(0, 100, 1) var initial_load_delay_ms: int = 0
+
+## Delay between chunk generation when player is exploring (ms).
+## Higher values reduce FPS drops but make terrain load slower as you move.
+## Recommended: 100-200ms for smooth exploration.
+@export_range(0, 500, 10) var exploration_delay_ms: int = 300
+
 # Adaptive loading - throttles based on current FPS
 var target_fps: float = 75.0
 var min_acceptable_fps: float = 45.0
@@ -132,6 +149,13 @@ func _ready():
 		thread.start(_cpu_thread_function)
 		cpu_threads.append(thread)
 	print("Started %d CPU workers for mesh building" % CPU_WORKER_COUNT)
+	
+	# Calculate initial load target (all chunks within render distance)
+	# This is a circle of chunks: roughly pi * r^2
+	initial_load_target_chunks = int(PI * render_distance * render_distance)
+	print("Two-phase loading: Initial load target = %d chunks (render_distance=%d)" % [initial_load_target_chunks, render_distance])
+	print("  Phase 1 (Initial): delay=%dms (aggressive)" % initial_load_delay_ms)
+	print("  Phase 2 (Explore): delay=%dms (throttled)" % exploration_delay_ms)
 
 func _process(delta):
 	if not viewer:
@@ -546,8 +570,18 @@ func _thread_function():
 						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 					in_flight.clear()
 					
-					# Deliberate delay to spread GPU load across frames (reduces stutters)
-					OS.delay_msec(chunk_generation_delay_ms)
+					# Two-phase loading: fast initial load, then throttled exploration
+					if initial_load_phase:
+						chunks_loaded_initial += 1
+						if chunks_loaded_initial >= initial_load_target_chunks:
+							initial_load_phase = false
+							print("Initial load complete! Switching to exploration mode (delay=%dms)" % exploration_delay_ms)
+						# During initial load: minimal or no delay for fast loading
+						if initial_load_delay_ms > 0:
+							OS.delay_msec(initial_load_delay_ms)
+					else:
+						# Exploration phase: longer delay to prevent stutters
+						OS.delay_msec(exploration_delay_ms)
 		elif task.type == "modify":
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
