@@ -16,6 +16,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var terrain_height: float = 10.0
 @export var water_level: float = 14.0 # Raised for surface lakes
 @export var noise_frequency: float = 0.1
+@export var chunk_generation_delay_ms: int = 64  # Delay between chunk dispatches to prevent GPU stutter
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -546,7 +547,7 @@ func _thread_function():
 					in_flight.clear()
 					
 					# Deliberate delay to spread GPU load across frames (reduces stutters)
-					OS.delay_msec(64)  # ~2 frames at 60fps
+					OS.delay_msec(chunk_generation_delay_ms)
 		elif task.type == "modify":
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
