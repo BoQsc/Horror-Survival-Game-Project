@@ -13,6 +13,8 @@ config_version=5
 config/name="GPUMarchingCubes"
 run/main_scene="uid://cubacbxdo4pih"
 config/features=PackedStringArray("4.5", "Forward Plus")
+run/max_fps=70
+run/low_processor_mode=true
 config/icon="res://icon.svg"
 
 [autoload]
