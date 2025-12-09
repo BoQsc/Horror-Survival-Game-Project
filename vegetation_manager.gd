@@ -118,9 +118,44 @@ func _ready():
 	
 	if terrain_manager:
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
+		terrain_manager.chunk_modified.connect(_on_chunk_modified)
 	
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
+
+# Called when terrain is modified (player edits) - reparent vegetation, don't regenerate
+func _on_chunk_modified(coord: Vector2i, chunk_node: Node3D):
+	if chunk_node == null:
+		return
+	
+	# Reparent vegetation MultiMeshInstances to the NEW chunk_node
+	# This prevents them from being deleted when old chunk_node is freed
+	if chunk_tree_data.has(coord):
+		var data = chunk_tree_data[coord]
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			var mmi = data.multimesh as MultiMeshInstance3D
+			if mmi and mmi.get_parent():
+				mmi.get_parent().remove_child(mmi)
+				chunk_node.add_child(mmi)
+		data.chunk_node = chunk_node
+	
+	if chunk_grass_data.has(coord):
+		var data = chunk_grass_data[coord]
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			var mmi = data.multimesh as MultiMeshInstance3D
+			if mmi and mmi.get_parent():
+				mmi.get_parent().remove_child(mmi)
+				chunk_node.add_child(mmi)
+		data.chunk_node = chunk_node
+	
+	if chunk_rock_data.has(coord):
+		var data = chunk_rock_data[coord]
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			var mmi = data.multimesh as MultiMeshInstance3D
+			if mmi and mmi.get_parent():
+				mmi.get_parent().remove_child(mmi)
+				chunk_node.add_child(mmi)
+		data.chunk_node = chunk_node
 
 func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
 	if chunk_node == null:
