@@ -546,7 +546,7 @@ func _thread_function():
 					in_flight.clear()
 					
 					# Deliberate delay to spread GPU load across frames (reduces stutters)
-					OS.delay_msec(16)  # ~1 frame at 60fps
+					OS.delay_msec(64)  # ~2 frames at 60fps
 		elif task.type == "modify":
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
