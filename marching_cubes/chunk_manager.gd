@@ -68,6 +68,10 @@ var adaptive_frame_budget_ms: float = 2.0  # Dynamically adjusted
 var chunks_per_frame_limit: int = 2  # Dynamically adjusted
 var loading_paused: bool = false
 
+# Persistent modification storage - survives chunk unloading
+# Format: coord (Vector2i) -> Array of { brush_pos: Vector3, radius: float, value: float, shape: int, layer: int }
+var stored_modifications: Dictionary = {}
+
 func _ready():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
@@ -306,11 +310,24 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 	var max_chunk_z = floor(max_pos.z / CHUNK_STRIDE)
 	
 	var tasks_to_add = []
-
+	
+	# Store modification for persistence (all affected chunks)
 	for x in range(min_chunk_x, max_chunk_x + 1):
 		for z in range(min_chunk_z, max_chunk_z + 1):
 			var coord = Vector2i(x, z)
 			
+			# Store the modification for this chunk (persists across unloads)
+			if not stored_modifications.has(coord):
+				stored_modifications[coord] = []
+			stored_modifications[coord].append({
+				"brush_pos": pos,
+				"radius": radius,
+				"value": value,
+				"shape": shape,
+				"layer": layer
+			})
+			
+			# Only dispatch GPU task if chunk is currently loaded
 			if active_chunks.has(coord):
 				var data = active_chunks[coord]
 				if data != null:
@@ -474,7 +491,7 @@ func _thread_function():
 		mutex.unlock()
 		
 		if task.type == "generate":
-			process_generate(rd, task, sid_gen, sid_gen_water, sid_mesh, pipe_gen, pipe_gen_water, pipe_mesh, vertex_buffer, counter_buffer)
+			process_generate(rd, task, sid_gen, sid_gen_water, sid_mod, sid_mesh, pipe_gen, pipe_gen_water, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "modify":
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
@@ -495,8 +512,9 @@ func _thread_function():
 	
 	rd.free()
 
-func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mesh, pipe_gen, pipe_gen_water, pipe_mesh, vertex_buffer, counter_buffer):
+func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod, sid_mesh, pipe_gen, pipe_gen_water, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
 	var chunk_pos = task.pos
+	var coord = task.coord
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
 	
 	# 1. Terrain Generation
@@ -518,8 +536,6 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mes
 	rd.sync()
 	if set_gen_t.is_valid(): rd.free_rid(set_gen_t)
 
-	var mesh_terrain_result = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, material_terrain, vertex_buffer, counter_buffer)
-
 	# 2. Water Generation
 	var dens_buf_water = rd.storage_buffer_create(density_bytes)
 	var u_density_w = RDUniform.new()
@@ -540,6 +556,18 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mes
 	rd.sync()
 	if set_gen_w.is_valid(): rd.free_rid(set_gen_w)
 	
+	# 3. Apply stored modifications (if any) before meshing
+	mutex.lock()
+	var mods_for_chunk = stored_modifications.get(coord, []).duplicate()
+	mutex.unlock()
+	
+	if mods_for_chunk.size() > 0:
+		for mod in mods_for_chunk:
+			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
+			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, chunk_pos, mod)
+	
+	# 4. Mesh terrain and water (after modifications applied)
+	var mesh_terrain_result = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, material_terrain, vertex_buffer, counter_buffer)
 	var mesh_water_result = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, material_water, vertex_buffer, counter_buffer)
 
 	# Readback Water Density for Physics (CPU)
@@ -551,6 +579,46 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mes
 	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
 
 	call_deferred("complete_generation", task.coord, mesh_terrain_result, dens_buf_terrain, mesh_water_result, dens_buf_water, cpu_density_floats_w, cpu_density_floats_t)
+
+# Helper to apply a single modification to a density buffer (used during generation replay)
+func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, density_buffer: RID, chunk_pos: Vector3, mod: Dictionary):
+	var u_density = RDUniform.new()
+	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_density.binding = 0
+	u_density.add_id(density_buffer)
+	
+	var set_mod = rd.uniform_set_create([u_density], sid_mod, 0)
+	var list = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
+	rd.compute_list_bind_uniform_set(list, set_mod, 0)
+	
+	var push_data = PackedByteArray()
+	push_data.resize(48)
+	var buffer = StreamPeerBuffer.new()
+	buffer.data_array = push_data
+	
+	buffer.put_float(chunk_pos.x)
+	buffer.put_float(chunk_pos.y)
+	buffer.put_float(chunk_pos.z)
+	buffer.put_float(0.0)
+	
+	buffer.put_float(mod.brush_pos.x)
+	buffer.put_float(mod.brush_pos.y)
+	buffer.put_float(mod.brush_pos.z)
+	buffer.put_float(mod.radius)
+	
+	buffer.put_float(mod.value)
+	buffer.put_32(mod.get("shape", 0))
+	buffer.put_float(0.0)
+	buffer.put_float(0.0)
+	
+	rd.compute_list_set_push_constant(list, buffer.data_array, buffer.data_array.size())
+	rd.compute_list_dispatch(list, 9, 9, 9)
+	rd.compute_list_end()
+	rd.submit()
+	rd.sync()
+	
+	if set_mod.is_valid(): rd.free_rid(set_mod)
 
 func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
 	var density_buffer = task.rid
