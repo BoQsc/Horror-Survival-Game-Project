@@ -60,15 +60,10 @@ void main() {
     // Create a sharp dropoff for lakes
     float dropoff = smoothstep(0.2, -0.2, mask_val) * 100.0;
     
-    // --- Surface Detail ---
-    // Use higher frequency noise for waves
-    float wave_val = noise(world_pos * params.noise_freq); 
-    wave_val = (wave_val * 2.0) - 1.0;
-    float wave_amp = 2.0;
-    
-    // Calculate final effective water height
-    // In dry zones, this will be (Level - 100), effectively removing it from the surface.
-    float effective_height = (params.water_level - dropoff) + (wave_val * wave_amp);
+    // --- Water Surface ---
+    // For Marching Cubes, keep water surface FLAT (waves would create visible bumps)
+    // Real-time wave effects should be done in the water shader, not the geometry
+    float effective_height = params.water_level - dropoff;
     
     // Density:
     // y < height -> Water (Negative)
