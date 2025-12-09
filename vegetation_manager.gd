@@ -613,8 +613,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
 	
-	var space_state = get_world_3d().direct_space_state
-	
+	# Use density lookup instead of physics raycasting (much faster)
 	for x in range(0, chunk_stride, 4):
 		for z in range(0, chunk_stride, 4):
 			var gx = chunk_origin_x + x
@@ -624,20 +623,15 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			if noise_val < 0.4:
 				continue
 			
-			var ray_origin = Vector3(gx, 100.0, gz)
-			var ray_end = Vector3(gx, -10.0, gz)
-			
-			var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-			query.collision_mask = 0xFFFFFFFF
-			query.collide_with_areas = false
-			
-			var result = space_state.intersect_ray(query)
-			if result.is_empty():
+			# Use terrain density lookup instead of expensive physics raycast
+			var terrain_y = terrain_manager.get_terrain_height(gx, gz)
+			if terrain_y < -100.0:  # No terrain found
 				continue
 			
-			var hit_pos = result.position
+			var hit_pos = Vector3(gx, terrain_y, gz)
 			
-			var water_dens = terrain_manager.get_water_density(Vector3(gx, hit_pos.y + 1.0, gz))
+			# Skip if underwater
+			var water_dens = terrain_manager.get_water_density(Vector3(gx, terrain_y + 1.0, gz))
 			if water_dens < 0.0:
 				continue
 			
@@ -1063,8 +1057,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
 	
-	var space_state = get_world_3d().direct_space_state
-	
+	# Use density lookup instead of physics raycasting (much faster)
 	# Sparse rocks - every 7 meters (less frequent than grass)
 	for x in range(0, chunk_stride, 7):
 		for z in range(0, chunk_stride, 7):
@@ -1075,18 +1068,12 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			if noise_val < 0.35:  # Slightly higher threshold than grass
 				continue
 			
-			var ray_origin = Vector3(gx, 100.0, gz)
-			var ray_end = Vector3(gx, -10.0, gz)
-			
-			var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-			query.collision_mask = 0xFFFFFFFF
-			query.collide_with_areas = false
-			
-			var result = space_state.intersect_ray(query)
-			if result.is_empty():
+			# Use terrain density lookup instead of expensive physics raycast
+			var terrain_y = terrain_manager.get_terrain_height(gx, gz)
+			if terrain_y < -100.0:  # No terrain found
 				continue
 			
-			var hit_pos = result.position
+			var hit_pos = Vector3(gx, terrain_y, gz)
 			
 			# Skip if this rock was previously removed
 			var pos_hash = _position_hash(hit_pos)
@@ -1094,13 +1081,12 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				continue
 			
 			# Skip if underwater
-			var water_dens = terrain_manager.get_water_density(Vector3(gx, hit_pos.y + 0.5, gz))
+			var water_dens = terrain_manager.get_water_density(Vector3(gx, terrain_y + 0.5, gz))
 			if water_dens < 0.0:
 				continue
 			
-			# Rocks can be on steeper slopes than grass (normal.y > 0.5)
-			if result.normal.y < 0.5:
-				continue
+			# Note: Slope check removed since we no longer have normal data
+			# Rocks can appear on any terrain now
 			
 			var local_pos = hit_pos - chunk_world_pos
 			local_pos.y += rock_y_offset
