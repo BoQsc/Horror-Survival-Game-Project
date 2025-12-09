@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://3fqaqd35e0oj"
-path.s3tc="res://.godot/imported/pine_tree_-_ps1_low_poly_0.png-6d86710c5db05b129e6a09524a832e4f.s3tc.ctex"
+uid="uid://matox4o5ttbx"
+path.s3tc="res://.godot/imported/pine_tree_-_ps1_low_poly_0.png-5498208ff0bfcdc8a1f90b59b04c1049.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
@@ -14,8 +14,8 @@ generator_parameters={
 
 [deps]
 
-source_file="res://models/pine_tree_-_ps1_low_poly_0.png"
-dest_files=["res://.godot/imported/pine_tree_-_ps1_low_poly_0.png-6d86710c5db05b129e6a09524a832e4f.s3tc.ctex"]
+source_file="res://models/tree/1/pine_tree_-_ps1_low_poly_0.png"
+dest_files=["res://.godot/imported/pine_tree_-_ps1_low_poly_0.png-5498208ff0bfcdc8a1f90b59b04c1049.s3tc.ctex"]
 
 [params]
 

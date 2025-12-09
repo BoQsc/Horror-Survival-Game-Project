@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://bkuco15thbxld"
-path="res://.godot/imported/rigged_animated_cinematic_quality_tree_4.glb-d06610f5dd74a2f7f0b358f545574ee2.scn"
+path="res://.godot/imported/rigged_animated_cinematic_quality_tree_4.glb-2b7fea8c2dd87364e3b1d5b06c53198d.scn"
 
 [deps]
 
-source_file="res://models/rigged_animated_cinematic_quality_tree_4.glb"
-dest_files=["res://.godot/imported/rigged_animated_cinematic_quality_tree_4.glb-d06610f5dd74a2f7f0b358f545574ee2.scn"]
+source_file="res://models/tree/0/rigged_animated_cinematic_quality_tree_4.glb"
+dest_files=["res://.godot/imported/rigged_animated_cinematic_quality_tree_4.glb-2b7fea8c2dd87364e3b1d5b06c53198d.scn"]
 
 [params]
 

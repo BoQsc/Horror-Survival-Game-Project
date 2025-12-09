@@ -5,7 +5,7 @@ signal grass_harvested(world_position: Vector3)
 signal rock_harvested(world_position: Vector3)
 
 @export var terrain_manager: Node3D
-@export var tree_model_path: String = "res://models/pine_tree_-_ps1_low_poly.glb"
+@export var tree_model_path: String = "res://models/tree/1/pine_tree_-_ps1_low_poly.glb"
 @export var tree_scale: float = 1.0
 @export var tree_y_offset: float = 0.0  # GLB model has Y=11.76 origin built-in
 @export var tree_rotation_fix: Vector3 = Vector3.ZERO

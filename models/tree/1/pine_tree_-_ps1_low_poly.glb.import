@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://usppq4xmfumb"
-path="res://.godot/imported/pine_tree_-_ps1_low_poly.glb-9752fb84bd36457446ff838c10bf3e10.scn"
+path="res://.godot/imported/pine_tree_-_ps1_low_poly.glb-d2bc44a2c2c156fc82f9eeead041cfa2.scn"
 
 [deps]
 
-source_file="res://models/pine_tree_-_ps1_low_poly.glb"
-dest_files=["res://.godot/imported/pine_tree_-_ps1_low_poly.glb-9752fb84bd36457446ff838c10bf3e10.scn"]
+source_file="res://models/tree/1/pine_tree_-_ps1_low_poly.glb"
+dest_files=["res://.godot/imported/pine_tree_-_ps1_low_poly.glb-d2bc44a2c2c156fc82f9eeead041cfa2.scn"]
 
 [params]
 

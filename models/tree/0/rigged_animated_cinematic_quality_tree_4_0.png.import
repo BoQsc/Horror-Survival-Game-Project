@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dc60ekwrg2hfm"
-path.s3tc="res://.godot/imported/rigged_animated_cinematic_quality_tree_4_2.png-34ccadf305404f6074b2f6523d437225.s3tc.ctex"
+uid="uid://b5bl3yg10xk2j"
+path.s3tc="res://.godot/imported/rigged_animated_cinematic_quality_tree_4_0.png-1d916b45991b329025a762fb542bc6ad.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "535dcf895f6ee92ddd4d69e4eb8c50e6"
+"md5": "e9f9298b8a6435ba9c62e38b25ffc3b8"
 }
 
 [deps]
 
-source_file="res://models/rigged_animated_cinematic_quality_tree_4_2.png"
-dest_files=["res://.godot/imported/rigged_animated_cinematic_quality_tree_4_2.png-34ccadf305404f6074b2f6523d437225.s3tc.ctex"]
+source_file="res://models/tree/0/rigged_animated_cinematic_quality_tree_4_0.png"
+dest_files=["res://.godot/imported/rigged_animated_cinematic_quality_tree_4_0.png-1d916b45991b329025a762fb542bc6ad.s3tc.ctex"]
 
 [params]
 
