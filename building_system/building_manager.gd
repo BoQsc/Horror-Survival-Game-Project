@@ -6,7 +6,7 @@ var mesher: BuildingMesher
 
 # Render distance management
 @export var viewer: Node3D
-@export var render_distance: int = 5  # Match terrain default
+@export var render_distance: int = 8  # Increased for better visibility
 
 # Track which chunks are currently visible (have nodes in scene tree)
 var visible_chunks: Dictionary = {}  # Vector3i -> true
