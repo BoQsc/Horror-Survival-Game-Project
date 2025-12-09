@@ -52,18 +52,19 @@ void main() {
     // Map 0..1 to -1..1
     mask_val = (mask_val * 2.0) - 1.0;
     
-    // Threshold: Only generate water if mask > 0.1
-    // Instead of a hard cut, we lower the water table in dry regions.
-    // If mask is high (wet), water_bias is 0.
-    // If mask is low (dry), water_bias is large negative.
+    // --- Shoreline Transition ---
+    // Instead of a harsh dropoff, create a gentle slope where water meets land
+    // This makes water naturally "pool" in low areas rather than having cliff edges
     
-    // Create a sharp dropoff for lakes
-    float dropoff = smoothstep(0.2, -0.2, mask_val) * 100.0;
+    // mask_val ranges from -1 to 1
+    // We want water where mask > 0 (wet regions)
+    // Smooth transition over a wider range for natural shorelines
+    float water_mask = smoothstep(-0.3, 0.3, mask_val);  // 0 = dry, 1 = wet
     
-    // --- Water Surface ---
-    // For Marching Cubes, keep water surface FLAT (waves would create visible bumps)
-    // Real-time wave effects should be done in the water shader, not the geometry
-    float effective_height = params.water_level - dropoff;
+    // Gently lower water level in dry areas (not a cliff, just lower)
+    // Water in wet areas: at water_level
+    // Water in dry areas: 20 units below (effectively underground/invisible)
+    float effective_height = params.water_level - (1.0 - water_mask) * 20.0;
     
     // Density:
     // y < height -> Water (Negative)
