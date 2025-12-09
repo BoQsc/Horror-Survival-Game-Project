@@ -17,13 +17,9 @@ run/max_fps=70
 run/low_processor_mode=true
 config/icon="res://icon.svg"
 
-[autoload]
-
-DebugMenu="*res://addons/debug_menu/debug_menu.tscn"
-
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/3d-first-person-wasd-input-actions/plugin.cfg", "res://addons/camera3d_templates/plugin.cfg", "res://addons/debug_menu/plugin.cfg")
+enabled=PackedStringArray("res://addons/3d-first-person-wasd-input-actions/plugin.cfg", "res://addons/camera3d_templates/plugin.cfg")
 
 [input]
 
