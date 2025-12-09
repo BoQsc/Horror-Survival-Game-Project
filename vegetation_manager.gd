@@ -702,9 +702,10 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	var space_state = get_world_3d().direct_space_state
 	
-	# Sparse grass - every 5 meters (similar to trees)
-	for x in range(0, chunk_stride, 5):
-		for z in range(0, chunk_stride, 5):
+	# Very dense grass - every 1 meter (5x more than step 2)
+	# Uses terrain density lookup instead of raycasting for performance
+	for x in range(0, chunk_stride, 1):
+		for z in range(0, chunk_stride, 1):
 			var gx = chunk_origin_x + x
 			var gz = chunk_origin_z + z
 			
@@ -712,26 +713,16 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			if noise_val < 0.3:  # Similar threshold to trees
 				continue
 			
-			var ray_origin = Vector3(gx, 100.0, gz)
-			var ray_end = Vector3(gx, -10.0, gz)
-			
-			var query = PhysicsRayQueryParameters3D.create(ray_origin, ray_end)
-			query.collision_mask = 0xFFFFFFFF
-			query.collide_with_areas = false
-			
-			var result = space_state.intersect_ray(query)
-			if result.is_empty():
+			# Use terrain density lookup instead of expensive raycasting
+			var terrain_y = terrain_manager.get_terrain_height(gx, gz)
+			if terrain_y < -100.0:  # No terrain found
 				continue
 			
-			var hit_pos = result.position
+			var hit_pos = Vector3(gx, terrain_y, gz)
 			
 			# Skip if underwater
-			var water_dens = terrain_manager.get_water_density(Vector3(gx, hit_pos.y + 0.5, gz))
+			var water_dens = terrain_manager.get_water_density(Vector3(gx, terrain_y + 0.5, gz))
 			if water_dens < 0.0:
-				continue
-			
-			# Skip steep slopes (grass only on flat-ish terrain)
-			if result.normal.y < 0.7:
 				continue
 			
 			var local_pos = hit_pos - chunk_world_pos

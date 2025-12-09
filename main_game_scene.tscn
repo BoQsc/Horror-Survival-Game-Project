@@ -40,7 +40,7 @@ transform = Transform3D(-0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, 0.75
 shadow_enabled = true
 
 [node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 127.55815, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 499.71902, 0)
 script = ExtResource("1_player")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
@@ -106,6 +106,7 @@ color = Color(0, 0.25098, 0.443137, 0.392157)
 [node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer")]
 script = ExtResource("4_terrain")
 viewer = NodePath("../Player")
+chunk_generation_delay_ms = 140
 
 [node name="VegetationManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
 script = ExtResource("6_vegetation")
