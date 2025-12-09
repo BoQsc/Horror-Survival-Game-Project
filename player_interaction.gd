@@ -232,7 +232,8 @@ func update_selection_box():
 func handle_playing_input(event):
 	# PLAYING mode - interact with world objects (trees, grass, rocks)
 	# Use collide_with_areas=true to detect grass/rocks (Area3D)
-	var hit = raycast(100.0, true)
+	# Use exclude_water=true so we can harvest vegetation BELOW water surface
+	var hit = raycast(100.0, true, true)  # collide_areas=true, exclude_water=true
 	
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		# L-Click: Harvest/Chop
@@ -320,13 +321,24 @@ func handle_building_input(event):
 				# or if the user wants to remove terrain? (Not requested here)
 				pass
 
-func raycast(length: float, collide_areas: bool = false):
+func raycast(length: float, collide_areas: bool = false, exclude_water: bool = false):
 	var space_state = camera.get_world_3d().direct_space_state
 	var from = camera.global_position
 	var to = from - camera.global_transform.basis.z * length
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.exclude = [player.get_rid()]
 	query.collide_with_areas = collide_areas
+	
+	if exclude_water:
+		# Cast ray, if we hit water, continue through it
+		var result = space_state.intersect_ray(query)
+		while result and result.collider and result.collider.is_in_group("water"):
+			# Add hit collider to exclude list and raycast again from hit point
+			query.exclude.append(result.collider.get_rid())
+			query.from = result.position + (to - from).normalized() * 0.01  # Move slightly past
+			result = space_state.intersect_ray(query)
+		return result
+	
 	return space_state.intersect_ray(query)
 
 func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
