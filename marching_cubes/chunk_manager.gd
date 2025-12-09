@@ -17,13 +17,20 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var water_level: float = 14.0 # Raised for surface lakes
 @export var noise_frequency: float = 0.1
 
-# Threading
+# GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
 var mutex: Mutex
 var semaphore: Semaphore
 var exit_thread: bool = false
 
-# Task Queue
+# CPU Worker Pool (for mesh building and collision)
+const CPU_WORKER_COUNT = 2
+var cpu_threads: Array[Thread] = []
+var cpu_task_queue: Array[Dictionary] = []
+var cpu_mutex: Mutex
+var cpu_semaphore: Semaphore
+
+# Task Queue (GPU tasks)
 var task_queue: Array[Dictionary] = []
 
 # Batching for synchronized updates
@@ -76,6 +83,8 @@ func _ready():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
 	pending_nodes_mutex = Mutex.new()
+	cpu_mutex = Mutex.new()
+	cpu_semaphore = Semaphore.new()
 	
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
@@ -112,8 +121,16 @@ func _ready():
 	material_water.set_shader_parameter("beer_factor", 0.15)
 	material_water.set_shader_parameter("foam_level", 0.8)
 	
+	# Start GPU thread
 	compute_thread = Thread.new()
 	compute_thread.start(_thread_function)
+	
+	# Start CPU worker pool
+	for i in range(CPU_WORKER_COUNT):
+		var thread = Thread.new()
+		thread.start(_cpu_thread_function)
+		cpu_threads.append(thread)
+	print("Started %d CPU workers for mesh building" % CPU_WORKER_COUNT)
 
 func _process(delta):
 	if not viewer:
@@ -368,10 +385,21 @@ func _exit_tree():
 	exit_thread = true
 	mutex.unlock()
 	
+	# Signal GPU thread to exit
 	semaphore.post()
 	
+	# Signal all CPU workers to exit
+	for i in range(CPU_WORKER_COUNT):
+		cpu_semaphore.post()
+	
+	# Wait for GPU thread
 	if compute_thread and compute_thread.is_alive():
 		compute_thread.wait_to_finish()
+	
+	# Wait for CPU workers
+	for thread in cpu_threads:
+		if thread and thread.is_alive():
+			thread.wait_to_finish()
 
 func update_chunks():
 	var p_pos = viewer.global_position
@@ -566,19 +594,129 @@ func process_generate(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod
 			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, chunk_pos, mod)
 	
-	# 4. Mesh terrain and water (after modifications applied)
-	var mesh_terrain_result = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, material_terrain, vertex_buffer, counter_buffer)
-	var mesh_water_result = run_meshing(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, material_water, vertex_buffer, counter_buffer)
+	# 4. Run GPU meshing (get raw vertex floats) - NO CPU mesh building here
+	var vert_floats_terrain = run_gpu_meshing(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
+	var vert_floats_water = run_gpu_meshing(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, vertex_buffer, counter_buffer)
 
-	# Readback Water Density for Physics (CPU)
+	# Readback Density for Physics (CPU)
 	var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
 	var cpu_density_floats_w = cpu_density_bytes_w.to_float32_array()
-	
-	# Readback Terrain Density for Vegetation/Physics (CPU)
 	var cpu_density_bytes_t = rd.buffer_get_data(dens_buf_terrain)
 	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
+	
+	# 5. Queue to CPU workers for mesh building (heavy CPU work done in parallel)
+	cpu_mutex.lock()
+	cpu_task_queue.append({
+		"coord": coord,
+		"chunk_pos": chunk_pos,
+		"vert_floats_terrain": vert_floats_terrain,
+		"vert_floats_water": vert_floats_water,
+		"cpu_dens_w": cpu_density_floats_w,
+		"cpu_dens_t": cpu_density_floats_t,
+		"dens_buf_terrain": dens_buf_terrain,
+		"dens_buf_water": dens_buf_water
+	})
+	cpu_mutex.unlock()
+	cpu_semaphore.post()
 
-	call_deferred("complete_generation", task.coord, mesh_terrain_result, dens_buf_terrain, mesh_water_result, dens_buf_water, cpu_density_floats_w, cpu_density_floats_t)
+# GPU-only meshing - returns raw vertex floats, doesn't build ArrayMesh
+func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
+	# Reset Counter to 0
+	var zero_data = PackedByteArray()
+	zero_data.resize(4)
+	zero_data.encode_u32(0, 0)
+	rd.buffer_update(counter_buffer, 0, 4, zero_data)
+	
+	var u_vert = RDUniform.new()
+	u_vert.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_vert.binding = 0
+	u_vert.add_id(vertex_buffer)
+	
+	var u_count = RDUniform.new()
+	u_count.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_count.binding = 1
+	u_count.add_id(counter_buffer)
+	
+	var u_dens = RDUniform.new()
+	u_dens.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_dens.binding = 2
+	u_dens.add_id(density_buffer)
+	
+	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens], sid_mesh, 0)
+	
+	var list = rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
+	rd.compute_list_bind_uniform_set(list, set_mesh, 0)
+	
+	var push_data = PackedFloat32Array([
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, 
+		noise_frequency, terrain_height, 0.0, 0.0
+	])
+	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
+	
+	var groups = CHUNK_SIZE / 8
+	rd.compute_list_dispatch(list, groups, groups, groups)
+	rd.compute_list_end()
+	
+	rd.submit()
+	rd.sync()
+	
+	# Read back vertex data
+	var count_bytes = rd.buffer_get_data(counter_buffer)
+	var tri_count = count_bytes.decode_u32(0)
+	
+	var vert_floats = PackedFloat32Array()
+	if tri_count > 0:
+		var total_floats = tri_count * 3 * 6
+		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
+		vert_floats = vert_bytes.to_float32_array()
+		
+	if set_mesh.is_valid(): rd.free_rid(set_mesh)
+	
+	return vert_floats
+
+# CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
+func _cpu_thread_function():
+	while true:
+		cpu_semaphore.wait()
+		
+		mutex.lock()
+		var should_exit = exit_thread
+		mutex.unlock()
+		
+		if should_exit:
+			break
+		
+		cpu_mutex.lock()
+		if cpu_task_queue.is_empty():
+			cpu_mutex.unlock()
+			continue
+		
+		var task = cpu_task_queue.pop_front()
+		cpu_mutex.unlock()
+		
+		# Build terrain mesh and collision (CPU intensive)
+		var mesh_terrain = null
+		var shape_terrain = null
+		if task.vert_floats_terrain.size() > 0:
+			mesh_terrain = build_mesh(task.vert_floats_terrain, material_terrain)
+			if mesh_terrain:
+				shape_terrain = mesh_terrain.create_trimesh_shape()
+		
+		# Build water mesh and collision (CPU intensive)
+		var mesh_water = null
+		var shape_water = null
+		if task.vert_floats_water.size() > 0:
+			mesh_water = build_mesh(task.vert_floats_water, material_water)
+			if mesh_water:
+				shape_water = mesh_water.create_trimesh_shape()
+		
+		# Package results
+		var result_t = { "mesh": mesh_terrain, "shape": shape_terrain }
+		var result_w = { "mesh": mesh_water, "shape": shape_water }
+		
+		# Send to main thread
+		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t)
 
 # Helper to apply a single modification to a density buffer (used during generation replay)
 func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, density_buffer: RID, chunk_pos: Vector3, mod: Dictionary):
