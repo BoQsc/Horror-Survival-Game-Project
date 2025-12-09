@@ -16,7 +16,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var terrain_height: float = 10.0
 @export var water_level: float = 14.0 # Raised for surface lakes
 @export var noise_frequency: float = 0.1
-@export var chunk_generation_delay_ms: int = 64  # Delay between chunk dispatches to prevent GPU stutter
+@export var chunk_generation_delay_ms: int = 72  # Delay between chunk dispatches to prevent GPU stutter
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
