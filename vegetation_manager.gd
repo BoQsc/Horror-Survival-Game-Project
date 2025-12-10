@@ -87,7 +87,9 @@ func _ready():
 	
 	forest_noise = FastNoiseLite.new()
 	forest_noise.frequency = 0.05
-	forest_noise.seed = 12345
+	# Derive seed from world seed for reproducibility
+	var base_seed = terrain_manager.world_seed if terrain_manager else 12345
+	forest_noise.seed = base_seed
 	
 	# Load grass mesh
 	var grass_result = load_tree_mesh_from_glb(grass_model_path)
@@ -102,7 +104,7 @@ func _ready():
 	
 	grass_noise = FastNoiseLite.new()
 	grass_noise.frequency = 0.08  # Different pattern from trees
-	grass_noise.seed = 54321
+	grass_noise.seed = base_seed + 1  # Offset for different pattern
 	
 	# Load rock mesh
 	var rock_result = load_tree_mesh_from_glb(rock_model_path)
@@ -117,7 +119,7 @@ func _ready():
 	
 	rock_noise = FastNoiseLite.new()
 	rock_noise.frequency = 0.06  # Different pattern from grass/trees
-	rock_noise.seed = 98765
+	rock_noise.seed = base_seed + 2  # Offset for different pattern
 	
 	if terrain_manager:
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)

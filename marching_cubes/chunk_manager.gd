@@ -17,6 +17,9 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var terrain_height: float = 10.0
 @export var water_level: float = 14.0 # Raised for surface lakes
 @export var noise_frequency: float = 0.1
+## World generation seed - same seed = same world
+## Change this for different world generation
+@export var world_seed: int = 12345
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
