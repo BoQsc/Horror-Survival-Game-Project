@@ -140,6 +140,10 @@ func _ready():
 	material_terrain.set_shader_parameter("texture_road", load("res://marching_cubes/asphalt-texture.png"))
 	material_terrain.set_shader_parameter("uv_scale", 0.5) 
 	material_terrain.set_shader_parameter("global_snow_amount", 0.0)
+	# Procedural road texture settings (sync with density shader)
+	material_terrain.set_shader_parameter("procedural_road_enabled", procedural_road_spacing > 0)
+	material_terrain.set_shader_parameter("procedural_road_spacing", procedural_road_spacing)
+	material_terrain.set_shader_parameter("procedural_road_width", procedural_road_width)
 	# Road mask will be set by road_manager
 	
 	# Setup Water Material

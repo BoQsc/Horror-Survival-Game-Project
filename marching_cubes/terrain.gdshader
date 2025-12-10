@@ -16,6 +16,11 @@ uniform sampler2D road_mask : hint_default_black, filter_linear, repeat_disable;
 uniform vec2 road_mask_offset = vec2(0.0);  // World offset for mask
 uniform float road_mask_scale = 0.0005;      // World units to UV (2000m coverage)
 
+// Procedural road texture toggle (matches density shader roads)
+uniform bool procedural_road_enabled = true;
+uniform float procedural_road_spacing = 100.0;
+uniform float procedural_road_width = 8.0;
+
 varying vec3 world_pos;
 varying vec3 world_normal;
 
@@ -52,6 +57,18 @@ float fbm(vec2 p) {
 		w *= 0.5;
 	}
 	return f;
+}
+
+// Procedural road distance (same math as gen_density.glsl)
+float get_procedural_road_dist(vec2 pos) {
+	if (!procedural_road_enabled || procedural_road_spacing <= 0.0) {
+		return 1000.0;
+	}
+	float local_x = mod(pos.x, procedural_road_spacing);
+	float local_z = mod(pos.y, procedural_road_spacing);
+	float dist_to_x_road = min(local_x, procedural_road_spacing - local_x);
+	float dist_to_z_road = min(local_z, procedural_road_spacing - local_z);
+	return min(dist_to_x_road, dist_to_z_road);
 }
 
 void vertex() {
@@ -111,14 +128,22 @@ void fragment() {
 	float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
 	biome_color = mix(biome_color, col_rock, cliff_mix);
 	
-	// --- Road Overlay ---
+	// --- Procedural Road Texture ---
+	float proc_road_dist = get_procedural_road_dist(world_pos.xz);
+	float proc_road_intensity = 0.0;
+	if (proc_road_dist < procedural_road_width) {
+		// Only on flat surfaces (slope > 0.85)
+		float road_slope_ok = smoothstep(0.8, 0.9, slope);
+		proc_road_intensity = smoothstep(procedural_road_width, procedural_road_width * 0.3, proc_road_dist) * road_slope_ok;
+	}
+	biome_color = mix(biome_color, col_road, proc_road_intensity);
+	
+	// --- Player Road Overlay (mask-based) ---
 	// Sample road mask at world position to get road intensity
-	// Only apply road texture to FLAT surfaces to prevent spillover on excavated cliffs
 	vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
 	float road_raw = texture(road_mask, road_uv).r;
 	
 	// Relaxed slope check for Road Type 3 graded surfaces
-	// smoothstep from 0.7 to 0.85 allows road on moderately sloped terrain
 	float road_slope_mask = smoothstep(0.7, 0.85, slope);
 	float road_intensity = road_raw * road_slope_mask;
 	
