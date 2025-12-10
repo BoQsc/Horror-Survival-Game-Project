@@ -42,8 +42,9 @@ func _ready():
 	call_deferred("_init_road_shader")
 
 func _create_road_mask():
-	# Create empty image (black = no road, white = road)
-	road_mask_image = Image.create(MASK_SIZE, MASK_SIZE, false, Image.FORMAT_L8)
+	# Create empty image - R = road exists, G = encoded road height
+	# Using RGBA8 to store height data in G channel
+	road_mask_image = Image.create(MASK_SIZE, MASK_SIZE, false, Image.FORMAT_RGBA8)
 	road_mask_image.fill(Color.BLACK)
 	
 	# Create texture from image
@@ -86,6 +87,10 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 		var px = int(pos.x * scale_factor + center)
 		var pz = int(pos.z * scale_factor + center)
 		
+		# Encode road height: world Y [-50, 150] -> [0, 1]
+		var encoded_height = clamp((pos.y + 50.0) / 200.0, 0.0, 1.0)
+		var road_color = Color(1.0, encoded_height, 0.0, 1.0)  # R=road, G=height
+		
 		# Paint circle at this point
 		for dx in range(-pixel_radius, pixel_radius + 1):
 			for dz in range(-pixel_radius, pixel_radius + 1):
@@ -93,7 +98,7 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 					var x = px + dx
 					var z = pz + dz
 					if x >= 0 and x < MASK_SIZE and z >= 0 and z < MASK_SIZE:
-						road_mask_image.set_pixel(x, z, Color.WHITE)
+						road_mask_image.set_pixel(x, z, road_color)
 	
 	# Update texture
 	road_mask_texture.update(road_mask_image)
