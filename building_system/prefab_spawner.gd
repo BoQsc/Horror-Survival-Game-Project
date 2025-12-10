@@ -161,12 +161,20 @@ func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 			if _is_forested_area(spawn_x, spawn_z):
 				continue
 			
-			# Get terrain height at spawn position
-			var terrain_y = _get_terrain_height(spawn_x, spawn_z)
+			# Sample terrain height at multiple points (building is 3x3)
+			# Use the MAXIMUM height to prevent the building from being buried
+			var h1 = _get_terrain_height(spawn_x, spawn_z)
+			var h2 = _get_terrain_height(spawn_x + 3, spawn_z)
+			var h3 = _get_terrain_height(spawn_x, spawn_z + 3)
+			var h4 = _get_terrain_height(spawn_x + 3, spawn_z + 3)
+			
+			# Use max height to ensure building sits on highest point
+			var terrain_y = max(max(h1, h2), max(h3, h4))
 			if terrain_y < 0:
 				terrain_y = 15.0  # Fallback
 			
-			var spawn_pos = Vector3(spawn_x, terrain_y + 1, spawn_z)
+			# Place floor at terrain level (prefab floor is at Y=0)
+			var spawn_pos = Vector3(spawn_x, terrain_y, spawn_z)
 			
 			# Spawn a prefab
 			_spawn_prefab("small_house", spawn_pos)
