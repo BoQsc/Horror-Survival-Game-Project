@@ -110,7 +110,7 @@ color = Color(0, 0.25098, 0.443137, 0.392157)
 script = ExtResource("4_terrain")
 viewer = NodePath("../Player")
 
-[node name="VegetationManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
+[node name="VegetationManager" type="Node3D" parent="." groups=["vegetation_manager"] node_paths=PackedStringArray("terrain_manager")]
 script = ExtResource("6_vegetation")
 terrain_manager = NodePath("../TerrainManager")
 tree_y_offset = 9.5

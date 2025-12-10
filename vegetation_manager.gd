@@ -760,6 +760,76 @@ func chop_tree_by_collider(collider: Node) -> bool:
 	
 	return false
 
+## Clear all vegetation (trees, grass, rocks) within a radius of a world position
+## Used by prefab spawner to ensure buildings don't overlap vegetation
+func clear_vegetation_in_area(center: Vector3, radius: float):
+	var radius_sq = radius * radius
+	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	
+	# Clear trees
+	for coord in chunk_tree_data:
+		var data = chunk_tree_data[coord]
+		var modified = false
+		for tree in data.trees:
+			if not tree.alive:
+				continue
+			var dist_sq = Vector2(tree.world_pos.x, tree.world_pos.z).distance_squared_to(Vector2(center.x, center.z))
+			if dist_sq < radius_sq:
+				tree.alive = false
+				modified = true
+				# Hide in MultiMesh
+				var mmi = data.multimesh as MultiMeshInstance3D
+				if mmi and mmi.multimesh:
+					var t = Transform3D()
+					t = t.scaled(Vector3.ZERO)
+					t.origin = tree.local_pos
+					mmi.multimesh.set_instance_transform(tree.index, t)
+				# Remove collider
+				var key = _tree_key(coord, tree.index)
+				if active_colliders.has(key):
+					_return_collider_to_pool(active_colliders[key])
+					active_colliders.erase(key)
+	
+	# Clear grass
+	for coord in chunk_grass_data:
+		var data = chunk_grass_data[coord]
+		for grass in data.grass_list:
+			if not grass.alive:
+				continue
+			var dist_sq = Vector2(grass.world_pos.x, grass.world_pos.z).distance_squared_to(Vector2(center.x, center.z))
+			if dist_sq < radius_sq:
+				grass.alive = false
+				var mmi = data.multimesh as MultiMeshInstance3D
+				if mmi and mmi.multimesh:
+					var t = Transform3D()
+					t = t.scaled(Vector3.ZERO)
+					t.origin = grass.local_pos
+					mmi.multimesh.set_instance_transform(grass.index, t)
+				var key = _grass_key(coord, grass.index)
+				if active_grass_colliders.has(key):
+					_return_grass_collider_to_pool(active_grass_colliders[key])
+					active_grass_colliders.erase(key)
+	
+	# Clear rocks
+	for coord in chunk_rock_data:
+		var data = chunk_rock_data[coord]
+		for rock in data.rock_list:
+			if not rock.alive:
+				continue
+			var dist_sq = Vector2(rock.world_pos.x, rock.world_pos.z).distance_squared_to(Vector2(center.x, center.z))
+			if dist_sq < radius_sq:
+				rock.alive = false
+				var mmi = data.multimesh as MultiMeshInstance3D
+				if mmi and mmi.multimesh:
+					var t = Transform3D()
+					t = t.scaled(Vector3.ZERO)
+					t.origin = rock.local_pos
+					mmi.multimesh.set_instance_transform(rock.index, t)
+				var key = _rock_key(coord, rock.index)
+				if active_rock_colliders.has(key):
+					_return_rock_collider_to_pool(active_rock_colliders[key])
+					active_rock_colliders.erase(key)
+
 # ========== GRASS SPAWNING AND HARVESTING ==========
 
 func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):

@@ -70,6 +70,9 @@ var prefabs = {
 	]
 }
 
+# Noise to check if trees would spawn (same as vegetation_manager)
+var forest_noise: FastNoiseLite
+
 func _ready():
 	# Find managers if not assigned
 	if not terrain_manager:
@@ -82,12 +85,30 @@ func _ready():
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
 		print("PrefabSpawner: Connected to terrain_manager")
 	
+	# Setup forest noise (same params as vegetation_manager)
+	forest_noise = FastNoiseLite.new()
+	forest_noise.frequency = 0.05
+	var base_seed = terrain_manager.world_seed if terrain_manager else 12345
+	forest_noise.seed = base_seed
+	
 	# Sync road settings from terrain_manager
 	if terrain_manager:
 		if "procedural_road_spacing" in terrain_manager:
 			road_spacing = terrain_manager.procedural_road_spacing
 		if "procedural_road_width" in terrain_manager:
 			road_width = terrain_manager.procedural_road_width
+
+## Check if location would have trees (returns true if forested area)
+func _is_forested_area(x: float, z: float) -> bool:
+	if not forest_noise:
+		return false
+	# Check a small area around the point
+	for dx in range(-2, 5, 2):  # -2 to 4 step 2 = covers 3x3 building
+		for dz in range(-2, 5, 2):
+			var noise_val = forest_noise.get_noise_2d(x + dx, z + dz)
+			if noise_val >= 0.4:  # Trees spawn when >= 0.4
+				return true
+	return false
 
 func _on_chunk_generated(coord: Vector2i, _chunk_node: Node3D):
 	if not enabled or not building_manager:
@@ -136,6 +157,10 @@ func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 			var spawn_x = intersection.x + spawn_distance_from_road * side
 			var spawn_z = intersection.y + spawn_distance_from_road
 			
+			# Skip if this is a forested area (trees would spawn here)
+			if _is_forested_area(spawn_x, spawn_z):
+				continue
+			
 			# Get terrain height at spawn position
 			var terrain_y = _get_terrain_height(spawn_x, spawn_z)
 			if terrain_y < 0:
@@ -151,9 +176,24 @@ func _get_terrain_height(x: float, z: float) -> float:
 		return terrain_manager.get_terrain_height(x, z)
 	return -1.0
 
+var vegetation_manager: Node3D  # Cached reference
+
+func _get_vegetation_manager() -> Node3D:
+	if not vegetation_manager:
+		vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+		# Fallback: search by name
+		if not vegetation_manager:
+			vegetation_manager = get_tree().root.find_child("VegetationManager", true, false)
+	return vegetation_manager
+
 func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 	if not prefabs.has(prefab_name):
 		return
+	
+	# Clear vegetation in the building area first
+	var veg_mgr = _get_vegetation_manager()
+	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
+		veg_mgr.clear_vegetation_in_area(world_pos, 5.0)  # 5 meter radius
 	
 	var blocks = prefabs[prefab_name]
 	
@@ -166,3 +206,4 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 		building_manager.set_voxel(pos, block_type, block_meta)
 	
 	print("PrefabSpawner: Spawned %s at %v" % [prefab_name, world_pos])
+
