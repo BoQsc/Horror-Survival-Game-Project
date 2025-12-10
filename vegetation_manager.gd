@@ -783,14 +783,13 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	# Very dense grass - every 1 meter (5x more than step 2)
 	# Uses terrain density lookup instead of raycasting for performance
-	for x in range(0, chunk_stride, 1):
-		for z in range(0, chunk_stride, 1):
+	# Step 2 = every 2 meters for performance, no noise threshold = even distribution
+	for x in range(0, chunk_stride, 2):
+		for z in range(0, chunk_stride, 2):
 			var gx = chunk_origin_x + x
 			var gz = chunk_origin_z + z
 			
-			var noise_val = grass_noise.get_noise_2d(gx, gz)
-			if noise_val < 0.3:  # Similar threshold to trees
-				continue
+			# No noise threshold - grass everywhere for even distribution
 			
 			# Use terrain density lookup instead of expensive raycasting
 			var terrain_y = terrain_manager.get_terrain_height(gx, gz)
