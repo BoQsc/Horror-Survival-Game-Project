@@ -108,7 +108,6 @@ color = Color(0, 0.25098, 0.443137, 0.392157)
 [node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer")]
 script = ExtResource("4_terrain")
 viewer = NodePath("../Player")
-procedural_roads_enabled = false
 
 [node name="VegetationManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
 script = ExtResource("6_vegetation")
