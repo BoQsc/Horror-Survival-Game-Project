@@ -13,10 +13,10 @@ signal road_placed(world_position: Vector3)
 ## Trail width in meters (narrower than roads)
 @export var trail_width: float = 2.0
 
-## Road mask texture size (512 = covers 512/road_mask_scale meters)
-const MASK_SIZE = 512
-## World units per pixel (smaller = higher detail, less coverage)
-const MASK_SCALE = 0.002  # 1/500 = covers 500m centered on origin
+## Road mask texture size - higher = more detail but more memory
+const MASK_SIZE = 2048  # Higher res for smoother roads
+## World units per UV - 0.0005 means 2000m coverage centered on origin
+const MASK_SCALE = 0.0005  # More coverage and detail
 
 # Road path data - Dictionary of road segments
 # Key: segment_id, Value: { points: Array[Vector3], width: float, is_trail: bool }
@@ -66,10 +66,10 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	var center = MASK_SIZE / 2.0
 	var scale_factor = MASK_SCALE * MASK_SIZE  # Corrected: no division by 2
 	
-	# Paint line from start to end
+	# Paint line from start to end - dense steps for full coverage
 	var length = start.distance_to(end)
-	var steps = int(length) + 1
-	var pixel_width = max(width * scale_factor, 3.0)  # Minimum 3 pixels wide
+	var steps = int(length * 2) + 1  # Every 0.5 meters for dense coverage
+	var pixel_width = max(width * scale_factor, 5.0)  # Ensure visible width
 	
 	for i in range(steps + 1):
 		var t = float(i) / float(steps) if steps > 0 else 0.0
@@ -78,8 +78,9 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 		var px = int(pos.x * scale_factor + center)
 		var pz = int(pos.z * scale_factor + center)
 		
-		# Paint circle at this point
-		var radius = int(pixel_width / 2.0) + 1
+		# Paint circle at this point - use smaller radius to reduce bleed
+		var radius = int(pixel_width / 2.0)
+		if radius < 1: radius = 1
 		for dx in range(-radius, radius + 1):
 			for dz in range(-radius, radius + 1):
 				if dx * dx + dz * dz <= radius * radius:

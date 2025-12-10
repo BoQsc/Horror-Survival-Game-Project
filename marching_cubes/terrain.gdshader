@@ -11,9 +11,10 @@ uniform float biome_scale = 0.002; // Smaller = larger biomes
 uniform float global_snow_amount : hint_range(0.0, 1.0) = 0.0;
 
 // Road mask system - samples road_mask texture based on world position
+// filter_linear for smooth edges (requires higher resolution mask)
 uniform sampler2D road_mask : hint_default_black, filter_linear, repeat_disable;
 uniform vec2 road_mask_offset = vec2(0.0);  // World offset for mask
-uniform float road_mask_scale = 0.002;       // World units to UV (1/500 = 500m coverage)
+uniform float road_mask_scale = 0.0005;      // World units to UV (2000m coverage)
 
 varying vec3 world_pos;
 varying vec3 world_normal;
