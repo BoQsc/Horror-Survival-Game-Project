@@ -26,6 +26,18 @@ func _init(coord: Vector3i):
 	voxel_meta.resize(SIZE * SIZE * SIZE)
 	voxel_meta.fill(0)
 
+## Reset chunk for pool reuse - clears data without reallocating arrays
+func reset(new_coord: Vector3i):
+	chunk_coord = new_coord
+	voxel_bytes.fill(0)  # Clear all voxels to air
+	voxel_meta.fill(0)   # Clear all metadata
+	is_empty = true
+	# Clear visuals
+	if mesh_instance:
+		mesh_instance.mesh = null
+	if collision_shape:
+		collision_shape.shape = null
+
 func _ready():
 	# Setup Node Structure
 	static_body = StaticBody3D.new()

@@ -11,6 +11,10 @@ var mesher: BuildingMesher
 # Track which chunks are currently visible (have nodes in scene tree)
 var visible_chunks: Dictionary = {}  # Vector3i -> true
 
+# Chunk pool for recycling (multiplayer optimization)
+var chunk_pool: Array[BuildingChunk] = []
+const MAX_POOL_SIZE = 32  # Keep up to 32 chunks in pool
+
 const CHUNK_SIZE = 16  # Must match BuildingChunk.SIZE
 
 func _ready():
@@ -75,15 +79,20 @@ func _load_chunk_visual(coord: Vector3i):
 	
 	visible_chunks[coord] = true
 
-# TODO: Pooling chunks could optimize this further
+## Get or create a chunk at the given coordinate. Uses pool for recycling.
 func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 	if chunks.has(chunk_coord):
 		return chunks[chunk_coord]
 	
-	# Create new chunk if not exists
-	var chunk = BuildingChunk.new(chunk_coord)
-	chunk.mesher = mesher # Inject dependency
+	# Get chunk from pool or create new one
+	var chunk: BuildingChunk
+	if chunk_pool.size() > 0:
+		chunk = chunk_pool.pop_back()
+		chunk.reset(chunk_coord)  # Recycle: clear and assign new coord
+	else:
+		chunk = BuildingChunk.new(chunk_coord)  # Pool empty: create new
 	
+	chunk.mesher = mesher  # Inject dependency
 	chunks[chunk_coord] = chunk
 	
 	# Only add to tree if within render distance
@@ -104,6 +113,24 @@ func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 		visible_chunks[chunk_coord] = true
 	
 	return chunk
+
+## Return a chunk to the pool for recycling (call when permanently removing a chunk)
+func release_chunk(chunk_coord: Vector3i):
+	if not chunks.has(chunk_coord):
+		return
+	
+	var chunk = chunks[chunk_coord]
+	chunks.erase(chunk_coord)
+	visible_chunks.erase(chunk_coord)
+	
+	if chunk.is_inside_tree():
+		remove_child(chunk)
+	
+	# Add to pool if not full, otherwise free
+	if chunk_pool.size() < MAX_POOL_SIZE:
+		chunk_pool.append(chunk)
+	else:
+		chunk.queue_free()
 
 func set_voxel(global_pos: Vector3, value: int, meta: int = 0):
 	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
