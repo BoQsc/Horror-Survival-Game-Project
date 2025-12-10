@@ -3,17 +3,22 @@ extends Node
 @export var terrain_manager: Node3D
 @export var building_manager: Node3D
 @export var vegetation_manager: Node3D
+@export var road_manager: Node3D  # Road placement system
 
 @onready var mode_label: Label = $"../../../UI/ModeLabel"
 @onready var camera: Camera3D = $".."
 @onready var selection_box: MeshInstance3D = $"../../../SelectionBox"
 @onready var player = $"../.."
 
-enum Mode { PLAYING, TERRAIN, WATER, BUILDING }
+enum Mode { PLAYING, TERRAIN, WATER, BUILDING, ROAD }
 var current_mode: Mode = Mode.PLAYING
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
 var current_rotation: int = 0
+
+# Road building state
+var road_start_pos: Vector3 = Vector3.ZERO
+var is_placing_road: bool = false
 
 # PLAYING mode placeable items
 enum PlaceableItem { ROCK, GRASS }
@@ -127,13 +132,15 @@ func _unhandled_input(event):
 				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 					current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
-			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 				if current_mode == Mode.PLAYING:
 					handle_playing_input(event)
 				elif current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
 					handle_terrain_input(event)
 				elif current_mode == Mode.BUILDING and has_target:
 					handle_building_input(event)
+				elif current_mode == Mode.ROAD:
+					handle_road_input(event)
 
 func toggle_mode():
 	if current_mode == Mode.PLAYING:
@@ -142,6 +149,9 @@ func toggle_mode():
 		current_mode = Mode.WATER
 	elif current_mode == Mode.WATER:
 		current_mode = Mode.BUILDING
+	elif current_mode == Mode.BUILDING:
+		current_mode = Mode.ROAD
+		is_placing_road = false  # Reset road state
 	else:
 		current_mode = Mode.PLAYING
 	update_ui()
@@ -163,6 +173,9 @@ func update_ui():
 		elif current_block_id == 4: block_name = "Stairs"
 		
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
+	elif current_mode == Mode.ROAD:
+		var road_status = "Click to start" if not is_placing_road else "Click to end"
+		mode_label.text = "Mode: ROAD\n%s\nR-Click: Place road segment\n[ESC] Cancel" % road_status
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -416,3 +429,61 @@ func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
 				normal = Vector3(0, 0, -step_z)
 				
 	return null
+
+## Road placement input handler
+func handle_road_input(event: InputEventMouseButton):
+	if not road_manager:
+		return
+	
+	# Right click to place road points
+	if event.button_index == MOUSE_BUTTON_RIGHT:
+		var hit = raycast(50.0, false)  # Longer range for roads
+		if hit:
+			var pos = hit.position
+			
+			if not is_placing_road:
+				# First click - start road
+				road_start_pos = pos
+				is_placing_road = true
+				road_manager.start_road(false)  # false = not a trail
+				road_manager.add_road_point(pos)
+				update_ui()
+			else:
+				# Second click - end road and flatten terrain
+				road_manager.add_road_point(pos)
+				var segment_id = road_manager.finish_road(false)
+				
+				if segment_id >= 0:
+					# Flatten terrain along the road
+					_flatten_road_segment(road_start_pos, pos)
+				
+				is_placing_road = false
+				update_ui()
+	
+	# Left click to cancel
+	elif event.button_index == MOUSE_BUTTON_LEFT and is_placing_road:
+		is_placing_road = false
+		road_manager.current_road_points.clear()
+		road_manager.is_building_road = false
+		update_ui()
+
+## Flatten terrain along a road segment
+func _flatten_road_segment(start: Vector3, end: Vector3):
+	if not terrain_manager:
+		return
+	
+	var road_width = road_manager.road_width if road_manager else 5.0
+	var direction = (end - start).normalized()
+	var length = start.distance_to(end)
+	var steps = int(length / 2.0)  # Every 2 meters
+	
+	# Average Y height for flat road
+	var avg_y = (start.y + end.y) / 2.0
+	
+	for i in range(steps + 1):
+		var t = float(i) / float(steps) if steps > 0 else 0.0
+		var pos = start.lerp(end, t)
+		pos.y = avg_y
+		
+		# Flatten terrain at this point (box shape = 1)
+		terrain_manager.modify_terrain(pos, road_width / 2.0, 0.0, 1, 0)

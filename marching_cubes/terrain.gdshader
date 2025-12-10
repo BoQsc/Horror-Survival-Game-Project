@@ -4,10 +4,16 @@ uniform sampler2D texture_grass : source_color, filter_linear_mipmap;
 uniform sampler2D texture_rock : source_color, filter_linear_mipmap;
 uniform sampler2D texture_sand : source_color, filter_linear_mipmap;
 uniform sampler2D texture_snow : source_color, filter_linear_mipmap;
+uniform sampler2D texture_road : source_color, filter_linear_mipmap;  // Asphalt texture
 
 uniform float uv_scale = 0.5;
 uniform float biome_scale = 0.002; // Smaller = larger biomes
 uniform float global_snow_amount : hint_range(0.0, 1.0) = 0.0;
+
+// Road mask system - samples road_mask texture based on world position
+uniform sampler2D road_mask : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 road_mask_offset = vec2(0.0);  // World offset for mask
+uniform float road_mask_scale = 0.002;       // World units to UV (1/500 = 500m coverage)
 
 varying vec3 world_pos;
 varying vec3 world_normal;
@@ -73,6 +79,7 @@ void fragment() {
 	vec3 col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;
 	vec3 col_sand = triplanar_texture(texture_sand, weights, uv_pos).rgb;
 	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
+	vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
 	
 	// --- Biome Logic ---
 	// Use world X/Z to pick a biome value [-1, 1]
@@ -102,6 +109,12 @@ void fragment() {
 	float slope = normal.y;
 	float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
 	biome_color = mix(biome_color, col_rock, cliff_mix);
+	
+	// --- Road Overlay ---
+	// Sample road mask at world position to get road intensity
+	vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
+	float road_intensity = texture(road_mask, road_uv).r;
+	biome_color = mix(biome_color, col_road, road_intensity);
 	
 	// --- Dynamic Weather Snow ---
 	// Applies everywhere based on global_snow_amount

@@ -131,8 +131,11 @@ func _ready():
 	material_terrain.set_shader_parameter("texture_grass", load("res://marching_cubes/green-grass-texture.jpg"))
 	material_terrain.set_shader_parameter("texture_rock", load("res://marching_cubes/rocky-texture.jpg"))
 	material_terrain.set_shader_parameter("texture_sand", load("res://marching_cubes/sand-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_snow", load("res://marching_cubes/snow-texture.jpg") if FileAccess.file_exists("res://marching_cubes/snow-texture.jpg") else load("res://marching_cubes/rocky-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_road", load("res://marching_cubes/asphalt-texture.png"))
 	material_terrain.set_shader_parameter("uv_scale", 0.5) 
 	material_terrain.set_shader_parameter("global_snow_amount", 0.0)
+	# Road mask will be set by road_manager
 	
 	# Setup Water Material
 	material_water = ShaderMaterial.new()
