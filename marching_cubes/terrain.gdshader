@@ -117,9 +117,9 @@ void fragment() {
 	vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
 	float road_raw = texture(road_mask, road_uv).r;
 	
-	// Slope check: only apply road on nearly horizontal surfaces (slope > 0.92)
-	// This prevents road texture from appearing on cliff walls after excavation
-	float road_slope_mask = step(0.92, slope);
+	// Relaxed slope check for Road Type 3 graded surfaces
+	// smoothstep from 0.7 to 0.85 allows road on moderately sloped terrain
+	float road_slope_mask = smoothstep(0.7, 0.85, slope);
 	float road_intensity = road_raw * road_slope_mask;
 	
 	biome_color = mix(biome_color, col_road, road_intensity);
