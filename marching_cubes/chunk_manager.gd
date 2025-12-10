@@ -22,7 +22,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var world_seed: int = 12345
 
 ## Procedural Road Network (generated with terrain)
-## Set to 0 to disable procedural roads
+@export var procedural_roads_enabled: bool = true  # Toggle to disable procedural roads
 @export var procedural_road_spacing: float = 100.0  # Distance between roads
 @export var procedural_road_width: float = 8.0  # Width of roads
 
@@ -141,8 +141,8 @@ func _ready():
 	material_terrain.set_shader_parameter("uv_scale", 0.5) 
 	material_terrain.set_shader_parameter("global_snow_amount", 0.0)
 	# Procedural road texture settings (sync with density shader)
-	material_terrain.set_shader_parameter("procedural_road_enabled", procedural_road_spacing > 0)
-	material_terrain.set_shader_parameter("procedural_road_spacing", procedural_road_spacing)
+	material_terrain.set_shader_parameter("procedural_road_enabled", procedural_roads_enabled)
+	material_terrain.set_shader_parameter("procedural_road_spacing", procedural_road_spacing if procedural_roads_enabled else 0.0)
 	material_terrain.set_shader_parameter("procedural_road_width", procedural_road_width)
 	# Road mask will be set by road_manager
 	
@@ -675,7 +675,9 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen)
 	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
-	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, terrain_height, procedural_road_spacing, procedural_road_width])
+	# Pass 0.0 for road spacing if disabled
+	var actual_road_spacing = procedural_road_spacing if procedural_roads_enabled else 0.0
+	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, terrain_height, actual_road_spacing, procedural_road_width])
 	rd.compute_list_set_push_constant(list, push_data_t.to_byte_array(), push_data_t.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
