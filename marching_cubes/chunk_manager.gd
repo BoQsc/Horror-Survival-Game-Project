@@ -536,14 +536,7 @@ func _thread_function():
 	const MAX_IN_FLIGHT = 1  # Limit to prevent GPU overload
 	
 	while true:
-		# 1. Complete any in-flight chunks FIRST (one sync for all)
-		if in_flight.size() > 0:
-			rd.sync()  # Single sync for ALL in-flight work
-			for flight_data in in_flight:
-				_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
-			in_flight.clear()
-		
-		# 2. Check for new tasks or exit
+		# 1. Check for new tasks FIRST (prioritize modifications before completing in-flight work)
 		semaphore.wait()
 		
 		mutex.lock()
@@ -553,13 +546,34 @@ func _thread_function():
 			
 		if task_queue.is_empty():
 			mutex.unlock()
+			# Only complete in-flight when no tasks pending
+			if in_flight.size() > 0:
+				rd.sync()
+				for flight_data in in_flight:
+					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+				in_flight.clear()
 			continue
 			
 		var task = task_queue.pop_front()
 		mutex.unlock()
 		
-		# 3. Handle task types
-		if task.type == "generate":
+		# 2. Handle task types
+		if task.type == "modify":
+			# HIGHEST PRIORITY: Process modifications immediately, sync all pending work first
+			if in_flight.size() > 0:
+				rd.sync()
+				for fd in in_flight:
+					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+				in_flight.clear()
+			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
+		elif task.type == "generate":
+			# Complete any in-flight before starting new generation
+			if in_flight.size() > 0:
+				rd.sync()
+				for flight_data in in_flight:
+					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+				in_flight.clear()
+			
 			# Dispatch all GPU work, NO sync - will be completed next iteration
 			var flight_data = _dispatch_chunk_generation(rd, task, sid_gen, sid_gen_water, sid_mod, pipe_gen, pipe_gen_water, pipe_mod)
 			if flight_data:
@@ -585,8 +599,6 @@ func _thread_function():
 					else:
 						# Exploration phase: longer delay to prevent stutters
 						OS.delay_msec(exploration_delay_ms)
-		elif task.type == "modify":
-			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
 		elif task.type == "free":
 			if task.rid.is_valid():
 				rd.free_rid(task.rid)
