@@ -21,42 +21,52 @@ class_name PrefabSpawner
 var spawned_positions: Dictionary = {}
 
 # Simple prefab definitions (relative block positions)
+# Block types: 1=Wood, 2=Stone, 3=Ramp, 4=Stairs
 var prefabs = {
 	"small_house": [
+		# Entrance stairs (in front, type=4 is stairs)
+		{"offset": Vector3i(1, 0, -1), "type": 4, "meta": 0},  # Stairs facing +Z (into building)
+		
 		# Floor
-		{"offset": Vector3i(0, 0, 0), "type": 1},
-		{"offset": Vector3i(1, 0, 0), "type": 1},
-		{"offset": Vector3i(2, 0, 0), "type": 1},
-		{"offset": Vector3i(0, 0, 1), "type": 1},
-		{"offset": Vector3i(1, 0, 1), "type": 1},
-		{"offset": Vector3i(2, 0, 1), "type": 1},
-		{"offset": Vector3i(0, 0, 2), "type": 1},
-		{"offset": Vector3i(1, 0, 2), "type": 1},
-		{"offset": Vector3i(2, 0, 2), "type": 1},
-		# Walls - layer 1
-		{"offset": Vector3i(0, 1, 0), "type": 1},
-		{"offset": Vector3i(2, 1, 0), "type": 1},
-		{"offset": Vector3i(0, 1, 2), "type": 1},
-		{"offset": Vector3i(2, 1, 2), "type": 1},
-		{"offset": Vector3i(0, 1, 1), "type": 1},
-		{"offset": Vector3i(2, 1, 1), "type": 1},
-		# Walls - layer 2
-		{"offset": Vector3i(0, 2, 0), "type": 1},
-		{"offset": Vector3i(2, 2, 0), "type": 1},
-		{"offset": Vector3i(0, 2, 2), "type": 1},
-		{"offset": Vector3i(2, 2, 2), "type": 1},
-		{"offset": Vector3i(0, 2, 1), "type": 1},
-		{"offset": Vector3i(2, 2, 1), "type": 1},
+		{"offset": Vector3i(0, 0, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 0, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 0, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 0, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 0, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 0, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 0, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 0, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 0, 2), "type": 1, "meta": 0},
+		
+		# Walls - layer 1 (door opening at 1, 1, 0)
+		{"offset": Vector3i(0, 1, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 1, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 1, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 1, 2), "type": 1, "meta": 0},  # Back wall
+		{"offset": Vector3i(2, 1, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 1, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 1, 1), "type": 1, "meta": 0},
+		
+		# Walls - layer 2 (door opening continues here - no block at 1,2,0)
+		{"offset": Vector3i(0, 2, 0), "type": 1, "meta": 0},
+		# {"offset": Vector3i(1, 2, 0) removed for 2-block doorway}
+		{"offset": Vector3i(2, 2, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 2, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 2, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 2, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 2, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 2, 1), "type": 1, "meta": 0},
+		
 		# Roof
-		{"offset": Vector3i(0, 3, 0), "type": 1},
-		{"offset": Vector3i(1, 3, 0), "type": 1},
-		{"offset": Vector3i(2, 3, 0), "type": 1},
-		{"offset": Vector3i(0, 3, 1), "type": 1},
-		{"offset": Vector3i(1, 3, 1), "type": 1},
-		{"offset": Vector3i(2, 3, 1), "type": 1},
-		{"offset": Vector3i(0, 3, 2), "type": 1},
-		{"offset": Vector3i(1, 3, 2), "type": 1},
-		{"offset": Vector3i(2, 3, 2), "type": 1},
+		{"offset": Vector3i(0, 3, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 3, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 3, 0), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 3, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 3, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 3, 1), "type": 1, "meta": 0},
+		{"offset": Vector3i(0, 3, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(1, 3, 2), "type": 1, "meta": 0},
+		{"offset": Vector3i(2, 3, 2), "type": 1, "meta": 0},
 	]
 }
 
@@ -150,8 +160,9 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 	for block in blocks:
 		var offset = block.offset
 		var block_type = block.type
+		var block_meta = block.get("meta", 0)  # Default to 0 if not specified
 		
 		var pos = world_pos + Vector3(offset)
-		building_manager.set_voxel(pos, block_type, 0)
+		building_manager.set_voxel(pos, block_type, block_meta)
 	
 	print("PrefabSpawner: Spawned %s at %v" % [prefab_name, world_pos])
