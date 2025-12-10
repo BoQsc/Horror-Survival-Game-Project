@@ -6,6 +6,7 @@
 [ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
+[ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://roads/road_manager.gd" id="7_roads"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -50,11 +51,12 @@ shape = SubResource("PlayerShape")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 script = ExtResource("2_camera")
 
-[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager")]
+[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager", "road_manager")]
 script = ExtResource("3_interact")
 terrain_manager = NodePath("../../../TerrainManager")
 building_manager = NodePath("../../../BuildingManager")
 vegetation_manager = NodePath("../../../VegetationManager")
+road_manager = NodePath("../../../RoadManager")
 
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
@@ -118,6 +120,10 @@ rock_y_offset = 0.3
 
 [node name="BuildingManager" type="Node3D" parent="."]
 script = ExtResource("5_buildings")
+
+[node name="RoadManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
+script = ExtResource("7_roads")
+terrain_manager = NodePath("../TerrainManager")
 
 [node name="SelectionBox" type="MeshInstance3D" parent="."]
 visible = false
