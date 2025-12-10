@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=15 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://roads/road_manager.gd" id="7_roads"]
+[ext_resource type="Script" path="res://building_system/prefab_spawner.gd" id="8_prefabs"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -118,14 +119,20 @@ grass_collision_radius = 0.7
 rock_scale = 0.3
 rock_y_offset = 0.3
 
-[node name="BuildingManager" type="Node3D" parent="."]
+[node name="BuildingManager" type="Node3D" parent="." groups=["building_manager"]]
 script = ExtResource("5_buildings")
 
 [node name="RoadManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
 script = ExtResource("7_roads")
 terrain_manager = NodePath("../TerrainManager")
 
+[node name="PrefabSpawner" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager", "building_manager")]
+script = ExtResource("8_prefabs")
+terrain_manager = NodePath("../TerrainManager")
+building_manager = NodePath("../BuildingManager")
+
 [node name="SelectionBox" type="MeshInstance3D" parent="."]
 visible = false
 mesh = SubResource("BoxMesh_selection")
 surface_material_override/0 = SubResource("StandardMaterial3D_selection")
+
