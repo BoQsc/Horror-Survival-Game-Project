@@ -396,10 +396,13 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 		var batch_count = tasks_to_add.size()
 		
 		mutex.lock()
-		for t in tasks_to_add:
+		# PRIORITY: Insert modifications at FRONT of queue (not back)
+		# This ensures player interactions are instant, not queued behind chunk generation
+		for i in range(tasks_to_add.size() - 1, -1, -1):  # Reverse order to maintain sequence
+			var t = tasks_to_add[i]
 			t["batch_id"] = modification_batch_id
 			t["batch_count"] = batch_count
-			task_queue.append(t)
+			task_queue.push_front(t)  # Push to front, not append to back
 		mutex.unlock()
 		
 		for i in range(batch_count):
