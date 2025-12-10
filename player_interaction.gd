@@ -501,39 +501,33 @@ func _flatten_road_segment(start: Vector3, end: Vector3):
 		terrain_manager.modify_terrain(pos, road_width / 2.0, 0.0, 1, 0)
 
 ## Road Type 3: Custom terrain normalization with relaxed slope
-## Creates a smooth drivable surface using gradual terrain adjustment (not hard stamps)
+## Creates a smooth drivable surface - follows slope between clicked points
 func _normalize_road_segment(start: Vector3, end: Vector3):
 	if not terrain_manager:
 		return
 	
 	var road_width = road_manager.road_width if road_manager else 10.0
-	var brush_radius = road_width / 2.0
+	var brush_radius = road_width  # Larger brush for stronger effect
 	
-	# start.y and end.y ARE the terrain surface heights (from raycast hits)
 	var start_y = start.y
 	var end_y = end.y
 	
-	print("Road Type 3: Start (%.1f, %.1f, %.1f) -> End (%.1f, %.1f, %.1f)" % [start.x, start_y, start.z, end.x, end_y, end.z])
+	print("Road Type 3: Start Y=%.1f -> End Y=%.1f" % [start_y, end_y])
 	
-	# Calculate 2D distance for step count
+	# Fewer steps = faster, larger brush compensates
 	var length_2d = Vector2(start.x, start.z).distance_to(Vector2(end.x, end.z))
-	var steps = int(length_2d / 2.0) + 1  # Every 2 meters
+	var steps = int(length_2d / 4.0) + 1  # Every 4 meters (fewer ops = faster)
 	
 	for i in range(steps + 1):
 		var t = float(i) / float(steps) if steps > 0 else 0.0
-		
-		# Horizontal position along the road
 		var pos_x = lerpf(start.x, end.x, t)
 		var pos_z = lerpf(start.z, end.z, t)
+		var target_y = lerpf(start_y, end_y, t)  # Slope from start to end
 		
-		# Target Y: linear gradient between start and end (THIS IS THE SLOPE)
-		var target_y = lerpf(start_y, end_y, t)
+		# STRONG dig above road level
+		var dig_pos = Vector3(pos_x, target_y + brush_radius * 0.5, pos_z)
+		terrain_manager.modify_terrain(dig_pos, brush_radius, 2.0, 0, 0)  # Strong dig
 		
-		# Smooth brush ABOVE road surface (gently carve)
-		# shape=0 is sphere with smooth falloff
-		var dig_pos = Vector3(pos_x, target_y + brush_radius * 0.7, pos_z)
-		terrain_manager.modify_terrain(dig_pos, brush_radius, 0.5, 0, 0)  # Gentle dig
-		
-		# Smooth brush BELOW road surface (gently fill)
-		var fill_pos = Vector3(pos_x, target_y - brush_radius * 0.7, pos_z)
-		terrain_manager.modify_terrain(fill_pos, brush_radius, -0.5, 0, 0)  # Gentle fill
+		# STRONG fill below road level
+		var fill_pos = Vector3(pos_x, target_y - brush_radius * 0.5, pos_z)
+		terrain_manager.modify_terrain(fill_pos, brush_radius, -2.0, 0, 0)  # Strong fill
