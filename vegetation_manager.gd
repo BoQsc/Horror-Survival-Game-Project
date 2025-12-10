@@ -19,6 +19,9 @@ signal rock_harvested(world_position: Vector3)
 @export var grass_y_offset: float = 0.0
 @export var grass_collision_radius: float = 0.3
 @export var grass_collision_height: float = 0.5
+## Dense grass mode: even distribution everywhere (GPU intensive)
+## Default (false): patchy distribution using noise (better performance)
+@export var dense_grass_mode: bool = false
 
 # Rock settings
 @export var rock_model_path: String = "res://models/small_rock/simple_rock_-_ps1_low_poly.glb"
@@ -781,15 +784,19 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	var space_state = get_world_3d().direct_space_state
 	
-	# Very dense grass - every 1 meter (5x more than step 2)
-	# Uses terrain density lookup instead of raycasting for performance
-	# Step 2 = every 2 meters for performance, no noise threshold = even distribution
-	for x in range(0, chunk_stride, 2):
-		for z in range(0, chunk_stride, 2):
+	# Grass placement - mode determines density and distribution
+	var step = 2 if dense_grass_mode else 1
+	for x in range(0, chunk_stride, step):
+		for z in range(0, chunk_stride, step):
 			var gx = chunk_origin_x + x
 			var gz = chunk_origin_z + z
 			
-			# No noise threshold - grass everywhere for even distribution
+			# Default mode: use noise for patchy distribution
+			# Dense mode: skip noise check for even distribution everywhere
+			if not dense_grass_mode:
+				var noise_val = grass_noise.get_noise_2d(gx, gz)
+				if noise_val < 0.3:
+					continue
 			
 			# Use terrain density lookup instead of expensive raycasting
 			var terrain_y = terrain_manager.get_terrain_height(gx, gz)
