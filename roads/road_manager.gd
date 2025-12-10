@@ -8,10 +8,10 @@ signal road_placed(world_position: Vector3)
 @export var terrain_manager: Node3D  # ChunkManager reference
 @export var roads_enabled: bool = true  # Toggle entire road system
 
-## Road width in meters
-@export var road_width: float = 5.0
-## Trail width in meters (narrower than roads)
-@export var trail_width: float = 2.0
+## Road width in meters (wider for vehicle roads)
+@export var road_width: float = 10.0
+## Trail width in meters (narrower for walking paths)
+@export var trail_width: float = 3.0
 
 ## Road mask texture size - higher = more detail but more memory
 const MASK_SIZE = 2048  # Higher res for smoother roads
