@@ -64,12 +64,20 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	#          = world_pos * MASK_SCALE * MASK_SIZE + MASK_SIZE/2
 	
 	var center = MASK_SIZE / 2.0
-	var scale_factor = MASK_SCALE * MASK_SIZE  # Corrected: no division by 2
+	var scale_factor = MASK_SCALE * MASK_SIZE  # pixels per meter
+	
+	print("Road mask paint: scale_factor=%f, center=%d" % [scale_factor, int(center)])
+	print("  Start world: (%f, %f) -> pixel: (%d, %d)" % [start.x, start.z, int(start.x * scale_factor + center), int(start.z * scale_factor + center)])
+	print("  End world: (%f, %f) -> pixel: (%d, %d)" % [end.x, end.z, int(end.x * scale_factor + center), int(end.z * scale_factor + center)])
 	
 	# Paint line from start to end - dense steps for full coverage
 	var length = start.distance_to(end)
 	var steps = int(length * 2) + 1  # Every 0.5 meters for dense coverage
-	var pixel_width = max(width * scale_factor, 5.0)  # Ensure visible width
+	
+	# Width in pixels - scale_factor converts meters to pixels
+	var pixel_radius = int((width / 2.0) * scale_factor)
+	if pixel_radius < 2: pixel_radius = 2
+	print("  Road width=%fm, pixel_radius=%d" % [width, pixel_radius])
 	
 	for i in range(steps + 1):
 		var t = float(i) / float(steps) if steps > 0 else 0.0
@@ -78,12 +86,10 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 		var px = int(pos.x * scale_factor + center)
 		var pz = int(pos.z * scale_factor + center)
 		
-		# Paint circle at this point - use smaller radius to reduce bleed
-		var radius = int(pixel_width / 2.0)
-		if radius < 1: radius = 1
-		for dx in range(-radius, radius + 1):
-			for dz in range(-radius, radius + 1):
-				if dx * dx + dz * dz <= radius * radius:
+		# Paint circle at this point
+		for dx in range(-pixel_radius, pixel_radius + 1):
+			for dz in range(-pixel_radius, pixel_radius + 1):
+				if dx * dx + dz * dz <= pixel_radius * pixel_radius:
 					var x = px + dx
 					var z = pz + dz
 					if x >= 0 and x < MASK_SIZE and z >= 0 and z < MASK_SIZE:
@@ -91,6 +97,10 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	
 	# Update texture
 	road_mask_texture.update(road_mask_image)
+	
+	# Save mask for debugging
+	road_mask_image.save_png("user://road_mask_debug.png")
+	print("  Saved mask to user://road_mask_debug.png")
 
 ## Start building a new road/trail
 func start_road(is_trail: bool = false):
