@@ -507,6 +507,28 @@ func update_chunks():
 			
 			chunks_queued_this_frame += 1
 
+## Interruptible delay - checks for high-priority modify tasks every 10ms
+## Allows player modifications to interrupt chunk loading delays
+func _interruptible_delay(total_ms: int):
+	var elapsed = 0
+	while elapsed < total_ms:
+		# Check if there's a modify task waiting
+		mutex.lock()
+		var has_modify = false
+		for t in task_queue:
+			if t.type == "modify":
+				has_modify = true
+				break
+		mutex.unlock()
+		
+		if has_modify:
+			return  # Stop delaying, process the modification
+		
+		# Sleep in small chunks
+		var sleep_time = min(10, total_ms - elapsed)
+		OS.delay_msec(sleep_time)
+		elapsed += sleep_time
+
 func _thread_function():
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd:
@@ -595,10 +617,11 @@ func _thread_function():
 							print("Initial load complete! Switching to exploration mode (delay=%dms)" % exploration_delay_ms)
 						# During initial load: minimal or no delay for fast loading
 						if initial_load_delay_ms > 0:
-							OS.delay_msec(initial_load_delay_ms)
+							_interruptible_delay(initial_load_delay_ms)
 					else:
 						# Exploration phase: longer delay to prevent stutters
-						OS.delay_msec(exploration_delay_ms)
+						# Use interruptible delay so modifications can break through
+						_interruptible_delay(exploration_delay_ms)
 		elif task.type == "free":
 			if task.rid.is_valid():
 				rd.free_rid(task.rid)
