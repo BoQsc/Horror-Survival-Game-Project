@@ -19,6 +19,7 @@ var current_rotation: int = 0
 # Road building state
 var road_start_pos: Vector3 = Vector3.ZERO
 var is_placing_road: bool = false
+var road_type: int = 1  # 1=Flatten, 2=Mask Only, 3=Normalize
 
 # PLAYING mode placeable items
 enum PlaceableItem { ROCK, GRASS }
@@ -102,25 +103,29 @@ func _unhandled_input(event):
 			terrain_blocky_mode = not terrain_blocky_mode
 			update_ui()
 		elif event.keycode == KEY_1:
-			current_block_id = 1
+			if current_mode == Mode.ROAD:
+				road_type = 1
+			elif current_mode == Mode.PLAYING:
+				current_placeable = PlaceableItem.ROCK
+			else:
+				current_block_id = 1
 			update_ui()
 		elif event.keycode == KEY_2:
-			if current_mode == Mode.PLAYING:
+			if current_mode == Mode.ROAD:
+				road_type = 2
+			elif current_mode == Mode.PLAYING:
 				current_placeable = PlaceableItem.GRASS
 			else:
 				current_block_id = 2
 			update_ui()
 		elif event.keycode == KEY_3:
-			current_block_id = 3
+			if current_mode == Mode.ROAD:
+				road_type = 3
+			else:
+				current_block_id = 3
 			update_ui()
 		elif event.keycode == KEY_4:
 			current_block_id = 4
-			update_ui()
-		elif event.keycode == KEY_1:
-			if current_mode == Mode.PLAYING:
-				current_placeable = PlaceableItem.ROCK
-			else:
-				current_block_id = 1
 			update_ui()
 	
 	if event is InputEventMouseButton:
@@ -175,7 +180,9 @@ func update_ui():
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
-		mode_label.text = "Mode: ROAD\n%s\nR-Click: Place road segment\n[ESC] Cancel" % road_status
+		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
+		var type_name = type_names[road_type] if road_type < type_names.size() else "Type %d" % road_type
+		mode_label.text = "Mode: ROAD (%s)\n%s\nR-Click: Place road\n[1-3] Road Type" % [type_name, road_status]
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -449,13 +456,18 @@ func handle_road_input(event: InputEventMouseButton):
 				road_manager.add_road_point(pos)
 				update_ui()
 			else:
-				# Second click - end road and flatten terrain
+				# Second click - end road and apply terrain modification based on type
 				road_manager.add_road_point(pos)
 				var segment_id = road_manager.finish_road(false)
 				
 				if segment_id >= 0:
-					# Flatten terrain along the road
-					_flatten_road_segment(road_start_pos, pos)
+					# Apply terrain modification based on road_type
+					if road_type == 1:
+						_flatten_road_segment(road_start_pos, pos)  # Full flatten
+					elif road_type == 2:
+						pass  # Mask only - no terrain modification
+					elif road_type == 3:
+						_normalize_road_segment(road_start_pos, pos)  # Light normalize
 				
 				is_placing_road = false
 				update_ui()
@@ -487,3 +499,20 @@ func _flatten_road_segment(start: Vector3, end: Vector3):
 		
 		# Flatten terrain at this point (box shape = 1)
 		terrain_manager.modify_terrain(pos, road_width / 2.0, 0.0, 1, 0)
+
+## Normalize terrain along a road - light smoothing that follows terrain
+func _normalize_road_segment(start: Vector3, end: Vector3):
+	if not terrain_manager:
+		return
+	
+	var road_width = road_manager.road_width if road_manager else 5.0
+	var length = start.distance_to(end)
+	var steps = int(length / 2.0) + 1
+	
+	for i in range(steps + 1):
+		var t = float(i) / float(steps) if steps > 0 else 0.0
+		var pos = start.lerp(end, t)
+		
+		# Light normalize - small radius, gentle value at surface level
+		# Follows terrain but smooths out bumps
+		terrain_manager.modify_terrain(pos, road_width / 3.0, 0.0, 0, 0)  # Sphere, gentle
