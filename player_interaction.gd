@@ -500,19 +500,40 @@ func _flatten_road_segment(start: Vector3, end: Vector3):
 		# Flatten terrain at this point (box shape = 1)
 		terrain_manager.modify_terrain(pos, road_width / 2.0, 0.0, 1, 0)
 
-## Normalize terrain along a road - light smoothing that follows terrain
+## Road Type 3: Custom terrain normalization with relaxed slope
+## Creates a smooth drivable surface using gradual terrain adjustment (not hard stamps)
 func _normalize_road_segment(start: Vector3, end: Vector3):
 	if not terrain_manager:
 		return
 	
-	var road_width = road_manager.road_width if road_manager else 5.0
-	var length = start.distance_to(end)
-	var steps = int(length / 2.0) + 1
+	var road_width = road_manager.road_width if road_manager else 10.0
+	var brush_radius = road_width / 2.0
+	
+	# start.y and end.y ARE the terrain surface heights (from raycast hits)
+	var start_y = start.y
+	var end_y = end.y
+	
+	print("Road Type 3: Start (%.1f, %.1f, %.1f) -> End (%.1f, %.1f, %.1f)" % [start.x, start_y, start.z, end.x, end_y, end.z])
+	
+	# Calculate 2D distance for step count
+	var length_2d = Vector2(start.x, start.z).distance_to(Vector2(end.x, end.z))
+	var steps = int(length_2d / 2.0) + 1  # Every 2 meters
 	
 	for i in range(steps + 1):
 		var t = float(i) / float(steps) if steps > 0 else 0.0
-		var pos = start.lerp(end, t)
 		
-		# Light normalize - small radius, gentle value at surface level
-		# Follows terrain but smooths out bumps
-		terrain_manager.modify_terrain(pos, road_width / 3.0, 0.0, 0, 0)  # Sphere, gentle
+		# Horizontal position along the road
+		var pos_x = lerpf(start.x, end.x, t)
+		var pos_z = lerpf(start.z, end.z, t)
+		
+		# Target Y: linear gradient between start and end (THIS IS THE SLOPE)
+		var target_y = lerpf(start_y, end_y, t)
+		
+		# Smooth brush ABOVE road surface (gently carve)
+		# shape=0 is sphere with smooth falloff
+		var dig_pos = Vector3(pos_x, target_y + brush_radius * 0.7, pos_z)
+		terrain_manager.modify_terrain(dig_pos, brush_radius, 0.5, 0, 0)  # Gentle dig
+		
+		# Smooth brush BELOW road surface (gently fill)
+		var fill_pos = Vector3(pos_x, target_y - brush_radius * 0.7, pos_z)
+		terrain_manager.modify_terrain(fill_pos, brush_radius, -0.5, 0, 0)  # Gentle fill
