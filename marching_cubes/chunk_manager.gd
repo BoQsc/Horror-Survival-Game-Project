@@ -150,6 +150,9 @@ func _ready():
 	material_terrain.set_shader_parameter("procedural_road_enabled", procedural_roads_enabled)
 	material_terrain.set_shader_parameter("procedural_road_spacing", procedural_road_spacing if procedural_roads_enabled else 0.0)
 	material_terrain.set_shader_parameter("procedural_road_width", procedural_road_width)
+	# Terrain parameters for per-pixel material calculation (sync with gen_density.glsl)
+	material_terrain.set_shader_parameter("terrain_height", terrain_height)
+	material_terrain.set_shader_parameter("noise_frequency", noise_frequency)
 	# Road mask will be set by road_manager
 	
 	# Setup Water Material

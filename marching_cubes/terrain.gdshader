@@ -21,9 +21,13 @@ uniform bool procedural_road_enabled = true;
 uniform float procedural_road_spacing = 100.0;
 uniform float procedural_road_width = 8.0;
 
+// Terrain parameters for per-pixel material calculation
+uniform float terrain_height = 20.0;
+uniform float noise_frequency = 0.02;
+
 varying vec3 world_pos;
 varying vec3 world_normal;
-varying vec3 vertex_color;  // Material color from GPU
+varying vec3 vertex_color;  // Material color from GPU (legacy, kept for compatibility)
 
 // Simple 2D hash/noise for biomes
 vec2 hash(vec2 p) {
@@ -101,19 +105,33 @@ void fragment() {
 	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
 	vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
 	
-	// --- Material-Based Texturing (from vertex color) ---
-	// GPU sets vertex color based on material ID:
-	// Green (0.4, 0.7, 0.3) = Grass/Dirt (surface)
-	// Gray (0.5, 0.5, 0.5) = Stone (underground)
-	// Gold (0.9, 0.7, 0.2) = Ore (rare)
+	// --- Per-Pixel Material Detection (using world position, not vertex color) ---
+	// This eliminates rectangular boundaries from voxel grid sampling
 	
-	// Detect material from vertex color
-	float is_grass = step(0.6, vertex_color.g) * step(vertex_color.r, 0.5);  // Green with low red = grass
-	float is_ore = step(0.8, vertex_color.r);  // High red = ore
-	float is_stone = 1.0 - is_grass - is_ore;  // Default to stone
+	// Calculate terrain height at this pixel using same noise as gen_density.glsl
+	float base_height = terrain_height;
+	float hill_height = noise(world_pos.xz * noise_frequency) * terrain_height;
+	float terrain_surface = base_height + hill_height;
+	
+	// Account for roads in material calculation
+	float road_dist = get_procedural_road_dist(world_pos.xz);
+	float effective_surface = terrain_surface;
+	if (road_dist < procedural_road_width * 2.0) {
+		// Near road - use lower effective surface
+		float road_blend = smoothstep(procedural_road_width * 2.0, procedural_road_width * 0.5, road_dist);
+		effective_surface = mix(terrain_surface, terrain_surface - 5.0, road_blend);
+	}
+	
+	// Calculate depth below surface
+	float depth = effective_surface - world_pos.y;
+	
+	// Smooth material blending based on depth (no hard edges)
+	float is_grass = 1.0 - smoothstep(10.0, 15.0, depth);  // Grass fades to stone at depth 10-15
+	float is_ore = 0.0;  // Ore could be noise-based if needed
+	float is_stone = 1.0 - is_grass;
 	
 	// Mix textures based on material
-	vec3 material_color = col_grass * is_grass + col_rock * is_stone + col_sand * is_ore;  // TODO: Add ore texture
+	vec3 material_color = col_grass * is_grass + col_rock * is_stone;
 	
 	// --- Biome Logic (applied on top of material) ---
 	// Use world X/Z to add biome variation
