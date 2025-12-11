@@ -577,6 +577,12 @@ func update_chunks():
 		# Y=1+ chunks load when player interacts via modify_terrain, which applies stored mods
 		var y_to_load: Array[int] = [0]
 		
+		# Predictive Y-1 loading: preload underground chunks when player is near bottom
+		var local_y_in_chunk = fmod(p_pos.y, CHUNK_STRIDE)
+		if local_y_in_chunk < 0:
+			local_y_in_chunk += CHUNK_STRIDE
+		if local_y_in_chunk < 5.0:  # Within 5 units of bottom boundary
+			y_to_load.append(-1)
 		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
 				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
