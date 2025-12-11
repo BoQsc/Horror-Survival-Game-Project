@@ -170,8 +170,9 @@ func _ready():
 	print("Started %d CPU workers for mesh building" % CPU_WORKER_COUNT)
 	
 	# Calculate initial load target (all chunks within render distance)
-	# This is a circle of chunks: roughly pi * r^2
-	initial_load_target_chunks = int(PI * render_distance * render_distance)
+	# This is a circle of chunks: roughly pi * r^2, multiplied by Y-layers (3 terrain + 3 player)
+	var base_chunks = int(PI * render_distance * render_distance)
+	initial_load_target_chunks = base_chunks * 3  # Account for Y-layers
 	print("Two-phase loading: Initial load target = %d chunks (render_distance=%d)" % [initial_load_target_chunks, render_distance])
 	print("  Phase 1 (Initial): delay=%dms (aggressive)" % initial_load_delay_ms)
 	print("  Phase 2 (Explore): delay=%dms (throttled)" % exploration_delay_ms)
@@ -476,13 +477,20 @@ func update_chunks():
 	# 1. Unload far chunks (3D distance check)
 	var chunks_to_remove = []
 	for coord in active_chunks:
+		# NEVER unload terrain surface layers (-1, 0, 1) - these are always needed
+		var is_terrain_layer = coord.y >= -1 and coord.y <= 1
+		
 		# XZ distance for horizontal, separate check for Y
 		var dx = coord.x - center_chunk.x
 		var dy = coord.y - center_chunk.y
 		var dz = coord.z - center_chunk.z
 		var dist_xz = sqrt(dx * dx + dz * dz)
-		# Unload if too far horizontally OR too far vertically
-		if dist_xz > render_distance + 2 or abs(dy) > 3:
+		
+		# Unload if too far horizontally
+		if dist_xz > render_distance + 2:
+			chunks_to_remove.append(coord)
+		# For non-terrain layers, also unload if too far vertically
+		elif not is_terrain_layer and abs(dy) > 3:
 			chunks_to_remove.append(coord)
 			
 	for coord in chunks_to_remove:
@@ -521,26 +529,30 @@ func update_chunks():
 	var chunks_queued_this_frame = 0
 	
 	# Build list of Y-layers to load:
-	# 1. Terrain surface layers (-1, 0, 1) - always needed
-	# 2. Player's immediate area (center_chunk.y ± 1) - for collision
+	# 1. Terrain surface layer 0 FIRST - this is where visible terrain is
+	# 2. Other terrain layers (-1, 1)
+	# 3. Player's immediate area (center_chunk.y ± 1) - for collision
 	var y_layers_to_load: Array[int] = []
 	
-	# Always load terrain layers
-	for y in [-1, 0, 1]:
+	# PRIORITY: Load terrain layer 0 first (where the surface is)
+	if 0 >= MIN_Y_LAYER and 0 <= MAX_Y_LAYER:
+		y_layers_to_load.append(0)
+	
+	# Then other terrain layers
+	for y in [-1, 1]:
 		if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
 			y_layers_to_load.append(y)
 	
-	# Add player's immediate area
+	# Add player's immediate area (only if different from terrain layers)
 	for dy in range(-1, 2):  # -1, 0, 1
 		var y = center_chunk.y + dy
 		if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
 			y_layers_to_load.append(y)
 	
-	# Sort for consistent ordering
-	y_layers_to_load.sort()
+	# NOTE: Don't sort - terrain layer 0 should stay first for priority loading
 	
-	# Increase limit for 3D chunking - we have more chunks to load now
-	var effective_limit = chunks_per_frame_limit * 4
+	# Significantly increase limit for 3D chunking - terrain needs to load fast
+	var effective_limit = chunks_per_frame_limit * 8
 	
 	for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 		for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
