@@ -133,6 +133,10 @@ func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
 	if chunk_node == null:
 		return
 	
+	# Only handle surface chunks (Y=0) - vegetation doesn't exist on underground/sky chunks
+	if coord.y != 0:
+		return
+	
 	# Extract surface key (X,Z) - vegetation only exists on surface
 	var surface_key = Vector2i(coord.x, coord.z)
 	
