@@ -114,6 +114,10 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	if not enabled or not building_manager:
 		return
 	
+	# Only spawn buildings on surface chunks (Y=0)
+	if coord.y != 0:
+		return
+	
 	# Check for road intersections in this chunk
 	var chunk_world_x = coord.x * 31  # CHUNK_STRIDE
 	var chunk_world_z = coord.z * 31  # Use .z for Z coordinate (Vector3i)

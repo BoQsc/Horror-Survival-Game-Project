@@ -169,6 +169,11 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	if chunk_node == null:
 		return
 	
+	# Only spawn vegetation on surface chunks (Y=0)
+	# Underground chunks (Y=-1, -2, etc.) and sky chunks (Y=1+) don't need vegetation
+	if coord.y != 0:
+		return
+	
 	# Extract surface key (X,Z) - vegetation only exists on surface
 	var surface_key = Vector2i(coord.x, coord.z)
 	
