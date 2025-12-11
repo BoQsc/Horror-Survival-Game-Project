@@ -408,10 +408,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					"layer": layer
 				})
 				
-				# Debug: track underground modifications
-				if coord.y < 0:
-					print("DEBUG: Stored mod for underground chunk %s (brush at Y=%.1f, r=%.1f)" % [coord, pos.y, radius])
-				
+
 				# Only dispatch GPU task if chunk is currently loaded
 				if active_chunks.has(coord):
 					var data = active_chunks[coord]
@@ -447,9 +444,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 	
 	# Queue chunk generations with high priority (before other generates but after modifies)
 	if chunks_to_generate.size() > 0:
-		print("DEBUG: Digging triggered generation of %d chunks" % chunks_to_generate.size())
-		for gen_task in chunks_to_generate:
-			print("  - Generating chunk at coord=%s pos=%s" % [gen_task.coord, gen_task.pos])
+
 		mutex.lock()
 		for gen_task in chunks_to_generate:
 			task_queue.push_front(gen_task)
@@ -823,8 +818,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	
 	if mods_for_chunk.size() > 0:
 		# Debug: show when mods are applied to underground chunks
-		if coord.y < 0:
-			print("DEBUG: Applying %d stored mods to underground chunk %s" % [mods_for_chunk.size(), coord])
+
 		# Need to sync before modifications since they read/write density
 		rd.submit()
 		rd.sync()
@@ -874,10 +868,7 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
 	
 	# Queue to CPU workers for mesh building
-	# Debug: show vertex counts for underground chunks
-	if coord.y < 0:
-		print("DEBUG: Y=-1 chunk %s has %d terrain verts, %d water verts" % [coord, vert_floats_terrain.size() / 6, vert_floats_water.size() / 6])
-	
+
 	cpu_mutex.lock()
 	cpu_task_queue.append({
 		"coord": coord,
