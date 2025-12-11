@@ -56,3 +56,24 @@ This file documents optimization attempts and features that didn't work well, so
 3. Alternatively: always preload Y-1 when player is digging at Y < 5
 
 **Files to modify:** `chunk_manager.gd` - `update_chunks()` function
+
+---
+
+## 🔧 TODO: Rectangular Rock Patches Near Roads (Dec 2024)
+
+**Current Issue:** When roads cut through terrain at steep angles, the excavated walls sometimes show rectangular gray "rocky" texture patches. This is especially visible when standing on a high road looking down at plain terrain.
+
+**Root Causes:**
+1. **Material system** - Underground voxels exposed by road excavation get "stone" material ID (fixed with `effective_height` calculation)
+2. **Cliff detection** - Steep slopes trigger rock texture in `terrain.gdshader` via `cliff_mix`
+3. **Marching Cubes geometry** - Creates axis-aligned triangular faces at sharp density transitions
+
+**Partial Fix Applied:**
+- `gen_density.glsl` - Material depth now uses `effective_height` accounting for road excavation (helps but doesn't fix all cases)
+
+**Future Solutions to Explore:**
+1. Reduce cliff detection intensity near roads (tried 60%, caused shader conflicts)
+2. Smoother density blending at road edges
+3. Use biome/grass texture instead of rock for all road-adjacent steep slopes
+
+**Files involved:** `gen_density.glsl`, `terrain.gdshader`
