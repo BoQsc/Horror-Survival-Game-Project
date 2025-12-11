@@ -323,6 +323,13 @@ func get_water_density(global_pos: Vector3) -> float:
 		
 	return 1.0
 
+# Check if any Y layer at this X,Z has stored modifications (player-built terrain)
+func has_modifications_at_xz(x: int, z: int) -> bool:
+	for coord in stored_modifications:
+		if coord.x == x and coord.z == z:
+			return true
+	return false
+
 func get_terrain_height(global_x: float, global_z: float) -> float:
 	# Find X,Z chunk coordinates
 	var chunk_x = int(floor(global_x / CHUNK_STRIDE))

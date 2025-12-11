@@ -178,6 +178,12 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	if coord.y != 0:
 		return
 	
+	# Skip vegetation for modified chunks (player-built structures)
+	# Check all Y layers at this X,Z for modifications
+	if terrain_manager and terrain_manager.has_method("has_modifications_at_xz"):
+		if terrain_manager.has_modifications_at_xz(coord.x, coord.z):
+			return  # Don't spawn vegetation on player-modified terrain
+	
 	# Extract surface key (X,Z) - vegetation only exists on surface
 	var surface_key = Vector2i(coord.x, coord.z)
 	
