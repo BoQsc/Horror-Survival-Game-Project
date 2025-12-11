@@ -97,13 +97,6 @@ float get_density(vec3 pos) {
         density = mix(density, road_density, blend);
     }
     
-    // Bedrock floor at Y=-20 - creates visible underground surface
-    // Below Y=-20 becomes air (positive density) so marching cubes renders a floor
-    const float BEDROCK_Y = -20.0;
-    if (world_pos.y < BEDROCK_Y) {
-        density = 1.0;  // Air below bedrock
-    }
-    
     return density;
 }
 
