@@ -59,21 +59,21 @@ This file documents optimization attempts and features that didn't work well, so
 
 ---
 
-## 🔧 TODO: Rectangular Rock Patches Near Roads (Dec 2024)
+## ✅ FIXED: Rectangular Rock Patches Near Roads (Dec 2024)
 
-**Current Issue:** When roads cut through terrain at steep angles, the excavated walls sometimes show rectangular gray "rocky" texture patches. This is especially visible when standing on a high road looking down at plain terrain.
+**Original Issue:** Rectangular gray "rocky" texture patches appeared on terrain near roads and underwater areas.
 
-**Root Causes:**
-1. **Material system** - Underground voxels exposed by road excavation get "stone" material ID (fixed with `effective_height` calculation)
-2. **Cliff detection** - Steep slopes trigger rock texture in `terrain.gdshader` via `cliff_mix`
-3. **Marching Cubes geometry** - Creates axis-aligned triangular faces at sharp density transitions
+**Root Cause Found:**
+The GPU material system (`marching_cubes.glsl`) sampled materials from an **integer voxel grid** using `round()`. All triangle vertices got the same material from the voxel center. Adjacent voxels with different materials created **hard rectangular boundaries**.
 
-**Partial Fix Applied:**
-- `gen_density.glsl` - Material depth now uses `effective_height` accounting for road excavation (helps but doesn't fix all cases)
+**Solution Implemented:**
+Moved material detection from GPU (per-voxel) to **fragment shader (per-pixel)**:
+- `terrain.gdshader` now calculates depth using world position + smooth noise
+- Uses `smoothstep(10.0, 15.0, depth)` for soft grass→stone transition
+- No grid sampling = no rectangular boundaries
 
-**Future Solutions to Explore:**
-1. Reduce cliff detection intensity near roads (tried 60%, caused shader conflicts)
-2. Smoother density blending at road edges
-3. Use biome/grass texture instead of rock for all road-adjacent steep slopes
+**Files Modified:**
+- `terrain.gdshader` - Per-pixel material detection using world position
+- `chunk_manager.gd` - Added `terrain_height` and `noise_frequency` uniforms
 
-**Files involved:** `gen_density.glsl`, `terrain.gdshader`
+**Key Insight:** Don't rely on discrete per-voxel data for smooth visual effects. Calculate continuous values in the fragment shader using world position.
