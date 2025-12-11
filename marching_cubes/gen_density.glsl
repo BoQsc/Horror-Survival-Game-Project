@@ -93,12 +93,13 @@ float get_density(vec3 pos) {
     float road_height;
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     
-    if (road_dist < params.road_width) {
+    if (road_dist < params.road_width * 1.5) {
         // Inside road area - flatten terrain
         float road_density = world_pos.y - road_height;
         
-        // Smooth blend at road edges
-        float blend = smoothstep(params.road_width, params.road_width * 0.5, road_dist);
+        // Smooth blend at road edges - wider zone for gentler slopes
+        // Start blending 1.5x road width out, fully road at 0.3x width
+        float blend = smoothstep(params.road_width * 1.5, params.road_width * 0.3, road_dist);
         density = mix(density, road_density, blend);
     }
     
@@ -143,7 +144,17 @@ void main() {
     float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;
     float terrain_height = base_height + hill_height;
     
+    // Account for road excavation in material calculation
+    float road_height;
+    float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
+    float effective_height = terrain_height;
+    if (road_dist < params.road_width * 2.0) {
+        // Near a road - use road height as the "surface" for material depth
+        float blend = smoothstep(params.road_width * 2.0, params.road_width * 0.5, road_dist);
+        effective_height = mix(terrain_height, road_height, blend);
+    }
+    
     density_buffer.values[index] = get_density(pos);
-    material_buffer.values[index] = get_material(pos, terrain_height);
+    material_buffer.values[index] = get_material(pos, effective_height);
 }
 
