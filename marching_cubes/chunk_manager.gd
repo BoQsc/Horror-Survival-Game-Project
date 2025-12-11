@@ -85,6 +85,7 @@ var pending_nodes_mutex: Mutex
 var initial_load_phase: bool = true
 var initial_load_target_chunks: int = 0  # Calculated at startup based on render_distance
 var chunks_loaded_initial: int = 0
+var underground_load_triggered: bool = false  # Track if Y=-1 burst load has been done
 
 ## Delay between chunk generation during initial game load (ms). 
 ## Initial load ends after ~π×render_distance² chunks (e.g., ~78 chunks for render_distance=5).
@@ -388,6 +389,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 	var max_chunk_z = int(floor(max_pos.z / CHUNK_STRIDE))
 	
 	var tasks_to_add = []
+	var chunks_to_generate = []  # Track unloaded chunks that need immediate loading
 	
 	# Store modification for persistence (all affected chunks)
 	for x in range(min_chunk_x, max_chunk_x + 1):
@@ -405,6 +407,10 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					"shape": shape,
 					"layer": layer
 				})
+				
+				# Debug: track underground modifications
+				if coord.y < 0:
+					print("DEBUG: Stored mod for underground chunk %s (brush at Y=%.1f, r=%.1f)" % [coord, pos.y, radius])
 				
 				# Only dispatch GPU task if chunk is currently loaded
 				if active_chunks.has(coord):
@@ -427,6 +433,29 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 								"layer": layer # Pass layer info
 							}
 							tasks_to_add.append(task)
+				else:
+					# Chunk not loaded - trigger immediate generation
+					# This handles digging into underground layers (Y=-1, etc.)
+					if not active_chunks.has(coord):  # Not already queued
+						active_chunks[coord] = null  # Mark as pending
+						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
+						chunks_to_generate.append({
+							"type": "generate",
+							"coord": coord,
+							"pos": chunk_pos
+						})
+	
+	# Queue chunk generations with high priority (before other generates but after modifies)
+	if chunks_to_generate.size() > 0:
+		print("DEBUG: Digging triggered generation of %d chunks" % chunks_to_generate.size())
+		for gen_task in chunks_to_generate:
+			print("  - Generating chunk at coord=%s pos=%s" % [gen_task.coord, gen_task.pos])
+		mutex.lock()
+		for gen_task in chunks_to_generate:
+			task_queue.push_front(gen_task)
+		mutex.unlock()
+		for i in range(chunks_to_generate.size()):
+			semaphore.post()
 	
 	if tasks_to_add.size() > 0:
 		modification_batch_id += 1
@@ -527,58 +556,88 @@ func update_chunks():
 	
 	var chunks_queued_this_frame = 0
 	
-	# Build list of Y-layers to load:
-	# For ground-level players (layer 0 or 1): just load Y=0 like before 3D chunking
-	# For players underground or in the air: load their immediate area
-	var y_layers_to_load: Array[int] = []
+	# Fast path for players above ground (the common case)
+	# This matches the original 2D loading loop exactly, just with Vector3i(x, 0, z)
+	# Only use multi-layer path for underground players (Y < 0)
+	var is_above_ground = center_chunk.y >= 0
 	
-	# Always load terrain surface layer 0 (where visible terrain is)
-	y_layers_to_load.append(0)
+	# DEBUG: Print loading state (remove after testing)
+	if initial_load_phase and chunks_loaded_initial == 0:
+		print("DEBUG LOAD: center=%s is_above_ground=%s chunks_per_frame=%d" % [center_chunk, is_above_ground, chunks_per_frame_limit])
 	
-	# Only expand to other layers if player is NOT at ground level
-	# Ground level = chunk layers 0 or 1 (Y = 0-63)
-	if center_chunk.y < 0 or center_chunk.y > 1:
-		# Player is underground or high up - load their immediate area
-		for dy in range(-1, 2):  # -1, 0, 1
-			var y = center_chunk.y + dy
-			if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
-				y_layers_to_load.append(y)
-	
-	# Restore original loading rate since we're back to ~1 Y-layer for ground players
-	var effective_limit = chunks_per_frame_limit
-	
-	for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
-		for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
-			# Check XZ distance first
-			var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
-			if dist_xz > render_distance:
-				continue
-			
-			for y in y_layers_to_load:
-				if chunks_queued_this_frame >= effective_limit:
-					return  # Stop for this frame, continue next frame
-				
-				var coord = Vector3i(x, y, z)
-				
-				if active_chunks.has(coord):
+	if is_above_ground:
+		# Only load Y=0 layer. Y=-1 will be loaded by modify_terrain when player digs near Y=0
+		# This ensures the dig modification is stored BEFORE the chunk generates
+		var y_to_load: Array[int] = [0]
+		
+		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
+			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
+				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
+				if dist_xz > render_distance:
 					continue
+				
+				for y in y_to_load:
+					if chunks_queued_this_frame >= chunks_per_frame_limit:
+						return
+					
+					var coord = Vector3i(x, y, z)
+					
+					if active_chunks.has(coord):
+						continue
 
-				active_chunks[coord] = null
+					active_chunks[coord] = null
+					
+					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_SIZE, z * CHUNK_STRIDE)
+					
+					var task = {
+						"type": "generate",
+						"coord": coord,
+						"pos": chunk_pos
+					}
+					
+					mutex.lock()
+					task_queue.append(task)
+					mutex.unlock()
+					semaphore.post()
+					
+					chunks_queued_this_frame += 1
+	else:
+		# Player is underground or flying - load multiple Y layers
+		var y_layers = [center_chunk.y - 1, center_chunk.y, center_chunk.y + 1, 0]  # Include terrain layer 0
+		
+		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
+			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
+				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
+				if dist_xz > render_distance:
+					continue
 				
-				var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_SIZE, z * CHUNK_STRIDE)
-				
-				var task = {
-					"type": "generate",
-					"coord": coord,
-					"pos": chunk_pos
-				}
-				
-				mutex.lock()
-				task_queue.append(task)
-				mutex.unlock()
-				semaphore.post()
-				
-				chunks_queued_this_frame += 1
+				for y in y_layers:
+					if y < MIN_Y_LAYER or y > MAX_Y_LAYER:
+						continue
+					if chunks_queued_this_frame >= chunks_per_frame_limit:
+						return
+					
+					var coord = Vector3i(x, y, z)
+					
+					if active_chunks.has(coord):
+						continue
+
+					active_chunks[coord] = null
+					
+					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_SIZE, z * CHUNK_STRIDE)
+					
+					var task = {
+						"type": "generate",
+						"coord": coord,
+						"pos": chunk_pos
+					}
+					
+					mutex.lock()
+					task_queue.append(task)
+					mutex.unlock()
+					semaphore.post()
+					
+					chunks_queued_this_frame += 1
 
 ## Interruptible delay - checks for high-priority modify tasks every 10ms
 ## Allows player modifications to interrupt chunk loading delays
@@ -763,6 +822,9 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	mutex.unlock()
 	
 	if mods_for_chunk.size() > 0:
+		# Debug: show when mods are applied to underground chunks
+		if coord.y < 0:
+			print("DEBUG: Applying %d stored mods to underground chunk %s" % [mods_for_chunk.size(), coord])
 		# Need to sync before modifications since they read/write density
 		rd.submit()
 		rd.sync()
@@ -812,6 +874,10 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
 	
 	# Queue to CPU workers for mesh building
+	# Debug: show vertex counts for underground chunks
+	if coord.y < 0:
+		print("DEBUG: Y=-1 chunk %s has %d terrain verts, %d water verts" % [coord, vert_floats_terrain.size() / 6, vert_floats_water.size() / 6])
+	
 	cpu_mutex.lock()
 	cpu_task_queue.append({
 		"coord": coord,
