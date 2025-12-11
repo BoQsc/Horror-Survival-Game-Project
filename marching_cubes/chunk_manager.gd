@@ -233,7 +233,7 @@ func update_collision_proximity():
 	
 	var p_pos = viewer.global_position
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
-	var p_chunk_y = int(floor(p_pos.y / CHUNK_SIZE))
+	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
 	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
 	
@@ -292,7 +292,7 @@ func process_pending_nodes():
 func get_water_density(global_pos: Vector3) -> float:
 	# Find Chunk (3D coordinates)
 	var chunk_x = int(floor(global_pos.x / CHUNK_STRIDE))
-	var chunk_y = int(floor(global_pos.y / CHUNK_SIZE))
+	var chunk_y = int(floor(global_pos.y / CHUNK_STRIDE))
 	var chunk_z = int(floor(global_pos.z / CHUNK_STRIDE))
 	var coord = Vector3i(chunk_x, chunk_y, chunk_z)
 	
@@ -304,7 +304,7 @@ func get_water_density(global_pos: Vector3) -> float:
 		return 1.0
 		
 	# Find local position within chunk
-	var chunk_origin = Vector3(chunk_x * CHUNK_STRIDE, chunk_y * CHUNK_SIZE, chunk_z * CHUNK_STRIDE)
+	var chunk_origin = Vector3(chunk_x * CHUNK_STRIDE, chunk_y * CHUNK_STRIDE, chunk_z * CHUNK_STRIDE)
 	var local_pos = global_pos - chunk_origin
 	
 	# Clamp to grid
@@ -349,7 +349,7 @@ func get_terrain_height(global_x: float, global_z: float) -> float:
 		if data == null or data.cpu_density_terrain.is_empty():
 			continue
 		
-		var chunk_base_y = chunk_y * CHUNK_SIZE
+		var chunk_base_y = chunk_y * CHUNK_STRIDE
 		
 		# Scan Y column from top to bottom within this chunk
 		var prev_density = 1.0  # Assume air above
@@ -383,8 +383,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 	
 	var min_chunk_x = int(floor(min_pos.x / CHUNK_STRIDE))
 	var max_chunk_x = int(floor(max_pos.x / CHUNK_STRIDE))
-	var min_chunk_y = int(floor(min_pos.y / CHUNK_SIZE))
-	var max_chunk_y = int(floor(max_pos.y / CHUNK_SIZE))
+	var min_chunk_y = int(floor(min_pos.y / CHUNK_STRIDE))
+	var max_chunk_y = int(floor(max_pos.y / CHUNK_STRIDE))
 	var min_chunk_z = int(floor(min_pos.z / CHUNK_STRIDE))
 	var max_chunk_z = int(floor(max_pos.z / CHUNK_STRIDE))
 	
@@ -419,7 +419,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 						var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
 						
 						if target_buffer.is_valid():
-							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
+							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 							
 							var task = {
 								"type": "modify",
@@ -438,7 +438,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					# This handles digging into underground layers (Y=-1, etc.)
 					if not active_chunks.has(coord):  # Not already queued
 						active_chunks[coord] = null  # Mark as pending
-						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
+						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 						chunks_to_generate.append({
 							"type": "generate",
 							"coord": coord,
@@ -498,7 +498,7 @@ func _exit_tree():
 func update_chunks():
 	var p_pos = viewer.global_position
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
-	var p_chunk_y = int(floor(p_pos.y / CHUNK_SIZE))  # Y uses CHUNK_SIZE (no overlap needed vertically)
+	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))  # Y uses CHUNK_STRIDE for 1-voxel overlap
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
 	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
 
@@ -587,7 +587,7 @@ func update_chunks():
 
 					active_chunks[coord] = null
 					
-					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_SIZE, z * CHUNK_STRIDE)
+					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
 					
 					var task = {
 						"type": "generate",
@@ -624,7 +624,7 @@ func update_chunks():
 
 					active_chunks[coord] = null
 					
-					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_SIZE, z * CHUNK_STRIDE)
+					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
 					
 					var task = {
 						"type": "generate",
@@ -1227,7 +1227,7 @@ func _finalize_chunk_creation(item: Dictionary):
 			for t in tasks: semaphore.post()
 			return
 		
-		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
+		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
 		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos)
 		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
@@ -1268,7 +1268,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 	if not active_chunks.has(coord):
 		return
 	var data = active_chunks[coord]
-	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 	
 	if layer == 0: # Terrain
 		if data.node_terrain: data.node_terrain.queue_free()
