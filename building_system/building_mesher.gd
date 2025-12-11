@@ -9,6 +9,22 @@ var exit_thread: bool = false
 var queue: Array = [] # Array of BuildingChunk
 var compute_shader: RDShaderFile
 
+# DEBUG: Track GPU mesh generation
+static var mesh_gen_count: int = 0
+const BYTES_PER_CALL: int = 32768  # ~32KB per call (2x 16KB textures + sampler + uniform_set)
+
+## GPU RESOURCE CLEANUP TOGGLE
+## ============================
+## If you experience crashes related to building/mesh generation:
+## 1. Set this to FALSE to disable cleanup
+## 2. Test if crashes stop
+## 3. If crashes stop, the freeing order may need more research
+## 4. The original code had this disabled due to crashes (pre-Godot 4.5)
+## 
+## With cleanup ON: GPU memory is freed properly (no leak)
+## With cleanup OFF: GPU memory leaks ~32KB per mesh generation
+const ENABLE_GPU_CLEANUP: bool = true
+
 func _init():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
@@ -91,6 +107,13 @@ func _thread_loop():
 	rd.free()
 
 func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray, v_meta: PackedByteArray, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer) -> Array:
+	# DEBUG: Track GPU mesh generation calls
+	mesh_gen_count += 1
+	var cleanup_status = "CLEANUP ON" if ENABLE_GPU_CLEANUP else "CLEANUP OFF (LEAKING!)"
+	if mesh_gen_count <= 3 or mesh_gen_count % 50 == 0:
+		var estimated_kb = mesh_gen_count * BYTES_PER_CALL / 1024.0
+		print("[BuildingMesher] Mesh #%d | %s | Est. GPU use: %.0f KB" % [mesh_gen_count, cleanup_status, estimated_kb if not ENABLE_GPU_CLEANUP else 0])
+	
 	# 16x16x16
 	var grid_size = Vector3i(16, 16, 16)
 	
@@ -244,11 +267,17 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		arrays[ArrayMesh.ARRAY_TEX_UV] = PackedVector2Array(uvs)
 		arrays[ArrayMesh.ARRAY_INDEX] = indices
 		
-	# Cleanup (Disabled to debug crash, but I can enable 'meta_rid' free if I want? No, let's stick to the safe leak pattern for now)
-	# if texture_rid.is_valid(): rd.free_rid(texture_rid)
-	# if meta_rid.is_valid(): rd.free_rid(meta_rid)
-	# if sampler_rid.is_valid(): rd.free_rid(sampler_rid)
-	# if uniform_set.is_valid(): rd.free_rid(uniform_set)
+	# Cleanup GPU resources - controlled by ENABLE_GPU_CLEANUP toggle
+	# ORDER MATTERS: Free uniform_set FIRST (it holds references to textures/sampler)
+	if ENABLE_GPU_CLEANUP:
+		if uniform_set.is_valid():
+			rd.free_rid(uniform_set)
+		if texture_rid.is_valid():
+			rd.free_rid(texture_rid)
+		if meta_rid.is_valid():
+			rd.free_rid(meta_rid)
+		if sampler_rid.is_valid():
+			rd.free_rid(sampler_rid)
 	
 	return arrays
 
