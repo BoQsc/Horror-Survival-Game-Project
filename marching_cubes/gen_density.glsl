@@ -93,13 +93,12 @@ float get_density(vec3 pos) {
     float road_height;
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     
-    if (road_dist < params.road_width * 1.5) {
+    if (road_dist < params.road_width) {
         // Inside road area - flatten terrain
         float road_density = world_pos.y - road_height;
         
-        // Smooth blend at road edges - wider zone for gentler slopes
-        // Start blending 1.5x road width out, fully road at 0.3x width
-        float blend = smoothstep(params.road_width * 1.5, params.road_width * 0.3, road_dist);
+        // Smooth blend at road edges
+        float blend = smoothstep(params.road_width, params.road_width * 0.5, road_dist);
         density = mix(density, road_density, blend);
     }
     

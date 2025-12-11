@@ -135,23 +135,18 @@ void fragment() {
 		biome_color = mix(biome_color, col_snow, snow_biome_mix);
 	}
 	
-	// --- Check if near a road (used to reduce cliff effect) ---
-	float proc_road_dist = get_procedural_road_dist(world_pos.xz);
-	float near_road = 1.0 - smoothstep(0.0, procedural_road_width * 3.0, proc_road_dist);
-	
-	// --- Slope Logic (Steep cliffs are rock, but DISABLED near roads) ---
+	// --- Slope Logic (Steep cliffs are rock) ---
 	float slope = normal.y;
 	float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
-	cliff_mix *= (1.0 - near_road);  // Completely disable cliff rock texture near roads
 	biome_color = mix(biome_color, col_rock, cliff_mix);
 	
 	// --- Procedural Road Texture ---
+	float proc_road_dist = get_procedural_road_dist(world_pos.xz);
 	float proc_road_intensity = 0.0;
-	if (proc_road_dist < procedural_road_width * 1.5) {
-		// Relax slope check for road edges (allow some slope)
-		float road_slope_ok = smoothstep(0.5, 0.85, slope);
-		// Wider texture blend matching density blend
-		proc_road_intensity = smoothstep(procedural_road_width * 1.5, procedural_road_width * 0.3, proc_road_dist) * road_slope_ok;
+	if (proc_road_dist < procedural_road_width) {
+		// Only on flat surfaces (slope > 0.85)
+		float road_slope_ok = smoothstep(0.8, 0.9, slope);
+		proc_road_intensity = smoothstep(procedural_road_width, procedural_road_width * 0.3, proc_road_dist) * road_slope_ok;
 	}
 	biome_color = mix(biome_color, col_road, proc_road_intensity);
 	
