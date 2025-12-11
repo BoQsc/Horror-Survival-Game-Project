@@ -170,9 +170,8 @@ func _ready():
 	print("Started %d CPU workers for mesh building" % CPU_WORKER_COUNT)
 	
 	# Calculate initial load target (all chunks within render distance)
-	# This is a circle of chunks: roughly pi * r^2, multiplied by Y-layers (3 terrain + 3 player)
-	var base_chunks = int(PI * render_distance * render_distance)
-	initial_load_target_chunks = base_chunks * 3  # Account for Y-layers
+	# For ground-level players, we only load Y=0, same chunk count as before
+	initial_load_target_chunks = int(PI * render_distance * render_distance)
 	print("Two-phase loading: Initial load target = %d chunks (render_distance=%d)" % [initial_load_target_chunks, render_distance])
 	print("  Phase 1 (Initial): delay=%dms (aggressive)" % initial_load_delay_ms)
 	print("  Phase 2 (Explore): delay=%dms (throttled)" % exploration_delay_ms)
@@ -529,30 +528,24 @@ func update_chunks():
 	var chunks_queued_this_frame = 0
 	
 	# Build list of Y-layers to load:
-	# 1. Terrain surface layer 0 FIRST - this is where visible terrain is
-	# 2. Other terrain layers (-1, 1)
-	# 3. Player's immediate area (center_chunk.y ± 1) - for collision
+	# For ground-level players (layer 0 or 1): just load Y=0 like before 3D chunking
+	# For players underground or in the air: load their immediate area
 	var y_layers_to_load: Array[int] = []
 	
-	# PRIORITY: Load terrain layer 0 first (where the surface is)
-	if 0 >= MIN_Y_LAYER and 0 <= MAX_Y_LAYER:
-		y_layers_to_load.append(0)
+	# Always load terrain surface layer 0 (where visible terrain is)
+	y_layers_to_load.append(0)
 	
-	# Then other terrain layers
-	for y in [-1, 1]:
-		if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
-			y_layers_to_load.append(y)
+	# Only expand to other layers if player is NOT at ground level
+	# Ground level = chunk layers 0 or 1 (Y = 0-63)
+	if center_chunk.y < 0 or center_chunk.y > 1:
+		# Player is underground or high up - load their immediate area
+		for dy in range(-1, 2):  # -1, 0, 1
+			var y = center_chunk.y + dy
+			if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
+				y_layers_to_load.append(y)
 	
-	# Add player's immediate area (only if different from terrain layers)
-	for dy in range(-1, 2):  # -1, 0, 1
-		var y = center_chunk.y + dy
-		if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
-			y_layers_to_load.append(y)
-	
-	# NOTE: Don't sort - terrain layer 0 should stay first for priority loading
-	
-	# Significantly increase limit for 3D chunking - terrain needs to load fast
-	var effective_limit = chunks_per_frame_limit * 8
+	# Restore original loading rate since we're back to ~1 Y-layer for ground players
+	var effective_limit = chunks_per_frame_limit
 	
 	for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 		for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
