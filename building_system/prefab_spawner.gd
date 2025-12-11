@@ -110,13 +110,13 @@ func _is_forested_area(x: float, z: float) -> bool:
 				return true
 	return false
 
-func _on_chunk_generated(coord: Vector2i, _chunk_node: Node3D):
+func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	if not enabled or not building_manager:
 		return
 	
 	# Check for road intersections in this chunk
 	var chunk_world_x = coord.x * 31  # CHUNK_STRIDE
-	var chunk_world_z = coord.y * 31
+	var chunk_world_z = coord.z * 31  # Use .z for Z coordinate (Vector3i)
 	
 	_check_and_spawn_buildings(chunk_world_x, chunk_world_z)
 

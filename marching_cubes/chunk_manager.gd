@@ -1,13 +1,17 @@
 extends Node3D
 
-signal chunk_generated(coord: Vector2i, chunk_node: Node3D)
-signal chunk_modified(coord: Vector2i, chunk_node: Node3D)  # For terrain edits - vegetation stays
+signal chunk_generated(coord: Vector3i, chunk_node: Node3D)
+signal chunk_modified(coord: Vector3i, chunk_node: Node3D)  # For terrain edits - vegetation stays
 
 # 32 Voxels wide
 const CHUNK_SIZE = 32
 # Overlap chunks by 1 unit to prevent gaps (seams)
 const CHUNK_STRIDE = CHUNK_SIZE - 1 
 const DENSITY_GRID_SIZE = 33 # 0..32
+
+# Y-layer limits for vertical chunk stacking
+const MIN_Y_LAYER = -20  # How deep you can dig (in chunk layers)
+const MAX_Y_LAYER = 40   # How high you can build (in chunk layers)
 
 # Max triangles estimation
 const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
@@ -227,17 +231,23 @@ func update_collision_proximity():
 	collision_update_counter = 0
 	
 	var p_pos = viewer.global_position
-	var p_chunk_x = floor(p_pos.x / CHUNK_STRIDE)
-	var p_chunk_z = floor(p_pos.z / CHUNK_STRIDE)
-	var center_chunk = Vector2i(p_chunk_x, p_chunk_z)
+	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
+	var p_chunk_y = int(floor(p_pos.y / CHUNK_SIZE))
+	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
+	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
 	
 	for coord in active_chunks:
 		var data = active_chunks[coord]
 		if data == null:
 			continue
 		
-		var dist = Vector2(coord.x, coord.y).distance_to(Vector2(center_chunk.x, center_chunk.y))
-		var should_have_collision = dist <= collision_distance
+		# 3D distance for collision check
+		var dx = coord.x - center_chunk.x
+		var dy = coord.y - center_chunk.y
+		var dz = coord.z - center_chunk.z
+		var dist_xz = sqrt(dx * dx + dz * dz)
+		# Enable collision if close horizontally AND within 2 Y layers
+		var should_have_collision = dist_xz <= collision_distance and abs(dy) <= 2
 		
 		# Enable/disable collision shape
 		if data.collision_shape_terrain:
@@ -279,10 +289,11 @@ func process_pending_nodes():
 			break
 
 func get_water_density(global_pos: Vector3) -> float:
-	# 1. Find Chunk
-	var x = floor(global_pos.x / CHUNK_STRIDE)
-	var z = floor(global_pos.z / CHUNK_STRIDE)
-	var coord = Vector2i(x, z)
+	# Find Chunk (3D coordinates)
+	var chunk_x = int(floor(global_pos.x / CHUNK_STRIDE))
+	var chunk_y = int(floor(global_pos.y / CHUNK_SIZE))
+	var chunk_z = int(floor(global_pos.z / CHUNK_STRIDE))
+	var coord = Vector3i(chunk_x, chunk_y, chunk_z)
 	
 	if not active_chunks.has(coord):
 		return 1.0 # Air (Positive is air, Negative is water)
@@ -291,19 +302,19 @@ func get_water_density(global_pos: Vector3) -> float:
 	if data == null or data.cpu_density_water.is_empty():
 		return 1.0
 		
-	# 2. Find local position
-	var chunk_origin = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
+	# Find local position within chunk
+	var chunk_origin = Vector3(chunk_x * CHUNK_STRIDE, chunk_y * CHUNK_SIZE, chunk_z * CHUNK_STRIDE)
 	var local_pos = global_pos - chunk_origin
 	
 	# Clamp to grid
-	var ix = round(local_pos.x)
-	var iy = round(local_pos.y)
-	var iz = round(local_pos.z)
+	var ix = int(round(local_pos.x))
+	var iy = int(round(local_pos.y))
+	var iz = int(round(local_pos.z))
 	
 	if ix < 0 or ix >= DENSITY_GRID_SIZE or iy < 0 or iy >= DENSITY_GRID_SIZE or iz < 0 or iz >= DENSITY_GRID_SIZE:
 		return 1.0 # Out of bounds
 		
-	var index = int(ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE))
+	var index = ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
 	
 	if index >= 0 and index < data.cpu_density_water.size():
 		return data.cpu_density_water[index]
@@ -311,49 +322,57 @@ func get_water_density(global_pos: Vector3) -> float:
 	return 1.0
 
 func get_terrain_height(global_x: float, global_z: float) -> float:
-	# 1. Find Chunk
-	var x = floor(global_x / CHUNK_STRIDE)
-	var z = floor(global_z / CHUNK_STRIDE)
-	var coord = Vector2i(x, z)
+	# Find X,Z chunk coordinates
+	var chunk_x = int(floor(global_x / CHUNK_STRIDE))
+	var chunk_z = int(floor(global_z / CHUNK_STRIDE))
 	
-	if not active_chunks.has(coord):
-		return -1000.0 # No chunk
-		
-	var data = active_chunks[coord]
-	if data == null or data.cpu_density_terrain.is_empty():
-		return -1000.0
-		
-	# 2. Find local X, Z
-	var chunk_origin = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
-	var local_x = round(global_x - chunk_origin.x)
-	var local_z = round(global_z - chunk_origin.z)
+	# Calculate local X,Z within chunk
+	var chunk_origin_x = chunk_x * CHUNK_STRIDE
+	var chunk_origin_z = chunk_z * CHUNK_STRIDE
+	var local_x = int(round(global_x - chunk_origin_x))
+	var local_z = int(round(global_z - chunk_origin_z))
 	
 	if local_x < 0 or local_x >= DENSITY_GRID_SIZE or local_z < 0 or local_z >= DENSITY_GRID_SIZE:
 		return -1000.0
-		
-	# 3. Scan Y column from top (32) to bottom (0)
-	# We look for transition from Air (>0) to Ground (<0)
-	var ix = int(local_x)
-	var iz = int(local_z)
 	
-	var prev_density = 1.0  # Assume air above the grid
-	for iy in range(DENSITY_GRID_SIZE - 1, -1, -1):
-		var index = ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
-		var density = data.cpu_density_terrain[index]
+	# Scan from highest to lowest Y-layer to find terrain surface
+	var best_height = -1000.0
+	
+	for chunk_y in range(MAX_Y_LAYER, MIN_Y_LAYER - 1, -1):
+		var coord = Vector3i(chunk_x, chunk_y, chunk_z)
 		
-		if density < 0.0:
-			# Found ground! Interpolate for accurate isosurface height.
-			# The surface is where density = 0, between iy (ground) and iy+1 (air)
-			# Linear interpolation: t = prev_density / (prev_density - density)
-			# Height = (iy + 1) - t = iy + 1 - prev_density / (prev_density - density)
-			if iy < DENSITY_GRID_SIZE - 1:
-				var t = prev_density / (prev_density - density)
-				return float(iy + 1) - t
-			else:
-				return float(iy)
-		prev_density = density
+		if not active_chunks.has(coord):
+			continue
 			
-	return -1000.0 # Only air found (hole)
+		var data = active_chunks[coord]
+		if data == null or data.cpu_density_terrain.is_empty():
+			continue
+		
+		var chunk_base_y = chunk_y * CHUNK_SIZE
+		
+		# Scan Y column from top to bottom within this chunk
+		var prev_density = 1.0  # Assume air above
+		for iy in range(DENSITY_GRID_SIZE - 1, -1, -1):
+			var index = local_x + (iy * DENSITY_GRID_SIZE) + (local_z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+			var density = data.cpu_density_terrain[index]
+			
+			if density < 0.0:
+				# Found ground! Interpolate for accurate isosurface height
+				var local_height: float
+				if iy < DENSITY_GRID_SIZE - 1:
+					var t = prev_density / (prev_density - density)
+					local_height = float(iy + 1) - t
+				else:
+					local_height = float(iy)
+				
+				var world_height = chunk_base_y + local_height
+				if world_height > best_height:
+					best_height = world_height
+				# Found surface in this chunk, stop searching
+				return best_height
+			prev_density = density
+	
+	return best_height  # Return -1000.0 if no terrain found
 
 # Updated to accept layer (0=Terrain, 1=Water)
 func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0):
@@ -361,50 +380,53 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 	var min_pos = pos - Vector3(radius, radius, radius)
 	var max_pos = pos + Vector3(radius, radius, radius)
 	
-	var min_chunk_x = floor(min_pos.x / CHUNK_STRIDE)
-	var max_chunk_x = floor(max_pos.x / CHUNK_STRIDE)
-	var min_chunk_z = floor(min_pos.z / CHUNK_STRIDE)
-	var max_chunk_z = floor(max_pos.z / CHUNK_STRIDE)
+	var min_chunk_x = int(floor(min_pos.x / CHUNK_STRIDE))
+	var max_chunk_x = int(floor(max_pos.x / CHUNK_STRIDE))
+	var min_chunk_y = int(floor(min_pos.y / CHUNK_SIZE))
+	var max_chunk_y = int(floor(max_pos.y / CHUNK_SIZE))
+	var min_chunk_z = int(floor(min_pos.z / CHUNK_STRIDE))
+	var max_chunk_z = int(floor(max_pos.z / CHUNK_STRIDE))
 	
 	var tasks_to_add = []
 	
 	# Store modification for persistence (all affected chunks)
 	for x in range(min_chunk_x, max_chunk_x + 1):
-		for z in range(min_chunk_z, max_chunk_z + 1):
-			var coord = Vector2i(x, z)
-			
-			# Store the modification for this chunk (persists across unloads)
-			if not stored_modifications.has(coord):
-				stored_modifications[coord] = []
-			stored_modifications[coord].append({
-				"brush_pos": pos,
-				"radius": radius,
-				"value": value,
-				"shape": shape,
-				"layer": layer
-			})
-			
-			# Only dispatch GPU task if chunk is currently loaded
-			if active_chunks.has(coord):
-				var data = active_chunks[coord]
-				if data != null:
-					var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
-					
-					if target_buffer.is_valid():
-						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+		for y in range(min_chunk_y, max_chunk_y + 1):
+			for z in range(min_chunk_z, max_chunk_z + 1):
+				var coord = Vector3i(x, y, z)
+				
+				# Store the modification for this chunk (persists across unloads)
+				if not stored_modifications.has(coord):
+					stored_modifications[coord] = []
+				stored_modifications[coord].append({
+					"brush_pos": pos,
+					"radius": radius,
+					"value": value,
+					"shape": shape,
+					"layer": layer
+				})
+				
+				# Only dispatch GPU task if chunk is currently loaded
+				if active_chunks.has(coord):
+					var data = active_chunks[coord]
+					if data != null:
+						var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
 						
-						var task = {
-							"type": "modify",
-							"coord": coord,
-							"rid": target_buffer,
-							"pos": chunk_pos,
-							"brush_pos": pos,
-							"radius": radius,
-							"value": value,
-							"shape": shape,
-							"layer": layer # Pass layer info
-						}
-						tasks_to_add.append(task)
+						if target_buffer.is_valid():
+							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
+							
+							var task = {
+								"type": "modify",
+								"coord": coord,
+								"rid": target_buffer,
+								"pos": chunk_pos,
+								"brush_pos": pos,
+								"radius": radius,
+								"value": value,
+								"shape": shape,
+								"layer": layer # Pass layer info
+							}
+							tasks_to_add.append(task)
 	
 	if tasks_to_add.size() > 0:
 		modification_batch_id += 1
@@ -446,15 +468,21 @@ func _exit_tree():
 
 func update_chunks():
 	var p_pos = viewer.global_position
-	var p_chunk_x = floor(p_pos.x / CHUNK_STRIDE)
-	var p_chunk_z = floor(p_pos.z / CHUNK_STRIDE)
-	var center_chunk = Vector2i(p_chunk_x, p_chunk_z)
+	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
+	var p_chunk_y = int(floor(p_pos.y / CHUNK_SIZE))  # Y uses CHUNK_SIZE (no overlap needed vertically)
+	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
+	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
 
-	# 1. Unload far chunks
+	# 1. Unload far chunks (3D distance check)
 	var chunks_to_remove = []
 	for coord in active_chunks:
-		var dist = Vector2(coord.x, coord.y).distance_to(Vector2(center_chunk.x, center_chunk.y))
-		if dist > render_distance + 2:
+		# XZ distance for horizontal, separate check for Y
+		var dx = coord.x - center_chunk.x
+		var dy = coord.y - center_chunk.y
+		var dz = coord.z - center_chunk.z
+		var dist_xz = sqrt(dx * dx + dz * dz)
+		# Unload if too far horizontally OR too far vertically
+		if dist_xz > render_distance + 2 or abs(dy) > 3:
 			chunks_to_remove.append(coord)
 			
 	for coord in chunks_to_remove:
@@ -492,35 +520,60 @@ func update_chunks():
 	
 	var chunks_queued_this_frame = 0
 	
+	# Build list of Y-layers to load:
+	# 1. Terrain surface layers (-1, 0, 1) - always needed
+	# 2. Player's immediate area (center_chunk.y ± 1) - for collision
+	var y_layers_to_load: Array[int] = []
+	
+	# Always load terrain layers
+	for y in [-1, 0, 1]:
+		if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
+			y_layers_to_load.append(y)
+	
+	# Add player's immediate area
+	for dy in range(-1, 2):  # -1, 0, 1
+		var y = center_chunk.y + dy
+		if y >= MIN_Y_LAYER and y <= MAX_Y_LAYER and not y_layers_to_load.has(y):
+			y_layers_to_load.append(y)
+	
+	# Sort for consistent ordering
+	y_layers_to_load.sort()
+	
+	# Increase limit for 3D chunking - we have more chunks to load now
+	var effective_limit = chunks_per_frame_limit * 4
+	
 	for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
-		for z in range(center_chunk.y - render_distance, center_chunk.y + render_distance + 1):
-			if chunks_queued_this_frame >= chunks_per_frame_limit:
-				return  # Stop for this frame, continue next frame
-			
-			var coord = Vector2i(x, z)
-			
-			if active_chunks.has(coord):
+		for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
+			# Check XZ distance first
+			var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
+			if dist_xz > render_distance:
 				continue
 			
-			if Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.y)) > render_distance:
-				continue
+			for y in y_layers_to_load:
+				if chunks_queued_this_frame >= effective_limit:
+					return  # Stop for this frame, continue next frame
+				
+				var coord = Vector3i(x, y, z)
+				
+				if active_chunks.has(coord):
+					continue
 
-			active_chunks[coord] = null
-			
-			var chunk_pos = Vector3(x * CHUNK_STRIDE, 0, z * CHUNK_STRIDE)
-			
-			var task = {
-				"type": "generate",
-				"coord": coord,
-				"pos": chunk_pos
-			}
-			
-			mutex.lock()
-			task_queue.append(task)
-			mutex.unlock()
-			semaphore.post()
-			
-			chunks_queued_this_frame += 1
+				active_chunks[coord] = null
+				
+				var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_SIZE, z * CHUNK_STRIDE)
+				
+				var task = {
+					"type": "generate",
+					"coord": coord,
+					"pos": chunk_pos
+				}
+				
+				mutex.lock()
+				task_queue.append(task)
+				mutex.unlock()
+				semaphore.post()
+				
+				chunks_queued_this_frame += 1
 
 ## Interruptible delay - checks for high-priority modify tasks every 10ms
 ## Allows player modifications to interrupt chunk loading delays
@@ -1062,7 +1115,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk
 	
 	return { "mesh": mesh, "shape": shape }
 
-func complete_generation(coord: Vector2i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array):
+func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array):
 	if not active_chunks.has(coord):
 		var tasks = []
 		tasks.append({ "type": "free", "rid": dens_t })
@@ -1103,7 +1156,7 @@ func _finalize_chunk_creation(item: Dictionary):
 			for t in tasks: semaphore.post()
 			return
 		
-		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
 		
 		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos)
 		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
@@ -1121,7 +1174,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		
 		chunk_generated.emit(coord, data.node_terrain)
 
-func complete_modification(coord: Vector2i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array()):
+func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array()):
 	if batch_id == -1:
 		_apply_chunk_update(coord, result, layer, cpu_dens)
 		return
@@ -1140,11 +1193,11 @@ func complete_modification(coord: Vector2i, result: Dictionary, layer: int, batc
 			_apply_chunk_update(update.coord, update.result, update.layer, update.cpu_dens)
 		pending_batches.erase(batch_id)
 
-func _apply_chunk_update(coord: Vector2i, result: Dictionary, layer: int, cpu_dens: PackedFloat32Array):
+func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_dens: PackedFloat32Array):
 	if not active_chunks.has(coord):
 		return
 	var data = active_chunks[coord]
-	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, 0, coord.y * CHUNK_STRIDE)
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_SIZE, coord.z * CHUNK_STRIDE)
 	
 	if layer == 0: # Terrain
 		if data.node_terrain: data.node_terrain.queue_free()

@@ -129,14 +129,17 @@ func _ready():
 	player = get_tree().get_first_node_in_group("player")
 
 # Called when terrain is modified (player edits) - reparent vegetation, don't regenerate
-func _on_chunk_modified(coord: Vector2i, chunk_node: Node3D):
+func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
 	if chunk_node == null:
 		return
 	
+	# Extract surface key (X,Z) - vegetation only exists on surface
+	var surface_key = Vector2i(coord.x, coord.z)
+	
 	# Reparent vegetation MultiMeshInstances to the NEW chunk_node
 	# This prevents them from being deleted when old chunk_node is freed
-	if chunk_tree_data.has(coord):
-		var data = chunk_tree_data[coord]
+	if chunk_tree_data.has(surface_key):
+		var data = chunk_tree_data[surface_key]
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
 			var mmi = data.multimesh as MultiMeshInstance3D
 			if mmi and mmi.get_parent():
@@ -144,8 +147,8 @@ func _on_chunk_modified(coord: Vector2i, chunk_node: Node3D):
 				chunk_node.add_child(mmi)
 		data.chunk_node = chunk_node
 	
-	if chunk_grass_data.has(coord):
-		var data = chunk_grass_data[coord]
+	if chunk_grass_data.has(surface_key):
+		var data = chunk_grass_data[surface_key]
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
 			var mmi = data.multimesh as MultiMeshInstance3D
 			if mmi and mmi.get_parent():
@@ -153,8 +156,8 @@ func _on_chunk_modified(coord: Vector2i, chunk_node: Node3D):
 				chunk_node.add_child(mmi)
 		data.chunk_node = chunk_node
 	
-	if chunk_rock_data.has(coord):
-		var data = chunk_rock_data[coord]
+	if chunk_rock_data.has(surface_key):
+		var data = chunk_rock_data[surface_key]
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
 			var mmi = data.multimesh as MultiMeshInstance3D
 			if mmi and mmi.get_parent():
@@ -162,19 +165,22 @@ func _on_chunk_modified(coord: Vector2i, chunk_node: Node3D):
 				chunk_node.add_child(mmi)
 		data.chunk_node = chunk_node
 
-func _on_chunk_generated(coord: Vector2i, chunk_node: Node3D):
+func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	if chunk_node == null:
 		return
 	
-	if chunk_tree_data.has(coord):
-		_cleanup_chunk_trees(coord)
-	if chunk_grass_data.has(coord):
-		_cleanup_chunk_grass(coord)
-	if chunk_rock_data.has(coord):
-		_cleanup_chunk_rocks(coord)
+	# Extract surface key (X,Z) - vegetation only exists on surface
+	var surface_key = Vector2i(coord.x, coord.z)
+	
+	if chunk_tree_data.has(surface_key):
+		_cleanup_chunk_trees(surface_key)
+	if chunk_grass_data.has(surface_key):
+		_cleanup_chunk_grass(surface_key)
+	if chunk_rock_data.has(surface_key):
+		_cleanup_chunk_rocks(surface_key)
 	
 	pending_chunks.append({
-		"coord": coord,
+		"coord": surface_key,  # Use surface_key for vegetation
 		"chunk_node": chunk_node,
 		"frames_waited": 0
 	})

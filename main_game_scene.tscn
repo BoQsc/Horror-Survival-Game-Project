@@ -7,7 +7,7 @@
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://roads/road_manager.gd" id="7_roads"]
-[ext_resource type="Script" path="res://building_system/prefab_spawner.gd" id="8_prefabs"]
+[ext_resource type="Script" uid="uid://ds7smfcuouehv" path="res://building_system/prefab_spawner.gd" id="8_prefabs"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -42,7 +42,7 @@ transform = Transform3D(-0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, 0.75
 shadow_enabled = true
 
 [node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.17198, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 30, 0)
 script = ExtResource("1_player")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
@@ -110,7 +110,7 @@ color = Color(0, 0.25098, 0.443137, 0.392157)
 script = ExtResource("4_terrain")
 viewer = NodePath("../Player")
 
-[node name="VegetationManager" type="Node3D" parent="." groups=["vegetation_manager"] node_paths=PackedStringArray("terrain_manager")]
+[node name="VegetationManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager") groups=["vegetation_manager"]]
 script = ExtResource("6_vegetation")
 terrain_manager = NodePath("../TerrainManager")
 tree_y_offset = 9.5
@@ -135,4 +135,3 @@ building_manager = NodePath("../BuildingManager")
 visible = false
 mesh = SubResource("BoxMesh_selection")
 surface_material_override/0 = SubResource("StandardMaterial3D_selection")
-
