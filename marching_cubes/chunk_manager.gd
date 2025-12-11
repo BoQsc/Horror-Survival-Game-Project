@@ -64,6 +64,7 @@ class ChunkData:
 	var node_water: Node3D
 	var density_buffer_terrain: RID
 	var density_buffer_water: RID
+	var material_buffer_terrain: RID  # Material IDs per voxel
 	var collision_shape_terrain: CollisionShape3D  # For dynamic enable/disable
 	var terrain_shape: Shape3D  # Store the shape for lazy creation
 	# CPU mirrors for physics detection
@@ -415,13 +416,14 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					if data != null:
 						var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
 						
-						if target_buffer.is_valid():
+							if target_buffer.is_valid():
 							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 							
 							var task = {
 								"type": "modify",
 								"coord": coord,
 								"rid": target_buffer,
+								"material_rid": data.material_buffer_terrain,  # Pass material buffer
 								"pos": chunk_pos,
 								"brush_pos": pos,
 								"radius": radius,
@@ -694,8 +696,8 @@ func _thread_function():
 	var pipe_mod = rd.compute_pipeline_create(sid_mod)
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 	
-	# Create REUSABLE Buffers for meshing
-	var output_bytes_size = MAX_TRIANGLES * 3 * 6 * 4
+	# Create REUSABLE Buffers for meshing (9 floats per vertex: pos + normal + color)
+	var output_bytes_size = MAX_TRIANGLES * 3 * 9 * 4
 	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
 	
 	var counter_data = PackedByteArray()
@@ -795,10 +797,12 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var chunk_pos = task.pos
 	var coord = task.coord
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
+	var material_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4  # uint per voxel
 	
-	# Create density buffers (will persist until readback)
+	# Create density and material buffers (will persist until readback)
 	var dens_buf_terrain = rd.storage_buffer_create(density_bytes)
 	var dens_buf_water = rd.storage_buffer_create(density_bytes)
+	var mat_buf_terrain = rd.storage_buffer_create(material_bytes)  # Material IDs
 	
 	# --- Dispatch Terrain Density (no sync) ---
 	var u_density_t = RDUniform.new()
@@ -806,7 +810,12 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	u_density_t.binding = 0
 	u_density_t.add_id(dens_buf_terrain)
 	
-	var set_gen_t = rd.uniform_set_create([u_density_t], sid_gen, 0)
+	var u_material_t = RDUniform.new()
+	u_material_t.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_material_t.binding = 1
+	u_material_t.add_id(mat_buf_terrain)
+	
+	var set_gen_t = rd.uniform_set_create([u_density_t, u_material_t], sid_gen, 0)
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen)
 	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
@@ -858,7 +867,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"coord": coord,
 		"chunk_pos": chunk_pos,
 		"dens_buf_terrain": dens_buf_terrain,
-		"dens_buf_water": dens_buf_water
+		"dens_buf_water": dens_buf_water,
+		"mat_buf_terrain": mat_buf_terrain
 	}
 
 # Complete readback and queue to CPU workers (called after density sync)
@@ -867,19 +877,20 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	var chunk_pos = flight_data.chunk_pos
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
+	var mat_buf_terrain = flight_data.mat_buf_terrain
 	
 	# Dispatch BOTH mesh shaders, THEN sync once (reduces stalls)
 	# Note: We need separate vertex/counter buffers to batch both, so we do them sequentially
 	# but with minimal sync (each mesh needs its own readback before the buffer is reused)
 	
-	# Terrain mesh
-	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
+	# Terrain mesh (uses material buffer for vertex colors)
+	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
 	rd.sync()
 	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_t)
 	
-	# Water mesh  
-	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, chunk_pos, vertex_buffer, counter_buffer)
+	# Water mesh (no material buffer, use terrain's for now)
+	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
 	rd.sync()
 	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_w)
@@ -901,13 +912,14 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 		"cpu_dens_w": cpu_density_floats_w,
 		"cpu_dens_t": cpu_density_floats_t,
 		"dens_buf_terrain": dens_buf_terrain,
-		"dens_buf_water": dens_buf_water
+		"dens_buf_water": dens_buf_water,
+		"mat_buf_terrain": mat_buf_terrain  # Material buffer for modify path
 	})
 	cpu_mutex.unlock()
 	cpu_semaphore.post()
 
 # GPU meshing dispatch only - NO sync, returns uniform set for later cleanup
-func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer) -> RID:
+func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> RID:
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
 	zero_data.resize(4)
@@ -929,7 +941,12 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 	u_dens.binding = 2
 	u_dens.add_id(density_buffer)
 	
-	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens], sid_mesh, 0)
+	var u_mat = RDUniform.new()
+	u_mat.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_mat.binding = 3
+	u_mat.add_id(material_buffer)
+	
+	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat], sid_mesh, 0)
 	
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
@@ -956,7 +973,7 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 	
 	var vert_floats = PackedFloat32Array()
 	if tri_count > 0:
-		var total_floats = tri_count * 3 * 6
+		var total_floats = tri_count * 3 * 9  # 9 floats per vertex: pos(3) + normal(3) + color(3)
 		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		vert_floats = vert_bytes.to_float32_array()
 		
@@ -1012,7 +1029,7 @@ func _cpu_thread_function():
 		var result_w = { "mesh": mesh_water, "shape": shape_water }
 		
 		# Send to main thread
-		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t)
+		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t, task.mat_buf_terrain)
 
 # Helper to apply a single modification to a density buffer (used during generation replay)
 func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, density_buffer: RID, chunk_pos: Vector3, mod: Dictionary):
@@ -1056,6 +1073,7 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 
 func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
 	var density_buffer = task.rid
+	var material_buffer = task.get("material_rid", RID())  # Material buffer from chunk
 	var chunk_pos = task.pos
 	var layer = task.get("layer", 0)
 	
@@ -1098,7 +1116,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 	
 	var material = material_terrain if layer == 0 else material_water
-	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, material, vertex_buffer, counter_buffer)
+	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material, vertex_buffer, counter_buffer)
 	
 	var cpu_density_floats = PackedFloat32Array()
 	# Read back density for this layer
@@ -1114,25 +1132,29 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayM
 	if data.size() == 0:
 		return null
 	
-	var vertex_count = data.size() / 6
+	var vertex_count = data.size() / 9  # 9 floats per vertex: pos(3) + normal(3) + color(3)
 	
 	# Pre-allocate arrays
 	var vertices = PackedVector3Array()
 	var normals = PackedVector3Array()
+	var colors = PackedColorArray()
 	vertices.resize(vertex_count)
 	normals.resize(vertex_count)
+	colors.resize(vertex_count)
 	
 	# Fill arrays directly (much faster than SurfaceTool)
 	for i in range(vertex_count):
-		var idx = i * 6
+		var idx = i * 9
 		vertices[i] = Vector3(data[idx], data[idx + 1], data[idx + 2])
 		normals[i] = Vector3(data[idx + 3], data[idx + 4], data[idx + 5])
+		colors[i] = Color(data[idx + 6], data[idx + 7], data[idx + 8])
 	
 	# Build ArrayMesh directly
 	var arrays = []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = vertices
 	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
 	
 	var mesh = ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
@@ -1140,7 +1162,7 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayM
 	
 	return mesh
 
-func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer):
+func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer):
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
 	zero_data.resize(4)
@@ -1162,7 +1184,16 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk
 	u_dens.binding = 2
 	u_dens.add_id(density_buffer)
 	
-	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens], sid_mesh, 0)
+	var u_mat = RDUniform.new()
+	u_mat.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_mat.binding = 3
+	if material_buffer.is_valid():
+		u_mat.add_id(material_buffer)
+	else:
+		# Fallback: use density buffer as placeholder (won't look right but won't crash)
+		u_mat.add_id(density_buffer)
+	
+	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat], sid_mesh, 0)
 	
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
@@ -1189,7 +1220,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk
 	var shape = null
 	
 	if tri_count > 0:
-		var total_floats = tri_count * 3 * 6
+		var total_floats = tri_count * 3 * 9  # 9 floats per vertex
 		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		var vert_floats = vert_bytes.to_float32_array()
 		mesh = build_mesh(vert_floats, material_instance)
@@ -1200,11 +1231,13 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk
 	
 	return { "mesh": mesh, "shape": shape }
 
-func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array):
+func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, mat_t: RID = RID()):
 	if not active_chunks.has(coord):
 		var tasks = []
 		tasks.append({ "type": "free", "rid": dens_t })
 		tasks.append({ "type": "free", "rid": dens_w })
+		if mat_t.is_valid():
+			tasks.append({ "type": "free", "rid": mat_t })
 		mutex.lock()
 		for t in tasks: task_queue.append(t)
 		mutex.unlock()
@@ -1220,6 +1253,7 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"result_w": result_w,
 		"dens_t": dens_t,
 		"dens_w": dens_w,
+		"mat_t": mat_t,
 		"cpu_dens_w": cpu_dens_w,
 		"cpu_dens_t": cpu_dens_t
 	})
@@ -1252,6 +1286,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.collision_shape_terrain = result_t.collision_shape if not result_t.is_empty() else null
 		data.density_buffer_terrain = item.dens_t
 		data.density_buffer_water = item.dens_w
+		data.material_buffer_terrain = item.mat_t  # Store material buffer
 		data.cpu_density_water = item.cpu_dens_w
 		data.cpu_density_terrain = item.cpu_dens_t
 		

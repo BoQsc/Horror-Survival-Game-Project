@@ -23,6 +23,7 @@ uniform float procedural_road_width = 8.0;
 
 varying vec3 world_pos;
 varying vec3 world_normal;
+varying vec3 vertex_color;  // Material color from GPU
 
 // Simple 2D hash/noise for biomes
 vec2 hash(vec2 p) {
@@ -74,6 +75,7 @@ float get_procedural_road_dist(vec2 pos) {
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
+	vertex_color = COLOR.rgb;  // Pass material color to fragment
 }
 
 vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos) {
@@ -99,29 +101,39 @@ void fragment() {
 	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
 	vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
 	
-	// --- Biome Logic ---
-	// Use world X/Z to pick a biome value [-1, 1]
+	// --- Material-Based Texturing (from vertex color) ---
+	// GPU sets vertex color based on material ID:
+	// Green (0.4, 0.7, 0.3) = Grass/Dirt (surface)
+	// Gray (0.5, 0.5, 0.5) = Stone (underground)
+	// Gold (0.9, 0.7, 0.2) = Ore (rare)
+	
+	// Detect material from vertex color
+	float is_grass = step(0.6, vertex_color.g) * step(vertex_color.r, 0.5);  // Green with low red = grass
+	float is_ore = step(0.8, vertex_color.r);  // High red = ore
+	float is_stone = 1.0 - is_grass - is_ore;  // Default to stone
+	
+	// Mix textures based on material
+	vec3 material_color = col_grass * is_grass + col_rock * is_stone + col_sand * is_ore;  // TODO: Add ore texture
+	
+	// --- Biome Logic (applied on top of material) ---
+	// Use world X/Z to add biome variation
 	float biome_val = fbm(world_pos.xz * biome_scale);
 	
-	// Map biome_val to types:
-	// < -0.3  : Desert (Sand)
-	// -0.3 to 0.2 : Grass
-	// 0.2 to 0.6 : Gravel/Rock (Mountain base?)
-	// > 0.6   : Snow Biome (Tundra)
-	
-	vec3 biome_color = col_grass; // Default
-	
-	// Mix Sand -> Grass
-	float sand_mix = smoothstep(-0.2, -0.4, biome_val); // Fade into sand as value gets lower
-	biome_color = mix(biome_color, col_sand, sand_mix);
-	
-	// Mix Grass -> Gravel (Rock)
-	float gravel_mix = smoothstep(0.2, 0.4, biome_val);
-	biome_color = mix(biome_color, col_rock, gravel_mix);
-	
-	// Mix Gravel -> Snow Biome
-	float snow_biome_mix = smoothstep(0.6, 0.8, biome_val);
-	biome_color = mix(biome_color, col_snow, snow_biome_mix);
+	// Only apply biome blending on grass material (surface)
+	vec3 biome_color = material_color;
+	if (is_grass > 0.5) {
+		// Mix Sand -> Grass
+		float sand_mix = smoothstep(-0.2, -0.4, biome_val);
+		biome_color = mix(biome_color, col_sand, sand_mix);
+		
+		// Mix Grass -> Gravel (Rock)
+		float gravel_mix = smoothstep(0.2, 0.4, biome_val);
+		biome_color = mix(biome_color, col_rock, gravel_mix);
+		
+		// Mix Gravel -> Snow Biome
+		float snow_biome_mix = smoothstep(0.6, 0.8, biome_val);
+		biome_color = mix(biome_color, col_snow, snow_biome_mix);
+	}
 	
 	// --- Slope Logic (Steep cliffs are rock) ---
 	float slope = normal.y;

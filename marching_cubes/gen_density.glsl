@@ -9,6 +9,11 @@ layout(set = 0, binding = 0, std430) restrict buffer DensityBuffer {
     float values[];
 } density_buffer;
 
+// Output: Material IDs (packed as uint, one per voxel)
+layout(set = 0, binding = 1, std430) restrict buffer MaterialBuffer {
+    uint values[];
+} material_buffer;
+
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position
     float noise_freq;
@@ -100,6 +105,27 @@ float get_density(vec3 pos) {
     return density;
 }
 
+// Material ID based on depth below terrain surface + noise for variety
+// 0 = Grass/Dirt (surface), 1 = Stone (underground), 2 = Ore (rare)
+uint get_material(vec3 pos, float terrain_height_at_pos) {
+    vec3 world_pos = pos + params.chunk_offset.xyz;
+    float depth = terrain_height_at_pos - world_pos.y;
+    
+    // Surface layer (grass/dirt)
+    if (depth < 3.0) {
+        return 0u;
+    }
+    
+    // Check for ore veins (rare, uses 3D noise)
+    float ore_noise = noise(world_pos * 0.15);
+    if (ore_noise > 0.75 && depth > 8.0) {
+        return 2u;  // Ore
+    }
+    
+    // Default underground material
+    return 1u;  // Stone
+}
+
 void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
     
@@ -110,7 +136,14 @@ void main() {
 
     uint index = id.x + (id.y * 33) + (id.z * 33 * 33);
     vec3 pos = vec3(id);
+    vec3 world_pos = pos + params.chunk_offset.xyz;
+    
+    // Calculate terrain height for material determination
+    float base_height = params.terrain_height;
+    float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;
+    float terrain_height = base_height + hill_height;
     
     density_buffer.values[index] = get_density(pos);
+    material_buffer.values[index] = get_material(pos, terrain_height);
 }
 

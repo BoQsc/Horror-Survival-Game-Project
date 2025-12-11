@@ -18,6 +18,11 @@ layout(set = 0, binding = 2, std430) restrict buffer DensityBuffer {
     float values[];
 } density_buffer;
 
+// New Binding: Input Material Map
+layout(set = 0, binding = 3, std430) restrict buffer MaterialBuffer {
+    uint values[];
+} material_buffer;
+
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position
     float noise_freq;
@@ -43,6 +48,24 @@ float get_density_from_buffer(vec3 p) {
     
     uint index = x + (y * 33) + (z * 33 * 33);
     return density_buffer.values[index];
+}
+
+uint get_material_from_buffer(vec3 p) {
+    int x = int(round(p.x));
+    int y = int(round(p.y));
+    int z = int(round(p.z));
+    x = clamp(x, 0, 32);
+    y = clamp(y, 0, 32);
+    z = clamp(z, 0, 32);
+    uint index = x + (y * 33) + (z * 33 * 33);
+    return material_buffer.values[index];
+}
+
+// Convert material ID to RGB color for vertex color
+vec3 material_to_color(uint mat_id) {
+    if (mat_id == 0u) return vec3(0.4, 0.7, 0.3);  // Grass/Dirt - green-brown
+    if (mat_id == 2u) return vec3(0.9, 0.7, 0.2);  // Ore - gold
+    return vec3(0.5, 0.5, 0.5);  // Stone - gray
 }
 
 vec3 get_normal(vec3 pos) {
@@ -124,12 +147,16 @@ void main() {
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
         uint idx = atomicAdd(counter.triangle_count, 1);
-        uint start_ptr = idx * 18; 
+        uint start_ptr = idx * 27;  // 9 floats per vertex (pos + normal + color) 
 
         vec3 v1 = vertList[triTable[cubeIndex * 16 + i]];
         vec3 v2 = vertList[triTable[cubeIndex * 16 + i + 1]];
         vec3 v3 = vertList[triTable[cubeIndex * 16 + i + 2]];
 
+        // Get material color from center of cube
+        uint mat_id = get_material_from_buffer(pos + vec3(0.5));
+        vec3 mat_color = material_to_color(mat_id);
+        
         // Vertex 1
         vec3 n1 = get_normal(v1);
         mesh_output.vertices[start_ptr + 0] = v1.x;
@@ -138,23 +165,32 @@ void main() {
         mesh_output.vertices[start_ptr + 3] = n1.x;
         mesh_output.vertices[start_ptr + 4] = n1.y;
         mesh_output.vertices[start_ptr + 5] = n1.z;
+        mesh_output.vertices[start_ptr + 6] = mat_color.r;
+        mesh_output.vertices[start_ptr + 7] = mat_color.g;
+        mesh_output.vertices[start_ptr + 8] = mat_color.b;
         
-        // Vertex 3
+        // Vertex 3 (note: order is 1,3,2 for winding)
         vec3 n3 = get_normal(v3);
-        mesh_output.vertices[start_ptr + 6] = v3.x;
-        mesh_output.vertices[start_ptr + 7] = v3.y;
-        mesh_output.vertices[start_ptr + 8] = v3.z;
-        mesh_output.vertices[start_ptr + 9] = n3.x;
-        mesh_output.vertices[start_ptr + 10] = n3.y;
-        mesh_output.vertices[start_ptr + 11] = n3.z;
+        mesh_output.vertices[start_ptr + 9] = v3.x;
+        mesh_output.vertices[start_ptr + 10] = v3.y;
+        mesh_output.vertices[start_ptr + 11] = v3.z;
+        mesh_output.vertices[start_ptr + 12] = n3.x;
+        mesh_output.vertices[start_ptr + 13] = n3.y;
+        mesh_output.vertices[start_ptr + 14] = n3.z;
+        mesh_output.vertices[start_ptr + 15] = mat_color.r;
+        mesh_output.vertices[start_ptr + 16] = mat_color.g;
+        mesh_output.vertices[start_ptr + 17] = mat_color.b;
         
         // Vertex 2
         vec3 n2 = get_normal(v2);
-        mesh_output.vertices[start_ptr + 12] = v2.x;
-        mesh_output.vertices[start_ptr + 13] = v2.y;
-        mesh_output.vertices[start_ptr + 14] = v2.z;
-        mesh_output.vertices[start_ptr + 15] = n2.x;
-        mesh_output.vertices[start_ptr + 16] = n2.y;
-        mesh_output.vertices[start_ptr + 17] = n2.z;
+        mesh_output.vertices[start_ptr + 18] = v2.x;
+        mesh_output.vertices[start_ptr + 19] = v2.y;
+        mesh_output.vertices[start_ptr + 20] = v2.z;
+        mesh_output.vertices[start_ptr + 21] = n2.x;
+        mesh_output.vertices[start_ptr + 22] = n2.y;
+        mesh_output.vertices[start_ptr + 23] = n2.z;
+        mesh_output.vertices[start_ptr + 24] = mat_color.r;
+        mesh_output.vertices[start_ptr + 25] = mat_color.g;
+        mesh_output.vertices[start_ptr + 26] = mat_color.b;
     }
 }
