@@ -561,8 +561,8 @@ func update_chunks():
 		print("DEBUG LOAD: center=%s is_above_ground=%s chunks_per_frame=%d" % [center_chunk, is_above_ground, chunks_per_frame_limit])
 	
 	if is_above_ground:
-		# Only load Y=0 layer. Y=-1 will be loaded by modify_terrain when player digs near Y=0
-		# This ensures the dig modification is stored BEFORE the chunk generates
+		# Only load Y=0 layer for performance (like original 2D system)
+		# Y=1+ chunks load when player interacts via modify_terrain, which applies stored mods
 		var y_to_load: Array[int] = [0]
 		
 		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
@@ -596,6 +596,29 @@ func update_chunks():
 					semaphore.post()
 					
 					chunks_queued_this_frame += 1
+		
+		# Also load chunks with stored modifications (player builds) within range
+		if not initial_load_phase:
+			for coord in stored_modifications:
+				if chunks_queued_this_frame >= chunks_per_frame_limit:
+					return
+				if active_chunks.has(coord):
+					continue
+				
+				# Check if chunk is within horizontal render distance
+				var dist_xz = Vector2(coord.x, coord.z).distance_to(Vector2(center_chunk.x, center_chunk.z))
+				if dist_xz > render_distance:
+					continue
+				
+				active_chunks[coord] = null
+				var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+				var task = { "type": "generate", "coord": coord, "pos": chunk_pos }
+				
+				mutex.lock()
+				task_queue.append(task)
+				mutex.unlock()
+				semaphore.post()
+				chunks_queued_this_frame += 1
 	else:
 		# Player is underground or flying - load multiple Y layers
 		var y_layers = [center_chunk.y - 1, center_chunk.y, center_chunk.y + 1, 0]  # Include terrain layer 0
