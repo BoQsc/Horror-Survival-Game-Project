@@ -416,7 +416,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					if data != null:
 						var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
 						
-							if target_buffer.is_valid():
+						if target_buffer.is_valid():
 							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 							
 							var task = {
@@ -982,8 +982,8 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 	return vert_floats
 
 # Legacy function for modify path (still needs sync inline)
-func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
-	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, chunk_pos, vertex_buffer, counter_buffer)
+func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
+	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
 	rd.sync()
 	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh)
