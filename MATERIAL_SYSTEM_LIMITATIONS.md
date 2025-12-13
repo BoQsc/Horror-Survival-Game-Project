@@ -187,3 +187,6 @@ This ensures that when placing materials, neighboring chunks at boundaries also 
 ### Debug Feature
 Press **F9** to toggle chunk boundary visualization (red lines at X/Z boundaries, blue at Y).
 
+### Future Optimization
+The shader currently uses **4 texture samples** to detect player materials (direct, 0.8 inward, 1.5 inward, 2.5 inward). This was added during debugging. Now that the chunk bounds fix is in place, this could potentially be **reduced to 2 samples** (direct + one biased) for better performance.
+
