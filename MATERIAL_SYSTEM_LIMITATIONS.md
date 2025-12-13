@@ -158,3 +158,32 @@ If starting fresh, implement **Solution #1 (GPU-Side Vertex Material Assignment)
 
 **Key principle:** Materials should be resolved at mesh creation time, never sampled in the fragment shader from a separate texture.
 
+---
+
+## Issue: Material Missing at Chunk Boundaries (FIXED)
+
+### Problem Description
+When placing materials near chunk boundaries, faces touching the boundary would show wrong texture (procedural terrain instead of placed material). The face geometry was generated correctly, but material sampling failed.
+
+### Root Cause
+1. **Chunk bounds calculation** used only the brush radius when determining which chunks need modification
+2. The shader samples material from voxels using normal-biased positions
+3. When placement was near boundary, the neighboring chunk didn't receive the material modification
+4. The boundary face was rendered by the neighboring chunk which had `has_material_map = false`
+
+### Solution (Implemented Dec 2024)
+**Expanded chunk bounds calculation** in `chunk_manager.gd`:
+
+```gdscript
+func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0, material_id: int = -1):
+    # Add extra margin (1.0) to account for material radius extension and shader sampling
+    var extra_margin = 1.0 if material_id >= 0 else 0.0
+    var min_pos = pos - Vector3(radius + extra_margin, radius + extra_margin, radius + extra_margin)
+    var max_pos = pos + Vector3(radius + extra_margin, radius + extra_margin, radius + extra_margin)
+```
+
+This ensures that when placing materials, neighboring chunks at boundaries also receive the modification, so their 3D material textures are properly updated.
+
+### Debug Feature
+Press **F9** to toggle chunk boundary visualization (red lines at X/Z boundaries, blue at Y).
+

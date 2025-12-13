@@ -441,10 +441,6 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					"material_id": material_id
 				})
 				
-				# DEBUG: Trace material modifications
-				if material_id >= 0:
-					print("[MATMOD] Material %d queued for chunk %s (brush at %s, radius %.2f)" % [material_id, coord, pos, radius])
-				
 
 				# Only dispatch GPU task if chunk is currently loaded
 				if active_chunks.has(coord):
