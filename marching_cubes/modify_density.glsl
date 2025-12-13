@@ -56,7 +56,15 @@ void main() {
     }
     
     // Write material when PLACING terrain (negative brush_value = adding solid)
-    if (modified && params.material_id >= 0 && params.brush_value < 0.0) {
-        material_buffer.values[index] = uint(params.material_id);
+    // EXTEND material radius by +2 beyond density radius to cover boundary voxels
+    // This eliminates rocky artifacts at edges where marching cubes interpolates
+    if (params.material_id >= 0 && params.brush_value < 0.0) {
+        vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
+        float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
+        float material_radius = params.brush_pos.w + 2.0;  // Extended radius
+        
+        if (max_dist <= material_radius) {
+            material_buffer.values[index] = uint(params.material_id);
+        }
     }
 }
