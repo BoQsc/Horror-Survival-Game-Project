@@ -147,11 +147,13 @@ void fragment() {
 	vec3 player_material_color = vec3(0.0);
 	
 	if (has_material_map) {
-		// Snap to voxel grid centers to prevent "sliding" due to interpolated vertex positions
-		// Marching cubes vertices are at fractional positions, but materials are stored at integer voxels
-		vec3 voxel_center = floor(local_vertex + vec3(0.5));  // Round to nearest voxel
-		vec3 local_pos = voxel_center / 32.0;
-		local_pos = clamp(local_pos, vec3(0.0), vec3(1.0));  // Clamp to valid range
+		// Bias sampling toward the SOLID side of the surface using normal
+		// Normal points away from solid, so we subtract a small offset in normal direction
+		// This ensures we sample from the placed block's voxel, not the existing terrain
+		vec3 biased_pos = local_vertex - normal * 0.5;
+		vec3 voxel_pos = floor(biased_pos + vec3(0.5));  // Round to nearest voxel
+		vec3 local_pos = voxel_pos / 32.0;
+		local_pos = clamp(local_pos, vec3(0.0), vec3(1.0));
 		
 		// Sample material ID from 3D texture (R channel stores id/255)
 		float mat_raw = texture(material_map, local_pos).r;
