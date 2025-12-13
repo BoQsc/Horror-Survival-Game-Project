@@ -64,12 +64,17 @@ class ChunkData:
 	var node_water: Node3D
 	var density_buffer_terrain: RID
 	var density_buffer_water: RID
-	var material_buffer_terrain: RID  # Material IDs per voxel
+	var material_buffer_terrain: RID  # Material IDs per voxel (GPU)
 	var collision_shape_terrain: CollisionShape3D  # For dynamic enable/disable
 	var terrain_shape: Shape3D  # Store the shape for lazy creation
 	# CPU mirrors for physics detection
 	var cpu_density_water: PackedFloat32Array = PackedFloat32Array()
 	var cpu_density_terrain: PackedFloat32Array = PackedFloat32Array()
+	# CPU mirror for materials (for 3D texture creation)
+	var cpu_material_terrain: PackedByteArray = PackedByteArray()
+	# 3D texture for fragment shader sampling
+	var material_texture: ImageTexture3D = null
+	var chunk_material: ShaderMaterial = null  # Per-chunk material instance
 
 var active_chunks: Dictionary = {}
 
@@ -386,8 +391,8 @@ func get_terrain_height(global_x: float, global_z: float) -> float:
 	
 	return best_height  # Return -1000.0 if no terrain found
 
-# Updated to accept layer (0=Terrain, 1=Water)
-func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0):
+# Updated to accept layer (0=Terrain, 1=Water) and optional material_id
+func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0, material_id: int = -1):
 	# Calculate bounds of the modification sphere/box
 	var min_pos = pos - Vector3(radius, radius, radius)
 	var max_pos = pos + Vector3(radius, radius, radius)
@@ -416,7 +421,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					"radius": radius,
 					"value": value,
 					"shape": shape,
-					"layer": layer
+					"layer": layer,
+					"material_id": material_id
 				})
 				
 
@@ -439,7 +445,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 								"radius": radius,
 								"value": value,
 								"shape": shape,
-								"layer": layer # Pass layer info
+								"layer": layer,
+								"material_id": material_id
 							}
 							tasks_to_add.append(task)
 				else:
@@ -872,7 +879,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		rd.sync()
 		for mod in mods_for_chunk:
 			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
-			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, chunk_pos, mod)
+			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
 	
 	# Free uniform sets
 	if set_gen_t.is_valid(): rd.free_rid(set_gen_t)
@@ -917,6 +924,9 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	var cpu_density_bytes_t = rd.buffer_get_data(dens_buf_terrain)
 	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
 	
+	# Readback material buffer for 3D texture creation
+	var cpu_material_bytes = rd.buffer_get_data(mat_buf_terrain)
+	
 	# Queue to CPU workers for mesh building
 
 	cpu_mutex.lock()
@@ -927,6 +937,7 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 		"vert_floats_water": vert_floats_water,
 		"cpu_dens_w": cpu_density_floats_w,
 		"cpu_dens_t": cpu_density_floats_t,
+		"cpu_mat_t": cpu_material_bytes,  # Material data for 3D texture
 		"dens_buf_terrain": dens_buf_terrain,
 		"dens_buf_water": dens_buf_water,
 		"mat_buf_terrain": mat_buf_terrain  # Material buffer for modify path
@@ -1045,16 +1056,25 @@ func _cpu_thread_function():
 		var result_w = { "mesh": mesh_water, "shape": shape_water }
 		
 		# Send to main thread
-		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t, task.mat_buf_terrain)
+		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t, task.mat_buf_terrain, task.cpu_mat_t)
 
 # Helper to apply a single modification to a density buffer (used during generation replay)
-func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, density_buffer: RID, chunk_pos: Vector3, mod: Dictionary):
+func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, density_buffer: RID, material_buffer: RID, chunk_pos: Vector3, mod: Dictionary):
 	var u_density = RDUniform.new()
 	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_density.binding = 0
 	u_density.add_id(density_buffer)
 	
-	var set_mod = rd.uniform_set_create([u_density], sid_mod, 0)
+	# Add material buffer binding
+	var u_material = RDUniform.new()
+	u_material.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_material.binding = 1
+	if material_buffer.is_valid():
+		u_material.add_id(material_buffer)
+	else:
+		u_material.add_id(density_buffer)  # Fallback
+	
+	var set_mod = rd.uniform_set_create([u_density, u_material], sid_mod, 0)
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
@@ -1076,8 +1096,8 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 	
 	buffer.put_float(mod.value)
 	buffer.put_32(mod.get("shape", 0))
-	buffer.put_float(0.0)
-	buffer.put_float(0.0)
+	buffer.put_32(mod.get("material_id", -1))  # Material ID
+	buffer.put_float(0.0)  # Padding
 	
 	rd.compute_list_set_push_constant(list, buffer.data_array, buffer.data_array.size())
 	rd.compute_list_dispatch(list, 9, 9, 9)
@@ -1092,13 +1112,23 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	var material_buffer = task.get("material_rid", RID())  # Material buffer from chunk
 	var chunk_pos = task.pos
 	var layer = task.get("layer", 0)
+	var material_id = task.get("material_id", -1)
 	
 	var u_density = RDUniform.new()
 	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_density.binding = 0
 	u_density.add_id(density_buffer)
 	
-	var set_mod = rd.uniform_set_create([u_density], sid_mod, 0)
+	# Add material buffer binding
+	var u_material = RDUniform.new()
+	u_material.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_material.binding = 1
+	if material_buffer.is_valid():
+		u_material.add_id(material_buffer)
+	else:
+		u_material.add_id(density_buffer)  # Fallback
+	
+	var set_mod = rd.uniform_set_create([u_density, u_material], sid_mod, 0)
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
@@ -1120,8 +1150,8 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	
 	buffer.put_float(task.value)
 	buffer.put_32(task.get("shape", 0))
-	buffer.put_float(0.0)
-	buffer.put_float(0.0)
+	buffer.put_32(material_id)  # Material ID (int32)
+	buffer.put_float(0.0)  # Padding
 	
 	rd.compute_list_set_push_constant(list, buffer.data_array, buffer.data_array.size())
 	rd.compute_list_dispatch(list, 9, 9, 9)
@@ -1139,10 +1169,15 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	var cpu_density_bytes = rd.buffer_get_data(density_buffer)
 	cpu_density_floats = cpu_density_bytes.to_float32_array()
 	
+	# Read back material buffer for 3D texture recreation
+	var cpu_material_bytes = PackedByteArray()
+	if material_buffer.is_valid():
+		cpu_material_bytes = rd.buffer_get_data(material_buffer)
+	
 	var b_id = task.get("batch_id", -1)
 	var b_count = task.get("batch_count", 1)
 	
-	call_deferred("complete_modification", task.coord, result, layer, b_id, b_count, cpu_density_floats)
+	call_deferred("complete_modification", task.coord, result, layer, b_id, b_count, cpu_density_floats, cpu_material_bytes)
 
 func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
 	if data.size() == 0:
@@ -1247,7 +1282,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 	
 	return { "mesh": mesh, "shape": shape }
 
-func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, mat_t: RID = RID()):
+func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, mat_t: RID = RID(), cpu_mat_t: PackedByteArray = PackedByteArray()):
 	if not active_chunks.has(coord):
 		var tasks = []
 		tasks.append({ "type": "free", "rid": dens_t })
@@ -1271,7 +1306,8 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"dens_w": dens_w,
 		"mat_t": mat_t,
 		"cpu_dens_w": cpu_dens_w,
-		"cpu_dens_t": cpu_dens_t
+		"cpu_dens_t": cpu_dens_t,
+		"cpu_mat_t": cpu_mat_t
 	})
 	pending_nodes_mutex.unlock()
 
@@ -1293,7 +1329,10 @@ func _finalize_chunk_creation(item: Dictionary):
 		
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
-		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos)
+		# Create per-chunk material with 3D texture for material sampling
+		var chunk_material = _create_chunk_material(chunk_pos, item.get("cpu_mat_t", PackedByteArray()))
+		
+		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos, false, chunk_material)
 		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
 		
 		var data = ChunkData.new()
@@ -1305,14 +1344,62 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.material_buffer_terrain = item.mat_t  # Store material buffer
 		data.cpu_density_water = item.cpu_dens_w
 		data.cpu_density_terrain = item.cpu_dens_t
+		data.cpu_material_terrain = item.get("cpu_mat_t", PackedByteArray())
+		data.chunk_material = chunk_material
 		
 		active_chunks[coord] = data
 		
 		chunk_generated.emit(coord, data.node_terrain)
 
-func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array()):
+## Create per-chunk ShaderMaterial with 3D material texture
+func _create_chunk_material(chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
+	# Clone base material
+	var mat = material_terrain.duplicate() as ShaderMaterial
+	
+	# Set chunk origin for world-space to local-space conversion
+	mat.set_shader_parameter("chunk_origin", chunk_pos)
+	
+	# Create 3D texture from material data if available
+	if cpu_mat.size() > 0:
+		var tex3d = _create_material_texture_3d(cpu_mat)
+		if tex3d:
+			mat.set_shader_parameter("material_map", tex3d)
+			mat.set_shader_parameter("has_material_map", true)
+			print("Created 3D material texture for chunk at %s, size=%d bytes" % [chunk_pos, cpu_mat.size()])
+		else:
+			print("ERROR: Failed to create 3D texture for chunk at %s" % chunk_pos)
+	
+	return mat
+
+## Create ImageTexture3D from material buffer (uint8 per voxel)
+func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
+	# Material buffer is 33x33x33 uints (4 bytes each)
+	# We only need the first byte (material ID 0-255)
+	if cpu_mat.size() < DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4:
+		return null
+	
+	# Create array of 2D slices (33 images of 33x33)
+	var images: Array[Image] = []
+	
+	for z in range(DENSITY_GRID_SIZE):
+		var img = Image.create(DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, Image.FORMAT_R8)
+		for y in range(DENSITY_GRID_SIZE):
+			for x in range(DENSITY_GRID_SIZE):
+				var index = x + (y * DENSITY_GRID_SIZE) + (z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+				var byte_offset = index * 4  # uint is 4 bytes
+				var mat_id = cpu_mat[byte_offset] if byte_offset < cpu_mat.size() else 0
+				img.set_pixel(x, y, Color(float(mat_id) / 255.0, 0, 0))
+		images.append(img)
+	
+	# Create 3D texture from image slices
+	var tex3d = ImageTexture3D.new()
+	tex3d.create(Image.FORMAT_R8, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, images)
+	
+	return tex3d
+
+func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array(), cpu_mat: PackedByteArray = PackedByteArray()):
 	if batch_id == -1:
-		_apply_chunk_update(coord, result, layer, cpu_dens)
+		_apply_chunk_update(coord, result, layer, cpu_dens, cpu_mat)
 		return
 	
 	if not pending_batches.has(batch_id):
@@ -1322,14 +1409,14 @@ func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batc
 	batch.received += 1
 	
 	if active_chunks.has(coord):
-		batch.updates.append({ "coord": coord, "result": result, "layer": layer, "cpu_dens": cpu_dens })
+		batch.updates.append({ "coord": coord, "result": result, "layer": layer, "cpu_dens": cpu_dens, "cpu_mat": cpu_mat })
 		
 	if batch.received >= batch.expected:
 		for update in batch.updates:
-			_apply_chunk_update(update.coord, update.result, update.layer, update.cpu_dens)
+			_apply_chunk_update(update.coord, update.result, update.layer, update.cpu_dens, update.get("cpu_mat", PackedByteArray()))
 		pending_batches.erase(batch_id)
 
-func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_dens: PackedFloat32Array):
+func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_dens: PackedFloat32Array, cpu_mat: PackedByteArray = PackedByteArray()):
 	if not active_chunks.has(coord):
 		return
 	var data = active_chunks[coord]
@@ -1337,11 +1424,18 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 	
 	if layer == 0: # Terrain
 		if data.node_terrain: data.node_terrain.queue_free()
-		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos)
+		
+		# Recreate chunk material with updated 3D texture
+		var chunk_material = _create_chunk_material(chunk_pos, cpu_mat)
+		
+		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, false, chunk_material)
 		data.node_terrain = result_node.node if not result_node.is_empty() else null
 		data.collision_shape_terrain = result_node.collision_shape if not result_node.is_empty() else null
+		data.chunk_material = chunk_material
 		if not cpu_dens.is_empty():
 			data.cpu_density_terrain = cpu_dens
+		if not cpu_mat.is_empty():
+			data.cpu_material_terrain = cpu_mat
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water
@@ -1351,7 +1445,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
 
-func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false) -> Dictionary:
+func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false, custom_material: Material = null) -> Dictionary:
 	if mesh == null:
 		return {}
 		
@@ -1372,6 +1466,11 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	
 	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.mesh = mesh
+	
+	# Apply per-chunk material if provided, otherwise mesh uses its surface material
+	if custom_material:
+		mesh_instance.material_override = custom_material
+	
 	# If water, we might want to ensure it's not casting shadows or has specific render flags if needed, 
 	# but the material handles most transparency.
 	if is_water:

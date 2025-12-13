@@ -10,11 +10,12 @@ extends Node
 @onready var selection_box: MeshInstance3D = $"../../../SelectionBox"
 @onready var player = $"../.."
 
-enum Mode { PLAYING, TERRAIN, WATER, BUILDING, ROAD }
+enum Mode { PLAYING, TERRAIN, WATER, BUILDING, ROAD, MATERIAL }
 var current_mode: Mode = Mode.PLAYING
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
 var current_rotation: int = 0
+var current_material_id: int = 2  # Start with Sand (2=Sand, 3=Snow)
 
 # Road building state
 var road_start_pos: Vector3 = Vector3.ZERO
@@ -107,6 +108,8 @@ func _unhandled_input(event):
 				road_type = 1
 			elif current_mode == Mode.PLAYING:
 				current_placeable = PlaceableItem.ROCK
+			elif current_mode == Mode.MATERIAL:
+				current_material_id = 0  # Grass
 			else:
 				current_block_id = 1
 			update_ui()
@@ -115,17 +118,24 @@ func _unhandled_input(event):
 				road_type = 2
 			elif current_mode == Mode.PLAYING:
 				current_placeable = PlaceableItem.GRASS
+			elif current_mode == Mode.MATERIAL:
+				current_material_id = 1  # Stone
 			else:
 				current_block_id = 2
 			update_ui()
 		elif event.keycode == KEY_3:
 			if current_mode == Mode.ROAD:
 				road_type = 3
+			elif current_mode == Mode.MATERIAL:
+				current_material_id = 2  # Sand
 			else:
 				current_block_id = 3
 			update_ui()
 		elif event.keycode == KEY_4:
-			current_block_id = 4
+			if current_mode == Mode.MATERIAL:
+				current_material_id = 3  # Snow
+			else:
+				current_block_id = 4
 			update_ui()
 	
 	if event is InputEventMouseButton:
@@ -146,6 +156,8 @@ func _unhandled_input(event):
 					handle_building_input(event)
 				elif current_mode == Mode.ROAD:
 					handle_road_input(event)
+				elif current_mode == Mode.MATERIAL:
+					handle_material_input(event)
 
 func toggle_mode():
 	if current_mode == Mode.PLAYING:
@@ -157,6 +169,8 @@ func toggle_mode():
 	elif current_mode == Mode.BUILDING:
 		current_mode = Mode.ROAD
 		is_placing_road = false  # Reset road state
+	elif current_mode == Mode.ROAD:
+		current_mode = Mode.MATERIAL
 	else:
 		current_mode = Mode.PLAYING
 	update_ui()
@@ -183,6 +197,10 @@ func update_ui():
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
 		var type_name = type_names[road_type] if road_type < type_names.size() else "Type %d" % road_type
 		mode_label.text = "Mode: ROAD (%s)\n%s\nR-Click: Place road\n[1-3] Road Type" % [type_name, road_status]
+	elif current_mode == Mode.MATERIAL:
+		var mat_names = ["Grass", "Stone", "Sand", "Snow"]
+		var mat_name = mat_names[current_material_id] if current_material_id < mat_names.size() else "Mat %d" % current_material_id
+		mode_label.text = "Mode: MATERIAL\nPlacing: %s\nL-Click: Dig, R-Click: Place\n[1-4] Select Material" % mat_name
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -360,6 +378,25 @@ func raycast(length: float, collide_areas: bool = false, exclude_water: bool = f
 		return result
 	
 	return space_state.intersect_ray(query)
+
+## Handle material placement mode input
+func handle_material_input(event):
+	var hit = raycast(100.0, false)
+	if hit:
+		var target_pos
+		var val = 0.0
+		
+		if event.button_index == MOUSE_BUTTON_LEFT: # Dig
+			var p = hit.position - hit.normal * 0.1
+			target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
+			val = 0.5 # Dig (Positive density)
+			terrain_manager.modify_terrain(target_pos, 0.6, val, 1, 0, -1)  # -1 = no material change
+			
+		elif event.button_index == MOUSE_BUTTON_RIGHT: # Place with material
+			var p = hit.position + hit.normal * 0.1
+			target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
+			val = -0.5 # Place (Negative density)
+			terrain_manager.modify_terrain(target_pos, 0.6, val, 1, 0, current_material_id)
 
 func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
 	# Normalize direction just in case, though usually it is.

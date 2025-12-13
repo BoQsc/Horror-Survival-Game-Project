@@ -25,6 +25,11 @@ uniform float procedural_road_width = 8.0;
 uniform float terrain_height = 20.0;
 uniform float noise_frequency = 0.02;
 
+// Per-chunk material system (world-space sampling)
+uniform sampler3D material_map : filter_nearest;  // 3D texture with material IDs
+uniform vec3 chunk_origin = vec3(0.0);  // Chunk world position for UV calculation
+uniform bool has_material_map = false;  // Whether this chunk has player-placed materials
+
 varying vec3 world_pos;
 varying vec3 world_normal;
 varying vec3 vertex_color;  // Material color from GPU (legacy, kept for compatibility)
@@ -133,13 +138,39 @@ void fragment() {
 	// Mix textures based on material
 	vec3 material_color = col_grass * is_grass + col_rock * is_stone;
 	
-	// --- Biome Logic (applied on top of material) ---
+	// --- Player Material Override (world-space 3D texture sampling) ---
+	// This bypasses vertex interpolation by sampling at pixel position
+	bool is_player_placed = false;
+	vec3 player_material_color = vec3(0.0);
+	
+	if (has_material_map) {
+		// Convert world position to chunk-local UV (0..1 range for 33 voxel grid)
+		vec3 local_pos = (world_pos - chunk_origin) / 32.0;  // Normalize to 0..1.03125 (33 voxels)
+		local_pos = clamp(local_pos, vec3(0.0), vec3(1.0));  // Clamp to valid range
+		
+		// Sample material ID from 3D texture (R channel stores id/255)
+		float mat_raw = texture(material_map, local_pos).r;
+		int mat_id = int(round(mat_raw * 255.0));
+		
+		// Material IDs: 0=Grass, 1=Stone, 2=Sand, 3=Snow
+		// Only override if it's a "placeable" material (2=Sand, 3=Snow for now)
+		// Grass(0) and Stone(1) are procedural, so don't override
+		if (mat_id == 2) {
+			player_material_color = col_sand;
+			is_player_placed = true;
+		} else if (mat_id == 3) {
+			player_material_color = col_snow;
+			is_player_placed = true;
+		}
+	}
+	
+	// --- Biome Logic (skipped for player-placed materials) ---
 	// Use world X/Z to add biome variation
 	float biome_val = fbm(world_pos.xz * biome_scale);
 	
-	// Only apply biome blending on grass material (surface)
-	vec3 biome_color = material_color;
-	if (is_grass > 0.5) {
+	// Only apply biome blending on grass material (surface) and not player-placed
+	vec3 biome_color = is_player_placed ? player_material_color : material_color;
+	if (!is_player_placed && is_grass > 0.5) {
 		// Mix Sand -> Grass
 		float sand_mix = smoothstep(-0.2, -0.4, biome_val);
 		biome_color = mix(biome_color, col_sand, sand_mix);
@@ -153,29 +184,31 @@ void fragment() {
 		biome_color = mix(biome_color, col_snow, snow_biome_mix);
 	}
 	
-	// --- Slope Logic (Steep cliffs are rock) ---
+	// --- Slope Logic (Steep cliffs are rock, skip for player-placed) ---
 	float slope = normal.y;
-	float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
-	biome_color = mix(biome_color, col_rock, cliff_mix);
+	if (!is_player_placed) {
+		float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
+		biome_color = mix(biome_color, col_rock, cliff_mix);
+	}
 	
-	// --- Procedural Road Texture ---
+	// --- Procedural Road Texture (skip for player-placed) ---
 	float proc_road_dist = get_procedural_road_dist(world_pos.xz);
 	float proc_road_intensity = 0.0;
-	if (proc_road_dist < procedural_road_width) {
+	if (!is_player_placed && proc_road_dist < procedural_road_width) {
 		// Only on flat surfaces (slope > 0.85)
 		float road_slope_ok = smoothstep(0.8, 0.9, slope);
 		proc_road_intensity = smoothstep(procedural_road_width, procedural_road_width * 0.3, proc_road_dist) * road_slope_ok;
 	}
 	biome_color = mix(biome_color, col_road, proc_road_intensity);
 	
-	// --- Player Road Overlay (mask-based) ---
+	// --- Player Road Overlay (skip for player-placed materials) ---
 	// Sample road mask at world position to get road intensity
 	vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
 	float road_raw = texture(road_mask, road_uv).r;
 	
 	// Relaxed slope check for Road Type 3 graded surfaces
 	float road_slope_mask = smoothstep(0.7, 0.85, slope);
-	float road_intensity = road_raw * road_slope_mask;
+	float road_intensity = is_player_placed ? 0.0 : road_raw * road_slope_mask;
 	
 	biome_color = mix(biome_color, col_road, road_intensity);
 	
