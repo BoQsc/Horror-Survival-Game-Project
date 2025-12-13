@@ -147,28 +147,32 @@ void fragment() {
 	vec3 player_material_color = vec3(0.0);
 	
 	if (has_material_map) {
-		// Bias sampling toward the SOLID side of the surface using normal
-		// Normal points away from solid, so we subtract a small offset in normal direction
-		// This ensures we sample from the placed block's voxel, not the existing terrain
-		vec3 biased_pos = local_vertex - normal * 0.5;
-		vec3 voxel_pos = floor(biased_pos + vec3(0.5));  // Round to nearest voxel
-		vec3 local_pos = voxel_pos / 32.0;
-		local_pos = clamp(local_pos, vec3(0.0), vec3(1.0));
+		// Sample from BOTH the direct voxel and biased (toward solid) voxel
+		// Use player material if either has it - covers all face orientations
 		
-		// Sample material ID from 3D texture (R channel stores id/255)
-		float mat_raw = texture(material_map, local_pos).r;
-		int mat_id = int(round(mat_raw * 255.0));
+		// Direct sample at vertex position
+		vec3 voxel_pos1 = floor(local_vertex + vec3(0.5));
+		vec3 local_pos1 = clamp(voxel_pos1 / 32.0, vec3(0.0), vec3(1.0));
+		float mat_raw1 = texture(material_map, local_pos1).r;
+		int mat_id1 = int(round(mat_raw1 * 255.0));
 		
-		// Only apply player materials to relatively FLAT surfaces (top faces)
-		// This prevents the "flap" issue where nearby slopes sample the same texture
-		float surface_flatness = normal.y;
-		bool is_flat_enough = surface_flatness > -1.0;  // Disabled: show on ALL surfaces
+		// Biased sample toward solid side (using normal)
+		vec3 biased_pos = local_vertex - normal * 0.7;
+		vec3 voxel_pos2 = floor(biased_pos + vec3(0.5));
+		vec3 local_pos2 = clamp(voxel_pos2 / 32.0, vec3(0.0), vec3(1.0));
+		float mat_raw2 = texture(material_map, local_pos2).r;
+		int mat_id2 = int(round(mat_raw2 * 255.0));
 		
-		// Player-placed material IDs use 100+ range to avoid conflicting with procedural (0-2)
+		// Use whichever has player material (prefer first, check second)
+		int mat_id = (mat_id1 >= 100) ? mat_id1 : mat_id2;
+		
+		// Player-placed material IDs use 100+ range
 		// 100=Grass, 101=Stone, 102=Sand, 103=Snow
-		if (mat_id >= 100 && is_flat_enough) {
+		// DEBUG: Using solid colors to see if detection works
+		if (mat_id >= 100) {
 			if (mat_id == 102) {
-				player_material_color = col_sand;
+				player_material_color = col_sand;  // Use texture
+				//player_material_color = vec3(1.0, 1.0, 0.0);  // DEBUG: Yellow for sand
 			} else if (mat_id == 103) {
 				player_material_color = col_snow;
 			} else if (mat_id == 100) {
