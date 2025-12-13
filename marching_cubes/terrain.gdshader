@@ -1,4 +1,5 @@
 shader_type spatial;
+render_mode cull_disabled;  // DEBUG: disable backface culling to see if faces are inverted
 
 uniform sampler2D texture_grass : source_color, filter_linear_mipmap;
 uniform sampler2D texture_rock : source_color, filter_linear_mipmap;
@@ -160,22 +161,38 @@ void fragment() {
 		int mat_id1 = int(round(mat_raw1 * 255.0));
 		
 		// Biased sample toward solid side (using normal)
-		vec3 biased_pos = local_vertex - normal * 0.7;
+		vec3 biased_pos = local_vertex - normal * 0.8;
 		vec3 voxel_pos2 = floor(biased_pos + vec3(0.5));
 		vec3 local_pos2 = clamp(voxel_pos2 / 32.0, vec3(0.0), vec3(1.0));
 		float mat_raw2 = texture(material_map, local_pos2).r;
 		int mat_id2 = int(round(mat_raw2 * 255.0));
 		
-		// Use whichever has player material (prefer first, check second)
-		int mat_id = (mat_id1 >= 100) ? mat_id1 : mat_id2;
+		// Third sample: deeper inward
+		vec3 deep_pos = local_vertex - normal * 1.5;
+		vec3 voxel_pos3 = floor(deep_pos + vec3(0.5));
+		vec3 local_pos3 = clamp(voxel_pos3 / 32.0, vec3(0.0), vec3(1.0));
+		float mat_raw3 = texture(material_map, local_pos3).r;
+		int mat_id3 = int(round(mat_raw3 * 255.0));
+		
+		// Fourth sample: even deeper
+		vec3 vdeep_pos = local_vertex - normal * 2.5;
+		vec3 voxel_pos4 = floor(vdeep_pos + vec3(0.5));
+		vec3 local_pos4 = clamp(voxel_pos4 / 32.0, vec3(0.0), vec3(1.0));
+		float mat_raw4 = texture(material_map, local_pos4).r;
+		int mat_id4 = int(round(mat_raw4 * 255.0));
+		
+		// Use first player material found from any sample
+		int mat_id = 0;
+		if (mat_id1 >= 100) mat_id = mat_id1;
+		else if (mat_id2 >= 100) mat_id = mat_id2;
+		else if (mat_id3 >= 100) mat_id = mat_id3;
+		else if (mat_id4 >= 100) mat_id = mat_id4;
 		
 		// Player-placed material IDs use 100+ range
 		// 100=Grass, 101=Stone, 102=Sand, 103=Snow
-		// DEBUG: Using solid colors to see if detection works
 		if (mat_id >= 100) {
 			if (mat_id == 102) {
-				player_material_color = col_sand;  // Use texture
-				//player_material_color = vec3(1.0, 1.0, 0.0);  // DEBUG: Yellow for sand
+				player_material_color = col_sand;
 			} else if (mat_id == 103) {
 				player_material_color = col_snow;
 			} else if (mat_id == 100) {
@@ -264,6 +281,11 @@ void fragment() {
 		}
 		if (dist_y < line_width) {
 			ALBEDO = mix(ALBEDO, vec3(0.0, 0.0, 1.0), 0.8);  // Blue for Y bounds
+		}
+		
+		// CYAN = has_material_map but no player material found (BUG INDICATOR!)
+		if (has_material_map && !is_player_placed) {
+			ALBEDO = mix(ALBEDO, vec3(0.0, 1.0, 1.0), 0.7);  // Cyan = sampling failed
 		}
 	}
 }

@@ -408,8 +408,10 @@ func get_terrain_height(global_x: float, global_z: float) -> float:
 # Updated to accept layer (0=Terrain, 1=Water) and optional material_id
 func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0, material_id: int = -1):
 	# Calculate bounds of the modification sphere/box
-	var min_pos = pos - Vector3(radius, radius, radius)
-	var max_pos = pos + Vector3(radius, radius, radius)
+	# Add extra margin (1.0) to account for material radius extension and shader sampling
+	var extra_margin = 1.0 if material_id >= 0 else 0.0
+	var min_pos = pos - Vector3(radius + extra_margin, radius + extra_margin, radius + extra_margin)
+	var max_pos = pos + Vector3(radius + extra_margin, radius + extra_margin, radius + extra_margin)
 	
 	var min_chunk_x = int(floor(min_pos.x / CHUNK_STRIDE))
 	var max_chunk_x = int(floor(max_pos.x / CHUNK_STRIDE))
@@ -438,6 +440,10 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					"layer": layer,
 					"material_id": material_id
 				})
+				
+				# DEBUG: Trace material modifications
+				if material_id >= 0:
+					print("[MATMOD] Material %d queued for chunk %s (brush at %s, radius %.2f)" % [material_id, coord, pos, radius])
 				
 
 				# Only dispatch GPU task if chunk is currently loaded
