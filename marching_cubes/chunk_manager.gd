@@ -200,6 +200,20 @@ func _process(delta):
 	process_pending_nodes()
 	update_collision_proximity()  # Enable/disable collision based on player distance
 
+var debug_chunk_bounds: bool = false
+
+func _unhandled_input(event):
+	# F9 toggles chunk boundary visualization
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F9:
+		debug_chunk_bounds = !debug_chunk_bounds
+		print("[DEBUG] Chunk bounds visualization: ", "ON" if debug_chunk_bounds else "OFF")
+		# Update all chunk materials
+		for coord in active_chunks:
+			var data = active_chunks[coord]
+			if data and data.chunk_material:
+				data.chunk_material.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
+		material_terrain.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
+
 func _update_fps_tracking(delta: float):
 	var instant_fps = 1.0 / delta if delta > 0 else 60.0
 	fps_samples.append(instant_fps)

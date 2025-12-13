@@ -30,6 +30,9 @@ uniform sampler3D material_map : filter_nearest;  // 3D texture with material ID
 uniform vec3 chunk_origin = vec3(0.0);  // Chunk world position for UV calculation
 uniform bool has_material_map = false;  // Whether this chunk has player-placed materials
 
+// Debug visualization
+uniform bool debug_show_chunk_bounds = false;  // Toggle to show chunk boundary lines
+
 varying vec3 world_pos;
 varying vec3 world_normal;
 varying vec3 vertex_color;  // Material color from GPU (legacy, kept for compatibility)
@@ -244,5 +247,23 @@ void fragment() {
 	} else {
 		// Player-placed materials: output directly without weather overlay
 		ALBEDO = biome_color;
+	}
+	
+	// --- Debug: Chunk Boundary Visualization ---
+	if (debug_show_chunk_bounds) {
+		float chunk_size = 32.0;
+		// Distance to nearest chunk boundary in X and Z
+		float dist_x = min(mod(world_pos.x, chunk_size), chunk_size - mod(world_pos.x, chunk_size));
+		float dist_z = min(mod(world_pos.z, chunk_size), chunk_size - mod(world_pos.z, chunk_size));
+		float dist_y = min(mod(world_pos.y, chunk_size), chunk_size - mod(world_pos.y, chunk_size));
+		
+		// Draw red lines at X/Z boundaries, blue at Y
+		float line_width = 0.3;
+		if (dist_x < line_width || dist_z < line_width) {
+			ALBEDO = mix(ALBEDO, vec3(1.0, 0.0, 0.0), 0.8);  // Red for X/Z bounds
+		}
+		if (dist_y < line_width) {
+			ALBEDO = mix(ALBEDO, vec3(0.0, 0.0, 1.0), 0.8);  // Blue for Y bounds
+		}
 	}
 }
