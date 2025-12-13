@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=16 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
@@ -8,6 +8,7 @@
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://marching_cubes/roads/road_manager.gd" id="7_roads"]
 [ext_resource type="Script" uid="uid://ds7smfcuouehv" path="res://building_system/prefab_spawner.gd" id="8_prefabs"]
+[ext_resource type="PackedScene" path="res://entities/entity_manager.tscn" id="9_entities"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -52,12 +53,13 @@ shape = SubResource("PlayerShape")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 script = ExtResource("2_camera")
 
-[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager", "road_manager")]
+[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager", "road_manager", "entity_manager")]
 script = ExtResource("3_interact")
 terrain_manager = NodePath("../../../TerrainManager")
 building_manager = NodePath("../../../BuildingManager")
 vegetation_manager = NodePath("../../../VegetationManager")
 road_manager = NodePath("../../../RoadManager")
+entity_manager = NodePath("../../../EntityManager")
 
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
@@ -130,6 +132,9 @@ terrain_manager = NodePath("../TerrainManager")
 script = ExtResource("8_prefabs")
 terrain_manager = NodePath("../TerrainManager")
 building_manager = NodePath("../BuildingManager")
+
+[node name="EntityManager" parent="." node_paths=PackedStringArray("terrain_manager") instance=ExtResource("9_entities")]
+terrain_manager = NodePath("../TerrainManager")
 
 [node name="SelectionBox" type="MeshInstance3D" parent="."]
 visible = false

@@ -1,0 +1,11 @@
+[gd_scene load_steps=3 format=3 uid="uid://dxkm8p7qhwvam"]
+
+[ext_resource type="Script" path="res://entities/entity_manager.gd" id="1"]
+[ext_resource type="PackedScene" path="res://entities/entity_base.tscn" id="2"]
+
+[node name="EntityManager" type="Node3D"]
+script = ExtResource("1")
+max_entities = 50
+spawn_radius = 80.0
+despawn_radius = 120.0
+default_entity_scene = ExtResource("2")

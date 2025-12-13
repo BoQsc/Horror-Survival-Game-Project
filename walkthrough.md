@@ -26,14 +26,14 @@ The terrain system uses **GPU-accelerated Marching Cubes** with a 3D chunk grid 
 
 ```mermaid
 flowchart TD
-    A[Player Position] --> B{Above Ground?}
-    B -->|Yes| C[Load Y=0 chunks]
-    B -->|No| D[Load player Y ± 1 + Y=0]
-    C --> E[Load modified chunks]
-    D --> E
-    E --> F[GPU generates density + mesh]
-    F --> G[Apply stored modifications]
-    G --> H[Chunk visible]
+	A[Player Position] --> B{Above Ground?}
+	B -->|Yes| C[Load Y=0 chunks]
+	B -->|No| D[Load player Y ± 1 + Y=0]
+	C --> E[Load modified chunks]
+	D --> E
+	E --> F[GPU generates density + mesh]
+	F --> G[Apply stored modifications]
+	G --> H[Chunk visible]
 ```
 
 ### Loading Rules

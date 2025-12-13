@@ -4,6 +4,7 @@ extends Node
 @export var building_manager: Node3D
 @export var vegetation_manager: Node3D
 @export var road_manager: Node3D  # Road placement system
+@export var entity_manager: Node3D  # Entity spawning system
 
 @onready var mode_label: Label = $"../../../UI/ModeLabel"
 @onready var camera: Camera3D = $".."
@@ -161,6 +162,12 @@ func _unhandled_input(event):
 				material_brush_index = (material_brush_index + 1) % 3
 				material_brush_radius = material_brush_sizes[material_brush_index]
 				update_ui()
+		elif event.keycode == KEY_F10:
+			# F10: Spawn test entity
+			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
+				var entity = entity_manager.spawn_entity_near_player()
+				if entity:
+					print("Spawned entity at %s (Total: %d)" % [entity.global_position, entity_manager.get_entity_count()])
 	
 	if event is InputEventMouseButton:
 		if event.pressed:
