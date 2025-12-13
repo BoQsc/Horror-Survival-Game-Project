@@ -100,7 +100,7 @@ vec3 interpolate_vertex(vec3 p1, vec3 p2, float v1, float v2) {
 void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
     
-    if (id.x >= uint(CHUNK_SIZE) || id.y >= uint(CHUNK_SIZE) || id.z >= uint(CHUNK_SIZE)) {
+    if (id.x >= uint(CHUNK_SIZE) - 1u || id.y >= uint(CHUNK_SIZE) - 1u || id.z >= uint(CHUNK_SIZE) - 1u) {
         return;
     }
 

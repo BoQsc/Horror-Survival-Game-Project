@@ -1,5 +1,4 @@
 shader_type spatial;
-render_mode cull_disabled;  // DEBUG: disable backface culling to see if faces are inverted
 
 uniform sampler2D texture_grass : source_color, filter_linear_mipmap;
 uniform sampler2D texture_rock : source_color, filter_linear_mipmap;
@@ -281,11 +280,6 @@ void fragment() {
 		}
 		if (dist_y < line_width) {
 			ALBEDO = mix(ALBEDO, vec3(0.0, 0.0, 1.0), 0.8);  // Blue for Y bounds
-		}
-		
-		// CYAN = has_material_map but no player material found (BUG INDICATOR!)
-		if (has_material_map && !is_player_placed) {
-			ALBEDO = mix(ALBEDO, vec3(0.0, 1.0, 1.0), 0.7);  // Cyan = sampling failed
 		}
 	}
 }
