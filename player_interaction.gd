@@ -15,7 +15,7 @@ var current_mode: Mode = Mode.PLAYING
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
 var current_rotation: int = 0
-var current_material_id: int = 2  # Start with Sand (2=Sand, 3=Snow)
+var current_material_id: int = 102  # Start with Sand (100=Grass, 101=Stone, 102=Sand, 103=Snow)
 
 # Road building state
 var road_start_pos: Vector3 = Vector3.ZERO
@@ -109,7 +109,7 @@ func _unhandled_input(event):
 			elif current_mode == Mode.PLAYING:
 				current_placeable = PlaceableItem.ROCK
 			elif current_mode == Mode.MATERIAL:
-				current_material_id = 0  # Grass
+				current_material_id = 100  # Grass
 			else:
 				current_block_id = 1
 			update_ui()
@@ -119,7 +119,7 @@ func _unhandled_input(event):
 			elif current_mode == Mode.PLAYING:
 				current_placeable = PlaceableItem.GRASS
 			elif current_mode == Mode.MATERIAL:
-				current_material_id = 1  # Stone
+				current_material_id = 101  # Stone
 			else:
 				current_block_id = 2
 			update_ui()
@@ -127,13 +127,13 @@ func _unhandled_input(event):
 			if current_mode == Mode.ROAD:
 				road_type = 3
 			elif current_mode == Mode.MATERIAL:
-				current_material_id = 2  # Sand
+				current_material_id = 102  # Sand
 			else:
 				current_block_id = 3
 			update_ui()
 		elif event.keycode == KEY_4:
 			if current_mode == Mode.MATERIAL:
-				current_material_id = 3  # Snow
+				current_material_id = 103  # Snow
 			else:
 				current_block_id = 4
 			update_ui()
@@ -199,7 +199,8 @@ func update_ui():
 		mode_label.text = "Mode: ROAD (%s)\n%s\nR-Click: Place road\n[1-3] Road Type" % [type_name, road_status]
 	elif current_mode == Mode.MATERIAL:
 		var mat_names = ["Grass", "Stone", "Sand", "Snow"]
-		var mat_name = mat_names[current_material_id] if current_material_id < mat_names.size() else "Mat %d" % current_material_id
+		var mat_index = current_material_id - 100  # 100+ offset
+		var mat_name = mat_names[mat_index] if mat_index >= 0 and mat_index < mat_names.size() else "Mat %d" % current_material_id
 		mode_label.text = "Mode: MATERIAL\nPlacing: %s\nL-Click: Dig, R-Click: Place\n[1-4] Select Material" % mat_name
 
 func update_selection_box():

@@ -144,21 +144,21 @@ void fragment() {
 	vec3 player_material_color = vec3(0.0);
 	
 	if (has_material_map) {
-		// Convert world position to chunk-local UV (0..1 range for 33 voxel grid)
-		vec3 local_pos = (world_pos - chunk_origin) / 32.0;  // Normalize to 0..1.03125 (33 voxels)
+		// Convert world position to chunk-local UV (0..1 range)
+		// The voxel grid is 33x33x33 covering 32 world units per axis
+		vec3 local_pos = (world_pos - chunk_origin) / 32.0;
 		local_pos = clamp(local_pos, vec3(0.0), vec3(1.0));  // Clamp to valid range
 		
 		// Sample material ID from 3D texture (R channel stores id/255)
 		float mat_raw = texture(material_map, local_pos).r;
 		int mat_id = int(round(mat_raw * 255.0));
 		
-		// Material IDs: 0=Grass, 1=Stone, 2=Sand, 3=Snow
-		// Only override if it's a "placeable" material (2=Sand, 3=Snow for now)
-		// Grass(0) and Stone(1) are procedural, so don't override
-		if (mat_id == 2) {
+		// Player-placed material IDs use 100+ range to avoid conflicting with procedural (0-2)
+		// 100=Grass, 101=Stone, 102=Sand, 103=Snow
+		if (mat_id == 102) {
 			player_material_color = col_sand;
 			is_player_placed = true;
-		} else if (mat_id == 3) {
+		} else if (mat_id == 103) {
 			player_material_color = col_snow;
 			is_player_placed = true;
 		}
