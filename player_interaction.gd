@@ -16,7 +16,9 @@ var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
 var current_rotation: int = 0
 var current_material_id: int = 102  # Start with Sand (100=Grass, 101=Stone, 102=Sand, 103=Snow)
-var material_brush_radius: float = 1.5  # Default to large brush (1.5=large, 0.6=small)
+var material_brush_sizes: Array = [0.6, 1.5, 3.0]  # Small, Medium, Large
+var material_brush_index: int = 1  # Default to medium (index 1)
+var material_brush_radius: float = 1.5  # Computed from index
 
 # Road building state
 var road_start_pos: Vector3 = Vector3.ZERO
@@ -140,11 +142,24 @@ func _unhandled_input(event):
 			update_ui()
 		elif event.keycode == KEY_5:
 			if current_mode == Mode.MATERIAL:
-				material_brush_radius = 0.6  # Small brush
+				material_brush_index = 0  # Small brush
+				material_brush_radius = material_brush_sizes[material_brush_index]
 				update_ui()
 		elif event.keycode == KEY_6:
 			if current_mode == Mode.MATERIAL:
-				material_brush_radius = 1.5  # Large brush
+				material_brush_index = 1  # Medium brush
+				material_brush_radius = material_brush_sizes[material_brush_index]
+				update_ui()
+		elif event.keycode == KEY_7:
+			if current_mode == Mode.MATERIAL:
+				material_brush_index = 2  # Large brush
+				material_brush_radius = material_brush_sizes[material_brush_index]
+				update_ui()
+		elif event.keycode == KEY_Q:
+			if current_mode == Mode.MATERIAL:
+				# Toggle through brush sizes: 0 -> 1 -> 2 -> 0...
+				material_brush_index = (material_brush_index + 1) % 3
+				material_brush_radius = material_brush_sizes[material_brush_index]
 				update_ui()
 	
 	if event is InputEventMouseButton:
@@ -210,8 +225,9 @@ func update_ui():
 		var mat_names = ["Grass", "Stone", "Sand", "Snow"]
 		var mat_index = current_material_id - 100  # 100+ offset
 		var mat_name = mat_names[mat_index] if mat_index >= 0 and mat_index < mat_names.size() else "Mat %d" % current_material_id
-		var brush_size_name = "Small" if material_brush_radius < 1.0 else "Large"
-		mode_label.text = "Mode: MATERIAL\nPlacing: %s\nBrush: %s (%.1f)\nL-Click: Dig, R-Click: Place\n[1-4] Material, [5-6] Brush Size" % [mat_name, brush_size_name, material_brush_radius]
+		var brush_size_names = ["Small", "Medium", "Large"]
+		var brush_size_name = brush_size_names[material_brush_index]
+		mode_label.text = "Mode: MATERIAL\nPlacing: %s\nBrush: %s (%.1f)\nL-Click: Dig, R-Click: Place\n[1-4] Material, [5-7] Size, [Q] Toggle" % [mat_name, brush_size_name, material_brush_radius]
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -407,9 +423,8 @@ func handle_material_input(event):
 			var p = hit.position + hit.normal * 0.1
 			target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 			val = -0.5 # Place (Negative density)
-			# Testing small brush with solid-conditional material extension
-			print("[MATDBG] Placing at world %s with mat_id=%d, radius=0.7" % [target_pos, current_material_id])
-			terrain_manager.modify_terrain(target_pos, 0.6, val, 1, 0, current_material_id)
+			print("[MATDBG] Placing at world %s with mat_id=%d, radius=%.1f" % [target_pos, current_material_id, material_brush_radius])
+			terrain_manager.modify_terrain(target_pos, material_brush_radius, val, 1, 0, current_material_id)
 
 func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
 	# Normalize direction just in case, though usually it is.

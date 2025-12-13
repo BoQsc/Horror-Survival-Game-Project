@@ -56,19 +56,28 @@ void main() {
     }
     
     // Write material when PLACING terrain (negative brush_value = adding solid)
-    // Extended material radius (+1.5) but ONLY to solid voxels
-    // This covers boundary voxels without spilling onto air/distant terrain
+    // Different logic for small vs large brushes:
+    // - Small brushes: extended radius BUT only to solid voxels (prevents spill)
+    // - Large brushes: simple extension (enough coverage without spill issues)
     if (params.material_id >= 0 && params.brush_value < 0.0) {
         vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
         float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
-        float material_radius = params.brush_pos.w + 0.6;  // Extended radius for small brush support
+        float brush_radius = params.brush_pos.w;
         
-        // Read the CURRENT density (after modification above)
-        float current_density = density_buffer.values[index];
+        bool should_write = false;
         
-        // Only write material if within extended radius AND voxel is SOLID
-        // This prevents spilling onto distant/air terrain
-        if (max_dist <= material_radius && current_density < 0.0) {
+        if (brush_radius < 1.0) {
+            // SMALL BRUSH: extended radius (+0.6) but only to solid voxels
+            float material_radius = brush_radius + 0.6;
+            float current_density = density_buffer.values[index];
+            should_write = (max_dist <= material_radius && current_density < 0.0);
+        } else {
+            // LARGE BRUSH: simple extension (+0.49), no solid check needed
+            float material_radius = brush_radius + 0.49;
+            should_write = (max_dist <= material_radius);
+        }
+        
+        if (should_write) {
             material_buffer.values[index] = uint(params.material_id);
         }
     }
