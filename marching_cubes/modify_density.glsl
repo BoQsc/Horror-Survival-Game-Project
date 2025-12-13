@@ -61,7 +61,7 @@ void main() {
     if (params.material_id >= 0 && params.brush_value < 0.0) {
         vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
         float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
-        float material_radius = params.brush_pos.w + 0.5;  // Extended radius for small brush support
+        float material_radius = params.brush_pos.w + 0.6;  // Extended radius for small brush support
         
         // Read the CURRENT density (after modification above)
         float current_density = density_buffer.values[index];

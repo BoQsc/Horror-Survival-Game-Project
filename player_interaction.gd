@@ -398,7 +398,7 @@ func handle_material_input(event):
 			target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 			val = -0.5 # Place (Negative density)
 			# Testing small brush with solid-conditional material extension
-			print("[MATDBG] Placing at world %s with mat_id=%d, radius=0.6" % [target_pos, current_material_id])
+			print("[MATDBG] Placing at world %s with mat_id=%d, radius=0.7" % [target_pos, current_material_id])
 			terrain_manager.modify_terrain(target_pos, 0.6, val, 1, 0, current_material_id)
 
 func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
