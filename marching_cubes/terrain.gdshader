@@ -229,9 +229,14 @@ void fragment() {
 	// --- Dynamic Weather Snow ---
 	// Applies everywhere based on global_snow_amount
 	// Snow sticks to flat surfaces more (slope > 0.5)
-	float weather_snow = global_snow_amount * smoothstep(0.3, 0.6, slope);
-	// Also adds some noise to the snow edge
-	weather_snow *= smoothstep(0.0, 1.0, noise(world_pos.xz * 0.5) + 0.5); 
-	
-	ALBEDO = mix(biome_color, col_snow, clamp(weather_snow, 0.0, 1.0));
+	// Skip for player-placed materials so they stay pure
+	if (!is_player_placed) {
+		float weather_snow = global_snow_amount * smoothstep(0.3, 0.6, slope);
+		// Also adds some noise to the snow edge
+		weather_snow *= smoothstep(0.0, 1.0, noise(world_pos.xz * 0.5) + 0.5); 
+		ALBEDO = mix(biome_color, col_snow, clamp(weather_snow, 0.0, 1.0));
+	} else {
+		// Player-placed materials: output directly without weather overlay
+		ALBEDO = biome_color;
+	}
 }
