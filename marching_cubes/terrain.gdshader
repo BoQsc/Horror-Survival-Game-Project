@@ -81,10 +81,13 @@ float get_procedural_road_dist(vec2 pos) {
 	return min(dist_to_x_road, dist_to_z_road);
 }
 
+varying vec3 local_vertex;  // Mesh vertex in local chunk space (0-32)
+
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
 	vertex_color = COLOR.rgb;  // Pass material color to fragment
+	local_vertex = VERTEX;  // Pass local position for 3D texture sampling
 }
 
 vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos) {
@@ -144,22 +147,33 @@ void fragment() {
 	vec3 player_material_color = vec3(0.0);
 	
 	if (has_material_map) {
-		// Convert world position to chunk-local UV (0..1 range)
-		// The voxel grid is 33x33x33 covering 32 world units per axis
-		vec3 local_pos = (world_pos - chunk_origin) / 32.0;
+		// Snap to voxel grid centers to prevent "sliding" due to interpolated vertex positions
+		// Marching cubes vertices are at fractional positions, but materials are stored at integer voxels
+		vec3 voxel_center = floor(local_vertex + vec3(0.5));  // Round to nearest voxel
+		vec3 local_pos = voxel_center / 32.0;
 		local_pos = clamp(local_pos, vec3(0.0), vec3(1.0));  // Clamp to valid range
 		
 		// Sample material ID from 3D texture (R channel stores id/255)
 		float mat_raw = texture(material_map, local_pos).r;
 		int mat_id = int(round(mat_raw * 255.0));
 		
+		// Only apply player materials to relatively FLAT surfaces (top faces)
+		// This prevents the "flap" issue where nearby slopes sample the same texture
+		float surface_flatness = normal.y;
+		bool is_flat_enough = surface_flatness > -1.0;  // Disabled: show on ALL surfaces
+		
 		// Player-placed material IDs use 100+ range to avoid conflicting with procedural (0-2)
 		// 100=Grass, 101=Stone, 102=Sand, 103=Snow
-		if (mat_id == 102) {
-			player_material_color = col_sand;
-			is_player_placed = true;
-		} else if (mat_id == 103) {
-			player_material_color = col_snow;
+		if (mat_id >= 100 && is_flat_enough) {
+			if (mat_id == 102) {
+				player_material_color = col_sand;
+			} else if (mat_id == 103) {
+				player_material_color = col_snow;
+			} else if (mat_id == 100) {
+				player_material_color = col_grass;
+			} else {
+				player_material_color = col_rock;
+			}
 			is_player_placed = true;
 		}
 	}

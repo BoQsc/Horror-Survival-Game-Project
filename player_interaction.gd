@@ -397,7 +397,8 @@ func handle_material_input(event):
 			var p = hit.position + hit.normal * 0.1
 			target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 			val = -0.5 # Place (Negative density)
-			terrain_manager.modify_terrain(target_pos, 0.6, val, 1, 0, current_material_id)
+			print("[MATDBG] Placing at world %s with mat_id=%d, radius=2.0" % [target_pos, current_material_id])
+			terrain_manager.modify_terrain(target_pos, 2.0, val, 1, 0, current_material_id)  # Increased radius to 2.0
 
 func raycast_voxel_grid(origin: Vector3, direction: Vector3, max_dist: float):
 	# Normalize direction just in case, though usually it is.

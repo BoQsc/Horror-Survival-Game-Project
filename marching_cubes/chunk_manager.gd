@@ -1361,13 +1361,14 @@ func _create_chunk_material(chunk_pos: Vector3, cpu_mat: PackedByteArray) -> Sha
 	
 	# Create 3D texture from material data if available
 	if cpu_mat.size() > 0:
+		print("[MATDBG] Creating chunk material: chunk_origin=%s" % chunk_pos)
 		var tex3d = _create_material_texture_3d(cpu_mat)
 		if tex3d:
 			mat.set_shader_parameter("material_map", tex3d)
 			mat.set_shader_parameter("has_material_map", true)
-			print("Created 3D material texture for chunk at %s, size=%d bytes" % [chunk_pos, cpu_mat.size()])
+			print("[MATDBG] -> 3D texture created and assigned, has_material_map=true")
 		else:
-			print("ERROR: Failed to create 3D texture for chunk at %s" % chunk_pos)
+			print("[MATDBG] ERROR: Failed to create 3D texture for chunk at %s" % chunk_pos)
 	
 	return mat
 
@@ -1380,6 +1381,7 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 	
 	# Create array of 2D slices (33 images of 33x33)
 	var images: Array[Image] = []
+	var player_mat_count = 0  # Debug counter
 	
 	for z in range(DENSITY_GRID_SIZE):
 		var img = Image.create(DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, Image.FORMAT_R8)
@@ -1388,8 +1390,14 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 				var index = x + (y * DENSITY_GRID_SIZE) + (z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
 				var byte_offset = index * 4  # uint is 4 bytes
 				var mat_id = cpu_mat[byte_offset] if byte_offset < cpu_mat.size() else 0
+				if mat_id >= 100:  # Player-placed material
+					player_mat_count += 1
+					if player_mat_count <= 5:  # Only print first 5 to avoid spam
+						print("[MATDBG]   Material %d at voxel (%d, %d, %d) -> texture pixel (%d, %d) in slice %d" % [mat_id, x, y, z, x, y, z])
 				img.set_pixel(x, y, Color(float(mat_id) / 255.0, 0, 0))
 		images.append(img)
+	
+	print("[MATDBG] 3D Texture: %d voxels have player materials (100+)" % player_mat_count)
 	
 	# Create 3D texture from image slices
 	var tex3d = ImageTexture3D.new()
