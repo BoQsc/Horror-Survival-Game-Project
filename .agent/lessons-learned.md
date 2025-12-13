@@ -77,3 +77,31 @@ Moved material detection from GPU (per-voxel) to **fragment shader (per-pixel)**
 - `chunk_manager.gd` - Added `terrain_height` and `noise_frequency` uniforms
 
 **Key Insight:** Don't rely on discrete per-voxel data for smooth visual effects. Calculate continuous values in the fragment shader using world position.
+
+---
+
+## ⚠️ CRITICAL: Material Placement is a Fundamental Architecture Issue (Dec 2024)
+
+**Problem:** Player-placed materials (sand, snow, etc.) don't display correctly at block boundaries, especially with small brush sizes. Spent extensive time debugging coordinate mismatches, sampling strategies, and radius extensions - none fully resolved it.
+
+**Root Cause:**
+The marching cubes mesh generation and material system have a fundamental mismatch:
+1. Materials are stored at **discrete voxel positions** (3D texture)
+2. Mesh surfaces exist at **interpolated positions** between voxels
+3. Fragment shader samples materials at these interpolated positions
+4. Boundary voxels may not have the correct material, causing artifacts
+
+**Current Workaround:** Minimum brush radius of 1.5, dual voxel sampling, normal-biased sampling. Works for large placements, fails for small ones.
+
+**LESSON FOR FUTURE DEVELOPMENT:**
+> If rebuilding marching cubes terrain from scratch, **material placement must be designed FIRST**, not retrofitted. It's a fundamental architecture issue, not a shader fix.
+
+**Better approaches to consider:**
+1. **Vertex colors during mesh generation** - Assign materials in the GPU marching cubes shader when creating vertices, bake into mesh
+2. **Per-triangle materials** - Store material per triangle face rather than per voxel
+3. **Dual contouring** - Different isosurface algorithm with better material handling
+4. **Hybrid approach** - Use block-based mesh (like building system) for player placements, marching cubes only for procedural terrain
+
+**Files documenting this:** `MATERIAL_SYSTEM_LIMITATIONS.md` in root folder
+
+---
