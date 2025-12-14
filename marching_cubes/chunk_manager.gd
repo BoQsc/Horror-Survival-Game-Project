@@ -29,6 +29,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var procedural_roads_enabled: bool = true  # Toggle to disable procedural roads
 @export var procedural_road_spacing: float = 100.0  # Distance between roads
 @export var procedural_road_width: float = 8.0  # Width of roads
+@export var debug_show_road_zones: bool = false  # Debug: show road alignment (Yellow=correct, Red=spillover, Green=crack)
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -158,6 +159,8 @@ func _ready():
 	# Terrain parameters for per-pixel material calculation (sync with gen_density.glsl)
 	material_terrain.set_shader_parameter("terrain_height", terrain_height)
 	material_terrain.set_shader_parameter("noise_frequency", noise_frequency)
+	# Debug visualization
+	material_terrain.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
 	# Road mask will be set by road_manager
 	
 	# Setup Water Material
@@ -213,6 +216,18 @@ func _unhandled_input(event):
 			if data and data.chunk_material:
 				data.chunk_material.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
 		material_terrain.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
+	
+	# F10 toggles road zone visualization (Yellow=correct, Red=spillover, Green=crack)
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F10:
+		debug_show_road_zones = !debug_show_road_zones
+		print("[DEBUG] Road zones visualization: ", "ON" if debug_show_road_zones else "OFF")
+		print("  Yellow = correct, Red = spillover, Green = crack")
+		# Update all chunk materials
+		for coord in active_chunks:
+			var data = active_chunks[coord]
+			if data and data.chunk_material:
+				data.chunk_material.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
+		material_terrain.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
 
 func _update_fps_tracking(delta: float):
 	var instant_fps = 1.0 / delta if delta > 0 else 60.0

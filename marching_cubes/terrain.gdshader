@@ -209,8 +209,19 @@ void fragment() {
 	}
 	
 	// --- Debug: Road Zone Visualization ---
-	if (debug_show_road_zones && mat_id == 6) {
-		ALBEDO = mix(ALBEDO, vec3(1.0, 0.0, 0.0), 0.5);  // Red overlay for road material
+	// Red = voxel says road, Green = procedural says road, Yellow = both agree
+	if (debug_show_road_zones) {
+		float road_dist_debug = get_procedural_road_dist(world_pos.xz);
+		bool in_procedural_road = (road_dist_debug < procedural_road_width);
+		bool voxel_is_road = (mat_id == 6);
+		
+		if (voxel_is_road && in_procedural_road) {
+			ALBEDO = mix(ALBEDO, vec3(1.0, 1.0, 0.0), 0.6);  // Yellow = both agree
+		} else if (voxel_is_road) {
+			ALBEDO = mix(ALBEDO, vec3(1.0, 0.0, 0.0), 0.6);  // Red = voxel only (spillover)
+		} else if (in_procedural_road) {
+			ALBEDO = mix(ALBEDO, vec3(0.0, 1.0, 0.0), 0.6);  // Green = procedural only (crack)
+		}
 	}
 	
 	// --- Debug: Chunk Boundary Visualization ---
