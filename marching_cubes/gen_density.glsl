@@ -154,10 +154,12 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     float depth = terrain_height_at_pos - world_pos.y;
     
-    // 1. ROADS FIRST - override everything on surface
+    // 1. ROADS - only on the actual road surface, not sides
     float road_height;
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
-    if (road_dist < params.road_width * 0.9 && depth < 2.0) {
+    // Check: within road width AND at road surface level (within 1.5 units of road_height)
+    float height_diff = abs(world_pos.y - road_height);
+    if (road_dist < params.road_width * 0.9 && height_diff < 1.5) {
         return 6u;  // Road (asphalt)
     }
     
@@ -171,8 +173,8 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
         return 1u;  // Stone
     }
     
-    // 3. Surface biomes (using fbm - same scale as terrain.gdshader: 0.02)
-    float biome_val = fbm(world_pos.xz * 0.02);
+    // 3. Surface biomes (scale 0.002 = large biomes, matching shader)
+    float biome_val = fbm(world_pos.xz * 0.002);
     
     if (biome_val < -0.2) return 3u;  // Sand biome
     if (biome_val > 0.6) return 5u;   // Snow biome
