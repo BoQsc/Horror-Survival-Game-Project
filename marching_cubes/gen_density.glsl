@@ -154,12 +154,12 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     float depth = terrain_height_at_pos - world_pos.y;
     
-    // 1. ROADS - on the road surface (relaxed height check for voxel grid alignment)
+    // 1. ROADS - on the road surface (height tolerance for voxel grid, tight horizontal bounds)
     float road_height;
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
-    // Relaxed check: voxels within 2 units of road height to handle grid alignment issues
+    // Tight horizontal bounds (0.5x), relaxed height (2.0) to fill cracks without spillover
     float height_diff = abs(world_pos.y - road_height);
-    if (road_dist < params.road_width * 0.8 && height_diff < 2.0) {
+    if (road_dist < params.road_width * 0.5 && height_diff < 2.0) {
         return 6u;  // Road (asphalt)
     }
     
