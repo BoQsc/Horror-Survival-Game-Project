@@ -230,13 +230,21 @@ void fragment() {
 		biome_color = mix(biome_color, col_rock, cliff_mix);
 	}
 	
-	// --- Procedural Road Texture (skip for player-placed) ---
+	// --- Procedural Road Texture (skip for player-placed and excavated surfaces) ---
 	float proc_road_dist = get_procedural_road_dist(world_pos.xz);
 	float proc_road_intensity = 0.0;
 	if (!is_player_placed && proc_road_dist < procedural_road_width) {
+		// Calculate expected road height at this position (same as gen_density.glsl)
+		float expected_road_height = noise(world_pos.xz * 0.02) * 10.0 + 10.0;
+		
+		// Only apply road texture if surface is at or above expected road level
+		// Skip if terrain has been excavated (dug below road level)
+		float excavation_depth = expected_road_height - world_pos.y;
+		float not_excavated = 1.0 - smoothstep(0.0, 2.0, excavation_depth);
+		
 		// Only on flat surfaces (slope > 0.85)
 		float road_slope_ok = smoothstep(0.8, 0.9, slope);
-		proc_road_intensity = smoothstep(procedural_road_width, procedural_road_width * 0.3, proc_road_dist) * road_slope_ok;
+		proc_road_intensity = smoothstep(procedural_road_width, procedural_road_width * 0.3, proc_road_dist) * road_slope_ok * not_excavated;
 	}
 	biome_color = mix(biome_color, col_road, proc_road_intensity);
 	

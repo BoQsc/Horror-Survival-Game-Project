@@ -81,4 +81,18 @@ void main() {
             material_buffer.values[index] = uint(params.material_id);
         }
     }
+    
+    // Reset material when DIGGING terrain (positive brush_value = removing solid)
+    // Exposed underground voxels should show stone, not surface materials like asphalt
+    if (modified && params.brush_value > 0.0) {
+        // Check if the voxel is now exposed (near the new surface)
+        // We reset to stone (material ID 1) for underground appearance
+        float new_density = density_buffer.values[index];
+        
+        // Reset material for voxels that are still solid (underground) or near surface
+        // This clears any surface materials like asphalt that were "painted" on top
+        if (new_density < 0.5) {
+            material_buffer.values[index] = 1u;  // Stone
+        }
+    }
 }
