@@ -43,6 +43,41 @@ float noise(vec3 x) {
                    mix( hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
 }
 
+// === 2D Simplex Noise for Biomes (matching terrain.gdshader) ===
+vec2 hash2d(vec2 p) {
+    p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+    return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+}
+
+float noise2d(vec2 p) {
+    const float K1 = 0.366025404; // (sqrt(3)-1)/2
+    const float K2 = 0.211324865; // (3-sqrt(3))/6
+
+    vec2 i = floor(p + (p.x + p.y) * K1);
+    vec2 a = p - i + (i.x + i.y) * K2;
+    float m = step(a.y, a.x); 
+    vec2 o = vec2(m, 1.0 - m);
+    vec2 b = a - o + K2;
+    vec2 c = a - 1.0 + 2.0 * K2;
+
+    vec3 h = max(0.5 - vec3(dot(a, a), dot(b, b), dot(c, c)), 0.0);
+    vec3 n = h * h * h * h * vec3(dot(a, hash2d(i + 0.0)), dot(b, hash2d(i + o)), dot(c, hash2d(i + 1.0)));
+
+    return dot(n, vec3(70.0));
+}
+
+// Fractal Brownian Motion for natural biome shapes (matching terrain.gdshader)
+float fbm(vec2 p) {
+    float f = 0.0;
+    float w = 0.5;
+    for (int i = 0; i < 3; i++) {
+        f += w * noise2d(p);
+        p *= 2.0;
+        w *= 0.5;
+    }
+    return f;
+}
+
 // === Procedural Road Network ===
 // Returns distance to nearest road and the road's target height
 float get_road_info(vec2 pos, float spacing, out float road_height) {
@@ -105,25 +140,45 @@ float get_density(vec3 pos) {
     return density;
 }
 
-// Material ID based on depth below terrain surface + noise for variety
-// 0 = Grass/Dirt (surface), 1 = Stone (underground), 2 = Ore (rare)
+// Material IDs:
+// 0 = Grass (default surface)
+// 1 = Stone (underground)
+// 2 = Ore (rare, deep)
+// 3 = Sand (biome)
+// 4 = Gravel (biome)
+// 5 = Snow (biome)
+// 6 = Road (asphalt)
+// 100+ = Player-placed materials
+
 uint get_material(vec3 pos, float terrain_height_at_pos) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     float depth = terrain_height_at_pos - world_pos.y;
     
-    // Surface layer (grass/dirt)
-    if (depth < 3.0) {
-        return 0u;
+    // 1. ROADS FIRST - override everything on surface
+    float road_height;
+    float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
+    if (road_dist < params.road_width * 0.9 && depth < 2.0) {
+        return 6u;  // Road (asphalt)
     }
     
-    // Check for ore veins (rare, uses 3D noise)
-    float ore_noise = noise(world_pos * 0.15);
-    if (ore_noise > 0.75 && depth > 8.0) {
-        return 2u;  // Ore
+    // 2. Underground materials (below surface)
+    if (depth > 3.0) {
+        // Check for ore veins (rare, uses 3D noise)
+        float ore_noise = noise(world_pos * 0.15);
+        if (ore_noise > 0.75 && depth > 8.0) {
+            return 2u;  // Ore
+        }
+        return 1u;  // Stone
     }
     
-    // Default underground material
-    return 1u;  // Stone
+    // 3. Surface biomes (using fbm - same scale as terrain.gdshader: 0.02)
+    float biome_val = fbm(world_pos.xz * 0.02);
+    
+    if (biome_val < -0.2) return 3u;  // Sand biome
+    if (biome_val > 0.6) return 5u;   // Snow biome
+    if (biome_val > 0.2) return 4u;   // Gravel biome
+    
+    return 0u;  // Grass (default)
 }
 
 void main() {

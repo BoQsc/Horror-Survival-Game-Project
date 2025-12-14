@@ -32,6 +32,7 @@ uniform bool has_material_map = false;  // Whether this chunk has player-placed 
 
 // Debug visualization
 uniform bool debug_show_chunk_bounds = false;  // Toggle to show chunk boundary lines
+uniform bool debug_show_road_zones = false;   // Toggle to show road zone detection
 
 varying vec3 world_pos;
 varying vec3 world_normal;
@@ -109,168 +110,91 @@ void fragment() {
 	
 	vec3 uv_pos = world_pos * uv_scale;
 	
-	// Sample all textures
+	// Sample all textures (triplanar)
 	vec3 col_grass = triplanar_texture(texture_grass, weights, uv_pos).rgb;
 	vec3 col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;
 	vec3 col_sand = triplanar_texture(texture_sand, weights, uv_pos).rgb;
 	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
 	vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
 	
-	// --- Per-Pixel Material Detection (using world position, not vertex color) ---
-	// This eliminates rectangular boundaries from voxel grid sampling
+	// === NEW: Material from Vertex Color (set by marching_cubes.glsl) ===
+	// Material ID is encoded in vertex_color.r channel
+	// IDs: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow, 6=Road, 100+=Player
+	int mat_id = int(round(vertex_color.r * 255.0));
 	
-	// Calculate terrain height at this pixel using same noise as gen_density.glsl
-	float base_height = terrain_height;
-	float hill_height = noise(world_pos.xz * noise_frequency) * terrain_height;
-	float terrain_surface = base_height + hill_height;
-	
-	// Account for roads in material calculation
-	float road_dist = get_procedural_road_dist(world_pos.xz);
-	float effective_surface = terrain_surface;
-	if (road_dist < procedural_road_width * 2.0) {
-		// Near road - use lower effective surface
-		float road_blend = smoothstep(procedural_road_width * 2.0, procedural_road_width * 0.5, road_dist);
-		effective_surface = mix(terrain_surface, terrain_surface - 5.0, road_blend);
-	}
-	
-	// Calculate depth below surface
-	float depth = effective_surface - world_pos.y;
-	
-	// Smooth material blending based on depth (no hard edges)
-	float is_grass = 1.0 - smoothstep(10.0, 15.0, depth);  // Grass fades to stone at depth 10-15
-	float is_ore = 0.0;  // Ore could be noise-based if needed
-	float is_stone = 1.0 - is_grass;
-	
-	// Mix textures based on material
-	vec3 material_color = col_grass * is_grass + col_rock * is_stone;
-	
-	// --- Player Material Override (world-space 3D texture sampling) ---
-	// This bypasses vertex interpolation by sampling at pixel position
+	// Check for player-placed material override from 3D texture
+	// Player materials (100+) are written to material_map when player places blocks
 	bool is_player_placed = false;
-	vec3 player_material_color = vec3(0.0);
-	
 	if (has_material_map) {
-		// Sample from BOTH the direct voxel and biased (toward solid) voxel
-		// Use player material if either has it - covers all face orientations
-		
-		// Direct sample at vertex position
-		vec3 voxel_pos1 = floor(local_vertex + vec3(0.5));
-		vec3 local_pos1 = clamp(voxel_pos1 / 32.0, vec3(0.0), vec3(1.0));
-		float mat_raw1 = texture(material_map, local_pos1).r;
-		int mat_id1 = int(round(mat_raw1 * 255.0));
-		
-		// Biased sample toward solid side (using normal)
+		// Sample material map at vertex position (biased toward solid)
 		vec3 biased_pos = local_vertex - normal * 0.8;
-		vec3 voxel_pos2 = floor(biased_pos + vec3(0.5));
-		vec3 local_pos2 = clamp(voxel_pos2 / 32.0, vec3(0.0), vec3(1.0));
-		float mat_raw2 = texture(material_map, local_pos2).r;
-		int mat_id2 = int(round(mat_raw2 * 255.0));
+		vec3 voxel_pos = floor(biased_pos + vec3(0.5));
+		vec3 local_pos = clamp(voxel_pos / 32.0, vec3(0.0), vec3(1.0));
+		float mat_raw = texture(material_map, local_pos).r;
+		int sampled_id = int(round(mat_raw * 255.0));
 		
-		// Third sample: deeper inward
-		vec3 deep_pos = local_vertex - normal * 1.5;
-		vec3 voxel_pos3 = floor(deep_pos + vec3(0.5));
-		vec3 local_pos3 = clamp(voxel_pos3 / 32.0, vec3(0.0), vec3(1.0));
-		float mat_raw3 = texture(material_map, local_pos3).r;
-		int mat_id3 = int(round(mat_raw3 * 255.0));
-		
-		// Fourth sample: even deeper
-		vec3 vdeep_pos = local_vertex - normal * 2.5;
-		vec3 voxel_pos4 = floor(vdeep_pos + vec3(0.5));
-		vec3 local_pos4 = clamp(voxel_pos4 / 32.0, vec3(0.0), vec3(1.0));
-		float mat_raw4 = texture(material_map, local_pos4).r;
-		int mat_id4 = int(round(mat_raw4 * 255.0));
-		
-		// Use first player material found from any sample
-		int mat_id = 0;
-		if (mat_id1 >= 100) mat_id = mat_id1;
-		else if (mat_id2 >= 100) mat_id = mat_id2;
-		else if (mat_id3 >= 100) mat_id = mat_id3;
-		else if (mat_id4 >= 100) mat_id = mat_id4;
-		
-		// Player-placed material IDs use 100+ range
-		// 100=Grass, 101=Stone, 102=Sand, 103=Snow
-		if (mat_id >= 100) {
-			if (mat_id == 102) {
-				player_material_color = col_sand;
-			} else if (mat_id == 103) {
-				player_material_color = col_snow;
-			} else if (mat_id == 100) {
-				player_material_color = col_grass;
-			} else {
-				player_material_color = col_rock;
-			}
+		// Player-placed materials (100+) override procedural
+		if (sampled_id >= 100) {
+			mat_id = sampled_id;
 			is_player_placed = true;
 		}
 	}
 	
-	// --- Biome Logic (skipped for player-placed materials) ---
-	// Use world X/Z to add biome variation
-	float biome_val = fbm(world_pos.xz * biome_scale);
-	
-	// Only apply biome blending on grass material (surface) and not player-placed
-	vec3 biome_color = is_player_placed ? player_material_color : material_color;
-	if (!is_player_placed && is_grass > 0.5) {
-		// Mix Sand -> Grass
-		float sand_mix = smoothstep(-0.2, -0.4, biome_val);
-		biome_color = mix(biome_color, col_sand, sand_mix);
-		
-		// Mix Grass -> Gravel (Rock)
-		float gravel_mix = smoothstep(0.2, 0.4, biome_val);
-		biome_color = mix(biome_color, col_rock, gravel_mix);
-		
-		// Mix Gravel -> Snow Biome
-		float snow_biome_mix = smoothstep(0.6, 0.8, biome_val);
-		biome_color = mix(biome_color, col_snow, snow_biome_mix);
+	// === Simple Material Lookup ===
+	vec3 base_color;
+	if (mat_id == 0) {
+		base_color = col_grass;
+	} else if (mat_id == 1) {
+		base_color = col_rock;
+	} else if (mat_id == 2) {
+		base_color = col_rock * vec3(1.2, 1.0, 0.5);  // Ore: golden rock tint
+	} else if (mat_id == 3) {
+		base_color = col_sand;
+	} else if (mat_id == 4) {
+		base_color = col_rock;  // Gravel uses rock texture
+	} else if (mat_id == 5) {
+		base_color = col_snow;
+	} else if (mat_id == 6) {
+		base_color = col_road;
+	} else if (mat_id >= 100) {
+		// Player-placed materials
+		if (mat_id == 100) base_color = col_grass;
+		else if (mat_id == 102) base_color = col_sand;
+		else if (mat_id == 103) base_color = col_snow;
+		else base_color = col_rock;  // 101 = Stone
+	} else {
+		base_color = col_grass;  // Fallback
 	}
 	
-	// --- Slope Logic (Steep cliffs are rock, skip for player-placed) ---
+	// === Slope-based Cliff Rock (visual enhancement, not material change) ===
+	// Only apply to non-player materials that aren't already rock/road
 	float slope = normal.y;
-	if (!is_player_placed) {
+	if (!is_player_placed && mat_id != 1 && mat_id != 4 && mat_id != 6) {
 		float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
-		biome_color = mix(biome_color, col_rock, cliff_mix);
+		base_color = mix(base_color, col_rock, cliff_mix);
 	}
 	
-	// --- Procedural Road Texture (skip for player-placed and excavated surfaces) ---
-	float proc_road_dist = get_procedural_road_dist(world_pos.xz);
-	float proc_road_intensity = 0.0;
-	if (!is_player_placed && proc_road_dist < procedural_road_width) {
-		// Calculate expected road height at this position (same as gen_density.glsl)
-		float expected_road_height = noise(world_pos.xz * 0.02) * 10.0 + 10.0;
-		
-		// Only apply road texture if surface is at or above expected road level
-		// Skip if terrain has been excavated (dug below road level)
-		float excavation_depth = expected_road_height - world_pos.y;
-		float not_excavated = 1.0 - smoothstep(0.0, 2.0, excavation_depth);
-		
-		// Only on flat surfaces (slope > 0.85)
-		float road_slope_ok = smoothstep(0.8, 0.9, slope);
-		proc_road_intensity = smoothstep(procedural_road_width, procedural_road_width * 0.3, proc_road_dist) * road_slope_ok * not_excavated;
-	}
-	biome_color = mix(biome_color, col_road, proc_road_intensity);
-	
-	// --- Player Road Overlay (skip for player-placed materials) ---
-	// Sample road mask at world position to get road intensity
+	// === Player Road Overlay (from road_mask texture) ===
+	// This allows player-painted roads to overlay procedural materials
 	vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
 	float road_raw = texture(road_mask, road_uv).r;
-	
-	// Relaxed slope check for Road Type 3 graded surfaces
 	float road_slope_mask = smoothstep(0.7, 0.85, slope);
 	float road_intensity = is_player_placed ? 0.0 : road_raw * road_slope_mask;
+	base_color = mix(base_color, col_road, road_intensity);
 	
-	biome_color = mix(biome_color, col_road, road_intensity);
-	
-	// --- Dynamic Weather Snow ---
-	// Applies everywhere based on global_snow_amount
-	// Snow sticks to flat surfaces more (slope > 0.5)
-	// Skip for player-placed materials so they stay pure
+	// === Dynamic Weather Snow ===
+	// Applies based on global_snow_amount, sticks to flat surfaces
 	if (!is_player_placed) {
 		float weather_snow = global_snow_amount * smoothstep(0.3, 0.6, slope);
-		// Also adds some noise to the snow edge
-		weather_snow *= smoothstep(0.0, 1.0, noise(world_pos.xz * 0.5) + 0.5); 
-		ALBEDO = mix(biome_color, col_snow, clamp(weather_snow, 0.0, 1.0));
+		weather_snow *= smoothstep(0.0, 1.0, noise(world_pos.xz * 0.5) + 0.5);
+		ALBEDO = mix(base_color, col_snow, clamp(weather_snow, 0.0, 1.0));
 	} else {
-		// Player-placed materials: output directly without weather overlay
-		ALBEDO = biome_color;
+		ALBEDO = base_color;
+	}
+	
+	// --- Debug: Road Zone Visualization ---
+	if (debug_show_road_zones && mat_id == 6) {
+		ALBEDO = mix(ALBEDO, vec3(1.0, 0.0, 0.0), 0.5);  // Red overlay for road material
 	}
 	
 	// --- Debug: Chunk Boundary Visualization ---

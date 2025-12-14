@@ -62,10 +62,13 @@ uint get_material_from_buffer(vec3 p) {
 }
 
 // Convert material ID to RGB color for vertex color
+// R channel encodes material ID (0-255), G=1 marks valid material
+// Material IDs: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow, 6=Road, 100+=Player
 vec3 material_to_color(uint mat_id) {
-    if (mat_id == 0u) return vec3(0.4, 0.7, 0.3);  // Grass/Dirt - green-brown
-    if (mat_id == 2u) return vec3(0.9, 0.7, 0.2);  // Ore - gold
-    return vec3(0.5, 0.5, 0.5);  // Stone - gray
+    // Encode material ID in R channel (normalized to 0-1)
+    // Fragment shader decodes: int id = int(round(color.r * 255.0))
+    float encoded_id = float(mat_id) / 255.0;
+    return vec3(encoded_id, 1.0, 0.0);  // G=1 marks valid, B unused
 }
 
 vec3 get_normal(vec3 pos) {
