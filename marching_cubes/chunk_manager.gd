@@ -536,8 +536,9 @@ func update_chunks():
 	# 1. Unload far chunks (3D distance check)
 	var chunks_to_remove = []
 	for coord in active_chunks:
-		# NEVER unload terrain surface layers (-1, 0, 1) - these are always needed
-		var is_terrain_layer = coord.y >= -1 and coord.y <= 1
+		# NEVER unload terrain layers from MIN_Y_LAYER to 1 within horizontal range
+		# This includes all underground layers we might dig into
+		var is_terrain_layer = coord.y >= MIN_Y_LAYER and coord.y <= 1
 		
 		# XZ distance for horizontal, separate check for Y
 		var dx = coord.x - center_chunk.x
@@ -597,19 +598,10 @@ func update_chunks():
 		print("DEBUG LOAD: center=%s is_above_ground=%s chunks_per_frame=%d" % [center_chunk, is_above_ground, chunks_per_frame_limit])
 	
 	if is_above_ground:
-		# Only load Y=0 layer for performance (like original 2D system)
-		# Y=1+ chunks load when player interacts via modify_terrain, which applies stored mods
+		# Only load Y=0 layer for performance
+		# Underground chunks load on-demand when player digs (via modify_terrain)
+		# They're protected from unloading by is_terrain_layer check
 		var y_to_load: Array[int] = [0]
-		
-		# Predictive underground loading: when player is near bottom, queue ALL underground layers
-		# This ensures terrain never "ends" when digging deep
-		var local_y_in_chunk = fmod(p_pos.y, CHUNK_STRIDE)
-		if local_y_in_chunk < 0:
-			local_y_in_chunk += CHUNK_STRIDE
-		if local_y_in_chunk < 5.0:  # Within 5 units of bottom boundary
-			# Queue all underground layers from -1 down to MIN_Y_LAYER
-			for y_layer in range(-1, MIN_Y_LAYER - 1, -1):
-				y_to_load.append(y_layer)
 		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
 				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
