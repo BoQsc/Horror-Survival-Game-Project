@@ -471,6 +471,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					if not active_chunks.has(coord):  # Not already queued
 						active_chunks[coord] = null  # Mark as pending
 						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+						print("[DEBUG Y-LOAD] modify_terrain triggering generation for Y=%d chunk at (%d, %d)" % [coord.y, coord.x, coord.z])
 						chunks_to_generate.append({
 							"type": "generate",
 							"coord": coord,
@@ -600,12 +601,15 @@ func update_chunks():
 		# Y=1+ chunks load when player interacts via modify_terrain, which applies stored mods
 		var y_to_load: Array[int] = [0]
 		
-		# Predictive Y-1 loading: preload underground chunks when player is near bottom
+		# Predictive underground loading: when player is near bottom, queue ALL underground layers
+		# This ensures terrain never "ends" when digging deep
 		var local_y_in_chunk = fmod(p_pos.y, CHUNK_STRIDE)
 		if local_y_in_chunk < 0:
 			local_y_in_chunk += CHUNK_STRIDE
 		if local_y_in_chunk < 5.0:  # Within 5 units of bottom boundary
-			y_to_load.append(-1)
+			# Queue all underground layers from -1 down to MIN_Y_LAYER
+			for y_layer in range(-1, MIN_Y_LAYER - 1, -1):
+				y_to_load.append(y_layer)
 		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
 				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
@@ -622,6 +626,10 @@ func update_chunks():
 						continue
 
 					active_chunks[coord] = null
+					
+					# Debug: track when underground chunks are queued
+					if y < 0:
+						print("[DEBUG Y-LOAD] Queuing underground chunk Y=%d at (%d, %d)" % [y, x, z])
 					
 					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
 					
@@ -1377,14 +1385,10 @@ func _create_chunk_material(chunk_pos: Vector3, cpu_mat: PackedByteArray) -> Sha
 	
 	# Create 3D texture from material data if available
 	if cpu_mat.size() > 0:
-		print("[MATDBG] Creating chunk material: chunk_origin=%s" % chunk_pos)
 		var tex3d = _create_material_texture_3d(cpu_mat)
 		if tex3d:
 			mat.set_shader_parameter("material_map", tex3d)
 			mat.set_shader_parameter("has_material_map", true)
-			print("[MATDBG] -> 3D texture created and assigned, has_material_map=true")
-		else:
-			print("[MATDBG] ERROR: Failed to create 3D texture for chunk at %s" % chunk_pos)
 	
 	return mat
 
@@ -1397,7 +1401,6 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 	
 	# Create array of 2D slices (33 images of 33x33)
 	var images: Array[Image] = []
-	var player_mat_count = 0  # Debug counter
 	
 	for z in range(DENSITY_GRID_SIZE):
 		var img = Image.create(DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, Image.FORMAT_R8)
@@ -1406,14 +1409,8 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 				var index = x + (y * DENSITY_GRID_SIZE) + (z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
 				var byte_offset = index * 4  # uint is 4 bytes
 				var mat_id = cpu_mat[byte_offset] if byte_offset < cpu_mat.size() else 0
-				if mat_id >= 100:  # Player-placed material
-					player_mat_count += 1
-					if player_mat_count <= 5:  # Only print first 5 to avoid spam
-						print("[MATDBG]   Material %d at voxel (%d, %d, %d) -> texture pixel (%d, %d) in slice %d" % [mat_id, x, y, z, x, y, z])
 				img.set_pixel(x, y, Color(float(mat_id) / 255.0, 0, 0))
 		images.append(img)
-	
-	print("[MATDBG] 3D Texture: %d voxels have player materials (100+)" % player_mat_count)
 	
 	# Create 3D texture from image slices
 	var tex3d = ImageTexture3D.new()
