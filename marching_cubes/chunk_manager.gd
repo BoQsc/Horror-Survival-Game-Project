@@ -698,22 +698,18 @@ func update_chunks():
 					
 					chunks_queued_this_frame += 1
 
-## Interruptible delay - checks for high-priority modify tasks every 10ms
-## Allows player modifications to interrupt chunk loading delays
+## Interruptible delay - checks for high-priority tasks every 10ms
+## Allows player interactions to interrupt chunk loading delays
 func _interruptible_delay(total_ms: int):
 	var elapsed = 0
 	while elapsed < total_ms:
-		# Check if there's a modify task waiting
+		# Check if there's any task waiting (player interaction pushed to front)
 		mutex.lock()
-		var has_modify = false
-		for t in task_queue:
-			if t.type == "modify":
-				has_modify = true
-				break
+		var has_priority_task = not task_queue.is_empty()
 		mutex.unlock()
 		
-		if has_modify:
-			return  # Stop delaying, process the modification
+		if has_priority_task:
+			return  # Stop delaying, process immediately
 		
 		# Sleep in small chunks
 		var sleep_time = min(10, total_ms - elapsed)
