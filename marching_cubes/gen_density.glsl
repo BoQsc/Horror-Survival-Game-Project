@@ -154,12 +154,12 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     float depth = terrain_height_at_pos - world_pos.y;
     
-    // 1. ROADS - only on the actual road surface, not sides
+    // 1. ROADS - only on the flat road surface, strict check
     float road_height;
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
-    // Check: within road width AND at road surface level (within 1.5 units of road_height)
+    // Strict check: must be close to road center AND exactly at road height
     float height_diff = abs(world_pos.y - road_height);
-    if (road_dist < params.road_width * 0.9 && height_diff < 1.5) {
+    if (road_dist < params.road_width * 0.6 && height_diff < 1.0) {
         return 6u;  // Road (asphalt)
     }
     

@@ -140,20 +140,36 @@ void fragment() {
 		}
 	}
 	
-	// === Simple Material Lookup ===
+	// === Material Lookup with Smooth Biome Blending ===
+	// Use vertex color material as base, but smooth biome transitions for surface materials
 	vec3 base_color;
-	if (mat_id == 0) {
+	
+	// For surface biome materials (0,3,4,5), apply smooth blending based on fbm
+	bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
+	
+	if (is_surface_biome && !is_player_placed) {
+		// Smooth biome calculation (same as original shader)
+		float biome_val = fbm(world_pos.xz * biome_scale);
+		
+		// Start with grass as base
 		base_color = col_grass;
-	} else if (mat_id == 1) {
+		
+		// Smooth blend to sand
+		float sand_mix = smoothstep(-0.2, -0.4, biome_val);
+		base_color = mix(base_color, col_sand, sand_mix);
+		
+		// Smooth blend to gravel
+		float gravel_mix = smoothstep(0.2, 0.4, biome_val);
+		base_color = mix(base_color, col_rock, gravel_mix);
+		
+		// Smooth blend to snow
+		float snow_mix = smoothstep(0.6, 0.8, biome_val);
+		base_color = mix(base_color, col_snow, snow_mix);
+	}
+	else if (mat_id == 1) {
 		base_color = col_rock;
 	} else if (mat_id == 2) {
 		base_color = col_rock * vec3(1.2, 1.0, 0.5);  // Ore: golden rock tint
-	} else if (mat_id == 3) {
-		base_color = col_sand;
-	} else if (mat_id == 4) {
-		base_color = col_rock;  // Gravel uses rock texture
-	} else if (mat_id == 5) {
-		base_color = col_snow;
 	} else if (mat_id == 6) {
 		base_color = col_road;
 	} else if (mat_id >= 100) {
