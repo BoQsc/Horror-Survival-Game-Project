@@ -107,13 +107,27 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
     float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
     
-    // Bilinear interpolation
+    // Bilinear interpolation for base height
     float tx = local_x / spacing;
     float tz = local_z / spacing;
     float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
     
-    // Round to nearest integer for grid-aligned block placement
-    road_height = round(interpolated_height);
+    // Smooth stepping: round to nearest integer, but smoothly transition between levels
+    // This prevents sharp triangle artifacts at step boundaries
+    float rounded_height = round(interpolated_height);
+    float height_diff = interpolated_height - rounded_height;
+    
+    // Smooth transition zone: blend between levels over 0.3 units
+    // When within 0.3 of a step boundary, smoothly interpolate
+    float transition_zone = 0.3;
+    if (abs(height_diff) > 0.5 - transition_zone) {
+        // Near a step boundary - smooth it
+        float blend = smoothstep(0.5 - transition_zone, 0.5, abs(height_diff));
+        float step_dir = sign(height_diff);
+        road_height = rounded_height + step_dir * blend;
+    } else {
+        road_height = rounded_height;
+    }
     
     return min_dist;
 }
