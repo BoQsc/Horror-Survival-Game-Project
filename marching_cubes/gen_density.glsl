@@ -101,11 +101,12 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     float min_dist = min(dist_to_x_road, dist_to_z_road);
     
     // Calculate smoothed road height at this position
-    // Sample terrain at multiple grid points and average
-    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.02) * 10.0 + 10.0;
-    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.02) * 10.0 + 10.0;
-    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
-    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
+    // Sample terrain at grid intersection points - REDUCED variation for flatter roads
+    // Using smaller multiplier (3.0 instead of 10.0) for gentler slopes
+    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.02) * 3.0 + 12.0;
+    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.02) * 3.0 + 12.0;
+    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 3.0 + 12.0;
+    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 3.0 + 12.0;
     
     // Bilinear interpolation for base height
     float tx = local_x / spacing;
