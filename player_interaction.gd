@@ -340,11 +340,26 @@ func update_selection_box():
 		var voxel_y: int
 		var voxel_z: int
 		
+		# Check if we hit a placed object (should use grid placement like blocks)
+		var hit_placed_object = terrain_hit.collider and terrain_hit.collider.is_in_group("placed_objects")
+		
 		# Store precise hit Y for object placement (with small offset above surface)
 		current_precise_hit_y = pos.y + 0.05  # Tiny offset to sit just above surface
 		
-		if current_mode == Mode.OBJECT and surface_snap_placement:
-			# OBJECT mode: Use fractional Y for natural terrain placement
+		if hit_placed_object:
+			# Hit a placed object: use normal to place ABOVE/BESIDE it (like blocks)
+			# Move position along normal by 1 unit to get the adjacent placement cell
+			var offset_pos = pos + normal * 1.0
+			voxel_x = int(floor(offset_pos.x))
+			voxel_y = int(floor(offset_pos.y))
+			voxel_z = int(floor(offset_pos.z))
+			current_precise_hit_y = float(voxel_y)  # Use grid Y for objects too
+			
+			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			current_remove_voxel_pos = Vector3(int(floor(pos.x)), int(floor(pos.y)), int(floor(pos.z)))
+			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+		elif current_mode == Mode.OBJECT and surface_snap_placement:
+			# OBJECT mode on terrain: Use fractional Y for natural terrain placement
 			# X/Z grid-snapped, Y at terrain surface level
 			voxel_x = int(floor(pos.x))
 			voxel_z = int(floor(pos.z))
