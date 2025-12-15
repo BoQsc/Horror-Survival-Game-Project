@@ -143,13 +143,10 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 	# Add visual instance with collision
 	if scene_instance:
 		add_child(scene_instance)
-		# Position: Center the object over its footprint (size-based offset)
-		# For a 2x2 object, offset is 1.0; for 1x1 object, offset is 0.5
-		var obj_def = ObjectRegistry.get_object(object_id)
-		var size = ObjectRegistry.get_rotated_size(object_id, rotation)
-		var offset_x = float(size.x) / 2.0
-		var offset_z = float(size.z) / 2.0
-		scene_instance.position = Vector3(local_anchor.x + offset_x, local_anchor.y + fractional_y, local_anchor.z + offset_z)
+		# Position: Place at anchor position directly
+		# The scene itself should define where the model sits relative to origin (0,0,0)
+		# Origin = anchor = corner of footprint
+		scene_instance.position = Vector3(local_anchor.x, local_anchor.y + fractional_y, local_anchor.z)
 		# Apply rotation (90 degree increments)
 		scene_instance.rotation_degrees.y = rotation * 90
 		

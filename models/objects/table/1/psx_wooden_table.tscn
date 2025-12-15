@@ -11,7 +11,7 @@ albedo_color = Color(0.2, 0.5, 1, 0.3)
 [node name="WoodenTable" type="Node3D"]
 
 [node name="TableModel" parent="." instance=ExtResource("1_table")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0.50518084)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.011517, 0, 0.5360272)
 
 [node name="PlacementGuides" type="Node3D" parent="."]
 
