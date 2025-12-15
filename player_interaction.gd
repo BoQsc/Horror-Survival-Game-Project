@@ -205,6 +205,14 @@ func _unhandled_input(event):
 				var snap_str = "ON TOP (surface)" if surface_snap_placement else "EMBEDDED"
 				print("[Placement] Snap mode: %s" % snap_str)
 				update_ui()
+		elif event.keycode == KEY_R:
+			# R key: rotate in OBJECT or BUILDING mode
+			if current_mode == Mode.OBJECT:
+				current_object_rotation = (current_object_rotation + 1) % 4
+				update_ui()
+			elif current_mode == Mode.BUILDING:
+				current_rotation = (current_rotation + 1) % 4
+				update_ui()
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
@@ -291,7 +299,7 @@ func update_ui():
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"
 		var grid_str = "Grid ON" if object_show_grid else "Grid OFF"
-		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select, [G] Grid, [V] Snap" % [grid_str, obj_name, current_object_rotation]
+		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
