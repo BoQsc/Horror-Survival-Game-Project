@@ -141,14 +141,21 @@ float get_density(vec3 pos) {
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     
     if (road_dist < params.road_width) {
-        // COMPLETELY FLAT ROAD - just use road height, ignore terrain bumps
-        float road_density = world_pos.y - road_height;
+        // INTEGER road surface (stairs for block alignment)
+        float integer_road_height = round(road_height);
+        float integer_density = world_pos.y - integer_road_height;
+        
+        // SMOOTH road surface (for filling between stairs)
+        float smooth_density = world_pos.y - road_height;
+        
+        // Fill: use whichever surface is LOWER (more solid)
+        // This fills the stair steps with a smooth ramp
+        float road_surface_density = min(integer_density, smooth_density);
         
         // Blend factor: 1.0 in center, 0.0 at edges
         float blend = smoothstep(params.road_width, params.road_width * 0.5, road_dist);
         
-        // Replace terrain with flat road
-        density = mix(density, road_density, blend);
+        density = mix(density, road_surface_density, blend);
     }
     
     return density;
