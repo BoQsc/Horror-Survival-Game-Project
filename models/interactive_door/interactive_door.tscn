@@ -1,10 +1,24 @@
-[gd_scene load_steps=3 format=3 uid="uid://y0c2i7cobaf2"]
+[gd_scene load_steps=5 format=3 uid="uid://y0c2i7cobaf2"]
 
 [ext_resource type="PackedScene" uid="uid://biqf2y3w81huo" path="res://models/interactive_door/hello_neighbor_reality_door_download.glb" id="1_door"]
-[ext_resource type="Script" path="res://models/interactive_door/interactive_door.gd" id="2_script"]
+[ext_resource type="Script" uid="uid://c73mi36ajpgu0" path="res://models/interactive_door/interactive_door.gd" id="2_script"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_2cftf"]
+size = Vector3(0.95, 2.045, 0.23)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_cg8g3"]
+size = Vector3(0.95, 2.045, 0.23)
 
 [node name="InteractiveDoor" type="Node3D"]
 script = ExtResource("2_script")
 
 [node name="DoorModel" parent="." instance=ExtResource("1_door")]
 transform = Transform3D(1, 0, 0, 0, 0.87700605, 0, 0, 0, 1, 0, 0.076827765, -0.42714855)
+
+[node name="opened door collision layer" type="CollisionShape3D" parent="DoorModel"]
+transform = Transform3D(-4.3711363e-08, 0, 0.99999946, 0, 0.9999994, 0, -0.99999946, 0, -4.3711363e-08, -0.50908184, 1.1190791, -0.4042086)
+shape = SubResource("BoxShape3D_2cftf")
+
+[node name="door interaction layer" type="CollisionShape3D" parent="DoorModel"]
+transform = Transform3D(0.9999998, 0, 0, 0, 0.9999998, 0, 0, 0, 0.9999998, 0, 1.0694132, 0)
+shape = SubResource("BoxShape3D_cg8g3")
