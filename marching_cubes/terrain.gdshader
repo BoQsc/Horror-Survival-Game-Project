@@ -1,7 +1,8 @@
 shader_type spatial;
 
 uniform sampler2D texture_grass : source_color, filter_linear_mipmap;
-uniform sampler2D texture_rock : source_color, filter_linear_mipmap;
+uniform sampler2D texture_rock : source_color, filter_linear_mipmap;   // For cliff faces only
+uniform sampler2D texture_stone : source_color, filter_linear_mipmap;  // For underground/gravel/ore
 uniform sampler2D texture_sand : source_color, filter_linear_mipmap;
 uniform sampler2D texture_snow : source_color, filter_linear_mipmap;
 uniform sampler2D texture_road : source_color, filter_linear_mipmap;  // Asphalt texture
@@ -112,7 +113,8 @@ void fragment() {
 	
 	// Sample all textures (triplanar)
 	vec3 col_grass = triplanar_texture(texture_grass, weights, uv_pos).rgb;
-	vec3 col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;
+	vec3 col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;    // Cliff faces
+	vec3 col_stone = triplanar_texture(texture_stone, weights, uv_pos).rgb;  // Underground/gravel
 	vec3 col_sand = triplanar_texture(texture_sand, weights, uv_pos).rgb;
 	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
 	vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
@@ -158,18 +160,18 @@ void fragment() {
 		float sand_mix = smoothstep(-0.2, -0.4, biome_val);
 		base_color = mix(base_color, col_sand, sand_mix);
 		
-		// Smooth blend to gravel
+		// Smooth blend to gravel (uses stone texture, not rock)
 		float gravel_mix = smoothstep(0.2, 0.4, biome_val);
-		base_color = mix(base_color, col_rock, gravel_mix);
+		base_color = mix(base_color, col_stone, gravel_mix);
 		
 		// Smooth blend to snow
 		float snow_mix = smoothstep(0.6, 0.8, biome_val);
 		base_color = mix(base_color, col_snow, snow_mix);
 	}
 	else if (mat_id == 1) {
-		base_color = col_rock;
+		base_color = col_stone;  // Underground stone
 	} else if (mat_id == 2) {
-		base_color = col_rock * vec3(1.2, 1.0, 0.5);  // Ore: golden rock tint
+		base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore: golden stone tint
 	} else if (mat_id == 6) {
 		base_color = col_road;
 	} else if (mat_id >= 100) {
@@ -177,7 +179,7 @@ void fragment() {
 		if (mat_id == 100) base_color = col_grass;
 		else if (mat_id == 102) base_color = col_sand;
 		else if (mat_id == 103) base_color = col_snow;
-		else base_color = col_rock;  // 101 = Stone
+		else base_color = col_stone;  // 101 = Stone
 	} else {
 		base_color = col_grass;  // Fallback
 	}
