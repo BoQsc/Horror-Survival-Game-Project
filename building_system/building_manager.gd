@@ -179,7 +179,7 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
 	
 	for cell in cells:
-		# Check each cell is available
+		# Calculate which chunk this specific cell belongs to
 		var chunk_coord = Vector3i(
 			int(floor(float(cell.x) / CHUNK_SIZE)),
 			int(floor(float(cell.y) / CHUNK_SIZE)),
@@ -191,9 +191,13 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 		if local.y < 0: local.y += CHUNK_SIZE
 		if local.z < 0: local.z += CHUNK_SIZE
 		
-		# Get or create chunk to check
+		# Check if cell is available in its chunk
 		if chunks.has(chunk_coord):
-			if not chunks[chunk_coord].is_cell_available(local):
+			var chunk = chunks[chunk_coord]
+			if not chunk.is_cell_available(local):
+				var voxel_val = chunk.get_voxel(local)
+				var occupied = chunk.occupied_by_object.has(local)
+				print("[DEBUG] Cell %s blocked: voxel=%d, occupied_by_object=%s" % [cell, voxel_val, occupied])
 				return false
 		# If chunk doesn't exist, cell is available (empty terrain)
 	

@@ -370,8 +370,24 @@ func update_selection_box():
 		current_remove_voxel_pos = voxel_hit.voxel_pos
 		current_voxel_pos = voxel_hit.voxel_pos + voxel_hit.normal
 		
-		# For OBJECT mode on blocks: precise Y is the top of the block
+		# For OBJECT mode: Check if we're aiming through a hole - use physics position instead
 		if current_mode == Mode.OBJECT:
+			# If terrain_hit is closer than voxel_hit, use terrain hit position
+			# This handles the case where we're looking through a hole in a wall
+			if terrain_hit:
+				var terrain_dist = terrain_hit.position.distance_to(camera.global_position)
+				if voxel_hit.distance > terrain_dist + 0.5:
+					# The voxel hit is further than the terrain - we're hitting a back wall through a hole
+					# Use the terrain (physics) hit position instead
+					var pos = terrain_hit.position
+					var normal = terrain_hit.normal
+					var offset_pos = pos + normal * 0.6
+					current_voxel_pos = Vector3(floor(offset_pos.x), floor(offset_pos.y), floor(offset_pos.z))
+					current_precise_hit_y = current_voxel_pos.y
+					selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+					selection_box.visible = true
+					has_target = true
+					return
 			current_precise_hit_y = voxel_hit.voxel_pos.y + 1.0  # Top of block
 		
 		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
@@ -805,9 +821,11 @@ func _update_or_create_preview():
 		preview_instance.rotation_degrees.y = current_object_rotation * 90
 		preview_instance.visible = true
 		
-		# Check validity
+		# Check validity - use grid-snapped position
+		var check_pos = Vector3(floor(current_voxel_pos.x), floor(current_precise_hit_y), floor(current_voxel_pos.z))
+		print("[DEBUG TARGET] voxel_pos=%s, precise_hit_y=%.2f, check_pos=%s" % [current_voxel_pos, current_precise_hit_y, check_pos])
 		var can_place = building_manager.can_place_object(
-			Vector3(current_voxel_pos.x, current_precise_hit_y, current_voxel_pos.z),
+			check_pos,
 			current_object_id,
 			current_object_rotation
 		)

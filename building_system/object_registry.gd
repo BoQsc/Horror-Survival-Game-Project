@@ -28,7 +28,7 @@ const OBJECTS = {
 	5: {
 		"name": "Window",
 		"scene": "res://models/objects/window/1/window.tscn",
-		"size": Vector3i(1, 2, 1),
+		"size": Vector3i(1, 1, 1),
 	},
 }
 
