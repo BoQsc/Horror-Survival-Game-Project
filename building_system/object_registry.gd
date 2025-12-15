@@ -7,7 +7,7 @@ class_name ObjectRegistry
 const OBJECTS = {
 	1: {
 		"name": "Cardboard Box",
-		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.glb",
+		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.tscn",
 		"size": Vector3i(1, 1, 1),
 	},
 	2: {

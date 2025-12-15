@@ -45,6 +45,11 @@ var has_target: bool = false
 var voxel_grid_visualizer: MeshInstance3D
 var last_stable_voxel_y: float = 0.0  # For hysteresis in surface snap mode
 
+# Object preview system
+var preview_instance: Node3D = null
+var preview_object_id: int = -1  # Track which object the preview is for
+var preview_valid: bool = true  # Whether current placement is valid
+
 func _ready():
 	# Create Grid Visualizer
 	voxel_grid_visualizer = MeshInstance3D.new()
@@ -63,12 +68,17 @@ func _process(_delta):
 		# No selection box in playing mode
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
+		_destroy_preview()  # Ensure preview is cleaned up
 	elif current_mode == Mode.BUILDING or current_mode == Mode.OBJECT or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
+		# Update object preview in OBJECT mode
+		if current_mode == Mode.OBJECT:
+			_update_or_create_preview()
 	else:
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
+		_destroy_preview()  # Ensure preview is cleaned up
 
 func update_grid_visualizer():
 	if not has_target or not terrain_blocky_mode:
@@ -241,10 +251,12 @@ func toggle_mode():
 	elif current_mode == Mode.OBJECT:
 		current_mode = Mode.ROAD
 		is_placing_road = false
+		_destroy_preview()  # Clean up preview when leaving OBJECT mode
 	elif current_mode == Mode.ROAD:
 		current_mode = Mode.MATERIAL
 	else:
 		current_mode = Mode.PLAYING
+		_destroy_preview()  # Clean up preview
 	update_ui()
 
 func update_ui():
@@ -732,3 +744,109 @@ func _normalize_road_segment(start: Vector3, end: Vector3):
 		# STRONG fill below road level
 		var fill_pos = Vector3(pos_x, target_y - brush_radius * 0.5, pos_z)
 		terrain_manager.modify_terrain(fill_pos, brush_radius, -2.0, 0, 0)  # Strong fill
+
+## ============== OBJECT PREVIEW SYSTEM ==============
+
+## Create or update preview for the current object
+func _update_or_create_preview():
+	if current_mode != Mode.OBJECT:
+		_destroy_preview()
+		return
+	
+	# Check if we need to create a new preview (object changed)
+	if preview_object_id != current_object_id or preview_instance == null:
+		_destroy_preview()
+		_create_preview()
+	
+	# Update preview position and rotation
+	if preview_instance and has_target:
+		var size = ObjectRegistry.get_rotated_size(current_object_id, current_object_rotation)
+		var offset_x = float(size.x) / 2.0
+		var offset_z = float(size.z) / 2.0
+		preview_instance.position = Vector3(
+			current_voxel_pos.x + offset_x,
+			current_precise_hit_y,
+			current_voxel_pos.z + offset_z
+		)
+		preview_instance.rotation_degrees.y = current_object_rotation * 90
+		preview_instance.visible = true
+		
+		# Check validity
+		var can_place = building_manager.can_place_object(
+			Vector3(current_voxel_pos.x, current_precise_hit_y, current_voxel_pos.z),
+			current_object_id,
+			current_object_rotation
+		)
+		_set_preview_validity(can_place)
+	elif preview_instance:
+		preview_instance.visible = false
+
+## Create a preview instance for the current object
+func _create_preview():
+	var obj_def = ObjectRegistry.get_object(current_object_id)
+	if obj_def.is_empty():
+		return
+	
+	var packed = load(obj_def.scene) as PackedScene
+	if not packed:
+		return
+	
+	preview_instance = packed.instantiate()
+	preview_object_id = current_object_id
+	
+	# Add to scene (not as child of anything specific, just to world)
+	get_tree().root.add_child(preview_instance)
+	
+	# Apply transparent preview material to all meshes
+	_apply_preview_material(preview_instance)
+	
+	# Disable collisions on preview (it shouldn't interact with physics)
+	_disable_preview_collisions(preview_instance)
+
+## Destroy the current preview instance
+func _destroy_preview():
+	if preview_instance and is_instance_valid(preview_instance):
+		preview_instance.queue_free()
+	preview_instance = null
+	preview_object_id = -1
+
+## Apply semi-transparent preview material to all MeshInstance3D children
+func _apply_preview_material(node: Node):
+	if node is MeshInstance3D:
+		var mesh_inst = node as MeshInstance3D
+		var mat = StandardMaterial3D.new()
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(0.2, 1.0, 0.3, 0.5)  # Green, semi-transparent
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true  # Render on top
+		mesh_inst.material_override = mat
+	
+	for child in node.get_children():
+		_apply_preview_material(child)
+
+## Set preview color based on validity (green = valid, red = invalid)
+func _set_preview_validity(valid: bool):
+	preview_valid = valid
+	var color = Color(0.2, 1.0, 0.3, 0.5) if valid else Color(1.0, 0.2, 0.2, 0.5)
+	_set_preview_color(preview_instance, color)
+
+## Recursively set preview color on all materials
+func _set_preview_color(node: Node, color: Color):
+	if node is MeshInstance3D:
+		var mesh_inst = node as MeshInstance3D
+		if mesh_inst.material_override is StandardMaterial3D:
+			mesh_inst.material_override.albedo_color = color
+	
+	for child in node.get_children():
+		_set_preview_color(child, color)
+
+## Disable all collisions on the preview node
+func _disable_preview_collisions(node: Node):
+	if node is CollisionShape3D:
+		node.disabled = true
+	elif node is StaticBody3D or node is CharacterBody3D or node is RigidBody3D:
+		node.collision_layer = 0
+		node.collision_mask = 0
+	
+	for child in node.get_children():
+		_disable_preview_collisions(child)
