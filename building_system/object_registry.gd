@@ -16,8 +16,8 @@ const OBJECTS = {
 		"size": Vector3i(2, 1, 1),
 	},
 	3: {
-		"name": "Table",
-		"scene": "res://objects/table.tscn",
+		"name": "Wooden Table",
+		"scene": "res://models/objects/table/1/psx_wooden_table.glb",
 		"size": Vector3i(2, 1, 2),
 	},
 }
