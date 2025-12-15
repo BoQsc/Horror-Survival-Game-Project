@@ -100,20 +100,29 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     
     float min_dist = min(dist_to_x_road, dist_to_z_road);
     
-    // Calculate road height - MINIMAL variation for nearly flat roads
-    // Using tiny multiplier (0.5) for almost completely level roads
-    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.02) * 0.5 + 14.0;
-    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.02) * 0.5 + 14.0;
-    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 0.5 + 14.0;
-    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 0.5 + 14.0;
+    // Calculate road height - follows terrain with variation
+    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.02) * 10.0 + 10.0;
+    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.02) * 10.0 + 10.0;
+    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
+    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
     
     // Bilinear interpolation for base height
     float tx = local_x / spacing;
     float tz = local_z / spacing;
     float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
     
-    // Use smooth interpolated height directly - NO STEPPING for smooth drivable roads
-    road_height = interpolated_height;
+    // Round to nearest integer for block alignment, with smooth transitions
+    float rounded_height = round(interpolated_height);
+    float height_diff = interpolated_height - rounded_height;
+    
+    // Very wide transition zone (0.45) for smooth ramps between levels
+    float transition_zone = 0.45;
+    if (abs(height_diff) > 0.5 - transition_zone) {
+        float blend = smoothstep(0.5 - transition_zone, 0.5, abs(height_diff));
+        road_height = rounded_height + sign(height_diff) * blend;
+    } else {
+        road_height = rounded_height;
+    }
     
     return min_dist;
 }
