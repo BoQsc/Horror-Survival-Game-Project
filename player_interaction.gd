@@ -187,10 +187,12 @@ func _unhandled_input(event):
 				current_block_id = 4
 			update_ui()
 		elif event.keycode == KEY_5:
-			if current_mode == Mode.MATERIAL:
+			if current_mode == Mode.OBJECT:
+				current_object_id = 5  # Window
+			elif current_mode == Mode.MATERIAL:
 				material_brush_index = 0  # Small brush
 				material_brush_radius = material_brush_sizes[material_brush_index]
-				update_ui()
+			update_ui()
 		elif event.keycode == KEY_6:
 			if current_mode == Mode.MATERIAL:
 				material_brush_index = 1  # Medium brush
@@ -312,7 +314,7 @@ func update_ui():
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"
 		var grid_str = "Grid ON" if object_show_grid else "Grid OFF"
-		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-4] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
+		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-5] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
