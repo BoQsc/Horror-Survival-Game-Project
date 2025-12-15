@@ -199,7 +199,7 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 	
 	return true
 
-## Place an object at the given global position
+## Place an object at the given global position (supports fractional Y for terrain surface)
 func place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
 	if not can_place_object(global_pos, object_id, rotation):
 		return false
@@ -208,7 +208,9 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
 	if obj_def.is_empty():
 		return false
 	
-	var anchor = Vector3i(floor(global_pos.x), floor(global_pos.y), floor(global_pos.z))
+	# Calculate anchor (integer grid position) and fractional Y offset
+	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
+	var fractional_y = global_pos.y - floor(global_pos.y)  # Y offset from floor (0.0 to 1.0)
 	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
 	
 	# Load and instantiate the scene
@@ -241,7 +243,7 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
 		local_cells.append(local_cell)
 	
 	var chunk = get_chunk(chunk_coord)
-	return chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance)
+	return chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_y)
 
 ## Remove an object at the given global position
 func remove_object_at(global_pos: Vector3) -> bool:

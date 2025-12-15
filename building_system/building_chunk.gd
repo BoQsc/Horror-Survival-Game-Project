@@ -131,9 +131,10 @@ func is_cell_available(local_pos: Vector3i) -> bool:
 	return true
 
 ## Place an object at the anchor position (assumes cells already validated)
-func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D) -> bool:
-	# Store object data
-	objects[local_anchor] = { "object_id": object_id, "rotation": rotation }
+## fractional_y is the Y offset from the floor (0.0 to 1.0) for terrain surface alignment
+func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_y: float = 0.0) -> bool:
+	# Store object data (include fractional_y for persistence)
+	objects[local_anchor] = { "object_id": object_id, "rotation": rotation, "fractional_y": fractional_y }
 	
 	# Mark all occupied cells
 	for cell in cells:
@@ -142,7 +143,8 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 	# Add visual instance
 	if scene_instance:
 		add_child(scene_instance)
-		scene_instance.position = Vector3(local_anchor) + Vector3(0.5, 0, 0.5)  # Center on cell X/Z
+		# Position: X/Z centered on cell, Y at anchor + fractional offset
+		scene_instance.position = Vector3(local_anchor.x + 0.5, local_anchor.y + fractional_y, local_anchor.z + 0.5)
 		# Apply rotation (90 degree increments)
 		scene_instance.rotation_degrees.y = rotation * 90
 		object_nodes[local_anchor] = scene_instance

@@ -40,6 +40,7 @@ var current_placeable: PlaceableItem = PlaceableItem.ROCK
 
 var current_voxel_pos: Vector3
 var current_remove_voxel_pos: Vector3
+var current_precise_hit_y: float = 0.0  # Precise Y for object placement (fractional)
 var has_target: bool = false
 var voxel_grid_visualizer: MeshInstance3D
 var last_stable_voxel_y: float = 0.0  # For hysteresis in surface snap mode
@@ -327,7 +328,7 @@ func update_selection_box():
 		selection_box.visible = true
 		has_target = true
 	elif terrain_hit:
-		# Building/Object mode terrain hit - surface snap or embedded
+		# Building/Object mode terrain hit
 		var pos = terrain_hit.position
 		var normal = terrain_hit.normal
 		
@@ -335,23 +336,39 @@ func update_selection_box():
 		var voxel_y: int
 		var voxel_z: int
 		
-		if surface_snap_placement:
-			# Surface snap: push UP from hit point using surface normal
-			var offset = normal * 0.6  # Push away from surface
-			var placement_pos = pos + offset
-			voxel_x = int(floor(placement_pos.x))
-			voxel_y = int(floor(placement_pos.y)) + placement_y_offset  # Apply manual offset
-			voxel_z = int(floor(placement_pos.z))
-		else:
-			# Embedded: use floor of hit point (may sink into terrain)
+		# Store precise hit Y for object placement (with small offset above surface)
+		current_precise_hit_y = pos.y + 0.05  # Tiny offset to sit just above surface
+		
+		if current_mode == Mode.OBJECT and surface_snap_placement:
+			# OBJECT mode: Use fractional Y for natural terrain placement
+			# X/Z grid-snapped, Y at terrain surface level
 			voxel_x = int(floor(pos.x))
-			voxel_y = int(floor(pos.y))
 			voxel_z = int(floor(pos.z))
+			# For selection, still use an integer Y for the preview box
+			voxel_y = int(round(pos.y))
+			
+			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			current_remove_voxel_pos = current_voxel_pos
+			
+			# Position selection box at ACTUAL terrain level (fractional Y)
+			selection_box.global_position = Vector3(voxel_x + 0.5, current_precise_hit_y + 0.5, voxel_z + 0.5)
+		else:
+			# BUILDING mode: Full grid snap for block stacking
+			if surface_snap_placement:
+				var offset = normal * 0.6
+				var placement_pos = pos + offset
+				voxel_x = int(floor(placement_pos.x))
+				voxel_y = int(floor(placement_pos.y)) + placement_y_offset
+				voxel_z = int(floor(placement_pos.z))
+			else:
+				voxel_x = int(floor(pos.x))
+				voxel_y = int(floor(pos.y))
+				voxel_z = int(floor(pos.z))
+			
+			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			current_remove_voxel_pos = current_voxel_pos
+			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		
-		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
-		current_remove_voxel_pos = current_voxel_pos 
-		
-		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		selection_box.visible = true
 		has_target = true
 	else:
@@ -451,12 +468,18 @@ func handle_building_input(event):
 				pass
 
 func handle_object_input(event):
-	# Object placement uses current_voxel_pos for placement target
+	# Object placement uses grid X/Z but fractional Y for terrain surface placement
 	
 	if event.button_index == MOUSE_BUTTON_RIGHT: # Place object
-		var success = building_manager.place_object(current_voxel_pos, current_object_id, current_object_rotation)
+		# Build position with fractional Y for natural terrain placement
+		var placement_pos = Vector3(
+			floor(current_voxel_pos.x),  # Grid-snapped X
+			current_precise_hit_y,        # Fractional Y (sits on terrain)
+			floor(current_voxel_pos.z)   # Grid-snapped Z
+		)
+		var success = building_manager.place_object(placement_pos, current_object_id, current_object_rotation)
 		if success:
-			print("Placed object %d at %s" % [current_object_id, current_voxel_pos])
+			print("Placed object %d at %s" % [current_object_id, placement_pos])
 		else:
 			print("Cannot place object - cells not available")
 	
