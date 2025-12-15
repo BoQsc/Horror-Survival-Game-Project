@@ -110,7 +110,10 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     // Bilinear interpolation
     float tx = local_x / spacing;
     float tz = local_z / spacing;
-    road_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
+    float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
+    
+    // Round to nearest integer for grid-aligned block placement
+    road_height = round(interpolated_height);
     
     return min_dist;
 }
