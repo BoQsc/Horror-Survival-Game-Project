@@ -32,6 +32,7 @@ var current_object_rotation: int = 0
 
 # Placement snap mode (applies to BUILDING and OBJECT modes)
 var surface_snap_placement: bool = true  # true = place ON TOP of terrain, false = embedded
+var placement_y_offset: int = 0  # Manual Y offset adjustment
 
 # PLAYING mode placeable items
 enum PlaceableItem { ROCK, GRASS }
@@ -41,6 +42,7 @@ var current_voxel_pos: Vector3
 var current_remove_voxel_pos: Vector3
 var has_target: bool = false
 var voxel_grid_visualizer: MeshInstance3D
+var last_stable_voxel_y: float = 0.0  # For hysteresis in surface snap mode
 
 func _ready():
 	# Create Grid Visualizer
@@ -203,6 +205,15 @@ func _unhandled_input(event):
 					else:
 						current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
+			elif event.shift_pressed:
+				# Shift+Scroll: adjust placement Y offset
+				if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT:
+					if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+						placement_y_offset += 1
+						print("Placement Y offset: %d" % placement_y_offset)
+					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+						placement_y_offset -= 1
+						print("Placement Y offset: %d" % placement_y_offset)
 		elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 				if current_mode == Mode.PLAYING:
 					handle_playing_input(event)
@@ -320,18 +331,22 @@ func update_selection_box():
 		var pos = terrain_hit.position
 		var normal = terrain_hit.normal
 		
-		var check_pos: Vector3
-		if surface_snap_placement:
-			# Surface snap: place in the voxel ABOVE the hit point
-			# Move along normal by 0.5 to ensure we're in the air voxel
-			check_pos = pos + normal * 0.5
-		else:
-			# Embedded: original behavior - slightly inside surface
-			check_pos = pos + normal * 0.01
+		var voxel_x: int
+		var voxel_y: int
+		var voxel_z: int
 		
-		var voxel_x = floor(check_pos.x)
-		var voxel_y = floor(check_pos.y)
-		var voxel_z = floor(check_pos.z)
+		if surface_snap_placement:
+			# Surface snap: push UP from hit point using surface normal
+			var offset = normal * 0.6  # Push away from surface
+			var placement_pos = pos + offset
+			voxel_x = int(floor(placement_pos.x))
+			voxel_y = int(floor(placement_pos.y)) + placement_y_offset  # Apply manual offset
+			voxel_z = int(floor(placement_pos.z))
+		else:
+			# Embedded: use floor of hit point (may sink into terrain)
+			voxel_x = int(floor(pos.x))
+			voxel_y = int(floor(pos.y))
+			voxel_z = int(floor(pos.z))
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		current_remove_voxel_pos = current_voxel_pos 
