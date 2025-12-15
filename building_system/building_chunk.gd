@@ -140,17 +140,55 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 	for cell in cells:
 		occupied_by_object[cell] = local_anchor
 	
-	# Add visual instance
+	# Add visual instance with collision
 	if scene_instance:
 		add_child(scene_instance)
 		# Position: X/Z centered on cell, Y at anchor + fractional offset
 		scene_instance.position = Vector3(local_anchor.x + 0.5, local_anchor.y + fractional_y, local_anchor.z + 0.5)
 		# Apply rotation (90 degree increments)
 		scene_instance.rotation_degrees.y = rotation * 90
+		
+		# Add to group for identification during removal
+		scene_instance.add_to_group("placed_objects")
+		# Store anchor reference in metadata for removal lookup
+		scene_instance.set_meta("anchor", local_anchor)
+		scene_instance.set_meta("chunk", self)
+		
+		# Generate collision for the object (if it has meshes)
+		_generate_object_collision(scene_instance, local_anchor)
+		
 		object_nodes[local_anchor] = scene_instance
 	
 	is_empty = false
 	return true
+
+## Generate collision for an object by finding its meshes
+## anchor is passed in since child nodes may not have the meta set
+func _generate_object_collision(obj: Node3D, anchor: Vector3i):
+	# Find all MeshInstance3D children and create collision shapes
+	for child in obj.get_children():
+		if child is MeshInstance3D:
+			var mesh_inst = child as MeshInstance3D
+			if mesh_inst.mesh:
+				# Create StaticBody3D with trimesh collision
+				var static_body = StaticBody3D.new()
+				static_body.add_to_group("placed_objects")
+				static_body.set_meta("anchor", anchor)
+				static_body.set_meta("chunk", self)
+				
+				var collision = CollisionShape3D.new()
+				collision.shape = mesh_inst.mesh.create_trimesh_shape()
+				static_body.add_child(collision)
+				
+				# Match the mesh position
+				static_body.position = mesh_inst.position
+				static_body.rotation = mesh_inst.rotation
+				static_body.scale = mesh_inst.scale
+				
+				mesh_inst.add_child(static_body)
+		# Recurse into children
+		if child is Node3D:
+			_generate_object_collision(child, anchor)
 
 ## Remove an object and free its cells
 func remove_object(local_anchor: Vector3i) -> bool:

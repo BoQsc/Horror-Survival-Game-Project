@@ -489,7 +489,20 @@ func handle_object_input(event):
 	
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove object
 		var hit = raycast(10.0, false)
-		if hit:
+		if hit and hit.collider:
+			# Check if we hit a placed object (either the root or a child StaticBody)
+			if hit.collider.is_in_group("placed_objects"):
+				# Get anchor and chunk from metadata (check if they exist first)
+				if hit.collider.has_meta("anchor") and hit.collider.has_meta("chunk"):
+					var anchor = hit.collider.get_meta("anchor")
+					var chunk = hit.collider.get_meta("chunk")
+					if anchor != null and chunk != null:
+						var success = chunk.remove_object(anchor)
+						if success:
+							print("Removed object at anchor %s" % anchor)
+						return
+			
+			# Fallback: try position-based removal
 			var remove_pos = hit.position - hit.normal * 0.01
 			var success = building_manager.remove_object_at(remove_pos)
 			if success:
