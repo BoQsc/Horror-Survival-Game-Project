@@ -100,35 +100,20 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     
     float min_dist = min(dist_to_x_road, dist_to_z_road);
     
-    // Calculate smoothed road height at this position
-    // Sample terrain at grid intersection points - REDUCED variation for flatter roads
-    // Using smaller multiplier (3.0 instead of 10.0) for gentler slopes
-    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.02) * 3.0 + 12.0;
-    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.02) * 3.0 + 12.0;
-    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 3.0 + 12.0;
-    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 3.0 + 12.0;
+    // Calculate road height - MINIMAL variation for nearly flat roads
+    // Using tiny multiplier (0.5) for almost completely level roads
+    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.02) * 0.5 + 14.0;
+    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.02) * 0.5 + 14.0;
+    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 0.5 + 14.0;
+    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 0.5 + 14.0;
     
     // Bilinear interpolation for base height
     float tx = local_x / spacing;
     float tz = local_z / spacing;
     float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
     
-    // Smooth stepping: round to nearest integer, but smoothly transition between levels
-    // This prevents sharp triangle artifacts at step boundaries
-    float rounded_height = round(interpolated_height);
-    float height_diff = interpolated_height - rounded_height;
-    
-    // Smooth transition zone: blend between levels over 0.3 units
-    // When within 0.3 of a step boundary, smoothly interpolate
-    float transition_zone = 0.3;
-    if (abs(height_diff) > 0.5 - transition_zone) {
-        // Near a step boundary - smooth it
-        float blend = smoothstep(0.5 - transition_zone, 0.5, abs(height_diff));
-        float step_dir = sign(height_diff);
-        road_height = rounded_height + step_dir * blend;
-    } else {
-        road_height = rounded_height;
-    }
+    // Use smooth interpolated height directly - NO STEPPING for smooth drivable roads
+    road_height = interpolated_height;
     
     return min_dist;
 }
@@ -147,25 +132,14 @@ float get_density(vec3 pos) {
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     
     if (road_dist < params.road_width) {
-        // Inside road area - create a SOLID road slab
-        // Below road surface = solid (negative density)
-        // Above road surface = air (positive density)
+        // COMPLETELY FLAT ROAD - just use road height, ignore terrain bumps
         float road_density = world_pos.y - road_height;
         
-        // Fill in any terrain that's below the road surface
-        // This eliminates bumps where terrain dips below road level
-        float filled_density;
-        if (world_pos.y < road_height) {
-            // Below road surface: make solid (but only override if terrain had a hole)
-            filled_density = min(density, road_density);
-        } else {
-            // At or above road surface: use road density
-            filled_density = road_density;
-        }
+        // Blend factor: 1.0 in center, 0.0 at edges
+        float blend = smoothstep(params.road_width, params.road_width * 0.5, road_dist);
         
-        // Smooth blend at road edges
-        float blend = smoothstep(params.road_width, params.road_width * 0.3, road_dist);
-        density = mix(density, filled_density, blend);
+        // Replace terrain with flat road
+        density = mix(density, road_density, blend);
     }
     
     return density;
