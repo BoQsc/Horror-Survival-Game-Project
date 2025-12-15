@@ -169,7 +169,12 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 
 ## Generate collision for an object by finding its meshes
 ## anchor is passed in since child nodes may not have the meta set
+## Skips objects in "interactable" group - they handle their own collision
 func _generate_object_collision(obj: Node3D, anchor: Vector3i):
+	# Skip collision generation for interactable objects (they manage their own)
+	if obj.is_in_group("interactable"):
+		print("BuildingChunk: Skipping collision for interactable object")
+		return
 	# Find all MeshInstance3D children and create collision shapes
 	for child in obj.get_children():
 		if child is MeshInstance3D:

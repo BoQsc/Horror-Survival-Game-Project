@@ -887,9 +887,17 @@ func _disable_preview_collisions(node: Node):
 
 ## Check for interactable objects player is looking at
 func _check_interaction_target():
-	var hit = raycast(5.0, false)  # Short range, no areas
+	var hit = raycast(5.0, true)  # Short range, WITH areas for door detection
 	
 	if hit and hit.collider:
+		# Check if we hit an Area3D with a door reference
+		if hit.collider is Area3D and hit.collider.has_meta("door"):
+			var door = hit.collider.get_meta("door")
+			if door and door.is_in_group("interactable"):
+				interaction_target = door
+				_show_interaction_prompt()
+				return
+		
 		# Walk up the tree to find an interactable parent
 		var node = hit.collider
 		while node:
