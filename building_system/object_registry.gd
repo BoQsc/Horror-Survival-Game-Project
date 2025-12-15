@@ -25,6 +25,11 @@ const OBJECTS = {
 		"scene": "res://models/interactive_door/interactive_door.tscn",
 		"size": Vector3i(1, 2, 1),
 	},
+	5: {
+		"name": "Window",
+		"scene": "res://models/objects/window/1/window.tscn",
+		"size": Vector3i(1, 2, 1),
+	},
 }
 
 ## Get object definition by ID

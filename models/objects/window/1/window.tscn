@@ -1,0 +1,25 @@
+[gd_scene load_steps=4 format=3 uid="uid://67wx1k6uu5nj"]
+
+[ext_resource type="PackedScene" uid="uid://drk8pkv75dikl" path="res://models/objects/window/1/window.glb" id="1_window"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_guide"]
+transparency = 1
+albedo_color = Color(0.2, 0.5, 1, 0.3)
+
+[sub_resource type="BoxMesh" id="BoxMesh_guide"]
+
+[node name="Window" type="Node3D"]
+
+[node name="WindowModel" parent="." instance=ExtResource("1_window")]
+
+[node name="PlacementGuides" type="Node3D" parent="."]
+
+[node name="Block00" type="MeshInstance3D" parent="PlacementGuides"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+material_override = SubResource("StandardMaterial3D_guide")
+mesh = SubResource("BoxMesh_guide")
+
+[node name="Block01" type="MeshInstance3D" parent="PlacementGuides"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
+material_override = SubResource("StandardMaterial3D_guide")
+mesh = SubResource("BoxMesh_guide")
