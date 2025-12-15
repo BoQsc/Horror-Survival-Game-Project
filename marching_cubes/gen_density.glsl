@@ -111,18 +111,14 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     float tz = local_z / spacing;
     float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
     
-    // Round to nearest integer for block alignment, with smooth transitions
+    // Round to nearest integer for block alignment, with very gentle transitions
     float rounded_height = round(interpolated_height);
     float height_diff = interpolated_height - rounded_height;
     
-    // Very wide transition zone (0.45) for smooth ramps between levels
-    float transition_zone = 0.45;
-    if (abs(height_diff) > 0.5 - transition_zone) {
-        float blend = smoothstep(0.5 - transition_zone, 0.5, abs(height_diff));
-        road_height = rounded_height + sign(height_diff) * blend;
-    } else {
-        road_height = rounded_height;
-    }
+    // Super smooth transition: use smoothstep across the ENTIRE 0.5 range
+    // This creates a gentle ramp the whole way, no sudden bumps
+    float blend = smoothstep(0.0, 0.5, abs(height_diff));
+    road_height = rounded_height + sign(height_diff) * blend;
     
     return min_dist;
 }
