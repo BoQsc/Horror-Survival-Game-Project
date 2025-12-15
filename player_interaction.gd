@@ -175,6 +175,8 @@ func _unhandled_input(event):
 		elif event.keycode == KEY_4:
 			if current_mode == Mode.MATERIAL:
 				current_material_id = 103  # Snow
+			elif current_mode == Mode.OBJECT:
+				current_object_id = 4  # Door
 			else:
 				current_block_id = 4
 			update_ui()
@@ -299,7 +301,7 @@ func update_ui():
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"
 		var grid_str = "Grid ON" if object_show_grid else "Grid OFF"
-		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
+		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-4] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
