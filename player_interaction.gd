@@ -49,6 +49,7 @@ var last_stable_voxel_y: float = 0.0  # For hysteresis in surface snap mode
 var preview_instance: Node3D = null
 var preview_object_id: int = -1  # Track which object the preview is for
 var preview_valid: bool = true  # Whether current placement is valid
+var object_show_grid: bool = false  # Toggle to show selection box/grid in OBJECT mode (default off)
 
 func _ready():
 	# Create Grid Visualizer
@@ -69,12 +70,18 @@ func _process(_delta):
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
 		_destroy_preview()  # Ensure preview is cleaned up
-	elif current_mode == Mode.BUILDING or current_mode == Mode.OBJECT or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
+	elif current_mode == Mode.OBJECT:
+		# OBJECT mode: use preview, optionally show grid helpers
+		update_selection_box()  # Still calculate target position
+		if object_show_grid:
+			update_grid_visualizer()
+			# Selection box visibility is set in update_selection_box
+		else:
+			selection_box.visible = false
+			voxel_grid_visualizer.visible = false
+	elif current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
-		# Update object preview in OBJECT mode
-		if current_mode == Mode.OBJECT:
-			_update_or_create_preview()
 	else:
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
@@ -125,7 +132,10 @@ func _unhandled_input(event):
 		
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_G:
-			terrain_blocky_mode = not terrain_blocky_mode
+			if current_mode == Mode.OBJECT:
+				object_show_grid = not object_show_grid
+			else:
+				terrain_blocky_mode = not terrain_blocky_mode
 			update_ui()
 		elif event.keycode == KEY_1:
 			if current_mode == Mode.ROAD:
@@ -279,8 +289,8 @@ func update_ui():
 	elif current_mode == Mode.OBJECT:
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"
-		var snap_str = "Surface" if surface_snap_placement else "Embed"
-		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select, [V] Snap" % [snap_str, obj_name, current_object_rotation]
+		var grid_str = "Grid ON" if object_show_grid else "Grid OFF"
+		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select, [G] Grid, [V] Snap" % [grid_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
