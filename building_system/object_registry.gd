@@ -12,7 +12,7 @@ const OBJECTS = {
 	},
 	2: {
 		"name": "Long Crate",
-		"scene": "res://objects/long_crate.tscn", 
+		"scene": "res://models/objects/crate/1/simple_long_crate.tscn", 
 		"size": Vector3i(2, 1, 1),
 	},
 	3: {

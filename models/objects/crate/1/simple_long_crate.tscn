@@ -1,0 +1,27 @@
+[gd_scene load_steps=4 format=3 uid="uid://dsbf11hgy5m0p"]
+
+[ext_resource type="PackedScene" uid="uid://dvdsreoeekta8" path="res://models/objects/crate/1/simple_long_crate.glb" id="1_crate"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
+transparency = 1
+albedo_color = Color(0.2, 0.5, 1, 0.3)
+
+[sub_resource type="BoxMesh" id="BoxMesh_1"]
+
+[node name="SimpleLongCrate" type="Node3D"]
+
+[node name="CrateModel" parent="." instance=ExtResource("1_crate")]
+transform = Transform3D(-1.2523373e-08, 0, 0.2632489, 0, 0.33812726, 0, -0.28650138, 0, -1.1506975e-08, -0.004655361, 0.38655603, -0.05474502)
+
+[node name="PlacementGuides" type="Node3D" parent="."]
+visible = false
+
+[node name="Block00" type="MeshInstance3D" parent="PlacementGuides"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.5, -0.5, 0)
+material_override = SubResource("StandardMaterial3D_1")
+mesh = SubResource("BoxMesh_1")
+
+[node name="Block10" type="MeshInstance3D" parent="PlacementGuides"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5, -0.5, 0)
+material_override = SubResource("StandardMaterial3D_1")
+mesh = SubResource("BoxMesh_1")
