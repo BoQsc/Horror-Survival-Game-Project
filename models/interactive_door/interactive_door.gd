@@ -2,9 +2,9 @@ extends Node3D
 class_name InteractiveDoor
 
 ## Interactive door that can be opened/closed with E key
-## Has two collision types:
-## 1. Blocking collision - toggles on/off to block/allow player passage
-## 2. Interaction Area3D - always on for raycast detection
+## Uses collision shapes defined in the scene:
+## - "opened door collision layer" - Blocking collision (toggles on/off)
+## - "door interaction layer" - Interaction Area3D (always on for raycast detection)
 
 @export var is_open: bool = false
 
@@ -12,6 +12,7 @@ var animation_player: AnimationPlayer = null
 var door_static_body: StaticBody3D = null
 var door_collision: CollisionShape3D = null
 var interaction_area: Area3D = null
+var interaction_collision: CollisionShape3D = null
 
 func _ready():
 	# Add to interactable group for player detection (also tells building_chunk to skip collision)
@@ -26,9 +27,9 @@ func _ready():
 	else:
 		print("Door: No AnimationPlayer found!")
 	
-	# Create collision shapes
-	_create_door_collision()
-	_create_interaction_area()
+	# Setup collision using scene-defined shapes
+	_setup_door_collision()
+	_setup_interaction_area()
 	
 	# Set initial collision state
 	_set_collision_enabled(not is_open)
@@ -42,44 +43,83 @@ func _find_animation_player(node: Node):
 			return
 		_find_animation_player(child)
 
-## Create a box collision shape for blocking the player (toggleable)
-func _create_door_collision():
-	door_static_body = StaticBody3D.new()
-	door_static_body.name = "DoorBlocker"
-	door_static_body.add_to_group("placed_objects")
+## Find the "closed door collision layer" from scene and wrap it in a StaticBody3D
+func _setup_door_collision():
+	# Find the existing collision shape from the scene (blocks player when door is closed)
+	var existing_shape = _find_node_by_name(self, "closed door collision layer")
 	
-	door_collision = CollisionShape3D.new()
-	# Door size: 1 wide, 2 tall, 0.2 deep
-	var box = BoxShape3D.new()
-	box.size = Vector3(1.0, 2.0, 0.2)
-	door_collision.shape = box
-	door_collision.position = Vector3(0.0, 1.0, 0.0)
-	
-	door_static_body.add_child(door_collision)
-	add_child(door_static_body)
-	
-	print("Door: Created blocking collision")
+	if existing_shape and existing_shape is CollisionShape3D:
+		door_collision = existing_shape
+		
+		# Create StaticBody3D to be the parent
+		door_static_body = StaticBody3D.new()
+		door_static_body.name = "DoorBlocker"
+		door_static_body.add_to_group("placed_objects")
+		
+		# Store original parent and transform
+		var original_parent = door_collision.get_parent()
+		var global_xform = door_collision.global_transform
+		
+		# Reparent: remove from old parent
+		original_parent.remove_child(door_collision)
+		
+		# Add StaticBody to the door root
+		add_child(door_static_body)
+		
+		# Add collision shape to StaticBody
+		door_static_body.add_child(door_collision)
+		
+		# Restore global transform
+		door_collision.global_transform = global_xform
+		
+		print("Door: Using scene-defined blocking collision")
+	else:
+		print("Door: WARNING - 'opened door collision layer' not found in scene!")
 
-## Create an Area3D for interaction detection (always active)
-func _create_interaction_area():
-	interaction_area = Area3D.new()
-	interaction_area.name = "InteractionArea"
-	interaction_area.add_to_group("interactable")
-	interaction_area.add_to_group("placed_objects")
-	# Store reference to this door for interaction
-	interaction_area.set_meta("door", self)
+## Find the "door interaction layer" from scene and wrap it in an Area3D
+func _setup_interaction_area():
+	# Find the existing collision shape from the scene
+	var existing_shape = _find_node_by_name(self, "door interaction layer")
 	
-	var collision = CollisionShape3D.new()
-	# Slightly larger than the door for easy targeting
-	var box = BoxShape3D.new()
-	box.size = Vector3(1.2, 2.2, 0.4)
-	collision.shape = box
-	collision.position = Vector3(0.0, 1.0, 0.0)
-	
-	interaction_area.add_child(collision)
-	add_child(interaction_area)
-	
-	print("Door: Created interaction area")
+	if existing_shape and existing_shape is CollisionShape3D:
+		interaction_collision = existing_shape
+		
+		# Create Area3D for interaction detection
+		interaction_area = Area3D.new()
+		interaction_area.name = "InteractionArea"
+		interaction_area.add_to_group("interactable")
+		interaction_area.add_to_group("placed_objects")
+		interaction_area.set_meta("door", self)
+		
+		# Store original parent and transform
+		var original_parent = interaction_collision.get_parent()
+		var global_xform = interaction_collision.global_transform
+		
+		# Reparent: remove from old parent
+		original_parent.remove_child(interaction_collision)
+		
+		# Add Area3D to the door root
+		add_child(interaction_area)
+		
+		# Add collision shape to Area3D
+		interaction_area.add_child(interaction_collision)
+		
+		# Restore global transform
+		interaction_collision.global_transform = global_xform
+		
+		print("Door: Using scene-defined interaction area")
+	else:
+		print("Door: WARNING - 'door interaction layer' not found in scene!")
+
+## Recursively find a node by name
+func _find_node_by_name(root: Node, target_name: String) -> Node:
+	if root.name == target_name:
+		return root
+	for child in root.get_children():
+		var found = _find_node_by_name(child, target_name)
+		if found:
+			return found
+	return null
 
 ## Enable or disable door blocking collision (not interaction area)
 func _set_collision_enabled(enabled: bool):
