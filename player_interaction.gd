@@ -324,6 +324,10 @@ func update_selection_box():
 		current_remove_voxel_pos = voxel_hit.voxel_pos
 		current_voxel_pos = voxel_hit.voxel_pos + voxel_hit.normal
 		
+		# For OBJECT mode on blocks: precise Y is the top of the block
+		if current_mode == Mode.OBJECT:
+			current_precise_hit_y = voxel_hit.voxel_pos.y + 1.0  # Top of block
+		
 		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		selection_box.visible = true
 		has_target = true
