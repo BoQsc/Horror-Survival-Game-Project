@@ -10,6 +10,7 @@ extends Node
 @onready var camera: Camera3D = $".."
 @onready var selection_box: MeshInstance3D = $"../../../SelectionBox"
 @onready var player = $"../.."
+@onready var interaction_label: Label = get_node_or_null("../../../UI/InteractionLabel")  # Created dynamically if null
 
 enum Mode { PLAYING, TERRAIN, WATER, BUILDING, OBJECT, ROAD, MATERIAL }
 var current_mode: Mode = Mode.PLAYING
@@ -51,6 +52,9 @@ var preview_object_id: int = -1  # Track which object the preview is for
 var preview_valid: bool = true  # Whether current placement is valid
 var object_show_grid: bool = false  # Toggle to show selection box/grid in OBJECT mode (default off)
 
+# Interaction system
+var interaction_target: Node3D = null  # Current interactable being looked at
+
 func _ready():
 	# Create Grid Visualizer
 	voxel_grid_visualizer = MeshInstance3D.new()
@@ -70,6 +74,8 @@ func _process(_delta):
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
 		_destroy_preview()  # Ensure preview is cleaned up
+		# Check for interactable objects
+		_check_interaction_target()
 	elif current_mode == Mode.OBJECT:
 		# OBJECT mode: use preview, optionally show grid helpers
 		update_selection_box()  # Still calculate target position
@@ -215,6 +221,11 @@ func _unhandled_input(event):
 			elif current_mode == Mode.BUILDING:
 				current_rotation = (current_rotation + 1) % 4
 				update_ui()
+		elif event.keycode == KEY_E:
+			# E key: interact with objects in PLAYING mode
+			if current_mode == Mode.PLAYING and interaction_target:
+				if interaction_target.has_method("interact"):
+					interaction_target.interact()
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
@@ -871,3 +882,61 @@ func _disable_preview_collisions(node: Node):
 	
 	for child in node.get_children():
 		_disable_preview_collisions(child)
+
+## ============== INTERACTION SYSTEM ==============
+
+## Check for interactable objects player is looking at
+func _check_interaction_target():
+	var hit = raycast(5.0, false)  # Short range, no areas
+	
+	if hit and hit.collider:
+		# Walk up the tree to find an interactable parent
+		var node = hit.collider
+		while node:
+			if node.is_in_group("interactable"):
+				interaction_target = node
+				_show_interaction_prompt()
+				return
+			node = node.get_parent()
+	
+	# No interactable found
+	interaction_target = null
+	_hide_interaction_prompt()
+
+## Show interaction prompt (creates label if needed)
+func _show_interaction_prompt():
+	if not interaction_label:
+		_create_interaction_label()
+	
+	if interaction_label and interaction_target:
+		if interaction_target.has_method("get_interaction_prompt"):
+			interaction_label.text = interaction_target.get_interaction_prompt()
+		else:
+			interaction_label.text = "Press E to interact"
+		interaction_label.visible = true
+
+## Hide interaction prompt
+func _hide_interaction_prompt():
+	if interaction_label:
+		interaction_label.visible = false
+
+## Create the interaction label if it doesn't exist
+func _create_interaction_label():
+	var ui_node = get_node_or_null("../../../UI")
+	if ui_node:
+		interaction_label = Label.new()
+		interaction_label.name = "InteractionLabel"
+		interaction_label.text = "Press E to interact"
+		interaction_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		interaction_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		interaction_label.anchor_left = 0.5
+		interaction_label.anchor_right = 0.5
+		interaction_label.anchor_top = 0.6
+		interaction_label.anchor_bottom = 0.6
+		interaction_label.offset_left = -100
+		interaction_label.offset_right = 100
+		interaction_label.offset_top = -20
+		interaction_label.offset_bottom = 20
+		interaction_label.add_theme_font_size_override("font_size", 20)
+		interaction_label.visible = false
+		ui_node.add_child(interaction_label)

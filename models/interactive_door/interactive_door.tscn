@@ -1,8 +1,10 @@
-[gd_scene load_steps=2 format=3 uid="uid://y0c2i7cobaf2"]
+[gd_scene load_steps=3 format=3 uid="uid://y0c2i7cobaf2"]
 
 [ext_resource type="PackedScene" uid="uid://biqf2y3w81huo" path="res://models/interactive_door/hello_neighbor_reality_door_download.glb" id="1_door"]
+[ext_resource type="Script" path="res://models/interactive_door/interactive_door.gd" id="2_script"]
 
 [node name="InteractiveDoor" type="Node3D"]
+script = ExtResource("2_script")
 
 [node name="DoorModel" parent="." instance=ExtResource("1_door")]
 transform = Transform3D(1, 0, 0, 0, 0.87700605, 0, 0, 0, 1, 0, 0.076827765, -0.42714855)

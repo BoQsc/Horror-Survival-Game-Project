@@ -24,6 +24,8 @@ tonemap_mode = 2
 glow_enabled = true
 
 [sub_resource type="CapsuleShape3D" id="PlayerShape"]
+radius = 0.1
+height = 1.0
 
 [sub_resource type="BoxMesh" id="BoxMesh_selection"]
 size = Vector3(1.01, 1.01, 1.01)
