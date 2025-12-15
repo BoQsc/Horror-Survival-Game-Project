@@ -11,7 +11,7 @@ extends Node
 @onready var selection_box: MeshInstance3D = $"../../../SelectionBox"
 @onready var player = $"../.."
 
-enum Mode { PLAYING, TERRAIN, WATER, BUILDING, ROAD, MATERIAL }
+enum Mode { PLAYING, TERRAIN, WATER, BUILDING, OBJECT, ROAD, MATERIAL }
 var current_mode: Mode = Mode.PLAYING
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
@@ -25,6 +25,10 @@ var material_brush_radius: float = 1.5  # Computed from index
 var road_start_pos: Vector3 = Vector3.ZERO
 var is_placing_road: bool = false
 var road_type: int = 1  # 1=Flatten, 2=Mask Only, 3=Normalize
+
+# Object placement state
+var current_object_id: int = 1  # From ObjectRegistry
+var current_object_rotation: int = 0
 
 # PLAYING mode placeable items
 enum PlaceableItem { ROCK, GRASS }
@@ -53,7 +57,7 @@ func _process(_delta):
 		# No selection box in playing mode
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
-	elif current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
+	elif current_mode == Mode.BUILDING or current_mode == Mode.OBJECT or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
 	else:
@@ -114,6 +118,8 @@ func _unhandled_input(event):
 				current_placeable = PlaceableItem.ROCK
 			elif current_mode == Mode.MATERIAL:
 				current_material_id = 100  # Grass
+			elif current_mode == Mode.OBJECT:
+				current_object_id = 1  # Wooden Crate
 			else:
 				current_block_id = 1
 			update_ui()
@@ -124,6 +130,8 @@ func _unhandled_input(event):
 				current_placeable = PlaceableItem.GRASS
 			elif current_mode == Mode.MATERIAL:
 				current_material_id = 101  # Stone
+			elif current_mode == Mode.OBJECT:
+				current_object_id = 2  # Long Crate
 			else:
 				current_block_id = 2
 			update_ui()
@@ -132,6 +140,8 @@ func _unhandled_input(event):
 				road_type = 3
 			elif current_mode == Mode.MATERIAL:
 				current_material_id = 102  # Sand
+			elif current_mode == Mode.OBJECT:
+				current_object_id = 3  # Table
 			else:
 				current_block_id = 3
 			update_ui()
@@ -173,10 +183,16 @@ func _unhandled_input(event):
 		if event.pressed:
 			if event.ctrl_pressed:
 				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-					current_rotation = (current_rotation + 1) % 4
+					if current_mode == Mode.OBJECT:
+						current_object_rotation = (current_object_rotation + 1) % 4
+					else:
+						current_rotation = (current_rotation + 1) % 4
 					update_ui()
 				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-					current_rotation = (current_rotation - 1 + 4) % 4
+					if current_mode == Mode.OBJECT:
+						current_object_rotation = (current_object_rotation - 1 + 4) % 4
+					else:
+						current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
 		elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 				if current_mode == Mode.PLAYING:
@@ -185,6 +201,8 @@ func _unhandled_input(event):
 					handle_terrain_input(event)
 				elif current_mode == Mode.BUILDING and has_target:
 					handle_building_input(event)
+				elif current_mode == Mode.OBJECT and has_target:
+					handle_object_input(event)
 				elif current_mode == Mode.ROAD:
 					handle_road_input(event)
 				elif current_mode == Mode.MATERIAL:
@@ -198,8 +216,10 @@ func toggle_mode():
 	elif current_mode == Mode.WATER:
 		current_mode = Mode.BUILDING
 	elif current_mode == Mode.BUILDING:
+		current_mode = Mode.OBJECT
+	elif current_mode == Mode.OBJECT:
 		current_mode = Mode.ROAD
-		is_placing_road = false  # Reset road state
+		is_placing_road = false
 	elif current_mode == Mode.ROAD:
 		current_mode = Mode.MATERIAL
 	else:
@@ -223,6 +243,10 @@ func update_ui():
 		elif current_block_id == 4: block_name = "Stairs"
 		
 		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
+	elif current_mode == Mode.OBJECT:
+		var obj = ObjectRegistry.get_object(current_object_id)
+		var obj_name = obj.name if obj else "Unknown"
+		mode_label.text = "Mode: OBJECT\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select Object\nCTRL+Scroll: Rotate" % [obj_name, current_object_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
@@ -392,6 +416,24 @@ func handle_building_input(event):
 				# Fallback to the grid selection if we hit something else (like terrain) 
 				# or if the user wants to remove terrain? (Not requested here)
 				pass
+
+func handle_object_input(event):
+	# Object placement uses current_voxel_pos for placement target
+	
+	if event.button_index == MOUSE_BUTTON_RIGHT: # Place object
+		var success = building_manager.place_object(current_voxel_pos, current_object_id, current_object_rotation)
+		if success:
+			print("Placed object %d at %s" % [current_object_id, current_voxel_pos])
+		else:
+			print("Cannot place object - cells not available")
+	
+	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove object
+		var hit = raycast(10.0, false)
+		if hit:
+			var remove_pos = hit.position - hit.normal * 0.01
+			var success = building_manager.remove_object_at(remove_pos)
+			if success:
+				print("Removed object at %s" % remove_pos)
 
 func raycast(length: float, collide_areas: bool = false, exclude_water: bool = false):
 	var space_state = camera.get_world_3d().direct_space_state

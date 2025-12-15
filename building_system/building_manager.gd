@@ -173,3 +173,97 @@ func get_voxel(global_pos: Vector3) -> int:
 	
 	return chunks[chunk_coord].get_voxel(Vector3i(local_x, local_y, local_z))
 
+## Check if an object can be placed at the given global position
+func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
+	var anchor = Vector3i(floor(global_pos.x), floor(global_pos.y), floor(global_pos.z))
+	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
+	
+	for cell in cells:
+		# Check each cell is available
+		var chunk_coord = Vector3i(
+			int(floor(float(cell.x) / CHUNK_SIZE)),
+			int(floor(float(cell.y) / CHUNK_SIZE)),
+			int(floor(float(cell.z) / CHUNK_SIZE))
+		)
+		
+		var local = Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
+		if local.x < 0: local.x += CHUNK_SIZE
+		if local.y < 0: local.y += CHUNK_SIZE
+		if local.z < 0: local.z += CHUNK_SIZE
+		
+		# Get or create chunk to check
+		if chunks.has(chunk_coord):
+			if not chunks[chunk_coord].is_cell_available(local):
+				return false
+		# If chunk doesn't exist, cell is available (empty terrain)
+	
+	return true
+
+## Place an object at the given global position
+func place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
+	if not can_place_object(global_pos, object_id, rotation):
+		return false
+	
+	var obj_def = ObjectRegistry.get_object(object_id)
+	if obj_def.is_empty():
+		return false
+	
+	var anchor = Vector3i(floor(global_pos.x), floor(global_pos.y), floor(global_pos.z))
+	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
+	
+	# Load and instantiate the scene
+	var scene_path = obj_def.scene
+	var scene_instance: Node3D = null
+	if ResourceLoader.exists(scene_path):
+		var packed = load(scene_path) as PackedScene
+		if packed:
+			scene_instance = packed.instantiate()
+	
+	# Place in the chunk containing the anchor
+	var chunk_coord = Vector3i(
+		int(floor(float(anchor.x) / CHUNK_SIZE)),
+		int(floor(float(anchor.y) / CHUNK_SIZE)),
+		int(floor(float(anchor.z) / CHUNK_SIZE))
+	)
+	
+	var local_anchor = Vector3i(anchor.x % CHUNK_SIZE, anchor.y % CHUNK_SIZE, anchor.z % CHUNK_SIZE)
+	if local_anchor.x < 0: local_anchor.x += CHUNK_SIZE
+	if local_anchor.y < 0: local_anchor.y += CHUNK_SIZE
+	if local_anchor.z < 0: local_anchor.z += CHUNK_SIZE
+	
+	# Convert cells to local coordinates for the anchor chunk
+	var local_cells: Array[Vector3i] = []
+	for cell in cells:
+		var local_cell = Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
+		if local_cell.x < 0: local_cell.x += CHUNK_SIZE
+		if local_cell.y < 0: local_cell.y += CHUNK_SIZE
+		if local_cell.z < 0: local_cell.z += CHUNK_SIZE
+		local_cells.append(local_cell)
+	
+	var chunk = get_chunk(chunk_coord)
+	return chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance)
+
+## Remove an object at the given global position
+func remove_object_at(global_pos: Vector3) -> bool:
+	var cell = Vector3i(floor(global_pos.x), floor(global_pos.y), floor(global_pos.z))
+	
+	var chunk_coord = Vector3i(
+		int(floor(float(cell.x) / CHUNK_SIZE)),
+		int(floor(float(cell.y) / CHUNK_SIZE)),
+		int(floor(float(cell.z) / CHUNK_SIZE))
+	)
+	
+	if not chunks.has(chunk_coord):
+		return false
+	
+	var local = Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
+	if local.x < 0: local.x += CHUNK_SIZE
+	if local.y < 0: local.y += CHUNK_SIZE
+	if local.z < 0: local.z += CHUNK_SIZE
+	
+	var chunk = chunks[chunk_coord]
+	var anchor = chunk.get_object_at(local)
+	if anchor == null:
+		return false
+	
+	return chunk.remove_object(anchor)

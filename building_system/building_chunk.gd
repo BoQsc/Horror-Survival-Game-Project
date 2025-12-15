@@ -6,9 +6,14 @@ const SIZE = 16
 
 # Data
 var chunk_coord: Vector3i
-var voxel_bytes: PackedByteArray # IDs
+var voxel_bytes: PackedByteArray # Block IDs (0 = air, 1-127 = blocks, 128+ reserved for object markers)
 var voxel_meta: PackedByteArray # Rotation/Meta
 var is_empty: bool = true
+
+# Object storage (separate from voxels for multi-cell objects)
+var objects: Dictionary = {}  # Vector3i (local anchor) -> { object_id: int, rotation: int }
+var occupied_by_object: Dictionary = {}  # Vector3i (any local cell) -> Vector3i (anchor pos)
+var object_nodes: Dictionary = {}  # Vector3i (local anchor) -> Node3D (visual instance)
 
 # Visuals
 var mesh_instance: MeshInstance3D
@@ -32,6 +37,14 @@ func reset(new_coord: Vector3i):
 	voxel_bytes.fill(0)  # Clear all voxels to air
 	voxel_meta.fill(0)   # Clear all metadata
 	is_empty = true
+	# Clear object data
+	for anchor in object_nodes:
+		var node = object_nodes[anchor]
+		if node and is_instance_valid(node):
+			node.queue_free()
+	objects.clear()
+	occupied_by_object.clear()
+	object_nodes.clear()
 	# Clear visuals
 	if mesh_instance:
 		mesh_instance.mesh = null
@@ -101,3 +114,68 @@ func apply_mesh(arrays: Array, shape: Shape3D = null):
 
 func _get_index(pos: Vector3i) -> int:
 	return pos.x + pos.y * SIZE + pos.z * SIZE * SIZE
+
+## Check if a cell is available (no block, no object)
+func is_cell_available(local_pos: Vector3i) -> bool:
+	if local_pos.x < 0 or local_pos.y < 0 or local_pos.z < 0: return false
+	if local_pos.x >= SIZE or local_pos.y >= SIZE or local_pos.z >= SIZE: return false
+	
+	# Check block
+	if get_voxel(local_pos) > 0:
+		return false
+	
+	# Check object occupation
+	if occupied_by_object.has(local_pos):
+		return false
+	
+	return true
+
+## Place an object at the anchor position (assumes cells already validated)
+func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D) -> bool:
+	# Store object data
+	objects[local_anchor] = { "object_id": object_id, "rotation": rotation }
+	
+	# Mark all occupied cells
+	for cell in cells:
+		occupied_by_object[cell] = local_anchor
+	
+	# Add visual instance
+	if scene_instance:
+		add_child(scene_instance)
+		scene_instance.position = Vector3(local_anchor) + Vector3(0.5, 0, 0.5)  # Center on cell X/Z
+		# Apply rotation (90 degree increments)
+		scene_instance.rotation_degrees.y = rotation * 90
+		object_nodes[local_anchor] = scene_instance
+	
+	is_empty = false
+	return true
+
+## Remove an object and free its cells
+func remove_object(local_anchor: Vector3i) -> bool:
+	if not objects.has(local_anchor):
+		return false
+	
+	var obj_data = objects[local_anchor]
+	var object_id = obj_data.object_id
+	var rotation = obj_data.rotation
+	
+	# Get all cells to free
+	var cells = ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
+	for cell in cells:
+		occupied_by_object.erase(cell)
+	
+	# Remove visual
+	if object_nodes.has(local_anchor):
+		var node = object_nodes[local_anchor]
+		if node and is_instance_valid(node):
+			node.queue_free()
+		object_nodes.erase(local_anchor)
+	
+	objects.erase(local_anchor)
+	return true
+
+## Get object at a cell (returns anchor position, or null if no object)
+func get_object_at(local_pos: Vector3i):
+	if occupied_by_object.has(local_pos):
+		return occupied_by_object[local_pos]
+	return null
