@@ -3,14 +3,23 @@ class_name InteractiveDoor
 
 ## Interactive door that can be opened/closed with E key
 ## Uses collision shapes defined in the scene:
-## - "opened door collision layer" - Blocking collision (toggles on/off)
+## - "closed door collision layer" - Blocking collision when door is CLOSED
+## - "opened door collision layer" - Blocking collision when door is OPEN (swung position)
 ## - "door interaction layer" - Interaction Area3D (always on for raycast detection)
 
 @export var is_open: bool = false
 
 var animation_player: AnimationPlayer = null
-var door_static_body: StaticBody3D = null
-var door_collision: CollisionShape3D = null
+
+# Closed door blocking collision
+var closed_static_body: StaticBody3D = null
+var closed_collision: CollisionShape3D = null
+
+# Opened door blocking collision
+var opened_static_body: StaticBody3D = null
+var opened_collision: CollisionShape3D = null
+
+# Interaction area
 var interaction_area: Area3D = null
 var interaction_collision: CollisionShape3D = null
 
@@ -28,11 +37,12 @@ func _ready():
 		print("Door: No AnimationPlayer found!")
 	
 	# Setup collision using scene-defined shapes
-	_setup_door_collision()
+	_setup_closed_collision()
+	_setup_opened_collision()
 	_setup_interaction_area()
 	
-	# Set initial collision state
-	_set_collision_enabled(not is_open)
+	# Set initial collision state (door starts closed)
+	_update_collision_states()
 
 func _find_animation_player(node: Node):
 	if node is AnimationPlayer:
@@ -44,41 +54,71 @@ func _find_animation_player(node: Node):
 		_find_animation_player(child)
 
 ## Find the "closed door collision layer" from scene and wrap it in a StaticBody3D
-func _setup_door_collision():
-	# Find the existing collision shape from the scene (blocks player when door is closed)
+func _setup_closed_collision():
 	var existing_shape = _find_node_by_name(self, "closed door collision layer")
 	
 	if existing_shape and existing_shape is CollisionShape3D:
-		door_collision = existing_shape
+		closed_collision = existing_shape
 		
 		# Create StaticBody3D to be the parent
-		door_static_body = StaticBody3D.new()
-		door_static_body.name = "DoorBlocker"
-		door_static_body.add_to_group("placed_objects")
+		closed_static_body = StaticBody3D.new()
+		closed_static_body.name = "ClosedDoorBlocker"
+		closed_static_body.add_to_group("placed_objects")
 		
 		# Store original parent and transform
-		var original_parent = door_collision.get_parent()
-		var global_xform = door_collision.global_transform
+		var original_parent = closed_collision.get_parent()
+		var global_xform = closed_collision.global_transform
 		
 		# Reparent: remove from old parent
-		original_parent.remove_child(door_collision)
+		original_parent.remove_child(closed_collision)
 		
 		# Add StaticBody to the door root
-		add_child(door_static_body)
+		add_child(closed_static_body)
 		
 		# Add collision shape to StaticBody
-		door_static_body.add_child(door_collision)
+		closed_static_body.add_child(closed_collision)
 		
 		# Restore global transform
-		door_collision.global_transform = global_xform
+		closed_collision.global_transform = global_xform
 		
-		print("Door: Using scene-defined blocking collision")
+		print("Door: Using scene-defined CLOSED collision")
+	else:
+		print("Door: WARNING - 'closed door collision layer' not found in scene!")
+
+## Find the "opened door collision layer" from scene and wrap it in a StaticBody3D
+func _setup_opened_collision():
+	var existing_shape = _find_node_by_name(self, "opened door collision layer")
+	
+	if existing_shape and existing_shape is CollisionShape3D:
+		opened_collision = existing_shape
+		
+		# Create StaticBody3D to be the parent
+		opened_static_body = StaticBody3D.new()
+		opened_static_body.name = "OpenedDoorBlocker"
+		opened_static_body.add_to_group("placed_objects")
+		
+		# Store original parent and transform
+		var original_parent = opened_collision.get_parent()
+		var global_xform = opened_collision.global_transform
+		
+		# Reparent: remove from old parent
+		original_parent.remove_child(opened_collision)
+		
+		# Add StaticBody to the door root
+		add_child(opened_static_body)
+		
+		# Add collision shape to StaticBody
+		opened_static_body.add_child(opened_collision)
+		
+		# Restore global transform
+		opened_collision.global_transform = global_xform
+		
+		print("Door: Using scene-defined OPENED collision")
 	else:
 		print("Door: WARNING - 'opened door collision layer' not found in scene!")
 
 ## Find the "door interaction layer" from scene and wrap it in an Area3D
 func _setup_interaction_area():
-	# Find the existing collision shape from the scene
 	var existing_shape = _find_node_by_name(self, "door interaction layer")
 	
 	if existing_shape and existing_shape is CollisionShape3D:
@@ -121,11 +161,17 @@ func _find_node_by_name(root: Node, target_name: String) -> Node:
 			return found
 	return null
 
-## Enable or disable door blocking collision (not interaction area)
-func _set_collision_enabled(enabled: bool):
-	if door_collision:
-		door_collision.disabled = not enabled
-		print("Door blocking collision: %s" % ("enabled" if enabled else "disabled"))
+## Update both collision states based on is_open
+func _update_collision_states():
+	# Closed collision: enabled when door is CLOSED
+	if closed_collision:
+		closed_collision.disabled = is_open
+		print("Door CLOSED collision: %s" % ("disabled" if is_open else "enabled"))
+	
+	# Opened collision: enabled when door is OPEN
+	if opened_collision:
+		opened_collision.disabled = not is_open
+		print("Door OPENED collision: %s" % ("enabled" if is_open else "disabled"))
 
 ## Called when player presses E while looking at this door
 func interact():
@@ -138,14 +184,14 @@ func open_door():
 	if animation_player and animation_player.has_animation("HN_Door_Open"):
 		animation_player.play("HN_Door_Open")
 	is_open = true
-	_set_collision_enabled(false)  # Disable blocking collision when open
+	_update_collision_states()
 	print("Door opened")
 
 func close_door():
 	if animation_player and animation_player.has_animation("HN_Door_Close"):
 		animation_player.play("HN_Door_Close")
 	is_open = false
-	_set_collision_enabled(true)  # Enable blocking collision when closed
+	_update_collision_states()
 	print("Door closed")
 
 ## Get interaction prompt text for UI
@@ -154,3 +200,4 @@ func get_interaction_prompt() -> String:
 		return "Press E to close"
 	else:
 		return "Press E to open"
+
