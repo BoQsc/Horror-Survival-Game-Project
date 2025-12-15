@@ -30,6 +30,9 @@ var road_type: int = 1  # 1=Flatten, 2=Mask Only, 3=Normalize
 var current_object_id: int = 1  # From ObjectRegistry
 var current_object_rotation: int = 0
 
+# Placement snap mode (applies to BUILDING and OBJECT modes)
+var surface_snap_placement: bool = true  # true = place ON TOP of terrain, false = embedded
+
 # PLAYING mode placeable items
 enum PlaceableItem { ROCK, GRASS }
 var current_placeable: PlaceableItem = PlaceableItem.ROCK
@@ -172,6 +175,12 @@ func _unhandled_input(event):
 				material_brush_index = (material_brush_index + 1) % 3
 				material_brush_radius = material_brush_sizes[material_brush_index]
 				update_ui()
+		elif event.keycode == KEY_V:
+			if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT:
+				surface_snap_placement = not surface_snap_placement
+				var snap_str = "ON TOP (surface)" if surface_snap_placement else "EMBEDDED"
+				print("[Placement] Snap mode: %s" % snap_str)
+				update_ui()
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
@@ -241,12 +250,13 @@ func update_ui():
 		if current_block_id == 2: block_name = "Ramp"
 		elif current_block_id == 3: block_name = "Sphere"
 		elif current_block_id == 4: block_name = "Stairs"
-		
-		mode_label.text = "Mode: BUILDING (Blocky)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate" % [block_name, current_rotation]
+		var snap_str = "Surface" if surface_snap_placement else "Embed"
+		mode_label.text = "Mode: BUILDING (%s)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate, [V] Snap" % [snap_str, block_name, current_rotation]
 	elif current_mode == Mode.OBJECT:
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"
-		mode_label.text = "Mode: OBJECT\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select Object\nCTRL+Scroll: Rotate" % [obj_name, current_object_rotation]
+		var snap_str = "Surface" if surface_snap_placement else "Embed"
+		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-3] Select, [V] Snap" % [snap_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
@@ -306,11 +316,19 @@ func update_selection_box():
 		selection_box.visible = true
 		has_target = true
 	elif terrain_hit:
-		# Building mode terrain hit logic (remains mostly same, maybe update later)
+		# Building/Object mode terrain hit - surface snap or embedded
 		var pos = terrain_hit.position
 		var normal = terrain_hit.normal
 		
-		var check_pos = pos + normal * 0.01
+		var check_pos: Vector3
+		if surface_snap_placement:
+			# Surface snap: place in the voxel ABOVE the hit point
+			# Move along normal by 0.5 to ensure we're in the air voxel
+			check_pos = pos + normal * 0.5
+		else:
+			# Embedded: original behavior - slightly inside surface
+			check_pos = pos + normal * 0.01
+		
 		var voxel_x = floor(check_pos.x)
 		var voxel_y = floor(check_pos.y)
 		var voxel_z = floor(check_pos.z)
