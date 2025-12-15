@@ -147,12 +147,25 @@ float get_density(vec3 pos) {
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     
     if (road_dist < params.road_width) {
-        // Inside road area - flatten terrain
+        // Inside road area - create a SOLID road slab
+        // Below road surface = solid (negative density)
+        // Above road surface = air (positive density)
         float road_density = world_pos.y - road_height;
         
+        // Fill in any terrain that's below the road surface
+        // This eliminates bumps where terrain dips below road level
+        float filled_density;
+        if (world_pos.y < road_height) {
+            // Below road surface: make solid (but only override if terrain had a hole)
+            filled_density = min(density, road_density);
+        } else {
+            // At or above road surface: use road density
+            filled_density = road_density;
+        }
+        
         // Smooth blend at road edges
-        float blend = smoothstep(params.road_width, params.road_width * 0.5, road_dist);
-        density = mix(density, road_density, blend);
+        float blend = smoothstep(params.road_width, params.road_width * 0.3, road_dist);
+        density = mix(density, filled_density, blend);
     }
     
     return density;
