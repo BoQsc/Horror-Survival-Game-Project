@@ -115,12 +115,11 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     float rounded_height = round(interpolated_height);
     float height_diff = interpolated_height - rounded_height;
     
-    // STEPPED roads with smooth ramps at transitions
-    // Most of the road is flat at integer Y, with gentle ramps at step boundaries
+    // STEPPED roads with smooth ramps - balanced for driving and block placement
     float t = abs(height_diff) * 2.0;  // 0-1 range
     
-    // Single smoothstep - creates flat sections with ramps only at edges
-    float blend = smoothstep(0.3, 1.0, t);  // Flat when t < 0.3, ramp when t > 0.3
+    // 50% flat at integer Y, 50% smooth ramp between levels
+    float blend = smoothstep(0.5, 1.0, t);
     
     // Road stays at rounded integer, transitions toward next level at edges
     road_height = rounded_height + sign(height_diff) * blend * 0.5;
