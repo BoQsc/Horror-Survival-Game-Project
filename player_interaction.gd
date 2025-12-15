@@ -79,6 +79,7 @@ func _process(_delta):
 		else:
 			selection_box.visible = false
 			voxel_grid_visualizer.visible = false
+		_update_or_create_preview()
 	elif current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
