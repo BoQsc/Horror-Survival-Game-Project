@@ -48,7 +48,10 @@ func _physics_process(delta: float) -> void:
 			velocity.y = JUMP_VELOCITY # Jump out
 	
 	# Visuals: Check Camera Eye
-	var cam_density = terrain_manager.get_water_density(camera.global_position)
+	# Sample density at a point BELOW camera to compensate for water mesh being above density=0
+	# The water mesh is rendered ~0.5 units above where density crosses 0
+	var cam_check_pos = camera.global_position - Vector3(0, 0.5, 0)
+	var cam_density = terrain_manager.get_water_density(cam_check_pos)
 	var is_cam_underwater = cam_density < 0.0
 	
 	var ui = get_node_or_null("../UI/UnderwaterEffect")
