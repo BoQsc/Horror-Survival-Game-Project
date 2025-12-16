@@ -121,8 +121,8 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     float frac = interpolated_height - base_level;  // 0.0 to 1.0
     
     // Define how much of each level is FLAT (grid-aligned)
-    // flat_size = 0.35 means 35% flat at bottom, 35% flat at top, 30% ramp
-    float flat_size = 0.35;
+    // flat_size = 0.45 means 45% flat at bottom, 45% flat at top, only 10% ramp
+    float flat_size = 0.45;
     
     if (frac < flat_size) {
         // FLAT ZONE at lower integer level
