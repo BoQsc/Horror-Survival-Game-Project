@@ -284,6 +284,9 @@ func _unhandled_input(event):
 func toggle_mode():
 	if current_mode == Mode.PLAYING:
 		current_mode = Mode.TERRAIN
+		# Clean up interaction system when leaving PLAYING mode
+		interaction_target = null
+		_hide_interaction_prompt()
 	elif current_mode == Mode.TERRAIN:
 		current_mode = Mode.WATER
 	elif current_mode == Mode.WATER:
