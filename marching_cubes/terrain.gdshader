@@ -216,7 +216,7 @@ void fragment() {
 	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
 		float road_dist = get_procedural_road_dist(world_pos.xz);
 		// Blend zone extends from road edge outward into terrain
-		float road_edge = procedural_road_width * 0.5;
+		float road_edge = procedural_road_width * 0.6;  // Closer to actual voxel road
 		float outer_limit = road_edge + road_edge_blend_width;
 		// Only blend just outside the road edge
 		if (road_dist > road_edge && road_dist < outer_limit) {
