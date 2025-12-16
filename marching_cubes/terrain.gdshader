@@ -185,9 +185,10 @@ void fragment() {
 	}
 	
 	// === Slope-based Cliff Rock (visual enhancement, not material change) ===
-	// Only apply to non-player materials that aren't already rock/road
+	// Apply to all steep surfaces except player-placed blocks and roads
+	// Uses purely per-pixel slope calculation for smooth blending without voxel artifacts
 	float slope = normal.y;
-	if (!is_player_placed && mat_id != 1 && mat_id != 4 && mat_id != 6) {
+	if (!is_player_placed && mat_id != 6) {
 		float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
 		base_color = mix(base_color, col_rock, cliff_mix);
 	}
