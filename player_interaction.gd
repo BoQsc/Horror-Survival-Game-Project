@@ -411,6 +411,14 @@ func update_selection_box():
 			is_voxel_hit = false
 		else:
 			current_voxel_pos = voxel_hit.voxel_pos + placement_normal
+			
+			# CRITICAL: Check if placement cell already has a block (edge case with overlapping geometry)
+			# Keep shifting in normal direction until we find an empty cell (max 3 tries)
+			for _i in range(3):
+				if building_manager.get_voxel(current_voxel_pos) > 0:
+					current_voxel_pos = current_voxel_pos + placement_normal
+				else:
+					break
 		
 			# For OBJECT mode: Check if we're aiming through a hole - use physics position instead
 			if current_mode == Mode.OBJECT:
