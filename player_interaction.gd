@@ -427,18 +427,19 @@ func update_selection_box():
 		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		
 	elif current_mode == Mode.OBJECT:
-		# OBJECT MODE
+		# OBJECT MODE - same logic as BUILDING mode
 		if hit_placed_object or hit_building:
-			# Hit an object/building: place adjacent
+			# Hit an object/building: place adjacent (same as BUILDING mode)
 			var grid_normal = _round_to_axis(normal)
-			var offset_pos = pos + grid_normal * 1.0
-			voxel_x = int(floor(offset_pos.x))
-			voxel_y = int(floor(offset_pos.y))
-			voxel_z = int(floor(offset_pos.z))
-			current_precise_hit_y = float(voxel_y)
+			var inside_pos = pos - normal * 0.01  # Find the hit block
+			voxel_x = int(floor(inside_pos.x))
+			voxel_y = int(floor(inside_pos.y))
+			voxel_z = int(floor(inside_pos.z))
+			current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 			
-			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
-			current_remove_voxel_pos = Vector3(int(floor(pos.x)), int(floor(pos.y)), int(floor(pos.z)))
+			# Place adjacent to the hit block
+			current_voxel_pos = current_remove_voxel_pos + grid_normal
+			current_precise_hit_y = current_voxel_pos.y
 			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		elif surface_snap_placement:
 			# Terrain: use fractional Y for natural placement
