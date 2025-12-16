@@ -195,9 +195,6 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 		if chunks.has(chunk_coord):
 			var chunk = chunks[chunk_coord]
 			if not chunk.is_cell_available(local):
-				var voxel_val = chunk.get_voxel(local)
-				var occupied = chunk.occupied_by_object.has(local)
-				print("[DEBUG] Cell %s blocked: voxel=%d, occupied_by_object=%s" % [cell, voxel_val, occupied])
 				return false
 		# If chunk doesn't exist, cell is available (empty terrain)
 	

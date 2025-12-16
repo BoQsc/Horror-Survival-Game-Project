@@ -847,7 +847,6 @@ func _update_or_create_preview():
 		
 		# Check validity - use grid-snapped position
 		var check_pos = Vector3(floor(current_voxel_pos.x), floor(current_precise_hit_y), floor(current_voxel_pos.z))
-		print("[DEBUG TARGET] voxel_pos=%s, precise_hit_y=%.2f, check_pos=%s" % [current_voxel_pos, current_precise_hit_y, check_pos])
 		var can_place = building_manager.can_place_object(
 			check_pos,
 			current_object_id,
