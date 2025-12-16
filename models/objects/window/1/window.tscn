@@ -5,4 +5,4 @@
 [node name="Window" type="Node3D"]
 
 [node name="WindowModel" parent="." instance=ExtResource("1_window")]
-transform = Transform3D(0.264861, 0, 0, 0, 0.31495714, 0, 0, 0, 0.8836557, 0.009008519, 0.4883341, 0.1946016)
+transform = Transform3D(0.51306266, 0, 0, 0, 0.5053189, 0, 0, 0, 1.251, -0.025541507, 0.4883341, 0.4110645)
