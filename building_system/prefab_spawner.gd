@@ -18,6 +18,7 @@ class_name PrefabSpawner
 @export var seed_offset: int = 42  # Added to world seed for variety
 
 # Track which road intersections have been processed
+# This is persisted via SaveManager to prevent respawning
 var spawned_positions: Dictionary = {}
 
 # Simple prefab definitions (relative block positions)
@@ -218,4 +219,17 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 		building_manager.set_voxel(pos, block_type, block_meta)
 	
 	print("PrefabSpawner: Spawned %s at %v" % [prefab_name, world_pos])
+
+## Save/Load persistence - prevents prefabs from respawning after load
+func get_save_data() -> Dictionary:
+	return {
+		"spawned_positions": spawned_positions.keys()
+	}
+
+func load_save_data(data: Dictionary):
+	if data.has("spawned_positions"):
+		spawned_positions.clear()
+		for key in data.spawned_positions:
+			spawned_positions[key] = true
+		print("PrefabSpawner: Loaded %d spawned positions" % spawned_positions.size())
 

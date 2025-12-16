@@ -110,7 +110,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.05, 0.2, 0.12, 0.4)
 
-[node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer")]
+[node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer") groups=["terrain_manager"]]
 script = ExtResource("4_terrain")
 viewer = NodePath("../Player")
 

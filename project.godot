@@ -17,6 +17,10 @@ run/max_fps=70
 run/low_processor_mode=true
 config/icon="res://icon.svg"
 
+[autoload]
+
+SaveManager="*res://save_manager.gd"
+
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/3d-first-person-wasd-input-actions/plugin.cfg", "res://addons/camera3d_templates/plugin.cfg")
