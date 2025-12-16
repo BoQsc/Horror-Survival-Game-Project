@@ -111,18 +111,22 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     float tz = local_z / spacing;
     float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
     
-    // Round to nearest integer for block alignment, with EXTREMELY gentle transitions
+    // SMOOTH RAMP: Use the interpolated height directly for gradual transitions
+    // The height naturally varies between integer levels as you move along the road
+    // Apply smoothstep to create defined flat zones and transition zones
     float rounded_height = round(interpolated_height);
-    float height_diff = interpolated_height - rounded_height;
+    float height_diff = interpolated_height - rounded_height;  // -0.5 to +0.5
     
-    // STEPPED roads with smooth ramps - balanced for driving and block placement
-    float t = abs(height_diff) * 2.0;  // 0-1 range
+    // Create smooth ramps that span the FULL transition zone (not just 50%)
+    // smoothstep from 0.15 to 0.35 means:
+    // - Center 30% of each cell segment stays flat at integer Y
+    // - Outer 70% smoothly ramps to next level
+    float t = abs(height_diff) * 2.0;  // 0-1 range (0 = at integer, 1 = halfway to next)
+    float blend = smoothstep(0.15, 0.85, t);  // Much wider transition zone
     
-    // 50% flat at integer Y, 50% smooth ramp between levels
-    float blend = smoothstep(0.5, 1.0, t);
-    
-    // Road stays at rounded integer, transitions toward next level at edges
-    road_height = rounded_height + sign(height_diff) * blend * 0.5;
+    // Interpolate between current integer and next integer based on blend
+    float next_height = rounded_height + sign(height_diff);
+    road_height = mix(rounded_height, next_height, blend * 0.5);
     
     return min_dist;
 }
