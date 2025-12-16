@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, cull_back, depth_draw_always;
+render_mode blend_mix, cull_back, depth_draw_always, depth_prepass_alpha;
 
 // Water colors - darker base to avoid wash-out
 uniform vec3 albedo : source_color = vec3(0.08, 0.25, 0.4);         // Teal-blue
@@ -25,6 +25,8 @@ varying vec3 world_pos;
 
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	// Lift water slightly to reduce Z-fighting with coplanar terrain
+	VERTEX.y += 0.05;
 }
 
 // Improved noise - smoother gradient noise (avoids rectangular artifacts)
