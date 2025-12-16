@@ -24,7 +24,7 @@ uniform float procedural_road_width = 8.0;
 
 // Road edge blending - soft gradient transition from road to terrain
 uniform bool road_edge_blend_enabled = true;
-uniform float road_edge_blend_width = 0.8;  // Width of the blend zone in world units
+uniform float road_edge_blend_width = 3.0;  // Width of the blend zone in world units
 
 // Terrain parameters for per-pixel material calculation
 uniform float terrain_height = 20.0;
@@ -213,13 +213,13 @@ void fragment() {
 	
 	// === Procedural Road Edge Blending (toggleable) ===
 	// Creates soft gradient at road edges, extending OUTWARD into terrain
+	// mat_id != 6 already excludes actual road surface, so we blend ANY terrain near roads
 	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
 		float road_dist = get_procedural_road_dist(world_pos.xz);
-		// Blend zone extends from road edge outward into terrain
-		float road_edge = procedural_road_width * 0.6;  // Closer to actual voxel road
+		float road_edge = procedural_road_width * 0.5;  // Where road material ends
 		float outer_limit = road_edge + road_edge_blend_width;
-		// Only blend just outside the road edge
-		if (road_dist > road_edge && road_dist < outer_limit) {
+		// Apply blend to ANY terrain within range (mat_id check already skips road)
+		if (road_dist < outer_limit) {
 			float edge_blend = 1.0 - smoothstep(road_edge, outer_limit, road_dist);
 			edge_blend *= road_slope_mask;
 			base_color = mix(base_color, col_road, edge_blend);
