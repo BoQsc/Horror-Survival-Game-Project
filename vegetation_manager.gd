@@ -743,6 +743,17 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"trees": tree_list,
 		"chunk_node": chunk_node
 	}
+	
+	# Apply chopped_trees filter - hide trees that were previously chopped
+	for tree in tree_list:
+		var persist_key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+		if chopped_trees.has(persist_key):
+			tree.alive = false
+			# Hide in MultiMesh
+			var t = Transform3D()
+			t = t.scaled(Vector3.ZERO)
+			t.origin = tree.local_pos
+			mmi.multimesh.set_instance_transform(tree.index, t)
 
 func chop_tree_by_collider(collider: Node) -> bool:
 	# Check if collider is still valid (not freed)
