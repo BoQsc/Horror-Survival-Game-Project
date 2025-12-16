@@ -18,7 +18,16 @@ uniform float foam_intensity = 0.25;
 uniform float foam_threshold = 0.5;
 uniform vec3 foam_color : source_color = vec3(0.5, 0.7, 0.8);
 
+// Refraction settings
+uniform float refraction_strength = 0.008;  // Very subtle distortion
+
+// Normal texture for detailed ripples
+uniform sampler2D water_normal_texture : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform float normal_texture_scale = 0.05;  // Tiling scale
+uniform float normal_texture_strength = 0.4;  // How much texture affects normal
+
 uniform sampler2D depth_texture : hint_depth_texture, filter_linear_mipmap;
+uniform sampler2D screen_texture : hint_screen_texture, filter_linear_mipmap;
 
 // Pass world position from vertex shader so it's truly world-space
 varying vec3 world_pos;
@@ -72,15 +81,26 @@ void fragment() {
 	float time = TIME * wave_speed;
 	vec2 uv = world_pos.xz * wave_scale;  // World-space UV, won't move with camera
 	
-	// Generate smooth wave normal from FBM
+	// Generate smooth wave normal from FBM (large wave motion)
 	float wave = fbm(uv, time);
 	float eps = 0.1;
 	float wave_dx = fbm(uv + vec2(eps, 0.0), time) - wave;
 	float wave_dz = fbm(uv + vec2(0.0, eps), time) - wave;
 	vec3 wave_normal = normalize(vec3(-wave_dx * 1.5, 1.0, -wave_dz * 1.5));
 	
-	// Blend wave normal with mesh normal
-	vec3 final_normal = normalize(mix(NORMAL, wave_normal, 0.35));
+	// Sample normal texture with scrolling animation (fine detail)
+	vec2 normal_uv1 = world_pos.xz * normal_texture_scale + time * vec2(0.02, 0.01);
+	vec2 normal_uv2 = world_pos.xz * normal_texture_scale * 0.7 - time * vec2(0.015, 0.02);
+	vec3 tex_normal1 = texture(water_normal_texture, normal_uv1).rgb * 2.0 - 1.0;
+	vec3 tex_normal2 = texture(water_normal_texture, normal_uv2).rgb * 2.0 - 1.0;
+	// Blend two scrolling layers for organic look
+	vec3 tex_normal = normalize(tex_normal1 + tex_normal2);
+	
+	// Combine: procedural waves + texture detail
+	vec3 combined_normal = normalize(wave_normal + tex_normal * normal_texture_strength);
+	
+	// Blend combined normal with mesh normal
+	vec3 final_normal = normalize(mix(NORMAL, combined_normal, 0.5));
 	NORMAL = final_normal;
 	
 	// Depth calculation
@@ -95,9 +115,23 @@ void fragment() {
 	// Beer's Law - depth absorption
 	float depth_alpha = clamp(1.0 - exp(-depth_diff * beer_factor), 0.0, 1.0);
 	
+	// === REFRACTION (subtle) ===
+	// Offset screen UV based on wave normal to distort underwater view
+	vec2 refract_offset = final_normal.xz * refraction_strength;
+	// Only apply refraction in shallow-to-mid depth (avoid deep water blur)
+	float refract_mask = smoothstep(0.0, 0.3, depth_diff) * (1.0 - smoothstep(0.5, 1.5, depth_diff));
+	refract_offset *= refract_mask;
+	vec2 refract_uv = SCREEN_UV + refract_offset;
+	// Sample what's behind the water with distortion
+	vec3 refracted_color = texture(screen_texture, refract_uv).rgb;
+	
 	// Three-way color blend: shallow -> mid -> deep
 	vec3 color_blend = mix(albedo_shallow, albedo, smoothstep(0.0, 0.3, depth_alpha));
 	color_blend = mix(color_blend, albedo_deep, smoothstep(0.4, 1.0, depth_alpha));
+	
+	// Blend refracted background with water color
+	// Only show refraction in shallow/clear water - deep water is just water color
+	color_blend = mix(refracted_color, color_blend, 0.4 + depth_alpha * 0.5);
 	
 	// Subtle shimmer from wave
 	float shimmer = wave * 0.08;

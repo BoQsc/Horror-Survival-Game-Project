@@ -171,6 +171,10 @@ func _ready():
 	material_water.set_shader_parameter("albedo_deep", Color(0.0, 0.1, 0.2))
 	material_water.set_shader_parameter("beer_factor", 0.15)
 	material_water.set_shader_parameter("foam_level", 0.8)
+	# Water normal texture for detailed ripples
+	var water_normal = load("res://marching_cubes/water_texture.png")
+	if water_normal:
+		material_water.set_shader_parameter("water_normal_texture", water_normal)
 	
 	# Start GPU thread
 	compute_thread = Thread.new()
