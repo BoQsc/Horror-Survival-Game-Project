@@ -100,11 +100,13 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     
     float min_dist = min(dist_to_x_road, dist_to_z_road);
     
-    // Calculate road height - follows terrain with variation
-    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.02) * 10.0 + 10.0;
-    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.02) * 10.0 + 10.0;
-    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
-    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.02) * 10.0 + 10.0;
+    // Calculate road height - follows terrain with GENTLE variation
+    // Lower frequency (0.008) = slower height changes over distance
+    // Smaller amplitude (3.0) = max 3 Y-levels difference = fewer steps
+    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
+    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
+    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
+    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
     
     // Bilinear interpolation for base height
     float tx = local_x / spacing;
