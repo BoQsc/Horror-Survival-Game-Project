@@ -26,6 +26,10 @@ uniform float procedural_road_width = 8.0;
 uniform float terrain_height = 20.0;
 uniform float noise_frequency = 0.02;
 
+// Surface cliff rock threshold - only apply rocky texture above this Y level
+// Below this height, show actual materials for underground mining clarity
+uniform float surface_cliff_threshold = 10.0;
+
 // Per-chunk material system (world-space sampling)
 uniform sampler3D material_map : filter_nearest;  // 3D texture with material IDs
 uniform vec3 chunk_origin = vec3(0.0);  // Chunk world position for UV calculation
@@ -185,11 +189,13 @@ void fragment() {
 	}
 	
 	// === Slope-based Cliff Rock (visual enhancement, not material change) ===
-	// Apply to all steep surfaces except player-placed blocks and roads
-	// Uses purely per-pixel slope calculation for smooth blending without voxel artifacts
+	// Only apply to SURFACE cliffs (above threshold). Underground shows raw materials.
+	// This ensures players can see stone, ore, etc. when mining underground.
 	float slope = normal.y;
 	if (!is_player_placed && mat_id != 6) {
-		float cliff_mix = 1.0 - smoothstep(0.5, 0.7, slope);
+		// Height-based surface check with smooth transition
+		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
+		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;
 		base_color = mix(base_color, col_rock, cliff_mix);
 	}
 	
