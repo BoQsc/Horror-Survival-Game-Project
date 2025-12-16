@@ -500,6 +500,27 @@ func update_selection_box():
 			
 			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 			current_remove_voxel_pos = current_voxel_pos
+			
+			# CRITICAL: Check if target cell already has a building block
+			# This happens when terrain mesh blocks the face of embedded building blocks
+			if building_manager.get_voxel(current_voxel_pos) > 0:
+				# Target cell has a block - shift to adjacent cell using normal
+				var adj_normal = Vector3.ZERO
+				# Round terrain normal to nearest axis
+				var ax = abs(normal.x)
+				var ay = abs(normal.y)
+				var az = abs(normal.z)
+				if ax >= ay and ax >= az:
+					adj_normal = Vector3(sign(normal.x), 0, 0)
+				elif ay >= ax and ay >= az:
+					adj_normal = Vector3(0, sign(normal.y), 0)
+				else:
+					adj_normal = Vector3(0, 0, sign(normal.z))
+				
+				current_voxel_pos = current_voxel_pos + adj_normal
+				# Update removal target to the block we hit
+				current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			
 			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		
 		selection_box.visible = true
