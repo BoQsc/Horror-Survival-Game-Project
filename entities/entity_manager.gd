@@ -159,3 +159,54 @@ func find_nearest_entity(world_pos: Vector3) -> Node3D:
 			nearest = entity
 	
 	return nearest
+
+## Save/Load persistence
+func get_save_data() -> Dictionary:
+	var entities_data: Array = []
+	
+	for entity in active_entities:
+		if not is_instance_valid(entity):
+			continue
+		
+		var entity_data = {
+			"position": [entity.global_position.x, entity.global_position.y, entity.global_position.z],
+			"rotation": entity.rotation.y,
+		}
+		
+		# Store entity type if available
+		if entity.has_meta("entity_type"):
+			entity_data["type"] = entity.get_meta("entity_type")
+		elif entity.scene_file_path:
+			entity_data["scene_path"] = entity.scene_file_path
+		
+		entities_data.append(entity_data)
+	
+	return { "entities": entities_data }
+
+func load_save_data(data: Dictionary):
+	# Despawn all existing entities first
+	despawn_all()
+	
+	if not data.has("entities"):
+		return
+	
+	for ent_data in data.entities:
+		var pos = Vector3(ent_data.position[0], ent_data.position[1], ent_data.position[2])
+		var rotation_y = ent_data.get("rotation", 0.0)
+		
+		var entity: Node3D = null
+		
+		# Spawn using scene path or default
+		if ent_data.has("scene_path") and ResourceLoader.exists(ent_data.scene_path):
+			var scene = load(ent_data.scene_path)
+			entity = spawn_entity(pos, scene)
+		elif default_entity_scene:
+			entity = spawn_entity(pos, default_entity_scene)
+		
+		if entity:
+			entity.rotation.y = rotation_y
+			if ent_data.has("type"):
+				entity.set_meta("entity_type", ent_data.type)
+	
+	print("EntityManager: Loaded %d entities" % data.entities.size())
+

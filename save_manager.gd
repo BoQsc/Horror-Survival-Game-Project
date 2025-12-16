@@ -84,7 +84,9 @@ func save_game(path: String) -> bool:
 		"buildings": _get_building_data(),
 		"vegetation": _get_vegetation_data(),
 		"roads": _get_road_data(),
-		"prefabs": _get_prefab_data()
+		"prefabs": _get_prefab_data(),
+		"entities": _get_entity_data(),
+		"doors": _get_door_data()
 	}
 	
 	# Convert to JSON
@@ -146,6 +148,9 @@ func load_game(path: String) -> bool:
 	_load_building_data(save_data.get("buildings", {}))
 	_load_vegetation_data(save_data.get("vegetation", {}))
 	_load_road_data(save_data.get("roads", {}))
+	_load_entity_data(save_data.get("entities", {}))
+	# Doors are loaded after buildings (since doors are placed in building chunks)
+	call_deferred("_load_door_data", save_data.get("doors", {}))
 	
 	print("[SaveManager] Load completed successfully!")
 	load_completed.emit(true, path)
@@ -461,6 +466,64 @@ func _load_road_data(data: Dictionary):
 			road_manager.next_segment_id = max_id + 1
 	
 	print("[SaveManager] Road data loaded: %d segments" % data.segments.size() if data.has("segments") else 0)
+
+# ============ ENTITY DATA ============
+
+func _get_entity_data() -> Dictionary:
+	if not entity_manager:
+		return {}
+	
+	if entity_manager.has_method("get_save_data"):
+		return entity_manager.get_save_data()
+	
+	return {}
+
+func _load_entity_data(data: Dictionary):
+	if data.is_empty() or not entity_manager:
+		return
+	
+	if entity_manager.has_method("load_save_data"):
+		entity_manager.load_save_data(data)
+
+# ============ DOOR DATA ============
+
+func _get_door_data() -> Dictionary:
+	# Find all interactive doors in the scene
+	var doors = get_tree().get_nodes_in_group("interactable")
+	var door_states: Array = []
+	
+	for node in doors:
+		if node is InteractiveDoor:
+			door_states.append({
+				"position": _vec3_to_array(node.global_position),
+				"is_open": node.is_open
+			})
+	
+	return { "doors": door_states }
+
+func _load_door_data(data: Dictionary):
+	if data.is_empty() or not data.has("doors"):
+		return
+	
+	# Find all doors and match by position
+	var doors = get_tree().get_nodes_in_group("interactable")
+	
+	for saved_door in data.doors:
+		var saved_pos = _array_to_vec3(saved_door.position)
+		var saved_is_open = saved_door.is_open
+		
+		# Find matching door by position
+		for node in doors:
+			if node is InteractiveDoor:
+				var dist = node.global_position.distance_to(saved_pos)
+				if dist < 0.5:  # Within 0.5 units = same door
+					if saved_is_open and not node.is_open:
+						node.open_door()
+					elif not saved_is_open and node.is_open:
+						node.close_door()
+					break
+	
+	print("[SaveManager] Door states loaded: %d doors" % data.doors.size())
 
 # ============ UTILITY FUNCTIONS ============
 
