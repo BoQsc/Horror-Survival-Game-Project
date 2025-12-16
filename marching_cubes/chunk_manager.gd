@@ -19,7 +19,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var viewer: Node3D
 @export var render_distance: int = 5  # Visual range
 @export var terrain_height: float = 10.0
-@export var water_level: float = 14.0 # Raised for surface lakes
+@export var water_level: float = 13.0 # Lowered to keep roads dry
 @export var noise_frequency: float = 0.1
 ## World generation seed - same seed = same world
 ## Change this for different world generation
