@@ -1,10 +1,10 @@
 shader_type spatial;
 render_mode blend_mix, cull_back, depth_draw_always, depth_prepass_alpha;
 
-// Water colors - darker base to avoid wash-out
-uniform vec3 albedo : source_color = vec3(0.08, 0.25, 0.4);         // Teal-blue
-uniform vec3 albedo_deep : source_color = vec3(0.02, 0.1, 0.2);     // Deep blue
-uniform vec3 albedo_shallow : source_color = vec3(0.15, 0.4, 0.5);  // Lighter shallow
+// Water colors - dark green tones
+uniform vec3 albedo : source_color = vec3(0.05, 0.18, 0.12);          // Dark green
+uniform vec3 albedo_deep : source_color = vec3(0.01, 0.06, 0.04);     // Very dark green-black
+uniform vec3 albedo_shallow : source_color = vec3(0.1, 0.3, 0.2);     // Lighter greenish
 uniform float metallic : hint_range(0.0, 1.0) = 0.4;
 uniform float roughness : hint_range(0.0, 1.0) = 0.05;
 uniform float beer_factor = 0.25;

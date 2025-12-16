@@ -167,10 +167,11 @@ func _ready():
 	# Setup Water Material
 	material_water = ShaderMaterial.new()
 	material_water.shader = load("res://marching_cubes/water.gdshader")
-	material_water.set_shader_parameter("albedo", Color(0.0, 0.3, 0.8))
-	material_water.set_shader_parameter("albedo_deep", Color(0.0, 0.1, 0.2))
-	material_water.set_shader_parameter("beer_factor", 0.15)
-	material_water.set_shader_parameter("foam_level", 0.8)
+	# Dark green water colors
+	material_water.set_shader_parameter("albedo", Color(0.05, 0.18, 0.12))
+	material_water.set_shader_parameter("albedo_deep", Color(0.01, 0.06, 0.04))
+	material_water.set_shader_parameter("albedo_shallow", Color(0.1, 0.3, 0.2))
+	material_water.set_shader_parameter("beer_factor", 0.25)
 	# Water normal texture for detailed ripples
 	var water_normal = load("res://marching_cubes/water_texture.png")
 	if water_normal:
