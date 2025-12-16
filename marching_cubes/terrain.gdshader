@@ -22,6 +22,10 @@ uniform bool procedural_road_enabled = true;
 uniform float procedural_road_spacing = 100.0;
 uniform float procedural_road_width = 8.0;
 
+// Road edge blending - soft gradient transition from road to terrain
+uniform bool road_edge_blend_enabled = true;
+uniform float road_edge_blend_width = 2.0;  // Width of the blend zone in world units
+
 // Terrain parameters for per-pixel material calculation
 uniform float terrain_height = 20.0;
 uniform float noise_frequency = 0.02;
@@ -206,6 +210,18 @@ void fragment() {
 	float road_slope_mask = smoothstep(0.7, 0.85, slope);
 	float road_intensity = is_player_placed ? 0.0 : road_raw * road_slope_mask;
 	base_color = mix(base_color, col_road, road_intensity);
+	
+	// === Procedural Road Edge Blending (toggleable) ===
+	// Creates soft gradient at road edges instead of hard material boundary
+	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
+		float road_dist = get_procedural_road_dist(world_pos.xz);
+		// Blend zone: from (road_width - blend_width) to road_width
+		float inner_edge = procedural_road_width - road_edge_blend_width;
+		float edge_blend = 1.0 - smoothstep(inner_edge, procedural_road_width, road_dist);
+		// Only blend on relatively flat surfaces (roads don't go up vertical walls)
+		edge_blend *= road_slope_mask;
+		base_color = mix(base_color, col_road, edge_blend);
+	}
 	
 	// === Dynamic Weather Snow ===
 	// Applies based on global_snow_amount, sticks to flat surfaces
