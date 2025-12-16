@@ -389,31 +389,52 @@ func update_selection_box():
 	
 	if is_voxel_hit:
 		current_remove_voxel_pos = voxel_hit.voxel_pos
-		current_voxel_pos = voxel_hit.voxel_pos + voxel_hit.normal
 		
-		# For OBJECT mode: Check if we're aiming through a hole - use physics position instead
-		if current_mode == Mode.OBJECT:
-			# If terrain_hit is closer than voxel_hit, use terrain hit position
-			# This handles the case where we're looking through a hole in a wall
-			if terrain_hit:
-				var terrain_dist = terrain_hit.position.distance_to(camera.global_position)
-				if voxel_hit.distance > terrain_dist + 0.5:
-					# The voxel hit is further than the terrain - we're hitting a back wall through a hole
-					# Use the terrain (physics) hit position instead
-					var pos = terrain_hit.position
-					var normal = terrain_hit.normal
-					var offset_pos = pos + normal * 0.6
-					current_voxel_pos = Vector3(floor(offset_pos.x), floor(offset_pos.y), floor(offset_pos.z))
-					current_precise_hit_y = current_voxel_pos.y
-					selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
-					selection_box.visible = true
-					has_target = true
-					return
-			current_precise_hit_y = voxel_hit.voxel_pos.y + 1.0  # Top of block
+		# Use voxel normal if available, otherwise use physics normal (rounded to axis)
+		var placement_normal = voxel_hit.normal
+		if placement_normal == Vector3.ZERO and terrain_hit:
+			# Voxel normal is zero - use physics raycast normal instead
+			# Round to nearest axis to get grid-aligned placement
+			var tn = terrain_hit.normal
+			var ax = abs(tn.x)
+			var ay = abs(tn.y)
+			var az = abs(tn.z)
+			if ax >= ay and ax >= az:
+				placement_normal = Vector3(sign(tn.x), 0, 0)
+			elif ay >= ax and ay >= az:
+				placement_normal = Vector3(0, sign(tn.y), 0)
+			else:
+				placement_normal = Vector3(0, 0, sign(tn.z))
 		
-		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
-		selection_box.visible = true
-		has_target = true
+		# If still zero normal, skip this hit entirely (shouldn't happen normally)
+		if placement_normal == Vector3.ZERO:
+			is_voxel_hit = false
+		else:
+			current_voxel_pos = voxel_hit.voxel_pos + placement_normal
+		
+			# For OBJECT mode: Check if we're aiming through a hole - use physics position instead
+			if current_mode == Mode.OBJECT:
+				# If terrain_hit is closer than voxel_hit, use terrain hit position
+				# This handles the case where we're looking through a hole in a wall
+				if terrain_hit:
+					var terrain_dist = terrain_hit.position.distance_to(camera.global_position)
+					if voxel_hit.distance > terrain_dist + 0.5:
+						# The voxel hit is further than the terrain - we're hitting a back wall through a hole
+						# Use the terrain (physics) hit position instead
+						var pos = terrain_hit.position
+						var normal = terrain_hit.normal
+						var offset_pos = pos + normal * 0.6
+						current_voxel_pos = Vector3(floor(offset_pos.x), floor(offset_pos.y), floor(offset_pos.z))
+						current_precise_hit_y = current_voxel_pos.y
+						selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+						selection_box.visible = true
+						has_target = true
+						return
+				current_precise_hit_y = voxel_hit.voxel_pos.y + 1.0  # Top of block
+		
+			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+			selection_box.visible = true
+			has_target = true
 	elif terrain_hit:
 		# Building/Object mode terrain hit
 		var pos = terrain_hit.position
