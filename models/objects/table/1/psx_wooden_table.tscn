@@ -5,4 +5,4 @@
 [node name="WoodenTable" type="Node3D"]
 
 [node name="TableModel" parent="." instance=ExtResource("1_table")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.8463341, 0.060912013, 0, -0.011457682)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.8463341, -0.009635806, 0, 0.03223294)
