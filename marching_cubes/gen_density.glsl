@@ -113,22 +113,31 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     float tz = local_z / spacing;
     float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
     
-    // SMOOTH RAMP: Use the interpolated height directly for gradual transitions
-    // The height naturally varies between integer levels as you move along the road
-    // Apply smoothstep to create defined flat zones and transition zones
-    float rounded_height = round(interpolated_height);
-    float height_diff = interpolated_height - rounded_height;  // -0.5 to +0.5
+    // === STEPPED ROAD WITH SMOOTH RAMPS ===
+    // Creates: FLAT zones at integer Y (for block placement)
+    //          RAMP zones between integers (for smooth driving)
     
-    // Create smooth ramps that span the FULL transition zone (not just 50%)
-    // smoothstep from 0.15 to 0.35 means:
-    // - Center 30% of each cell segment stays flat at integer Y
-    // - Outer 70% smoothly ramps to next level
-    float t = abs(height_diff) * 2.0;  // 0-1 range (0 = at integer, 1 = halfway to next)
-    float blend = smoothstep(0.15, 0.85, t);  // Much wider transition zone
+    float base_level = floor(interpolated_height);
+    float frac = interpolated_height - base_level;  // 0.0 to 1.0
     
-    // Interpolate between current integer and next integer based on blend
-    float next_height = rounded_height + sign(height_diff);
-    road_height = mix(rounded_height, next_height, blend * 0.5);
+    // Define how much of each level is FLAT (grid-aligned)
+    // flat_size = 0.35 means 35% flat at bottom, 35% flat at top, 30% ramp
+    float flat_size = 0.35;
+    
+    if (frac < flat_size) {
+        // FLAT ZONE at lower integer level
+        road_height = base_level;
+    } else if (frac > 1.0 - flat_size) {
+        // FLAT ZONE at upper integer level
+        road_height = base_level + 1.0;
+    } else {
+        // RAMP ZONE - smooth S-curve transition between integers
+        // Normalize the ramp portion to 0-1
+        float ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size);
+        // Apply smoothstep for S-curve (no sudden slope changes)
+        ramp_t = smoothstep(0.0, 1.0, ramp_t);
+        road_height = base_level + ramp_t;
+    }
     
     return min_dist;
 }
@@ -147,21 +156,15 @@ float get_density(vec3 pos) {
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     
     if (road_dist < params.road_width) {
-        // INTEGER road surface (stairs for block alignment)
-        float integer_road_height = round(road_height);
-        float integer_density = world_pos.y - integer_road_height;
-        
-        // SMOOTH road surface (for filling between stairs)
-        float smooth_density = world_pos.y - road_height;
-        
-        // Fill: use whichever surface is LOWER (more solid)
-        // This fills the stair steps with a smooth ramp
-        float road_surface_density = min(integer_density, smooth_density);
+        // SMOOTH ROAD SURFACE: follows the interpolated road_height directly
+        // road_height already contains smooth transitions between Y levels
+        // calculated in get_road_info() using smoothstep blending
+        float road_density = world_pos.y - road_height;
         
         // Blend factor: 1.0 in center, 0.0 at edges
         float blend = smoothstep(params.road_width, params.road_width * 0.5, road_dist);
         
-        density = mix(density, road_surface_density, blend);
+        density = mix(density, road_density, blend);
     }
     
     return density;
