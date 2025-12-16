@@ -357,185 +357,121 @@ func update_selection_box():
 		return
 
 	var hit_areas = (current_mode == Mode.WATER)
-	var terrain_hit = raycast(10.0, hit_areas)
-	var voxel_hit = raycast_voxel_grid(camera.global_position, -camera.global_transform.basis.z, 10.0)
+	var hit = raycast(10.0, hit_areas)
 	
-	var final_hit_pos = Vector3.ZERO
-	var final_normal = Vector3.ZERO
-	var is_voxel_hit = false
+	if not hit:
+		selection_box.visible = false
+		has_target = false
+		return
 	
-	# Determine which hit to use
-	# Fix: Only use voxel grid when physics raycast actually hit a building
-	if voxel_hit and terrain_hit:
-		# Check if physics raycast hit a building (not terrain)
-		var hit_building = terrain_hit.collider and terrain_hit.collider.get_parent() is BuildingChunk
+	var pos = hit.position
+	var normal = hit.normal
+	
+	# Check what we hit
+	var hit_building = hit.collider and hit.collider.get_parent() is BuildingChunk
+	var hit_placed_object = hit.collider and hit.collider.is_in_group("placed_objects")
+	
+	var voxel_x: int
+	var voxel_y: int
+	var voxel_z: int
+	
+	# Store precise hit Y for object placement
+	current_precise_hit_y = pos.y + 0.05
+	
+	if current_mode == Mode.BUILDING:
+		# BUILDING MODE: Simple physics-based targeting
+		# Round normal to nearest grid axis for consistent placement
+		var grid_normal = _round_to_axis(normal)
 		
 		if hit_building:
-			# Hit a building - use voxel grid for precise stacking
-			is_voxel_hit = true
-		elif surface_snap_placement:
-			# Surface mode aiming at terrain - always use terrain hit
-			is_voxel_hit = false
+			# Hit a building block: place ADJACENT using grid-aligned normal
+			var inside_pos = pos - normal * 0.01
+			voxel_x = int(floor(inside_pos.x))
+			voxel_y = int(floor(inside_pos.y))
+			voxel_z = int(floor(inside_pos.z))
+			current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			
+			# Place adjacent to the hit block
+			current_voxel_pos = current_remove_voxel_pos + grid_normal
 		else:
-			# Embed mode - use closer hit
-			if voxel_hit.distance <= terrain_hit.position.distance_to(camera.global_position) + 0.1:
-				is_voxel_hit = true
-			else:
-				is_voxel_hit = false
-	elif voxel_hit:
-		is_voxel_hit = true
-	elif terrain_hit:
-		is_voxel_hit = false
-	
-	if is_voxel_hit:
-		current_remove_voxel_pos = voxel_hit.voxel_pos
-		
-		# Use voxel normal if available, otherwise use physics normal (rounded to axis)
-		var placement_normal = voxel_hit.normal
-		if placement_normal == Vector3.ZERO and terrain_hit:
-			# Voxel normal is zero - use physics raycast normal instead
-			# Round to nearest axis to get grid-aligned placement
-			var tn = terrain_hit.normal
-			var ax = abs(tn.x)
-			var ay = abs(tn.y)
-			var az = abs(tn.z)
-			if ax >= ay and ax >= az:
-				placement_normal = Vector3(sign(tn.x), 0, 0)
-			elif ay >= ax and ay >= az:
-				placement_normal = Vector3(0, sign(tn.y), 0)
-			else:
-				placement_normal = Vector3(0, 0, sign(tn.z))
-		
-		# If still zero normal, skip this hit entirely (shouldn't happen normally)
-		if placement_normal == Vector3.ZERO:
-			is_voxel_hit = false
-		else:
-			current_voxel_pos = voxel_hit.voxel_pos + placement_normal
-			
-			# CRITICAL: Check if placement cell already has a block (edge case with overlapping geometry)
-			# Keep shifting in normal direction until we find an empty cell (max 3 tries)
-			for _i in range(3):
-				if building_manager.get_voxel(current_voxel_pos) > 0:
-					current_voxel_pos = current_voxel_pos + placement_normal
-				else:
-					break
-		
-			# For OBJECT mode: Check if we're aiming through a hole - use physics position instead
-			if current_mode == Mode.OBJECT:
-				# If terrain_hit is closer than voxel_hit, use terrain hit position
-				# This handles the case where we're looking through a hole in a wall
-				if terrain_hit:
-					var terrain_dist = terrain_hit.position.distance_to(camera.global_position)
-					if voxel_hit.distance > terrain_dist + 0.5:
-						# The voxel hit is further than the terrain - we're hitting a back wall through a hole
-						# Use the terrain (physics) hit position instead
-						var pos = terrain_hit.position
-						var normal = terrain_hit.normal
-						var offset_pos = pos + normal * 0.6
-						current_voxel_pos = Vector3(floor(offset_pos.x), floor(offset_pos.y), floor(offset_pos.z))
-						current_precise_hit_y = current_voxel_pos.y
-						selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
-						selection_box.visible = true
-						has_target = true
-						return
-				current_precise_hit_y = voxel_hit.voxel_pos.y + 1.0  # Top of block
-		
-			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
-			selection_box.visible = true
-			has_target = true
-	elif terrain_hit:
-		# Building/Object mode terrain hit
-		var pos = terrain_hit.position
-		var normal = terrain_hit.normal
-		
-		var voxel_x: int
-		var voxel_y: int
-		var voxel_z: int
-		
-		# Check if we hit a placed object (should use grid placement like blocks)
-		var hit_placed_object = terrain_hit.collider and terrain_hit.collider.is_in_group("placed_objects")
-		
-		# Store precise hit Y for object placement (with small offset above surface)
-		current_precise_hit_y = pos.y + 0.05  # Tiny offset to sit just above surface
-		
-		if hit_placed_object:
-			# Hit a placed object: use normal to place ABOVE/BESIDE it (like blocks)
-			# Move position along normal by 1 unit to get the adjacent placement cell
-			var offset_pos = pos + normal * 1.0
-			voxel_x = int(floor(offset_pos.x))
-			voxel_y = int(floor(offset_pos.y))
-			voxel_z = int(floor(offset_pos.z))
-			current_precise_hit_y = float(voxel_y)  # Use grid Y for objects too
-			
-			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
-			current_remove_voxel_pos = Vector3(int(floor(pos.x)), int(floor(pos.y)), int(floor(pos.z)))
-			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
-		elif current_mode == Mode.OBJECT and surface_snap_placement:
-			# OBJECT mode on terrain: Use fractional Y for natural terrain placement
-			# X/Z grid-snapped, Y at terrain surface level
-			voxel_x = int(floor(pos.x))
-			voxel_z = int(floor(pos.z))
-			# For selection, still use an integer Y for the preview box
-			voxel_y = int(round(pos.y))
-			
-			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
-			current_remove_voxel_pos = current_voxel_pos
-			
-			# Position selection box at ACTUAL terrain level (fractional Y)
-			selection_box.global_position = Vector3(voxel_x + 0.5, current_precise_hit_y + 0.5, voxel_z + 0.5)
-		else:
-			# BUILDING mode: Full grid snap for block stacking
+			# Hit terrain or other: use placement mode
 			if placement_mode == PlacementMode.EMBED:
 				# Embed mode: place inside terrain
 				voxel_x = int(floor(pos.x))
 				voxel_y = int(floor(pos.y))
 				voxel_z = int(floor(pos.z))
 			else:
-				# SNAP or AUTO mode: calculate snapped position
-				var offset = normal * 0.6
-				var placement_pos = pos + offset
-				voxel_x = int(floor(placement_pos.x))
-				voxel_y = int(floor(placement_pos.y)) + placement_y_offset
-				voxel_z = int(floor(placement_pos.z))
+				# SNAP or AUTO mode: place on surface
+				var offset_pos = pos + normal * 0.6
+				voxel_x = int(floor(offset_pos.x))
+				voxel_y = int(floor(offset_pos.y)) + placement_y_offset
+				voxel_z = int(floor(offset_pos.z))
 				
 				# AUTO mode: Check if block would float too much
 				if placement_mode == PlacementMode.AUTO:
 					var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
 					var float_distance = float(voxel_y) - terrain_y
 					if float_distance > auto_embed_threshold:
-						# Too much floating - embed instead
 						voxel_y = int(floor(terrain_y))
 			
 			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 			current_remove_voxel_pos = current_voxel_pos
-			
-			# CRITICAL: Check if target cell already has a building block
-			# This happens when terrain mesh blocks the face of embedded building blocks
-			if building_manager.get_voxel(current_voxel_pos) > 0:
-				# Target cell has a block - shift to adjacent cell using normal
-				var adj_normal = Vector3.ZERO
-				# Round terrain normal to nearest axis
-				var ax = abs(normal.x)
-				var ay = abs(normal.y)
-				var az = abs(normal.z)
-				if ax >= ay and ax >= az:
-					adj_normal = Vector3(sign(normal.x), 0, 0)
-				elif ay >= ax and ay >= az:
-					adj_normal = Vector3(0, sign(normal.y), 0)
-				else:
-					adj_normal = Vector3(0, 0, sign(normal.z))
-				
-				current_voxel_pos = current_voxel_pos + adj_normal
-				# Update removal target to the block we hit
-				current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
-			
-			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		
-		selection_box.visible = true
-		has_target = true
+		# SAFETY: Never allow placing inside an existing block
+		if building_manager.get_voxel(current_voxel_pos) > 0:
+			# Target would overlap with existing block - invalidate
+			selection_box.visible = false
+			has_target = false
+			return
+		
+		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+		
+	elif current_mode == Mode.OBJECT:
+		# OBJECT MODE
+		if hit_placed_object or hit_building:
+			# Hit an object/building: place adjacent
+			var grid_normal = _round_to_axis(normal)
+			var offset_pos = pos + grid_normal * 1.0
+			voxel_x = int(floor(offset_pos.x))
+			voxel_y = int(floor(offset_pos.y))
+			voxel_z = int(floor(offset_pos.z))
+			current_precise_hit_y = float(voxel_y)
+			
+			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			current_remove_voxel_pos = Vector3(int(floor(pos.x)), int(floor(pos.y)), int(floor(pos.z)))
+			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+		elif surface_snap_placement:
+			# Terrain: use fractional Y for natural placement
+			voxel_x = int(floor(pos.x))
+			voxel_z = int(floor(pos.z))
+			voxel_y = int(round(pos.y))
+			
+			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			current_remove_voxel_pos = current_voxel_pos
+			selection_box.global_position = Vector3(voxel_x + 0.5, current_precise_hit_y + 0.5, voxel_z + 0.5)
+		else:
+			# Embed mode for objects
+			voxel_x = int(floor(pos.x))
+			voxel_y = int(floor(pos.y))
+			voxel_z = int(floor(pos.z))
+			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+			current_remove_voxel_pos = current_voxel_pos
+			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+	
+	selection_box.visible = true
+	has_target = true
+
+## Round a vector to the nearest axis-aligned unit vector
+func _round_to_axis(v: Vector3) -> Vector3:
+	var ax = abs(v.x)
+	var ay = abs(v.y)
+	var az = abs(v.z)
+	if ax >= ay and ax >= az:
+		return Vector3(sign(v.x), 0, 0)
+	elif ay >= ax and ay >= az:
+		return Vector3(0, sign(v.y), 0)
 	else:
-		selection_box.visible = false
-		has_target = false
+		return Vector3(0, 0, sign(v.z))
 
 func handle_playing_input(event):
 	# PLAYING mode - interact with world objects (trees, grass, rocks)
