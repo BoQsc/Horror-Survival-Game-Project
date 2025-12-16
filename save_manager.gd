@@ -412,6 +412,8 @@ func _load_building_data(data: Dictionary):
 		
 		chunk.is_empty = false
 		chunk.rebuild_mesh()
+		# Restore visual instances for placed objects (tables, doors, etc.)
+		chunk.call_deferred("restore_object_visuals")
 	
 	print("[SaveManager] Building data loaded: %d chunks" % data.size())
 

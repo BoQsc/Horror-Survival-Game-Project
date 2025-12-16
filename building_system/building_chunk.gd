@@ -229,3 +229,54 @@ func get_object_at(local_pos: Vector3i):
 	if occupied_by_object.has(local_pos):
 		return occupied_by_object[local_pos]
 	return null
+
+## Restore visual instances for all stored objects (called after load)
+## This spawns the scene instances for objects that were saved to the objects dictionary
+func restore_object_visuals():
+	for local_anchor in objects:
+		# Skip if visual already exists
+		if object_nodes.has(local_anchor) and is_instance_valid(object_nodes[local_anchor]):
+			continue
+		
+		var obj_data = objects[local_anchor]
+		var object_id = obj_data.object_id
+		var rotation = obj_data.rotation
+		var fractional_y = obj_data.get("fractional_y", 0.0)
+		
+		# Load and instantiate the scene
+		var obj_def = ObjectRegistry.get_object(object_id)
+		if obj_def.is_empty():
+			print("BuildingChunk: restore_object_visuals - Unknown object_id: ", object_id)
+			continue
+		
+		var scene_path = obj_def.get("scene", "")
+		if scene_path == "":
+			continue
+		
+		var packed = load(scene_path)
+		if not packed:
+			print("BuildingChunk: restore_object_visuals - Failed to load scene: ", scene_path)
+			continue
+		
+		var scene_instance = packed.instantiate()
+		
+		# Add and position the visual
+		add_child(scene_instance)
+		var size = ObjectRegistry.get_rotated_size(object_id, rotation)
+		var offset_x = float(size.x) / 2.0
+		var offset_z = float(size.z) / 2.0
+		scene_instance.position = Vector3(local_anchor.x + offset_x, local_anchor.y + fractional_y, local_anchor.z + offset_z)
+		scene_instance.rotation_degrees.y = rotation * 90
+		
+		# Add to group for identification
+		scene_instance.add_to_group("placed_objects")
+		scene_instance.set_meta("anchor", local_anchor)
+		scene_instance.set_meta("chunk", self)
+		
+		# Generate collision
+		_generate_object_collision(scene_instance, local_anchor)
+		
+		object_nodes[local_anchor] = scene_instance
+	
+	print("BuildingChunk: Restored %d object visuals" % object_nodes.size())
+
