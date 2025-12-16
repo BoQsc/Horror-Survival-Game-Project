@@ -216,7 +216,7 @@ void fragment() {
 	// mat_id != 6 already excludes actual road surface, so we blend ANY terrain near roads
 	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
 		float road_dist = get_procedural_road_dist(world_pos.xz);
-		float road_edge = procedural_road_width * 0.5;  // Where road material ends
+		float road_edge = procedural_road_width * 0.43;  // Where road material ends
 		float outer_limit = road_edge + road_edge_blend_width;
 		// Apply blend to ANY terrain within range (mat_id check already skips road)
 		if (road_dist < outer_limit) {
