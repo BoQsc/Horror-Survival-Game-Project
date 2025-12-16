@@ -108,7 +108,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0, 0.25098, 0.443137, 0.392157)
+color = Color(0.05, 0.2, 0.12, 0.4)
 
 [node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer")]
 script = ExtResource("4_terrain")
