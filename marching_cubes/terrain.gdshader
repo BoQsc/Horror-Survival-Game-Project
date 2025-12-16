@@ -216,7 +216,7 @@ void fragment() {
 	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
 		float road_dist = get_procedural_road_dist(world_pos.xz);
 		// Actual voxel road is at road_width * 0.5 (4.0 for 8.0 width)
-		float actual_road_edge = procedural_road_width * 0.5;
+		float actual_road_edge = procedural_road_width * 0.43;
 		float inner_edge = actual_road_edge - road_edge_blend_width;
 		if (road_dist >= inner_edge && road_dist <= actual_road_edge) {
 			float edge_blend = 1.0 - smoothstep(inner_edge, actual_road_edge, road_dist);
