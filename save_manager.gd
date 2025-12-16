@@ -15,6 +15,7 @@ var building_manager: Node = null
 var vegetation_manager: Node = null
 var road_manager: Node = null
 var prefab_spawner: Node = null
+var entity_manager: Node = null
 var player: Node = null
 
 func _ready():
@@ -34,6 +35,7 @@ func _find_managers():
 	vegetation_manager = get_node_or_null("/root/MainGame/VegetationManager")
 	road_manager = get_node_or_null("/root/MainGame/RoadManager")
 	prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
+	entity_manager = get_node_or_null("/root/MainGame/EntityManager")
 	player = get_tree().get_first_node_in_group("player")
 	
 	print("[SaveManager] Managers found:")
@@ -42,6 +44,7 @@ func _find_managers():
 	print("  - VegetationManager: ", vegetation_manager != null)
 	print("  - RoadManager: ", road_manager != null)
 	print("  - PrefabSpawner: ", prefab_spawner != null)
+	print("  - EntityManager: ", entity_manager != null)
 	print("  - Player: ", player != null)
 
 func _input(event):
@@ -249,36 +252,11 @@ func _get_vegetation_data() -> Dictionary:
 	if not vegetation_manager:
 		return {}
 	
-	var result = {}
+	# Use vegetation manager's built-in save method (includes chopped trees)
+	if vegetation_manager.has_method("get_save_data"):
+		return vegetation_manager.get_save_data()
 	
-	# Removed vegetation
-	if "removed_grass" in vegetation_manager:
-		result["removed_grass"] = vegetation_manager.removed_grass.keys()
-	if "removed_rocks" in vegetation_manager:
-		result["removed_rocks"] = vegetation_manager.removed_rocks.keys()
-	
-	# Placed vegetation
-	if "placed_grass" in vegetation_manager:
-		var grass_list = []
-		for g in vegetation_manager.placed_grass:
-			grass_list.append({
-				"world_pos": _vec3_to_array(g.world_pos),
-				"scale": g.get("scale", 1.0),
-				"rotation": g.get("rotation", 0.0)
-			})
-		result["placed_grass"] = grass_list
-	
-	if "placed_rocks" in vegetation_manager:
-		var rock_list = []
-		for r in vegetation_manager.placed_rocks:
-			rock_list.append({
-				"world_pos": _vec3_to_array(r.world_pos),
-				"scale": r.get("scale", 1.0),
-				"rotation": r.get("rotation", 0.0)
-			})
-		result["placed_rocks"] = rock_list
-	
-	return result
+	return {}
 
 func _get_road_data() -> Dictionary:
 	if not road_manager:
@@ -436,37 +414,11 @@ func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:
 		return
 	
-	# Load removed vegetation
-	if data.has("removed_grass") and "removed_grass" in vegetation_manager:
-		vegetation_manager.removed_grass.clear()
-		for key in data.removed_grass:
-			vegetation_manager.removed_grass[key] = true
-	
-	if data.has("removed_rocks") and "removed_rocks" in vegetation_manager:
-		vegetation_manager.removed_rocks.clear()
-		for key in data.removed_rocks:
-			vegetation_manager.removed_rocks[key] = true
-	
-	# Load placed vegetation
-	if data.has("placed_grass") and "placed_grass" in vegetation_manager:
-		vegetation_manager.placed_grass.clear()
-		for g in data.placed_grass:
-			vegetation_manager.placed_grass.append({
-				"world_pos": _array_to_vec3(g.world_pos),
-				"scale": g.get("scale", 1.0),
-				"rotation": g.get("rotation", 0.0)
-			})
-	
-	if data.has("placed_rocks") and "placed_rocks" in vegetation_manager:
-		vegetation_manager.placed_rocks.clear()
-		for r in data.placed_rocks:
-			vegetation_manager.placed_rocks.append({
-				"world_pos": _array_to_vec3(r.world_pos),
-				"scale": r.get("scale", 1.0),
-				"rotation": r.get("rotation", 0.0)
-			})
-	
-	print("[SaveManager] Vegetation data loaded")
+	# Use vegetation manager's built-in load method (handles chopped trees, etc.)
+	if vegetation_manager.has_method("load_save_data"):
+		vegetation_manager.load_save_data(data)
+	else:
+		print("[SaveManager] WARNING: vegetation_manager has no load_save_data method!")
 
 func _load_road_data(data: Dictionary):
 	if data.is_empty() or not road_manager:

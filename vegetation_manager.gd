@@ -67,6 +67,7 @@ const MAX_ACTIVE_ROCK_COLLIDERS = 30
 # Persistence - survives chunk unloading
 var removed_grass: Dictionary = {}  # "x_z" position hash -> true
 var removed_rocks: Dictionary = {}  # "x_z" position hash -> true
+var chopped_trees: Dictionary = {}  # "x_z" position hash -> true (for save/load persistence)
 var placed_grass: Array[Dictionary] = []  # { world_pos, scale, rotation }
 var placed_rocks: Array[Dictionary] = []  # { world_pos, scale, rotation }
 
@@ -761,6 +762,10 @@ func chop_tree_by_collider(collider: Node) -> bool:
 	for tree in data.trees:
 		if tree.index == tree_index and tree.alive:
 			tree.alive = false
+			
+			# Add to chopped_trees for persistence across chunk unloads
+			var persist_key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+			chopped_trees[persist_key] = true
 			
 			# Hide in MultiMesh
 			var mmi = data.multimesh as MultiMeshInstance3D
@@ -1572,3 +1577,94 @@ func create_basic_rock_mesh() -> Mesh:
 	
 	st.index()
 	return st.commit()
+
+## Save/Load persistence for vegetation state
+func get_save_data() -> Dictionary:
+	# Collect all chopped trees from active chunks
+	var all_chopped: Array = []
+	for coord in chunk_tree_data:
+		var data = chunk_tree_data[coord]
+		for tree in data.trees:
+			if not tree.alive:
+				# Store as position hash
+				var key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+				all_chopped.append(key)
+	# Also include previously stored chopped trees (from unloaded chunks)
+	for key in chopped_trees:
+		if key not in all_chopped:
+			all_chopped.append(key)
+	
+	return {
+		"removed_grass": removed_grass.keys(),
+		"removed_rocks": removed_rocks.keys(),
+		"chopped_trees": all_chopped,
+		"placed_grass": _serialize_placed_list(placed_grass),
+		"placed_rocks": _serialize_placed_list(placed_rocks)
+	}
+
+func load_save_data(data: Dictionary):
+	if data.has("removed_grass"):
+		removed_grass.clear()
+		for key in data.removed_grass:
+			removed_grass[key] = true
+	
+	if data.has("removed_rocks"):
+		removed_rocks.clear()
+		for key in data.removed_rocks:
+			removed_rocks[key] = true
+	
+	if data.has("chopped_trees"):
+		chopped_trees.clear()
+		for key in data.chopped_trees:
+			chopped_trees[key] = true
+		# Apply to currently loaded trees
+		_apply_chopped_trees()
+	
+	if data.has("placed_grass"):
+		placed_grass.clear()
+		for g in data.placed_grass:
+			placed_grass.append({
+				"world_pos": Vector3(g.world_pos[0], g.world_pos[1], g.world_pos[2]),
+				"scale": g.get("scale", 1.0),
+				"rotation": g.get("rotation", 0.0)
+			})
+	
+	if data.has("placed_rocks"):
+		placed_rocks.clear()
+		for r in data.placed_rocks:
+			placed_rocks.append({
+				"world_pos": Vector3(r.world_pos[0], r.world_pos[1], r.world_pos[2]),
+				"scale": r.get("scale", 1.0),
+				"rotation": r.get("rotation", 0.0)
+			})
+	
+	print("VegetationManager: Loaded %d chopped trees, %d removed grass, %d removed rocks" % [
+		chopped_trees.size(), removed_grass.size(), removed_rocks.size()
+	])
+
+func _apply_chopped_trees():
+	# Mark trees as dead based on chopped_trees dictionary
+	for coord in chunk_tree_data:
+		var data = chunk_tree_data[coord]
+		var mmi = data.multimesh as MultiMeshInstance3D
+		for tree in data.trees:
+			var key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+			if chopped_trees.has(key) and tree.alive:
+				tree.alive = false
+				# Hide in MultiMesh
+				if mmi and mmi.multimesh:
+					var t = Transform3D()
+					t = t.scaled(Vector3.ZERO)
+					t.origin = tree.local_pos
+					mmi.multimesh.set_instance_transform(tree.index, t)
+
+func _serialize_placed_list(list: Array) -> Array:
+	var result = []
+	for item in list:
+		result.append({
+			"world_pos": [item.world_pos.x, item.world_pos.y, item.world_pos.z],
+			"scale": item.get("scale", 1.0),
+			"rotation": item.get("rotation", 0.0)
+		})
+	return result
+
