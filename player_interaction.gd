@@ -31,9 +31,16 @@ var road_type: int = 1  # 1=Flatten, 2=Mask Only, 3=Normalize
 var current_object_id: int = 1  # From ObjectRegistry
 var current_object_rotation: int = 0
 
-# Placement snap mode (applies to BUILDING and OBJECT modes)
-var surface_snap_placement: bool = true  # true = place ON TOP of terrain, false = embedded
+# Placement mode (applies to BUILDING and OBJECT modes)
+enum PlacementMode { SNAP, EMBED, AUTO }
+var placement_mode: PlacementMode = PlacementMode.AUTO  # Default to AUTO (smart hybrid)
+var auto_embed_threshold: float = 0.2  # If snapped Y floats more than this above terrain, embed instead
 var placement_y_offset: int = 0  # Manual Y offset adjustment
+
+# Computed surface_snap_placement for compatibility with existing code
+var surface_snap_placement: bool:
+	get:
+		return placement_mode != PlacementMode.EMBED
 
 # PLAYING mode placeable items
 enum PlaceableItem { ROCK, GRASS }
@@ -211,9 +218,10 @@ func _unhandled_input(event):
 				update_ui()
 		elif event.keycode == KEY_V:
 			if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT:
-				surface_snap_placement = not surface_snap_placement
-				var snap_str = "ON TOP (surface)" if surface_snap_placement else "EMBEDDED"
-				print("[Placement] Snap mode: %s" % snap_str)
+				# Cycle through: AUTO -> SNAP -> EMBED -> AUTO
+				placement_mode = (placement_mode + 1) % 3 as PlacementMode
+				var mode_names = ["SNAP (Surface)", "EMBED", "AUTO (Hybrid)"]
+				print("[Placement] Mode: %s" % mode_names[placement_mode])
 				update_ui()
 		elif event.keycode == KEY_R:
 			# R key: rotate in OBJECT or BUILDING mode
@@ -308,8 +316,9 @@ func update_ui():
 		if current_block_id == 2: block_name = "Ramp"
 		elif current_block_id == 3: block_name = "Sphere"
 		elif current_block_id == 4: block_name = "Stairs"
-		var snap_str = "Surface" if surface_snap_placement else "Embed"
-		mode_label.text = "Mode: BUILDING (%s)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate, [V] Snap" % [snap_str, block_name, current_rotation]
+		var mode_names = ["Snap", "Embed", "Auto"]
+		var mode_str = mode_names[placement_mode]
+		mode_label.text = "Mode: BUILDING (%s)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate, [V] Mode" % [mode_str, block_name, current_rotation]
 	elif current_mode == Mode.OBJECT:
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"
@@ -356,11 +365,23 @@ func update_selection_box():
 	var is_voxel_hit = false
 	
 	# Determine which hit to use
+	# Fix: Only use voxel grid when physics raycast actually hit a building
 	if voxel_hit and terrain_hit:
-		if voxel_hit.distance <= terrain_hit.position.distance_to(camera.global_position) + 0.1:
+		# Check if physics raycast hit a building (not terrain)
+		var hit_building = terrain_hit.collider and terrain_hit.collider.get_parent() is BuildingChunk
+		
+		if hit_building:
+			# Hit a building - use voxel grid for precise stacking
 			is_voxel_hit = true
-		else:
+		elif surface_snap_placement:
+			# Surface mode aiming at terrain - always use terrain hit
 			is_voxel_hit = false
+		else:
+			# Embed mode - use closer hit
+			if voxel_hit.distance <= terrain_hit.position.distance_to(camera.global_position) + 0.1:
+				is_voxel_hit = true
+			else:
+				is_voxel_hit = false
 	elif voxel_hit:
 		is_voxel_hit = true
 	elif terrain_hit:
@@ -435,16 +456,26 @@ func update_selection_box():
 			selection_box.global_position = Vector3(voxel_x + 0.5, current_precise_hit_y + 0.5, voxel_z + 0.5)
 		else:
 			# BUILDING mode: Full grid snap for block stacking
-			if surface_snap_placement:
+			if placement_mode == PlacementMode.EMBED:
+				# Embed mode: place inside terrain
+				voxel_x = int(floor(pos.x))
+				voxel_y = int(floor(pos.y))
+				voxel_z = int(floor(pos.z))
+			else:
+				# SNAP or AUTO mode: calculate snapped position
 				var offset = normal * 0.6
 				var placement_pos = pos + offset
 				voxel_x = int(floor(placement_pos.x))
 				voxel_y = int(floor(placement_pos.y)) + placement_y_offset
 				voxel_z = int(floor(placement_pos.z))
-			else:
-				voxel_x = int(floor(pos.x))
-				voxel_y = int(floor(pos.y))
-				voxel_z = int(floor(pos.z))
+				
+				# AUTO mode: Check if block would float too much
+				if placement_mode == PlacementMode.AUTO:
+					var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
+					var float_distance = float(voxel_y) - terrain_y
+					if float_distance > auto_embed_threshold:
+						# Too much floating - embed instead
+						voxel_y = int(floor(terrain_y))
 			
 			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 			current_remove_voxel_pos = current_voxel_pos
@@ -604,6 +635,12 @@ func raycast(length: float, collide_areas: bool = false, exclude_water: bool = f
 		return result
 	
 	return space_state.intersect_ray(query)
+
+## Get terrain height at a world position (for AUTO placement mode)
+func _get_terrain_height_at(x: float, z: float) -> float:
+	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
+		return terrain_manager.get_terrain_height(x, z)
+	return 0.0
 
 ## Handle material placement mode input
 func handle_material_input(event):
