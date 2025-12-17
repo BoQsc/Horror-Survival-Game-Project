@@ -233,9 +233,16 @@ func _get_player_data() -> Dictionary:
 	if not player:
 		return {}
 	
+	# Find player's camera to save look direction (pitch)
+	var camera_pitch: float = 0.0
+	var camera = player.get_node_or_null("Camera3D")
+	if camera:
+		camera_pitch = camera.rotation.x
+	
 	return {
 		"position": _vec3_to_array(player.global_position),
 		"rotation": _vec3_to_array(player.rotation),
+		"camera_pitch": camera_pitch,
 		"is_flying": player.get("is_flying") if "is_flying" in player else false
 	}
 
@@ -368,6 +375,10 @@ func _load_player_data(data: Dictionary):
 		player.global_position = player_pos
 	if data.has("rotation"):
 		player.rotation = _array_to_vec3(data.rotation)
+	if data.has("camera_pitch"):
+		var camera = player.get_node_or_null("Camera3D")
+		if camera:
+			camera.rotation.x = data.camera_pitch
 	if data.has("is_flying") and "is_flying" in player:
 		player.is_flying = data.is_flying
 	
