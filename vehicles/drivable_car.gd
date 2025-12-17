@@ -30,6 +30,7 @@ func _ready() -> void:
 	collision_layer = collision_layer | (1 << 3)
 	
 	# Lower center of mass for natural stability (lowered more for better handling)
+	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
 	center_of_mass = Vector3(0, -0.5, 0)
 
 
@@ -183,4 +184,3 @@ func set_camera_active(active: bool) -> void:
 	if cam and cam is Camera3D:
 		cam.current = active
 		print("[Vehicle] Camera active: %s" % active)
-
