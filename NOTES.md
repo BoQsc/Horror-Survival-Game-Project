@@ -68,3 +68,30 @@
 ### Potential future fix:
 - Pass actual mesh boundary info from density to terrain shader (complex)
 - Or accept the current "good enough" state
+
+---
+
+## Vehicle System
+
+**Directory:** `vehicles/`, `addons/srcoder_simplecar/`
+
+### Current Status:
+> ⚠️ **Vehicles are hard to deal with.** The current vehicle system works but has known limitations due to lack of experience in vehicle physics tuning.
+
+### Known Issues:
+- **Camera behavior:** Getting the follow camera to behave correctly (decoupled from car rotation, smooth lag, etc.) is tricky with Godot's scene hierarchy
+- **Physics tuning:** Car handling requires careful balance of mass, grip, suspension stiffness, and damping - easy to make the car feel "floaty" or unstable
+- **High-speed stability:** Cars can become difficult to control at high speeds
+
+### What's working:
+- Basic driving with WASD controls
+- Enter/exit vehicle interaction
+- Vehicle save/load integration
+- Deferred spawning (waits for terrain)
+- Water physics (buoyancy)
+- Flip recovery (B key)
+
+### Future improvements needed:
+- Better camera system (possibly custom, not child of car)
+- More refined physics parameters
+- Possibly switch to a different vehicle addon/approach
