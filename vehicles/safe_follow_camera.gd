@@ -10,8 +10,15 @@ extends "res://addons/srcoder_simplecar/assets/scripts/follow_camera.gd"
 @export var max_pitch: float = 45.0
 @export var min_pitch: float = -30.0
 
+# Zoom settings
+@export_category("Zoom Settings")
+@export var zoom_speed: float = 2.0
+@export var min_distance: float = 3.0
+@export var max_distance: float = 20.0
+
 # Reference to the actual camera
 var camera_node: Camera3D = null
+var spring_arm: SpringArm3D = null
 
 # Current yaw offset applied to pivot (in radians)  
 var current_yaw: float = 0.0
@@ -21,15 +28,26 @@ func _ready() -> void:
 	super._ready()
 	set_process_input(true)
 	
-	# Get reference to the camera
+	# Get references to camera and spring arm
 	camera_node = get_node_or_null("Pivot/SpringArm3D/Camera3D")
-	print("[VehicleCam] Ready - camera: %s, pivot: %s" % [camera_node, pivot])
+	spring_arm = get_node_or_null("Pivot/SpringArm3D")
+	print("[VehicleCam] Ready - camera: %s, spring_arm: %s" % [camera_node, spring_arm])
 
 
 func _input(event: InputEvent) -> void:
 	if not camera_node:
 		return
-		
+	
+	# Mouse wheel zoom
+	if event is InputEventMouseButton and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+		if spring_arm:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
+				# Zoom in (reduce distance)
+				spring_arm.spring_length = clampf(spring_arm.spring_length - zoom_speed, min_distance, max_distance)
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
+				# Zoom out (increase distance)
+				spring_arm.spring_length = clampf(spring_arm.spring_length + zoom_speed, min_distance, max_distance)
+	
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		# Apply yaw (horizontal) to pivot - like player camera rotates parent
 		if pivot:
