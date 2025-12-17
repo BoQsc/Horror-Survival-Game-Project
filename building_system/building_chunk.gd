@@ -279,4 +279,3 @@ func restore_object_visuals():
 		object_nodes[local_anchor] = scene_instance
 	
 	print("BuildingChunk: Restored %d object visuals" % object_nodes.size())
-

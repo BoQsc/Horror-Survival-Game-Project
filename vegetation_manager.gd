@@ -1678,4 +1678,3 @@ func _serialize_placed_list(list: Array) -> Array:
 			"rotation": item.get("rotation", 0.0)
 		})
 	return result
-

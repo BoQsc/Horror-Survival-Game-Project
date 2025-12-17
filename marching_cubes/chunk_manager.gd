@@ -2,6 +2,7 @@ extends Node3D
 
 signal chunk_generated(coord: Vector3i, chunk_node: Node3D)
 signal chunk_modified(coord: Vector3i, chunk_node: Node3D)  # For terrain edits - vegetation stays
+signal spawn_zones_ready(positions: Array)  # Emitted when all requested spawn zones have loaded
 
 # 32 Voxels wide
 const CHUNK_SIZE = 32
@@ -116,6 +117,10 @@ var loading_paused: bool = false
 # Persistent modification storage - survives chunk unloading
 # Format: coord (Vector2i) -> Array of { brush_pos: Vector3, radius: float, value: float, shape: int, layer: int }
 var stored_modifications: Dictionary = {}
+
+# Spawn zone tracking - positions waiting for terrain to load
+# Format: Array of { "position": Vector3, "radius": int, "pending_coords": Array[Vector3i] }
+var pending_spawn_zones: Array = []
 
 func _ready():
 	mutex = Mutex.new()
@@ -1383,6 +1388,9 @@ func _finalize_chunk_creation(item: Dictionary):
 		active_chunks[coord] = data
 		
 		chunk_generated.emit(coord, data.node_terrain)
+		
+		# Check if this chunk completes any pending spawn zones
+		_check_spawn_zone_readiness(coord)
 
 ## Create per-chunk ShaderMaterial with 3D material texture
 func _create_chunk_material(chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
@@ -1515,3 +1523,98 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	
 	# Return both node and collision_shape for tracking
 	return { "node": node, "collision_shape": collision_shape }
+
+# ============ SPAWN ZONE API ============
+# These methods enable save/load to wait for terrain before spawning players/entities
+
+## Request priority loading of chunks around a spawn position
+## The spawn_zones_ready signal will be emitted when all chunks are loaded
+func request_spawn_zone(position: Vector3, radius: int = 2):
+	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
+	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
+	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
+	
+	var pending_coords: Array[Vector3i] = []
+	
+	# Collect chunks in radius and request generation for any not loaded
+	for dx in range(-radius, radius + 1):
+		for dy in range(-1, 2):  # Only check Y layers -1, 0, +1 around spawn
+			for dz in range(-radius, radius + 1):
+				var coord = Vector3i(chunk_x + dx, chunk_y + dy, chunk_z + dz)
+				
+				# Skip if already loaded with data
+				if active_chunks.has(coord) and active_chunks[coord] != null:
+					continue
+				
+				# Mark as pending
+				if not active_chunks.has(coord):
+					active_chunks[coord] = null
+					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+					var task = {
+						"type": "generate",
+						"coord": coord,
+						"pos": chunk_pos
+					}
+					mutex.lock()
+					task_queue.push_front(task)  # Priority: push to front
+					mutex.unlock()
+					semaphore.post()
+				
+				pending_coords.append(coord)
+	
+	if pending_coords.is_empty():
+		# All chunks already loaded - emit immediately
+		call_deferred("emit_signal", "spawn_zones_ready", [position])
+	else:
+		# Track this spawn zone
+		pending_spawn_zones.append({
+			"position": position,
+			"radius": radius,
+			"pending_coords": pending_coords
+		})
+		print("[SpawnZone] Requested %d chunks around position %s" % [pending_coords.size(), position])
+
+## Check if chunks around a position are ready (loaded with data)
+func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
+	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
+	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
+	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
+	
+	for dx in range(-radius, radius + 1):
+		for dy in range(-1, 2):
+			for dz in range(-radius, radius + 1):
+				var coord = Vector3i(chunk_x + dx, chunk_y + dy, chunk_z + dz)
+				# Not loaded or still pending (null)
+				if not active_chunks.has(coord) or active_chunks[coord] == null:
+					return false
+	return true
+
+## Called when a chunk completes generation - checks if any spawn zones are now ready
+func _check_spawn_zone_readiness(completed_coord: Vector3i):
+	if pending_spawn_zones.is_empty():
+		return
+	
+	var zones_to_remove: Array[int] = []
+	var ready_positions: Array[Vector3] = []
+	
+	for i in range(pending_spawn_zones.size()):
+		var zone = pending_spawn_zones[i]
+		zone.pending_coords.erase(completed_coord)
+		
+		if zone.pending_coords.is_empty():
+			zones_to_remove.append(i)
+			ready_positions.append(zone.position)
+	
+	# Remove completed zones (reverse order to preserve indices)
+	for i in range(zones_to_remove.size() - 1, -1, -1):
+		pending_spawn_zones.remove_at(zones_to_remove[i])
+	
+	# Emit signal if any zones completed
+	if not ready_positions.is_empty():
+		print("[SpawnZone] %d spawn zones ready!" % ready_positions.size())
+		spawn_zones_ready.emit(ready_positions)
+
+## Request multiple spawn zones at once (for batch loading player + entities)
+func request_spawn_zones(positions: Array[Vector3], radius: int = 2):
+	for pos in positions:
+		request_spawn_zone(pos, radius)

@@ -18,6 +18,11 @@ var prefab_spawner: Node = null
 var entity_manager: Node = null
 var player: Node = null
 
+# Deferred spawn data - waiting for terrain to load
+var pending_player_data: Dictionary = {}
+var pending_entity_data: Dictionary = {}
+var is_loading_game: bool = false
+
 func _ready():
 	# Create saves directory if it doesn't exist
 	if not DirAccess.dir_exists_absolute(SAVE_DIR):
@@ -46,6 +51,12 @@ func _find_managers():
 	print("  - PrefabSpawner: ", prefab_spawner != null)
 	print("  - EntityManager: ", entity_manager != null)
 	print("  - Player: ", player != null)
+	
+	# Connect to chunk_manager's spawn_zones_ready signal
+	if chunk_manager and chunk_manager.has_signal("spawn_zones_ready"):
+		if not chunk_manager.is_connected("spawn_zones_ready", _on_spawn_zones_ready):
+			chunk_manager.connect("spawn_zones_ready", _on_spawn_zones_ready)
+			print("  - Connected to spawn_zones_ready signal")
 
 func _input(event):
 	if event is InputEventKey and event.pressed:
@@ -143,18 +154,47 @@ func load_game(path: String) -> bool:
 	# Load each component
 	# IMPORTANT: Load prefabs FIRST to prevent respawning during chunk generation
 	_load_prefab_data(save_data.get("prefabs", {}))
+	
+	# Set loading flag - entities will be deferred until terrain is ready
+	is_loading_game = true
+	pending_entity_data = save_data.get("entities", {})
+	
 	_load_player_data(save_data.get("player", {}))
 	_load_terrain_data(save_data.get("terrain_modifications", {}))
 	_load_building_data(save_data.get("buildings", {}))
 	_load_vegetation_data(save_data.get("vegetation", {}))
 	_load_road_data(save_data.get("roads", {}))
-	_load_entity_data(save_data.get("entities", {}))
+	# Entities are deferred - they will spawn in _on_spawn_zones_ready()
+	# _load_entity_data is NOT called here anymore
 	# Doors are loaded after buildings (since doors are placed in building chunks)
 	call_deferred("_load_door_data", save_data.get("doors", {}))
 	
 	print("[SaveManager] Load completed successfully!")
 	load_completed.emit(true, path)
 	return true
+
+## Called when terrain chunks around spawn positions are ready
+func _on_spawn_zones_ready(positions: Array):
+	if not is_loading_game:
+		return
+	
+	print("[SaveManager] Spawn zones ready - enabling gameplay")
+	
+	# Unfreeze player
+	if player:
+		player.process_mode = Node.PROCESS_MODE_INHERIT
+		print("[SaveManager] Player unfrozen")
+	
+	# Spawn queued entities now that terrain is ready
+	if not pending_entity_data.is_empty() and entity_manager:
+		if entity_manager.has_method("load_save_data"):
+			entity_manager.load_save_data(pending_entity_data)
+			print("[SaveManager] Entities spawned")
+	
+	# Clear pending data
+	pending_player_data = {}
+	pending_entity_data = {}
+	is_loading_game = false
 
 ## Get list of available save files
 func get_save_files() -> Array[String]:
@@ -307,14 +347,36 @@ func _load_player_data(data: Dictionary):
 	if data.is_empty() or not player:
 		return
 	
+	# Store position for spawn zone request
+	pending_player_data = data
+	var player_pos = Vector3.ZERO
+	
 	if data.has("position"):
-		player.global_position = _array_to_vec3(data.position)
+		player_pos = _array_to_vec3(data.position)
+		player.global_position = player_pos
 	if data.has("rotation"):
 		player.rotation = _array_to_vec3(data.rotation)
 	if data.has("is_flying") and "is_flying" in player:
 		player.is_flying = data.is_flying
 	
-	print("[SaveManager] Player data loaded")
+	# FREEZE player until terrain is ready
+	player.velocity = Vector3.ZERO
+	player.process_mode = Node.PROCESS_MODE_DISABLED
+	print("[SaveManager] Player frozen at position %s, waiting for terrain..." % player_pos)
+	
+	# Request terrain around player position
+	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
+		chunk_manager.request_spawn_zone(player_pos, 2)
+	else:
+		# Fallback: if no spawn zone API, just unfreeze after a delay
+		push_warning("[SaveManager] No spawn zone API - using fallback timer")
+		get_tree().create_timer(2.0).timeout.connect(func(): 
+			if player:
+				player.process_mode = Node.PROCESS_MODE_INHERIT
+			is_loading_game = false
+		)
+	
+	print("[SaveManager] Player data loaded (frozen until terrain ready)")
 
 func _load_terrain_data(data: Dictionary):
 	if data.is_empty():
