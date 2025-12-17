@@ -109,6 +109,7 @@ func _process(_delta):
 			selection_box.visible = false
 			voxel_grid_visualizer.visible = false
 		_update_or_create_preview()
+		_check_interaction_target()  # Allow door interaction in all modes
 	elif current_mode == Mode.CONSTRUCT:
 		# CONSTRUCT mode: unified block (1-4), object (5-9), and vegetation (0) placement
 		update_selection_box()
@@ -126,13 +127,16 @@ func _process(_delta):
 			selection_box.visible = false
 			voxel_grid_visualizer.visible = false
 			_update_or_create_construct_preview()
+		_check_interaction_target()  # Allow door interaction in all modes
 	elif current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
+		_check_interaction_target()  # Allow door interaction in all modes
 	else:
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
 		_destroy_preview()  # Ensure preview is cleaned up
+		_check_interaction_target()  # Allow door interaction in all modes
 
 func update_grid_visualizer():
 	if not has_target or not terrain_blocky_mode:
@@ -296,17 +300,19 @@ func _unhandled_input(event):
 				current_rotation = (current_rotation + 1) % 4
 				update_ui()
 		elif event.keycode == KEY_E:
-			# E key: interact in PLAYING mode
-			if current_mode == Mode.PLAYING:
-				if is_in_vehicle:
-					# Exit vehicle
+			# E key: interact with doors/vehicles in ALL modes
+			if is_in_vehicle:
+				# Exit vehicle (only in PLAYING mode for now)
+				if current_mode == Mode.PLAYING:
 					_exit_vehicle()
-				elif interaction_target:
-					# Check if target is a vehicle
-					if interaction_target.is_in_group("vehicle"):
-						_enter_vehicle(interaction_target)
-					elif interaction_target.has_method("interact"):
-						interaction_target.interact()
+			elif interaction_target:
+				# Interact with doors, vehicles, etc.
+				if interaction_target.is_in_group("vehicle") and current_mode == Mode.PLAYING:
+					# Only allow entering vehicles in PLAYING mode
+					_enter_vehicle(interaction_target)
+				elif interaction_target.has_method("interact"):
+					# Doors and other interactables work in all modes
+					interaction_target.interact()
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
