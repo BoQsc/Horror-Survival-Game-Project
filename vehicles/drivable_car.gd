@@ -11,10 +11,10 @@ var terrain_manager: Node = null
 const BUOYANCY_FORCE: float = 15.0
 const WATER_DRAG: float = 2.0
 
-# Anti-roll stabilization (only for extreme tilts, not normal turning)
-const ANTI_ROLL_FORCE: float = 30.0  # Reduced - only for preventing flips
-const ANTI_ROLL_THRESHOLD: float = 0.3  # Higher threshold - don't interfere with normal lean
-const FLIP_THRESHOLD: float = 0.3  # Consider flipped when nearly on side
+# Anti-roll stabilization - CONTINUOUS during driving
+const ROLL_STIFFNESS: float = 150.0     # How strongly to resist tilting
+const ROLL_DAMPING: float = 25.0        # How strongly to resist roll angular velocity
+const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 
 signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
@@ -38,8 +38,8 @@ func _ready() -> void:
 	center_of_mass = Vector3(0, -0.7, 0)
 	
 	# Add damping to reduce floaty oscillations
-	angular_damp = 2.0   # Resist spinning/rotation
-	linear_damp = 0.3    # Slight resistance to linear motion
+	angular_damp = 0.5   # Light damping - keeps turning responsive
+	linear_damp = 0.2    # Reduced for less sluggish feel
 	
 	# Maximum tire grip for no-drift handling (like a go-kart)
 	front_wheel_grip = 30.0  # Maximum grip - no drift
@@ -128,26 +128,33 @@ func _apply_water_physics(delta: float) -> void:
 		linear_velocity = linear_velocity.lerp(Vector3.ZERO, WATER_DRAG * delta)
 
 
-## Apply anti-roll stabilization to prevent flipping during sharp turns
+## Apply CONTINUOUS anti-roll stabilization - works during ALL driving, not just extreme tilts
 func _apply_anti_roll_stabilization(delta: float) -> void:
-	# Get the car's up vector in world space
+	# Get the car's up vector and forward in world space
 	var up = global_transform.basis.y
+	var forward = -global_transform.basis.z
 	
-	# How much are we tilted? (1.0 = upright, 0.0 = on side, -1.0 = upside down)
+	# How much are we tilted? (1.0 = upright, 0.0 = on side)
 	var uprightness = up.dot(Vector3.UP)
 	
-	# Only apply stabilization when tilted but not fully flipped
-	if uprightness > FLIP_THRESHOLD and uprightness < (1.0 - ANTI_ROLL_THRESHOLD):
-		# Calculate how much we need to correct
-		var tilt_amount = 1.0 - uprightness
-		
-		# Get the sideways tilt direction (cross product of up and world up)
-		var tilt_axis = up.cross(Vector3.UP).normalized()
-		
-		if tilt_axis.length() > 0.01:  # Avoid NaN when vectors are parallel
-			# Apply counter-torque to resist the roll
-			var correction_torque = tilt_axis * ANTI_ROLL_FORCE * tilt_amount * delta * 60.0
-			apply_torque(correction_torque)
+	# Don't stabilize if flipped (let player use B to flip)
+	if uprightness < FLIP_THRESHOLD:
+		return
+	
+	# 1. TILT CORRECTION - Push car back to upright (spring-like)
+	var tilt_axis = up.cross(Vector3.UP)
+	if tilt_axis.length() > 0.001:
+		var tilt_amount = 1.0 - uprightness  # How far from upright
+		var correction_torque = tilt_axis.normalized() * ROLL_STIFFNESS * tilt_amount
+		apply_torque(correction_torque)
+	
+	# 2. ROLL DAMPING - Resist angular velocity on the roll axis (prevents swaying)
+	# Project angular velocity onto the forward axis (roll)
+	var roll_velocity = angular_velocity.dot(forward)
+	if abs(roll_velocity) > 0.01:
+		# Apply counter-torque to damp the roll motion
+		var damping_torque = -forward * roll_velocity * ROLL_DAMPING
+		apply_torque(damping_torque)
 
 
 ## Check if player wants to flip the car back over (B key)
