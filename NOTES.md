@@ -138,7 +138,15 @@ Entities wait for terrain before spawning:
 
 **Current workaround:** `despawn_radius` (80m) is set lower than terrain load distance (~155m) so entities are removed before terrain unloads.
 
-**Future improvements needed:**
-- Freeze/pause far entities instead of relying on despawn timing
-- Or: Keep terrain collision loaded slightly longer than visual mesh
-- Or: Store entity positions and re-place them when player returns
+**How it works:**
+- `_freeze_entity()`: Disables physics, zeros velocity
+- `_unfreeze_entity()`: Only re-enables if terrain is loaded at position
+- `dormant_entities`: Stores despawned entity data for respawning when player returns
+
+### Future: World Simulation (TODO)
+> 💡 Since we now have persistent dormant entities, a logical next step is **world simulation**:
+> - Simulate zombie movement/behavior even when player is far away
+> - Zombies could wander, die, or migrate while dormant
+> - Would require lightweight "tick" simulation for dormant entities
+> - Could use cellular automata or simplified AI for distant entities
+
