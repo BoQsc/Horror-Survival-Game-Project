@@ -24,6 +24,10 @@ signal player_exited(player_node: Node3D)
 const DOWNFORCE_FACTOR: float = 8.0  # Downforce per m/s of speed
 const MAX_DOWNFORCE: float = 400.0   # Cap on downforce
 
+# Speed-sensitive steering - reduce turn angle at high speeds to prevent loss of control
+const STEERING_SPEED_FACTOR: float = 0.015  # How much speed affects steering (lower = more reduction)
+const MIN_STEERING_RATIO: float = 0.2       # Minimum steering (20% of max at top speed)
+
 func _ready() -> void:
 	super._ready()
 	add_to_group("vehicle")
@@ -76,7 +80,13 @@ func get_input(delta: float) -> void:
 	
 	# WASD controls - override addon's up/down/left/right
 	player_input.x = Input.get_axis("move_right", "move_left")
-	player_steer = move_toward(player_steer, player_input.x * max_steer, steer_damping * delta)
+	
+	# Speed-sensitive steering: reduce steering at high speeds for stability
+	var current_speed = linear_velocity.length()
+	var steering_ratio = clampf(1.0 - (current_speed * STEERING_SPEED_FACTOR), MIN_STEERING_RATIO, 1.0)
+	var effective_max_steer = max_steer * steering_ratio
+	
+	player_steer = move_toward(player_steer, player_input.x * effective_max_steer, steer_damping * delta)
 	
 	# W/S for forward/backward
 	player_input.y = Input.get_axis("move_backward", "move_forward")
