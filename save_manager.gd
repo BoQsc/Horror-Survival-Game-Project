@@ -22,6 +22,7 @@ var player: Node = null
 # Deferred spawn data - waiting for terrain to load
 var pending_player_data: Dictionary = {}
 var pending_entity_data: Dictionary = {}
+var pending_vehicle_data: Dictionary = {}
 var is_loading_game: bool = false
 
 func _ready():
@@ -172,8 +173,8 @@ func load_game(path: String) -> bool:
 	# _load_entity_data is NOT called here anymore
 	# Doors are loaded after buildings (since doors are placed in building chunks)
 	call_deferred("_load_door_data", save_data.get("doors", {}))
-	# Load vehicles (can be spawned immediately as they don't depend on terrain)
-	_load_vehicle_data(save_data.get("vehicles", {}))
+	# Vehicles are ALSO deferred until terrain is ready (prevents falling through)
+	pending_vehicle_data = save_data.get("vehicles", {})
 	print("[SaveManager] Load completed successfully!")
 	load_completed.emit(true, path)
 	return true
@@ -196,9 +197,15 @@ func _on_spawn_zones_ready(positions: Array):
 			entity_manager.load_save_data(pending_entity_data)
 			print("[SaveManager] Entities spawned")
 	
+	# Spawn queued vehicles now that terrain is ready
+	if not pending_vehicle_data.is_empty():
+		_load_vehicle_data(pending_vehicle_data)
+		print("[SaveManager] Vehicles spawned")
+	
 	# Clear pending data
 	pending_player_data = {}
 	pending_entity_data = {}
+	pending_vehicle_data = {}
 	is_loading_game = false
 
 ## Get list of available save files
