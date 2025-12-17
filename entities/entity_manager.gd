@@ -19,7 +19,7 @@ var entity_pool: Array[Node3D] = []  # Pooled inactive entities
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []  # Array of { position, scene, retry_count }
-const MAX_SPAWN_RETRIES: int = 30  # Max frames to wait for terrain
+const MAX_SPAWN_RETRIES: int = 300  # Max frames to wait (~5 sec at 60fps)
 
 func _ready():
 	# Find player
@@ -195,15 +195,7 @@ func _process_pending_spawns():
 					print("[EntityManager] Deferred spawn completed at %s" % spawn_pos)
 				completed.append(i)
 			else:
-				# Still not ready - increment retry
-				spawn_data.retry_count += 1
-				if spawn_data.retry_count >= MAX_SPAWN_RETRIES:
-					# Give up - spawn at estimated height
-					var fallback_y = player.global_position.y if player else 20.0
-					var spawn_pos = Vector3(pos.x, fallback_y + 5.0, pos.z)
-					spawn_entity(spawn_pos, spawn_data.scene)
-					print("[EntityManager] Deferred spawn timed out - spawned at fallback height")
-					completed.append(i)
+				# Still not ready - keep waiting (no timeout)
 	
 	# Remove completed spawns (reverse order)
 	for i in range(completed.size() - 1, -1, -1):

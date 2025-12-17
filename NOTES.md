@@ -135,4 +135,3 @@ Entities now properly wait for terrain to load before spawning:
 4. Fallback: After 30 frames, spawns at estimated height anyway
 
 This prevents entities from "falling from the sky" when spawned in unloaded chunks.
-
