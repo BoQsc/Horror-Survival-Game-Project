@@ -150,3 +150,9 @@ Entities wait for terrain before spawning:
 > - Would require lightweight "tick" simulation for dormant entities
 > - Could use cellular automata or simplified AI for distant entities
 
+### Testing Needed: Collision Cleanup
+> ⚠️ **Verify that collisions properly unload when chunks/entities despawn:**
+> - Do prefab doors (and other building objects) unload their collision?
+> - Do zombies truly release their collision shapes when despawned?
+> - Does terrain collision memory get freed when chunks unload?
+> - Potential memory leak if collisions persist after objects are removed
