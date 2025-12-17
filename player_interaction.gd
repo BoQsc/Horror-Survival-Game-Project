@@ -89,16 +89,21 @@ func _ready():
 	update_ui()
 
 func _process(_delta):
+	# Block all construction visuals while in vehicle - only show exit prompt
+	if is_in_vehicle:
+		selection_box.visible = false
+		voxel_grid_visualizer.visible = false
+		_destroy_preview()
+		_show_vehicle_exit_prompt()
+		return
+	
 	if current_mode == Mode.PLAYING:
 		# No selection box in playing mode
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
 		_destroy_preview()  # Ensure preview is cleaned up
-		# Check for interactable objects (unless in vehicle, then show exit prompt)
-		if is_in_vehicle:
-			_show_vehicle_exit_prompt()
-		else:
-			_check_interaction_target()
+		# Check for interactable objects
+		_check_interaction_target()
 	elif current_mode == Mode.OBJECT:
 		# OBJECT mode: use preview, optionally show grid helpers
 		update_selection_box()  # Still calculate target position
@@ -178,6 +183,12 @@ func update_grid_visualizer():
 	mesh.surface_end()
 
 func _unhandled_input(event):
+	# Block most input while in vehicle - only allow E key to exit
+	if is_in_vehicle:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_E:
+			_exit_vehicle()
+		return
+	
 	if event.is_action_pressed("ui_focus_next"): # Tab
 		toggle_mode()
 		
