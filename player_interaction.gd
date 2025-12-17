@@ -1049,6 +1049,11 @@ func _enter_vehicle(vehicle: Node3D) -> void:
 		vehicle_manager.current_player_vehicle = vehicle
 		vehicle_manager.player_entered_vehicle.emit(vehicle)
 	
+	# Switch terrain generation to follow the vehicle
+	if terrain_manager and "viewer" in terrain_manager:
+		terrain_manager.viewer = vehicle
+		print("[Interaction] Switched terrain viewer to Vehicle")
+	
 	# Show exit prompt
 	_show_interaction_prompt()
 
@@ -1087,6 +1092,11 @@ func _exit_vehicle() -> void:
 	
 	# Make player camera current again
 	camera.current = true
+	
+	# Switch terrain generation back to player
+	if terrain_manager and "viewer" in terrain_manager:
+		terrain_manager.viewer = player
+		print("[Interaction] Switched terrain viewer to Player")
 	
 	# Track in vehicle manager
 	if vehicle_manager:
