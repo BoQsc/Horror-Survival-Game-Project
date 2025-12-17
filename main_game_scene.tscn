@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=17 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://marching_cubes/roads/road_manager.gd" id="7_roads"]
 [ext_resource type="Script" uid="uid://ds7smfcuouehv" path="res://building_system/prefab_spawner.gd" id="8_prefabs"]
 [ext_resource type="PackedScene" uid="uid://dxkm8p7qhwvam" path="res://entities/entity_manager.tscn" id="9_entities"]
+[ext_resource type="Script" path="res://vehicles/vehicle_manager.gd" id="10_vehicles"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -55,13 +56,14 @@ shape = SubResource("PlayerShape")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 script = ExtResource("2_camera")
 
-[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager", "road_manager", "entity_manager")]
+[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager", "road_manager", "entity_manager", "vehicle_manager")]
 script = ExtResource("3_interact")
 terrain_manager = NodePath("../../../TerrainManager")
 building_manager = NodePath("../../../BuildingManager")
 vegetation_manager = NodePath("../../../VegetationManager")
 road_manager = NodePath("../../../RoadManager")
 entity_manager = NodePath("../../../EntityManager")
+vehicle_manager = NodePath("../../../VehicleManager")
 
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
@@ -137,6 +139,10 @@ building_manager = NodePath("../BuildingManager")
 
 [node name="EntityManager" parent="." node_paths=PackedStringArray("terrain_manager") instance=ExtResource("9_entities")]
 terrain_manager = NodePath("../TerrainManager")
+
+[node name="VehicleManager" type="Node" parent="." node_paths=PackedStringArray("player") groups=["vehicle_manager"]]
+script = ExtResource("10_vehicles")
+player = NodePath("../Player")
 
 [node name="SelectionBox" type="MeshInstance3D" parent="."]
 visible = false

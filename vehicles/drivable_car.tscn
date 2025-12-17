@@ -1,0 +1,14 @@
+[gd_scene load_steps=4 format=3 uid="uid://drivable_car_scene"]
+
+[ext_resource type="PackedScene" uid="uid://7l1irinimxa" path="res://addons/srcoder_simplecar/car.tscn" id="1_car"]
+[ext_resource type="Script" path="res://vehicles/drivable_car.gd" id="2_script"]
+[ext_resource type="PackedScene" uid="uid://rjx8tx5y7j2p" path="res://addons/srcoder_simplecar/follow_camera.tscn" id="3_camera"]
+[ext_resource type="Script" path="res://vehicles/safe_follow_camera.gd" id="4_safe_cam"]
+
+[node name="DrivableCar" instance=ExtResource("1_car")]
+script = ExtResource("2_script")
+
+[node name="FollowCamera" parent="." instance=ExtResource("3_camera")]
+script = ExtResource("4_safe_cam")
+follow_target = NodePath("..")
+

@@ -5,6 +5,7 @@ extends Node
 @export var vegetation_manager: Node3D
 @export var road_manager: Node3D  # Road placement system
 @export var entity_manager: Node3D  # Entity spawning system
+@export var vehicle_manager: Node  # Vehicle spawning/tracking system
 
 @onready var mode_label: Label = $"../../../UI/ModeLabel"
 @onready var camera: Camera3D = $".."
@@ -62,6 +63,10 @@ var object_show_grid: bool = false  # Toggle to show selection box/grid in OBJEC
 # Interaction system
 var interaction_target: Node3D = null  # Current interactable being looked at
 
+# Vehicle system
+var is_in_vehicle: bool = false
+var current_vehicle: Node3D = null
+
 func _ready():
 	# Create Grid Visualizer
 	voxel_grid_visualizer = MeshInstance3D.new()
@@ -81,8 +86,11 @@ func _process(_delta):
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
 		_destroy_preview()  # Ensure preview is cleaned up
-		# Check for interactable objects
-		_check_interaction_target()
+		# Check for interactable objects (unless in vehicle, then show exit prompt)
+		if is_in_vehicle:
+			_show_vehicle_exit_prompt()
+		else:
+			_check_interaction_target()
 	elif current_mode == Mode.OBJECT:
 		# OBJECT mode: use preview, optionally show grid helpers
 		update_selection_box()  # Still calculate target position
@@ -232,10 +240,17 @@ func _unhandled_input(event):
 				current_rotation = (current_rotation + 1) % 4
 				update_ui()
 		elif event.keycode == KEY_E:
-			# E key: interact with objects in PLAYING mode
-			if current_mode == Mode.PLAYING and interaction_target:
-				if interaction_target.has_method("interact"):
-					interaction_target.interact()
+			# E key: interact in PLAYING mode
+			if current_mode == Mode.PLAYING:
+				if is_in_vehicle:
+					# Exit vehicle
+					_exit_vehicle()
+				elif interaction_target:
+					# Check if target is a vehicle
+					if interaction_target.is_in_group("vehicle"):
+						_enter_vehicle(interaction_target)
+					elif interaction_target.has_method("interact"):
+						interaction_target.interact()
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
@@ -969,6 +984,15 @@ func _show_interaction_prompt():
 			interaction_label.text = "Press E to interact"
 		interaction_label.visible = true
 
+## Show vehicle exit prompt when player is in a vehicle
+func _show_vehicle_exit_prompt():
+	if not interaction_label:
+		_create_interaction_label()
+	
+	if interaction_label:
+		interaction_label.text = "Press E to exit vehicle"
+		interaction_label.visible = true
+
 ## Hide interaction prompt
 func _hide_interaction_prompt():
 	if interaction_label:
@@ -994,3 +1018,86 @@ func _create_interaction_label():
 		interaction_label.add_theme_font_size_override("font_size", 20)
 		interaction_label.visible = false
 		ui_node.add_child(interaction_label)
+
+## ============== VEHICLE SYSTEM ==============
+
+## Enter a vehicle
+func _enter_vehicle(vehicle: Node3D) -> void:
+	if not vehicle or not vehicle.has_method("enter_vehicle"):
+		return
+	
+	print("[Vehicle] Entering vehicle")
+	is_in_vehicle = true
+	current_vehicle = vehicle
+	
+	# Tell vehicle player is entering
+	vehicle.enter_vehicle(player)
+	
+	# Disable player CharacterBody3D movement and hide it
+	player.process_mode = Node.PROCESS_MODE_DISABLED
+	player.visible = false
+	
+	# Keep this controller active so we can still receive input to exit after player is disabled
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	
+	# Enable vehicle camera
+	if vehicle.has_method("set_camera_active"):
+		vehicle.set_camera_active(true)
+	
+	# Track in vehicle manager
+	if vehicle_manager:
+		vehicle_manager.current_player_vehicle = vehicle
+		vehicle_manager.player_entered_vehicle.emit(vehicle)
+	
+	# Show exit prompt
+	_show_interaction_prompt()
+
+
+## Exit the current vehicle
+func _exit_vehicle() -> void:
+	if not current_vehicle or not current_vehicle.has_method("exit_vehicle"):
+		return
+	
+	print("[Vehicle] Exiting vehicle")
+	
+	# Get exit position from vehicle
+	var exit_pos = current_vehicle.global_position + Vector3(0, 1, 0)
+	if current_vehicle.has_method("get_exit_position"):
+		exit_pos = current_vehicle.get_exit_position()
+	
+	# Ensure exit position is above terrain
+	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
+		var terrain_y = terrain_manager.get_terrain_height(exit_pos.x, exit_pos.z)
+		# Place player at least 0.5 units above terrain (half player capsule height)
+		if exit_pos.y < terrain_y + 0.5:
+			exit_pos.y = terrain_y + 0.5
+	
+	# Disable vehicle camera first
+	if current_vehicle.has_method("set_camera_active"):
+		current_vehicle.set_camera_active(false)
+	
+	# Tell vehicle player is exiting
+	current_vehicle.exit_vehicle()
+	
+	# Move player to exit position and re-enable
+	player.global_position = exit_pos
+	player.visible = true
+	player.process_mode = Node.PROCESS_MODE_INHERIT
+	player.velocity = Vector3.ZERO
+	
+	# Make player camera current again
+	camera.current = true
+	
+	# Track in vehicle manager
+	if vehicle_manager:
+		vehicle_manager.player_exited_vehicle.emit(current_vehicle)
+		vehicle_manager.current_player_vehicle = null
+	
+	is_in_vehicle = false
+	current_vehicle = null
+	
+	# Restore normal process mode (inherit from parent)
+	process_mode = Node.PROCESS_MODE_INHERIT
+	
+	# Hide interaction prompt
+	_hide_interaction_prompt()

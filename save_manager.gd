@@ -16,6 +16,7 @@ var vegetation_manager: Node = null
 var road_manager: Node = null
 var prefab_spawner: Node = null
 var entity_manager: Node = null
+var vehicle_manager: Node = null
 var player: Node = null
 
 # Deferred spawn data - waiting for terrain to load
@@ -41,6 +42,7 @@ func _find_managers():
 	road_manager = get_node_or_null("/root/MainGame/RoadManager")
 	prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
 	entity_manager = get_node_or_null("/root/MainGame/EntityManager")
+	vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
 	player = get_tree().get_first_node_in_group("player")
 	
 	print("[SaveManager] Managers found:")
@@ -50,6 +52,7 @@ func _find_managers():
 	print("  - RoadManager: ", road_manager != null)
 	print("  - PrefabSpawner: ", prefab_spawner != null)
 	print("  - EntityManager: ", entity_manager != null)
+	print("  - VehicleManager: ", vehicle_manager != null)
 	print("  - Player: ", player != null)
 	
 	# Connect to chunk_manager's spawn_zones_ready signal
@@ -97,7 +100,8 @@ func save_game(path: String) -> bool:
 		"roads": _get_road_data(),
 		"prefabs": _get_prefab_data(),
 		"entities": _get_entity_data(),
-		"doors": _get_door_data()
+		"doors": _get_door_data(),
+		"vehicles": _get_vehicle_data()
 	}
 	
 	# Convert to JSON
@@ -168,7 +172,8 @@ func load_game(path: String) -> bool:
 	# _load_entity_data is NOT called here anymore
 	# Doors are loaded after buildings (since doors are placed in building chunks)
 	call_deferred("_load_door_data", save_data.get("doors", {}))
-	
+	# Load vehicles (can be spawned immediately as they don't depend on terrain)
+	_load_vehicle_data(save_data.get("vehicles", {}))
 	print("[SaveManager] Load completed successfully!")
 	load_completed.emit(true, path)
 	return true
@@ -548,6 +553,24 @@ func _load_entity_data(data: Dictionary):
 	
 	if entity_manager.has_method("load_save_data"):
 		entity_manager.load_save_data(data)
+
+# ============ VEHICLE DATA ============
+
+func _get_vehicle_data() -> Dictionary:
+	if not vehicle_manager:
+		return {}
+	
+	if vehicle_manager.has_method("get_save_data"):
+		return vehicle_manager.get_save_data()
+	
+	return {}
+
+func _load_vehicle_data(data: Dictionary):
+	if data.is_empty() or not vehicle_manager:
+		return
+	
+	if vehicle_manager.has_method("load_save_data"):
+		vehicle_manager.load_save_data(data)
 
 # ============ DOOR DATA ============
 
