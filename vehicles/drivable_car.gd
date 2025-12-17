@@ -12,8 +12,8 @@ const BUOYANCY_FORCE: float = 15.0
 const WATER_DRAG: float = 2.0
 
 # Anti-roll stabilization - AGGRESSIVE to prevent any sway
-const ROLL_STIFFNESS: float = 500.0     # Very strong tilt resistance
-const ROLL_DAMPING: float = 80.0        # Heavily damp roll oscillation
+const ROLL_STIFFNESS: float = 1000.0    # Extremely strong - almost no tilt
+const ROLL_DAMPING: float = 100.0       # Heavy damping
 const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 
 signal player_entered(player_node: Node3D)
@@ -37,8 +37,8 @@ func _ready() -> void:
 	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
 	center_of_mass = Vector3(0, -0.7, 0)
 	
-	# Add damping to reduce floaty oscillations
-	angular_damp = 1.5   # Moderate damping for stability
+	# Add damping - keep low to preserve steering responsiveness
+	angular_damp = 0.3   # Low so yaw (steering) stays snappy - roll handled separately
 	linear_damp = 0.1    # Light to keep acceleration responsive
 	
 	# Maximum tire grip for no-drift handling (like a go-kart)
