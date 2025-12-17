@@ -11,18 +11,18 @@ var terrain_manager: Node = null
 const BUOYANCY_FORCE: float = 15.0
 const WATER_DRAG: float = 2.0
 
-# Anti-roll stabilization - AGGRESSIVE to prevent any sway
-const ROLL_STIFFNESS: float = 1000.0    # Extremely strong - almost no tilt
-const ROLL_DAMPING: float = 100.0       # Heavy damping
+# Anti-roll stabilization - EXTREME to eliminate body roll during turns
+const ROLL_STIFFNESS: float = 8000.0    # Very strong - keeps car flat during turns
+const ROLL_DAMPING: float = 800.0       # Heavy damping to stop roll oscillation
 const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 
 signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
 
 
-# Physics tuning constants
-const DOWNFORCE_FACTOR: float = 8.0  # Downforce per m/s of speed
-const MAX_DOWNFORCE: float = 400.0   # Cap on downforce
+# Physics tuning constants - HEAVY car feel
+const DOWNFORCE_FACTOR: float = 20.0  # Increased downforce per m/s of speed
+const MAX_DOWNFORCE: float = 1000.0   # Higher cap for more weight at speed
 
 # Speed-sensitive steering - reduce turn angle at high speeds to prevent loss of control
 const STEERING_SPEED_FACTOR: float = 0.015  # How much speed affects steering (lower = more reduction)
@@ -37,23 +37,38 @@ func _ready() -> void:
 	# Set collision layer 4 for vehicle detection (bit 3)
 	collision_layer = collision_layer | (1 << 3)
 	
+	# HEAVY vehicle mass - like a large truck (2500kg vs default ~300kg)
+	mass = 2500.0
+	
+	# POWERFUL engine to move the heavy mass - strong acceleration
+	max_torque = 16000.0     # Doubled from 8000
+	max_wheel_rpm = 6000.0   # Doubled from 3000
+	
 	# Lower center of mass significantly for more planted feel
 	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
-	center_of_mass = Vector3(0, -0.7, 0)
+	center_of_mass = Vector3(0, -1.0, 0)  # Very low - almost at ground level
 	
-	# Add damping - keep low to preserve steering responsiveness
-	angular_damp = 0.3   # Low so yaw (steering) stays snappy - roll handled separately
-	linear_damp = 0.1    # Light to keep acceleration responsive
+	# EXTREME damping - resist all rotational motion (tilting, bouncing)
+	angular_damp = 5.0   # Maximum resistance to any rotation
+	linear_damp = 0.15   # Keep acceleration responsive
 	
-	# Maximum tire grip for no-drift handling (like a go-kart)
-	front_wheel_grip = 30.0  # Maximum grip - no drift
-	rear_wheel_grip = 28.0   # Nearly max grip
+	# EXTREME tire grip to handle heavy mass during turns
+	front_wheel_grip = 100.0  # Very high grip - no sliding
+	rear_wheel_grip = 100.0   # Match front for stability
 	
-	# Apply grip to wheels
+	# Apply grip and ULTRA-STIFF SUSPENSION - almost no bounce
 	for wheel in steering_wheels:
 		wheel.wheel_friction_slip = front_wheel_grip
+		wheel.suspension_stiffness = 500.0  # Extremely stiff - almost rigid
+		wheel.damping_compression = 10.0    # Very high damping
+		wheel.damping_relaxation = 10.0     # Very high damping
+		wheel.suspension_travel = 0.1       # Minimal travel
 	for wheel in driving_wheels:
 		wheel.wheel_friction_slip = rear_wheel_grip
+		wheel.suspension_stiffness = 500.0
+		wheel.damping_compression = 10.0
+		wheel.damping_relaxation = 10.0
+		wheel.suspension_travel = 0.1
 
 
 func enter_vehicle(player_node: Node3D) -> void:
