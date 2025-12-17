@@ -12,9 +12,9 @@ const BUOYANCY_FORCE: float = 15.0
 const WATER_DRAG: float = 2.0
 
 # Anti-roll stabilization
-const ANTI_ROLL_FORCE: float = 50.0  # How strongly the car resists rolling
-const ANTI_ROLL_THRESHOLD: float = 0.3  # Start applying force when tilted beyond this (0-1, where 1 = 90 degrees)
-const FLIP_THRESHOLD: float = 0.5  # Consider flipped when up vector's Y is below this (pointing sideways/down)
+const ANTI_ROLL_FORCE: float = 15.0  # Gentle resistance to rolling (was 50)
+const ANTI_ROLL_THRESHOLD: float = 0.5  # Only apply when tilted past ~45 degrees (was 0.3)
+const FLIP_THRESHOLD: float = 0.3  # Consider flipped when nearly on side (was 0.5)
 
 signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
@@ -29,8 +29,8 @@ func _ready() -> void:
 	# Set collision layer 4 for vehicle detection (bit 3)
 	collision_layer = collision_layer | (1 << 3)
 	
-	# Lower center of mass for better stability
-	center_of_mass = Vector3(0, -0.3, 0)
+	# Lower center of mass for natural stability (lowered more for better handling)
+	center_of_mass = Vector3(0, -0.5, 0)
 
 
 func enter_vehicle(player_node: Node3D) -> void:
