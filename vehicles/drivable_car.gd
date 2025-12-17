@@ -11,64 +11,59 @@ var terrain_manager: Node = null
 const BUOYANCY_FORCE: float = 15.0
 const WATER_DRAG: float = 2.0
 
-# Anti-roll stabilization - EXTREME to eliminate body roll during turns
-const ROLL_STIFFNESS: float = 8000.0    # Very strong - keeps car flat during turns
-const ROLL_DAMPING: float = 800.0       # Heavy damping to stop roll oscillation
+# Flip recovery threshold
 const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 
 signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
 
 
-# Physics tuning constants - HEAVY car feel
-const DOWNFORCE_FACTOR: float = 20.0  # Increased downforce per m/s of speed
-const MAX_DOWNFORCE: float = 1000.0   # Higher cap for more weight at speed
-
-# Speed-sensitive steering - reduce turn angle at high speeds to prevent loss of control
-const STEERING_SPEED_FACTOR: float = 0.015  # How much speed affects steering (lower = more reduction)
-const MIN_STEERING_RATIO: float = 0.2       # Minimum steering (20% of max at top speed)
-
 func _ready() -> void:
 	super._ready()
 	add_to_group("vehicle")
-	add_to_group("interactable")  # For E key interaction
+	add_to_group("interactable")
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	
 	# Set collision layer 4 for vehicle detection (bit 3)
 	collision_layer = collision_layer | (1 << 3)
 	
-	# HEAVY vehicle mass - like a large truck (2500kg vs default ~300kg)
-	mass = 2500.0
+	# === REALISTIC CAR PHYSICS ===
+	# Standard car mass (still heavy but reasonable)
+	mass = 1200.0  # ~1.2 ton sedan
 	
-	# POWERFUL engine to move the heavy mass - strong acceleration
-	max_torque = 16000.0     # Doubled from 8000
-	max_wheel_rpm = 6000.0   # Doubled from 3000
-	
-	# Lower center of mass significantly for more planted feel
+	# Center of mass - slightly low but INSIDE the car body
 	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
-	center_of_mass = Vector3(0, -1.0, 0)  # Very low - almost at ground level
+	center_of_mass = Vector3(0, -0.3, 0)  # Slightly below center
 	
-	# EXTREME damping - resist all rotational motion (tilting, bouncing)
-	angular_damp = 5.0   # Maximum resistance to any rotation
-	linear_damp = 0.15   # Keep acceleration responsive
+	# Light damping - let the suspension do the work
+	angular_damp = 0.5
+	linear_damp = 0.05
 	
-	# EXTREME tire grip to handle heavy mass during turns
-	front_wheel_grip = 100.0  # Very high grip - no sliding
-	rear_wheel_grip = 100.0   # Match front for stability
+	# Engine - POWERFUL for fun gameplay
+	max_torque = 4000.0      # Very strong acceleration
+	max_wheel_rpm = 2500.0   # Fast top speed
 	
-	# Apply grip and ULTRA-STIFF SUSPENSION - almost no bounce
+	# Tire grip - HIGH to prevent sliding
+	front_wheel_grip = 15.0   # High grip, no slide
+	rear_wheel_grip = 14.0    # Slightly less for mild oversteer
+	
+	# === RIGID SUSPENSION (No Body Lean) ===
+	# Very high stiffness effectively locks the suspension
+	# High damping prevents any oscillation
+	max_steer = 0.25  # Gentler steering (default was 0.45)
+	
 	for wheel in steering_wheels:
 		wheel.wheel_friction_slip = front_wheel_grip
-		wheel.suspension_stiffness = 500.0  # Extremely stiff - almost rigid
-		wheel.damping_compression = 10.0    # Very high damping
-		wheel.damping_relaxation = 10.0     # Very high damping
-		wheel.suspension_travel = 0.1       # Minimal travel
+		wheel.suspension_stiffness = 500.0   # Extremely stiff - no lean
+		wheel.damping_compression = 10.0     # Heavy damping
+		wheel.damping_relaxation = 10.0      # No bounce
+		wheel.suspension_travel = 0.1        # Minimal travel
 	for wheel in driving_wheels:
 		wheel.wheel_friction_slip = rear_wheel_grip
-		wheel.suspension_stiffness = 500.0
-		wheel.damping_compression = 10.0
-		wheel.damping_relaxation = 10.0
-		wheel.suspension_travel = 0.1
+		wheel.suspension_stiffness = 500.0   # Extremely stiff - no lean
+		wheel.damping_compression = 10.0     # Heavy damping
+		wheel.damping_relaxation = 10.0      # No bounce
+		wheel.suspension_travel = 0.1        # Minimal travel
 
 
 func enter_vehicle(player_node: Node3D) -> void:
@@ -93,15 +88,9 @@ func get_input(delta: float) -> void:
 		player_braking = 0.0
 		return
 	
-	# WASD controls - override addon's up/down/left/right
+	# WASD controls
 	player_input.x = Input.get_axis("move_right", "move_left")
-	
-	# Speed-sensitive steering: reduce steering at high speeds for stability
-	var current_speed = linear_velocity.length()
-	var steering_ratio = clampf(1.0 - (current_speed * STEERING_SPEED_FACTOR), MIN_STEERING_RATIO, 1.0)
-	var effective_max_steer = max_steer * steering_ratio
-	
-	player_steer = move_toward(player_steer, player_input.x * effective_max_steer, steer_damping * delta)
+	player_steer = move_toward(player_steer, player_input.x * max_steer, steer_damping * delta)
 	
 	# W/S for forward/backward
 	player_input.y = Input.get_axis("move_backward", "move_forward")
@@ -126,18 +115,8 @@ func get_input(delta: float) -> void:
 
 func _physics_process(delta: float) -> void:
 	super._physics_process(delta)
-	_apply_downforce()
 	_apply_water_physics(delta)
-	_apply_anti_roll_stabilization(delta)
 	_check_flip_recovery()
-
-
-## Apply speed-based downforce to keep car planted
-func _apply_downforce() -> void:
-	var speed = linear_velocity.length()
-	var downforce = min(speed * DOWNFORCE_FACTOR, MAX_DOWNFORCE)
-	if downforce > 0.1:
-		apply_central_force(Vector3.DOWN * downforce)
 
 
 func _apply_water_physics(delta: float) -> void:
@@ -151,35 +130,6 @@ func _apply_water_physics(delta: float) -> void:
 		apply_central_force(Vector3.UP * BUOYANCY_FORCE * min(submerge_depth, 3.0))
 		# Water drag - slow down movement
 		linear_velocity = linear_velocity.lerp(Vector3.ZERO, WATER_DRAG * delta)
-
-
-## Apply CONTINUOUS anti-roll stabilization - works during ALL driving, not just extreme tilts
-func _apply_anti_roll_stabilization(delta: float) -> void:
-	# Get the car's up vector and forward in world space
-	var up = global_transform.basis.y
-	var forward = -global_transform.basis.z
-	
-	# How much are we tilted? (1.0 = upright, 0.0 = on side)
-	var uprightness = up.dot(Vector3.UP)
-	
-	# Don't stabilize if flipped (let player use B to flip)
-	if uprightness < FLIP_THRESHOLD:
-		return
-	
-	# 1. TILT CORRECTION - Push car back to upright (spring-like)
-	var tilt_axis = up.cross(Vector3.UP)
-	if tilt_axis.length() > 0.001:
-		var tilt_amount = 1.0 - uprightness  # How far from upright
-		var correction_torque = tilt_axis.normalized() * ROLL_STIFFNESS * tilt_amount
-		apply_torque(correction_torque)
-	
-	# 2. ROLL DAMPING - Resist angular velocity on the roll axis (prevents swaying)
-	# Project angular velocity onto the forward axis (roll)
-	var roll_velocity = angular_velocity.dot(forward)
-	if abs(roll_velocity) > 0.01:
-		# Apply counter-torque to damp the roll motion
-		var damping_torque = -forward * roll_velocity * ROLL_DAMPING
-		apply_torque(damping_torque)
 
 
 ## Check if player wants to flip the car back over (B key)
