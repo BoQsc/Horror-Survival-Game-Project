@@ -21,6 +21,9 @@ class_name PrefabSpawner
 # This is persisted via SaveManager to prevent respawning
 var spawned_positions: Dictionary = {}
 
+# Preload the interactive door scene
+const DOOR_SCENE = preload("res://models/interactive_door/interactive_door.tscn")
+
 # Simple prefab definitions (relative block positions)
 # Block types: 1=Wood, 2=Stone, 3=Ramp, 4=Stairs
 var prefabs = {
@@ -218,7 +221,32 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 		var pos = world_pos + Vector3(offset)
 		building_manager.set_voxel(pos, block_type, block_meta)
 	
+	# Spawn interactive door for small_house prefab
+	if prefab_name == "small_house":
+		_spawn_door_at_prefab(world_pos)
+	
 	print("PrefabSpawner: Spawned %s at %v" % [prefab_name, world_pos])
+
+## Spawn an interactive door at the prefab doorway
+func _spawn_door_at_prefab(prefab_world_pos: Vector3):
+	# The doorway is at block offset (1, 1, 0) in the small_house prefab
+	# Door should be placed at the front of the building, facing outward
+	var door_offset = Vector3(1.5, 1.0, 0.0)  # Center in x, floor level + 1, front edge
+	var door_pos = prefab_world_pos + door_offset
+	
+	# Instance the door scene
+	var door_instance = DOOR_SCENE.instantiate()
+	
+	# Rotate door to face outward (-Z direction, which is 180 degrees)
+	door_instance.rotation_degrees.y = 180.0
+	
+	# Add to scene tree FIRST (required before setting global_transform)
+	add_child(door_instance)
+	
+	# Now set global position (must be after add_child)
+	door_instance.global_transform.origin = door_pos
+	
+	print("PrefabSpawner: Spawned door at %v" % door_pos)
 
 ## Save/Load persistence - prevents prefabs from respawning after load
 func get_save_data() -> Dictionary:
@@ -232,4 +260,3 @@ func load_save_data(data: Dictionary):
 		for key in data.spawned_positions:
 			spawned_positions[key] = true
 		print("PrefabSpawner: Loaded %d spawned positions" % spawned_positions.size())
-
