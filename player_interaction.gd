@@ -35,8 +35,10 @@ var current_object_rotation: int = 0
 # Construct mode (combined block+object) - unified item ID
 # 1-4 = blocks (Cube, Ramp, Sphere, Stairs)
 # 5-9 = objects (Cardboard Box, Long Crate, Table, Door, Window)
+# 0 = vegetation (toggles between Rock/Grass)
 var construct_item_id: int = 1
 var construct_rotation: int = 0
+var construct_vegetation_type: int = 0  # 0=Rock, 1=Grass
 
 # Placement mode (applies to BUILDING and OBJECT modes)
 enum PlacementMode { SNAP, EMBED, AUTO }
@@ -108,9 +110,14 @@ func _process(_delta):
 			voxel_grid_visualizer.visible = false
 		_update_or_create_preview()
 	elif current_mode == Mode.CONSTRUCT:
-		# CONSTRUCT mode: unified block (1-4) and object (5-9) placement
+		# CONSTRUCT mode: unified block (1-4), object (5-9), and vegetation (0) placement
 		update_selection_box()
-		if construct_item_id <= 4:
+		if construct_item_id == 0:
+			# Vegetation mode - no grid or preview needed
+			selection_box.visible = false
+			voxel_grid_visualizer.visible = false
+			_destroy_preview()
+		elif construct_item_id <= 4:
 			# Block mode - show grid
 			update_grid_visualizer()
 			_destroy_preview()
@@ -258,6 +265,12 @@ func _unhandled_input(event):
 			if current_mode == Mode.CONSTRUCT:
 				construct_item_id = 9  # Window object
 				update_ui()
+		elif event.keycode == KEY_0:
+			if current_mode == Mode.CONSTRUCT:
+				# Toggle between Rock (0) and Grass (1) when pressing 0
+				construct_item_id = 0  # Vegetation mode
+				construct_vegetation_type = (construct_vegetation_type + 1) % 2
+				update_ui()
 		elif event.keycode == KEY_Q:
 			if current_mode == Mode.MATERIAL:
 				# Toggle through brush sizes: 0 -> 1 -> 2 -> 0...
@@ -396,10 +409,16 @@ func update_ui():
 		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-5] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.CONSTRUCT:
 		var item_name = _get_construct_item_name(construct_item_id)
-		var type_str = "Block" if construct_item_id <= 4 else "Object"
+		var type_str: String
+		if construct_item_id == 0:
+			type_str = "Vegetation"
+		elif construct_item_id <= 4:
+			type_str = "Block"
+		else:
+			type_str = "Object"
 		var mode_names = ["Snap", "Embed", "Auto"]
 		var mode_str = mode_names[placement_mode]
-		mode_label.text = "Mode: CONSTRUCT (%s, %s)\n%s (Rot: %d)\n[1-4] Blocks [5-9] Objects\n[R] Rotate [V] Mode" % [type_str, mode_str, item_name, construct_rotation]
+		mode_label.text = "Mode: CONSTRUCT (%s, %s)\n%s (Rot: %d)\n[1-4] Blocks [5-9] Objects [0] Veg\n[R] Rotate [V] Mode" % [type_str, mode_str, item_name, construct_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
@@ -746,9 +765,12 @@ func handle_object_input(event):
 			if success:
 				print("Removed object at %s" % remove_pos)
 
-## Handle CONSTRUCT mode input - unified block (1-4) and object (5-9) placement
+## Handle CONSTRUCT mode input - unified block (1-4), object (5-9), and vegetation (0) placement
 func handle_construct_input(event):
-	if construct_item_id <= 4:
+	if construct_item_id == 0:
+		# Vegetation placement (Rock/Grass)
+		_handle_construct_vegetation_input(event)
+	elif construct_item_id <= 4:
 		# Block placement (1-4)
 		_handle_construct_block_input(event)
 	else:
@@ -803,8 +825,30 @@ func _handle_construct_object_input(event):
 			if success:
 				print("Removed object at %s" % remove_pos)
 
+## Handle vegetation placement in CONSTRUCT mode (Rock/Grass)
+func _handle_construct_vegetation_input(event):
+	if event.button_index == MOUSE_BUTTON_RIGHT: # Place vegetation
+		var hit = raycast(100.0, false)
+		if hit and vegetation_manager:
+			if construct_vegetation_type == 0:
+				vegetation_manager.place_rock(hit.position)
+				print("Placed rock at %s" % hit.position)
+			else:
+				vegetation_manager.place_grass(hit.position)
+				print("Placed grass at %s" % hit.position)
+	
+	elif event.button_index == MOUSE_BUTTON_LEFT: # Harvest vegetation
+		var hit = raycast(100.0, true)  # Include areas for vegetation detection
+		if hit and hit.collider and vegetation_manager:
+			if hit.collider.is_in_group("rocks"):
+				vegetation_manager.harvest_rock_by_collider(hit.collider)
+			elif hit.collider.is_in_group("grass"):
+				vegetation_manager.harvest_grass_by_collider(hit.collider)
+
 ## Get human-readable name for construct item ID
 func _get_construct_item_name(id: int) -> String:
+	if id == 0:
+		return "Rock" if construct_vegetation_type == 0 else "Grass"
 	match id:
 		1: return "Cube"
 		2: return "Ramp"
