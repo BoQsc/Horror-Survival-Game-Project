@@ -12,9 +12,9 @@ const BUOYANCY_FORCE: float = 15.0
 const WATER_DRAG: float = 2.0
 
 # Anti-roll stabilization
-const ANTI_ROLL_FORCE: float = 15.0  # Gentle resistance to rolling (was 50)
-const ANTI_ROLL_THRESHOLD: float = 0.5  # Only apply when tilted past ~45 degrees (was 0.3)
-const FLIP_THRESHOLD: float = 0.3  # Consider flipped when nearly on side (was 0.5)
+const ANTI_ROLL_FORCE: float = 80.0  # Stronger resistance to rolling
+const ANTI_ROLL_THRESHOLD: float = 0.1  # Apply earlier when starting to tilt
+const FLIP_THRESHOLD: float = 0.3  # Consider flipped when nearly on side
 
 signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
