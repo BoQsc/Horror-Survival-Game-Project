@@ -302,16 +302,13 @@ func _unhandled_input(event):
 		elif event.keycode == KEY_E:
 			# E key: interact with doors/vehicles in ALL modes
 			if is_in_vehicle:
-				# Exit vehicle (only in PLAYING mode for now)
-				if current_mode == Mode.PLAYING:
-					_exit_vehicle()
+				# Exit vehicle
+				_exit_vehicle()
 			elif interaction_target:
 				# Interact with doors, vehicles, etc.
-				if interaction_target.is_in_group("vehicle") and current_mode == Mode.PLAYING:
-					# Only allow entering vehicles in PLAYING mode
+				if interaction_target.is_in_group("vehicle"):
 					_enter_vehicle(interaction_target)
 				elif interaction_target.has_method("interact"):
-					# Doors and other interactables work in all modes
 					interaction_target.interact()
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity
