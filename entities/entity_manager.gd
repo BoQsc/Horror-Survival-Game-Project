@@ -1,25 +1,27 @@
 extends Node3D
 ## Entity Manager - handles spawning, tracking, and despawning of entities
-## Entities use the terrain's physics for movement and collision
+## Uses distance-based zones: Active -> Frozen -> Despawn
 
 signal entity_spawned(entity: Node3D)
 signal entity_despawned(entity: Node3D)
 
 @export var terrain_manager: Node3D  # Reference to ChunkManager for terrain interaction
 @export var max_entities: int = 50  # Maximum number of active entities
-@export var spawn_radius: float = 80.0  # Range around player where entities can spawn
-@export var despawn_radius: float = 120.0  # Distance at which entities despawn
+@export var spawn_radius: float = 50.0  # Range around player where entities can spawn
+@export var freeze_radius: float = 60.0  # Distance at which entities freeze (physics disabled)
+@export var despawn_radius: float = 100.0  # Distance at which entities are removed
 
 # Entity scene to spawn (can be overridden per entity type)
 @export var default_entity_scene: PackedScene
 
 var player: Node3D
 var active_entities: Array[Node3D] = []
+var frozen_entities: Dictionary = {}  # entity -> { position: Vector3 }
+var dormant_entities: Array = []  # Stored entities: { position, scene_path, health, state }
 var entity_pool: Array[Node3D] = []  # Pooled inactive entities
 
 # Deferred spawning - wait for terrain to load
-var pending_spawns: Array = []  # Array of { position, scene, retry_count }
-const MAX_SPAWN_RETRIES: int = 300  # Max frames to wait (~5 sec at 60fps)
+var pending_spawns: Array = []
 
 func _ready():
 	# Find player
@@ -34,30 +36,119 @@ func _physics_process(_delta):
 			return
 	
 	_update_entity_proximity()
+	_check_dormant_respawns()
 	
 	# Process spawn queue - spawns when terrain is ready
 	if not pending_spawns.is_empty():
 		_process_spawn_queue()
 
-## Check for entities that need to be despawned (too far from player)
+## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():
 	var player_pos = player.global_position
+	var freeze_dist_sq = freeze_radius * freeze_radius
 	var despawn_dist_sq = despawn_radius * despawn_radius
 	
-	# Find entities to despawn
 	var to_despawn: Array[Node3D] = []
+	
 	for entity in active_entities:
 		if not is_instance_valid(entity):
 			to_despawn.append(entity)
 			continue
 		
 		var dist_sq = entity.global_position.distance_squared_to(player_pos)
+		
 		if dist_sq > despawn_dist_sq:
+			# Beyond despawn radius - remove entity
 			to_despawn.append(entity)
+		elif dist_sq > freeze_dist_sq:
+			# In freeze zone - disable physics
+			_freeze_entity(entity)
+		else:
+			# In active zone - ensure physics enabled
+			_unfreeze_entity(entity)
 	
 	# Despawn far entities
 	for entity in to_despawn:
 		despawn_entity(entity)
+
+## Freeze an entity - disable physics to prevent falling
+func _freeze_entity(entity: Node3D):
+	if frozen_entities.has(entity):
+		return  # Already frozen
+	
+	# Store current state
+	frozen_entities[entity] = {
+		"position": entity.global_position
+	}
+	
+	# Disable physics processing
+	entity.set_physics_process(false)
+	
+	# Zero velocity if CharacterBody3D
+	if entity is CharacterBody3D:
+		entity.velocity = Vector3.ZERO
+	
+	print("[EntityManager] Frozen entity at distance")
+
+## Unfreeze an entity - re-enable physics
+func _unfreeze_entity(entity: Node3D):
+	if not frozen_entities.has(entity):
+		return  # Not frozen
+	
+	# Check if terrain is ready before unfreezing
+	var pos = entity.global_position
+	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
+		var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
+		if terrain_y < -100.0:
+			# Terrain not loaded yet - stay frozen
+			return
+	
+	# Re-enable physics
+	entity.set_physics_process(true)
+	frozen_entities.erase(entity)
+	print("[EntityManager] Unfrozen entity - terrain ready")
+
+## Check if any dormant entities should be respawned (player returned to their area)
+func _check_dormant_respawns():
+	if dormant_entities.is_empty() or not player:
+		return
+	
+	var player_pos = player.global_position
+	var spawn_dist_sq = spawn_radius * spawn_radius
+	var completed: Array[int] = []
+	
+	for i in range(dormant_entities.size()):
+		var data = dormant_entities[i]
+		var pos = data.position
+		
+		# Check if within spawn radius
+		var dist_sq = pos.distance_squared_to(player_pos)
+		if dist_sq > spawn_dist_sq:
+			continue  # Still too far
+		
+		# Check if terrain is ready
+		if terrain_manager and terrain_manager.has_method("get_terrain_height"):
+			var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
+			if terrain_y < -100.0:
+				continue  # Terrain not loaded
+			
+			# Respawn the entity!
+			var scene_path = data.scene_path
+			if scene_path != "":
+				var scene = load(scene_path)
+				if scene:
+					var respawn_pos = Vector3(pos.x, terrain_y + 1.0, pos.z)
+					var entity = spawn_entity(respawn_pos, scene)
+					if entity:
+						# Restore state
+						if data.health > 0 and "current_health" in entity:
+							entity.current_health = data.health
+						print("[EntityManager] Respawned dormant entity at %s" % respawn_pos)
+					completed.append(i)
+	
+	# Remove respawned entities from dormant list (reverse order)
+	for i in range(completed.size() - 1, -1, -1):
+		dormant_entities.remove_at(completed[i])
 
 ## Spawn an entity at a world position
 func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3D:
@@ -98,23 +189,34 @@ func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3
 	entity_spawned.emit(entity)
 	return entity
 
-## Despawn an entity (return to pool)
-func despawn_entity(entity: Node3D):
+## Despawn an entity - store for later respawn
+func despawn_entity(entity: Node3D, permanent: bool = false):
 	if not is_instance_valid(entity):
 		active_entities.erase(entity)
+		frozen_entities.erase(entity)
 		return
 	
-	# Remove from active
+	# Store entity data for respawning (unless permanent despawn like death)
+	if not permanent:
+		var entity_data = {
+			"position": entity.global_position,
+			"scene_path": entity.scene_file_path if entity.scene_file_path else "",
+			"health": entity.current_health if "current_health" in entity else -1,
+			"state": entity.current_state if "current_state" in entity else ""
+		}
+		dormant_entities.append(entity_data)
+		print("[EntityManager] Entity stored for respawn at %s" % entity_data.position)
+	
+	# Remove from tracking
 	active_entities.erase(entity)
+	frozen_entities.erase(entity)
 	
 	# Notify entity
 	if entity.has_method("on_despawn"):
 		entity.on_despawn()
 	
-	# Return to pool
-	entity.visible = false
-	entity.process_mode = Node.PROCESS_MODE_DISABLED
-	entity_pool.append(entity)
+	# Free the entity (we'll recreate from stored data)
+	entity.queue_free()
 	
 	entity_despawned.emit(entity)
 

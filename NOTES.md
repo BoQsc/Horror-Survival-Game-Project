@@ -142,4 +142,3 @@ Entities wait for terrain before spawning:
 - Freeze/pause far entities instead of relying on despawn timing
 - Or: Keep terrain collision loaded slightly longer than visual mesh
 - Or: Store entity positions and re-place them when player returns
-
