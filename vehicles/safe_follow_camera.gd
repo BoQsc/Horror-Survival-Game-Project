@@ -72,8 +72,19 @@ func _physics_process(delta: float) -> void:
 	var target_horizontal_direction = follow_target.global_basis.z.slide(Vector3.UP).normalized()
 	var desired_basis = Basis.looking_at(-target_horizontal_direction)
 	
+	# Velocity-based camera lag - the faster we go, the more the camera lags behind
+	# This creates a cinematic feel where the camera smoothly follows during turns
+	var velocity = follow_target.linear_velocity if follow_target is RigidBody3D else Vector3.ZERO
+	var speed = velocity.length()
+	
+	# Base damping is low (0.3) and gets even lower at high speeds
+	# At 0 speed: damping = 0.3 (fairly responsive)
+	# At 20+ m/s: damping = 0.1 (very floaty/laggy)
+	var speed_factor = clampf(speed / 30.0, 0.0, 1.0)  # 0-1 based on speed up to 30 m/s
+	var effective_damping = lerpf(0.4, 0.15, speed_factor)  # Lower values = more lag
+	
 	# Smoothly rotate base towards car direction
-	global_basis = global_basis.slerp(desired_basis, rotation_damping * delta)
+	global_basis = global_basis.slerp(desired_basis, effective_damping * delta)
 	
 	# Gradually return yaw to zero (auto-center horizontal)
 	if pivot and return_speed > 0:
