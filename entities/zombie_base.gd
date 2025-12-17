@@ -76,8 +76,8 @@ func _ready():
 	wall_detector.enabled = true
 	wall_detector.target_position = Vector3(0, 0, 1.0)
 	
-	# Improve collision stability
-	safe_margin = 0.2
+	# Collision settings (low safe_margin to minimize floating gap)
+	safe_margin = 0.04
 	wall_min_slide_angle = deg_to_rad(15)
 	floor_max_angle = deg_to_rad(60)
 	

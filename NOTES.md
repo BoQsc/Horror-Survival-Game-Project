@@ -95,3 +95,35 @@
 - Better camera system (possibly custom, not child of car)
 - More refined physics parameters
 - Possibly switch to a different vehicle addon/approach
+
+---
+
+## Zombie Entity System
+
+**Directory:** `entities/`  
+**Files:** `zombie_base.gd`, `zombie_base.tscn`
+
+### Spawning:
+- **F10:** Spawn default capsule entity
+- **F11:** Spawn zombie
+
+### Known quirks:
+
+#### Floating Gap Fix
+- **Issue:** Zombies appear to float slightly above terrain
+- **Cause:** `safe_margin` property on CharacterBody3D adds a buffer distance
+- **Fix:** Set `safe_margin = 0.04` (4cm) instead of default 0.2 (20cm)
+- Also adjust model Y position in scene if needed
+
+#### Model Facing Direction
+- **Issue:** GLB model faces backwards (negative Z is forward)
+- **Fix:** Rotate the model node 180° in the scene file (negate X and Z scale)
+- Do NOT use `rotate_y(PI)` in code - cleaner to fix in scene
+
+### Animation System:
+Uses **time-slice animation** on a single "Take 001" animation:
+- Idle: 0-1s
+- Walk/Chase: 1-2s
+- Attack: 3.5-4.5s
+- Death: 9.5s+
+
