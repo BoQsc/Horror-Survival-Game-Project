@@ -128,10 +128,18 @@ Uses **time-slice animation** on a single "Take 001" animation:
 - Death: 9.5s+
 
 ### Deferred Spawning (Dec 2024):
-Entities now properly wait for terrain to load before spawning:
-1. If terrain isn't loaded at spawn position, entity is **queued**
-2. `request_spawn_zone()` is called to prioritize terrain loading
-3. Once terrain is ready (`spawn_zones_ready` signal), entity spawns at correct height
-4. Fallback: After 30 frames, spawns at estimated height anyway
+Entities wait for terrain before spawning:
+1. Spawn request added to queue
+2. Each frame, queue is checked - spawns only when terrain is ready AND within spawn_radius
+3. If player moves away, pending spawn is cancelled
 
-This prevents entities from "falling from the sky" when spawned in unloaded chunks.
+### Terrain Collision Issue:
+> ⚠️ **NEEDS MORE WORK:** When player moves far away, terrain chunks unload and entities lose collision, causing them to fall through.
+
+**Current workaround:** `despawn_radius` (80m) is set lower than terrain load distance (~155m) so entities are removed before terrain unloads.
+
+**Future improvements needed:**
+- Freeze/pause far entities instead of relying on despawn timing
+- Or: Keep terrain collision loaded slightly longer than visual mesh
+- Or: Store entity positions and re-place them when player returns
+
