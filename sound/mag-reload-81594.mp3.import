@@ -3,12 +3,12 @@
 importer="mp3"
 type="AudioStreamMP3"
 uid="uid://tgfktonq04dw"
-path="res://.godot/imported/mag-reload-81594.mp3-ee773a641cc38a59361047955fa4cd10.mp3str"
+path="res://.godot/imported/mag-reload-81594.mp3-350134c5633597ce213a0186a0136d06.mp3str"
 
 [deps]
 
-source_file="res://sfx/mag-reload-81594.mp3"
-dest_files=["res://.godot/imported/mag-reload-81594.mp3-ee773a641cc38a59361047955fa4cd10.mp3str"]
+source_file="res://sound/mag-reload-81594.mp3"
+dest_files=["res://.godot/imported/mag-reload-81594.mp3-350134c5633597ce213a0186a0136d06.mp3str"]
 
 [params]
 

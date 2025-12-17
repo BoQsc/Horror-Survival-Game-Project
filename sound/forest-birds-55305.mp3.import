@@ -3,12 +3,12 @@
 importer="mp3"
 type="AudioStreamMP3"
 uid="uid://w0h4ukkiep4l"
-path="res://.godot/imported/forest-birds-55305.mp3-58ebd57412c7b45e34b6ef1c94c8adc0.mp3str"
+path="res://.godot/imported/forest-birds-55305.mp3-ecedaf4220de5288a28cc26097caab11.mp3str"
 
 [deps]
 
-source_file="res://sfx/forest-birds-55305.mp3"
-dest_files=["res://.godot/imported/forest-birds-55305.mp3-58ebd57412c7b45e34b6ef1c94c8adc0.mp3str"]
+source_file="res://sound/forest-birds-55305.mp3"
+dest_files=["res://.godot/imported/forest-birds-55305.mp3-ecedaf4220de5288a28cc26097caab11.mp3str"]
 
 [params]
 

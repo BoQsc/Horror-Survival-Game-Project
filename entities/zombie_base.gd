@@ -1,0 +1,331 @@
+extends EntityBase
+class_name ZombieBase
+## Zombie enemy entity with chase/attack AI, animations, and sounds
+## Based on old reference patterns - uses time-slice animation looping
+
+# --- Health ---
+@export var max_health: int = 3
+var current_health: int
+
+# --- State ---
+var current_state: String = "IDLE"
+var attack_timer: float = 0.0
+var stuck_timer: float = 0.0
+
+# --- Movement (overrides EntityBase) ---
+@export var chase_speed_multiplier: float = 2.5
+@export var detection_radius: float = 20.0
+@export var attack_range: float = 1.5
+@export var lose_interest_range: float = 50.0
+@export var attack_cooldown: float = 1.0
+@export var attack_damage: int = 1
+
+# --- References ---
+var anim_player: AnimationPlayer = null
+var wall_detector: RayCast3D = null
+
+# --- Sound ---
+const CHASE_SOUND = preload("res://sound/zombie-sound-2-357976.mp3")
+var chase_audio_player: AudioStreamPlayer3D = null
+
+# --- Player reference ---
+var player: Node3D = null
+
+signal zombie_died(zombie: ZombieBase)
+signal zombie_attacked(target: Node3D)
+
+func _ready():
+	super._ready()
+	
+	# Disable EntityBase wander - we handle movement ourselves
+	wander_enabled = false
+	
+	# Initialize health
+	current_health = max_health
+	
+	# Add to zombies group
+	add_to_group("zombies")
+	add_to_group("enemies")
+	
+	# Find AnimationPlayer in the model
+	_find_animation_player(self)
+	
+	# Setup animation if found
+	if anim_player:
+		print("Zombie: Found AnimationPlayer with animations: ", anim_player.get_animation_list())
+		if anim_player.has_animation("Take 001"):
+			anim_player.play("Take 001")
+			anim_player.get_animation("Take 001").loop_mode = Animation.LOOP_NONE
+		anim_player.callback_mode_process = AnimationPlayer.ANIMATION_CALLBACK_MODE_PROCESS_PHYSICS
+	else:
+		print("Zombie: No AnimationPlayer found - will work without animations")
+	
+	# Setup chase sound
+	chase_audio_player = AudioStreamPlayer3D.new()
+	add_child(chase_audio_player)
+	chase_audio_player.stream = CHASE_SOUND
+	chase_audio_player.volume_db = -5.0
+	chase_audio_player.max_distance = 20.0
+	chase_audio_player.autoplay = false
+	
+	# Setup wall detector
+	wall_detector = RayCast3D.new()
+	wall_detector.name = "WallDetector"
+	add_child(wall_detector)
+	wall_detector.position = Vector3(0, 1.0, 0.6)
+	wall_detector.enabled = true
+	wall_detector.target_position = Vector3(0, 0, 1.0)
+	
+	# Improve collision stability
+	safe_margin = 0.2
+	wall_min_slide_angle = deg_to_rad(15)
+	floor_max_angle = deg_to_rad(60)
+	
+	# Safety start - wait for physics to settle
+	set_physics_process(false)
+	await get_tree().create_timer(0.3).timeout
+	set_physics_process(true)
+	
+	change_state("IDLE")
+
+func _find_animation_player(node: Node):
+	if node is AnimationPlayer:
+		anim_player = node
+		return
+	for child in node.get_children():
+		if anim_player:
+			return
+		_find_animation_player(child)
+
+func _physics_process(delta):
+	if current_state == "DEAD":
+		return
+	
+	# Find player if needed
+	if not player or not is_instance_valid(player):
+		player = get_tree().get_first_node_in_group("player")
+	
+	# Apply gravity (from EntityBase pattern)
+	if not is_on_floor():
+		velocity.y -= gravity * delta
+	else:
+		velocity.y = -0.1
+		# Step-up logic - hop when hitting walls while moving
+		if is_on_wall() and velocity.length() > 0.5:
+			velocity.y = 4.0
+	
+	# Animation time-slice looping
+	_update_animation()
+	
+	# State machine
+	match current_state:
+		"IDLE":
+			_process_idle(delta)
+		"WALK":
+			_process_walk(delta)
+		"CHASE":
+			_process_chase(delta)
+		"ATTACK":
+			_process_attack(delta)
+	
+	move_and_slide()
+	
+	# Void safety
+	if global_position.y < -50:
+		velocity = Vector3.ZERO
+		global_position.y = 50
+
+func _update_animation():
+	if not anim_player:
+		return
+	
+	var t = anim_player.current_animation_position
+	
+	match current_state:
+		"IDLE":
+			if t >= 1.0:
+				anim_player.seek(t - 1.0)
+		"WALK", "CHASE":
+			if t >= 2.0:
+				anim_player.seek(1.0 + (t - 2.0))
+		"ATTACK":
+			if t >= 4.5:
+				anim_player.seek(3.5 + (t - 4.5))
+
+func _process_idle(delta):
+	# Friction when idle
+	velocity.x = move_toward(velocity.x, 0, 10.0 * delta)
+	velocity.z = move_toward(velocity.z, 0, 10.0 * delta)
+	
+	# Wander timer (reuse from EntityBase)
+	wander_timer -= delta
+	if wander_timer <= 0:
+		_pick_random_direction()
+		change_state("WALK")
+	
+	# Check for player
+	if player and _can_see_player():
+		var dist = global_position.distance_to(player.global_position)
+		if dist < detection_radius:
+			change_state("CHASE")
+
+func _process_walk(delta):
+	# Move forward
+	var forward_dir = -transform.basis.z.normalized()
+	velocity.x = forward_dir.x * move_speed
+	velocity.z = forward_dir.z * move_speed
+	
+	wander_timer -= delta
+	
+	# Check for walls or timer expiring
+	if (wall_detector and wall_detector.is_colliding()) or wander_timer <= 0:
+		change_state("IDLE")
+	
+	# Check for player
+	if player and _can_see_player():
+		var dist = global_position.distance_to(player.global_position)
+		if dist < detection_radius:
+			change_state("CHASE")
+
+func _process_chase(delta):
+	if not player:
+		change_state("IDLE")
+		return
+	
+	var dist = global_position.distance_to(player.global_position)
+	
+	if dist > lose_interest_range:
+		change_state("IDLE")
+	elif dist < attack_range:
+		change_state("ATTACK")
+	else:
+		# Face player
+		var look_pos = Vector3(player.global_position.x, global_position.y, player.global_position.z)
+		look_at(look_pos, Vector3.UP)
+		
+		# Move toward player at increased speed
+		var dir = (player.global_position - global_position).normalized()
+		velocity.x = dir.x * move_speed * chase_speed_multiplier
+		velocity.z = dir.z * move_speed * chase_speed_multiplier
+
+func _process_attack(delta):
+	if not player:
+		change_state("IDLE")
+		return
+	
+	var dist = global_position.distance_to(player.global_position)
+	
+	if dist > attack_range + 1.0:
+		change_state("CHASE")
+	else:
+		# Face player
+		var look_pos = Vector3(player.global_position.x, global_position.y, player.global_position.z)
+		look_at(look_pos, Vector3.UP)
+		velocity.x = 0
+		velocity.z = 0
+		
+		# Attack on cooldown
+		attack_timer -= delta
+		if attack_timer <= 0:
+			_do_attack()
+			attack_timer = attack_cooldown
+
+func _do_attack():
+	if not player:
+		return
+	
+	print("Zombie attacked player!")
+	zombie_attacked.emit(player)
+	
+	if player.has_method("take_damage"):
+		player.take_damage(attack_damage)
+
+func _can_see_player() -> bool:
+	# Simple check - could add raycast for line of sight
+	return player != null and is_instance_valid(player)
+
+func _pick_random_direction():
+	rotate_y(deg_to_rad(randf_range(90, 270)))
+
+func change_state(new_state: String):
+	if current_state == "DEAD":
+		return
+	
+	var old_state = current_state
+	current_state = new_state
+	
+	# Handle sound
+	if new_state == "CHASE":
+		if chase_audio_player and not chase_audio_player.playing:
+			chase_audio_player.play()
+	else:
+		if chase_audio_player and chase_audio_player.playing:
+			chase_audio_player.stop()
+	
+	# Handle animation seek
+	if anim_player:
+		match new_state:
+			"IDLE":
+				anim_player.seek(0.0)
+			"WALK", "CHASE":
+				anim_player.seek(1.0)
+			"ATTACK":
+				anim_player.seek(3.5)
+	
+	# Set timers
+	match new_state:
+		"IDLE":
+			wander_timer = randf_range(2.0, 4.0)
+		"WALK":
+			wander_timer = randf_range(3.0, 6.0)
+
+## Force zombie to start chasing (called externally)
+func start_chase():
+	if current_state != "DEAD":
+		change_state("CHASE")
+
+# --- DAMAGE SYSTEM ---
+func take_damage(amount: int):
+	if current_state == "DEAD":
+		return
+	
+	current_health -= amount
+	print("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
+	
+	if current_health <= 0:
+		die()
+
+func die():
+	change_state("DEAD")
+	print("Zombie died!")
+	zombie_died.emit(self)
+	velocity = Vector3.ZERO
+	
+	# Disable collision
+	var col = get_node_or_null("CollisionShape3D")
+	if col:
+		col.disabled = true
+	
+	# Play death animation
+	if anim_player and anim_player.has_animation("Take 001"):
+		anim_player.play("Take 001")
+		anim_player.seek(9.5, true)
+		
+		await get_tree().create_timer(0.9).timeout
+		anim_player.pause()
+	
+	# Disappear after delay
+	await get_tree().create_timer(3.0).timeout
+	queue_free()
+
+## Override EntityBase on_spawn
+func on_spawn(manager: Node3D):
+	super.on_spawn(manager)
+	current_health = max_health
+	change_state("IDLE")
+
+## Override EntityBase on_despawn  
+func on_despawn():
+	super.on_despawn()
+	if chase_audio_player and chase_audio_player.playing:
+		chase_audio_player.stop()

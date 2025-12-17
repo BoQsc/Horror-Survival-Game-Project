@@ -1,0 +1,20 @@
+[gd_scene load_steps=4 format=3 uid="uid://7iymman0ho4w"]
+
+[ext_resource type="Script" uid="uid://bg3r2ledgpqpk" path="res://entities/zombie_base.gd" id="1_zombie"]
+[ext_resource type="PackedScene" uid="uid://bu2dogmupukq3" path="res://models/entities/zombie/1/male_zombie.glb" id="2_model"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
+radius = 0.4
+height = 1.8
+
+[node name="ZombieBase" type="CharacterBody3D"]
+collision_layer = 4
+script = ExtResource("1_zombie")
+move_speed = 1.5
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("CapsuleShape3D_1")
+
+[node name="ZombieModel" parent="." instance=ExtResource("2_model")]
+transform = Transform3D(10.355, 0, 0, 0, 10.355, 0, 0, 0, 10.355, 0, 0, 0)

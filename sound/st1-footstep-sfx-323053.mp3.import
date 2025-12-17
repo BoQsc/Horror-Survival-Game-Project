@@ -3,12 +3,12 @@
 importer="mp3"
 type="AudioStreamMP3"
 uid="uid://b4700oqaeovxi"
-path="res://.godot/imported/st1-footstep-sfx-323053.mp3-5703d11f20a88c6a26bd4b83ff6e5501.mp3str"
+path="res://.godot/imported/st1-footstep-sfx-323053.mp3-6eaab40b1366783ff4bf5ed1982dcb25.mp3str"
 
 [deps]
 
-source_file="res://sfx/st1-footstep-sfx-323053.mp3"
-dest_files=["res://.godot/imported/st1-footstep-sfx-323053.mp3-5703d11f20a88c6a26bd4b83ff6e5501.mp3str"]
+source_file="res://sound/st1-footstep-sfx-323053.mp3"
+dest_files=["res://.godot/imported/st1-footstep-sfx-323053.mp3-6eaab40b1366783ff4bf5ed1982dcb25.mp3str"]
 
 [params]
 

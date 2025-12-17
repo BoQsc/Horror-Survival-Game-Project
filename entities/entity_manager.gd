@@ -64,8 +64,11 @@ func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3
 	
 	var entity: Node3D
 	
-	# Try to get from pool
-	if entity_pool.size() > 0:
+	# Only use pooling for default entity scene - custom scenes always create new instances
+	# This prevents mixing different entity types (e.g., capsules vs zombies)
+	var use_pooling = (entity_scene == null) and entity_pool.size() > 0
+	
+	if use_pooling:
 		entity = entity_pool.pop_back()
 		entity.visible = true
 		entity.process_mode = Node.PROCESS_MODE_INHERIT

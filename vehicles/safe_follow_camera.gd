@@ -75,4 +75,3 @@ func _physics_process(delta: float) -> void:
 	global_rotation.y = -car_y_rotation + current_yaw
 	global_rotation.x = 0
 	global_rotation.z = 0
-
