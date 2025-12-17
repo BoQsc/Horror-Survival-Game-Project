@@ -13,7 +13,7 @@ extends Node
 @onready var player = $"../.."
 @onready var interaction_label: Label = get_node_or_null("../../../UI/InteractionLabel")  # Created dynamically if null
 
-enum Mode { PLAYING, TERRAIN, WATER, BUILDING, OBJECT, ROAD, MATERIAL }
+enum Mode { PLAYING, TERRAIN, WATER, BUILDING, OBJECT, CONSTRUCT, ROAD, MATERIAL }
 var current_mode: Mode = Mode.PLAYING
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
@@ -31,6 +31,12 @@ var road_type: int = 1  # 1=Flatten, 2=Mask Only, 3=Normalize
 # Object placement state
 var current_object_id: int = 1  # From ObjectRegistry
 var current_object_rotation: int = 0
+
+# Construct mode (combined block+object) - unified item ID
+# 1-4 = blocks (Cube, Ramp, Sphere, Stairs)
+# 5-9 = objects (Cardboard Box, Long Crate, Table, Door, Window)
+var construct_item_id: int = 1
+var construct_rotation: int = 0
 
 # Placement mode (applies to BUILDING and OBJECT modes)
 enum PlacementMode { SNAP, EMBED, AUTO }
@@ -101,6 +107,18 @@ func _process(_delta):
 			selection_box.visible = false
 			voxel_grid_visualizer.visible = false
 		_update_or_create_preview()
+	elif current_mode == Mode.CONSTRUCT:
+		# CONSTRUCT mode: unified block (1-4) and object (5-9) placement
+		update_selection_box()
+		if construct_item_id <= 4:
+			# Block mode - show grid
+			update_grid_visualizer()
+			_destroy_preview()
+		else:
+			# Object mode - show preview
+			selection_box.visible = false
+			voxel_grid_visualizer.visible = false
+			_update_or_create_construct_preview()
 	elif current_mode == Mode.BUILDING or ((current_mode == Mode.TERRAIN or current_mode == Mode.WATER) and terrain_blocky_mode):
 		update_selection_box()
 		update_grid_visualizer()
@@ -160,7 +178,9 @@ func _unhandled_input(event):
 				terrain_blocky_mode = not terrain_blocky_mode
 			update_ui()
 		elif event.keycode == KEY_1:
-			if current_mode == Mode.ROAD:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 1  # Cube block
+			elif current_mode == Mode.ROAD:
 				road_type = 1
 			elif current_mode == Mode.PLAYING:
 				current_placeable = PlaceableItem.ROCK
@@ -172,7 +192,9 @@ func _unhandled_input(event):
 				current_block_id = 1
 			update_ui()
 		elif event.keycode == KEY_2:
-			if current_mode == Mode.ROAD:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 2  # Ramp block
+			elif current_mode == Mode.ROAD:
 				road_type = 2
 			elif current_mode == Mode.PLAYING:
 				current_placeable = PlaceableItem.GRASS
@@ -184,7 +206,9 @@ func _unhandled_input(event):
 				current_block_id = 2
 			update_ui()
 		elif event.keycode == KEY_3:
-			if current_mode == Mode.ROAD:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 3  # Sphere block
+			elif current_mode == Mode.ROAD:
 				road_type = 3
 			elif current_mode == Mode.MATERIAL:
 				current_material_id = 102  # Sand
@@ -194,7 +218,9 @@ func _unhandled_input(event):
 				current_block_id = 3
 			update_ui()
 		elif event.keycode == KEY_4:
-			if current_mode == Mode.MATERIAL:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 4  # Stairs block
+			elif current_mode == Mode.MATERIAL:
 				current_material_id = 103  # Snow
 			elif current_mode == Mode.OBJECT:
 				current_object_id = 4  # Door
@@ -202,21 +228,35 @@ func _unhandled_input(event):
 				current_block_id = 4
 			update_ui()
 		elif event.keycode == KEY_5:
-			if current_mode == Mode.OBJECT:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 5  # Cardboard Box object
+			elif current_mode == Mode.OBJECT:
 				current_object_id = 5  # Window
 			elif current_mode == Mode.MATERIAL:
 				material_brush_index = 0  # Small brush
 				material_brush_radius = material_brush_sizes[material_brush_index]
 			update_ui()
 		elif event.keycode == KEY_6:
-			if current_mode == Mode.MATERIAL:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 6  # Long Crate object
+			elif current_mode == Mode.MATERIAL:
 				material_brush_index = 1  # Medium brush
 				material_brush_radius = material_brush_sizes[material_brush_index]
-				update_ui()
+			update_ui()
 		elif event.keycode == KEY_7:
-			if current_mode == Mode.MATERIAL:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 7  # Table object
+			elif current_mode == Mode.MATERIAL:
 				material_brush_index = 2  # Large brush
 				material_brush_radius = material_brush_sizes[material_brush_index]
+			update_ui()
+		elif event.keycode == KEY_8:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 8  # Door object
+				update_ui()
+		elif event.keycode == KEY_9:
+			if current_mode == Mode.CONSTRUCT:
+				construct_item_id = 9  # Window object
 				update_ui()
 		elif event.keycode == KEY_Q:
 			if current_mode == Mode.MATERIAL:
@@ -225,15 +265,18 @@ func _unhandled_input(event):
 				material_brush_radius = material_brush_sizes[material_brush_index]
 				update_ui()
 		elif event.keycode == KEY_V:
-			if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT:
+			if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT or current_mode == Mode.CONSTRUCT:
 				# Cycle through: AUTO -> SNAP -> EMBED -> AUTO
 				placement_mode = (placement_mode + 1) % 3 as PlacementMode
 				var mode_names = ["SNAP (Surface)", "EMBED", "AUTO (Hybrid)"]
 				print("[Placement] Mode: %s" % mode_names[placement_mode])
 				update_ui()
 		elif event.keycode == KEY_R:
-			# R key: rotate in OBJECT or BUILDING mode
-			if current_mode == Mode.OBJECT:
+			# R key: rotate in OBJECT, BUILDING, or CONSTRUCT mode
+			if current_mode == Mode.CONSTRUCT:
+				construct_rotation = (construct_rotation + 1) % 4
+				update_ui()
+			elif current_mode == Mode.OBJECT:
 				current_object_rotation = (current_object_rotation + 1) % 4
 				update_ui()
 			elif current_mode == Mode.BUILDING:
@@ -262,39 +305,45 @@ func _unhandled_input(event):
 		if event.pressed:
 			if event.ctrl_pressed:
 				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-					if current_mode == Mode.OBJECT:
+					if current_mode == Mode.CONSTRUCT:
+						construct_rotation = (construct_rotation + 1) % 4
+					elif current_mode == Mode.OBJECT:
 						current_object_rotation = (current_object_rotation + 1) % 4
 					else:
 						current_rotation = (current_rotation + 1) % 4
 					update_ui()
 				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-					if current_mode == Mode.OBJECT:
+					if current_mode == Mode.CONSTRUCT:
+						construct_rotation = (construct_rotation - 1 + 4) % 4
+					elif current_mode == Mode.OBJECT:
 						current_object_rotation = (current_object_rotation - 1 + 4) % 4
 					else:
 						current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
 			elif event.shift_pressed:
 				# Shift+Scroll: adjust placement Y offset
-				if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT:
+				if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT or current_mode == Mode.CONSTRUCT:
 					if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 						placement_y_offset += 1
 						print("Placement Y offset: %d" % placement_y_offset)
 					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 						placement_y_offset -= 1
 						print("Placement Y offset: %d" % placement_y_offset)
-		elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-				if current_mode == Mode.PLAYING:
-					handle_playing_input(event)
-				elif current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
-					handle_terrain_input(event)
-				elif current_mode == Mode.BUILDING and has_target:
-					handle_building_input(event)
-				elif current_mode == Mode.OBJECT and has_target:
-					handle_object_input(event)
-				elif current_mode == Mode.ROAD:
-					handle_road_input(event)
-				elif current_mode == Mode.MATERIAL:
-					handle_material_input(event)
+			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+					if current_mode == Mode.PLAYING:
+						handle_playing_input(event)
+					elif current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
+						handle_terrain_input(event)
+					elif current_mode == Mode.BUILDING and has_target:
+						handle_building_input(event)
+					elif current_mode == Mode.OBJECT and has_target:
+						handle_object_input(event)
+					elif current_mode == Mode.CONSTRUCT and has_target:
+						handle_construct_input(event)
+					elif current_mode == Mode.ROAD:
+						handle_road_input(event)
+					elif current_mode == Mode.MATERIAL:
+						handle_material_input(event)
 
 func toggle_mode():
 	if current_mode == Mode.PLAYING:
@@ -309,9 +358,12 @@ func toggle_mode():
 	elif current_mode == Mode.BUILDING:
 		current_mode = Mode.OBJECT
 	elif current_mode == Mode.OBJECT:
+		current_mode = Mode.CONSTRUCT
+		_destroy_preview()  # Clean up preview when leaving OBJECT mode
+	elif current_mode == Mode.CONSTRUCT:
 		current_mode = Mode.ROAD
 		is_placing_road = false
-		_destroy_preview()  # Clean up preview when leaving OBJECT mode
+		_destroy_preview()  # Clean up preview when leaving CONSTRUCT mode
 	elif current_mode == Mode.ROAD:
 		current_mode = Mode.MATERIAL
 	else:
@@ -342,6 +394,12 @@ func update_ui():
 		var obj_name = obj.name if obj else "Unknown"
 		var grid_str = "Grid ON" if object_show_grid else "Grid OFF"
 		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-5] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
+	elif current_mode == Mode.CONSTRUCT:
+		var item_name = _get_construct_item_name(construct_item_id)
+		var type_str = "Block" if construct_item_id <= 4 else "Object"
+		var mode_names = ["Snap", "Embed", "Auto"]
+		var mode_str = mode_names[placement_mode]
+		mode_label.text = "Mode: CONSTRUCT (%s, %s)\n%s (Rot: %d)\n[1-4] Blocks [5-9] Objects\n[R] Rotate [V] Mode" % [type_str, mode_str, item_name, construct_rotation]
 	elif current_mode == Mode.ROAD:
 		var road_status = "Click to start" if not is_placing_road else "Click to end"
 		var type_names = ["", "Flatten", "Mask Only", "Normalize"]
@@ -476,6 +534,73 @@ func update_selection_box():
 			current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 			current_remove_voxel_pos = current_voxel_pos
 			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+	
+	elif current_mode == Mode.CONSTRUCT:
+		# CONSTRUCT MODE - unified targeting for blocks (1-4) and objects (5-9)
+		if construct_item_id <= 4:
+			# Block targeting (same as BUILDING mode)
+			var grid_normal = _round_to_axis(normal)
+			
+			if hit_building:
+				var inside_pos = pos - normal * 0.01
+				voxel_x = int(floor(inside_pos.x))
+				voxel_y = int(floor(inside_pos.y))
+				voxel_z = int(floor(inside_pos.z))
+				current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+				current_voxel_pos = current_remove_voxel_pos + grid_normal
+			else:
+				if placement_mode == PlacementMode.EMBED:
+					voxel_x = int(floor(pos.x))
+					voxel_y = int(floor(pos.y))
+					voxel_z = int(floor(pos.z))
+				else:
+					var offset_pos = pos + normal * 0.6
+					voxel_x = int(floor(offset_pos.x))
+					voxel_y = int(floor(offset_pos.y)) + placement_y_offset
+					voxel_z = int(floor(offset_pos.z))
+					
+					if placement_mode == PlacementMode.AUTO:
+						var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
+						var float_distance = float(voxel_y) - terrain_y
+						if float_distance > auto_embed_threshold:
+							voxel_y = int(floor(terrain_y))
+				
+				current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+				current_remove_voxel_pos = current_voxel_pos
+			
+			# SAFETY: Never allow placing inside an existing block
+			if building_manager.get_voxel(current_voxel_pos) > 0:
+				selection_box.visible = false
+				has_target = false
+				return
+			
+			selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+		else:
+			# Object targeting (same as OBJECT mode)
+			if hit_placed_object or hit_building:
+				var grid_normal = _round_to_axis(normal)
+				var inside_pos = pos - normal * 0.01
+				voxel_x = int(floor(inside_pos.x))
+				voxel_y = int(floor(inside_pos.y))
+				voxel_z = int(floor(inside_pos.z))
+				current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+				current_voxel_pos = current_remove_voxel_pos + grid_normal
+				current_precise_hit_y = current_voxel_pos.y
+				selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
+			elif surface_snap_placement:
+				voxel_x = int(floor(pos.x))
+				voxel_z = int(floor(pos.z))
+				voxel_y = int(round(pos.y))
+				current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+				current_remove_voxel_pos = current_voxel_pos
+				selection_box.global_position = Vector3(voxel_x + 0.5, current_precise_hit_y + 0.5, voxel_z + 0.5)
+			else:
+				voxel_x = int(floor(pos.x))
+				voxel_y = int(floor(pos.y))
+				voxel_z = int(floor(pos.z))
+				current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+				current_remove_voxel_pos = current_voxel_pos
+				selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 	
 	selection_box.visible = true
 	has_target = true
@@ -615,11 +740,133 @@ func handle_object_input(event):
 							print("Removed object at anchor %s" % anchor)
 						return
 			
-			# Fallback: try position-based removal
+				# Fallback: try position-based removal
 			var remove_pos = hit.position - hit.normal * 0.01
 			var success = building_manager.remove_object_at(remove_pos)
 			if success:
 				print("Removed object at %s" % remove_pos)
+
+## Handle CONSTRUCT mode input - unified block (1-4) and object (5-9) placement
+func handle_construct_input(event):
+	if construct_item_id <= 4:
+		# Block placement (1-4)
+		_handle_construct_block_input(event)
+	else:
+		# Object placement (5-9)
+		_handle_construct_object_input(event)
+
+## Handle block placement in CONSTRUCT mode
+func _handle_construct_block_input(event):
+	if event.button_index == MOUSE_BUTTON_RIGHT: # Add block
+		building_manager.set_voxel(current_voxel_pos, construct_item_id, construct_rotation)
+		
+	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove block
+		var hit = raycast(10.0, false)
+		if hit and hit.collider:
+			if hit.collider.get_parent() is BuildingChunk:
+				var remove_pos = hit.position - hit.normal * 0.01
+				var voxel_pos = Vector3(floor(remove_pos.x), floor(remove_pos.y), floor(remove_pos.z))
+				building_manager.set_voxel(voxel_pos, 0.0)
+
+## Handle object placement in CONSTRUCT mode
+func _handle_construct_object_input(event):
+	# Object IDs in construct: 5-9 map to ObjectRegistry IDs 1-5
+	var object_id = construct_item_id - 4
+	
+	if event.button_index == MOUSE_BUTTON_RIGHT: # Place object
+		var placement_pos = Vector3(
+			floor(current_voxel_pos.x),
+			current_precise_hit_y,
+			floor(current_voxel_pos.z)
+		)
+		var success = building_manager.place_object(placement_pos, object_id, construct_rotation)
+		if success:
+			print("Placed object %d at %s" % [object_id, placement_pos])
+		else:
+			print("Cannot place object - cells not available")
+	
+	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove object
+		var hit = raycast(10.0, false)
+		if hit and hit.collider:
+			if hit.collider.is_in_group("placed_objects"):
+				if hit.collider.has_meta("anchor") and hit.collider.has_meta("chunk"):
+					var anchor = hit.collider.get_meta("anchor")
+					var chunk = hit.collider.get_meta("chunk")
+					if anchor != null and chunk != null:
+						var success = chunk.remove_object(anchor)
+						if success:
+							print("Removed object at anchor %s" % anchor)
+						return
+			
+			var remove_pos = hit.position - hit.normal * 0.01
+			var success = building_manager.remove_object_at(remove_pos)
+			if success:
+				print("Removed object at %s" % remove_pos)
+
+## Get human-readable name for construct item ID
+func _get_construct_item_name(id: int) -> String:
+	match id:
+		1: return "Cube"
+		2: return "Ramp"
+		3: return "Sphere"
+		4: return "Stairs"
+		5: return "Cardboard Box"
+		6: return "Long Crate"
+		7: return "Table"
+		8: return "Door"
+		9: return "Window"
+		_: return "Unknown"
+
+## Update or create preview for CONSTRUCT mode (objects only, id >= 5)
+func _update_or_create_construct_preview():
+	if not has_target or construct_item_id <= 4:
+		_destroy_preview()
+		return
+	
+	# Object IDs in construct: 5-9 map to ObjectRegistry IDs 1-5
+	var object_id = construct_item_id - 4
+	
+	# Check if we need to create a new preview (object changed)
+	if preview_object_id != object_id or preview_instance == null:
+		_destroy_preview()
+		_create_construct_preview(object_id)
+	
+	# Update preview position and rotation
+	if preview_instance and has_target:
+		var size = ObjectRegistry.get_rotated_size(object_id, construct_rotation)
+		var offset_x = float(size.x) / 2.0
+		var offset_z = float(size.z) / 2.0
+		preview_instance.position = Vector3(
+			current_voxel_pos.x + offset_x,
+			current_precise_hit_y,
+			current_voxel_pos.z + offset_z
+		)
+		preview_instance.rotation_degrees.y = construct_rotation * 90
+		preview_instance.visible = true
+		
+		# Check validity
+		var check_pos = Vector3(floor(current_voxel_pos.x), floor(current_precise_hit_y), floor(current_voxel_pos.z))
+		var can_place = building_manager.can_place_object(check_pos, object_id, construct_rotation)
+		_set_preview_validity(can_place)
+	elif preview_instance:
+		preview_instance.visible = false
+
+## Create preview for CONSTRUCT mode object
+func _create_construct_preview(object_id: int):
+	var obj_def = ObjectRegistry.get_object(object_id)
+	if obj_def.is_empty():
+		return
+	
+	var packed = load(obj_def.scene) as PackedScene
+	if not packed:
+		return
+	
+	preview_instance = packed.instantiate()
+	preview_object_id = object_id
+	
+	get_tree().root.add_child(preview_instance)
+	_apply_preview_material(preview_instance)
+	_disable_preview_collisions(preview_instance)
 
 func raycast(length: float, collide_areas: bool = false, exclude_water: bool = false):
 	var space_state = camera.get_world_3d().direct_space_state
