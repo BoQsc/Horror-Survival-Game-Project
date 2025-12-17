@@ -127,3 +127,12 @@ Uses **time-slice animation** on a single "Take 001" animation:
 - Attack: 3.5-4.5s
 - Death: 9.5s+
 
+### Deferred Spawning (Dec 2024):
+Entities now properly wait for terrain to load before spawning:
+1. If terrain isn't loaded at spawn position, entity is **queued**
+2. `request_spawn_zone()` is called to prioritize terrain loading
+3. Once terrain is ready (`spawn_zones_ready` signal), entity spawns at correct height
+4. Fallback: After 30 frames, spawns at estimated height anyway
+
+This prevents entities from "falling from the sky" when spawned in unloaded chunks.
+

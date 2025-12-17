@@ -17,11 +17,19 @@ var player: Node3D
 var active_entities: Array[Node3D] = []
 var entity_pool: Array[Node3D] = []  # Pooled inactive entities
 
+# Deferred spawning - wait for terrain to load
+var pending_spawns: Array = []  # Array of { position, scene, retry_count }
+const MAX_SPAWN_RETRIES: int = 30  # Max frames to wait for terrain
+
 func _ready():
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
 	if not player:
 		push_warning("EntityManager: Player not found in 'player' group!")
+	
+	# Connect to terrain manager's spawn_zones_ready signal if available
+	if terrain_manager and terrain_manager.has_signal("spawn_zones_ready"):
+		terrain_manager.spawn_zones_ready.connect(_on_spawn_zones_ready)
 
 func _physics_process(_delta):
 	if not player:
@@ -30,6 +38,10 @@ func _physics_process(_delta):
 			return
 	
 	_update_entity_proximity()
+	
+	# Periodically try to complete pending spawns (fallback for missed signals)
+	if not pending_spawns.is_empty():
+		_process_pending_spawns()
 
 ## Check for entities that need to be despawned (too far from player)
 func _update_entity_proximity():
@@ -111,6 +123,7 @@ func despawn_entity(entity: Node3D):
 	entity_despawned.emit(entity)
 
 ## Spawn an entity at a random position around the player on terrain surface
+## If terrain isn't loaded, queues spawn and requests terrain loading
 func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 	if not player:
 		return null
@@ -119,21 +132,82 @@ func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 	
 	# Random angle and distance
 	var angle = randf() * TAU
-	var distance = randf_range(spawn_radius * 0.5, spawn_radius)
+	var distance = randf_range(15.0, spawn_radius * 0.6)  # Within reasonable range
 	
 	var spawn_x = player_pos.x + cos(angle) * distance
 	var spawn_z = player_pos.z + sin(angle) * distance
+	var spawn_pos = Vector3(spawn_x, 0, spawn_z)
 	
-	# Get terrain height at spawn position
-	var terrain_y = player_pos.y  # Default to player Y if no terrain manager
+	# Check if terrain is loaded at this position
 	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-		terrain_y = terrain_manager.get_terrain_height(spawn_x, spawn_z)
-		if terrain_y < -100.0:  # No terrain found
-			# Try nearby position
-			terrain_y = player_pos.y
+		var terrain_y = terrain_manager.get_terrain_height(spawn_x, spawn_z)
+		
+		if terrain_y < -100.0:
+			# Terrain not loaded - queue for deferred spawn
+			_queue_deferred_spawn(spawn_pos, entity_scene)
+			print("[EntityManager] Terrain not ready at %.1f,%.1f - queued for deferred spawn" % [spawn_x, spawn_z])
+			return null
+		else:
+			# Terrain is ready - spawn immediately
+			spawn_pos.y = terrain_y + 1.0
+			return spawn_entity(spawn_pos, entity_scene)
+	else:
+		# No terrain manager - spawn at player height
+		spawn_pos.y = player_pos.y + 1.0
+		return spawn_entity(spawn_pos, entity_scene)
+
+## Queue an entity for deferred spawning once terrain loads
+func _queue_deferred_spawn(position: Vector3, scene: PackedScene):
+	pending_spawns.append({
+		"position": position,
+		"scene": scene,
+		"retry_count": 0
+	})
 	
-	var spawn_pos = Vector3(spawn_x, terrain_y + 1.0, spawn_z)  # +1 to spawn above ground
-	return spawn_entity(spawn_pos, entity_scene)
+	# Request terrain chunk loading if available
+	if terrain_manager and terrain_manager.has_method("request_spawn_zone"):
+		terrain_manager.request_spawn_zone(position, 1)
+
+## Called when terrain chunks become ready
+func _on_spawn_zones_ready(positions: Array):
+	_process_pending_spawns()
+
+## Process any pending spawns that might now have terrain available
+func _process_pending_spawns():
+	if pending_spawns.is_empty():
+		return
+	
+	var completed: Array[int] = []
+	
+	for i in range(pending_spawns.size()):
+		var spawn_data = pending_spawns[i]
+		var pos = spawn_data.position
+		
+		# Check terrain height again
+		if terrain_manager and terrain_manager.has_method("get_terrain_height"):
+			var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
+			
+			if terrain_y >= -100.0:
+				# Terrain ready - spawn now
+				var spawn_pos = Vector3(pos.x, terrain_y + 1.0, pos.z)
+				var entity = spawn_entity(spawn_pos, spawn_data.scene)
+				if entity:
+					print("[EntityManager] Deferred spawn completed at %s" % spawn_pos)
+				completed.append(i)
+			else:
+				# Still not ready - increment retry
+				spawn_data.retry_count += 1
+				if spawn_data.retry_count >= MAX_SPAWN_RETRIES:
+					# Give up - spawn at estimated height
+					var fallback_y = player.global_position.y if player else 20.0
+					var spawn_pos = Vector3(pos.x, fallback_y + 5.0, pos.z)
+					spawn_entity(spawn_pos, spawn_data.scene)
+					print("[EntityManager] Deferred spawn timed out - spawned at fallback height")
+					completed.append(i)
+	
+	# Remove completed spawns (reverse order)
+	for i in range(completed.size() - 1, -1, -1):
+		pending_spawns.remove_at(completed[i])
 
 ## Get all active entities
 func get_entities() -> Array[Node3D]:
