@@ -1,0 +1,15 @@
+[gd_scene load_steps=2 format=3 uid="uid://rjx8tx5y7j2p"]
+
+[ext_resource type="Script" path="res://addons/srcoder_simplecar/assets/scripts/follow_camera.gd" id="1_1bo7l"]
+
+[node name="FollowCamera" type="Node3D"]
+script = ExtResource("1_1bo7l")
+
+[node name="Pivot" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.96363, -0.267238, 0, 0.267238, 0.96363, 0, 2, 0)
+
+[node name="SpringArm3D" type="SpringArm3D" parent="Pivot"]
+transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0)
+spring_length = 5.0
+
+[node name="Camera3D" type="Camera3D" parent="Pivot/SpringArm3D"]
