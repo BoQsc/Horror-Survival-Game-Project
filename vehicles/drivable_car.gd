@@ -33,9 +33,9 @@ func _ready() -> void:
 	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
 	center_of_mass = Vector3(0, -0.5, 0)
 	
-	# High tire grip for responsive, non-drifty handling
-	front_wheel_grip = 18.0  # Very high grip - almost no drift
-	rear_wheel_grip = 16.0   # Slightly less than front for mild oversteer
+	# Maximum tire grip for no-drift handling (like a go-kart)
+	front_wheel_grip = 30.0  # Maximum grip - no drift
+	rear_wheel_grip = 28.0   # Nearly max grip
 	
 	# Apply grip to wheels
 	for wheel in steering_wheels:
