@@ -20,6 +20,10 @@ signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
 
 
+# Physics tuning constants
+const DOWNFORCE_FACTOR: float = 8.0  # Downforce per m/s of speed
+const MAX_DOWNFORCE: float = 400.0   # Cap on downforce
+
 func _ready() -> void:
 	super._ready()
 	add_to_group("vehicle")
@@ -29,9 +33,13 @@ func _ready() -> void:
 	# Set collision layer 4 for vehicle detection (bit 3)
 	collision_layer = collision_layer | (1 << 3)
 	
-	# Lower center of mass for natural stability (lowered more for better handling)
+	# Lower center of mass significantly for more planted feel
 	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
-	center_of_mass = Vector3(0, -0.5, 0)
+	center_of_mass = Vector3(0, -0.7, 0)
+	
+	# Add damping to reduce floaty oscillations
+	angular_damp = 2.0   # Resist spinning/rotation
+	linear_damp = 0.3    # Slight resistance to linear motion
 	
 	# Maximum tire grip for no-drift handling (like a go-kart)
 	front_wheel_grip = 30.0  # Maximum grip - no drift
@@ -93,9 +101,18 @@ func get_input(delta: float) -> void:
 
 func _physics_process(delta: float) -> void:
 	super._physics_process(delta)
+	_apply_downforce()
 	_apply_water_physics(delta)
 	_apply_anti_roll_stabilization(delta)
 	_check_flip_recovery()
+
+
+## Apply speed-based downforce to keep car planted
+func _apply_downforce() -> void:
+	var speed = linear_velocity.length()
+	var downforce = min(speed * DOWNFORCE_FACTOR, MAX_DOWNFORCE)
+	if downforce > 0.1:
+		apply_central_force(Vector3.DOWN * downforce)
 
 
 func _apply_water_physics(delta: float) -> void:
