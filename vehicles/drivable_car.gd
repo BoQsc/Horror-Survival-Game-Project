@@ -11,9 +11,9 @@ var terrain_manager: Node = null
 const BUOYANCY_FORCE: float = 15.0
 const WATER_DRAG: float = 2.0
 
-# Anti-roll stabilization - CONTINUOUS during driving
-const ROLL_STIFFNESS: float = 150.0     # How strongly to resist tilting
-const ROLL_DAMPING: float = 25.0        # How strongly to resist roll angular velocity
+# Anti-roll stabilization - AGGRESSIVE to prevent any sway
+const ROLL_STIFFNESS: float = 500.0     # Very strong tilt resistance
+const ROLL_DAMPING: float = 80.0        # Heavily damp roll oscillation
 const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 
 signal player_entered(player_node: Node3D)
@@ -38,8 +38,8 @@ func _ready() -> void:
 	center_of_mass = Vector3(0, -0.7, 0)
 	
 	# Add damping to reduce floaty oscillations
-	angular_damp = 0.5   # Light damping - keeps turning responsive
-	linear_damp = 0.2    # Reduced for less sluggish feel
+	angular_damp = 1.5   # Moderate damping for stability
+	linear_damp = 0.1    # Light to keep acceleration responsive
 	
 	# Maximum tire grip for no-drift handling (like a go-kart)
 	front_wheel_grip = 30.0  # Maximum grip - no drift
