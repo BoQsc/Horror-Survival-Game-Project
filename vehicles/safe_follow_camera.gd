@@ -65,31 +65,14 @@ func _physics_process(delta: float) -> void:
 	if not follow_target or not is_instance_valid(follow_target):
 		return
 	
-	# Follow position
+	# Follow position only
 	global_position = follow_target.global_position
 	
-	# Calculate base car direction (horizontal only)
-	var target_horizontal_direction = follow_target.global_basis.z.slide(Vector3.UP).normalized()
-	var desired_basis = Basis.looking_at(-target_horizontal_direction)
-	
-	# Velocity-based camera lag - the faster we go, the more the camera lags behind
-	# This creates a cinematic feel where the camera smoothly follows during turns
-	var velocity = follow_target.linear_velocity if follow_target is RigidBody3D else Vector3.ZERO
-	var speed = velocity.length()
-	
-	# Base damping is low (0.3) and gets even lower at high speeds
-	# At 0 speed: damping = 0.3 (fairly responsive)
-	# At 20+ m/s: damping = 0.1 (very floaty/laggy)
-	var speed_factor = clampf(speed / 30.0, 0.0, 1.0)  # 0-1 based on speed up to 30 m/s
-	var effective_damping = lerpf(0.4, 0.15, speed_factor)  # Lower values = more lag
-	
-	# Smoothly rotate base towards car direction
-	global_basis = global_basis.slerp(desired_basis, effective_damping * delta)
-	
-	# Gradually return yaw to zero (auto-center horizontal)
-	if pivot and return_speed > 0:
-		pivot.rotation.y = move_toward(pivot.rotation.y, 0.0, return_speed * delta)
-	
-	# Gradually return pitch to zero (auto-center vertical)
-	if camera_node and return_speed > 0:
-		camera_node.rotation.x = move_toward(camera_node.rotation.x, 0.0, return_speed * delta * 0.5)
+	# COUNTER-ROTATE: Cancel out the car's rotation completely
+	# Get the car's Y rotation and apply the INVERSE to this node
+	# This makes the camera maintain world-space orientation
+	var car_y_rotation = follow_target.global_rotation.y
+	global_rotation.y = -car_y_rotation + current_yaw
+	global_rotation.x = 0
+	global_rotation.z = 0
+
