@@ -16,6 +16,9 @@ const ANTI_ROLL_FORCE: float = 80.0  # Stronger resistance to rolling
 const ANTI_ROLL_THRESHOLD: float = 0.1  # Apply earlier when starting to tilt
 const FLIP_THRESHOLD: float = 0.3  # Consider flipped when nearly on side
 
+# Lateral drag - reduces sideways sliding for tighter turning
+const LATERAL_DRAG: float = 6.0  # Higher = less drifty, more grip-like handling
+
 signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
 
@@ -32,6 +35,16 @@ func _ready() -> void:
 	# Lower center of mass for natural stability (lowered more for better handling)
 	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
 	center_of_mass = Vector3(0, -0.5, 0)
+	
+	# Increase tire grip for less floaty, more responsive handling
+	front_wheel_grip = 12.0  # Up from default 5.0
+	rear_wheel_grip = 10.0   # Slightly less than front for mild oversteer feel
+	
+	# Apply grip to wheels
+	for wheel in steering_wheels:
+		wheel.wheel_friction_slip = front_wheel_grip
+	for wheel in driving_wheels:
+		wheel.wheel_friction_slip = rear_wheel_grip
 
 
 func enter_vehicle(player_node: Node3D) -> void:
@@ -85,7 +98,23 @@ func _physics_process(delta: float) -> void:
 	super._physics_process(delta)
 	_apply_water_physics(delta)
 	_apply_anti_roll_stabilization(delta)
+	_apply_lateral_drag(delta)
 	_check_flip_recovery()
+
+
+## Apply lateral drag to reduce sideways sliding (floaty feeling)
+func _apply_lateral_drag(delta: float) -> void:
+	# Get car's local right vector (X axis)
+	var right = global_transform.basis.x
+	
+	# Calculate lateral (sideways) velocity component
+	var lateral_velocity = right * linear_velocity.dot(right)
+	
+	# Apply counter-force to reduce sideways sliding
+	# Only apply when moving at reasonable speed to avoid low-speed jitter
+	if linear_velocity.length() > 1.0:
+		var drag_force = -lateral_velocity * LATERAL_DRAG * mass
+		apply_central_force(drag_force)
 
 
 func _apply_water_physics(delta: float) -> void:
