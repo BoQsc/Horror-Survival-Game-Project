@@ -538,10 +538,10 @@ func update_selection_box():
 	elif current_mode == Mode.CONSTRUCT:
 		# CONSTRUCT MODE - unified targeting for blocks (1-4) and objects (5-9)
 		if construct_item_id <= 4:
-			# Block targeting (same as BUILDING mode)
+			# Block targeting - allow placing adjacent to buildings OR placed objects
 			var grid_normal = _round_to_axis(normal)
 			
-			if hit_building:
+			if hit_building or hit_placed_object:
 				var inside_pos = pos - normal * 0.01
 				voxel_x = int(floor(inside_pos.x))
 				voxel_y = int(floor(inside_pos.y))
