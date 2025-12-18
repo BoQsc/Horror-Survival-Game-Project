@@ -139,42 +139,64 @@ Door layout:
 
 Place door object at `[2, 1, Z]`.
 
-## Prefab JSON Format
+## Prefab JSON Format (v2 - Bracket Notation)
+
+Prefabs use a compact, human-readable bracket notation format.
 
 ```json
 {
   "name": "my_prefab",
-  "version": 1,
-  "origin": "bottom_corner",
+  "version": 2,
+  "size": [10, 9, 12],
   "submerge": 1,
-  "size": [width_X, height_Y, depth_Z],
-  "blocks": [
-    {"type": 1, "meta": 0, "offset": [X, Y, Z]},
-    {"type": 4, "meta": 0, "offset": [X, Y, Z]}
+  "layers": [
+    "[1] [1] [1] . . [1] [1] [1]",
+    "[1] . . . . . . [1]",
+    "[1] . . [4] [4] . . [1]",
+    "---",
+    "[1] [1] [1] [1:1] . . [1] [1]"
   ],
   "objects": [
-    {
-      "object_id": 4,
-      "offset": [X.0, Y.0, Z.0],
-      "rotation": 0,
-      "fractional_y": 0.0,
-      "scene": "res://models/interactive_door/interactive_door.tscn"
-    }
+    [4, 2, 1, 0, 0, 0.0]
   ]
 }
 ```
+
+### Layer Strings
+
+Each string represents one Z-row. Tokens are space-separated:
+
+| Token | Meaning |
+|-------|---------|
+| `.` | Empty/air |
+| `[type]` | Block with type and meta=0 |
+| `[type:meta]` | Block with type and specific meta (rotation) |
+| `---` | Y-level separator (next layer up) |
+
+**Reading order**: Layers go Z=0 to Z=max, then `---`, then Y+1.
+
+### Object Arrays
+
+Objects use compact arrays: `[object_id, X, Y, Z, rotation, fractional_y]`
+
+Example: `[4, 2, 1, 0, 0, 0.0]` = Door (id=4) at position (2,1,0), rotation=0
 
 ### Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `submerge` | int | How many blocks deep to bury into terrain (typically 1) |
-| `offset` | [X, Y, Z] | Block position relative to origin |
-| `type` | int | Block type (1-4) |
-| `meta` | int | Rotation (0-3) |
-| `object_id` | int | Object registry ID |
-| `rotation` | int | Object rotation (0-3) |
-| `fractional_y` | float | Fine Y adjustment for terrain alignment |
+| `version` | int | Must be `2` for bracket notation |
+| `size` | [X, Y, Z] | Prefab dimensions |
+| `submerge` | int | Blocks to bury into terrain (typically 1) |
+| `layers` | string[] | Block layout in bracket notation |
+| `objects` | array[] | Compact object arrays |
+
+### Converting Old Prefabs
+
+Old v1 prefabs can be converted using:
+```bash
+python prefabs/convert_prefab.py old_prefab.json
+```
 
 ## Common Mistakes
 
@@ -184,5 +206,6 @@ Place door object at `[2, 1, Z]`.
 4. **Not enough stairs**: Need N stairs for N-block vertical rise (floor Y difference)
 5. **Objects in wrong place**: Object offset must match the gap location exactly
 6. **Missing gaps**: Objects don't carve holes - you must omit wall blocks
-7. **JSON comments**: JSON does NOT support comments (`//` or `/* */`)
-8. **Forgetting floor surface**: Floor at Y=4 means walking surface at Y=5
+7. **Forgetting floor surface**: Floor at Y=4 means walking surface at Y=5
+8. **Wrong token format**: Use `[type]` or `[type:meta]`, not brackets around coordinates
+
