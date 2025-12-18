@@ -11,6 +11,12 @@ signal entity_despawned(entity: Node3D)
 @export var freeze_radius: float = 60.0  # Distance at which entities freeze (physics disabled)
 @export var despawn_radius: float = 100.0  # Distance at which entities are removed
 
+# Procedural spawning settings
+@export var procedural_spawning_enabled: bool = true
+@export var spawn_chance_per_chunk: float = 0.15  # 15% chance per surface chunk
+@export var min_spawn_distance_from_player: float = 40.0  # Don't spawn too close
+@export var max_spawns_per_chunk: int = 2
+
 # Entity scene to spawn (can be overridden per entity type)
 @export var default_entity_scene: PackedScene
 
@@ -23,11 +29,28 @@ var entity_pool: Array[Node3D] = []  # Pooled inactive entities
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
 
+# Procedural spawning tracking
+var spawned_chunks: Dictionary = {}  # Vector2i -> true (tracks which chunks already spawned entities)
+var zombie_scene: PackedScene = null  # Cached zombie scene
+var biome_noise: FastNoiseLite = null  # For biome detection (must match GPU)
+
+# Biome-based spawn rules: biome_id -> { "zombie_chance": float }
+# Biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
+var spawn_rules = {
+	0: { "zombie_chance": 0.3 },   # Grass - moderate danger
+	3: { "zombie_chance": 0.1 },   # Sand - peaceful desert
+	4: { "zombie_chance": 0.6 },   # Gravel - high danger ruins
+	5: { "zombie_chance": 0.25 },  # Snow - cold hostile
+}
+
 func _ready():
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
 	if not player:
 		push_warning("EntityManager: Player not found in 'player' group!")
+	
+	# Setup procedural spawning
+	_setup_procedural_spawning()
 
 func _physics_process(_delta):
 	if not player:
@@ -355,11 +378,27 @@ func get_save_data() -> Dictionary:
 		
 		entities_data.append(entity_data)
 	
-	return { "entities": entities_data }
+	# Convert spawned_chunks keys to arrays for JSON serialization
+	var chunks_data: Array = []
+	for key in spawned_chunks.keys():
+		chunks_data.append([key.x, key.y])
+	
+	return { 
+		"entities": entities_data,
+		"spawned_chunks": chunks_data
+	}
 
 func load_save_data(data: Dictionary):
 	# Despawn all existing entities first
 	despawn_all()
+	
+	# Restore spawned_chunks tracking to prevent duplicate procedural spawns
+	spawned_chunks.clear()
+	if data.has("spawned_chunks"):
+		for chunk_arr in data.spawned_chunks:
+			if chunk_arr.size() >= 2:
+				spawned_chunks[Vector2i(int(chunk_arr[0]), int(chunk_arr[1]))] = true
+		print("[EntityManager] Restored %d spawned chunk records" % spawned_chunks.size())
 	
 	if not data.has("entities"):
 		return
@@ -383,4 +422,134 @@ func load_save_data(data: Dictionary):
 				entity.set_meta("entity_type", ent_data.type)
 	
 	print("EntityManager: Loaded %d entities" % data.entities.size())
+
+# ============ PROCEDURAL SPAWNING ============
+
+## Setup procedural spawning - connect to terrain signals
+func _setup_procedural_spawning():
+	if not procedural_spawning_enabled:
+		return
+	
+	# Load zombie scene for procedural spawning
+	if ResourceLoader.exists("res://entities/zombie_base.tscn"):
+		zombie_scene = load("res://entities/zombie_base.tscn")
+		print("[EntityManager] Loaded zombie scene for procedural spawning")
+	else:
+		push_warning("[EntityManager] Zombie scene not found - procedural spawning disabled")
+		procedural_spawning_enabled = false
+		return
+	
+	# Setup biome noise (must match gen_density.glsl fbm)
+	biome_noise = FastNoiseLite.new()
+	biome_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	biome_noise.frequency = 0.002  # Match GPU biome scale
+	biome_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
+	biome_noise.fractal_octaves = 3
+	
+	# Connect to terrain chunk_generated signal
+	if not terrain_manager:
+		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	
+	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
+		terrain_manager.chunk_generated.connect(_on_chunk_generated)
+		print("[EntityManager] Connected to chunk_generated signal - procedural spawning active")
+	else:
+		push_warning("[EntityManager] Could not connect to terrain - procedural spawning disabled")
+		procedural_spawning_enabled = false
+
+## Called when a terrain chunk is generated
+func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
+	if not procedural_spawning_enabled:
+		return
+	
+	# Only spawn on surface chunks (Y=0)
+	if coord.y != 0:
+		return
+	
+	var chunk_key = Vector2i(coord.x, coord.z)
+	
+	# Skip if already spawned for this chunk
+	if spawned_chunks.has(chunk_key):
+		return
+	
+	# Mark chunk as processed (even if we don't spawn anything)
+	spawned_chunks[chunk_key] = true
+	
+	# Check distance from player - don't spawn too close or too far
+	if not player:
+		return
+	
+	var chunk_center = Vector3(coord.x * 31.0 + 16.0, 0, coord.z * 31.0 + 16.0)  # CHUNK_STRIDE = 31
+	var dist_to_player = Vector2(chunk_center.x, chunk_center.z).distance_to(
+		Vector2(player.global_position.x, player.global_position.z))
+	
+	if dist_to_player < min_spawn_distance_from_player:
+		return  # Too close to player
+	
+	if dist_to_player > spawn_radius * 2.0:
+		return  # Too far - will spawn when player gets closer
+	
+	# Deterministic RNG based on chunk coordinate
+	var rng = RandomNumberGenerator.new()
+	rng.seed = hash(chunk_key) + (terrain_manager.world_seed if "world_seed" in terrain_manager else 12345)
+	
+	# Roll spawn chance
+	if rng.randf() > spawn_chance_per_chunk:
+		return  # No spawn this chunk
+	
+	# Determine biome at chunk center
+	var biome_id = _get_biome_at(chunk_center.x, chunk_center.z)
+	var rules = spawn_rules.get(biome_id, spawn_rules[0])  # Default to grass rules
+	
+	# Roll for zombie spawn based on biome
+	var zombie_chance = rules.get("zombie_chance", 0.3)
+	
+	var spawns_this_chunk = 0
+	for i in range(max_spawns_per_chunk):
+		if spawns_this_chunk >= max_spawns_per_chunk:
+			break
+		
+		if rng.randf() > zombie_chance:
+			continue  # Failed this spawn roll
+		
+		# Random position within chunk
+		var offset_x = rng.randf_range(2.0, 29.0)  # Avoid chunk edges
+		var offset_z = rng.randf_range(2.0, 29.0)
+		var spawn_x = coord.x * 31.0 + offset_x
+		var spawn_z = coord.z * 31.0 + offset_z
+		
+		# Queue spawn (will be processed when terrain collision is ready)
+		pending_spawns.append({
+			"position": Vector3(spawn_x, 0, spawn_z),
+			"scene": zombie_scene,
+			"procedural": true,  # Mark as procedurally spawned
+			"chunk_key": chunk_key
+		})
+		spawns_this_chunk += 1
+	
+	if spawns_this_chunk > 0:
+		print("[EntityManager] Queued %d zombie(s) in chunk %s (biome %d)" % [spawns_this_chunk, chunk_key, biome_id])
+
+## Get biome ID at world position (must match gen_density.glsl)
+func _get_biome_at(world_x: float, world_z: float) -> int:
+	if not biome_noise:
+		return 0  # Default grass
+	
+	# FBM noise value (matches GPU fbm function)
+	var val = biome_noise.get_noise_2d(world_x, world_z)
+	
+	# Same thresholds as gen_density.glsl
+	if val < -0.2:
+		return 3  # Sand biome
+	if val > 0.6:
+		return 5  # Snow biome
+	if val > 0.2:
+		return 4  # Gravel biome
+	return 0  # Grass (default)
+
+## Clear spawned chunks tracking (called on new game)
+func clear_spawned_chunks():
+	spawned_chunks.clear()
+	print("[EntityManager] Cleared spawned chunks tracking")
+
 
