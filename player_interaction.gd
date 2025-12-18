@@ -1515,12 +1515,8 @@ func _place_current_prefab():
 	
 	print("[PREFAB] Raycast hit at: %v" % hit.position)
 	
-	# Get terrain manager for height sampling
-	var spawn_y = hit.position.y
-	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-		spawn_y = terrain_manager.get_terrain_height(hit.position.x, hit.position.z)
-	
-	var spawn_pos = Vector3(floor(hit.position.x), spawn_y, floor(hit.position.z))
+	# Use floored hit position for spawn - consistent for blocks and objects
+	var spawn_pos = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
 	print("[PREFAB] Spawn position: %v" % spawn_pos)
 	
 	# Ensure prefab_spawner reference
