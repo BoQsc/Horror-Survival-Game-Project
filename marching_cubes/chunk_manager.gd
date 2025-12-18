@@ -304,40 +304,24 @@ func update_collision_proximity():
 		if data.collision_shape_terrain:
 			data.collision_shape_terrain.disabled = not should_have_collision
 
-# Process pending node creations within adaptive frame budget
+# Process pending node creations - STRICT: only 1 per frame to prevent bursts
 func process_pending_nodes():
 	if pending_nodes.is_empty():
 		return
 	
-	# Skip if loading is paused due to low FPS
+	# Skip entirely if loading is paused due to low FPS
 	if loading_paused:
 		return
 	
-	var start_time = Time.get_ticks_usec()
-	var budget_usec = adaptive_frame_budget_ms * 1000.0
-	var nodes_created = 0
-	
-	while not pending_nodes.is_empty():
-		# Check time budget
-		var elapsed = Time.get_ticks_usec() - start_time
-		if elapsed >= budget_usec:
-			break
-		
-		# Get next pending chunk
-		pending_nodes_mutex.lock()
-		if pending_nodes.is_empty():
-			pending_nodes_mutex.unlock()
-			break
-		var item = pending_nodes.pop_front()
+	# Process EXACTLY 1 chunk per frame - no loops, no budgets
+	pending_nodes_mutex.lock()
+	if pending_nodes.is_empty():
 		pending_nodes_mutex.unlock()
-		
-		# Create the nodes
-		_finalize_chunk_creation(item)
-		nodes_created += 1
-		
-		# Limit nodes per frame when FPS is critical
-		if nodes_created >= 1 and current_fps < target_fps:
-			break
+		return
+	var item = pending_nodes.pop_front()
+	pending_nodes_mutex.unlock()
+	
+	_finalize_chunk_creation(item)
 
 func get_water_density(global_pos: Vector3) -> float:
 	# Find Chunk (3D coordinates)
