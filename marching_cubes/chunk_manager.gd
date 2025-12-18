@@ -1485,6 +1485,7 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 		node.monitoring = false # Terrain chunks don't need to monitor others
 	else:
 		node = StaticBody3D.new()
+		node.collision_layer = 1  # Explicitly set terrain layer for entity spawning raycasts
 		node.add_to_group("terrain")
 		
 	node.position = position

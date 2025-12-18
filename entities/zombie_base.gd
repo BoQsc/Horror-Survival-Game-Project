@@ -130,10 +130,13 @@ func _physics_process(delta):
 	
 	move_and_slide()
 	
-	# Void safety
-	if global_position.y < -50:
+	# Fall-through-terrain safety: if we fall below reasonable terrain level,
+	# freeze ourselves instead of teleporting (which causes sky-falling issue)
+	if global_position.y < -10:
+		set_physics_process(false)
 		velocity = Vector3.ZERO
-		global_position.y = 50
+		# Don't teleport to Y=50 - that causes sky falling
+		# EntityManager will respawn us at correct height
 
 func _update_animation():
 	if not anim_player:

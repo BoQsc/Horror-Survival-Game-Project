@@ -490,7 +490,7 @@ func _get_collider_from_pool() -> StaticBody3D:
 	if collider_pool.size() > 0:
 		var collider = collider_pool.pop_back()
 		collider.visible = debug_collision # Use the flag
-		collider.collision_layer = 1
+		collider.collision_layer = 8  # Layer 8 = vegetation (separate from terrain layer 1)
 		# Re-enable the CollisionShape3D
 		for child in collider.get_children():
 			if child is CollisionShape3D:
@@ -500,7 +500,7 @@ func _get_collider_from_pool() -> StaticBody3D:
 	# Create new collider
 	var body = StaticBody3D.new()
 	body.add_to_group("trees")
-	body.collision_layer = 1  # Layer 1 - same as terrain
+	body.collision_layer = 8  # Layer 8 = vegetation (separate from terrain layer 1)
 	
 	var shape_node = CollisionShape3D.new()
 	var shape = CylinderShape3D.new()
@@ -545,7 +545,7 @@ func _get_grass_collider_from_pool() -> Area3D:
 	if grass_collider_pool.size() > 0:
 		var collider = grass_collider_pool.pop_back()
 		collider.visible = debug_collision
-		collider.collision_layer = 1
+		collider.collision_layer = 8  # Layer 8 = vegetation (separate from terrain layer 1)
 		collider.monitorable = true
 		# Re-enable CollisionShape3D
 		for child in collider.get_children():
@@ -556,7 +556,7 @@ func _get_grass_collider_from_pool() -> Area3D:
 	# Create new collider - Area3D so player can walk through
 	var body = Area3D.new()
 	body.add_to_group("grass")
-	body.collision_layer = 1
+	body.collision_layer = 8  # Layer 8 = vegetation (separate from terrain)
 	body.monitorable = true  # Can be detected by raycasts
 	body.monitoring = false  # Doesn't need to detect others
 	
@@ -676,7 +676,7 @@ func _get_rock_collider_from_pool() -> Area3D:
 	if rock_collider_pool.size() > 0:
 		var collider = rock_collider_pool.pop_back()
 		collider.visible = debug_collision
-		collider.collision_layer = 1
+		collider.collision_layer = 8  # Layer 8 = vegetation (separate from terrain)
 		collider.monitorable = true
 		# Re-enable CollisionShape3D
 		for child in collider.get_children():
@@ -687,7 +687,7 @@ func _get_rock_collider_from_pool() -> Area3D:
 	# Create new collider - Area3D so player can walk through
 	var body = Area3D.new()
 	body.add_to_group("rocks")
-	body.collision_layer = 1
+	body.collision_layer = 8  # Layer 8 = vegetation (separate from terrain)
 	body.monitorable = true
 	body.monitoring = false
 	

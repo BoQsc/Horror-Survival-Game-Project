@@ -118,15 +118,36 @@ func _unfreeze_entity(entity: Node3D):
 	if not frozen_entities.has(entity):
 		return  # Not frozen
 	
-	# Check if terrain is ready before unfreezing
-	var pos = entity.global_position
-	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-		var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
-		if terrain_y < -100.0:
-			# Terrain not loaded yet - stay frozen
-			return
+	if not player:
+		return  # No player reference
 	
-	# Re-enable physics
+	var pos = entity.global_position
+	
+	# Check if within collision range (where terrain collision is enabled)
+	var dist_to_player = Vector2(pos.x, pos.z).distance_to(Vector2(player.global_position.x, player.global_position.z))
+	var collision_range = 93.0  # 3 chunks * 31 stride
+	if terrain_manager and "collision_distance" in terrain_manager:
+		collision_range = terrain_manager.collision_distance * 31.0
+	
+	if dist_to_player > collision_range:
+		# Outside collision range - stay frozen to prevent falling through
+		return
+	
+	# Use RAYCAST to verify terrain collision is actually active (not just mesh loaded)
+	var space_state = get_world_3d().direct_space_state
+	var ray_from = Vector3(pos.x, pos.y + 10.0, pos.z)  # Start above entity
+	var ray_to = Vector3(pos.x, pos.y - 50.0, pos.z)    # Cast down
+	
+	var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
+	query.collision_mask = 1  # Only terrain layer
+	query.exclude = [entity]  # Don't hit self
+	var result = space_state.intersect_ray(query)
+	
+	if result.is_empty():
+		# No terrain collision detected - stay frozen
+		return
+	
+	# Collision verified! Re-enable physics
 	entity.set_physics_process(true)
 	frozen_entities.erase(entity)
 	print("[EntityManager] Unfrozen entity - terrain ready")
@@ -137,20 +158,28 @@ func _check_dormant_respawns():
 		return
 	
 	var player_pos = player.global_position
-	var spawn_dist_sq = spawn_radius * spawn_radius
 	var completed: Array[int] = []
-	var current_time = Time.get_ticks_msec() / 1000.0
 	
 	for i in range(dormant_entities.size()):
 		var data = dormant_entities[i]
 		var pos = data.position
 		
-		# Check if within spawn radius
-		var dist_sq = Vector2(pos.x, pos.z).distance_squared_to(Vector2(player_pos.x, player_pos.z))
-		if dist_sq > spawn_dist_sq:
+		# Check distance to player
+		var dist = Vector2(pos.x, pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
+		
+		# Must be within spawn radius
+		if dist > spawn_radius:
 			continue  # Still too far
 		
-		# Use RAYCAST to check if terrain collision is ready (same as spawn queue)
+		# Must be within collision range (where collision is actually enabled)
+		var collision_range = 93.0  # 3 chunks * 31 stride
+		if terrain_manager and "collision_distance" in terrain_manager:
+			collision_range = terrain_manager.collision_distance * 31.0
+		
+		if dist > collision_range:
+			continue  # Collision disabled at this location, wait
+		
+		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
 		var space_state = get_world_3d().direct_space_state
 		var ray_from = Vector3(pos.x, 200.0, pos.z)
 		var ray_to = Vector3(pos.x, -50.0, pos.z)
@@ -160,30 +189,21 @@ func _check_dormant_respawns():
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
-			continue  # Terrain collision not ready
+			continue  # Terrain collision not ready yet, try next frame
 		
-		# Wait for collision stability
-		if not data.has("ready_time"):
-			data["ready_time"] = current_time
-			data["collision_y"] = result.position.y
-			continue
-		
-		var elapsed = current_time - data.ready_time
-		if elapsed < 0.5:
-			continue  # Still waiting
-		
-		# Respawn the entity at collision point!
+		# Terrain found! Spawn immediately at exact collision point
+		var terrain_y = result.position.y
 		var scene_path = data.scene_path
 		if scene_path != "":
 			var scene = load(scene_path)
 			if scene:
-				var respawn_pos = Vector3(pos.x, data.collision_y + 0.3, pos.z)
+				var respawn_pos = Vector3(pos.x, terrain_y + 0.3, pos.z)
 				var entity = spawn_entity(respawn_pos, scene)
 				if entity:
 					# Restore state
 					if data.health > 0 and "current_health" in entity:
 						entity.current_health = data.health
-					print("[EntityManager] Respawned dormant entity at %s" % respawn_pos)
+					print("[EntityManager] Respawned dormant entity at %s (terrain_y=%.1f)" % [respawn_pos, terrain_y])
 					completed.append(i)
 	
 	# Remove respawned entities from dormant list (reverse order)
@@ -218,6 +238,13 @@ func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3
 	
 	# Set position
 	entity.global_position = world_pos
+	
+	# CRITICAL: Spawn frozen by default to prevent falling through unloaded collision
+	# The _update_entity_proximity loop will unfreeze when collision is verified via raycast
+	entity.set_physics_process(false)
+	if entity is CharacterBody3D:
+		entity.velocity = Vector3.ZERO
+	frozen_entities[entity] = { "position": world_pos }
 	
 	# Track
 	active_entities.append(entity)
@@ -284,7 +311,8 @@ func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 	# Return null - entity will spawn later via queue processing
 	return null
 
-## Process spawn queue - spawns entities when terrain collision is CONFIRMED ready via raycast
+## Process spawn queue - spawns entities immediately when terrain collision is ready via raycast
+## Event-driven: no hardcoded delays, spawn as soon as raycast hits terrain
 func _process_spawn_queue():
 	if pending_spawns.is_empty() or not player:
 		return
@@ -296,18 +324,30 @@ func _process_spawn_queue():
 		var spawn_data = pending_spawns[i]
 		var pos = spawn_data.position
 		
-		# For procedural spawns, DON'T check distance - they should spawn regardless
-		# Only check distance for manually spawned entities
+		# Check if spawn point is within collision range of player
+		# Collision is only enabled within collision_distance chunks (~93 units for distance=3)
+		# Spawning outside this range = zombie falls through disabled collision
+		var player_pos = player.global_position
+		var dist_to_player = Vector2(pos.x, pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
+		
+		# Get collision distance from terrain manager (default ~93 units = 3 chunks * 31)
+		var collision_range = 93.0  # 3 chunks * 31 stride
+		if terrain_manager and "collision_distance" in terrain_manager:
+			collision_range = terrain_manager.collision_distance * 31.0
+		
+		# Only spawn if within collision range (where collision is actually enabled)
+		if dist_to_player > collision_range:
+			# Too far from player - collision disabled there, wait until player gets closer
+			continue
+		
+		# Also check despawn radius for non-procedural spawns
 		var is_procedural = spawn_data.get("procedural", false)
 		if not is_procedural:
-			var player_pos = player.global_position
-			var dist_sq = Vector2(pos.x, pos.z).distance_squared_to(Vector2(player_pos.x, player_pos.z))
-			if dist_sq > despawn_radius * despawn_radius:
+			if dist_to_player > despawn_radius:
 				completed.append(i)
 				continue
 		
-		# Use RAYCAST to check if terrain collision is actually ready
-		# This is more reliable than get_terrain_height which only checks mesh, not collision
+		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
 		var space_state = get_world_3d().direct_space_state
 		var ray_from = Vector3(pos.x, 200.0, pos.z)  # Start high above terrain
 		var ray_to = Vector3(pos.x, -50.0, pos.z)    # End below expected terrain
@@ -326,24 +366,26 @@ func _process_spawn_queue():
 				completed.append(i)
 			continue
 		
-		# Found collision! Now wait a bit for stability
-		if not spawn_data.has("ready_time"):
-			spawn_data["ready_time"] = current_time
-			spawn_data["collision_y"] = result.position.y
-			print("[EntityManager] Collision found at (%.0f, %.1f, %.0f), waiting..." % [pos.x, result.position.y, pos.z])
-			continue
+		# Terrain found! Verify it's actually terrain (in "terrain" group)
+		var hit_collider = result.collider
+		var terrain_y = result.position.y
 		
-		# Wait 1.5 seconds after collision detected
-		var elapsed = current_time - spawn_data.ready_time
-		if elapsed < 1.5:
-			continue
+		# DEBUG: Log what we hit
+		var collider_name = hit_collider.name if hit_collider else "null"
+		var collider_groups = hit_collider.get_groups() if hit_collider else []
+		print("[EntityManager] Raycast hit: %s at Y=%.1f, groups=%s" % [collider_name, terrain_y, collider_groups])
 		
-		# Spawn at collision point + small offset (0.3m to avoid clipping)
-		var spawn_pos = Vector3(pos.x, spawn_data.collision_y + 0.3, pos.z)
-		var entity = spawn_entity(spawn_pos, spawn_data.scene)
-		if entity:
-			print("[EntityManager] Spawned entity at %s (collision_y=%.1f, after %.1fs)" % [spawn_pos, spawn_data.collision_y, elapsed])
-		completed.append(i)
+		# Only spawn if we hit actual terrain
+		if hit_collider and hit_collider.is_in_group("terrain"):
+			var spawn_pos = Vector3(pos.x, terrain_y + 0.3, pos.z)
+			var entity = spawn_entity(spawn_pos, spawn_data.scene)
+			if entity:
+				print("[EntityManager] Spawned entity at %s (terrain_y=%.1f)" % [spawn_pos, terrain_y])
+			completed.append(i)
+		else:
+			# Hit something that's not terrain - keep waiting for actual terrain
+			print("[EntityManager] Hit non-terrain collider '%s', waiting for terrain..." % collider_name)
+			# Don't mark as completed - keep trying
 	
 	# Remove processed spawns (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
