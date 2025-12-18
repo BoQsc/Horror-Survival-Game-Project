@@ -353,10 +353,16 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 		return false
 	
 	var data = json.get_data()
+	var version = data.get("version", 1)
 	
 	# Convert JSON data to prefab format
 	var blocks: Array = []
-	if data.has("blocks"):
+	
+	if version >= 2 and data.has("layers"):
+		# New bracket notation format
+		blocks = _parse_layers(data.layers, data.get("size", [1, 1, 1]))
+	elif data.has("blocks"):
+		# Old format (version 1)
 		for block in data.blocks:
 			var offset = block.offset
 			blocks.append({
@@ -373,7 +379,12 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 		# Store separately for object spawning
 		if not has_meta("prefab_objects"):
 			set_meta("prefab_objects", {})
-		get_meta("prefab_objects")[prefab_name] = data.objects
+		
+		# Convert compact format to full format if needed
+		var objects_data = data.objects
+		if version >= 2:
+			objects_data = _parse_compact_objects(data.objects)
+		get_meta("prefab_objects")[prefab_name] = objects_data
 	
 	# Store submerge value
 	if data.has("submerge"):
@@ -381,8 +392,72 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 			set_meta("prefab_submerge", {})
 		get_meta("prefab_submerge")[prefab_name] = data.submerge
 	
-	print("PrefabSpawner: Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
+	print("PrefabSpawner: Loaded prefab '%s' (v%d) with %d blocks" % [prefab_name, version, blocks.size()])
 	return true
+
+## Parse bracket notation token to type and meta
+## Returns {type, meta} or null for empty
+func _parse_token(token: String) -> Variant:
+	if token == "." or token == "":
+		return null
+	
+	# Remove brackets [type] or [type:meta]
+	if token.begins_with("[") and token.ends_with("]"):
+		var content = token.substr(1, token.length() - 2)
+		if ":" in content:
+			var parts = content.split(":")
+			return {"type": int(parts[0]), "meta": int(parts[1])}
+		else:
+			return {"type": int(content), "meta": 0}
+	
+	return null
+
+## Parse layer strings to blocks array
+func _parse_layers(layers: Array, size_arr: Array) -> Array:
+	var blocks: Array = []
+	var size = Vector3i(int(size_arr[0]), int(size_arr[1]), int(size_arr[2]))
+	
+	var y = 0
+	var z = 0
+	
+	for layer_str in layers:
+		var line = str(layer_str).strip_edges()
+		
+		# Y-level separator
+		if line == "---":
+			y += 1
+			z = 0
+			continue
+		
+		# Parse tokens in this row
+		var tokens = line.split(" ", false)  # false = skip empty
+		var x = 0
+		for token in tokens:
+			var parsed = _parse_token(token.strip_edges())
+			if parsed != null:
+				blocks.append({
+					"offset": Vector3i(x, y, z),
+					"type": parsed.type,
+					"meta": parsed.meta
+				})
+			x += 1
+		
+		z += 1
+	
+	return blocks
+
+## Parse compact object format [id, x, y, z, rot, frac_y] to full format
+func _parse_compact_objects(compact: Array) -> Array:
+	var result: Array = []
+	for obj in compact:
+		if obj is Array and obj.size() >= 5:
+			result.append({
+				"offset": [obj[1], obj[2], obj[3]],
+				"object_id": obj[0],
+				"rotation": obj[4],
+				"fractional_y": obj[5] if obj.size() > 5 else 0.0
+			})
+	return result
 
 ## Spawn a user prefab at the given world position
 ## submerge_offset: how many blocks to bury into terrain (negative Y adjustment)

@@ -171,6 +171,51 @@ func _raycast() -> Dictionary:
 	
 	return space.intersect_ray(query)
 
+## Convert a block type and meta to bracket notation token
+func _block_to_token(block_type: int, meta: int) -> String:
+	if meta == 0:
+		return "[%d]" % block_type
+	else:
+		return "[%d:%d]" % [block_type, meta]
+
+## Convert a 3D grid to layer strings in bracket notation
+## Grid is [x][y][z] = {type, meta} or null for empty
+func _grid_to_layers(grid: Array, size: Vector3i) -> Array:
+	var layers: Array = []
+	
+	for y in range(size.y):
+		# Add Y-level separator (except for first layer)
+		if y > 0:
+			layers.append("---")
+		
+		for z in range(size.z):
+			var row_tokens: Array = []
+			for x in range(size.x):
+				var cell = grid[x][y][z]
+				if cell == null:
+					row_tokens.append(".")
+				else:
+					row_tokens.append(_block_to_token(cell.type, cell.meta))
+			
+			# Join tokens with space
+			layers.append(" ".join(row_tokens))
+	
+	return layers
+
+## Convert objects to compact array format [id, x, y, z, rot, frac_y]
+func _objects_to_compact(objects: Array) -> Array:
+	var compact: Array = []
+	for obj in objects:
+		compact.append([
+			obj.object_id,
+			obj.offset[0],
+			obj.offset[1],
+			obj.offset[2],
+			obj.rotation,
+			obj.get("fractional_y", 0.0)
+		])
+	return compact
+
 func _capture_region():
 	if not building_manager:
 		print("[PrefabCapture] ERROR: No building manager!")
@@ -191,55 +236,63 @@ func _capture_region():
 	
 	print("[PrefabCapture] Scanning region from %s to %s" % [min_corner, max_corner])
 	
-	# Collect blocks
-	var blocks: Array = []
-	var objects: Array = []
-	var origin = min_corner  # Origin at bottom corner
+	# Calculate size
+	var size = Vector3i(
+		int(max_corner.x - min_corner.x) + 1,
+		int(max_corner.y - min_corner.y) + 1,
+		int(max_corner.z - min_corner.z) + 1
+	)
 	
-	# Scan the region
-	for x in range(int(min_corner.x), int(max_corner.x) + 1):
-		for y in range(int(min_corner.y), int(max_corner.y) + 1):
-			for z in range(int(min_corner.z), int(max_corner.z) + 1):
-				var global_pos = Vector3(x, y, z)
+	# Build 3D grid [x][y][z]
+	var grid: Array = []
+	var block_count = 0
+	var origin = min_corner
+	
+	for x in range(size.x):
+		var y_slice: Array = []
+		for y in range(size.y):
+			var z_slice: Array = []
+			for z in range(size.z):
+				var global_pos = origin + Vector3(x, y, z)
 				var block_type = building_manager.get_voxel(global_pos)
 				
 				if block_type > 0:
-					# Get meta/rotation data
 					var meta = _get_voxel_meta(global_pos)
-					var offset = global_pos - origin
-					blocks.append({
-						"offset": [int(offset.x), int(offset.y), int(offset.z)],
-						"type": block_type,
-						"meta": meta
-					})
+					z_slice.append({"type": block_type, "meta": meta})
+					block_count += 1
+				else:
+					z_slice.append(null)
+			y_slice.append(z_slice)
+		grid.append(y_slice)
 	
 	# Scan for placed objects in the region
-	objects = _scan_objects_in_region(min_corner, max_corner, origin)
+	var raw_objects = _scan_objects_in_region(min_corner, max_corner, origin)
 	
-	if blocks.size() == 0 and objects.size() == 0:
+	if block_count == 0 and raw_objects.size() == 0:
 		print("[PrefabCapture] No blocks or objects found in selection!")
 		_cancel_selection()
 		return
 	
-	print("[PrefabCapture] Found %d blocks and %d objects" % [blocks.size(), objects.size()])
+	print("[PrefabCapture] Found %d blocks and %d objects" % [block_count, raw_objects.size()])
+	
+	# Convert to layer strings
+	var layers = _grid_to_layers(grid, size)
+	
+	# Convert objects to compact format
+	var compact_objects = _objects_to_compact(raw_objects)
 	
 	# Generate prefab name with timestamp
 	var timestamp = Time.get_unix_time_from_system()
 	var prefab_name = "prefab_%d" % timestamp
 	
-	# Save prefab
+	# Save prefab in new bracket notation format (version 2)
 	var prefab_data = {
-		"version": 1,
 		"name": prefab_name,
-		"origin": "bottom_corner",
+		"version": 2,
+		"size": [size.x, size.y, size.z],
 		"submerge": 1,
-		"size": [
-			int(max_corner.x - min_corner.x) + 1,
-			int(max_corner.y - min_corner.y) + 1,
-			int(max_corner.z - min_corner.z) + 1
-		],
-		"blocks": blocks,
-		"objects": objects
+		"layers": layers,
+		"objects": compact_objects
 	}
 	
 	var path = PREFAB_DIR + prefab_name + ".json"
@@ -248,7 +301,7 @@ func _capture_region():
 		file.store_string(JSON.stringify(prefab_data, "\t"))
 		file.close()
 		print("[PrefabCapture] Saved prefab to: %s" % path)
-		print("[PrefabCapture] Prefab contains %d blocks" % blocks.size())
+		print("[PrefabCapture] Prefab contains %d blocks in bracket notation" % block_count)
 		prefab_captured.emit(prefab_name, path)
 	else:
 		print("[PrefabCapture] ERROR: Failed to save prefab!")
