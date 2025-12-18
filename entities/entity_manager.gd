@@ -150,6 +150,14 @@ func _unfreeze_entity(entity: Node3D):
 	# Collision verified! Re-enable physics
 	entity.set_physics_process(true)
 	frozen_entities.erase(entity)
+	
+	# Restart animation by re-triggering current state (fixes stuck pose after freeze)
+	if entity.has_method("change_state") and "current_state" in entity:
+		var current = entity.current_state
+		# Force state change by temporarily clearing, then restoring
+		entity.current_state = ""
+		entity.change_state(current)
+	
 	print("[EntityManager] Unfrozen entity - terrain ready")
 
 ## Check if any dormant entities should be respawned (player returned to their area)
