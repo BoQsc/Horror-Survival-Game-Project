@@ -156,3 +156,16 @@ Entities wait for terrain before spawning:
 > - Do zombies truly release their collision shapes when despawned?
 > - Does terrain collision memory get freed when chunks unload?
 > - Potential memory leak if collisions persist after objects are removed
+
+---
+
+## Terrain & Chunk Loading Customization (Priority)
+
+> ⚠️ **NEEDS HEAVY WORK:** The terrain and chunk loading systems require significant customization:
+> - Loading priority and sequencing improvements needed
+> - Player spawn-area prioritization
+> - Underground/sky chunk loading optimization
+> - Integration with procedural spawning systems
+> - Performance tuning for smooth exploration
+
+See also: `TERRAIN_LOADING_PRIORITY.md` for related notes.
