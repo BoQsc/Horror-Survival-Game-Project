@@ -278,13 +278,11 @@ func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 	# Return null - entity will spawn later via queue processing
 	return null
 
-## Process spawn queue - spawns entities that are within range AND have terrain ready
+## Process spawn queue - spawns entities when terrain collision is CONFIRMED ready via raycast
 func _process_spawn_queue():
 	if pending_spawns.is_empty() or not player:
 		return
 	
-	var player_pos = player.global_position
-	var spawn_dist_sq = spawn_radius * spawn_radius
 	var completed: Array[int] = []
 	var current_time = Time.get_ticks_msec() / 1000.0
 	
@@ -292,38 +290,54 @@ func _process_spawn_queue():
 		var spawn_data = pending_spawns[i]
 		var pos = spawn_data.position
 		
-		# Check if within spawn radius
-		var dist_sq = Vector2(pos.x, pos.z).distance_squared_to(Vector2(player_pos.x, player_pos.z))
+		# For procedural spawns, DON'T check distance - they should spawn regardless
+		# Only check distance for manually spawned entities
+		var is_procedural = spawn_data.get("procedural", false)
+		if not is_procedural:
+			var player_pos = player.global_position
+			var dist_sq = Vector2(pos.x, pos.z).distance_squared_to(Vector2(player_pos.x, player_pos.z))
+			if dist_sq > despawn_radius * despawn_radius:
+				completed.append(i)
+				continue
 		
-		if dist_sq > spawn_dist_sq:
-			# Too far - remove from queue (player moved away)
-			completed.append(i)
+		# Use RAYCAST to check if terrain collision is actually ready
+		# This is more reliable than get_terrain_height which only checks mesh, not collision
+		var space_state = get_world_3d().direct_space_state
+		var ray_from = Vector3(pos.x, 200.0, pos.z)  # Start high above terrain
+		var ray_to = Vector3(pos.x, -50.0, pos.z)    # End below expected terrain
+		
+		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
+		query.collision_mask = 1  # Only terrain layer
+		var result = space_state.intersect_ray(query)
+		
+		if result.is_empty():
+			# No collision found - terrain not ready yet, keep waiting
+			if not spawn_data.has("wait_start"):
+				spawn_data["wait_start"] = current_time
+			elif current_time - spawn_data.wait_start > 10.0:
+				# Waited too long (10s), give up on this spawn
+				print("[EntityManager] Spawn timeout at (%.0f, %.0f) - no collision found" % [pos.x, pos.z])
+				completed.append(i)
 			continue
 		
-		# Check if terrain is ready
-		if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-			var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
-			
-			if terrain_y >= -100.0:
-				# Terrain data is ready - but wait for collision mesh to build
-				if not spawn_data.has("ready_time"):
-					# First time terrain is valid - record time and wait
-					spawn_data["ready_time"] = current_time
-					spawn_data["terrain_y"] = terrain_y
-					continue  # Wait for delay
-				
-				# Check if delay has passed (0.3 seconds for collision to build)
-				var elapsed = current_time - spawn_data.ready_time
-				if elapsed < 0.3:
-					continue  # Still waiting
-				
-				# Delay passed - spawn now!
-				var spawn_pos = Vector3(pos.x, spawn_data.terrain_y + 1.0, pos.z)
-				var entity = spawn_entity(spawn_pos, spawn_data.scene)
-				if entity:
-					print("[EntityManager] Spawned entity at %s (after %.1fs delay)" % [spawn_pos, elapsed])
-				completed.append(i)
-			# else: terrain not ready, keep in queue
+		# Found collision! Now wait a bit for stability
+		if not spawn_data.has("ready_time"):
+			spawn_data["ready_time"] = current_time
+			spawn_data["collision_y"] = result.position.y
+			print("[EntityManager] Collision found at (%.0f, %.1f, %.0f), waiting..." % [pos.x, result.position.y, pos.z])
+			continue
+		
+		# Wait 1.5 seconds after collision detected
+		var elapsed = current_time - spawn_data.ready_time
+		if elapsed < 1.5:
+			continue
+		
+		# Spawn at collision point + offset
+		var spawn_pos = Vector3(pos.x, spawn_data.collision_y + 1.5, pos.z)
+		var entity = spawn_entity(spawn_pos, spawn_data.scene)
+		if entity:
+			print("[EntityManager] Spawned entity at %s (collision_y=%.1f, after %.1fs)" % [spawn_pos, spawn_data.collision_y, elapsed])
+		completed.append(i)
 	
 	# Remove processed spawns (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
@@ -468,26 +482,15 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	
 	var chunk_key = Vector2i(coord.x, coord.z)
 	
-	# Skip if already spawned for this chunk
+	# Skip if already processed this chunk
 	if spawned_chunks.has(chunk_key):
 		return
 	
-	# Mark chunk as processed (even if we don't spawn anything)
+	# Mark chunk as processed immediately (signal only fires once)
 	spawned_chunks[chunk_key] = true
 	
-	# Check distance from player - don't spawn too close or too far
-	if not player:
-		return
-	
-	var chunk_center = Vector3(coord.x * 31.0 + 16.0, 0, coord.z * 31.0 + 16.0)  # CHUNK_STRIDE = 31
-	var dist_to_player = Vector2(chunk_center.x, chunk_center.z).distance_to(
-		Vector2(player.global_position.x, player.global_position.z))
-	
-	if dist_to_player < min_spawn_distance_from_player:
-		return  # Too close to player
-	
-	if dist_to_player > spawn_radius * 2.0:
-		return  # Too far - will spawn when player gets closer
+	# DEBUG: Log every chunk we process
+	print("[EntityManager] Processing chunk %s for spawns" % chunk_key)
 	
 	# Deterministic RNG based on chunk coordinate
 	var rng = RandomNumberGenerator.new()
@@ -496,6 +499,9 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	# Roll spawn chance
 	if rng.randf() > spawn_chance_per_chunk:
 		return  # No spawn this chunk
+	
+	# Calculate chunk center for biome detection
+	var chunk_center = Vector3(coord.x * 31.0 + 16.0, 0, coord.z * 31.0 + 16.0)  # CHUNK_STRIDE = 31
 	
 	# Determine biome at chunk center
 	var biome_id = _get_biome_at(chunk_center.x, chunk_center.z)
