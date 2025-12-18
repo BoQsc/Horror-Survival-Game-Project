@@ -13,9 +13,9 @@ signal entity_despawned(entity: Node3D)
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
-@export var spawn_chance_per_chunk: float = 0.15  # 15% chance per surface chunk
+@export var spawn_chance_per_chunk: float = 0.50  # 50% chance per surface chunk
 @export var min_spawn_distance_from_player: float = 40.0  # Don't spawn too close
-@export var max_spawns_per_chunk: int = 2
+@export var max_spawns_per_chunk: int = 3
 
 # Entity scene to spawn (can be overridden per entity type)
 @export var default_entity_scene: PackedScene
@@ -37,10 +37,10 @@ var biome_noise: FastNoiseLite = null  # For biome detection (must match GPU)
 # Biome-based spawn rules: biome_id -> { "zombie_chance": float }
 # Biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
 var spawn_rules = {
-	0: { "zombie_chance": 0.3 },   # Grass - moderate danger
-	3: { "zombie_chance": 0.1 },   # Sand - peaceful desert
-	4: { "zombie_chance": 0.6 },   # Gravel - high danger ruins
-	5: { "zombie_chance": 0.25 },  # Snow - cold hostile
+	0: { "zombie_chance": 0.6 },   # Grass - moderate danger
+	3: { "zombie_chance": 0.3 },   # Sand - peaceful desert
+	4: { "zombie_chance": 0.9 },   # Gravel - high danger ruins
+	5: { "zombie_chance": 0.5 },  # Snow - cold hostile
 }
 
 func _ready():
