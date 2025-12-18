@@ -116,6 +116,7 @@ func _check_dormant_respawns():
 	var player_pos = player.global_position
 	var spawn_dist_sq = spawn_radius * spawn_radius
 	var completed: Array[int] = []
+	var current_time = Time.get_ticks_msec() / 1000.0
 	
 	for i in range(dormant_entities.size()):
 		var data = dormant_entities[i]
@@ -132,12 +133,22 @@ func _check_dormant_respawns():
 			if terrain_y < -100.0:
 				continue  # Terrain not loaded
 			
+			# Wait for collision mesh to build (same as regular spawns)
+			if not data.has("ready_time"):
+				data["ready_time"] = current_time
+				data["terrain_y"] = terrain_y
+				continue
+			
+			var elapsed = current_time - data.ready_time
+			if elapsed < 0.3:
+				continue  # Still waiting
+			
 			# Respawn the entity!
 			var scene_path = data.scene_path
 			if scene_path != "":
 				var scene = load(scene_path)
 				if scene:
-					var respawn_pos = Vector3(pos.x, terrain_y + 1.0, pos.z)
+					var respawn_pos = Vector3(pos.x, data.terrain_y + 1.0, pos.z)
 					var entity = spawn_entity(respawn_pos, scene)
 					if entity:
 						# Restore state
@@ -252,6 +263,7 @@ func _process_spawn_queue():
 	var player_pos = player.global_position
 	var spawn_dist_sq = spawn_radius * spawn_radius
 	var completed: Array[int] = []
+	var current_time = Time.get_ticks_msec() / 1000.0
 	
 	for i in range(pending_spawns.size()):
 		var spawn_data = pending_spawns[i]
@@ -270,11 +282,23 @@ func _process_spawn_queue():
 			var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
 			
 			if terrain_y >= -100.0:
-				# Terrain ready AND in range - spawn now!
-				var spawn_pos = Vector3(pos.x, terrain_y + 1.0, pos.z)
+				# Terrain data is ready - but wait for collision mesh to build
+				if not spawn_data.has("ready_time"):
+					# First time terrain is valid - record time and wait
+					spawn_data["ready_time"] = current_time
+					spawn_data["terrain_y"] = terrain_y
+					continue  # Wait for delay
+				
+				# Check if delay has passed (0.3 seconds for collision to build)
+				var elapsed = current_time - spawn_data.ready_time
+				if elapsed < 0.3:
+					continue  # Still waiting
+				
+				# Delay passed - spawn now!
+				var spawn_pos = Vector3(pos.x, spawn_data.terrain_y + 1.0, pos.z)
 				var entity = spawn_entity(spawn_pos, spawn_data.scene)
 				if entity:
-					print("[EntityManager] Spawned entity at %s" % spawn_pos)
+					print("[EntityManager] Spawned entity at %s (after %.1fs delay)" % [spawn_pos, elapsed])
 				completed.append(i)
 			# else: terrain not ready, keep in queue
 	
