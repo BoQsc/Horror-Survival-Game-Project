@@ -111,7 +111,7 @@ var target_fps: float = 75.0
 var min_acceptable_fps: float = 45.0
 var current_fps: float = 60.0
 var fps_samples: Array[float] = []
-var adaptive_frame_budget_ms: float = 2.0  # Dynamically adjusted
+var adaptive_frame_budget_ms: float = 1.0  # Dynamically adjusted (reduced for smoother FPS)
 var chunks_per_frame_limit: int = 2  # Dynamically adjusted
 var loading_paused: bool = false
 
@@ -257,21 +257,21 @@ func _update_fps_tracking(delta: float):
 
 func _adjust_adaptive_loading():
 	if current_fps < min_acceptable_fps:
-		# FPS is too low - pause loading and minimize work
+		# FPS is too low - pause loading completely
 		loading_paused = true
-		adaptive_frame_budget_ms = 0.5
+		adaptive_frame_budget_ms = 0.0  # Zero work when FPS critical
 		chunks_per_frame_limit = 0
 	elif current_fps < target_fps:
-		# FPS is below target - reduce loading
+		# FPS is below target - reduce loading with tighter budget
 		loading_paused = false
 		var fps_ratio = current_fps / target_fps
-		adaptive_frame_budget_ms = lerp(0.5, 2.0, fps_ratio)
+		adaptive_frame_budget_ms = lerp(0.25, 1.0, fps_ratio)  # Tighter range
 		chunks_per_frame_limit = 1
 	else:
-		# FPS is good - still limit to prevent GPU stutters
+		# FPS is good - still limit to prevent stutters
 		loading_paused = false
-		adaptive_frame_budget_ms = 3.0
-		chunks_per_frame_limit = 1  # Reduced from 2 to prevent GPU overload
+		adaptive_frame_budget_ms = 1.5  # Max 1.5ms (reduced from 3ms)
+		chunks_per_frame_limit = 1
 
 var collision_update_counter: int = 0
 func update_collision_proximity():
