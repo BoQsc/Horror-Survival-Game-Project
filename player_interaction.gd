@@ -392,23 +392,23 @@ func _unhandled_input(event):
 					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 						placement_y_offset -= 1
 						print("Placement Y offset: %d" % placement_y_offset)
-				elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-					if current_mode == Mode.PLAYING:
-						handle_playing_input(event)
-					elif current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
-						handle_terrain_input(event)
-					elif current_mode == Mode.BUILDING and has_target:
-						handle_building_input(event)
-					elif current_mode == Mode.OBJECT and has_target:
-						handle_object_input(event)
-					elif current_mode == Mode.CONSTRUCT and has_target:
-						handle_construct_input(event)
-					elif current_mode == Mode.ROAD:
-						handle_road_input(event)
-					elif current_mode == Mode.MATERIAL:
-						handle_material_input(event)
-					elif current_mode == Mode.PREFAB:
-						handle_prefab_input(event)
+			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+				if current_mode == Mode.PLAYING:
+					handle_playing_input(event)
+				elif current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
+					handle_terrain_input(event)
+				elif current_mode == Mode.BUILDING and has_target:
+					handle_building_input(event)
+				elif current_mode == Mode.OBJECT and has_target:
+					handle_object_input(event)
+				elif current_mode == Mode.CONSTRUCT and has_target:
+					handle_construct_input(event)
+				elif current_mode == Mode.ROAD:
+					handle_road_input(event)
+				elif current_mode == Mode.MATERIAL:
+					handle_material_input(event)
+				elif current_mode == Mode.PREFAB:
+					handle_prefab_input(event)
 
 func toggle_mode():
 	if current_mode == Mode.PLAYING:
@@ -1496,12 +1496,15 @@ func _place_current_prefab():
 		return
 	
 	var prefab_name = available_prefabs[current_prefab_index]
+	print("[PREFAB] Attempting to place: %s" % prefab_name)
 	
 	# Get spawn position from raycast
 	var hit = raycast(50.0, false)
 	if not hit:
-		print("[PREFAB] No valid placement position")
+		print("[PREFAB] No valid placement position - raycast returned nothing")
 		return
+	
+	print("[PREFAB] Raycast hit at: %v" % hit.position)
 	
 	# Get terrain manager for height sampling
 	var spawn_y = hit.position.y
@@ -1509,6 +1512,12 @@ func _place_current_prefab():
 		spawn_y = terrain_manager.get_terrain_height(hit.position.x, hit.position.z)
 	
 	var spawn_pos = Vector3(floor(hit.position.x), spawn_y, floor(hit.position.z))
+	print("[PREFAB] Spawn position: %v" % spawn_pos)
+	
+	# Ensure prefab_spawner reference
+	if not prefab_spawner:
+		prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
+		print("[PREFAB] Found PrefabSpawner: %s" % (prefab_spawner != null))
 	
 	# Spawn via PrefabSpawner
 	if prefab_spawner and prefab_spawner.has_method("spawn_user_prefab"):
@@ -1517,6 +1526,8 @@ func _place_current_prefab():
 			print("[PREFAB] Placed %s at %v (rot: %d)" % [prefab_name, spawn_pos, prefab_rotation * 90])
 		else:
 			print("[PREFAB] Failed to place %s" % prefab_name)
+	else:
+		print("[PREFAB] ERROR: PrefabSpawner not found or missing spawn_user_prefab method")
 
 func _update_prefab_preview():
 	# Destroy existing preview
