@@ -45,6 +45,7 @@ var available_prefabs: Array[String] = []
 var current_prefab_index: int = 0
 var prefab_rotation: int = 0  # 0, 1, 2, 3 = 0°, 90°, 180°, 270°
 var prefab_carve_mode: bool = false  # If true, carve terrain and submerge. If false, place on top.
+var prefab_foundation_fill: bool = false  # If true, grow terrain under prefab foundation to fill gaps
 var prefab_preview_nodes: Array[MeshInstance3D] = []  # Ghost blocks for preview
 var prefab_spawner: Node = null  # Cached reference
 
@@ -340,10 +341,21 @@ func _unhandled_input(event):
 				_update_prefab_preview()
 				update_ui()
 		elif event.keycode == KEY_C:
-			# C key: toggle prefab placement mode (Surface/Carve)
+			# C key: cycle prefab placement mode (Surface -> Carve -> Fill -> Surface)
 			if current_mode == Mode.PREFAB:
-				prefab_carve_mode = not prefab_carve_mode
-				var mode_str = "Carve (submerge + carve terrain)" if prefab_carve_mode else "Surface (place on top)"
+				if not prefab_carve_mode and not prefab_foundation_fill:
+					# Surface -> Carve
+					prefab_carve_mode = true
+					prefab_foundation_fill = false
+				elif prefab_carve_mode and not prefab_foundation_fill:
+					# Carve -> Fill
+					prefab_carve_mode = false
+					prefab_foundation_fill = true
+				else:
+					# Fill -> Surface
+					prefab_carve_mode = false
+					prefab_foundation_fill = false
+				var mode_str = "Carve" if prefab_carve_mode else ("Fill" if prefab_foundation_fill else "Surface")
 				print("[PREFAB] Placement mode: %s" % mode_str)
 				update_ui()
 		elif event.keycode == KEY_E:
@@ -502,8 +514,8 @@ func update_ui():
 		if available_prefabs.size() > 0 and current_prefab_index < available_prefabs.size():
 			prefab_name = available_prefabs[current_prefab_index]
 		var rot_deg = prefab_rotation * 90
-		var carve_str = "Carve" if prefab_carve_mode else "Surface"
-		mode_label.text = "Mode: PREFAB (%s)\n%s (Rot: %d°)\n[</>] Select, [R] Rotate, [C] Mode\nR-Click: Place"  % [carve_str, prefab_name, rot_deg]
+		var mode_str = "Carve" if prefab_carve_mode else ("Fill" if prefab_foundation_fill else "Surface")
+		mode_label.text = "Mode: PREFAB (%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode\nR-Click: Place"  % [mode_str, prefab_name, rot_deg]
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -1528,7 +1540,7 @@ func _place_current_prefab():
 	if prefab_spawner and prefab_spawner.has_method("spawn_user_prefab"):
 		# Surface mode: submerge=0 (on top), Carve mode: submerge=1 (buried + carve terrain)
 		var submerge = 1 if prefab_carve_mode else 0
-		var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode)
+		var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, prefab_foundation_fill)
 		if success:
 			print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, "Carve" if prefab_carve_mode else "Surface"])
 		else:

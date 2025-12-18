@@ -449,7 +449,8 @@ func _parse_compact_objects(compact: Array) -> Array:
 ## submerge_offset: how many blocks to bury into terrain (negative Y adjustment)
 ## rotation: 0-3 for 0°, 90°, 180°, 270° rotation
 ## carve_terrain: if true, carve out terrain where submerged blocks go
-func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false) -> bool:
+## foundation_fill: if true, grow terrain under foundation blocks to fill gaps
+func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, foundation_fill: bool = false) -> bool:
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		if not load_prefab_from_file(prefab_name):
@@ -469,8 +470,13 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
 		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
 	
-	# Carve terrain for submerged blocks (only in carve mode)
 	var blocks = prefabs[prefab_name]
+	
+	# Foundation fill mode: grow terrain under foundation blocks
+	if foundation_fill:
+		_fill_foundation_terrain(blocks, spawn_pos, rotation)
+	
+	# Carve terrain for submerged blocks (only in carve mode)
 	if carve_terrain:
 		for block in blocks:
 			var offset = block.offset
@@ -518,8 +524,56 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					var scene_rot_y = obj.get("rotation_y", 0) + (rotation * 90)
 					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
 	
-	print("PrefabSpawner: Spawned user prefab '%s' at %v (submerge: %d)" % [prefab_name, spawn_pos, submerge_offset])
+	var mode_str = "carve" if carve_terrain else ("fill" if foundation_fill else "surface")
+	print("PrefabSpawner: Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 	return true
+
+## Fill terrain gaps under the prefab's foundation layer (Y=0 blocks)
+func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
+	if not terrain_manager or not terrain_manager.has_method("modify_terrain"):
+		return
+	
+	print("[Foundation Fill] Starting fill for prefab at %v" % spawn_pos)
+	
+	# Find the minimum Y in the prefab (usually 0, but could be offset)
+	var min_y = 999
+	for block in blocks:
+		if block.offset.y < min_y:
+			min_y = block.offset.y
+	
+	# Process only foundation layer blocks (blocks at min_y)
+	var fill_count = 0
+	for block in blocks:
+		if block.offset.y != min_y:
+			continue
+		
+		var rotated_offset = _rotate_offset(block.offset, rotation)
+		var block_world_pos = spawn_pos + Vector3(rotated_offset)
+		
+		# Sample terrain height at this X,Z position
+		var terrain_y = _get_terrain_height(block_world_pos.x + 0.5, block_world_pos.z + 0.5)
+		
+		# Target Y is just below the foundation block (fill up to the block's bottom)
+		var target_y = block_world_pos.y
+		var gap = target_y - terrain_y
+		
+		print("  Block at (%d, %d): terrain_y=%.1f, target_y=%.1f, gap=%.1f" % [
+			int(block_world_pos.x), int(block_world_pos.z), terrain_y, target_y, gap])
+		
+		# Only fill if there's a gap (terrain is below foundation)
+		if gap > 0.2:
+			# Fill in 1-block increments from terrain up to foundation
+			# Each fill creates solid terrain at that level
+			var current_y = terrain_y + 0.5  # Start half a block above terrain
+			while current_y < target_y:
+				var fill_pos = Vector3(block_world_pos.x + 0.5, current_y, block_world_pos.z + 0.5)
+				# Strong fill: shape 1 = box, value -2.0 = aggressive terrain add
+				terrain_manager.modify_terrain(fill_pos, 0.6, -2.0, 1, 0)  # Box shape, STRONG fill
+				current_y += 0.8  # Move up slightly less than 1 for overlap
+				fill_count += 1
+	
+	print("[Foundation Fill] Completed: %d fill operations" % fill_count)
+
 
 func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
 	if not ResourceLoader.exists(scene_path):
