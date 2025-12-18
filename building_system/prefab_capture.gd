@@ -19,6 +19,7 @@ var corner_b: Vector3 = Vector3.ZERO
 # Visual markers for corners
 var marker_a: MeshInstance3D = null
 var marker_b: MeshInstance3D = null
+var selection_box: MeshInstance3D = null  # Transparent box showing selection region
 
 const PREFAB_DIR = "user://prefabs/"
 
@@ -41,6 +42,21 @@ func _ready():
 	marker_b = _create_marker(Color.RED)
 	add_child(marker_a)
 	add_child(marker_b)
+	
+	# Create selection box visual
+	selection_box = _create_selection_box()
+	add_child(selection_box)
+
+func _process(_delta):
+	# Update selection box when selecting corner B
+	if state == State.SELECTING_CORNER_B:
+		var hit = _raycast()
+		if hit:
+			var current_b = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
+			_update_selection_box(corner_a, current_b)
+			selection_box.visible = true
+	else:
+		selection_box.visible = false
 
 func _create_marker(color: Color) -> MeshInstance3D:
 	var mesh_inst = MeshInstance3D.new()
@@ -57,6 +73,39 @@ func _create_marker(color: Color) -> MeshInstance3D:
 	mesh_inst.visible = false
 	
 	return mesh_inst
+
+func _create_selection_box() -> MeshInstance3D:
+	var mesh_inst = MeshInstance3D.new()
+	mesh_inst.mesh = BoxMesh.new()
+	
+	var mat = StandardMaterial3D.new()
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(0.2, 0.6, 1.0, 0.3)  # Light blue, 30% opacity
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED  # See box from inside
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mesh_inst.material_override = mat
+	mesh_inst.visible = false
+	
+	return mesh_inst
+
+func _update_selection_box(c1: Vector3, c2: Vector3):
+	# Calculate min/max corners
+	var min_c = Vector3(min(c1.x, c2.x), min(c1.y, c2.y), min(c1.z, c2.z))
+	var max_c = Vector3(max(c1.x, c2.x), max(c1.y, c2.y), max(c1.z, c2.z))
+	
+	# Size is difference + 1 (since blocks are 1 unit)
+	var size = (max_c - min_c) + Vector3.ONE
+	
+	# Center is midpoint
+	var center = min_c + size / 2.0
+	
+	# Update mesh size
+	var box_mesh = selection_box.mesh as BoxMesh
+	box_mesh.size = size
+	
+	# Position at center
+	selection_box.global_position = center
+
 
 func _input(event):
 	if event is InputEventKey and event.pressed and event.keycode == KEY_P:
@@ -79,6 +128,7 @@ func _cancel_selection():
 	state = State.IDLE
 	marker_a.visible = false
 	marker_b.visible = false
+	selection_box.visible = false
 	print("[PrefabCapture] Selection cancelled")
 
 func _handle_click():
