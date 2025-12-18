@@ -44,6 +44,7 @@ var construct_vegetation_type: int = 0  # 0=Rock, 1=Grass
 var available_prefabs: Array[String] = []
 var current_prefab_index: int = 0
 var prefab_rotation: int = 0  # 0, 1, 2, 3 = 0°, 90°, 180°, 270°
+var prefab_carve_mode: bool = false  # If true, carve terrain and submerge. If false, place on top.
 var prefab_preview_nodes: Array[MeshInstance3D] = []  # Ghost blocks for preview
 var prefab_spawner: Node = null  # Cached reference
 
@@ -338,6 +339,13 @@ func _unhandled_input(event):
 				current_prefab_index = (current_prefab_index + 1) % available_prefabs.size()
 				_update_prefab_preview()
 				update_ui()
+		elif event.keycode == KEY_C:
+			# C key: toggle prefab placement mode (Surface/Carve)
+			if current_mode == Mode.PREFAB:
+				prefab_carve_mode = not prefab_carve_mode
+				var mode_str = "Carve (submerge + carve terrain)" if prefab_carve_mode else "Surface (place on top)"
+				print("[PREFAB] Placement mode: %s" % mode_str)
+				update_ui()
 		elif event.keycode == KEY_E:
 			# E key: interact with doors/vehicles in ALL modes
 			if is_in_vehicle:
@@ -494,7 +502,8 @@ func update_ui():
 		if available_prefabs.size() > 0 and current_prefab_index < available_prefabs.size():
 			prefab_name = available_prefabs[current_prefab_index]
 		var rot_deg = prefab_rotation * 90
-		mode_label.text = "Mode: PREFAB\n%s (Rot: %d°)\n[←/→] Select, [R] Rotate\nR-Click: Place"  % [prefab_name, rot_deg]
+		var carve_str = "Carve" if prefab_carve_mode else "Surface"
+		mode_label.text = "Mode: PREFAB (%s)\n%s (Rot: %d°)\n[</>] Select, [R] Rotate, [C] Mode\nR-Click: Place"  % [carve_str, prefab_name, rot_deg]
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -1521,9 +1530,11 @@ func _place_current_prefab():
 	
 	# Spawn via PrefabSpawner
 	if prefab_spawner and prefab_spawner.has_method("spawn_user_prefab"):
-		var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 1, prefab_rotation)
+		# Surface mode: submerge=0 (on top), Carve mode: submerge=1 (buried + carve terrain)
+		var submerge = 1 if prefab_carve_mode else 0
+		var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode)
 		if success:
-			print("[PREFAB] Placed %s at %v (rot: %d)" % [prefab_name, spawn_pos, prefab_rotation * 90])
+			print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, "Carve" if prefab_carve_mode else "Surface"])
 		else:
 			print("[PREFAB] Failed to place %s" % prefab_name)
 	else:

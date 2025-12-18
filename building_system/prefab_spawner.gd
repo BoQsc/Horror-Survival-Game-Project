@@ -387,7 +387,8 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 ## Spawn a user prefab at the given world position
 ## submerge_offset: how many blocks to bury into terrain (negative Y adjustment)
 ## rotation: 0-3 for 0°, 90°, 180°, 270° rotation
-func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0) -> bool:
+## carve_terrain: if true, carve out terrain where submerged blocks go
+func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false) -> bool:
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		if not load_prefab_from_file(prefab_name):
@@ -407,18 +408,19 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
 		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
 	
-	# Carve terrain for submerged blocks to prevent z-fighting
+	# Carve terrain for submerged blocks (only in carve mode)
 	var blocks = prefabs[prefab_name]
-	for block in blocks:
-		var offset = block.offset
-		var rotated_offset = _rotate_offset(offset, rotation)
-		var pos = spawn_pos + Vector3(rotated_offset)
-		
-		# If this block is at or below terrain surface, carve it out
-		if pos.y <= world_pos.y:
-			if terrain_manager and terrain_manager.has_method("modify_terrain"):
-				# Dig a small box at this position (shape 1 = box, value > 0 = dig)
-				terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
+	if carve_terrain:
+		for block in blocks:
+			var offset = block.offset
+			var rotated_offset = _rotate_offset(offset, rotation)
+			var pos = spawn_pos + Vector3(rotated_offset)
+			
+			# If this block is at or below terrain surface, carve it out
+			if pos.y <= world_pos.y:
+				if terrain_manager and terrain_manager.has_method("modify_terrain"):
+					# Dig a small box at this position (shape 1 = box, value > 0 = dig)
+					terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
 	
 	# Spawn blocks with rotation
 	for block in blocks:
