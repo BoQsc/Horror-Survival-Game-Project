@@ -93,11 +93,12 @@ func _update_selection_box(c1: Vector3, c2: Vector3):
 	var min_c = Vector3(min(c1.x, c2.x), min(c1.y, c2.y), min(c1.z, c2.z))
 	var max_c = Vector3(max(c1.x, c2.x), max(c1.y, c2.y), max(c1.z, c2.z))
 	
-	# Size is difference + 1 (since blocks are 1 unit)
-	var size = (max_c - min_c) + Vector3.ONE
+	# Size is difference + 1 (since blocks are 1 unit) + margin to prevent z-fighting
+	const MARGIN = 0.05
+	var size = (max_c - min_c) + Vector3.ONE + Vector3(MARGIN * 2, MARGIN * 2, MARGIN * 2)
 	
 	# Center is midpoint
-	var center = min_c + size / 2.0
+	var center = min_c + (max_c - min_c + Vector3.ONE) / 2.0
 	
 	# Update mesh size
 	var box_mesh = selection_box.mesh as BoxMesh
