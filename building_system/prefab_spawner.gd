@@ -305,3 +305,163 @@ func load_save_data(data: Dictionary):
 		for key in data.spawned_positions:
 			spawned_positions[key] = true
 		print("PrefabSpawner: Loaded %d spawned positions" % spawned_positions.size())
+
+# ============ USER PREFAB SUPPORT ============
+
+const USER_PREFAB_DIR = "user://prefabs/"
+
+## Load all user prefabs from user://prefabs/ directory
+func load_user_prefabs():
+	if not DirAccess.dir_exists_absolute(USER_PREFAB_DIR):
+		return
+	
+	var dir = DirAccess.open(USER_PREFAB_DIR)
+	if not dir:
+		return
+	
+	var count = 0
+	dir.list_dir_begin()
+	var file_name = dir.get_next()
+	while file_name != "":
+		if file_name.ends_with(".json"):
+			var prefab_name = file_name.replace(".json", "")
+			if load_prefab_from_file(prefab_name):
+				count += 1
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	
+	if count > 0:
+		print("PrefabSpawner: Loaded %d user prefabs" % count)
+
+## Load a single prefab from JSON file
+func load_prefab_from_file(prefab_name: String) -> bool:
+	var path = USER_PREFAB_DIR + prefab_name + ".json"
+	if not FileAccess.file_exists(path):
+		print("PrefabSpawner: Prefab not found: %s" % path)
+		return false
+	
+	var file = FileAccess.open(path, FileAccess.READ)
+	if not file:
+		return false
+	
+	var json_string = file.get_as_text()
+	file.close()
+	
+	var json = JSON.new()
+	if json.parse(json_string) != OK:
+		print("PrefabSpawner: Failed to parse prefab: %s" % prefab_name)
+		return false
+	
+	var data = json.get_data()
+	
+	# Convert JSON data to prefab format
+	var blocks: Array = []
+	if data.has("blocks"):
+		for block in data.blocks:
+			var offset = block.offset
+			blocks.append({
+				"offset": Vector3i(int(offset[0]), int(offset[1]), int(offset[2])),
+				"type": block.type,
+				"meta": block.get("meta", 0)
+			})
+	
+	# Store in prefabs dictionary
+	prefabs[prefab_name] = blocks
+	
+	# Store object data if present (for spawning .tscn objects)
+	if data.has("objects") and data.objects.size() > 0:
+		# Store separately for object spawning
+		if not has_meta("prefab_objects"):
+			set_meta("prefab_objects", {})
+		get_meta("prefab_objects")[prefab_name] = data.objects
+	
+	# Store submerge value
+	if data.has("submerge"):
+		if not has_meta("prefab_submerge"):
+			set_meta("prefab_submerge", {})
+		get_meta("prefab_submerge")[prefab_name] = data.submerge
+	
+	print("PrefabSpawner: Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
+	return true
+
+## Spawn a user prefab at the given world position
+## submerge_offset: how many blocks to bury into terrain (negative Y adjustment)
+func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1) -> bool:
+	# Try to load if not already loaded
+	if not prefabs.has(prefab_name):
+		if not load_prefab_from_file(prefab_name):
+			return false
+	
+	# Get submerge from prefab data if not specified
+	if has_meta("prefab_submerge"):
+		var submerge_data = get_meta("prefab_submerge")
+		if submerge_data.has(prefab_name):
+			submerge_offset = submerge_data[prefab_name]
+	
+	# Adjust Y to submerge into terrain
+	var spawn_pos = world_pos - Vector3(0, submerge_offset, 0)
+	
+	# Clear vegetation
+	var veg_mgr = _get_vegetation_manager()
+	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
+		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
+	
+	# Spawn blocks
+	var blocks = prefabs[prefab_name]
+	for block in blocks:
+		var offset = block.offset
+		var block_type = block.type
+		var block_meta = block.get("meta", 0)
+		
+		var pos = spawn_pos + Vector3(offset)
+		building_manager.set_voxel(pos, block_type, block_meta)
+	
+	# Spawn objects if any
+	if has_meta("prefab_objects"):
+		var objects_data = get_meta("prefab_objects")
+		if objects_data.has(prefab_name):
+			for obj in objects_data[prefab_name]:
+				var offset = obj.offset
+				var obj_pos = spawn_pos + Vector3(offset[0], offset[1], offset[2])
+				
+				# Use object_id if available, otherwise try to load scene directly
+				if obj.has("object_id"):
+					var rotation = obj.get("rotation", 0)
+					building_manager.place_object(obj_pos, obj.object_id, rotation)
+				elif obj.has("scene") and obj.scene != "":
+					_spawn_scene_at(obj.scene, obj_pos, obj.get("rotation_y", 0))
+	
+	print("PrefabSpawner: Spawned user prefab '%s' at %v (submerge: %d)" % [prefab_name, spawn_pos, submerge_offset])
+	return true
+
+func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
+	if not ResourceLoader.exists(scene_path):
+		return
+	
+	var packed = load(scene_path) as PackedScene
+	if not packed:
+		return
+	
+	var instance = packed.instantiate()
+	add_child(instance)
+	instance.global_position = pos
+	instance.rotation_degrees.y = rotation_y
+
+## Get list of available user prefabs
+func get_available_prefabs() -> Array[String]:
+	var result: Array[String] = []
+	
+	if not DirAccess.dir_exists_absolute(USER_PREFAB_DIR):
+		return result
+	
+	var dir = DirAccess.open(USER_PREFAB_DIR)
+	if dir:
+		dir.list_dir_begin()
+		var file_name = dir.get_next()
+		while file_name != "":
+			if file_name.ends_with(".json"):
+				result.append(file_name.replace(".json", ""))
+			file_name = dir.get_next()
+		dir.list_dir_end()
+	
+	return result

@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=18 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
@@ -10,6 +10,7 @@
 [ext_resource type="Script" uid="uid://ds7smfcuouehv" path="res://building_system/prefab_spawner.gd" id="8_prefabs"]
 [ext_resource type="PackedScene" uid="uid://dxkm8p7qhwvam" path="res://entities/entity_manager.tscn" id="9_entities"]
 [ext_resource type="Script" path="res://vehicles/vehicle_manager.gd" id="10_vehicles"]
+[ext_resource type="Script" path="res://building_system/prefab_capture.gd" id="11_prefab_capture"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -137,6 +138,11 @@ terrain_manager = NodePath("../TerrainManager")
 script = ExtResource("8_prefabs")
 terrain_manager = NodePath("../TerrainManager")
 building_manager = NodePath("../BuildingManager")
+
+[node name="PrefabCapture" type="Node" parent="." node_paths=PackedStringArray("building_manager", "player")]
+script = ExtResource("11_prefab_capture")
+building_manager = NodePath("../BuildingManager")
+player = NodePath("../Player")
 
 [node name="EntityManager" parent="." node_paths=PackedStringArray("terrain_manager") instance=ExtResource("9_entities")]
 terrain_manager = NodePath("../TerrainManager")
