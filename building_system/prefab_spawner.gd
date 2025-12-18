@@ -6,6 +6,7 @@ class_name PrefabSpawner
 
 @export var terrain_manager: Node3D  # ChunkManager reference
 @export var building_manager: Node3D  # BuildingManager reference
+@export var viewer: Node3D  # Player reference for distance checks
 
 ## Procedural road settings (must match ChunkManager)
 @export var road_spacing: float = 100.0
@@ -16,10 +17,14 @@ class_name PrefabSpawner
 @export var spawn_distance_from_road: float = 15.0  # How far from road center
 @export var spawn_interval: float = 50.0  # Distance between buildings along road
 @export var seed_offset: int = 42  # Added to world seed for variety
+@export var door_despawn_distance: float = 150.0  # Distance at which doors unload
 
 # Track which road intersections have been processed
 # This is persisted via SaveManager to prevent respawning
 var spawned_positions: Dictionary = {}
+
+# Track spawned doors for distance-based cleanup
+var spawned_doors: Dictionary = {}  # "x_z" -> door instance
 
 # Preload the interactive door scene
 const DOOR_SCENE = preload("res://models/interactive_door/interactive_door.tscn")
@@ -83,6 +88,8 @@ func _ready():
 		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	if not building_manager:
 		building_manager = get_tree().get_first_node_in_group("building_manager")
+	if not viewer:
+		viewer = get_tree().get_first_node_in_group("player")
 	
 	# Connect to chunk generation signal
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
@@ -101,6 +108,34 @@ func _ready():
 			road_spacing = terrain_manager.procedural_road_spacing
 		if "procedural_road_width" in terrain_manager:
 			road_width = terrain_manager.procedural_road_width
+
+func _process(_delta):
+	_cleanup_distant_doors()
+
+## Remove doors that are too far from the player
+func _cleanup_distant_doors():
+	if not viewer:
+		viewer = get_tree().get_first_node_in_group("player")
+		if not viewer:
+			return
+	
+	var player_pos = viewer.global_position
+	var max_dist_sq = door_despawn_distance * door_despawn_distance
+	var to_remove: Array = []
+	
+	for key in spawned_doors:
+		var door = spawned_doors[key]
+		if not is_instance_valid(door):
+			to_remove.append(key)
+			continue
+		
+		var dist_sq = door.global_position.distance_squared_to(player_pos)
+		if dist_sq > max_dist_sq:
+			door.queue_free()
+			to_remove.append(key)
+	
+	for key in to_remove:
+		spawned_doors.erase(key)
 
 ## Check if location would have trees (returns true if forested area)
 func _is_forested_area(x: float, z: float) -> bool:
@@ -229,6 +264,13 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 
 ## Spawn an interactive door at the prefab doorway
 func _spawn_door_at_prefab(prefab_world_pos: Vector3):
+	# Create key based on prefab position
+	var key = "%d_%d" % [int(prefab_world_pos.x), int(prefab_world_pos.z)]
+	
+	# Skip if door already exists at this position
+	if spawned_doors.has(key) and is_instance_valid(spawned_doors[key]):
+		return
+	
 	# The doorway is at block offset (1, 1, 0) in the small_house prefab
 	# Door should be placed at the front of the building, facing outward
 	var door_offset = Vector3(1.5, 1.0, 0.0)  # Center in x, floor level + 1, front edge
@@ -245,6 +287,9 @@ func _spawn_door_at_prefab(prefab_world_pos: Vector3):
 	
 	# Now set global position (must be after add_child)
 	door_instance.global_transform.origin = door_pos
+	
+	# Track door for cleanup
+	spawned_doors[key] = door_instance
 	
 	print("PrefabSpawner: Spawned door at %v" % door_pos)
 
