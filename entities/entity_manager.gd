@@ -197,7 +197,7 @@ func _check_dormant_respawns():
 		if scene_path != "":
 			var scene = load(scene_path)
 			if scene:
-				var respawn_pos = Vector3(pos.x, terrain_y + 0.3, pos.z)
+				var respawn_pos = Vector3(pos.x, terrain_y + 1.5, pos.z)
 				var entity = spawn_entity(respawn_pos, scene)
 				if entity:
 					# Restore state
@@ -377,7 +377,7 @@ func _process_spawn_queue():
 		
 		# Only spawn if we hit actual terrain
 		if hit_collider and hit_collider.is_in_group("terrain"):
-			var spawn_pos = Vector3(pos.x, terrain_y + 0.3, pos.z)
+			var spawn_pos = Vector3(pos.x, terrain_y + 1.5, pos.z)
 			var entity = spawn_entity(spawn_pos, spawn_data.scene)
 			if entity:
 				print("[EntityManager] Spawned entity at %s (terrain_y=%.1f)" % [spawn_pos, terrain_y])
