@@ -438,14 +438,18 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		if objects_data.has(prefab_name):
 			for obj in objects_data[prefab_name]:
 				var offset = obj.offset
-				var obj_pos = spawn_pos + Vector3(offset[0], offset[1], offset[2])
+				# Rotate the object offset the same way as blocks
+				var rotated_offset = _rotate_offset(Vector3i(int(offset[0]), int(offset[1]), int(offset[2])), rotation)
+				var obj_pos = spawn_pos + Vector3(rotated_offset)
 				
 				# Use object_id if available, otherwise try to load scene directly
 				if obj.has("object_id"):
-					var obj_rotation = obj.get("rotation", 0)
+					# Combine object's saved rotation with prefab rotation
+					var obj_rotation = (int(obj.get("rotation", 0)) + rotation) % 4
 					building_manager.place_object(obj_pos, obj.object_id, obj_rotation)
 				elif obj.has("scene") and obj.scene != "":
-					_spawn_scene_at(obj.scene, obj_pos, obj.get("rotation_y", 0))
+					var scene_rot_y = obj.get("rotation_y", 0) + (rotation * 90)
+					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
 	
 	print("PrefabSpawner: Spawned user prefab '%s' at %v (submerge: %d)" % [prefab_name, spawn_pos, submerge_offset])
 	return true
