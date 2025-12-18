@@ -309,6 +309,7 @@ func load_save_data(data: Dictionary):
 # ============ USER PREFAB SUPPORT ============
 
 const USER_PREFAB_DIR = "user://prefabs/"
+const RES_PREFAB_DIR = "res://prefabs/"
 
 ## Load all user prefabs from user://prefabs/ directory
 func load_user_prefabs():
@@ -334,11 +335,16 @@ func load_user_prefabs():
 		print("PrefabSpawner: Loaded %d user prefabs" % count)
 
 ## Load a single prefab from JSON file (v2 bracket notation format only)
+## Checks res://prefabs/ first, then user://prefabs/
 func load_prefab_from_file(prefab_name: String) -> bool:
-	var path = USER_PREFAB_DIR + prefab_name + ".json"
+	# Try res://prefabs/ first (built-in prefabs)
+	var path = RES_PREFAB_DIR + prefab_name + ".json"
 	if not FileAccess.file_exists(path):
-		print("PrefabSpawner: Prefab not found: %s" % path)
-		return false
+		# Fall back to user://prefabs/ (user-created prefabs)
+		path = USER_PREFAB_DIR + prefab_name + ".json"
+		if not FileAccess.file_exists(path):
+			print("PrefabSpawner: Prefab not found in res:// or user:// : %s" % prefab_name)
+			return false
 	
 	var file = FileAccess.open(path, FileAccess.READ)
 	if not file:
@@ -588,22 +594,39 @@ func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
 	instance.global_position = pos
 	instance.rotation_degrees.y = rotation_y
 
-## Get list of available user prefabs
+## Get list of available prefabs from both res://prefabs/ and user://prefabs/
 func get_available_prefabs() -> Array[String]:
 	var result: Array[String] = []
+	var seen: Dictionary = {}  # Track names to avoid duplicates
 	
-	if not DirAccess.dir_exists_absolute(USER_PREFAB_DIR):
-		return result
-	
-	var dir = DirAccess.open(USER_PREFAB_DIR)
-	if dir:
-		dir.list_dir_begin()
-		var file_name = dir.get_next()
+	# Check res://prefabs/ first (built-in prefabs)
+	var res_dir = DirAccess.open(RES_PREFAB_DIR)
+	if res_dir:
+		res_dir.list_dir_begin()
+		var file_name = res_dir.get_next()
 		while file_name != "":
 			if file_name.ends_with(".json"):
-				result.append(file_name.replace(".json", ""))
-			file_name = dir.get_next()
-		dir.list_dir_end()
+				var prefab_name = file_name.replace(".json", "")
+				if not seen.has(prefab_name):
+					result.append(prefab_name)
+					seen[prefab_name] = true
+			file_name = res_dir.get_next()
+		res_dir.list_dir_end()
+	
+	# Check user://prefabs/ (user-created prefabs)
+	if DirAccess.dir_exists_absolute(USER_PREFAB_DIR):
+		var user_dir = DirAccess.open(USER_PREFAB_DIR)
+		if user_dir:
+			user_dir.list_dir_begin()
+			var file_name = user_dir.get_next()
+			while file_name != "":
+				if file_name.ends_with(".json"):
+					var prefab_name = file_name.replace(".json", "")
+					if not seen.has(prefab_name):
+						result.append(prefab_name)
+						seen[prefab_name] = true
+				file_name = user_dir.get_next()
+			user_dir.list_dir_end()
 	
 	return result
 
