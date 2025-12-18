@@ -28,6 +28,16 @@ Wait longer for terrain collision to stabilize before spawning at the exact rayc
 
 This would eliminate the "spawning in air and falling" effect while preventing clipping.
 
+## Prefab Spawning Considerations
+
+The current system may NOT work well for spawning inside house prefabs:
+- Raycast only detects terrain (layer 1) - won't hit house floors unless on same layer
+- +1.5m offset could push zombies through ceilings
+
+**Recommended approach for indoor spawns:**
+- Use predefined spawn point markers in prefabs (known-good positions)
+- Or create separate spawn logic for prefab interiors with smaller offset
+
 ## Related Files
 
 - `entities/entity_manager.gd` - Spawn queue and respawn logic
