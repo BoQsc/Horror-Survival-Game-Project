@@ -146,38 +146,44 @@ func _check_dormant_respawns():
 		var pos = data.position
 		
 		# Check if within spawn radius
-		var dist_sq = pos.distance_squared_to(player_pos)
+		var dist_sq = Vector2(pos.x, pos.z).distance_squared_to(Vector2(player_pos.x, player_pos.z))
 		if dist_sq > spawn_dist_sq:
 			continue  # Still too far
 		
-		# Check if terrain is ready
-		if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-			var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
-			if terrain_y < -100.0:
-				continue  # Terrain not loaded
-			
-			# Wait for collision mesh to build (same as regular spawns)
-			if not data.has("ready_time"):
-				data["ready_time"] = current_time
-				data["terrain_y"] = terrain_y
-				continue
-			
-			var elapsed = current_time - data.ready_time
-			if elapsed < 0.3:
-				continue  # Still waiting
-			
-			# Respawn the entity!
-			var scene_path = data.scene_path
-			if scene_path != "":
-				var scene = load(scene_path)
-				if scene:
-					var respawn_pos = Vector3(pos.x, data.terrain_y + 1.0, pos.z)
-					var entity = spawn_entity(respawn_pos, scene)
-					if entity:
-						# Restore state
-						if data.health > 0 and "current_health" in entity:
-							entity.current_health = data.health
-						print("[EntityManager] Respawned dormant entity at %s" % respawn_pos)
+		# Use RAYCAST to check if terrain collision is ready (same as spawn queue)
+		var space_state = get_world_3d().direct_space_state
+		var ray_from = Vector3(pos.x, 200.0, pos.z)
+		var ray_to = Vector3(pos.x, -50.0, pos.z)
+		
+		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
+		query.collision_mask = 1  # Only terrain layer
+		var result = space_state.intersect_ray(query)
+		
+		if result.is_empty():
+			continue  # Terrain collision not ready
+		
+		# Wait for collision stability
+		if not data.has("ready_time"):
+			data["ready_time"] = current_time
+			data["collision_y"] = result.position.y
+			continue
+		
+		var elapsed = current_time - data.ready_time
+		if elapsed < 0.5:
+			continue  # Still waiting
+		
+		# Respawn the entity at collision point!
+		var scene_path = data.scene_path
+		if scene_path != "":
+			var scene = load(scene_path)
+			if scene:
+				var respawn_pos = Vector3(pos.x, data.collision_y + 0.3, pos.z)
+				var entity = spawn_entity(respawn_pos, scene)
+				if entity:
+					# Restore state
+					if data.health > 0 and "current_health" in entity:
+						entity.current_health = data.health
+					print("[EntityManager] Respawned dormant entity at %s" % respawn_pos)
 					completed.append(i)
 	
 	# Remove respawned entities from dormant list (reverse order)
@@ -332,8 +338,8 @@ func _process_spawn_queue():
 		if elapsed < 1.5:
 			continue
 		
-		# Spawn at collision point + offset
-		var spawn_pos = Vector3(pos.x, spawn_data.collision_y + 1.5, pos.z)
+		# Spawn at collision point + small offset (0.3m to avoid clipping)
+		var spawn_pos = Vector3(pos.x, spawn_data.collision_y + 0.3, pos.z)
 		var entity = spawn_entity(spawn_pos, spawn_data.scene)
 		if entity:
 			print("[EntityManager] Spawned entity at %s (collision_y=%.1f, after %.1fs)" % [spawn_pos, spawn_data.collision_y, elapsed])
