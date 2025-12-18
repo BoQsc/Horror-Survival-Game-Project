@@ -386,7 +386,8 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 
 ## Spawn a user prefab at the given world position
 ## submerge_offset: how many blocks to bury into terrain (negative Y adjustment)
-func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1) -> bool:
+## rotation: 0-3 for 0°, 90°, 180°, 270° rotation
+func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0) -> bool:
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		if not load_prefab_from_file(prefab_name):
@@ -406,14 +407,15 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
 		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
 	
-	# Spawn blocks
+	# Spawn blocks with rotation
 	var blocks = prefabs[prefab_name]
 	for block in blocks:
 		var offset = block.offset
+		var rotated_offset = _rotate_offset(offset, rotation)
 		var block_type = block.type
 		var block_meta = block.get("meta", 0)
 		
-		var pos = spawn_pos + Vector3(offset)
+		var pos = spawn_pos + Vector3(rotated_offset)
 		building_manager.set_voxel(pos, block_type, block_meta)
 	
 	# Spawn objects if any
@@ -426,8 +428,8 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				
 				# Use object_id if available, otherwise try to load scene directly
 				if obj.has("object_id"):
-					var rotation = obj.get("rotation", 0)
-					building_manager.place_object(obj_pos, obj.object_id, rotation)
+					var obj_rotation = obj.get("rotation", 0)
+					building_manager.place_object(obj_pos, obj.object_id, obj_rotation)
 				elif obj.has("scene") and obj.scene != "":
 					_spawn_scene_at(obj.scene, obj_pos, obj.get("rotation_y", 0))
 	
@@ -465,3 +467,12 @@ func get_available_prefabs() -> Array[String]:
 		dir.list_dir_end()
 	
 	return result
+
+## Rotate a Vector3i offset by 90 degree increments
+func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
+	match rotation:
+		0: return offset  # No rotation
+		1: return Vector3i(-offset.z, offset.y, offset.x)   # 90°
+		2: return Vector3i(-offset.x, offset.y, -offset.z)  # 180°
+		3: return Vector3i(offset.z, offset.y, -offset.x)   # 270°
+	return offset

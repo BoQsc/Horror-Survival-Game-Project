@@ -13,7 +13,7 @@ extends Node
 @onready var player = $"../.."
 @onready var interaction_label: Label = get_node_or_null("../../../UI/InteractionLabel")  # Created dynamically if null
 
-enum Mode { PLAYING, TERRAIN, WATER, BUILDING, OBJECT, CONSTRUCT, ROAD, MATERIAL }
+enum Mode { PLAYING, TERRAIN, WATER, BUILDING, OBJECT, CONSTRUCT, ROAD, MATERIAL, PREFAB }
 var current_mode: Mode = Mode.PLAYING
 var terrain_blocky_mode: bool = true # Default to blocky as requested
 var current_block_id: int = 1
@@ -39,6 +39,13 @@ var current_object_rotation: int = 0
 var construct_item_id: int = 1
 var construct_rotation: int = 0
 var construct_vegetation_type: int = 0  # 0=Rock, 1=Grass
+
+# Prefab placement state
+var available_prefabs: Array[String] = []
+var current_prefab_index: int = 0
+var prefab_rotation: int = 0  # 0, 1, 2, 3 = 0°, 90°, 180°, 270°
+var prefab_preview_nodes: Array[MeshInstance3D] = []  # Ghost blocks for preview
+var prefab_spawner: Node = null  # Cached reference
 
 # Placement mode (applies to BUILDING and OBJECT modes)
 enum PlacementMode { SNAP, EMBED, AUTO }
@@ -137,6 +144,11 @@ func _process(_delta):
 		update_selection_box()
 		update_grid_visualizer()
 		_check_interaction_target()  # Allow door interaction in all modes
+	elif current_mode == Mode.PREFAB:
+		selection_box.visible = false
+		voxel_grid_visualizer.visible = false
+		_process_prefab_preview()
+		_check_interaction_target()
 	else:
 		selection_box.visible = false
 		voxel_grid_visualizer.visible = false
@@ -300,7 +312,7 @@ func _unhandled_input(event):
 				print("[Placement] Mode: %s" % mode_names[placement_mode])
 				update_ui()
 		elif event.keycode == KEY_R:
-			# R key: rotate in OBJECT, BUILDING, or CONSTRUCT mode
+			# R key: rotate in OBJECT, BUILDING, CONSTRUCT, or PREFAB mode
 			if current_mode == Mode.CONSTRUCT:
 				construct_rotation = (construct_rotation + 1) % 4
 				update_ui()
@@ -309,6 +321,22 @@ func _unhandled_input(event):
 				update_ui()
 			elif current_mode == Mode.BUILDING:
 				current_rotation = (current_rotation + 1) % 4
+				update_ui()
+			elif current_mode == Mode.PREFAB:
+				prefab_rotation = (prefab_rotation + 1) % 4
+				_update_prefab_preview()
+				update_ui()
+		elif event.keycode == KEY_BRACKETLEFT:
+			# [ key: previous prefab
+			if current_mode == Mode.PREFAB and available_prefabs.size() > 0:
+				current_prefab_index = (current_prefab_index - 1 + available_prefabs.size()) % available_prefabs.size()
+				_update_prefab_preview()
+				update_ui()
+		elif event.keycode == KEY_BRACKETRIGHT:
+			# ] key: next prefab
+			if current_mode == Mode.PREFAB and available_prefabs.size() > 0:
+				current_prefab_index = (current_prefab_index + 1) % available_prefabs.size()
+				_update_prefab_preview()
 				update_ui()
 		elif event.keycode == KEY_E:
 			# E key: interact with doors/vehicles in ALL modes
@@ -364,7 +392,7 @@ func _unhandled_input(event):
 					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 						placement_y_offset -= 1
 						print("Placement Y offset: %d" % placement_y_offset)
-			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+				elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 					if current_mode == Mode.PLAYING:
 						handle_playing_input(event)
 					elif current_mode == Mode.TERRAIN or current_mode == Mode.WATER:
@@ -379,6 +407,8 @@ func _unhandled_input(event):
 						handle_road_input(event)
 					elif current_mode == Mode.MATERIAL:
 						handle_material_input(event)
+					elif current_mode == Mode.PREFAB:
+						handle_prefab_input(event)
 
 func toggle_mode():
 	if current_mode == Mode.PLAYING:
@@ -401,6 +431,12 @@ func toggle_mode():
 		_destroy_preview()  # Clean up preview when leaving CONSTRUCT mode
 	elif current_mode == Mode.ROAD:
 		current_mode = Mode.MATERIAL
+	elif current_mode == Mode.MATERIAL:
+		current_mode = Mode.PREFAB
+		_load_available_prefabs()
+	elif current_mode == Mode.PREFAB:
+		current_mode = Mode.PLAYING
+		_destroy_prefab_preview()
 	else:
 		current_mode = Mode.PLAYING
 		_destroy_preview()  # Clean up preview
@@ -453,6 +489,12 @@ func update_ui():
 		var brush_size_names = ["Small", "Medium", "Large"]
 		var brush_size_name = brush_size_names[material_brush_index]
 		mode_label.text = "Mode: MATERIAL\nPlacing: %s\nBrush: %s (%.1f)\nL-Click: Dig, R-Click: Place\n[1-4] Material, [5-7] Size, [Q] Toggle" % [mat_name, brush_size_name, material_brush_radius]
+	elif current_mode == Mode.PREFAB:
+		var prefab_name = "None"
+		if available_prefabs.size() > 0 and current_prefab_index < available_prefabs.size():
+			prefab_name = available_prefabs[current_prefab_index]
+		var rot_deg = prefab_rotation * 90
+		mode_label.text = "Mode: PREFAB\n%s (Rot: %d°)\n[←/→] Select, [R] Rotate\nR-Click: Place"  % [prefab_name, rot_deg]
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -1424,3 +1466,144 @@ func _exit_vehicle() -> void:
 	
 	# Hide interaction prompt
 	_hide_interaction_prompt()
+
+# ============ PREFAB PLACEMENT SYSTEM ============
+
+func _load_available_prefabs():
+	# Get prefab spawner reference
+	if not prefab_spawner:
+		prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
+	
+	if prefab_spawner and prefab_spawner.has_method("get_available_prefabs"):
+		available_prefabs = prefab_spawner.get_available_prefabs()
+		current_prefab_index = 0
+		prefab_rotation = 0
+		print("[PREFAB] Loaded %d prefabs" % available_prefabs.size())
+		if available_prefabs.size() > 0:
+			_update_prefab_preview()
+	else:
+		available_prefabs = []
+		print("[PREFAB] No PrefabSpawner found or no prefabs available")
+
+func handle_prefab_input(event):
+	if event.button_index == MOUSE_BUTTON_RIGHT:
+		# Place prefab
+		_place_current_prefab()
+
+func _place_current_prefab():
+	if available_prefabs.size() == 0 or current_prefab_index >= available_prefabs.size():
+		print("[PREFAB] No prefab selected")
+		return
+	
+	var prefab_name = available_prefabs[current_prefab_index]
+	
+	# Get spawn position from raycast
+	var hit = raycast(50.0, false)
+	if not hit:
+		print("[PREFAB] No valid placement position")
+		return
+	
+	# Get terrain manager for height sampling
+	var spawn_y = hit.position.y
+	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
+		spawn_y = terrain_manager.get_terrain_height(hit.position.x, hit.position.z)
+	
+	var spawn_pos = Vector3(floor(hit.position.x), spawn_y, floor(hit.position.z))
+	
+	# Spawn via PrefabSpawner
+	if prefab_spawner and prefab_spawner.has_method("spawn_user_prefab"):
+		var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 1, prefab_rotation)
+		if success:
+			print("[PREFAB] Placed %s at %v (rot: %d)" % [prefab_name, spawn_pos, prefab_rotation * 90])
+		else:
+			print("[PREFAB] Failed to place %s" % prefab_name)
+
+func _update_prefab_preview():
+	# Destroy existing preview
+	_destroy_prefab_preview()
+	
+	if available_prefabs.size() == 0 or current_prefab_index >= available_prefabs.size():
+		return
+	
+	var prefab_name = available_prefabs[current_prefab_index]
+	
+	# Load prefab data to get block positions
+	if not prefab_spawner:
+		prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
+	
+	if not prefab_spawner or not prefab_spawner.has_method("load_prefab_from_file"):
+		return
+	
+	# Ensure prefab is loaded
+	prefab_spawner.load_prefab_from_file(prefab_name)
+	
+	# Get blocks from the prefabs dictionary
+	if not "prefabs" in prefab_spawner:
+		return
+	
+	if not prefab_spawner.prefabs.has(prefab_name):
+		return
+	
+	var blocks = prefab_spawner.prefabs[prefab_name]
+	
+	# Create transparent preview mesh for each block
+	var preview_material = StandardMaterial3D.new()
+	preview_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	preview_material.albedo_color = Color(0.3, 0.8, 0.3, 0.4)  # Green, 40% opacity
+	preview_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	
+	for block in blocks:
+		var offset = block.offset
+		var rotated_offset = _rotate_offset(offset, prefab_rotation)
+		
+		var mesh_inst = MeshInstance3D.new()
+		var box = BoxMesh.new()
+		box.size = Vector3(0.95, 0.95, 0.95)  # Slightly smaller to prevent z-fighting
+		mesh_inst.mesh = box
+		mesh_inst.material_override = preview_material
+		mesh_inst.set_meta("offset", rotated_offset)
+		
+		get_tree().root.add_child(mesh_inst)
+		prefab_preview_nodes.append(mesh_inst)
+
+func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
+	match rotation:
+		0: return offset  # No rotation
+		1: return Vector3i(-offset.z, offset.y, offset.x)   # 90°
+		2: return Vector3i(-offset.x, offset.y, -offset.z)  # 180°
+		3: return Vector3i(offset.z, offset.y, -offset.x)   # 270°
+	return offset
+
+func _destroy_prefab_preview():
+	for node in prefab_preview_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	prefab_preview_nodes.clear()
+
+func _process_prefab_preview():
+	# Update preview positions based on cursor
+	if current_mode != Mode.PREFAB or prefab_preview_nodes.size() == 0:
+		return
+	
+	var hit = raycast(50.0, false)
+	if not hit:
+		# Hide preview when no valid target
+		for node in prefab_preview_nodes:
+			if is_instance_valid(node):
+				node.visible = false
+		return
+	
+	# Get base position
+	var spawn_y = hit.position.y
+	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
+		spawn_y = terrain_manager.get_terrain_height(hit.position.x, hit.position.z)
+	
+	var base_pos = Vector3(floor(hit.position.x), spawn_y - 1, floor(hit.position.z))  # -1 for submerge
+	
+	# Position each preview block
+	for node in prefab_preview_nodes:
+		if is_instance_valid(node):
+			var offset = node.get_meta("offset", Vector3i.ZERO)
+			node.global_position = base_pos + Vector3(offset) + Vector3(0.5, 0.5, 0.5)
+			node.visible = true
