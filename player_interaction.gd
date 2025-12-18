@@ -1515,8 +1515,8 @@ func _place_current_prefab():
 	
 	print("[PREFAB] Raycast hit at: %v" % hit.position)
 	
-	# Use floored hit position for spawn - consistent for blocks and objects
-	var spawn_pos = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
+	# Use floor for X/Z grid alignment, ceil for Y to place ON terrain (not into it)
+	var spawn_pos = Vector3(floor(hit.position.x), ceil(hit.position.y), floor(hit.position.z))
 	print("[PREFAB] Spawn position: %v" % spawn_pos)
 	
 	# Ensure prefab_spawner reference
@@ -1612,12 +1612,10 @@ func _process_prefab_preview():
 				node.visible = false
 		return
 	
-	# Get base position
-	var spawn_y = hit.position.y
-	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-		spawn_y = terrain_manager.get_terrain_height(hit.position.x, hit.position.z)
-	
-	var base_pos = Vector3(floor(hit.position.x), spawn_y - 1, floor(hit.position.z))  # -1 for submerge
+	# Get base position - match the placement logic
+	# Surface mode: submerge=0 (on terrain), Carve mode: submerge=1 (buried)
+	var submerge = 1 if prefab_carve_mode else 0
+	var base_pos = Vector3(floor(hit.position.x), ceil(hit.position.y) - submerge, floor(hit.position.z))
 	
 	# Position each preview block
 	for node in prefab_preview_nodes:
