@@ -125,6 +125,8 @@ func _ready():
 	if terrain_manager:
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
 		terrain_manager.chunk_modified.connect(_on_chunk_modified)
+		if terrain_manager.has_signal("chunk_unloaded"):
+			terrain_manager.chunk_unloaded.connect(_on_chunk_unloaded)
 	
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
@@ -169,6 +171,59 @@ func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
 				mmi.get_parent().remove_child(mmi)
 				chunk_node.add_child(mmi)
 		data.chunk_node = chunk_node
+
+## Called when a chunk is unloaded - clean up vegetation data and colliders
+func _on_chunk_unloaded(coord: Vector3i):
+	# Only handle surface chunks (Y=0)
+	if coord.y != 0:
+		return
+	
+	var surface_key = Vector2i(coord.x, coord.z)
+	print("[VegetationManager] Chunk unloaded: %s -> cleaning surface_key %s" % [coord, surface_key])
+	
+	# Clean up trees (including MultiMesh and colliders)
+	if chunk_tree_data.has(surface_key):
+		var data = chunk_tree_data[surface_key]
+		var tree_count = data.trees.size() if data.has("trees") else 0
+		var colliders_removed = 0
+		# Free MultiMesh
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			data.multimesh.queue_free()
+		# Return colliders to pool
+		for tree in data.trees:
+			var key = _tree_key(surface_key, tree.index)
+			if active_colliders.has(key):
+				_return_collider_to_pool(active_colliders[key])
+				active_colliders.erase(key)
+				colliders_removed += 1
+		chunk_tree_data.erase(surface_key)
+		print("  -> Trees: %d, colliders removed: %d, active_colliders remaining: %d" % [tree_count, colliders_removed, active_colliders.size()])
+	else:
+		print("  -> No tree data for this chunk")
+	
+	# Clean up grass
+	if chunk_grass_data.has(surface_key):
+		var data = chunk_grass_data[surface_key]
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			data.multimesh.queue_free()
+		for grass in data.grass_list:
+			var key = _grass_key(surface_key, grass.index)
+			if active_grass_colliders.has(key):
+				_return_grass_collider_to_pool(active_grass_colliders[key])
+				active_grass_colliders.erase(key)
+		chunk_grass_data.erase(surface_key)
+	
+	# Clean up rocks
+	if chunk_rock_data.has(surface_key):
+		var data = chunk_rock_data[surface_key]
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			data.multimesh.queue_free()
+		for rock in data.rock_list:
+			var key = _rock_key(surface_key, rock.index)
+			if active_rock_colliders.has(key):
+				_return_rock_collider_to_pool(active_rock_colliders[key])
+				active_rock_colliders.erase(key)
+		chunk_rock_data.erase(surface_key)
 
 func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	if chunk_node == null:
@@ -256,6 +311,7 @@ func _physics_process(_delta):
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
+		_cleanup_orphan_colliders()  # Clean up any stranded colliders
 	
 	# Process pending placements (retry when chunk becomes valid)
 	_process_pending_placements()
@@ -296,6 +352,54 @@ func _process_pending_placements():
 	
 	for i in range(completed_grass.size() - 1, -1, -1):
 		pending_grass_placements.remove_at(completed_grass[i])
+
+## Clean up any orphan colliders that aren't in loaded chunks
+## This catches colliders that weren't properly tracked in active_colliders
+func _cleanup_orphan_colliders():
+	if not terrain_manager:
+		return
+	
+	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var cleaned = 0
+	var visible_colliders = 0
+	var total_colliders = 0
+	
+	# Check all children that are colliders (StaticBody3D or Area3D)
+	for child in get_children():
+		if child is StaticBody3D or child is Area3D:
+			total_colliders += 1
+			
+			# Skip if already in pool (visible = false means in pool)
+			if not child.visible:
+				continue
+			
+			visible_colliders += 1
+			
+			# Calculate which chunk this collider is in
+			var pos = child.global_position
+			var chunk_x = int(floor(pos.x / chunk_stride))
+			var chunk_z = int(floor(pos.z / chunk_stride))
+			var chunk_key = Vector2i(chunk_x, chunk_z)
+			
+			# If chunk isn't loaded (not in tree/grass/rock data), this is orphaned
+			var is_loaded = chunk_tree_data.has(chunk_key) or chunk_grass_data.has(chunk_key) or chunk_rock_data.has(chunk_key)
+			
+			if not is_loaded:
+				# This collider is orphaned - hide it and disable collision
+				child.visible = false
+				child.collision_layer = 0
+				if child is Area3D:
+					child.monitorable = false
+				# Also disable CollisionShape3D so it doesn't show in debug
+				for grandchild in child.get_children():
+					if grandchild is CollisionShape3D:
+						grandchild.disabled = true
+				cleaned += 1
+				print("  -> Orphan at %s (chunk %s not loaded)" % [pos, chunk_key])
+	
+	# Debug: periodically log counts
+	if total_colliders > 0 and visible_colliders > 0:
+		print("[VegetationManager] Colliders: %d total, %d visible, %d orphaned" % [total_colliders, visible_colliders, cleaned])
 
 var collider_update_counter: int = 0
 
@@ -387,6 +491,10 @@ func _get_collider_from_pool() -> StaticBody3D:
 		var collider = collider_pool.pop_back()
 		collider.visible = debug_collision # Use the flag
 		collider.collision_layer = 1
+		# Re-enable the CollisionShape3D
+		for child in collider.get_children():
+			if child is CollisionShape3D:
+				child.disabled = false
 		return collider
 	
 	# Create new collider
@@ -422,6 +530,10 @@ func _get_collider_from_pool() -> StaticBody3D:
 func _return_collider_to_pool(collider: StaticBody3D):
 	collider.collision_layer = 0  # Disable collision
 	collider.visible = false
+	# Also disable the CollisionShape3D so it doesn't show in Godot's debug view
+	for child in collider.get_children():
+		if child is CollisionShape3D:
+			child.disabled = true
 	collider_pool.append(collider)
 
 # ========== GRASS HELPER FUNCTIONS ==========
@@ -435,6 +547,10 @@ func _get_grass_collider_from_pool() -> Area3D:
 		collider.visible = debug_collision
 		collider.collision_layer = 1
 		collider.monitorable = true
+		# Re-enable CollisionShape3D
+		for child in collider.get_children():
+			if child is CollisionShape3D:
+				child.disabled = false
 		return collider
 	
 	# Create new collider - Area3D so player can walk through
@@ -473,6 +589,10 @@ func _return_grass_collider_to_pool(collider: Area3D):
 	collider.collision_layer = 0
 	collider.monitorable = false
 	collider.visible = false
+	# Disable CollisionShape3D so it doesn't show in Godot's debug view
+	for child in collider.get_children():
+		if child is CollisionShape3D:
+			child.disabled = true
 	grass_collider_pool.append(collider)
 
 func _update_grass_proximity_colliders():
@@ -558,6 +678,10 @@ func _get_rock_collider_from_pool() -> Area3D:
 		collider.visible = debug_collision
 		collider.collision_layer = 1
 		collider.monitorable = true
+		# Re-enable CollisionShape3D
+		for child in collider.get_children():
+			if child is CollisionShape3D:
+				child.disabled = false
 		return collider
 	
 	# Create new collider - Area3D so player can walk through
@@ -596,6 +720,10 @@ func _return_rock_collider_to_pool(collider: Area3D):
 	collider.collision_layer = 0
 	collider.monitorable = false
 	collider.visible = false
+	# Disable CollisionShape3D so it doesn't show in Godot's debug view
+	for child in collider.get_children():
+		if child is CollisionShape3D:
+			child.disabled = true
 	rock_collider_pool.append(collider)
 
 func _update_rock_proximity_colliders():

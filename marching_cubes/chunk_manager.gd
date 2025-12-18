@@ -2,6 +2,7 @@ extends Node3D
 
 signal chunk_generated(coord: Vector3i, chunk_node: Node3D)
 signal chunk_modified(coord: Vector3i, chunk_node: Node3D)  # For terrain edits - vegetation stays
+signal chunk_unloaded(coord: Vector3i)  # Emitted when chunk is removed from world
 signal spawn_zones_ready(positions: Array)  # Emitted when all requested spawn zones have loaded
 
 # 32 Voxels wide
@@ -607,6 +608,9 @@ func update_chunks():
 			for t in tasks: semaphore.post()
 		
 		active_chunks.erase(coord)
+		
+		# Notify systems that chunk has unloaded (for vegetation cleanup, etc.)
+		chunk_unloaded.emit(coord)
 
 	# 2. Load new chunks (adaptive rate limiting based on FPS)
 	if loading_paused:
