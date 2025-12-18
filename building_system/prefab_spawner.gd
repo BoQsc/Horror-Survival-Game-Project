@@ -490,6 +490,11 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		var block_type = block.type
 		var block_meta = block.get("meta", 0)
 		
+		# Rotate meta for directional blocks (stairs type=4, ramps type=2 with metas 1-3)
+		# Meta values 0-3 represent directions that need to rotate with the prefab
+		if block_type == 4 or (block_type == 2 and block_meta >= 1 and block_meta <= 3):
+			block_meta = (block_meta + rotation) % 4
+		
 		var pos = spawn_pos + Vector3(rotated_offset)
 		building_manager.set_voxel(pos, block_type, block_meta)
 	
@@ -506,6 +511,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				# Use object_id if available, otherwise try to load scene directly
 				if obj.has("object_id"):
 					# Combine object's saved rotation with prefab rotation
+					# This keeps objects facing the correct relative direction within the structure
 					var obj_rotation = (int(obj.get("rotation", 0)) + rotation) % 4
 					building_manager.place_object(obj_pos, obj.object_id, obj_rotation)
 				elif obj.has("scene") and obj.scene != "":
