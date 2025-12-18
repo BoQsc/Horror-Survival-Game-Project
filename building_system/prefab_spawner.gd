@@ -394,8 +394,8 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		if not load_prefab_from_file(prefab_name):
 			return false
 	
-	# Get submerge from prefab data if not specified
-	if has_meta("prefab_submerge"):
+	# Get submerge from prefab data ONLY if in carve mode (otherwise respect caller's value)
+	if carve_terrain and has_meta("prefab_submerge"):
 		var submerge_data = get_meta("prefab_submerge")
 		if submerge_data.has(prefab_name):
 			submerge_offset = submerge_data[prefab_name]
