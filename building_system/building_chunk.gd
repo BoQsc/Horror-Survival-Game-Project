@@ -143,12 +143,19 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 	# Add visual instance with collision
 	if scene_instance:
 		add_child(scene_instance)
-		# Position: Center the object over its footprint (size-based offset)
-		# For a 1x1 object, offset is 0.5 (centers on single block)
-		# For a 2x2 object, offset is 1.0 (centers on 4 blocks)
-		var size = ObjectRegistry.get_rotated_size(object_id, rotation)
-		var offset_x = float(size.x) / 2.0
-		var offset_z = float(size.z) / 2.0
+		# Position: Center the object over its ORIGINAL footprint (unrotated size)
+		# The visual rotation is applied to the model, so we use original size for offset
+		# For rotations 1 and 3 (90°/270°), swap the offset components to match rotated footprint
+		var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
+		var offset_x = float(original_size.x) / 2.0
+		var offset_z = float(original_size.z) / 2.0
+		
+		# For 90° and 270° rotations, swap offsets since footprint is rotated
+		if rotation == 1 or rotation == 3:
+			var temp = offset_x
+			offset_x = offset_z
+			offset_z = temp
+		
 		scene_instance.position = Vector3(local_anchor.x + offset_x, local_anchor.y + fractional_y, local_anchor.z + offset_z)
 		# Apply rotation (90 degree increments)
 		scene_instance.rotation_degrees.y = rotation * 90
@@ -262,9 +269,16 @@ func restore_object_visuals():
 		
 		# Add and position the visual
 		add_child(scene_instance)
-		var size = ObjectRegistry.get_rotated_size(object_id, rotation)
-		var offset_x = float(size.x) / 2.0
-		var offset_z = float(size.z) / 2.0
+		var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
+		var offset_x = float(original_size.x) / 2.0
+		var offset_z = float(original_size.z) / 2.0
+		
+		# For 90° and 270° rotations, swap offsets since footprint is rotated
+		if rotation == 1 or rotation == 3:
+			var temp = offset_x
+			offset_x = offset_z
+			offset_z = temp
+		
 		scene_instance.position = Vector3(local_anchor.x + offset_x, local_anchor.y + fractional_y, local_anchor.z + offset_z)
 		scene_instance.rotation_degrees.y = rotation * 90
 		
