@@ -333,7 +333,7 @@ func load_user_prefabs():
 	if count > 0:
 		print("PrefabSpawner: Loaded %d user prefabs" % count)
 
-## Load a single prefab from JSON file
+## Load a single prefab from JSON file (v2 bracket notation format only)
 func load_prefab_from_file(prefab_name: String) -> bool:
 	var path = USER_PREFAB_DIR + prefab_name + ".json"
 	if not FileAccess.file_exists(path):
@@ -355,36 +355,22 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 	var data = json.get_data()
 	var version = data.get("version", 1)
 	
-	# Convert JSON data to prefab format
-	var blocks: Array = []
+	# v2 format required
+	if version < 2 or not data.has("layers"):
+		print("PrefabSpawner: Prefab '%s' uses old format (v%d). Run convert_prefab.py to upgrade." % [prefab_name, version])
+		return false
 	
-	if version >= 2 and data.has("layers"):
-		# New bracket notation format
-		blocks = _parse_layers(data.layers, data.get("size", [1, 1, 1]))
-	elif data.has("blocks"):
-		# Old format (version 1)
-		for block in data.blocks:
-			var offset = block.offset
-			blocks.append({
-				"offset": Vector3i(int(offset[0]), int(offset[1]), int(offset[2])),
-				"type": block.type,
-				"meta": block.get("meta", 0)
-			})
+	# Parse bracket notation layers
+	var blocks = _parse_layers(data.layers, data.get("size", [1, 1, 1]))
 	
 	# Store in prefabs dictionary
 	prefabs[prefab_name] = blocks
 	
 	# Store object data if present (for spawning .tscn objects)
 	if data.has("objects") and data.objects.size() > 0:
-		# Store separately for object spawning
 		if not has_meta("prefab_objects"):
 			set_meta("prefab_objects", {})
-		
-		# Convert compact format to full format if needed
-		var objects_data = data.objects
-		if version >= 2:
-			objects_data = _parse_compact_objects(data.objects)
-		get_meta("prefab_objects")[prefab_name] = objects_data
+		get_meta("prefab_objects")[prefab_name] = _parse_compact_objects(data.objects)
 	
 	# Store submerge value
 	if data.has("submerge"):
@@ -392,7 +378,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 			set_meta("prefab_submerge", {})
 		get_meta("prefab_submerge")[prefab_name] = data.submerge
 	
-	print("PrefabSpawner: Loaded prefab '%s' (v%d) with %d blocks" % [prefab_name, version, blocks.size()])
+	print("PrefabSpawner: Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
 	return true
 
 ## Parse bracket notation token to type and meta
