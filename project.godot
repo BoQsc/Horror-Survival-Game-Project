@@ -21,6 +21,10 @@ config/icon="res://icon.svg"
 
 SaveManager="*res://save_manager.gd"
 
+[display]
+
+window/size/mode=3
+
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/3d-first-person-wasd-input-actions/plugin.cfg", "res://addons/camera3d_templates/plugin.cfg")
