@@ -407,8 +407,20 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
 		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
 	
-	# Spawn blocks with rotation
+	# Carve terrain for submerged blocks to prevent z-fighting
 	var blocks = prefabs[prefab_name]
+	for block in blocks:
+		var offset = block.offset
+		var rotated_offset = _rotate_offset(offset, rotation)
+		var pos = spawn_pos + Vector3(rotated_offset)
+		
+		# If this block is at or below terrain surface, carve it out
+		if pos.y <= world_pos.y:
+			if terrain_manager and terrain_manager.has_method("modify_terrain"):
+				# Dig a small box at this position (shape 1 = box, value > 0 = dig)
+				terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
+	
+	# Spawn blocks with rotation
 	for block in blocks:
 		var offset = block.offset
 		var rotated_offset = _rotate_offset(offset, rotation)
