@@ -37,6 +37,11 @@ public:
     // Main update function
     // is_above_ground: true = load only Y=0, false = load spherical volume
     Dictionary update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride);
+
+    // Optimized height lookup for vegetation (Process entire chunk at once)
+    // Returns PackedFloat32Array of heights. If not found, returns -1000.0.
+    // Order: x + z * (size / step)
+    PackedFloat32Array get_chunk_height_map(const PackedFloat32Array &density, int size, int step);
 };
 
 }

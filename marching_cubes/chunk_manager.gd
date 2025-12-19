@@ -1624,7 +1624,9 @@ func _finalize_chunk_creation(item: Dictionary):
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
 		# Create Node
-		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, true)
+		# OPTIMIZATION: Skip water mesh creation (Infinite Water Plane is used)
+		# Volumetric water mesh generation caused 30ms spikes.
+		# var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, true)
 		
 		# Update Data
 		var data = active_chunks[coord]
@@ -1632,7 +1634,7 @@ func _finalize_chunk_creation(item: Dictionary):
 			data = ChunkData.new()
 			active_chunks[coord] = data
 			
-		data.node_water = result.node if not result.is_empty() else null
+		data.node_water = null # result.node if not result.is_empty() else null
 		data.density_buffer_water = item.dens
 		data.cpu_density_water = item.cpu_dens
 		

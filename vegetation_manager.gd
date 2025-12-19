@@ -908,26 +908,48 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var chunk_world_pos = chunk_node.global_position
 	
 	# Use density lookup instead of physics raycasting (much faster)
-	for x in range(0, chunk_stride, 4):
-		for z in range(0, chunk_stride, 4):
+	# Use density lookup instead of physics raycasting (much faster)
+	var step = 4
+	
+	var batch_heights = PackedFloat32Array()
+	var batch_idx = 0
+	
+	# Try GDExtension batch lookup (Instant)
+	if terrain_manager.get("terrain_grid"):
+		if terrain_manager.active_chunks.has(Vector3i(coord.x, 0, coord.y)):
+			var c_data = terrain_manager.active_chunks[Vector3i(coord.x, 0, coord.y)]
+			if c_data and not c_data.cpu_density_terrain.is_empty():
+				batch_heights = terrain_manager.terrain_grid.get_chunk_height_map(c_data.cpu_density_terrain, chunk_stride, step)
+
+	for x in range(0, chunk_stride, step):
+		for z in range(0, chunk_stride, step):
 			var gx = chunk_origin_x + x
 			var gz = chunk_origin_z + z
 			
 			var noise_val = forest_noise.get_noise_2d(gx, gz)
 			if noise_val < 0.4:
+				# Sync index even if skipping
+				if not batch_heights.is_empty(): batch_idx += 1
 				continue
 			
-			# Use optimized chunk density lookup (checks only this chunk's density)
-			# Vegetation only runs on surface (Y=0) chunks
-			var terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
+			# Use optimized chunk density lookup
+			var terrain_y = -1000.0
+			if not batch_heights.is_empty():
+				# Use batch result
+				if batch_idx < batch_heights.size():
+					terrain_y = batch_heights[batch_idx]
+				batch_idx += 1
+			else:
+				# Slow fallback
+				terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
+				
 			if terrain_y < -100.0:  # No terrain found
 				continue
 			
 			var hit_pos = Vector3(gx, terrain_y, gz)
 			
-			# Skip if underwater
-			var water_dens = terrain_manager.get_water_density(Vector3(gx, terrain_y + 1.0, gz))
-			if water_dens < 0.0:
+			# Skip if underwater (Optimized: Simple check against water level for Infinite Plane)
+			if terrain_y + 1.0 < terrain_manager.water_level:
 				continue
 			
 			var local_pos = hit_pos - chunk_world_pos
@@ -1131,6 +1153,17 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var step = 2 
 	if dense_grass_mode: step = 1 # Use stride 1 for dense mode if requested
 	
+	var batch_heights = PackedFloat32Array()
+	var batch_idx = 0
+	
+	# Try GDExtension batch lookup (Instant)
+	if terrain_manager.get("terrain_grid"): # Check if property exists
+		if terrain_manager.active_chunks.has(Vector3i(coord.x, 0, coord.y)):
+			var c_data = terrain_manager.active_chunks[Vector3i(coord.x, 0, coord.y)]
+			if c_data and not c_data.cpu_density_terrain.is_empty():
+				# Call C++ method
+				batch_heights = terrain_manager.terrain_grid.get_chunk_height_map(c_data.cpu_density_terrain, chunk_stride, step)
+	
 	for x in range(0, chunk_stride, step):
 		for z in range(0, chunk_stride, step):
 			var gx = chunk_origin_x + x
@@ -1141,10 +1174,20 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			if not dense_grass_mode:
 				var noise_val = grass_noise.get_noise_2d(gx, gz)
 				if noise_val < 0.3:
+					# Skip index if using batch (sync index)
+					if not batch_heights.is_empty(): batch_idx += 1
 					continue
 			
 			# Use optimized chunk density lookup
-			var terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
+			var terrain_y = -1000.0
+			if not batch_heights.is_empty():
+				if batch_idx < batch_heights.size():
+					terrain_y = batch_heights[batch_idx]
+				batch_idx += 1
+			else:
+				# Slow fallback
+				terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
+				
 			if terrain_y < -100.0:  # No terrain found
 				continue
 			

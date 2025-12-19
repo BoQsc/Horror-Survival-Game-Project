@@ -10,6 +10,7 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("has_chunk", "coord"), &TerrainGrid::has_chunk);
     ClassDB::bind_method(D_METHOD("clear"), &TerrainGrid::clear);
     ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride"), &TerrainGrid::update);
+    ClassDB::bind_method(D_METHOD("get_chunk_height_map", "density", "size", "step"), &TerrainGrid::get_chunk_height_map);
 }
 
 TerrainGrid::TerrainGrid() {}
@@ -126,4 +127,65 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
     return result;
 }
 
+// namespace godot continue
+
+PackedFloat32Array TerrainGrid::get_chunk_height_map(const PackedFloat32Array &density, int size, int step) {
+    PackedFloat32Array heights;
+    int density_size = 33; // Default for 32 stride + 1 padding
+    if (density.size() < density_size * density_size * density_size) {
+        // Safety check, return empty or full of errors?
+        // Just return empty, script can check size
+        return heights;
+    }
+    
+    // Reserve memory
+    int grid_points_side = (size + step - 1) / step; // ceil div? No, range is exclusive in GDScript: 0, 2, ... < 32. Count = 16.
+    // GDScript: range(0, 32, 2) -> 0, 2, ..., 30. (16 points)
+    grid_points_side = (size + step - 1) / step; 
+    
+    // But exact count is `(size - 1) / step + 1` if inclusive?
+    // range(0, size, step): count = ceil(size/step).
+    int count = 0;
+    for (int i = 0; i < size; i+=step) count++;
+    
+    heights.resize(count * count);
+    
+    int write_idx = 0;
+    
+    for (int x = 0; x < size; x += step) {
+        for (int z = 0; z < size; z += step) {
+            float height = -1000.0f;
+            
+            // Scan Y column from top to bottom
+            float prev_dens = 1.0f;
+            
+            // Indexing: local_x + (local_z * 33 * 33) + (iy * 33)
+            int col_offset = x + (z * density_size * density_size);
+            
+            for (int iy = density_size - 1; iy >= 0; iy--) {
+                int index = col_offset + (iy * density_size);
+                float d = density[index];
+                
+                if (d < 0.0f) {
+                    // Surface found
+                    float local_h;
+                    if (iy < density_size - 1) {
+                         float t = prev_dens / (prev_dens - d);
+                         local_h = (float)(iy + 1) - t;
+                    } else {
+                         local_h = (float)iy;
+                    }
+                    height = local_h;
+                    break; 
+                }
+                prev_dens = d;
+            }
+            heights[write_idx++] = height;
+        }
+    }
+    
+    return heights;
 }
+
+
+} // namespace godot
