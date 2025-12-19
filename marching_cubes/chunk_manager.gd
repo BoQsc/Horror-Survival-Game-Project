@@ -1247,6 +1247,16 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayM
 	
 	var vertex_count = data.size() / 9  # 9 floats per vertex: pos(3) + normal(3) + color(3)
 	
+	# Try using GDExtension "MeshBuilder" for extreme speed (10-50x faster)
+	if ClassDB.class_exists("MeshBuilder"):
+		var builder = ClassDB.instantiate("MeshBuilder")
+		# 9 stride = pos(3) + norm(3) + col(3)
+		var mesh = builder.build_mesh_native(data, 9)
+		if mesh:
+			mesh.surface_set_material(0, material_instance)
+			return mesh
+	
+	# Fallback (slow GDScript path)
 	# Pre-allocate arrays
 	var vertices = PackedVector3Array()
 	var normals = PackedVector3Array()

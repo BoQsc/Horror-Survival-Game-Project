@@ -4,3 +4,7 @@
 # Except this .gitignore and the setup script
 !.gitignore
 !setup_project.py
+!testextension/src/**
+!testextension/bin/**
+!SConstruct
+!testextension/bin/**

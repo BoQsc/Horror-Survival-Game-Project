@@ -1,0 +1,55 @@
+#!/usr/bin/env python
+import os
+import sys
+
+# Point to godot-cpp in addons/gdextension_setup
+# We are in gdextension/, so we go up one level (..) then down into addons/gdextension_setup/
+setup_dir = os.path.join(os.path.dirname(os.getcwd()), "addons", "gdextension_setup")
+env = SConscript(os.path.join(setup_dir, "godot-cpp-godot-4.5-stable/SConstruct"))
+
+# Get the directory where scons is running (the gdextension folder)
+project_path = os.getcwd()
+
+# Point to Zig compiler in addons/gdextension_setup
+zig_exe = os.path.join(setup_dir, "zig-x86_64-windows-0.16.0-dev.1484+d0ba6642b", "zig.exe")
+
+# Configure Zig as the compiler
+env["CC"] = zig_exe + " cc"
+env["CXX"] = zig_exe + " c++"
+env["LINK"] = zig_exe + " c++"
+env["RANLIB"] = zig_exe + " ranlib"
+
+# Use temp files for sources to avoid "command line too long"
+if sys.platform == "win32":
+    env["ARCOM"] = zig_exe + " ar $ARFLAGS $TARGET ${TEMPFILE('$SOURCES')}"
+    env["LINKCOM"] = zig_exe + " c++ $LINKFLAGS -o $TARGET ${TEMPFILE('$SOURCES')} $SHLINKFLAGS"
+else:
+    env["AR"] = zig_exe + " ar"
+    env["LINK"] = zig_exe + " c++"
+
+# Fix for "App Data Dir Unavailable"
+# Keep cache in addons/gdextension_setup to keep this folder clean
+zig_cache = os.path.join(setup_dir, "zig_cache")
+if not os.path.exists(zig_cache):
+    os.makedirs(zig_cache)
+
+env["ENV"]["ZIG_GLOBAL_CACHE_DIR"] = zig_cache
+env["ENV"]["ZIG_LOCAL_CACHE_DIR"] = zig_cache
+
+# Sources - now local to this folder
+sources = Glob("src/*.cpp")
+
+if env["platform"] == "macos":
+    library = env.SharedLibrary(
+        "bin/high_performance.{}.{}.framework/high_performance.{}.{}".format(
+            env["platform"], env["target"], env["platform"], env["target"]
+        ),
+        source=sources,
+    )
+else:
+    library = env.SharedLibrary(
+        "bin/high_performance{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+        source=sources,
+    )
+
+Default(library)
