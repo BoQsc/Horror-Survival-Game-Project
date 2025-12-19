@@ -36,6 +36,9 @@ func _ready():
 	else:
 		print("Door: No AnimationPlayer found!")
 	
+	# Disable any auto-generated collision from the GLB model
+	_disable_glb_collisions()
+	
 	# Setup collision using scene-defined shapes
 	_setup_closed_collision()
 	_setup_opened_collision()
@@ -52,6 +55,31 @@ func _find_animation_player(node: Node):
 		if animation_player:
 			return
 		_find_animation_player(child)
+
+## Disable any auto-generated StaticBody3D collision from the GLB model
+## These are created by Godot during GLB import if the model has collision nodes
+func _disable_glb_collisions():
+	var door_model = get_node_or_null("DoorModel")
+	if not door_model:
+		return
+	
+	var disabled_count = 0
+	_disable_static_bodies_recursive(door_model, disabled_count)
+
+func _disable_static_bodies_recursive(node: Node, disabled_count: int) -> void:
+	for child in node.get_children():
+		# Skip our known collision layers - they will be reparented to our own StaticBody3D
+		if child.name in ["closed door collision layer", "opened door collision layer", "door interaction layer"]:
+			continue
+		
+		# Disable any StaticBody3D collision shapes found in the model
+		if child is StaticBody3D:
+			# Free the entire StaticBody3D (and its children collision shapes)
+			child.queue_free()
+			print("Door: Removed GLB auto-generated StaticBody3D: %s" % child.name)
+		else:
+			# Recurse into child nodes
+			_disable_static_bodies_recursive(child, disabled_count)
 
 ## Find the "closed door collision layer" from scene and wrap it in a StaticBody3D
 func _setup_closed_collision():
