@@ -179,22 +179,68 @@ func _is_valid_spacing(pos: Vector3) -> bool:
 	return true
 
 ## Check if position is over water (skip building placement there)
+## Uses same noise-based regional masking as gen_water_density.glsl
 func _is_over_water(pos: Vector3) -> bool:
-	if not terrain_manager:
-		return false
+	# Get noise frequency from terrain manager
+	var noise_freq = 0.02  # Default
+	if terrain_manager and "noise_frequency" in terrain_manager:
+		noise_freq = terrain_manager.noise_frequency
 	
-	# Get road height at this position
-	var road_y = _get_road_height(pos.x, pos.z)
+	# Sample low-frequency noise to determine wet/dry region
+	# This matches gen_water_density.glsl logic exactly
+	var sample_freq = noise_freq * 0.1
+	var noise_val = _simple_noise_3d(Vector3(pos.x, 0.0, pos.z) * sample_freq)
 	
-	# Check water density at the building position
-	if terrain_manager.has_method("get_water_density"):
-		var check_pos = Vector3(pos.x, road_y + 1.0, pos.z)  # Check slightly above floor
-		var water_density = terrain_manager.get_water_density(check_pos)
-		# Negative density = water present
-		if water_density < 0:
+	# Map 0..1 to -1..1
+	var mask_val = (noise_val * 2.0) - 1.0
+	
+	# Check multiple points around building footprint
+	var check_radius = 8.0  # Slightly larger than building footprint
+	var check_positions = [
+		Vector3(pos.x, 0.0, pos.z),
+		Vector3(pos.x - check_radius, 0.0, pos.z),
+		Vector3(pos.x + check_radius, 0.0, pos.z),
+		Vector3(pos.x, 0.0, pos.z - check_radius),
+		Vector3(pos.x, 0.0, pos.z + check_radius),
+	]
+	
+	for check_pos in check_positions:
+		var n = _simple_noise_3d(Vector3(check_pos.x, 0.0, check_pos.z) * sample_freq)
+		var m = (n * 2.0) - 1.0
+		# VERY strict threshold - exclude anything that might be near water
+		# Shader uses smoothstep(-0.3, 0.3) so m > -0.3 starts transition
+		# We use m > -0.5 to be extra safe
+		if m > -0.5:
 			return true
 	
 	return false
+
+## Simple 3D noise matching the shader's hash function
+func _simple_noise_3d(p: Vector3) -> float:
+	var i = Vector3(floor(p.x), floor(p.y), floor(p.z))
+	var f = Vector3(p.x - i.x, p.y - i.y, p.z - i.z)
+	f = Vector3(f.x * f.x * (3.0 - 2.0 * f.x), f.y * f.y * (3.0 - 2.0 * f.y), f.z * f.z * (3.0 - 2.0 * f.z))
+	
+	var h000 = _hash_3d(i)
+	var h100 = _hash_3d(i + Vector3(1, 0, 0))
+	var h010 = _hash_3d(i + Vector3(0, 1, 0))
+	var h110 = _hash_3d(i + Vector3(1, 1, 0))
+	var h001 = _hash_3d(i + Vector3(0, 0, 1))
+	var h101 = _hash_3d(i + Vector3(1, 0, 1))
+	var h011 = _hash_3d(i + Vector3(0, 1, 1))
+	var h111 = _hash_3d(i + Vector3(1, 1, 1))
+	
+	return lerp(
+		lerp(lerp(h000, h100, f.x), lerp(h010, h110, f.x), f.y),
+		lerp(lerp(h001, h101, f.x), lerp(h011, h111, f.x), f.y),
+		f.z
+	)
+
+func _hash_3d(p: Vector3) -> float:
+	var pp = Vector3(fmod(p.x * 0.3183099 + 0.1, 1.0), fmod(p.y * 0.3183099 + 0.1, 1.0), fmod(p.z * 0.3183099 + 0.1, 1.0))
+	pp = Vector3(abs(pp.x), abs(pp.y), abs(pp.z))
+	pp *= 17.0
+	return fmod(abs(pp.x * pp.y * pp.z * (pp.x + pp.y + pp.z)), 1.0)
 
 ## Spawn a building at the given position
 func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
@@ -204,6 +250,11 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	# Get road height at this position
 	var road_y = _get_road_height(pos.x, pos.z)
 	var spawn_pos = Vector3(floor(pos.x), road_y, floor(pos.z))
+	
+	# Double-check water at spawn time (chunk may have loaded since queueing)
+	if _is_over_water(spawn_pos):
+		print("[BuildingGenerator] Skipped %s at %v - over water" % [prefab_name, spawn_pos])
+		return false
 	
 	# Spawn WITHOUT interior carve (false at the end) for performance
 	var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, false, false, false)

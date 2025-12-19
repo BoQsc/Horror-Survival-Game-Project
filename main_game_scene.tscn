@@ -28,7 +28,7 @@ glow_enabled = true
 
 [sub_resource type="CapsuleShape3D" id="PlayerShape"]
 radius = 0.1
-height = 0.9
+height = 0.7
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_16slq"]
 
@@ -55,7 +55,7 @@ collision_mask = 137
 script = ExtResource("1_player")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.3074646, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.38883972, 0)
 shape = SubResource("PlayerShape")
 
 [node name="Camera3D" type="Camera3D" parent="Player"]
@@ -72,6 +72,7 @@ entity_manager = NodePath("../../../EntityManager")
 vehicle_manager = NodePath("../../../VehicleManager")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Player"]
+visible = false
 mesh = SubResource("CapsuleMesh_16slq")
 
 [node name="UI" type="Control" parent="."]
