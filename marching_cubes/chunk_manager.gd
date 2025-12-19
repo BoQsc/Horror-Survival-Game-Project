@@ -458,6 +458,46 @@ func get_terrain_height(global_x: float, global_z: float) -> float:
 	
 	return best_height  # Return -1000.0 if no terrain found
 
+# Optimized height lookup that only checks a specific chunk (much faster for vegetation placement)
+func get_chunk_surface_height(coord: Vector3i, local_x: int, local_z: int) -> float:
+	if not active_chunks.has(coord):
+		return -1000.0
+		
+	var data = active_chunks[coord]
+	if data == null or data.cpu_density_terrain.is_empty():
+		return -1000.0
+		
+	# Scan Y column from top to bottom within this chunk
+	var chunk_base_y = coord.y * CHUNK_STRIDE
+	var prev_density = 1.0  # Assume air above
+	
+	# Safety check for bounds
+	if local_x < 0 or local_x >= DENSITY_GRID_SIZE or local_z < 0 or local_z >= DENSITY_GRID_SIZE:
+		return -1000.0
+	
+	# Pre-calculate index offsets to avoid multiplication in loop
+	var col_offset = local_x + (local_z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+	var stride_y = DENSITY_GRID_SIZE
+	
+	for iy in range(DENSITY_GRID_SIZE - 1, -1, -1):
+		var index = col_offset + (iy * stride_y)
+		var density = data.cpu_density_terrain[index]
+		
+		if density < 0.0:
+			# Found ground! Interpolate
+			var local_height: float
+			if iy < DENSITY_GRID_SIZE - 1:
+				var t = prev_density / (prev_density - density)
+				local_height = float(iy + 1) - t
+			else:
+				local_height = float(iy)
+			
+			return chunk_base_y + local_height
+		
+		prev_density = density
+		
+	return -1000.0
+
 # Updated to accept layer (0=Terrain, 1=Water) and optional material_id
 func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0, material_id: int = -1):
 	# Calculate bounds of the modification sphere/box
@@ -1404,6 +1444,7 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 
 func _finalize_chunk_creation(item: Dictionary):
 	if item.type == "generation":
+		var start_time = Time.get_ticks_usec()
 		var coord = item.coord
 		
 		# Check if chunk is still wanted
@@ -1418,6 +1459,10 @@ func _finalize_chunk_creation(item: Dictionary):
 		
 		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos, false, chunk_material)
 		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
+		
+		var duration = (Time.get_ticks_usec() - start_time) / 1000.0
+		if duration > 2.0: # Print if takes longer than 2ms
+			print("Chunk Finalize took: %.2f ms" % duration)
 		
 		var data = ChunkData.new()
 		data.node_terrain = result_t.node if not result_t.is_empty() else null
