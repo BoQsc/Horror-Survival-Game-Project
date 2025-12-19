@@ -1,5 +1,6 @@
 #include "register_types.h"
 #include "mesh_builder.h"
+#include "terrain_grid.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -13,6 +14,7 @@ void initialize_high_performance_module(ModuleInitializationLevel p_level) {
     }
 
     ClassDB::register_class<MeshBuilder>();
+    ClassDB::register_class<TerrainGrid>();
 }
 
 void uninitialize_high_performance_module(ModuleInitializationLevel p_level) {

@@ -120,6 +120,8 @@ var fps_samples: Array[float] = []
 var adaptive_frame_budget_ms: float = 1.0  # Dynamically adjusted (reduced for smoother FPS)
 var chunks_per_frame_limit: int = 2  # Dynamically adjusted
 var loading_paused: bool = false
+var terrain_grid = null
+
 
 # Persistent modification storage - survives chunk unloading
 # Format: coord (Vector2i) -> Array of { brush_pos: Vector3, radius: float, value: float, shape: int, layer: int }
@@ -151,6 +153,12 @@ func _ready():
 		print("[GDExtension] MeshBuilder active! Using optimized C++ meshing.")
 	else:
 		push_warning("[GDExtension] MeshBuilder NOT found. Using slow GDScript fallback.")
+
+	# Check for TerrainGrid
+	if ClassDB.class_exists("TerrainGrid"):
+		terrain_grid = ClassDB.instantiate("TerrainGrid")
+		print("[GDExtension] TerrainGrid active! Using optimized C++ chunk logic.")
+
 
 	# Load shaders (Data only, safe on Main Thread)
 	shader_gen_spirv = load("res://marching_cubes/gen_density.glsl").get_spirv()
@@ -620,6 +628,103 @@ func _exit_tree():
 			thread.wait_to_finish()
 
 func update_chunks():
+	if terrain_grid:
+		_update_chunks_native()
+	else:
+		_update_chunks_gdscript()
+
+func _update_chunks_native():
+	if loading_paused:
+		return
+
+	var p_pos = viewer.global_position
+	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
+	var is_above_ground = p_chunk_y >= 0
+	
+	# 1. Update Grid (C++)
+	# Returns { "load": [Vector3i], "unload": [Vector3i] }
+	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE)
+	
+	# 2. Process Unloads
+	for coord in result["unload"]:
+		_unload_chunk(coord)
+		terrain_grid.remove_chunk(coord)
+		
+	# 3. Process Loads
+	var chunks_queued = 0
+	
+	for coord in result["load"]:
+		if chunks_queued >= chunks_per_frame_limit:
+			break
+			
+		# Safe check, though Grid should handle it
+		if active_chunks.has(coord):
+			continue
+			
+		_load_chunk(coord)
+		terrain_grid.add_chunk(coord)
+		chunks_queued += 1
+		
+	# 4. Special Case: Stored Modifications (Force load if nearby)
+	if chunks_queued < chunks_per_frame_limit and not initial_load_phase:
+		for coord in stored_modifications:
+			if chunks_queued >= chunks_per_frame_limit: break
+			if active_chunks.has(coord): continue
+			
+			var chunk_origin = Vector3(coord.x * CHUNK_STRIDE, 0, coord.z * CHUNK_STRIDE)
+			var dist_xz = Vector2(chunk_origin.x, chunk_origin.z).distance_to(Vector2(p_pos.x, p_pos.z))
+			
+			if dist_xz <= (render_distance * CHUNK_STRIDE):
+				_load_chunk(coord)
+				terrain_grid.add_chunk(coord)
+				chunks_queued += 1
+
+func _load_chunk(coord: Vector3i):
+	active_chunks[coord] = null
+	
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+	var task = {
+		"type": "generate",
+		"coord": coord,
+		"pos": chunk_pos
+	}
+	
+	mutex.lock()
+	task_queue.append(task)
+	mutex.unlock()
+	semaphore.post()
+
+func _unload_chunk(coord: Vector3i):
+	mutex.lock()
+	var i = task_queue.size() - 1
+	while i >= 0:
+		var t = task_queue[i]
+		if t.type == "generate" and t.coord == coord:
+			task_queue.remove_at(i)
+		i -= 1
+	mutex.unlock()
+	
+	var data = active_chunks[coord]
+	if data: 
+		if data.node_terrain: data.node_terrain.queue_free()
+		if data.node_water: data.node_water.queue_free()
+		
+		var tasks = []
+		if data.density_buffer_terrain.is_valid():
+			tasks.append({ "type": "free", "rid": data.density_buffer_terrain })
+		if data.density_buffer_water.is_valid():
+			tasks.append({ "type": "free", "rid": data.density_buffer_water })
+			
+		mutex.lock()
+		for t in tasks: task_queue.append(t)
+		mutex.unlock()
+		
+		for t in tasks: semaphore.post()
+	
+	active_chunks.erase(coord)
+	chunk_unloaded.emit(coord)
+
+func _update_chunks_gdscript():
 	var p_pos = viewer.global_position
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))  # Y uses CHUNK_STRIDE for 1-voxel overlap
