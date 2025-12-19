@@ -75,6 +75,13 @@ var placed_rocks: Array[Dictionary] = []  # { world_pos, scale, rotation }
 var pending_rock_placements: Array[Dictionary] = []
 var pending_grass_placements: Array[Dictionary] = []
 
+# Incremental Collider Updates
+var pending_collider_adds: Array[Dictionary] = [] # {type, key, item}
+var pending_collider_removes: Array[Dictionary] = [] # {type, key}
+var keys_pending_add: Dictionary = {} # Duplicate check
+var keys_pending_remove: Dictionary = {} # Duplicate check
+const MAX_COLLIDER_UPDATES_PER_FRAME = 5
+
 func _ready():
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
@@ -253,7 +260,8 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	pending_chunks.append({
 		"coord": surface_key,  # Use surface_key for vegetation
 		"chunk_node": chunk_node,
-		"frames_waited": 0
+		"frames_waited": 0,
+		"stage": 0 # 0=Trees, 1=Grass, 2=Rocks
 	})
 
 func _cleanup_chunk_trees(coord: Vector2i):
@@ -291,30 +299,140 @@ func _physics_process(_delta):
 	# Process only ONE pending chunk per physics frame (rate limited)
 	if not pending_chunks.is_empty():
 		var item = pending_chunks[0]
-		item.frames_waited += 1
 		
-		# Wait 5 frames for colliders, then process
-		if item.frames_waited >= 5:
-			pending_chunks.pop_front()
-			if is_instance_valid(item.chunk_node):
-				# Place vegetation - this does raycasting so only one per frame
+		# Wait 5 frames for colliders before starting anything
+		if item.frames_waited < 5:
+			item.frames_waited += 1
+			return # Wait
+			
+		if is_instance_valid(item.chunk_node):
+			# Stage 0: Trees
+			if item.stage == 0:
+				var start = Time.get_ticks_usec()
 				_place_vegetation_for_chunk(item.coord, item.chunk_node)
+				var dt = (Time.get_ticks_usec() - start) / 1000.0
+				if dt > 2.0: print("[Profiler] Veg Stage 0 (Trees): %.2f ms" % dt)
+				item.stage = 1
+				return # Done for this frame
+				
+			# Stage 1: Grass
+			if item.stage == 1:
+				var start = Time.get_ticks_usec()
 				_place_grass_for_chunk(item.coord, item.chunk_node)
+				var dt = (Time.get_ticks_usec() - start) / 1000.0
+				if dt > 2.0: print("[Profiler] Veg Stage 1 (Grass): %.2f ms" % dt)
+				item.stage = 2
+				return # Done for this frame
+				
+			# Stage 2: Rocks
+			if item.stage == 2:
+				var start = Time.get_ticks_usec()
 				_place_rocks_for_chunk(item.coord, item.chunk_node)
-			# Only process one chunk per frame to prevent stutter
+				var dt = (Time.get_ticks_usec() - start) / 1000.0
+				if dt > 2.0: print("[Profiler] Veg Stage 2 (Rocks): %.2f ms" % dt)
+				
+				# All stages done
+				pending_chunks.pop_front()
+				return # Done for this frame
+		else:
+			# Invalid chunk, remove
+			pending_chunks.pop_front()
 			return
 	
 	# Only update colliders if we didn't just place vegetation (spread work)
 	collider_update_counter += 1
 	if collider_update_counter >= 15:  # Increased from 10 to reduce work
 		collider_update_counter = 0
+		var start_coll = Time.get_ticks_usec()
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
 		_cleanup_orphan_colliders()  # Clean up any stranded colliders
+		var dt_coll = (Time.get_ticks_usec() - start_coll) / 1000.0
+		if dt_coll > 2.0:
+			print("[Profiler] Veg Collider Update (Logic): %.2f ms" % dt_coll)
+	
+	# Always process incremental updates (Add/Remove actual nodes)
+	_process_queued_collider_updates()
 	
 	# Process pending placements (retry when chunk becomes valid)
 	_process_pending_placements()
+
+func _process_queued_collider_updates():
+	var updates_done = 0
+	
+	# Prioritize removes (to free pool)
+	while updates_done < MAX_COLLIDER_UPDATES_PER_FRAME and not pending_collider_removes.is_empty():
+		var task = pending_collider_removes.pop_front()
+		keys_pending_remove.erase(task.key)
+		updates_done += 1
+		
+		if task.type == "tree":
+			if active_colliders.has(task.key):
+				_return_collider_to_pool(active_colliders[task.key])
+				active_colliders.erase(task.key)
+		elif task.type == "grass":
+			if active_grass_colliders.has(task.key):
+				_return_grass_collider_to_pool(active_grass_colliders[task.key])
+				active_grass_colliders.erase(task.key)
+		elif task.type == "rock":
+			if active_rock_colliders.has(task.key):
+				_return_rock_collider_to_pool(active_rock_colliders[task.key])
+				active_rock_colliders.erase(task.key)
+				
+	# Then do adds
+	while updates_done < MAX_COLLIDER_UPDATES_PER_FRAME and not pending_collider_adds.is_empty():
+		var task = pending_collider_adds.pop_front()
+		keys_pending_add.erase(task.key)
+		updates_done += 1
+		
+		# Check if remove is pending (race condition)
+		if keys_pending_remove.has(task.key):
+			continue
+			
+		if task.type == "tree":
+			# Copied logic from old loop
+			if not active_colliders.has(task.key):
+				_spawn_tree_collider(task.key, task.item)
+		elif task.type == "grass":
+			if not active_grass_colliders.has(task.key):
+				_spawn_grass_collider(task.key, task.item)
+		elif task.type == "rock":
+			if not active_rock_colliders.has(task.key):
+				_spawn_rock_collider(task.key, task.item)
+
+func _spawn_tree_collider(key, item):
+	var collider = _get_collider_from_pool()
+	collider.global_position = item.tree.hit_pos
+	collider.global_position.y += (collision_height * item.tree.scale) / 2.0
+	var shape = collider.get_child(0).shape as CylinderShape3D
+	shape.radius = collision_radius * item.tree.scale
+	shape.height = collision_height * item.tree.scale
+	collider.set_meta("tree_coord", item.coord)
+	collider.set_meta("tree_index", item.tree.index)
+	active_colliders[key] = collider
+
+func _spawn_grass_collider(key, item):
+	var collider = _get_grass_collider_from_pool()
+	collider.global_position = item.grass.hit_pos
+	collider.global_position.y += grass_collision_height / 2.0
+	var shape = collider.get_child(0).shape as CylinderShape3D
+	shape.radius = grass_collision_radius
+	shape.height = grass_collision_height
+	collider.set_meta("grass_coord", item.coord)
+	collider.set_meta("grass_index", item.grass.index)
+	active_grass_colliders[key] = collider
+
+func _spawn_rock_collider(key, item):
+	var collider = _get_rock_collider_from_pool()
+	collider.global_position = item.rock.hit_pos
+	collider.global_position.y += rock_collision_height / 2.0
+	var shape = collider.get_child(0).shape as CylinderShape3D
+	shape.radius = rock_collision_radius
+	shape.height = rock_collision_height
+	collider.set_meta("rock_coord", item.coord)
+	collider.set_meta("rock_index", item.rock.index)
+	active_rock_colliders[key] = collider
 
 func _process_pending_placements():
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
@@ -418,26 +536,29 @@ func _update_proximity_colliders():
 	# Collect trees that need colliders (only from nearby chunks)
 	var trees_needing_colliders: Array[Dictionary] = []
 	
-	for coord in chunk_tree_data:
-		# Early-out: skip chunks too far from player
-		var chunk_center_x = coord.x * chunk_stride + chunk_stride / 2.0
-		var chunk_center_z = coord.y * chunk_stride + chunk_stride / 2.0
-		var chunk_dist = Vector2(player_pos.x, player_pos.z).distance_to(Vector2(chunk_center_x, chunk_center_z))
-		if chunk_dist > chunk_check_dist:
-			continue
-		
-		var data = chunk_tree_data[coord]
-		for tree in data.trees:
-			if not tree.alive:
-				continue
+	# Optimized: Check only 3x3 chunks around player instead of iterating all loaded chunks
+	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
+	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
+	
+	for dx in range(-1, 2):
+		for dz in range(-1, 2):
+			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
 			
-			var tree_dist_sq = player_pos.distance_squared_to(tree.world_pos)
-			if tree_dist_sq < dist_sq:
-				trees_needing_colliders.append({
-					"coord": coord,
-					"tree": tree,
-					"dist_sq": tree_dist_sq
-				})
+			if not chunk_tree_data.has(coord):
+				continue
+		
+			var data = chunk_tree_data[coord]
+			for tree in data.trees:
+				if not tree.alive:
+					continue
+				
+				var tree_dist_sq = player_pos.distance_squared_to(tree.world_pos)
+				if tree_dist_sq < dist_sq:
+					trees_needing_colliders.append({
+						"coord": coord,
+						"tree": tree,
+						"dist_sq": tree_dist_sq
+					})
 	
 	# Sort by distance (closest first)
 	trees_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
@@ -456,28 +577,16 @@ func _update_proximity_colliders():
 			keys_to_remove.append(key)
 	
 	for key in keys_to_remove:
-		_return_collider_to_pool(active_colliders[key])
-		active_colliders.erase(key)
+		if not keys_pending_remove.has(key):
+			pending_collider_removes.append({"type": "tree", "key": key})
+			keys_pending_remove[key] = true
 	
 	# Add colliders for trees that need them
 	for key in wanted_keys:
-		if not active_colliders.has(key):
+		if not active_colliders.has(key) and not keys_pending_add.has(key):
 			var item = wanted_keys[key]
-			var collider = _get_collider_from_pool()
-			# Use hit_pos (ground level) as base, then offset up by half height to center the cylinder on the trunk
-			collider.global_position = item.tree.hit_pos
-			collider.global_position.y += (collision_height * item.tree.scale) / 2.0
-			
-			# Update collision shape size if needed
-			var shape = collider.get_child(0).shape as CylinderShape3D
-			shape.radius = collision_radius * item.tree.scale
-			shape.height = collision_height * item.tree.scale
-			
-			# Store reference for chopping
-			collider.set_meta("tree_coord", item.coord)
-			collider.set_meta("tree_index", item.tree.index)
-			
-			active_colliders[key] = collider
+			pending_collider_adds.append({"type": "tree", "key": key, "item": item})
+			keys_pending_add[key] = true
 
 func _tree_key(coord: Vector2i, index: int) -> String:
 	return "%d_%d_%d" % [coord.x, coord.y, index]
@@ -607,25 +716,37 @@ func _update_grass_proximity_colliders():
 	# Collect grass that needs colliders
 	var grass_needing_colliders: Array[Dictionary] = []
 	
-	for coord in chunk_grass_data:
-		var chunk_center_x = coord.x * chunk_stride + chunk_stride / 2.0
-		var chunk_center_z = coord.y * chunk_stride + chunk_stride / 2.0
-		var chunk_dist = Vector2(player_pos.x, player_pos.z).distance_to(Vector2(chunk_center_x, chunk_center_z))
-		if chunk_dist > chunk_check_dist:
-			continue
-		
-		var data = chunk_grass_data[coord]
-		for grass in data.grass_list:
-			if not grass.alive:
-				continue
+	# Optimized: Check only 3x3 chunks around player
+	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
+	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
+	
+	for dx in range(-1, 2):
+		for dz in range(-1, 2):
+			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
 			
-			var grass_dist_sq = player_pos.distance_squared_to(grass.world_pos)
-			if grass_dist_sq < dist_sq:
-				grass_needing_colliders.append({
-					"coord": coord,
-					"grass": grass,
-					"dist_sq": grass_dist_sq
-				})
+			if not chunk_grass_data.has(coord):
+				continue
+
+			# Extra Optimization: Check dist to chunk center to skip iterating thousands of grass blades
+			var chunk_center_x = (coord.x + 0.5) * chunk_stride
+			var chunk_center_z = (coord.y + 0.5) * chunk_stride
+			var center_dist = Vector2(player_pos.x, player_pos.z).distance_to(Vector2(chunk_center_x, chunk_center_z))
+			# Safe radius = Stride * 0.71 (approx 23m) + margin
+			if center_dist > collider_distance + 25.0:
+				continue
+		
+			var data = chunk_grass_data[coord]
+			for grass in data.grass_list:
+				if not grass.alive:
+					continue
+				
+				var grass_dist_sq = player_pos.distance_squared_to(grass.world_pos)
+				if grass_dist_sq < dist_sq:
+					grass_needing_colliders.append({
+						"coord": coord,
+						"grass": grass,
+						"dist_sq": grass_dist_sq
+					})
 	
 	# Sort by distance (closest first)
 	grass_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
@@ -644,28 +765,16 @@ func _update_grass_proximity_colliders():
 			keys_to_remove.append(key)
 	
 	for key in keys_to_remove:
-		_return_grass_collider_to_pool(active_grass_colliders[key])
-		active_grass_colliders.erase(key)
+		if not keys_pending_remove.has(key):
+			pending_collider_removes.append({"type": "grass", "key": key})
+			keys_pending_remove[key] = true
 	
 	# Add colliders for grass that needs them
 	for key in wanted_keys:
-		if not active_grass_colliders.has(key):
+		if not active_grass_colliders.has(key) and not keys_pending_add.has(key):
 			var item = wanted_keys[key]
-			var collider = _get_grass_collider_from_pool()
-			collider.global_position = item.grass.hit_pos
-			# Don't scale collision by grass visual scale - use fixed collision size
-			collider.global_position.y += grass_collision_height / 2.0
-			
-			# Update collision shape size (fixed, not scaled by visual scale)
-			var shape = collider.get_child(0).shape as CylinderShape3D
-			shape.radius = grass_collision_radius
-			shape.height = grass_collision_height
-			
-			# Store reference for harvesting
-			collider.set_meta("grass_coord", item.coord)
-			collider.set_meta("grass_index", item.grass.index)
-			
-			active_grass_colliders[key] = collider
+			pending_collider_adds.append({"type": "grass", "key": key, "item": item})
+			keys_pending_add[key] = true
 
 # ========== ROCK HELPER FUNCTIONS ==========
 
@@ -737,25 +846,29 @@ func _update_rock_proximity_colliders():
 	
 	var rocks_needing_colliders: Array[Dictionary] = []
 	
-	for coord in chunk_rock_data:
-		var chunk_center_x = coord.x * chunk_stride + chunk_stride / 2.0
-		var chunk_center_z = coord.y * chunk_stride + chunk_stride / 2.0
-		var chunk_dist = Vector2(player_pos.x, player_pos.z).distance_to(Vector2(chunk_center_x, chunk_center_z))
-		if chunk_dist > chunk_check_dist:
-			continue
-		
-		var data = chunk_rock_data[coord]
-		for rock in data.rock_list:
-			if not rock.alive:
-				continue
+	# Optimized: Check only 3x3 chunks around player
+	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
+	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
+	
+	for dx in range(-1, 2):
+		for dz in range(-1, 2):
+			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
 			
-			var rock_dist_sq = player_pos.distance_squared_to(rock.world_pos)
-			if rock_dist_sq < dist_sq:
-				rocks_needing_colliders.append({
-					"coord": coord,
-					"rock": rock,
-					"dist_sq": rock_dist_sq
-				})
+			if not chunk_rock_data.has(coord):
+				continue
+		
+			var data = chunk_rock_data[coord]
+			for rock in data.rock_list:
+				if not rock.alive:
+					continue
+				
+				var rock_dist_sq = player_pos.distance_squared_to(rock.world_pos)
+				if rock_dist_sq < dist_sq:
+					rocks_needing_colliders.append({
+						"coord": coord,
+						"rock": rock,
+						"dist_sq": rock_dist_sq
+					})
 	
 	rocks_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
 	
@@ -771,24 +884,15 @@ func _update_rock_proximity_colliders():
 			keys_to_remove.append(key)
 	
 	for key in keys_to_remove:
-		_return_rock_collider_to_pool(active_rock_colliders[key])
-		active_rock_colliders.erase(key)
+		if not keys_pending_remove.has(key):
+			pending_collider_removes.append({"type": "rock", "key": key})
+			keys_pending_remove[key] = true
 	
 	for key in wanted_keys:
-		if not active_rock_colliders.has(key):
+		if not active_rock_colliders.has(key) and not keys_pending_add.has(key):
 			var item = wanted_keys[key]
-			var collider = _get_rock_collider_from_pool()
-			collider.global_position = item.rock.hit_pos
-			collider.global_position.y += rock_collision_height / 2.0
-			
-			var shape = collider.get_child(0).shape as CylinderShape3D
-			shape.radius = rock_collision_radius
-			shape.height = rock_collision_height
-			
-			collider.set_meta("rock_coord", item.coord)
-			collider.set_meta("rock_index", item.rock.index)
-			
-			active_rock_colliders[key] = collider
+			pending_collider_adds.append({"type": "rock", "key": key, "item": item})
+			keys_pending_add[key] = true
 
 func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var mmi = MultiMeshInstance3D.new()
@@ -1023,7 +1127,10 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var space_state = get_world_3d().direct_space_state
 	
 	# Grass placement - mode determines density and distribution
-	var step = 2 if dense_grass_mode else 1
+	# Optimized: step 2 reduces checks by 4x (256 vs 1024) - acceptable for grass
+	var step = 2 
+	if dense_grass_mode: step = 1 # Use stride 1 for dense mode if requested
+	
 	for x in range(0, chunk_stride, step):
 		for z in range(0, chunk_stride, step):
 			var gx = chunk_origin_x + x

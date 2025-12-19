@@ -1531,57 +1531,113 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		for t in tasks: semaphore.post()
 		return
 	
-	# Queue for time-budgeted node creation instead of immediate creation
 	pending_nodes_mutex.lock()
+	
+	# Split into two separate tasks to spread main-thread load
+	# Task 1: Terrain (Heavier - ~4ms)
 	pending_nodes.append({
-		"type": "generation",
+		"type": "final_terrain",
 		"coord": coord,
-		"result_t": result_t,
-		"result_w": result_w,
-		"dens_t": dens_t,
-		"dens_w": dens_w,
-		"mat_t": mat_t,
-		"cpu_dens_w": cpu_dens_w,
-		"cpu_dens_t": cpu_dens_t,
-		"cpu_mat_t": cpu_mat_t
+		"result": result_t,
+		"dens": dens_t,
+		"mat_buf": mat_t,
+		"cpu_dens": cpu_dens_t,
+		"cpu_mat": cpu_mat_t
 	})
+	
+	# Task 2: Water (Lighter - ~2ms)
+	pending_nodes.append({
+		"type": "final_water",
+		"coord": coord,
+		"result": result_w,
+		"dens": dens_w,
+		"cpu_dens": cpu_dens_w
+	})
+	
 	pending_nodes_mutex.unlock()
 
 func _finalize_chunk_creation(item: Dictionary):
-	if item.type == "generation":
+	if item.type == "final_terrain":
+		var start = Time.get_ticks_usec()
 		var coord = item.coord
 		
-		# Check if chunk is still wanted
-		if not active_chunks.has(coord):
-			# ... (free logic)
-			return
-		
+		if not active_chunks.has(coord): return
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
-		# Create per-chunk material with 3D texture for material sampling
-		var chunk_material = _create_chunk_material(chunk_pos, item.get("cpu_mat_t", PackedByteArray()))
+		# Create Material
+		var chunk_material = _create_chunk_material(chunk_pos, item.get("cpu_mat", PackedByteArray()))
 		
-		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos, false, chunk_material)
-		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
+		# Create Node (VISUALS ONLY - Defer Collision)
+		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, false, chunk_material, true)
 		
-		var data = ChunkData.new()
-		data.node_terrain = result_t.node if not result_t.is_empty() else null
-		data.node_water = result_w.node if not result_w.is_empty() else null
-		data.collision_shape_terrain = result_t.collision_shape if not result_t.is_empty() else null
-		data.density_buffer_terrain = item.dens_t
-		data.density_buffer_water = item.dens_w
-		data.material_buffer_terrain = item.mat_t  # Store material buffer
-		data.cpu_density_water = item.cpu_dens_w
-		data.cpu_density_terrain = item.cpu_dens_t
-		data.cpu_material_terrain = item.get("cpu_mat_t", PackedByteArray())
+		# Update Data
+		var data = active_chunks[coord]
+		if data == null:
+			data = ChunkData.new()
+			active_chunks[coord] = data
+			
+		data.node_terrain = result.node if not result.is_empty() else null
+		# Collision shape is created but NOT added to tree yet
+		data.collision_shape_terrain = result.collision_shape if not result.is_empty() else null
+		data.density_buffer_terrain = item.dens
+		data.material_buffer_terrain = item.get("mat_buf", RID())
+		data.cpu_density_terrain = item.cpu_dens
 		data.chunk_material = chunk_material
+		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
 		
-		active_chunks[coord] = data
+		# Queue Phase 2: Add Collision (Heavy ~8ms)
+		pending_nodes_mutex.lock()
+		pending_nodes.append({
+			"type": "final_collision",
+			"coord": coord,
+			"shape_node": data.collision_shape_terrain
+		})
+		pending_nodes_mutex.unlock()
 		
-		chunk_generated.emit(coord, data.node_terrain)
-		
-		# Check if this chunk completes any pending spawn zones
+		# Emit signal immediately (Visuals are ready)
+		# Defer signal to prevent sync listeners from spiking this frame
+		call_deferred("emit_signal", "chunk_generated", coord, data.node_terrain)
 		_check_spawn_zone_readiness(coord)
+		
+		var dt = (Time.get_ticks_usec() - start) / 1000.0
+		if dt > 8.0: print("[Profiler] SPIKE Finalize Terrain (Visual): %.2f ms" % dt)
+
+	elif item.type == "final_collision":
+		var start = Time.get_ticks_usec()
+		var coord = item.coord
+		
+		if not active_chunks.has(coord): return
+		var data = active_chunks[coord]
+		if data and data.node_terrain and item.shape_node:
+			# This is the heavy operation (Physics Server Build = ~8ms)
+			if item.shape_node.get_parent() == null:
+				data.node_terrain.add_child(item.shape_node)
+		
+		var dt = (Time.get_ticks_usec() - start) / 1000.0
+		if dt > 8.0: print("[Profiler] SPIKE Finalize Collision: %.2f ms" % dt)
+		
+	elif item.type == "final_water":
+		var start = Time.get_ticks_usec()
+		var coord = item.coord
+		
+		if not active_chunks.has(coord): return
+		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+		
+		# Create Node
+		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, true)
+		
+		# Update Data
+		var data = active_chunks[coord]
+		if data == null:
+			data = ChunkData.new()
+			active_chunks[coord] = data
+			
+		data.node_water = result.node if not result.is_empty() else null
+		data.density_buffer_water = item.dens
+		data.cpu_density_water = item.cpu_dens
+		
+		var dt = (Time.get_ticks_usec() - start) / 1000.0
+		if dt > 8.0: print("[Profiler] SPIKE Finalize Water: %.2f ms" % dt)
 
 ## Create per-chunk ShaderMaterial with 3D material texture
 func _create_chunk_material(chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
@@ -1618,7 +1674,7 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 		return tex3d
 
 	# Slow Fallback
-	# images is already declared above
+	print("[Profiler] WARNING: Hit GDScript texture fallback! Stutter expected.")
 	for z in range(DENSITY_GRID_SIZE):
 		var img = Image.create(DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, Image.FORMAT_R8)
 		for y in range(DENSITY_GRID_SIZE):
@@ -1683,7 +1739,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
 
-func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false, custom_material: Material = null) -> Dictionary:
+func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false, custom_material: Material = null, defer_collision: bool = false) -> Dictionary:
 	if mesh == null:
 		return {}
 		
@@ -1701,7 +1757,6 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 		node.add_to_group("terrain")
 		
 	node.position = position
-	add_child(node)
 	
 	var mesh_instance = MeshInstance3D.new()
 	mesh_instance.mesh = mesh
@@ -1720,7 +1775,12 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	var collision_shape = CollisionShape3D.new()
 	if shape:
 		collision_shape.shape = shape
-	node.add_child(collision_shape)
+	
+	if not defer_collision:
+		node.add_child(collision_shape)
+	
+	# Optimization: Add to tree LAST to perform single update
+	add_child(node)
 	
 	# Return both node and collision_shape for tracking
 	return { "node": node, "collision_shape": collision_shape }
