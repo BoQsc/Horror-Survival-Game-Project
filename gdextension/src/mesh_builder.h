@@ -5,6 +5,7 @@
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/image_texture3d.hpp>
+#include <godot_cpp/classes/concave_polygon_shape3d.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 
@@ -27,6 +28,10 @@ public:
     // Native implementation of 3D texture creation
     // Converts raw density bytes directly to ImageTexture3D
     Ref<ImageTexture3D> create_material_texture(const PackedByteArray& data, int width, int height, int depth);
+
+    // Native implementation of collision shape creation
+    // Generates ConcavePolygonShape3D directly from raw vertex data
+    Ref<ConcavePolygonShape3D> build_collision_shape(const PackedFloat32Array& data, int stride);
 };
 
 }

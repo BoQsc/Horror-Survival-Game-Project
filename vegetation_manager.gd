@@ -791,6 +791,7 @@ func _update_rock_proximity_colliders():
 			active_rock_colliders[key] = collider
 
 func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
+	var start_time = Time.get_ticks_usec()
 	var mmi = MultiMeshInstance3D.new()
 	mmi.multimesh = MultiMesh.new()
 	mmi.multimesh.mesh = tree_mesh
@@ -871,6 +872,10 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"trees": tree_list,
 		"chunk_node": chunk_node
 	}
+
+	var duration = (Time.get_ticks_usec() - start_time) / 1000.0
+	if duration > 2.0:
+		print("Vegetation Place took: %.2f ms" % duration)
 	
 	# Apply chopped_trees filter - hide trees that were previously chopped
 	for tree in tree_list:

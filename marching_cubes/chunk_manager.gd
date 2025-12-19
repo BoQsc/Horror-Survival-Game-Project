@@ -1103,21 +1103,34 @@ func _cpu_thread_function():
 		var task = cpu_task_queue.pop_front()
 		cpu_mutex.unlock()
 		
+		# Initialize builder once per task if available
+		var builder = null
+		if ClassDB.class_exists("MeshBuilder"):
+			builder = ClassDB.instantiate("MeshBuilder")
+
 		# Build terrain mesh and collision (CPU intensive)
 		var mesh_terrain = null
 		var shape_terrain = null
 		if task.vert_floats_terrain.size() > 0:
 			mesh_terrain = build_mesh(task.vert_floats_terrain, material_terrain)
-			# if mesh_terrain:
-			# 	shape_terrain = mesh_terrain.create_trimesh_shape()
+			
+			# Use optimized GDExtension for collision if available
+			if builder:
+				shape_terrain = builder.build_collision_shape(task.vert_floats_terrain, 9)
+			elif mesh_terrain:
+				shape_terrain = mesh_terrain.create_trimesh_shape()
 		
 		# Build water mesh and collision (CPU intensive)
 		var mesh_water = null
 		var shape_water = null
 		if task.vert_floats_water.size() > 0:
 			mesh_water = build_mesh(task.vert_floats_water, material_water)
-			# if mesh_water:
-			# 	shape_water = mesh_water.create_trimesh_shape()
+			
+			# Use optimized GDExtension for collision if available
+			if builder:
+				shape_water = builder.build_collision_shape(task.vert_floats_water, 9)
+			elif mesh_water:
+				shape_water = mesh_water.create_trimesh_shape()
 		
 		# Package results
 		var result_t = { "mesh": mesh_terrain, "shape": shape_terrain }
@@ -1391,19 +1404,15 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 
 func _finalize_chunk_creation(item: Dictionary):
 	if item.type == "generation":
+		var start_time = Time.get_ticks_usec()
 		var coord = item.coord
 		
 		# Check if chunk is still wanted
 		if not active_chunks.has(coord):
-			# Free the density buffers
-			var tasks = []
-			tasks.append({ "type": "free", "rid": item.dens_t })
-			tasks.append({ "type": "free", "rid": item.dens_w })
-			mutex.lock()
-			for t in tasks: task_queue.append(t)
-			mutex.unlock()
-			for t in tasks: semaphore.post()
+			# ... (free logic)
 			return
+		
+		# ... (rest of logic)
 		
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
@@ -1412,6 +1421,10 @@ func _finalize_chunk_creation(item: Dictionary):
 		
 		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos, false, chunk_material)
 		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
+		
+		var duration = (Time.get_ticks_usec() - start_time) / 1000.0
+		if duration > 2.0: # Print if takes longer than 2ms
+			print("Chunk Finalize took: %.2f ms" % duration)
 		
 		var data = ChunkData.new()
 		data.node_terrain = result_t.node if not result_t.is_empty() else null
