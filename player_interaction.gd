@@ -48,6 +48,7 @@ var prefab_carve_mode: bool = false  # If true, carve terrain and submerge. If f
 var prefab_foundation_fill: bool = false  # If true, grow terrain under prefab foundation to fill gaps
 var prefab_carve_fill_mode: bool = false  # If true, carve first then fill after delay
 var prefab_snap_to_road: bool = false  # If true, snap prefab Y to nearest road height
+var prefab_road_snap_y_offset: int = 0  # Manual Y offset when using road snap (scroll wheel)
 var prefab_preview_nodes: Array[MeshInstance3D] = []  # Ghost blocks for preview
 var prefab_spawner: Node = null  # Cached reference
 
@@ -428,6 +429,16 @@ func _unhandled_input(event):
 					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 						placement_y_offset -= 1
 						print("Placement Y offset: %d" % placement_y_offset)
+				# Scroll in PREFAB mode with road snap: adjust Y offset
+				elif current_mode == Mode.PREFAB and prefab_snap_to_road:
+					if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+						prefab_road_snap_y_offset += 1
+						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
+						update_ui()
+					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+						prefab_road_snap_y_offset -= 1
+						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
+						update_ui()
 			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 				if current_mode == Mode.PLAYING:
 					handle_playing_input(event)
@@ -531,8 +542,13 @@ func update_ui():
 			prefab_name = available_prefabs[current_prefab_index]
 		var rot_deg = prefab_rotation * 90
 		var mode_str = _get_prefab_mode_str()
-		var road_snap_str = " ROAD" if prefab_snap_to_road else ""
-		mode_label.text = "Mode: PREFAB (%s%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode, [T] Road\nR-Click: Place"  % [mode_str, road_snap_str, prefab_name, rot_deg]
+		var road_snap_str = ""
+		if prefab_snap_to_road:
+			if prefab_road_snap_y_offset != 0:
+				road_snap_str = " ROAD Y%+d" % prefab_road_snap_y_offset
+			else:
+				road_snap_str = " ROAD"
+		mode_label.text = "Mode: PREFAB (%s%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode, [T] Road\nShift+Scroll: Y offset, R-Click: Place"  % [mode_str, road_snap_str, prefab_name, rot_deg]
 
 ## Get the current prefab placement mode string
 func _get_prefab_mode_str() -> String:
@@ -1560,11 +1576,12 @@ func _place_current_prefab():
 	
 	# Road snap: override Y position to snap to road height
 	# Subtract 1 so the door (at Y=1 in prefab) is at road level, not the floor
+	# Add manual Y offset from scroll wheel
 	if prefab_snap_to_road:
 		var road_y = _get_road_height_at(spawn_pos.x, spawn_pos.z)
 		if road_y > 0:
-			spawn_pos.y = floor(road_y) - 1  # -1 so door is at road level
-			print("[PREFAB] Snapped to road height: Y = %.1f" % spawn_pos.y)
+			spawn_pos.y = floor(road_y) - 1 + prefab_road_snap_y_offset
+			print("[PREFAB] Snapped to road height: Y = %.1f (offset: %d)" % [spawn_pos.y, prefab_road_snap_y_offset])
 	
 	print("[PREFAB] Spawn position: %v" % spawn_pos)
 	
@@ -1750,10 +1767,11 @@ func _process_prefab_preview():
 	
 	# Road snap: override Y position to snap to road height
 	# Subtract 1 so the door (at Y=1 in prefab) is at road level, not the floor
+	# Add manual Y offset from scroll wheel
 	if prefab_snap_to_road:
 		var road_y = _get_road_height_at(base_pos.x, base_pos.z)
 		if road_y > 0:
-			base_pos.y = floor(road_y) - 1 - submerge  # -1 so door is at road level
+			base_pos.y = floor(road_y) - 1 - submerge + prefab_road_snap_y_offset
 	
 	# Position each preview block
 	for node in prefab_preview_nodes:
