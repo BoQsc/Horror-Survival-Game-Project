@@ -9,8 +9,8 @@
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://marching_cubes/roads/road_manager.gd" id="7_roads"]
 [ext_resource type="Script" uid="uid://ds7smfcuouehv" path="res://building_system/prefab_spawner.gd" id="8_prefabs"]
 [ext_resource type="PackedScene" uid="uid://dxkm8p7qhwvam" path="res://entities/entity_manager.tscn" id="9_entities"]
-[ext_resource type="Script" path="res://vehicles/vehicle_manager.gd" id="10_vehicles"]
-[ext_resource type="Script" path="res://building_system/prefab_capture.gd" id="11_prefab_capture"]
+[ext_resource type="Script" uid="uid://o0r1v40u60lk" path="res://vehicles/vehicle_manager.gd" id="10_vehicles"]
+[ext_resource type="Script" uid="uid://bts6arlg03cxx" path="res://building_system/prefab_capture.gd" id="11_prefab_capture"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -48,7 +48,7 @@ shadow_enabled = true
 
 [node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
-collision_mask = 129
+collision_mask = 137
 script = ExtResource("1_player")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
@@ -126,6 +126,7 @@ grass_scale = 0.01
 grass_collision_radius = 0.7
 rock_scale = 0.3
 rock_y_offset = 0.3
+debug_collision = true
 
 [node name="BuildingManager" type="Node3D" parent="." groups=["building_manager"]]
 script = ExtResource("5_buildings")
