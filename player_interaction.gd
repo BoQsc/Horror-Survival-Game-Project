@@ -1599,61 +1599,45 @@ func _place_current_prefab():
 	else:
 		print("[PREFAB] ERROR: PrefabSpawner not found or missing spawn_user_prefab method")
 
-## Calculate road height at a given X, Z position (matches GPU shader algorithm)
+## Calculate road height at a given X, Z position by finding nearest road and sampling terrain
 func _get_road_height_at(x: float, z: float) -> float:
+	if not terrain_manager:
+		return -1.0
+	
 	# Get road spacing from terrain manager
 	var spacing = 100.0  # Default
-	if terrain_manager and "procedural_road_spacing" in terrain_manager:
+	if "procedural_road_spacing" in terrain_manager:
 		spacing = terrain_manager.procedural_road_spacing
 	
 	if spacing <= 0:
 		return -1.0  # No roads
 	
-	# Grid cell
-	var cell_x = floor(x / spacing)
-	var cell_z = floor(z / spacing)
+	# Find nearest road (roads are at grid edges: x % spacing == 0 or z % spacing == 0)
+	# Check both the X-aligned and Z-aligned roads and use the closer one
+	var nearest_x_road = round(x / spacing) * spacing  # Nearest road running along X
+	var nearest_z_road = round(z / spacing) * spacing  # Nearest road running along Z
 	
-	# Position within cell
-	var local_x = fmod(x, spacing)
-	var local_z = fmod(z, spacing)
-	if local_x < 0: local_x += spacing
-	if local_z < 0: local_z += spacing
+	var dist_to_x_road = abs(x - nearest_x_road)
+	var dist_to_z_road = abs(z - nearest_z_road)
 	
-	# Calculate interpolated height using corner heights (same algorithm as shader)
-	# Uses noise but we need to match the shader's noise function
-	# For simplicity, use a deterministic height based on cell position
-	var h1 = _simple_noise_3d(cell_x * spacing * 0.008, 0.0, cell_z * spacing * 0.008) * 3.0 + 12.0
-	var h2 = _simple_noise_3d((cell_x + 1) * spacing * 0.008, 0.0, cell_z * spacing * 0.008) * 3.0 + 12.0
-	var h3 = _simple_noise_3d(cell_x * spacing * 0.008, 0.0, (cell_z + 1) * spacing * 0.008) * 3.0 + 12.0
-	var h4 = _simple_noise_3d((cell_x + 1) * spacing * 0.008, 0.0, (cell_z + 1) * spacing * 0.008) * 3.0 + 12.0
+	# Sample terrain height ON the road (at the road center)
+	var road_x: float
+	var road_z: float
 	
-	# Bilinear interpolation
-	var tx = local_x / spacing
-	var tz = local_z / spacing
-	var interpolated_height = lerp(lerp(h1, h2, tx), lerp(h3, h4, tx), tz)
-	
-	# Stepped road with flat zones (same as shader)
-	var base_level = floor(interpolated_height)
-	var frac = interpolated_height - base_level
-	var flat_size = 0.45
-	
-	if frac < flat_size:
-		return base_level
-	elif frac > 1.0 - flat_size:
-		return base_level + 1.0
+	if dist_to_x_road < dist_to_z_road:
+		# Closer to an X-aligned road (vertical line at x = nearest_x_road)
+		road_x = nearest_x_road
+		road_z = z
 	else:
-		# Ramp zone - use smoothstep
-		var ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size)
-		ramp_t = smoothstep(0.0, 1.0, ramp_t)
-		return base_level + ramp_t
-
-## Simple 3D noise function to match shader (approximation)
-func _simple_noise_3d(x: float, y: float, z: float) -> float:
-	# Use a simple hash-based approach similar to shader
-	var p = Vector3(x, y, z)
-	p = Vector3(fmod(p.x * 0.3183099 + 0.1, 1.0), fmod(p.y * 0.3183099 + 0.1, 1.0), fmod(p.z * 0.3183099 + 0.1, 1.0))
-	var h = p.x * 17.0 + p.y * 17.0 + p.z * 17.0
-	return fmod(abs(sin(h * 43758.5453)), 1.0)
+		# Closer to a Z-aligned road (horizontal line at z = nearest_z_road)
+		road_x = x
+		road_z = nearest_z_road
+	
+	# Query actual terrain height at the road position
+	if terrain_manager.has_method("get_terrain_height"):
+		return terrain_manager.get_terrain_height(road_x, road_z)
+	
+	return -1.0
 
 ## Schedule the fill step for Carve+Fill mode with a 10-second delay
 func _schedule_prefab_fill(prefab_name: String, spawn_pos: Vector3, rotation: int):
