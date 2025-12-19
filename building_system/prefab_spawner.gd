@@ -452,7 +452,8 @@ func _parse_compact_objects(compact: Array) -> Array:
 ## carve_terrain: if true, carve out terrain where submerged blocks go
 ## foundation_fill: if true, grow terrain under foundation blocks to fill gaps
 ## skip_blocks: if true, only perform terrain operations (carve/fill) without placing blocks
-func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, foundation_fill: bool = false, skip_blocks: bool = false) -> bool:
+## interior_carve: if true, carve terrain at block positions that intersect with terrain
+func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, foundation_fill: bool = false, skip_blocks: bool = false, interior_carve: bool = false) -> bool:
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		if not load_prefab_from_file(prefab_name):
@@ -488,6 +489,62 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				if terrain_manager and terrain_manager.has_method("modify_terrain"):
 					# Dig a small box at this position (shape 1 = box, value > 0 = dig)
 					terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
+	
+	# Interior carve: carve only at interior positions (where there are gaps in Y levels)
+	# Walls have blocks at many consecutive Y levels, interior floors have gaps
+	if interior_carve and terrain_manager and terrain_manager.has_method("modify_terrain"):
+		# Build occupancy map: track which X,Z columns have blocks and at what Y levels
+		var column_blocks = {}  # Key: Vector2i(x,z), Value: Array of Y values
+		var min_y = 999
+		var max_y = -999
+		
+		for block in blocks:
+			var offset = block.offset
+			var rotated_offset = _rotate_offset(offset, rotation)
+			var key = Vector2i(rotated_offset.x, rotated_offset.z)
+			if not column_blocks.has(key):
+				column_blocks[key] = []
+			column_blocks[key].append(rotated_offset.y)
+			min_y = min(min_y, rotated_offset.y)
+			max_y = max(max_y, rotated_offset.y)
+		
+		print("[InteriorCarve] Prefab Y range: %d to %d, columns: %d" % [min_y, max_y, column_blocks.size()])
+		
+		# Interior column detection: a column is interior if it has fewer blocks
+		# than the total height span (i.e., there are empty/gap Y levels)
+		var prefab_height = max_y - min_y + 1
+		var carve_count = 0
+		var interior_count = 0
+		
+		for xz_key in column_blocks:
+			var y_levels = column_blocks[xz_key]
+			var block_count = y_levels.size()
+			
+			# Interior = has gaps in Y levels (fewer blocks than height span)
+			# Wall = fully filled column (block at every Y level)
+			var is_interior = block_count < prefab_height
+			
+			if not is_interior:
+				continue  # Skip fully-filled wall columns
+			
+			interior_count += 1
+			
+			# Get world position for this column at floor level
+			var pos = spawn_pos + Vector3(xz_key.x, min_y, xz_key.y)
+			
+			# Check terrain height at this X,Z position
+			var terrain_y = _get_terrain_height(pos.x + 0.5, pos.z + 0.5)
+			
+			# If terrain surface is above this floor, carve upward
+			if terrain_y > 0 and pos.y <= terrain_y:
+				var y = int(pos.y)
+				while y <= int(terrain_y):
+					var carve_pos = Vector3(pos.x + 0.5, float(y) + 0.5, pos.z + 0.5)
+					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)  # Box shape, dig
+					carve_count += 1
+					y += 1
+		
+		print("[InteriorCarve] Found %d interior columns, carved %d positions" % [interior_count, carve_count])
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:

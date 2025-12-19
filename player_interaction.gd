@@ -49,6 +49,7 @@ var prefab_foundation_fill: bool = false  # If true, grow terrain under prefab f
 var prefab_carve_fill_mode: bool = false  # If true, carve first then fill after delay
 var prefab_snap_to_road: bool = false  # If true, snap prefab Y to nearest road height
 var prefab_road_snap_y_offset: int = 0  # Manual Y offset when using road snap (scroll wheel)
+var prefab_interior_carve: bool = false  # If true, carve terrain inside prefab footprint on placement
 var prefab_preview_nodes: Array[MeshInstance3D] = []  # Ghost blocks for preview
 var prefab_spawner: Node = null  # Cached reference
 
@@ -375,6 +376,12 @@ func _unhandled_input(event):
 				prefab_snap_to_road = not prefab_snap_to_road
 				print("[PREFAB] Road snap: %s" % ("ON" if prefab_snap_to_road else "OFF"))
 				update_ui()
+		elif event.keycode == KEY_I:
+			# I key: toggle interior carve in PREFAB mode
+			if current_mode == Mode.PREFAB:
+				prefab_interior_carve = not prefab_interior_carve
+				print("[PREFAB] Interior carve: %s" % ("ON" if prefab_interior_carve else "OFF"))
+				update_ui()
 		elif event.keycode == KEY_E:
 			# E key: interact with doors/vehicles in ALL modes
 			if is_in_vehicle:
@@ -546,7 +553,8 @@ func update_ui():
 				road_snap_str = " ROAD Y%+d" % prefab_road_snap_y_offset
 			else:
 				road_snap_str = " ROAD"
-		mode_label.text = "Mode: PREFAB (%s%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode, [T] Road\nCtrl+Scroll: Y offset, R-Click: Place"  % [mode_str, road_snap_str, prefab_name, rot_deg]
+		var carve_str = " CARVE" if prefab_interior_carve else ""
+		mode_label.text = "Mode: PREFAB (%s%s%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode\n[T] Road, [I] Carve, Ctrl+Scroll: Y"  % [mode_str, road_snap_str, carve_str, prefab_name, rot_deg]
 
 ## Get the current prefab placement mode string
 func _get_prefab_mode_str() -> String:
@@ -1606,7 +1614,7 @@ func _place_current_prefab():
 		else:
 			# Normal modes: Surface, Carve, or Fill
 			var submerge = 1 if prefab_carve_mode else 0
-			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, prefab_foundation_fill)
+			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, prefab_foundation_fill, false, prefab_interior_carve)
 			if success:
 				print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, mode_str])
 			else:
