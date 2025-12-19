@@ -7,6 +7,9 @@ import sys
 setup_dir = os.path.join(os.path.dirname(os.getcwd()), "addons", "gdextension_setup")
 env = SConscript(os.path.join(setup_dir, "godot-cpp-godot-4.5-stable/SConstruct"))
 
+# Keep the .sconsign.dblite file in the setup directory to keep gdextension/ clean
+SConsignFile(os.path.join(setup_dir, ".sconsign"))
+
 # Get the directory where scons is running (the gdextension folder)
 project_path = os.getcwd()
 
