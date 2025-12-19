@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=20 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
@@ -11,6 +11,7 @@
 [ext_resource type="PackedScene" uid="uid://dxkm8p7qhwvam" path="res://entities/entity_manager.tscn" id="9_entities"]
 [ext_resource type="Script" uid="uid://o0r1v40u60lk" path="res://vehicles/vehicle_manager.gd" id="10_vehicles"]
 [ext_resource type="Script" uid="uid://bts6arlg03cxx" path="res://building_system/prefab_capture.gd" id="11_prefab_capture"]
+[ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://building_system/building_generator.gd" id="12_building_generator"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -27,7 +28,9 @@ glow_enabled = true
 
 [sub_resource type="CapsuleShape3D" id="PlayerShape"]
 radius = 0.1
-height = 1.0
+height = 0.9
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_16slq"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_selection"]
 size = Vector3(1.01, 1.01, 1.01)
@@ -52,6 +55,7 @@ collision_mask = 137
 script = ExtResource("1_player")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.3074646, 0)
 shape = SubResource("PlayerShape")
 
 [node name="Camera3D" type="Camera3D" parent="Player"]
@@ -66,6 +70,9 @@ vegetation_manager = NodePath("../../../VegetationManager")
 road_manager = NodePath("../../../RoadManager")
 entity_manager = NodePath("../../../EntityManager")
 vehicle_manager = NodePath("../../../VehicleManager")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Player"]
+mesh = SubResource("CapsuleMesh_16slq")
 
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
@@ -155,3 +162,8 @@ player = NodePath("../Player")
 visible = false
 mesh = SubResource("BoxMesh_selection")
 surface_material_override/0 = SubResource("StandardMaterial3D_selection")
+
+[node name="BuildingGenerator" type="Node3D" parent="." node_paths=PackedStringArray("prefab_spawner", "terrain_manager")]
+script = ExtResource("12_building_generator")
+prefab_spawner = NodePath("../PrefabSpawner")
+terrain_manager = NodePath("../TerrainManager")
