@@ -1108,16 +1108,16 @@ func _cpu_thread_function():
 		var shape_terrain = null
 		if task.vert_floats_terrain.size() > 0:
 			mesh_terrain = build_mesh(task.vert_floats_terrain, material_terrain)
-			if mesh_terrain:
-				shape_terrain = mesh_terrain.create_trimesh_shape()
+			# if mesh_terrain:
+			# 	shape_terrain = mesh_terrain.create_trimesh_shape()
 		
 		# Build water mesh and collision (CPU intensive)
 		var mesh_water = null
 		var shape_water = null
 		if task.vert_floats_water.size() > 0:
 			mesh_water = build_mesh(task.vert_floats_water, material_water)
-			if mesh_water:
-				shape_water = mesh_water.create_trimesh_shape()
+			# if mesh_water:
+			# 	shape_water = mesh_water.create_trimesh_shape()
 		
 		# Package results
 		var result_t = { "mesh": mesh_terrain, "shape": shape_terrain }
@@ -1459,6 +1459,15 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 	# Create array of 2D slices (33 images of 33x33)
 	var images: Array[Image] = []
 	
+	# Check if MeshBuilder is available for fast texture generation
+	if ClassDB.class_exists("MeshBuilder"):
+		var builder = ClassDB.instantiate("MeshBuilder")
+		# Returns ImageTexture3D directly from raw bytes, skipping 35k GDScript calls and binding overheads
+		var tex3d = builder.create_material_texture(cpu_mat, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE)
+		return tex3d
+
+	# Slow Fallback
+	# images is already declared above
 	for z in range(DENSITY_GRID_SIZE):
 		var img = Image.create(DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, Image.FORMAT_R8)
 		for y in range(DENSITY_GRID_SIZE):

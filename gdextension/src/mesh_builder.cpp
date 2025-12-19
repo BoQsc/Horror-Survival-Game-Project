@@ -15,6 +15,7 @@ MeshBuilder::~MeshBuilder() {
 
 void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("build_mesh_native", "data", "stride"), &MeshBuilder::build_mesh_native);
+    ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
 }
 
 Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, int stride) {
@@ -72,4 +73,41 @@ Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, in
     mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 
     return mesh;
+}
+
+
+
+Ref<ImageTexture3D> MeshBuilder::create_material_texture(const PackedByteArray& data, int width, int height, int depth) {
+    Ref<ImageTexture3D> tex;
+    
+    int total_voxels = width * height * depth;
+    if (data.size() < total_voxels * 4) {
+        return tex;
+    }
+
+    const uint8_t* raw_ptr = data.ptr();
+    TypedArray<Image> images;
+    
+    for (int z = 0; z < depth; ++z) {
+        PackedByteArray slice_data;
+        slice_data.resize(width * height);
+        uint8_t* slice_ptr = slice_data.ptrw();
+        
+        int z_offset = z * width * height;
+        
+        for (int i = 0; i < width * height; ++i) {
+            int src_idx = (z_offset + i) * 4;
+            slice_ptr[i] = raw_ptr[src_idx];
+        }
+        
+        Ref<Image> img;
+        img.instantiate();
+        img->set_data(width, height, false, Image::FORMAT_R8, slice_data);
+        images.append(img);
+    }
+    
+    tex.instantiate();
+    tex->create(Image::FORMAT_R8, width, height, depth, false, images);
+    
+    return tex;
 }
