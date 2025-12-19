@@ -1404,15 +1404,12 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 
 func _finalize_chunk_creation(item: Dictionary):
 	if item.type == "generation":
-		var start_time = Time.get_ticks_usec()
 		var coord = item.coord
 		
 		# Check if chunk is still wanted
 		if not active_chunks.has(coord):
 			# ... (free logic)
 			return
-		
-		# ... (rest of logic)
 		
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
@@ -1421,10 +1418,6 @@ func _finalize_chunk_creation(item: Dictionary):
 		
 		var result_t = create_chunk_node(item.result_t.mesh, item.result_t.shape, chunk_pos, false, chunk_material)
 		var result_w = create_chunk_node(item.result_w.mesh, item.result_w.shape, chunk_pos, true)
-		
-		var duration = (Time.get_ticks_usec() - start_time) / 1000.0
-		if duration > 2.0: # Print if takes longer than 2ms
-			print("Chunk Finalize took: %.2f ms" % duration)
 		
 		var data = ChunkData.new()
 		data.node_terrain = result_t.node if not result_t.is_empty() else null
