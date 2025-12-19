@@ -1559,10 +1559,11 @@ func _place_current_prefab():
 	var spawn_pos = Vector3(floor(hit.position.x), ceil(hit.position.y), floor(hit.position.z))
 	
 	# Road snap: override Y position to snap to road height
+	# Subtract 1 so the door (at Y=1 in prefab) is at road level, not the floor
 	if prefab_snap_to_road:
 		var road_y = _get_road_height_at(spawn_pos.x, spawn_pos.z)
 		if road_y > 0:
-			spawn_pos.y = ceil(road_y)
+			spawn_pos.y = floor(road_y) - 1  # -1 so door is at road level
 			print("[PREFAB] Snapped to road height: Y = %.1f" % spawn_pos.y)
 	
 	print("[PREFAB] Spawn position: %v" % spawn_pos)
@@ -1764,10 +1765,11 @@ func _process_prefab_preview():
 	var base_pos = Vector3(floor(hit.position.x), ceil(hit.position.y) - submerge, floor(hit.position.z))
 	
 	# Road snap: override Y position to snap to road height
+	# Subtract 1 so the door (at Y=1 in prefab) is at road level, not the floor
 	if prefab_snap_to_road:
 		var road_y = _get_road_height_at(base_pos.x, base_pos.z)
 		if road_y > 0:
-			base_pos.y = ceil(road_y) - submerge
+			base_pos.y = floor(road_y) - 1 - submerge  # -1 so door is at road level
 	
 	# Position each preview block
 	for node in prefab_preview_nodes:
