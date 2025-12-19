@@ -146,6 +146,12 @@ func _ready():
 	else:
 		print("Viewer NOT found! Terrain generation will not start.")
 
+	# Check for GDExtension
+	if ClassDB.class_exists("MeshBuilder"):
+		print("[GDExtension] MeshBuilder active! Using optimized C++ meshing.")
+	else:
+		push_warning("[GDExtension] MeshBuilder NOT found. Using slow GDScript fallback.")
+
 	# Load shaders (Data only, safe on Main Thread)
 	shader_gen_spirv = load("res://marching_cubes/gen_density.glsl").get_spirv()
 	shader_gen_water_spirv = load("res://marching_cubes/gen_water_density.glsl").get_spirv() # New

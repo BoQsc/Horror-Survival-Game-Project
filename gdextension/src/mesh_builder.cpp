@@ -44,11 +44,20 @@ Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, in
     Color* c_ptr = colors.ptrw();
 
     // Assuming stride is 9: pos(3) + norm(3) + color(3)
+    // Optimized: Reinterpret cast for direct memory to struct copy
+    // We process 9 floats per vertex: 3 for pos, 3 for norm, 3 for color
     for (int i = 0; i < vertex_count; ++i) {
         int idx = i * stride;
         
-        v_ptr[i] = Vector3(src[idx], src[idx + 1], src[idx + 2]);
-        n_ptr[i] = Vector3(src[idx + 3], src[idx + 4], src[idx + 5]);
+        // Direct cast from float* to Vector3*
+        // Position (floats 0,1,2)
+        v_ptr[i] = *reinterpret_cast<const Vector3*>(&src[idx]);
+        
+        // Normal (floats 3,4,5)
+        n_ptr[i] = *reinterpret_cast<const Vector3*>(&src[idx + 3]);
+        
+        // Color (floats 6,7,8) - Source is 3 floats [r, g, b]
+        // Godot Color struct is 4 floats [r, g, b, a], so we must construct explicit Color
         c_ptr[i] = Color(src[idx + 6], src[idx + 7], src[idx + 8]);
     }
 
