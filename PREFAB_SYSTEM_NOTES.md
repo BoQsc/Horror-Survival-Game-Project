@@ -3,7 +3,8 @@
 ## Current Implementation
 - Captures building blocks only (from `building_manager`)
 - Excludes terrain and terrain modifications by default
-- Spawns prefabs with configurable "submerge" offset for terrain alignment
+- Placement modes: **Surface** (on top of terrain) or **Carve** (buried 1 block with terrain carved)
+- Note: Future enhancement planned for automatic submerge mechanics based on prefab structure
 
 ## Future Enhancements
 
