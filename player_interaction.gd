@@ -47,6 +47,7 @@ var prefab_rotation: int = 0  # 0, 1, 2, 3 = 0°, 90°, 180°, 270°
 var prefab_carve_mode: bool = false  # If true, carve terrain and submerge. If false, place on top.
 var prefab_foundation_fill: bool = false  # If true, grow terrain under prefab foundation to fill gaps
 var prefab_carve_fill_mode: bool = false  # If true, carve first then fill after delay
+var prefab_snap_to_road: bool = false  # If true, snap prefab Y to nearest road height
 var prefab_preview_nodes: Array[MeshInstance3D] = []  # Ghost blocks for preview
 var prefab_spawner: Node = null  # Cached reference
 
@@ -367,6 +368,12 @@ func _unhandled_input(event):
 				var mode_str = _get_prefab_mode_str()
 				print("[PREFAB] Placement mode: %s" % mode_str)
 				update_ui()
+		elif event.keycode == KEY_T:
+			# T key: toggle road snap in PREFAB mode
+			if current_mode == Mode.PREFAB:
+				prefab_snap_to_road = not prefab_snap_to_road
+				print("[PREFAB] Road snap: %s" % ("ON" if prefab_snap_to_road else "OFF"))
+				update_ui()
 		elif event.keycode == KEY_E:
 			# E key: interact with doors/vehicles in ALL modes
 			if is_in_vehicle:
@@ -524,7 +531,8 @@ func update_ui():
 			prefab_name = available_prefabs[current_prefab_index]
 		var rot_deg = prefab_rotation * 90
 		var mode_str = _get_prefab_mode_str()
-		mode_label.text = "Mode: PREFAB (%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode\nR-Click: Place"  % [mode_str, prefab_name, rot_deg]
+		var road_snap_str = " ROAD" if prefab_snap_to_road else ""
+		mode_label.text = "Mode: PREFAB (%s%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode, [T] Road\nR-Click: Place"  % [mode_str, road_snap_str, prefab_name, rot_deg]
 
 ## Get the current prefab placement mode string
 func _get_prefab_mode_str() -> String:
@@ -1549,6 +1557,14 @@ func _place_current_prefab():
 	
 	# Use floor for X/Z grid alignment, ceil for Y to place ON terrain (not into it)
 	var spawn_pos = Vector3(floor(hit.position.x), ceil(hit.position.y), floor(hit.position.z))
+	
+	# Road snap: override Y position to snap to road height
+	if prefab_snap_to_road:
+		var road_y = _get_road_height_at(spawn_pos.x, spawn_pos.z)
+		if road_y > 0:
+			spawn_pos.y = ceil(road_y)
+			print("[PREFAB] Snapped to road height: Y = %.1f" % spawn_pos.y)
+	
 	print("[PREFAB] Spawn position: %v" % spawn_pos)
 	
 	# Ensure prefab_spawner reference
@@ -1581,6 +1597,62 @@ func _place_current_prefab():
 				print("[PREFAB] Failed to place %s" % prefab_name)
 	else:
 		print("[PREFAB] ERROR: PrefabSpawner not found or missing spawn_user_prefab method")
+
+## Calculate road height at a given X, Z position (matches GPU shader algorithm)
+func _get_road_height_at(x: float, z: float) -> float:
+	# Get road spacing from terrain manager
+	var spacing = 100.0  # Default
+	if terrain_manager and "procedural_road_spacing" in terrain_manager:
+		spacing = terrain_manager.procedural_road_spacing
+	
+	if spacing <= 0:
+		return -1.0  # No roads
+	
+	# Grid cell
+	var cell_x = floor(x / spacing)
+	var cell_z = floor(z / spacing)
+	
+	# Position within cell
+	var local_x = fmod(x, spacing)
+	var local_z = fmod(z, spacing)
+	if local_x < 0: local_x += spacing
+	if local_z < 0: local_z += spacing
+	
+	# Calculate interpolated height using corner heights (same algorithm as shader)
+	# Uses noise but we need to match the shader's noise function
+	# For simplicity, use a deterministic height based on cell position
+	var h1 = _simple_noise_3d(cell_x * spacing * 0.008, 0.0, cell_z * spacing * 0.008) * 3.0 + 12.0
+	var h2 = _simple_noise_3d((cell_x + 1) * spacing * 0.008, 0.0, cell_z * spacing * 0.008) * 3.0 + 12.0
+	var h3 = _simple_noise_3d(cell_x * spacing * 0.008, 0.0, (cell_z + 1) * spacing * 0.008) * 3.0 + 12.0
+	var h4 = _simple_noise_3d((cell_x + 1) * spacing * 0.008, 0.0, (cell_z + 1) * spacing * 0.008) * 3.0 + 12.0
+	
+	# Bilinear interpolation
+	var tx = local_x / spacing
+	var tz = local_z / spacing
+	var interpolated_height = lerp(lerp(h1, h2, tx), lerp(h3, h4, tx), tz)
+	
+	# Stepped road with flat zones (same as shader)
+	var base_level = floor(interpolated_height)
+	var frac = interpolated_height - base_level
+	var flat_size = 0.45
+	
+	if frac < flat_size:
+		return base_level
+	elif frac > 1.0 - flat_size:
+		return base_level + 1.0
+	else:
+		# Ramp zone - use smoothstep
+		var ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size)
+		ramp_t = smoothstep(0.0, 1.0, ramp_t)
+		return base_level + ramp_t
+
+## Simple 3D noise function to match shader (approximation)
+func _simple_noise_3d(x: float, y: float, z: float) -> float:
+	# Use a simple hash-based approach similar to shader
+	var p = Vector3(x, y, z)
+	p = Vector3(fmod(p.x * 0.3183099 + 0.1, 1.0), fmod(p.y * 0.3183099 + 0.1, 1.0), fmod(p.z * 0.3183099 + 0.1, 1.0))
+	var h = p.x * 17.0 + p.y * 17.0 + p.z * 17.0
+	return fmod(abs(sin(h * 43758.5453)), 1.0)
 
 ## Schedule the fill step for Carve+Fill mode with a 10-second delay
 func _schedule_prefab_fill(prefab_name: String, spawn_pos: Vector3, rotation: int):
@@ -1690,6 +1762,12 @@ func _process_prefab_preview():
 	# Surface mode: submerge=0 (on terrain), Carve mode: submerge=1 (buried)
 	var submerge = 1 if prefab_carve_mode else 0
 	var base_pos = Vector3(floor(hit.position.x), ceil(hit.position.y) - submerge, floor(hit.position.z))
+	
+	# Road snap: override Y position to snap to road height
+	if prefab_snap_to_road:
+		var road_y = _get_road_height_at(base_pos.x, base_pos.z)
+		if road_y > 0:
+			base_pos.y = ceil(road_y) - submerge
 	
 	# Position each preview block
 	for node in prefab_preview_nodes:
