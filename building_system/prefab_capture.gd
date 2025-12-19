@@ -290,7 +290,6 @@ func _capture_region():
 		"name": prefab_name,
 		"version": 2,
 		"size": [size.x, size.y, size.z],
-		"submerge": 1,
 		"layers": layers,
 		"objects": compact_objects
 	}

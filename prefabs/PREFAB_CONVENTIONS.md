@@ -148,7 +148,6 @@ Prefabs use a compact, human-readable bracket notation format.
   "name": "my_prefab",
   "version": 2,
   "size": [10, 9, 12],
-  "submerge": 1,
   "layers": [
     "[1] [1] [1] . . [1] [1] [1]",
     "[1] . . . . . . [1]",
@@ -187,7 +186,6 @@ Example: `[4, 2, 1, 0, 0, 0.0]` = Door (id=4) at position (2,1,0), rotation=0
 |-------|------|-------------|
 | `version` | int | Must be `2` for bracket notation |
 | `size` | [X, Y, Z] | Prefab dimensions |
-| `submerge` | int | Blocks to bury into terrain (typically 1) |
 | `layers` | string[] | Block layout in bracket notation |
 | `objects` | array[] | Compact object arrays |
 

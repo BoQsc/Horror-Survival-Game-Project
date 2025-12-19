@@ -378,12 +378,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 			set_meta("prefab_objects", {})
 		get_meta("prefab_objects")[prefab_name] = _parse_compact_objects(data.objects)
 	
-	# Store submerge value
-	if data.has("submerge"):
-		if not has_meta("prefab_submerge"):
-			set_meta("prefab_submerge", {})
-		get_meta("prefab_submerge")[prefab_name] = data.submerge
-	
+
 	print("PrefabSpawner: Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
 	return true
 
@@ -462,11 +457,9 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		if not load_prefab_from_file(prefab_name):
 			return false
 	
-	# Get submerge from prefab data ONLY if in carve mode (otherwise respect caller's value)
-	if carve_terrain and has_meta("prefab_submerge"):
-		var submerge_data = get_meta("prefab_submerge")
-		if submerge_data.has(prefab_name):
-			submerge_offset = submerge_data[prefab_name]
+	# Use default submerge of 1 for carve mode (prefabs no longer store this value)
+	if carve_terrain:
+		submerge_offset = 1
 	
 	# Adjust Y to submerge into terrain
 	var spawn_pos = world_pos - Vector3(0, submerge_offset, 0)

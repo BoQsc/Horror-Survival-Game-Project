@@ -6,7 +6,6 @@
   "name": "string_id",
   "version": 2,
   "size": [Width_X, Height_Y, Depth_Z],
-  "submerge": int,  // Layers to bury in ground
   "layers": [ ... ],
   "objects": [ ... ]
 }
