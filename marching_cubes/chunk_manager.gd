@@ -88,6 +88,12 @@ var active_chunks: Dictionary = {}
 var pending_nodes: Array[Dictionary] = []  # Queue of completed chunks waiting for node creation
 var pending_nodes_mutex: Mutex
 
+# Time-distributed finalization - spreads chunk appearances evenly over time
+var last_finalization_time_ms: int = 0
+## Minimum time between chunk finalizations (ms). Lower = faster loading, Higher = smoother appearance.
+## 100ms = max 10 chunks/second for very smooth visual spread.
+@export_range(0, 5000, 10) var min_finalization_interval_ms: int = 100
+
 # Two-phase loading system
 # Phase 1 (Initial Load): Fast/aggressive at game start for loading screen
 # Phase 2 (Exploration): Slower/throttled when player explores
@@ -104,7 +110,7 @@ var underground_load_triggered: bool = false  # Track if Y=-1 burst load has bee
 ## Delay between chunk generation when player is exploring (ms).
 ## Higher values reduce FPS drops but make terrain load slower as you move.
 ## Recommended: 100-200ms for smooth exploration.
-@export_range(0, 500, 10) var exploration_delay_ms: int = 300
+@export_range(0, 6000, 10) var exploration_delay_ms: int = 300
 
 # Adaptive loading - throttles based on current FPS
 var target_fps: float = 75.0
@@ -304,7 +310,7 @@ func update_collision_proximity():
 		if data.collision_shape_terrain:
 			data.collision_shape_terrain.disabled = not should_have_collision
 
-# Process pending node creations - STRICT: only 1 per frame to prevent bursts
+# Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
 func process_pending_nodes():
 	if pending_nodes.is_empty():
 		return
@@ -313,15 +319,45 @@ func process_pending_nodes():
 	if loading_paused:
 		return
 	
-	# Process EXACTLY 1 chunk per frame - no loops, no budgets
+	# Time-distributed: Only finalize if enough time has passed since last chunk
+	# This spreads chunk appearances evenly over time instead of bursts
+	var current_time = Time.get_ticks_msec()
+	var time_since_last = current_time - last_finalization_time_ms
+	
+	# During initial load phase, process faster (50ms interval)
+	var effective_interval = 50 if initial_load_phase else min_finalization_interval_ms
+	
+	if time_since_last < effective_interval:
+		return
+	
 	pending_nodes_mutex.lock()
 	if pending_nodes.is_empty():
 		pending_nodes_mutex.unlock()
 		return
+	
+	# Sort by distance to player (closest first) for smooth outward loading
+	_sort_pending_by_distance()
+	
 	var item = pending_nodes.pop_front()
 	pending_nodes_mutex.unlock()
 	
 	_finalize_chunk_creation(item)
+	last_finalization_time_ms = current_time
+
+# Sort pending nodes by distance to player (closest first)
+func _sort_pending_by_distance():
+	if pending_nodes.size() <= 1 or not viewer:
+		return
+	var viewer_chunk = Vector3i(
+		int(floor(viewer.global_position.x / CHUNK_STRIDE)),
+		int(floor(viewer.global_position.y / CHUNK_STRIDE)),
+		int(floor(viewer.global_position.z / CHUNK_STRIDE))
+	)
+	pending_nodes.sort_custom(func(a, b):
+		var dist_a = (a.coord - viewer_chunk).length_squared()
+		var dist_b = (b.coord - viewer_chunk).length_squared()
+		return dist_a < dist_b
+	)
 
 func get_water_density(global_pos: Vector3) -> float:
 	# Find Chunk (3D coordinates)
