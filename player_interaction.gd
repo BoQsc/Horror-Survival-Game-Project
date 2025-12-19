@@ -409,6 +409,10 @@ func _unhandled_input(event):
 						construct_rotation = (construct_rotation + 1) % 4
 					elif current_mode == Mode.OBJECT:
 						current_object_rotation = (current_object_rotation + 1) % 4
+					elif current_mode == Mode.PREFAB and prefab_snap_to_road:
+						# Ctrl+Scroll Up in PREFAB road snap: raise Y
+						prefab_road_snap_y_offset += 1
+						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
 					else:
 						current_rotation = (current_rotation + 1) % 4
 					update_ui()
@@ -417,6 +421,10 @@ func _unhandled_input(event):
 						construct_rotation = (construct_rotation - 1 + 4) % 4
 					elif current_mode == Mode.OBJECT:
 						current_object_rotation = (current_object_rotation - 1 + 4) % 4
+					elif current_mode == Mode.PREFAB and prefab_snap_to_road:
+						# Ctrl+Scroll Down in PREFAB road snap: lower Y
+						prefab_road_snap_y_offset -= 1
+						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
 					else:
 						current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
@@ -429,16 +437,6 @@ func _unhandled_input(event):
 					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 						placement_y_offset -= 1
 						print("Placement Y offset: %d" % placement_y_offset)
-				# Scroll in PREFAB mode with road snap: adjust Y offset
-				elif current_mode == Mode.PREFAB and prefab_snap_to_road:
-					if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-						prefab_road_snap_y_offset += 1
-						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
-						update_ui()
-					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-						prefab_road_snap_y_offset -= 1
-						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
-						update_ui()
 			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 				if current_mode == Mode.PLAYING:
 					handle_playing_input(event)
@@ -548,7 +546,7 @@ func update_ui():
 				road_snap_str = " ROAD Y%+d" % prefab_road_snap_y_offset
 			else:
 				road_snap_str = " ROAD"
-		mode_label.text = "Mode: PREFAB (%s%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode, [T] Road\nShift+Scroll: Y offset, R-Click: Place"  % [mode_str, road_snap_str, prefab_name, rot_deg]
+		mode_label.text = "Mode: PREFAB (%s%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode, [T] Road\nCtrl+Scroll: Y offset, R-Click: Place"  % [mode_str, road_snap_str, prefab_name, rot_deg]
 
 ## Get the current prefab placement mode string
 func _get_prefab_mode_str() -> String:
