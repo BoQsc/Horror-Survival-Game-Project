@@ -46,6 +46,7 @@ var current_prefab_index: int = 0
 var prefab_rotation: int = 0  # 0, 1, 2, 3 = 0°, 90°, 180°, 270°
 var prefab_carve_mode: bool = false  # If true, carve terrain and submerge. If false, place on top.
 var prefab_foundation_fill: bool = false  # If true, grow terrain under prefab foundation to fill gaps
+var prefab_carve_fill_mode: bool = false  # If true, carve first then fill after delay
 var prefab_preview_nodes: Array[MeshInstance3D] = []  # Ghost blocks for preview
 var prefab_spawner: Node = null  # Cached reference
 
@@ -341,21 +342,29 @@ func _unhandled_input(event):
 				_update_prefab_preview()
 				update_ui()
 		elif event.keycode == KEY_C:
-			# C key: cycle prefab placement mode (Surface -> Carve -> Fill -> Surface)
+			# C key: cycle prefab placement mode (Surface -> Carve -> Fill -> Carve+Fill -> Surface)
 			if current_mode == Mode.PREFAB:
-				if not prefab_carve_mode and not prefab_foundation_fill:
+				if not prefab_carve_mode and not prefab_foundation_fill and not prefab_carve_fill_mode:
 					# Surface -> Carve
 					prefab_carve_mode = true
 					prefab_foundation_fill = false
-				elif prefab_carve_mode and not prefab_foundation_fill:
+					prefab_carve_fill_mode = false
+				elif prefab_carve_mode and not prefab_foundation_fill and not prefab_carve_fill_mode:
 					# Carve -> Fill
 					prefab_carve_mode = false
 					prefab_foundation_fill = true
-				else:
-					# Fill -> Surface
+					prefab_carve_fill_mode = false
+				elif not prefab_carve_mode and prefab_foundation_fill and not prefab_carve_fill_mode:
+					# Fill -> Carve+Fill
 					prefab_carve_mode = false
 					prefab_foundation_fill = false
-				var mode_str = "Carve" if prefab_carve_mode else ("Fill" if prefab_foundation_fill else "Surface")
+					prefab_carve_fill_mode = true
+				else:
+					# Carve+Fill -> Surface
+					prefab_carve_mode = false
+					prefab_foundation_fill = false
+					prefab_carve_fill_mode = false
+				var mode_str = _get_prefab_mode_str()
 				print("[PREFAB] Placement mode: %s" % mode_str)
 				update_ui()
 		elif event.keycode == KEY_E:
@@ -514,8 +523,19 @@ func update_ui():
 		if available_prefabs.size() > 0 and current_prefab_index < available_prefabs.size():
 			prefab_name = available_prefabs[current_prefab_index]
 		var rot_deg = prefab_rotation * 90
-		var mode_str = "Carve" if prefab_carve_mode else ("Fill" if prefab_foundation_fill else "Surface")
+		var mode_str = _get_prefab_mode_str()
 		mode_label.text = "Mode: PREFAB (%s)\n%s (Rot: %d°)\n[</>/] Select, [R] Rotate, [C] Mode\nR-Click: Place"  % [mode_str, prefab_name, rot_deg]
+
+## Get the current prefab placement mode string
+func _get_prefab_mode_str() -> String:
+	if prefab_carve_fill_mode:
+		return "Carve+Fill"
+	elif prefab_carve_mode:
+		return "Carve"
+	elif prefab_foundation_fill:
+		return "Fill"
+	else:
+		return "Surface"
 
 func update_selection_box():
 	# If in Terrain/Water Blocky mode, we only care about hit
@@ -1538,15 +1558,57 @@ func _place_current_prefab():
 	
 	# Spawn via PrefabSpawner
 	if prefab_spawner and prefab_spawner.has_method("spawn_user_prefab"):
-		# Surface mode: submerge=0 (on top), Carve mode: submerge=1 (buried + carve terrain)
-		var submerge = 1 if prefab_carve_mode else 0
-		var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, prefab_foundation_fill)
-		if success:
-			print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, "Carve" if prefab_carve_mode else "Surface"])
+		var mode_str = _get_prefab_mode_str()
+		
+		if prefab_carve_fill_mode:
+			# Carve+Fill mode: First carve (no blocks), wait 10 seconds, then fill+place blocks
+			print("[PREFAB] Carve+Fill mode: Carving terrain (no blocks yet)...")
+			# Step 1: Carve terrain only - skip_blocks=true means no blocks placed
+			var carve_success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 1, prefab_rotation, true, false, true)
+			if carve_success:
+				print("[PREFAB] Carve complete. Waiting 10 seconds before fill+blocks...")
+				# Step 2: Wait 10 seconds, then fill terrain AND place blocks
+				_schedule_prefab_fill(prefab_name, spawn_pos, prefab_rotation)
+			else:
+				print("[PREFAB] Carve failed for %s" % prefab_name)
 		else:
-			print("[PREFAB] Failed to place %s" % prefab_name)
+			# Normal modes: Surface, Carve, or Fill
+			var submerge = 1 if prefab_carve_mode else 0
+			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, prefab_foundation_fill)
+			if success:
+				print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, mode_str])
+			else:
+				print("[PREFAB] Failed to place %s" % prefab_name)
 	else:
 		print("[PREFAB] ERROR: PrefabSpawner not found or missing spawn_user_prefab method")
+
+## Schedule the fill step for Carve+Fill mode with a 10-second delay
+func _schedule_prefab_fill(prefab_name: String, spawn_pos: Vector3, rotation: int):
+	print("[PREFAB] Scheduling fill in 10 seconds for %s at %v" % [prefab_name, spawn_pos])
+	# Capture spawner reference now (before timer fires)
+	var spawner = prefab_spawner
+	if not spawner:
+		spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
+	
+	if not spawner:
+		print("[PREFAB] ERROR: No PrefabSpawner found for scheduled fill!")
+		return
+	
+	var timer = get_tree().create_timer(10.0)
+	timer.timeout.connect(func():
+		print("[PREFAB] Timer fired! Executing fill step...")
+		if spawner and spawner.has_method("spawn_user_prefab"):
+			print("[PREFAB] Carve+Fill mode: Now filling terrain and placing blocks...")
+			# Call with submerge=0 (same as standalone Fill mode), foundation_fill=true
+			# This fills terrain AND places blocks at the surface level
+			var fill_success = spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, true, false)
+			if fill_success:
+				print("[PREFAB] Fill+blocks complete for %s at %v" % [prefab_name, spawn_pos])
+			else:
+				print("[PREFAB] Fill failed for %s" % prefab_name)
+		else:
+			print("[PREFAB] ERROR: Spawner invalid in timer callback!")
+	)
 
 func _update_prefab_preview():
 	# Destroy existing preview

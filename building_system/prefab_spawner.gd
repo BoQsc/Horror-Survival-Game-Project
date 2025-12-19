@@ -451,7 +451,8 @@ func _parse_compact_objects(compact: Array) -> Array:
 ## rotation: 0-3 for 0°, 90°, 180°, 270° rotation
 ## carve_terrain: if true, carve out terrain where submerged blocks go
 ## foundation_fill: if true, grow terrain under foundation blocks to fill gaps
-func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, foundation_fill: bool = false) -> bool:
+## skip_blocks: if true, only perform terrain operations (carve/fill) without placing blocks
+func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, foundation_fill: bool = false, skip_blocks: bool = false) -> bool:
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		if not load_prefab_from_file(prefab_name):
@@ -487,6 +488,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				if terrain_manager and terrain_manager.has_method("modify_terrain"):
 					# Dig a small box at this position (shape 1 = box, value > 0 = dig)
 					terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
+	
+	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
+	if skip_blocks:
+		var mode_str = "carve-only" if carve_terrain else "fill-only"
+		print("PrefabSpawner: Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
+		return true
 	
 	# Spawn blocks with rotation
 	for block in blocks:
