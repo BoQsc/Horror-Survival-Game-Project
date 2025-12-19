@@ -9,24 +9,28 @@ When placing prefabs that are partially inside terrain (e.g., using Road Snap mo
 - Problem: Carving radius causes spillover into surrounding terrain
 
 ## Future Improvement Needed
-Implement **accurate Y-axis block-driven carving**:
+Two possible approaches:
 
-1. For each block position (X, Z) in the prefab
-2. Carve **sharply** (precise 1-voxel cuts) from that block's Y level
-3. Carve **upward** until reaching the top block of the prefab at that column
-4. Do NOT carve beyond the prefab's block boundaries
+### Option A: Smaller, More Accurate Smooth Carving (Easier)
+Keep marching cubes, but improve accuracy:
+1. Use **smaller dig radius** (e.g., 0.3-0.4 instead of 0.6)
+2. Only carve at **exact block positions** within prefab interior
+3. Reduce spillover by limiting carve strength
+4. Accept slight smoothing at edges (MC limitation)
 
-### Key Requirements
-- Carving must be **sharp/blocky**, not smooth marching cubes transitions
-- Each carve should affect exactly 1 voxel, no spillover to neighbors
-- Only carve at positions where the prefab actually has blocks defined
-- Stop carving at the prefab's maximum height per column
+### Option B: Sharp Block-Driven Carving (Requires Dual Contouring)
+For truly sharp 90° cuts:
+1. Would require reimplementing terrain from Marching Cubes to **Dual Contouring**
+2. Dual contouring preserves sharp features but is significantly more complex
+3. Not worth the effort just for this feature
 
-### Potential Approaches
-1. Use smaller dig radius (< 0.5) for more precise cuts
-2. Consider using material painting instead of density modification
-3. Pre-compute a 3D occupancy grid for the prefab and only modify matching voxels
-4. Use a post-processing pass to "seal" edges after carving
+### Recommended: Option A
+Smaller, more accurate carving with marching cubes is the practical solution.
+
+### Implementation Notes
+- Carve from each block's Y level upward to top of prefab at that column
+- Only carve at positions inside the prefab bounding box (1+ block from edges)
+- Test with progressively smaller radii until spillover is minimized
 
 ## Files Involved
 - `building_system/prefab_spawner.gd` - `spawn_user_prefab()` function, interior_carve logic
