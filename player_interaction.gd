@@ -240,17 +240,44 @@ func _unhandled_input(event):
 			_exit_vehicle()
 		return
 	
-	# Handle Freestyle toggle (Press/Release E) - only in OBJECT mode
-	if current_mode == Mode.OBJECT:
-		if event is InputEventKey and event.keycode == KEY_E:
+	# Handle Unified E-Key Input (Freestyle, Pickup, Drop, Interact)
+	if event is InputEventKey and event.keycode == KEY_E:
+		# 1. DROP PROP (Release) - High Priority
+		if not event.pressed and held_prop_instance:
+			_drop_held_prop()
+			# Consume event so we don't trigger other release logic?
+			# Actually, we might also want to turn off freestyle if it was on.
+		
+		# 2. FREESTYLE TOGGLE (Press/Release) - Only in OBJECT mode
+		if current_mode == Mode.OBJECT:
 			if event.pressed and not event.echo:
-				if not interaction_target: # Only if NOT looking at an interactable
+				# Only enable freestyle if NOT interacting with something else
+				if not interaction_target and not held_prop_instance:
 					is_freestyle_placement = true
-					freestyle_rotation_offset = 0.0 # Reset fine rotation
+					freestyle_rotation_offset = 0.0
 					print("Freestyle Placement: ON")
 			elif not event.pressed:
 				is_freestyle_placement = false
-				print("Freestyle Placement: OFF")
+				# print("Freestyle Placement: OFF") # Reduce spam
+		
+		# 3. INTERACT / PICKUP (Press Only)
+		if event.pressed and not event.echo:
+			# Check vehicle/interact priority
+			if interaction_target:
+				if interaction_target.is_in_group("vehicle"):
+					_enter_vehicle(interaction_target)
+				elif interaction_target.has_method("interact"):
+					interaction_target.interact()
+			else:
+				# Try Pickup if not holding
+				if not held_prop_instance:
+					_try_pickup_prop()
+					
+		# Return early if E handled? 
+		# If we don't return, it might fall through to the 'pressed' block below?
+		# The 'pressed' block below has 'elif event.keycode == KEY_E' which would catch it if we didn't remove it.
+		# But we ARE removing the other block in the next step.
+		# For now, let's keep it clean.
 	
 	if event.is_action_pressed("ui_focus_next"): # Tab
 		toggle_mode()
@@ -435,30 +462,7 @@ func _unhandled_input(event):
 				prefab_interior_carve = not prefab_interior_carve
 				print("[PREFAB] Interior carve: %s" % ("ON" if prefab_interior_carve else "OFF"))
 				update_ui()
-		elif event.keycode == KEY_E:
-			# E key: Interact (Press) or Pickup Prop (Hold)
-			# Logic:
-			# If holding prop: Release on E release? Or toggle?
-			# Request: "Holding E should allow to pick up" -> Implies Hold to Carry, Release to Drop.
-			
-			if event.pressed and not event.echo:
-				if is_in_vehicle:
-					_exit_vehicle()
-				elif interaction_target:
-					# Priority: Interaction Target (Doors, Vehicles)
-					if interaction_target.is_in_group("vehicle"):
-						_enter_vehicle(interaction_target)
-					elif interaction_target.has_method("interact"):
-						interaction_target.interact()
-				else:
-					# No interaction target -> Try Pick Up Prop
-					if not held_prop_instance:
-						_try_pickup_prop()
-			
-			# Release E to Drop Prop
-			if not event.pressed and held_prop_instance:
-				_drop_held_prop()
-				
+
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity (default capsule)
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
@@ -2053,29 +2057,40 @@ func _process_prefab_preview():
 ## ============== PROP PICKUP SYSTEM =============
 
 func _get_pickup_target() -> Node:
-	# 1. Try precise raycast first
-	var hit = raycast(5.0, false)
-	if not hit or not hit.collider:
-		return null
-		
-	# Direct hit?
-	if hit.collider.is_in_group("placed_objects") and hit.collider.has_meta("anchor"):
-		return hit.collider
-		
-	# 2. Sphere Assist: Check around the hit point (e.g. if we hit floor next to item)
-	var space_state = get_viewport().get_camera_3d().get_world_3d().direct_space_state
-	var params = PhysicsShapeQueryParameters3D.new()
-	params.shape = SphereShape3D.new()
-	params.shape.radius = 0.5 # 50cm radius forgiveness
-	params.transform = Transform3D(Basis(), hit.position) # Center on hit point
-	params.collision_mask = 0xFFFFFFFF # Check all layers (or refine?)
-	params.exclude = [player.get_rid()]
+	# "Thick Ray" via Multi-Step Sphere Check
+	var came_node = get_viewport().get_camera_3d()
+	var origin = came_node.global_position
+	var forward = -came_node.global_transform.basis.z
+	var space_state = came_node.get_world_3d().direct_space_state
 	
-	var results = space_state.intersect_shape(params, 5) # Get top 5
-	for result in results:
-		var col = result.collider
-		if col.is_in_group("placed_objects") and col.has_meta("anchor") and col.has_meta("chunk"):
-			return col
+	# Check spheres at 1m, 2m, 3m, 4m, 5m
+	for dist in [1.0, 2.0, 3.0, 4.0, 5.0]:
+		var center = origin + forward * dist
+		
+		var params = PhysicsShapeQueryParameters3D.new()
+		params.shape = SphereShape3D.new()
+		params.shape.radius = 0.5 # 0.5m radius "beam"
+		params.transform = Transform3D(Basis(), center)
+		params.collision_mask = 0xFFFFFFFF 
+		params.exclude = [player.get_rid()]
+		
+		var results = space_state.intersect_shape(params, 5) 
+		
+		# Find closest prop in this sphere
+		var best_target = null
+		var best_dist = 999.0
+		
+		for result in results:
+			var col = result.collider
+			if col.is_in_group("placed_objects") and col.has_meta("anchor") and col.has_meta("chunk"):
+				# Valid prop. Check distance to ray center to prioritize centered items
+				var d = col.global_position.distance_to(center)
+				if d < best_dist:
+					best_dist = d
+					best_target = col
+		
+		if best_target:
+			return best_target
 			
 	return null
 
@@ -2123,26 +2138,29 @@ func _try_pickup_prop():
 func _drop_held_prop():
 	if not held_prop_instance: return
 	
-	# Determine drop position (Physics Raycast from camera?)
-	# Or just drop at current held position?
-	# Current held position is floating in front of camera.
-	# We should try to place it exactly there.
+	print("Release detected. Dropping prop.")
 	
 	var drop_pos = held_prop_instance.global_position
 	
-	# We reuse the "Freestyle Placement" logic for insertion!
-	# Since we are essentially "Placing" it again.
+	# GRAVITY LOGIC: Raycast down to find the floor
+	var space_state = held_prop_instance.get_world_3d().direct_space_state
+	var query = PhysicsRayQueryParameters3D.create(drop_pos + Vector3(0, 0.5, 0), drop_pos + Vector3(0, -10.0, 0)) # Cast down 10m
+	query.exclude = [player.get_rid()] # Ignore player
+	var result = space_state.intersect_ray(query)
 	
-	# But we need to call 'building_manager.place_object'.
-	# We also need to handle the "Smart Anchor Search" if the exact air block is technically 'occupied' (unlikely in air, but likely if shoving into a pile).
+	if result:
+		# Found ground! Place ON ground.
+		drop_pos = result.position
+		print("Drop Gravity: Snapped to %.2f (Hit %s)" % [drop_pos.y, result.collider.name])
+	else:
+		# No ground? Place in air (will float static)
+		print("Drop Gravity: No ground found, floating.")
 	
-	# Let's reuse the EXACT logic we wrote for handle_object_input, adapted here.
-	
+	# Reuse Placement Logic
 	var success = building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
 	
+	# If direct placement failed, try "Smart Search" (Stacking)
 	if not success:
-		# Copy-paste of the Smart Anchor Search from handle_object_input
-		# (Refactoring this into a helper would be cleaner, but for now inline is safe)
 		var chunk_x = floor(drop_pos.x / building_manager.CHUNK_SIZE)
 		var chunk_y = floor(drop_pos.y / building_manager.CHUNK_SIZE)
 		var chunk_z = floor(drop_pos.z / building_manager.CHUNK_SIZE)
@@ -2175,15 +2193,16 @@ func _drop_held_prop():
 							instance.rotation_degrees.y = held_prop_rotation * 90
 							chunk.place_object(try_anchor, held_prop_id, held_prop_rotation, cells, instance, new_fractional)
 							
-							# Cleanup and Return immediately
-							held_prop_instance.queue_free()
-							held_prop_instance = null
-							held_prop_id = -1
-							print("Dropped Prop (Redirected to %s)" % try_anchor)
-							return
+							print("Dropped Prop (Staked to %s)" % try_anchor)
+							# Break inner/outer loops
+							success = true
+							break
+					if success: break
+				if success: break
 	
-	# Clean up held visual (Normal success case)
-	held_prop_instance.queue_free()
+	# CRITICAL: Always clean up, whether placement succeeded or not
+	if held_prop_instance:
+		held_prop_instance.queue_free()
 	held_prop_instance = null
 	held_prop_id = -1
-	print("Dropped Prop")
+	print("Prop Release Complete")
