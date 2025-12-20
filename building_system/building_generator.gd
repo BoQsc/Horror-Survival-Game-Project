@@ -15,6 +15,7 @@ signal building_spawned(position: Vector3, prefab_name: String)
 @export var prefab_list: Array[String] = ["new_wooden_house_2floor"]
 @export var min_building_spacing: float = 20.0  # Min distance between buildings
 @export var intersection_avoid_radius: float = 15.0  # Avoid spawning near road intersections
+@export var regenerate_buildings_on_load: bool = false  # Debug: regenerate instead of loading saved state
 
 # --- References ---
 @export var prefab_spawner: Node = null
@@ -25,6 +26,39 @@ var spawn_queue: Array = []  # Queue of {position, rotation, prefab_name}
 var spawned_buildings: Dictionary = {}  # Key: chunk_coord, Value: Array of positions
 var global_building_positions: Array[Vector3] = []  # All building positions for overlap check
 var spawn_timer: float = 0.0
+
+# --- Save/Load Support ---
+func get_save_data() -> Dictionary:
+	var result = {}
+	for coord in spawned_buildings:
+		var key = "%d,%d,%d" % [coord.x, coord.y, coord.z]
+		var positions = []
+		for pos in spawned_buildings[coord]:
+			positions.append([pos.x, pos.y, pos.z])
+		result[key] = positions
+	return { "spawned_chunks": result }
+
+func load_save_data(data: Dictionary) -> void:
+	if regenerate_buildings_on_load:
+		print("[BuildingGenerator] Regenerate mode enabled - skipping saved state")
+		return  # Debug: regenerate fresh instead of loading
+	
+	spawned_buildings.clear()
+	global_building_positions.clear()
+	spawn_queue.clear()
+	
+	if data.has("spawned_chunks"):
+		for key in data.spawned_chunks:
+			var parts = key.split(",")
+			if parts.size() != 3:
+				continue
+			var coord = Vector3i(int(parts[0]), int(parts[1]), int(parts[2]))
+			spawned_buildings[coord] = []
+			for pos_arr in data.spawned_chunks[key]:
+				var pos = Vector3(pos_arr[0], pos_arr[1], pos_arr[2])
+				spawned_buildings[coord].append(pos)
+				global_building_positions.append(pos)
+		print("[BuildingGenerator] Loaded %d chunks with building spawn data" % spawned_buildings.size())
 
 func _ready():
 	# Connect to terrain manager signals

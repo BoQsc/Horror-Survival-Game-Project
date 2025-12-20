@@ -96,6 +96,13 @@
 - Improve noise matching between GDScript and shader
 - Accept imperfection and let players manually remove misplaced buildings
 
+### Implemented: Save Building Spawn State
+Building spawn decisions are now persisted via SaveManager:
+- `building_generator.gd` has `get_save_data()` / `load_save_data()` methods
+- `save_manager.gd` integrates with building_generator
+- Debug toggle: `regenerate_buildings_on_load` (default: false)
+  - Set to `true` to regenerate buildings fresh for debugging placement logic
+
 ---
 
 ## Vehicle System

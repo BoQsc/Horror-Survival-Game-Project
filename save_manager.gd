@@ -17,6 +17,7 @@ var road_manager: Node = null
 var prefab_spawner: Node = null
 var entity_manager: Node = null
 var vehicle_manager: Node = null
+var building_generator: Node = null
 var player: Node = null
 
 # Deferred spawn data - waiting for terrain to load
@@ -44,6 +45,7 @@ func _find_managers():
 	prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
 	entity_manager = get_node_or_null("/root/MainGame/EntityManager")
 	vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+	building_generator = get_node_or_null("/root/MainGame/BuildingGenerator")
 	player = get_tree().get_first_node_in_group("player")
 	
 	DebugSettings.log_save("Managers: CM=%s BM=%s VM=%s RM=%s PF=%s EM=%s VEH=%s P=%s" % [
@@ -97,7 +99,8 @@ func save_game(path: String) -> bool:
 		"prefabs": _get_prefab_data(),
 		"entities": _get_entity_data(),
 		"doors": _get_door_data(),
-		"vehicles": _get_vehicle_data()
+		"vehicles": _get_vehicle_data(),
+		"building_spawns": _get_building_spawn_data()
 	}
 	
 	# Convert to JSON
@@ -154,6 +157,8 @@ func load_game(path: String) -> bool:
 	# Load each component
 	# IMPORTANT: Load prefabs FIRST to prevent respawning during chunk generation
 	_load_prefab_data(save_data.get("prefabs", {}))
+	# Load building spawn state BEFORE chunks generate
+	_load_building_spawn_data(save_data.get("building_spawns", {}))
 	
 	# Set loading flag - entities will be deferred until terrain is ready
 	is_loading_game = true
@@ -345,6 +350,13 @@ func _get_prefab_data() -> Dictionary:
 	
 	return {}
 
+func _get_building_spawn_data() -> Dictionary:
+	if not building_generator:
+		return {}
+	if building_generator.has_method("get_save_data"):
+		return building_generator.get_save_data()
+	return {}
+
 # ============ DATA LOADERS ============
 
 func _load_prefab_data(data: Dictionary):
@@ -353,6 +365,12 @@ func _load_prefab_data(data: Dictionary):
 	
 	if prefab_spawner.has_method("load_save_data"):
 		prefab_spawner.load_save_data(data)
+
+func _load_building_spawn_data(data: Dictionary):
+	if data.is_empty() or not building_generator:
+		return
+	if building_generator.has_method("load_save_data"):
+		building_generator.load_save_data(data)
 
 func _load_player_data(data: Dictionary):
 	if data.is_empty() or not player:
