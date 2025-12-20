@@ -1020,16 +1020,14 @@ func handle_object_input(event):
 								var packed = load(obj_def.scene)
 								var instance = packed.instantiate()
 								
-								instance.position = Vector3(try_anchor) + new_fractional
 								instance.rotation_degrees.y = final_rotation * 90
 								
 								# Use internal place method
 								chunk.place_object(try_anchor, current_object_id, final_rotation, cells, instance, new_fractional)
 								
 								print("Freestyle Placement: Redirected anchor to ", try_anchor)
-								success = true
-								break
-					if success: break
+								print("Placed object %d at %s" % [current_object_id, final_pos])
+								return
 
 		if success:
 			print("Placed object %d at %s" % [current_object_id, final_pos])
