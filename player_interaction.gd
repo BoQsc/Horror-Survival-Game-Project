@@ -984,58 +984,7 @@ func handle_object_input(event):
 		
 		# FREESTYLE RETRY LOGIC:
 		# If direct placement failed (cell occupied), try to find a nearby empty cell to use as an anchor.
-		# This is critical for placing props on tables/stacked objects, as valid physical space != valid grid space.
 		if not success and is_freestyle_placement:
-			var search_offsets = [
-				Vector3(0, 1, 0),   # Try Up (most likely)
-				Vector3(0, -1, 0),  # Try Down
-				Vector3(1, 0, 0),   # Try Neighbors..
-				Vector3(-1, 0, 0),
-				Vector3(0, 0, 1),
-				Vector3(0, 0, -1)
-			]
-			
-			for offset in search_offsets:
-				# Shift the "anchor" position but keep visual same?
-				# building_manager.place_object takes a GLOBAL position which is converted to anchor + fractional.
-				# So we just pass the shifted global position?
-				# No, if we pass shifted global pos, the visual moves too.
-				# We need to manually calculate the anchor, checks availability, then call chunk directly?
-				# Too complex to bypass manager.
-				
-				# Simpler approach:
-				# Pass a "shifted" global position that would land in the neighbor cell,
-				# BUT rely on the fact that fractional_pos handles the offset.
-				# Wait, place_object calculates anchor from floor(pos).
-				# So if we add 'offset' to 'final_pos', the anchor moves.
-				# BUT the visual position will also move unless we compensated.
-				# BuildingChunk stores "fractional_pos".
-				
-				# We can try to force the anchor by targeting the neighbor cell,
-				# but we can't easily tell place_object to "use this anchor but render THERE".
-				# Actually we can't without modifying BuildingManager API.
-				
-				# WAIT! BuildingManager.place_object(pos) -> calculates anchor = floor(pos).
-				# Fractional = pos - anchor.
-				# If we want the SAME visual pos (V) but different Anchor (A'),
-				# We need to pass a P' such that floor(P') = A' ?
-				# No, P is just the argument. P is used for BOTH anchor and fractional.
-				# Anchor = floor(P). Fractional = P - Anchor.
-				# So visual pos = Anchor + Fractional = floor(P) + P - floor(P) = P.
-				# So P IS the visual position. We cannot decouple them via this API.
-				
-				# HACK: We need to modify place_object or access chunk directly.
-				pass
-			
-			# Since we can't easily trick the manager, let's try a different strategy:
-			# If we are freestyle, we just want to succeed.
-			# Let's try to just "Find a spot" that results in the same visual if we are lucky?
-			# No.
-			
-			# REAL FIX: We need to be able to tell the system "Index at Cell A, but visually offset to B".
-			# This requires modifying BuildingManager to accept an optional 'visual_offset_override'?
-			# Or, we manually access the chunk.
-			
 			var chunk_x = floor(final_pos.x / building_manager.CHUNK_SIZE)
 			var chunk_y = floor(final_pos.y / building_manager.CHUNK_SIZE)
 			var chunk_z = floor(final_pos.z / building_manager.CHUNK_SIZE)
@@ -1053,38 +1002,35 @@ func handle_object_input(event):
 				
 				var base_anchor = Vector3i(local_x, local_y, local_z)
 				
-				# Search for free anchor
-				for off in search_offsets:
-					var try_anchor = base_anchor + Vector3i(off)
-					if chunk.is_cell_available(try_anchor):
-						# Found a free cell! Use it as the anchor.
-						# We need to calculate the fractional offset to put the visual back at 'final_pos'
-						# VisualPos = AnchorIndices + ChunkOffset + Fractional
-						# We want VisualPos = final_pos
-						# So Fractional = final_pos - (ChunkOrigin + AnchorIndices)
-						var anchor_world_pos = Vector3(chunk_key) * building_manager.CHUNK_SIZE + Vector3(try_anchor)
-						var new_fractional = final_pos - anchor_world_pos
-						
-						# Manually place in chunk
-						# We need to register the cells. For a 1x1 prop, it's just the anchor.
-						var cells: Array[Vector3i] = [try_anchor] 
-						
-						# Instantiate visual
-						var obj_def = ObjectRegistry.get_object(current_object_id)
-						var packed = load(obj_def.scene)
-						var instance = packed.instantiate()
-						
-						# Add to chunk info
-						instance.position = Vector3(try_anchor) + new_fractional
-						instance.rotation_degrees.y = final_rotation * 90
-						# chunk.add_child(instance) <--- REMOVED: place_object does this!
-						
-						# Use internal place method
-						chunk.place_object(try_anchor, current_object_id, final_rotation, cells, instance, new_fractional)
-						
-						print("Freestyle Placement: Redirected anchor to ", try_anchor)
-						success = true
-						break
+				# Expanded search: Check 2-block radius (5x5x5 volume)
+				# Spiral out from center ideally, but simple loop is fast enough for small radius
+				var range_r = 2
+				for dx in range(-range_r, range_r + 1):
+					for dy in range(-range_r, range_r + 1):
+						for dz in range(-range_r, range_r + 1):
+							if dx == 0 and dy == 0 and dz == 0: continue
+							
+							var try_anchor = base_anchor + Vector3i(dx, dy, dz)
+							if chunk.is_cell_available(try_anchor):
+								# Found a free cell! Use it as the anchor.
+								var anchor_world_pos = Vector3(chunk_key) * building_manager.CHUNK_SIZE + Vector3(try_anchor)
+								var new_fractional = final_pos - anchor_world_pos
+								
+								var cells: Array[Vector3i] = [try_anchor] 
+								var obj_def = ObjectRegistry.get_object(current_object_id)
+								var packed = load(obj_def.scene)
+								var instance = packed.instantiate()
+								
+								instance.position = Vector3(try_anchor) + new_fractional
+								instance.rotation_degrees.y = final_rotation * 90
+								
+								# Use internal place method
+								chunk.place_object(try_anchor, current_object_id, final_rotation, cells, instance, new_fractional)
+								
+								print("Freestyle Placement: Redirected anchor to ", try_anchor)
+								success = true
+								break
+					if success: break
 
 		if success:
 			print("Placed object %d at %s" % [current_object_id, final_pos])
