@@ -84,7 +84,7 @@ func _ready():
 	
 	# Speed adjustments requested by user:
 	move_speed = 1.5 
-	chase_speed_multiplier = 2.0
+	chase_speed_multiplier = 2.4
 	
 	# Safety start - wait for physics to settle
 	# Pause animation during this time to prevent drift
