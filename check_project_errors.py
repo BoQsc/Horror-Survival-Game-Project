@@ -16,8 +16,7 @@ def main():
     cmd = [
         GODOT_BIN,
         "--path", PROJECT_PATH,
-        "--debug",
-        "--log-file", LOG_FILE
+        "--debug"
     ]
 
     try:
