@@ -289,10 +289,10 @@ _surfaces = [{
 blend_shape_mode = 0
 shadow_mesh = SubResource("ArrayMesh_scsik")
 
-[node name="HeavyPistolWithoutHands" type="Node2D"]
+[node name="HeavyPistolWithoutHands" type="Node3D"]
 
 [node name="Talon" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, -2.220446e-16, 0, 2.220446e-16, 1, 0, -0.84309834, -0.1261691)
+transform = Transform3D(0.01, 0, 0, 0, 0.01, -2.220446e-18, 0, 2.220446e-18, 0.01, 0, 0, 0)
 
 [node name="base" type="Node3D" parent="Talon"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.030765643, 0.87508756, 0.13028747)

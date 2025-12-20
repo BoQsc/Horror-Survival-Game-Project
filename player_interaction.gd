@@ -88,6 +88,11 @@ var interaction_target: Node3D = null  # Current interactable being looked at
 var is_in_vehicle: bool = false
 var current_vehicle: Node3D = null
 
+# Freestyle Placement State
+var is_freestyle_placement: bool = false
+var freestyle_rotation_offset: float = 0.0 # Additional rotation in degrees
+
+
 func _ready():
 	# Create Grid Visualizer
 	voxel_grid_visualizer = MeshInstance3D.new()
@@ -207,6 +212,18 @@ func _unhandled_input(event):
 			_exit_vehicle()
 		return
 	
+	# Handle Freestyle toggle (Press/Release E) - only in OBJECT mode
+	if current_mode == Mode.OBJECT:
+		if event is InputEventKey and event.keycode == KEY_E:
+			if event.pressed and not event.echo:
+				if not interaction_target: # Only if NOT looking at an interactable
+					is_freestyle_placement = true
+					freestyle_rotation_offset = 0.0 # Reset fine rotation
+					print("Freestyle Placement: ON")
+			elif not event.pressed:
+				is_freestyle_placement = false
+				print("Freestyle Placement: OFF")
+	
 	if event.is_action_pressed("ui_focus_next"): # Tab
 		toggle_mode()
 		
@@ -276,12 +293,15 @@ func _unhandled_input(event):
 				material_brush_index = 0  # Small brush
 				material_brush_radius = material_brush_sizes[material_brush_index]
 			update_ui()
+			update_ui()
 		elif event.keycode == KEY_6:
 			if current_mode == Mode.CONSTRUCT:
 				construct_item_id = 6  # Long Crate object
 			elif current_mode == Mode.MATERIAL:
 				material_brush_index = 1  # Medium brush
 				material_brush_radius = material_brush_sizes[material_brush_index]
+			elif current_mode == Mode.OBJECT:
+				current_object_id = 6  # Heavy Pistol
 			update_ui()
 		elif event.keycode == KEY_7:
 			if current_mode == Mode.CONSTRUCT:
@@ -415,7 +435,11 @@ func _unhandled_input(event):
 					if current_mode == Mode.CONSTRUCT:
 						construct_rotation = (construct_rotation + 1) % 4
 					elif current_mode == Mode.OBJECT:
-						current_object_rotation = (current_object_rotation + 1) % 4
+						if is_freestyle_placement:
+							# Freestyle: Fine rotation (15 degrees)
+							freestyle_rotation_offset -= 15.0
+						else:
+							current_object_rotation = (current_object_rotation + 1) % 4
 					elif current_mode == Mode.PREFAB and prefab_snap_to_road:
 						# Ctrl+Scroll Up in PREFAB road snap: raise Y
 						prefab_road_snap_y_offset += 1
@@ -427,7 +451,11 @@ func _unhandled_input(event):
 					if current_mode == Mode.CONSTRUCT:
 						construct_rotation = (construct_rotation - 1 + 4) % 4
 					elif current_mode == Mode.OBJECT:
-						current_object_rotation = (current_object_rotation - 1 + 4) % 4
+						if is_freestyle_placement:
+							# Freestyle: Fine rotation (15 degrees)
+							freestyle_rotation_offset += 15.0
+						else:
+							current_object_rotation = (current_object_rotation - 1 + 4) % 4
 					elif current_mode == Mode.PREFAB and prefab_snap_to_road:
 						# Ctrl+Scroll Down in PREFAB road snap: lower Y
 						prefab_road_snap_y_offset -= 1
@@ -658,7 +686,18 @@ func update_selection_box():
 		
 	elif current_mode == Mode.OBJECT:
 		# OBJECT MODE - same logic as BUILDING mode
-		if hit_placed_object or hit_building:
+		if is_freestyle_placement:
+			# FREESTYLE MODE: Use exact raycast hit
+			current_voxel_pos = pos # Store exact pos
+			current_precise_hit_y = pos.y
+			
+			# Align logic for preview (will be handled by _update_preview)
+			# We don't snap to grid.
+			selection_box.visible = false # Hide box in free mode? Or follow exact?
+			# Let's show box at exact pos for feedback
+			selection_box.global_position = pos + Vector3(0, 0.5, 0) # Box is 1x1 center pivoted usually
+			
+		elif hit_placed_object or hit_building:
 			# Hit an object/building: place adjacent (same as BUILDING mode)
 			var grid_normal = _round_to_axis(normal)
 			var inside_pos = pos - normal * 0.01  # Find the hit block
@@ -868,14 +907,29 @@ func handle_object_input(event):
 	
 	if event.button_index == MOUSE_BUTTON_RIGHT: # Place object
 		# Build position with fractional Y for natural terrain placement
-		var placement_pos = Vector3(
+		var final_pos = Vector3(
 			floor(current_voxel_pos.x),  # Grid-snapped X
 			current_precise_hit_y,        # Fractional Y (sits on terrain)
 			floor(current_voxel_pos.z)   # Grid-snapped Z
 		)
-		var success = building_manager.place_object(placement_pos, current_object_id, current_object_rotation)
+		var final_rotation = current_object_rotation
+		
+		if is_freestyle_placement:
+			# Freestyle placement: Center the object on the exact hit point
+			# We must compensate for BuildingChunk's auto-centering (Size/2)
+			var obj_size = ObjectRegistry.get_rotated_size(current_object_id, current_object_rotation)
+			var offset_x = float(obj_size.x) / 2.0
+			var offset_z = float(obj_size.z) / 2.0
+			
+			var compensation = Vector3(offset_x, 0, offset_z)
+			final_pos = current_voxel_pos - compensation
+			
+			# Rotation is currently limited to 90 degree increments by backend
+			# Future: Support fine rotation in backend
+		
+		var success = building_manager.place_object(final_pos, current_object_id, final_rotation)
 		if success:
-			print("Placed object %d at %s" % [current_object_id, placement_pos])
+			print("Placed object %d at %s" % [current_object_id, final_pos])
 		else:
 			print("Cannot place object - cells not available")
 	
@@ -1281,12 +1335,24 @@ func _update_or_create_preview():
 		var size = ObjectRegistry.get_rotated_size(current_object_id, current_object_rotation)
 		var offset_x = float(size.x) / 2.0
 		var offset_z = float(size.z) / 2.0
-		preview_instance.position = Vector3(
-			current_voxel_pos.x + offset_x,
-			current_precise_hit_y,
-			current_voxel_pos.z + offset_z
-		)
-		preview_instance.rotation_degrees.y = current_object_rotation * 90
+		
+		if is_freestyle_placement:
+			# Freestyle: Preview matches exact hit position
+			# We show the object centered on the hit point
+			preview_instance.position = current_voxel_pos
+			
+			# Apply fine rotation
+			var base_rot = current_object_rotation * 90
+			preview_instance.rotation_degrees.y = base_rot + freestyle_rotation_offset
+		else:
+			# Snapped: Preview matches grid position + centering
+			preview_instance.position = Vector3(
+				current_voxel_pos.x + offset_x,
+				current_precise_hit_y,
+				current_voxel_pos.z + offset_z
+			)
+			preview_instance.rotation_degrees.y = current_object_rotation * 90
+			
 		preview_instance.visible = true
 		
 		# Check validity - use grid-snapped position

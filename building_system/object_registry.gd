@@ -30,6 +30,11 @@ const OBJECTS = {
 		"scene": "res://models/objects/window/1/window.tscn",
 		"size": Vector3i(1, 1, 1),
 	},
+	6: {
+		"name": "Heavy Pistol",
+		"scene": "res://models/pistol/heavy_pistol_without_hands.tscn",
+		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
+	},
 }
 
 ## Get object definition by ID
