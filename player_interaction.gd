@@ -958,7 +958,7 @@ func handle_building_input(event):
 func handle_object_input(event):
 	# Object placement uses grid X/Z but fractional Y for terrain surface placement
 	
-	if event.button_index == MOUSE_BUTTON_RIGHT: # Place object
+	if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed: # Place object
 		# Build position with fractional Y for natural terrain placement
 		var final_pos = Vector3(
 			floor(current_voxel_pos.x),  # Grid-snapped X
@@ -1003,7 +1003,6 @@ func handle_object_input(event):
 				var base_anchor = Vector3i(local_x, local_y, local_z)
 				
 				# Expanded search: Check 2-block radius (5x5x5 volume)
-				# Spiral out from center ideally, but simple loop is fast enough for small radius
 				var range_r = 2
 				for dx in range(-range_r, range_r + 1):
 					for dy in range(-range_r, range_r + 1):
@@ -1036,8 +1035,8 @@ func handle_object_input(event):
 			print("Placed object %d at %s" % [current_object_id, final_pos])
 		else:
 			print("Cannot place object - cells not available")
-	
-	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove object
+
+	elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed: # Remove object
 		var hit = raycast(10.0, false)
 		if hit and hit.collider:
 			# Check if we hit a placed object (either the root or a child StaticBody)
