@@ -1077,7 +1077,7 @@ func handle_object_input(event):
 						# Add to chunk info
 						instance.position = Vector3(try_anchor) + new_fractional
 						instance.rotation_degrees.y = final_rotation * 90
-						chunk.add_child(instance)
+						# chunk.add_child(instance) <--- REMOVED: place_object does this!
 						
 						# Use internal place method
 						chunk.place_object(try_anchor, current_object_id, final_rotation, cells, instance, new_fractional)
