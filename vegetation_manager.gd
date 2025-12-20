@@ -308,28 +308,25 @@ func _physics_process(_delta):
 		if is_instance_valid(item.chunk_node):
 			# Stage 0: Trees
 			if item.stage == 0:
-				var start = Time.get_ticks_usec()
+				PerformanceMonitor.start_measure("Veg Spawn: Trees")
 				_place_vegetation_for_chunk(item.coord, item.chunk_node)
-				var dt = (Time.get_ticks_usec() - start) / 1000.0
-				if dt > 2.0: print("[Profiler] Veg Stage 0 (Trees): %.2f ms" % dt)
+				PerformanceMonitor.end_measure("Veg Spawn: Trees", 2.0)
 				item.stage = 1
 				return # Done for this frame
 				
 			# Stage 1: Grass
 			if item.stage == 1:
-				var start = Time.get_ticks_usec()
+				PerformanceMonitor.start_measure("Veg Spawn: Grass")
 				_place_grass_for_chunk(item.coord, item.chunk_node)
-				var dt = (Time.get_ticks_usec() - start) / 1000.0
-				if dt > 2.0: print("[Profiler] Veg Stage 1 (Grass): %.2f ms" % dt)
+				PerformanceMonitor.end_measure("Veg Spawn: Grass", 2.0)
 				item.stage = 2
 				return # Done for this frame
 				
 			# Stage 2: Rocks
 			if item.stage == 2:
-				var start = Time.get_ticks_usec()
+				PerformanceMonitor.start_measure("Veg Spawn: Rocks")
 				_place_rocks_for_chunk(item.coord, item.chunk_node)
-				var dt = (Time.get_ticks_usec() - start) / 1000.0
-				if dt > 2.0: print("[Profiler] Veg Stage 2 (Rocks): %.2f ms" % dt)
+				PerformanceMonitor.end_measure("Veg Spawn: Rocks", 2.0)
 				
 				# All stages done
 				pending_chunks.pop_front()
@@ -343,14 +340,12 @@ func _physics_process(_delta):
 	collider_update_counter += 1
 	if collider_update_counter >= 15:  # Increased from 10 to reduce work
 		collider_update_counter = 0
-		var start_coll = Time.get_ticks_usec()
+		PerformanceMonitor.start_measure("Veg Collider Update")
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
 		_cleanup_orphan_colliders()  # Clean up any stranded colliders
-		var dt_coll = (Time.get_ticks_usec() - start_coll) / 1000.0
-		if dt_coll > 2.0:
-			print("[Profiler] Veg Collider Update (Logic): %.2f ms" % dt_coll)
+		PerformanceMonitor.end_measure("Veg Collider Update", 2.0)
 	
 	# Always process incremental updates (Add/Remove actual nodes)
 	_process_queued_collider_updates()

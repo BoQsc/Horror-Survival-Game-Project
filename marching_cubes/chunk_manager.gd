@@ -231,8 +231,14 @@ func _process(delta):
 	# Adjust loading based on FPS
 	_adjust_adaptive_loading()
 	
+	PerformanceMonitor.start_measure("Chunk Update")
 	update_chunks()
+	PerformanceMonitor.end_measure("Chunk Update", PerformanceMonitor.THRESHOLD_CHUNK_GEN) # Should be fast (< 2ms)
+	
+	PerformanceMonitor.start_measure("Node Finalization")
 	process_pending_nodes()
+	PerformanceMonitor.end_measure("Node Finalization", 2.0)
+	
 	update_collision_proximity()  # Enable/disable collision based on player distance
 
 var debug_chunk_bounds: bool = false
@@ -350,7 +356,9 @@ func process_pending_nodes():
 		return
 	
 	# Sort by distance to player (closest first) for smooth outward loading
+	PerformanceMonitor.start_measure("Finalize: Sort")
 	_sort_pending_by_distance()
+	PerformanceMonitor.end_measure("Finalize: Sort", 0.1)
 	
 	var item = pending_nodes.pop_front()
 	pending_nodes_mutex.unlock()
@@ -1565,10 +1573,14 @@ func _finalize_chunk_creation(item: Dictionary):
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
 		# Create Material
+		PerformanceMonitor.start_measure("Finalize: Mat")
 		var chunk_material = _create_chunk_material(chunk_pos, item.get("cpu_mat", PackedByteArray()))
+		PerformanceMonitor.end_measure("Finalize: Mat", 0.1) # Threshold 1ms
 		
 		# Create Node (VISUALS ONLY - Defer Collision)
+		PerformanceMonitor.start_measure("Finalize: Node")
 		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, false, chunk_material, true)
+		PerformanceMonitor.end_measure("Finalize: Node", 0.1) # Threshold 1ms
 		
 		# Update Data
 		var data = active_chunks[coord]
