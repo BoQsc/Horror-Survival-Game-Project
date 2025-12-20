@@ -195,69 +195,91 @@ func _is_near_intersection(pos: Vector3) -> bool:
 	var dist_to_intersection = Vector2(pos.x, pos.z).distance_to(Vector2(nearest_x, nearest_z))
 	return dist_to_intersection < intersection_avoid_radius
 
-## Check if position is over water (skip building placement there)
-## Uses same noise-based regional masking as gen_water_density.glsl
+## Check if position is over water
+## Balanced check - catches water without being too aggressive
 func _is_over_water(pos: Vector3) -> bool:
-	# Get noise frequency from terrain manager
+	if not terrain_manager:
+		return false
+	
+	var water_level = 13.0  # Default
+	if "water_level" in terrain_manager:
+		water_level = terrain_manager.water_level
+	
+	# Buffer: reject terrain within 1 block above water level
+	var water_buffer = 1.0
+	
+	# Check terrain height at points across building footprint
+	var check_radius = 8.0  # Building footprint
+	var check_offsets = [
+		Vector2(0, 0),
+		Vector2(-check_radius, 0), Vector2(check_radius, 0),
+		Vector2(0, -check_radius), Vector2(0, check_radius),
+		Vector2(-check_radius, -check_radius), Vector2(check_radius, -check_radius),
+		Vector2(-check_radius, check_radius), Vector2(check_radius, check_radius),
+	]
+	
+	for offset in check_offsets:
+		var cx = pos.x + offset.x
+		var cz = pos.z + offset.y
+		
+		# Check terrain height - reject if below or near water level
+		if terrain_manager.has_method("get_terrain_height"):
+			var terrain_h = terrain_manager.get_terrain_height(cx, cz)
+			if terrain_h > 0 and terrain_h < water_level + water_buffer:
+				return true
+		
+		# Also check water density if chunks are loaded
+		if terrain_manager.has_method("get_water_density"):
+			var density = terrain_manager.get_water_density(Vector3(cx, water_level, cz))
+			if density < 0.0:  # Negative = inside water
+				return true
+	
+	# Check if in wet region AND terrain is low
+	if _is_in_wet_region(pos.x, pos.z):
+		if terrain_manager.has_method("get_terrain_height"):
+			var h = terrain_manager.get_terrain_height(pos.x, pos.z)
+			if h > 0 and h < water_level:  # Only reject if actually below water
+				return true
+	
+	return false
+
+## Check if position is in a "wet region" using noise (matches gen_water_density.glsl)
+func _is_in_wet_region(x: float, z: float) -> bool:
 	var noise_freq = 0.02  # Default
 	if terrain_manager and "noise_frequency" in terrain_manager:
 		noise_freq = terrain_manager.noise_frequency
 	
-	# Sample low-frequency noise to determine wet/dry region
-	# This matches gen_water_density.glsl logic exactly
+	# Sample low-frequency noise - matches shader: noise_freq * 0.1
 	var sample_freq = noise_freq * 0.1
-	var noise_val = _simple_noise_3d(Vector3(pos.x, 0.0, pos.z) * sample_freq)
+	var noise_val = _simple_noise_2d(x * sample_freq, z * sample_freq)
 	
-	# Map 0..1 to -1..1
+	# Map 0..1 to -1..1, then smoothstep(-0.3, 0.3)
 	var mask_val = (noise_val * 2.0) - 1.0
-	
-	# Check multiple points around building footprint
-	var check_radius = 8.0  # Slightly larger than building footprint
-	var check_positions = [
-		Vector3(pos.x, 0.0, pos.z),
-		Vector3(pos.x - check_radius, 0.0, pos.z),
-		Vector3(pos.x + check_radius, 0.0, pos.z),
-		Vector3(pos.x, 0.0, pos.z - check_radius),
-		Vector3(pos.x, 0.0, pos.z + check_radius),
-	]
-	
-	for check_pos in check_positions:
-		var n = _simple_noise_3d(Vector3(check_pos.x, 0.0, check_pos.z) * sample_freq)
-		var m = (n * 2.0) - 1.0
-		# VERY strict threshold - exclude anything that might be near water
-		# Shader uses smoothstep(-0.3, 0.3) so m > -0.3 starts transition
-		# We use m > -0.5 to be extra safe
-		if m > -0.5:
-			return true
-	
-	return false
+	# smoothstep: wet when mask_val > 0
+	return mask_val > 0.0
 
-## Simple 3D noise matching the shader's hash function
-func _simple_noise_3d(p: Vector3) -> float:
-	var i = Vector3(floor(p.x), floor(p.y), floor(p.z))
-	var f = Vector3(p.x - i.x, p.y - i.y, p.z - i.z)
-	f = Vector3(f.x * f.x * (3.0 - 2.0 * f.x), f.y * f.y * (3.0 - 2.0 * f.y), f.z * f.z * (3.0 - 2.0 * f.z))
+## Simple 2D noise for wet region detection
+func _simple_noise_2d(x: float, z: float) -> float:
+	var ix = floor(x)
+	var iz = floor(z)
+	var fx = x - ix
+	var fz = z - iz
+	fx = fx * fx * (3.0 - 2.0 * fx)
+	fz = fz * fz * (3.0 - 2.0 * fz)
 	
-	var h000 = _hash_3d(i)
-	var h100 = _hash_3d(i + Vector3(1, 0, 0))
-	var h010 = _hash_3d(i + Vector3(0, 1, 0))
-	var h110 = _hash_3d(i + Vector3(1, 1, 0))
-	var h001 = _hash_3d(i + Vector3(0, 0, 1))
-	var h101 = _hash_3d(i + Vector3(1, 0, 1))
-	var h011 = _hash_3d(i + Vector3(0, 1, 1))
-	var h111 = _hash_3d(i + Vector3(1, 1, 1))
+	var h00 = _hash_2d(ix, iz)
+	var h10 = _hash_2d(ix + 1, iz)
+	var h01 = _hash_2d(ix, iz + 1)
+	var h11 = _hash_2d(ix + 1, iz + 1)
 	
-	return lerp(
-		lerp(lerp(h000, h100, f.x), lerp(h010, h110, f.x), f.y),
-		lerp(lerp(h001, h101, f.x), lerp(h011, h111, f.x), f.y),
-		f.z
-	)
+	return lerp(lerp(h00, h10, fx), lerp(h01, h11, fx), fz)
 
-func _hash_3d(p: Vector3) -> float:
-	var pp = Vector3(fmod(p.x * 0.3183099 + 0.1, 1.0), fmod(p.y * 0.3183099 + 0.1, 1.0), fmod(p.z * 0.3183099 + 0.1, 1.0))
-	pp = Vector3(abs(pp.x), abs(pp.y), abs(pp.z))
-	pp *= 17.0
-	return fmod(abs(pp.x * pp.y * pp.z * (pp.x + pp.y + pp.z)), 1.0)
+func _hash_2d(x: float, z: float) -> float:
+	var px = fmod(abs(x * 0.3183099 + 0.1), 1.0)
+	var pz = fmod(abs(z * 0.3183099 + 0.1), 1.0)
+	px *= 17.0
+	pz *= 17.0
+	return fmod(abs(px * pz * (px + pz)), 1.0)
 
 ## Spawn a building at the given position
 func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
