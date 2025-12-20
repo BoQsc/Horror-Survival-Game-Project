@@ -71,6 +71,33 @@
 
 ---
 
+## Procedural Building Generator
+
+**Directory:** `building_system/`  
+**Files:** `building_generator.gd`
+
+### Current Status:
+> ⚠️ **Imperfect Water Detection:** Procedural buildings are sometimes placed over water or in water despite multiple detection methods. The water detection system cannot reliably prevent all water placements.
+
+> ⚠️ **Floating `small_house` Prefab:** The legacy `small_house` prefab (hardcoded in `prefab_spawner.gd` lines 34-62) sometimes spawns floating above terrain. This is an older placement system that needs updating to properly ground buildings.
+
+### Why it's imperfect:
+- **Timing issue:** Buildings are queued when terrain chunk generates, but water density data may not be available yet (water chunks not loaded)
+- **Terrain shape:** Water appears in depressions - a building may be placed on terrain above water level while its footprint extends over a lower depression filled with water
+- **Regional noise mismatch:** The GDScript noise approximation for "wet regions" doesn't perfectly match the GPU shader's noise function
+
+### Current detection methods (all have limitations):
+1. **Terrain height vs water_level:** Works when terrain data is available, but can miss nearby depressions
+2. **Water density check:** Only works if water chunks are loaded (often not true at queue time)
+3. **Wet region noise:** Approximates shader noise but doesn't match exactly
+
+### Potential future fixes:
+- Defer all building spawns until water chunks are loaded
+- Improve noise matching between GDScript and shader
+- Accept imperfection and let players manually remove misplaced buildings
+
+---
+
 ## Vehicle System
 
 **Directory:** `vehicles/`, `addons/srcoder_simplecar/`
