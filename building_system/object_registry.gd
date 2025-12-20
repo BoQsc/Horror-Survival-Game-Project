@@ -32,7 +32,7 @@ const OBJECTS = {
 	},
 	6: {
 		"name": "Heavy Pistol",
-		"scene": "res://models/pistol/heavy_pistol_without_hands.tscn",
+		"scene": "res://models/pistol/heavy_pistol_physics.tscn",
 		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
 	},
 }
