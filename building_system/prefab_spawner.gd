@@ -573,16 +573,68 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		if objects_data.has(prefab_name):
 			for obj in objects_data[prefab_name]:
 				var offset = obj.offset
-				# Rotate the object offset the same way as blocks
-				var rotated_offset = _rotate_offset(Vector3i(int(offset[0]), int(offset[1]), int(offset[2])), rotation)
-				var obj_pos = spawn_pos + Vector3(rotated_offset)
+				# --- COMMON POSITIONING LOGIC ---
+				# 1. Calculate the Target Corner (Rotated + Grid Corrected)
+				var vec_offset = Vector3(float(offset[0]), float(offset[1]), float(offset[2]))
+				var rotated_corner = _rotate_vector3_offset(vec_offset, rotation)
+				var grid_correction = _get_grid_correction(rotation)
+				var target_corner = spawn_pos + rotated_corner + grid_correction
+				
+				# Get object size (default 1x1x1)
+				var obj_size = Vector3(1, 1, 1)
+				var obj_local_rot = int(obj.get("rotation", 0))
+				
+				# If it's a known object_id, use its registry size
+				if obj.has("object_id"):
+					var def = ObjectRegistry.get_object(obj.object_id)
+					if not def.is_empty():
+						var s = def.size
+						obj_size = Vector3(s.x, s.y, s.z)
+				
+				# 2. Calculate Local Size (Dimensions in Unrotated Prefab space)
+				# If object is locally rotated 90/270, swap X/Z
+				var local_size = obj_size
+				if obj_local_rot == 1 or obj_local_rot == 3:
+					local_size = Vector3(obj_size.z, obj_size.y, obj_size.x)
+				
+				# 3. Calculate Half-Size Offset (from Corner to Center) in Unrotated Prefab Space
+				var half_size = local_size * 0.5
+				
+				# 4. Rotate this Half-Size vector by the PREFAB Rotation
+				var rotated_half_size = _rotate_vector3_offset(half_size, rotation)
+				
+				# Remove Y offset if pivot is bottom-centered
+				var center_offset = rotated_half_size
+				center_offset.y = 0 
+				
+				# 5. Calculate Final Target Center
+				var target_center = target_corner + center_offset
+				
+				# 6. Compensation for BuildingChunk's Auto-Centering
+				# BuildingChunk uses 'combined rotation' to swap offsets and ORIGINAL Unrotated Registry Size.
+				# Combined Rotation = (obj_local_rot + rotation) % 4
+				var combined_rot = (obj_local_rot + rotation) % 4
+				
+				var chunk_offset_x = obj_size.x * 0.5
+				var chunk_offset_z = obj_size.z * 0.5
+				
+				# Swap if Combined Rotation is 90/270
+				if combined_rot == 1 or combined_rot == 3:
+					var temp = chunk_offset_x
+					chunk_offset_x = chunk_offset_z
+					chunk_offset_z = temp
+				
+				var chunk_center_offset = Vector3(chunk_offset_x, 0, chunk_offset_z)
+				
+				# 7. Final Position passed to helper
+				var obj_pos = target_center - chunk_center_offset
+				# --------------------------------
 				
 				# Use object_id if available, otherwise try to load scene directly
 				if obj.has("object_id"):
-					# Combine object's saved rotation with prefab rotation
-					# This keeps objects facing the correct relative direction within the structure
-					var obj_rotation = (int(obj.get("rotation", 0)) + rotation) % 4
-					building_manager.place_object(obj_pos, obj.object_id, obj_rotation)
+					if not building_manager.place_object(obj_pos, obj.object_id, combined_rot, true):
+						# print("DEBUG_MISSING_OBJ: Failed to place object_id %d at %v (Rotation %d)" % [obj.object_id, obj_pos, combined_rot])
+						pass
 				elif obj.has("scene") and obj.scene != "":
 					var scene_rot_y = obj.get("rotation_y", 0) + (rotation * 90)
 					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
@@ -695,3 +747,21 @@ func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
 		2: return Vector3i(-offset.x, offset.y, -offset.z)  # 180°
 		3: return Vector3i(offset.z, offset.y, -offset.x)   # 270°
 	return offset
+
+## Rotate a Vector3 offset by 90 degree increments (preserves float precision)
+func _rotate_vector3_offset(offset: Vector3, rotation: int) -> Vector3:
+	match rotation:
+		0: return offset  # No rotation
+		1: return Vector3(-offset.z, offset.y, offset.x)   # 90°
+		2: return Vector3(-offset.x, offset.y, -offset.z)  # 180°
+		3: return Vector3(offset.z, offset.y, -offset.x)   # 270°
+	return offset
+## Get correction offset to realign geometry with the voxel grid after rotation
+## This is needed because rotating 0..1 into the negative axis (e.g. -1..0) 
+## shifts the floor() index by -1 compared to simple integer negation.
+func _get_grid_correction(rotation: int) -> Vector3:
+	match rotation:
+		1: return Vector3(1, 0, 0)  # X axis becomes negative Z
+		2: return Vector3(1, 0, 1)  # X->-X, Z->-Z
+		3: return Vector3(0, 0, 1)  # Z axis becomes negative X
+	return Vector3.ZERO

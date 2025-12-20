@@ -195,23 +195,24 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 		if chunks.has(chunk_coord):
 			var chunk = chunks[chunk_coord]
 			if not chunk.is_cell_available(local):
+				print("DEBUG_MISSING_OBJ: Cell collision at global %v (Chunk %v Local %v) for Object %d" % [cell, chunk_coord, local, object_id])
 				return false
 		# If chunk doesn't exist, cell is available (empty terrain)
 	
 	return true
 
 ## Place an object at the given global position (supports fractional Y for terrain surface)
-func place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
-	if not can_place_object(global_pos, object_id, rotation):
+func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false) -> bool:
+	if not ignore_collision and not can_place_object(global_pos, object_id, rotation):
 		return false
 	
 	var obj_def = ObjectRegistry.get_object(object_id)
 	if obj_def.is_empty():
 		return false
 	
-	# Calculate anchor (integer grid position) and fractional Y offset
+	# Calculate anchor (integer grid position) and fractional position offset
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
-	var fractional_y = global_pos.y - floor(global_pos.y)  # Y offset from floor (0.0 to 1.0)
+	var fractional_pos = global_pos - Vector3(anchor)  # Full 3D offset from anchor
 	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
 	
 	# Load and instantiate the scene
@@ -244,7 +245,7 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
 		local_cells.append(local_cell)
 	
 	var chunk = get_chunk(chunk_coord)
-	return chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_y)
+	return chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
 
 ## Remove an object at the given global position
 func remove_object_at(global_pos: Vector3) -> bool:

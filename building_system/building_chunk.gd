@@ -131,10 +131,10 @@ func is_cell_available(local_pos: Vector3i) -> bool:
 	return true
 
 ## Place an object at the anchor position (assumes cells already validated)
-## fractional_y is the Y offset from the floor (0.0 to 1.0) for terrain surface alignment
-func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_y: float = 0.0) -> bool:
-	# Store object data (include fractional_y for persistence)
-	objects[local_anchor] = { "object_id": object_id, "rotation": rotation, "fractional_y": fractional_y }
+## fractional_pos is the 3D offset from the anchor block's origin (0,0,0)
+func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO) -> bool:
+	# Store object data (include fractional_pos for persistence)
+	objects[local_anchor] = { "object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos }
 	
 	# Mark all occupied cells
 	for cell in cells:
@@ -143,7 +143,9 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 	# Add visual instance with collision
 	if scene_instance:
 		add_child(scene_instance)
-		# Position: Center the object over its ORIGINAL footprint (unrotated size)
+		
+		# Position logic:
+		# Center the object over its ORIGINAL footprint (unrotated size)
 		# The visual rotation is applied to the model, so we use original size for offset
 		# For rotations 1 and 3 (90°/270°), swap the offset components to match rotated footprint
 		var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
@@ -156,7 +158,12 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 			offset_x = offset_z
 			offset_z = temp
 		
-		scene_instance.position = Vector3(local_anchor.x + offset_x, local_anchor.y + fractional_y, local_anchor.z + offset_z)
+		# Base position is anchor + centered offset
+		var base_pos = Vector3(local_anchor.x + offset_x, local_anchor.y, local_anchor.z + offset_z)
+		
+		# Add fractional_pos (treated as extra offset, usually 0 for manual placement)
+		scene_instance.position = base_pos + fractional_pos
+		
 		# Apply rotation (90 degree increments)
 		scene_instance.rotation_degrees.y = rotation * 90
 		
