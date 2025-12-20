@@ -68,6 +68,10 @@ class ChunkData:
 	var density_buffer_terrain: RID
 	var density_buffer_water: RID
 	var material_buffer_terrain: RID  # Material IDs per voxel (GPU)
+	
+	# Optimization: Use PhysicsServer3D RIDs directly instead of Nodes for terrain collision
+	var body_rid_terrain: RID
+	
 	var collision_shape_terrain: CollisionShape3D  # For dynamic enable/disable
 	var terrain_shape: Shape3D  # Store the shape for lazy creation
 	# CPU mirrors for physics detection
@@ -717,6 +721,10 @@ func _unload_chunk(coord: Vector3i):
 		if data.node_terrain: data.node_terrain.queue_free()
 		if data.node_water: data.node_water.queue_free()
 		
+		# Free Physics Body RID (Immediate, Main Thread/Thread Safe)
+		if data.body_rid_terrain.is_valid():
+			PhysicsServer3D.free_rid(data.body_rid_terrain)
+		
 		var tasks = []
 		if data.density_buffer_terrain.is_valid():
 			tasks.append({ "type": "free", "rid": data.density_buffer_terrain })
@@ -773,6 +781,10 @@ func _update_chunks_gdscript():
 		if data: 
 			if data.node_terrain: data.node_terrain.queue_free()
 			if data.node_water: data.node_water.queue_free()
+			
+			# Free Physics Body RID
+			if data.body_rid_terrain.is_valid():
+				PhysicsServer3D.free_rid(data.body_rid_terrain)
 			
 			var tasks = []
 			if data.density_buffer_terrain.is_valid():
@@ -1543,6 +1555,38 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 	
 	# Split into two separate tasks to spread main-thread load
 	# Task 1: Terrain (Heavier - ~4ms)
+	# Task 1: Terrain (Heavier ~4ms - NOW ~0ms on Main Thread)
+	# Optimize: Create Physics Body ON THREAD to avoid Main Thread spike
+	var body_rid = RID()
+	var shape_rid = RID()
+	
+	if result_t.shape:
+		# 1. Create Body
+		body_rid = PhysicsServer3D.body_create()
+		PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
+		
+		# 2. Create and Add Shape
+		shape_rid = result_t.shape.get_rid() # Get RID from the Shape3D resource
+		# Note: We need to keep the Shape3D resource alive or the RID might become invalid if ref count hits 0? 
+		# Actually, Shape3D resource holds the RID. As long as we hold 'result_t.shape', it's fine.
+		# But wait, we can't share Shape3D RID usage easily if we want to be safe?
+		# Actually, 'mesh.create_trimesh_shape()' creates a new ConcavePolygonShape3D.
+		
+		PhysicsServer3D.body_add_shape(body_rid, shape_rid)
+		
+		# 3. Set Layer/Mask (Layer 1 = Terrain)
+		PhysicsServer3D.body_set_collision_layer(body_rid, 1)
+		PhysicsServer3D.body_set_collision_mask(body_rid, 1)
+		
+		# 4. Add to Space (The heavy part - Done on Thread!)
+		var space = get_world_3d().space
+		PhysicsServer3D.body_set_space(body_rid, space)
+		
+		# 5. Set Position (Chunk Origin)
+		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+		var transform = Transform3D(Basis(), chunk_pos)
+		PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, transform)
+
 	pending_nodes.append({
 		"type": "final_terrain",
 		"coord": coord,
@@ -1550,7 +1594,8 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"dens": dens_t,
 		"mat_buf": mat_t,
 		"cpu_dens": cpu_dens_t,
-		"cpu_mat": cpu_mat_t
+		"cpu_mat": cpu_mat_t,
+		"body_rid": body_rid # Pass the pre-cooked body
 	})
 	
 	# Task 2: Water (Lighter - ~2ms)
@@ -1569,64 +1614,65 @@ func _finalize_chunk_creation(item: Dictionary):
 		var start = Time.get_ticks_usec()
 		var coord = item.coord
 		
-		if not active_chunks.has(coord): return
+		if not active_chunks.has(coord): 
+			# Cleanup orphan RIDs if chunk was cancelled
+			if item.get("body_rid", RID()).is_valid():
+				PhysicsServer3D.free_rid(item.body_rid)
+			return
+			
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		
 		# Create Material
 		PerformanceMonitor.start_measure("Finalize: Mat")
 		var chunk_material = _create_chunk_material(chunk_pos, item.get("cpu_mat", PackedByteArray()))
-		PerformanceMonitor.end_measure("Finalize: Mat", 0.1) # Threshold 1ms
+		PerformanceMonitor.end_measure("Finalize: Mat", 0.1)
 		
-		# Create Node (VISUALS ONLY - Defer Collision)
+		# Create Node (VISUALS ONLY)
 		PerformanceMonitor.start_measure("Finalize: Node")
-		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, false, chunk_material, true)
-		PerformanceMonitor.end_measure("Finalize: Node", 0.1) # Threshold 1ms
+		# Pass defer_collision=true to prevent create_chunk_node from creating a StaticBody3D/CollisionShape3D
+		var result = create_chunk_node(item.result.mesh, null, chunk_pos, false, chunk_material, true)
+		PerformanceMonitor.end_measure("Finalize: Node", 0.1)
 		
 		# Update Data
+		PerformanceMonitor.start_measure("Finalize: Data")
 		var data = active_chunks[coord]
 		if data == null:
 			data = ChunkData.new()
 			active_chunks[coord] = data
 			
 		data.node_terrain = result.node if not result.is_empty() else null
-		# Collision shape is created but NOT added to tree yet
-		data.collision_shape_terrain = result.collision_shape if not result.is_empty() else null
+		
+		# Link Visual Node to Physics Body (for Raycasts/Interaction)
+		var body_rid = item.get("body_rid", RID())
+		if body_rid.is_valid() and data.node_terrain:
+			# This links the RID to the InstanceID of the visual mesh instance/node
+			# So that when raycast hits the RID, we can find the Node.
+			PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
+			data.body_rid_terrain = body_rid
+		
+		# CRITICAL: Keep Shape3D resource alive!
+		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
+		if item.result.get("shape"):
+			data.terrain_shape = item.result.shape
+			
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
 		data.cpu_density_terrain = item.cpu_dens
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
 		
-		# Queue Phase 2: Add Collision (Heavy ~8ms)
-		pending_nodes_mutex.lock()
-		pending_nodes.append({
-			"type": "final_collision",
-			"coord": coord,
-			"shape_node": data.collision_shape_terrain
-		})
-		pending_nodes_mutex.unlock()
+		PerformanceMonitor.end_measure("Finalize: Data", 0.1)
 		
-		# Emit signal immediately (Visuals are ready)
-		# Defer signal to prevent sync listeners from spiking this frame
+		# Spawn Zones
+		PerformanceMonitor.start_measure("Finalize: Spawn")
 		call_deferred("emit_signal", "chunk_generated", coord, data.node_terrain)
 		_check_spawn_zone_readiness(coord)
+		PerformanceMonitor.end_measure("Finalize: Spawn", 0.1)
 		
 		var dt = (Time.get_ticks_usec() - start) / 1000.0
-		if dt > 8.0: print("[Profiler] SPIKE Finalize Terrain (Visual): %.2f ms" % dt)
-
-	elif item.type == "final_collision":
-		var start = Time.get_ticks_usec()
-		var coord = item.coord
+		if dt > 8.0: print("[Profiler] SPIKE Finalize Terrain: %.2f ms" % dt)
 		
-		if not active_chunks.has(coord): return
-		var data = active_chunks[coord]
-		if data and data.node_terrain and item.shape_node:
-			# This is the heavy operation (Physics Server Build = ~8ms)
-			if item.shape_node.get_parent() == null:
-				data.node_terrain.add_child(item.shape_node)
-		
-		var dt = (Time.get_ticks_usec() - start) / 1000.0
-		if dt > 8.0: print("[Profiler] SPIKE Finalize Collision: %.2f ms" % dt)
+	# REMOVED: final_collision block - handled in worker thread now!
 		
 	elif item.type == "final_water":
 		var start = Time.get_ticks_usec()
