@@ -284,16 +284,20 @@ func _unhandled_input(event):
 		
 		# 3. INTERACT / PICKUP (Press Only)
 		if event.pressed and not event.echo:
+			var interaction_handled = false
+			
 			# Check vehicle/interact priority
 			if interaction_target:
 				if interaction_target.is_in_group("vehicle"):
 					_enter_vehicle(interaction_target)
+					interaction_handled = true
 				elif interaction_target.has_method("interact"):
 					interaction_target.interact()
-			else:
-				# Try Pickup if not holding
-				if not held_prop_instance:
-					_try_pickup_prop()
+					interaction_handled = true
+			
+			# Fallback: Try Pickup if not holding and no interaction occurred
+			if not interaction_handled and not held_prop_instance:
+				_try_pickup_prop()
 					
 		# Return early if E handled? 
 		# If we don't return, it might fall through to the 'pressed' block below?
