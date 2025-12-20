@@ -1775,6 +1775,10 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 	
 	if layer == 0: # Terrain
+		# CRITICAL: Free the PhysicsServer body RID first (contains stale collision)
+		if data.body_rid_terrain.is_valid():
+			PhysicsServer3D.free_rid(data.body_rid_terrain)
+			data.body_rid_terrain = RID()  # Clear to prevent double-free
 		if data.node_terrain: data.node_terrain.queue_free()
 		
 		# Recreate chunk material with updated 3D texture
