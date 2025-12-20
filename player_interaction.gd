@@ -93,10 +93,16 @@ var is_freestyle_placement: bool = false
 var freestyle_rotation_offset: float = 0.0 # Additional rotation in degrees
 var smart_surface_align: bool = true # Default to true as requested
 
+
 # Prop Pickup / Physics Drag State
 var held_prop_instance: Node3D = null
 var held_prop_id: int = -1
 var held_prop_rotation: int = 0
+
+# Debug Visualization
+var pickup_debug_mesh: MeshInstance3D = null
+var debug_timer: float = 0.0
+
 
 
 func _ready():
@@ -109,6 +115,15 @@ func _ready():
 	voxel_grid_visualizer.material_override.albedo_color = Color(1, 1, 1, 0.2)
 	voxel_grid_visualizer.material_override.vertex_color_use_as_albedo = true
 	get_tree().root.add_child.call_deferred(voxel_grid_visualizer)
+	
+	# Create Debug Visualizer for Pickup
+	pickup_debug_mesh = MeshInstance3D.new()
+	var debug_mesh = ImmediateMesh.new()
+	pickup_debug_mesh.mesh = debug_mesh
+	pickup_debug_mesh.material_override = StandardMaterial3D.new()
+	pickup_debug_mesh.material_override.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	pickup_debug_mesh.material_override.vertex_color_use_as_albedo = true
+	get_tree().root.add_child.call_deferred(pickup_debug_mesh)
 	
 	update_ui()
 
@@ -142,6 +157,13 @@ func _process(_delta):
 		if was_freestyle != is_freestyle_placement:
 			update_ui()
 			_update_or_create_preview()
+			
+	# Auto-clear debug lines after 0.1s
+	debug_timer += _delta
+	if debug_timer > 0.1:
+		debug_timer = 0.0
+		if pickup_debug_mesh and pickup_debug_mesh.mesh:
+			pickup_debug_mesh.mesh.clear_surfaces()
 	
 	if current_mode == Mode.PLAYING:
 		# No selection box in playing mode
@@ -2056,41 +2078,91 @@ func _process_prefab_preview():
 
 ## ============== PROP PICKUP SYSTEM =============
 
+func _draw_debug_line(start: Vector3, end: Vector3, color: Color):
+	if not pickup_debug_mesh or not pickup_debug_mesh.mesh: return
+	pickup_debug_mesh.mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+	pickup_debug_mesh.mesh.surface_set_color(color)
+	pickup_debug_mesh.mesh.surface_add_vertex(start)
+	pickup_debug_mesh.mesh.surface_add_vertex(end)
+	pickup_debug_mesh.mesh.surface_end()
+
+func _draw_debug_sphere(center: Vector3, radius: float, color: Color):
+	if not pickup_debug_mesh or not pickup_debug_mesh.mesh: return
+	# Draw 3 circles (XY, XZ, YZ)
+	var steps = 16
+	pickup_debug_mesh.mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	pickup_debug_mesh.mesh.surface_set_color(color)
+	for i in range(steps + 1):
+		var angle = (float(i) / steps) * TAU
+		pickup_debug_mesh.mesh.surface_add_vertex(center + Vector3(cos(angle) * radius, sin(angle) * radius, 0))
+	pickup_debug_mesh.mesh.surface_end()
+	
+	pickup_debug_mesh.mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	pickup_debug_mesh.mesh.surface_set_color(color)
+	for i in range(steps + 1):
+		var angle = (float(i) / steps) * TAU
+		pickup_debug_mesh.mesh.surface_add_vertex(center + Vector3(cos(angle) * radius, 0, sin(angle) * radius))
+	pickup_debug_mesh.mesh.surface_end()
+	
+	pickup_debug_mesh.mesh.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	pickup_debug_mesh.mesh.surface_set_color(color)
+	for i in range(steps + 1):
+		var angle = (float(i) / steps) * TAU
+		pickup_debug_mesh.mesh.surface_add_vertex(center + Vector3(0, cos(angle) * radius, sin(angle) * radius))
+	pickup_debug_mesh.mesh.surface_end()
+
 func _get_pickup_target() -> Node:
-	# "Thick Ray" via Multi-Step Sphere Check
+	# Debug Setup
+	if pickup_debug_mesh and pickup_debug_mesh.mesh:
+		pickup_debug_mesh.mesh.clear_surfaces()
+		
 	var came_node = get_viewport().get_camera_3d()
 	var origin = came_node.global_position
 	var forward = -came_node.global_transform.basis.z
-	var space_state = came_node.get_world_3d().direct_space_state
 	
-	# Check spheres at 1m, 2m, 3m, 4m, 5m
-	for dist in [1.0, 2.0, 3.0, 4.0, 5.0]:
-		var center = origin + forward * dist
-		
-		var params = PhysicsShapeQueryParameters3D.new()
-		params.shape = SphereShape3D.new()
-		params.shape.radius = 0.5 # 0.5m radius "beam"
-		params.transform = Transform3D(Basis(), center)
-		params.collision_mask = 0xFFFFFFFF 
-		params.exclude = [player.get_rid()]
-		
-		var results = space_state.intersect_shape(params, 5) 
-		
-		# Find closest prop in this sphere
-		var best_target = null
-		var best_dist = 999.0
-		
-		for result in results:
-			var col = result.collider
-			if col.is_in_group("placed_objects") and col.has_meta("anchor") and col.has_meta("chunk"):
-				# Valid prop. Check distance to ray center to prioritize centered items
-				var d = col.global_position.distance_to(center)
-				if d < best_dist:
-					best_dist = d
-					best_target = col
-		
-		if best_target:
-			return best_target
+	# 1. OPTION A: PRECISE RAYCAST
+	var hit = raycast(5.0, false)
+	
+	# Visualize Ray
+	var ray_end = origin + forward * 5.0
+	if hit: ray_end = hit.position
+	_draw_debug_line(origin - Vector3(0, 0.1, 0), ray_end, Color.RED) # Slight offset to see it
+	
+	if hit and hit.collider:
+		if hit.collider.is_in_group("placed_objects") and hit.collider.has_meta("anchor"):
+			print("Pickup: Direct Hit on %s" % hit.collider.name)
+			_draw_debug_sphere(hit.collider.global_position, 0.2, Color.GREEN)
+			return hit.collider
+			
+	# 2. OPTION B: SPHERE ASSIST
+	var search_origin = hit.position if hit else (origin + forward * 2.0)
+	
+	_draw_debug_sphere(search_origin, 0.4, Color.YELLOW) # Visualize search area
+	
+	var space_state = came_node.get_world_3d().direct_space_state
+	var params = PhysicsShapeQueryParameters3D.new()
+	params.shape = SphereShape3D.new()
+	params.shape.radius = 0.4 # 40cm forgiveness radius
+	params.transform = Transform3D(Basis(), search_origin)
+	params.collision_mask = 0xFFFFFFFF 
+	params.exclude = [player.get_rid()]
+	
+	var results = space_state.intersect_shape(params, 5) 
+	var best_target = null
+	var best_dist = 999.0
+	
+	for result in results:
+		var col = result.collider
+		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
+			var d = col.global_position.distance_to(search_origin)
+			if d < best_dist:
+				best_dist = d
+				best_target = col
+	
+	if best_target:
+		print("Pickup: Assisted Hit on %s" % best_target.name)
+		_draw_debug_sphere(best_target.global_position, 0.3, Color.CYAN)
+		return best_target
 			
 	return null
 
