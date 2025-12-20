@@ -103,6 +103,14 @@ Building spawn decisions are now persisted via SaveManager:
 - Debug toggle: `regenerate_buildings_on_load` (default: false)
   - Set to `true` to regenerate buildings fresh for debugging placement logic
 
+### Future: Deterministic Building Carving During Terrain Generation
+> 💡 **Potential Optimization:** Use deterministic building placement and carve prefab interiors block-by-block during terrain generation:
+> - Determine building positions deterministically (seeded by world coordinates)
+> - During chunk terrain generation, detect if a building will spawn there
+> - Carve interior space upward column-by-column until reaching top prefab block
+> - Then place the building blocks
+> - **Benefit:** Buildings won't have terrain inside them; faster than post-placement carving
+
 ---
 
 ## Vehicle System
