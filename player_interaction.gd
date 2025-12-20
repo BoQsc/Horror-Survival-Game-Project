@@ -2052,43 +2052,73 @@ func _process_prefab_preview():
 
 ## ============== PROP PICKUP SYSTEM =============
 
-func _try_pickup_prop():
-	var hit = raycast(5.0, false) # Short range grab
-	if hit and hit.collider:
-		# Check if valid prop
-		if hit.collider.is_in_group("placed_objects") and hit.collider.has_meta("anchor") and hit.collider.has_meta("chunk"):
-			var anchor = hit.collider.get_meta("anchor")
-			var chunk = hit.collider.get_meta("chunk")
+func _get_pickup_target() -> Node:
+	# 1. Try precise raycast first
+	var hit = raycast(5.0, false)
+	if not hit or not hit.collider:
+		return null
+		
+	# Direct hit?
+	if hit.collider.is_in_group("placed_objects") and hit.collider.has_meta("anchor"):
+		return hit.collider
+		
+	# 2. Sphere Assist: Check around the hit point (e.g. if we hit floor next to item)
+	var space_state = get_viewport().get_camera_3d().get_world_3d().direct_space_state
+	var params = PhysicsShapeQueryParameters3D.new()
+	params.shape = SphereShape3D.new()
+	params.shape.radius = 0.5 # 50cm radius forgiveness
+	params.transform = Transform3D(Basis(), hit.position) # Center on hit point
+	params.collision_mask = 0xFFFFFFFF # Check all layers (or refine?)
+	params.exclude = [player.get_rid()]
+	
+	var results = space_state.intersect_shape(params, 5) # Get top 5
+	for result in results:
+		var col = result.collider
+		if col.is_in_group("placed_objects") and col.has_meta("anchor") and col.has_meta("chunk"):
+			return col
 			
-			# We need to read the object data BEFORE removing it to know what we picked up
-			# BuildingChunk stores objects in 'objects' dict
-			if chunk.objects.has(anchor):
-				var data = chunk.objects[anchor]
-				held_prop_id = data["object_id"]
-				held_prop_rotation = data["rotation"]
+	return null
+
+func _try_pickup_prop():
+	var target = _get_pickup_target()
+	
+	if target:
+		print("Pickup Found: ", target.name)
+		var anchor = target.get_meta("anchor")
+		var chunk = target.get_meta("chunk")
+	
+		# We need to read the object data BEFORE removing it to know what we picked up
+		# BuildingChunk stores objects in 'objects' dict
+		if chunk.objects.has(anchor):
+			var data = chunk.objects[anchor]
+			held_prop_id = data["object_id"]
+			# Default rotation if missing
+			held_prop_rotation = data.get("rotation", 0)
+			
+			# Remove from world (Logical + Visual)
+			chunk.remove_object(anchor)
+			
+			# Spawn temporary held visual
+			var obj_def = ObjectRegistry.get_object(held_prop_id)
+			if obj_def.has("scene"):
+				var packed = load(obj_def.scene)
+				held_prop_instance = packed.instantiate()
 				
-				# Remove from world (Logical + Visual)
-				chunk.remove_object(anchor)
+				# Strip physics/collision for holding
+				if held_prop_instance is RigidBody3D:
+					held_prop_instance.freeze = true
+					held_prop_instance.collision_layer = 0
+					held_prop_instance.collision_mask = 0
 				
-				# Spawn temporary held visual
-				var obj_def = ObjectRegistry.get_object(held_prop_id)
-				if obj_def.has("scene"):
-					var packed = load(obj_def.scene)
-					held_prop_instance = packed.instantiate()
-					
-					# Strip physics/collision for holding
-					if held_prop_instance is RigidBody3D:
-						held_prop_instance.freeze = true
-						held_prop_instance.collision_layer = 0
-						held_prop_instance.collision_mask = 0
-					
-					# Recursive disable collision for children
-					_disable_preview_collisions(held_prop_instance)
-					
-					get_tree().root.add_child(held_prop_instance)
-					held_prop_instance.global_position = hit.position # Start at grab point
-					
-					print("Picked up Prop ID %d" % held_prop_id)
+				# Recursive disable collision for children
+				_disable_preview_collisions(held_prop_instance)
+				
+				get_tree().root.add_child(held_prop_instance)
+				# Start at camera grab point (not random hit pos)
+				var cam = get_viewport().get_camera_3d()
+				held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
+				
+				print("Picked up Prop ID %d" % held_prop_id)
 
 func _drop_held_prop():
 	if not held_prop_instance: return
