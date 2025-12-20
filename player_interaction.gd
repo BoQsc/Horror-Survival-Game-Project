@@ -1408,14 +1408,19 @@ func _update_or_create_preview():
 			
 		preview_instance.visible = true
 		
-		# Check validity - use grid-snapped position
-		var check_pos = Vector3(floor(current_voxel_pos.x), floor(current_precise_hit_y), floor(current_voxel_pos.z))
-		var can_place = building_manager.can_place_object(
-			check_pos,
-			current_object_id,
-			current_object_rotation
-		)
-		_set_preview_validity(can_place)
+		# Check validity
+		if is_freestyle_placement:
+			# Freestyle is valid (physics will handle collision)
+			_set_preview_validity(true)
+		else:
+			# Standard grid check
+			var check_pos = Vector3(floor(current_voxel_pos.x), floor(current_precise_hit_y), floor(current_voxel_pos.z))
+			var can_place = building_manager.can_place_object(
+				check_pos,
+				current_object_id,
+				current_object_rotation
+			)
+			_set_preview_validity(can_place)
 	elif preview_instance:
 		preview_instance.visible = false
 
