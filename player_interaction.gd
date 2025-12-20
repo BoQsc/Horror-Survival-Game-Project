@@ -743,9 +743,12 @@ func update_selection_box():
 			
 			# Align logic for preview (will be handled by _update_preview)
 			# We don't snap to grid.
-			selection_box.visible = false # Hide box in free mode? Or follow exact?
+			selection_box.visible = false 
 			# Let's show box at exact pos for feedback
-			selection_box.global_position = current_voxel_pos + Vector3(0, 0.5, 0) # Box is 1x1 center pivoted usually
+			selection_box.global_position = current_voxel_pos + Vector3(0, 0.5, 0)
+			
+			# Freestyle is always valid (physics handles the rest)
+			_set_preview_validity(true)
 			
 		elif hit_placed_object or hit_building:
 			# Hit an object/building: place adjacent (same as BUILDING mode)
