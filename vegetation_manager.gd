@@ -105,7 +105,7 @@ func _ready():
 		grass_mesh = grass_result.mesh
 		grass_base_transform = grass_result.transform
 		grass_base_transform.origin = Vector3.ZERO
-		print("Loaded grass model from GLB")
+		DebugSettings.log_vegetation("Loaded grass model from GLB")
 	else:
 		push_warning("Failed to load grass model, using basic mesh")
 		grass_mesh = create_basic_grass_mesh()
@@ -120,7 +120,7 @@ func _ready():
 		rock_mesh = rock_result.mesh
 		rock_base_transform = rock_result.transform
 		rock_base_transform.origin = Vector3.ZERO
-		print("Loaded rock model from GLB")
+		DebugSettings.log_vegetation("Loaded rock model from GLB")
 	else:
 		push_warning("Failed to load rock model, using basic mesh")
 		rock_mesh = create_basic_rock_mesh()
@@ -186,7 +186,8 @@ func _on_chunk_unloaded(coord: Vector3i):
 		return
 	
 	var surface_key = Vector2i(coord.x, coord.z)
-	print("[VegetationManager] Chunk unloaded: %s -> cleaning surface_key %s" % [coord, surface_key])
+	if DebugSettings.LOG_VEGETATION:
+		DebugSettings.log_vegetation("Chunk unloaded: %s" % coord)
 	
 	# Clean up trees (including MultiMesh and colliders)
 	if chunk_tree_data.has(surface_key):
@@ -204,9 +205,6 @@ func _on_chunk_unloaded(coord: Vector3i):
 				active_colliders.erase(key)
 				colliders_removed += 1
 		chunk_tree_data.erase(surface_key)
-		print("  -> Trees: %d, colliders removed: %d, active_colliders remaining: %d" % [tree_count, colliders_removed, active_colliders.size()])
-	else:
-		print("  -> No tree data for this chunk")
 	
 	# Clean up grass
 	if chunk_grass_data.has(surface_key):
@@ -444,7 +442,6 @@ func _process_pending_placements():
 				# Chunk is now valid, add the rock
 				if _add_rock_to_chunk(placement.world_pos, placement.scale, placement.rotation, coord):
 					completed_rocks.append(i)
-					print("Retry: Added pending rock to chunk ", coord)
 	
 	# Remove completed placements (reverse order to preserve indices)
 	for i in range(completed_rocks.size() - 1, -1, -1):
@@ -461,7 +458,6 @@ func _process_pending_placements():
 			if data.has("chunk_node") and is_instance_valid(data.chunk_node) and data.has("multimesh") and is_instance_valid(data.multimesh):
 				if _add_grass_to_chunk(placement.world_pos, placement.scale, placement.rotation, coord):
 					completed_grass.append(i)
-					print("Retry: Added pending grass to chunk ", coord)
 	
 	for i in range(completed_grass.size() - 1, -1, -1):
 		pending_grass_placements.remove_at(completed_grass[i])
@@ -508,11 +504,6 @@ func _cleanup_orphan_colliders():
 					if grandchild is CollisionShape3D:
 						grandchild.disabled = true
 				cleaned += 1
-				print("  -> Orphan at %s (chunk %s not loaded)" % [pos, chunk_key])
-	
-	# Debug: periodically log counts
-	if total_colliders > 0 and visible_colliders > 0:
-		print("[VegetationManager] Colliders: %d total, %d visible, %d orphaned" % [total_colliders, visible_colliders, cleaned])
 
 var collider_update_counter: int = 0
 
@@ -520,7 +511,7 @@ func _update_proximity_colliders():
 	if not player:
 		player = get_tree().get_first_node_in_group("player")
 		if not player:
-			print("VegetationManager: Player not found in 'player' group!")
+			push_warning("VegetationManager: Player not found in 'player' group!")
 			return
 	
 	var player_pos = player.global_position
@@ -1342,11 +1333,11 @@ func place_grass(world_pos: Vector3) -> bool:
 		"scale": final_scale,
 		"rotation": rotation_angle
 	})
-	print("Stored grass placement at ", world_pos, " for persistence")
+	# Store for persistence
 	
 	# Check if we can place immediately
 	if not chunk_grass_data.has(coord):
-		print("Chunk grass data not ready - queuing for retry")
+		# Chunk grass data not ready - queue for retry
 		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
 		return true  # Stored for later
 	
@@ -1354,7 +1345,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	
 	# Validate chunk_node
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
-		print("Chunk node not valid - queuing for retry")
+		# Chunk node not valid - queue for retry
 		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
 		return true  # Stored for later
 	
@@ -1370,7 +1361,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	
 	# Add to MultiMesh - need to expand instance count
 	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
-		print("MultiMesh not valid - queuing for retry")
+		# MultiMesh not valid - queue for retry
 		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
 		return true  # Stored for later
 	
@@ -1403,7 +1394,7 @@ func place_grass(world_pos: Vector3) -> bool:
 		}
 		data.grass_list.append(grass_entry)
 		
-		print("Placed grass immediately at ", world_pos)
+		return true
 		return true
 	
 	return true  # Already stored for persistence
@@ -1545,7 +1536,6 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	for placed in placed_rocks:
 		var placed_coord = Vector2i(int(floor(placed.world_pos.x / chunk_stride)), int(floor(placed.world_pos.z / chunk_stride)))
 		if placed_coord == coord:
-			print("Restoring player-placed rock at ", placed.world_pos, " to chunk ", coord)
 			var local_pos = placed.world_pos - chunk_world_pos
 			local_pos.y += rock_y_offset
 			
@@ -1573,7 +1563,8 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
 	
-	print("Placed ", valid_transforms.size(), " rocks in chunk ", coord, " (", placed_rocks.size(), " total in persistence)")
+	if DebugSettings.LOG_VEGETATION and valid_transforms.size() > 0:
+		DebugSettings.log_vegetation("Placed %d rocks in chunk %s" % [valid_transforms.size(), coord])
 	
 	# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
 	chunk_node.add_child(mmi)
@@ -1652,11 +1643,11 @@ func place_rock(world_pos: Vector3) -> bool:
 		"scale": final_scale,
 		"rotation": rotation_angle
 	})
-	print("Stored rock placement at ", world_pos, " for persistence (", placed_rocks.size(), " total)")
+	# Store for persistence
 	
 	# Check if we can place immediately
 	if not chunk_rock_data.has(coord):
-		print("Chunk rock data not ready - queuing for retry")
+		# Chunk rock data not ready - queue for retry
 		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
 		return true
 	
@@ -1664,19 +1655,19 @@ func place_rock(world_pos: Vector3) -> bool:
 	
 	# Validate chunk_node
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
-		print("Chunk node not valid - queuing for retry")
+		# Chunk node not valid - queue for retry
 		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
 		return true
 	
 	# Validate multimesh
 	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
-		print("MultiMesh not valid - queuing for retry")
+		# MultiMesh not valid - queue for retry
 		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
 		return true
 	
 	# Can place immediately
 	if _add_rock_to_chunk(world_pos, final_scale, rotation_angle, coord):
-		print("Placed rock immediately at ", world_pos)
+		return true
 		return true
 	
 	return true
@@ -1749,8 +1740,7 @@ func load_tree_mesh_from_glb(path: String) -> Dictionary:
 	instance.queue_free()
 	
 	if result.mesh:
-		print("Loaded tree mesh from: ", path)
-		print("Mesh transform: ", result.transform)
+		DebugSettings.log_vegetation("Loaded tree mesh from: %s" % path)
 	
 	return result
 
@@ -1923,7 +1913,7 @@ func load_save_data(data: Dictionary):
 				"rotation": r.get("rotation", 0.0)
 			})
 	
-	print("VegetationManager: Loaded %d chopped trees, %d removed grass, %d removed rocks" % [
+	DebugSettings.log_vegetation("Loaded %d chopped, %d removed grass, %d removed rocks" % [
 		chopped_trees.size(), removed_grass.size(), removed_rocks.size()
 	])
 

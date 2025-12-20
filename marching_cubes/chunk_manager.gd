@@ -148,20 +148,20 @@ func _ready():
 			viewer = get_node_or_null("../CharacterBody3D")
 	
 	if viewer:
-		print("Viewer found: ", viewer.name)
+		DebugSettings.log_chunk("Viewer found: %s" % viewer.name)
 	else:
-		print("Viewer NOT found! Terrain generation will not start.")
+		push_warning("Viewer NOT found! Terrain generation will not start.")
 
 	# Check for GDExtension
 	if ClassDB.class_exists("MeshBuilder"):
-		print("[GDExtension] MeshBuilder active! Using optimized C++ meshing.")
+		DebugSettings.log_chunk("GDExtension MeshBuilder active")
 	else:
 		push_warning("[GDExtension] MeshBuilder NOT found. Using slow GDScript fallback.")
 
 	# Check for TerrainGrid
 	if ClassDB.class_exists("TerrainGrid"):
 		terrain_grid = ClassDB.instantiate("TerrainGrid")
-		print("[GDExtension] TerrainGrid active! Using optimized C++ chunk logic.")
+		DebugSettings.log_chunk("GDExtension TerrainGrid active")
 
 
 	# Load shaders (Data only, safe on Main Thread)
@@ -216,14 +216,12 @@ func _ready():
 		var thread = Thread.new()
 		thread.start(_cpu_thread_function)
 		cpu_threads.append(thread)
-	print("Started %d CPU workers for mesh building" % CPU_WORKER_COUNT)
+	DebugSettings.log_chunk("Started %d CPU workers" % CPU_WORKER_COUNT)
 	
 	# Calculate initial load target (all chunks within render distance)
 	# For ground-level players, we only load Y=0, same chunk count as before
 	initial_load_target_chunks = int(PI * render_distance * render_distance)
-	print("Two-phase loading: Initial load target = %d chunks (render_distance=%d)" % [initial_load_target_chunks, render_distance])
-	print("  Phase 1 (Initial): delay=%dms (aggressive)" % initial_load_delay_ms)
-	print("  Phase 2 (Explore): delay=%dms (throttled)" % exploration_delay_ms)
+	DebugSettings.log_chunk("Two-phase loading: target=%d chunks, initial=%dms, explore=%dms" % [initial_load_target_chunks, initial_load_delay_ms, exploration_delay_ms])
 
 func _process(delta):
 	if not viewer:
@@ -251,7 +249,7 @@ func _unhandled_input(event):
 	# F9 toggles chunk boundary visualization
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F9:
 		debug_chunk_bounds = !debug_chunk_bounds
-		print("[DEBUG] Chunk bounds visualization: ", "ON" if debug_chunk_bounds else "OFF")
+		DebugSettings.log_chunk("Chunk bounds visualization: %s" % ("ON" if debug_chunk_bounds else "OFF"))
 		# Update all chunk materials
 		for coord in active_chunks:
 			var data = active_chunks[coord]
@@ -262,8 +260,7 @@ func _unhandled_input(event):
 	# F10 toggles road zone visualization (Yellow=correct, Red=spillover, Green=crack)
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F10:
 		debug_show_road_zones = !debug_show_road_zones
-		print("[DEBUG] Road zones visualization: ", "ON" if debug_show_road_zones else "OFF")
-		print("  Yellow = correct, Red = spillover, Green = crack")
+		DebugSettings.log_chunk("Road zones visualization: %s" % ("ON" if debug_show_road_zones else "OFF"))
 		# Update all chunk materials
 		for coord in active_chunks:
 			var data = active_chunks[coord]
@@ -584,7 +581,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					if not active_chunks.has(coord):  # Not already queued
 						active_chunks[coord] = null  # Mark as pending
 						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-						print("[DEBUG Y-LOAD] modify_terrain triggering generation for Y=%d chunk at (%d, %d)" % [coord.y, coord.x, coord.z])
+						if DebugSettings.LOG_CHUNK: DebugSettings.log_chunk("modify_terrain triggering Y=%d at (%d, %d)" % [coord.y, coord.x, coord.z])
 						chunks_to_generate.append({
 							"type": "generate",
 							"coord": coord,
@@ -814,9 +811,9 @@ func _update_chunks_gdscript():
 	# Only use multi-layer path for underground players (Y < 0)
 	var is_above_ground = center_chunk.y >= 0
 	
-	# DEBUG: Print loading state (remove after testing)
-	if initial_load_phase and chunks_loaded_initial == 0:
-		print("DEBUG LOAD: center=%s is_above_ground=%s chunks_per_frame=%d" % [center_chunk, is_above_ground, chunks_per_frame_limit])
+	# Debug loading state (gated)
+	if DebugSettings.LOG_CHUNK and initial_load_phase and chunks_loaded_initial == 0:
+		DebugSettings.log_chunk("Loading center=%s chunks_per_frame=%d" % [center_chunk, chunks_per_frame_limit])
 	
 	if is_above_ground:
 		# Only load Y=0 layer for performance
@@ -841,8 +838,8 @@ func _update_chunks_gdscript():
 					active_chunks[coord] = null
 					
 					# Debug: track when underground chunks are queued
-					if y < 0:
-						print("[DEBUG Y-LOAD] Queuing underground chunk Y=%d at (%d, %d)" % [y, x, z])
+					if DebugSettings.LOG_CHUNK and y < 0:
+						DebugSettings.log_chunk("Queuing underground Y=%d at (%d, %d)" % [y, x, z])
 					
 					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
 					
@@ -1022,7 +1019,7 @@ func _thread_function():
 						chunks_loaded_initial += 1
 						if chunks_loaded_initial >= initial_load_target_chunks:
 							initial_load_phase = false
-							print("Initial load complete! Switching to exploration mode (delay=%dms)" % exploration_delay_ms)
+							DebugSettings.log_chunk("Initial load complete! Exploration mode delay=%dms" % exploration_delay_ms)
 						# During initial load: minimal or no delay for fast loading
 						if initial_load_delay_ms > 0:
 							_interruptible_delay(initial_load_delay_ms)
@@ -1670,7 +1667,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		PerformanceMonitor.end_measure("Finalize: Spawn", 0.1)
 		
 		var dt = (Time.get_ticks_usec() - start) / 1000.0
-		if dt > 8.0: print("[Profiler] SPIKE Finalize Terrain: %.2f ms" % dt)
+		if dt > 8.0 and DebugSettings.LOG_CHUNK: DebugSettings.log_chunk("SPIKE Finalize Terrain: %.2f ms" % dt)
 		
 	# REMOVED: final_collision block - handled in worker thread now!
 		
@@ -1695,7 +1692,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.cpu_density_water = item.cpu_dens
 		
 		var dt = (Time.get_ticks_usec() - start) / 1000.0
-		if dt > 8.0: print("[Profiler] SPIKE Finalize Water: %.2f ms" % dt)
+		if dt > 8.0 and DebugSettings.LOG_CHUNK: DebugSettings.log_chunk("SPIKE Finalize Water: %.2f ms" % dt)
 
 ## Create per-chunk ShaderMaterial with 3D material texture
 func _create_chunk_material(chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
@@ -1732,7 +1729,7 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 		return tex3d
 
 	# Slow Fallback
-	print("[Profiler] WARNING: Hit GDScript texture fallback! Stutter expected.")
+	push_warning("GDScript texture fallback used - stutter expected")
 	for z in range(DENSITY_GRID_SIZE):
 		var img = Image.create(DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, Image.FORMAT_R8)
 		for y in range(DENSITY_GRID_SIZE):
@@ -1895,7 +1892,7 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 			"radius": radius,
 			"pending_coords": pending_coords
 		})
-		print("[SpawnZone] Requested %d chunks around position %s" % [pending_coords.size(), position])
+		DebugSettings.log_chunk("SpawnZone requested %d chunks at %s" % [pending_coords.size(), position])
 
 ## Check if chunks around a position are ready (loaded with data)
 func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
@@ -1934,7 +1931,7 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 	
 	# Emit signal if any zones completed
 	if not ready_positions.is_empty():
-		print("[SpawnZone] %d spawn zones ready!" % ready_positions.size())
+		DebugSettings.log_chunk("SpawnZone %d zones ready" % ready_positions.size())
 		spawn_zones_ready.emit(ready_positions)
 
 ## Request multiple spawn zones at once (for batch loading player + entities)

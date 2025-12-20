@@ -46,21 +46,16 @@ func _find_managers():
 	vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
 	player = get_tree().get_first_node_in_group("player")
 	
-	print("[SaveManager] Managers found:")
-	print("  - ChunkManager: ", chunk_manager != null)
-	print("  - BuildingManager: ", building_manager != null)
-	print("  - VegetationManager: ", vegetation_manager != null)
-	print("  - RoadManager: ", road_manager != null)
-	print("  - PrefabSpawner: ", prefab_spawner != null)
-	print("  - EntityManager: ", entity_manager != null)
-	print("  - VehicleManager: ", vehicle_manager != null)
-	print("  - Player: ", player != null)
+	DebugSettings.log_save("Managers: CM=%s BM=%s VM=%s RM=%s PF=%s EM=%s VEH=%s P=%s" % [
+		chunk_manager != null, building_manager != null, vegetation_manager != null,
+		road_manager != null, prefab_spawner != null, entity_manager != null,
+		vehicle_manager != null, player != null
+	])
 	
 	# Connect to chunk_manager's spawn_zones_ready signal
 	if chunk_manager and chunk_manager.has_signal("spawn_zones_ready"):
 		if not chunk_manager.is_connected("spawn_zones_ready", _on_spawn_zones_ready):
 			chunk_manager.connect("spawn_zones_ready", _on_spawn_zones_ready)
-			print("  - Connected to spawn_zones_ready signal")
 
 func _input(event):
 	if event is InputEventKey and event.pressed:
@@ -72,7 +67,7 @@ func _input(event):
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		# Auto-save on exit
-		print("[SaveManager] Auto-saving on exit...")
+		DebugSettings.log_save("Auto-saving on exit...")
 		save_game(SAVE_DIR + "autosave.json")
 		get_tree().quit()
 
@@ -88,7 +83,7 @@ func quick_load():
 
 ## Save game to specified path
 func save_game(path: String) -> bool:
-	print("[SaveManager] Saving game to: ", path)
+	DebugSettings.log_save("Saving to: %s" % path)
 	
 	var save_data = {
 		"version": SAVE_VERSION,
@@ -118,13 +113,13 @@ func save_game(path: String) -> bool:
 	file.store_string(json_string)
 	file.close()
 	
-	print("[SaveManager] Save completed successfully!")
+	DebugSettings.log_save("Save complete!")
 	save_completed.emit(true, path)
 	return true
 
 ## Load game from specified path
 func load_game(path: String) -> bool:
-	print("[SaveManager] Loading game from: ", path)
+	DebugSettings.log_save("Loading from: %s" % path)
 	
 	if not FileAccess.file_exists(path):
 		push_error("[SaveManager] Save file not found: " + path)
@@ -175,7 +170,7 @@ func load_game(path: String) -> bool:
 	call_deferred("_load_door_data", save_data.get("doors", {}))
 	# Vehicles are ALSO deferred until terrain is ready (prevents falling through)
 	pending_vehicle_data = save_data.get("vehicles", {})
-	print("[SaveManager] Load completed successfully!")
+	DebugSettings.log_save("Load complete!")
 	load_completed.emit(true, path)
 	return true
 
@@ -184,23 +179,20 @@ func _on_spawn_zones_ready(positions: Array):
 	if not is_loading_game:
 		return
 	
-	print("[SaveManager] Spawn zones ready - enabling gameplay")
+	DebugSettings.log_save("Spawn zones ready - gameplay enabled")
 	
 	# Unfreeze player
 	if player:
 		player.process_mode = Node.PROCESS_MODE_INHERIT
-		print("[SaveManager] Player unfrozen")
 	
 	# Spawn queued entities now that terrain is ready
 	if not pending_entity_data.is_empty() and entity_manager:
 		if entity_manager.has_method("load_save_data"):
 			entity_manager.load_save_data(pending_entity_data)
-			print("[SaveManager] Entities spawned")
 	
 	# Spawn queued vehicles now that terrain is ready
 	if not pending_vehicle_data.is_empty():
 		_load_vehicle_data(pending_vehicle_data)
-		print("[SaveManager] Vehicles spawned")
 	
 	# Clear pending data
 	pending_player_data = {}
@@ -248,12 +240,12 @@ func _get_player_data() -> Dictionary:
 
 func _get_terrain_data() -> Dictionary:
 	if not chunk_manager:
-		print("[SaveManager] WARNING: chunk_manager is null!")
+		push_warning("SaveManager: chunk_manager is null")
 		return {}
 	
 	# Access stored_modifications directly
 	if not "stored_modifications" in chunk_manager:
-		print("[SaveManager] WARNING: chunk_manager has no stored_modifications!")
+		push_warning("SaveManager: no stored_modifications")
 		return {}
 	
 	var result = {}
@@ -271,7 +263,7 @@ func _get_terrain_data() -> Dictionary:
 			})
 		result[key] = mods
 	
-	print("[SaveManager] Saved %d terrain modification chunks (%d total edits)" % [result.size(), chunk_manager.stored_modifications.size()])
+	DebugSettings.log_save("Saved %d terrain chunks" % result.size())
 	return result
 
 func _get_building_data() -> Dictionary:
@@ -385,32 +377,29 @@ func _load_player_data(data: Dictionary):
 	# FREEZE player until terrain is ready
 	player.velocity = Vector3.ZERO
 	player.process_mode = Node.PROCESS_MODE_DISABLED
-	print("[SaveManager] Player frozen at position %s, waiting for terrain..." % player_pos)
+	DebugSettings.log_save("Player frozen at %s, waiting for terrain" % player_pos)
 	
 	# Request terrain around player position
 	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
 		chunk_manager.request_spawn_zone(player_pos, 2)
 	else:
 		# Fallback: if no spawn zone API, just unfreeze after a delay
-		push_warning("[SaveManager] No spawn zone API - using fallback timer")
+		push_warning("SaveManager: No spawn zone API - using fallback timer")
 		get_tree().create_timer(2.0).timeout.connect(func(): 
 			if player:
 				player.process_mode = Node.PROCESS_MODE_INHERIT
 			is_loading_game = false
 		)
-	
-	print("[SaveManager] Player data loaded (frozen until terrain ready)")
 
 func _load_terrain_data(data: Dictionary):
 	if data.is_empty():
-		print("[SaveManager] No terrain data to load")
 		return
 	if not chunk_manager:
-		print("[SaveManager] ERROR: Cannot load terrain - chunk_manager is null!")
+		push_error("SaveManager: Cannot load terrain - chunk_manager is null!")
 		return
 	
 	if not "stored_modifications" in chunk_manager:
-		print("[SaveManager] ERROR: chunk_manager has no stored_modifications property!")
+		push_error("SaveManager: chunk_manager has no stored_modifications property!")
 		return
 	
 	# Clear existing modifications
@@ -435,8 +424,6 @@ func _load_terrain_data(data: Dictionary):
 			})
 		chunk_manager.stored_modifications[coord] = mods
 	
-	print("[SaveManager] Terrain modifications loaded: %d chunks" % data.size())
-	
 	# Force regeneration of affected chunks by marking them for reload
 	# This ensures the loaded modifications are actually applied
 	var affected_chunks = chunk_manager.stored_modifications.keys()
@@ -450,7 +437,7 @@ func _load_terrain_data(data: Dictionary):
 				chunk_data.node_water.queue_free()
 			chunk_manager.active_chunks.erase(coord)
 	
-	print("[SaveManager] Forced regeneration of %d chunks" % affected_chunks.size())
+	DebugSettings.log_save("Terrain loaded: %d chunks, regenerating %d" % [data.size(), affected_chunks.size()])
 
 func _load_building_data(data: Dictionary):
 	if data.is_empty() or not building_manager:
@@ -500,7 +487,7 @@ func _load_building_data(data: Dictionary):
 		# Restore visual instances for placed objects (tables, doors, etc.)
 		chunk.call_deferred("restore_object_visuals")
 	
-	print("[SaveManager] Building data loaded: %d chunks" % data.size())
+	DebugSettings.log_save("Buildings loaded: %d chunks" % data.size())
 
 func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:
@@ -510,7 +497,7 @@ func _load_vegetation_data(data: Dictionary):
 	if vegetation_manager.has_method("load_save_data"):
 		vegetation_manager.load_save_data(data)
 	else:
-		print("[SaveManager] WARNING: vegetation_manager has no load_save_data method!")
+		push_warning("SaveManager: vegetation_manager has no load_save_data method")
 
 func _load_road_data(data: Dictionary):
 	if data.is_empty() or not road_manager:
@@ -552,7 +539,7 @@ func _load_road_data(data: Dictionary):
 					max_id = seg.id
 			road_manager.next_segment_id = max_id + 1
 	
-	print("[SaveManager] Road data loaded: %d segments" % data.segments.size() if data.has("segments") else 0)
+	DebugSettings.log_save("Roads loaded: %d segments" % (data.segments.size() if data.has("segments") else 0))
 
 # ============ ENTITY DATA ============
 
@@ -628,7 +615,7 @@ func _load_door_data(data: Dictionary):
 						node.close_door()
 					break
 	
-	print("[SaveManager] Door states loaded: %d doors" % data.doors.size())
+	DebugSettings.log_save("Doors loaded: %d" % data.doors.size())
 
 # ============ UTILITY FUNCTIONS ============
 
