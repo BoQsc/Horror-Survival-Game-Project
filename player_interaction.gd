@@ -91,7 +91,7 @@ var current_vehicle: Node3D = null
 # Freestyle Placement State
 var is_freestyle_placement: bool = false
 var freestyle_rotation_offset: float = 0.0 # Additional rotation in degrees
-
+var smart_surface_align: bool = true # Default to true as requested
 
 func _ready():
 	# Create Grid Visualizer
@@ -234,6 +234,11 @@ func _unhandled_input(event):
 			else:
 				terrain_blocky_mode = not terrain_blocky_mode
 			update_ui()
+		elif event.keycode == KEY_Z:
+			if current_mode == Mode.OBJECT:
+				smart_surface_align = not smart_surface_align
+				print("Smart Surface Align: %s" % ("ON" if smart_surface_align else "OFF"))
+				update_ui()
 		elif event.keycode == KEY_1:
 			if current_mode == Mode.CONSTRUCT:
 				construct_item_id = 1  # Cube block
@@ -544,7 +549,8 @@ func update_ui():
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"
 		var grid_str = "Grid ON" if object_show_grid else "Grid OFF"
-		mode_label.text = "Mode: OBJECT (%s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-5] Select, [R] Rotate, [G] Grid" % [grid_str, obj_name, current_object_rotation]
+		var align_str = "Align ON" if smart_surface_align else "Align OFF"
+		mode_label.text = "Mode: OBJECT (%s, %s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-5] Select, [R] Rotate, [G] Grid\n[E] Hold Free, [Z] Toggle Align" % [grid_str, align_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.CONSTRUCT:
 		var item_name = _get_construct_item_name(construct_item_id)
 		var type_str: String
@@ -685,17 +691,61 @@ func update_selection_box():
 		selection_box.global_position = current_voxel_pos + Vector3(0.5, 0.5, 0.5)
 		
 	elif current_mode == Mode.OBJECT:
-		# OBJECT MODE - same logic as BUILDING mode
 		if is_freestyle_placement:
 			# FREESTYLE MODE: Use exact raycast hit
 			current_voxel_pos = pos # Store exact pos
 			current_precise_hit_y = pos.y
 			
+			# Smart Surface Align: Prevent clipping into terrain or objects
+			if smart_surface_align: # Works on everything now
+				# Sample terrain at object corners + center to find highest point
+				var obj_size = ObjectRegistry.get_rotated_size(current_object_id, current_object_rotation)
+				var half_x = float(obj_size.x) / 2.0
+				var half_z = float(obj_size.z) / 2.0
+				
+				# Corners + Center
+				var points = [
+					pos, # Center
+					Vector3(pos.x - half_x, 0, pos.z - half_z),
+					Vector3(pos.x + half_x, 0, pos.z - half_z),
+					Vector3(pos.x - half_x, 0, pos.z + half_z),
+					Vector3(pos.x + half_x, 0, pos.z + half_z)
+				]
+				
+				var max_y = -999.0
+				for p in points:
+					# Use physics raycast instead of math height for perfect mesh alignment
+					# Start search from the hit position's Y
+					var h = _get_physics_height_at(p.x, p.z, pos.y)
+					if h > max_y:
+						max_y = h
+				
+				if max_y > -900:
+					# Base height is the surface
+					current_precise_hit_y = max_y
+					
+					# Add pivot offset from preview instance (if available)
+					# This handles centered pivots vs bottom pivots
+					if preview_instance and preview_object_id == current_object_id:
+						var pivot_offset = _calculate_pivot_offset(preview_instance)
+						current_precise_hit_y += pivot_offset
+					else:
+						# Fallback safety margin
+						current_precise_hit_y += 0.02
+			
+			# Apply manual offset (Shift+Scroll) - finer control for freestyle (0.1 steps)
+			if placement_y_offset != 0:
+				current_precise_hit_y += float(placement_y_offset) * 0.1
+				
+			current_voxel_pos.y = current_precise_hit_y
+			
+			# Align logic for preview (will be handled by _update_preview)
+			
 			# Align logic for preview (will be handled by _update_preview)
 			# We don't snap to grid.
 			selection_box.visible = false # Hide box in free mode? Or follow exact?
 			# Let's show box at exact pos for feedback
-			selection_box.global_position = pos + Vector3(0, 0.5, 0) # Box is 1x1 center pivoted usually
+			selection_box.global_position = current_voxel_pos + Vector3(0, 0.5, 0) # Box is 1x1 center pivoted usually
 			
 		elif hit_placed_object or hit_building:
 			# Hit an object/building: place adjacent (same as BUILDING mode)
@@ -1365,6 +1415,57 @@ func _update_or_create_preview():
 		_set_preview_validity(can_place)
 	elif preview_instance:
 		preview_instance.visible = false
+
+## Get exact physics height at position using a vertical raycast
+func _get_physics_height_at(x: float, z: float, start_y: float) -> float:
+	var space_state = player.get_world_3d().direct_space_state
+	var from = Vector3(x, start_y + 2.0, z) # Start 2 meters above
+	var to = Vector3(x, start_y - 2.0, z)   # Cast 2 meters below
+	
+	var query = PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = [player.get_rid()] # Exclude player
+	# We want to hit everything solid (Terrain, Buildings, other Objects)
+	
+	var result = space_state.intersect_ray(query)
+	if result:
+		return result.position.y
+	
+	return -1000.0 # No hit
+
+## Calculate how much to raise the object so its bottom sits at Y=0
+func _calculate_pivot_offset(node: Node3D) -> float:
+	var min_y = 0.0
+	var found = false
+	
+	# Recursively check meshes
+	var meshes = _find_all_mesh_instances(node)
+	if meshes.is_empty():
+		return 0.0
+		
+	for mesh in meshes:
+		var aabb = mesh.get_aabb()
+		# Transform AABB corners to node local space
+		# The mesh might be a child with its own transform
+		var tr = node.global_transform.affine_inverse() * mesh.global_transform
+		
+		for i in range(8):
+			var corner = aabb.get_endpoint(i)
+			var local_pt = tr * corner
+			if not found or local_pt.y < min_y:
+				min_y = local_pt.y
+				found = true
+	
+	# If min_y is -0.5, we need to raise by 0.5.
+	# If min_y is 0, we raise by 0.
+	# Return positive offset
+	return -min_y if found else 0.0
+
+func _find_all_mesh_instances(node: Node, list: Array = []) -> Array:
+	if node is MeshInstance3D:
+		list.append(node)
+	for child in node.get_children():
+		_find_all_mesh_instances(child, list)
+	return list
 
 ## Create a preview instance for the current object
 func _create_preview():
