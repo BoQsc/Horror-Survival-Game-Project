@@ -2219,8 +2219,24 @@ func _drop_held_prop():
 	# Drop exactly where held (User control)
 	var drop_pos = held_prop_instance.global_position
 	
-	# Reuse Placement Logic
-	var success = building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
+	# COMPENSATE FOR CHUNK CENTERING:
+	# The building system automatically adds "Half Size" centering.
+	# For precise physics drops, we must pre-subtract this so the final result is exactly drop_pos.
+	var drop_obj_def = ObjectRegistry.get_object(held_prop_id)
+	var size = drop_obj_def.get("size", Vector3i(1, 1, 1))
+	var offset_x = float(size.x) / 2.0
+	var offset_z = float(size.z) / 2.0
+	
+	if held_prop_rotation == 1 or held_prop_rotation == 3:
+		var temp = offset_x
+		offset_x = offset_z
+		offset_z = temp
+	
+	var center_offset = Vector3(offset_x, 0, offset_z)
+	var adjusted_drop_pos = drop_pos - center_offset
+	
+	# Reuse Placement Logic with ADJUSTED position
+	var success = building_manager.place_object(adjusted_drop_pos, held_prop_id, held_prop_rotation)
 	
 	# If direct placement failed, try "Smart Search" (Stacking)
 	if not success:
