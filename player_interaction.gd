@@ -2216,21 +2216,8 @@ func _drop_held_prop():
 	
 	print("Release detected. Dropping prop.")
 	
+	# Drop exactly where held (User control)
 	var drop_pos = held_prop_instance.global_position
-	
-	# GRAVITY LOGIC: Raycast down to find the floor
-	var space_state = held_prop_instance.get_world_3d().direct_space_state
-	var query = PhysicsRayQueryParameters3D.create(drop_pos + Vector3(0, 0.5, 0), drop_pos + Vector3(0, -10.0, 0)) # Cast down 10m
-	query.exclude = [player.get_rid()] # Ignore player
-	var result = space_state.intersect_ray(query)
-	
-	if result:
-		# Found ground! Place ON ground.
-		drop_pos = result.position
-		print("Drop Gravity: Snapped to %.2f (Hit %s)" % [drop_pos.y, result.collider.name])
-	else:
-		# No ground? Place in air (will float static)
-		print("Drop Gravity: No ground found, floating.")
 	
 	# Reuse Placement Logic
 	var success = building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
