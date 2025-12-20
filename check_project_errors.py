@@ -14,8 +14,8 @@ PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 
 # 3. (Optional) If you ONLY want to check 'main_game_scene.tscn', uncomment the line below.
 # If left as None, it will scan the whole folder and check EVERY scene.
-# SPECIFIC_SCENE = "main_game_scene.tscn" 
-SPECIFIC_SCENE = None
+SPECIFIC_SCENE = "main_game_scene.tscn" 
+# SPECIFIC_SCENE = None
 
 # 4. How long to test the scene (seconds)
 TEST_DURATION = 3.0
