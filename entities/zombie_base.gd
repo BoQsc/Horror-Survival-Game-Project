@@ -187,9 +187,9 @@ func _update_animation():
 			if t < 1.0 or t >= 2.0:
 				anim_player.seek(1.0 + fmod(t - 1.0, 1.0) if t >= 2.0 else 1.0)
 		"CHASE":
-			# Run: 11.6s to 12.2s
-			if t < 11.6 or t >= 12.2:
-				anim_player.seek(11.6 + fmod(t - 11.6, 0.6) if t >= 12.2 else 11.6, true)
+			# Run: 11.6s to 12.3s
+			if t < 11.6 or t >= 12.3:
+				anim_player.seek(11.6 + fmod(t - 11.6, 0.7) if t >= 12.3 else 11.6, true)
 		"ATTACK":
 			if t < 3.5 or t >= 4.5:
 				anim_player.seek(3.5 + fmod(t - 3.5, 1.0) if t >= 4.5 else 3.5)
