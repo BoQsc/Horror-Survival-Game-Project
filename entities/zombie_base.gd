@@ -82,9 +82,14 @@ func _ready():
 	floor_max_angle = deg_to_rad(60)
 	
 	# Safety start - wait for physics to settle
+	# Pause animation during this time to prevent drift
 	set_physics_process(false)
+	if anim_player:
+		anim_player.pause()
 	await get_tree().create_timer(0.3).timeout
 	set_physics_process(true)
+	if anim_player:
+		anim_player.play("Take 001")
 	
 	change_state("IDLE")
 
@@ -134,6 +139,8 @@ func _physics_process(delta):
 	# freeze ourselves instead of teleporting (which causes sky-falling issue)
 	if global_position.y < -10:
 		set_physics_process(false)
+		if anim_player:
+			anim_player.pause()  # Stop animation drift during freeze
 		velocity = Vector3.ZERO
 		# Don't teleport to Y=50 - that causes sky falling
 		# EntityManager will respawn us at correct height
@@ -144,16 +151,32 @@ func _update_animation():
 	
 	var t = anim_player.current_animation_position
 	
+	# Safety: if animation drifted past valid ranges (e.g., was playing while paused),
+	# reset it to the correct position for current state
+	if t > 5.0:  # Animation is way past any valid state range
+		match current_state:
+			"IDLE":
+				anim_player.seek(0.0)
+				return
+			"WALK", "CHASE":
+				anim_player.seek(1.0)
+				return
+			"ATTACK":
+				anim_player.seek(3.5)
+				return
+			# DEAD state doesn't need reset - it's meant to stay at death pose
+	
 	match current_state:
 		"IDLE":
 			if t >= 1.0:
 				anim_player.seek(t - 1.0)
 		"WALK", "CHASE":
-			if t >= 2.0:
-				anim_player.seek(1.0 + (t - 2.0))
+			# Also catch if animation is outside the 1-2s range
+			if t < 1.0 or t >= 2.0:
+				anim_player.seek(1.0 + fmod(t, 1.0) if t >= 2.0 else 1.0)
 		"ATTACK":
-			if t >= 4.5:
-				anim_player.seek(3.5 + (t - 4.5))
+			if t < 3.5 or t >= 4.5:
+				anim_player.seek(3.5 + fmod(t, 1.0) if t >= 4.5 else 3.5)
 
 func _process_idle(delta):
 	# Friction when idle
