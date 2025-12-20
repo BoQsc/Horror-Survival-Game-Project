@@ -171,7 +171,7 @@ func _update_animation():
 				anim_player.seek(1.0)
 				return
 			"CHASE":
-				anim_player.seek(11.8)
+				anim_player.seek(11.6)
 				return
 			"ATTACK":
 				anim_player.seek(3.5)
@@ -187,10 +187,10 @@ func _update_animation():
 			if t < 1.0 or t >= 2.0:
 				anim_player.seek(1.0 + fmod(t - 1.0, 1.0) if t >= 2.0 else 1.0)
 		"CHASE":
-			# Run: 11.8s to 12.3s
+			# Run: 11.6s to 12.3s
 			# Use strict seek to start to avoid floating point modulo errors on absolute time
-			if t < 11.8 or t >= 12.3:
-				anim_player.seek(11.8)
+			if t < 11.6 or t >= 12.3:
+				anim_player.seek(11.6)
 		"ATTACK":
 			if t < 3.5 or t >= 4.5:
 				anim_player.seek(3.5 + fmod(t - 3.5, 1.0) if t >= 4.5 else 3.5)
@@ -313,7 +313,7 @@ func change_state(new_state: String):
 			"WALK":
 				anim_player.seek(1.0)
 			"CHASE":
-				anim_player.seek(11.8)
+				anim_player.seek(11.6)
 			"ATTACK":
 				anim_player.seek(3.5)
 	
