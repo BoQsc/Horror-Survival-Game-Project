@@ -14,6 +14,7 @@ signal building_spawned(position: Vector3, prefab_name: String)
 @export var road_width: float = 8.0      # Match chunk_manager.procedural_road_width
 @export var prefab_list: Array[String] = ["new_wooden_house_2floor"]
 @export var min_building_spacing: float = 20.0  # Min distance between buildings
+@export var intersection_avoid_radius: float = 15.0  # Avoid spawning near road intersections
 
 # --- References ---
 @export var prefab_spawner: Node = null
@@ -93,6 +94,10 @@ func _queue_buildings_for_chunk(chunk_coord: Vector3i, chunk_world_pos: Vector3)
 		
 		# Check spacing from other buildings (including queued ones)
 		if not _is_valid_spacing(spot.position):
+			continue
+		
+		# Skip if near a road intersection
+		if _is_near_intersection(spot.position):
 			continue
 		
 		# Skip if over water
@@ -177,6 +182,18 @@ func _is_valid_spacing(pos: Vector3) -> bool:
 		if dist < min_building_spacing:
 			return false
 	return true
+
+## Check if position is near a road intersection (where X and Z roads cross)
+func _is_near_intersection(pos: Vector3) -> bool:
+	if road_spacing <= 0:
+		return false
+	
+	# Find nearest intersection (occurs at multiples of road_spacing on both axes)
+	var nearest_x = round(pos.x / road_spacing) * road_spacing
+	var nearest_z = round(pos.z / road_spacing) * road_spacing
+	
+	var dist_to_intersection = Vector2(pos.x, pos.z).distance_to(Vector2(nearest_x, nearest_z))
+	return dist_to_intersection < intersection_avoid_radius
 
 ## Check if position is over water (skip building placement there)
 ## Uses same noise-based regional masking as gen_water_density.glsl
