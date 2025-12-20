@@ -77,9 +77,14 @@ func _ready():
 	wall_detector.target_position = Vector3(0, 0, 1.0)
 	
 	# Collision settings (low safe_margin to minimize floating gap)
+	# Collision settings (low safe_margin to minimize floating gap)
 	safe_margin = 0.04
 	wall_min_slide_angle = deg_to_rad(15)
 	floor_max_angle = deg_to_rad(60)
+	
+	# Speed adjustments requested by user:
+	move_speed = 1.5 
+	chase_speed_multiplier = 2.0
 	
 	# Safety start - wait for physics to settle
 	# Pause animation during this time to prevent drift
@@ -148,18 +153,25 @@ func _physics_process(delta):
 func _update_animation():
 	if not anim_player:
 		return
+		
+	# Ensure animation is playing
+	if not anim_player.is_playing():
+		anim_player.play("Take 001")
 	
 	var t = anim_player.current_animation_position
 	
 	# Safety: if animation drifted past valid ranges (e.g., was playing while paused),
 	# reset it to the correct position for current state
-	if t > 5.0:  # Animation is way past any valid state range
+	if t > 13.0:  # Animation is way past any valid state range
 		match current_state:
 			"IDLE":
 				anim_player.seek(0.0)
 				return
-			"WALK", "CHASE":
+			"WALK":
 				anim_player.seek(1.0)
+				return
+			"CHASE":
+				anim_player.seek(12.0)
 				return
 			"ATTACK":
 				anim_player.seek(3.5)
@@ -170,13 +182,18 @@ func _update_animation():
 		"IDLE":
 			if t >= 1.0:
 				anim_player.seek(t - 1.0)
-		"WALK", "CHASE":
-			# Also catch if animation is outside the 1-2s range
+		"WALK":
+			# Walk: 1.0s to 2.0s
 			if t < 1.0 or t >= 2.0:
-				anim_player.seek(1.0 + fmod(t, 1.0) if t >= 2.0 else 1.0)
+				anim_player.seek(1.0 + fmod(t - 1.0, 1.0) if t >= 2.0 else 1.0)
+		"CHASE":
+			# Run: 12.0s to 12.3s
+			# Use strict seek to 12.0 to avoid floating point modulo errors on absolute time
+			if t < 12.0 or t >= 12.3:
+				anim_player.seek(12.0)
 		"ATTACK":
 			if t < 3.5 or t >= 4.5:
-				anim_player.seek(3.5 + fmod(t, 1.0) if t >= 4.5 else 3.5)
+				anim_player.seek(3.5 + fmod(t - 3.5, 1.0) if t >= 4.5 else 3.5)
 
 func _process_idle(delta):
 	# Friction when idle
@@ -293,8 +310,10 @@ func change_state(new_state: String):
 		match new_state:
 			"IDLE":
 				anim_player.seek(0.0)
-			"WALK", "CHASE":
+			"WALK":
 				anim_player.seek(1.0)
+			"CHASE":
+				anim_player.seek(12.0)
 			"ATTACK":
 				anim_player.seek(3.5)
 	
