@@ -212,3 +212,39 @@ Entities wait for terrain before spawning:
 > - Performance tuning for smooth exploration
 
 See also: `TERRAIN_LOADING_PRIORITY.md` for related notes.
+
+---
+
+## Combat System Architecture (Strategy)
+
+### Hitscan vs Projectile Analysis
+We have decided on a **hybrid approach** for future weapon implementation:
+
+1.  **Hitscan (Simulated Laser):**
+    *   **Use case:** Fast firearms (Pistols, Rifles).
+    *   **Reason:** Cheaper performance, easier network sync, "snappy" feel.
+    *   **Implementation:** Immediate raycast + Visual Tracer Line. No physical object spawned.
+
+2.  **Projectile (Physical Object):**
+    *   **Use case:** Bows, Crossbows, Grenades, Slow Plasma.
+    *   **Reason:** Requires travel time, gravity arc, or bouncy physics.
+    *   **Implementation:** Spawn `Area3D/RigidBody3D` that moves each frame.
+    *   **Structure:** Create `combat_system/projectile_manager.gd` to pool and update these objects efficiently.
+
+### Planned Structure
+*   `combat_system/` directory.
+*   `weapon_base.gd`: Interactable script attached to props.
+*   `projectile_manager.gd`: Global handler for physical projectiles.
+
+---
+
+## Interaction System Refinement (TODO)
+
+### Issue: Object vs. Prop Placement
+Currently, there is a disconnect between picking up a placed **Object** (Grid-aligned) and dropping it as a **Prop** (Physics/Free).
+*   **Grid Placement:** Snaps to integer coordinates, usually center-aligned.
+*   **Physics Drop:** Free rotation, physics-simulated.
+
+### Future Goal: "Smart Re-Placement"
+When moving an object via pickup (E), we want to preserve its "intention":
+**Current limitation:** Objects dropped via "Physics Drop" lose their grid alignment and exact rotation, making it hard to "tidy up" a room manually.
