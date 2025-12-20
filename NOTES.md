@@ -108,6 +108,7 @@ Building spawn decisions are now persisted via SaveManager:
 > - Determine building positions deterministically (seeded by world coordinates)
 > - During chunk terrain generation, detect if a building will spawn there
 > - Carve interior space upward column-by-column until reaching top prefab block
+> - Clear vegetation/trees in building footprint (prevent trees inside buildings)
 > - Then place the building blocks
 > - **Benefit:** Buildings won't have terrain inside them; faster than post-placement carving
 
