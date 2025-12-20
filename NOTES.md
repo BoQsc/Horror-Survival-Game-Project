@@ -221,15 +221,15 @@ See also: `TERRAIN_LOADING_PRIORITY.md` for related notes.
 We have decided on a **hybrid approach** for future weapon implementation:
 
 1.  **Hitscan (Simulated Laser):**
-    *   **Use case:** Fast firearms (Pistols, Rifles).
-    *   **Reason:** Cheaper performance, easier network sync, "snappy" feel.
-    *   **Implementation:** Immediate raycast + Visual Tracer Line. No physical object spawned.
+	*   **Use case:** Fast firearms (Pistols, Rifles).
+	*   **Reason:** Cheaper performance, easier network sync, "snappy" feel.
+	*   **Implementation:** Immediate raycast + Visual Tracer Line. No physical object spawned.
 
 2.  **Projectile (Physical Object):**
-    *   **Use case:** Bows, Crossbows, Grenades, Slow Plasma.
-    *   **Reason:** Requires travel time, gravity arc, or bouncy physics.
-    *   **Implementation:** Spawn `Area3D/RigidBody3D` that moves each frame.
-    *   **Structure:** Create `combat_system/projectile_manager.gd` to pool and update these objects efficiently.
+	*   **Use case:** Bows, Crossbows, Grenades, Slow Plasma.
+	*   **Reason:** Requires travel time, gravity arc, or bouncy physics.
+	*   **Implementation:** Spawn `Area3D/RigidBody3D` that moves each frame.
+	*   **Structure:** Create `combat_system/projectile_manager.gd` to pool and update these objects efficiently.
 
 ### Planned Structure
 *   `combat_system/` directory.
