@@ -93,6 +93,12 @@ var is_freestyle_placement: bool = false
 var freestyle_rotation_offset: float = 0.0 # Additional rotation in degrees
 var smart_surface_align: bool = true # Default to true as requested
 
+# Prop Pickup / Physics Drag State
+var held_prop_instance: Node3D = null
+var held_prop_id: int = -1
+var held_prop_rotation: int = 0
+
+
 func _ready():
 	# Create Grid Visualizer
 	voxel_grid_visualizer = MeshInstance3D.new()
@@ -114,6 +120,28 @@ func _process(_delta):
 		_destroy_preview()
 		_show_vehicle_exit_prompt()
 		return
+		
+	# Update Held Prop Position (if holding one)
+	if held_prop_instance and is_instance_valid(held_prop_instance):
+		var cam = get_viewport().get_camera_3d()
+		if cam:
+			# Float 2 meters in front of camera
+			var target_pos = cam.global_position - cam.global_transform.basis.z * 2.0
+			# Smoothly interpolate
+			held_prop_instance.global_position = held_prop_instance.global_position.lerp(target_pos, _delta * 15.0)
+			# Match camera rotation (yaw only) or keep static?
+			var cam_rot_y = cam.global_rotation.y
+			held_prop_instance.rotation.y = lerp_angle(held_prop_instance.rotation.y, cam_rot_y + deg_to_rad(held_prop_rotation * 90.0), _delta * 10.0)
+
+	# Handle input for Freestyle Placement Mode (Hold MMB)
+	if current_mode == Mode.OBJECT:
+		var was_freestyle = is_freestyle_placement
+		is_freestyle_placement = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE)
+		
+		# If mode changed, refresh UI or Preview
+		if was_freestyle != is_freestyle_placement:
+			update_ui()
+			_update_or_create_preview()
 	
 	if current_mode == Mode.PLAYING:
 		# No selection box in playing mode
@@ -408,16 +436,29 @@ func _unhandled_input(event):
 				print("[PREFAB] Interior carve: %s" % ("ON" if prefab_interior_carve else "OFF"))
 				update_ui()
 		elif event.keycode == KEY_E:
-			# E key: interact with doors/vehicles in ALL modes
-			if is_in_vehicle:
-				# Exit vehicle
-				_exit_vehicle()
-			elif interaction_target:
-				# Interact with doors, vehicles, etc.
-				if interaction_target.is_in_group("vehicle"):
-					_enter_vehicle(interaction_target)
-				elif interaction_target.has_method("interact"):
-					interaction_target.interact()
+			# E key: Interact (Press) or Pickup Prop (Hold)
+			# Logic:
+			# If holding prop: Release on E release? Or toggle?
+			# Request: "Holding E should allow to pick up" -> Implies Hold to Carry, Release to Drop.
+			
+			if event.pressed and not event.echo:
+				if is_in_vehicle:
+					_exit_vehicle()
+				elif interaction_target:
+					# Priority: Interaction Target (Doors, Vehicles)
+					if interaction_target.is_in_group("vehicle"):
+						_enter_vehicle(interaction_target)
+					elif interaction_target.has_method("interact"):
+						interaction_target.interact()
+				else:
+					# No interaction target -> Try Pick Up Prop
+					if not held_prop_instance:
+						_try_pickup_prop()
+			
+			# Release E to Drop Prop
+			if not event.pressed and held_prop_instance:
+				_drop_held_prop()
+				
 		elif event.keycode == KEY_F10:
 			# F10: Spawn test entity (default capsule)
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
@@ -550,7 +591,7 @@ func update_ui():
 		var obj_name = obj.name if obj else "Unknown"
 		var grid_str = "Grid ON" if object_show_grid else "Grid OFF"
 		var align_str = "Align ON" if smart_surface_align else "Align OFF"
-		mode_label.text = "Mode: OBJECT (%s, %s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-5] Select, [R] Rotate, [G] Grid\n[E] Hold Free, [Z] Toggle Align" % [grid_str, align_str, obj_name, current_object_rotation]
+		mode_label.text = "Mode: OBJECT (%s, %s)\nObject: %s (Rot: %d)\nL-Click: Remove, R-Click: Place\n[1-5] Select, [R] Rotate, [G] Grid\n[MMB] Hold Free, [E] Hold Grab, [Z] Align" % [grid_str, align_str, obj_name, current_object_rotation]
 	elif current_mode == Mode.CONSTRUCT:
 		var item_name = _get_construct_item_name(construct_item_id)
 		var type_str: String
@@ -2008,3 +2049,111 @@ func _process_prefab_preview():
 			var offset = node.get_meta("offset", Vector3i.ZERO)
 			node.global_position = base_pos + Vector3(offset) + Vector3(0.5, 0.5, 0.5)
 			node.visible = true
+
+## ============== PROP PICKUP SYSTEM =============
+
+func _try_pickup_prop():
+	var hit = raycast(5.0, false) # Short range grab
+	if hit and hit.collider:
+		# Check if valid prop
+		if hit.collider.is_in_group("placed_objects") and hit.collider.has_meta("anchor") and hit.collider.has_meta("chunk"):
+			var anchor = hit.collider.get_meta("anchor")
+			var chunk = hit.collider.get_meta("chunk")
+			
+			# We need to read the object data BEFORE removing it to know what we picked up
+			# BuildingChunk stores objects in 'objects' dict
+			if chunk.objects.has(anchor):
+				var data = chunk.objects[anchor]
+				held_prop_id = data["object_id"]
+				held_prop_rotation = data["rotation"]
+				
+				# Remove from world (Logical + Visual)
+				chunk.remove_object(anchor)
+				
+				# Spawn temporary held visual
+				var obj_def = ObjectRegistry.get_object(held_prop_id)
+				if obj_def.has("scene"):
+					var packed = load(obj_def.scene)
+					held_prop_instance = packed.instantiate()
+					
+					# Strip physics/collision for holding
+					if held_prop_instance is RigidBody3D:
+						held_prop_instance.freeze = true
+						held_prop_instance.collision_layer = 0
+						held_prop_instance.collision_mask = 0
+					
+					# Recursive disable collision for children
+					_disable_preview_collisions(held_prop_instance)
+					
+					get_tree().root.add_child(held_prop_instance)
+					held_prop_instance.global_position = hit.position # Start at grab point
+					
+					print("Picked up Prop ID %d" % held_prop_id)
+
+func _drop_held_prop():
+	if not held_prop_instance: return
+	
+	# Determine drop position (Physics Raycast from camera?)
+	# Or just drop at current held position?
+	# Current held position is floating in front of camera.
+	# We should try to place it exactly there.
+	
+	var drop_pos = held_prop_instance.global_position
+	
+	# We reuse the "Freestyle Placement" logic for insertion!
+	# Since we are essentially "Placing" it again.
+	
+	# But we need to call 'building_manager.place_object'.
+	# We also need to handle the "Smart Anchor Search" if the exact air block is technically 'occupied' (unlikely in air, but likely if shoving into a pile).
+	
+	# Let's reuse the EXACT logic we wrote for handle_object_input, adapted here.
+	
+	var success = building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
+	
+	if not success:
+		# Copy-paste of the Smart Anchor Search from handle_object_input
+		# (Refactoring this into a helper would be cleaner, but for now inline is safe)
+		var chunk_x = floor(drop_pos.x / building_manager.CHUNK_SIZE)
+		var chunk_y = floor(drop_pos.y / building_manager.CHUNK_SIZE)
+		var chunk_z = floor(drop_pos.z / building_manager.CHUNK_SIZE)
+		var chunk_key = Vector3i(chunk_x, chunk_y, chunk_z)
+		
+		if building_manager.chunks.has(chunk_key):
+			var chunk = building_manager.chunks[chunk_key]
+			var local_x = int(floor(drop_pos.x)) % building_manager.CHUNK_SIZE
+			var local_y = int(floor(drop_pos.y)) % building_manager.CHUNK_SIZE
+			var local_z = int(floor(drop_pos.z)) % building_manager.CHUNK_SIZE
+			if local_x < 0: local_x += building_manager.CHUNK_SIZE
+			if local_y < 0: local_y += building_manager.CHUNK_SIZE
+			if local_z < 0: local_z += building_manager.CHUNK_SIZE
+			var base_anchor = Vector3i(local_x, local_y, local_z)
+			
+			var range_r = 2
+			for dx in range(-range_r, range_r + 1):
+				for dy in range(-range_r, range_r + 1):
+					for dz in range(-range_r, range_r + 1):
+						if dx == 0 and dy == 0 and dz == 0: continue
+						var try_anchor = base_anchor + Vector3i(dx, dy, dz)
+						if chunk.is_cell_available(try_anchor):
+							var anchor_world_pos = Vector3(chunk_key) * building_manager.CHUNK_SIZE + Vector3(try_anchor)
+							var new_fractional = drop_pos - anchor_world_pos
+							var cells: Array[Vector3i] = [try_anchor] 
+							var obj_def = ObjectRegistry.get_object(held_prop_id)
+							var packed = load(obj_def.scene)
+							var instance = packed.instantiate()
+							instance.position = Vector3(try_anchor) + new_fractional
+							instance.rotation_degrees.y = held_prop_rotation * 90
+							chunk.place_object(try_anchor, held_prop_id, held_prop_rotation, cells, instance, new_fractional)
+							
+							# Cleanup and Return immediately
+							held_prop_instance.queue_free()
+							held_prop_instance = null
+							held_prop_id = -1
+							print("Dropped Prop (Redirected to %s)" % try_anchor)
+							return
+	
+	# Clean up held visual (Normal success case)
+	held_prop_instance.queue_free()
+	held_prop_instance = null
+	held_prop_id = -1
+	print("Dropped Prop")
