@@ -3,6 +3,7 @@
 ## Personal notes
 Do not use Scene Inheritance.
 Plan out entire project structure as a monolith.
+Enforce composition for medium parts and scripting for small parts.
 
 ## GPU Resource Cleanup (Building System)
 
