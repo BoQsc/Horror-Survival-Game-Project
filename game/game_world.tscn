@@ -3,7 +3,18 @@
 [ext_resource type="PackedScene" path="res://world.tscn" id="1_world"]
 [ext_resource type="Script" path="res://game/player/player_controller.gd" id="2_player_ctrl"]
 
+[sub_resource type="BoxMesh" id="BoxMesh_block"]
+size = Vector3(0.5, 0.5, 0.5)
+
 [node name="GameWorld" instance=ExtResource("1_world")]
 
 [node name="Player" parent="." index="2"]
 script = ExtResource("2_player_ctrl")
+
+[node name="HandHolder" type="Node3D" parent="Player/Camera3D" index="1"]
+
+[node name="BlockMesh" type="MeshInstance3D" parent="Player/Camera3D/HandHolder" index="0"]
+visible = false
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.3, -0.1, -0.5)
+mesh = SubResource("BoxMesh_block")
+
