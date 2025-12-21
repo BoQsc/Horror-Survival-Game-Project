@@ -1,0 +1,30 @@
+[gd_scene load_steps=5 format=3 uid="uid://bd7wig7c4xlqe"]
+
+[ext_resource type="Script" path="res://modules/world_player/player.gd" id="1_player"]
+[ext_resource type="Script" path="res://modules/world_player/components/player_movement.gd" id="2_movement"]
+[ext_resource type="Script" path="res://modules/world_player/components/player_camera.gd" id="3_camera"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
+radius = 0.4
+height = 1.8
+
+[node name="WorldPlayer" type="CharacterBody3D"]
+script = ExtResource("1_player")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("CapsuleShape3D_1")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
+current = true
+fov = 75.0
+near = 0.05
+
+[node name="Components" type="Node" parent="."]
+
+[node name="Movement" type="Node" parent="Components"]
+script = ExtResource("2_movement")
+
+[node name="Camera" type="Node" parent="Components"]
+script = ExtResource("3_camera")
