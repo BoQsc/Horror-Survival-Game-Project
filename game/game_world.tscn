@@ -1,0 +1,9 @@
+[gd_scene load_steps=3 format=3 uid="uid://cqme6pgmt5i1e"]
+
+[ext_resource type="PackedScene" path="res://world.tscn" id="1_world"]
+[ext_resource type="Script" path="res://game/player/player_controller.gd" id="2_player_ctrl"]
+
+[node name="GameWorld" instance=ExtResource("1_world")]
+
+[node name="Player" parent="." index="2"]
+script = ExtResource("2_player_ctrl")

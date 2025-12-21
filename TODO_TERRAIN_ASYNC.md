@@ -23,8 +23,8 @@ signal modification_complete(batch_id: int)
 
 ## Call this to request a completion callback
 func modify_terrain_with_callback(pos, radius, value, shape, layer, material_id) -> int:
-    # Returns a batch_id
-    # Emits modification_complete(batch_id) when mesh is updated
+	# Returns a batch_id
+	# Emits modification_complete(batch_id) when mesh is updated
 ```
 
 ## Workaround (Current)
