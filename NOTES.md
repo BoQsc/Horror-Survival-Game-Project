@@ -1,5 +1,9 @@
 # GPU Marching Cubes - Developer Notes
 
+## Personal notes
+Do not use Scene Inheritance.
+Plan out entire project structure as a monolith.
+
 ## GPU Resource Cleanup (Building System)
 
 **File:** `building_system/building_mesher.gd`  
