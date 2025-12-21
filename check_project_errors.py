@@ -38,9 +38,9 @@ def main():
         return
 
     # Save raw output for inspection
-    with open(RAW_LOG_FILE, "w", encoding="utf-8") as f:
-        f.write(output)
-    print(f"📄 Full output saved to: {RAW_LOG_FILE}")
+    #with open(RAW_LOG_FILE, "w", encoding="utf-8") as f:
+    #    f.write(output)
+    #print(f"📄 Full output saved to: {RAW_LOG_FILE}")
     
     # Filter output
     lines = output.splitlines()
