@@ -6,6 +6,7 @@ Plan out entire project structure as a monolith.
 Enforce composition for medium parts and scripting for small parts.
 Top level folder as entire game starting point and configuration.
 Folder based activation of functionality.(Modules. Enable. Disable.)
+Example: hook up new entities, models, objects, systems.
 
 ## GPU Resource Cleanup (Building System)
 
