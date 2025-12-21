@@ -8,6 +8,7 @@ Top level folder as entire game starting point and configuration.
 Folder based activation of functionality.(Modules. Enable. Disable.)
 Example: hook up new entities, models, objects, systems.
 Singular isolated folders for features that hook up to the system. (data, scripts)
+Convert as many things as possible to modules. 
 
 ## GPU Resource Cleanup (Building System)
 
