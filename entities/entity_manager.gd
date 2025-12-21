@@ -613,5 +613,3 @@ func _get_biome_at(world_x: float, world_z: float) -> int:
 func clear_spawned_chunks():
 	spawned_chunks.clear()
 	print("[EntityManager] Cleared spawned chunks tracking")
-
-

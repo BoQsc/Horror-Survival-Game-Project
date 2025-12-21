@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene load_steps=21 format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
@@ -12,7 +12,7 @@
 [ext_resource type="Script" uid="uid://o0r1v40u60lk" path="res://vehicles/vehicle_manager.gd" id="10_vehicles"]
 [ext_resource type="Script" uid="uid://bts6arlg03cxx" path="res://building_system/prefab_capture.gd" id="11_prefab_capture"]
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://building_system/building_generator.gd" id="12_building_generator"]
-[ext_resource type="Script" path="res://building_system/debug_teleporter.gd" id="13_debug"]
+[ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://building_system/debug_teleporter.gd" id="13_debug"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -174,4 +174,3 @@ terrain_manager = NodePath("../TerrainManager")
 
 [node name="DebugTeleporter" type="Node" parent="."]
 script = ExtResource("13_debug")
-
