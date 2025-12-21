@@ -5,7 +5,7 @@ import time
 # Configuration
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
-TIMEOUT = 3  # Seconds to run
+TIMEOUT = 15  # Seconds to run
 
 def main():
     print(f"🚀 Running Godot for {TIMEOUT}s...")
