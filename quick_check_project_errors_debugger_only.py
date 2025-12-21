@@ -37,7 +37,7 @@ def main():
         print(f"❌ Execution error: {e}")
         return
 
-    # Save raw output for inspection
+    # Warning! Never Save raw output for inspection. It's annoying when you can now see using stdout output without saving to file.
     #with open(RAW_LOG_FILE, "w", encoding="utf-8") as f:
     #    f.write(output)
     #print(f"📄 Full output saved to: {RAW_LOG_FILE}")
