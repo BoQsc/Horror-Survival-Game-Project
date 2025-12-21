@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://bd7wig7c4xlqe"]
+[gd_scene load_steps=15 format=3 uid="uid://bd7wig7c4xlqe"]
 
 [ext_resource type="Script" path="res://modules/world_player/player.gd" id="1_player"]
 [ext_resource type="Script" path="res://modules/world_player/components/player_movement.gd" id="2_movement"]
@@ -6,6 +6,13 @@
 [ext_resource type="Script" path="res://modules/world_player/systems/hotbar.gd" id="4_hotbar"]
 [ext_resource type="Script" path="res://modules/world_player/modes/mode_manager.gd" id="5_mode_manager"]
 [ext_resource type="Script" path="res://modules/world_player/systems/item_use_router.gd" id="6_item_router"]
+[ext_resource type="Script" path="res://modules/world_player/modes/mode_play.gd" id="7_mode_play"]
+[ext_resource type="Script" path="res://modules/world_player/modes/mode_build.gd" id="8_mode_build"]
+[ext_resource type="Script" path="res://modules/world_player/modes/mode_editor.gd" id="9_mode_editor"]
+[ext_resource type="Script" path="res://modules/world_player/systems/inventory.gd" id="10_inventory"]
+[ext_resource type="Script" path="res://modules/world_player/components/player_interaction.gd" id="11_interaction"]
+[ext_resource type="Script" path="res://modules/world_player/components/player_combat.gd" id="12_combat"]
+[ext_resource type="PackedScene" uid="uid://dhw7kxqy4cjrf" path="res://modules/world_player/ui/player_hud.tscn" id="13_hud"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -32,6 +39,12 @@ script = ExtResource("2_movement")
 [node name="Camera" type="Node" parent="Components"]
 script = ExtResource("3_camera")
 
+[node name="Interaction" type="Node" parent="Components"]
+script = ExtResource("11_interaction")
+
+[node name="Combat" type="Node" parent="Components"]
+script = ExtResource("12_combat")
+
 [node name="Systems" type="Node" parent="."]
 
 [node name="Hotbar" type="Node" parent="Systems"]
@@ -42,3 +55,19 @@ script = ExtResource("5_mode_manager")
 
 [node name="ItemUseRouter" type="Node" parent="Systems"]
 script = ExtResource("6_item_router")
+
+[node name="Inventory" type="Node" parent="Systems"]
+script = ExtResource("10_inventory")
+
+[node name="Modes" type="Node" parent="."]
+
+[node name="ModePlay" type="Node" parent="Modes"]
+script = ExtResource("7_mode_play")
+
+[node name="ModeBuild" type="Node" parent="Modes"]
+script = ExtResource("8_mode_build")
+
+[node name="ModeEditor" type="Node" parent="Modes"]
+script = ExtResource("9_mode_editor")
+
+[node name="PlayerHUD" parent="." instance=ExtResource("13_hud")]

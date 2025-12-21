@@ -26,16 +26,18 @@ func _ready() -> void:
 	# Capture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	print("PlayerCamera: Component initialized")
+	print("  - Player: %s" % player.name)
+	print("  - Camera: %s" % camera.name)
 
 func _input(event: InputEvent) -> void:
-	# Toggle mouse capture with Escape (handled by game menu later)
+	# Toggle mouse capture with Escape
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		else:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-
-func _unhandled_input(event: InputEvent) -> void:
+	
+	# Handle mouse look
 	if not player or not camera:
 		return
 	
@@ -67,17 +69,25 @@ func get_camera_position() -> Vector3:
 ## Perform a raycast from camera center
 func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF) -> Dictionary:
 	if not camera:
+		print("PlayerCamera: raycast - no camera!")
 		return {}
 	
 	var space_state = player.get_world_3d().direct_space_state
-	var viewport = player.get_viewport()
-	var center = viewport.get_visible_rect().size / 2
 	
-	var from = camera.project_ray_origin(center)
-	var to = from + camera.project_ray_normal(center) * distance
+	# Use camera position and direction for raycast
+	var from = camera.global_position
+	var direction = - camera.global_transform.basis.z
+	var to = from + direction * distance
 	
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = collision_mask
 	query.exclude = [player]
 	
-	return space_state.intersect_ray(query)
+	var result = space_state.intersect_ray(query)
+	
+	if result.is_empty():
+		print("PlayerCamera: raycast - no hit (range: %.1f)" % distance)
+	else:
+		print("PlayerCamera: raycast HIT %s at %s" % [result.collider.name, result.position])
+	
+	return result
