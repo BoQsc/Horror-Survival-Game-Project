@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="GPUMarchingCubes"
-run/main_scene="res://game/game_world.tscn"
+run/main_scene="uid://c8iimeavbdci7"
 config/features=PackedStringArray("4.5", "Forward Plus")
 run/max_fps=70
 run/low_processor_mode=true

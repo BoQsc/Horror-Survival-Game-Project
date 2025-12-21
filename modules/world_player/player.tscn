@@ -1,8 +1,11 @@
-[gd_scene load_steps=5 format=3 uid="uid://bd7wig7c4xlqe"]
+[gd_scene load_steps=8 format=3 uid="uid://bd7wig7c4xlqe"]
 
 [ext_resource type="Script" path="res://modules/world_player/player.gd" id="1_player"]
 [ext_resource type="Script" path="res://modules/world_player/components/player_movement.gd" id="2_movement"]
 [ext_resource type="Script" path="res://modules/world_player/components/player_camera.gd" id="3_camera"]
+[ext_resource type="Script" path="res://modules/world_player/systems/hotbar.gd" id="4_hotbar"]
+[ext_resource type="Script" path="res://modules/world_player/modes/mode_manager.gd" id="5_mode_manager"]
+[ext_resource type="Script" path="res://modules/world_player/systems/item_use_router.gd" id="6_item_router"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -28,3 +31,14 @@ script = ExtResource("2_movement")
 
 [node name="Camera" type="Node" parent="Components"]
 script = ExtResource("3_camera")
+
+[node name="Systems" type="Node" parent="."]
+
+[node name="Hotbar" type="Node" parent="Systems"]
+script = ExtResource("4_hotbar")
+
+[node name="ModeManager" type="Node" parent="Systems"]
+script = ExtResource("5_mode_manager")
+
+[node name="ItemUseRouter" type="Node" parent="Systems"]
+script = ExtResource("6_item_router")
