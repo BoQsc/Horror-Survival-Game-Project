@@ -103,11 +103,11 @@ static func get_test_items() -> Array[Dictionary]:
 			"mining_strength": 0.0,
 			"stack_size": 16
 		},
-		# Slot 8 (key 9): Crate
+		# Slot 8 (key 9): Cardboard
 		{
-			"id": "prop_crate",
-			"name": "Wooden Crate",
-			"category": ItemCategory.PROP,
+			"id": "object_cardboard",
+			"name": "Cardboard Box",
+			"category": ItemCategory.OBJECT,
 			"object_id": 1,
 			"damage": 0,
 			"mining_strength": 0.0,

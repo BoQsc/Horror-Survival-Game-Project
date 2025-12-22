@@ -62,6 +62,14 @@ func _input(event: InputEvent) -> void:
 	if not mode_manager or not mode_manager.is_build_mode():
 		return
 	
+	# E key: Hold for freestyle placement (legacy port)
+	if event is InputEventKey and event.keycode == KEY_E:
+		if building_api:
+			if event.pressed and not event.echo:
+				building_api.set_freestyle(true)
+			elif not event.pressed:
+				building_api.set_freestyle(false)
+	
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_R:
@@ -76,6 +84,11 @@ func _input(event: InputEvent) -> void:
 				# Cycle placement mode
 				if building_api:
 					building_api.cycle_placement_mode()
+			KEY_Z:
+				# Toggle smart surface align (legacy port)
+				if building_api:
+					building_api.smart_surface_align = not building_api.smart_surface_align
+					print("ModeBuild: Smart align -> %s" % ("ON" if building_api.smart_surface_align else "OFF"))
 	
 	# Scroll to rotate
 	if event is InputEventMouseButton and event.pressed:
@@ -109,6 +122,7 @@ func handle_primary(item: Dictionary) -> void:
 ## Handle secondary action (right click) in BUILD mode - Place
 func handle_secondary(item: Dictionary) -> void:
 	var category = item.get("category", 0)
+	print("ModeBuild: handle_secondary category=%d item=%s" % [category, item.get("name", "?")])
 	
 	match category:
 		4: # BLOCK
@@ -228,49 +242,63 @@ func _do_object_remove() -> void:
 		if success:
 			print("ModeBuild: Removed object at %s" % position)
 
-## Place object at target
+## Place object at target - uses building_api with fractional Y (legacy port)
+## Supports: Grid X/Z, fractional Y, freestyle mode, smart surface align, retry
 func _do_object_place(item: Dictionary) -> void:
-	if not player or not building_manager:
+	if not player or not building_api:
+		print("ModeBuild: Object place failed - no player or building_api")
 		return
 	
-	var hit = player.raycast(10.0)
-	if hit.is_empty():
-		return
-	
-	var position = hit.get("position", Vector3.ZERO)
 	var object_id = item.get("object_id", 1)
 	
-	if building_manager.has_method("place_object"):
-		var success = building_manager.place_object(position, object_id, current_rotation)
+	# Sync object ID and rotation to building_api
+	building_api.current_object_id = object_id
+	building_api.current_object_rotation = current_rotation
+	
+	# Use building_api's place_object which handles:
+	# - Fractional Y (sits on terrain)
+	# - Freestyle mode with size compensation
+	# - Smart surface align (sample corners)
+	# - Retry logic for occupied cells
+	if building_api.has_target:
+		var success = building_api.place_object(object_id, current_rotation)
 		if success:
-			print("ModeBuild: Placed %s at %s" % [item.get("name", "object"), position])
+			print("ModeBuild: Placed %s (rot: %d)" % [item.get("name", "object"), current_rotation])
 		else:
-			print("ModeBuild: Cannot place - cells occupied")
+			print("ModeBuild: Cannot place object - cells occupied")
 
 ## Remove prop (same as object for now)
 func _do_prop_remove() -> void:
 	_do_object_remove()
 
-## Place prop at target (free or grid-aligned)
+## Place prop at target (uses building_api if grid snap, else free placement)
 func _do_prop_place(item: Dictionary) -> void:
 	if not player or not building_manager:
 		return
 	
+	var object_id = item.get("object_id", 1)
+	
+	# Use building_api's grid-aligned position when grid snap is on
+	if grid_snap_props and building_api and building_api.has_target:
+		var grid_pos = building_api.current_voxel_pos
+		if building_manager.has_method("place_object"):
+			var success = building_manager.place_object(grid_pos, object_id, current_rotation)
+			if success:
+				print("ModeBuild: Placed prop %s at %s (grid snap)" % [item.get("name", "prop"), grid_pos])
+			else:
+				print("ModeBuild: Cannot place prop - cells occupied")
+		return
+	
+	# Free placement: use raw raycast position
 	var hit = player.raycast(10.0)
 	if hit.is_empty():
 		return
 	
-	var position = hit.get("position", Vector3.ZERO)
-	var object_id = item.get("object_id", 1)
-	
-	# If grid snap is on, snap to grid
-	if grid_snap_props:
-		position = Vector3(floor(position.x), position.y, floor(position.z))
-	
+	var free_pos = hit.get("position", Vector3.ZERO)
 	if building_manager.has_method("place_object"):
-		var success = building_manager.place_object(position, object_id, current_rotation)
+		var success = building_manager.place_object(free_pos, object_id, current_rotation)
 		if success:
-			print("ModeBuild: Placed prop %s at %s (grid: %s)" % [item.get("name", "prop"), position, grid_snap_props])
+			print("ModeBuild: Placed prop %s at %s (free)" % [item.get("name", "prop"), free_pos])
 		else:
 			print("ModeBuild: Cannot place prop - cells occupied")
 

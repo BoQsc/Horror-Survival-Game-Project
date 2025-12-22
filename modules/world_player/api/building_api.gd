@@ -1,6 +1,6 @@
 extends Node
 class_name BuildingAPI
-## BuildingAPI - Block placement functions for BUILD mode
+## BuildingAPI - Block and object placement functions for BUILD mode
 ## Ported from legacy player_interaction.gd
 
 # Manager references
@@ -8,14 +8,23 @@ var building_manager: Node = null
 var terrain_manager: Node = null
 var player: Node = null
 
-# State
+# Block State
 var current_block_id: int = 1 # 1=Cube, 2=Ramp, 3=Sphere, 4=Stairs
 var current_rotation: int = 0 # 0-3 (0°, 90°, 180°, 270°)
+
+# Object State (ported from legacy)
+var current_object_id: int = 1 # From ObjectRegistry
+var current_object_rotation: int = 0
 
 # Targeting state
 var current_voxel_pos: Vector3 = Vector3.ZERO
 var current_remove_voxel_pos: Vector3 = Vector3.ZERO
+var current_precise_hit_y: float = 0.0 # Fractional Y for objects (sits on terrain)
 var has_target: bool = false
+
+# Freestyle placement (Hold E for exact placement, legacy port)
+var is_freestyle: bool = false
+var smart_surface_align: bool = true # Sample terrain corners for anti-clip
 
 # Selection box and grid
 var selection_box: MeshInstance3D = null
@@ -36,6 +45,7 @@ const BLOCK_NAMES = ["", "Cube", "Ramp", "Sphere", "Stairs"]
 
 signal block_placed(position: Vector3, block_id: int, rotation: int)
 signal block_removed(position: Vector3)
+signal object_placed(position: Vector3, object_id: int, rotation: int)
 
 func _ready() -> void:
 	# Find managers via groups
@@ -122,8 +132,12 @@ func update_targeting(hit: Dictionary) -> void:
 	var pos = hit.position
 	var normal = hit.normal
 	
-	# Check what we hit
+	# Store fractional Y for object placement (legacy port)
+	current_precise_hit_y = pos.y
+	
+	# Check what we hit (legacy port line 706-707)
 	var hit_building = hit.collider and _is_building_chunk(hit.collider)
+	var hit_placed_object = hit.collider and hit.collider.is_in_group("placed_objects")
 	
 	# Round normal to nearest grid axis
 	var grid_normal = _round_to_axis(normal)
@@ -132,16 +146,31 @@ func update_targeting(hit: Dictionary) -> void:
 	var voxel_y: int
 	var voxel_z: int
 	
-	if hit_building:
-		# Hit a building block: place ADJACENT
+	# Freestyle mode: use exact hit position (legacy port)
+	if is_freestyle:
+		current_voxel_pos = pos # Exact position
+		current_remove_voxel_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
+		
+		# Apply smart surface align if enabled
+		if smart_surface_align:
+			current_precise_hit_y = apply_smart_surface_align(pos, current_object_id, current_object_rotation)
+			current_voxel_pos.y = current_precise_hit_y
+		
+		# Apply Y offset (finer for freestyle: 0.1 steps)
+		if placement_y_offset != 0:
+			current_precise_hit_y += float(placement_y_offset) * 0.1
+			current_voxel_pos.y = current_precise_hit_y
+	elif hit_building or hit_placed_object:
+		# Hit a building block OR placed object: place ADJACENT (legacy line 824-836)
 		var inside_pos = pos - normal * 0.01
 		voxel_x = int(floor(inside_pos.x))
 		voxel_y = int(floor(inside_pos.y))
 		voxel_z = int(floor(inside_pos.z))
 		current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		
-		# Place adjacent to the hit block
+		# Place adjacent to the hit block/object
 		current_voxel_pos = current_remove_voxel_pos + grid_normal
+		current_precise_hit_y = current_voxel_pos.y # Integer Y when placing on building/object
 	else:
 		# Hit terrain: use placement mode
 		if placement_mode == PlacementMode.EMBED:
@@ -165,6 +194,7 @@ func update_targeting(hit: Dictionary) -> void:
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		current_remove_voxel_pos = current_voxel_pos
+		# Keep fractional Y from raycast for objects
 	
 	# Safety: Never allow placing inside an existing block
 	if building_manager and building_manager.has_method("get_voxel"):
@@ -343,6 +373,161 @@ func hide_visuals() -> void:
 	if grid_visualizer:
 		grid_visualizer.visible = false
 	has_target = false
+
+## Place object with fractional Y (ported from legacy handle_object_input)
+## Uses: current_voxel_pos (X/Z grid), current_precise_hit_y (fractional Y)
+## Supports: freestyle placement, smart surface align, retry logic
+func place_object(object_id: int, rotation: int) -> bool:
+	if not building_manager:
+		print("BuildingAPI: No building_manager")
+		return false
+	
+	# Build position: grid X/Z, fractional Y
+	var final_pos: Vector3
+	
+	if is_freestyle:
+		# Freestyle: use exact hit position with size compensation
+		var obj_size = _get_object_size(object_id, rotation)
+		var offset_x = float(obj_size.x) / 2.0
+		var offset_z = float(obj_size.z) / 2.0
+		var compensation = Vector3(offset_x, 0, offset_z)
+		final_pos = current_voxel_pos - compensation
+	else:
+		# Grid snap: X/Z floored, Y fractional
+		final_pos = Vector3(
+			floor(current_voxel_pos.x),
+			current_precise_hit_y,
+			floor(current_voxel_pos.z)
+		)
+	
+	print("BuildingAPI: place_object freestyle=%s pos=%s voxel=%s preciseY=%s" % [is_freestyle, final_pos, current_voxel_pos, current_precise_hit_y])
+	
+	# Try placement
+	if building_manager.has_method("place_object"):
+		var success = building_manager.place_object(final_pos, object_id, rotation)
+		if success:
+			print("BuildingAPI: Placed object %d at %s" % [object_id, final_pos])
+			object_placed.emit(final_pos, object_id, rotation)
+			return true
+		
+		# Retry logic for freestyle: search for nearby empty anchor cell
+		if is_freestyle:
+			success = _retry_object_placement(final_pos, object_id, rotation)
+			if success:
+				return true
+	
+	print("BuildingAPI: Cannot place object - cells occupied")
+	return false
+
+## Get object size from ObjectRegistry
+func _get_object_size(object_id: int, rotation: int) -> Vector3i:
+	# Try ObjectRegistry if available
+	if has_node("/root/ObjectRegistry"):
+		var registry = get_node("/root/ObjectRegistry")
+		if registry.has_method("get_rotated_size"):
+			return registry.get_rotated_size(object_id, rotation)
+	
+	# Try static class
+	if ClassDB.class_exists("ObjectRegistry"):
+		return ObjectRegistry.get_rotated_size(object_id, rotation)
+	
+	# Fallback
+	return Vector3i(1, 1, 1)
+
+## Retry object placement by searching nearby cells (legacy freestyle retry)
+func _retry_object_placement(target_pos: Vector3, object_id: int, rotation: int) -> bool:
+	if not building_manager or not "CHUNK_SIZE" in building_manager:
+		return false
+	
+	var chunk_size = building_manager.CHUNK_SIZE
+	var chunk_x = int(floor(target_pos.x / chunk_size))
+	var chunk_y = int(floor(target_pos.y / chunk_size))
+	var chunk_z = int(floor(target_pos.z / chunk_size))
+	var chunk_key = Vector3i(chunk_x, chunk_y, chunk_z)
+	
+	if not building_manager.chunks.has(chunk_key):
+		return false
+	
+	var chunk = building_manager.chunks[chunk_key]
+	
+	# Calculate local coord
+	var local_x = int(floor(target_pos.x)) % chunk_size
+	var local_y = int(floor(target_pos.y)) % chunk_size
+	var local_z = int(floor(target_pos.z)) % chunk_size
+	if local_x < 0: local_x += chunk_size
+	if local_y < 0: local_y += chunk_size
+	if local_z < 0: local_z += chunk_size
+	
+	var base_anchor = Vector3i(local_x, local_y, local_z)
+	
+	# Search 2-block radius (5x5x5 volume)
+	var range_r = 2
+	for dx in range(-range_r, range_r + 1):
+		for dy in range(-range_r, range_r + 1):
+			for dz in range(-range_r, range_r + 1):
+				if dx == 0 and dy == 0 and dz == 0:
+					continue
+				
+				var try_anchor = base_anchor + Vector3i(dx, dy, dz)
+				if chunk.has_method("is_cell_available") and chunk.is_cell_available(try_anchor):
+					# Found free cell - try placement there
+					var anchor_world = Vector3(chunk_key) * chunk_size + Vector3(try_anchor)
+					if building_manager.place_object(anchor_world, object_id, rotation):
+						print("BuildingAPI: Freestyle retry succeeded at %s" % try_anchor)
+						return true
+	
+	return false
+
+## Get physics surface height at X,Z by raycast down (for smart surface align)
+func _get_physics_height_at(x: float, z: float, start_y: float) -> float:
+	if not player:
+		return start_y
+	
+	var space_state = player.get_world_3d().direct_space_state
+	var from = Vector3(x, start_y + 10.0, z)
+	var to = Vector3(x, start_y - 100.0, z)
+	
+	var query = PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = [player.get_rid()] if player.has_method("get_rid") else []
+	
+	var result = space_state.intersect_ray(query)
+	if result:
+		return result.position.y
+	
+	return start_y
+
+## Apply smart surface align: sample corners and use highest Y
+func apply_smart_surface_align(center: Vector3, object_id: int, rotation: int) -> float:
+	if not smart_surface_align:
+		return center.y
+	
+	var obj_size = _get_object_size(object_id, rotation)
+	var half_x = float(obj_size.x) / 2.0
+	var half_z = float(obj_size.z) / 2.0
+	
+	# Sample 5 points: center + 4 corners
+	var points = [
+		center,
+		Vector3(center.x - half_x, 0, center.z - half_z),
+		Vector3(center.x + half_x, 0, center.z - half_z),
+		Vector3(center.x - half_x, 0, center.z + half_z),
+		Vector3(center.x + half_x, 0, center.z + half_z)
+	]
+	
+	var max_y = -999.0
+	for p in points:
+		var h = _get_physics_height_at(p.x, p.z, center.y)
+		if h > max_y:
+			max_y = h
+	
+	if max_y > -900:
+		return max_y + 0.02 # Small margin
+	return center.y
+
+## Toggle freestyle mode
+func set_freestyle(enabled: bool) -> void:
+	is_freestyle = enabled
+	print("BuildingAPI: Freestyle %s" % ("ON" if enabled else "OFF"))
 
 ## Cleanup
 func _exit_tree() -> void:
