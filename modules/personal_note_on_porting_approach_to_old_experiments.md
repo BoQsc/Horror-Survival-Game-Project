@@ -9,3 +9,5 @@ It is important to ask to audit software porting process from time to time.
 You have to make complete porting audit against original.
 
 Always make a porting reference document with maximum accuracy and code line numbers. 
+
+Always cycle around the porting subjects in ultrathink, to not miss possible connected features.
