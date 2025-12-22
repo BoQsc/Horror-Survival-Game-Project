@@ -1,6 +1,6 @@
 person_note_on_block_submergence_problem_and_solutions.md
 
-This is a note for auto-mode of building blocks placement.
+This is a note for auto-mode of building blocks placement. (modules\world_player\api\building_api.gd)
 
 I think future upgrade would be to have no/minimal (80% submergence allowed, after that place block above and use terrain tool to match terrain to block bottom) building block submergence and use terrain tool to automatically adjust terrain to match the block.
 
