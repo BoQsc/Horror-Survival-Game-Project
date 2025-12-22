@@ -22,7 +22,7 @@ var selection_box: MeshInstance3D = null
 var grid_visualizer: MeshInstance3D = null
 
 # Placement modes
-enum PlacementMode {SNAP, EMBED, AUTO}
+enum PlacementMode {SNAP, EMBED, AUTO, FILL}
 var placement_mode: PlacementMode = PlacementMode.AUTO
 var placement_y_offset: int = 0
 var auto_embed_threshold: float = 0.2
@@ -96,8 +96,8 @@ func rotate_block(direction: int = 1) -> void:
 
 ## Cycle placement mode
 func cycle_placement_mode() -> void:
-	placement_mode = ((placement_mode + 1) % 3) as PlacementMode
-	var mode_names = ["SNAP", "EMBED", "AUTO"]
+	placement_mode = ((placement_mode + 1) % 4) as PlacementMode
+	var mode_names = ["SNAP", "EMBED", "AUTO", "FILL"]
 	print("BuildingAPI: Placement mode -> %s" % mode_names[placement_mode])
 
 ## Adjust Y offset
@@ -141,22 +141,39 @@ func update_targeting(hit: Dictionary) -> void:
 	else:
 		# Hit terrain: use placement mode
 		if placement_mode == PlacementMode.EMBED:
+			# EMBED: place at hit position (inside terrain)
 			voxel_x = int(floor(pos.x))
 			voxel_y = int(floor(pos.y))
 			voxel_z = int(floor(pos.z))
-		else:
-			# SNAP or AUTO mode: place on surface
+		elif placement_mode == PlacementMode.AUTO:
+			# AUTO: Original raycast-based placement on surface
 			var offset_pos = pos + normal * 0.6
 			voxel_x = int(floor(offset_pos.x))
 			voxel_y = int(floor(offset_pos.y)) + placement_y_offset
 			voxel_z = int(floor(offset_pos.z))
 			
-			# AUTO mode: Check if block would float too much
-			if placement_mode == PlacementMode.AUTO:
-				var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
-				var float_distance = float(voxel_y) - terrain_y
-				if float_distance > auto_embed_threshold:
-					voxel_y = int(floor(terrain_y))
+			# Check if floating too much, snap down to terrain
+			var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
+			var float_distance = float(voxel_y) - terrain_y
+			if float_distance > auto_embed_threshold:
+				voxel_y = int(floor(terrain_y))
+		elif placement_mode == PlacementMode.FILL:
+			# FILL: Snap to terrain surface, future: fill gap with terrain
+			voxel_x = int(floor(pos.x))
+			voxel_z = int(floor(pos.z))
+			var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
+			# Start with floor - block may be partially submerged
+			voxel_y = int(floor(terrain_y)) + placement_y_offset
+			# If more than 40% would be submerged, snap UP
+			var submergence = terrain_y - float(voxel_y)
+			if submergence > 0.4:
+				voxel_y = int(ceil(terrain_y)) + placement_y_offset
+		else:
+			# SNAP: use normal offset from hit point
+			var offset_pos = pos + normal * 0.6
+			voxel_x = int(floor(offset_pos.x))
+			voxel_y = int(floor(offset_pos.y)) + placement_y_offset
+			voxel_z = int(floor(offset_pos.z))
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		current_remove_voxel_pos = current_voxel_pos

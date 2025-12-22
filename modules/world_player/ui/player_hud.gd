@@ -173,9 +173,9 @@ func _update_build_mode_info() -> void:
 		return
 	
 	# Get placement mode info
-	var placement_modes = ["SNAP", "EMBED", "AUTO"]
+	var placement_modes = ["SNAP", "EMBED", "AUTO", "FILL"]
 	var mode_idx = building_api.get("placement_mode")
-	var mode_str = placement_modes[mode_idx] if mode_idx != null and mode_idx < 3 else "?"
+	var mode_str = placement_modes[mode_idx] if mode_idx != null and mode_idx < 4 else "?"
 	
 	var curr_rotation = mode_build.get("current_rotation")
 	var rot_str = "%d°" % (curr_rotation * 90) if curr_rotation != null else "?"
