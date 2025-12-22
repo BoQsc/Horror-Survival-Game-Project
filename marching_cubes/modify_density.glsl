@@ -13,12 +13,12 @@ layout(set = 0, binding = 1, std430) restrict buffer MaterialBuffer {
 } material_buffer;
 
 layout(push_constant) uniform PushConstants {
-    vec4 chunk_offset;   // .xyz = position, .w unused
-    vec4 brush_pos;      // .xyz = world pos, .w = radius
+    vec4 chunk_offset;   // .xyz = position, .w = y_min (for Column shape)
+    vec4 brush_pos;      // .xyz = world pos, .w = radius (or y_max for Column)
     float brush_value;   // +1 to dig, -1 to place
-    int shape_type;      // 0 = Sphere, 1 = Box
+    int shape_type;      // 0 = Sphere, 1 = Box, 2 = Column
     int material_id;     // -1 = no change, 0+ = specific material
-    float _padding;      // Keep 48 byte alignment
+    float y_max;         // For Column shape: max Y bound
 } params;
 
 void main() {
@@ -28,11 +28,25 @@ void main() {
     uint index = id.x + (id.y * 33) + (id.z * 33 * 33);
     
     vec3 local_pos = vec3(id);
-    vec3 world_pos = local_pos + params.chunk_offset.xyz;
+    vec3 world_pos = local_pos + vec3(params.chunk_offset.xyz);
     
     bool modified = false;
     
-    if (params.shape_type == 1) {
+    if (params.shape_type == 2) {
+        // Column Shape (precise 1x1 vertical column, y_min to y_max)
+        // XZ: 0.5 radius centered on brush_pos.xy
+        // Y: between chunk_offset.w (y_min) and y_max
+        float dist_x = abs(world_pos.x - params.brush_pos.x);
+        float dist_z = abs(world_pos.z - params.brush_pos.z);
+        float y_min = params.chunk_offset.w;
+        float y_max_val = params.y_max;
+        
+        // Inside 1x1 column horizontally AND within Y bounds
+        if (dist_x <= 0.5 && dist_z <= 0.5 && world_pos.y >= y_min && world_pos.y <= y_max_val) {
+            density_buffer.values[index] = params.brush_value;
+            modified = true;
+        }
+    } else if (params.shape_type == 1) {
         // Box Shape (Hard edges)
         vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
         float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));

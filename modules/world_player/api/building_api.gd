@@ -156,22 +156,26 @@ func update_targeting(hit: Dictionary) -> void:
 			voxel_y = int(floor(offset_pos.y)) + placement_y_offset
 			voxel_z = int(floor(offset_pos.z))
 			
-			# Check if floating too much, snap down to terrain
-			var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
-			var float_distance = float(voxel_y) - terrain_y
-			if float_distance > auto_embed_threshold:
-				voxel_y = int(floor(terrain_y))
+			# Only apply anti-float snap on HORIZONTAL surfaces (normal.y > 0.5)
+			# Don't snap when looking at vertical walls/cliffs
+			if normal.y > 0.5:
+				var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
+				var float_distance = float(voxel_y) - terrain_y
+				if float_distance > auto_embed_threshold:
+					voxel_y = int(floor(terrain_y))
 		elif placement_mode == PlacementMode.FILL:
-			# FILL: Snap to terrain surface, future: fill gap with terrain
-			voxel_x = int(floor(pos.x))
-			voxel_z = int(floor(pos.z))
-			var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
-			# Start with floor - block may be partially submerged
-			voxel_y = int(floor(terrain_y)) + placement_y_offset
-			# If more than 40% would be submerged, snap UP
-			var submergence = terrain_y - float(voxel_y)
-			if submergence > 0.4:
-				voxel_y = int(ceil(terrain_y)) + placement_y_offset
+			# FILL: Same targeting as AUTO, fill happens at placement time
+			var offset_pos = pos + normal * 0.6
+			voxel_x = int(floor(offset_pos.x))
+			voxel_y = int(floor(offset_pos.y)) + placement_y_offset
+			voxel_z = int(floor(offset_pos.z))
+			
+			# Only apply anti-float snap on HORIZONTAL surfaces (normal.y > 0.5)
+			if normal.y > 0.5:
+				var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
+				var float_distance = float(voxel_y) - terrain_y
+				if float_distance > auto_embed_threshold:
+					voxel_y = int(floor(terrain_y))
 		else:
 			# SNAP: use normal offset from hit point
 			var offset_pos = pos + normal * 0.6
@@ -200,6 +204,7 @@ func place_block() -> bool:
 		return false
 	
 	# FILL mode: Fill terrain gap before placing block
+	print("BuildingAPI.place_block: mode=%d (FILL=%d), tm=%s" % [placement_mode, PlacementMode.FILL, "OK" if terrain_manager else "NULL"])
 	if placement_mode == PlacementMode.FILL and terrain_manager:
 		var terrain_y = _get_terrain_height_at(
 			current_voxel_pos.x + 0.5,
@@ -207,28 +212,30 @@ func place_block() -> bool:
 		)
 		var block_bottom = float(int(current_voxel_pos.y))
 		var gap = block_bottom - terrain_y
+		print("BuildingAPI.place_block FILL: terrain_y=%.2f block_bottom=%.2f gap=%.2f" % [terrain_y, block_bottom, gap])
 		
 		# If there's a gap (block above terrain), fill it
 		if gap > 0.1:
-			# Fill terrain up from terrain surface to block bottom
-			# Position at terrain surface + half the gap to cover entire vertical span
-			var fill_center = Vector3(
-				current_voxel_pos.x + 0.5,
-				block_bottom - gap * 0.5, # Center between terrain and block
-				current_voxel_pos.z + 0.5
-			)
-			# Radius must cover half the gap (from center to each edge) + 0.1 buffer
-			var fill_radius = max(0.5, gap * 0.5 + 0.1)
-			terrain_manager.modify_terrain(fill_center, fill_radius, -0.8, 1, 0)
+			# Use fill_column for precise vertical fill from terrain to block
+			print("BuildingAPI: terrain_manager=%s has_method=%s" % [terrain_manager.name if terrain_manager else "NULL", terrain_manager.has_method("fill_column") if terrain_manager else false])
+			if terrain_manager.has_method("fill_column"):
+				terrain_manager.fill_column(
+					current_voxel_pos.x + 0.5, # X center
+					current_voxel_pos.z + 0.5, # Z center
+					terrain_y, # Y from (terrain surface)
+					block_bottom, # Y to (block bottom)
+					-0.8, # Fill value
+					0 # Terrain layer
+				)
 			
 			# Store fill info for undo
 			var pos_key = str(current_voxel_pos)
 			fill_info[pos_key] = {
 				"terrain_y": terrain_y,
-				"fill_amount": gap,
-				"fill_center": fill_center
+				"block_bottom": block_bottom,
+				"fill_amount": gap
 			}
-			print("BuildingAPI: Filled terrain gap of %.2f at %s" % [gap, current_voxel_pos])
+			print("BuildingAPI: Column fill from %.2f to %.2f at %s" % [terrain_y, block_bottom, current_voxel_pos])
 	
 	if building_manager.has_method("set_voxel"):
 		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
@@ -259,13 +266,22 @@ func remove_block(hit: Dictionary) -> bool:
 		var pos_key = str(voxel_pos)
 		if fill_info.has(pos_key) and terrain_manager:
 			var info = fill_info[pos_key]
-			var fill_center = info.get("fill_center", Vector3.ZERO)
+			var terrain_y = info.get("terrain_y", 0.0)
+			var block_bottom = info.get("block_bottom", 0.0)
 			var fill_amount = info.get("fill_amount", 0.0)
 			
-			if fill_center != Vector3.ZERO and fill_amount > 0.1:
-				# Dig out the filled terrain
-				terrain_manager.modify_terrain(fill_center, fill_amount * 0.6, 0.8, 1, 0)
-				print("BuildingAPI: Undid terrain fill at %s (gap was %.2f)" % [voxel_pos, fill_amount])
+			if fill_amount > 0.1:
+				# Use fill_column with positive value to dig out the filled area
+				if terrain_manager.has_method("fill_column"):
+					terrain_manager.fill_column(
+						voxel_pos.x + 0.5, # X center
+						voxel_pos.z + 0.5, # Z center
+						terrain_y, # Y from
+						block_bottom, # Y to
+						0.8, # Positive = dig
+						0 # Terrain layer
+					)
+				print("BuildingAPI: Undid column fill at %s (from %.2f to %.2f)" % [voxel_pos, terrain_y, block_bottom])
 			
 			fill_info.erase(pos_key)
 		
