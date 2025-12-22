@@ -111,9 +111,9 @@ anchor_left = 0.5
 anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
-offset_left = -250.0
-offset_top = -60.0
-offset_right = 250.0
+offset_left = -425.0
+offset_top = -85.0
+offset_right = 425.0
 offset_bottom = -10.0
 
 [node name="HotbarContainer" type="HBoxContainer" parent="HotbarPanel"]
@@ -128,73 +128,87 @@ offset_bottom = -5.0
 alignment = 1
 
 [node name="Slot0" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[1]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot1" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[2]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot2" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[3]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot3" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[4]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot4" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[5]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot5" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[6]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot6" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[7]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot7" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[8]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot8" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[9]"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Slot9" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(45, 40)
+custom_minimum_size = Vector2(80, 60)
 layout_mode = 2
 text = "[0]"
 horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SelectedItemLabel" type="Label" parent="."]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = 440.0
+offset_top = -70.0
+offset_right = 640.0
+offset_bottom = -30.0
+text = "Fists"
+horizontal_alignment = 0
 vertical_alignment = 1
 
 [node name="GameMenu" type="Control" parent="."]

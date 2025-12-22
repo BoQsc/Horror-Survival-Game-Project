@@ -13,6 +13,7 @@ class_name PlayerHUD
 @onready var stamina_bar: ProgressBar = $StatusBars/StaminaBar
 @onready var compass: Label = $Compass
 @onready var game_menu: Control = $GameMenu
+@onready var selected_item_label: Label = $SelectedItemLabel
 
 # Hotbar slot labels
 var slot_labels: Array[Label] = []
@@ -65,6 +66,10 @@ func _setup_hotbar() -> void:
 			for i in range(slot_labels.size()):
 				var item = hotbar.get_item_at(i)
 				slot_labels[i].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
+			# Set initial selected item label
+			if selected_item_label:
+				var first_item = hotbar.get_item_at(0)
+				selected_item_label.text = first_item.get("name", "Fists")
 	
 	# Highlight first slot by default
 	if slot_labels.size() > 0:
@@ -130,6 +135,14 @@ func _on_hotbar_slot_selected(slot: int) -> void:
 			slot_labels[i].modulate = Color.YELLOW
 		else:
 			slot_labels[i].modulate = Color.WHITE
+	
+	# Update selected item label with full name
+	var player_node = get_tree().get_first_node_in_group("player")
+	if player_node and selected_item_label:
+		var hotbar = player_node.get_node_or_null("Systems/Hotbar")
+		if hotbar:
+			var item = hotbar.get_item_at(slot)
+			selected_item_label.text = item.get("name", "Empty")
 
 ## Interaction available handler
 func _on_interaction_available(_target: Node, prompt: String) -> void:
