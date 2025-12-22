@@ -216,9 +216,9 @@ func place_block() -> bool:
 				terrain_y + gap * 0.5, # Center of gap
 				current_voxel_pos.z + 0.5
 			)
-			# Use box shape for precise fill - minimum 0.6 radius for visible 1x1 column
-			var fill_radius = max(0.6, gap * 0.6)
-			terrain_manager.modify_terrain(fill_center, fill_radius, -1.5, 1, 0)
+			# Use box shape for precise fill - 0.5 radius for subtle 1x1 column
+			var fill_radius = max(0.5, gap * 0.5)
+			terrain_manager.modify_terrain(fill_center, fill_radius, -1.0, 1, 0)
 			
 			# Store fill info for undo
 			var pos_key = str(current_voxel_pos)
