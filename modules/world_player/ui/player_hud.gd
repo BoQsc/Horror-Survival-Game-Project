@@ -5,6 +5,7 @@ class_name PlayerHUD
 
 # References
 @onready var mode_label: Label = $ModeIndicator
+@onready var build_info_label: Label = $BuildInfoLabel
 @onready var hotbar_container: HBoxContainer = $HotbarPanel/HotbarContainer
 @onready var crosshair: TextureRect = $Crosshair
 @onready var interaction_prompt: Label = $InteractionPrompt
@@ -42,6 +43,9 @@ func _process(_delta: float) -> void:
 	
 	# Update health/stamina bars
 	_update_status_bars()
+	
+	# Update mode label with extra build info when in BUILD mode
+	_update_build_mode_info()
 
 ## Setup hotbar slot display
 func _setup_hotbar() -> void:
@@ -132,3 +136,54 @@ func _on_inventory_toggled(is_open: bool) -> void:
 ## Game menu toggled handler
 func _on_game_menu_toggled(is_open: bool) -> void:
 	game_menu.visible = is_open
+
+## Update mode label with build mode details
+func _update_build_mode_info() -> void:
+	# Find mode manager to check current mode
+	var player_node = get_tree().get_first_node_in_group("player")
+	if not player_node:
+		if build_info_label:
+			build_info_label.visible = false
+		return
+	
+	var mode_manager_node = player_node.get_node_or_null("Systems/ModeManager")
+	if not mode_manager_node:
+		if build_info_label:
+			build_info_label.visible = false
+		return
+	
+	# Only show when in BUILD mode
+	if not mode_manager_node.is_build_mode():
+		if build_info_label:
+			build_info_label.visible = false
+		return
+	
+	# Find the ModeBuild node to get building_api
+	var mode_build = player_node.get_node_or_null("Modes/ModeBuild")
+	if not mode_build:
+		if build_info_label:
+			build_info_label.visible = false
+		return
+	
+	# Get building_api from ModeBuild
+	var building_api = mode_build.get("building_api")
+	if not building_api:
+		if build_info_label:
+			build_info_label.visible = false
+		return
+	
+	# Get placement mode info
+	var placement_modes = ["SNAP", "EMBED", "AUTO"]
+	var mode_idx = building_api.get("placement_mode")
+	var mode_str = placement_modes[mode_idx] if mode_idx != null and mode_idx < 3 else "?"
+	
+	var curr_rotation = mode_build.get("current_rotation")
+	var rot_str = "%d°" % (curr_rotation * 90) if curr_rotation != null else "?"
+	
+	var y_offset = building_api.get("placement_y_offset")
+	var y_str = "Y:%+d" % y_offset if y_offset != null and y_offset != 0 else ""
+	
+	# Update build info label with build info (below mode label)
+	if build_info_label:
+		build_info_label.text = "[%s] Rot:%s %s" % [mode_str, rot_str, y_str]
+		build_info_label.visible = true

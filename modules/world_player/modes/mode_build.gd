@@ -3,6 +3,9 @@ class_name ModeBuild
 ## ModeBuild - Handles BUILD mode behaviors
 ## Block, object, and prop placement/removal
 
+# Preload API scripts
+const BuildingAPIScript = preload("res://modules/world_player/api/building_api.gd")
+
 # References
 var player: WorldPlayer = null
 var hotbar: Node = null
@@ -10,6 +13,9 @@ var mode_manager: Node = null
 
 # Manager references
 var building_manager: Node = null
+
+# API reference for selection box visualization
+var building_api: Node = null
 
 # Build state
 var current_rotation: int = 0
@@ -22,15 +28,34 @@ func _ready() -> void:
 	# Find player
 	player = get_parent().get_parent() as WorldPlayer
 	
-	# Find siblings
+	# Find siblings - ModeManager is in Systems node
 	hotbar = get_node_or_null("../../Systems/Hotbar")
-	mode_manager = get_node_or_null("../ModeManager")
+	mode_manager = get_node_or_null("../../Systems/ModeManager")
 	
 	# Find managers via groups
 	await get_tree().process_frame
 	building_manager = get_tree().get_first_node_in_group("building_manager")
 	
+	# Create building API for selection box visualization
+	building_api = BuildingAPIScript.new()
+	add_child(building_api)
+	building_api.initialize(player)
+	
 	print("ModeBuild: Initialized")
+
+func _process(_delta: float) -> void:
+	# Update selection box when in build mode
+	if mode_manager and mode_manager.is_build_mode() and building_api:
+		# Update targeting from player raycast
+		if player:
+			var hit = player.raycast(10.0)
+			building_api.update_targeting(hit)
+			# Sync rotation
+			building_api.current_rotation = current_rotation
+	else:
+		# Hide when not in build mode
+		if building_api:
+			building_api.hide_visuals()
 
 func _input(event: InputEvent) -> void:
 	# Only handle input in BUILD mode
@@ -47,6 +72,10 @@ func _input(event: InputEvent) -> void:
 				# Toggle grid snap for props
 				grid_snap_props = not grid_snap_props
 				print("ModeBuild: Grid snap -> %s" % ("ON" if grid_snap_props else "OFF"))
+			KEY_V:
+				# Cycle placement mode
+				if building_api:
+					building_api.cycle_placement_mode()
 	
 	# Scroll to rotate
 	if event is InputEventMouseButton and event.pressed:
@@ -57,6 +86,13 @@ func _input(event: InputEvent) -> void:
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				current_rotation = (current_rotation - 1 + 4) % 4
 				print("ModeBuild: Rotation -> %d" % current_rotation)
+		elif event.shift_pressed:
+			# Shift+Scroll: adjust Y offset
+			if building_api:
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					building_api.adjust_y_offset(1)
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					building_api.adjust_y_offset(-1)
 
 ## Handle primary action (left click) in BUILD mode - Remove
 func handle_primary(item: Dictionary) -> void:
@@ -85,24 +121,48 @@ func handle_secondary(item: Dictionary) -> void:
 ## Remove block at target
 func _do_block_remove() -> void:
 	if not player or not building_manager:
+		print("ModeBuild: Remove failed - no player or building_manager")
 		return
 	
 	var hit = player.raycast(10.0)
 	if hit.is_empty():
+		print("ModeBuild: Remove failed - no raycast hit")
 		return
 	
 	var target = hit.get("collider")
+	if not target:
+		print("ModeBuild: Remove failed - no collider")
+		return
 	
-	# Check if we hit a building chunk
-	if target and target.get_parent():
-		var _parent_class = target.get_parent().get_class() if target.get_parent().has_method("get_class") else ""
-		if "BuildingChunk" in str(target.get_parent()):
-			var position = hit.get("position", Vector3.ZERO) - hit.get("normal", Vector3.ZERO) * 0.1
-			var voxel_pos = Vector3(floor(position.x), floor(position.y), floor(position.z))
-			
-			if building_manager.has_method("set_voxel"):
-				building_manager.set_voxel(voxel_pos, 0)
-				print("ModeBuild: Removed block at %s" % voxel_pos)
+	# Walk up the node tree to check if this belongs to BuildingManager
+	var node = target
+	var is_building_block: bool = false
+	for i in range(6):
+		if not node:
+			break
+		# Check if this node IS the BuildingManager or has "BuildingManager" in name
+		if node == building_manager or "BuildingManager" in str(node):
+			is_building_block = true
+			break
+		# Also check for BuildingChunk script
+		if node.get_script() and ("BuildingChunk" in str(node.get_script()) or "building_chunk" in str(node.get_script())):
+			is_building_block = true
+			break
+		node = node.get_parent()
+	
+	if is_building_block:
+		# Calculate voxel position from hit (slightly inside the block)
+		var position = hit.get("position", Vector3.ZERO) - hit.get("normal", Vector3.ZERO) * 0.1
+		var voxel_pos = Vector3(floor(position.x), floor(position.y), floor(position.z))
+		
+		if building_manager.has_method("set_voxel"):
+			building_manager.set_voxel(voxel_pos, 0)
+			print("ModeBuild: Removed block at %s" % voxel_pos)
+	else:
+		# Not a building block
+		var p1 = target.get_parent() if target else null
+		var p2 = p1.get_parent() if p1 else null
+		print("ModeBuild: Not a building block. Parents: %s -> %s" % [p1, p2])
 
 ## Place block at target
 func _do_block_place(item: Dictionary) -> void:
