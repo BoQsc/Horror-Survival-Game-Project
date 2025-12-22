@@ -3,3 +3,5 @@ Software Porting is the answer to old large code that is mystical. You start a n
 
 
 Software porting is adapting an application to work in a new environment, like a different operating system (Windows to Linux), CPU, or hardware, by modifying its code or dependencies to maintain functionality, essentially making it run "somewhere else" without a full rewrite. 
+
+It is important to ask to audit software porting process from time to time.
