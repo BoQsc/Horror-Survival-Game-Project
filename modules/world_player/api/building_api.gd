@@ -206,11 +206,19 @@ func remove_block(hit: Dictionary) -> bool:
 	
 	return false
 
-## Check if collider is part of a BuildingChunk
+## Check if collider belongs to the building system (walk up tree)
 func _is_building_chunk(collider: Node) -> bool:
-	if collider.get_parent():
-		return collider.get_parent().get_class() == "BuildingChunk" or \
-			   (collider.get_parent().get_script() and "BuildingChunk" in str(collider.get_parent().get_script()))
+	var node = collider
+	for i in range(6):
+		if not node:
+			break
+		# Check if this node is the building_manager
+		if node == building_manager or "BuildingManager" in str(node):
+			return true
+		# Check for BuildingChunk script
+		if node.get_script() and ("BuildingChunk" in str(node.get_script()) or "building_chunk" in str(node.get_script())):
+			return true
+		node = node.get_parent()
 	return false
 
 ## Round normal to nearest axis
