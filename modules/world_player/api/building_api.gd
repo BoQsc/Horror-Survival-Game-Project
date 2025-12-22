@@ -22,9 +22,16 @@ var current_remove_voxel_pos: Vector3 = Vector3.ZERO
 var current_precise_hit_y: float = 0.0 # Fractional Y for objects (sits on terrain)
 var has_target: bool = false
 
-# Freestyle placement (Hold E for exact placement, legacy port)
+# Freestyle placement (Hold E/MMB for exact placement, legacy port)
 var is_freestyle: bool = false
 var smart_surface_align: bool = true # Sample terrain corners for anti-clip
+var freestyle_rotation_offset: float = 0.0 # Fine rotation in freestyle mode
+
+# Object Preview System (ported from legacy)
+var preview_instance: Node3D = null
+var preview_object_id: int = -1 # Track which object the preview is for
+var preview_valid: bool = true # Whether current placement is valid (green/red)
+var object_show_grid: bool = false # Toggle grid visibility in OBJECT mode (default off)
 
 # Selection box and grid
 var selection_box: MeshInstance3D = null
@@ -529,9 +536,133 @@ func set_freestyle(enabled: bool) -> void:
 	is_freestyle = enabled
 	print("BuildingAPI: Freestyle %s" % ("ON" if enabled else "OFF"))
 
+# ============== OBJECT PREVIEW SYSTEM ==============
+# Ported from legacy player_interaction.gd lines 1494-1666
+
+## Create or update preview for the current object
+## Call this in _process when in OBJECT/BUILD mode with an object selected
+func update_or_create_preview() -> void:
+	# Check if we need to create a new preview (object changed)
+	if preview_object_id != current_object_id or preview_instance == null:
+		destroy_preview()
+		_create_preview()
+	
+	# Update preview position and rotation
+	if preview_instance and has_target:
+		var size = ObjectRegistry.get_rotated_size(current_object_id, current_object_rotation)
+		var offset_x = float(size.x) / 2.0
+		var offset_z = float(size.z) / 2.0
+		
+		if is_freestyle:
+			# Freestyle: Preview matches exact hit position
+			preview_instance.position = current_voxel_pos
+			
+			# Apply fine rotation
+			var base_rot = current_object_rotation * 90
+			preview_instance.rotation_degrees.y = base_rot + freestyle_rotation_offset
+		else:
+			# Snapped: Preview matches grid position + centering
+			preview_instance.position = Vector3(
+				current_voxel_pos.x + offset_x,
+				current_precise_hit_y,
+				current_voxel_pos.z + offset_z
+			)
+			preview_instance.rotation_degrees.y = current_object_rotation * 90
+			
+		preview_instance.visible = true
+		
+		# Check validity
+		if is_freestyle:
+			# Freestyle is valid (physics will handle collision)
+			set_preview_validity(true)
+		else:
+			# Standard grid check
+			var check_pos = Vector3(floor(current_voxel_pos.x), floor(current_precise_hit_y), floor(current_voxel_pos.z))
+			var can_place = building_manager.can_place_object(
+				check_pos,
+				current_object_id,
+				current_object_rotation
+			) if building_manager else true
+			set_preview_validity(can_place)
+	elif preview_instance:
+		preview_instance.visible = false
+
+## Create a preview instance for the current object
+func _create_preview() -> void:
+	var obj_def = ObjectRegistry.get_object(current_object_id)
+	if obj_def.is_empty():
+		return
+	
+	var packed = load(obj_def.scene) as PackedScene
+	if not packed:
+		return
+	
+	preview_instance = packed.instantiate()
+	preview_object_id = current_object_id
+	
+	# Add to scene (not as child of anything specific, just to world)
+	get_tree().root.add_child(preview_instance)
+	
+	# Apply transparent preview material to all meshes
+	_apply_preview_material(preview_instance)
+	
+	# Disable collisions on preview (it shouldn't interact with physics)
+	_disable_preview_collisions(preview_instance)
+
+## Destroy the current preview instance
+func destroy_preview() -> void:
+	if preview_instance and is_instance_valid(preview_instance):
+		preview_instance.queue_free()
+	preview_instance = null
+	preview_object_id = -1
+
+## Set preview color based on validity (green = valid, red = invalid)
+func set_preview_validity(valid: bool) -> void:
+	preview_valid = valid
+	var color = Color(0.2, 1.0, 0.3, 0.5) if valid else Color(1.0, 0.2, 0.2, 0.5)
+	_set_preview_color(preview_instance, color)
+
+## Apply semi-transparent preview material to all MeshInstance3D children
+func _apply_preview_material(node: Node) -> void:
+	if node is MeshInstance3D:
+		var mesh_inst = node as MeshInstance3D
+		var mat = StandardMaterial3D.new()
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = Color(0.2, 1.0, 0.3, 0.5) # Green, semi-transparent
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.no_depth_test = true # Render on top
+		mesh_inst.material_override = mat
+	
+	for child in node.get_children():
+		_apply_preview_material(child)
+
+## Recursively set preview color on all materials
+func _set_preview_color(node: Node, color: Color) -> void:
+	if not node:
+		return
+	if node is MeshInstance3D:
+		var mesh_inst = node as MeshInstance3D
+		if mesh_inst.material_override is StandardMaterial3D:
+			mesh_inst.material_override.albedo_color = color
+	
+	for child in node.get_children():
+		_set_preview_color(child, color)
+
+## Disable all collisions on the preview node
+func _disable_preview_collisions(node: Node) -> void:
+	if node is CollisionShape3D:
+		node.disabled = true
+	elif node is StaticBody3D or node is CharacterBody3D or node is RigidBody3D:
+		node.collision_layer = 0
+		node.collision_mask = 0
+	
+	for child in node.get_children():
+		_disable_preview_collisions(child)
+
 ## Cleanup
 func _exit_tree() -> void:
 	if selection_box and is_instance_valid(selection_box):
 		selection_box.queue_free()
 	if grid_visualizer and is_instance_valid(grid_visualizer):
 		grid_visualizer.queue_free()
+	destroy_preview()

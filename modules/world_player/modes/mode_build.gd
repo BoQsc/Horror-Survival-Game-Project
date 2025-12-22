@@ -5,6 +5,8 @@ class_name ModeBuild
 
 # Preload API scripts
 const BuildingAPIScript = preload("res://modules/world_player/api/building_api.gd")
+const ItemDefinitions = preload("res://modules/world_player/data/item_definitions.gd")
+const ItemCategory = ItemDefinitions.ItemCategory
 
 # References
 var player: WorldPlayer = null
@@ -20,9 +22,6 @@ var building_api: Node = null
 # Build state
 var current_rotation: int = 0
 var grid_snap_props: bool = false # Toggle for prop placement
-
-# Preview (future)
-var preview_instance: Node3D = null
 
 func _ready() -> void:
 	# Find player
@@ -52,10 +51,35 @@ func _process(_delta: float) -> void:
 			building_api.update_targeting(hit)
 			# Sync rotation
 			building_api.current_rotation = current_rotation
+		
+		# MMB Freestyle toggle (continuous check, legacy port)
+		var was_freestyle = building_api.is_freestyle
+		building_api.is_freestyle = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE)
+		if was_freestyle != building_api.is_freestyle:
+			print("ModeBuild: Freestyle %s (MMB)" % ("ON" if building_api.is_freestyle else "OFF"))
+		
+		# Category-aware visuals: preview for OBJECT, selection box for BLOCK
+		var item_data = _get_current_item_data()
+		if item_data and item_data.get("category") == ItemCategory.OBJECT:
+			# OBJECT: show preview, hide selection box (unless object_show_grid)
+			building_api.current_object_id = item_data.get("object_id", 1)
+			building_api.current_object_rotation = current_rotation
+			building_api.update_or_create_preview()
+			
+			if building_api.object_show_grid:
+				if building_api.selection_box:
+					building_api.selection_box.visible = true
+			else:
+				if building_api.selection_box:
+					building_api.selection_box.visible = false
+		else:
+			# BLOCK/PROP: destroy preview, show selection box
+			building_api.destroy_preview()
 	else:
 		# Hide when not in build mode
 		if building_api:
 			building_api.hide_visuals()
+			building_api.destroy_preview()
 
 func _input(event: InputEvent) -> void:
 	# Only handle input in BUILD mode
@@ -77,9 +101,16 @@ func _input(event: InputEvent) -> void:
 				current_rotation = (current_rotation + 1) % 4
 				print("ModeBuild: Rotation -> %d (%.0f°)" % [current_rotation, current_rotation * 90.0])
 			KEY_G:
-				# Toggle grid snap for props
-				grid_snap_props = not grid_snap_props
-				print("ModeBuild: Grid snap -> %s" % ("ON" if grid_snap_props else "OFF"))
+				# Toggle grid visibility 
+				# In OBJECT mode: toggle object_show_grid
+				# In BLOCK mode: toggle prop grid snap
+				var item_data = _get_current_item_data()
+				if item_data and item_data.get("category") == ItemCategory.OBJECT:
+					building_api.object_show_grid = not building_api.object_show_grid
+					print("ModeBuild: Object grid -> %s" % ("ON" if building_api.object_show_grid else "OFF"))
+				else:
+					grid_snap_props = not grid_snap_props
+					print("ModeBuild: Grid snap -> %s" % ("ON" if grid_snap_props else "OFF"))
 			KEY_V:
 				# Cycle placement mode
 				if building_api:
@@ -131,6 +162,12 @@ func handle_secondary(item: Dictionary) -> void:
 			_do_object_place(item)
 		6: # PROP
 			_do_prop_place(item)
+
+## Helper to get current item data from hotbar
+func _get_current_item_data() -> Dictionary:
+	if hotbar and hotbar.has_method("get_item_at"):
+		return hotbar.get_item_at(hotbar.selected_slot) if hotbar.has_method("get_selected_slot_item") else hotbar.get_item_at(hotbar.get("selected_slot"))
+	return {}
 
 ## Remove block at target
 func _do_block_remove() -> void:
