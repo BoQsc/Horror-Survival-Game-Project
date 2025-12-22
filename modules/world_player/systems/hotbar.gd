@@ -22,10 +22,11 @@ func _ready() -> void:
 	
 	print("Hotbar: Initialized with %d slots" % slots.size())
 	
-	# Emit initial selection
-	_emit_selection_change()
+	# Auto-select first slot
+	select_slot(0)
 
 func _input(event: InputEvent) -> void:
+	# Number keys 1-0 for slots
 	if event is InputEventKey and event.pressed and not event.echo:
 		var new_slot = -1
 		
@@ -43,6 +44,14 @@ func _input(event: InputEvent) -> void:
 		
 		if new_slot >= 0 and new_slot != selected_slot:
 			select_slot(new_slot)
+	
+	# Scroll wheel to cycle slots (only when not using Ctrl/Shift modifiers)
+	if event is InputEventMouseButton and event.pressed:
+		if not event.ctrl_pressed and not event.shift_pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				select_slot((selected_slot - 1 + SLOT_COUNT) % SLOT_COUNT)
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				select_slot((selected_slot + 1) % SLOT_COUNT)
 
 func select_slot(index: int) -> void:
 	if index < 0 or index >= SLOT_COUNT:

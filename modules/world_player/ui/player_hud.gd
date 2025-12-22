@@ -49,7 +49,6 @@ func _process(_delta: float) -> void:
 
 ## Setup hotbar slot display
 func _setup_hotbar() -> void:
-	# Get hotbar from player (via autoload signal is fine for now)
 	slot_labels.clear()
 	
 	# Find all slot labels in hotbar container
@@ -57,6 +56,19 @@ func _setup_hotbar() -> void:
 		var slot = hotbar_container.get_node_or_null("Slot%d" % i)
 		if slot and slot is Label:
 			slot_labels.append(slot)
+	
+	# Find hotbar and populate names (signal fires before HUD connects)
+	var player_node = get_tree().get_first_node_in_group("player")
+	if player_node:
+		var hotbar = player_node.get_node_or_null("Systems/Hotbar")
+		if hotbar:
+			for i in range(slot_labels.size()):
+				var item = hotbar.get_item_at(i)
+				slot_labels[i].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
+	
+	# Highlight first slot by default
+	if slot_labels.size() > 0:
+		slot_labels[0].modulate = Color.YELLOW
 
 ## Update compass direction
 func _update_compass() -> void:
