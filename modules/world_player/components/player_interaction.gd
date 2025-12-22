@@ -19,6 +19,11 @@ var is_holding_e: bool = false
 var hold_time: float = 0.0
 const BARRICADE_HOLD_TIME: float = 1.0 # Seconds to hold for barricade
 
+# Vehicle state (legacy port)
+var is_in_vehicle: bool = false
+var current_vehicle: Node3D = null
+var terrain_manager: Node = null
+
 func _ready() -> void:
 	# Find player
 	player = get_parent().get_parent() as WorldPlayer
@@ -31,6 +36,7 @@ func _ready() -> void:
 	building_manager = get_tree().get_first_node_in_group("building_manager")
 	vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
 	entity_manager = get_tree().get_first_node_in_group("entity_manager")
+	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	
 	print("PlayerInteraction: Initialized")
 
@@ -47,6 +53,12 @@ func _process(delta: float) -> void:
 			hold_time = 0.0
 
 func _input(event: InputEvent) -> void:
+	# Handle E key while in vehicle - exit only
+	if is_in_vehicle:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_E:
+			_exit_vehicle()
+		return
+	
 	if event is InputEventKey:
 		if event.keycode == KEY_E:
 			if event.pressed and not event.echo:
@@ -60,33 +72,57 @@ func _input(event: InputEvent) -> void:
 				hold_time = 0.0
 
 ## Update interaction target based on what player is looking at
+## Ported from legacy player_interaction.gd _check_interaction_target()
 func _update_interaction_target() -> void:
 	if not player:
 		return
 	
-	var hit = player.raycast(3.0) # Interaction range
+	# Use 5.0 range (legacy used 5.0 with Area3D support)
+	var hit = player.raycast(5.0)
 	
 	if hit.is_empty():
 		_clear_target()
 		return
 	
-	var target = hit.get("collider")
-	if not target:
+	var collider = hit.get("collider")
+	if not collider:
 		_clear_target()
 		return
 	
-	# Determine interaction prompt
-	var prompt = _get_interaction_prompt(target)
+	# Check if we hit an Area3D with a door reference (legacy door detection)
+	if collider is Area3D and collider.has_meta("door"):
+		var door = collider.get_meta("door")
+		if door and door.is_in_group("interactable"):
+			_set_target(door)
+			return
 	
-	if prompt.is_empty():
-		_clear_target()
+	# Walk up the tree to find an interactable parent (legacy tree traversal)
+	var node = collider
+	while node:
+		if node.is_in_group("interactable") or node.is_in_group("vehicle"):
+			_set_target(node)
+			return
+		node = node.get_parent()
+	
+	# No interactable found
+	_clear_target()
+
+## Set interaction target and get prompt
+func _set_target(target: Node) -> void:
+	if target == current_target:
 		return
 	
-	# Only emit if target/prompt changed
-	if target != current_target or prompt != current_prompt:
-		current_target = target
-		current_prompt = prompt
-		PlayerSignals.interaction_available.emit(current_target, current_prompt)
+	current_target = target
+	
+	# Get prompt from object if it has the method (legacy approach)
+	if target.has_method("get_interaction_prompt"):
+		current_prompt = target.get_interaction_prompt()
+	elif target.is_in_group("vehicle"):
+		current_prompt = "[E] Enter Vehicle"
+	else:
+		current_prompt = "[E] Interact"
+	
+	PlayerSignals.interaction_available.emit(current_target, current_prompt)
 
 func _clear_target() -> void:
 	if current_target != null:
@@ -140,22 +176,15 @@ func _do_interaction() -> void:
 	
 	print("PlayerInteraction: Interacting with %s" % current_target.name)
 	
-	# Doors
-	if current_target.is_in_group("doors"):
-		if current_target.has_method("toggle"):
-			current_target.toggle()
-		elif current_target.has_method("interact"):
-			current_target.interact()
-		PlayerSignals.interaction_performed.emit(current_target, "toggle_door")
+	# Vehicles (check first - legacy priority)
+	if current_target.is_in_group("vehicle"):
+		_enter_vehicle(current_target)
 		return
 	
-	# Vehicles
-	if current_target.is_in_group("vehicles"):
-		if vehicle_manager and vehicle_manager.has_method("enter_vehicle"):
-			vehicle_manager.enter_vehicle(current_target)
-		elif current_target.has_method("enter"):
-			current_target.enter(player)
-		PlayerSignals.interaction_performed.emit(current_target, "enter_vehicle")
+	# Generic interactables (doors, etc.) - legacy uses interact() method
+	if current_target.has_method("interact"):
+		current_target.interact()
+		PlayerSignals.interaction_performed.emit(current_target, "interact")
 		return
 	
 	# Pickups
@@ -163,10 +192,8 @@ func _do_interaction() -> void:
 		_pickup_item(current_target)
 		return
 	
-	# Generic
-	if current_target.has_method("interact"):
-		current_target.interact()
-		PlayerSignals.interaction_performed.emit(current_target, "interact")
+	# Fallback for objects without interact method
+	print("PlayerInteraction: No interact method on %s" % current_target.name)
 
 ## Pick up an item/prop into inventory
 func _pickup_item(target: Node) -> void:
@@ -227,3 +254,79 @@ func _do_barricade() -> void:
 			# TODO: Remove item from hotbar
 		else:
 			print("PlayerInteraction: Could not place barricade")
+
+## Enter a vehicle (ported from legacy player_interaction.gd)
+func _enter_vehicle(vehicle: Node3D) -> void:
+	if not vehicle or not vehicle.has_method("enter_vehicle"):
+		print("PlayerInteraction: Vehicle has no enter_vehicle method")
+		return
+	
+	print("[Vehicle] Entering vehicle")
+	is_in_vehicle = true
+	current_vehicle = vehicle
+	
+	# Tell vehicle player is entering
+	vehicle.enter_vehicle(player)
+	
+	# Disable player CharacterBody3D movement and hide it
+	player.process_mode = Node.PROCESS_MODE_DISABLED
+	player.visible = false
+	
+	# Keep this controller active so we can still receive input to exit
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	
+	# Enable vehicle camera
+	if vehicle.has_method("set_camera_active"):
+		vehicle.set_camera_active(true)
+	
+	# Track in vehicle manager
+	if vehicle_manager and "current_player_vehicle" in vehicle_manager:
+		vehicle_manager.current_player_vehicle = vehicle
+		if vehicle_manager.has_signal("player_entered_vehicle"):
+			vehicle_manager.player_entered_vehicle.emit(vehicle)
+	
+	# Switch terrain generation to follow the vehicle
+	if terrain_manager and "viewer" in terrain_manager:
+		terrain_manager.viewer = vehicle
+		print("[Interaction] Switched terrain viewer to Vehicle")
+	
+	PlayerSignals.interaction_performed.emit(vehicle, "enter_vehicle")
+
+## Exit current vehicle (ported from legacy player_interaction.gd)
+func _exit_vehicle() -> void:
+	if not is_in_vehicle or not current_vehicle:
+		return
+	
+	print("[Vehicle] Exiting vehicle")
+	
+	# Tell vehicle player is exiting
+	if current_vehicle.has_method("exit_vehicle"):
+		current_vehicle.exit_vehicle()
+	
+	# Re-enable player
+	player.process_mode = Node.PROCESS_MODE_INHERIT
+	player.visible = true
+	
+	# Position player near vehicle
+	if current_vehicle:
+		player.global_position = current_vehicle.global_position + Vector3(2, 1, 0)
+	
+	# Disable vehicle camera
+	if current_vehicle.has_method("set_camera_active"):
+		current_vehicle.set_camera_active(false)
+	
+	# Update vehicle manager
+	if vehicle_manager and "current_player_vehicle" in vehicle_manager:
+		vehicle_manager.current_player_vehicle = null
+		if vehicle_manager.has_signal("player_exited_vehicle"):
+			vehicle_manager.player_exited_vehicle.emit(current_vehicle)
+	
+	# Switch terrain generation back to player
+	if terrain_manager and "viewer" in terrain_manager:
+		terrain_manager.viewer = player
+		print("[Interaction] Switched terrain viewer back to Player")
+	
+	is_in_vehicle = false
+	current_vehicle = null
+	
+	PlayerSignals.interaction_performed.emit(null, "exit_vehicle")
