@@ -210,15 +210,16 @@ func place_block() -> bool:
 		
 		# If there's a gap (block above terrain), fill it
 		if gap > 0.1:
-			# Fill terrain up to block bottom
+			# Fill terrain up from terrain surface to block bottom
+			# Position at terrain surface + half the gap to cover entire vertical span
 			var fill_center = Vector3(
 				current_voxel_pos.x + 0.5,
-				terrain_y + gap * 0.5, # Center of gap
+				block_bottom - gap * 0.5, # Center between terrain and block
 				current_voxel_pos.z + 0.5
 			)
-			# Use box shape for precise fill - 0.5 radius for subtle 1x1 column
-			var fill_radius = max(0.5, gap * 0.5)
-			terrain_manager.modify_terrain(fill_center, fill_radius, -1.0, 1, 0)
+			# Radius must cover half the gap (from center to each edge) + 0.1 buffer
+			var fill_radius = max(0.5, gap * 0.5 + 0.1)
+			terrain_manager.modify_terrain(fill_center, fill_radius, -0.8, 1, 0)
 			
 			# Store fill info for undo
 			var pos_key = str(current_voxel_pos)
