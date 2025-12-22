@@ -3,4 +3,5 @@ trigger: always_on
 ---
 
 We are using Windows 10 and cmd command line prompt.
+Always list the options, so that answer can be single letters or numbers.
 Always add prefix when printing debug. If testing specific feature/bug then make unique prefix to filter the specific feature/bug debug log related messages to resolve issue.
