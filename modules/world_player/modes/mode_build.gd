@@ -164,22 +164,33 @@ func _do_block_remove() -> void:
 		var p2 = p1.get_parent() if p1 else null
 		print("ModeBuild: Not a building block. Parents: %s -> %s" % [p1, p2])
 
-## Place block at target
+## Place block at target - uses building_api's calculated position to match visual
 func _do_block_place(item: Dictionary) -> void:
 	if not player or not building_manager:
 		return
 	
+	# Use building_api's target position (matches selection box visual)
+	if building_api and building_api.has_target:
+		var voxel_pos = building_api.current_voxel_pos
+		var block_id = item.get("block_id", 1)
+		
+		if building_manager.has_method("set_voxel"):
+			building_manager.set_voxel(voxel_pos, block_id, current_rotation)
+			print("ModeBuild: Placed %s at %s (rot: %d)" % [item.get("name", "block"), voxel_pos, current_rotation])
+		return
+	
+	# Fallback: old calculation if building_api not available
 	var hit = player.raycast(10.0)
 	if hit.is_empty():
 		return
 	
-	var position = hit.get("position", Vector3.ZERO) + hit.get("normal", Vector3.UP) * 0.5
-	var voxel_pos = Vector3(floor(position.x), floor(position.y), floor(position.z))
-	var block_id = item.get("block_id", 1)
+	var fb_position = hit.get("position", Vector3.ZERO) + hit.get("normal", Vector3.UP) * 0.5
+	var fb_voxel_pos = Vector3(floor(fb_position.x), floor(fb_position.y), floor(fb_position.z))
+	var fb_block_id = item.get("block_id", 1)
 	
 	if building_manager.has_method("set_voxel"):
-		building_manager.set_voxel(voxel_pos, block_id, current_rotation)
-		print("ModeBuild: Placed %s at %s (rot: %d)" % [item.get("name", "block"), voxel_pos, current_rotation])
+		building_manager.set_voxel(fb_voxel_pos, fb_block_id, current_rotation)
+		print("ModeBuild: Placed %s at %s (rot: %d, fallback)" % [item.get("name", "block"), fb_voxel_pos, current_rotation])
 
 ## Remove object at target
 func _do_object_remove() -> void:
