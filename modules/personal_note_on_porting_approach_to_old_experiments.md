@@ -1,0 +1,2 @@
+personal_note_on_porting_approach_to_old_experiments.md
+Porting is the answer to old large code that is mystical. You start a new module and let it ask questions about entire thing until we reimplement/port entire thing into new module with manageable pieces.
