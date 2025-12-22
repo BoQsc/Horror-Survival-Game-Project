@@ -169,14 +169,23 @@ func _do_block_place(item: Dictionary) -> void:
 	if not player or not building_manager:
 		return
 	
-	# Use building_api's target position (matches selection box visual)
+	# Use building_api for placement (handles FILL mode terrain gap)
 	if building_api and building_api.has_target:
-		var voxel_pos = building_api.current_voxel_pos
 		var block_id = item.get("block_id", 1)
 		
+		# Sync block_id and rotation to building_api before placing
+		building_api.current_block_id = block_id
+		building_api.current_rotation = current_rotation
+		
+		# Call building_api.place_block which handles FILL mode terrain fill
+		if building_api.place_block():
+			return
+		
+		# Fallback: direct placement using building_api's position
+		var voxel_pos = building_api.current_voxel_pos
 		if building_manager.has_method("set_voxel"):
 			building_manager.set_voxel(voxel_pos, block_id, current_rotation)
-			print("ModeBuild: Placed %s at %s (rot: %d)" % [item.get("name", "block"), voxel_pos, current_rotation])
+			print("ModeBuild: Placed %s at %s (rot: %d, direct)" % [item.get("name", "block"), voxel_pos, current_rotation])
 		return
 	
 	# Fallback: old calculation if building_api not available

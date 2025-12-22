@@ -27,6 +27,10 @@ var placement_mode: PlacementMode = PlacementMode.AUTO
 var placement_y_offset: int = 0
 var auto_embed_threshold: float = 0.2
 
+# FILL mode: Track terrain fills for undo on block removal
+# Key = Vector3 position string, Value = {terrain_y: float, fill_amount: float}
+var fill_info: Dictionary = {}
+
 # Block names for UI
 const BLOCK_NAMES = ["", "Cube", "Ramp", "Sphere", "Stairs"]
 
@@ -195,6 +199,36 @@ func place_block() -> bool:
 	if not has_target or not building_manager:
 		return false
 	
+	# FILL mode: Fill terrain gap before placing block
+	if placement_mode == PlacementMode.FILL and terrain_manager:
+		var terrain_y = _get_terrain_height_at(
+			current_voxel_pos.x + 0.5,
+			current_voxel_pos.z + 0.5
+		)
+		var block_bottom = float(int(current_voxel_pos.y))
+		var gap = block_bottom - terrain_y
+		
+		# If there's a gap (block above terrain), fill it
+		if gap > 0.1:
+			# Fill terrain up to block bottom
+			var fill_center = Vector3(
+				current_voxel_pos.x + 0.5,
+				terrain_y + gap * 0.5, # Center of gap
+				current_voxel_pos.z + 0.5
+			)
+			# Use box shape for precise fill - minimum 0.6 radius for visible 1x1 column
+			var fill_radius = max(0.6, gap * 0.6)
+			terrain_manager.modify_terrain(fill_center, fill_radius, -1.5, 1, 0)
+			
+			# Store fill info for undo
+			var pos_key = str(current_voxel_pos)
+			fill_info[pos_key] = {
+				"terrain_y": terrain_y,
+				"fill_amount": gap,
+				"fill_center": fill_center
+			}
+			print("BuildingAPI: Filled terrain gap of %.2f at %s" % [gap, current_voxel_pos])
+	
 	if building_manager.has_method("set_voxel"):
 		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
 		block_placed.emit(current_voxel_pos, current_block_id, current_rotation)
@@ -219,6 +253,21 @@ func remove_block(hit: Dictionary) -> bool:
 		building_manager.set_voxel(voxel_pos, 0.0)
 		block_removed.emit(voxel_pos)
 		print("BuildingAPI: Removed block at %s" % voxel_pos)
+		
+		# FILL mode undo: Restore original terrain by digging filled area
+		var pos_key = str(voxel_pos)
+		if fill_info.has(pos_key) and terrain_manager:
+			var info = fill_info[pos_key]
+			var fill_center = info.get("fill_center", Vector3.ZERO)
+			var fill_amount = info.get("fill_amount", 0.0)
+			
+			if fill_center != Vector3.ZERO and fill_amount > 0.1:
+				# Dig out the filled terrain
+				terrain_manager.modify_terrain(fill_center, fill_amount * 0.6, 0.8, 1, 0)
+				print("BuildingAPI: Undid terrain fill at %s (gap was %.2f)" % [voxel_pos, fill_amount])
+			
+			fill_info.erase(pos_key)
+		
 		return true
 	
 	return false
