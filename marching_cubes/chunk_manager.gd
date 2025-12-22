@@ -621,52 +621,58 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 	# Calculate center position (mid-point of column)
 	var pos = Vector3(x, (y_from + y_to) / 2.0, z)
 	
-	# Find affected chunk(s) based on Y range
+	# Add margin for Marching Cubes boundary overlap (1.0 is sufficient)
+	# This ensures adjacent chunks are also updated when column is near boundary
+	var margin = 1.0
+	var min_chunk_x = int(floor((x - margin) / CHUNK_STRIDE))
+	var max_chunk_x = int(floor((x + margin) / CHUNK_STRIDE))
 	var min_chunk_y = int(floor(y_from / CHUNK_STRIDE))
 	var max_chunk_y = int(floor(y_to / CHUNK_STRIDE))
-	var chunk_x = int(floor(x / CHUNK_STRIDE))
-	var chunk_z = int(floor(z / CHUNK_STRIDE))
+	var min_chunk_z = int(floor((z - margin) / CHUNK_STRIDE))
+	var max_chunk_z = int(floor((z + margin) / CHUNK_STRIDE))
 	
 	var tasks_to_add = []
 	
-	for chunk_y in range(min_chunk_y, max_chunk_y + 1):
-		var coord = Vector3i(chunk_x, chunk_y, chunk_z)
-		
-		# Store modification for persistence
-		if not stored_modifications.has(coord):
-			stored_modifications[coord] = []
-		stored_modifications[coord].append({
-			"brush_pos": pos,
-			"radius": 0.6, # Minimal radius, column shape uses XZ distance
-			"value": value,
-			"shape": 2, # Column shape
-			"layer": layer,
-			"y_min": y_from,
-			"y_max": y_to,
-			"material_id": - 1
-		})
-		
-		if active_chunks.has(coord):
-			var data = active_chunks[coord]
-			if data != null:
-				var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
-				if target_buffer.is_valid():
-					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-					tasks_to_add.append({
-						"type": "modify",
-						"coord": coord,
-						"rid": target_buffer,
-						"material_rid": data.material_buffer_terrain,
-						"pos": chunk_pos,
-						"brush_pos": pos,
-						"radius": 0.6,
-						"value": value,
-						"shape": 2, # Column shape
-						"layer": layer,
-						"y_min": y_from,
-						"y_max": y_to,
-						"material_id": - 1
-					})
+	for chunk_x in range(min_chunk_x, max_chunk_x + 1):
+		for chunk_y in range(min_chunk_y, max_chunk_y + 1):
+			for chunk_z in range(min_chunk_z, max_chunk_z + 1):
+				var coord = Vector3i(chunk_x, chunk_y, chunk_z)
+				
+				# Store modification for persistence
+				if not stored_modifications.has(coord):
+					stored_modifications[coord] = []
+				stored_modifications[coord].append({
+					"brush_pos": pos,
+					"radius": 0.6, # Minimal radius, column shape uses XZ distance
+					"value": value,
+					"shape": 2, # Column shape
+					"layer": layer,
+					"y_min": y_from,
+					"y_max": y_to,
+					"material_id": - 1
+				})
+				
+				if active_chunks.has(coord):
+					var data = active_chunks[coord]
+					if data != null:
+						var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
+						if target_buffer.is_valid():
+							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+							tasks_to_add.append({
+								"type": "modify",
+								"coord": coord,
+								"rid": target_buffer,
+								"material_rid": data.material_buffer_terrain,
+								"pos": chunk_pos,
+								"brush_pos": pos,
+								"radius": 0.6,
+								"value": value,
+								"shape": 2, # Column shape
+								"layer": layer,
+								"y_min": y_from,
+								"y_max": y_to,
+								"material_id": - 1
+							})
 	
 	if tasks_to_add.size() > 0:
 		modification_batch_id += 1
@@ -1046,7 +1052,7 @@ func _thread_function():
 			mutex.unlock()
 			# Only complete in-flight when no tasks pending
 			if in_flight.size() > 0:
-				rd.sync()
+				rd.sync ()
 				for flight_data in in_flight:
 					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1059,7 +1065,7 @@ func _thread_function():
 		if task.type == "modify":
 			# HIGHEST PRIORITY: Process modifications immediately, sync all pending work first
 			if in_flight.size() > 0:
-				rd.sync()
+				rd.sync ()
 				for fd in in_flight:
 					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1067,7 +1073,7 @@ func _thread_function():
 		elif task.type == "generate":
 			# Complete any in-flight before starting new generation
 			if in_flight.size() > 0:
-				rd.sync()
+				rd.sync ()
 				for flight_data in in_flight:
 					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1080,7 +1086,7 @@ func _thread_function():
 				
 				# If at max in-flight, immediately complete to avoid GPU buildup
 				if in_flight.size() >= MAX_IN_FLIGHT:
-					rd.sync()
+					rd.sync ()
 					for fd in in_flight:
 						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 					in_flight.clear()
@@ -1176,7 +1182,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		# Debug: show when mods are applied to underground chunks
 		# Need to sync before modifications since they read/write density
 		rd.submit()
-		rd.sync()
+		rd.sync ()
 		for mod in mods_for_chunk:
 			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
@@ -1209,13 +1215,13 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	# Terrain mesh (uses material buffer for vertex colors)
 	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync()
+	rd.sync ()
 	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_t)
 	
 	# Water mesh (no material buffer, use terrain's for now)
 	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync()
+	rd.sync ()
 	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_w)
 	
 	# Readback density for physics
@@ -1312,7 +1318,7 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
 	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync()
+	rd.sync ()
 	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh)
 
 # CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
@@ -1416,7 +1422,7 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	rd.submit()
-	rd.sync()
+	rd.sync ()
 	
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
@@ -1476,7 +1482,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	rd.submit()
-	rd.sync()
+	rd.sync ()
 	
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 	
@@ -1590,7 +1596,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 	rd.compute_list_end()
 	
 	rd.submit()
-	rd.sync()
+	rd.sync ()
 	
 	# Read back
 	var count_bytes = rd.buffer_get_data(counter_buffer)
