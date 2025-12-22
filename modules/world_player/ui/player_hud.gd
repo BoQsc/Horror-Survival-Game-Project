@@ -31,6 +31,11 @@ func _ready() -> void:
 	# Initialize hotbar UI
 	_setup_hotbar()
 	
+	# Connect exit button
+	var exit_btn = game_menu.get_node_or_null("ExitButton")
+	if exit_btn:
+		exit_btn.pressed.connect(_on_exit_pressed)
+	
 	# Initial state
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
@@ -161,6 +166,10 @@ func _on_inventory_toggled(is_open: bool) -> void:
 ## Game menu toggled handler
 func _on_game_menu_toggled(is_open: bool) -> void:
 	game_menu.visible = is_open
+
+## Exit button pressed handler
+func _on_exit_pressed() -> void:
+	get_tree().quit()
 
 ## Update mode label with build mode details
 func _update_build_mode_info() -> void:

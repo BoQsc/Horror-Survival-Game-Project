@@ -30,12 +30,16 @@ func _ready() -> void:
 	print("  - Camera: %s" % camera.name)
 
 func _input(event: InputEvent) -> void:
-	# Toggle mouse capture with Escape
+	# Toggle menu with Escape
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+			# Open menu, release mouse
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+			PlayerSignals.game_menu_toggled.emit(true)
 		else:
+			# Close menu, capture mouse
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+			PlayerSignals.game_menu_toggled.emit(false)
 	
 	# Handle mouse look
 	if not player or not camera:

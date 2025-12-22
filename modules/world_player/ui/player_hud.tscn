@@ -222,34 +222,12 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-color = Color(0, 0, 0, 0.7)
+color = Color(0, 0, 0, 0.5)
 
-[node name="MenuPanel" type="VBoxContainer" parent="GameMenu"]
-layout_mode = 1
-anchors_preset = 8
-anchor_left = 0.5
-anchor_top = 0.5
-anchor_right = 0.5
-anchor_bottom = 0.5
-offset_left = -100.0
-offset_top = -100.0
-offset_right = 100.0
-offset_bottom = 100.0
-alignment = 1
-
-[node name="Title" type="Label" parent="GameMenu/MenuPanel"]
-layout_mode = 2
-text = "PAUSED"
-horizontal_alignment = 1
-
-[node name="ResumeButton" type="Button" parent="GameMenu/MenuPanel"]
-layout_mode = 2
-text = "Resume"
-
-[node name="OptionsButton" type="Button" parent="GameMenu/MenuPanel"]
-layout_mode = 2
-text = "Options"
-
-[node name="QuitButton" type="Button" parent="GameMenu/MenuPanel"]
-layout_mode = 2
-text = "Quit"
+[node name="ExitButton" type="Button" parent="GameMenu"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 150.0
+offset_bottom = 60.0
+text = "Exit Game"
