@@ -149,33 +149,13 @@ func update_targeting(hit: Dictionary) -> void:
 			voxel_x = int(floor(pos.x))
 			voxel_y = int(floor(pos.y))
 			voxel_z = int(floor(pos.z))
-		elif placement_mode == PlacementMode.AUTO:
-			# AUTO: Original raycast-based placement on surface
+		elif placement_mode == PlacementMode.AUTO or placement_mode == PlacementMode.FILL:
+			# AUTO/FILL: Pure raycast-based placement on surface
+			# Same as SNAP mode - offset from hit point by normal
 			var offset_pos = pos + normal * 0.6
 			voxel_x = int(floor(offset_pos.x))
 			voxel_y = int(floor(offset_pos.y)) + placement_y_offset
 			voxel_z = int(floor(offset_pos.z))
-			
-			# Only apply anti-float snap on HORIZONTAL surfaces (normal.y > 0.5)
-			# Don't snap when looking at vertical walls/cliffs
-			if normal.y > 0.5:
-				var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
-				var float_distance = float(voxel_y) - terrain_y
-				if float_distance > auto_embed_threshold:
-					voxel_y = int(floor(terrain_y))
-		elif placement_mode == PlacementMode.FILL:
-			# FILL: Same targeting as AUTO, fill happens at placement time
-			var offset_pos = pos + normal * 0.6
-			voxel_x = int(floor(offset_pos.x))
-			voxel_y = int(floor(offset_pos.y)) + placement_y_offset
-			voxel_z = int(floor(offset_pos.z))
-			
-			# Only apply anti-float snap on HORIZONTAL surfaces (normal.y > 0.5)
-			if normal.y > 0.5:
-				var terrain_y = _get_terrain_height_at(float(voxel_x) + 0.5, float(voxel_z) + 0.5)
-				var float_distance = float(voxel_y) - terrain_y
-				if float_distance > auto_embed_threshold:
-					voxel_y = int(floor(terrain_y))
 		else:
 			# SNAP: use normal offset from hit point
 			var offset_pos = pos + normal * 0.6
