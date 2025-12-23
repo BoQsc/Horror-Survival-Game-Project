@@ -247,25 +247,25 @@ func _do_bucket_collect(_item: Dictionary) -> void:
 	if not player or not terrain_manager:
 		return
 	
-	# Use grid-aligned position if targeting is active
-	if has_target:
-		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
-		# Check if there's water at this position
-		if terrain_manager.has_method("get_water_density"):
-			var density = terrain_manager.get_water_density(center)
-			if density < 0: # In water
-				terrain_manager.modify_terrain(center, 0.6, 0.5, 1, 1) # Box shape, dig, water layer
-				print("ModePlay: Collected water at %s" % current_target_pos)
-	else:
-		var hit = player.raycast(5.0)
-		if hit.is_empty():
-			return
-		var pos = hit.position
-		if terrain_manager.has_method("get_water_density"):
-			var density = terrain_manager.get_water_density(pos)
-			if density < 0:
-				terrain_manager.modify_terrain(pos, 0.6, 0.5, 1, 1)
-				print("ModePlay: Collected water at %s" % pos)
+	# Water removal needs to target INSIDE the water (not adjacent like placement)
+	var hit = player.raycast(5.0)
+	if hit.is_empty():
+		return
+	
+	# Calculate position INSIDE the water block (opposite of placement direction)
+	# Use hit position directly - shift UP to ensure we target surface level
+	var pos = hit.position
+	var inside_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
+	# Shift center UP by 0.5 to target surface, not below it
+	var center = inside_pos + Vector3(0.5, 1.0, 0.5)
+	
+	# Check if there's water at this position
+	if terrain_manager.has_method("get_water_density"):
+		var density = terrain_manager.get_water_density(center)
+		if density < 0: # In water
+			# Use larger radius (1.0) to ensure full column removal including surface
+			terrain_manager.modify_terrain(center, 1.0, 0.5, 1, 1) # Box shape, dig, water layer
+			print("ModePlay: Collected water at %s (center=%s)" % [inside_pos, center])
 	# TODO: Switch bucket from empty to full
 
 ## Place water from bucket
