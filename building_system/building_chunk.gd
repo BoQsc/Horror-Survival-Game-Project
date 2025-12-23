@@ -11,9 +11,9 @@ var voxel_meta: PackedByteArray # Rotation/Meta
 var is_empty: bool = true
 
 # Object storage (separate from voxels for multi-cell objects)
-var objects: Dictionary = {}  # Vector3i (local anchor) -> { object_id: int, rotation: int }
-var occupied_by_object: Dictionary = {}  # Vector3i (any local cell) -> Vector3i (anchor pos)
-var object_nodes: Dictionary = {}  # Vector3i (local anchor) -> Node3D (visual instance)
+var objects: Dictionary = {} # Vector3i (local anchor) -> { object_id: int, rotation: int }
+var occupied_by_object: Dictionary = {} # Vector3i (any local cell) -> Vector3i (anchor pos)
+var object_nodes: Dictionary = {} # Vector3i (local anchor) -> Node3D (visual instance)
 
 # Visuals
 var mesh_instance: MeshInstance3D
@@ -34,8 +34,8 @@ func _init(coord: Vector3i):
 ## Reset chunk for pool reuse - clears data without reallocating arrays
 func reset(new_coord: Vector3i):
 	chunk_coord = new_coord
-	voxel_bytes.fill(0)  # Clear all voxels to air
-	voxel_meta.fill(0)   # Clear all metadata
+	voxel_bytes.fill(0) # Clear all voxels to air
+	voxel_meta.fill(0) # Clear all metadata
 	is_empty = true
 	# Clear object data
 	for anchor in object_nodes:
@@ -52,6 +52,9 @@ func reset(new_coord: Vector3i):
 		collision_shape.shape = null
 
 func _ready():
+	# Add to group for detection by player punch system
+	add_to_group("building_chunks")
+	
 	# Setup Node Structure
 	static_body = StaticBody3D.new()
 	add_child(static_body)
@@ -134,7 +137,7 @@ func is_cell_available(local_pos: Vector3i) -> bool:
 ## fractional_pos is the 3D offset from the anchor block's origin (0,0,0)
 func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO) -> bool:
 	# Store object data (include fractional_pos for persistence)
-	objects[local_anchor] = { "object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos }
+	objects[local_anchor] = {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
 	
 	# Mark all occupied cells
 	for cell in cells:

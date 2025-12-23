@@ -22,6 +22,14 @@ var has_target: bool = false
 var attack_cooldown: float = 0.0
 const ATTACK_COOLDOWN_TIME: float = 0.3
 
+# Durability system - blocks/objects require multiple hits
+const BLOCK_HP: int = 10 # Building blocks take 10 damage to destroy
+const OBJECT_HP: int = 5 # Placed objects take 5 damage to destroy
+const TREE_HP: int = 8 # Trees take 8 damage to chop
+var block_damage: Dictionary = {} # Vector3i -> accumulated damage
+var object_damage: Dictionary = {} # RID -> accumulated damage
+var tree_damage: Dictionary = {} # collider RID -> accumulated damage
+
 # Prop holding state
 var held_prop_instance: Node3D = null
 var held_prop_id: int = -1
@@ -203,11 +211,21 @@ func _do_punch(item: Dictionary) -> void:
 		PlayerSignals.damage_dealt.emit(target, damage)
 		return
 	
-	# Check for harvestable vegetation
+	# Check for harvestable vegetation (with durability for trees)
 	if target and vegetation_manager:
 		if target.is_in_group("trees"):
-			vegetation_manager.chop_tree_by_collider(target)
-			print("ModePlay: Punched tree")
+			# Trees have durability - axes do 8 damage, fists do 1
+			var tree_dmg = damage
+			var item_id = item.get("id", "")
+			if "axe" in item_id:
+				tree_dmg = 8 # One-shot with axe
+			var tree_rid = target.get_rid()
+			tree_damage[tree_rid] = tree_damage.get(tree_rid, 0) + tree_dmg
+			print("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
+			if tree_damage[tree_rid] >= TREE_HP:
+				vegetation_manager.chop_tree_by_collider(target)
+				tree_damage.erase(tree_rid)
+				print("ModePlay: Tree chopped!")
 			return
 		elif target.is_in_group("grass"):
 			vegetation_manager.harvest_grass_by_collider(target)
@@ -216,6 +234,45 @@ func _do_punch(item: Dictionary) -> void:
 		elif target.is_in_group("rocks"):
 			vegetation_manager.harvest_rock_by_collider(target)
 			print("ModePlay: Punched rock")
+			return
+	
+	# Check for placed objects (furniture, etc.)
+	if target and target.is_in_group("placed_objects") and building_manager:
+		var obj_rid = target.get_rid()
+		var obj_dmg = damage
+		var item_id = item.get("id", "")
+		if "pickaxe" in item_id:
+			obj_dmg = 5 # Pickaxe one-shots objects
+		object_damage[obj_rid] = object_damage.get(obj_rid, 0) + obj_dmg
+		print("ModePlay: Hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
+		if object_damage[obj_rid] >= OBJECT_HP:
+			# Remove via building manager
+			if target.has_meta("anchor") and target.has_meta("chunk"):
+				var anchor = target.get_meta("anchor")
+				var chunk = target.get_meta("chunk")
+				chunk.remove_object(anchor)
+				print("ModePlay: Object destroyed!")
+			object_damage.erase(obj_rid)
+		return
+	
+	# Check for building blocks (voxels) - need to hit BuildingChunk mesh
+	if target and building_manager:
+		# Try to find if this is a building chunk
+		var chunk = _find_building_chunk(target)
+		if chunk:
+			var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+			var blk_dmg = damage
+			var item_id = item.get("id", "")
+			if "pickaxe" in item_id:
+				blk_dmg = 5 # Pickaxe does 5 damage
+			block_damage[block_pos] = block_damage.get(block_pos, 0) + blk_dmg
+			print("ModePlay: Hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
+			if block_damage[block_pos] >= BLOCK_HP:
+				# Remove the block
+				var voxel_pos = position - hit.get("normal", Vector3.ZERO) * 0.1
+				building_manager.set_voxel(Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z)), 0.0)
+				block_damage.erase(block_pos)
+				print("ModePlay: Block destroyed!")
 			return
 	
 	# Default - hit terrain (modify it)
@@ -228,6 +285,24 @@ func _do_punch(item: Dictionary) -> void:
 			print("ModePlay: Item has no mining strength")
 	else:
 		print("ModePlay: No terrain_manager or missing modify_terrain method")
+
+## Find BuildingChunk from a collider (check parent hierarchy)
+func _find_building_chunk(collider: Node) -> Node:
+	if not collider:
+		return null
+	
+	# Check if collider itself is a BuildingChunk
+	if collider.is_in_group("building_chunks"):
+		return collider
+	
+	# Check parent chain
+	var node = collider.get_parent()
+	while node:
+		if node.is_in_group("building_chunks"):
+			return node
+		node = node.get_parent()
+	
+	return null
 
 ## Tool attack/mine
 func _do_tool_attack(item: Dictionary) -> void:
