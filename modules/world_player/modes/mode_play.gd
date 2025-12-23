@@ -247,19 +247,26 @@ func _do_bucket_collect(_item: Dictionary) -> void:
 	if not player or not terrain_manager:
 		return
 	
-	var hit = player.raycast(5.0)
-	if hit.is_empty():
-		return
-	
-	var position = hit.get("position", Vector3.ZERO)
-	
-	# Check if there's water at this position
-	if terrain_manager.has_method("get_water_density"):
-		var density = terrain_manager.get_water_density(position)
-		if density < 0: # In water
-			terrain_manager.modify_terrain(position, 1.0, 1.0, 0, 1) # Remove water
-			print("ModePlay: Collected water")
-			# TODO: Switch bucket from empty to full
+	# Use grid-aligned position if targeting is active
+	if has_target:
+		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
+		# Check if there's water at this position
+		if terrain_manager.has_method("get_water_density"):
+			var density = terrain_manager.get_water_density(center)
+			if density < 0: # In water
+				terrain_manager.modify_terrain(center, 0.6, 0.5, 1, 1) # Box shape, dig, water layer
+				print("ModePlay: Collected water at %s" % current_target_pos)
+	else:
+		var hit = player.raycast(5.0)
+		if hit.is_empty():
+			return
+		var pos = hit.position
+		if terrain_manager.has_method("get_water_density"):
+			var density = terrain_manager.get_water_density(pos)
+			if density < 0:
+				terrain_manager.modify_terrain(pos, 0.6, 0.5, 1, 1)
+				print("ModePlay: Collected water at %s" % pos)
+	# TODO: Switch bucket from empty to full
 
 ## Place water from bucket
 func _do_bucket_place(_item: Dictionary) -> void:
