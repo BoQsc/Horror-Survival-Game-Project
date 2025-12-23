@@ -9,6 +9,7 @@ class_name PlayerHUD
 @onready var hotbar_container: HBoxContainer = $HotbarPanel/HotbarContainer
 @onready var crosshair: TextureRect = $Crosshair
 @onready var interaction_prompt: Label = $InteractionPrompt
+@onready var durability_bar: ProgressBar = $DurabilityBar
 @onready var health_bar: ProgressBar = $StatusBars/HealthBar
 @onready var stamina_bar: ProgressBar = $StatusBars/StaminaBar
 @onready var compass: Label = $Compass
@@ -35,6 +36,8 @@ func _ready() -> void:
 	PlayerSignals.game_menu_toggled.connect(_on_game_menu_toggled)
 	PlayerSignals.editor_submode_changed.connect(_on_editor_submode_changed)
 	PlayerSignals.inventory_changed.connect(_on_inventory_changed)
+	PlayerSignals.durability_hit.connect(_on_durability_hit)
+	PlayerSignals.durability_cleared.connect(_on_durability_cleared)
 
 	
 	# Initialize hotbar UI
@@ -308,3 +311,20 @@ func _update_hotbar_display() -> void:
 				if selected_item_label:
 					var item = hotbar.get_item_at(selected)
 					selected_item_label.text = item.get("name", "Empty")
+
+#region Durability UI
+
+func _on_durability_hit(current_hp: int, max_hp: int, _target_name: String) -> void:
+	if not durability_bar:
+		return
+	# Show damage dealt as percentage (full bar = fully destroyed)
+	var damage_percent = 100.0 * (1.0 - float(current_hp) / float(max_hp))
+	durability_bar.value = damage_percent
+	durability_bar.visible = true
+
+func _on_durability_cleared() -> void:
+	if durability_bar:
+		durability_bar.visible = false
+		durability_bar.value = 0
+
+#endregion

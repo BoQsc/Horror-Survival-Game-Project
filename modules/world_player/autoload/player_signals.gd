@@ -21,6 +21,10 @@ signal interaction_available(target: Node, prompt: String)
 signal interaction_unavailable()
 signal interaction_performed(target: Node, action: String)
 
+# Durability events (for objects with HP)
+signal durability_hit(current_hp: int, max_hp: int, target_name: String)
+signal durability_cleared()
+
 # Inventory events
 signal inventory_changed()
 signal inventory_toggled(is_open: bool)

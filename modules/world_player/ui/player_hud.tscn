@@ -54,6 +54,21 @@ offset_right = 2.0
 offset_bottom = 2.0
 color = Color(1, 1, 1, 0.8)
 
+[node name="DurabilityBar" type="ProgressBar" parent="."]
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -40.0
+offset_top = 20.0
+offset_right = 40.0
+offset_bottom = 30.0
+max_value = 100.0
+value = 0.0
+show_percentage = false
+
 [node name="InteractionPrompt" type="Label" parent="."]
 anchors_preset = 7
 anchor_left = 0.5

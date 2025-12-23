@@ -225,10 +225,13 @@ func _do_punch(item: Dictionary) -> void:
 				tree_dmg = 8 # One-shot with axe
 			var tree_rid = target.get_rid()
 			tree_damage[tree_rid] = tree_damage.get(tree_rid, 0) + tree_dmg
+			var current_hp = TREE_HP - tree_damage[tree_rid]
 			print("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
+			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree")
 			if tree_damage[tree_rid] >= TREE_HP:
 				vegetation_manager.chop_tree_by_collider(target)
 				tree_damage.erase(tree_rid)
+				PlayerSignals.durability_cleared.emit()
 				print("ModePlay: Tree chopped!")
 			return
 		elif target.is_in_group("grass"):
@@ -248,7 +251,9 @@ func _do_punch(item: Dictionary) -> void:
 		if "pickaxe" in item_id:
 			obj_dmg = 5 # Pickaxe one-shots objects
 		object_damage[obj_rid] = object_damage.get(obj_rid, 0) + obj_dmg
+		var current_hp = OBJECT_HP - object_damage[obj_rid]
 		print("ModePlay: Hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
+		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name)
 		if object_damage[obj_rid] >= OBJECT_HP:
 			# Remove via building manager
 			if target.has_meta("anchor") and target.has_meta("chunk"):
@@ -257,6 +262,7 @@ func _do_punch(item: Dictionary) -> void:
 				chunk.remove_object(anchor)
 				print("ModePlay: Object destroyed!")
 			object_damage.erase(obj_rid)
+			PlayerSignals.durability_cleared.emit()
 		return
 	
 	# Check for building blocks (voxels) - need to hit BuildingChunk mesh
@@ -270,12 +276,15 @@ func _do_punch(item: Dictionary) -> void:
 			if "pickaxe" in item_id:
 				blk_dmg = 5 # Pickaxe does 5 damage
 			block_damage[block_pos] = block_damage.get(block_pos, 0) + blk_dmg
+			var current_hp = BLOCK_HP - block_damage[block_pos]
 			print("ModePlay: Hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
+			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block")
 			if block_damage[block_pos] >= BLOCK_HP:
 				# Remove the block
 				var voxel_pos = position - hit.get("normal", Vector3.ZERO) * 0.1
 				building_manager.set_voxel(Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z)), 0.0)
 				block_damage.erase(block_pos)
+				PlayerSignals.durability_cleared.emit()
 				print("ModePlay: Block destroyed!")
 			return
 	
