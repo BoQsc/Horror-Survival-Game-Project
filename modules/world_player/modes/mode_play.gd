@@ -106,6 +106,10 @@ func _input(event: InputEvent) -> void:
 			if is_holding_prop():
 				print("PropInput: Dropping")
 				_drop_held_prop()
+	
+	# E key for item pickup (adds to hotbar)
+	if event is InputEventKey and event.keycode == KEY_E and event.pressed and not event.echo:
+		_try_pickup_item()
 
 
 func _update_terrain_targeting() -> void:
@@ -643,5 +647,69 @@ func _disable_preview_collisions(node: Node) -> void:
 ## Check if currently holding a prop
 func is_holding_prop() -> bool:
 	return held_prop_instance != null and is_instance_valid(held_prop_instance)
+
+#endregion
+
+#region Item Pickup (E key)
+
+## Try to pick up an item and add it to hotbar
+func _try_pickup_item() -> void:
+	if not player or not hotbar:
+		return
+	
+	# Raycast to find interactable items
+	var hit = player.raycast(3.0, 0xFFFFFFFF, false, false)
+	if hit.is_empty():
+		return
+	
+	var target = hit.get("collider")
+	if not target:
+		return
+	
+	# Check if it's a pickupable item (interactable group)
+	if not target.is_in_group("interactable"):
+		# Check parent for interactable (collision shapes are children)
+		var parent = target.get_parent()
+		while parent:
+			if parent.is_in_group("interactable"):
+				target = parent
+				break
+			parent = parent.get_parent()
+		if not target.is_in_group("interactable"):
+			return
+	
+	# Determine item type from the target name
+	var item_data = _get_item_data_from_pickup(target)
+	if item_data.is_empty():
+		print("ItemPickup: Unknown item: %s" % target.name)
+		return
+	
+	# Try to add to hotbar
+	if hotbar.add_item(item_data):
+		print("ItemPickup: Picked up %s" % item_data.get("name", "item"))
+		# Remove from world
+		target.queue_free()
+	else:
+		print("ItemPickup: Hotbar full, cannot pick up %s" % item_data.get("name", "item"))
+
+## Get item data dictionary from a pickup target
+func _get_item_data_from_pickup(target: Node) -> Dictionary:
+	var name_lower = target.name.to_lower()
+	
+	# Pistol variants
+	if "pistol" in name_lower:
+		return {
+			"id": "pistol",
+			"name": "Pistol",
+			"category": 1, # TOOL
+			"damage": 25,
+			"mining_strength": 0.0,
+			"stack_size": 1
+		}
+	
+	# Add more pickupable items here as needed
+	# Example: if "shotgun" in name_lower: ...
+	
+	return {}
 
 #endregion

@@ -121,3 +121,20 @@ func get_all_slots() -> Array:
 ## Get selected slot index
 func get_selected_index() -> int:
 	return selected_slot
+
+## Find first empty slot, returns -1 if none
+func find_first_empty_slot() -> int:
+	for i in range(slots.size()):
+		if slots[i].get("id", "") == "empty":
+			return i
+	return -1
+
+## Add item to first empty slot, returns true if successful
+func add_item(item: Dictionary) -> bool:
+	var slot = find_first_empty_slot()
+	if slot >= 0:
+		set_item_at(slot, item)
+		print("Hotbar: Added %s to slot %d" % [item.get("name", "item"), slot])
+		return true
+	print("Hotbar: No empty slot for %s" % item.get("name", "item"))
+	return false

@@ -34,6 +34,7 @@ func _ready() -> void:
 	PlayerSignals.inventory_toggled.connect(_on_inventory_toggled)
 	PlayerSignals.game_menu_toggled.connect(_on_game_menu_toggled)
 	PlayerSignals.editor_submode_changed.connect(_on_editor_submode_changed)
+	PlayerSignals.inventory_changed.connect(_on_inventory_changed)
 
 	
 	# Initialize hotbar UI
@@ -192,6 +193,20 @@ func _on_game_menu_toggled(is_open: bool) -> void:
 ## Exit button pressed handler
 func _on_exit_pressed() -> void:
 	get_tree().quit()
+
+## Inventory changed handler - refresh all hotbar slots
+func _on_inventory_changed() -> void:
+	var player_node = get_tree().get_first_node_in_group("player")
+	if not player_node:
+		return
+	var hotbar = player_node.get_node_or_null("Systems/Hotbar")
+	if not hotbar:
+		return
+	
+	# Refresh all slot labels
+	for i in range(slot_labels.size()):
+		var item = hotbar.get_item_at(i)
+		slot_labels[i].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
 
 ## Update mode label with build mode details
 func _update_build_mode_info() -> void:
