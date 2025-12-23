@@ -18,6 +18,12 @@ class_name PlayerHUD
 # Hotbar slot labels
 var slot_labels: Array[Label] = []
 
+# Editor mode tracking
+var is_editor_mode: bool = false
+var current_editor_submode: int = 0
+const EDITOR_SUBMODE_NAMES = ["Terrain", "Water", "Road", "Prefab", "Fly"]
+
+
 func _ready() -> void:
 	# Connect to player signals
 	PlayerSignals.mode_changed.connect(_on_mode_changed)
@@ -27,6 +33,8 @@ func _ready() -> void:
 	PlayerSignals.interaction_unavailable.connect(_on_interaction_unavailable)
 	PlayerSignals.inventory_toggled.connect(_on_inventory_toggled)
 	PlayerSignals.game_menu_toggled.connect(_on_game_menu_toggled)
+	PlayerSignals.editor_submode_changed.connect(_on_editor_submode_changed)
+
 	
 	# Initialize hotbar UI
 	_setup_hotbar()
@@ -118,6 +126,9 @@ func _update_status_bars() -> void:
 func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 	mode_label.text = new_mode
 	
+	# Track editor mode state
+	is_editor_mode = (new_mode == "EDITOR")
+	
 	# Change mode label color based on mode
 	match new_mode:
 		"PLAY":
@@ -126,6 +137,10 @@ func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 			mode_label.modulate = Color.CYAN
 		"EDITOR":
 			mode_label.modulate = Color.YELLOW
+	
+	# Update hotbar display for editor/play mode
+	_update_hotbar_display()
+
 
 ## Item changed handler
 func _on_item_changed(slot: int, item: Dictionary) -> void:
@@ -221,3 +236,53 @@ func _update_build_mode_info() -> void:
 	if build_info_label:
 		build_info_label.text = "[%s] Rot:%s %s" % [mode_str, rot_str, y_str]
 		build_info_label.visible = true
+
+## Editor submode changed handler
+func _on_editor_submode_changed(submode: int, _submode_name: String) -> void:
+	current_editor_submode = submode
+	if is_editor_mode:
+		_update_hotbar_display()
+
+## Update hotbar display based on current mode
+func _update_hotbar_display() -> void:
+	if is_editor_mode:
+		# Show editor submodes in hotbar slots
+		for i in range(slot_labels.size()):
+			if i < EDITOR_SUBMODE_NAMES.size():
+				slot_labels[i].text = "[%s]" % EDITOR_SUBMODE_NAMES[i].substr(0, 3)
+				# Highlight selected submode
+				if i == current_editor_submode:
+					slot_labels[i].modulate = Color.YELLOW
+				else:
+					slot_labels[i].modulate = Color.WHITE
+			else:
+				# Hide unused slots
+				slot_labels[i].text = "[---]"
+				slot_labels[i].modulate = Color.DIM_GRAY
+		
+		# Update selected item label
+		if selected_item_label:
+			if current_editor_submode < EDITOR_SUBMODE_NAMES.size():
+				selected_item_label.text = EDITOR_SUBMODE_NAMES[current_editor_submode]
+			else:
+				selected_item_label.text = "Editor"
+	else:
+		# Restore normal hotbar from items
+		var player_node = get_tree().get_first_node_in_group("player")
+		if player_node:
+			var hotbar = player_node.get_node_or_null("Systems/Hotbar")
+			if hotbar:
+				for i in range(slot_labels.size()):
+					var item = hotbar.get_item_at(i)
+					slot_labels[i].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
+					slot_labels[i].modulate = Color.WHITE
+				
+				# Restore selected slot highlight
+				var selected = hotbar.get_selected_index()
+				if selected >= 0 and selected < slot_labels.size():
+					slot_labels[selected].modulate = Color.YELLOW
+				
+				# Update selected item label
+				if selected_item_label:
+					var item = hotbar.get_item_at(selected)
+					selected_item_label.text = item.get("name", "Empty")

@@ -9,6 +9,7 @@ signal hotbar_slot_selected(slot: int)
 
 # Mode events
 signal mode_changed(old_mode: String, new_mode: String)
+signal editor_submode_changed(submode: int, submode_name: String)
 
 # Combat events
 signal damage_dealt(target: Node, amount: int)

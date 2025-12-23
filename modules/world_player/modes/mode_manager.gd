@@ -104,6 +104,7 @@ func set_editor_submode(submode: EditorSubmode) -> void:
 	
 	editor_submode = submode
 	print("ModeManager: Editor submode -> %s" % get_submode_name())
+	PlayerSignals.editor_submode_changed.emit(editor_submode, get_submode_name())
 
 ## Toggle fly mode (EDITOR only)
 func toggle_fly_mode() -> void:
