@@ -279,7 +279,8 @@ func _do_punch(item: Dictionary) -> void:
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
 		var strength = item.get("mining_strength", 0.5)
 		if strength > 0:
-			terrain_manager.modify_terrain(position, strength, 1.0, 0, 0)
+			# material_id=-1 preserves existing terrain material
+			terrain_manager.modify_terrain(position, strength, 1.0, 0, 0, -1)
 			print("ModePlay: Punched terrain at %s (strength: %.1f)" % [position, strength])
 		else:
 			print("ModePlay: Item has no mining strength")
