@@ -84,13 +84,19 @@ func _input(event: InputEvent) -> void:
 	
 	# T key for prop pickup/drop (hold T to pick up and move, release to drop)
 	if event is InputEventKey and event.keycode == KEY_T:
-		if event.pressed and not event.echo:
-			# T held down - pick up prop
+		# Ignore echo (key repeat) events
+		if event.echo:
+			return
+		
+		if event.pressed:
+			# T pressed down - pick up prop
 			if not is_holding_prop():
+				print("PropInput: Starting pickup")
 				_try_pickup_prop()
 		else:
 			# T released - drop prop
 			if is_holding_prop():
+				print("PropInput: Dropping")
 				_drop_held_prop()
 
 
