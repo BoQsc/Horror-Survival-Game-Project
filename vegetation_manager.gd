@@ -7,11 +7,11 @@ signal rock_harvested(world_position: Vector3)
 @export var terrain_manager: Node3D
 @export var tree_model_path: String = "res://models/tree/1/pine_tree_-_ps1_low_poly.glb"
 @export var tree_scale: float = 1.0
-@export var tree_y_offset: float = 0.0  # GLB model has Y=11.76 origin built-in
+@export var tree_y_offset: float = 0.0 # GLB model has Y=11.76 origin built-in
 @export var tree_rotation_fix: Vector3 = Vector3.ZERO
 @export var collision_radius: float = 0.5
 @export var collision_height: float = 8.0
-@export var collider_distance: float = 30.0  # Only trees within this distance get colliders
+@export var collider_distance: float = 30.0 # Only trees within this distance get colliders
 
 # Grass settings
 @export var grass_model_path: String = "res://models/grass/2/grass_lowpoly.glb"
@@ -31,7 +31,7 @@ signal rock_harvested(world_position: Vector3)
 @export var rock_collision_height: float = 0.4
 
 var tree_mesh: Mesh
-var tree_base_transform: Transform3D = Transform3D()  # Orientation fix from GLB
+var tree_base_transform: Transform3D = Transform3D() # Orientation fix from GLB
 var grass_mesh: Mesh
 var grass_base_transform: Transform3D = Transform3D()
 var rock_mesh: Mesh
@@ -48,28 +48,28 @@ var pending_chunks: Array[Dictionary] = []
 var chunk_tree_data: Dictionary = {}
 
 # Pool of active colliders (reusable)
-var active_colliders: Dictionary = {}  # tree_key -> StaticBody3D
+var active_colliders: Dictionary = {} # tree_key -> StaticBody3D
 var collider_pool: Array[StaticBody3D] = []
-const MAX_ACTIVE_COLLIDERS = 50  # Limit active colliders for performance
+const MAX_ACTIVE_COLLIDERS = 50 # Limit active colliders for performance
 
 # Grass data per chunk coord -> { multimesh, grass_list[] }
 var chunk_grass_data: Dictionary = {}
-var active_grass_colliders: Dictionary = {}  # grass_key -> Area3D
+var active_grass_colliders: Dictionary = {} # grass_key -> Area3D
 var grass_collider_pool: Array[Area3D] = []
 const MAX_ACTIVE_GRASS_COLLIDERS = 30
 
 # Rock data per chunk coord -> { multimesh, rock_list[] }
 var chunk_rock_data: Dictionary = {}
-var active_rock_colliders: Dictionary = {}  # rock_key -> Area3D
+var active_rock_colliders: Dictionary = {} # rock_key -> Area3D
 var rock_collider_pool: Array[Area3D] = []
 const MAX_ACTIVE_ROCK_COLLIDERS = 30
 
 # Persistence - survives chunk unloading
-var removed_grass: Dictionary = {}  # "x_z" position hash -> true
-var removed_rocks: Dictionary = {}  # "x_z" position hash -> true
-var chopped_trees: Dictionary = {}  # "x_z" position hash -> true (for save/load persistence)
-var placed_grass: Array[Dictionary] = []  # { world_pos, scale, rotation }
-var placed_rocks: Array[Dictionary] = []  # { world_pos, scale, rotation }
+var removed_grass: Dictionary = {} # "x_z" position hash -> true
+var removed_rocks: Dictionary = {} # "x_z" position hash -> true
+var chopped_trees: Dictionary = {} # "x_z" position hash -> true (for save/load persistence)
+var placed_grass: Array[Dictionary] = [] # { world_pos, scale, rotation }
+var placed_rocks: Array[Dictionary] = [] # { world_pos, scale, rotation }
 
 # Pending placements - retry when chunk becomes valid
 var pending_rock_placements: Array[Dictionary] = []
@@ -88,7 +88,7 @@ func _ready():
 	if glb_result.mesh:
 		tree_mesh = glb_result.mesh
 		tree_base_transform = glb_result.transform
-		tree_base_transform.origin = Vector3.ZERO  # Remove position, keep rotation/scale
+		tree_base_transform.origin = Vector3.ZERO # Remove position, keep rotation/scale
 	else:
 		push_warning("Failed to load tree model, falling back to basic mesh")
 		tree_mesh = create_basic_tree_mesh()
@@ -111,8 +111,8 @@ func _ready():
 		grass_mesh = create_basic_grass_mesh()
 	
 	grass_noise = FastNoiseLite.new()
-	grass_noise.frequency = 0.08  # Different pattern from trees
-	grass_noise.seed = base_seed + 1  # Offset for different pattern
+	grass_noise.frequency = 0.08 # Different pattern from trees
+	grass_noise.seed = base_seed + 1 # Offset for different pattern
 	
 	# Load rock mesh
 	var rock_result = load_tree_mesh_from_glb(rock_model_path)
@@ -126,8 +126,8 @@ func _ready():
 		rock_mesh = create_basic_rock_mesh()
 	
 	rock_noise = FastNoiseLite.new()
-	rock_noise.frequency = 0.06  # Different pattern from grass/trees
-	rock_noise.seed = base_seed + 2  # Offset for different pattern
+	rock_noise.frequency = 0.06 # Different pattern from grass/trees
+	rock_noise.seed = base_seed + 2 # Offset for different pattern
 	
 	if terrain_manager:
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
@@ -243,7 +243,7 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	# Check all Y layers at this X,Z for modifications
 	if terrain_manager and terrain_manager.has_method("has_modifications_at_xz"):
 		if terrain_manager.has_modifications_at_xz(coord.x, coord.z):
-			return  # Don't spawn vegetation on player-modified terrain
+			return # Don't spawn vegetation on player-modified terrain
 	
 	# Extract surface key (X,Z) - vegetation only exists on surface
 	var surface_key = Vector2i(coord.x, coord.z)
@@ -256,7 +256,7 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 		_cleanup_chunk_rocks(surface_key)
 	
 	pending_chunks.append({
-		"coord": surface_key,  # Use surface_key for vegetation
+		"coord": surface_key, # Use surface_key for vegetation
 		"chunk_node": chunk_node,
 		"frames_waited": 0,
 		"stage": 0 # 0=Trees, 1=Grass, 2=Rocks
@@ -336,13 +336,13 @@ func _physics_process(_delta):
 	
 	# Only update colliders if we didn't just place vegetation (spread work)
 	collider_update_counter += 1
-	if collider_update_counter >= 15:  # Increased from 10 to reduce work
+	if collider_update_counter >= 15: # Increased from 10 to reduce work
 		collider_update_counter = 0
 		PerformanceMonitor.start_measure("Veg Collider Update")
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
-		_cleanup_orphan_colliders()  # Clean up any stranded colliders
+		_cleanup_orphan_colliders() # Clean up any stranded colliders
 		PerformanceMonitor.end_measure("Veg Collider Update", 2.0)
 	
 	# Always process incremental updates (Add/Remove actual nodes)
@@ -517,7 +517,7 @@ func _update_proximity_colliders():
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
-	var chunk_check_dist = collider_distance + chunk_stride  # Only check nearby chunks
+	var chunk_check_dist = collider_distance + chunk_stride # Only check nearby chunks
 	
 	# Collect trees that need colliders (only from nearby chunks)
 	var trees_needing_colliders: Array[Dictionary] = []
@@ -585,7 +585,7 @@ func _get_collider_from_pool() -> StaticBody3D:
 	if collider_pool.size() > 0:
 		var collider = collider_pool.pop_back()
 		collider.visible = debug_collision # Use the flag
-		collider.collision_layer = 8  # Layer 8 = vegetation (separate from terrain layer 1)
+		collider.collision_layer = 8 # Layer 8 = vegetation (separate from terrain layer 1)
 		# Re-enable the CollisionShape3D
 		for child in collider.get_children():
 			if child is CollisionShape3D:
@@ -595,7 +595,7 @@ func _get_collider_from_pool() -> StaticBody3D:
 	# Create new collider
 	var body = StaticBody3D.new()
 	body.add_to_group("trees")
-	body.collision_layer = 8  # Layer 8 = vegetation (separate from terrain layer 1)
+	body.collision_layer = 8 # Layer 8 = vegetation (separate from terrain layer 1)
 	
 	var shape_node = CollisionShape3D.new()
 	var shape = CylinderShape3D.new()
@@ -623,7 +623,7 @@ func _get_collider_from_pool() -> StaticBody3D:
 	return body
 
 func _return_collider_to_pool(collider: StaticBody3D):
-	collider.collision_layer = 0  # Disable collision
+	collider.collision_layer = 0 # Disable collision
 	collider.visible = false
 	# Also disable the CollisionShape3D so it doesn't show in Godot's debug view
 	for child in collider.get_children():
@@ -640,7 +640,7 @@ func _get_grass_collider_from_pool() -> Area3D:
 	if grass_collider_pool.size() > 0:
 		var collider = grass_collider_pool.pop_back()
 		collider.visible = debug_collision
-		collider.collision_layer = 8  # Layer 8 = vegetation (separate from terrain layer 1)
+		collider.collision_layer = 8 # Layer 8 = vegetation (separate from terrain layer 1)
 		collider.monitorable = true
 		# Re-enable CollisionShape3D
 		for child in collider.get_children():
@@ -651,9 +651,9 @@ func _get_grass_collider_from_pool() -> Area3D:
 	# Create new collider - Area3D so player can walk through
 	var body = Area3D.new()
 	body.add_to_group("grass")
-	body.collision_layer = 8  # Layer 8 = vegetation (separate from terrain)
-	body.monitorable = true  # Can be detected by raycasts
-	body.monitoring = false  # Doesn't need to detect others
+	body.collision_layer = 8 # Layer 8 = vegetation (separate from terrain)
+	body.monitorable = true # Can be detected by raycasts
+	body.monitoring = false # Doesn't need to detect others
 	
 	var shape_node = CollisionShape3D.new()
 	var shape = CylinderShape3D.new()
@@ -670,7 +670,7 @@ func _get_grass_collider_from_pool() -> Area3D:
 	cylinder_mesh.height = grass_collision_height
 	mesh_instance.mesh = cylinder_mesh
 	var debug_mat = StandardMaterial3D.new()
-	debug_mat.albedo_color = Color(0, 1, 0, 0.5)  # Green for grass
+	debug_mat.albedo_color = Color(0, 1, 0, 0.5) # Green for grass
 	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mesh_instance.material_override = debug_mat
 	body.add_child(mesh_instance)
@@ -771,7 +771,7 @@ func _get_rock_collider_from_pool() -> Area3D:
 	if rock_collider_pool.size() > 0:
 		var collider = rock_collider_pool.pop_back()
 		collider.visible = debug_collision
-		collider.collision_layer = 8  # Layer 8 = vegetation (separate from terrain)
+		collider.collision_layer = 8 # Layer 8 = vegetation (separate from terrain)
 		collider.monitorable = true
 		# Re-enable CollisionShape3D
 		for child in collider.get_children():
@@ -782,7 +782,7 @@ func _get_rock_collider_from_pool() -> Area3D:
 	# Create new collider - Area3D so player can walk through
 	var body = Area3D.new()
 	body.add_to_group("rocks")
-	body.collision_layer = 8  # Layer 8 = vegetation (separate from terrain)
+	body.collision_layer = 8 # Layer 8 = vegetation (separate from terrain)
 	body.monitorable = true
 	body.monitoring = false
 	
@@ -801,7 +801,7 @@ func _get_rock_collider_from_pool() -> Area3D:
 	cylinder_mesh.height = rock_collision_height
 	mesh_instance.mesh = cylinder_mesh
 	var debug_mat = StandardMaterial3D.new()
-	debug_mat.albedo_color = Color(0.5, 0.5, 0.5, 0.5)  # Gray for rocks
+	debug_mat.albedo_color = Color(0.5, 0.5, 0.5, 0.5) # Gray for rocks
 	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mesh_instance.material_override = debug_mat
 	body.add_child(mesh_instance)
@@ -929,7 +929,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				# Slow fallback
 				terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
 				
-			if terrain_y < -100.0:  # No terrain found
+			if terrain_y < -100.0: # No terrain found
 				continue
 			
 			var hit_pos = Vector3(gx, terrain_y, gz)
@@ -1120,10 +1120,10 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	
 	# Fix distance visibility issues
-	mmi.extra_cull_margin = 1000.0  # Very large margin
-	mmi.ignore_occlusion_culling = true  # Ignore occlusion
-	mmi.lod_bias = 100.0  # Prevent LOD from hiding mesh
-	mmi.visibility_range_end = 0.0  # 0 = infinite visibility
+	mmi.extra_cull_margin = 1000.0 # Very large margin
+	mmi.ignore_occlusion_culling = true # Ignore occlusion
+	mmi.lod_bias = 100.0 # Prevent LOD from hiding mesh
+	mmi.visibility_range_end = 0.0 # 0 = infinite visibility
 	
 	var grass_list = []
 	var valid_transforms = []
@@ -1136,7 +1136,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	# Grass placement - mode determines density and distribution
 	# Optimized: step 2 reduces checks by 4x (256 vs 1024) - acceptable for grass
-	var step = 2 
+	var step = 2
 	if dense_grass_mode: step = 1 # Use stride 1 for dense mode if requested
 	
 	var batch_heights = PackedFloat32Array()
@@ -1174,7 +1174,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				# Slow fallback
 				terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
 				
-			if terrain_y < -100.0:  # No terrain found
+			if terrain_y < -100.0: # No terrain found
 				continue
 			
 			var hit_pos = Vector3(gx, terrain_y, gz)
@@ -1339,7 +1339,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	if not chunk_grass_data.has(coord):
 		# Chunk grass data not ready - queue for retry
 		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
-		return true  # Stored for later
+		return true # Stored for later
 	
 	var data = chunk_grass_data[coord]
 	
@@ -1347,7 +1347,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
 		# Chunk node not valid - queue for retry
 		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
-		return true  # Stored for later
+		return true # Stored for later
 	
 	var chunk_node = data.chunk_node
 	var chunk_world_pos = chunk_node.global_position
@@ -1363,7 +1363,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
 		# MultiMesh not valid - queue for retry
 		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
-		return true  # Stored for later
+		return true # Stored for later
 	
 	var mmi = data.multimesh as MultiMeshInstance3D
 	if mmi and mmi.multimesh:
@@ -1397,7 +1397,7 @@ func place_grass(world_pos: Vector3) -> bool:
 		return true
 		return true
 	
-	return true  # Already stored for persistence
+	return true # Already stored for persistence
 
 func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: float, coord: Vector2i) -> bool:
 	"""Helper to add a grass instance to an existing chunk."""
@@ -1480,12 +1480,12 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			var gz = chunk_origin_z + z
 			
 			var noise_val = rock_noise.get_noise_2d(gx, gz)
-			if noise_val < 0.35:  # Slightly higher threshold than grass
+			if noise_val < 0.35: # Slightly higher threshold than grass
 				continue
 			
 			# Use optimized chunk density lookup
 			var terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
-			if terrain_y < -100.0:  # No terrain found
+			if terrain_y < -100.0: # No terrain found
 				continue
 			
 			var hit_pos = Vector3(gx, terrain_y, gz)
@@ -1731,7 +1731,7 @@ func load_tree_mesh_from_glb(path: String) -> Dictionary:
 	var scene = load(path)
 	if scene == null:
 		push_error("Could not load GLB: " + path)
-		return { "mesh": null, "transform": Transform3D() }
+		return {"mesh": null, "transform": Transform3D()}
 	
 	var instance = scene.instantiate()
 	# Need to add to tree temporarily to get global_transform
@@ -1746,14 +1746,14 @@ func load_tree_mesh_from_glb(path: String) -> Dictionary:
 
 func find_mesh_and_transform_in_node(node: Node) -> Dictionary:
 	if node is MeshInstance3D:
-		return { "mesh": node.mesh, "transform": node.global_transform }
+		return {"mesh": node.mesh, "transform": node.global_transform}
 	
 	for child in node.get_children():
 		var result = find_mesh_and_transform_in_node(child)
 		if result.mesh:
 			return result
 	
-	return { "mesh": null, "transform": Transform3D() }
+	return {"mesh": null, "transform": Transform3D()}
 
 func create_basic_tree_mesh() -> Mesh:
 	var st = SurfaceTool.new()
@@ -1768,7 +1768,7 @@ func create_basic_tree_mesh() -> Mesh:
 	
 	for i in range(8):
 		var angle1 = float(i) / 8.0 * PI * 2.0
-		var angle2 = float(i+1) / 8.0 * PI * 2.0
+		var angle2 = float(i + 1) / 8.0 * PI * 2.0
 		var p1 = Vector3(cos(angle1) * trunk_radius, 0, sin(angle1) * trunk_radius)
 		var p2 = Vector3(cos(angle2) * trunk_radius, 0, sin(angle2) * trunk_radius)
 		var p3 = Vector3(cos(angle2) * trunk_radius, trunk_height, sin(angle2) * trunk_radius)
@@ -1790,7 +1790,7 @@ func create_basic_tree_mesh() -> Mesh:
 	
 	for i in range(8):
 		var angle1 = float(i) / 8.0 * PI * 2.0
-		var angle2 = float(i+1) / 8.0 * PI * 2.0
+		var angle2 = float(i + 1) / 8.0 * PI * 2.0
 		var p1 = Vector3(cos(angle1) * leaves_radius, leaves_base_y, sin(angle1) * leaves_radius)
 		var p2 = Vector3(cos(angle2) * leaves_radius, leaves_base_y, sin(angle2) * leaves_radius)
 		var p_top = Vector3(0, leaves_base_y + leaves_height, 0)
@@ -1814,8 +1814,8 @@ func create_basic_grass_mesh() -> Mesh:
 	var width = 0.2
 	
 	# Simple quad for grass blade
-	st.add_vertex(Vector3(-width/2, 0, 0))
-	st.add_vertex(Vector3(width/2, 0, 0))
+	st.add_vertex(Vector3(-width / 2, 0, 0))
+	st.add_vertex(Vector3(width / 2, 0, 0))
 	st.add_vertex(Vector3(0, height, 0))
 	
 	st.index()
