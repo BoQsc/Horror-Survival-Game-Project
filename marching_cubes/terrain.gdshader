@@ -216,8 +216,8 @@ void fragment() {
 	
 	// === Procedural Road Edge Blending (toggleable) ===
 	// Creates soft gradient at road edges, extending OUTWARD into terrain
-	// mat_id != 6 already excludes actual road surface, so we blend ANY terrain near roads
-	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
+	// Only apply at surface level (Y > 10) to prevent blending on underground walls when digging
+	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6 && world_pos.y > 10.0) {
 		float road_dist = get_procedural_road_dist(world_pos.xz);
 		// NOTE: Blending works but not perfect - some asymmetry due to MC mesh boundary variations
 		float road_edge = procedural_road_width * 0.43;  // Tuned value, not perfect match
