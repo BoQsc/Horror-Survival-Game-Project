@@ -184,7 +184,8 @@ func _do_punch(item: Dictionary) -> void:
 	attack_cooldown = ATTACK_COOLDOWN_TIME
 	
 	# Use collide_with_areas=true to detect grass/rocks (Area3D)
-	var hit = player.raycast(2.5, 0xFFFFFFFF, true)
+	# Use exclude_water=true to pierce through water surfaces
+	var hit = player.raycast(5.0, 0xFFFFFFFF, true, true)
 	if hit.is_empty():
 		print("ModePlay: Punch - miss")
 		return

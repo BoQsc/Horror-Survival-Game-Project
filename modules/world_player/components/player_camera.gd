@@ -71,7 +71,7 @@ func get_camera_position() -> Vector3:
 	return Vector3.ZERO
 
 ## Perform a raycast from camera center
-func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_with_areas: bool = false) -> Dictionary:
+func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_with_areas: bool = false, exclude_water: bool = false) -> Dictionary:
 	if not camera:
 		print("PlayerCamera: raycast - no camera!")
 		return {}
@@ -88,6 +88,14 @@ func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_w
 	query.collide_with_areas = collide_with_areas
 	query.exclude = [player]
 	
-	var result = space_state.intersect_ray(query)
+	if exclude_water:
+		# Cast ray, if we hit water, continue through it
+		var result = space_state.intersect_ray(query)
+		while result and result.collider and result.collider.is_in_group("water"):
+			# Add hit collider to exclude list and raycast again from hit point
+			query.exclude.append(result.collider.get_rid())
+			query.from = result.position + direction * 0.01 # Move slightly past
+			result = space_state.intersect_ray(query)
+		return result
 	
-	return result
+	return space_state.intersect_ray(query)
