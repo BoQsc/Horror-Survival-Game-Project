@@ -5,16 +5,16 @@ extends Node3D
 signal entity_spawned(entity: Node3D)
 signal entity_despawned(entity: Node3D)
 
-@export var terrain_manager: Node3D  # Reference to ChunkManager for terrain interaction
-@export var max_entities: int = 50  # Maximum number of active entities
-@export var spawn_radius: float = 50.0  # Range around player where entities can spawn
-@export var freeze_radius: float = 60.0  # Distance at which entities freeze (physics disabled)
-@export var despawn_radius: float = 100.0  # Distance at which entities are removed
+@export var terrain_manager: Node3D # Reference to ChunkManager for terrain interaction
+@export var max_entities: int = 50 # Maximum number of active entities
+@export var spawn_radius: float = 50.0 # Range around player where entities can spawn
+@export var freeze_radius: float = 60.0 # Distance at which entities freeze (physics disabled)
+@export var despawn_radius: float = 100.0 # Distance at which entities are removed
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
-@export var spawn_chance_per_chunk: float = 0.50  # 50% chance per surface chunk
-@export var min_spawn_distance_from_player: float = 40.0  # Don't spawn too close
+@export var spawn_chance_per_chunk: float = 0.50 # 50% chance per surface chunk
+@export var min_spawn_distance_from_player: float = 40.0 # Don't spawn too close
 @export var max_spawns_per_chunk: int = 3
 
 # Entity scene to spawn (can be overridden per entity type)
@@ -22,25 +22,25 @@ signal entity_despawned(entity: Node3D)
 
 var player: Node3D
 var active_entities: Array[Node3D] = []
-var frozen_entities: Dictionary = {}  # entity -> { position: Vector3 }
-var dormant_entities: Array = []  # Stored entities: { position, scene_path, health, state }
-var entity_pool: Array[Node3D] = []  # Pooled inactive entities
+var frozen_entities: Dictionary = {} # entity -> { position: Vector3 }
+var dormant_entities: Array = [] # Stored entities: { position, scene_path, health, state }
+var entity_pool: Array[Node3D] = [] # Pooled inactive entities
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
 
 # Procedural spawning tracking
-var spawned_chunks: Dictionary = {}  # Vector2i -> true (tracks which chunks already spawned entities)
-var zombie_scene: PackedScene = null  # Cached zombie scene
-var biome_noise: FastNoiseLite = null  # For biome detection (must match GPU)
+var spawned_chunks: Dictionary = {} # Vector2i -> true (tracks which chunks already spawned entities)
+var zombie_scene: PackedScene = null # Cached zombie scene
+var biome_noise: FastNoiseLite = null # For biome detection (must match GPU)
 
 # Biome-based spawn rules: biome_id -> { "zombie_chance": float }
 # Biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
 var spawn_rules = {
-	0: { "zombie_chance": 0.6 },   # Grass - moderate danger
-	3: { "zombie_chance": 0.3 },   # Sand - peaceful desert
-	4: { "zombie_chance": 0.9 },   # Gravel - high danger ruins
-	5: { "zombie_chance": 0.5 },  # Snow - cold hostile
+	0: {"zombie_chance": 0.6}, # Grass - moderate danger
+	3: {"zombie_chance": 0.3}, # Sand - peaceful desert
+	4: {"zombie_chance": 0.9}, # Gravel - high danger ruins
+	5: {"zombie_chance": 0.5}, # Snow - cold hostile
 }
 
 func _ready():
@@ -72,10 +72,12 @@ func _update_entity_proximity():
 	var despawn_dist_sq = despawn_radius * despawn_radius
 	
 	var to_despawn: Array[Node3D] = []
+	var invalid_entities: Array = [] # Track indices of invalid entities for cleanup
 	
-	for entity in active_entities:
+	for i in range(active_entities.size()):
+		var entity = active_entities[i]
 		if not is_instance_valid(entity):
-			to_despawn.append(entity)
+			invalid_entities.append(i)
 			continue
 		
 		var dist_sq = entity.global_position.distance_squared_to(player_pos)
@@ -90,6 +92,10 @@ func _update_entity_proximity():
 			# In active zone - ensure physics enabled
 			_unfreeze_entity(entity)
 	
+	# Clean up invalid entities from tracking (reverse order to preserve indices)
+	for i in range(invalid_entities.size() - 1, -1, -1):
+		active_entities.remove_at(invalid_entities[i])
+	
 	# Despawn far entities
 	for entity in to_despawn:
 		despawn_entity(entity)
@@ -97,7 +103,7 @@ func _update_entity_proximity():
 ## Freeze an entity - disable physics to prevent falling
 func _freeze_entity(entity: Node3D):
 	if frozen_entities.has(entity):
-		return  # Already frozen
+		return # Already frozen
 	
 	# Store current state
 	frozen_entities[entity] = {
@@ -116,16 +122,16 @@ func _freeze_entity(entity: Node3D):
 ## Unfreeze an entity - re-enable physics
 func _unfreeze_entity(entity: Node3D):
 	if not frozen_entities.has(entity):
-		return  # Not frozen
+		return # Not frozen
 	
 	if not player:
-		return  # No player reference
+		return # No player reference
 	
 	var pos = entity.global_position
 	
 	# Check if within collision range (where terrain collision is enabled)
 	var dist_to_player = Vector2(pos.x, pos.z).distance_to(Vector2(player.global_position.x, player.global_position.z))
-	var collision_range = 93.0  # 3 chunks * 31 stride
+	var collision_range = 93.0 # 3 chunks * 31 stride
 	if terrain_manager and "collision_distance" in terrain_manager:
 		collision_range = terrain_manager.collision_distance * 31.0
 	
@@ -135,12 +141,12 @@ func _unfreeze_entity(entity: Node3D):
 	
 	# Use RAYCAST to verify terrain collision is actually active (not just mesh loaded)
 	var space_state = get_world_3d().direct_space_state
-	var ray_from = Vector3(pos.x, pos.y + 10.0, pos.z)  # Start above entity
-	var ray_to = Vector3(pos.x, pos.y - 50.0, pos.z)    # Cast down
+	var ray_from = Vector3(pos.x, pos.y + 10.0, pos.z) # Start above entity
+	var ray_to = Vector3(pos.x, pos.y - 50.0, pos.z) # Cast down
 	
 	var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-	query.collision_mask = 1  # Only terrain layer
-	query.exclude = [entity]  # Don't hit self
+	query.collision_mask = 1 # Only terrain layer
+	query.exclude = [entity] # Don't hit self
 	var result = space_state.intersect_ray(query)
 	
 	if result.is_empty():
@@ -177,15 +183,15 @@ func _check_dormant_respawns():
 		
 		# Must be within spawn radius
 		if dist > spawn_radius:
-			continue  # Still too far
+			continue # Still too far
 		
 		# Must be within collision range (where collision is actually enabled)
-		var collision_range = 93.0  # 3 chunks * 31 stride
+		var collision_range = 93.0 # 3 chunks * 31 stride
 		if terrain_manager and "collision_distance" in terrain_manager:
 			collision_range = terrain_manager.collision_distance * 31.0
 		
 		if dist > collision_range:
-			continue  # Collision disabled at this location, wait
+			continue # Collision disabled at this location, wait
 		
 		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
 		var space_state = get_world_3d().direct_space_state
@@ -193,11 +199,11 @@ func _check_dormant_respawns():
 		var ray_to = Vector3(pos.x, -50.0, pos.z)
 		
 		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-		query.collision_mask = 1  # Only terrain layer
+		query.collision_mask = 1 # Only terrain layer
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
-			continue  # Terrain collision not ready yet, try next frame
+			continue # Terrain collision not ready yet, try next frame
 		
 		# Terrain found! Spawn immediately at exact collision point
 		var terrain_y = result.position.y
@@ -252,7 +258,7 @@ func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3
 	entity.set_physics_process(false)
 	if entity is CharacterBody3D:
 		entity.velocity = Vector3.ZERO
-	frozen_entities[entity] = { "position": world_pos }
+	frozen_entities[entity] = {"position": world_pos}
 	
 	# Track
 	active_entities.append(entity)
@@ -339,7 +345,7 @@ func _process_spawn_queue():
 		var dist_to_player = Vector2(pos.x, pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
 		
 		# Get collision distance from terrain manager (default ~93 units = 3 chunks * 31)
-		var collision_range = 93.0  # 3 chunks * 31 stride
+		var collision_range = 93.0 # 3 chunks * 31 stride
 		if terrain_manager and "collision_distance" in terrain_manager:
 			collision_range = terrain_manager.collision_distance * 31.0
 		
@@ -357,11 +363,11 @@ func _process_spawn_queue():
 		
 		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
 		var space_state = get_world_3d().direct_space_state
-		var ray_from = Vector3(pos.x, 200.0, pos.z)  # Start high above terrain
-		var ray_to = Vector3(pos.x, -50.0, pos.z)    # End below expected terrain
+		var ray_from = Vector3(pos.x, 200.0, pos.z) # Start high above terrain
+		var ray_to = Vector3(pos.x, -50.0, pos.z) # End below expected terrain
 		
 		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
-		query.collision_mask = 1  # Only terrain layer
+		query.collision_mask = 1 # Only terrain layer
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
@@ -453,7 +459,7 @@ func get_save_data() -> Dictionary:
 	for key in spawned_chunks.keys():
 		chunks_data.append([key.x, key.y])
 	
-	return { 
+	return {
 		"entities": entities_data,
 		"spawned_chunks": chunks_data
 	}
@@ -512,7 +518,7 @@ func _setup_procedural_spawning():
 	# Setup biome noise (must match gen_density.glsl fbm)
 	biome_noise = FastNoiseLite.new()
 	biome_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
-	biome_noise.frequency = 0.002  # Match GPU biome scale
+	biome_noise.frequency = 0.002 # Match GPU biome scale
 	biome_noise.fractal_type = FastNoiseLite.FRACTAL_FBM
 	biome_noise.fractal_octaves = 3
 	
@@ -554,14 +560,14 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	
 	# Roll spawn chance
 	if rng.randf() > spawn_chance_per_chunk:
-		return  # No spawn this chunk
+		return # No spawn this chunk
 	
 	# Calculate chunk center for biome detection
-	var chunk_center = Vector3(coord.x * 31.0 + 16.0, 0, coord.z * 31.0 + 16.0)  # CHUNK_STRIDE = 31
+	var chunk_center = Vector3(coord.x * 31.0 + 16.0, 0, coord.z * 31.0 + 16.0) # CHUNK_STRIDE = 31
 	
 	# Determine biome at chunk center
 	var biome_id = _get_biome_at(chunk_center.x, chunk_center.z)
-	var rules = spawn_rules.get(biome_id, spawn_rules[0])  # Default to grass rules
+	var rules = spawn_rules.get(biome_id, spawn_rules[0]) # Default to grass rules
 	
 	# Roll for zombie spawn based on biome
 	var zombie_chance = rules.get("zombie_chance", 0.3)
@@ -572,10 +578,10 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 			break
 		
 		if rng.randf() > zombie_chance:
-			continue  # Failed this spawn roll
+			continue # Failed this spawn roll
 		
 		# Random position within chunk
-		var offset_x = rng.randf_range(2.0, 29.0)  # Avoid chunk edges
+		var offset_x = rng.randf_range(2.0, 29.0) # Avoid chunk edges
 		var offset_z = rng.randf_range(2.0, 29.0)
 		var spawn_x = coord.x * 31.0 + offset_x
 		var spawn_z = coord.z * 31.0 + offset_z
@@ -584,7 +590,7 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 		pending_spawns.append({
 			"position": Vector3(spawn_x, 0, spawn_z),
 			"scene": zombie_scene,
-			"procedural": true,  # Mark as procedurally spawned
+			"procedural": true, # Mark as procedurally spawned
 			"chunk_key": chunk_key
 		})
 		spawns_this_chunk += 1
@@ -595,19 +601,19 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 ## Get biome ID at world position (must match gen_density.glsl)
 func _get_biome_at(world_x: float, world_z: float) -> int:
 	if not biome_noise:
-		return 0  # Default grass
+		return 0 # Default grass
 	
 	# FBM noise value (matches GPU fbm function)
 	var val = biome_noise.get_noise_2d(world_x, world_z)
 	
 	# Same thresholds as gen_density.glsl
 	if val < -0.2:
-		return 3  # Sand biome
+		return 3 # Sand biome
 	if val > 0.6:
-		return 5  # Snow biome
+		return 5 # Snow biome
 	if val > 0.2:
-		return 4  # Gravel biome
-	return 0  # Grass (default)
+		return 4 # Gravel biome
+	return 0 # Grass (default)
 
 ## Clear spawned chunks tracking (called on new game)
 func clear_spawned_chunks():
