@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://bd7wig7c4xlqe"]
+[gd_scene load_steps=16 format=3 uid="uid://bd7wig7c4xlqe"]
 
 [ext_resource type="Script" path="res://modules/world_player/player.gd" id="1_player"]
 [ext_resource type="Script" path="res://modules/world_player/components/player_movement.gd" id="2_movement"]
@@ -13,6 +13,7 @@
 [ext_resource type="Script" path="res://modules/world_player/components/player_interaction.gd" id="11_interaction"]
 [ext_resource type="Script" path="res://modules/world_player/components/player_combat.gd" id="12_combat"]
 [ext_resource type="PackedScene" uid="uid://dhw7kxqy4cjrf" path="res://modules/world_player/ui/player_hud.tscn" id="13_hud"]
+[ext_resource type="Script" path="res://modules/world_player/utils/debug_draw.gd" id="14_debug_draw"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -71,3 +72,6 @@ script = ExtResource("8_mode_build")
 script = ExtResource("9_mode_editor")
 
 [node name="PlayerHUD" parent="." instance=ExtResource("13_hud")]
+
+[node name="DebugDraw" type="Node3D" parent="."]
+script = ExtResource("14_debug_draw")
