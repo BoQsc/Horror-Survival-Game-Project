@@ -6,10 +6,16 @@ class_name ModePlay
 # References
 var player: WorldPlayer = null
 var hotbar: Node = null
+var mode_manager: Node = null
 
 # Manager references
 var terrain_manager: Node = null
 var vegetation_manager: Node = null
+
+# Selection box for RESOURCE/BUCKET placement
+var selection_box: MeshInstance3D = null
+var current_target_pos: Vector3 = Vector3.ZERO
+var has_target: bool = false
 
 # Combat state
 var attack_cooldown: float = 0.0
@@ -21,11 +27,15 @@ func _ready() -> void:
 	
 	# Find hotbar - go up to WorldPlayer, then down to Systems/Hotbar
 	hotbar = get_node_or_null("../../Systems/Hotbar")
+	mode_manager = get_node_or_null("../../Systems/ModeManager")
 	
 	# Find managers via groups
 	await get_tree().process_frame
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	
+	# Create selection box for terrain resource placement
+	_create_selection_box()
 	
 	print("ModePlay: Initialized")
 	print("  - Player: %s" % ("OK" if player else "MISSING"))
@@ -33,9 +43,63 @@ func _ready() -> void:
 	print("  - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
 	print("  - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
 
+func _create_selection_box() -> void:
+	selection_box = MeshInstance3D.new()
+	var box_mesh = BoxMesh.new()
+	box_mesh.size = Vector3(1.01, 1.01, 1.01)
+	selection_box.mesh = box_mesh
+	
+	var material = StandardMaterial3D.new()
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.albedo_color = Color(0.4, 0.8, 0.3, 0.5) # Green/brown for terrain
+	selection_box.material_override = material
+	selection_box.visible = false
+	
+	get_tree().root.add_child.call_deferred(selection_box)
+
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
 		attack_cooldown -= delta
+	
+	# Update selection box for RESOURCE/BUCKET items
+	_update_terrain_targeting()
+
+func _update_terrain_targeting() -> void:
+	if not player or not hotbar or not selection_box:
+		return
+	
+	# Only show when in PLAY mode with RESOURCE or BUCKET selected
+	if mode_manager and not mode_manager.is_play_mode():
+		selection_box.visible = false
+		has_target = false
+		return
+	
+	var item = hotbar.get_selected_item()
+	var category = item.get("category", 0)
+	
+	# Categories: 2=BUCKET, 3=RESOURCE
+	if category != 2 and category != 3:
+		selection_box.visible = false
+		has_target = false
+		return
+	
+	# Raycast to find target
+	var hit = player.raycast(5.0)
+	if hit.is_empty():
+		selection_box.visible = false
+		has_target = false
+		return
+	
+	has_target = true
+	
+	# Calculate adjacent voxel position (where block will be placed)
+	var pos = hit.position + hit.normal * 0.1
+	current_target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
+	
+	# Update selection box position
+	selection_box.global_position = current_target_pos + Vector3(0.5, 0.5, 0.5)
+	selection_box.visible = true
 
 ## Handle primary action (left click) in PLAY mode
 func handle_primary(item: Dictionary) -> void:
@@ -202,13 +266,18 @@ func _do_bucket_place(_item: Dictionary) -> void:
 	if not player or not terrain_manager:
 		return
 	
-	var hit = player.raycast(5.0)
-	if hit.is_empty():
-		return
-	
-	var position = hit.get("position", Vector3.ZERO) + hit.get("normal", Vector3.UP) * 0.5
-	terrain_manager.modify_terrain(position, 1.0, -1.0, 0, 1) # Add water
-	print("ModePlay: Placed water")
+	# Use grid-aligned position if targeting is active
+	if has_target:
+		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
+		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 1) # Box shape, fill, water layer
+		print("ModePlay: Placed water at %s" % current_target_pos)
+	else:
+		var hit = player.raycast(5.0)
+		if hit.is_empty():
+			return
+		var pos = hit.position + hit.normal * 0.5
+		terrain_manager.modify_terrain(pos, 0.6, -0.5, 1, 1)
+		print("ModePlay: Placed water at %s" % pos)
 	# TODO: Switch bucket from full to empty
 
 ## Place resource (terrain material)
@@ -216,10 +285,19 @@ func _do_resource_place(item: Dictionary) -> void:
 	if not player or not terrain_manager:
 		return
 	
-	var hit = player.raycast(5.0)
-	if hit.is_empty():
-		return
-	
-	var position = hit.get("position", Vector3.ZERO) + hit.get("normal", Vector3.UP) * 0.5
-	terrain_manager.modify_terrain(position, 1.0, -1.0, 0, 0)
-	print("ModePlay: Placed %s" % item.get("name", "resource"))
+	# Use grid-aligned position if targeting is active
+	if has_target:
+		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
+		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0) # Box shape, fill, terrain layer
+		print("ModePlay: Placed %s at %s" % [item.get("name", "resource"), current_target_pos])
+	else:
+		var hit = player.raycast(5.0)
+		if hit.is_empty():
+			return
+		var pos = hit.position + hit.normal * 0.5
+		terrain_manager.modify_terrain(pos, 0.6, -0.5, 1, 0)
+		print("ModePlay: Placed %s at %s" % [item.get("name", "resource"), pos])
+
+func _exit_tree() -> void:
+	if selection_box and is_instance_valid(selection_box):
+		selection_box.queue_free()
