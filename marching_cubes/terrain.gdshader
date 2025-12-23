@@ -182,6 +182,9 @@ void fragment() {
 		base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore: golden stone tint
 	} else if (mat_id == 6) {
 		base_color = col_road;
+	} else if (mat_id == 9) {
+		// Granite: darker stone variant (underground 3D variation)
+		base_color = col_stone * vec3(0.7, 0.65, 0.6);
 	} else if (mat_id >= 100) {
 		// Player-placed materials
 		if (mat_id == 100) base_color = col_grass;

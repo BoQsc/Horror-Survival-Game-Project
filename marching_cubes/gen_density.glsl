@@ -78,6 +78,18 @@ float fbm(vec2 p) {
     return f;
 }
 
+// === 3D Fractal Brownian Motion for underground variation ===
+float fbm3d(vec3 p) {
+    float f = 0.0;
+    float w = 0.5;
+    for (int i = 0; i < 3; i++) {
+        f += w * noise(p);
+        p *= 2.0;
+        w *= 0.5;
+    }
+    return f;
+}
+
 // === Procedural Road Network ===
 // Returns distance to nearest road and the road's target height
 float get_road_info(vec2 pos, float spacing, out float road_height) {
@@ -193,14 +205,19 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
         return 6u;  // Road (asphalt)
     }
     
-    // 2. Underground materials (below surface)
+    // 2. Underground materials (below surface) - TRUE 3D variation
     if (depth > 3.0) {
-        // Check for ore veins (rare, uses 3D noise)
+        // Check for ore veins using 3D noise
         float ore_noise = noise(world_pos * 0.15);
         if (ore_noise > 0.75 && depth > 8.0) {
             return 2u;  // Ore
         }
-        return 1u;  // Stone
+        
+        // 3D stone variant noise - creates natural underground variation
+        // Different positions = different stone types (deterministic)
+        float stone_var = fbm3d(world_pos * 0.02);
+        if (stone_var > 0.25) return 9u;  // Granite (~35-40%)
+        return 1u;  // Stone (default)
     }
     
     // 3. Surface biomes (scale 0.002 = large biomes, matching shader)
