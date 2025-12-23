@@ -29,6 +29,7 @@ const TREE_HP: int = 8 # Trees take 8 damage to chop
 var block_damage: Dictionary = {} # Vector3i -> accumulated damage
 var object_damage: Dictionary = {} # RID -> accumulated damage
 var tree_damage: Dictionary = {} # collider RID -> accumulated damage
+var durability_target: Variant = null # Current target being damaged (RID or Vector3i)
 
 # Prop holding state
 var held_prop_instance: Node3D = null
@@ -84,6 +85,9 @@ func _process(delta: float) -> void:
 	
 	# Update selection box for RESOURCE/BUCKET items
 	_update_terrain_targeting()
+	
+	# Check if still looking at durability target
+	_check_durability_target()
 
 func _input(event: InputEvent) -> void:
 	# Only process in PLAY mode
@@ -208,11 +212,12 @@ func _do_punch(item: Dictionary) -> void:
 	
 	print("ModePlay: Punch - hit %s" % (target.name if target else "nothing"))
 	
-	# Check for damageable target
-	if target and target.has_method("take_damage"):
-		target.take_damage(damage)
-		print("ModePlay: Punched %s for %d damage" % [target.name, damage])
-		PlayerSignals.damage_dealt.emit(target, damage)
+	# Check for damageable target (direct or parent with take_damage)
+	var damageable = _find_damageable(target)
+	if damageable:
+		damageable.take_damage(damage)
+		print("ModePlay: Punched %s for %d damage" % [damageable.name, damage])
+		PlayerSignals.damage_dealt.emit(damageable, damage)
 		return
 	
 	# Check for harvestable vegetation (with durability for trees)
@@ -226,6 +231,7 @@ func _do_punch(item: Dictionary) -> void:
 			var tree_rid = target.get_rid()
 			tree_damage[tree_rid] = tree_damage.get(tree_rid, 0) + tree_dmg
 			var current_hp = TREE_HP - tree_damage[tree_rid]
+			durability_target = tree_rid # Track for look-away clearing
 			print("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
 			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree")
 			if tree_damage[tree_rid] >= TREE_HP:
@@ -252,6 +258,7 @@ func _do_punch(item: Dictionary) -> void:
 			obj_dmg = 5 # Pickaxe one-shots objects
 		object_damage[obj_rid] = object_damage.get(obj_rid, 0) + obj_dmg
 		var current_hp = OBJECT_HP - object_damage[obj_rid]
+		durability_target = obj_rid # Track for look-away clearing
 		print("ModePlay: Hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
 		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name)
 		if object_damage[obj_rid] >= OBJECT_HP:
@@ -277,6 +284,7 @@ func _do_punch(item: Dictionary) -> void:
 				blk_dmg = 5 # Pickaxe does 5 damage
 			block_damage[block_pos] = block_damage.get(block_pos, 0) + blk_dmg
 			var current_hp = BLOCK_HP - block_damage[block_pos]
+			durability_target = block_pos # Track for look-away clearing (Vector3i)
 			print("ModePlay: Hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
 			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block")
 			if block_damage[block_pos] >= BLOCK_HP:
@@ -317,6 +325,58 @@ func _find_building_chunk(collider: Node) -> Node:
 		node = node.get_parent()
 	
 	return null
+
+## Find a node with take_damage method (check target and parent hierarchy)
+func _find_damageable(target: Node) -> Node:
+	if not target:
+		return null
+	
+	# Direct check
+	if target.has_method("take_damage"):
+		return target
+	
+	# Check parent chain (for doors with sub-colliders like ClosedDoorBlocker)
+	var node = target.get_parent()
+	while node:
+		if node.has_method("take_damage"):
+			return node
+		node = node.get_parent()
+	
+	return null
+
+## Check if player is still looking at the durability target
+func _check_durability_target() -> void:
+	if durability_target == null:
+		return
+	
+	if not player:
+		return
+	
+	# Raycast to see what we're looking at
+	var hit = player.raycast(5.0, 0xFFFFFFFF, true, true)
+	if hit.is_empty():
+		# Looking at nothing - clear target
+		durability_target = null
+		PlayerSignals.durability_cleared.emit()
+		return
+	
+	var target = hit.get("collider")
+	var position = hit.get("position", Vector3.ZERO)
+	
+	# Check if it's the same target based on type
+	if durability_target is RID:
+		# Tree or object - compare RID
+		if target and target.get_rid() == durability_target:
+			return # Still looking at same target
+	elif durability_target is Vector3i:
+		# Block - compare position
+		var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+		if block_pos == durability_target:
+			return # Still looking at same block
+	
+	# Different target or no match - clear UI
+	durability_target = null
+	PlayerSignals.durability_cleared.emit()
 
 ## Tool attack/mine
 func _do_tool_attack(item: Dictionary) -> void:

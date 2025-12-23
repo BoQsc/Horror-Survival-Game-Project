@@ -9,6 +9,14 @@ class_name InteractiveDoor
 
 @export var is_open: bool = false
 
+# HP/Damage system
+@export var max_hp: int = 15
+var current_hp: int = -1 # Initialized in _ready
+
+# Damage stages (for future model swapping)
+const DAMAGE_THRESHOLDS = [0.66, 0.33, 0.0] # HP percentages triggering visual change
+var current_damage_stage: int = 0
+
 var animation_player: AnimationPlayer = null
 
 # Closed door blocking collision
@@ -24,9 +32,13 @@ var interaction_area: Area3D = null
 var interaction_collision: CollisionShape3D = null
 
 func _ready():
+	# Initialize HP
+	current_hp = max_hp
+	
 	# Add to interactable group for player detection (also tells building_chunk to skip collision)
 	add_to_group("interactable")
 	add_to_group("placed_objects")
+	add_to_group("breakable") # For damage system
 	
 	# Find AnimationPlayer in the door model
 	_find_animation_player(self)
@@ -229,3 +241,45 @@ func get_interaction_prompt() -> String:
 	else:
 		return "Press E to open"
 
+#region Damage System
+
+## Called when door is hit/punched
+func take_damage(amount: int) -> void:
+	current_hp = max(0, current_hp - amount)
+	print("Door: Took %d damage (%d/%d HP)" % [amount, current_hp, max_hp])
+	
+	# Check for damage stage change (for future model swapping)
+	var hp_percent = float(current_hp) / float(max_hp)
+	for i in range(DAMAGE_THRESHOLDS.size()):
+		if hp_percent <= DAMAGE_THRESHOLDS[i] and i > current_damage_stage:
+			current_damage_stage = i
+			_on_damage_stage_changed(i)
+			break
+	
+	# Emit durability signal for UI
+	PlayerSignals.durability_hit.emit(current_hp, max_hp, "Door")
+	
+	if current_hp <= 0:
+		_on_destroyed()
+
+## Called when damage threshold is crossed (for future model swapping)
+func _on_damage_stage_changed(stage: int) -> void:
+	print("Door: Damage stage changed to %d" % stage)
+	# Future: swap door mesh to damaged variant based on stage
+	# stage 0 = light damage, stage 1 = heavy damage, stage 2 = almost broken
+
+## Called when door HP reaches 0
+func _on_destroyed() -> void:
+	print("Door: Destroyed!")
+	PlayerSignals.durability_cleared.emit()
+	
+	# If door has chunk/anchor meta, remove from building system
+	if has_meta("anchor") and has_meta("chunk"):
+		var anchor = get_meta("anchor")
+		var chunk = get_meta("chunk")
+		if chunk and chunk.has_method("remove_object"):
+			chunk.remove_object(anchor)
+	
+	queue_free()
+
+#endregion
