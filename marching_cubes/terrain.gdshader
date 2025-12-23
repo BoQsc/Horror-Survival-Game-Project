@@ -94,6 +94,59 @@ float get_procedural_road_dist(vec2 pos) {
 	return min(dist_to_x_road, dist_to_z_road);
 }
 
+// 3D hash for road height calculation
+float hash3d(vec3 p) {
+	p = fract(p * 0.3183099 + 0.1);
+	p *= 17.0;
+	return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+// 3D noise for road height
+float noise3d(vec3 x) {
+	vec3 i = floor(x);
+	vec3 f = fract(x);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(hash3d(i + vec3(0,0,0)), hash3d(i + vec3(1,0,0)), f.x),
+	               mix(hash3d(i + vec3(0,1,0)), hash3d(i + vec3(1,1,0)), f.x), f.y),
+	           mix(mix(hash3d(i + vec3(0,0,1)), hash3d(i + vec3(1,0,1)), f.x),
+	               mix(hash3d(i + vec3(0,1,1)), hash3d(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+
+// Get road height at a given XZ position (matches gen_density.glsl logic)
+float get_road_height(vec2 pos) {
+	float spacing = procedural_road_spacing;
+	float cell_x = floor(pos.x / spacing);
+	float cell_z = floor(pos.y / spacing);
+	float local_x = mod(pos.x, spacing);
+	float local_z = mod(pos.y, spacing);
+	
+	// Corner heights with noise
+	float h1 = noise3d(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
+	float h2 = noise3d(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
+	float h3 = noise3d(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
+	float h4 = noise3d(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
+	
+	// Bilinear interpolation
+	float tx = local_x / spacing;
+	float tz = local_z / spacing;
+	float interpolated = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
+	
+	// Stepped road with flat zones
+	float base_level = floor(interpolated);
+	float frac_part = interpolated - base_level;
+	float flat_size = 0.45;
+	
+	if (frac_part < flat_size) {
+		return base_level;
+	} else if (frac_part > 1.0 - flat_size) {
+		return base_level + 1.0;
+	} else {
+		float ramp_t = (frac_part - flat_size) / (1.0 - 2.0 * flat_size);
+		ramp_t = smoothstep(0.0, 1.0, ramp_t);
+		return base_level + ramp_t;
+	}
+}
+
 varying vec3 local_vertex;  // Mesh vertex in local chunk space (0-32)
 
 void vertex() {
@@ -216,17 +269,22 @@ void fragment() {
 	
 	// === Procedural Road Edge Blending (toggleable) ===
 	// Creates soft gradient at road edges, extending OUTWARD into terrain
-	// Only apply at surface level (Y > 10) to prevent blending on underground walls when digging
-	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6 && world_pos.y > 10.0) {
+	// ROOT FIX: Only apply blending at ACTUAL road surface level (not underground)
+	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
 		float road_dist = get_procedural_road_dist(world_pos.xz);
-		// NOTE: Blending works but not perfect - some asymmetry due to MC mesh boundary variations
-		float road_edge = procedural_road_width * 0.43;  // Tuned value, not perfect match
+		float road_edge = procedural_road_width * 0.43;
 		float outer_limit = road_edge + road_edge_blend_width;
-		// Apply blend to ANY terrain within range (mat_id check already skips road)
+		
 		if (road_dist < outer_limit) {
-			float edge_blend = 1.0 - smoothstep(road_edge, outer_limit, road_dist);
-			edge_blend *= road_slope_mask;
-			base_color = mix(base_color, col_road, edge_blend);
+			// Get the actual road height at this XZ position
+			float road_height = get_road_height(world_pos.xz);
+			// Only blend if we're AT road surface level (within 1.5 units)
+			float height_diff = world_pos.y - road_height;
+			if (height_diff >= -0.5 && height_diff < 1.5) {
+				float edge_blend = 1.0 - smoothstep(road_edge, outer_limit, road_dist);
+				edge_blend *= road_slope_mask;  // Only horizontal surfaces
+				base_color = mix(base_color, col_road, edge_blend);
+			}
 		}
 	}
 	
