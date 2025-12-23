@@ -50,6 +50,20 @@ func _input(event: InputEvent) -> void:
 					set_editor_submode(EditorSubmode.PREFAB)
 				KEY_F:
 					toggle_fly_mode()
+	
+	# Scrollwheel to cycle submodes in EDITOR mode
+	if current_mode == Mode.EDITOR:
+		if event is InputEventMouseButton and event.pressed:
+			if not event.ctrl_pressed and not event.shift_pressed:
+				var submode_count = EditorSubmode.FLY + 1 # All submodes including FLY
+				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+					var new_submode = (editor_submode - 1 + submode_count) % submode_count
+					set_editor_submode(new_submode as EditorSubmode)
+					get_viewport().set_input_as_handled()
+				elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+					var new_submode = (editor_submode + 1) % submode_count
+					set_editor_submode(new_submode as EditorSubmode)
+					get_viewport().set_input_as_handled()
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	# Don't auto-switch modes while in EDITOR

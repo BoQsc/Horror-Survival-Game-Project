@@ -144,11 +144,18 @@ func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 
 ## Item changed handler
 func _on_item_changed(slot: int, item: Dictionary) -> void:
+	# Skip in editor mode - editor has its own display
+	if is_editor_mode:
+		return
 	if slot >= 0 and slot < slot_labels.size():
 		slot_labels[slot].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
 
 ## Hotbar slot selected handler
 func _on_hotbar_slot_selected(slot: int) -> void:
+	# Skip hotbar changes in editor mode - editor has its own display
+	if is_editor_mode:
+		return
+	
 	# Highlight selected slot
 	for i in range(slot_labels.size()):
 		if i == slot:
@@ -256,8 +263,8 @@ func _update_hotbar_display() -> void:
 				else:
 					slot_labels[i].modulate = Color.WHITE
 			else:
-				# Hide unused slots
-				slot_labels[i].text = "[---]"
+				# Show empty for unused slots
+				slot_labels[i].text = "[Emp]"
 				slot_labels[i].modulate = Color.DIM_GRAY
 		
 		# Update selected item label
