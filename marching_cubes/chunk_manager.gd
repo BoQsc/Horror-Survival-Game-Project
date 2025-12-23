@@ -1432,6 +1432,8 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	var chunk_pos = task.pos
 	var layer = task.get("layer", 0)
 	var material_id = task.get("material_id", -1)
+	print("ChunkMan.process_modify: coord=%s layer=%d value=%.2f buf_valid=%s" % [task.coord, layer, task.value, density_buffer.is_valid()])
+
 	
 	var u_density = RDUniform.new()
 	u_density.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
@@ -1874,6 +1876,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water
+		print("ChunkMan: Applying water update to %s, has_mesh=%s" % [coord, result.mesh != null])
 		if data.node_water: data.node_water.queue_free()
 		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true)
 		data.node_water = result_node.node if not result_node.is_empty() else null
