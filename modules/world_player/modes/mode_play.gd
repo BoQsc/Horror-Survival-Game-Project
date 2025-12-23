@@ -90,22 +90,22 @@ func _input(event: InputEvent) -> void:
 	if mode_manager and not mode_manager.is_play_mode():
 		return
 	
-	# T key for prop pickup/drop (hold T to pick up and move, release to drop)
+	# T key for prop grab/drop (hold T to grab and move, release to drop)
 	if event is InputEventKey and event.keycode == KEY_T:
 		# Ignore echo (key repeat) events
 		if event.echo:
 			return
 		
 		if event.pressed:
-			# T pressed down - pick up prop
-			if not is_holding_prop():
-				print("PropInput: Starting pickup")
-				_try_pickup_prop()
+			# T pressed down - grab prop
+			if not is_grabbing_prop():
+				print("PropGrab: Starting grab")
+				_try_grab_prop()
 		else:
 			# T released - drop prop
-			if is_holding_prop():
-				print("PropInput: Dropping")
-				_drop_held_prop()
+			if is_grabbing_prop():
+				print("PropGrab: Dropping")
+				_drop_grabbed_prop()
 	
 	# E key for item pickup (adds to hotbar)
 	if event is InputEventKey and event.keycode == KEY_E and event.pressed and not event.echo:
@@ -152,9 +152,9 @@ func _update_terrain_targeting() -> void:
 func handle_primary(item: Dictionary) -> void:
 	print("ModePlay: handle_primary called with item: %s" % item.get("name", "unknown"))
 	
-	# If holding a prop, don't do other actions
-	if is_holding_prop():
-		print("ModePlay: Holding prop, ignoring primary action")
+	# If grabbing a prop, don't do other actions
+	if is_grabbing_prop():
+		print("ModePlay: Grabbing prop, ignoring primary action")
 		return
 	
 	if attack_cooldown > 0:
@@ -496,13 +496,13 @@ func _get_pickup_target() -> Node:
 		print("PropPickup: Assisted hit on %s" % best_target.name)
 	return best_target
 
-## Try to pick up a prop
-func _try_pickup_prop() -> void:
+## Try to grab a prop
+func _try_grab_prop() -> void:
 	var target = _get_pickup_target()
 	if not target:
 		return
 	
-	print("PropPickup: Trying to pick up %s" % target.name)
+	print("PropGrab: Trying to grab %s" % target.name)
 	var anchor = target.get_meta("anchor")
 	var chunk = target.get_meta("chunk")
 	
@@ -547,8 +547,8 @@ func _try_pickup_prop() -> void:
 		else:
 			print("PropPickup: WARNING - No camera, prop may be mispositioned")
 
-## Drop the held prop
-func _drop_held_prop() -> void:
+## Drop the grabbed prop
+func _drop_grabbed_prop() -> void:
 	if not held_prop_instance:
 		return
 	
@@ -644,8 +644,8 @@ func _disable_preview_collisions(node: Node) -> void:
 	for child in node.get_children():
 		_disable_preview_collisions(child)
 
-## Check if currently holding a prop
-func is_holding_prop() -> bool:
+## Check if currently grabbing a prop
+func is_grabbing_prop() -> bool:
 	return held_prop_instance != null and is_instance_valid(held_prop_instance)
 
 #endregion
@@ -689,6 +689,8 @@ func _try_pickup_item() -> void:
 		print("ItemPickup: Picked up %s" % item_data.get("name", "item"))
 		# Remove from world
 		target.queue_free()
+		# Hide the interaction prompt
+		PlayerSignals.interaction_unavailable.emit()
 	else:
 		print("ItemPickup: Hotbar full, cannot pick up %s" % item_data.get("name", "item"))
 
