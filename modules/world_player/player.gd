@@ -45,9 +45,9 @@ func get_camera_position() -> Vector3:
 	return global_position + Vector3(0, 1.6, 0)
 
 ## Perform raycast from camera
-func raycast(distance: float = 10.0, mask: int = 0xFFFFFFFF) -> Dictionary:
+func raycast(distance: float = 10.0, mask: int = 0xFFFFFFFF, collide_with_areas: bool = false) -> Dictionary:
 	if camera_component:
-		return camera_component.raycast(distance, mask)
+		return camera_component.raycast(distance, mask, collide_with_areas)
 	return {}
 
 ## Take damage (delegates to PlayerStats autoload)

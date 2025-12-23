@@ -183,7 +183,8 @@ func _do_punch(item: Dictionary) -> void:
 	
 	attack_cooldown = ATTACK_COOLDOWN_TIME
 	
-	var hit = player.raycast(2.5) # Melee range
+	# Use collide_with_areas=true to detect grass/rocks (Area3D)
+	var hit = player.raycast(2.5, 0xFFFFFFFF, true)
 	if hit.is_empty():
 		print("ModePlay: Punch - miss")
 		return

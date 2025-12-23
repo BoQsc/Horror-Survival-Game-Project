@@ -71,7 +71,7 @@ func get_camera_position() -> Vector3:
 	return Vector3.ZERO
 
 ## Perform a raycast from camera center
-func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF) -> Dictionary:
+func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_with_areas: bool = false) -> Dictionary:
 	if not camera:
 		print("PlayerCamera: raycast - no camera!")
 		return {}
@@ -85,13 +85,9 @@ func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF) -> Dictio
 	
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = collision_mask
+	query.collide_with_areas = collide_with_areas
 	query.exclude = [player]
 	
 	var result = space_state.intersect_ray(query)
-	
-	if result.is_empty():
-		print("PlayerCamera: raycast - no hit (range: %.1f)" % distance)
-	else:
-		print("PlayerCamera: raycast HIT %s at %s" % [result.collider.name, result.position])
 	
 	return result

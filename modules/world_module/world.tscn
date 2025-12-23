@@ -1,6 +1,6 @@
-[gd_scene load_steps=18 format=3 uid="uid://c8iimeavbdci7"]
+[gd_scene load_steps=17 format=3 uid="uid://c8iimeavbdci7"]
 
-[ext_resource type="PackedScene" path="res://modules/world_player/player.tscn" id="1_worldplayer"]
+[ext_resource type="PackedScene" uid="uid://bd7wig7c4xlqe" path="res://modules/world_player/player.tscn" id="1_worldplayer"]
 [ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
@@ -24,12 +24,6 @@ background_mode = 2
 sky = SubResource("Sky")
 tonemap_mode = 2
 glow_enabled = true
-
-[sub_resource type="CapsuleShape3D" id="PlayerShape"]
-radius = 0.1
-height = 0.7
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_16slq"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_selection"]
 size = Vector3(1.01, 1.01, 1.01)
@@ -85,6 +79,7 @@ grass_scale = 0.01
 grass_collision_radius = 0.7
 rock_scale = 0.3
 rock_y_offset = 0.3
+debug_collision = true
 
 [node name="BuildingManager" type="Node3D" parent="." groups=["building_manager"]]
 script = ExtResource("5_buildings")
