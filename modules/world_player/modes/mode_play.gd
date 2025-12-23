@@ -11,6 +11,7 @@ var mode_manager: Node = null
 # Manager references
 var terrain_manager: Node = null
 var vegetation_manager: Node = null
+var building_manager: Node = null
 
 # Selection box for RESOURCE/BUCKET placement
 var selection_box: MeshInstance3D = null
@@ -20,6 +21,12 @@ var has_target: bool = false
 # Combat state
 var attack_cooldown: float = 0.0
 const ATTACK_COOLDOWN_TIME: float = 0.3
+
+# Prop holding state
+var held_prop_instance: Node3D = null
+var held_prop_id: int = -1
+var held_prop_rotation: int = 0
+
 
 func _ready() -> void:
 	# Find player - ModePlay is child of Modes which is child of WorldPlayer
@@ -33,6 +40,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	building_manager = get_tree().get_first_node_in_group("building_manager")
 	
 	# Create selection box for terrain resource placement
 	_create_selection_box()
@@ -42,6 +50,7 @@ func _ready() -> void:
 	print("  - Hotbar: %s" % ("OK" if hotbar else "MISSING"))
 	print("  - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
 	print("  - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
+	print("  - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
@@ -62,8 +71,28 @@ func _process(delta: float) -> void:
 	if attack_cooldown > 0:
 		attack_cooldown -= delta
 	
+	# Update held prop position (if holding one)
+	_update_held_prop(delta)
+	
 	# Update selection box for RESOURCE/BUCKET items
 	_update_terrain_targeting()
+
+func _input(event: InputEvent) -> void:
+	# Only process in PLAY mode
+	if mode_manager and not mode_manager.is_play_mode():
+		return
+	
+	# T key for prop pickup/drop (hold T to pick up and move, release to drop)
+	if event is InputEventKey and event.keycode == KEY_T:
+		if event.pressed and not event.echo:
+			# T held down - pick up prop
+			if not is_holding_prop():
+				_try_pickup_prop()
+		else:
+			# T released - drop prop
+			if is_holding_prop():
+				_drop_held_prop()
+
 
 func _update_terrain_targeting() -> void:
 	if not player or not hotbar or not selection_box:
@@ -104,6 +133,11 @@ func _update_terrain_targeting() -> void:
 ## Handle primary action (left click) in PLAY mode
 func handle_primary(item: Dictionary) -> void:
 	print("ModePlay: handle_primary called with item: %s" % item.get("name", "unknown"))
+	
+	# If holding a prop, don't do other actions
+	if is_holding_prop():
+		print("ModePlay: Holding prop, ignoring primary action")
+		return
 	
 	if attack_cooldown > 0:
 		print("ModePlay: Still on cooldown (%.2f)" % attack_cooldown)
@@ -296,3 +330,234 @@ func _do_resource_place(item: Dictionary) -> void:
 func _exit_tree() -> void:
 	if selection_box and is_instance_valid(selection_box):
 		selection_box.queue_free()
+	if held_prop_instance and is_instance_valid(held_prop_instance):
+		held_prop_instance.queue_free()
+
+#region Prop Pickup/Drop System
+
+## Update held prop position (follows camera)
+func _update_held_prop(delta: float) -> void:
+	if not held_prop_instance or not is_instance_valid(held_prop_instance):
+		return
+	
+	# Get camera from player
+	var cam: Camera3D = null
+	if player and player.has_node("Head/Camera3D"):
+		cam = player.get_node("Head/Camera3D")
+	if not cam:
+		cam = get_viewport().get_camera_3d()
+	if not cam:
+		print("PropHold: WARNING - No camera found!")
+		return
+	
+	# Float 2 meters in front of camera
+	var target_pos = cam.global_position - cam.global_transform.basis.z * 2.0
+	# Smoothly interpolate
+	held_prop_instance.global_position = held_prop_instance.global_position.lerp(target_pos, delta * 15.0)
+	# Match camera rotation (yaw only)
+	var cam_rot_y = cam.global_rotation.y
+	held_prop_instance.rotation.y = lerp_angle(held_prop_instance.rotation.y, cam_rot_y + deg_to_rad(held_prop_rotation * 90.0), delta * 10.0)
+	
+	# Debug every 60 frames
+	if Engine.get_process_frames() % 60 == 0:
+		print("PropHold: Prop at %s (visible: %s)" % [held_prop_instance.global_position, held_prop_instance.visible])
+
+## Find a prop that can be picked up
+func _get_pickup_target() -> Node:
+	var cam = get_viewport().get_camera_3d()
+	if not cam:
+		return null
+	
+	var origin = cam.global_position
+	var forward = - cam.global_transform.basis.z
+	
+	# Option A: Precise raycast
+	var hit = player.raycast(5.0) if player else {}
+	
+	if hit and hit.has("collider"):
+		var col = hit.collider
+		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
+			print("PropPickup: Direct hit on %s" % col.name)
+			return col
+	
+	# Option B: Sphere assist for forgiveness
+	var search_origin = hit.position if hit and hit.has("position") else (origin + forward * 2.0)
+	
+	var space_state = cam.get_world_3d().direct_space_state
+	var params = PhysicsShapeQueryParameters3D.new()
+	params.shape = SphereShape3D.new()
+	params.shape.radius = 0.4 # 40cm forgiveness
+	params.transform = Transform3D(Basis(), search_origin)
+	params.collision_mask = 0xFFFFFFFF
+	if player:
+		params.exclude = [player.get_rid()]
+	
+	var results = space_state.intersect_shape(params, 5)
+	var best_target = null
+	var best_dist = 999.0
+	
+	for result in results:
+		var col = result.collider
+		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
+			var d = col.global_position.distance_to(search_origin)
+			if d < best_dist:
+				best_dist = d
+				best_target = col
+	
+	if best_target:
+		print("PropPickup: Assisted hit on %s" % best_target.name)
+	return best_target
+
+## Try to pick up a prop
+func _try_pickup_prop() -> void:
+	var target = _get_pickup_target()
+	if not target:
+		return
+	
+	print("PropPickup: Trying to pick up %s" % target.name)
+	var anchor = target.get_meta("anchor")
+	var chunk = target.get_meta("chunk")
+	
+	if not chunk or not chunk.objects.has(anchor):
+		print("PropPickup: No object data at anchor")
+		return
+	
+	# Read object data before removing
+	var data = chunk.objects[anchor]
+	held_prop_id = data["object_id"]
+	held_prop_rotation = data.get("rotation", 0)
+	
+	# Remove from world
+	chunk.remove_object(anchor)
+	
+	# Spawn temporary held visual
+	var obj_def = ObjectRegistry.get_object(held_prop_id)
+	if obj_def.has("scene"):
+		var packed = load(obj_def.scene)
+		held_prop_instance = packed.instantiate()
+		
+		# Strip physics for holding
+		if held_prop_instance is RigidBody3D:
+			held_prop_instance.freeze = true
+			held_prop_instance.collision_layer = 0
+			held_prop_instance.collision_mask = 0
+		
+		# Disable all collisions
+		_disable_preview_collisions(held_prop_instance)
+		
+		get_tree().root.add_child(held_prop_instance)
+		
+		# Position at camera
+		var cam: Camera3D = null
+		if player and player.has_node("Head/Camera3D"):
+			cam = player.get_node("Head/Camera3D")
+		if not cam:
+			cam = get_viewport().get_camera_3d()
+		if cam:
+			held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
+			print("PropPickup: Picked up prop ID %d at %s" % [held_prop_id, held_prop_instance.global_position])
+		else:
+			print("PropPickup: WARNING - No camera, prop may be mispositioned")
+
+## Drop the held prop
+func _drop_held_prop() -> void:
+	if not held_prop_instance:
+		return
+	
+	print("PropDrop: Dropping prop")
+	
+	var drop_pos = held_prop_instance.global_position
+	
+	# Compensate for chunk centering offset
+	var drop_obj_def = ObjectRegistry.get_object(held_prop_id)
+	var obj_size = drop_obj_def.get("size", Vector3i(1, 1, 1))
+	var offset_x = float(obj_size.x) / 2.0
+	var offset_z = float(obj_size.z) / 2.0
+	
+	if held_prop_rotation == 1 or held_prop_rotation == 3:
+		var temp = offset_x
+		offset_x = offset_z
+		offset_z = temp
+	
+	var center_offset = Vector3(offset_x, 0, offset_z)
+	var adjusted_drop_pos = drop_pos - center_offset
+	
+	print("PropDrop: building_manager = %s" % building_manager)
+	print("PropDrop: Drop at %s, adjusted = %s" % [drop_pos, adjusted_drop_pos])
+	
+	# Try placement via building manager
+	var success = false
+	if building_manager and building_manager.has_method("place_object"):
+		success = building_manager.place_object(adjusted_drop_pos, held_prop_id, held_prop_rotation)
+		print("PropDrop: place_object returned %s" % success)
+	else:
+		print("PropDrop: No building_manager or no place_object method!")
+	
+	# If direct placement failed, try "Smart Search" (find nearby available cell)
+	if not success and building_manager:
+		var chunk_size = building_manager.get("CHUNK_SIZE")
+		if chunk_size == null:
+			chunk_size = 16 # fallback
+		
+		var chunk_x = int(floor(drop_pos.x / chunk_size))
+		var chunk_y = int(floor(drop_pos.y / chunk_size))
+		var chunk_z = int(floor(drop_pos.z / chunk_size))
+		var chunk_key = Vector3i(chunk_x, chunk_y, chunk_z)
+		
+		if building_manager.chunks.has(chunk_key):
+			var chunk = building_manager.chunks[chunk_key]
+			var local_x = int(floor(drop_pos.x)) % chunk_size
+			var local_y = int(floor(drop_pos.y)) % chunk_size
+			var local_z = int(floor(drop_pos.z)) % chunk_size
+			if local_x < 0: local_x += chunk_size
+			if local_y < 0: local_y += chunk_size
+			if local_z < 0: local_z += chunk_size
+			var base_anchor = Vector3i(local_x, local_y, local_z)
+			
+			var range_r = 2
+			for dx in range(-range_r, range_r + 1):
+				for dy in range(-range_r, range_r + 1):
+					for dz in range(-range_r, range_r + 1):
+						if dx == 0 and dy == 0 and dz == 0: continue
+						var try_anchor = base_anchor + Vector3i(dx, dy, dz)
+						if chunk.has_method("is_cell_available") and chunk.is_cell_available(try_anchor):
+							var anchor_world_pos = Vector3(chunk_key) * chunk_size + Vector3(try_anchor)
+							var new_fractional = drop_pos - anchor_world_pos
+							var cells: Array[Vector3i] = [try_anchor]
+							var obj_def = ObjectRegistry.get_object(held_prop_id)
+							var packed = load(obj_def.scene)
+							var instance = packed.instantiate()
+							instance.position = Vector3(try_anchor) + new_fractional
+							instance.rotation_degrees.y = held_prop_rotation * 90
+							chunk.place_object(try_anchor, held_prop_id, held_prop_rotation, cells, instance, new_fractional)
+							
+							print("PropDrop: Placed at nearby anchor %s" % try_anchor)
+							success = true
+							break
+					if success: break
+				if success: break
+	
+	if not success:
+		print("PropDrop: Placement failed, prop lost")
+	else:
+		print("PropDrop: Placed successfully")
+	
+	# Cleanup held prop
+	if held_prop_instance:
+		held_prop_instance.queue_free()
+	held_prop_instance = null
+	held_prop_id = -1
+	held_prop_rotation = 0
+
+## Recursively disable collisions on a node tree
+func _disable_preview_collisions(node: Node) -> void:
+	if node is CollisionShape3D or node is CollisionPolygon3D:
+		node.disabled = true
+	for child in node.get_children():
+		_disable_preview_collisions(child)
+
+## Check if currently holding a prop
+func is_holding_prop() -> bool:
+	return held_prop_instance != null and is_instance_valid(held_prop_instance)
+
+#endregion
