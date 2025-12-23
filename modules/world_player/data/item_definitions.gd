@@ -34,7 +34,7 @@ static func get_test_items() -> Array[Dictionary]:
 			"name": "Fists",
 			"category": ItemCategory.NONE,
 			"damage": 1,
-			"mining_strength": 0.5,
+			"mining_strength": 1.0,
 			"stack_size": 1
 		},
 		# Slot 1 (key 2): Stone Pickaxe
