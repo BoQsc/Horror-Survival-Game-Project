@@ -11,6 +11,7 @@ uniform float uv_scale = 0.5;
 uniform float biome_scale = 0.002; // Match gen_density.glsl for aligned blending
 uniform float global_snow_amount : hint_range(0.0, 1.0) = 0.0;
 uniform bool biome_blending_enabled = true;  // Toggle: false = exact mat_id, true = smooth per-pixel blending
+uniform bool cliff_rock_enabled = true;  // Toggle: true = rocky texture on steep slopes
 
 // Road mask system - samples road_mask texture based on world position
 // filter_linear for smooth edges (requires higher resolution mask)
@@ -247,11 +248,11 @@ void fragment() {
 	// Slope needed for road and weather effects
 	float slope = normal.y;
 	
-	// === Slope-based Cliff Rock (temporary - can be toggled) ===
-	// Apply rocky texture to steep slopes above surface level
-	bool cliff_rock_enabled = true;  // Toggle to disable cliff rock effect
+	// === Slope-based Cliff Rock (visual enhancement, not material change) ===
+	// Only apply to SURFACE cliffs (above threshold). Underground shows raw materials.
+	// This ensures players can see stone, ore, etc. when mining underground.
 	if (cliff_rock_enabled && !is_player_placed && mat_id != 6) {
-		// Only apply above surface_cliff_threshold
+		// Height-based surface check with smooth transition
 		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
 		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;
 		base_color = mix(base_color, col_rock, cliff_mix);
