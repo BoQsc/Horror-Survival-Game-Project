@@ -241,9 +241,10 @@ func _process_chase(delta):
 	elif dist < attack_range:
 		change_state("ATTACK")
 	else:
-		# Face player
+		# Face player (only if not at same position)
 		var look_pos = Vector3(player.global_position.x, global_position.y, player.global_position.z)
-		look_at(look_pos, Vector3.UP)
+		if global_position.distance_to(look_pos) > 0.01:
+			look_at(look_pos, Vector3.UP)
 		
 		# Move toward player at increased speed
 		var dir = (player.global_position - global_position).normalized()
@@ -260,9 +261,10 @@ func _process_attack(delta):
 	if dist > attack_range + 1.0:
 		change_state("CHASE")
 	else:
-		# Face player
+		# Face player (only if not at same position)
 		var look_pos = Vector3(player.global_position.x, global_position.y, player.global_position.z)
-		look_at(look_pos, Vector3.UP)
+		if global_position.distance_to(look_pos) > 0.01:
+			look_at(look_pos, Vector3.UP)
 		velocity.x = 0
 		velocity.z = 0
 		
