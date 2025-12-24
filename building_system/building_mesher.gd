@@ -11,7 +11,7 @@ var compute_shader: RDShaderFile
 
 # DEBUG: Track GPU mesh generation
 static var mesh_gen_count: int = 0
-const BYTES_PER_CALL: int = 32768  # ~32KB per call (2x 16KB textures + sampler + uniform_set)
+const BYTES_PER_CALL: int = 32768 # ~32KB per call (2x 16KB textures + sampler + uniform_set)
 
 ## GPU RESOURCE CLEANUP TOGGLE
 ## ============================
@@ -79,7 +79,7 @@ func _thread_loop():
 			
 		var chunk = queue.pop_front()
 		# IMPORTANT: Copy data inside lock to ensure thread safety
-		if not is_instance_valid(chunk): 
+		if not is_instance_valid(chunk):
 			mutex.unlock()
 			continue
 			
@@ -112,7 +112,7 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	var cleanup_status = "CLEANUP ON" if ENABLE_GPU_CLEANUP else "CLEANUP OFF (LEAKING!)"
 	if mesh_gen_count <= 3 or mesh_gen_count % 50 == 0:
 		var estimated_kb = mesh_gen_count * BYTES_PER_CALL / 1024.0
-		print("[BuildingMesher] Mesh #%d | %s | Est. GPU use: %.0f KB" % [mesh_gen_count, cleanup_status, estimated_kb if not ENABLE_GPU_CLEANUP else 0])
+		DebugSettings.log_building("[BuildingMesher] Mesh #%d | %s | Est. GPU use: %.0f KB" % [mesh_gen_count, cleanup_status, estimated_kb if not ENABLE_GPU_CLEANUP else 0])
 	
 	# 16x16x16
 	var grid_size = Vector3i(16, 16, 16)
@@ -222,7 +222,7 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	rd.compute_list_end()
 	
 	rd.submit()
-	rd.sync()
+	rd.sync ()
 	
 	# Read
 	var counter_bytes = rd.buffer_get_data(counter_buffer)
@@ -245,19 +245,19 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		var vertices_floats = vertex_bytes.to_float32_array()
 		vertices.resize(actual_vertex_count)
 		for i in range(actual_vertex_count):
-			vertices[i] = Vector3(vertices_floats[i*3], vertices_floats[i*3+1], vertices_floats[i*3+2])
+			vertices[i] = Vector3(vertices_floats[i * 3], vertices_floats[i * 3 + 1], vertices_floats[i * 3 + 2])
 			
 		var normals = []
 		var normals_floats = normal_bytes.to_float32_array()
 		normals.resize(actual_vertex_count)
 		for i in range(actual_vertex_count):
-			normals[i] = Vector3(normals_floats[i*3], normals_floats[i*3+1], normals_floats[i*3+2])
+			normals[i] = Vector3(normals_floats[i * 3], normals_floats[i * 3 + 1], normals_floats[i * 3 + 2])
 
 		var uvs = []
 		var uvs_floats = uv_bytes.to_float32_array()
 		uvs.resize(actual_vertex_count)
 		for i in range(actual_vertex_count):
-			uvs[i] = Vector2(uvs_floats[i*2], uvs_floats[i*2+1])
+			uvs[i] = Vector2(uvs_floats[i * 2], uvs_floats[i * 2 + 1])
 			
 		var indices = index_bytes.to_int32_array()
 

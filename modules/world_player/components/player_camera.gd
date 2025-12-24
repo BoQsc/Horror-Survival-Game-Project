@@ -25,9 +25,9 @@ func _ready() -> void:
 	
 	# Capture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	print("PlayerCamera: Component initialized")
-	print("  - Player: %s" % player.name)
-	print("  - Camera: %s" % camera.name)
+	DebugSettings.log_player("PlayerCamera: Component initialized")
+	DebugSettings.log_player("  - Player: %s" % player.name)
+	DebugSettings.log_player("  - Camera: %s" % camera.name)
 
 func _input(event: InputEvent) -> void:
 	# Toggle menu with Escape
@@ -73,7 +73,7 @@ func get_camera_position() -> Vector3:
 ## Perform a raycast from camera center
 func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_with_areas: bool = false, exclude_water: bool = false) -> Dictionary:
 	if not camera:
-		print("PlayerCamera: raycast - no camera!")
+		DebugSettings.log_player("PlayerCamera: raycast - no camera!")
 		return {}
 	
 	var space_state = player.get_world_3d().direct_space_state

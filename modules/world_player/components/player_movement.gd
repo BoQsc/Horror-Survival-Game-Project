@@ -18,7 +18,7 @@ func _ready() -> void:
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
 		push_error("PlayerMovement: Must be child of Player/Components node")
-	print("PlayerMovement: Component initialized")
+	DebugSettings.log_player("PlayerMovement: Component initialized")
 
 func _physics_process(delta: float) -> void:
 	if not player:

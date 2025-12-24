@@ -30,7 +30,7 @@ func end_measure(name: String, threshold_ms: float = -1.0) -> void:
 
 func log_spike(name: String, duration_ms: float, threshold_ms: float) -> void:
 	var message = "[SPIKE] %s took %.2fms (Threshold: %.2fms)" % [name, duration_ms, threshold_ms]
-	print(message)
+	DebugSettings.log_performance(message)
 
 func _process(delta):
 	# Frame time monitoring

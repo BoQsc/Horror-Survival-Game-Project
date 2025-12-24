@@ -20,7 +20,7 @@ func _ready() -> void:
 	while slots.size() < SLOT_COUNT:
 		slots.append(_create_empty_slot())
 	
-	print("Hotbar: Initialized with %d slots" % slots.size())
+	DebugSettings.log_player("Hotbar: Initialized with %d slots" % slots.size())
 	
 	# Auto-select first slot
 	select_slot(0)
@@ -61,7 +61,7 @@ func select_slot(index: int) -> void:
 	var _old_slot = selected_slot
 	selected_slot = index
 	
-	print("Hotbar: Selected slot %d (%s)" % [index, get_selected_item().get("name", "Empty")])
+	DebugSettings.log_player("Hotbar: Selected slot %d (%s)" % [index, get_selected_item().get("name", "Empty")])
 	
 	_emit_selection_change()
 	PlayerSignals.hotbar_slot_selected.emit(selected_slot)
@@ -135,9 +135,9 @@ func add_item(item: Dictionary) -> bool:
 	var slot = find_first_empty_slot()
 	if slot >= 0:
 		set_item_at(slot, item)
-		print("Hotbar: Added %s to slot %d" % [item.get("name", "item"), slot])
+		DebugSettings.log_player("Hotbar: Added %s to slot %d" % [item.get("name", "item"), slot])
 		return true
-	print("Hotbar: No empty slot for %s" % item.get("name", "item"))
+	DebugSettings.log_player("Hotbar: No empty slot for %s" % item.get("name", "item"))
 	return false
 
 ## Get slot data in inventory-compatible format {item: Dict, count: int}
@@ -159,13 +159,13 @@ func set_slot(index: int, item: Dictionary, count: int) -> void:
 func drop_selected_item() -> void:
 	var item = get_selected_item()
 	if item.get("id", "empty") == "empty":
-		print("Hotbar: Nothing to drop")
+		DebugSettings.log_player("Hotbar: Nothing to drop")
 		return
 	
 	# Get player position for drop
 	var player = get_tree().get_first_node_in_group("player")
 	if not player:
-		print("Hotbar: No player found for drop")
+		DebugSettings.log_player("Hotbar: No player found for drop")
 		return
 	
 	var drop_pos = player.global_position + player.global_transform.basis.z * 2.0 + Vector3.UP
@@ -179,9 +179,9 @@ func drop_selected_item() -> void:
 		pickup.set_item(item, 1)
 		pickup.linear_velocity = player.global_transform.basis.z * -3.0 + Vector3.UP * 2.0
 		
-		print("Hotbar: Dropped %s" % item.get("name", "item"))
+		DebugSettings.log_player("Hotbar: Dropped %s" % item.get("name", "item"))
 		
 		# Clear the slot
 		clear_slot(selected_slot)
 	else:
-		print("Hotbar: Failed to load pickup scene")
+		DebugSettings.log_player("Hotbar: Failed to load pickup scene")

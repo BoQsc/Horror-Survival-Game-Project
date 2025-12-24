@@ -117,7 +117,7 @@ func _freeze_entity(entity: Node3D):
 	if entity is CharacterBody3D:
 		entity.velocity = Vector3.ZERO
 	
-	print("[EntityManager] Frozen entity at distance")
+	DebugSettings.log_entities("Frozen entity at distance")
 
 ## Unfreeze an entity - re-enable physics
 func _unfreeze_entity(entity: Node3D):
@@ -164,7 +164,7 @@ func _unfreeze_entity(entity: Node3D):
 		entity.current_state = ""
 		entity.change_state(current)
 	
-	print("[EntityManager] Unfrozen entity - terrain ready")
+	DebugSettings.log_entities("Unfrozen entity - terrain ready")
 
 ## Check if any dormant entities should be respawned (player returned to their area)
 func _check_dormant_respawns():
@@ -217,7 +217,7 @@ func _check_dormant_respawns():
 					# Restore state
 					if data.health > 0 and "current_health" in entity:
 						entity.current_health = data.health
-					print("[EntityManager] Respawned dormant entity at %s (terrain_y=%.1f)" % [respawn_pos, terrain_y])
+					DebugSettings.log_entities("Respawned dormant entity at %s (terrain_y=%.1f)" % [respawn_pos, terrain_y])
 					completed.append(i)
 	
 	# Remove respawned entities from dormant list (reverse order)
@@ -286,7 +286,7 @@ func despawn_entity(entity: Node3D, permanent: bool = false):
 			"state": entity.current_state if "current_state" in entity else ""
 		}
 		dormant_entities.append(entity_data)
-		print("[EntityManager] Entity stored for respawn at %s" % entity_data.position)
+		DebugSettings.log_entities("Entity stored for respawn at %s" % entity_data.position)
 	
 	# Remove from tracking
 	active_entities.erase(entity)
@@ -376,7 +376,7 @@ func _process_spawn_queue():
 				spawn_data["wait_start"] = current_time
 			elif current_time - spawn_data.wait_start > 10.0:
 				# Waited too long (10s), give up on this spawn
-				print("[EntityManager] Spawn timeout at (%.0f, %.0f) - no collision found" % [pos.x, pos.z])
+				DebugSettings.log_entities("Spawn timeout at (%.0f, %.0f) - no collision found" % [pos.x, pos.z])
 				completed.append(i)
 			continue
 		
@@ -387,18 +387,18 @@ func _process_spawn_queue():
 		# DEBUG: Log what we hit
 		var collider_name = hit_collider.name if hit_collider else "null"
 		var collider_groups = hit_collider.get_groups() if hit_collider else []
-		print("[EntityManager] Raycast hit: %s at Y=%.1f, groups=%s" % [collider_name, terrain_y, collider_groups])
+		DebugSettings.log_entities("Raycast hit: %s at Y=%.1f, groups=%s" % [collider_name, terrain_y, collider_groups])
 		
 		# Only spawn if we hit actual terrain
 		if hit_collider and hit_collider.is_in_group("terrain"):
 			var spawn_pos = Vector3(pos.x, terrain_y + 1.5, pos.z)
 			var entity = spawn_entity(spawn_pos, spawn_data.scene)
 			if entity:
-				print("[EntityManager] Spawned entity at %s (terrain_y=%.1f)" % [spawn_pos, terrain_y])
+				DebugSettings.log_entities("Spawned entity at %s (terrain_y=%.1f)" % [spawn_pos, terrain_y])
 			completed.append(i)
 		else:
 			# Hit something that's not terrain - keep waiting for actual terrain
-			print("[EntityManager] Hit non-terrain collider '%s', waiting for terrain..." % collider_name)
+			DebugSettings.log_entities("Hit non-terrain collider '%s', waiting for terrain..." % collider_name)
 			# Don't mark as completed - keep trying
 	
 	# Remove processed spawns (reverse order)
@@ -474,7 +474,7 @@ func load_save_data(data: Dictionary):
 		for chunk_arr in data.spawned_chunks:
 			if chunk_arr.size() >= 2:
 				spawned_chunks[Vector2i(int(chunk_arr[0]), int(chunk_arr[1]))] = true
-		print("[EntityManager] Restored %d spawned chunk records" % spawned_chunks.size())
+		DebugSettings.log_entities("Restored %d spawned chunk records" % spawned_chunks.size())
 	
 	if not data.has("entities"):
 		return
@@ -497,7 +497,7 @@ func load_save_data(data: Dictionary):
 			if ent_data.has("type"):
 				entity.set_meta("entity_type", ent_data.type)
 	
-	print("EntityManager: Loaded %d entities" % data.entities.size())
+	DebugSettings.log_entities("Loaded %d entities" % data.entities.size())
 
 # ============ PROCEDURAL SPAWNING ============
 
@@ -509,7 +509,7 @@ func _setup_procedural_spawning():
 	# Load zombie scene for procedural spawning
 	if ResourceLoader.exists("res://entities/zombie_base.tscn"):
 		zombie_scene = load("res://entities/zombie_base.tscn")
-		print("[EntityManager] Loaded zombie scene for procedural spawning")
+		DebugSettings.log_entities("Loaded zombie scene for procedural spawning")
 	else:
 		push_warning("[EntityManager] Zombie scene not found - procedural spawning disabled")
 		procedural_spawning_enabled = false
@@ -528,7 +528,7 @@ func _setup_procedural_spawning():
 	
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
-		print("[EntityManager] Connected to chunk_generated signal - procedural spawning active")
+		DebugSettings.log_entities("Connected to chunk_generated signal - procedural spawning active")
 	else:
 		push_warning("[EntityManager] Could not connect to terrain - procedural spawning disabled")
 		procedural_spawning_enabled = false
@@ -552,7 +552,7 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	spawned_chunks[chunk_key] = true
 	
 	# DEBUG: Log every chunk we process
-	print("[EntityManager] Processing chunk %s for spawns" % chunk_key)
+	DebugSettings.log_entities("Processing chunk %s for spawns" % chunk_key)
 	
 	# Deterministic RNG based on chunk coordinate
 	var rng = RandomNumberGenerator.new()
@@ -596,7 +596,7 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 		spawns_this_chunk += 1
 	
 	if spawns_this_chunk > 0:
-		print("[EntityManager] Queued %d zombie(s) in chunk %s (biome %d)" % [spawns_this_chunk, chunk_key, biome_id])
+		DebugSettings.log_entities("Queued %d zombie(s) in chunk %s (biome %d)" % [spawns_this_chunk, chunk_key, biome_id])
 
 ## Get biome ID at world position (must match gen_density.glsl)
 func _get_biome_at(world_x: float, world_z: float) -> int:
@@ -618,4 +618,4 @@ func _get_biome_at(world_x: float, world_z: float) -> int:
 ## Clear spawned chunks tracking (called on new game)
 func clear_spawned_chunks():
 	spawned_chunks.clear()
-	print("[EntityManager] Cleared spawned chunks tracking")
+	DebugSettings.log_entities("Cleared spawned chunks tracking")

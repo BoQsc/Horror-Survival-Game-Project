@@ -52,13 +52,13 @@ func _ready():
 	
 	# Setup animation if found
 	if anim_player:
-		print("Zombie: Found AnimationPlayer with animations: ", anim_player.get_animation_list())
+		DebugSettings.log_entities("Zombie: Found AnimationPlayer with animations: %s" % [anim_player.get_animation_list()])
 		if anim_player.has_animation("Take 001"):
 			anim_player.play("Take 001")
 			anim_player.get_animation("Take 001").loop_mode = Animation.LOOP_NONE
 		anim_player.callback_mode_process = AnimationPlayer.ANIMATION_CALLBACK_MODE_PROCESS_PHYSICS
 	else:
-		print("Zombie: No AnimationPlayer found - will work without animations")
+		DebugSettings.log_entities("Zombie: No AnimationPlayer found - will work without animations")
 	
 	# Setup chase sound
 	chase_audio_player = AudioStreamPlayer3D.new()
@@ -83,7 +83,7 @@ func _ready():
 	floor_max_angle = deg_to_rad(60)
 	
 	# Speed adjustments requested by user:
-	move_speed = 1.5 
+	move_speed = 1.5
 	chase_speed_multiplier = 2.4
 	
 	# Safety start - wait for physics to settle
@@ -145,7 +145,7 @@ func _physics_process(delta):
 	if global_position.y < -10:
 		set_physics_process(false)
 		if anim_player:
-			anim_player.pause()  # Stop animation drift during freeze
+			anim_player.pause() # Stop animation drift during freeze
 		velocity = Vector3.ZERO
 		# Don't teleport to Y=50 - that causes sky falling
 		# EntityManager will respawn us at correct height
@@ -162,7 +162,7 @@ func _update_animation():
 	
 	# Safety: if animation drifted past valid ranges (e.g., was playing while paused),
 	# reset it to the correct position for current state
-	if t > 13.0:  # Animation is way past any valid state range
+	if t > 13.0: # Animation is way past any valid state range
 		match current_state:
 			"IDLE":
 				anim_player.seek(0.0)
@@ -213,7 +213,7 @@ func _process_idle(delta):
 
 func _process_walk(delta):
 	# Move forward
-	var forward_dir = -transform.basis.z.normalized()
+	var forward_dir = - transform.basis.z.normalized()
 	velocity.x = forward_dir.x * move_speed
 	velocity.z = forward_dir.z * move_speed
 	
@@ -276,7 +276,7 @@ func _do_attack():
 	if not player:
 		return
 	
-	print("Zombie attacked player!")
+	DebugSettings.log_entities("Zombie attacked player!")
 	zombie_attacked.emit(player)
 	
 	if player.has_method("take_damage"):
@@ -337,14 +337,14 @@ func take_damage(amount: int):
 		return
 	
 	current_health -= amount
-	print("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
+	DebugSettings.log_entities("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
 	
 	if current_health <= 0:
 		die()
 
 func die():
 	change_state("DEAD")
-	print("Zombie died!")
+	DebugSettings.log_entities("Zombie died!")
 	zombie_died.emit(self)
 	velocity = Vector3.ZERO
 	

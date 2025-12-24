@@ -4,9 +4,9 @@ class_name PrefabSpawner
 ## Spawns prefab buildings near procedural roads
 ## Uses the existing building system so buildings are destructible/mutable
 
-@export var terrain_manager: Node3D  # ChunkManager reference
-@export var building_manager: Node3D  # BuildingManager reference
-@export var viewer: Node3D  # Player reference for distance checks
+@export var terrain_manager: Node3D # ChunkManager reference
+@export var building_manager: Node3D # BuildingManager reference
+@export var viewer: Node3D # Player reference for distance checks
 
 ## Procedural road settings (must match ChunkManager)
 @export var road_spacing: float = 100.0
@@ -14,17 +14,17 @@ class_name PrefabSpawner
 @export var enabled: bool = true
 
 ## Spawning settings
-@export var spawn_distance_from_road: float = 15.0  # How far from road center
-@export var spawn_interval: float = 50.0  # Distance between buildings along road
-@export var seed_offset: int = 42  # Added to world seed for variety
-@export var door_despawn_distance: float = 150.0  # Distance at which doors unload
+@export var spawn_distance_from_road: float = 15.0 # How far from road center
+@export var spawn_interval: float = 50.0 # Distance between buildings along road
+@export var seed_offset: int = 42 # Added to world seed for variety
+@export var door_despawn_distance: float = 150.0 # Distance at which doors unload
 
 # Track which road intersections have been processed
 # This is persisted via SaveManager to prevent respawning
 var spawned_positions: Dictionary = {}
 
 # Track spawned doors for distance-based cleanup
-var spawned_doors: Dictionary = {}  # "x_z" -> door instance
+var spawned_doors: Dictionary = {} # "x_z" -> door instance
 
 # Preload the interactive door scene
 const DOOR_SCENE = preload("res://models/interactive_door/interactive_door.tscn")
@@ -34,7 +34,7 @@ const DOOR_SCENE = preload("res://models/interactive_door/interactive_door.tscn"
 var prefabs = {
 	"small_house": [
 		# Entrance stairs (in front, type=4 is stairs)
-		{"offset": Vector3i(1, 0, -1), "type": 4, "meta": 0},  # Stairs facing +Z (into building)
+		{"offset": Vector3i(1, 0, -1), "type": 4, "meta": 0}, # Stairs facing +Z (into building)
 		
 		# Floor
 		{"offset": Vector3i(0, 0, 0), "type": 1, "meta": 0},
@@ -51,7 +51,7 @@ var prefabs = {
 		{"offset": Vector3i(0, 1, 0), "type": 1, "meta": 0},
 		{"offset": Vector3i(2, 1, 0), "type": 1, "meta": 0},
 		{"offset": Vector3i(0, 1, 2), "type": 1, "meta": 0},
-		{"offset": Vector3i(1, 1, 2), "type": 1, "meta": 0},  # Back wall
+		{"offset": Vector3i(1, 1, 2), "type": 1, "meta": 0}, # Back wall
 		{"offset": Vector3i(2, 1, 2), "type": 1, "meta": 0},
 		{"offset": Vector3i(0, 1, 1), "type": 1, "meta": 0},
 		{"offset": Vector3i(2, 1, 1), "type": 1, "meta": 0},
@@ -94,7 +94,7 @@ func _ready():
 	# Connect to chunk generation signal
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
-		print("PrefabSpawner: Connected to terrain_manager")
+		DebugSettings.log_building("PrefabSpawner connected to terrain_manager")
 	
 	# Setup forest noise (same params as vegetation_manager)
 	forest_noise = FastNoiseLite.new()
@@ -142,10 +142,10 @@ func _is_forested_area(x: float, z: float) -> bool:
 	if not forest_noise:
 		return false
 	# Check a small area around the point
-	for dx in range(-2, 5, 2):  # -2 to 4 step 2 = covers 3x3 building
+	for dx in range(-2, 5, 2): # -2 to 4 step 2 = covers 3x3 building
 		for dz in range(-2, 5, 2):
 			var noise_val = forest_noise.get_noise_2d(x + dx, z + dz)
-			if noise_val >= 0.4:  # Trees spawn when >= 0.4
+			if noise_val >= 0.4: # Trees spawn when >= 0.4
 				return true
 	return false
 
@@ -158,8 +158,8 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 		return
 	
 	# Check for road intersections in this chunk
-	var chunk_world_x = coord.x * 31  # CHUNK_STRIDE
-	var chunk_world_z = coord.z * 31  # Use .z for Z coordinate (Vector3i)
+	var chunk_world_x = coord.x * 31 # CHUNK_STRIDE
+	var chunk_world_z = coord.z * 31 # Use .z for Z coordinate (Vector3i)
 	
 	_check_and_spawn_buildings(chunk_world_x, chunk_world_z)
 
@@ -214,7 +214,7 @@ func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 			# Use max height to ensure building sits on highest point
 			var terrain_y = max(max(h1, h2), max(h3, h4))
 			if terrain_y < 0:
-				terrain_y = 15.0  # Fallback
+				terrain_y = 15.0 # Fallback
 			
 			# Place floor at terrain level (prefab floor is at Y=0)
 			var spawn_pos = Vector3(spawn_x, terrain_y, spawn_z)
@@ -227,7 +227,7 @@ func _get_terrain_height(x: float, z: float) -> float:
 		return terrain_manager.get_terrain_height(x, z)
 	return -1.0
 
-var vegetation_manager: Node3D  # Cached reference
+var vegetation_manager: Node3D # Cached reference
 
 func _get_vegetation_manager() -> Node3D:
 	if not vegetation_manager:
@@ -244,14 +244,14 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 	# Clear vegetation in the building area first
 	var veg_mgr = _get_vegetation_manager()
 	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
-		veg_mgr.clear_vegetation_in_area(world_pos, 5.0)  # 5 meter radius
+		veg_mgr.clear_vegetation_in_area(world_pos, 5.0) # 5 meter radius
 	
 	var blocks = prefabs[prefab_name]
 	
 	for block in blocks:
 		var offset = block.offset
 		var block_type = block.type
-		var block_meta = block.get("meta", 0)  # Default to 0 if not specified
+		var block_meta = block.get("meta", 0) # Default to 0 if not specified
 		
 		var pos = world_pos + Vector3(offset)
 		building_manager.set_voxel(pos, block_type, block_meta)
@@ -260,7 +260,7 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 	if prefab_name == "small_house":
 		_spawn_door_at_prefab(world_pos)
 	
-	print("PrefabSpawner: Spawned %s at %v" % [prefab_name, world_pos])
+	DebugSettings.log_building("Spawned %s at %v" % [prefab_name, world_pos])
 
 ## Spawn an interactive door at the prefab doorway
 func _spawn_door_at_prefab(prefab_world_pos: Vector3):
@@ -273,7 +273,7 @@ func _spawn_door_at_prefab(prefab_world_pos: Vector3):
 	
 	# The doorway is at block offset (1, 1, 0) in the small_house prefab
 	# Door should be placed at the front of the building, facing outward
-	var door_offset = Vector3(1.5, 1.0, 0.0)  # Center in x, floor level + 1, front edge
+	var door_offset = Vector3(1.5, 1.0, 0.0) # Center in x, floor level + 1, front edge
 	var door_pos = prefab_world_pos + door_offset
 	
 	# Instance the door scene
@@ -291,7 +291,7 @@ func _spawn_door_at_prefab(prefab_world_pos: Vector3):
 	# Track door for cleanup
 	spawned_doors[key] = door_instance
 	
-	print("PrefabSpawner: Spawned door at %v" % door_pos)
+	DebugSettings.log_building("Spawned door at %v" % door_pos)
 
 ## Save/Load persistence - prevents prefabs from respawning after load
 func get_save_data() -> Dictionary:
@@ -304,7 +304,7 @@ func load_save_data(data: Dictionary):
 		spawned_positions.clear()
 		for key in data.spawned_positions:
 			spawned_positions[key] = true
-		print("PrefabSpawner: Loaded %d spawned positions" % spawned_positions.size())
+		DebugSettings.log_building("Loaded %d spawned positions" % spawned_positions.size())
 
 # ============ USER PREFAB SUPPORT ============
 
@@ -332,7 +332,7 @@ func load_user_prefabs():
 	dir.list_dir_end()
 	
 	if count > 0:
-		print("PrefabSpawner: Loaded %d user prefabs" % count)
+		DebugSettings.log_building("Loaded %d user prefabs" % count)
 
 ## Load a single prefab from JSON file (v2 bracket notation format only)
 ## Checks res://prefabs/ first, then user://prefabs/
@@ -343,7 +343,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 		# Fall back to user://prefabs/ (user-created prefabs)
 		path = USER_PREFAB_DIR + prefab_name + ".json"
 		if not FileAccess.file_exists(path):
-			print("PrefabSpawner: Prefab not found in res:// or user:// : %s" % prefab_name)
+			DebugSettings.log_building("Prefab not found in res:// or user:// : %s" % prefab_name)
 			return false
 	
 	var file = FileAccess.open(path, FileAccess.READ)
@@ -355,7 +355,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 	
 	var json = JSON.new()
 	if json.parse(json_string) != OK:
-		print("PrefabSpawner: Failed to parse prefab: %s" % prefab_name)
+		DebugSettings.log_building("Failed to parse prefab: %s" % prefab_name)
 		return false
 	
 	var data = json.get_data()
@@ -363,7 +363,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 	
 	# v2 format required
 	if version < 2 or not data.has("layers"):
-		print("PrefabSpawner: Prefab '%s' uses old format (v%d). Run convert_prefab.py to upgrade." % [prefab_name, version])
+		DebugSettings.log_building("Prefab '%s' uses old format (v%d). Run convert_prefab.py to upgrade." % [prefab_name, version])
 		return false
 	
 	# Parse bracket notation layers
@@ -379,7 +379,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 		get_meta("prefab_objects")[prefab_name] = _parse_compact_objects(data.objects)
 	
 
-	print("PrefabSpawner: Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
+	DebugSettings.log_building("Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
 	return true
 
 ## Parse bracket notation token to type and meta
@@ -417,7 +417,7 @@ func _parse_layers(layers: Array, size_arr: Array) -> Array:
 			continue
 		
 		# Parse tokens in this row
-		var tokens = line.split(" ", false)  # false = skip empty
+		var tokens = line.split(" ", false) # false = skip empty
 		var x = 0
 		for token in tokens:
 			var parsed = _parse_token(token.strip_edges())
@@ -494,7 +494,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	# Walls have blocks at many consecutive Y levels, interior floors have gaps
 	if interior_carve and terrain_manager and terrain_manager.has_method("modify_terrain"):
 		# Build occupancy map: track which X,Z columns have blocks and at what Y levels
-		var column_blocks = {}  # Key: Vector2i(x,z), Value: Array of Y values
+		var column_blocks = {} # Key: Vector2i(x,z), Value: Array of Y values
 		var min_y = 999
 		var max_y = -999
 		
@@ -508,7 +508,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			min_y = min(min_y, rotated_offset.y)
 			max_y = max(max_y, rotated_offset.y)
 		
-		print("[InteriorCarve] Prefab Y range: %d to %d, columns: %d" % [min_y, max_y, column_blocks.size()])
+		DebugSettings.log_building("[InteriorCarve] Prefab Y range: %d to %d, columns: %d" % [min_y, max_y, column_blocks.size()])
 		
 		# Interior column detection: a column is interior if it has fewer blocks
 		# than the total height span (i.e., there are empty/gap Y levels)
@@ -525,7 +525,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			var is_interior = block_count < prefab_height
 			
 			if not is_interior:
-				continue  # Skip fully-filled wall columns
+				continue # Skip fully-filled wall columns
 			
 			interior_count += 1
 			
@@ -540,16 +540,16 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				var y = int(pos.y)
 				while y <= int(terrain_y):
 					var carve_pos = Vector3(pos.x + 0.5, float(y) + 0.5, pos.z + 0.5)
-					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)  # Box shape, dig
+					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0) # Box shape, dig
 					carve_count += 1
 					y += 1
 		
-		print("[InteriorCarve] Found %d interior columns, carved %d positions" % [interior_count, carve_count])
+		DebugSettings.log_building("[InteriorCarve] Found %d interior columns, carved %d positions" % [interior_count, carve_count])
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:
 		var mode_str = "carve-only" if carve_terrain else "fill-only"
-		print("PrefabSpawner: Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
+		DebugSettings.log_building("Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 		return true
 	
 	# Spawn blocks with rotation
@@ -605,7 +605,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				
 				# Remove Y offset if pivot is bottom-centered
 				var center_offset = rotated_half_size
-				center_offset.y = 0 
+				center_offset.y = 0
 				
 				# 5. Calculate Final Target Center
 				var target_center = target_corner + center_offset
@@ -640,7 +640,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
 	
 	var mode_str = "carve" if carve_terrain else ("fill" if foundation_fill else "surface")
-	print("PrefabSpawner: Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
+	DebugSettings.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 	return true
 
 ## Fill terrain gaps under the prefab's foundation layer (Y=0 blocks)
@@ -648,7 +648,7 @@ func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
 	if not terrain_manager or not terrain_manager.has_method("modify_terrain"):
 		return
 	
-	print("[Foundation Fill] Starting fill for prefab at %v" % spawn_pos)
+	DebugSettings.log_building("[Foundation Fill] Starting fill for prefab at %v" % spawn_pos)
 	
 	# Find the minimum Y in the prefab (usually 0, but could be offset)
 	var min_y = 999
@@ -672,22 +672,22 @@ func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
 		var target_y = block_world_pos.y
 		var gap = target_y - terrain_y
 		
-		print("  Block at (%d, %d): terrain_y=%.1f, target_y=%.1f, gap=%.1f" % [
+		DebugSettings.log_building("  Block at (%d, %d): terrain_y=%.1f, target_y=%.1f, gap=%.1f" % [
 			int(block_world_pos.x), int(block_world_pos.z), terrain_y, target_y, gap])
 		
 		# Only fill if there's a gap (terrain is below foundation)
 		if gap > 0.2:
 			# Fill in 1-block increments from terrain up to foundation
 			# Each fill creates solid terrain at that level
-			var current_y = terrain_y + 0.5  # Start half a block above terrain
+			var current_y = terrain_y + 0.5 # Start half a block above terrain
 			while current_y < target_y:
 				var fill_pos = Vector3(block_world_pos.x + 0.5, current_y, block_world_pos.z + 0.5)
 				# Strong fill: shape 1 = box, value -2.0 = aggressive terrain add
-				terrain_manager.modify_terrain(fill_pos, 0.6, -2.0, 1, 0)  # Box shape, STRONG fill
-				current_y += 0.8  # Move up slightly less than 1 for overlap
+				terrain_manager.modify_terrain(fill_pos, 0.6, -2.0, 1, 0) # Box shape, STRONG fill
+				current_y += 0.8 # Move up slightly less than 1 for overlap
 				fill_count += 1
 	
-	print("[Foundation Fill] Completed: %d fill operations" % fill_count)
+	DebugSettings.log_building("[Foundation Fill] Completed: %d fill operations" % fill_count)
 
 
 func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
@@ -706,7 +706,7 @@ func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
 ## Get list of available prefabs from both res://prefabs/ and user://prefabs/
 func get_available_prefabs() -> Array[String]:
 	var result: Array[String] = []
-	var seen: Dictionary = {}  # Track names to avoid duplicates
+	var seen: Dictionary = {} # Track names to avoid duplicates
 	
 	# Check res://prefabs/ first (built-in prefabs)
 	var res_dir = DirAccess.open(RES_PREFAB_DIR)
@@ -742,26 +742,26 @@ func get_available_prefabs() -> Array[String]:
 ## Rotate a Vector3i offset by 90 degree increments
 func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
 	match rotation:
-		0: return offset  # No rotation
-		1: return Vector3i(-offset.z, offset.y, offset.x)   # 90°
-		2: return Vector3i(-offset.x, offset.y, -offset.z)  # 180°
-		3: return Vector3i(offset.z, offset.y, -offset.x)   # 270°
+		0: return offset # No rotation
+		1: return Vector3i(-offset.z, offset.y, offset.x) # 90°
+		2: return Vector3i(-offset.x, offset.y, -offset.z) # 180°
+		3: return Vector3i(offset.z, offset.y, -offset.x) # 270°
 	return offset
 
 ## Rotate a Vector3 offset by 90 degree increments (preserves float precision)
 func _rotate_vector3_offset(offset: Vector3, rotation: int) -> Vector3:
 	match rotation:
-		0: return offset  # No rotation
-		1: return Vector3(-offset.z, offset.y, offset.x)   # 90°
-		2: return Vector3(-offset.x, offset.y, -offset.z)  # 180°
-		3: return Vector3(offset.z, offset.y, -offset.x)   # 270°
+		0: return offset # No rotation
+		1: return Vector3(-offset.z, offset.y, offset.x) # 90°
+		2: return Vector3(-offset.x, offset.y, -offset.z) # 180°
+		3: return Vector3(offset.z, offset.y, -offset.x) # 270°
 	return offset
 ## Get correction offset to realign geometry with the voxel grid after rotation
 ## This is needed because rotating 0..1 into the negative axis (e.g. -1..0) 
 ## shifts the floor() index by -1 compared to simple integer negation.
 func _get_grid_correction(rotation: int) -> Vector3:
 	match rotation:
-		1: return Vector3(1, 0, 0)  # X axis becomes negative Z
-		2: return Vector3(1, 0, 1)  # X->-X, Z->-Z
-		3: return Vector3(0, 0, 1)  # Z axis becomes negative X
+		1: return Vector3(1, 0, 0) # X axis becomes negative Z
+		2: return Vector3(1, 0, 1) # X->-X, Z->-Z
+		3: return Vector3(0, 0, 1) # Z axis becomes negative X
 	return Vector3.ZERO

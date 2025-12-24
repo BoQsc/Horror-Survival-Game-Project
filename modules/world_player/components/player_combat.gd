@@ -23,7 +23,7 @@ func _ready() -> void:
 	player = get_parent().get_parent() as WorldPlayer
 	hotbar = get_node_or_null("../../Systems/Hotbar")
 	
-	print("PlayerCombat: Initialized")
+	DebugSettings.log_player("PlayerCombat: Initialized")
 
 func _process(delta: float) -> void:
 	# Update cooldown
@@ -106,12 +106,12 @@ func _update_combo() -> void:
 
 ## Called on successful hit
 func _on_attack_hit(target: Node, damage: int) -> void:
-	print("PlayerCombat: Hit %s for %d damage (combo: %d)" % [target.name, damage, combo_count])
+	DebugSettings.log_player("PlayerCombat: Hit %s for %d damage (combo: %d)" % [target.name, damage, combo_count])
 	PlayerSignals.damage_dealt.emit(target, damage)
 
 ## Called when hitting non-damageable object
 func _on_attack_hit_object(hit: Dictionary) -> void:
-	print("PlayerCombat: Hit object at %s" % hit.get("position", Vector3.ZERO))
+	DebugSettings.log_player("PlayerCombat: Hit object at %s" % hit.get("position", Vector3.ZERO))
 
 ## Called on miss
 func _on_attack_miss() -> void:

@@ -76,12 +76,12 @@ func _ready() -> void:
 	# Create debug marker for material targeting
 	_create_material_target_marker()
 	
-	print("ModePlay: Initialized")
-	print("  - Player: %s" % ("OK" if player else "MISSING"))
-	print("  - Hotbar: %s" % ("OK" if hotbar else "MISSING"))
-	print("  - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
-	print("  - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
-	print("  - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
+	DebugSettings.log_player("ModePlay: Initialized")
+	DebugSettings.log_player("  - Player: %s" % ("OK" if player else "MISSING"))
+	DebugSettings.log_player("  - Hotbar: %s" % ("OK" if hotbar else "MISSING"))
+	DebugSettings.log_player("  - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
+	DebugSettings.log_player("  - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
+	DebugSettings.log_player("  - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
@@ -128,12 +128,12 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			# T pressed down - grab prop
 			if not is_grabbing_prop():
-				print("PropGrab: Starting grab")
+				DebugSettings.log_player("PropGrab: Starting grab")
 				_try_grab_prop()
 		else:
 			# T released - drop prop
 			if is_grabbing_prop():
-				print("PropGrab: Dropping")
+				DebugSettings.log_player("PropGrab: Dropping")
 				_drop_grabbed_prop()
 	
 	# E key for item pickup (adds to hotbar)
@@ -180,19 +180,19 @@ func _update_terrain_targeting() -> void:
 ## Handle primary action (left click) in PLAY mode
 func handle_primary(item: Dictionary) -> void:
 	mat_debug_on_click = true # Enable debug logging for this click
-	print("ModePlay: handle_primary called with item: %s" % item.get("name", "unknown"))
+	DebugSettings.log_player("ModePlay: handle_primary called with item: %s" % item.get("name", "unknown"))
 	
 	# If grabbing a prop, don't do other actions
 	if is_grabbing_prop():
-		print("ModePlay: Grabbing prop, ignoring primary action")
+		DebugSettings.log_player("ModePlay: Grabbing prop, ignoring primary action")
 		return
 	
 	if attack_cooldown > 0:
-		print("ModePlay: Still on cooldown (%.2f)" % attack_cooldown)
+		DebugSettings.log_player("ModePlay: Still on cooldown (%.2f)" % attack_cooldown)
 		return
 	
 	var category = item.get("category", 0)
-	print("ModePlay: Category = %d" % category)
+	DebugSettings.log_player("ModePlay: Category = %d" % category)
 	
 	match category:
 		0: # NONE - Fists
@@ -229,20 +229,20 @@ func _do_punch(item: Dictionary) -> void:
 	# Use exclude_water=true to pierce through water surfaces
 	var hit = player.raycast(5.0, 0xFFFFFFFF, true, true)
 	if hit.is_empty():
-		print("ModePlay: Punch - miss")
+		DebugSettings.log_player("ModePlay: Punch - miss")
 		return
 	
 	var damage = item.get("damage", 1)
 	var target = hit.get("collider")
 	var position = hit.get("position", Vector3.ZERO)
 	
-	print("ModePlay: Punch - hit %s" % (target.name if target else "nothing"))
+	DebugSettings.log_player("ModePlay: Punch - hit %s" % (target.name if target else "nothing"))
 	
 	# Check for damageable target (direct or parent with take_damage)
 	var damageable = _find_damageable(target)
 	if damageable:
 		damageable.take_damage(damage)
-		print("ModePlay: Punched %s for %d damage" % [damageable.name, damage])
+		DebugSettings.log_player("ModePlay: Punched %s for %d damage" % [damageable.name, damage])
 		PlayerSignals.damage_dealt.emit(damageable, damage)
 		return
 	
@@ -258,21 +258,21 @@ func _do_punch(item: Dictionary) -> void:
 			tree_damage[tree_rid] = tree_damage.get(tree_rid, 0) + tree_dmg
 			var current_hp = TREE_HP - tree_damage[tree_rid]
 			durability_target = tree_rid # Track for look-away clearing
-			print("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
+			DebugSettings.log_player("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
 			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree")
 			if tree_damage[tree_rid] >= TREE_HP:
 				vegetation_manager.chop_tree_by_collider(target)
 				tree_damage.erase(tree_rid)
 				PlayerSignals.durability_cleared.emit()
-				print("ModePlay: Tree chopped!")
+				DebugSettings.log_player("ModePlay: Tree chopped!")
 			return
 		elif target.is_in_group("grass"):
 			vegetation_manager.harvest_grass_by_collider(target)
-			print("ModePlay: Punched grass")
+			DebugSettings.log_player("ModePlay: Punched grass")
 			return
 		elif target.is_in_group("rocks"):
 			vegetation_manager.harvest_rock_by_collider(target)
-			print("ModePlay: Punched rock")
+			DebugSettings.log_player("ModePlay: Punched rock")
 			return
 	
 	# Check for placed objects (furniture, etc.)
@@ -285,7 +285,7 @@ func _do_punch(item: Dictionary) -> void:
 		object_damage[obj_rid] = object_damage.get(obj_rid, 0) + obj_dmg
 		var current_hp = OBJECT_HP - object_damage[obj_rid]
 		durability_target = obj_rid # Track for look-away clearing
-		print("ModePlay: Hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
+		DebugSettings.log_player("ModePlay: Hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
 		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name)
 		if object_damage[obj_rid] >= OBJECT_HP:
 			# Remove via building manager
@@ -293,7 +293,7 @@ func _do_punch(item: Dictionary) -> void:
 				var anchor = target.get_meta("anchor")
 				var chunk = target.get_meta("chunk")
 				chunk.remove_object(anchor)
-				print("ModePlay: Object destroyed!")
+				DebugSettings.log_player("ModePlay: Object destroyed!")
 			object_damage.erase(obj_rid)
 			PlayerSignals.durability_cleared.emit()
 		return
@@ -311,7 +311,7 @@ func _do_punch(item: Dictionary) -> void:
 			block_damage[block_pos] = block_damage.get(block_pos, 0) + blk_dmg
 			var current_hp = BLOCK_HP - block_damage[block_pos]
 			durability_target = block_pos # Track for look-away clearing (Vector3i)
-			print("ModePlay: Hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
+			DebugSettings.log_player("ModePlay: Hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
 			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block")
 			if block_damage[block_pos] >= BLOCK_HP:
 				# Remove the block
@@ -319,7 +319,7 @@ func _do_punch(item: Dictionary) -> void:
 				building_manager.set_voxel(Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z)), 0.0)
 				block_damage.erase(block_pos)
 				PlayerSignals.durability_cleared.emit()
-				print("ModePlay: Block destroyed!")
+				DebugSettings.log_player("ModePlay: Block destroyed!")
 			return
 	
 	# Default - hit terrain (modify it)
@@ -333,15 +333,15 @@ func _do_punch(item: Dictionary) -> void:
 			
 			# material_id=-1 preserves existing terrain material
 			terrain_manager.modify_terrain(position, strength, 1.0, 0, 0, -1)
-			print("ModePlay: Punched terrain at %s (strength: %.1f, mat: %d)" % [position, strength, mat_id])
+			DebugSettings.log_player("ModePlay: Punched terrain at %s (strength: %.1f, mat: %d)" % [position, strength, mat_id])
 			
 			# Add collected resource to inventory
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)
 		else:
-			print("ModePlay: Item has no mining strength")
+			DebugSettings.log_player("ModePlay: Item has no mining strength")
 	else:
-		print("ModePlay: No terrain_manager or missing modify_terrain method")
+		DebugSettings.log_player("ModePlay: No terrain_manager or missing modify_terrain method")
 
 ## Find BuildingChunk from a collider (check parent hierarchy)
 func _find_building_chunk(collider: Node) -> Node:
@@ -416,14 +416,14 @@ func _check_durability_target() -> void:
 ## Tool attack/mine
 func _do_tool_attack(item: Dictionary) -> void:
 	if not player:
-		print("ModePlay: Tool attack - no player!")
+		DebugSettings.log_player("ModePlay: Tool attack - no player!")
 		return
 	
 	attack_cooldown = ATTACK_COOLDOWN_TIME
 	
 	var hit = player.raycast(3.5) # Tool range
 	if hit.is_empty():
-		print("ModePlay: Tool attack - no hit")
+		DebugSettings.log_player("ModePlay: Tool attack - no hit")
 		return
 	
 	var damage = item.get("damage", 1)
@@ -431,12 +431,12 @@ func _do_tool_attack(item: Dictionary) -> void:
 	var target = hit.get("collider")
 	var position = hit.get("position", Vector3.ZERO)
 	
-	print("ModePlay: Tool hit %s at %s (mining_strength: %.1f)" % [target.name if target else "nothing", position, mining_strength])
+	DebugSettings.log_player("ModePlay: Tool hit %s at %s (mining_strength: %.1f)" % [target.name if target else "nothing", position, mining_strength])
 	
 	# Priority 1: Damage enemies
 	if target and target.is_in_group("enemies") and target.has_method("take_damage"):
 		target.take_damage(damage)
-		print("ModePlay: Hit enemy for %d damage" % damage)
+		DebugSettings.log_player("ModePlay: Hit enemy for %d damage" % damage)
 		PlayerSignals.damage_dealt.emit(target, damage)
 		return
 	
@@ -444,29 +444,29 @@ func _do_tool_attack(item: Dictionary) -> void:
 	if target and vegetation_manager:
 		if target.is_in_group("trees"):
 			vegetation_manager.chop_tree_by_collider(target)
-			print("ModePlay: Chopped tree with %s" % item.get("name", "tool"))
+			DebugSettings.log_player("ModePlay: Chopped tree with %s" % item.get("name", "tool"))
 			return
 		elif target.is_in_group("grass"):
 			vegetation_manager.harvest_grass_by_collider(target)
-			print("ModePlay: Harvested grass")
+			DebugSettings.log_player("ModePlay: Harvested grass")
 			return
 		elif target.is_in_group("rocks"):
 			vegetation_manager.harvest_rock_by_collider(target)
-			print("ModePlay: Mined rock")
+			DebugSettings.log_player("ModePlay: Mined rock")
 			return
 	
 	# Priority 3: Mine terrain
-	print("ModePlay: Trying to mine terrain... terrain_manager=%s" % (terrain_manager != null))
+	DebugSettings.log_player("ModePlay: Trying to mine terrain... terrain_manager=%s" % (terrain_manager != null))
 	if terrain_manager:
-		print("ModePlay: terrain_manager.has_method('modify_terrain')=%s" % terrain_manager.has_method("modify_terrain"))
+		DebugSettings.log_player("ModePlay: terrain_manager.has_method('modify_terrain')=%s" % terrain_manager.has_method("modify_terrain"))
 		if terrain_manager.has_method("modify_terrain"):
-			print("ModePlay: Calling modify_terrain(%s, %.1f, 1.0, 0, 0)" % [position, mining_strength])
+			DebugSettings.log_player("ModePlay: Calling modify_terrain(%s, %.1f, 1.0, 0, 0)" % [position, mining_strength])
 			terrain_manager.modify_terrain(position, mining_strength, 1.0, 0, 0)
-			print("ModePlay: Mined terrain at %s (strength: %.1f)" % [position, mining_strength])
+			DebugSettings.log_player("ModePlay: Mined terrain at %s (strength: %.1f)" % [position, mining_strength])
 		else:
-			print("ModePlay: terrain_manager missing modify_terrain method!")
+			DebugSettings.log_player("ModePlay: terrain_manager missing modify_terrain method!")
 	else:
-		print("ModePlay: terrain_manager is NULL!")
+		DebugSettings.log_player("ModePlay: terrain_manager is NULL!")
 
 ## Collect water with bucket
 func _do_bucket_collect(_item: Dictionary) -> void:
@@ -479,7 +479,7 @@ func _do_bucket_collect(_item: Dictionary) -> void:
 	
 	var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
 	terrain_manager.modify_terrain(center, 0.6, 0.5, 1, 1) # Same as placement but positive value
-	print("ModePlay: Collected water at %s" % current_target_pos)
+	DebugSettings.log_player("ModePlay: Collected water at %s" % current_target_pos)
 	# TODO: Switch bucket from empty to full
 
 ## Place water from bucket
@@ -491,14 +491,14 @@ func _do_bucket_place(_item: Dictionary) -> void:
 	if has_target:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
 		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 1) # Box shape, fill, water layer
-		print("ModePlay: Placed water at %s" % current_target_pos)
+		DebugSettings.log_player("ModePlay: Placed water at %s" % current_target_pos)
 	else:
 		var hit = player.raycast(5.0)
 		if hit.is_empty():
 			return
 		var pos = hit.position + hit.normal * 0.5
 		terrain_manager.modify_terrain(pos, 0.6, -0.5, 1, 1)
-		print("ModePlay: Placed water at %s" % pos)
+		DebugSettings.log_player("ModePlay: Placed water at %s" % pos)
 	# TODO: Switch bucket from full to empty
 
 ## Place resource (terrain material) - paints voxel with resource's material ID
@@ -509,25 +509,25 @@ func _do_resource_place(item: Dictionary) -> void:
 	# Get material ID from resource item (legacy: 100=Grass, 101=Stone, 102=Sand, 103=Snow)
 	# Item definitions use mat_id field (0=Grass, 1=Sand, etc) - need to check both formats
 	var mat_id = item.get("mat_id", -1)
-	print("ModePlay: _do_resource_place item=%s mat_id_raw=%d" % [item, mat_id])
+	DebugSettings.log_player("ModePlay: _do_resource_place item=%s mat_id_raw=%d" % [item, mat_id])
 	if mat_id < 0:
 		# Fallback: check if it has a material_id field
 		mat_id = item.get("material_id", 0)
-		print("ModePlay: Fallback to material_id field, mat_id=%d" % mat_id)
+		DebugSettings.log_player("ModePlay: Fallback to material_id field, mat_id=%d" % mat_id)
 	
 	# CRITICAL: Add 100 offset for player-placed materials!
 	# The terrain shader only skips biome blending for mat_id >= 100
 	# Legacy system used: 100=Grass, 101=Stone, 102=Sand, 103=Snow
 	if mat_id < 100:
 		mat_id += 100
-		print("ModePlay: Converted to player-placed mat_id=%d" % mat_id)
+		DebugSettings.log_player("ModePlay: Converted to player-placed mat_id=%d" % mat_id)
 	
 	# Use grid-aligned position if targeting is active
 	if has_target:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
 		# Fixed 0.6 brush size, box shape (1), terrain layer (0), with mat_id
 		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0, mat_id)
-		print("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
+		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
 		var hit = player.raycast(5.0)
 		if hit.is_empty():
@@ -536,7 +536,7 @@ func _do_resource_place(item: Dictionary) -> void:
 		var p = hit.position + hit.normal * 0.1
 		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, 0, mat_id)
-		print("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, target_pos])
+		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, target_pos])
 
 func _exit_tree() -> void:
 	if selection_box and is_instance_valid(selection_box):
@@ -558,7 +558,7 @@ func _update_held_prop(delta: float) -> void:
 	if not cam:
 		cam = get_viewport().get_camera_3d()
 	if not cam:
-		print("PropHold: WARNING - No camera found!")
+		DebugSettings.log_player("PropHold: WARNING - No camera found!")
 		return
 	
 	# Float 2 meters in front of camera
@@ -571,7 +571,7 @@ func _update_held_prop(delta: float) -> void:
 	
 	# Debug every 60 frames
 	if Engine.get_process_frames() % 60 == 0:
-		print("PropHold: Prop at %s (visible: %s)" % [held_prop_instance.global_position, held_prop_instance.visible])
+		DebugSettings.log_player("PropHold: Prop at %s (visible: %s)" % [held_prop_instance.global_position, held_prop_instance.visible])
 
 ## Find a prop that can be picked up
 func _get_pickup_target() -> Node:
@@ -588,7 +588,7 @@ func _get_pickup_target() -> Node:
 	if hit and hit.has("collider"):
 		var col = hit.collider
 		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
-			print("PropPickup: Direct hit on %s" % col.name)
+			DebugSettings.log_player("PropPickup: Direct hit on %s" % col.name)
 			return col
 	
 	# Option B: Sphere assist for forgiveness
@@ -616,7 +616,7 @@ func _get_pickup_target() -> Node:
 				best_target = col
 	
 	if best_target:
-		print("PropPickup: Assisted hit on %s" % best_target.name)
+		DebugSettings.log_player("PropPickup: Assisted hit on %s" % best_target.name)
 	return best_target
 
 ## Try to grab a prop
@@ -625,12 +625,12 @@ func _try_grab_prop() -> void:
 	if not target:
 		return
 	
-	print("PropGrab: Trying to grab %s" % target.name)
+	DebugSettings.log_player("PropGrab: Trying to grab %s" % target.name)
 	var anchor = target.get_meta("anchor")
 	var chunk = target.get_meta("chunk")
 	
 	if not chunk or not chunk.objects.has(anchor):
-		print("PropPickup: No object data at anchor")
+		DebugSettings.log_player("PropPickup: No object data at anchor")
 		return
 	
 	# Read object data before removing
@@ -666,16 +666,16 @@ func _try_grab_prop() -> void:
 			cam = get_viewport().get_camera_3d()
 		if cam:
 			held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
-			print("PropPickup: Picked up prop ID %d at %s" % [held_prop_id, held_prop_instance.global_position])
+			DebugSettings.log_player("PropPickup: Picked up prop ID %d at %s" % [held_prop_id, held_prop_instance.global_position])
 		else:
-			print("PropPickup: WARNING - No camera, prop may be mispositioned")
+			DebugSettings.log_player("PropPickup: WARNING - No camera, prop may be mispositioned")
 
 ## Drop the grabbed prop
 func _drop_grabbed_prop() -> void:
 	if not held_prop_instance:
 		return
 	
-	print("PropDrop: Dropping prop")
+	DebugSettings.log_player("PropDrop: Dropping prop")
 	
 	var drop_pos = held_prop_instance.global_position
 	
@@ -693,16 +693,16 @@ func _drop_grabbed_prop() -> void:
 	var center_offset = Vector3(offset_x, 0, offset_z)
 	var adjusted_drop_pos = drop_pos - center_offset
 	
-	print("PropDrop: building_manager = %s" % building_manager)
-	print("PropDrop: Drop at %s, adjusted = %s" % [drop_pos, adjusted_drop_pos])
+	DebugSettings.log_player("PropDrop: building_manager = %s" % building_manager)
+	DebugSettings.log_player("PropDrop: Drop at %s, adjusted = %s" % [drop_pos, adjusted_drop_pos])
 	
 	# Try placement via building manager
 	var success = false
 	if building_manager and building_manager.has_method("place_object"):
 		success = building_manager.place_object(adjusted_drop_pos, held_prop_id, held_prop_rotation)
-		print("PropDrop: place_object returned %s" % success)
+		DebugSettings.log_player("PropDrop: place_object returned %s" % success)
 	else:
-		print("PropDrop: No building_manager or no place_object method!")
+		DebugSettings.log_player("PropDrop: No building_manager or no place_object method!")
 	
 	# If direct placement failed, try "Smart Search" (find nearby available cell)
 	if not success and building_manager:
@@ -742,16 +742,16 @@ func _drop_grabbed_prop() -> void:
 							instance.rotation_degrees.y = held_prop_rotation * 90
 							chunk.place_object(try_anchor, held_prop_id, held_prop_rotation, cells, instance, new_fractional)
 							
-							print("PropDrop: Placed at nearby anchor %s" % try_anchor)
+							DebugSettings.log_player("PropDrop: Placed at nearby anchor %s" % try_anchor)
 							success = true
 							break
 					if success: break
 				if success: break
 	
 	if not success:
-		print("PropDrop: Placement failed, prop lost")
+		DebugSettings.log_player("PropDrop: Placement failed, prop lost")
 	else:
-		print("PropDrop: Placed successfully")
+		DebugSettings.log_player("PropDrop: Placed successfully")
 	
 	# Cleanup held prop
 	if held_prop_instance:
@@ -804,18 +804,18 @@ func _try_pickup_item() -> void:
 	# Determine item type from the target name
 	var item_data = _get_item_data_from_pickup(target)
 	if item_data.is_empty():
-		print("ItemPickup: Unknown item: %s" % target.name)
+		DebugSettings.log_player("ItemPickup: Unknown item: %s" % target.name)
 		return
 	
 	# Try to add to hotbar
 	if hotbar.add_item(item_data):
-		print("ItemPickup: Picked up %s" % item_data.get("name", "item"))
+		DebugSettings.log_player("ItemPickup: Picked up %s" % item_data.get("name", "item"))
 		# Remove from world
 		target.queue_free()
 		# Hide the interaction prompt
 		PlayerSignals.interaction_unavailable.emit()
 	else:
-		print("ItemPickup: Hotbar full, cannot pick up %s" % item_data.get("name", "item"))
+		DebugSettings.log_player("ItemPickup: Hotbar full, cannot pick up %s" % item_data.get("name", "item"))
 
 ## Get item data dictionary from a pickup target
 func _get_item_data_from_pickup(target: Node) -> Dictionary:
@@ -895,7 +895,7 @@ func _update_target_material() -> void:
 		
 		# Debug logging (only when digging/clicking)
 		if mat_debug_on_click:
-			print("[MAT_DEBUG] hit_pos=%.1f,%.1f,%.1f mat_id=%d (%s)" % [
+			DebugSettings.log_player("[MAT_DEBUG] hit_pos=%.1f,%.1f,%.1f mat_id=%d (%s)" % [
 				hit_pos.x, hit_pos.y, hit_pos.z, mat_id, material_name
 			])
 			mat_debug_on_click = false

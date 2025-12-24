@@ -44,9 +44,9 @@ func _ready():
 	_find_animation_player(self)
 	
 	if animation_player:
-		print("Door: Found AnimationPlayer with animations: ", animation_player.get_animation_list())
+		DebugSettings.log_building("Door: Found AnimationPlayer with animations: %s" % [animation_player.get_animation_list()])
 	else:
-		print("Door: No AnimationPlayer found!")
+		DebugSettings.log_building("Door: No AnimationPlayer found!")
 	
 	# Disable any auto-generated collision from the GLB model
 	_disable_glb_collisions()
@@ -88,7 +88,7 @@ func _disable_static_bodies_recursive(node: Node, disabled_count: int) -> void:
 		if child is StaticBody3D:
 			# Free the entire StaticBody3D (and its children collision shapes)
 			child.queue_free()
-			print("Door: Removed GLB auto-generated StaticBody3D: %s" % child.name)
+			DebugSettings.log_building("Door: Removed GLB auto-generated StaticBody3D: %s" % child.name)
 		else:
 			# Recurse into child nodes
 			_disable_static_bodies_recursive(child, disabled_count)
@@ -121,9 +121,9 @@ func _setup_closed_collision():
 		# Restore global transform
 		closed_collision.global_transform = global_xform
 		
-		print("Door: Using scene-defined CLOSED collision")
+		DebugSettings.log_building("Door: Using scene-defined CLOSED collision")
 	else:
-		print("Door: WARNING - 'closed door collision layer' not found in scene!")
+		push_warning("Door: 'closed door collision layer' not found in scene!")
 
 ## Find the "opened door collision layer" from scene and wrap it in a StaticBody3D
 func _setup_opened_collision():
@@ -153,9 +153,9 @@ func _setup_opened_collision():
 		# Restore global transform
 		opened_collision.global_transform = global_xform
 		
-		print("Door: Using scene-defined OPENED collision")
+		DebugSettings.log_building("Door: Using scene-defined OPENED collision")
 	else:
-		print("Door: WARNING - 'opened door collision layer' not found in scene!")
+		push_warning("Door: 'opened door collision layer' not found in scene!")
 
 ## Find the "door interaction layer" from scene and wrap it in an Area3D
 func _setup_interaction_area():
@@ -187,9 +187,9 @@ func _setup_interaction_area():
 		# Restore global transform
 		interaction_collision.global_transform = global_xform
 		
-		print("Door: Using scene-defined interaction area")
+		DebugSettings.log_building("Door: Using scene-defined interaction area")
 	else:
-		print("Door: WARNING - 'door interaction layer' not found in scene!")
+		push_warning("Door: 'door interaction layer' not found in scene!")
 
 ## Recursively find a node by name
 func _find_node_by_name(root: Node, target_name: String) -> Node:
@@ -206,12 +206,12 @@ func _update_collision_states():
 	# Closed collision: enabled when door is CLOSED
 	if closed_collision:
 		closed_collision.disabled = is_open
-		print("Door CLOSED collision: %s" % ("disabled" if is_open else "enabled"))
+		DebugSettings.log_building("Door CLOSED collision: %s" % ("disabled" if is_open else "enabled"))
 	
 	# Opened collision: enabled when door is OPEN
 	if opened_collision:
 		opened_collision.disabled = not is_open
-		print("Door OPENED collision: %s" % ("enabled" if is_open else "disabled"))
+		DebugSettings.log_building("Door OPENED collision: %s" % ("enabled" if is_open else "disabled"))
 
 ## Called when player presses E while looking at this door
 func interact():
@@ -225,14 +225,14 @@ func open_door():
 		animation_player.play("HN_Door_Open")
 	is_open = true
 	_update_collision_states()
-	print("Door opened")
+	DebugSettings.log_building("Door opened")
 
 func close_door():
 	if animation_player and animation_player.has_animation("HN_Door_Close"):
 		animation_player.play("HN_Door_Close")
 	is_open = false
 	_update_collision_states()
-	print("Door closed")
+	DebugSettings.log_building("Door closed")
 
 ## Get interaction prompt text for UI
 func get_interaction_prompt() -> String:
@@ -246,7 +246,7 @@ func get_interaction_prompt() -> String:
 ## Called when door is hit/punched
 func take_damage(amount: int) -> void:
 	current_hp = max(0, current_hp - amount)
-	print("Door: Took %d damage (%d/%d HP)" % [amount, current_hp, max_hp])
+	DebugSettings.log_building("Door: Took %d damage (%d/%d HP)" % [amount, current_hp, max_hp])
 	
 	# Check for damage stage change (for future model swapping)
 	var hp_percent = float(current_hp) / float(max_hp)
@@ -264,13 +264,13 @@ func take_damage(amount: int) -> void:
 
 ## Called when damage threshold is crossed (for future model swapping)
 func _on_damage_stage_changed(stage: int) -> void:
-	print("Door: Damage stage changed to %d" % stage)
+	DebugSettings.log_building("Door: Damage stage changed to %d" % stage)
 	# Future: swap door mesh to damaged variant based on stage
 	# stage 0 = light damage, stage 1 = heavy damage, stage 2 = almost broken
 
 ## Called when door HP reaches 0
 func _on_destroyed() -> void:
-	print("Door: Destroyed!")
+	DebugSettings.log_building("Door: Destroyed!")
 	PlayerSignals.durability_cleared.emit()
 	
 	# If door has chunk/anchor meta, remove from building system

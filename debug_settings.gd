@@ -33,6 +33,9 @@ var LOG_ROADS := false
 ## Water system
 var LOG_WATER := false
 
+## Performance spikes and timing
+var LOG_PERFORMANCE := false
+
 
 # === HELPER FUNCTIONS ===
 
@@ -73,6 +76,10 @@ func log_water(message: String) -> void:
 	if LOG_WATER:
 		print("[Water] ", message)
 
+func log_performance(message: String) -> void:
+	if LOG_PERFORMANCE:
+		print(message)
+
 
 # === ENABLE ALL FOR DEBUGGING ===
 
@@ -86,6 +93,7 @@ func enable_all() -> void:
 	LOG_PLAYER = true
 	LOG_ROADS = true
 	LOG_WATER = true
+	LOG_PERFORMANCE = true
 
 func disable_all() -> void:
 	LOG_CHUNK = false
@@ -97,3 +105,4 @@ func disable_all() -> void:
 	LOG_PLAYER = false
 	LOG_ROADS = false
 	LOG_WATER = false
+	LOG_PERFORMANCE = false

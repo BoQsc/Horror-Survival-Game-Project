@@ -38,4 +38,4 @@ signal player_jumped()
 signal player_landed()
 
 func _ready() -> void:
-	print("PlayerSignals: Autoload initialized")
+	DebugSettings.log_player("PlayerSignals: Autoload initialized")

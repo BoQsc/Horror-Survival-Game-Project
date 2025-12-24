@@ -6,16 +6,16 @@ var mesher: BuildingMesher
 
 # Render distance management
 @export var viewer: Node3D
-@export var render_distance: int = 8  # Increased for better visibility
+@export var render_distance: int = 8 # Increased for better visibility
 
 # Track which chunks are currently visible (have nodes in scene tree)
-var visible_chunks: Dictionary = {}  # Vector3i -> true
+var visible_chunks: Dictionary = {} # Vector3i -> true
 
 # Chunk pool for recycling (multiplayer optimization)
 var chunk_pool: Array[BuildingChunk] = []
-const MAX_POOL_SIZE = 32  # Keep up to 32 chunks in pool
+const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 
-const CHUNK_SIZE = 16  # Must match BuildingChunk.SIZE
+const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
 func _ready():
 	mesher = BuildingMesher.new()
@@ -49,7 +49,7 @@ func update_building_chunks():
 	# 2. Load chunks that are in range and have data
 	for coord in chunks:
 		if visible_chunks.has(coord):
-			continue  # Already visible
+			continue # Already visible
 		
 		var dist = Vector3(coord).distance_to(Vector3(center_chunk))
 		if dist <= render_distance:
@@ -88,11 +88,11 @@ func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 	var chunk: BuildingChunk
 	if chunk_pool.size() > 0:
 		chunk = chunk_pool.pop_back()
-		chunk.reset(chunk_coord)  # Recycle: clear and assign new coord
+		chunk.reset(chunk_coord) # Recycle: clear and assign new coord
 	else:
-		chunk = BuildingChunk.new(chunk_coord)  # Pool empty: create new
+		chunk = BuildingChunk.new(chunk_coord) # Pool empty: create new
 	
-	chunk.mesher = mesher  # Inject dependency
+	chunk.mesher = mesher # Inject dependency
 	chunks[chunk_coord] = chunk
 	
 	# Only add to tree if within render distance
@@ -195,7 +195,7 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 		if chunks.has(chunk_coord):
 			var chunk = chunks[chunk_coord]
 			if not chunk.is_cell_available(local):
-				print("DEBUG_MISSING_OBJ: Cell collision at global %v (Chunk %v Local %v) for Object %d" % [cell, chunk_coord, local, object_id])
+				DebugSettings.log_building("DEBUG_MISSING_OBJ: Cell collision at global %v (Chunk %v Local %v) for Object %d" % [cell, chunk_coord, local, object_id])
 				return false
 		# If chunk doesn't exist, cell is available (empty terrain)
 	
@@ -212,7 +212,7 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	
 	# Calculate anchor (integer grid position) and fractional position offset
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
-	var fractional_pos = global_pos - Vector3(anchor)  # Full 3D offset from anchor
+	var fractional_pos = global_pos - Vector3(anchor) # Full 3D offset from anchor
 	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
 	
 	# Load and instantiate the scene

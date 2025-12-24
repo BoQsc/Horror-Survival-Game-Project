@@ -38,7 +38,7 @@ func _ready() -> void:
 	entity_manager = get_tree().get_first_node_in_group("entity_manager")
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	
-	print("PlayerInteraction: Initialized")
+	DebugSettings.log_player("PlayerInteraction: Initialized")
 
 func _process(delta: float) -> void:
 	# Check for interactable target
@@ -174,7 +174,7 @@ func _do_interaction() -> void:
 	if not current_target:
 		return
 	
-	print("PlayerInteraction: Interacting with %s" % current_target.name)
+	DebugSettings.log_player("PlayerInteraction: Interacting with %s" % current_target.name)
 	
 	# Vehicles (check first - legacy priority)
 	if current_target.is_in_group("vehicle"):
@@ -193,7 +193,7 @@ func _do_interaction() -> void:
 		return
 	
 	# Fallback for objects without interact method
-	print("PlayerInteraction: No interact method on %s" % current_target.name)
+	DebugSettings.log_player("PlayerInteraction: No interact method on %s" % current_target.name)
 
 ## Pick up an item/prop into inventory
 func _pickup_item(target: Node) -> void:
@@ -223,12 +223,12 @@ func _pickup_item(target: Node) -> void:
 		if leftover == 0:
 			# Successfully picked up - remove from world
 			target.queue_free()
-			print("PlayerInteraction: Picked up %s" % item_data.get("name", target.name))
+			DebugSettings.log_player("PlayerInteraction: Picked up %s" % item_data.get("name", target.name))
 			PlayerSignals.interaction_performed.emit(target, "pickup")
 		else:
-			print("PlayerInteraction: Inventory full!")
+			DebugSettings.log_player("PlayerInteraction: Inventory full!")
 	else:
-		print("PlayerInteraction: No inventory system found")
+		DebugSettings.log_player("PlayerInteraction: No inventory system found")
 
 ## Perform barricade action (hold E near door/window with item)
 func _do_barricade() -> void:
@@ -249,19 +249,19 @@ func _do_barricade() -> void:
 	if building_manager.has_method("place_object"):
 		var success = building_manager.place_object(target_pos, object_id, 0)
 		if success:
-			print("PlayerInteraction: Barricaded with %s" % item.get("name", "object"))
+			DebugSettings.log_player("PlayerInteraction: Barricaded with %s" % item.get("name", "object"))
 			PlayerSignals.interaction_performed.emit(current_target, "barricade")
 			# TODO: Remove item from hotbar
 		else:
-			print("PlayerInteraction: Could not place barricade")
+			DebugSettings.log_player("PlayerInteraction: Could not place barricade")
 
 ## Enter a vehicle (ported from legacy player_interaction.gd)
 func _enter_vehicle(vehicle: Node3D) -> void:
 	if not vehicle or not vehicle.has_method("enter_vehicle"):
-		print("PlayerInteraction: Vehicle has no enter_vehicle method")
+		DebugSettings.log_player("PlayerInteraction: Vehicle has no enter_vehicle method")
 		return
 	
-	print("[Vehicle] Entering vehicle")
+	DebugSettings.log_player("[Vehicle] Entering vehicle")
 	is_in_vehicle = true
 	current_vehicle = vehicle
 	
@@ -288,7 +288,7 @@ func _enter_vehicle(vehicle: Node3D) -> void:
 	# Switch terrain generation to follow the vehicle
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = vehicle
-		print("[Interaction] Switched terrain viewer to Vehicle")
+		DebugSettings.log_player("[Interaction] Switched terrain viewer to Vehicle")
 	
 	PlayerSignals.interaction_performed.emit(vehicle, "enter_vehicle")
 
@@ -297,7 +297,7 @@ func _exit_vehicle() -> void:
 	if not is_in_vehicle or not current_vehicle:
 		return
 	
-	print("[Vehicle] Exiting vehicle")
+	DebugSettings.log_player("[Vehicle] Exiting vehicle")
 	
 	# Tell vehicle player is exiting
 	if current_vehicle.has_method("exit_vehicle"):
@@ -324,7 +324,7 @@ func _exit_vehicle() -> void:
 	# Switch terrain generation back to player
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = player
-		print("[Interaction] Switched terrain viewer back to Player")
+		DebugSettings.log_player("[Interaction] Switched terrain viewer back to Player")
 	
 	is_in_vehicle = false
 	current_vehicle = null

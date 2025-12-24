@@ -25,12 +25,12 @@ func _ready() -> void:
 	vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 	
 	# Log initialization status
-	print("WorldPlayer: Initialized")
-	print("  - Movement: ", "OK" if movement_component else "MISSING")
-	print("  - Camera: ", "OK" if camera_component else "MISSING")
-	print("  - TerrainManager: ", "OK" if terrain_manager else "NOT FOUND")
-	print("  - BuildingManager: ", "OK" if building_manager else "NOT FOUND")
-	print("  - VegetationManager: ", "OK" if vegetation_manager else "NOT FOUND")
+	DebugSettings.log_player("WorldPlayer: Initialized")
+	DebugSettings.log_player("  - Movement: %s" % ("OK" if movement_component else "MISSING"))
+	DebugSettings.log_player("  - Camera: %s" % ("OK" if camera_component else "MISSING"))
+	DebugSettings.log_player("  - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
+	DebugSettings.log_player("  - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
+	DebugSettings.log_player("  - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
 
 ## Get look direction from camera component
 func get_look_direction() -> Vector3:

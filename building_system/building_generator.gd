@@ -6,25 +6,25 @@ signal building_spawned(position: Vector3, prefab_name: String)
 
 # --- Configuration ---
 @export var enabled: bool = true
-@export_range(0.0, 1.0) var building_density: float = 0.3  # Chance per valid spot
-@export var spawn_interval: float = 0.5  # Seconds between spawns
-@export var min_road_distance: int = 2   # Min blocks from road center
-@export var max_road_distance: int = 10  # Max blocks from road center
-@export var road_spacing: float = 100.0  # Match chunk_manager.procedural_road_spacing
-@export var road_width: float = 8.0      # Match chunk_manager.procedural_road_width
+@export_range(0.0, 1.0) var building_density: float = 0.3 # Chance per valid spot
+@export var spawn_interval: float = 0.5 # Seconds between spawns
+@export var min_road_distance: int = 2 # Min blocks from road center
+@export var max_road_distance: int = 10 # Max blocks from road center
+@export var road_spacing: float = 100.0 # Match chunk_manager.procedural_road_spacing
+@export var road_width: float = 8.0 # Match chunk_manager.procedural_road_width
 @export var prefab_list: Array[String] = ["new_wooden_house_2floor"]
-@export var min_building_spacing: float = 20.0  # Min distance between buildings
-@export var intersection_avoid_radius: float = 15.0  # Avoid spawning near road intersections
-@export var regenerate_buildings_on_load: bool = false  # Debug: regenerate instead of loading saved state
+@export var min_building_spacing: float = 20.0 # Min distance between buildings
+@export var intersection_avoid_radius: float = 15.0 # Avoid spawning near road intersections
+@export var regenerate_buildings_on_load: bool = false # Debug: regenerate instead of loading saved state
 
 # --- References ---
 @export var prefab_spawner: Node = null
 @export var terrain_manager: Node = null
 
 # --- State ---
-var spawn_queue: Array = []  # Queue of {position, rotation, prefab_name}
-var spawned_buildings: Dictionary = {}  # Key: chunk_coord, Value: Array of positions
-var global_building_positions: Array[Vector3] = []  # All building positions for overlap check
+var spawn_queue: Array = [] # Queue of {position, rotation, prefab_name}
+var spawned_buildings: Dictionary = {} # Key: chunk_coord, Value: Array of positions
+var global_building_positions: Array[Vector3] = [] # All building positions for overlap check
 var spawn_timer: float = 0.0
 
 # --- Save/Load Support ---
@@ -36,12 +36,12 @@ func get_save_data() -> Dictionary:
 		for pos in spawned_buildings[coord]:
 			positions.append([pos.x, pos.y, pos.z])
 		result[key] = positions
-	return { "spawned_chunks": result }
+	return {"spawned_chunks": result}
 
 func load_save_data(data: Dictionary) -> void:
 	if regenerate_buildings_on_load:
-		print("[BuildingGenerator] Regenerate mode enabled - skipping saved state")
-		return  # Debug: regenerate fresh instead of loading
+		DebugSettings.log_building("Regenerate mode enabled - skipping saved state")
+		return # Debug: regenerate fresh instead of loading
 	
 	spawned_buildings.clear()
 	global_building_positions.clear()
@@ -58,13 +58,13 @@ func load_save_data(data: Dictionary) -> void:
 				var pos = Vector3(pos_arr[0], pos_arr[1], pos_arr[2])
 				spawned_buildings[coord].append(pos)
 				global_building_positions.append(pos)
-		print("[BuildingGenerator] Loaded %d chunks with building spawn data" % spawned_buildings.size())
+		DebugSettings.log_building("Loaded %d chunks with building spawn data" % spawned_buildings.size())
 
 func _ready():
 	# Connect to terrain manager signals
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
-		print("[BuildingGenerator] Connected to chunk_generated signal")
+		DebugSettings.log_building("BuildingGenerator connected to chunk_generated signal")
 		
 		# Get road spacing from terrain manager
 		if "procedural_road_spacing" in terrain_manager:
@@ -72,14 +72,14 @@ func _ready():
 		if "procedural_road_width" in terrain_manager:
 			road_width = terrain_manager.procedural_road_width
 	else:
-		print("[BuildingGenerator] WARNING: Could not connect to terrain_manager!")
+		push_warning("[BuildingGenerator] Could not connect to terrain_manager!")
 	
 	if prefab_spawner:
-		print("[BuildingGenerator] Found PrefabSpawner")
+		DebugSettings.log_building("BuildingGenerator found PrefabSpawner")
 	else:
-		print("[BuildingGenerator] WARNING: PrefabSpawner not found!")
+		push_warning("[BuildingGenerator] PrefabSpawner not found!")
 	
-	print("[BuildingGenerator] Ready, enabled=%s, density=%.2f, interval=%.1fs" % [enabled, building_density, spawn_interval])
+	DebugSettings.log_building("BuildingGenerator ready, enabled=%s, density=%.2f, interval=%.1fs" % [enabled, building_density, spawn_interval])
 
 func _process(delta):
 	if not enabled or spawn_queue.is_empty():
@@ -151,7 +151,7 @@ func _queue_buildings_for_chunk(chunk_coord: Vector3i, chunk_world_pos: Vector3)
 		global_building_positions.append(spot.position)
 	
 	if spawn_queue.size() > 0:
-		print("[BuildingGenerator] Queued %d spots for chunk %v (total queue: %d)" % [spots.size(), chunk_coord, spawn_queue.size()])
+		DebugSettings.log_building("Queued %d spots for chunk %v (total queue: %d)" % [spots.size(), chunk_coord, spawn_queue.size()])
 
 ## Find spots adjacent to roads within this chunk
 func _find_road_adjacent_spots(chunk_pos: Vector3, chunk_size: int) -> Array:
@@ -235,7 +235,7 @@ func _is_over_water(pos: Vector3) -> bool:
 	if not terrain_manager:
 		return false
 	
-	var water_level = 13.0  # Default
+	var water_level = 13.0 # Default
 	if "water_level" in terrain_manager:
 		water_level = terrain_manager.water_level
 	
@@ -243,7 +243,7 @@ func _is_over_water(pos: Vector3) -> bool:
 	var water_buffer = 1.0
 	
 	# Check terrain height at points across building footprint
-	var check_radius = 8.0  # Building footprint
+	var check_radius = 8.0 # Building footprint
 	var check_offsets = [
 		Vector2(0, 0),
 		Vector2(-check_radius, 0), Vector2(check_radius, 0),
@@ -265,21 +265,21 @@ func _is_over_water(pos: Vector3) -> bool:
 		# Also check water density if chunks are loaded
 		if terrain_manager.has_method("get_water_density"):
 			var density = terrain_manager.get_water_density(Vector3(cx, water_level, cz))
-			if density < 0.0:  # Negative = inside water
+			if density < 0.0: # Negative = inside water
 				return true
 	
 	# Check if in wet region AND terrain is low
 	if _is_in_wet_region(pos.x, pos.z):
 		if terrain_manager.has_method("get_terrain_height"):
 			var h = terrain_manager.get_terrain_height(pos.x, pos.z)
-			if h > 0 and h < water_level:  # Only reject if actually below water
+			if h > 0 and h < water_level: # Only reject if actually below water
 				return true
 	
 	return false
 
 ## Check if position is in a "wet region" using noise (matches gen_water_density.glsl)
 func _is_in_wet_region(x: float, z: float) -> bool:
-	var noise_freq = 0.02  # Default
+	var noise_freq = 0.02 # Default
 	if terrain_manager and "noise_frequency" in terrain_manager:
 		noise_freq = terrain_manager.noise_frequency
 	
@@ -326,7 +326,7 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	
 	# Double-check water at spawn time (chunk may have loaded since queueing)
 	if _is_over_water(spawn_pos):
-		print("[BuildingGenerator] Skipped %s at %v - over water" % [prefab_name, spawn_pos])
+		DebugSettings.log_building("Skipped %s at %v - over water" % [prefab_name, spawn_pos])
 		return false
 	
 	# Spawn WITHOUT interior carve (false at the end) for performance
@@ -334,7 +334,7 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	
 	if success:
 		building_spawned.emit(spawn_pos, prefab_name)
-		print("[BuildingGenerator] Spawned %s at %v" % [prefab_name, spawn_pos])
+		DebugSettings.log_building("Spawned %s at %v" % [prefab_name, spawn_pos])
 	
 	return success
 

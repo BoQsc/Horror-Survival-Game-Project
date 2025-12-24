@@ -619,7 +619,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 								"layer": layer,
 								"material_id": material_id
 							}
-							print("ChunkMan.modify_terrain TASK: coord=%s mat_id=%d mat_buf_valid=%s" % [coord, material_id, data.material_buffer_terrain.is_valid()])
+							DebugSettings.log_chunk("modify_terrain TASK: coord=%s mat_id=%d mat_buf_valid=%s" % [coord, material_id, data.material_buffer_terrain.is_valid()])
 							tasks_to_add.append(task)
 				else:
 					# Chunk not loaded - trigger immediate generation
@@ -663,7 +663,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 ## Fill a 1x1 vertical column of terrain from y_from to y_to
 ## Uses Column shape (type=2) for precise vertical fills
 func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, layer: int = 0):
-	print("ChunkManager.fill_column: x=%.2f z=%.2f y=[%.2f to %.2f] val=%.2f" % [x, z, y_from, y_to, value])
+	DebugSettings.log_chunk("fill_column: x=%.2f z=%.2f y=[%.2f to %.2f] val=%.2f" % [x, z, y_from, y_to, value])
 	# Calculate center position (mid-point of column)
 	var pos = Vector3(x, (y_from + y_to) / 2.0, z)
 	
@@ -734,9 +734,9 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 		
 		for i in range(batch_count):
 			semaphore.post()
-		print("ChunkManager.fill_column: queued %d tasks" % batch_count)
+		DebugSettings.log_chunk("fill_column: queued %d tasks" % batch_count)
 	else:
-		print("ChunkManager.fill_column: NO TASKS QUEUED - chunk not loaded or no valid buffer")
+		DebugSettings.log_chunk("fill_column: NO TASKS QUEUED - chunk not loaded or no valid buffer")
 
 func _exit_tree():
 	mutex.lock()
@@ -1098,7 +1098,7 @@ func _thread_function():
 			mutex.unlock()
 			# Only complete in-flight when no tasks pending
 			if in_flight.size() > 0:
-				rd.sync ()
+				rd.sync()
 				for flight_data in in_flight:
 					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1111,7 +1111,7 @@ func _thread_function():
 		if task.type == "modify":
 			# HIGHEST PRIORITY: Process modifications immediately, sync all pending work first
 			if in_flight.size() > 0:
-				rd.sync ()
+				rd.sync()
 				for fd in in_flight:
 					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1119,7 +1119,7 @@ func _thread_function():
 		elif task.type == "generate":
 			# Complete any in-flight before starting new generation
 			if in_flight.size() > 0:
-				rd.sync ()
+				rd.sync()
 				for flight_data in in_flight:
 					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1132,7 +1132,7 @@ func _thread_function():
 				
 				# If at max in-flight, immediately complete to avoid GPU buildup
 				if in_flight.size() >= MAX_IN_FLIGHT:
-					rd.sync ()
+					rd.sync()
 					for fd in in_flight:
 						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 					in_flight.clear()
@@ -1228,7 +1228,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		# Debug: show when mods are applied to underground chunks
 		# Need to sync before modifications since they read/write density
 		rd.submit()
-		rd.sync ()
+		rd.sync()
 		for mod in mods_for_chunk:
 			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
@@ -1261,13 +1261,13 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	# Terrain mesh (uses material buffer for vertex colors)
 	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_t)
 	
 	# Water mesh (no material buffer, use terrain's for now)
 	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_w)
 	
 	# Readback density for physics
@@ -1364,7 +1364,7 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
 	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh)
 
 # CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
@@ -1468,7 +1468,7 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
@@ -1478,7 +1478,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	var chunk_pos = task.pos
 	var layer = task.get("layer", 0)
 	var material_id = task.get("material_id", -1)
-	print("ChunkMan.process_modify: coord=%s layer=%d value=%.2f mat_id=%d mat_buf_valid=%s dens_buf_valid=%s" % [task.coord, layer, task.value, material_id, material_buffer.is_valid(), density_buffer.is_valid()])
+	DebugSettings.log_chunk("process_modify: coord=%s layer=%d value=%.2f mat_id=%d mat_buf_valid=%s dens_buf_valid=%s" % [task.coord, layer, task.value, material_id, material_buffer.is_valid(), density_buffer.is_valid()])
 
 	
 	var u_density = RDUniform.new()
@@ -1530,7 +1530,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 	
@@ -1644,7 +1644,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 	rd.compute_list_end()
 	
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	
 	# Read back
 	var count_bytes = rd.buffer_get_data(counter_buffer)
@@ -1784,7 +1784,7 @@ func _finalize_chunk_creation(item: Dictionary):
 			
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
-		print("ChunkMan.finalize_chunk: coord=%s mat_buf_valid=%s has_mat_buf_key=%s" % [coord, data.material_buffer_terrain.is_valid(), item.has("mat_buf")])
+		DebugSettings.log_chunk("finalize_chunk: coord=%s mat_buf_valid=%s has_mat_buf_key=%s" % [coord, data.material_buffer_terrain.is_valid(), item.has("mat_buf")])
 		data.cpu_density_terrain = item.cpu_dens
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
@@ -1923,7 +1923,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water
-		print("ChunkMan: Applying water update to %s, has_mesh=%s" % [coord, result.mesh != null])
+		DebugSettings.log_chunk("Applying water update to %s, has_mesh=%s" % [coord, result.mesh != null])
 		if data.node_water: data.node_water.queue_free()
 		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true)
 		data.node_water = result_node.node if not result_node.is_empty() else null
