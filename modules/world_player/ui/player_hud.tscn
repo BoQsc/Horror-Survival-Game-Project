@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3 uid="uid://dhw7kxqy4cjrf"]
+[gd_scene load_steps=3 format=3 uid="uid://dhw7kxqy4cjrf"]
 
 [ext_resource type="Script" path="res://modules/world_player/ui/player_hud.gd" id="1_hud"]
+[ext_resource type="PackedScene" path="res://modules/world_player/ui/inventory_panel.tscn" id="2_inv"]
 
 [node name="PlayerHUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
@@ -258,3 +259,5 @@ offset_top = 20.0
 offset_right = 150.0
 offset_bottom = 60.0
 text = "Exit Game"
+
+[node name="InventoryPanel" parent="." instance=ExtResource("2_inv")]

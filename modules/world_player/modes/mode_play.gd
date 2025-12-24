@@ -326,9 +326,18 @@ func _do_punch(item: Dictionary) -> void:
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
 		var strength = item.get("mining_strength", 0.5)
 		if strength > 0:
+			# Get material ID before digging (for resource collection)
+			var mat_id = -1
+			if terrain_manager.has_method("get_material_at"):
+				mat_id = terrain_manager.get_material_at(position)
+			
 			# material_id=-1 preserves existing terrain material
 			terrain_manager.modify_terrain(position, strength, 1.0, 0, 0, -1)
-			print("ModePlay: Punched terrain at %s (strength: %.1f)" % [position, strength])
+			print("ModePlay: Punched terrain at %s (strength: %.1f, mat: %d)" % [position, strength, mat_id])
+			
+			# Add collected resource to inventory
+			if mat_id >= 0:
+				_collect_terrain_resource(mat_id)
 		else:
 			print("ModePlay: Item has no mining strength")
 	else:
@@ -1025,5 +1034,28 @@ func _get_material_at(pos: Vector3) -> int:
 	if terrain_manager and terrain_manager.has_method("get_material_at"):
 		return terrain_manager.get_material_at(pos)
 	return -1 # Unknown
+
+## Collect terrain resource and add to inventory
+func _collect_terrain_resource(mat_id: int) -> void:
+	# Get resource item from material ID
+	const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
+	var resource_item = ItemDefs.get_resource_for_material(mat_id)
+	
+	if resource_item.get("id", "empty") == "empty":
+		print("ModePlay: No resource for material ID %d" % mat_id)
+		return
+	
+	# Find inventory system
+	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
+	if not inventory or not inventory.has_method("add_item"):
+		print("ModePlay: No inventory system found")
+		return
+	
+	# Add to inventory
+	var leftover = inventory.add_item(resource_item, 1)
+	if leftover == 0:
+		print("ModePlay: Collected 1x %s" % resource_item.get("name", "Resource"))
+	else:
+		print("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
 
 #endregion

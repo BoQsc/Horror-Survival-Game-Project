@@ -143,3 +143,24 @@ static func is_build_category(category: ItemCategory) -> bool:
 ## Check if category is a PLAY mode tool
 static func is_play_category(category: ItemCategory) -> bool:
 	return category in [ItemCategory.NONE, ItemCategory.TOOL, ItemCategory.BUCKET, ItemCategory.RESOURCE]
+
+## Terrain resource items - map material ID to item
+static func get_terrain_resources() -> Dictionary:
+	return {
+		0: {"id": "res_grass", "name": "Grass", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 0},
+		1: {"id": "res_stone", "name": "Stone", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 1},
+		2: {"id": "res_ore", "name": "Ore", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 2},
+		3: {"id": "res_sand", "name": "Sand", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 3},
+		4: {"id": "res_gravel", "name": "Gravel", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 4},
+		5: {"id": "res_snow", "name": "Snow", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 5},
+		9: {"id": "res_granite", "name": "Granite", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 9},
+		-1: {"id": "res_wood", "name": "Wood", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": - 1}
+	}
+
+## Get resource item by material ID
+static func get_resource_for_material(mat_id: int) -> Dictionary:
+	var resources = get_terrain_resources()
+	if resources.has(mat_id):
+		return resources[mat_id].duplicate()
+	# Fallback to stone
+	return resources[1].duplicate()

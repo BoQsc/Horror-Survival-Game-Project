@@ -41,6 +41,7 @@ func _input(event: InputEvent) -> void:
 			KEY_8: new_slot = 7
 			KEY_9: new_slot = 8
 			KEY_0: new_slot = 9
+			KEY_G: drop_selected_item()
 		
 		if new_slot >= 0 and new_slot != selected_slot:
 			select_slot(new_slot)
@@ -138,3 +139,49 @@ func add_item(item: Dictionary) -> bool:
 		return true
 	print("Hotbar: No empty slot for %s" % item.get("name", "item"))
 	return false
+
+## Get slot data in inventory-compatible format {item: Dict, count: int}
+func get_slot(index: int) -> Dictionary:
+	if index >= 0 and index < slots.size():
+		var item = slots[index]
+		# Convert to inventory format
+		return {"item": item, "count": 1 if item.get("id") != "empty" else 0}
+	return {"item": _create_empty_slot(), "count": 0}
+
+## Set slot data from inventory-compatible format
+func set_slot(index: int, item: Dictionary, count: int) -> void:
+	if count <= 0:
+		clear_slot(index)
+	else:
+		set_item_at(index, item)
+
+## Drop the selected item as 3D pickup
+func drop_selected_item() -> void:
+	var item = get_selected_item()
+	if item.get("id", "empty") == "empty":
+		print("Hotbar: Nothing to drop")
+		return
+	
+	# Get player position for drop
+	var player = get_tree().get_first_node_in_group("player")
+	if not player:
+		print("Hotbar: No player found for drop")
+		return
+	
+	var drop_pos = player.global_position + player.global_transform.basis.z * 2.0 + Vector3.UP
+	
+	# Spawn pickup
+	var pickup_scene = load("res://modules/world_player/pickups/pickup_item.tscn")
+	if pickup_scene:
+		var pickup = pickup_scene.instantiate()
+		get_tree().root.add_child(pickup)
+		pickup.global_position = drop_pos
+		pickup.set_item(item, 1)
+		pickup.linear_velocity = player.global_transform.basis.z * -3.0 + Vector3.UP * 2.0
+		
+		print("Hotbar: Dropped %s" % item.get("name", "item"))
+		
+		# Clear the slot
+		clear_slot(selected_slot)
+	else:
+		print("Hotbar: Failed to load pickup scene")

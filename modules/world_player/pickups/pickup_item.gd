@@ -1,0 +1,124 @@
+extends RigidBody3D
+class_name PickupItem
+## PickupItem - Physics-based item pickup in the world
+## Bounces/rolls when dropped, collected on player contact
+
+signal collected(item_data: Dictionary, count: int)
+
+@export var item_data: Dictionary = {}
+@export var item_count: int = 1
+@export var pickup_delay: float = 0.5 # Delay before can be picked up
+
+@onready var mesh: MeshInstance3D = $Mesh
+@onready var collision: CollisionShape3D = $Collision
+@onready var pickup_area: Area3D = $PickupArea
+
+var can_pickup: bool = false
+var time_spawned: float = 0.0
+
+const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
+
+func _ready() -> void:
+	time_spawned = Time.get_ticks_msec() / 1000.0
+	
+	# Set up physics
+	mass = 1.0
+	gravity_scale = 1.0
+	linear_damp = 0.5
+	angular_damp = 0.5
+	
+	# Set collision layers
+	collision_layer = 8 # Pickups layer
+	collision_mask = 1 # Collide with terrain
+	
+	# Connect pickup area
+	if pickup_area:
+		pickup_area.body_entered.connect(_on_body_entered)
+	
+	# Update visual
+	_update_visual()
+
+func _process(_delta: float) -> void:
+	if not can_pickup:
+		var current_time = Time.get_ticks_msec() / 1000.0
+		if current_time - time_spawned >= pickup_delay:
+			can_pickup = true
+
+## Set item data for this pickup
+func set_item(data: Dictionary, count: int = 1) -> void:
+	item_data = data.duplicate()
+	item_count = count
+	_update_visual()
+
+## Update visual based on item type
+func _update_visual() -> void:
+	if not mesh:
+		return
+	
+	var item_name = item_data.get("name", "Item")
+	
+	# Color based on item category
+	var mat = StandardMaterial3D.new()
+	var category = item_data.get("category", ItemDefs.ItemCategory.NONE)
+	
+	match category:
+		ItemDefs.ItemCategory.RESOURCE:
+			mat.albedo_color = Color(0.6, 0.5, 0.3) # Brown for resources
+		ItemDefs.ItemCategory.TOOL:
+			mat.albedo_color = Color(0.7, 0.7, 0.8) # Metallic for tools
+		ItemDefs.ItemCategory.BLOCK:
+			mat.albedo_color = Color(0.5, 0.5, 0.5) # Gray for blocks
+		ItemDefs.ItemCategory.OBJECT:
+			mat.albedo_color = Color(0.8, 0.6, 0.4) # Wood tone for objects
+		_:
+			mat.albedo_color = Color.WHITE
+	
+	mesh.material_override = mat
+
+## Handle body entering pickup area
+func _on_body_entered(body: Node3D) -> void:
+	if not can_pickup:
+		return
+	
+	if body.is_in_group("player"):
+		_try_collect(body)
+
+## Try to collect the item
+func _try_collect(player: Node3D) -> void:
+	var inventory = player.get_node_or_null("Systems/Inventory")
+	if not inventory or not inventory.has_method("add_item"):
+		return
+	
+	var leftover = inventory.add_item(item_data, item_count)
+	
+	if leftover < item_count:
+		# Some or all collected
+		collected.emit(item_data, item_count - leftover)
+		
+		if leftover <= 0:
+			# All collected, remove pickup
+			queue_free()
+		else:
+			# Partial collection
+			item_count = leftover
+
+## Spawn a pickup at position with velocity
+static func spawn_pickup(parent: Node, data: Dictionary, count: int, pos: Vector3, velocity: Vector3 = Vector3.ZERO) -> PickupItem:
+	var scene = load("res://modules/world_player/pickups/pickup_item.tscn")
+	var instance = scene.instantiate() as PickupItem
+	
+	parent.add_child(instance)
+	instance.global_position = pos
+	instance.set_item(data, count)
+	
+	if velocity != Vector3.ZERO:
+		instance.linear_velocity = velocity
+	else:
+		# Random small toss
+		instance.linear_velocity = Vector3(
+			randf_range(-2, 2),
+			randf_range(2, 4),
+			randf_range(-2, 2)
+		)
+	
+	return instance
