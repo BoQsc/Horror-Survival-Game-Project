@@ -221,10 +221,9 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
         return 1u;  // Stone (default)
     }
     
-    // 3. Surface biomes - QUANTIZED to 16x16 cells for consistency
-    // All voxels in a 16x16 cell get the same biome (no micro-boundaries)
-    vec2 biome_cell = floor(world_pos.xz / 16.0) * 16.0 + 8.0;  // Cell center
-    float biome_val = fbm(biome_cell * 0.002);  // Scale back to 0.002 with quantization
+    // 3. Surface biomes - per-voxel fbm for smooth transitions
+    // Shader uses same noise function for aligned visual blending
+    float biome_val = fbm(world_pos.xz * 0.002);
     
     if (biome_val < -0.2) return 3u;  // Sand biome
     if (biome_val > 0.6) return 5u;   // Snow biome

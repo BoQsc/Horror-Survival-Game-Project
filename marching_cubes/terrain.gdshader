@@ -8,7 +8,7 @@ uniform sampler2D texture_snow : source_color, filter_linear_mipmap;
 uniform sampler2D texture_road : source_color, filter_linear_mipmap;  // Asphalt texture
 
 uniform float uv_scale = 0.5;
-uniform float biome_scale = 0.0002; // Very large biomes for consistency
+uniform float biome_scale = 0.002; // Match gen_density.glsl for aligned blending
 uniform float global_snow_amount : hint_range(0.0, 1.0) = 0.0;
 
 // Road mask system - samples road_mask texture based on world position
@@ -203,32 +203,52 @@ void fragment() {
 		}
 	}
 	
-	// === Material Lookup - Pure mat_id (no blending for accuracy) ===
+	// === Material Lookup with Subtle Edge Blending ===
+	// Mat_id determines primary color, then blend softly at biome boundaries
 	vec3 base_color;
 	
-	if (mat_id == 0) {
-		base_color = col_grass;
-	} else if (mat_id == 1) {
-		base_color = col_stone;
-	} else if (mat_id == 2) {
-		base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore: golden tint
-	} else if (mat_id == 3) {
-		base_color = col_sand;
-	} else if (mat_id == 4) {
-		base_color = col_stone;  // Gravel uses stone texture
-	} else if (mat_id == 5) {
-		base_color = col_snow;
-	} else if (mat_id == 6) {
-		base_color = col_road;
-	} else if (mat_id == 9) {
-		base_color = col_stone * vec3(0.7, 0.65, 0.6);  // Granite: darker stone
-	} else if (mat_id >= 100) {
+	// First: get the primary color from mat_id
+	if (mat_id == 0) base_color = col_grass;
+	else if (mat_id == 1) base_color = col_stone;
+	else if (mat_id == 2) base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore
+	else if (mat_id == 3) base_color = col_sand;
+	else if (mat_id == 4) base_color = col_stone;  // Gravel
+	else if (mat_id == 5) base_color = col_snow;
+	else if (mat_id == 6) base_color = col_road;
+	else if (mat_id == 9) base_color = col_stone * vec3(0.7, 0.65, 0.6);  // Granite
+	else if (mat_id >= 100) {
 		if (mat_id == 100) base_color = col_grass;
 		else if (mat_id == 102) base_color = col_sand;
 		else if (mat_id == 103) base_color = col_snow;
 		else base_color = col_stone;
-	} else {
-		base_color = col_grass;  // Fallback
+	} else base_color = col_grass;
+	
+	// Second: apply subtle edge blending for surface biomes only
+	bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
+	if (is_surface_biome && !is_player_placed) {
+		float biome_val = fbm(world_pos.xz * biome_scale);
+		
+		// Blend based on proximity to biome thresholds
+		// Grass (0): default, transitions to sand below -0.2, gravel above 0.2, snow above 0.6
+		if (mat_id == 0) {
+			// Near sand boundary
+			float to_sand = smoothstep(-0.1, -0.3, biome_val) * 0.4;
+			// Near gravel boundary
+			float to_gravel = smoothstep(0.1, 0.3, biome_val) * 0.3;
+			base_color = mix(base_color, col_sand, to_sand);
+			base_color = mix(base_color, col_stone, to_gravel);
+		} else if (mat_id == 3) {  // Sand
+			float to_grass = smoothstep(-0.3, -0.1, biome_val) * 0.4;
+			base_color = mix(base_color, col_grass, to_grass);
+		} else if (mat_id == 4) {  // Gravel
+			float to_grass = smoothstep(0.3, 0.1, biome_val) * 0.3;
+			float to_snow = smoothstep(0.5, 0.7, biome_val) * 0.3;
+			base_color = mix(base_color, col_grass, to_grass);
+			base_color = mix(base_color, col_snow, to_snow);
+		} else if (mat_id == 5) {  // Snow
+			float to_gravel = smoothstep(0.7, 0.5, biome_val) * 0.3;
+			base_color = mix(base_color, col_stone, to_gravel);
+		}
 	}
 
 	// Slope needed for road and weather effects
