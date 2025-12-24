@@ -215,7 +215,7 @@ void fragment() {
 		float biome_val = fbm(world_pos.xz * biome_scale);
 		
 		// Universal blend width for all biome transitions
-		float blend_width = 0.02;  // Adjust this single value to change all blend sharpness
+		float blend_width = 0.00;  // Adjust this single value to change all blend sharpness
 		
 		// Biome thresholds: Sand < -0.2, Grass -0.2 to 0.2, Gravel 0.2 to 0.6, Snow > 0.6
 		float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
