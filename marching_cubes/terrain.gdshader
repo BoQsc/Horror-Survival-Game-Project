@@ -10,6 +10,7 @@ uniform sampler2D texture_road : source_color, filter_linear_mipmap;  // Asphalt
 uniform float uv_scale = 0.5;
 uniform float biome_scale = 0.002; // Match gen_density.glsl for aligned blending
 uniform float global_snow_amount : hint_range(0.0, 1.0) = 0.0;
+uniform bool biome_blending_enabled = true;  // Toggle: false = exact mat_id, true = smooth per-pixel blending
 
 // Road mask system - samples road_mask texture based on world position
 // filter_linear for smooth edges (requires higher resolution mask)
@@ -210,17 +211,17 @@ void fragment() {
 	// Underground/special materials: use mat_id directly
 	bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
 	
-	if (is_surface_biome && !is_player_placed) {
+	if (is_surface_biome && !is_player_placed && biome_blending_enabled) {
 		// Per-pixel biome calculation using same thresholds as gen_density.glsl
 		float biome_val = fbm(world_pos.xz * biome_scale);
 		
 		// Universal blend width for all biome transitions
-		float blend_width = 0.00;  // Adjust this single value to change all blend sharpness
+		float blend_width = 0.002;  // Adjust this single value to change all blend sharpness
 		
 		// Biome thresholds: Sand < -0.2, Grass -0.2 to 0.2, Gravel 0.2 to 0.6, Snow > 0.6
 		float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
 		float w_snow = smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val);
-		float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val));
+		float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - w_snow);
 		float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
 		
 		// Blend all surface biome colors
