@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3 uid="uid://dhw7kxqy4cjrf"]
+[gd_scene load_steps=4 format=3 uid="uid://dhw7kxqy4cjrf"]
 
 [ext_resource type="Script" path="res://modules/world_player/ui/player_hud.gd" id="1_hud"]
 [ext_resource type="PackedScene" path="res://modules/world_player/ui/inventory_panel.tscn" id="2_inv"]
+[ext_resource type="PackedScene" path="res://modules/world_player/ui/inventory_slot.tscn" id="3_slot"]
 
 [node name="PlayerHUD" type="CanvasLayer"]
 script = ExtResource("1_hud")
@@ -112,8 +113,6 @@ max_value = 100.0
 value = 100.0
 show_percentage = false
 
-[node name="HealthBarFill" type="StyleBoxFlat" parent="StatusBars/HealthBar"]
-
 [node name="StaminaBar" type="ProgressBar" parent="StatusBars"]
 custom_minimum_size = Vector2(200, 20)
 layout_mode = 2
@@ -154,76 +153,6 @@ offset_top = 5.0
 offset_right = -5.0
 offset_bottom = -5.0
 alignment = 1
-
-[node name="Slot0" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[1]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot1" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[2]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot2" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[3]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot3" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[4]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot4" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[5]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot5" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[6]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot6" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[7]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot7" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[8]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot8" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[9]"
-horizontal_alignment = 1
-vertical_alignment = 1
-
-[node name="Slot9" type="Label" parent="HotbarPanel/HotbarContainer"]
-custom_minimum_size = Vector2(80, 60)
-layout_mode = 2
-text = "[0]"
-horizontal_alignment = 1
-vertical_alignment = 1
 
 [node name="SelectedItemLabel" type="Label" parent="."]
 anchors_preset = 7

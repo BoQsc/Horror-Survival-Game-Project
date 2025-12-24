@@ -82,8 +82,13 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	if not data is Dictionary:
 		return
 	
-	# Signal parent to handle the swap/merge
-	get_parent().handle_slot_drop(data.get("source_slot", -1), slot_index)
+	# Find a parent that has handle_slot_drop (could be InventoryPanel or PlayerHUD)
+	var node = get_parent()
+	while node:
+		if node.has_method("handle_slot_drop"):
+			node.handle_slot_drop(data.get("source_slot", -1), slot_index)
+			return
+		node = node.get_parent()
 
 ## Handle click
 func _gui_input(event: InputEvent) -> void:

@@ -9,9 +9,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -230.0
-offset_top = -200.0
+offset_top = -150.0
 offset_right = 230.0
-offset_bottom = 200.0
+offset_bottom = 150.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_panel")
@@ -31,18 +31,3 @@ layout_mode = 2
 layout_mode = 2
 size_flags_vertical = 3
 columns = 9
-
-[node name="HSeparator2" type="HSeparator" parent="VBox"]
-layout_mode = 2
-
-[node name="HotbarLabel" type="Label" parent="VBox"]
-layout_mode = 2
-text = "HOTBAR"
-horizontal_alignment = 1
-
-[node name="HotbarSection" type="PanelContainer" parent="VBox"]
-layout_mode = 2
-
-[node name="HotbarGrid" type="HBoxContainer" parent="VBox/HotbarSection"]
-layout_mode = 2
-alignment = 1

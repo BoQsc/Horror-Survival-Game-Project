@@ -17,8 +17,12 @@ class_name PlayerHUD
 @onready var selected_item_label: Label = $SelectedItemLabel
 @onready var target_material_label: Label = $TargetMaterial
 
-# Hotbar slot labels
-var slot_labels: Array[Label] = []
+# Hotbar slot controls (InventorySlot instances)
+var hotbar_slots: Array = []
+var hotbar_ref: Node = null
+var inventory_ref: Node = null
+
+const InventorySlotScene = preload("res://modules/world_player/ui/inventory_slot.tscn")
 
 # Editor mode tracking
 var is_editor_mode: bool = false
@@ -67,32 +71,118 @@ func _process(_delta: float) -> void:
 	# Update mode label with extra build info when in BUILD mode
 	_update_build_mode_info()
 
-## Setup hotbar slot display
+## Setup hotbar slot display with InventorySlot instances
 func _setup_hotbar() -> void:
-	slot_labels.clear()
+	hotbar_slots.clear()
 	
-	# Find all slot labels in hotbar container
+	# Create 10 InventorySlot instances for hotbar
 	for i in range(10):
-		var slot = hotbar_container.get_node_or_null("Slot%d" % i)
-		if slot and slot is Label:
-			slot_labels.append(slot)
+		var slot = InventorySlotScene.instantiate()
+		slot.slot_index = i + 100 # Offset for hotbar (100-109)
+		slot.custom_minimum_size = Vector2(80, 60)
+		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slot.item_dropped_outside.connect(_on_hotbar_item_dropped_outside.bind(slot))
+		hotbar_container.add_child(slot)
+		hotbar_slots.append(slot)
 	
-	# Find hotbar and populate names (signal fires before HUD connects)
+	# Find player systems
 	var player_node = get_tree().get_first_node_in_group("player")
 	if player_node:
-		var hotbar = player_node.get_node_or_null("Systems/Hotbar")
-		if hotbar:
-			for i in range(slot_labels.size()):
-				var item = hotbar.get_item_at(i)
-				slot_labels[i].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
-			# Set initial selected item label
-			if selected_item_label:
-				var first_item = hotbar.get_item_at(0)
-				selected_item_label.text = first_item.get("name", "Fists")
+		hotbar_ref = player_node.get_node_or_null("Systems/Hotbar")
+		inventory_ref = player_node.get_node_or_null("Systems/Inventory")
+	
+	# Populate initial hotbar display
+	_refresh_hotbar_display()
 	
 	# Highlight first slot by default
-	if slot_labels.size() > 0:
-		slot_labels[0].modulate = Color.YELLOW
+	if hotbar_slots.size() > 0:
+		hotbar_slots[0].modulate = Color.YELLOW
+	
+	# Set initial selected item label
+	if hotbar_ref and selected_item_label:
+		var first_item = hotbar_ref.get_item_at(0)
+		selected_item_label.text = first_item.get("name", "Fists")
+
+## Refresh all hotbar slot displays
+func _refresh_hotbar_display() -> void:
+	if not hotbar_ref:
+		return
+	
+	var raw_data = hotbar_ref.get_all_slots() if hotbar_ref.has_method("get_all_slots") else []
+	for i in range(min(hotbar_slots.size(), raw_data.size())):
+		var item = raw_data[i]
+		var wrapped = {"item": item, "count": 1 if item.get("id", "empty") != "empty" else 0}
+		hotbar_slots[i].set_slot_data(wrapped, i + 100)
+
+## Handle item dropped outside hotbar slot - spawn 3D pickup
+func _on_hotbar_item_dropped_outside(item: Dictionary, count: int, slot) -> void:
+	var slot_idx = slot.slot_index - 100
+	
+	if hotbar_ref and hotbar_ref.has_method("clear_slot"):
+		hotbar_ref.clear_slot(slot_idx)
+	
+	# Get player position for drop
+	var player = get_tree().get_first_node_in_group("player")
+	var drop_pos = Vector3.ZERO
+	if player:
+		drop_pos = player.global_position + player.global_transform.basis.z * 2.0 + Vector3.UP
+	
+	# Spawn pickup
+	_spawn_pickup(item, count, drop_pos)
+	_refresh_hotbar_display()
+
+## Spawn a 3D pickup in the world
+func _spawn_pickup(item: Dictionary, count: int, pos: Vector3) -> void:
+	var pickup_scene = load("res://modules/world_player/pickups/pickup_item.tscn")
+	if not pickup_scene:
+		print("PlayerHUD: Failed to load pickup scene")
+		return
+	
+	var pickup = pickup_scene.instantiate()
+	get_tree().root.add_child(pickup)
+	pickup.global_position = pos
+	pickup.set_item(item, count)
+	
+	# Random toss
+	pickup.linear_velocity = Vector3(
+		randf_range(-2, 2),
+		randf_range(2, 4),
+		randf_range(-2, 2)
+	)
+	
+	print("PlayerHUD: Spawned pickup for %s x%d" % [item.get("name", "Item"), count])
+
+## Handle drag-drop between HUD hotbar and inventory panel
+func handle_slot_drop(source_index: int, target_index: int) -> void:
+	if source_index == target_index:
+		return
+	
+	var source_is_hotbar = source_index >= 100
+	var target_is_hotbar = target_index >= 100
+	var source_idx = source_index % 100
+	var target_idx = target_index % 100
+	
+	var source_system = hotbar_ref if source_is_hotbar else inventory_ref
+	var target_system = hotbar_ref if target_is_hotbar else inventory_ref
+	
+	if not source_system or not target_system:
+		return
+	
+	# Get slot data
+	var source_data = source_system.get_slot(source_idx) if source_system.has_method("get_slot") else {}
+	var target_data = target_system.get_slot(target_idx) if target_system.has_method("get_slot") else {}
+	
+	var source_item = source_data.get("item", {})
+	var source_count = source_data.get("count", 0)
+	var target_item = target_data.get("item", {})
+	var target_count = target_data.get("count", 0)
+	
+	# Swap items
+	if source_system.has_method("set_slot") and target_system.has_method("set_slot"):
+		target_system.set_slot(target_idx, source_item, source_count)
+		source_system.set_slot(source_idx, target_item, target_count)
+	
+	_refresh_hotbar_display()
 
 ## Update compass direction
 func _update_compass() -> void:
@@ -153,8 +243,10 @@ func _on_item_changed(slot: int, item: Dictionary) -> void:
 	# Skip in editor mode - editor has its own display
 	if is_editor_mode:
 		return
-	if slot >= 0 and slot < slot_labels.size():
-		slot_labels[slot].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
+	# Refresh the changed slot in hotbar display
+	if slot >= 0 and slot < hotbar_slots.size():
+		var wrapped = {"item": item, "count": 1 if item.get("id", "empty") != "empty" else 0}
+		hotbar_slots[slot].set_slot_data(wrapped, slot + 100)
 
 ## Hotbar slot selected handler
 func _on_hotbar_slot_selected(slot: int) -> void:
@@ -163,11 +255,11 @@ func _on_hotbar_slot_selected(slot: int) -> void:
 		return
 	
 	# Highlight selected slot
-	for i in range(slot_labels.size()):
+	for i in range(hotbar_slots.size()):
 		if i == slot:
-			slot_labels[i].modulate = Color.YELLOW
+			hotbar_slots[i].modulate = Color.YELLOW
 		else:
-			slot_labels[i].modulate = Color.WHITE
+			hotbar_slots[i].modulate = Color.WHITE
 	
 	# Update selected item label with full name
 	var player_node = get_tree().get_first_node_in_group("player")
@@ -201,17 +293,7 @@ func _on_exit_pressed() -> void:
 
 ## Inventory changed handler - refresh all hotbar slots
 func _on_inventory_changed() -> void:
-	var player_node = get_tree().get_first_node_in_group("player")
-	if not player_node:
-		return
-	var hotbar = player_node.get_node_or_null("Systems/Hotbar")
-	if not hotbar:
-		return
-	
-	# Refresh all slot labels
-	for i in range(slot_labels.size()):
-		var item = hotbar.get_item_at(i)
-		slot_labels[i].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
+	_refresh_hotbar_display()
 
 ## Update mode label with build mode details
 func _update_build_mode_info() -> void:
@@ -274,18 +356,22 @@ func _on_editor_submode_changed(submode: int, _submode_name: String) -> void:
 func _update_hotbar_display() -> void:
 	if is_editor_mode:
 		# Show editor submodes in hotbar slots
-		for i in range(slot_labels.size()):
+		for i in range(hotbar_slots.size()):
 			if i < EDITOR_SUBMODE_NAMES.size():
-				slot_labels[i].text = "[%s]" % EDITOR_SUBMODE_NAMES[i].substr(0, 3)
+				var editor_item = {"id": "editor_mode", "name": EDITOR_SUBMODE_NAMES[i]}
+				var wrapped = {"item": editor_item, "count": 1}
+				hotbar_slots[i].set_slot_data(wrapped, i + 100)
 				# Highlight selected submode
 				if i == current_editor_submode:
-					slot_labels[i].modulate = Color.YELLOW
+					hotbar_slots[i].modulate = Color.YELLOW
 				else:
-					slot_labels[i].modulate = Color.WHITE
+					hotbar_slots[i].modulate = Color.WHITE
 			else:
 				# Show empty for unused slots
-				slot_labels[i].text = "[Emp]"
-				slot_labels[i].modulate = Color.DIM_GRAY
+				var empty_item = {"id": "empty", "name": "Empty"}
+				var wrapped = {"item": empty_item, "count": 0}
+				hotbar_slots[i].set_slot_data(wrapped, i + 100)
+				hotbar_slots[i].modulate = Color.DIM_GRAY
 		
 		# Update selected item label
 		if selected_item_label:
@@ -295,24 +381,18 @@ func _update_hotbar_display() -> void:
 				selected_item_label.text = "Editor"
 	else:
 		# Restore normal hotbar from items
-		var player_node = get_tree().get_first_node_in_group("player")
-		if player_node:
-			var hotbar = player_node.get_node_or_null("Systems/Hotbar")
-			if hotbar:
-				for i in range(slot_labels.size()):
-					var item = hotbar.get_item_at(i)
-					slot_labels[i].text = "[%s]" % item.get("name", "Empty").substr(0, 3)
-					slot_labels[i].modulate = Color.WHITE
-				
-				# Restore selected slot highlight
-				var selected = hotbar.get_selected_index()
-				if selected >= 0 and selected < slot_labels.size():
-					slot_labels[selected].modulate = Color.YELLOW
-				
-				# Update selected item label
-				if selected_item_label:
-					var item = hotbar.get_item_at(selected)
-					selected_item_label.text = item.get("name", "Empty")
+		_refresh_hotbar_display()
+		
+		# Restore selected slot highlight
+		if hotbar_ref:
+			var selected = hotbar_ref.get_selected_index()
+			if selected >= 0 and selected < hotbar_slots.size():
+				hotbar_slots[selected].modulate = Color.YELLOW
+			
+			# Update selected item label
+			if selected_item_label:
+				var item = hotbar_ref.get_item_at(selected)
+				selected_item_label.text = item.get("name", "Empty")
 
 #region Durability UI
 
