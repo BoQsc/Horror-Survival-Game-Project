@@ -214,11 +214,13 @@ void fragment() {
 		// Per-pixel biome calculation using same thresholds as gen_density.glsl
 		float biome_val = fbm(world_pos.xz * biome_scale);
 		
-		// Minimal blend zones - almost sharp boundaries with tiny anti-aliasing
-		// Sand: < -0.2, Grass: -0.2 to 0.2, Gravel: 0.2 to 0.6, Snow: > 0.6
-		float w_sand = 1.0 - smoothstep(-0.22, -0.18, biome_val);
-		float w_snow = smoothstep(0.58, 0.62, biome_val);
-		float w_gravel = smoothstep(0.18, 0.22, biome_val) * (1.0 - smoothstep(0.58, 0.62, biome_val));
+		// Universal blend width for all biome transitions
+		float blend_width = 0.02;  // Adjust this single value to change all blend sharpness
+		
+		// Biome thresholds: Sand < -0.2, Grass -0.2 to 0.2, Gravel 0.2 to 0.6, Snow > 0.6
+		float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
+		float w_snow = smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val);
+		float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val));
 		float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
 		
 		// Blend all surface biome colors
