@@ -31,6 +31,7 @@ signal inventory_toggled(is_open: bool)
 
 # UI events
 signal game_menu_toggled(is_open: bool)
+signal target_material_changed(material_name: String)
 
 # Movement events
 signal player_jumped()

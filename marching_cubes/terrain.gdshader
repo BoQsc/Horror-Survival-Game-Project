@@ -8,7 +8,7 @@ uniform sampler2D texture_snow : source_color, filter_linear_mipmap;
 uniform sampler2D texture_road : source_color, filter_linear_mipmap;  // Asphalt texture
 
 uniform float uv_scale = 0.5;
-uniform float biome_scale = 0.002; // Smaller = larger biomes
+uniform float biome_scale = 0.0002; // Very large biomes for consistency
 uniform float global_snow_amount : hint_range(0.0, 1.0) = 0.0;
 
 // Road mask system - samples road_mask texture based on world position
@@ -203,61 +203,36 @@ void fragment() {
 		}
 	}
 	
-	// === Material Lookup with Smooth Biome Blending ===
-	// Use vertex color material as base, but smooth biome transitions for surface materials
+	// === Material Lookup - Pure mat_id (no blending for accuracy) ===
 	vec3 base_color;
 	
-	// For surface biome materials (0,3,4,5), apply smooth blending based on fbm
-	bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
-	
-	if (is_surface_biome && !is_player_placed) {
-		// Smooth biome calculation (same as original shader)
-		float biome_val = fbm(world_pos.xz * biome_scale);
-		
-		// Start with grass as base
+	if (mat_id == 0) {
 		base_color = col_grass;
-		
-		// Smooth blend to sand
-		float sand_mix = smoothstep(-0.2, -0.4, biome_val);
-		base_color = mix(base_color, col_sand, sand_mix);
-		
-		// Smooth blend to gravel (uses stone texture, not rock)
-		float gravel_mix = smoothstep(0.2, 0.4, biome_val);
-		base_color = mix(base_color, col_stone, gravel_mix);
-		
-		// Smooth blend to snow
-		float snow_mix = smoothstep(0.6, 0.8, biome_val);
-		base_color = mix(base_color, col_snow, snow_mix);
-	}
-	else if (mat_id == 1) {
-		base_color = col_stone;  // Underground stone
+	} else if (mat_id == 1) {
+		base_color = col_stone;
 	} else if (mat_id == 2) {
-		base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore: golden stone tint
+		base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore: golden tint
+	} else if (mat_id == 3) {
+		base_color = col_sand;
+	} else if (mat_id == 4) {
+		base_color = col_stone;  // Gravel uses stone texture
+	} else if (mat_id == 5) {
+		base_color = col_snow;
 	} else if (mat_id == 6) {
 		base_color = col_road;
 	} else if (mat_id == 9) {
-		// Granite: darker stone variant (underground 3D variation)
-		base_color = col_stone * vec3(0.7, 0.65, 0.6);
+		base_color = col_stone * vec3(0.7, 0.65, 0.6);  // Granite: darker stone
 	} else if (mat_id >= 100) {
-		// Player-placed materials
 		if (mat_id == 100) base_color = col_grass;
 		else if (mat_id == 102) base_color = col_sand;
 		else if (mat_id == 103) base_color = col_snow;
-		else base_color = col_stone;  // 101 = Stone
+		else base_color = col_stone;
 	} else {
 		base_color = col_grass;  // Fallback
 	}
-	
-	// === Slope-based Cliff Rock (visual enhancement, not material change) ===
-	// Only apply to SURFACE cliffs (above threshold). Underground shows raw materials.
-	// This ensures players can see stone, ore, etc. when mining underground.
+
+	// Slope needed for road and weather effects
 	float slope = normal.y;
-	if (!is_player_placed && mat_id != 6) {
-		// Height-based surface check with smooth transition
-		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
-		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;
-		base_color = mix(base_color, col_rock, cliff_mix);
-	}
 	
 	// === Player Road Overlay (from road_mask texture) ===
 	// This allows player-painted roads to overlay procedural materials

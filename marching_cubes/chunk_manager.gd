@@ -415,6 +415,51 @@ func get_water_density(global_pos: Vector3) -> float:
 		
 	return 1.0
 
+## Get material ID at world position (reads from CPU-cached chunk data)
+## Returns -1 if position is outside loaded chunks or no material data
+func get_material_at(global_pos: Vector3) -> int:
+	# Find Chunk (3D coordinates)
+	var chunk_x = int(floor(global_pos.x / CHUNK_STRIDE))
+	var chunk_y = int(floor(global_pos.y / CHUNK_STRIDE))
+	var chunk_z = int(floor(global_pos.z / CHUNK_STRIDE))
+	var coord = Vector3i(chunk_x, chunk_y, chunk_z)
+	
+	if not active_chunks.has(coord):
+		return -1 # Chunk not loaded
+		
+	var data = active_chunks[coord]
+	if data == null or data.cpu_material_terrain.is_empty():
+		return -1 # No material data
+		
+	# Find local position within chunk
+	var chunk_origin = Vector3(chunk_x * CHUNK_STRIDE, chunk_y * CHUNK_STRIDE, chunk_z * CHUNK_STRIDE)
+	var local_pos = global_pos - chunk_origin
+	
+	# CRITICAL: Match GPU behavior!
+	# GPU marching_cubes.glsl samples material at: pos + vec3(0.5) then uses round()
+	# We use floor to find the voxel cube, which is equivalent to GPU's round(pos+0.5) = floor(pos)+1 when pos > 0.5
+	# Actually, to EXACTLY match: round(local_pos) gives the nearest voxel
+	var ix = int(round(local_pos.x))
+	var iy = int(round(local_pos.y))
+	var iz = int(round(local_pos.z))
+	
+	# Clamp to valid range (0-32)
+	ix = clampi(ix, 0, DENSITY_GRID_SIZE - 1)
+	iy = clampi(iy, 0, DENSITY_GRID_SIZE - 1)
+	iz = clampi(iz, 0, DENSITY_GRID_SIZE - 1)
+		
+	var voxel_index = ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+	
+	# CRITICAL: Material buffer stores uint32 per voxel (4 bytes each)
+	# We need to read the first byte of each uint32 (material ID is 0-255)
+	var byte_offset = voxel_index * 4 # 4 bytes per uint
+	
+	if byte_offset >= 0 and byte_offset < data.cpu_material_terrain.size():
+		return data.cpu_material_terrain[byte_offset] # First byte is the mat_id
+		
+	return -1
+
+
 # Check if any Y layer at this X,Z has stored modifications (player-built terrain)
 func has_modifications_at_xz(x: int, z: int) -> bool:
 	for coord in stored_modifications:
@@ -1052,7 +1097,7 @@ func _thread_function():
 			mutex.unlock()
 			# Only complete in-flight when no tasks pending
 			if in_flight.size() > 0:
-				rd.sync ()
+				rd.sync()
 				for flight_data in in_flight:
 					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1065,7 +1110,7 @@ func _thread_function():
 		if task.type == "modify":
 			# HIGHEST PRIORITY: Process modifications immediately, sync all pending work first
 			if in_flight.size() > 0:
-				rd.sync ()
+				rd.sync()
 				for fd in in_flight:
 					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1073,7 +1118,7 @@ func _thread_function():
 		elif task.type == "generate":
 			# Complete any in-flight before starting new generation
 			if in_flight.size() > 0:
-				rd.sync ()
+				rd.sync()
 				for flight_data in in_flight:
 					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 				in_flight.clear()
@@ -1086,7 +1131,7 @@ func _thread_function():
 				
 				# If at max in-flight, immediately complete to avoid GPU buildup
 				if in_flight.size() >= MAX_IN_FLIGHT:
-					rd.sync ()
+					rd.sync()
 					for fd in in_flight:
 						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
 					in_flight.clear()
@@ -1182,7 +1227,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		# Debug: show when mods are applied to underground chunks
 		# Need to sync before modifications since they read/write density
 		rd.submit()
-		rd.sync ()
+		rd.sync()
 		for mod in mods_for_chunk:
 			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
@@ -1215,13 +1260,13 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	# Terrain mesh (uses material buffer for vertex colors)
 	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_t)
 	
 	# Water mesh (no material buffer, use terrain's for now)
 	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_w)
 	
 	# Readback density for physics
@@ -1318,7 +1363,7 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
 	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer)
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh)
 
 # CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
@@ -1422,7 +1467,7 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
@@ -1484,7 +1529,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 	
@@ -1598,7 +1643,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 	rd.compute_list_end()
 	
 	rd.submit()
-	rd.sync ()
+	rd.sync()
 	
 	# Read back
 	var count_bytes = rd.buffer_get_data(counter_buffer)

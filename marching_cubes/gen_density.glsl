@@ -206,7 +206,8 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
     }
     
     // 2. Underground materials (below surface) - TRUE 3D variation
-    if (depth > 3.0) {
+    // Extended threshold (10.0) so surface biomes extend deeper for consistency
+    if (depth > 10.0) {
         // Check for ore veins using 3D noise
         float ore_noise = noise(world_pos * 0.15);
         if (ore_noise > 0.75 && depth > 8.0) {
@@ -220,8 +221,10 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
         return 1u;  // Stone (default)
     }
     
-    // 3. Surface biomes (scale 0.002 = large biomes, matching shader)
-    float biome_val = fbm(world_pos.xz * 0.002);
+    // 3. Surface biomes - QUANTIZED to 16x16 cells for consistency
+    // All voxels in a 16x16 cell get the same biome (no micro-boundaries)
+    vec2 biome_cell = floor(world_pos.xz / 16.0) * 16.0 + 8.0;  // Cell center
+    float biome_val = fbm(biome_cell * 0.002);  // Scale back to 0.002 with quantization
     
     if (biome_val < -0.2) return 3u;  // Sand biome
     if (biome_val > 0.6) return 5u;   // Snow biome

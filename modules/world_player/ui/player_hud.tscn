@@ -29,6 +29,18 @@ text = ""
 horizontal_alignment = 2
 vertical_alignment = 1
 
+[node name="TargetMaterial" type="Label" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -150.0
+offset_top = 60.0
+offset_right = -10.0
+offset_bottom = 80.0
+text = ""
+horizontal_alignment = 2
+vertical_alignment = 1
+
 [node name="Crosshair" type="TextureRect" parent="."]
 anchors_preset = 8
 anchor_left = 0.5

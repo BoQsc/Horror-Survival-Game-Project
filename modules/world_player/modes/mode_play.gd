@@ -36,6 +36,25 @@ var held_prop_instance: Node3D = null
 var held_prop_id: int = -1
 var held_prop_rotation: int = 0
 
+# Material display - lookup and tracking
+const MATERIAL_NAMES = {
+	-1: "Unknown",
+	0: "Grass",
+	1: "Stone",
+	2: "Ore",
+	3: "Sand",
+	4: "Gravel",
+	5: "Snow",
+	6: "Road",
+	9: "Granite",
+	100: "[P] Grass",
+	101: "[P] Stone",
+	102: "[P] Sand",
+	103: "[P] Snow"
+}
+var last_target_material: String = ""
+var material_target_marker: MeshInstance3D = null
+var mat_debug_on_click: bool = false # Only log when clicking
 
 func _ready() -> void:
 	# Find player - ModePlay is child of Modes which is child of WorldPlayer
@@ -53,6 +72,9 @@ func _ready() -> void:
 	
 	# Create selection box for terrain resource placement
 	_create_selection_box()
+	
+	# Create debug marker for material targeting
+	_create_material_target_marker()
 	
 	print("ModePlay: Initialized")
 	print("  - Player: %s" % ("OK" if player else "MISSING"))
@@ -88,6 +110,9 @@ func _process(delta: float) -> void:
 	
 	# Check if still looking at durability target
 	_check_durability_target()
+	
+	# Update target material display
+	_update_target_material()
 
 func _input(event: InputEvent) -> void:
 	# Only process in PLAY mode
@@ -154,6 +179,7 @@ func _update_terrain_targeting() -> void:
 
 ## Handle primary action (left click) in PLAY mode
 func handle_primary(item: Dictionary) -> void:
+	mat_debug_on_click = true # Enable debug logging for this click
 	print("ModePlay: handle_primary called with item: %s" % item.get("name", "unknown"))
 	
 	# If grabbing a prop, don't do other actions
@@ -782,5 +808,83 @@ func _get_item_data_from_pickup(target: Node) -> Dictionary:
 	# Example: if "shotgun" in name_lower: ...
 	
 	return {}
+
+#endregion
+
+#region Material Display
+
+## Create debug marker for material target visualization
+func _create_material_target_marker() -> void:
+	material_target_marker = MeshInstance3D.new()
+	var sphere = SphereMesh.new()
+	sphere.radius = 0.15
+	sphere.height = 0.3
+	material_target_marker.mesh = sphere
+	
+	var mat = StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1, 0.3, 0.1, 1.0) # Orange-red
+	material_target_marker.material_override = mat
+	material_target_marker.visible = false
+	
+	get_tree().root.add_child.call_deferred(material_target_marker)
+
+## Update target material display in HUD
+func _update_target_material() -> void:
+	if not player:
+		return
+	
+	var hit = player.raycast(10.0, 0xFFFFFFFF, false, true) # Long range, exclude water
+	if hit.is_empty():
+		if material_target_marker:
+			material_target_marker.visible = false
+		if last_target_material != "":
+			last_target_material = ""
+			PlayerSignals.target_material_changed.emit("")
+		return
+	
+	var target = hit.get("collider")
+	var hit_pos = hit.get("position", Vector3.ZERO)
+	var hit_normal = hit.get("normal", Vector3.UP)
+	var material_name = ""
+	
+	# Update marker position
+	if material_target_marker:
+		material_target_marker.global_position = hit_pos
+		material_target_marker.visible = true
+	
+	# Check if we hit terrain (StaticBody3D in 'terrain' group)
+	if target and target.is_in_group("terrain"):
+		# Small offset INTO the terrain to ensure we sample the solid voxel
+		var sample_pos = hit_pos - hit_normal * 0.1
+		var mat_id = _get_material_at(sample_pos)
+		material_name = MATERIAL_NAMES.get(mat_id, "Unknown (%d)" % mat_id)
+		
+		# Debug logging (only when digging/clicking)
+		if mat_debug_on_click:
+			print("[MAT_DEBUG] hit_pos=%.1f,%.1f,%.1f normal=%.2f,%.2f,%.2f" % [
+				hit_pos.x, hit_pos.y, hit_pos.z,
+				hit_normal.x, hit_normal.y, hit_normal.z
+			])
+			print("[MAT_DEBUG] sample_pos=%.1f,%.1f,%.1f mat_id=%d (%s)" % [
+				sample_pos.x, sample_pos.y, sample_pos.z, mat_id, material_name
+			])
+			mat_debug_on_click = false
+	elif target and target.is_in_group("building_chunks"):
+		material_name = "Building Block"
+	elif target and target.is_in_group("trees"):
+		material_name = "Tree"
+	elif target and target.is_in_group("placed_objects"):
+		material_name = "Object"
+	
+	if material_name != last_target_material:
+		last_target_material = material_name
+		PlayerSignals.target_material_changed.emit(material_name)
+
+## Get material ID at a given world position (uses chunk_manager's accurate lookup)
+func _get_material_at(pos: Vector3) -> int:
+	if terrain_manager and terrain_manager.has_method("get_material_at"):
+		return terrain_manager.get_material_at(pos)
+	return -1 # Unknown
 
 #endregion

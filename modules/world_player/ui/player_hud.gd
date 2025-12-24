@@ -15,6 +15,7 @@ class_name PlayerHUD
 @onready var compass: Label = $Compass
 @onready var game_menu: Control = $GameMenu
 @onready var selected_item_label: Label = $SelectedItemLabel
+@onready var target_material_label: Label = $TargetMaterial
 
 # Hotbar slot labels
 var slot_labels: Array[Label] = []
@@ -38,6 +39,7 @@ func _ready() -> void:
 	PlayerSignals.inventory_changed.connect(_on_inventory_changed)
 	PlayerSignals.durability_hit.connect(_on_durability_hit)
 	PlayerSignals.durability_cleared.connect(_on_durability_cleared)
+	PlayerSignals.target_material_changed.connect(_on_target_material_changed)
 
 	
 	# Initialize hotbar UI
@@ -326,5 +328,9 @@ func _on_durability_cleared() -> void:
 	if durability_bar:
 		durability_bar.visible = false
 		durability_bar.value = 0
+
+func _on_target_material_changed(material_name: String) -> void:
+	if target_material_label:
+		target_material_label.text = material_name
 
 #endregion
