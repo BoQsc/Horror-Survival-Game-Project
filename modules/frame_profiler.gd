@@ -1,6 +1,6 @@
 extends Node
 ## Frame Profiler - Auto-detects which scripts cause spikes
-## F12 = Stats | F11 = List nodes | F10 = Start auto-test
+## F12 = Stats | F11 = List nodes | F10 = Start auto-test (15 seconds)
 
 var _frame_times: Array[float] = []
 var _last_print_time: float = 0.0
@@ -8,16 +8,16 @@ var _processing_nodes: Array[Node] = []
 
 # Auto-test state
 var _testing: bool = false
-var _test_queue: Array = [] # Script paths to test
-var _test_results: Dictionary = {} # script_path -> { disabled_avg, enabled_avg }
+var _test_queue: Array = []
+var _test_results: Dictionary = {}
 var _current_test_script: String = ""
-var _test_phase: int = 0 # 0=measure enabled, 1=disable and measure, 2=re-enable
+var _test_phase: int = 0
 var _test_samples: Array[float] = []
-var _test_frame_count: int = 0
-const TEST_FRAMES: int = 30 # Frames per test phase
+var _test_start_time: float = 0.0
+const TEST_DURATION_SEC: float = 15.0 # 15 seconds total test
 
 func _ready():
-	print("[FrameProfiler] F12=Stats | F11=List | F10=Auto-test scripts")
+	print("[FrameProfiler] F12=Stats | F11=List | F10=Auto-test (15 sec)")
 
 func _process(delta):
 	var process_ms = Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
@@ -25,9 +25,8 @@ func _process(delta):
 	while _frame_times.size() > 300:
 		_frame_times.pop_front()
 	
-	# Run auto-test if active
 	if _testing:
-		_run_auto_test(process_ms)
+		_run_auto_test(process_ms, delta)
 		return
 	
 	_last_print_time += delta
@@ -77,7 +76,6 @@ func _start_auto_test():
 	
 	_find_processing_nodes()
 	
-	# Get unique script paths (skip this profiler)
 	var scripts: Dictionary = {}
 	for node in _processing_nodes:
 		if node.get_script():
@@ -92,65 +90,64 @@ func _start_auto_test():
 		print("[TEST] No scripts to test")
 		return
 	
-	print("\n=== AUTO-TEST STARTED ===")
-	print("Testing %d scripts..." % _test_queue.size())
-	print("This will briefly disable each script to measure impact.")
-	print("=========================\n")
+	# Calculate time per script (15 sec total / num scripts / 2 phases)
+	var time_per_phase = TEST_DURATION_SEC / _test_queue.size() / 2.0
+	
+	print("\n=== AUTO-TEST STARTED (15 sec) ===")
+	print("Testing %d scripts, %.1fs each..." % [_test_queue.size(), time_per_phase * 2])
+	print("==================================\n")
 	
 	_testing = true
 	_test_phase = 0
 	_test_samples.clear()
-	_test_frame_count = 0
+	_test_start_time = 0.0
 	_current_test_script = _test_queue.pop_front()
 
-func _run_auto_test(process_ms: float):
+func _run_auto_test(process_ms: float, delta: float):
 	_test_samples.append(process_ms)
-	_test_frame_count += 1
+	_test_start_time += delta
 	
-	if _test_frame_count < TEST_FRAMES:
-		return # Still collecting samples
+	# Time per phase = 15 sec / (num scripts * 2 phases)
+	var total_scripts = _test_results.size() + _test_queue.size() + 1
+	var time_per_phase = TEST_DURATION_SEC / total_scripts / 2.0
+	
+	if _test_start_time < time_per_phase:
+		return # Still collecting
 	
 	var avg = _average(_test_samples)
 	
 	if _test_phase == 0:
-		# Phase 0: Measured with script enabled
 		_test_results[_current_test_script] = {"enabled": avg, "disabled": 0.0}
-		# Disable all nodes with this script
 		for node in _processing_nodes:
 			if node.get_script() and node.get_script().resource_path == _current_test_script:
 				if is_instance_valid(node):
 					node.set_process(false)
 		_test_phase = 1
 		_test_samples.clear()
-		_test_frame_count = 0
+		_test_start_time = 0.0
+		print("  Testing: %s (disabled)" % _current_test_script.get_file())
 	
 	elif _test_phase == 1:
-		# Phase 1: Measured with script disabled
 		_test_results[_current_test_script].disabled = avg
-		var impact = _test_results[_current_test_script].enabled - avg
-		# Re-enable
 		for node in _processing_nodes:
 			if node.get_script() and node.get_script().resource_path == _current_test_script:
 				if is_instance_valid(node):
 					node.set_process(true)
 		
-		# Move to next script or finish
 		if _test_queue.is_empty():
 			_finish_auto_test()
 		else:
 			_test_phase = 0
 			_test_samples.clear()
-			_test_frame_count = 0
+			_test_start_time = 0.0
 			_current_test_script = _test_queue.pop_front()
+			print("  Testing: %s (enabled)" % _current_test_script.get_file())
 
 func _finish_auto_test():
 	_testing = false
 	
-	print("\n========== AUTO-TEST RESULTS ==========")
-	print("Script                          Impact (ms)")
-	print("-".repeat(50))
+	print("\n========== RESULTS ==========")
 	
-	# Sort by impact (biggest first)
 	var sorted_scripts = _test_results.keys()
 	sorted_scripts.sort_custom(func(a, b):
 		var ia = _test_results[a].enabled - _test_results[a].disabled
@@ -161,13 +158,11 @@ func _finish_auto_test():
 	for script_path in sorted_scripts:
 		var r = _test_results[script_path]
 		var impact = r.enabled - r.disabled
-		var name = script_path.get_file()
-		if impact > 1.0: # Only show if >1ms impact
-			print("  %-35s %+.1fms" % [name, impact])
+		if impact > 1.0:
+			print("  %-30s %+.1fms" % [script_path.get_file(), impact])
 	
-	print("========================================\n")
-	print("Higher impact = disabling that script reduced frame time more.")
-	print("Those are your bottlenecks.\n")
+	print("==============================")
+	print("Higher = bigger bottleneck\n")
 
 func _average(arr) -> float:
 	if arr.is_empty(): return 0.0
