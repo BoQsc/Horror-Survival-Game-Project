@@ -247,6 +247,16 @@ void fragment() {
 	// Slope needed for road and weather effects
 	float slope = normal.y;
 	
+	// === Slope-based Cliff Rock (temporary - can be toggled) ===
+	// Apply rocky texture to steep slopes above surface level
+	bool cliff_rock_enabled = true;  // Toggle to disable cliff rock effect
+	if (cliff_rock_enabled && !is_player_placed && mat_id != 6) {
+		// Only apply above surface_cliff_threshold
+		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
+		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;
+		base_color = mix(base_color, col_rock, cliff_mix);
+	}
+	
 	// === Player Road Overlay (from road_mask texture) ===
 	// This allows player-painted roads to overlay procedural materials
 	vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
