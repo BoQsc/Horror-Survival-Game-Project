@@ -238,9 +238,17 @@ void fragment() {
 		else if (mat_id == 6) base_color = col_road;
 		else if (mat_id == 9) base_color = col_stone * vec3(0.7, 0.65, 0.6);  // Granite
 		else if (mat_id >= 100) {
-			if (mat_id == 100) base_color = col_grass;
-			else if (mat_id == 102) base_color = col_sand;
-			else if (mat_id == 103) base_color = col_snow;
+			// Player-placed materials: base mat_id + 100
+			// Matches item_definitions: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow
+			int base_id = mat_id - 100;
+			if (base_id == 0) base_color = col_grass;
+			else if (base_id == 1) base_color = col_stone;
+			else if (base_id == 2) base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore
+			else if (base_id == 3) base_color = col_sand;
+			else if (base_id == 4) base_color = col_stone;  // Gravel
+			else if (base_id == 5) base_color = col_snow;
+			else if (base_id == 6) base_color = col_road;
+			else if (base_id == 9) base_color = col_stone * vec3(0.7, 0.65, 0.6);  // Granite
 			else base_color = col_stone;
 		} else base_color = col_grass;
 	}
