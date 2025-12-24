@@ -501,23 +501,42 @@ func _do_bucket_place(_item: Dictionary) -> void:
 		print("ModePlay: Placed water at %s" % pos)
 	# TODO: Switch bucket from full to empty
 
-## Place resource (terrain material)
+## Place resource (terrain material) - paints voxel with resource's material ID
 func _do_resource_place(item: Dictionary) -> void:
 	if not player or not terrain_manager:
 		return
 	
+	# Get material ID from resource item (legacy: 100=Grass, 101=Stone, 102=Sand, 103=Snow)
+	# Item definitions use mat_id field (0=Grass, 1=Sand, etc) - need to check both formats
+	var mat_id = item.get("mat_id", -1)
+	print("ModePlay: _do_resource_place item=%s mat_id_raw=%d" % [item, mat_id])
+	if mat_id < 0:
+		# Fallback: check if it has a material_id field
+		mat_id = item.get("material_id", 0)
+		print("ModePlay: Fallback to material_id field, mat_id=%d" % mat_id)
+	
+	# CRITICAL: Add 100 offset for player-placed materials!
+	# The terrain shader only skips biome blending for mat_id >= 100
+	# Legacy system used: 100=Grass, 101=Stone, 102=Sand, 103=Snow
+	if mat_id < 100:
+		mat_id += 100
+		print("ModePlay: Converted to player-placed mat_id=%d" % mat_id)
+	
 	# Use grid-aligned position if targeting is active
 	if has_target:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0) # Box shape, fill, terrain layer
-		print("ModePlay: Placed %s at %s" % [item.get("name", "resource"), current_target_pos])
+		# Fixed 0.6 brush size, box shape (1), terrain layer (0), with mat_id
+		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0, mat_id)
+		print("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
 		var hit = player.raycast(5.0)
 		if hit.is_empty():
 			return
-		var pos = hit.position + hit.normal * 0.5
-		terrain_manager.modify_terrain(pos, 0.6, -0.5, 1, 0)
-		print("ModePlay: Placed %s at %s" % [item.get("name", "resource"), pos])
+		# Target voxel outside terrain (adjacent to hit surface)
+		var p = hit.position + hit.normal * 0.1
+		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
+		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, 0, mat_id)
+		print("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, target_pos])
 
 func _exit_tree() -> void:
 	if selection_box and is_instance_valid(selection_box):

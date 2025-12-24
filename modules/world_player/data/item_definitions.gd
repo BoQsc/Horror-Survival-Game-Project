@@ -71,7 +71,8 @@ static func get_test_items() -> Array[Dictionary]:
 			"category": ItemCategory.RESOURCE,
 			"damage": 0,
 			"mining_strength": 0.0,
-			"stack_size": 64
+			"stack_size": 64,
+			"mat_id": 0 # 0=Grass/Dirt surface material
 		},
 		# Slot 5 (key 6): Stone Block
 		{

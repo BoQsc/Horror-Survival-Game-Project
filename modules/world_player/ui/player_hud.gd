@@ -27,7 +27,7 @@ const InventorySlotScene = preload("res://modules/world_player/ui/inventory_slot
 # Editor mode tracking
 var is_editor_mode: bool = false
 var current_editor_submode: int = 0
-const EDITOR_SUBMODE_NAMES = ["Terrain", "Water", "Road", "Prefab", "Fly"]
+const EDITOR_SUBMODE_NAMES = ["Terrain", "Water", "Road", "Prefab", "Fly", "OldDirt"]
 
 
 func _ready() -> void:

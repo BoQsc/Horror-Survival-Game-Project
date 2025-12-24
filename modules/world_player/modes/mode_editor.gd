@@ -148,6 +148,8 @@ func handle_primary(_item: Dictionary) -> void:
 			_do_road_click()
 		3: # PREFAB
 			pass # No primary action for prefab (use secondary to place)
+		5: # OLDDIRT (legacy)
+			_do_legacy_dirt_dig()
 
 ## Handle secondary action (right click) in EDITOR mode
 func handle_secondary(_item: Dictionary) -> void:
@@ -165,6 +167,8 @@ func handle_secondary(_item: Dictionary) -> void:
 			_do_road_click() # Same as primary for roads
 		3: # PREFAB
 			_do_prefab_place()
+		5: # OLDDIRT (legacy)
+			_do_legacy_dirt_place()
 
 ## Terrain sculpting - dig
 func _do_terrain_dig() -> void:
@@ -333,3 +337,41 @@ func _get_current_prefab_name() -> String:
 	if available_prefabs.is_empty():
 		return "None"
 	return available_prefabs[current_prefab_index].get_file().get_basename()
+
+#region Legacy Dirt Placement (OldDirt submode)
+
+## Legacy dirt - dig (removes terrain at blocky grid position)
+func _do_legacy_dirt_dig() -> void:
+	if not player or not terrain_manager:
+		return
+	
+	var hit = player.raycast(100.0)
+	if hit.is_empty():
+		return
+	
+	var position = hit.get("position", Vector3.ZERO)
+	# Target voxel inside terrain
+	position = position - hit.get("normal", Vector3.ZERO) * 0.1
+	position = Vector3(floor(position.x) + 0.5, floor(position.y) + 0.5, floor(position.z) + 0.5)
+	
+	terrain_manager.modify_terrain(position, 0.6, 0.5, 1, 0) # Box shape, dig, terrain layer
+	print("ModeEditor: [OldDirt] Dug at %s" % position)
+
+## Legacy dirt - place (adds terrain at blocky grid position)  
+func _do_legacy_dirt_place() -> void:
+	if not player or not terrain_manager:
+		return
+	
+	var hit = player.raycast(100.0)
+	if hit.is_empty():
+		return
+	
+	var position = hit.get("position", Vector3.ZERO)
+	# Target voxel outside terrain (adjacent to hit surface)
+	position = position + hit.get("normal", Vector3.ZERO) * 0.1
+	position = Vector3(floor(position.x) + 0.5, floor(position.y) + 0.5, floor(position.z) + 0.5)
+	
+	terrain_manager.modify_terrain(position, 0.6, -0.5, 1, 0) # Box shape, fill, terrain layer
+	print("ModeEditor: [OldDirt] Placed at %s" % position)
+
+#endregion
