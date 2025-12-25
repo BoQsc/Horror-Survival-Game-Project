@@ -13,6 +13,10 @@ var mode_play: Node = null
 var mode_build: Node = null
 var mode_editor: Node = null
 
+# Hold-to-attack state
+var is_primary_held: bool = false
+var is_secondary_held: bool = false
+
 func _ready() -> void:
 	# Find sibling components
 	hotbar = get_node_or_null("../Hotbar")
@@ -35,6 +39,21 @@ func _ready() -> void:
 	print("  - ModeBuild: %s" % ("OK" if mode_build else "MISSING"))
 	print("  - ModeEditor: %s" % ("OK" if mode_editor else "MISSING"))
 
+func _process(_delta: float) -> void:
+	# Hold-to-attack: continuously trigger actions while mouse is held
+	if not hotbar or not player:
+		return
+	
+	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
+		is_primary_held = false
+		is_secondary_held = false
+		return
+	
+	# Continuous primary action while holding left mouse
+	if is_primary_held:
+		var item = hotbar.get_selected_item()
+		route_primary_action(item)
+
 func _input(event: InputEvent) -> void:
 	if not hotbar or not player:
 		return
@@ -43,14 +62,20 @@ func _input(event: InputEvent) -> void:
 	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
 		return
 	
-	if event is InputEventMouseButton and event.pressed:
-		var item = hotbar.get_selected_item()
-		print("ItemUseRouter: Mouse button %d pressed, item=%s" % [event.button_index, item.get("name", "none")])
-		
+	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			route_primary_action(item)
+			is_primary_held = event.pressed
+			# Trigger immediately on press
+			if event.pressed:
+				var item = hotbar.get_selected_item()
+				print("ItemUseRouter: LMB pressed, item=%s" % item.get("name", "none"))
+				route_primary_action(item)
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
-			route_secondary_action(item)
+			is_secondary_held = event.pressed
+			# Right-click only triggers once (placement/secondary actions)
+			if event.pressed:
+				var item = hotbar.get_selected_item()
+				route_secondary_action(item)
 
 ## Route left-click action to appropriate mode handler
 func route_primary_action(item: Dictionary) -> void:
