@@ -26,9 +26,11 @@ const ATTACK_COOLDOWN_TIME: float = 0.3
 const BLOCK_HP: int = 10 # Building blocks take 10 damage to destroy
 const OBJECT_HP: int = 5 # Placed objects take 5 damage to destroy
 const TREE_HP: int = 8 # Trees take 8 damage to chop
+const TERRAIN_HP: int = 5 # Terrain takes 5 punches to break a grid cube
 var block_damage: Dictionary = {} # Vector3i -> accumulated damage
 var object_damage: Dictionary = {} # RID -> accumulated damage
 var tree_damage: Dictionary = {} # collider RID -> accumulated damage
+var terrain_damage: Dictionary = {} # Vector3i -> accumulated damage for terrain
 var durability_target: Variant = null # Current target being damaged (RID or Vector3i)
 
 # Prop holding state
@@ -322,24 +324,41 @@ func _do_punch(item: Dictionary) -> void:
 				DebugSettings.log_player("ModePlay: Block destroyed!")
 			return
 	
-	# Default - hit terrain (modify it)
+	# Default - hit terrain with durability system (grid-aligned breaking)
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
-		var strength = item.get("mining_strength", 0.5)
-		if strength > 0:
-			# Get material ID before digging (for resource collection)
+		var punch_dmg = item.get("damage", 1)
+		
+		# Calculate grid position for this terrain cell
+		var terrain_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+		
+		# Accumulate damage on this grid cell
+		terrain_damage[terrain_pos] = terrain_damage.get(terrain_pos, 0) + punch_dmg
+		var current_hp = TERRAIN_HP - terrain_damage[terrain_pos]
+		durability_target = terrain_pos # Track for look-away clearing
+		
+		DebugSettings.log_player("ModePlay: Hit terrain at %s (%d/%d)" % [terrain_pos, terrain_damage[terrain_pos], TERRAIN_HP])
+		PlayerSignals.durability_hit.emit(current_hp, TERRAIN_HP, "Terrain")
+		
+		# Check if block should break
+		if terrain_damage[terrain_pos] >= TERRAIN_HP:
+			# Get material ID before breaking (for resource collection)
 			var mat_id = -1
 			if terrain_manager.has_method("get_material_at"):
 				mat_id = terrain_manager.get_material_at(position)
 			
-			# material_id=-1 preserves existing terrain material
-			terrain_manager.modify_terrain(position, strength, 1.0, 0, 0, -1)
-			DebugSettings.log_player("ModePlay: Punched terrain at %s (strength: %.1f, mat: %d)" % [position, strength, mat_id])
+			# Break a full 1x1x1 cube at grid center
+			var center = Vector3(terrain_pos) + Vector3(0.5, 0.5, 0.5)
+			terrain_manager.modify_terrain(center, 0.6, 1.0, 1, 0, -1) # Box shape, dig, terrain layer
+			
+			DebugSettings.log_player("ModePlay: Terrain block broken at %s (mat: %d)" % [terrain_pos, mat_id])
 			
 			# Add collected resource to inventory
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)
-		else:
-			DebugSettings.log_player("ModePlay: Item has no mining strength")
+			
+			# Clear tracking
+			terrain_damage.erase(terrain_pos)
+			PlayerSignals.durability_cleared.emit()
 	else:
 		DebugSettings.log_player("ModePlay: No terrain_manager or missing modify_terrain method")
 
