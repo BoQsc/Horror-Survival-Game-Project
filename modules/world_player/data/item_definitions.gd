@@ -155,8 +155,22 @@ static func get_terrain_resources() -> Dictionary:
 		4: {"id": "res_gravel", "name": "Gravel", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 4},
 		5: {"id": "res_snow", "name": "Snow", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 5},
 		9: {"id": "res_granite", "name": "Granite", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": 9},
-		-1: {"id": "res_wood", "name": "Wood", "category": ItemCategory.RESOURCE, "stack_size": 64, "mat_id": - 1}
 	}
+
+## Vegetation resource items - dropped when harvesting vegetation
+static func get_vegetation_resources() -> Dictionary:
+	return {
+		"wood": {"id": "veg_wood", "name": "Wood", "category": ItemCategory.RESOURCE, "stack_size": 64},
+		"fiber": {"id": "veg_fiber", "name": "Plant Fiber", "category": ItemCategory.RESOURCE, "stack_size": 64},
+		"rock": {"id": "veg_rock", "name": "Rock", "category": ItemCategory.RESOURCE, "stack_size": 64},
+	}
+
+## Get vegetation resource item by type (wood, fiber, rock)
+static func get_vegetation_resource(veg_type: String) -> Dictionary:
+	var resources = get_vegetation_resources()
+	if resources.has(veg_type):
+		return resources[veg_type].duplicate()
+	return {}
 
 ## Get resource item by material ID
 static func get_resource_for_material(mat_id: int) -> Dictionary:

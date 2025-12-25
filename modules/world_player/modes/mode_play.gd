@@ -266,14 +266,17 @@ func _do_punch(item: Dictionary) -> void:
 				vegetation_manager.chop_tree_by_collider(target)
 				tree_damage.erase(tree_rid)
 				PlayerSignals.durability_cleared.emit()
+				_collect_vegetation_resource("wood")
 				DebugSettings.log_player("ModePlay: Tree chopped!")
 			return
 		elif target.is_in_group("grass"):
 			vegetation_manager.harvest_grass_by_collider(target)
+			_collect_vegetation_resource("fiber")
 			DebugSettings.log_player("ModePlay: Punched grass")
 			return
 		elif target.is_in_group("rocks"):
 			vegetation_manager.harvest_rock_by_collider(target)
+			_collect_vegetation_resource("rock")
 			DebugSettings.log_player("ModePlay: Punched rock")
 			return
 	
@@ -463,14 +466,17 @@ func _do_tool_attack(item: Dictionary) -> void:
 	if target and vegetation_manager:
 		if target.is_in_group("trees"):
 			vegetation_manager.chop_tree_by_collider(target)
+			_collect_vegetation_resource("wood")
 			DebugSettings.log_player("ModePlay: Chopped tree with %s" % item.get("name", "tool"))
 			return
 		elif target.is_in_group("grass"):
 			vegetation_manager.harvest_grass_by_collider(target)
+			_collect_vegetation_resource("fiber")
 			DebugSettings.log_player("ModePlay: Harvested grass")
 			return
 		elif target.is_in_group("rocks"):
 			vegetation_manager.harvest_rock_by_collider(target)
+			_collect_vegetation_resource("rock")
 			DebugSettings.log_player("ModePlay: Mined rock")
 			return
 	
@@ -1095,5 +1101,28 @@ func _collect_terrain_resource(mat_id: int) -> void:
 		print("ModePlay: Collected 1x %s" % resource_item.get("name", "Resource"))
 	else:
 		print("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
+
+## Collect vegetation resource and add to inventory
+func _collect_vegetation_resource(veg_type: String) -> void:
+	# Get resource item from vegetation type
+	const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
+	var resource_item = ItemDefs.get_vegetation_resource(veg_type)
+	
+	if resource_item.is_empty():
+		print("ModePlay: No resource for vegetation type '%s'" % veg_type)
+		return
+	
+	# Find inventory system
+	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
+	if not inventory or not inventory.has_method("add_item"):
+		print("ModePlay: No inventory system found")
+		return
+	
+	# Add to inventory
+	var leftover = inventory.add_item(resource_item, 1)
+	if leftover == 0:
+		DebugSettings.log_player("ModePlay: Collected 1x %s" % resource_item.get("name", "Resource"))
+	else:
+		DebugSettings.log_player("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
 
 #endregion
