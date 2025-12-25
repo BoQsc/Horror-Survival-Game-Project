@@ -170,10 +170,19 @@ func get_selected_index() -> int:
 	return selected_slot
 
 ## Find first empty slot, returns -1 if none
+## Skips the currently selected slot (so fists stay as fists), uses it only as last resort
 func find_first_empty_slot() -> int:
+	# First pass: find any empty slot that's NOT the selected slot
 	for i in range(slots.size()):
+		if i == selected_slot:
+			continue  # Skip selected slot on first pass
 		if slots[i].get("count", 0) == 0:
 			return i
+	
+	# Second pass: only use selected slot if no other empty slots exist
+	if slots[selected_slot].get("count", 0) == 0:
+		return selected_slot
+	
 	return -1
 
 ## Find slot with matching item that has space for stacking
