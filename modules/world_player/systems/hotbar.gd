@@ -226,6 +226,7 @@ func set_slot(index: int, item: Dictionary, count: int) -> void:
 	set_item_at(index, item, count)
 
 ## Drop the selected item as 3D pickup
+## Hybrid: Items with physics scenes (like pistol) spawn directly, others use PickupItem wrapper
 func drop_selected_item() -> void:
 	var item = get_selected_item()
 	var count = get_selected_count()
@@ -241,19 +242,50 @@ func drop_selected_item() -> void:
 		return
 	
 	var drop_pos = player.global_position - player.global_transform.basis.z * 2.0 + Vector3.UP
+	var drop_velocity = -player.global_transform.basis.z * 3.0 + Vector3.UP * 2.0
 	
-	# Spawn pickup
-	var pickup_scene = load("res://modules/world_player/pickups/pickup_item.tscn")
-	if pickup_scene:
-		var pickup = pickup_scene.instantiate()
-		get_tree().root.add_child(pickup)
-		pickup.global_position = drop_pos
-		pickup.set_item(item, 1) # Drop 1 at a time
-		pickup.linear_velocity = -player.global_transform.basis.z * 3.0 + Vector3.UP * 2.0
-		
-		DebugSettings.log_player("Hotbar: Dropped 1x %s" % item.get("name", "item"))
-		
-		# Decrement the slot (drops 1 at a time)
-		decrement_slot(selected_slot, 1)
-	else:
-		DebugSettings.log_player("Hotbar: Failed to load pickup scene")
+	# Check if item has its own physics scene (like pistol)
+	var scene_path = item.get("scene", "")
+	var spawned_directly = false
+	
+	if scene_path != "":
+		var item_scene = load(scene_path)
+		if item_scene:
+			var temp_instance = item_scene.instantiate()
+			# Check if the scene is a RigidBody3D (physics prop)
+			if temp_instance is RigidBody3D:
+				# Spawn directly as physics prop (old method)
+				get_tree().root.add_child(temp_instance)
+				temp_instance.global_position = drop_pos
+				temp_instance.linear_velocity = drop_velocity
+				
+				# Add to interactable group for pickup
+				if not temp_instance.is_in_group("interactable"):
+					temp_instance.add_to_group("interactable")
+				
+				# Store item data on the node for re-pickup
+				temp_instance.set_meta("item_data", item.duplicate())
+				
+				DebugSettings.log_player("Hotbar: Dropped %s directly (physics prop)" % item.get("name", "item"))
+				spawned_directly = true
+			else:
+				# Not a RigidBody3D, clean up and use wrapper
+				temp_instance.queue_free()
+	
+	# Fallback: use PickupItem wrapper for non-physics items
+	if not spawned_directly:
+		var pickup_scene = load("res://modules/world_player/pickups/pickup_item.tscn")
+		if pickup_scene:
+			var pickup = pickup_scene.instantiate()
+			get_tree().root.add_child(pickup)
+			pickup.global_position = drop_pos
+			pickup.set_item(item, 1) # Drop 1 at a time
+			pickup.linear_velocity = drop_velocity
+			
+			DebugSettings.log_player("Hotbar: Dropped 1x %s (wrapped)" % item.get("name", "item"))
+		else:
+			DebugSettings.log_player("Hotbar: Failed to load pickup scene")
+			return
+	
+	# Decrement the slot (drops 1 at a time)
+	decrement_slot(selected_slot, 1)
