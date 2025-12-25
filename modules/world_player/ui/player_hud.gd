@@ -110,9 +110,15 @@ func _refresh_hotbar_display() -> void:
 	
 	var raw_data = hotbar_ref.get_all_slots() if hotbar_ref.has_method("get_all_slots") else []
 	for i in range(min(hotbar_slots.size(), raw_data.size())):
-		var item = raw_data[i]
-		var wrapped = {"item": item, "count": 1 if item.get("id", "empty") != "empty" else 0}
-		hotbar_slots[i].set_slot_data(wrapped, i + 100)
+		var slot_data = raw_data[i]
+		# Hotbar now stores {item: Dictionary, count: int} format directly
+		if slot_data is Dictionary and slot_data.has("item"):
+			# New format - pass directly
+			hotbar_slots[i].set_slot_data(slot_data, i + 100)
+		else:
+			# Legacy format - wrap it
+			var wrapped = {"item": slot_data, "count": 1 if slot_data.get("id", "empty") != "empty" else 0}
+			hotbar_slots[i].set_slot_data(wrapped, i + 100)
 
 ## Handle item dropped outside hotbar slot - spawn 3D pickup
 func _on_hotbar_item_dropped_outside(item: Dictionary, count: int, slot) -> void:
@@ -245,7 +251,11 @@ func _on_item_changed(slot: int, item: Dictionary) -> void:
 		return
 	# Refresh the changed slot in hotbar display
 	if slot >= 0 and slot < hotbar_slots.size():
-		var wrapped = {"item": item, "count": 1 if item.get("id", "empty") != "empty" else 0}
+		# Get actual count from hotbar for proper stacking display
+		var count = 1
+		if hotbar_ref and hotbar_ref.has_method("get_count_at"):
+			count = hotbar_ref.get_count_at(slot)
+		var wrapped = {"item": item, "count": count}
 		hotbar_slots[slot].set_slot_data(wrapped, slot + 100)
 
 ## Hotbar slot selected handler

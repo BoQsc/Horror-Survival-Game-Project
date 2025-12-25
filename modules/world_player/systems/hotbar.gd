@@ -1,11 +1,12 @@
 extends Node
 class_name Hotbar
-## Hotbar - Manages the 10-slot quick access bar
+## Hotbar - Manages the 10-slot quick access bar with stacking support
 ## Keys 1-9 select slots 0-8, key 0 selects slot 9
 
 const SLOT_COUNT: int = 10
+const MAX_STACK_SIZE: int = 3 # Maximum items per stack
 
-# Slot data - array of item dictionaries (or null for empty)
+# Slot data - array of {item: Dictionary, count: int}
 var slots: Array = []
 var selected_slot: int = 0
 
@@ -13,14 +14,17 @@ var selected_slot: int = 0
 const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
 
 func _ready() -> void:
-	# Initialize with test items
-	slots = ItemDefs.get_test_items()
+	# Initialize slots with test items (each as a stack of 1)
+	var test_items = ItemDefs.get_test_items()
+	slots.clear()
+	for item in test_items:
+		slots.append({"item": item, "count": 1 if item.get("id") != "empty" else 0})
 	
 	# Ensure we have exactly SLOT_COUNT slots
 	while slots.size() < SLOT_COUNT:
-		slots.append(_create_empty_slot())
+		slots.append(_create_empty_stack())
 	
-	DebugSettings.log_player("Hotbar: Initialized with %d slots" % slots.size())
+	DebugSettings.log_player("Hotbar: Initialized with %d slots (max stack: %d)" % [slots.size(), MAX_STACK_SIZE])
 	
 	# Auto-select first slot
 	select_slot(0)
@@ -61,7 +65,9 @@ func select_slot(index: int) -> void:
 	var _old_slot = selected_slot
 	selected_slot = index
 	
-	DebugSettings.log_player("Hotbar: Selected slot %d (%s)" % [index, get_selected_item().get("name", "Empty")])
+	var item = get_selected_item()
+	var count = get_selected_count()
+	DebugSettings.log_player("Hotbar: Selected slot %d (%s x%d)" % [index, item.get("name", "Empty"), count])
 	
 	_emit_selection_change()
 	PlayerSignals.hotbar_slot_selected.emit(selected_slot)
@@ -70,29 +76,65 @@ func _emit_selection_change() -> void:
 	var item = get_selected_item()
 	PlayerSignals.item_changed.emit(selected_slot, item)
 
-## Get the currently selected item data
+## Get the currently selected item data (just the item, not count)
 func get_selected_item() -> Dictionary:
 	if selected_slot >= 0 and selected_slot < slots.size():
-		return slots[selected_slot]
-	return _create_empty_slot()
+		return slots[selected_slot].get("item", _create_empty_item())
+	return _create_empty_item()
 
-## Get item at specific slot
+## Get the count of the currently selected item
+func get_selected_count() -> int:
+	if selected_slot >= 0 and selected_slot < slots.size():
+		return slots[selected_slot].get("count", 0)
+	return 0
+
+## Get item at specific slot (just the item)
 func get_item_at(index: int) -> Dictionary:
 	if index >= 0 and index < slots.size():
-		return slots[index]
-	return _create_empty_slot()
+		return slots[index].get("item", _create_empty_item())
+	return _create_empty_item()
 
-## Set item at specific slot
-func set_item_at(index: int, item: Dictionary) -> void:
+## Get count at specific slot
+func get_count_at(index: int) -> int:
 	if index >= 0 and index < slots.size():
-		slots[index] = item
+		return slots[index].get("count", 0)
+	return 0
+
+## Set item at specific slot with count
+func set_item_at(index: int, item: Dictionary, count: int = 1) -> void:
+	if index >= 0 and index < slots.size():
+		if count <= 0:
+			slots[index] = _create_empty_stack()
+		else:
+			slots[index] = {"item": item, "count": count}
 		if index == selected_slot:
 			_emit_selection_change()
 		PlayerSignals.inventory_changed.emit()
 
 ## Clear a slot
 func clear_slot(index: int) -> void:
-	set_item_at(index, _create_empty_slot())
+	set_item_at(index, _create_empty_item(), 0)
+
+## Decrement count at slot, returns true if item remains, false if slot emptied
+func decrement_slot(index: int, amount: int = 1) -> bool:
+	if index < 0 or index >= slots.size():
+		return false
+	
+	var current_count = slots[index].get("count", 0)
+	var new_count = current_count - amount
+	
+	if new_count <= 0:
+		slots[index] = _create_empty_stack()
+		if index == selected_slot:
+			_emit_selection_change()
+		PlayerSignals.inventory_changed.emit()
+		return false
+	else:
+		slots[index]["count"] = new_count
+		if index == selected_slot:
+			_emit_selection_change()
+		PlayerSignals.inventory_changed.emit()
+		return true
 
 ## Check if selected item is a specific category
 func is_selected_category(category: int) -> bool:
@@ -104,8 +146,8 @@ func get_selected_category() -> int:
 	var item = get_selected_item()
 	return item.get("category", ItemDefs.ItemCategory.NONE)
 
-## Create an empty slot item
-func _create_empty_slot() -> Dictionary:
+## Create an empty item dictionary
+func _create_empty_item() -> Dictionary:
 	return {
 		"id": "empty",
 		"name": "Empty",
@@ -114,6 +156,10 @@ func _create_empty_slot() -> Dictionary:
 		"mining_strength": 0.0,
 		"stack_size": 1
 	}
+
+## Create an empty stack
+func _create_empty_stack() -> Dictionary:
+	return {"item": _create_empty_item(), "count": 0}
 
 ## Get all slots (for UI rendering)
 func get_all_slots() -> Array:
@@ -126,39 +172,65 @@ func get_selected_index() -> int:
 ## Find first empty slot, returns -1 if none
 func find_first_empty_slot() -> int:
 	for i in range(slots.size()):
-		if slots[i].get("id", "") == "empty":
+		if slots[i].get("count", 0) == 0:
 			return i
 	return -1
 
-## Add item to first empty slot, returns true if successful
+## Find slot with matching item that has space for stacking
+func find_stackable_slot(item_id: String) -> int:
+	for i in range(slots.size()):
+		var slot = slots[i]
+		if slot.get("item", {}).get("id") == item_id:
+			if slot.get("count", 0) < MAX_STACK_SIZE:
+				return i
+	return -1
+
+## Add item to hotbar, tries stacking first, returns true if successful
 func add_item(item: Dictionary) -> bool:
-	var slot = find_first_empty_slot()
-	if slot >= 0:
-		set_item_at(slot, item)
-		DebugSettings.log_player("Hotbar: Added %s to slot %d" % [item.get("name", "item"), slot])
+	var item_id = item.get("id", "empty")
+	if item_id == "empty":
+		return false
+	
+	# Check if item is stackable (resources are stackable, tools are not)
+	var category = item.get("category", 0)
+	var is_stackable = category >= 2 # BUCKET, RESOURCE, BLOCK, OBJECT, PROP
+	
+	if is_stackable:
+		# Try to stack with existing item
+		var stack_slot = find_stackable_slot(item_id)
+		if stack_slot >= 0:
+			slots[stack_slot]["count"] += 1
+			DebugSettings.log_player("Hotbar: Stacked %s in slot %d (now x%d)" % [item.get("name", "item"), stack_slot, slots[stack_slot]["count"]])
+			PlayerSignals.inventory_changed.emit()
+			return true
+	
+	# Find empty slot
+	var empty_slot = find_first_empty_slot()
+	if empty_slot >= 0:
+		slots[empty_slot] = {"item": item, "count": 1}
+		DebugSettings.log_player("Hotbar: Added %s to slot %d" % [item.get("name", "item"), empty_slot])
+		PlayerSignals.inventory_changed.emit()
 		return true
-	DebugSettings.log_player("Hotbar: No empty slot for %s" % item.get("name", "item"))
+	
+	DebugSettings.log_player("Hotbar: No space for %s" % item.get("name", "item"))
 	return false
 
 ## Get slot data in inventory-compatible format {item: Dict, count: int}
 func get_slot(index: int) -> Dictionary:
 	if index >= 0 and index < slots.size():
-		var item = slots[index]
-		# Convert to inventory format
-		return {"item": item, "count": 1 if item.get("id") != "empty" else 0}
-	return {"item": _create_empty_slot(), "count": 0}
+		return slots[index].duplicate()
+	return _create_empty_stack()
 
 ## Set slot data from inventory-compatible format
 func set_slot(index: int, item: Dictionary, count: int) -> void:
-	if count <= 0:
-		clear_slot(index)
-	else:
-		set_item_at(index, item)
+	set_item_at(index, item, count)
 
 ## Drop the selected item as 3D pickup
 func drop_selected_item() -> void:
 	var item = get_selected_item()
-	if item.get("id", "empty") == "empty":
+	var count = get_selected_count()
+	
+	if item.get("id", "empty") == "empty" or count <= 0:
 		DebugSettings.log_player("Hotbar: Nothing to drop")
 		return
 	
@@ -176,12 +248,12 @@ func drop_selected_item() -> void:
 		var pickup = pickup_scene.instantiate()
 		get_tree().root.add_child(pickup)
 		pickup.global_position = drop_pos
-		pickup.set_item(item, 1)
+		pickup.set_item(item, 1) # Drop 1 at a time
 		pickup.linear_velocity = player.global_transform.basis.z * -3.0 + Vector3.UP * 2.0
 		
-		DebugSettings.log_player("Hotbar: Dropped %s" % item.get("name", "item"))
+		DebugSettings.log_player("Hotbar: Dropped 1x %s" % item.get("name", "item"))
 		
-		# Clear the slot
-		clear_slot(selected_slot)
+		# Decrement the slot (drops 1 at a time)
+		decrement_slot(selected_slot, 1)
 	else:
 		DebugSettings.log_player("Hotbar: Failed to load pickup scene")

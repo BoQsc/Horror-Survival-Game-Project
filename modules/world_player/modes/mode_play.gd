@@ -567,6 +567,7 @@ func _do_resource_place(item: Dictionary) -> void:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
 		# Fixed 0.6 brush size, box shape (1), terrain layer (0), with mat_id
 		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0, mat_id)
+		_consume_selected_item()
 		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
 		var hit = player.raycast(5.0)
@@ -576,6 +577,7 @@ func _do_resource_place(item: Dictionary) -> void:
 		var p = hit.position + hit.normal * 0.1
 		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, 0, mat_id)
+		_consume_selected_item()
 		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, target_pos])
 
 ## Place vegetation (grass or rock) at raycast hit position
@@ -591,9 +593,11 @@ func _do_vegetation_place(veg_type: String) -> void:
 	
 	if veg_type == "grass":
 		vegetation_manager.place_grass(hit.position)
+		_consume_selected_item()
 		DebugSettings.log_player("ModePlay: Placed grass at %s" % hit.position)
 	elif veg_type == "rock":
 		vegetation_manager.place_rock(hit.position)
+		_consume_selected_item()
 		DebugSettings.log_player("ModePlay: Placed rock at %s" % hit.position)
 
 func _exit_tree() -> void:
@@ -1135,7 +1139,7 @@ func _collect_terrain_resource(mat_id: int) -> void:
 	else:
 		print("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
 
-## Collect vegetation resource and add to inventory
+## Collect vegetation resource and add to hotbar/inventory
 func _collect_vegetation_resource(veg_type: String) -> void:
 	# Get resource item from vegetation type
 	const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
@@ -1145,7 +1149,13 @@ func _collect_vegetation_resource(veg_type: String) -> void:
 		print("ModePlay: No resource for vegetation type '%s'" % veg_type)
 		return
 	
-	# Find inventory system
+	# Try to add to hotbar first (for quick access)
+	if hotbar and hotbar.has_method("add_item"):
+		if hotbar.add_item(resource_item):
+			DebugSettings.log_player("ModePlay: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
+			return
+	
+	# Fall back to inventory if hotbar is full
 	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
 	if not inventory or not inventory.has_method("add_item"):
 		print("ModePlay: No inventory system found")
@@ -1154,8 +1164,35 @@ func _collect_vegetation_resource(veg_type: String) -> void:
 	# Add to inventory
 	var leftover = inventory.add_item(resource_item, 1)
 	if leftover == 0:
-		DebugSettings.log_player("ModePlay: Collected 1x %s" % resource_item.get("name", "Resource"))
+		DebugSettings.log_player("ModePlay: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
 	else:
 		DebugSettings.log_player("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
+
+## Consume 1 of the currently selected item from hotbar
+## Decrements the stack count by 1, clearing the slot if count reaches 0
+func _consume_selected_item() -> void:
+	if not hotbar:
+		return
+	
+	var item = hotbar.get_selected_item()
+	var item_id = item.get("id", "empty")
+	
+	if item_id == "empty":
+		return
+	
+	# Don't consume tools/fists (they don't deplete)
+	var category = item.get("category", 0)
+	if category == 0 or category == 1: # NONE (fists) or TOOL
+		return
+	
+	# Decrement the stack count by 1
+	var slot_idx = hotbar.get_selected_index()
+	var remaining = hotbar.decrement_slot(slot_idx, 1)
+	
+	if remaining:
+		var new_count = hotbar.get_count_at(slot_idx)
+		DebugSettings.log_player("ModePlay: Used 1x %s (remaining: %d)" % [item.get("name", "item"), new_count])
+	else:
+		DebugSettings.log_player("ModePlay: Used last %s from slot %d" % [item.get("name", "item"), slot_idx])
 
 #endregion
