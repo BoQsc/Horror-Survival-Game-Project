@@ -89,8 +89,8 @@ func _update_interaction_target() -> void:
 		_clear_target()
 		return
 	
-	# Check if we hit an Area3D with a door reference (legacy door detection)
-	if collider is Area3D and collider.has_meta("door"):
+	# Check if we hit a collider with a door reference (doors with mesh collisions)
+	if collider.has_meta("door"):
 		var door = collider.get_meta("door")
 		if door and door.is_in_group("interactable"):
 			_set_target(door)
