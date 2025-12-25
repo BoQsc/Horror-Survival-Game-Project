@@ -160,8 +160,8 @@ func _get_interaction_prompt(target: Node) -> String:
 		return "[E] Enter"
 	
 	# Pickups (props on ground that can be picked up)
-	if target.is_in_group("pickups") or target.is_in_group("props"):
-		return "[E] Take"
+	if target.is_in_group("pickups") or target.is_in_group("props") or target.is_in_group("pickup_items"):
+		return "[E] Pick up"
 	
 	# Generic interactables
 	if target.is_in_group("interactable"):
@@ -188,7 +188,7 @@ func _do_interaction() -> void:
 		return
 	
 	# Pickups
-	if current_target.is_in_group("pickups") or current_target.is_in_group("props"):
+	if current_target.is_in_group("pickups") or current_target.is_in_group("props") or current_target.is_in_group("pickup_items"):
 		_pickup_item(current_target)
 		return
 	

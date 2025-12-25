@@ -240,7 +240,7 @@ func drop_selected_item() -> void:
 		DebugSettings.log_player("Hotbar: No player found for drop")
 		return
 	
-	var drop_pos = player.global_position + player.global_transform.basis.z * 2.0 + Vector3.UP
+	var drop_pos = player.global_position - player.global_transform.basis.z * 2.0 + Vector3.UP
 	
 	# Spawn pickup
 	var pickup_scene = load("res://modules/world_player/pickups/pickup_item.tscn")
@@ -249,7 +249,7 @@ func drop_selected_item() -> void:
 		get_tree().root.add_child(pickup)
 		pickup.global_position = drop_pos
 		pickup.set_item(item, 1) # Drop 1 at a time
-		pickup.linear_velocity = player.global_transform.basis.z * -3.0 + Vector3.UP * 2.0
+		pickup.linear_velocity = -player.global_transform.basis.z * 3.0 + Vector3.UP * 2.0
 		
 		DebugSettings.log_player("Hotbar: Dropped 1x %s" % item.get("name", "item"))
 		

@@ -131,7 +131,7 @@ func _on_hotbar_item_dropped_outside(item: Dictionary, count: int, slot) -> void
 	var player = get_tree().get_first_node_in_group("player")
 	var drop_pos = Vector3.ZERO
 	if player:
-		drop_pos = player.global_position + player.global_transform.basis.z * 2.0 + Vector3.UP
+		drop_pos = player.global_position - player.global_transform.basis.z * 2.0 + Vector3.UP
 	
 	# Spawn pickup
 	_spawn_pickup(item, count, drop_pos)

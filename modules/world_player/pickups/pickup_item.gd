@@ -44,6 +44,15 @@ func _process(_delta: float) -> void:
 		if current_time - time_spawned >= pickup_delay:
 			can_pickup = true
 
+## Returns the interaction prompt for this pickup
+func get_interaction_prompt() -> String:
+	var name = item_data.get("name", "Item")
+	return "[E] Pick up %s" % name
+
+## Returns the item data dictionary for pickup
+func get_item_data() -> Dictionary:
+	return item_data.duplicate()
+
 ## Set item data for this pickup
 func set_item(data: Dictionary, count: int = 1) -> void:
 	item_data = data.duplicate()
@@ -55,9 +64,39 @@ func _update_visual() -> void:
 	if not mesh:
 		return
 	
-	var item_name = item_data.get("name", "Item")
+	# Check if item has a scene path for custom 3D model
+	var scene_path = item_data.get("scene", "")
+	if scene_path != "":
+		var custom_scene = load(scene_path)
+		if custom_scene:
+			# Clear existing mesh children
+			for child in mesh.get_children():
+				child.queue_free()
+			
+			# Instance the custom model as a child of mesh
+			var model_instance = custom_scene.instantiate()
+			
+			# If it's a RigidBody3D (physics prop), disable physics and hide collisions
+			if model_instance is RigidBody3D:
+				# Disable physics on it since parent handles that
+				model_instance.freeze = true
+				model_instance.collision_layer = 0
+				model_instance.collision_mask = 0
+				# Disable and hide all collision shapes
+				_hide_collision_shapes(model_instance)
+			
+			# Scale down for pickup appearance and center at origin
+			model_instance.scale = Vector3(0.6, 0.6, 0.6)
+			model_instance.position = Vector3.ZERO  # Center at mesh origin
+			mesh.add_child(model_instance)
+			mesh.mesh = null  # Hide the default box mesh
+			return
 	
-	# Color based on item category
+	# Fallback: Color-coded cube based on item category
+	if not mesh.mesh:
+		mesh.mesh = BoxMesh.new()
+		mesh.mesh.size = Vector3(0.3, 0.3, 0.3)
+	
 	var mat = StandardMaterial3D.new()
 	var category = item_data.get("category", ItemDefs.ItemCategory.NONE)
 	
@@ -74,6 +113,16 @@ func _update_visual() -> void:
 			mat.albedo_color = Color.WHITE
 	
 	mesh.material_override = mat
+
+## Recursively hide and disable all collision shapes in a node tree
+func _hide_collision_shapes(node: Node) -> void:
+	if node is CollisionShape3D:
+		node.disabled = true
+		node.visible = false
+	elif node is CollisionPolygon3D:
+		node.disabled = true
+	for child in node.get_children():
+		_hide_collision_shapes(child)
 
 ## Handle body entering pickup area
 func _on_body_entered(body: Node3D) -> void:
