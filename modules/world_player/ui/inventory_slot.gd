@@ -48,9 +48,9 @@ func _update_display() -> void:
 		count_label.text = ""
 		modulate = Color(0.5, 0.5, 0.5, 0.5)
 	else:
-		# Show first 3 letters of item name
-		var name = item.get("name", "???")
-		item_label.text = name.substr(0, 3)
+		# Show full item name with smaller font
+		var item_name = item.get("name", "???")
+		item_label.text = item_name
 		count_label.text = str(count) if count > 1 else ""
 		modulate = Color.WHITE
 
