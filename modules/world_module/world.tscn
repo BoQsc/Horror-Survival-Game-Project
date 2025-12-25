@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3 uid="uid://c8iimeavbdci7"]
+[gd_scene load_steps=18 format=3 uid="uid://c8iimeavbdci7"]
 
 [ext_resource type="PackedScene" uid="uid://bd7wig7c4xlqe" path="res://modules/world_player/player.tscn" id="1_worldplayer"]
 [ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" uid="uid://bts6arlg03cxx" path="res://building_system/prefab_capture.gd" id="11_prefab_capture"]
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://building_system/debug_teleporter.gd" id="13_debug"]
+[ext_resource type="PackedScene" path="res://modules/world_player/ui_loading_screen/loading_screen.tscn" id="14_loading"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -117,3 +118,5 @@ terrain_manager = NodePath("../TerrainManager")
 
 [node name="DebugTeleporter" type="Node" parent="."]
 script = ExtResource("13_debug")
+
+[node name="LoadingScreen" parent="." instance=ExtResource("14_loading")]
