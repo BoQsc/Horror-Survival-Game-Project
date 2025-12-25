@@ -1,10 +1,11 @@
-# Ignore everything in this folder
-*
+# GDExtension build artifacts
+godot-cpp-godot-4.5-stable/
+zig-x86_64-windows-0.16.0-dev.1484+d0ba6642b/
+zig_cache/
+.sconsign.dblite
+*.zip
 
-# Except this .gitignore and the setup script
-!.gitignore
-!setup_project.py
-!testextension/src/**
-!testextension/bin/**
-!SConstruct
-!testextension/bin/**
+# Build outputs
+testextension/bin/*.dll
+testextension/bin/*.a
+testextension/src/*.o
