@@ -11,13 +11,8 @@ config_version=5
 [application]
 
 config/name="ZigGDExtension"
-config/features=PackedStringArray("4.3", "Forward Plus")
+config/features=PackedStringArray("4.5", "Forward Plus")
 config/icon="res://icon.svg"
-
-[display]
-
-window/size/viewport_width=1152
-window/size/viewport_height=648
 
 [dotnet]
 
