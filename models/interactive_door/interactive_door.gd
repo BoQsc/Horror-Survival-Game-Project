@@ -33,6 +33,9 @@ func _ready():
 	if animation_player:
 		print("[Door] Found AnimationPlayer: %s" % [animation_player.get_animation_list()])
 	
+	# Disable GLB auto-generated collisions first
+	_disable_glb_collisions()
+	
 	# Find and configure scene-defined collisions
 	_setup_collisions()
 
@@ -71,6 +74,31 @@ func _setup_collisions():
 		print("[Door] Frame collision configured")
 	else:
 		push_warning("[Door] FrameCollider not found!")
+
+## Disable GLB auto-generated StaticBody3D collisions
+func _disable_glb_collisions():
+	var door_model = get_node_or_null("DoorModel")
+	if not door_model:
+		return
+	_disable_static_bodies_recursive(door_model)
+
+func _disable_static_bodies_recursive(node: Node):
+	var children_to_process = []
+	for child in node.get_children():
+		children_to_process.append(child)
+	
+	for child in children_to_process:
+		# Skip our named colliders and important nodes
+		if child.name in ["DoorCollider", "FrameCollider", "BoneAttachment3D", "SKM_Door", "STM_Frame", "Door_Rig"]:
+			_disable_static_bodies_recursive(child)  # But still check children
+			continue
+		
+		# Remove auto-generated StaticBody3D from GLB import
+		if child is StaticBody3D:
+			print("[Door] Removing GLB auto-generated: %s" % child.name)
+			child.queue_free()
+		else:
+			_disable_static_bodies_recursive(child)
 
 ## Find node by name recursively
 func _find_node_by_name(root: Node, target_name: String) -> Node:
