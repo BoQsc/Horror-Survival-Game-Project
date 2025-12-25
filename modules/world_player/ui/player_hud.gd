@@ -257,6 +257,12 @@ func _on_item_changed(slot: int, item: Dictionary) -> void:
 			count = hotbar_ref.get_count_at(slot)
 		var wrapped = {"item": item, "count": count}
 		hotbar_slots[slot].set_slot_data(wrapped, slot + 100)
+	
+	# Update selected item label if this is the selected slot
+	if hotbar_ref and selected_item_label:
+		var selected_slot = hotbar_ref.get_selected_index()
+		if slot == selected_slot:
+			selected_item_label.text = item.get("name", "Empty")
 
 ## Hotbar slot selected handler
 func _on_hotbar_slot_selected(slot: int) -> void:
