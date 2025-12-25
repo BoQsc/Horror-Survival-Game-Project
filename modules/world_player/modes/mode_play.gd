@@ -527,8 +527,23 @@ func _do_bucket_place(_item: Dictionary) -> void:
 	# TODO: Switch bucket from full to empty
 
 ## Place resource (terrain material) - paints voxel with resource's material ID
+## Also handles vegetation resource placement (fiber -> grass, rock -> rock)
 func _do_resource_place(item: Dictionary) -> void:
-	if not player or not terrain_manager:
+	if not player:
+		return
+	
+	var item_id = item.get("id", "")
+	
+	# Check if this is a vegetation resource
+	if item_id == "veg_fiber":
+		_do_vegetation_place("grass")
+		return
+	elif item_id == "veg_rock":
+		_do_vegetation_place("rock")
+		return
+	
+	# Otherwise it's a terrain resource - need terrain_manager
+	if not terrain_manager:
 		return
 	
 	# Get material ID from resource item (legacy: 100=Grass, 101=Stone, 102=Sand, 103=Snow)
@@ -562,6 +577,24 @@ func _do_resource_place(item: Dictionary) -> void:
 		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, 0, mat_id)
 		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, target_pos])
+
+## Place vegetation (grass or rock) at raycast hit position
+func _do_vegetation_place(veg_type: String) -> void:
+	if not player or not vegetation_manager:
+		DebugSettings.log_player("ModePlay: Cannot place vegetation - missing player or vegetation_manager")
+		return
+	
+	var hit = player.raycast(5.0)
+	if hit.is_empty():
+		DebugSettings.log_player("ModePlay: Cannot place vegetation - no hit")
+		return
+	
+	if veg_type == "grass":
+		vegetation_manager.place_grass(hit.position)
+		DebugSettings.log_player("ModePlay: Placed grass at %s" % hit.position)
+	elif veg_type == "rock":
+		vegetation_manager.place_rock(hit.position)
+		DebugSettings.log_player("ModePlay: Placed rock at %s" % hit.position)
 
 func _exit_tree() -> void:
 	if selection_box and is_instance_valid(selection_box):
