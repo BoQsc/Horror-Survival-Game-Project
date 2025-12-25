@@ -3,7 +3,9 @@
 [ext_resource type="Script" path="res://modules/world_player/ui/inventory_slot.gd" id="1_slot"]
 
 [node name="InventorySlot" type="PanelContainer"]
-custom_minimum_size = Vector2(48, 48)
+custom_minimum_size = Vector2(64, 64)
+size_flags_horizontal = 3
+size_flags_vertical = 3
 script = ExtResource("1_slot")
 
 [node name="ItemLabel" type="Label" parent="."]
