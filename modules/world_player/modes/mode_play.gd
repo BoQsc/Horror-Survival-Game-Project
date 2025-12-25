@@ -480,7 +480,51 @@ func _do_tool_attack(item: Dictionary) -> void:
 			DebugSettings.log_player("ModePlay: Mined rock")
 			return
 	
-	# Priority 3: Mine terrain
+	# Priority 3: Break placed objects (with durability)
+	if target and target.is_in_group("placed_objects") and building_manager:
+		var obj_rid = target.get_rid()
+		var obj_dmg = damage
+		var item_id = item.get("id", "")
+		if "pickaxe" in item_id:
+			obj_dmg = 5 # Pickaxe one-shots objects
+		object_damage[obj_rid] = object_damage.get(obj_rid, 0) + obj_dmg
+		var current_hp = OBJECT_HP - object_damage[obj_rid]
+		durability_target = obj_rid
+		DebugSettings.log_player("ModePlay: Tool hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
+		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name)
+		if object_damage[obj_rid] >= OBJECT_HP:
+			if target.has_meta("anchor") and target.has_meta("chunk"):
+				var anchor = target.get_meta("anchor")
+				var chunk = target.get_meta("chunk")
+				chunk.remove_object(anchor)
+				DebugSettings.log_player("ModePlay: Object destroyed with tool!")
+			object_damage.erase(obj_rid)
+			PlayerSignals.durability_cleared.emit()
+		return
+	
+	# Priority 4: Break building blocks (with durability)
+	if target and building_manager:
+		var chunk = _find_building_chunk(target)
+		if chunk:
+			var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+			var blk_dmg = damage
+			var item_id = item.get("id", "")
+			if "pickaxe" in item_id:
+				blk_dmg = 5 # Pickaxe does 5 damage
+			block_damage[block_pos] = block_damage.get(block_pos, 0) + blk_dmg
+			var current_hp = BLOCK_HP - block_damage[block_pos]
+			durability_target = block_pos
+			DebugSettings.log_player("ModePlay: Tool hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
+			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block")
+			if block_damage[block_pos] >= BLOCK_HP:
+				var voxel_pos = position - hit.get("normal", Vector3.ZERO) * 0.1
+				building_manager.set_voxel(Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z)), 0.0)
+				block_damage.erase(block_pos)
+				PlayerSignals.durability_cleared.emit()
+				DebugSettings.log_player("ModePlay: Block destroyed with tool!")
+			return
+	
+	# Priority 5: Mine terrain (instant with mining_strength)
 	DebugSettings.log_player("ModePlay: Trying to mine terrain... terrain_manager=%s" % (terrain_manager != null))
 	if terrain_manager:
 		DebugSettings.log_player("ModePlay: terrain_manager.has_method('modify_terrain')=%s" % terrain_manager.has_method("modify_terrain"))
