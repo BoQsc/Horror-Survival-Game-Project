@@ -28,16 +28,7 @@ enum ItemCategory {
 ## Test items for initial hotbar population
 static func get_test_items() -> Array[Dictionary]:
 	return [
-		# Slot 0 (key 1): Fists
-		{
-			"id": "fists",
-			"name": "Fists",
-			"category": ItemCategory.NONE,
-			"damage": 1,
-			"mining_strength": 1.0,
-			"stack_size": 1
-		},
-		# Slot 1 (key 2): Stone Pickaxe
+		# Slot 0 (key 1): Stone Pickaxe
 		{
 			"id": "pickaxe_stone",
 			"name": "Stone Pickaxe",
@@ -46,7 +37,7 @@ static func get_test_items() -> Array[Dictionary]:
 			"mining_strength": 1.5,
 			"stack_size": 1
 		},
-		# Slot 2 (key 3): Axe
+		# Slot 1 (key 2): Stone Axe
 		{
 			"id": "axe_stone",
 			"name": "Stone Axe",
@@ -55,7 +46,7 @@ static func get_test_items() -> Array[Dictionary]:
 			"mining_strength": 0.5,
 			"stack_size": 1
 		},
-		# Slot 3 (key 4): Water Bucket
+		# Slot 2 (key 3): Water Bucket
 		{
 			"id": "bucket_water",
 			"name": "Water Bucket",
@@ -144,6 +135,18 @@ static func is_build_category(category: ItemCategory) -> bool:
 ## Check if category is a PLAY mode tool
 static func is_play_category(category: ItemCategory) -> bool:
 	return category in [ItemCategory.NONE, ItemCategory.TOOL, ItemCategory.BUCKET, ItemCategory.RESOURCE]
+
+## Get the legacy Fists item (hidden, not in default hotbar)
+## Can be spawned via console or given to player programmatically
+static func get_fists_item() -> Dictionary:
+	return {
+		"id": "fists",
+		"name": "Fists",
+		"category": ItemCategory.NONE,
+		"damage": 1,
+		"mining_strength": 1.0,
+		"stack_size": 1
+	}
 
 ## Terrain resource items - map material ID to item
 static func get_terrain_resources() -> Dictionary:
