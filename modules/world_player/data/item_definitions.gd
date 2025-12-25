@@ -114,13 +114,13 @@ static func get_test_items() -> Array[Dictionary]:
 			"mining_strength": 0.0,
 			"stack_size": 16
 		},
-		# Slot 9 (key 0): Empty
+		# Slot 9 (key 0): Empty slot (acts like fists for combat)
 		{
 			"id": "empty",
 			"name": "Empty",
 			"category": ItemCategory.NONE,
-			"damage": 0,
-			"mining_strength": 0.0,
+			"damage": 1,
+			"mining_strength": 1.0,
 			"stack_size": 1
 		}
 	]

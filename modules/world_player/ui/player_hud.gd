@@ -119,6 +119,20 @@ func _refresh_hotbar_display() -> void:
 			# Legacy format - wrap it
 			var wrapped = {"item": slot_data, "count": 1 if slot_data.get("id", "empty") != "empty" else 0}
 			hotbar_slots[i].set_slot_data(wrapped, i + 100)
+	
+	# Restore selection highlight
+	_restore_slot_selection()
+
+## Restore selection highlight on the currently selected hotbar slot
+func _restore_slot_selection() -> void:
+	if not hotbar_ref:
+		return
+	var selected = hotbar_ref.get_selected_index()
+	for i in range(hotbar_slots.size()):
+		if i == selected:
+			hotbar_slots[i].modulate = Color.YELLOW
+		else:
+			hotbar_slots[i].modulate = Color.WHITE
 
 ## Handle item dropped outside hotbar slot - spawn 3D pickup
 func _on_hotbar_item_dropped_outside(item: Dictionary, count: int, slot) -> void:
@@ -262,7 +276,10 @@ func _on_item_changed(slot: int, item: Dictionary) -> void:
 	if hotbar_ref and selected_item_label:
 		var selected_slot = hotbar_ref.get_selected_index()
 		if slot == selected_slot:
-			selected_item_label.text = item.get("name", "Empty")
+			var label_text = item.get("name", "Fists")
+			if label_text == "Empty":
+				label_text = "Fists"
+			selected_item_label.text = label_text
 
 ## Hotbar slot selected handler
 func _on_hotbar_slot_selected(slot: int) -> void:
@@ -283,7 +300,10 @@ func _on_hotbar_slot_selected(slot: int) -> void:
 		var hotbar = player_node.get_node_or_null("Systems/Hotbar")
 		if hotbar:
 			var item = hotbar.get_item_at(slot)
-			selected_item_label.text = item.get("name", "Empty")
+			var label_text = item.get("name", "Fists")
+			if label_text == "Empty":
+				label_text = "Fists"
+			selected_item_label.text = label_text
 
 ## Interaction available handler
 func _on_interaction_available(_target: Node, prompt: String) -> void:

@@ -146,18 +146,18 @@ func get_selected_category() -> int:
 	var item = get_selected_item()
 	return item.get("category", ItemDefs.ItemCategory.NONE)
 
-## Create an empty item dictionary
+## Create an empty item dictionary (looks empty but acts like fists)
 func _create_empty_item() -> Dictionary:
 	return {
 		"id": "empty",
 		"name": "Empty",
 		"category": ItemDefs.ItemCategory.NONE,
-		"damage": 0,
-		"mining_strength": 0.0,
+		"damage": 1,  # Acts like fists for combat
+		"mining_strength": 1.0,  # Acts like fists for mining
 		"stack_size": 1
 	}
 
-## Create an empty stack
+## Create an empty stack (count 0 means slot is empty)
 func _create_empty_stack() -> Dictionary:
 	return {"item": _create_empty_item(), "count": 0}
 

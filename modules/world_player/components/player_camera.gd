@@ -32,6 +32,12 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	# Toggle menu with Escape
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		# First, check if inventory is open - close it instead of opening menu
+		var inventory = _get_inventory()
+		if inventory and inventory.is_open:
+			inventory.close_inventory()
+			return
+		
 		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 			# Open menu, release mouse
 			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -47,6 +53,12 @@ func _input(event: InputEvent) -> void:
 	
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		handle_mouse_look(event.relative)
+
+## Get inventory reference from player
+func _get_inventory() -> Node:
+	if player:
+		return player.get_node_or_null("Systems/Inventory")
+	return null
 
 func handle_mouse_look(motion: Vector2) -> void:
 	# Horizontal rotation (yaw) - rotate player body

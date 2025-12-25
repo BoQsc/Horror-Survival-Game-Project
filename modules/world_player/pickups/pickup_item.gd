@@ -134,22 +134,34 @@ func _on_body_entered(body: Node3D) -> void:
 
 ## Try to collect the item
 func _try_collect(player: Node3D) -> void:
+	var hotbar = player.get_node_or_null("Systems/Hotbar")
 	var inventory = player.get_node_or_null("Systems/Inventory")
-	if not inventory or not inventory.has_method("add_item"):
-		return
+	var remaining = item_count
 	
-	var leftover = inventory.add_item(item_data, item_count)
+	# First, try to add to hotbar (prioritize hotbar for quick access)
+	if hotbar and hotbar.has_method("add_item"):
+		while remaining > 0:
+			if hotbar.add_item(item_data):
+				remaining -= 1
+			else:
+				break  # Hotbar is full or can't stack
 	
-	if leftover < item_count:
+	# Then, add overflow to inventory
+	if remaining > 0 and inventory and inventory.has_method("add_item"):
+		var leftover = inventory.add_item(item_data, remaining)
+		remaining = leftover
+	
+	var collected_count = item_count - remaining
+	if collected_count > 0:
 		# Some or all collected
-		collected.emit(item_data, item_count - leftover)
+		collected.emit(item_data, collected_count)
 		
-		if leftover <= 0:
+		if remaining <= 0:
 			# All collected, remove pickup
 			queue_free()
 		else:
 			# Partial collection
-			item_count = leftover
+			item_count = remaining
 
 ## Spawn a pickup at position with velocity
 static func spawn_pickup(parent: Node, data: Dictionary, count: int, pos: Vector3, velocity: Vector3 = Vector3.ZERO) -> PickupItem:

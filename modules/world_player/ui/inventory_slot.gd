@@ -12,6 +12,7 @@ signal slot_clicked(slot_index: int)
 var slot_index: int = 0
 var slot_data: Dictionary = {} # {item: Dictionary, count: int}
 var is_dragging: bool = false
+var drag_was_handled: bool = false # Track if drop was consumed by a valid target
 
 const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
 
@@ -60,6 +61,7 @@ func _get_drag_data(_at_position: Vector2) -> Variant:
 		return null
 	
 	is_dragging = true
+	drag_was_handled = false # Reset for new drag
 	
 	# Create drag preview
 	var preview = Label.new()
@@ -82,6 +84,9 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 	if not data is Dictionary:
 		return
 	
+	# Mark source slot's drag as handled
+	_mark_drag_handled(data.get("source_slot", -1))
+	
 	# Find a parent that has handle_slot_drop (could be InventoryPanel or PlayerHUD)
 	var node = get_parent()
 	while node:
@@ -89,6 +94,16 @@ func _drop_data(_at_position: Vector2, data: Variant) -> void:
 			node.handle_slot_drop(data.get("source_slot", -1), slot_index)
 			return
 		node = node.get_parent()
+
+## Mark the source slot's drag as handled
+func _mark_drag_handled(source_slot_index: int) -> void:
+	# Find the source slot and mark its drag as handled
+	var root = get_tree().root
+	var all_slots = root.find_children("*", "InventorySlot", true, false)
+	for s in all_slots:
+		if s.slot_index == source_slot_index and s.is_dragging:
+			s.drag_was_handled = true
+			break
 
 ## Handle click
 func _gui_input(event: InputEvent) -> void:
@@ -98,12 +113,11 @@ func _gui_input(event: InputEvent) -> void:
 ## Called when drag ends (for detecting drops outside UI)
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_DRAG_END:
+		print("[SLOT_DROP] DRAG_END slot_index=%d is_dragging=%s drag_was_handled=%s is_empty=%s" % [slot_index, is_dragging, drag_was_handled, is_empty()])
 		if is_dragging:
 			is_dragging = false
-			# Check if dropped outside any valid target
-			var viewport = get_viewport()
-			if viewport:
-				var drop_target = viewport.gui_get_drag_data()
-				# If there's still drag data, it wasn't consumed - dropped outside
-				if drop_target != null and not is_empty():
-					item_dropped_outside.emit(slot_data.get("item", {}), slot_data.get("count", 0))
+			# If drag wasn't handled by a valid drop target, emit drop outside signal
+			if not drag_was_handled and not is_empty():
+				print("[SLOT_DROP] Emitting item_dropped_outside for slot %d item=%s" % [slot_index, slot_data.get("item", {}).get("name", "?")])
+				item_dropped_outside.emit(slot_data.get("item", {}), slot_data.get("count", 0))
+			drag_was_handled = false

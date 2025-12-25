@@ -110,6 +110,7 @@ func handle_slot_drop(source_index: int, target_index: int) -> void:
 ## Called when item is dropped outside a slot
 func _on_slot_item_dropped_outside(item: Dictionary, count: int, slot) -> void:
 	var slot_idx = slot.slot_index
+	print("[INV_PANEL] _on_slot_item_dropped_outside slot_idx=%d item=%s count=%d" % [slot_idx, item.get("name", "?"), count])
 	
 	if inventory_ref and inventory_ref.has_method("clear_slot"):
 		inventory_ref.clear_slot(slot_idx)
@@ -121,6 +122,7 @@ func _on_slot_item_dropped_outside(item: Dictionary, count: int, slot) -> void:
 		drop_pos = player.global_position + player.global_transform.basis.z * 2.0 + Vector3.UP
 	
 	# Spawn pickup
+	print("[INV_PANEL] Spawning pickup at %s" % drop_pos)
 	_spawn_pickup(item, count, drop_pos)
 	
 	item_dropped_outside.emit(item, count, drop_pos)

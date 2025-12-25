@@ -1117,7 +1117,7 @@ func _get_material_at(pos: Vector3) -> int:
 		return terrain_manager.get_material_at(pos)
 	return -1 # Unknown
 
-## Collect terrain resource and add to inventory
+## Collect terrain resource and add to hotbar/inventory
 func _collect_terrain_resource(mat_id: int) -> void:
 	# Get resource item from material ID
 	const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
@@ -1127,7 +1127,13 @@ func _collect_terrain_resource(mat_id: int) -> void:
 		print("ModePlay: No resource for material ID %d" % mat_id)
 		return
 	
-	# Find inventory system
+	# Try to add to hotbar first (for quick access)
+	if hotbar and hotbar.has_method("add_item"):
+		if hotbar.add_item(resource_item):
+			DebugSettings.log_player("ModePlay: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
+			return
+	
+	# Fall back to inventory if hotbar is full
 	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
 	if not inventory or not inventory.has_method("add_item"):
 		print("ModePlay: No inventory system found")
@@ -1136,9 +1142,9 @@ func _collect_terrain_resource(mat_id: int) -> void:
 	# Add to inventory
 	var leftover = inventory.add_item(resource_item, 1)
 	if leftover == 0:
-		print("ModePlay: Collected 1x %s" % resource_item.get("name", "Resource"))
+		DebugSettings.log_player("ModePlay: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
 	else:
-		print("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
+		DebugSettings.log_player("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
 
 ## Collect vegetation resource and add to hotbar/inventory
 func _collect_vegetation_resource(veg_type: String) -> void:

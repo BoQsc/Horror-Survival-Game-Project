@@ -216,19 +216,29 @@ func _pickup_item(target: Node) -> void:
 			"stack_size": 16
 		}
 	
-	# Add to inventory
+	# Add to hotbar first, then inventory
+	var hotbar_node = get_node_or_null("../../Systems/Hotbar")
 	var inventory = get_node_or_null("../../Systems/Inventory")
-	if inventory and inventory.has_method("add_item"):
+	var added = false
+	
+	# Try hotbar first
+	if hotbar_node and hotbar_node.has_method("add_item"):
+		if hotbar_node.add_item(item_data):
+			added = true
+	
+	# Fallback to inventory
+	if not added and inventory and inventory.has_method("add_item"):
 		var leftover = inventory.add_item(item_data, 1)
 		if leftover == 0:
-			# Successfully picked up - remove from world
-			target.queue_free()
-			DebugSettings.log_player("PlayerInteraction: Picked up %s" % item_data.get("name", target.name))
-			PlayerSignals.interaction_performed.emit(target, "pickup")
-		else:
-			DebugSettings.log_player("PlayerInteraction: Inventory full!")
+			added = true
+	
+	if added:
+		# Successfully picked up - remove from world
+		target.queue_free()
+		DebugSettings.log_player("PlayerInteraction: Picked up %s" % item_data.get("name", target.name))
+		PlayerSignals.interaction_performed.emit(target, "pickup")
 	else:
-		DebugSettings.log_player("PlayerInteraction: No inventory system found")
+		DebugSettings.log_player("PlayerInteraction: Hotbar and inventory full!")
 
 ## Perform barricade action (hold E near door/window with item)
 func _do_barricade() -> void:

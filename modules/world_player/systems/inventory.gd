@@ -4,6 +4,7 @@ class_name Inventory
 ## Works alongside Hotbar for extended storage
 
 const INVENTORY_SIZE: int = 27 # 3 rows of 9
+const MAX_STACK_SIZE: int = 3 # Maximum items per stack (matches hotbar)
 
 # Item stacks - array of {item: Dictionary, count: int}
 var slots: Array = []
@@ -20,12 +21,16 @@ func _ready() -> void:
 	for i in range(INVENTORY_SIZE):
 		slots.append(_create_empty_stack())
 	
-	DebugSettings.log_player("Inventory: Initialized with %d slots" % INVENTORY_SIZE)
+	DebugSettings.log_player("Inventory: Initialized with %d slots (max stack: %d)" % [INVENTORY_SIZE, MAX_STACK_SIZE])
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_I:
 			toggle_inventory()
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_ESCAPE and is_open:
+			close_inventory()
+			get_viewport().set_input_as_handled()
 
 ## Toggle inventory open/closed
 func toggle_inventory() -> void:
@@ -40,9 +45,17 @@ func toggle_inventory() -> void:
 	
 	PlayerSignals.inventory_toggled.emit(is_open)
 
+## Close inventory (no toggle, just close)
+func close_inventory() -> void:
+	if is_open:
+		is_open = false
+		DebugSettings.log_player("Inventory: Closed")
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		PlayerSignals.inventory_toggled.emit(false)
+
 ## Add item to inventory, returns leftover count
 func add_item(item: Dictionary, count: int = 1) -> int:
-	var stack_size = item.get("stack_size", 1)
+	var stack_size = MAX_STACK_SIZE  # Use our fixed stack size
 	var remaining = count
 	
 	# First, try to stack with existing items
