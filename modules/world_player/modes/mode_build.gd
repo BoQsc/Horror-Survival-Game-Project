@@ -230,6 +230,7 @@ func _do_block_place(item: Dictionary) -> void:
 		
 		# Call building_api.place_block which handles FILL mode terrain fill
 		if building_api.place_block():
+			_consume_held_item()
 			return
 		
 		# Fallback: direct placement using building_api's position
@@ -251,6 +252,7 @@ func _do_block_place(item: Dictionary) -> void:
 	if building_manager.has_method("set_voxel"):
 		building_manager.set_voxel(fb_voxel_pos, fb_block_id, current_rotation)
 		print("ModeBuild: Placed %s at %s (rot: %d, fallback)" % [item.get("name", "block"), fb_voxel_pos, current_rotation])
+		_consume_held_item()
 
 ## Remove object at target
 func _do_object_remove() -> void:
@@ -301,6 +303,7 @@ func _do_object_place(item: Dictionary) -> void:
 		var success = building_api.place_object(object_id, current_rotation)
 		if success:
 			print("ModeBuild: Placed %s (rot: %d)" % [item.get("name", "object"), current_rotation])
+			_consume_held_item()
 		else:
 			print("ModeBuild: Cannot place object - cells occupied")
 
@@ -322,6 +325,7 @@ func _do_prop_place(item: Dictionary) -> void:
 			var success = building_manager.place_object(grid_pos, object_id, current_rotation)
 			if success:
 				print("ModeBuild: Placed prop %s at %s (grid snap)" % [item.get("name", "prop"), grid_pos])
+				_consume_held_item()
 			else:
 				print("ModeBuild: Cannot place prop - cells occupied")
 		return
@@ -336,6 +340,7 @@ func _do_prop_place(item: Dictionary) -> void:
 		var success = building_manager.place_object(free_pos, object_id, current_rotation)
 		if success:
 			print("ModeBuild: Placed prop %s at %s (free)" % [item.get("name", "prop"), free_pos])
+			_consume_held_item()
 		else:
 			print("ModeBuild: Cannot place prop - cells occupied")
 
@@ -346,3 +351,9 @@ func get_rotation() -> int:
 ## Set rotation
 func set_rotation(rot: int) -> void:
 	current_rotation = rot % 4
+
+## Consume one item from the currently selected hotbar slot
+func _consume_held_item() -> void:
+	if hotbar and hotbar.has_method("decrement_slot") and hotbar.has_method("get_selected_index"):
+		var idx = hotbar.get_selected_index()
+		hotbar.decrement_slot(idx, 1)
