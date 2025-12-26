@@ -219,8 +219,8 @@ func _try_play_idle() -> void:
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var item_id = item.get("id", "")
-	# Match any axe
-	var should_show = "axe" in item_id
+	# Match any axe but NOT pickaxe
+	var should_show = "axe" in item_id and not "pickaxe" in item_id
 	
 	if axe_mesh:
 		axe_mesh.visible = should_show
