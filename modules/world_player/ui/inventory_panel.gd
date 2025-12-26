@@ -116,35 +116,66 @@ func _on_slot_item_dropped_outside(item: Dictionary, count: int, slot) -> void:
 		inventory_ref.clear_slot(slot_idx)
 	
 	# Get player position for drop
+	# Get player position for drop
 	var player = get_tree().get_first_node_in_group("player")
 	var drop_pos = Vector3.ZERO
+	var drop_velocity = Vector3.ZERO
 	if player:
-		drop_pos = player.global_position + player.global_transform.basis.z * 2.0 + Vector3.UP
+		# Use forward vector (negative Z) to drop IN FRONT of player
+		drop_pos = player.global_position - player.global_transform.basis.z * 2.0 + Vector3.UP
+		drop_velocity = -player.global_transform.basis.z * 3.0 + Vector3.UP * 2.0
 	
 	# Spawn pickup
 	print("[INV_PANEL] Spawning pickup at %s" % drop_pos)
-	_spawn_pickup(item, count, drop_pos)
+	_spawn_pickup(item, count, drop_pos, drop_velocity)
 	
 	item_dropped_outside.emit(item, count, drop_pos)
 	refresh_display()
 
 ## Spawn a 3D pickup in the world
-func _spawn_pickup(item: Dictionary, count: int, pos: Vector3) -> void:
-	var pickup_scene = load("res://modules/world_player/pickups/pickup_item.tscn")
-	if not pickup_scene:
-		print("InventoryPanel: Failed to load pickup scene")
-		return
+func _spawn_pickup(item: Dictionary, count: int, pos: Vector3, velocity: Vector3 = Vector3.ZERO) -> void:
+	# Check if item has its own physics scene (like pistol) and should spawn directly
+	var scene_path = item.get("scene", "")
+	var spawned_directly = false
 	
-	var pickup = pickup_scene.instantiate()
-	get_tree().root.add_child(pickup)
-	pickup.global_position = pos
-	pickup.set_item(item, count)
+	if scene_path != "":
+		var item_scene = load(scene_path)
+		if item_scene:
+			var temp_instance = item_scene.instantiate()
+			# Check if the scene is a RigidBody3D (physics prop)
+			if temp_instance is RigidBody3D:
+				# Spawn directly as physics prop
+				get_tree().root.add_child(temp_instance)
+				temp_instance.global_position = pos
+				
+				# Add to interactable group for pickup
+				if not temp_instance.is_in_group("interactable"):
+					temp_instance.add_to_group("interactable")
+				
+				# Store item data on the node for re-pickup
+				temp_instance.set_meta("item_data", item.duplicate())
+				
+				# Apply forward velocity
+				temp_instance.linear_velocity = velocity
+				
+				print("[INV_PANEL] Dropped %s directly (physics prop)" % item.get("name", "item"))
+				spawned_directly = true
+			else:
+				temp_instance.queue_free()
 	
-	# Random toss
-	pickup.linear_velocity = Vector3(
-		randf_range(-2, 2),
-		randf_range(2, 4),
-		randf_range(-2, 2)
-	)
-	
-	print("InventoryPanel: Spawned pickup for %s x%d" % [item.get("name", "Item"), count])
+	# Fallback: use PickupItem wrapper
+	if not spawned_directly:
+		var pickup_scene = load("res://modules/world_player/pickups/pickup_item.tscn")
+		if not pickup_scene:
+			print("InventoryPanel: Failed to load pickup scene")
+			return
+		
+		var pickup = pickup_scene.instantiate()
+		get_tree().root.add_child(pickup)
+		pickup.global_position = pos
+		pickup.set_item(item, count)
+		
+		# Apply forward velocity
+		pickup.linear_velocity = velocity
+		
+		print("InventoryPanel: Spawned wrapped pickup for %s x%d" % [item.get("name", "Item"), count])
