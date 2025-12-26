@@ -615,9 +615,25 @@ func _do_tool_attack(item: Dictionary) -> void:
 	# Priority 2: Harvest vegetation
 	if target and vegetation_manager:
 		if target.is_in_group("trees"):
-			vegetation_manager.chop_tree_by_collider(target)
-			_collect_vegetation_resource("wood")
-			DebugSettings.log_player("ModePlay: Chopped tree with %s" % item.get("name", "tool"))
+			var tree_dmg = damage
+			# Axe does 3 damage to trees (requires 3 hits for 8 HP)
+			if "axe" in item.get("id", ""):
+				tree_dmg = 3
+				
+			var tree_rid = target.get_rid()
+			tree_damage[tree_rid] = tree_damage.get(tree_rid, 0) + tree_dmg
+			var current_hp = TREE_HP - tree_damage[tree_rid]
+			
+			durability_target = tree_rid
+			DebugSettings.log_player("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
+			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree")
+			
+			if tree_damage[tree_rid] >= TREE_HP:
+				vegetation_manager.chop_tree_by_collider(target)
+				tree_damage.erase(tree_rid)
+				PlayerSignals.durability_cleared.emit()
+				_collect_vegetation_resource("wood")
+				DebugSettings.log_player("ModePlay: Tree chopped!")
 			return
 		elif target.is_in_group("grass"):
 			vegetation_manager.harvest_grass_by_collider(target)
