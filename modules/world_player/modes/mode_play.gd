@@ -536,9 +536,18 @@ func _do_tool_attack(item: Dictionary) -> void:
 	if terrain_manager:
 		DebugSettings.log_player("ModePlay: terrain_manager.has_method('modify_terrain')=%s" % terrain_manager.has_method("modify_terrain"))
 		if terrain_manager.has_method("modify_terrain"):
+			# Get material ID BEFORE digging (to collect what was there)
+			var mat_id = -1
+			if terrain_manager.has_method("get_material_at"):
+				mat_id = terrain_manager.get_material_at(position)
+			
 			DebugSettings.log_player("ModePlay: Calling modify_terrain(%s, %.1f, 1.0, 0, 0)" % [position, mining_strength])
 			terrain_manager.modify_terrain(position, mining_strength, 1.0, 0, 0)
 			DebugSettings.log_player("ModePlay: Mined terrain at %s (strength: %.1f)" % [position, mining_strength])
+			
+			# Collect resource
+			if mat_id >= 0:
+				_collect_terrain_resource(mat_id)
 		else:
 			DebugSettings.log_player("ModePlay: terrain_manager missing modify_terrain method!")
 	else:

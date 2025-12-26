@@ -14,6 +14,15 @@ var selected_slot: int = 0
 const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
 
 func _ready() -> void:
+	_load_dev_starter_kit()
+	
+	DebugSettings.log_player("Hotbar: Initialized with %d slots (max stack: %d)" % [slots.size(), MAX_STACK_SIZE])
+	
+	# Auto-select first slot
+	select_slot(0)
+
+## Load default developer starter kit items
+func _load_dev_starter_kit() -> void:
 	# Initialize slots with test items (each as a stack of 1)
 	var test_items = ItemDefs.get_test_items()
 	slots.clear()
@@ -23,11 +32,6 @@ func _ready() -> void:
 	# Ensure we have exactly SLOT_COUNT slots
 	while slots.size() < SLOT_COUNT:
 		slots.append(_create_empty_stack())
-	
-	DebugSettings.log_player("Hotbar: Initialized with %d slots (max stack: %d)" % [slots.size(), MAX_STACK_SIZE])
-	
-	# Auto-select first slot
-	select_slot(0)
 
 func _input(event: InputEvent) -> void:
 	# Number keys 1-0 for slots
