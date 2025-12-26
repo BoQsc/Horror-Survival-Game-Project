@@ -173,7 +173,8 @@ func _get_interaction_prompt(target: Node) -> String:
 		return "[E] Enter"
 	
 	# Pickups (props on ground that can be picked up)
-	if target.is_in_group("pickups") or target.is_in_group("props") or target.is_in_group("pickup_items"):
+	var is_physics_prop = (target is RigidBody3D and target.is_in_group("interactable") and not target.is_in_group("vehicle"))
+	if target.is_in_group("pickups") or target.is_in_group("props") or target.is_in_group("pickup_items") or target.has_meta("item_data") or is_physics_prop:
 		return "[E] Pick up"
 	
 	# Generic interactables
@@ -200,8 +201,9 @@ func _do_interaction() -> void:
 		PlayerSignals.interaction_performed.emit(current_target, "interact")
 		return
 	
-	# Pickups
-	if current_target.is_in_group("pickups") or current_target.is_in_group("props") or current_target.is_in_group("pickup_items"):
+	# Pickups (or physics props like pistols)
+	var is_physics_prop = (current_target is RigidBody3D and current_target.is_in_group("interactable") and not current_target.is_in_group("vehicle"))
+	if current_target.is_in_group("pickups") or current_target.is_in_group("props") or current_target.is_in_group("pickup_items") or current_target.has_meta("item_data") or is_physics_prop:
 		_pickup_item(current_target)
 		return
 	
@@ -222,12 +224,23 @@ func _pickup_item(target: Node) -> void:
 		item_data = target.get_meta("item_data")
 	else:
 		# Create generic item from object
+		# RESTORING FIX: Check for known physics props (Pistol) and inject scene path
+		var target_name = target.name.to_lower()
+		var item_scene = ""
+		
+		if "pistol" in target_name:
+			item_scene = "res://models/pistol/heavy_pistol_physics.tscn"
+		
 		item_data = {
-			"id": target.name.to_lower(),
+			"id": target_name,
 			"name": target.name,
 			"category": 6, # PROP
-			"stack_size": 16
+			"stack_size": 16,
+			"scene": item_scene
 		}
+		
+		if item_scene != "":
+			item_data["stack_size"] = 1 # Props usually don't stack well
 	
 	# Add to hotbar first, then inventory
 	var hotbar_node = get_node_or_null("../../Systems/Hotbar")

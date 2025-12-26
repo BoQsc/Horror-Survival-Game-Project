@@ -58,7 +58,7 @@ func close_inventory() -> void:
 
 ## Add item to inventory, returns leftover count
 func add_item(item: Dictionary, count: int = 1) -> int:
-	var stack_size = MAX_STACK_SIZE  # Use our fixed stack size
+	var stack_size = min(MAX_STACK_SIZE, item.get("stack_size", MAX_STACK_SIZE))
 	var remaining = count
 	
 	# First, try to stack with existing items
