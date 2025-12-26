@@ -15,7 +15,7 @@ const PUNCH_SFX_PATH: String = "res://game/assets/classic-punch-impact-352711.mp
 
 # Adjustable transform - tweak in editor!
 @export var arms_scale: Vector3 = Vector3(0.05, 0.05, 0.05)
-@export var arms_position: Vector3 = Vector3(0.005, -0.27, -0.025)
+@export var arms_position: Vector3 = Vector3(0.005, -0.27, 0.0)
 @export var arms_rotation: Vector3 = Vector3(-1.345, 189.54, 0.0)
 
 # References
@@ -109,8 +109,9 @@ func _load_arms_model() -> void:
 	else:
 		DebugSettings.log_player("FirstPersonArms: No AnimationPlayer found in model")
 	
-	# Set camera near clip to allow arms to render close
-	camera.near = 0.04
+	# Set camera near clip very small to prevent arms clipping during punch
+	# Note: Can't be exactly 0 (causes projection math issues), 0.001 is minimum
+	camera.near = 0.001
 	
 	DebugSettings.log_player("FirstPersonArms: Arms model loaded and positioned")
 
