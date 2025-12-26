@@ -6,7 +6,7 @@ class_name FirstPersonPistol
 # Preload resources
 const PISTOL_SOUND = preload("res://sound/pistol-shot-233473.mp3")
 const RELOAD_SOUND = preload("res://sound/mag-reload-81594.mp3")
-const PISTOL_SCENE_PATH = "res://models/pistol/heavy_pistol_without_hands.tscn"
+const PISTOL_SCENE_PATH = "res://models/pistol/heavy_pistol_animated.glb"
 
 # Sway & Bobbing Settings - matched to FirstPersonArms
 @export var sway_amount: float = 0.002
@@ -19,9 +19,9 @@ const PISTOL_SCENE_PATH = "res://models/pistol/heavy_pistol_without_hands.tscn"
 @export var ads_rotation: Vector3 = Vector3(-0.955, 180.735, 0.0)
 
 # Adjustable transform - tweak in editor!
-@export var pistol_scale: Vector3 = Vector3(0.02, 0.02, 0.02)
-@export var pistol_position: Vector3 = Vector3(0.1, -0.15, -0.25)
-@export var pistol_rotation: Vector3 = Vector3(0, 180, 0)
+@export var pistol_scale: Vector3 = Vector3(0.005, 0.005, 0.005)
+@export var pistol_position: Vector3 = Vector3(0.093, -0.094, -0.155)
+@export var pistol_rotation: Vector3 = Vector3(0, 170, 0)
 
 # References
 var player: CharacterBody3D = null
@@ -37,6 +37,7 @@ var mouse_input: Vector2 = Vector2.ZERO
 var sway_time: float = 0.0
 var is_aiming: bool = false
 var is_reloading: bool = false
+var should_show_pending: bool = false # Track visibility state during initialization
 
 func _ready() -> void:
 	player = get_parent().get_parent() as CharacterBody3D
@@ -92,8 +93,20 @@ func _setup_pistol() -> void:
 	player.add_child(audio_player)
 	
 	# Start hidden (only show when pistol equipped)
+	# Apply initial visibility state (sync with Hotbar)
+	var hotbar_chk = false
+	if not should_show_pending:
+		# Backup: Check hotbar directly in case we missed the signal
+		var hotbar = player.get_node_or_null("Systems/Hotbar")
+		if hotbar and hotbar.has_method("get_selected_item"):
+			var item = hotbar.get_selected_item()
+			if item.get("id", "") == "heavy_pistol":
+				should_show_pending = true
+				hotbar_chk = true
+	
 	if pistol_mesh:
-		pistol_mesh.visible = false
+		pistol_mesh.visible = should_show_pending
+		DebugSettings.log_player("FirstPersonPistol: Setup complete. Visible: %s (Pending: %s, HotbarChk: %s)" % [pistol_mesh.visible, should_show_pending, hotbar_chk])
 	
 	DebugSettings.log_player("FirstPersonPistol: Component initialized")
 
@@ -168,9 +181,11 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	# Show pistol only when heavy_pistol is equipped
 	var item_id = item.get("id", "")
 	var should_show = (item_id == "heavy_pistol")
+	should_show_pending = should_show # Update pending state for setup or synchronization
 	
 	if pistol_mesh:
 		pistol_mesh.visible = should_show
+		DebugSettings.log_player("FirstPersonPistol: Visibility update - ID: %s -> Visible: %s" % [item_id, should_show])
 
 func _on_pistol_fired() -> void:
 	if not audio_player:
