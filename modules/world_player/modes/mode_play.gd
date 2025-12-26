@@ -322,10 +322,21 @@ func _do_punch(item: Dictionary) -> void:
 			if block_damage[block_pos] >= BLOCK_HP:
 				# Remove the block
 				var voxel_pos = position - hit.get("normal", Vector3.ZERO) * 0.1
-				building_manager.set_voxel(Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z)), 0.0)
+				var voxel_coord = Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z))
+				
+				# Get voxel ID before destroying (to collect)
+				var voxel_id = 0
+				if building_manager.has_method("get_voxel"):
+					voxel_id = building_manager.get_voxel(voxel_pos)
+				
+				building_manager.set_voxel(voxel_coord, 0.0)
 				block_damage.erase(block_pos)
 				PlayerSignals.durability_cleared.emit()
 				DebugSettings.log_player("ModePlay: Block destroyed!")
+				
+				# Collect resource
+				if voxel_id > 0:
+					_collect_building_resource(voxel_id)
 			return
 	
 	# Default - hit terrain with durability system (grid-aligned breaking)
@@ -525,10 +536,24 @@ func _do_tool_attack(item: Dictionary) -> void:
 			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block")
 			if block_damage[block_pos] >= BLOCK_HP:
 				var voxel_pos = position - hit.get("normal", Vector3.ZERO) * 0.1
-				building_manager.set_voxel(Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z)), 0.0)
+				var voxel_coord = Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z))
+				
+				# Get voxel ID before destroying (to collect)
+				var voxel_id = 0
+				if building_manager.has_method("get_voxel"):
+					voxel_id = building_manager.get_voxel(voxel_pos)
+					DebugSettings.log_player("ModePlay: Destroying block at %s. Voxel ID: %d" % [voxel_pos, voxel_id])
+				
+				building_manager.set_voxel(voxel_coord, 0.0)
 				block_damage.erase(block_pos)
 				PlayerSignals.durability_cleared.emit()
 				DebugSettings.log_player("ModePlay: Block destroyed with tool!")
+				
+				# Collect resource
+				if voxel_id > 0:
+					_collect_building_resource(voxel_id)
+				else:
+					DebugSettings.log_player("ModePlay: WARNING - Voxel ID was 0, no collection!")
 			return
 	
 	# Priority 5: Mine terrain (instant with mining_strength)
@@ -1234,6 +1259,32 @@ func _collect_vegetation_resource(veg_type: String) -> void:
 		DebugSettings.log_player("ModePlay: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
 	else:
 		DebugSettings.log_player("ModePlay: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
+
+## Collect building block resource and add to hotbar/inventory
+func _collect_building_resource(block_id: int) -> void:
+	const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
+	var item_data = ItemDefs.get_item_for_block(block_id)
+	
+	if item_data.is_empty():
+		DebugSettings.log_player("ModePlay: No item found for block ID %d" % block_id)
+		return
+
+	# Try to add to hotbar first
+	if hotbar and hotbar.has_method("add_item"):
+		if hotbar.add_item(item_data):
+			DebugSettings.log_player("ModePlay: Collected 1x %s to hotbar" % item_data.get("name", "Block"))
+			return
+	
+	# Fall back to inventory
+	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
+	if not inventory or not inventory.has_method("add_item"):
+		return
+	
+	var leftover = inventory.add_item(item_data, 1)
+	if leftover == 0:
+		DebugSettings.log_player("ModePlay: Collected 1x %s to inventory" % item_data.get("name", "Block"))
+	else:
+		DebugSettings.log_player("ModePlay: Inventory full, dropped %s" % item_data.get("name", "Block"))
 
 ## Consume 1 of the currently selected item from hotbar
 ## Decrements the stack count by 1, clearing the slot if count reaches 0

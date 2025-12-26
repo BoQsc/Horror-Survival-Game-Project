@@ -138,9 +138,9 @@ func set_voxel(global_pos: Vector3, value: int, meta: int = 0):
 	var chunk_z = floor(global_pos.z / CHUNK_SIZE)
 	var chunk_coord = Vector3i(chunk_x, chunk_y, chunk_z)
 	
-	var local_x = int(global_pos.x) % CHUNK_SIZE
-	var local_y = int(global_pos.y) % CHUNK_SIZE
-	var local_z = int(global_pos.z) % CHUNK_SIZE
+	var local_x = int(floor(global_pos.x)) % CHUNK_SIZE
+	var local_y = int(floor(global_pos.y)) % CHUNK_SIZE
+	var local_z = int(floor(global_pos.z)) % CHUNK_SIZE
 	
 	# Handle negative modulo correctly
 	if local_x < 0: local_x += CHUNK_SIZE
@@ -163,9 +163,9 @@ func get_voxel(global_pos: Vector3) -> int:
 	if not chunks.has(chunk_coord):
 		return 0
 		
-	var local_x = int(global_pos.x) % CHUNK_SIZE
-	var local_y = int(global_pos.y) % CHUNK_SIZE
-	var local_z = int(global_pos.z) % CHUNK_SIZE
+	var local_x = int(floor(global_pos.x)) % CHUNK_SIZE
+	var local_y = int(floor(global_pos.y)) % CHUNK_SIZE
+	var local_z = int(floor(global_pos.z)) % CHUNK_SIZE
 	
 	if local_x < 0: local_x += CHUNK_SIZE
 	if local_y < 0: local_y += CHUNK_SIZE

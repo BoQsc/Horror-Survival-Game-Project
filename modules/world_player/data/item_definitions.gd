@@ -182,3 +182,11 @@ static func get_resource_for_material(mat_id: int) -> Dictionary:
 		return resources[mat_id].duplicate()
 	# Fallback to stone
 	return resources[1].duplicate()
+
+## Get item definition for a specific block ID
+static func get_item_for_block(block_id: int) -> Dictionary:
+	var items = get_test_items()
+	for item in items:
+		if item.get("category") == ItemCategory.BLOCK and item.get("block_id") == block_id:
+			return item.duplicate()
+	return {}
