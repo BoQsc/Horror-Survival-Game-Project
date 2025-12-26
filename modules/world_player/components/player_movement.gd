@@ -1,10 +1,10 @@
 extends Node
 class_name PlayerMovement
-## PlayerMovement - Handles player locomotion (walk, jump, gravity)
-## Minimal implementation to start - sprint, swim, fly will be added later.
+## PlayerMovement - Handles player locomotion (walk, jump, gravity, swim)
 
 # Movement constants
 const WALK_SPEED: float = 5.0
+const SWIM_SPEED: float = 4.0
 const JUMP_VELOCITY: float = 4.5
 
 # Footstep sound settings - matched to original project
@@ -19,6 +19,8 @@ var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 
 # State
 var was_on_floor: bool = true
+var is_swimming: bool = false
+var was_swimming: bool = false
 
 func _ready() -> void:
 	player = get_parent().get_parent() as CharacterBody3D
@@ -49,15 +51,69 @@ func _physics_process(delta: float) -> void:
 	if not player:
 		return
 	
-	apply_gravity(delta)
-	handle_jump()
-	handle_movement()
-	handle_footsteps(delta)
+	_update_water_state()
+	
+	if is_swimming:
+		_handle_swimming(delta)
+	else:
+		_handle_walking(delta)
 	
 	player.move_and_slide()
 	
 	# Detect landing
 	check_landing()
+
+func _update_water_state() -> void:
+	# Check Center of Mass (+0.9 is approx center of 1.8m player)
+	var center_pos = player.global_position + Vector3(0, 0.9, 0)
+	var body_density = 1.0 # Default to air
+	
+	# Access terrain manager to get density
+	if "terrain_manager" in player and player.terrain_manager and player.terrain_manager.has_method("get_water_density"):
+		body_density = player.terrain_manager.get_water_density(center_pos)
+	
+	was_swimming = is_swimming
+	# Negative density means inside water (as per ChunkManager convention)
+	is_swimming = body_density < 0.0
+	
+	# Handle entry/exit transitions
+	if is_swimming and not was_swimming:
+		player.velocity.y *= 0.1 # Dampen entry velocity
+	elif not is_swimming and was_swimming:
+		# Jump out of water if holding jump
+		if Input.is_action_pressed("ui_accept"):
+			player.velocity.y = JUMP_VELOCITY
+
+func _handle_walking(delta: float) -> void:
+	apply_gravity(delta)
+	handle_jump()
+	handle_movement()
+	handle_footsteps(delta)
+
+func _handle_swimming(delta: float) -> void:
+	# Neutral buoyancy or slight sinking/floating
+	# Apply drag to existing velocity
+	player.velocity = player.velocity.move_toward(Vector3.ZERO, 2.0 * delta)
+	
+	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	
+	# Swim in camera direction
+	var cam_basis = Basis()
+	if "camera_component" in player and player.camera_component and player.camera_component.camera:
+		cam_basis = player.camera_component.camera.global_transform.basis
+	else:
+		cam_basis = player.global_transform.basis
+		
+	var direction = (cam_basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	
+	if direction:
+		player.velocity += direction * SWIM_SPEED * delta * 5.0 # Acceleration
+		if player.velocity.length() > SWIM_SPEED:
+			player.velocity = player.velocity.normalized() * SWIM_SPEED
+	
+	# Space to swim up (surface) explicitly
+	if Input.is_action_pressed("ui_accept"):
+		player.velocity.y += 5.0 * delta
 
 func apply_gravity(delta: float) -> void:
 	if not player.is_on_floor():
