@@ -278,6 +278,7 @@ func drop_selected_item() -> void:
 				
 				# Store item data on the node for re-pickup
 				temp_instance.set_meta("item_data", item.duplicate())
+				temp_instance.set_meta("preferred_slot", selected_slot)
 				
 				DebugSettings.log_player("Hotbar: Dropped %s directly (physics prop)" % item.get("name", "item"))
 				spawned_directly = true
@@ -293,6 +294,7 @@ func drop_selected_item() -> void:
 			get_tree().root.add_child(pickup)
 			pickup.global_position = drop_pos
 			pickup.set_item(item, 1) # Drop 1 at a time
+			pickup.preferred_slot = selected_slot
 			pickup.linear_velocity = drop_velocity
 			
 			DebugSettings.log_player("Hotbar: Dropped 1x %s (wrapped)" % item.get("name", "item"))

@@ -11,7 +11,11 @@ signal collected(item_data: Dictionary, count: int)
 
 @onready var mesh: MeshInstance3D = $Mesh
 @onready var collision: CollisionShape3D = $Collision
+@onready var mesh: MeshInstance3D = $Mesh
+@onready var collision: CollisionShape3D = $Collision
 @onready var pickup_area: Area3D = $PickupArea
+
+var preferred_slot: int = -1 # Slot index to return to if possible
 
 var can_pickup: bool = false
 var time_spawned: float = 0.0
@@ -140,6 +144,27 @@ func _try_collect(player: Node3D) -> void:
 	var remaining = item_count
 	
 	# First, try to add to hotbar (prioritize hotbar for quick access)
+	if hotbar:
+		# Try preferred slot first if set
+		if preferred_slot >= 0 and remaining > 0:
+			var slot_count = hotbar.get_count_at(preferred_slot)
+			if slot_count == 0:
+				# Slot is empty - fill it
+				hotbar.set_item_at(preferred_slot, item_data, 1)
+				remaining -= 1
+				# If we have more, try to stack in same slot (if stackable)
+				# But set_item_at overwrites. We need to increment.
+				# hotbar doesn't expose "add to slot".
+				# But add_item handles generic adding.
+				# Let's just trust that filling the empty slot is enough for the first item.
+				# If the user dropped a whole stack, they might want all back in same slot.
+				# But drop_selected_item currently drops 1 at a time.
+			elif hotbar.get_item_at(preferred_slot).get("id") == item_data.get("id"):
+				# Slot has same item - try to stack
+				# hotbar doesn't expose public "increment slot".
+				# We can rely on generic add_item logic for stacking, causing it to likely pick this slot if it's the first stackable one.
+				pass
+	
 	if hotbar and hotbar.has_method("add_item"):
 		while remaining > 0:
 			if hotbar.add_item(item_data):

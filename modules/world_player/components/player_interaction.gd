@@ -222,9 +222,34 @@ func _pickup_item(target: Node) -> void:
 	var added = false
 	
 	# Try hotbar first
-	if hotbar_node and hotbar_node.has_method("add_item"):
-		if hotbar_node.add_item(item_data):
-			added = true
+	if hotbar_node:
+		# Check for preferred slot (from drop)
+		var preferred_slot = -1
+		if "preferred_slot" in target:
+			preferred_slot = target.preferred_slot
+		elif target.has_meta("preferred_slot"):
+			preferred_slot = target.get_meta("preferred_slot")
+			
+		if preferred_slot >= 0 and hotbar_node.has_method("get_count_at") and hotbar_node.has_method("set_item_at"):
+			# Try to put back in same slot if empty
+			if hotbar_node.get_count_at(preferred_slot) == 0:
+				hotbar_node.set_item_at(preferred_slot, item_data, 1) # Assumes stack size 1 for now or partial logic?
+				# Actually add_item handles full stacks. set_item_at sets explicit count.
+				# If we picked up a full stack? _pickup_item grabs "item_data".
+				# item_data usually doesn't have "count" in it (it's in the slot wrapper).
+				# But for pickups, they usually represent 1 item (pistol) or stack?
+				# PickupItem has item_count.
+				# PlayerInteraction logic just assumes 1?
+				# "var item_data = target.get_item_data()"
+				# "inventory.add_item(item_data, 1)" -> It hardcodes 1!
+				# This is a limitation of PlayerInteraction generic pickup.
+				# But for now, I will mimic that behavior.
+				added = true
+		
+		# Fallback to generic add if not added to preferred
+		if not added and hotbar_node.has_method("add_item"):
+			if hotbar_node.add_item(item_data):
+				added = true
 	
 	# Fallback to inventory
 	if not added and inventory and inventory.has_method("add_item"):
