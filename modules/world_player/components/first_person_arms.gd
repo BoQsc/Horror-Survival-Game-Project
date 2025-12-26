@@ -3,11 +3,11 @@ class_name FirstPersonArms
 ## FirstPersonArms - Handles first-person arm visuals with sway, bobbing, and punch animation
 ## Shows arms when no item equipped, hides when tools/weapons selected.
 
-# Sway & Bobbing Settings
-const SWAY_AMOUNT: float = 0.002
-const SWAY_SMOOTHING: float = 10.0
-const BOB_FREQ: float = 10.0
-const BOB_AMP: float = 0.01
+# Sway & Bobbing Settings - tweak in editor!
+@export var sway_amount: float = 0.002  # How much mouse movement affects position
+@export var sway_smoothing: float = 10.0  # How fast it returns to center
+@export var bob_freq: float = 10.0  # Speed of walking bob
+@export var bob_amp: float = 0.01  # Distance of walking bob
 
 # Arms model path
 const ARMS_MODEL_PATH: String = "res://game/assets/psx_first_person_arms.glb"
@@ -133,9 +133,10 @@ func _process(delta: float) -> void:
 		return
 	
 	# Update transform from export vars at runtime (for editor tweaking)
+	# Position is relative to HandHolder which handles sway/bob
 	arms_mesh.scale = arms_scale
+	arms_mesh.position = arms_position
 	arms_mesh.rotation_degrees = arms_rotation
-	arms_origin = arms_position  # Update origin so sway works from new position
 	
 	if not arms_mesh.visible:
 		return
@@ -156,23 +157,24 @@ func _update_sway_and_bob(delta: float) -> void:
 	if not hand_holder:
 		return
 	
-	# 1. Mouse Sway (lag behind camera)
+	# 1. Mouse Sway (lag behind camera) - applied to hand_holder like original
 	var target_sway = Vector3(
-		-mouse_input.x * SWAY_AMOUNT,
-		mouse_input.y * SWAY_AMOUNT,
+		-mouse_input.x * sway_amount,
+		mouse_input.y * sway_amount,
 		0
 	)
 	
 	# 2. Movement Bobbing (only when moving on floor)
 	var bob_offset = Vector3.ZERO
 	if player.is_on_floor() and player.velocity.length() > 1.0:
-		sway_time += delta * player.velocity.length()
-		bob_offset.y = sin(sway_time * BOB_FREQ * 0.5) * BOB_AMP
-		bob_offset.x = cos(sway_time * BOB_FREQ) * BOB_AMP * 0.5
+		# Use fixed time step for smooth bob, not velocity-dependent (that was too fast)
+		sway_time += delta
+		bob_offset.y = sin(sway_time * bob_freq) * bob_amp
+		bob_offset.x = cos(sway_time * bob_freq * 2.0) * bob_amp * 0.5
 	
-	# Combine and apply
-	var total_target = arms_origin + target_sway + bob_offset
-	arms_mesh.position = arms_mesh.position.lerp(total_target, delta * SWAY_SMOOTHING)
+	# Combine and apply to hand_holder
+	var total_target = target_sway + bob_offset
+	hand_holder.position = hand_holder.position.lerp(total_target, delta * sway_smoothing)
 	
 	# Reset mouse input frame-by-frame
 	mouse_input = Vector2.ZERO
