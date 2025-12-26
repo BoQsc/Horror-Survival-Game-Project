@@ -4,13 +4,14 @@ class_name ZombieBase
 ## Based on old reference patterns - uses time-slice animation looping
 
 # --- Health ---
-@export var max_health: int = 3
+@export var max_health: int = 20
 var current_health: int
 
 # --- State ---
 var current_state: String = "IDLE"
 var attack_timer: float = 0.0
 var stuck_timer: float = 0.0
+var hit_anim_variant: int = 0
 
 # --- Movement (overrides EntityBase) ---
 @export var chase_speed_multiplier: float = 2.5
@@ -137,6 +138,8 @@ func _physics_process(delta):
 			_process_chase(delta)
 		"ATTACK":
 			_process_attack(delta)
+		"HIT":
+			_process_hit(delta)
 	
 	move_and_slide()
 	
@@ -176,6 +179,9 @@ func _update_animation():
 			"ATTACK":
 				anim_player.seek(3.5)
 				return
+			"HIT":
+				anim_player.seek(4.5 if hit_anim_variant == 0 else 5.2)
+				return
 			# DEAD state doesn't need reset - it's meant to stay at death pose
 	
 	match current_state:
@@ -193,6 +199,15 @@ func _update_animation():
 		"ATTACK":
 			if t < 3.5 or t >= 4.5:
 				anim_player.seek(3.5 + fmod(t - 3.5, 1.0) if t >= 4.5 else 3.5)
+		"HIT":
+			# Variant 0: 4.5s to 5.2s
+			# Variant 1: 5.2s to 5.9s
+			# Hit animations don't loop, they exit state when done. 
+			# But we clamp here just in case.
+			if hit_anim_variant == 0:
+				if t < 4.5: anim_player.seek(4.5)
+			else:
+				if t < 5.2: anim_player.seek(5.2)
 
 func _process_idle(delta):
 	# Friction when idle
@@ -284,6 +299,26 @@ func _do_attack():
 	if player.has_method("take_damage"):
 		player.take_damage(attack_damage)
 
+func _process_hit(delta):
+	# Apply friction
+	velocity.x = move_toward(velocity.x, 0, 5.0 * delta)
+	velocity.z = move_toward(velocity.z, 0, 5.0 * delta)
+	
+	if not anim_player:
+		change_state("CHASE")
+		return
+
+	var t = anim_player.current_animation_position
+	var finished = false
+	
+	if hit_anim_variant == 0:
+		if t >= 5.2: finished = true
+	else:
+		if t >= 5.9: finished = true
+		
+	if finished:
+		change_state("CHASE")
+
 func _can_see_player() -> bool:
 	# Simple check - could add raycast for line of sight
 	return player != null and is_instance_valid(player)
@@ -320,6 +355,8 @@ func change_state(new_state: String):
 				anim_player.seek(11.6, true)
 			"ATTACK":
 				anim_player.seek(3.5)
+			"HIT":
+				anim_player.seek(4.5 if hit_anim_variant == 0 else 5.2)
 	
 	# Set timers
 	match new_state:
@@ -343,6 +380,17 @@ func take_damage(amount: int):
 	
 	if current_health <= 0:
 		die()
+	else:
+		# Random hit reaction
+		hit_anim_variant = randi() % 2
+		
+		# If already hit, we might want to restart animation or just let it play.
+		# Choosing to restart for better responsiveness.
+		if current_state == "HIT":
+			if anim_player:
+				anim_player.seek(4.5 if hit_anim_variant == 0 else 5.2)
+		else:
+			change_state("HIT")
 
 func die():
 	change_state("DEAD")
