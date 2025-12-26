@@ -601,6 +601,11 @@ func _do_tool_attack(item: Dictionary) -> void:
 	# Prioritizing this ensures we interact with complex entities first
 	var damageable = _find_damageable(target)
 	if damageable:
+		# Axe Bonus vs Zombies
+		if "axe" in item.get("id", "") and damageable.is_in_group("zombies"):
+			damage = 10 # 1-hit kill guarantee
+			DebugSettings.log_player("ModePlay: Axe Zombie Bonus Applied!")
+			
 		damageable.take_damage(damage)
 		durability_target = target.get_rid() # Track for look-away clearing
 		DebugSettings.log_player("ModePlay: Tool hit damageable %s for %d damage" % [damageable.name, damage])
