@@ -205,6 +205,7 @@ func _try_punch() -> void:
 
 func _on_punch_finished(_anim_name: String) -> void:
 	is_punching = false
+	PlayerSignals.punch_ready.emit()  # Tell ModePlay we're ready for next punch
 	_try_play_idle()
 
 func _try_play_idle() -> void:

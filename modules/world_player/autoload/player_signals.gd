@@ -15,6 +15,7 @@ signal editor_submode_changed(submode: int, submode_name: String)
 signal damage_dealt(target: Node, amount: int)
 signal damage_received(amount: int, source: Node)
 signal punch_triggered()
+signal punch_ready()  # Emitted when punch animation finishes, ready for next attack
 signal player_died()
 
 # Interaction events

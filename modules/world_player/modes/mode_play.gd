@@ -38,6 +38,9 @@ var held_prop_instance: Node3D = null
 var held_prop_id: int = -1
 var held_prop_rotation: int = 0
 
+# Fist punch sync - wait for animation to finish before next punch
+var fist_punch_ready: bool = true
+
 # Material display - lookup and tracking
 const MATERIAL_NAMES = {
 	-1: "Unknown",
@@ -84,6 +87,9 @@ func _ready() -> void:
 	DebugSettings.log_player("  - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
 	DebugSettings.log_player("  - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
 	DebugSettings.log_player("  - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
+	
+	# Connect to punch ready signal for animation-synced attacks
+	PlayerSignals.punch_ready.connect(_on_punch_ready)
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
@@ -220,15 +226,24 @@ func handle_secondary(item: Dictionary) -> void:
 		3: # RESOURCE
 			_do_resource_place(item)
 
-## Punch attack with fists
+## Callback when punch animation finishes
+func _on_punch_ready() -> void:
+	fist_punch_ready = true
+
+## Punch attack with fists (synced with animation)
 func _do_punch(item: Dictionary) -> void:
 	if not player:
 		return
 	
+	# Wait for animation to finish before allowing next punch
+	if not fist_punch_ready:
+		return
+	
+	# Block until animation finishes
+	fist_punch_ready = false
+	
 	# Emit signal for first-person arms animation
 	PlayerSignals.punch_triggered.emit()
-	
-	attack_cooldown = ATTACK_COOLDOWN_TIME
 	
 	# Use collide_with_areas=true to detect grass/rocks (Area3D)
 	# Use exclude_water=true to pierce through water surfaces

@@ -41,6 +41,7 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	# Hold-to-attack: continuously trigger actions while mouse is held
+	# The attack cooldown in mode handlers ensures proper timing
 	if not hotbar or not player:
 		return
 	
