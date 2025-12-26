@@ -214,15 +214,17 @@ func add_item(item: Dictionary) -> bool:
 		if stack_slot >= 0:
 			slots[stack_slot]["count"] += 1
 			DebugSettings.log_player("Hotbar: Stacked %s in slot %d (now x%d)" % [item.get("name", "item"), stack_slot, slots[stack_slot]["count"]])
+			if stack_slot == selected_slot:
+				_emit_selection_change()  # Signal arms to update
 			PlayerSignals.inventory_changed.emit()
 			return true
 	
 	# Find empty slot
 	var empty_slot = find_first_empty_slot()
 	if empty_slot >= 0:
-		slots[empty_slot] = {"item": item, "count": 1}
+		# Use set_item_at to properly emit signals (including item_changed for arms visibility)
+		set_item_at(empty_slot, item, 1)
 		DebugSettings.log_player("Hotbar: Added %s to slot %d" % [item.get("name", "item"), empty_slot])
-		PlayerSignals.inventory_changed.emit()
 		return true
 	
 	DebugSettings.log_player("Hotbar: No space for %s" % item.get("name", "item"))
