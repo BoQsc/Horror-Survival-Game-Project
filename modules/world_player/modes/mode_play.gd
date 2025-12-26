@@ -571,7 +571,7 @@ func _do_tool_attack(item: Dictionary) -> void:
 	
 	# Special handling for Axe animations (sync with visual)
 	var item_id = item.get("id", "")
-	if "axe" in item_id:
+	if "axe" in item_id and not "pickaxe" in item_id:
 		# Wait for animation to finish
 		if not axe_ready:
 			return
