@@ -173,17 +173,16 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 		pistol_mesh.visible = should_show
 
 func _on_pistol_fired() -> void:
-	if not audio_player or not pistol_mesh or not pistol_mesh.visible:
+	if not audio_player:
 		return
 	
-	# Play gunshot sound
+	# Play gunshot sound (even if pistol not visible, for feedback)
 	audio_player.stream = PISTOL_SOUND
 	audio_player.pitch_scale = randf_range(0.95, 1.05)
 	audio_player.play()
 	
-	# Play shoot animation (0-0.4s segment)
-	if anim_player:
-		_play_shoot_animation()
+	# Play shoot animation (0-0.4s segment) - always call to ensure signal is emitted
+	_play_shoot_animation()
 
 func _play_shoot_animation() -> void:
 	if not anim_player:
