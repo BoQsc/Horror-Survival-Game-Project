@@ -970,15 +970,7 @@ func _get_item_data_from_pickup(target: Node) -> Dictionary:
 	
 	# Pistol variants
 	if "pistol" in name_lower:
-		return {
-			"id": "pistol",
-			"name": "Pistol",
-			"category": 1, # TOOL
-			"damage": 25,
-			"mining_strength": 0.0,
-			"stack_size": 1,
-			"scene": "res://models/pistol/heavy_pistol_physics.tscn"
-		}
+		return ItemDefinitions.get_heavy_pistol_definition()
 	
 	# Add more pickupable items here as needed
 	# Example: if "shotgun" in name_lower: ...

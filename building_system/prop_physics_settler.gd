@@ -93,3 +93,31 @@ func _find_meshes_recursive(node: Node, result: Array):
 		result.append(node)
 	for child in node.get_children():
 		_find_meshes_recursive(child, result)
+
+## Get item data for pickup (called by PlayerInteraction)
+func get_item_data() -> Dictionary:
+	var data = {}
+	
+	# 1. Prefer existing metadata but validate it
+	if has_meta("item_data"):
+		data = get_meta("item_data").duplicate()
+	
+	# 2. Check identity
+	var my_name = name.to_lower()
+	var my_scene = scene_file_path
+	var is_pistol = ("pistol" in my_name or "heavy_pistol" in my_scene)
+	
+	# 3. If it is a pistol, FORCE canonical definition from Single Source of Truth
+	if is_pistol:
+		data = ItemDefinitions.get_heavy_pistol_definition()
+	
+	# 4. Fallback if no data found and not a pistol
+	if data.is_empty():
+		data = {
+			"id": my_name,
+			"name": name,
+			"category": 6, # PROP
+			"stack_size": 16
+		}
+		
+	return data

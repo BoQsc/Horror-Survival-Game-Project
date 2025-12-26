@@ -190,3 +190,13 @@ static func get_item_for_block(block_id: int) -> Dictionary:
 		if item.get("category") == ItemCategory.BLOCK and item.get("block_id") == block_id:
 			return item.duplicate()
 	return {}
+
+## Get Heavy Pistol definition (Single Source of Truth)
+static func get_heavy_pistol_definition() -> Dictionary:
+	return {
+		"id": "heavy_pistol",
+		"name": "Heavy Pistol",
+		"category": ItemCategory.PROP,
+		"stack_size": 1,
+		"scene": "res://models/pistol/heavy_pistol_physics.tscn"
+	}

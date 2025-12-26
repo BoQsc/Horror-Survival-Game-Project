@@ -227,17 +227,23 @@ func _pickup_item(target: Node) -> void:
 		# RESTORING FIX: Check for known physics props (Pistol) and inject scene path
 		var target_name = target.name.to_lower()
 		var item_scene = ""
+		var friendly_name = target.name
+		var item_id = target_name
 		
 		if "pistol" in target_name:
-			item_scene = "res://models/pistol/heavy_pistol_physics.tscn"
+			item_data = ItemDefinitions.get_heavy_pistol_definition()
 		
-		item_data = {
-			"id": target_name,
-			"name": target.name,
-			"category": 6, # PROP
-			"stack_size": 16,
-			"scene": item_scene
-		}
+		# Fallback if not identified above
+		if item_data.is_empty():
+			item_data = {
+				"id": item_id,
+				"name": friendly_name,
+				"category": 6, # PROP
+				"stack_size": 16,
+				"scene": item_scene
+			}
+			if item_scene != "":
+				item_data["stack_size"] = 1 # Props usually don't stack well
 		
 		if item_scene != "":
 			item_data["stack_size"] = 1 # Props usually don't stack well
