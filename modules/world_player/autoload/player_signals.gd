@@ -18,6 +18,11 @@ signal punch_triggered()
 signal punch_ready()  # Emitted when punch animation finishes, ready for next attack
 signal player_died()
 
+# Pistol events
+signal pistol_fired()  # Trigger shoot animation
+signal pistol_fire_ready()  # Animation done, can fire again
+signal pistol_reload()  # Trigger reload animation
+
 # Interaction events
 signal interaction_available(target: Node, prompt: String)
 signal interaction_unavailable()

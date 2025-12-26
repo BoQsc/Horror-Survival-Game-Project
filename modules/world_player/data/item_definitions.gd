@@ -128,9 +128,19 @@ static func get_category_name(category: ItemCategory) -> String:
 		ItemCategory.PROP: return "Prop"
 	return "Unknown"
 
-## Check if category triggers BUILD mode
+## Check if category triggers BUILD mode (category-only check)
 static func is_build_category(category: ItemCategory) -> bool:
 	return category in [ItemCategory.BLOCK, ItemCategory.OBJECT, ItemCategory.PROP]
+
+## Check if an item should trigger BUILD mode (considers firearm flag)
+static func is_build_item(item: Dictionary) -> bool:
+	var category = item.get("category", ItemCategory.NONE)
+	
+	# Firearms stay in PLAY mode even though they're PROP category
+	if item.get("is_firearm", false):
+		return false
+	
+	return is_build_category(category)
 
 ## Check if category is a PLAY mode tool
 static func is_play_category(category: ItemCategory) -> bool:
@@ -197,6 +207,9 @@ static func get_heavy_pistol_definition() -> Dictionary:
 		"id": "heavy_pistol",
 		"name": "Heavy Pistol",
 		"category": ItemCategory.PROP,
+		"is_firearm": true,  # Firearms stay in PLAY mode, not BUILD mode
+		"damage": 5,
+		"range": 50.0,
 		"stack_size": 1,
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn"
 	}

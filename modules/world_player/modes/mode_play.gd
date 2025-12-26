@@ -41,6 +41,10 @@ var held_prop_rotation: int = 0
 # Fist punch sync - wait for animation to finish before next punch
 var fist_punch_ready: bool = true
 
+# Pistol fire sync - wait for animation to finish before next shot
+var pistol_fire_ready: bool = true
+var is_reloading: bool = false
+
 # Material display - lookup and tracking
 const MATERIAL_NAMES = {
 	-1: "Unknown",
@@ -90,6 +94,7 @@ func _ready() -> void:
 	
 	# Connect to punch ready signal for animation-synced attacks
 	PlayerSignals.punch_ready.connect(_on_punch_ready)
+	PlayerSignals.pistol_fire_ready.connect(_on_pistol_fire_ready)
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
@@ -211,6 +216,11 @@ func handle_primary(item: Dictionary) -> void:
 			_do_bucket_collect(item)
 		3: # RESOURCE
 			pass # No primary action for resources
+		6: # PROP - Pistol and other props
+			DebugSettings.log_player("ModePlay: PROP detected, id=%s" % item.get("id", "unknown"))
+			_do_prop_primary(item)
+		_:
+			DebugSettings.log_player("ModePlay: Unhandled category %d for item %s" % [category, item.get("name", "?")])
 
 ## Handle secondary action (right click) in PLAY mode
 func handle_secondary(item: Dictionary) -> void:
@@ -229,6 +239,82 @@ func handle_secondary(item: Dictionary) -> void:
 ## Callback when punch animation finishes
 func _on_punch_ready() -> void:
 	fist_punch_ready = true
+
+## Callback when pistol fire animation finishes
+func _on_pistol_fire_ready() -> void:
+	pistol_fire_ready = true
+
+## Handle PROP primary action (pistol, etc.)
+func _do_prop_primary(item: Dictionary) -> void:
+	var item_id = item.get("id", "")
+	if item_id == "heavy_pistol":
+		_do_pistol_fire()
+
+## Pistol fire - synced with animation
+func _do_pistol_fire() -> void:
+	if not player:
+		return
+	
+	# Wait for animation to finish OR don't fire while reloading
+	if not pistol_fire_ready or is_reloading:
+		return
+	
+	# Block until animation finishes
+	pistol_fire_ready = false
+	
+	# Emit signal for first-person pistol animation
+	PlayerSignals.pistol_fired.emit()
+	
+	# Raycast for hit detection (longer range than fists)
+	var hit = player.raycast(50.0, 0xFFFFFFFF, true, true)
+	if hit.is_empty():
+		DebugSettings.log_player("ModePlay: Pistol - miss")
+		return
+	
+	var target = hit.get("collider", null)
+	var position = hit.get("position", Vector3.ZERO)
+	
+	# Spawn hit effect at impact point
+	_spawn_pistol_hit_effect(position)
+	
+	# Deal damage to enemies
+	if target and target.is_in_group("zombies") and target.has_method("take_damage"):
+		target.take_damage(5)  # Pistol does 5 damage
+		DebugSettings.log_player("ModePlay: Pistol hit zombie for 5 damage")
+		PlayerSignals.damage_dealt.emit(target, 5)
+		return
+	
+	# Deal damage to blocks
+	if target and target.is_in_group("blocks") and target.has_method("take_damage"):
+		target.take_damage(2)
+		DebugSettings.log_player("ModePlay: Pistol hit block")
+		return
+	
+	DebugSettings.log_player("ModePlay: Pistol hit at %s" % position)
+
+## Spawn red emissive sphere at hit point (matches original project)
+func _spawn_pistol_hit_effect(pos: Vector3) -> void:
+	var mesh_instance = MeshInstance3D.new()
+	var sphere = SphereMesh.new()
+	sphere.radius = 0.05
+	sphere.height = 0.1
+	
+	var mat = StandardMaterial3D.new()
+	mat.albedo_color = Color.RED
+	mat.emission_enabled = true
+	mat.emission = Color.RED
+	mat.emission_energy_multiplier = 2.0
+	
+	mesh_instance.mesh = sphere
+	mesh_instance.material_override = mat
+	
+	get_tree().root.add_child(mesh_instance)
+	mesh_instance.global_position = pos
+	
+	# Destroy after 2 seconds
+	await get_tree().create_timer(2.0).timeout
+	if is_instance_valid(mesh_instance):
+		mesh_instance.queue_free()
 
 ## Punch attack with fists (synced with animation)
 func _do_punch(item: Dictionary) -> void:

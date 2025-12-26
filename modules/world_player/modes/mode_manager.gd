@@ -76,9 +76,8 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 
 ## Determine which mode an item category belongs to
 func determine_mode_from_item(item: Dictionary) -> Mode:
-	var category = item.get("category", ItemDefs.ItemCategory.NONE)
-	
-	if ItemDefs.is_build_category(category):
+	# Use is_build_item which considers special flags like is_firearm
+	if ItemDefs.is_build_item(item):
 		return Mode.BUILD
 	else:
 		return Mode.PLAY
