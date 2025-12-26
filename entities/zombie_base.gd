@@ -12,6 +12,7 @@ var current_state: String = "IDLE"
 var attack_timer: float = 0.0
 var stuck_timer: float = 0.0
 var hit_anim_variant: int = 0
+var chase_anim_variant: int = 0 # 0 = Run, 1 = Calm Walk Alerted
 
 # --- Movement (overrides EntityBase) ---
 @export var chase_speed_multiplier: float = 2.5
@@ -174,7 +175,7 @@ func _update_animation():
 				anim_player.seek(1.0)
 				return
 			"CHASE":
-				anim_player.seek(11.6, true)
+				anim_player.seek(11.6 if chase_anim_variant == 0 else 2.07, true)
 				return
 			"ATTACK":
 				anim_player.seek(3.5)
@@ -193,9 +194,14 @@ func _update_animation():
 			if t < 1.0 or t >= 2.0:
 				anim_player.seek(1.0 + fmod(t - 1.0, 1.0) if t >= 2.0 else 1.0)
 		"CHASE":
-			# Run: 11.6s to 12.3s
-			if t < 11.6 or t >= 12.3:
-				anim_player.seek(11.6 + fmod(t - 11.6, 0.7) if t >= 12.3 else 11.6, true)
+			if chase_anim_variant == 0:
+				# Run: 11.6s to 12.3s
+				if t < 11.6 or t >= 12.3:
+					anim_player.seek(11.6 + fmod(t - 11.6, 0.7) if t >= 12.3 else 11.6, true)
+			else:
+				# Calm Walk Alerted: 2.07s to 3.0s
+				if t < 2.07 or t >= 3.0:
+					anim_player.seek(2.07 + fmod(t - 2.07, 0.93) if t >= 3.0 else 2.07)
 		"ATTACK":
 			if t < 3.5 or t >= 4.5:
 				anim_player.seek(3.5 + fmod(t - 3.5, 1.0) if t >= 4.5 else 3.5)
@@ -263,8 +269,14 @@ func _process_chase(delta):
 		
 		# Move toward player at increased speed
 		var dir = (player.global_position - global_position).normalized()
-		velocity.x = dir.x * move_speed * chase_speed_multiplier
-		velocity.z = dir.z * move_speed * chase_speed_multiplier
+		
+		# Apply speed based on variant (Calm Alerted is 60% slower)
+		var current_speed_mult = chase_speed_multiplier
+		if chase_anim_variant == 1:
+			current_speed_mult *= 0.4
+			
+		velocity.x = dir.x * move_speed * current_speed_mult
+		velocity.z = dir.z * move_speed * current_speed_mult
 
 func _process_attack(delta):
 	if not player:
@@ -352,7 +364,8 @@ func change_state(new_state: String):
 			"WALK":
 				anim_player.seek(1.0)
 			"CHASE":
-				anim_player.seek(11.6, true)
+				chase_anim_variant = randi() % 2
+				anim_player.seek(11.6 if chase_anim_variant == 0 else 2.07, true)
 			"ATTACK":
 				anim_player.seek(3.5)
 			"HIT":
