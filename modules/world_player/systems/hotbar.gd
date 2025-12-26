@@ -303,4 +303,15 @@ func drop_selected_item() -> void:
 			return
 	
 	# Decrement the slot (drops 1 at a time)
-	decrement_slot(selected_slot, 1)
+	DebugSettings.log_player("Hotbar: Decrementing slot %d (current count: %d)" % [selected_slot, count])
+	var success = decrement_slot(selected_slot, 1)
+	
+	# Verify decrement
+	var new_count = get_count_at(selected_slot)
+	DebugSettings.log_player("Hotbar: Decrement success: %s, New Count: %d" % [success, new_count])
+	
+	if new_count >= count:
+		# Critical failure: count did not decrease!
+		DebugSettings.log_player("CRITICAL: Hotbar slot count mismatch! Force clearing.")
+		# Force decrement
+		set_item_at(selected_slot, item, count - 1)

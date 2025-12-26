@@ -16,6 +16,9 @@ const ItemDefs = preload("res://modules/world_player/data/item_definitions.gd")
 var is_open: bool = false
 
 func _ready() -> void:
+	# Register to group for easy finding
+	add_to_group("inventory")
+	
 	# Initialize empty slots
 	slots.clear()
 	for i in range(INVENTORY_SIZE):

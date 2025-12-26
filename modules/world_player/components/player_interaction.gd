@@ -6,6 +6,7 @@ class_name PlayerInteraction
 # References
 var player: WorldPlayer = null
 var hotbar: Node = null
+var inventory: Node = null
 
 # Manager references
 var building_manager: Node = null
@@ -30,6 +31,18 @@ func _ready() -> void:
 	
 	# Find hotbar
 	hotbar = get_node_or_null("../../Systems/Hotbar")
+	
+	# Find inventory (robust search)
+	inventory = get_node_or_null("../../Systems/Inventory")
+	if not inventory:
+		inventory = get_tree().get_first_node_in_group("inventory")
+	if not inventory:
+		inventory = get_parent().get_parent().find_child("Inventory", true, false)
+		
+	if inventory:
+		DebugSettings.log_player("PlayerInteraction: Found Inventory")
+	else:
+		DebugSettings.log_player("PlayerInteraction: CRITICAL - Inventory not found!")
 	
 	# Find managers via groups
 	await get_tree().process_frame
@@ -233,37 +246,34 @@ func _pickup_item(target: Node) -> void:
 		if preferred_slot >= 0 and hotbar_node.has_method("get_count_at") and hotbar_node.has_method("set_item_at"):
 			# Try to put back in same slot if empty
 			if hotbar_node.get_count_at(preferred_slot) == 0:
-				hotbar_node.set_item_at(preferred_slot, item_data, 1) # Assumes stack size 1 for now or partial logic?
-				# Actually add_item handles full stacks. set_item_at sets explicit count.
-				# If we picked up a full stack? _pickup_item grabs "item_data".
-				# item_data usually doesn't have "count" in it (it's in the slot wrapper).
-				# But for pickups, they usually represent 1 item (pistol) or stack?
-				# PickupItem has item_count.
-				# PlayerInteraction logic just assumes 1?
-				# "var item_data = target.get_item_data()"
-				# "inventory.add_item(item_data, 1)" -> It hardcodes 1!
-				# This is a limitation of PlayerInteraction generic pickup.
-				# But for now, I will mimic that behavior.
+				hotbar_node.set_item_at(preferred_slot, item_data, 1)
 				added = true
+				DebugSettings.log_player("PlayerInteraction: Returned to preferred slot %d" % preferred_slot)
 		
 		# Fallback to generic add if not added to preferred
 		if not added and hotbar_node.has_method("add_item"):
 			if hotbar_node.add_item(item_data):
 				added = true
+				DebugSettings.log_player("PlayerInteraction: Added to hotbar")
 	
 	# Fallback to inventory
-	if not added and inventory and inventory.has_method("add_item"):
-		var leftover = inventory.add_item(item_data, 1)
-		if leftover == 0:
-			added = true
+	if not added:
+		if inventory and inventory.has_method("add_item"):
+			var leftover = inventory.add_item(item_data, 1)
+			if leftover == 0:
+				added = true
+				DebugSettings.log_player("PlayerInteraction: Added to inventory")
+			else:
+				DebugSettings.log_player("PlayerInteraction: Inventory full (leftover: %d)" % leftover)
+		else:
+			DebugSettings.log_player("PlayerInteraction: Inventory missing or invalid")
 	
 	if added:
 		# Successfully picked up - remove from world
 		target.queue_free()
-		DebugSettings.log_player("PlayerInteraction: Picked up %s" % item_data.get("name", target.name))
 		PlayerSignals.interaction_performed.emit(target, "pickup")
 	else:
-		DebugSettings.log_player("PlayerInteraction: Hotbar and inventory full!")
+		DebugSettings.log_player("PlayerInteraction: Could not pick up (Hotbar/Inventory full)")
 
 ## Perform barricade action (hold E near door/window with item)
 func _do_barricade() -> void:

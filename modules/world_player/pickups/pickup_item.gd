@@ -11,8 +11,7 @@ signal collected(item_data: Dictionary, count: int)
 
 @onready var mesh: MeshInstance3D = $Mesh
 @onready var collision: CollisionShape3D = $Collision
-@onready var mesh: MeshInstance3D = $Mesh
-@onready var collision: CollisionShape3D = $Collision
+
 @onready var pickup_area: Area3D = $PickupArea
 
 var preferred_slot: int = -1 # Slot index to return to if possible
