@@ -29,7 +29,8 @@ var camera: Camera3D = null
 var hand_holder: Node3D = null
 var pistol_mesh: Node3D = null
 var anim_player: AnimationPlayer = null
-var audio_player: AudioStreamPlayer3D = null
+var shot_player: AudioStreamPlayer3D = null
+var reload_player: AudioStreamPlayer3D = null
 
 # State
 var pistol_origin: Vector3 = Vector3.ZERO
@@ -86,11 +87,17 @@ func _setup_pistol() -> void:
 	else:
 		push_error("FirstPersonPistol: Could not find %s" % PISTOL_SCENE_PATH)
 	
-	# Create audio player
-	audio_player = AudioStreamPlayer3D.new()
-	audio_player.name = "PistolAudio"
-	audio_player.max_polyphony = 5  # Allow overlapping shots!
-	player.add_child(audio_player)
+	# Create audio players
+	shot_player = AudioStreamPlayer3D.new()
+	shot_player.name = "PistolShotAudio"
+	shot_player.stream = PISTOL_SOUND
+	shot_player.max_polyphony = 10
+	player.add_child(shot_player)
+	
+	reload_player = AudioStreamPlayer3D.new()
+	reload_player.name = "PistolReloadAudio"
+	reload_player.stream = RELOAD_SOUND
+	player.add_child(reload_player)
 	
 	# Start hidden (only show when pistol equipped)
 	# Apply initial visibility state (sync with Hotbar)
@@ -188,13 +195,11 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 		DebugSettings.log_player("FirstPersonPistol: Visibility update - ID: %s -> Visible: %s" % [item_id, should_show])
 
 func _on_pistol_fired() -> void:
-	if not audio_player:
+	if not shot_player:
 		return
 	
-	# Play gunshot sound (even if pistol not visible, for feedback)
-	audio_player.stream = PISTOL_SOUND
-	audio_player.pitch_scale = randf_range(0.95, 1.05)
-	audio_player.play()
+	# Play gunshot sound (pitch randomization removed to allow overlapping without artifacts)
+	shot_player.play()
 	
 	# Play shoot animation (0-0.4s segment) - always call to ensure signal is emitted
 	_play_shoot_animation()
@@ -231,14 +236,13 @@ func _play_shoot_animation() -> void:
 	PlayerSignals.pistol_fire_ready.emit()
 
 func _on_pistol_reload() -> void:
-	if is_reloading or not audio_player:
+	if is_reloading or not reload_player:
 		return
 	
 	is_reloading = true
 	
 	# Play reload sound
-	audio_player.stream = RELOAD_SOUND
-	audio_player.play()
+	reload_player.play()
 	
 	# Play reload animation (0.4s-2.85s segment)
 	if anim_player:
