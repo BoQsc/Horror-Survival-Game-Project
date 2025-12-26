@@ -57,6 +57,9 @@ func _ready():
 	
 	# Setup Node Structure
 	static_body = StaticBody3D.new()
+	# Layer 1 = Default (Player/Physics)
+	# Layer 10 (512) = Terrain Special (for PickupItem detection)
+	static_body.collision_layer = 1 + 512 
 	add_child(static_body)
 	
 	mesh_instance = MeshInstance3D.new()
