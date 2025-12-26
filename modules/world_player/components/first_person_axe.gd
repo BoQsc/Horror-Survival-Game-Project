@@ -9,7 +9,10 @@ const AXE_SCENE_PATH: String = "res://game/assets/player_axe/1/animated_fps_axe.
 const SWAY_AMOUNT: float = 0.002
 const SWAY_SMOOTHING: float = 10.0
 const BOB_FREQ: float = 10.0
+
 const BOB_AMP: float = 0.01
+
+const ATTACK_SOUND_PATH: String = "res://game/assets/player_axe/1/violent-sword-slice-393839.mp3"
 
 # Transforms - Tweak these to position the axe correctly on screen
 @export var axe_scale: Vector3 = Vector3(0.6, 0.6, 0.6)
@@ -21,7 +24,9 @@ var player: CharacterBody3D = null
 var camera: Camera3D = null
 var hand_holder: Node3D = null
 var axe_mesh: Node3D = null
+
 var anim_player: AnimationPlayer = null
+var audio_player: AudioStreamPlayer3D = null
 
 # State
 var mouse_input: Vector2 = Vector2.ZERO
@@ -43,12 +48,17 @@ func _ready() -> void:
 		push_error("FirstPersonAxe: Camera3D not found")
 		return
 		
-	_setup_axe_holder()
-	_load_axe_model()
+	# Defer setup to insure player is in tree
+	call_deferred("_setup_deferred")
 	
 	PlayerSignals.item_changed.connect(_on_item_changed)
 	
 	DebugSettings.log_player("FirstPersonAxe: Initialized")
+
+func _setup_deferred() -> void:
+	_setup_axe_holder()
+	_load_axe_model()
+	_setup_audio()
 
 func _setup_axe_holder() -> void:
 	hand_holder = Node3D.new()
@@ -80,6 +90,20 @@ func _load_axe_model() -> void:
 		# Print animations to help us debug
 	
 	DebugSettings.log_player("FirstPersonAxe: Model loaded")
+
+func _setup_audio() -> void:
+	if not ResourceLoader.exists(ATTACK_SOUND_PATH):
+		push_error("FirstPersonAxe: Sound file not found at " + ATTACK_SOUND_PATH)
+		return
+		
+	var stream = load(ATTACK_SOUND_PATH)
+	if stream:
+		audio_player = AudioStreamPlayer3D.new()
+		audio_player.name = "AxeAudio"
+		audio_player.stream = stream
+		# Attach to player root or camera so it follows, but not hand holder to avoid sway jitter
+		player.add_child(audio_player)
+		DebugSettings.log_player("FirstPersonAxe: Audio setup complete")
 
 func _find_anim_player(node: Node) -> AnimationPlayer:
 	if node is AnimationPlayer:
@@ -141,6 +165,10 @@ func _try_attack() -> void:
 		
 	cooldown = ATTACK_COOLDOWN
 	is_attacking = true
+	
+	if audio_player and audio_player.is_inside_tree():
+		audio_player.pitch_scale = randf_range(0.9, 1.1)
+		audio_player.play()
 	
 	if anim_player:
 		# Try to find a suitable animation
