@@ -68,7 +68,7 @@ static func get_test_items() -> Array[Dictionary]:
 		# Slot 5 (key 6): Stone Block
 		{
 			"id": "block_cube",
-			"name": "Stone Cube",
+			"name": "Wood Cube",
 			"category": ItemCategory.BLOCK,
 			"block_id": 1,
 			"damage": 0,
