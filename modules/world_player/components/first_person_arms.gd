@@ -4,10 +4,11 @@ class_name FirstPersonArms
 ## Shows arms when no item equipped, hides when tools/weapons selected.
 
 # Sway & Bobbing Settings - tweak in editor!
-@export var sway_amount: float = 0.002  # How much mouse movement affects position
-@export var sway_smoothing: float = 10.0  # How fast it returns to center
-@export var bob_freq: float = 10.0  # Speed of walking bob
-@export var bob_amp: float = 0.01  # Distance of walking bob
+# Set to 0 to disable, increase to enable
+@export var sway_amount: float = 0.0  # Was 0.002 - disabled for testing
+@export var sway_smoothing: float = 10.0
+@export var bob_freq: float = 0.0  # Was 10.0 - disabled for testing
+@export var bob_amp: float = 0.0  # Was 0.01 - disabled for testing
 
 # Arms model path
 const ARMS_MODEL_PATH: String = "res://game/assets/psx_first_person_arms.glb"
