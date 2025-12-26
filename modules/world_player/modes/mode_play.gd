@@ -244,6 +244,7 @@ func _do_punch(item: Dictionary) -> void:
 	var damageable = _find_damageable(target)
 	if damageable:
 		damageable.take_damage(damage)
+		durability_target = target.get_rid()
 		DebugSettings.log_player("ModePlay: Punched %s for %d damage" % [damageable.name, damage])
 		PlayerSignals.damage_dealt.emit(damageable, damage)
 		return
@@ -443,7 +444,9 @@ func _do_tool_attack(item: Dictionary) -> void:
 	
 	attack_cooldown = ATTACK_COOLDOWN_TIME
 	
-	var hit = player.raycast(3.5) # Tool range
+	# Use collide_with_areas=true to hit vegetation (grass)
+	# Use exclude_water=true
+	var hit = player.raycast(3.5, 0xFFFFFFFF, true, true) # Tool range
 	if hit.is_empty():
 		DebugSettings.log_player("ModePlay: Tool attack - no hit")
 		return
@@ -455,11 +458,15 @@ func _do_tool_attack(item: Dictionary) -> void:
 	
 	DebugSettings.log_player("ModePlay: Tool hit %s at %s (mining_strength: %.1f)" % [target.name if target else "nothing", position, mining_strength])
 	
-	# Priority 1: Damage enemies
-	if target and target.is_in_group("enemies") and target.has_method("take_damage"):
-		target.take_damage(damage)
-		DebugSettings.log_player("ModePlay: Hit enemy for %d damage" % damage)
-		PlayerSignals.damage_dealt.emit(target, damage)
+	# Priority 1: Generic Damageable (Enemies, Doors, etc.)
+	# This covers Enemies (have take_damage) and Doors (have take_damage)
+	# Prioritizing this ensures we interact with complex entities first
+	var damageable = _find_damageable(target)
+	if damageable:
+		damageable.take_damage(damage)
+		durability_target = target.get_rid() # Track for look-away clearing
+		DebugSettings.log_player("ModePlay: Tool hit damageable %s for %d damage" % [damageable.name, damage])
+		PlayerSignals.damage_dealt.emit(damageable, damage)
 		return
 	
 	# Priority 2: Harvest vegetation
