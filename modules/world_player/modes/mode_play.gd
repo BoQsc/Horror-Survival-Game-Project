@@ -225,6 +225,9 @@ func _do_punch(item: Dictionary) -> void:
 	if not player:
 		return
 	
+	# Emit signal for first-person arms animation
+	PlayerSignals.punch_triggered.emit()
+	
 	attack_cooldown = ATTACK_COOLDOWN_TIME
 	
 	# Use collide_with_areas=true to detect grass/rocks (Area3D)

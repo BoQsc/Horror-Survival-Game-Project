@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3 uid="uid://bd7wig7c4xlqe"]
+[gd_scene load_steps=17 format=3 uid="uid://bd7wig7c4xlqe"]
 
 [ext_resource type="Script" path="res://modules/world_player/player.gd" id="1_player"]
 [ext_resource type="Script" path="res://modules/world_player/components/player_movement.gd" id="2_movement"]
@@ -14,6 +14,7 @@
 [ext_resource type="Script" path="res://modules/world_player/components/player_combat.gd" id="12_combat"]
 [ext_resource type="PackedScene" uid="uid://dhw7kxqy4cjrf" path="res://modules/world_player/ui/player_hud.tscn" id="13_hud"]
 [ext_resource type="Script" path="res://modules/world_player/utils/debug_draw.gd" id="14_debug_draw"]
+[ext_resource type="Script" path="res://modules/world_player/components/first_person_arms.gd" id="15_arms"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -47,6 +48,9 @@ script = ExtResource("11_interaction")
 
 [node name="Combat" type="Node" parent="Components"]
 script = ExtResource("12_combat")
+
+[node name="FirstPersonArms" type="Node" parent="Components"]
+script = ExtResource("15_arms")
 
 [node name="Systems" type="Node" parent="."]
 
