@@ -17,6 +17,9 @@ class_name PlayerHUD
 @onready var selected_item_label: Label = $SelectedItemLabel
 @onready var target_material_label: Label = $TargetMaterial
 
+# Visual overlays
+var underwater_overlay: ColorRect = null
+
 # Hotbar slot controls (InventorySlot instances)
 var hotbar_slots: Array = []
 var hotbar_ref: Node = null
@@ -44,6 +47,7 @@ func _ready() -> void:
 	PlayerSignals.durability_hit.connect(_on_durability_hit)
 	PlayerSignals.durability_cleared.connect(_on_durability_cleared)
 	PlayerSignals.target_material_changed.connect(_on_target_material_changed)
+	PlayerSignals.camera_underwater_toggled.connect(_on_camera_underwater_toggled)
 
 	
 	# Initialize hotbar UI
@@ -60,6 +64,21 @@ func _ready() -> void:
 	game_menu.visible = false
 	
 	print("PlayerHUD: Initialized")
+	
+	_setup_visual_overlays()
+
+func _setup_visual_overlays() -> void:
+	# Create underwater overlay if not in scene
+	if not underwater_overlay:
+		underwater_overlay = ColorRect.new()
+		underwater_overlay.name = "UnderwaterOverlay"
+		# Matched to legacy world.tscn (0.05, 0.2, 0.12, 0.4) - Dark greenish/swampy
+		underwater_overlay.color = Color(0.05, 0.2, 0.12, 0.4)
+		underwater_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+		underwater_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		underwater_overlay.visible = false
+		add_child(underwater_overlay)
+		move_child(underwater_overlay, 0) # Move to back
 
 func _process(_delta: float) -> void:
 	# Update compass with player direction
@@ -471,5 +490,13 @@ func _on_durability_cleared() -> void:
 func _on_target_material_changed(material_name: String) -> void:
 	if target_material_label:
 		target_material_label.text = material_name
+
+#endregion
+
+#region Visual Effects
+
+func _on_camera_underwater_toggled(is_underwater: bool) -> void:
+	if underwater_overlay:
+		underwater_overlay.visible = is_underwater
 
 #endregion

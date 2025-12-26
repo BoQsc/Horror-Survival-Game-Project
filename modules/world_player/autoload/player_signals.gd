@@ -43,6 +43,8 @@ signal target_material_changed(material_name: String)
 # Movement events
 signal player_jumped()
 signal player_landed()
+signal underwater_toggled(is_underwater: bool)
+signal camera_underwater_toggled(is_underwater: bool)
 
 func _ready() -> void:
 	DebugSettings.log_player("PlayerSignals: Autoload initialized")

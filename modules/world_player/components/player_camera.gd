@@ -10,6 +10,9 @@ const PITCH_LIMIT: float = 89.0 # Degrees
 # References
 var player: CharacterBody3D = null
 var camera: Camera3D = null
+# State
+# State
+var is_camera_underwater: bool = false
 
 func _ready() -> void:
 	player = get_parent().get_parent() as CharacterBody3D
@@ -28,6 +31,34 @@ func _ready() -> void:
 	DebugSettings.log_player("PlayerCamera: Component initialized")
 	DebugSettings.log_player("  - Player: %s" % player.name)
 	DebugSettings.log_player("  - Camera: %s" % camera.name)
+
+	DebugSettings.log_player("  - Player: %s" % player.name)
+	DebugSettings.log_player("  - Camera: %s" % camera.name)
+
+func _physics_process(_delta: float) -> void:
+	check_underwater_visuals()
+
+func check_underwater_visuals() -> void:
+	if not player or not camera:
+		return
+		
+	# Access terrain manager from player (WorldPlayer)
+	if not "terrain_manager" in player:
+		return
+		
+	var tm = player.terrain_manager
+	if not tm or not tm.has_method("get_water_density"):
+		return
+		
+	# Sample density at a point BELOW camera to compensate for water mesh being above density=0
+	# The water mesh is rendered ~0.5 units above where density crosses 0 (matched to character_body_3d.gd)
+	var cam_check_pos = camera.global_position - Vector3(0, 0.5, 0)
+	var cam_density = tm.get_water_density(cam_check_pos)
+	var currently_underwater = cam_density < 0.0
+	
+	if currently_underwater != is_camera_underwater:
+		is_camera_underwater = currently_underwater
+		PlayerSignals.camera_underwater_toggled.emit(is_camera_underwater)
 
 func _input(event: InputEvent) -> void:
 	# Toggle menu with Escape
