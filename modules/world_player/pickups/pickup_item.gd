@@ -28,12 +28,13 @@ func _ready() -> void:
 	angular_damp = 0.5
 	
 	# Set collision layers
-	collision_layer = 8 # Pickups layer
-	collision_mask = 1 # Collide with terrain
+	collision_layer = 256 # Pickups layer (Layer 9)
+	collision_mask = 512 # Collide with terrain special layer (Layer 10)
 	
 	# Connect pickup area
 	if pickup_area:
-		pickup_area.body_entered.connect(_on_body_entered)
+		#pickup_area.body_entered.connect(_on_body_entered)
+		pass
 	
 	# Update visual
 	_update_visual()

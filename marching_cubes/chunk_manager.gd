@@ -242,6 +242,18 @@ func _process(delta):
 	PerformanceMonitor.end_measure("Node Finalization", 2.0)
 	
 	update_collision_proximity() # Enable/disable collision based on player distance
+	
+	# HOTFIX: Ensure all existing chunks have layer 512 (Layer 10) for pickups
+	if active_chunks.size() > 0 and not get_meta("collision_fixed", false):
+		for coord in active_chunks:
+			var data = active_chunks[coord]
+			if data:
+				if data.body_rid_terrain.is_valid():
+					PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 1 | 512)
+				if data.node_terrain is StaticBody3D:
+					data.node_terrain.collision_layer = 1 | 512
+		set_meta("collision_fixed", true)
+		DebugSettings.log_chunk("HOTFIX: Updated existing chunks to layer 1|512")
 
 var debug_chunk_bounds: bool = false
 
@@ -1702,7 +1714,7 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		PhysicsServer3D.body_add_shape(body_rid, shape_rid)
 		
 		# 3. Set Layer/Mask (Layer 1 = Terrain)
-		PhysicsServer3D.body_set_collision_layer(body_rid, 1)
+		PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
 		PhysicsServer3D.body_set_collision_mask(body_rid, 1)
 		
 		# 4. Add to Space (The heavy part - Done on Thread!)
@@ -1944,7 +1956,7 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 		node.monitoring = false # Terrain chunks don't need to monitor others
 	else:
 		node = StaticBody3D.new()
-		node.collision_layer = 1 # Explicitly set terrain layer for entity spawning raycasts
+		node.collision_layer = 1 | 512 # Terrain layer + Special layer for pickups
 		node.add_to_group("terrain")
 		
 	node.position = position
