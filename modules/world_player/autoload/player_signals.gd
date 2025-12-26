@@ -23,6 +23,10 @@ signal pistol_fired()  # Trigger shoot animation
 signal pistol_fire_ready()  # Animation done, can fire again
 signal pistol_reload()  # Trigger reload animation
 
+# Axe events
+signal axe_fired() # Trigger swing animation
+signal axe_ready() # Animation done, can swing again
+
 # Interaction events
 signal interaction_available(target: Node, prompt: String)
 signal interaction_unavailable()

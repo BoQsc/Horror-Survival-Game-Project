@@ -52,6 +52,7 @@ func _ready() -> void:
 	call_deferred("_setup_deferred")
 	
 	PlayerSignals.item_changed.connect(_on_item_changed)
+	PlayerSignals.axe_fired.connect(_on_axe_fired)
 	
 	DebugSettings.log_player("FirstPersonAxe: Initialized")
 
@@ -129,10 +130,10 @@ func _process(delta: float) -> void:
 	# Sway and Bob
 	_update_sway_and_bob(delta)
 	
-	# Input check
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-			_try_attack()
+	# Input is now handled by ModePlay
+	# if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+	# 	if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+	# 		_try_attack()
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
@@ -158,6 +159,15 @@ func _update_sway_and_bob(delta: float) -> void:
 	hand_holder.position = hand_holder.position.lerp(total_target, delta * SWAY_SMOOTHING)
 	
 	mouse_input = Vector2.ZERO
+
+func _on_axe_fired() -> void:
+	_try_attack()
+
+func _return_to_ready() -> void:
+	is_attacking = false
+	_try_play_idle()
+	# Signal ModePlay that we can attack again
+	PlayerSignals.axe_ready.emit()
 
 func _try_attack() -> void:
 	if cooldown > 0 or is_attacking:
@@ -192,13 +202,12 @@ func _try_attack() -> void:
 				anim_player.animation_finished.connect(_on_anim_finished, CONNECT_ONE_SHOT)
 		else:
 			# No animation, just reset flag after delay
-			get_tree().create_timer(ATTACK_COOLDOWN).timeout.connect(func(): is_attacking = false)
+			get_tree().create_timer(ATTACK_COOLDOWN).timeout.connect(_return_to_ready)
 	else:
-		get_tree().create_timer(ATTACK_COOLDOWN).timeout.connect(func(): is_attacking = false)
+		get_tree().create_timer(ATTACK_COOLDOWN).timeout.connect(_return_to_ready)
 
 func _on_anim_finished(_anim_name: String) -> void:
-	is_attacking = false
-	_try_play_idle()
+	_return_to_ready()
 
 func _try_play_idle() -> void:
 	if not anim_player: return

@@ -43,7 +43,11 @@ var fist_punch_ready: bool = true
 
 # Pistol fire sync - wait for animation to finish before next shot
 var pistol_fire_ready: bool = true
+
 var is_reloading: bool = false
+
+# Axe swing sync
+var axe_ready: bool = true
 
 # Material display - lookup and tracking
 const MATERIAL_NAMES = {
@@ -93,8 +97,10 @@ func _ready() -> void:
 	DebugSettings.log_player("  - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
 	
 	# Connect to punch ready signal for animation-synced attacks
+	# Connect to punch ready signal for animation-synced attacks
 	PlayerSignals.punch_ready.connect(_on_punch_ready)
 	PlayerSignals.pistol_fire_ready.connect(_on_pistol_fire_ready)
+	PlayerSignals.axe_ready.connect(_on_axe_ready)
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
@@ -243,6 +249,10 @@ func _on_punch_ready() -> void:
 ## Callback when pistol fire animation finishes
 func _on_pistol_fire_ready() -> void:
 	pistol_fire_ready = true
+
+## Callback when axe animation finishes
+func _on_axe_ready() -> void:
+	axe_ready = true
 
 ## Handle PROP primary action (pistol, etc.)
 func _do_prop_primary(item: Dictionary) -> void:
@@ -559,6 +569,19 @@ func _do_tool_attack(item: Dictionary) -> void:
 	
 	attack_cooldown = ATTACK_COOLDOWN_TIME
 	
+	# Special handling for Axe animations (sync with visual)
+	var item_id = item.get("id", "")
+	if "axe" in item_id:
+		# Wait for animation to finish
+		if not axe_ready:
+			return
+		
+		# Block until animation finishes
+		axe_ready = false
+		
+		# Emit signal for first-person axe animation
+		PlayerSignals.axe_fired.emit()
+	
 	# Use collide_with_areas=true to hit vegetation (grass)
 	# Use exclude_water=true
 	var hit = player.raycast(3.5, 0xFFFFFFFF, true, true) # Tool range
@@ -606,7 +629,7 @@ func _do_tool_attack(item: Dictionary) -> void:
 	if target and target.is_in_group("placed_objects") and building_manager:
 		var obj_rid = target.get_rid()
 		var obj_dmg = damage
-		var item_id = item.get("id", "")
+		# item_id already defined at top of function
 		if "pickaxe" in item_id:
 			obj_dmg = 5 # Pickaxe one-shots objects
 		object_damage[obj_rid] = object_damage.get(obj_rid, 0) + obj_dmg
@@ -630,7 +653,7 @@ func _do_tool_attack(item: Dictionary) -> void:
 		if chunk:
 			var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
 			var blk_dmg = damage
-			var item_id = item.get("id", "")
+			# item_id already defined at top of function
 			if "pickaxe" in item_id:
 				blk_dmg = 5 # Pickaxe does 5 damage
 			block_damage[block_pos] = block_damage.get(block_pos, 0) + blk_dmg
