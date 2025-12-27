@@ -36,7 +36,7 @@ const EDITOR_SUBMODE_NAMES = ["Terrain", "Water", "Road", "Prefab", "Fly", "OldD
 # Format: { target_key (String) -> { "target_ref": Variant, "hit_time": int, "hp_percent": float } }
 var durability_memory: Dictionary = {}
 var last_hit_target_key: String = "" # Track last hit for _on_durability_cleared
-const DURABILITY_PERSIST_MS: int = 3000
+const DURABILITY_PERSIST_MS: int = 6000
 
 
 func _ready() -> void:
