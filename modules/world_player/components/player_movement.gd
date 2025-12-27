@@ -134,7 +134,15 @@ func handle_movement() -> void:
 	var direction := (player.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	
 	# Check for sprint (Shift key)
-	is_sprinting = Input.is_action_pressed("sprint") and direction != Vector3.ZERO and player.is_on_floor()
+	# On floor: sprint if holding shift and moving
+	# In air: preserve sprint if still holding shift (momentum preservation)
+	if player.is_on_floor():
+		is_sprinting = Input.is_action_pressed("sprint") and direction != Vector3.ZERO
+	else:
+		# In air: keep sprinting if still holding shift (preserves jump momentum)
+		if not Input.is_action_pressed("sprint"):
+			is_sprinting = false
+	
 	var current_speed = SPRINT_SPEED if is_sprinting else WALK_SPEED
 	
 	if direction:
