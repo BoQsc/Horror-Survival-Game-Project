@@ -32,10 +32,10 @@ var is_editor_mode: bool = false
 var current_editor_submode: int = 0
 const EDITOR_SUBMODE_NAMES = ["Terrain", "Water", "Road", "Prefab", "Fly", "OldDirt"]
 
-# Durability persistence state (3 second memory)
-var last_durability_target: Variant = null
-var last_durability_hit_time: int = 0
-var cached_durability_percent: float = 0.0
+# Durability persistence state (3 second memory for MULTIPLE targets)
+# Format: { target_key (String) -> { "target_ref": Variant, "hit_time": int, "hp_percent": float } }
+var durability_memory: Dictionary = {}
+var last_hit_target_key: String = "" # Track last hit for _on_durability_cleared
 const DURABILITY_PERSIST_MS: int = 3000
 
 
@@ -483,50 +483,71 @@ func _update_hotbar_display() -> void:
 
 #region Durability UI
 
+## Convert a target reference to a string key for dictionary storage
+func _target_to_key(target_ref: Variant) -> String:
+	if target_ref is RID:
+		return "rid:%d" % target_ref.get_id()
+	elif target_ref is Vector3i:
+		return "v3i:%d,%d,%d" % [target_ref.x, target_ref.y, target_ref.z]
+	elif target_ref is Node:
+		return "node:%d" % target_ref.get_instance_id()
+	else:
+		return "unknown:%s" % str(target_ref)
+
 func _on_durability_hit(current_hp: int, max_hp: int, _target_name: String, target_ref: Variant) -> void:
 	if not durability_bar:
 		return
 	# Show remaining HP as percentage (full bar = full health, empty = destroyed)
 	var hp_percent = 100.0 * float(current_hp) / float(max_hp)
 	
-	# Store persistence state
-	last_durability_target = target_ref
-	last_durability_hit_time = Time.get_ticks_msec()
-	cached_durability_percent = hp_percent
+	# Store/update in multi-target memory
+	var key = _target_to_key(target_ref)
+	print("[DUR_HIT] Storing key=%s type=%s hp=%.1f%%" % [key, typeof(target_ref), hp_percent])
+	durability_memory[key] = {
+		"target_ref": target_ref,
+		"hit_time": Time.get_ticks_msec(),
+		"hp_percent": hp_percent
+	}
+	last_hit_target_key = key
+	print("[DUR_HIT] Memory now has %d entries: %s" % [durability_memory.size(), durability_memory.keys()])
 	
 	durability_bar.value = hp_percent
 	durability_bar.visible = true
 
 func _on_durability_cleared() -> void:
-	# This is called when target is DESTROYED (HP=0), not just when looking away
-	# Clear both the bar AND persistence state
+	# This is called when target is DESTROYED (HP=0)
+	# Remove the last hit target from memory
 	if durability_bar:
 		durability_bar.visible = false
 		durability_bar.value = 0
-	last_durability_target = null
-	last_durability_hit_time = 0
-	cached_durability_percent = 0.0
+	if last_hit_target_key != "":
+		durability_memory.erase(last_hit_target_key)
+		last_hit_target_key = ""
 
 ## Check if durability UI should be shown based on look target and time
 func _update_durability_visibility() -> void:
 	if not durability_bar:
 		return
 	
-	# No remembered target? Nothing to do.
-	if last_durability_target == null:
+	# No remembered targets? Nothing to do.
+	if durability_memory.is_empty():
 		return
 	
-	# Check time limit (3 seconds)
+	# Clean up expired entries first
 	var now = Time.get_ticks_msec()
-	if now - last_durability_hit_time > DURABILITY_PERSIST_MS:
-		# Expired - clear memory and hide
-		last_durability_target = null
-		last_durability_hit_time = 0
-		cached_durability_percent = 0.0
+	var keys_to_remove: Array = []
+	for key in durability_memory:
+		var entry = durability_memory[key]
+		if now - entry.hit_time > DURABILITY_PERSIST_MS:
+			keys_to_remove.append(key)
+	for key in keys_to_remove:
+		durability_memory.erase(key)
+	
+	if durability_memory.is_empty():
 		durability_bar.visible = false
 		return
 	
-	# Get current look target via direct raycast (don't rely on ModePlay.durability_target)
+	# Get current look target via direct raycast
 	var player_node = get_tree().get_first_node_in_group("player")
 	if not player_node or not player_node.has_method("raycast"):
 		return
@@ -540,30 +561,39 @@ func _update_durability_visibility() -> void:
 	var target = hit.get("collider")
 	var position = hit.get("position", Vector3.ZERO)
 	
-	# Compare current look target to remembered target
-	var is_same_target = false
+	# Check all remembered targets for a match
+	var look_rid = target.get_rid() if target else RID()
+	var look_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
 	
-	if last_durability_target is RID:
-		# Tree/Object - compare RID
-		if target and target.get_rid() == last_durability_target:
-			is_same_target = true
-	elif last_durability_target is Vector3i:
-		# Block/Terrain - compare grid position
-		var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
-		if block_pos == last_durability_target:
-			is_same_target = true
-	elif last_durability_target is Node:
-		# Direct node reference (like Door)
-		if target == last_durability_target or _is_child_of(target, last_durability_target):
-			is_same_target = true
+	for key in durability_memory:
+		var entry = durability_memory[key]
+		var remembered_target = entry.target_ref
+		var is_match = false
+		
+		if remembered_target is RID:
+			# Tree/Object - compare RID
+			if target and look_rid == remembered_target:
+				is_match = true
+			else:
+				print("[DUR_CHECK] RID mismatch: looking_at=%d remembered=%d" % [look_rid.get_id() if look_rid.is_valid() else -1, remembered_target.get_id()])
+		elif remembered_target is Vector3i:
+			# Block/Terrain - compare grid position
+			var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+			if block_pos == remembered_target:
+				is_match = true
+		elif remembered_target is Node:
+			# Direct node reference (like Door)
+			if target == remembered_target or _is_child_of(target, remembered_target):
+				is_match = true
+		
+		if is_match:
+			# Looking at a remembered target - show its durability
+			durability_bar.value = entry.hp_percent
+			durability_bar.visible = true
+			return
 	
-	if is_same_target:
-		# Looking at same target - show UI
-		durability_bar.value = cached_durability_percent
-		durability_bar.visible = true
-	else:
-		# Looking at different target - hide but keep memory
-		durability_bar.visible = false
+	# No match found - hide but keep memory
+	durability_bar.visible = false
 
 ## Helper: Check if node is child of another node (for door sub-colliders)
 func _is_child_of(node: Node, potential_parent: Node) -> bool:
