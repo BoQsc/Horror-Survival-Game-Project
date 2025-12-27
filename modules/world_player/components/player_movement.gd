@@ -1,17 +1,22 @@
 extends Node
 class_name PlayerMovement
-## PlayerMovement - Handles player locomotion (walk, jump, gravity, swim)
+## PlayerMovement - Handles player locomotion (walk, sprint, jump, gravity, swim)
 
 # Movement constants
 const WALK_SPEED: float = 5.0
+const SPRINT_SPEED: float = 8.5  # ~70% faster than walking
 const SWIM_SPEED: float = 4.0
 const JUMP_VELOCITY: float = 4.5
 
 # Footstep sound settings - matched to original project
-const FOOTSTEP_INTERVAL: float = 0.5  # Time between footsteps
+const FOOTSTEP_INTERVAL: float = 0.5  # Time between footsteps walking
+const FOOTSTEP_INTERVAL_SPRINT: float = 0.3  # Faster footsteps when sprinting
 var footstep_timer: float = 0.0
 var footstep_sounds: Array[AudioStream] = []
 var footstep_player: AudioStreamPlayer3D = null
+
+# State
+var is_sprinting: bool = false
 
 # References
 var player: CharacterBody3D = null
@@ -128,12 +133,16 @@ func handle_movement() -> void:
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	var direction := (player.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	
+	# Check for sprint (Shift key)
+	is_sprinting = Input.is_action_pressed("sprint") and direction != Vector3.ZERO and player.is_on_floor()
+	var current_speed = SPRINT_SPEED if is_sprinting else WALK_SPEED
+	
 	if direction:
-		player.velocity.x = direction.x * WALK_SPEED
-		player.velocity.z = direction.z * WALK_SPEED
+		player.velocity.x = direction.x * current_speed
+		player.velocity.z = direction.z * current_speed
 	else:
-		player.velocity.x = move_toward(player.velocity.x, 0, WALK_SPEED)
-		player.velocity.z = move_toward(player.velocity.z, 0, WALK_SPEED)
+		player.velocity.x = move_toward(player.velocity.x, 0, current_speed)
+		player.velocity.z = move_toward(player.velocity.z, 0, current_speed)
 
 # Matches original project's footstep logic exactly
 func handle_footsteps(delta: float) -> void:
@@ -145,7 +154,8 @@ func handle_footsteps(delta: float) -> void:
 		footstep_timer -= delta
 		if footstep_timer <= 0:
 			_play_random_footstep()
-			footstep_timer = FOOTSTEP_INTERVAL
+			# Use faster footstep interval when sprinting
+			footstep_timer = FOOTSTEP_INTERVAL_SPRINT if is_sprinting else FOOTSTEP_INTERVAL
 	else:
 		# Reset timer so step plays immediately when movement starts
 		footstep_timer = 0.0
