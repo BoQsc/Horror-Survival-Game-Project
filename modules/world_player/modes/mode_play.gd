@@ -716,8 +716,10 @@ func _do_tool_attack(item: Dictionary) -> void:
 				mat_id = terrain_manager.get_material_at(position)
 			
 			DebugSettings.log_player("ModePlay: Calling modify_terrain(%s, %.1f, 1.0, 0, 0)" % [position, mining_strength])
-			terrain_manager.modify_terrain(position, mining_strength, 1.0, 0, 0)
-			DebugSettings.log_player("ModePlay: Mined terrain at %s (strength: %.1f)" % [position, mining_strength])
+			# Minimum radius of 0.8 to guarantee visible terrain change
+			var actual_radius = max(mining_strength, 0.8)
+			terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			DebugSettings.log_player("ModePlay: Mined terrain at %s (strength: %.1f, radius: %.1f)" % [position, mining_strength, actual_radius])
 			
 			# Collect resource
 			if mat_id >= 0:
