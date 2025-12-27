@@ -998,12 +998,83 @@ func load_from_file(path: String) -> void:
 
 | External Resource | Location | V2 Action |
 |-------------------|----------|-----------|
+| **Pistol Assets** |
 | Pistol model | `models/pistol/heavy_pistol_animated.glb` | Copy to `features/first_person/pistol/` |
-| Pistol textures | `models/pistol/heavy_pistol_animated_*.png` | Copy to `features/first_person/pistol/` |
+| Pistol textures | `models/pistol/heavy_pistol_animated_*.png` (6 files) | Copy to `features/first_person/pistol/` |
 | Pistol physics scene | `models/pistol/heavy_pistol_physics.tscn` | Recreate in feature |
-| Footstep sounds | `sound/st1-footstep-sfx-*.mp3` | Reference from `features/movement/sounds/` |
+| **Axe Assets** |
+| Axe model | `game/assets/player_axe/1/animated_fps_axe.glb` | Copy to `features/first_person/axe/` |
+| **Sound Assets** |
+| Pistol shot | `sound/pistol-shot-233473.mp3` | Reference or copy to feature |
+| Reload sound | `sound/mag-reload-81594.mp3` | Reference or copy to feature |
+| Footstep 1 | `sound/st1-footstep-sfx-323053.mp3` | Copy to `features/movement/sounds/` |
+| Footstep 2 | `sound/st2-footstep-sfx-323055.mp3` | Copy to `features/movement/sounds/` |
+| Footstep 3 | `sound/st3-footstep-sfx-323056.mp3` | Copy to `features/movement/sounds/` |
+| **Door/Other Models** |
 | Door model | `models/door/` | Referenced by interaction feature |
-| Arm animations | Various | Embedded in first_person feature |
+
+### A.2.1 Class Names (24 total - must preserve or alias)
+
+| Class Name | Source File | V2 Location |
+|------------|-------------|-------------|
+| `WorldPlayer` | `player.gd` | `WorldPlayerV2` (rename) |
+| `PlayerMovement` | `components/player_movement.gd` | `features/movement/` |
+| `PlayerCamera` | `components/player_camera.gd` | `core/` |
+| `PlayerInteraction` | `components/player_interaction.gd` | `features/interaction/` |
+| `PlayerCombat` | `components/player_combat.gd` | `features/combat/` |
+| `FirstPersonArms` | `components/first_person_arms.gd` | `features/first_person/arms/` |
+| `FirstPersonPistol` | `components/first_person_pistol.gd` | `features/first_person/pistol/` |
+| `FirstPersonAxe` | `components/first_person_axe.gd` | `features/first_person/axe/` |
+| `Hotbar` | `systems/hotbar.gd` | `features/inventory/` |
+| `Inventory` | `systems/inventory.gd` | `features/inventory/` |
+| `ItemUseRouter` | `systems/item_use_router.gd` | `features/modes/` |
+| `ModeManager` | `modes/mode_manager.gd` | `features/modes/` |
+| `ModePlay` | `modes/mode_play.gd` | Split to features |
+| `ModeBuild` | `modes/mode_build.gd` | `features/modes/` |
+| `ModeEditor` | `modes/mode_editor.gd` | `features/modes/` |
+| `ItemDefinitions` | `data/item_definitions.gd` | `data/items/item_data.gd` |
+| `PickupItem` | `pickups/pickup_item.gd` | `features/interaction/` |
+| `PlayerHUD` | `ui/player_hud.gd` | `features/hud/` |
+| `InventoryPanel` | `ui/inventory_panel.gd` | `features/inventory/ui/` |
+| `InventorySlot` | `ui/inventory_slot.gd` | `features/inventory/ui/` |
+| `LoadingScreen` | `ui_loading_screen/loading_screen.gd` | `features/hud/` |
+| `DebugDraw` | `utils/debug_draw.gd` | `utils/` |
+| `BuildingAPI` | `api/building_api.gd` | `api/` |
+| `TerrainAPI` | `api/terrain_api.gd` | `api/` |
+
+### A.2.2 Groups Used (17 unique)
+
+| Group Name | Purpose | Used By |
+|------------|---------|---------|
+| `player` | Player identification | pickup_item, player_hud, inventory_panel, hotbar |
+| `interactable` | Generic interactable objects | mode_play, player_interaction, hotbar, hud |
+| `placed_objects` | Building system objects | mode_play, mode_build, building_api |
+| `building_chunks` | Voxel building meshes | mode_play |
+| `terrain` | Terrain meshes | mode_play |
+| `zombies` | Enemy entities | mode_play |
+| `trees` | Harvestable trees | mode_play |
+| `grass` | Harvestable grass | mode_play |
+| `rocks` | Harvestable rocks | mode_play |
+| `blocks` | Damageable blocks | mode_play |
+| `doors` | Door entities | player_interaction |
+| `windows` | Window entities | player_interaction |
+| `vehicle` / `vehicles` | Vehicle entities | player_interaction |
+| `pickups` | Pickup items | player_interaction |
+| `props` | Physics props | player_interaction |
+| `pickup_items` | PickupItem nodes | player_interaction |
+| `water` | Water meshes | player_camera |
+| `inventory` | Inventory system | player_interaction |
+
+### A.2.3 Meta Keys Used (6 unique)
+
+| Meta Key | Purpose | Set By | Read By |
+|----------|---------|--------|---------|
+| `item_data` | Item dictionary on dropped physics props | hotbar, hud, inventory_panel | mode_play, player_interaction |
+| `anchor` | Building system anchor position | building_manager | mode_play, mode_build |
+| `chunk` | Building chunk reference | building_manager | mode_play, mode_build |
+| `door` | Door reference on collider | building_manager | player_interaction |
+| `preferred_slot` | Preferred hotbar slot for re-pickup | hotbar | player_interaction |
+| `grabbed_item_data` | Item data while grabbed | mode_play | mode_play |
 
 ### A.3 Player Signals Audit (23 signals)
 
@@ -1058,6 +1129,42 @@ All signals must be preserved for v2 compatibility:
 | LMB | - | combat/modes |
 | RMB | - | modes |
 | Escape | - | HUD (menu) |
+
+### A.4.1 Gameplay Constants (must preserve values)
+
+| Constant | Value | Source | Feature |
+|----------|-------|--------|---------|
+| **Movement** |
+| `WALK_SPEED` | 5.0 | player_movement.gd | movement |
+| `SPRINT_SPEED` | 8.5 | player_movement.gd | movement |
+| `SWIM_SPEED` | 4.0 | player_movement.gd | movement |
+| `JUMP_VELOCITY` | 4.5 | player_movement.gd | movement |
+| `FOOTSTEP_INTERVAL` | 0.5 | player_movement.gd | movement |
+| `FOOTSTEP_INTERVAL_SPRINT` | 0.3 | player_movement.gd | movement |
+| **Camera** |
+| `MOUSE_SENSITIVITY` | 0.002 | player_camera.gd | core |
+| `PITCH_LIMIT` | 89.0 | player_camera.gd | core |
+| **Combat** |
+| `ATTACK_COOLDOWN_TIME` | 0.3 | mode_play.gd | combat |
+| `BASE_ATTACK_COOLDOWN` | 0.4 | player_combat.gd | combat |
+| `COMBO_WINDOW` | 0.8 | player_combat.gd | combat |
+| `MAX_COMBO` | 3 | player_combat.gd | combat |
+| `MELEE_RANGE` | 2.5 | player_combat.gd | combat |
+| `TOOL_RANGE` | 3.5 | player_combat.gd | combat |
+| **Durability/Mining** |
+| `BLOCK_HP` | 10 | mode_play.gd | mining |
+| `OBJECT_HP` | 5 | mode_play.gd | mining |
+| `TREE_HP` | 8 | mode_play.gd | mining |
+| `TERRAIN_HP` | 5 | mode_play.gd | mining |
+| `DURABILITY_PERSIST_MS` | 6000 | player_hud.gd | hud |
+| **Inventory** |
+| `SLOT_COUNT` | 10 | hotbar.gd | inventory |
+| `INVENTORY_SIZE` | 27 | inventory.gd | inventory |
+| `MAX_STACK_SIZE` | 3 | hotbar.gd, inventory.gd | inventory |
+| **Interaction** |
+| `BARRICADE_HOLD_TIME` | 1.0 | player_interaction.gd | interaction |
+| **UI** |
+| `FADE_DURATION` | 0.5 | loading_screen.gd | hud |
 
 ### A.5 External Manager Dependencies
 
