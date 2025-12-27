@@ -144,7 +144,7 @@ func take_damage(amount: int) -> void:
 			current_damage_stage = i
 			break
 	
-	PlayerSignals.durability_hit.emit(current_hp, max_hp, "Door")
+	PlayerSignals.durability_hit.emit(current_hp, max_hp, "Door", self)
 	
 	if current_hp <= 0:
 		_on_destroyed()

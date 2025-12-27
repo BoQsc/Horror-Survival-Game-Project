@@ -32,6 +32,12 @@ var is_editor_mode: bool = false
 var current_editor_submode: int = 0
 const EDITOR_SUBMODE_NAMES = ["Terrain", "Water", "Road", "Prefab", "Fly", "OldDirt"]
 
+# Durability persistence state (3 second memory)
+var last_durability_target: Variant = null
+var last_durability_hit_time: int = 0
+var cached_durability_percent: float = 0.0
+const DURABILITY_PERSIST_MS: int = 3000
+
 
 func _ready() -> void:
 	# Connect to player signals
@@ -89,6 +95,9 @@ func _process(_delta: float) -> void:
 	
 	# Update mode label with extra build info when in BUILD mode
 	_update_build_mode_info()
+	
+	# Check durability UI visibility (persistence logic)
+	_update_durability_visibility()
 
 ## Setup hotbar slot display with InventorySlot instances
 func _setup_hotbar() -> void:
@@ -474,18 +483,98 @@ func _update_hotbar_display() -> void:
 
 #region Durability UI
 
-func _on_durability_hit(current_hp: int, max_hp: int, _target_name: String) -> void:
+func _on_durability_hit(current_hp: int, max_hp: int, _target_name: String, target_ref: Variant) -> void:
 	if not durability_bar:
 		return
 	# Show damage dealt as percentage (full bar = fully destroyed)
 	var damage_percent = 100.0 * (1.0 - float(current_hp) / float(max_hp))
+	
+	# Store persistence state
+	last_durability_target = target_ref
+	last_durability_hit_time = Time.get_ticks_msec()
+	cached_durability_percent = damage_percent
+	
 	durability_bar.value = damage_percent
 	durability_bar.visible = true
 
 func _on_durability_cleared() -> void:
+	# This is called when target is DESTROYED (HP=0), not just when looking away
+	# Clear both the bar AND persistence state
 	if durability_bar:
 		durability_bar.visible = false
 		durability_bar.value = 0
+	last_durability_target = null
+	last_durability_hit_time = 0
+	cached_durability_percent = 0.0
+
+## Check if durability UI should be shown based on look target and time
+func _update_durability_visibility() -> void:
+	if not durability_bar:
+		return
+	
+	# No remembered target? Nothing to do.
+	if last_durability_target == null:
+		return
+	
+	# Check time limit (3 seconds)
+	var now = Time.get_ticks_msec()
+	if now - last_durability_hit_time > DURABILITY_PERSIST_MS:
+		# Expired - clear memory and hide
+		last_durability_target = null
+		last_durability_hit_time = 0
+		cached_durability_percent = 0.0
+		durability_bar.visible = false
+		return
+	
+	# Get current look target via direct raycast (don't rely on ModePlay.durability_target)
+	var player_node = get_tree().get_first_node_in_group("player")
+	if not player_node or not player_node.has_method("raycast"):
+		return
+	
+	var hit = player_node.raycast(5.0, 0xFFFFFFFF, true, true)
+	if hit.is_empty():
+		# Looking at nothing - hide but keep memory
+		durability_bar.visible = false
+		return
+	
+	var target = hit.get("collider")
+	var position = hit.get("position", Vector3.ZERO)
+	
+	# Compare current look target to remembered target
+	var is_same_target = false
+	
+	if last_durability_target is RID:
+		# Tree/Object - compare RID
+		if target and target.get_rid() == last_durability_target:
+			is_same_target = true
+	elif last_durability_target is Vector3i:
+		# Block/Terrain - compare grid position
+		var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+		if block_pos == last_durability_target:
+			is_same_target = true
+	elif last_durability_target is Node:
+		# Direct node reference (like Door)
+		if target == last_durability_target or _is_child_of(target, last_durability_target):
+			is_same_target = true
+	
+	if is_same_target:
+		# Looking at same target - show UI
+		durability_bar.value = cached_durability_percent
+		durability_bar.visible = true
+	else:
+		# Looking at different target - hide but keep memory
+		durability_bar.visible = false
+
+## Helper: Check if node is child of another node (for door sub-colliders)
+func _is_child_of(node: Node, potential_parent: Node) -> bool:
+	if not node or not potential_parent:
+		return false
+	var current = node.get_parent()
+	while current:
+		if current == potential_parent:
+			return true
+		current = current.get_parent()
+	return false
 
 func _on_target_material_changed(material_name: String) -> void:
 	if target_material_label:

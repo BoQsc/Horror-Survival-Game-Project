@@ -376,7 +376,7 @@ func _do_punch(item: Dictionary) -> void:
 			var current_hp = TREE_HP - tree_damage[tree_rid]
 			durability_target = tree_rid # Track for look-away clearing
 			DebugSettings.log_player("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
-			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree")
+			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree", durability_target)
 			if tree_damage[tree_rid] >= TREE_HP:
 				vegetation_manager.chop_tree_by_collider(target)
 				tree_damage.erase(tree_rid)
@@ -406,7 +406,7 @@ func _do_punch(item: Dictionary) -> void:
 		var current_hp = OBJECT_HP - object_damage[obj_rid]
 		durability_target = obj_rid # Track for look-away clearing
 		DebugSettings.log_player("ModePlay: Hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
-		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name)
+		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name, durability_target)
 		if object_damage[obj_rid] >= OBJECT_HP:
 			# Remove via building manager
 			if target.has_meta("anchor") and target.has_meta("chunk"):
@@ -432,7 +432,7 @@ func _do_punch(item: Dictionary) -> void:
 			var current_hp = BLOCK_HP - block_damage[block_pos]
 			durability_target = block_pos # Track for look-away clearing (Vector3i)
 			DebugSettings.log_player("ModePlay: Hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
-			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block")
+			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block", durability_target)
 			if block_damage[block_pos] >= BLOCK_HP:
 				# Remove the block
 				var voxel_pos = position - hit.get("normal", Vector3.ZERO) * 0.1
@@ -466,7 +466,7 @@ func _do_punch(item: Dictionary) -> void:
 		durability_target = terrain_pos # Track for look-away clearing
 		
 		DebugSettings.log_player("ModePlay: Hit terrain at %s (%d/%d)" % [terrain_pos, terrain_damage[terrain_pos], TERRAIN_HP])
-		PlayerSignals.durability_hit.emit(current_hp, TERRAIN_HP, "Terrain")
+		PlayerSignals.durability_hit.emit(current_hp, TERRAIN_HP, "Terrain", durability_target)
 		
 		# Check if block should break
 		if terrain_damage[terrain_pos] >= TERRAIN_HP:
@@ -528,6 +528,9 @@ func _find_damageable(target: Node) -> Node:
 	return null
 
 ## Check if player is still looking at the durability target
+## NOTE: This only clears durability_target for ModePlay's internal tracking.
+## The UI persistence is handled by PlayerHUD._update_durability_visibility()
+## durability_cleared is NOT emitted here - only when target is destroyed (HP=0)
 func _check_durability_target() -> void:
 	if durability_target == null:
 		return
@@ -538,9 +541,8 @@ func _check_durability_target() -> void:
 	# Raycast to see what we're looking at
 	var hit = player.raycast(5.0, 0xFFFFFFFF, true, true)
 	if hit.is_empty():
-		# Looking at nothing - clear target
+		# Looking at nothing - clear internal target (but DON'T emit cleared signal)
 		durability_target = null
-		PlayerSignals.durability_cleared.emit()
 		return
 	
 	var target = hit.get("collider")
@@ -557,9 +559,8 @@ func _check_durability_target() -> void:
 		if block_pos == durability_target:
 			return # Still looking at same block
 	
-	# Different target or no match - clear UI
+	# Different target or no match - clear internal target (but DON'T emit cleared signal)
 	durability_target = null
-	PlayerSignals.durability_cleared.emit()
 
 ## Tool attack/mine
 func _do_tool_attack(item: Dictionary) -> void:
@@ -626,7 +627,7 @@ func _do_tool_attack(item: Dictionary) -> void:
 			
 			durability_target = tree_rid
 			DebugSettings.log_player("ModePlay: Hit tree (%d/%d)" % [tree_damage[tree_rid], TREE_HP])
-			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree")
+			PlayerSignals.durability_hit.emit(current_hp, TREE_HP, "Tree", durability_target)
 			
 			if tree_damage[tree_rid] >= TREE_HP:
 				vegetation_manager.chop_tree_by_collider(target)
@@ -657,7 +658,7 @@ func _do_tool_attack(item: Dictionary) -> void:
 		var current_hp = OBJECT_HP - object_damage[obj_rid]
 		durability_target = obj_rid
 		DebugSettings.log_player("ModePlay: Tool hit object (%d/%d)" % [object_damage[obj_rid], OBJECT_HP])
-		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name)
+		PlayerSignals.durability_hit.emit(current_hp, OBJECT_HP, target.name, durability_target)
 		if object_damage[obj_rid] >= OBJECT_HP:
 			if target.has_meta("anchor") and target.has_meta("chunk"):
 				var anchor = target.get_meta("anchor")
@@ -681,7 +682,7 @@ func _do_tool_attack(item: Dictionary) -> void:
 			var current_hp = BLOCK_HP - block_damage[block_pos]
 			durability_target = block_pos
 			DebugSettings.log_player("ModePlay: Tool hit block at %s (%d/%d)" % [block_pos, block_damage[block_pos], BLOCK_HP])
-			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block")
+			PlayerSignals.durability_hit.emit(current_hp, BLOCK_HP, "Block", durability_target)
 			if block_damage[block_pos] >= BLOCK_HP:
 				var voxel_pos = position - hit.get("normal", Vector3.ZERO) * 0.1
 				var voxel_coord = Vector3(floor(voxel_pos.x), floor(voxel_pos.y), floor(voxel_pos.z))

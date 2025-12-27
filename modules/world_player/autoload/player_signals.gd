@@ -33,7 +33,7 @@ signal interaction_unavailable()
 signal interaction_performed(target: Node, action: String)
 
 # Durability events (for objects with HP)
-signal durability_hit(current_hp: int, max_hp: int, target_name: String)
+signal durability_hit(current_hp: int, max_hp: int, target_name: String, target_ref: Variant)
 signal durability_cleared()
 
 # Inventory events
