@@ -486,15 +486,15 @@ func _update_hotbar_display() -> void:
 func _on_durability_hit(current_hp: int, max_hp: int, _target_name: String, target_ref: Variant) -> void:
 	if not durability_bar:
 		return
-	# Show damage dealt as percentage (full bar = fully destroyed)
-	var damage_percent = 100.0 * (1.0 - float(current_hp) / float(max_hp))
+	# Show remaining HP as percentage (full bar = full health, empty = destroyed)
+	var hp_percent = 100.0 * float(current_hp) / float(max_hp)
 	
 	# Store persistence state
 	last_durability_target = target_ref
 	last_durability_hit_time = Time.get_ticks_msec()
-	cached_durability_percent = damage_percent
+	cached_durability_percent = hp_percent
 	
-	durability_bar.value = damage_percent
+	durability_bar.value = hp_percent
 	durability_bar.visible = true
 
 func _on_durability_cleared() -> void:
