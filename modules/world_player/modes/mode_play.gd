@@ -871,7 +871,7 @@ func _update_held_prop(delta: float) -> void:
 	if Engine.get_process_frames() % 60 == 0:
 		DebugSettings.log_player("PropHold: Prop at %s (visible: %s)" % [held_prop_instance.global_position, held_prop_instance.visible])
 
-## Find a prop that can be picked up
+## Find a prop that can be picked up (building_manager objects OR dropped physics props)
 func _get_pickup_target() -> Node:
 	var cam = get_viewport().get_camera_3d()
 	if not cam:
@@ -885,8 +885,13 @@ func _get_pickup_target() -> Node:
 	
 	if hit and hit.has("collider"):
 		var col = hit.collider
+		# Check for building_manager placed objects
 		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
-			DebugSettings.log_player("PropPickup: Direct hit on %s" % col.name)
+			DebugSettings.log_player("PropPickup: Direct hit on placed object %s" % col.name)
+			return col
+		# Check for dropped physics props (RigidBody3D with item_data or interactable)
+		if col is RigidBody3D and (col.has_meta("item_data") or col.is_in_group("interactable")):
+			DebugSettings.log_player("PropPickup: Direct hit on dropped prop %s" % col.name)
 			return col
 	
 	# Option B: Sphere assist for forgiveness
@@ -907,7 +912,15 @@ func _get_pickup_target() -> Node:
 	
 	for result in results:
 		var col = result.collider
+		var is_valid = false
+		# Check for building_manager placed objects
 		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
+			is_valid = true
+		# Check for dropped physics props
+		elif col is RigidBody3D and (col.has_meta("item_data") or col.is_in_group("interactable")):
+			is_valid = true
+		
+		if is_valid:
 			var d = col.global_position.distance_to(search_origin)
 			if d < best_dist:
 				best_dist = d
@@ -917,13 +930,24 @@ func _get_pickup_target() -> Node:
 		DebugSettings.log_player("PropPickup: Assisted hit on %s" % best_target.name)
 	return best_target
 
-## Try to grab a prop
+## Try to grab a prop (building_manager object OR dropped physics prop)
 func _try_grab_prop() -> void:
 	var target = _get_pickup_target()
 	if not target:
 		return
 	
 	DebugSettings.log_player("PropGrab: Trying to grab %s" % target.name)
+	
+	# Check if this is a dropped physics prop (has item_data, no anchor/chunk)
+	if target is RigidBody3D and target.has_meta("item_data"):
+		_grab_dropped_prop(target)
+		return
+	
+	# Otherwise, try building_manager object path
+	if not target.has_meta("anchor") or not target.has_meta("chunk"):
+		DebugSettings.log_player("PropGrab: Target has no anchor/chunk metadata")
+		return
+	
 	var anchor = target.get_meta("anchor")
 	var chunk = target.get_meta("chunk")
 	
@@ -968,12 +992,54 @@ func _try_grab_prop() -> void:
 		else:
 			DebugSettings.log_player("PropPickup: WARNING - No camera, prop may be mispositioned")
 
+## Grab a dropped physics prop (RigidBody3D with item_data meta)
+func _grab_dropped_prop(target: RigidBody3D) -> void:
+	# Store reference directly - don't need to respawn, just move it
+	held_prop_instance = target
+	held_prop_id = -1  # No object registry ID for dropped items
+	held_prop_rotation = 0
+	
+	# Store item data for later drop
+	if target.has_meta("item_data"):
+		held_prop_instance.set_meta("grabbed_item_data", target.get_meta("item_data"))
+	
+	# Freeze physics and disable collisions for holding
+	target.freeze = true
+	target.collision_layer = 0
+	target.collision_mask = 0
+	_disable_preview_collisions(target)
+	
+	# Position at camera
+	var cam = get_viewport().get_camera_3d()
+	if cam:
+		held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
+		DebugSettings.log_player("PropGrab: Grabbed dropped prop %s" % target.name)
+	else:
+		DebugSettings.log_player("PropGrab: WARNING - No camera")
+
 ## Drop the grabbed prop
 func _drop_grabbed_prop() -> void:
 	if not held_prop_instance:
 		return
 	
 	DebugSettings.log_player("PropDrop: Dropping prop")
+	
+	# Check if this was a grabbed dropped prop (not a building_manager object)
+	if held_prop_id == -1:
+		# Re-enable physics and drop naturally
+		if held_prop_instance is RigidBody3D:
+			# Re-enable collision shapes first!
+			_enable_preview_collisions(held_prop_instance)
+			held_prop_instance.freeze = false
+			held_prop_instance.collision_layer = 1  # Default layer
+			held_prop_instance.collision_mask = 1  # Default mask
+			# Give a small drop velocity
+			held_prop_instance.linear_velocity = Vector3(0, -1, 0)
+			DebugSettings.log_player("PropDrop: Released dropped prop with physics")
+		held_prop_instance = null
+		held_prop_id = -1
+		held_prop_rotation = 0
+		return
 	
 	var drop_pos = held_prop_instance.global_position
 	
@@ -1064,6 +1130,13 @@ func _disable_preview_collisions(node: Node) -> void:
 		node.disabled = true
 	for child in node.get_children():
 		_disable_preview_collisions(child)
+
+## Recursively re-enable collisions on a node tree
+func _enable_preview_collisions(node: Node) -> void:
+	if node is CollisionShape3D or node is CollisionPolygon3D:
+		node.disabled = false
+	for child in node.get_children():
+		_enable_preview_collisions(child)
 
 ## Check if currently grabbing a prop
 func is_grabbing_prop() -> bool:
