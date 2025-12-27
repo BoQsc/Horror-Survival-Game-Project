@@ -1,3 +1,4 @@
+Extract → Test → Update → Repeat
 I think it's best to move functionality, do testing, then update both for the new v2 structure and systems.  
 Until there is nothing more to extract and nothing more to test. Then it's complete.
 Starting with smallest features.
