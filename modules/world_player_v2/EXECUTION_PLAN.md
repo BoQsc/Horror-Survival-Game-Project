@@ -988,6 +988,11 @@ func load_from_file(path: String) -> void:
 | `pickups/pickup_item.tscn` | - | Pickup scene | `features/interaction/pickup_item.tscn` | 🔲 |
 | **Utils (1 file)** |
 | `utils/debug_draw.gd` | 50 | Debug visualization | `utils/debug_draw.gd` | 🔲 |
+| **Loading Screen (2 files)** |
+| `ui_loading_screen/loading_screen.gd` | 110 | Loading UI | `features/hud/loading_screen.gd` | 🔲 |
+| `ui_loading_screen/loading_screen.tscn` | - | Loading scene | `features/hud/loading_screen.tscn` | 🔲 |
+| **Reference (1 file)** |
+| `reference/README.md` | 15 | Documentation | `reference/README.md` | 🔲 |
 
 ### A.2 External Dependencies
 
@@ -1064,6 +1069,11 @@ V2 player must still interface with these external systems:
 | BuildingManager | `building_manager` | `set_voxel()`, `get_voxel()`, `place_object()` |
 | VegetationManager | `vegetation_manager` | `chop_tree_by_collider()`, `harvest_grass_by_collider()` |
 | ObjectRegistry | autoload | `get_object()` |
+| RoadManager | `road_manager` | Editor mode road painting |
+| PrefabSpawner | `prefab_spawner` | Editor mode prefab placement |
+| VehicleManager | `vehicle_manager` | Vehicle enter/exit interaction |
+| EntityManager | `entity_manager` | Entity spawning/tracking |
+| Inventory | `inventory` | Inventory system reference |
 
 ### A.6 Collision Layers
 
