@@ -16,6 +16,7 @@ var mode_editor: Node = null
 # Hold-to-attack state
 var is_primary_held: bool = false
 var is_secondary_held: bool = false
+var primary_triggered_this_frame: bool = false # Skip _process trigger on click frame
 
 func _ready() -> void:
 	# Find sibling components
@@ -51,9 +52,13 @@ func _process(_delta: float) -> void:
 		return
 	
 	# Continuous primary action while holding left mouse
+	# Skip on the same frame as the initial click (already triggered from _input)
 	if is_primary_held:
-		var item = hotbar.get_selected_item()
-		route_primary_action(item)
+		if primary_triggered_this_frame:
+			primary_triggered_this_frame = false # Reset for next frame
+		else:
+			var item = hotbar.get_selected_item()
+			route_primary_action(item)
 
 func _input(event: InputEvent) -> void:
 	if not hotbar or not player:
@@ -68,6 +73,7 @@ func _input(event: InputEvent) -> void:
 			is_primary_held = event.pressed
 			# Trigger immediately on press
 			if event.pressed:
+				primary_triggered_this_frame = true # Prevent double-trigger from _process
 				var item = hotbar.get_selected_item()
 				print("ItemUseRouter: LMB pressed, item=%s" % item.get("name", "none"))
 				route_primary_action(item)
