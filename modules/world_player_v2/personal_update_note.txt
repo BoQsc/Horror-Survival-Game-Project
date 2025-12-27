@@ -1,4 +1,22 @@
-Extract → Test → Update → Repeat
 I think it's best to move functionality, do testing, then update both for the new v2 structure and systems.  
 Until there is nothing more to extract and nothing more to test. Then it's complete.
 Starting with smallest features.
+
+
+Updated Plan: Extract → Test → Update → Repeat
+The plan now follows your preferred approach:
+
+Process for Each Feature
+EXTRACT - Copy exact code from V1 to V2
+TEST - Verify V2 feature works
+UPDATE - Apply V2 patterns (signals, base class, etc.)
+TEST - Verify again after updates
+REMOVE - Delete code from V1
+Repeat until V1 is empty
+Extraction Order (11 phases)
+#	Feature	Lines
+
+Done When
+V1 mode_play.gd is deleted
+V2 passes all gameplay tests
+No V1 code remains
