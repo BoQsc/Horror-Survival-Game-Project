@@ -106,6 +106,15 @@ func initialize(p_player: Node, p_terrain: Node, p_vegetation: Node, p_building:
 
 ## Handle primary action (left click) - mode dispatch (V1 EXACT)
 func handle_primary(item: Dictionary) -> void:
+	# V1: If grabbing a prop, don't do other actions
+	if is_grabbing_prop():
+		DebugSettings.log_player("CombatSystem: Grabbing prop, ignoring primary action")
+		return
+	
+	# V1: Attack cooldown check
+	if attack_cooldown > 0:
+		return
+	
 	var category = item.get("category", 0)
 	
 	match category:
