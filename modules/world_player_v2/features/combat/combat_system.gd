@@ -56,6 +56,7 @@ func _process(delta: float) -> void:
 	if attack_cooldown > 0:
 		attack_cooldown -= delta
 	
+	_update_held_prop(delta)
 	_check_durability_target()
 
 ## Initialize references (called by parent after scene ready)
@@ -150,9 +151,9 @@ func _try_grab_prop() -> void:
 	if not target:
 		return
 	
-	# Check for dropped physics prop
-	if target.has_meta("item_data") and not target.has_meta("anchor"):
-		target.queue_free()
+	# Check for dropped physics prop (RigidBody3D with item_data)
+	if target is RigidBody3D and target.has_meta("item_data") and not target.has_meta("anchor"):
+		_grab_dropped_prop(target)
 		return
 	
 	# Check for building object
@@ -180,6 +181,39 @@ func _try_grab_prop() -> void:
 				held_prop_instance = scene.instantiate()
 				get_tree().root.add_child(held_prop_instance)
 				_disable_preview_collisions(held_prop_instance)
+
+## Grab a dropped physics prop (RigidBody3D with item_data meta)
+func _grab_dropped_prop(target: RigidBody3D) -> void:
+	var item_data = target.get_meta("item_data")
+	if item_data.is_empty():
+		return
+	
+	# Check if item has an object_id for building system
+	if item_data.has("object_id"):
+		held_prop_id = item_data["object_id"]
+		held_prop_rotation = 0
+		
+		# Spawn temp held visual
+		if has_node("/root/ObjectRegistry"):
+			var obj_def = ObjectRegistry.get_object(held_prop_id)
+			if obj_def and obj_def.get("scene"):
+				var scene = load(obj_def["scene"])
+				if scene:
+					held_prop_instance = scene.instantiate()
+					get_tree().root.add_child(held_prop_instance)
+					_disable_preview_collisions(held_prop_instance)
+	else:
+		# For non-building items (like pistol), just use the existing instance
+		held_prop_instance = target
+		held_prop_id = -1  # Mark as non-building item
+		target.freeze = true  # Stop physics
+		_disable_preview_collisions(target)
+	
+	# Remove original from scene if we created a copy
+	if held_prop_instance != target:
+		target.queue_free()
+	
+	DebugSettings.log_player("CombatSystem: Grabbed dropped prop")
 
 func _drop_grabbed_prop() -> void:
 	if not held_prop_instance or held_prop_id < 0:
@@ -225,8 +259,19 @@ func _disable_preview_collisions(node: Node) -> void:
 	for child in node.get_children():
 		_disable_preview_collisions(child)
 
+func _enable_preview_collisions(node: Node) -> void:
+	if node is CollisionShape3D or node is CollisionPolygon3D:
+		node.disabled = false
+	for child in node.get_children():
+		_enable_preview_collisions(child)
+
 func is_grabbing_prop() -> bool:
 	return held_prop_instance != null and is_instance_valid(held_prop_instance)
+
+func _exit_tree() -> void:
+	# Cleanup held props
+	if held_prop_instance and is_instance_valid(held_prop_instance):
+		held_prop_instance.queue_free()
 
 # ============================================================================
 # WEAPON READY CALLBACKS

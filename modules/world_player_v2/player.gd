@@ -25,16 +25,20 @@ var vegetation_manager: Node = null
 func _ready() -> void:
 	add_to_group("player")
 	
-	# Find features (children of Features node)
-	var features_node = get_node_or_null("Features")
-	if features_node:
-		movement_feature = features_node.get_node_or_null("Movement/player_movement")
-		camera_feature = features_node.get_node_or_null("Camera/player_camera")
-		stats_feature = features_node.get_node_or_null("Stats/player_stats")
-		combat_feature = features_node.get_node_or_null("Combat/combat_system")
-		terrain_feature = features_node.get_node_or_null("Terrain/terrain_interaction")
+	# Find features in Components node (matching player.tscn structure)
+	var components_node = get_node_or_null("Components")
+	if components_node:
+		movement_feature = components_node.get_node_or_null("Movement")
+		camera_feature = components_node.get_node_or_null("Camera")
+		# Note: Stats is not in tscn yet - uses PlayerStats autoload
 	
-	# Find Systems (for inventory/hotbar)
+	# Find Modes (CombatSystem, BuildMode, ModeEditor, TerrainInteraction)
+	var modes_node = get_node_or_null("Modes")
+	if modes_node:
+		combat_feature = modes_node.get_node_or_null("CombatSystem")
+		terrain_feature = modes_node.get_node_or_null("TerrainInteraction")
+	
+	# Find Systems (Hotbar, Inventory, ModeManager, ItemUseRouter)
 	var systems_node = get_node_or_null("Systems")
 	if systems_node:
 		inventory_feature = systems_node.get_node_or_null("Hotbar")
