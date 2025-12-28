@@ -157,26 +157,29 @@ func _input(event: InputEvent) -> void:
 			if is_grabbing_prop():
 				print("CombatSystem: T released - dropping")
 				_drop_grabbed_prop()
-
-func _update_held_prop(_delta: float) -> void:
+## Update held prop position (follows camera) - V1 port with smooth lerp
+func _update_held_prop(delta: float) -> void:
 	if not held_prop_instance or not is_instance_valid(held_prop_instance):
 		return
 	
+	# Get camera from player - V1 uses "Head/Camera3D" path
 	var cam: Camera3D = null
-	if player and player.has_node("Camera3D"):
+	if player and player.has_node("Head/Camera3D"):
+		cam = player.get_node("Head/Camera3D")
+	if not cam and player and player.has_node("Camera3D"):
 		cam = player.get_node("Camera3D")
-	else:
+	if not cam:
 		cam = get_viewport().get_camera_3d()
-	
 	if not cam:
 		return
 	
-	var origin = cam.global_position
-	var forward = -cam.global_transform.basis.z
-	var hold_distance = 2.0
-	
-	held_prop_instance.global_position = origin + forward * hold_distance
-	held_prop_instance.rotation_degrees.y = cam.rotation_degrees.y + held_prop_rotation * 90
+	# Float 2 meters in front of camera
+	var target_pos = cam.global_position - cam.global_transform.basis.z * 2.0
+	# Smoothly interpolate position (V1 uses delta * 15.0)
+	held_prop_instance.global_position = held_prop_instance.global_position.lerp(target_pos, delta * 15.0)
+	# Match camera rotation (yaw only) with smooth interpolation
+	var cam_rot_y = cam.global_rotation.y
+	held_prop_instance.rotation.y = lerp_angle(held_prop_instance.rotation.y, cam_rot_y + deg_to_rad(held_prop_rotation * 90.0), delta * 10.0)
 
 func _try_grab_prop() -> void:
 	if held_prop_instance:
@@ -244,60 +247,67 @@ func _try_grab_prop() -> void:
 				_disable_preview_collisions(held_prop_instance)
 				print("CombatSystem: Spawned held visual")
 
-## Grab a dropped physics prop (RigidBody3D with item_data meta)
+## Grab a dropped physics prop (RigidBody3D with item_data meta) - V1 port
 func _grab_dropped_prop(target: RigidBody3D) -> void:
-	var item_data = target.get_meta("item_data")
-	if item_data.is_empty():
-		return
+	# Store reference directly - don't need to respawn, just move it (V1 approach)
+	held_prop_instance = target
+	held_prop_id = -1  # No object registry ID for dropped items
+	held_prop_rotation = 0
 	
-	# Check if item has an object_id for building system
-	if item_data.has("object_id"):
-		held_prop_id = item_data["object_id"]
-		held_prop_rotation = 0
-		
-		# Spawn temp held visual
-		if has_node("/root/ObjectRegistry"):
-			var obj_def = ObjectRegistry.get_object(held_prop_id)
-			if obj_def and obj_def.get("scene"):
-				var scene = load(obj_def["scene"])
-				if scene:
-					held_prop_instance = scene.instantiate()
-					get_tree().root.add_child(held_prop_instance)
-					_disable_preview_collisions(held_prop_instance)
+	# Store item data for later drop (V1: grabbed_item_data)
+	if target.has_meta("item_data"):
+		held_prop_instance.set_meta("grabbed_item_data", target.get_meta("item_data"))
+	
+	# Freeze physics and disable collisions for holding (V1 sets layer/mask to 0)
+	target.freeze = true
+	target.collision_layer = 0
+	target.collision_mask = 0
+	_disable_preview_collisions(target)
+	
+	# Position at camera immediately
+	var cam = get_viewport().get_camera_3d()
+	if cam:
+		held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
+		print("CombatSystem: Grabbed dropped prop %s" % target.name)
 	else:
-		# For non-building items (like pistol), just use the existing instance
-		held_prop_instance = target
-		held_prop_id = -1  # Mark as non-building item
-		target.freeze = true  # Stop physics
-		_disable_preview_collisions(target)
-	
-	# Remove original from scene if we created a copy
-	if held_prop_instance != target:
-		target.queue_free()
-	
-	DebugSettings.log_player("CombatSystem: Grabbed dropped prop")
+		print("CombatSystem: WARNING - No camera for initial prop position")
 
+## Drop the grabbed prop - V1 port with collision layer restore
 func _drop_grabbed_prop() -> void:
 	if not held_prop_instance:
 		return
 	
 	print("CombatSystem: Dropping prop (held_prop_id=%d)" % held_prop_id)
 	
-	var drop_pos = held_prop_instance.global_position
+	# Check if this was a grabbed dropped prop (not a building_manager object)
+	if held_prop_id == -1:
+		# Re-enable physics and drop naturally (V1 approach)
+		if held_prop_instance is RigidBody3D:
+			# Re-enable collision shapes first!
+			_enable_preview_collisions(held_prop_instance)
+			held_prop_instance.freeze = false
+			held_prop_instance.collision_layer = 1  # Default layer (V1)
+			held_prop_instance.collision_mask = 1   # Default mask (V1)
+			# Give a small drop velocity (V1)
+			held_prop_instance.linear_velocity = Vector3(0, -1, 0)
+			print("CombatSystem: Released dropped prop with physics")
+		held_prop_instance = null
+		held_prop_id = -1
+		held_prop_rotation = 0
+		return
 	
 	# For building objects, place via building_manager
-	if held_prop_id >= 0 and building_manager and building_manager.has_method("place_object"):
-		building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
-		# Destroy the preview instance
-		if held_prop_instance:
-			held_prop_instance.queue_free()
-	else:
-		# For non-building props (like pistol), just unfreeze and release
-		if held_prop_instance is RigidBody3D:
-			held_prop_instance.freeze = false
-			_enable_preview_collisions(held_prop_instance)
-		print("CombatSystem: Released non-building prop")
+	var drop_pos = held_prop_instance.global_position
 	
+	if building_manager and building_manager.has_method("place_object"):
+		building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
+		print("CombatSystem: Placed building object via building_manager")
+	else:
+		print("CombatSystem: No building_manager - placement failed")
+	
+	# Cleanup held prop
+	if held_prop_instance:
+		held_prop_instance.queue_free()
 	held_prop_instance = null
 	held_prop_id = -1
 	held_prop_rotation = 0
