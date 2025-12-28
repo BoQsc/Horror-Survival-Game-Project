@@ -9,6 +9,7 @@ var signals: Node = null
 # References (set by parent)
 var player: Node = null
 var terrain_manager: Node = null
+var vegetation_manager: Node = null
 var hotbar: Node = null
 
 # Selection box for RESOURCE/BUCKET placement
@@ -44,10 +45,22 @@ func _ready() -> void:
 	if not signals:
 		signals = get_node_or_null("signals")
 	
+	# Auto-discover player and managers
+	player = get_parent().get_parent()  # Modes/TerrainInteraction -> WorldPlayerV2
+	call_deferred("_find_managers")
+	
 	_create_selection_box()
 	_create_material_target_marker()
 	
 	DebugSettings.log_player("TerrainInteractionFeature: Initialized")
+
+func _find_managers() -> void:
+	if not terrain_manager:
+		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	if not vegetation_manager:
+		vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	if not hotbar and player:
+		hotbar = player.get_node_or_null("Systems/Hotbar")
 
 func _process(_delta: float) -> void:
 	_update_terrain_targeting()
@@ -244,9 +257,25 @@ func do_resource_place(item: Dictionary) -> void:
 		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, 0, mat_id)
 		_consume_selected_item()
 
+## Place vegetation (grass or rock) at raycast hit position - V1 EXACT
 func _do_vegetation_place(veg_type: String) -> void:
-	DebugSettings.log_player("TerrainInteraction: Vegetation placement not implemented for %s" % veg_type)
-	# TODO: Spawn vegetation instance
+	if not player or not vegetation_manager:
+		DebugSettings.log_player("TerrainInteraction: Cannot place vegetation - missing player or vegetation_manager")
+		return
+	
+	var hit = _raycast(5.0)
+	if hit.is_empty():
+		DebugSettings.log_player("TerrainInteraction: Cannot place vegetation - no hit")
+		return
+	
+	if veg_type == "grass":
+		vegetation_manager.place_grass(hit.position)
+		_consume_selected_item()
+		DebugSettings.log_player("TerrainInteraction: Placed grass at %s" % hit.position)
+	elif veg_type == "rock":
+		vegetation_manager.place_rock(hit.position)
+		_consume_selected_item()
+		DebugSettings.log_player("TerrainInteraction: Placed rock at %s" % hit.position)
 
 func _consume_selected_item() -> void:
 	if hotbar and hotbar.has_method("decrement_slot"):
