@@ -173,7 +173,8 @@ static func get_terrain_resources() -> Dictionary:
 ## Vegetation resource items - dropped when harvesting vegetation
 static func get_vegetation_resources() -> Dictionary:
 	return {
-		"wood": {"id": "veg_wood", "name": "Wood", "category": ItemCategory.RESOURCE, "stack_size": 64},
+		# Wood places as wood cube block (temporary placeholder)
+		"wood": {"id": "veg_wood", "name": "Wood", "category": ItemCategory.BLOCK, "block_id": 1, "stack_size": 64},
 		"fiber": {"id": "veg_fiber", "name": "Plant Fiber", "category": ItemCategory.RESOURCE, "stack_size": 64},
 		"rock": {"id": "veg_rock", "name": "Rock", "category": ItemCategory.RESOURCE, "stack_size": 64},
 	}
