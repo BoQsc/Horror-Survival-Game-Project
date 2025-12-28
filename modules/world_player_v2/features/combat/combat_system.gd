@@ -783,24 +783,57 @@ func _collect_terrain_resource(mat_id: int) -> void:
 	if resource_item.is_empty():
 		return
 	
+	# Try to add to hotbar first
 	if hotbar and hotbar.has_method("add_item"):
-		hotbar.add_item(resource_item)
+		if hotbar.add_item(resource_item):
+			DebugSettings.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
+			return
+	
+	# Fall back to inventory if hotbar is full
+	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
+	if inventory and inventory.has_method("add_item"):
+		var leftover = inventory.add_item(resource_item, 1)
+		if leftover == 0:
+			DebugSettings.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
 
 func _collect_vegetation_resource(veg_type: String) -> void:
 	var resource_item = ItemDefs.get_vegetation_resource(veg_type)
 	if resource_item.is_empty():
+		DebugSettings.log_player("CombatSystem: No resource for vegetation type '%s'" % veg_type)
 		return
 	
+	# Try to add to hotbar first (for quick access)
 	if hotbar and hotbar.has_method("add_item"):
-		hotbar.add_item(resource_item)
+		if hotbar.add_item(resource_item):
+			DebugSettings.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
+			return
+	
+	# Fall back to inventory if hotbar is full
+	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
+	if inventory and inventory.has_method("add_item"):
+		var leftover = inventory.add_item(resource_item, 1)
+		if leftover == 0:
+			DebugSettings.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
+		else:
+			DebugSettings.log_player("CombatSystem: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
+	else:
+		DebugSettings.log_player("CombatSystem: No inventory system found")
 
 func _collect_building_resource(voxel_id: int) -> void:
 	var resource_item = ItemDefs.get_item_for_block(voxel_id)
 	if resource_item.is_empty():
 		return
 	
+	# Try to add to hotbar first
 	if hotbar and hotbar.has_method("add_item"):
-		hotbar.add_item(resource_item)
+		if hotbar.add_item(resource_item):
+			DebugSettings.log_player("CombatSystem: Collected 1x building resource to hotbar")
+			return
+	
+	# Fall back to inventory if hotbar is full
+	var inventory = player.get_node_or_null("Systems/Inventory") if player else null
+	if inventory and inventory.has_method("add_item"):
+		inventory.add_item(resource_item, 1)
 
 # ============================================================================
 # SIGNAL EMISSION (Local + Backward Compat)
