@@ -145,7 +145,9 @@ func _pickup_item(target: Node) -> void:
 		return
 	
 	var item_data: Dictionary = {}
+	var item_count: int = 1  # Default to 1 if not specified
 	
+	# Get item data
 	if target.has_method("get_item_data"):
 		item_data = target.get_item_data()
 	elif target.has_meta("item_data"):
@@ -165,10 +167,17 @@ func _pickup_item(target: Node) -> void:
 				"scene": ""
 			}
 	
+	# Get item count from target (PickupItem has item_count property)
+	if "item_count" in target:
+		item_count = target.item_count
+	elif target.has_meta("item_count"):
+		item_count = target.get_meta("item_count")
+	
 	var hotbar_node = get_node_or_null("../../Systems/Hotbar")
 	var inv = get_node_or_null("../../Systems/Inventory")
-	var added = false
+	var remaining = item_count
 	
+	# Try to add to hotbar first
 	if hotbar_node:
 		var preferred_slot = -1
 		if "preferred_slot" in target:
@@ -176,23 +185,31 @@ func _pickup_item(target: Node) -> void:
 		elif target.has_meta("preferred_slot"):
 			preferred_slot = target.get_meta("preferred_slot")
 		
+		# Try preferred slot first
 		if preferred_slot >= 0 and hotbar_node.has_method("get_count_at") and hotbar_node.has_method("set_item_at"):
 			if hotbar_node.get_count_at(preferred_slot) == 0:
 				hotbar_node.set_item_at(preferred_slot, item_data, 1)
-				added = true
+				remaining -= 1
 		
-		if not added and hotbar_node.has_method("add_item"):
-			if hotbar_node.add_item(item_data):
-				added = true
+		# Add remaining to hotbar one at a time
+		if hotbar_node.has_method("add_item"):
+			while remaining > 0:
+				if hotbar_node.add_item(item_data):
+					remaining -= 1
+				else:
+					break  # Hotbar full
 	
-	if not added:
-		if inv and inv.has_method("add_item"):
-			var leftover = inv.add_item(item_data, 1)
-			if leftover == 0:
-				added = true
+	# Add overflow to inventory
+	if remaining > 0 and inv and inv.has_method("add_item"):
+		var leftover = inv.add_item(item_data, remaining)
+		remaining = leftover
 	
-	if added:
-		target.queue_free()
+	# Destroy target if we collected at least one item
+	if remaining < item_count:
+		if remaining <= 0:
+			target.queue_free()
+		elif "item_count" in target:
+			target.item_count = remaining  # Update remaining count
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.interaction_performed.emit(target, "pickup")
 
