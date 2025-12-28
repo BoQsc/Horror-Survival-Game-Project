@@ -11,6 +11,7 @@ var player: Node = null
 var terrain_manager: Node = null
 var vegetation_manager: Node = null
 var building_manager: Node = null
+var terrain_interaction: Node = null
 var hotbar: Node = null
 
 # Combat state
@@ -78,6 +79,8 @@ func _find_managers() -> void:
 		vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 	if not building_manager:
 		building_manager = get_tree().get_first_node_in_group("building_manager")
+	if not terrain_interaction and player:
+		terrain_interaction = player.get_node_or_null("Modes/TerrainInteraction")
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
@@ -101,7 +104,7 @@ func initialize(p_player: Node, p_terrain: Node, p_vegetation: Node, p_building:
 # MODE INTERFACE (called by ModeManager)
 # ============================================================================
 
-## Handle primary action (left click) - mode dispatch
+## Handle primary action (left click) - mode dispatch (V1 EXACT)
 func handle_primary(item: Dictionary) -> void:
 	var category = item.get("category", 0)
 	
@@ -110,6 +113,11 @@ func handle_primary(item: Dictionary) -> void:
 			do_punch(item)
 		1:  # TOOL
 			do_tool_attack(item)
+		2:  # BUCKET - V1 routes to _do_bucket_collect
+			if terrain_interaction and terrain_interaction.has_method("do_bucket_collect"):
+				terrain_interaction.do_bucket_collect()
+		3:  # RESOURCE - no primary action (V1: pass)
+			pass
 		6:  # PROP (pistol, etc.)
 			_do_prop_primary(item)
 		_:
