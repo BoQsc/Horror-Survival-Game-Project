@@ -35,6 +35,14 @@ var pistol_fire_ready: bool = true
 var axe_ready: bool = true
 var is_reloading: bool = false
 
+# Mode manager reference
+var mode_manager: Node = null
+
+# Prop grab/drop system
+var held_prop_instance: Node = null
+var held_prop_id: int = -1
+var held_prop_rotation: int = 0
+
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
 
@@ -44,6 +52,17 @@ func _ready() -> void:
 	if not signals:
 		signals = get_node_or_null("signals")
 	
+	# Auto-discover player (CombatSystem is at Modes/CombatSystem, parent.parent = WorldPlayerV2)
+	player = get_parent().get_parent()
+	
+	# Auto-discover mode manager
+	if player:
+		mode_manager = player.get_node_or_null("Systems/ModeManager")
+		hotbar = player.get_node_or_null("Systems/Hotbar")
+	
+	# Find managers via groups (deferred)
+	call_deferred("_find_managers")
+	
 	# Connect to weapon ready signals (backward compat)
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.punch_ready.connect(_on_punch_ready)
@@ -51,6 +70,14 @@ func _ready() -> void:
 		PlayerSignals.axe_ready.connect(_on_axe_ready)
 	
 	DebugSettings.log_player("CombatSystemFeature: Initialized")
+
+func _find_managers() -> void:
+	if not terrain_manager:
+		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	if not vegetation_manager:
+		vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	if not building_manager:
+		building_manager = get_tree().get_first_node_in_group("building_manager")
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
@@ -105,22 +132,30 @@ func _do_prop_primary(item: Dictionary) -> void:
 # PROP GRAB/DROP SYSTEM
 # ============================================================================
 
-var held_prop_instance: Node3D = null
-var held_prop_id: int = -1
-var held_prop_rotation: int = 0
-var mode_manager: Node = null
-
 func _input(event: InputEvent) -> void:
-	# Only process in PLAY mode
+	# Only process in PLAY mode (if mode_manager is null, assume PLAY mode)
 	if mode_manager and not mode_manager.is_play_mode():
 		return
 	
+	# Also try to find mode_manager if not set
+	if not mode_manager and player:
+		mode_manager = player.get_node_or_null("Systems/ModeManager")
+	
 	# T key for prop grab/drop
 	if event is InputEventKey and event.keycode == KEY_T:
-		if event.pressed and not event.echo:
-			_try_grab_prop()
-		elif not event.pressed:
-			if held_prop_instance:
+		# Ignore echo (key repeat) events
+		if event.echo:
+			return
+		
+		if event.pressed:
+			# T pressed down - grab prop
+			if not is_grabbing_prop():
+				print("CombatSystem: T pressed - attempting grab")
+				_try_grab_prop()
+		else:
+			# T released - drop prop
+			if is_grabbing_prop():
+				print("CombatSystem: T released - dropping")
 				_drop_grabbed_prop()
 
 func _update_held_prop(_delta: float) -> void:
@@ -145,25 +180,50 @@ func _update_held_prop(_delta: float) -> void:
 
 func _try_grab_prop() -> void:
 	if held_prop_instance:
+		print("CombatSystem: Already holding prop, returning")
 		return
 	
 	var target = _get_pickup_target()
 	if not target:
+		print("CombatSystem: No target found")
 		return
 	
-	# Check for dropped physics prop (RigidBody3D with item_data)
+	print("CombatSystem: Trying to grab %s" % target.name)
+	print("  - is RigidBody3D: %s" % (target is RigidBody3D))
+	print("  - has item_data: %s" % target.has_meta("item_data"))
+	print("  - has anchor: %s" % target.has_meta("anchor"))
+	print("  - has chunk: %s" % target.has_meta("chunk"))
+	print("  - is_in_group placed_objects: %s" % target.is_in_group("placed_objects"))
+	print("  - is_in_group interactable: %s" % target.is_in_group("interactable"))
+	
+	# Check for dropped physics prop (RigidBody3D with item_data but no anchor)
 	if target is RigidBody3D and target.has_meta("item_data") and not target.has_meta("anchor"):
+		print("CombatSystem: Grabbing as dropped physics prop")
 		_grab_dropped_prop(target)
 		return
 	
-	# Check for building object
+	# Check for RigidBody3D interactable (like pistol)
+	if target is RigidBody3D and target.is_in_group("interactable"):
+		print("CombatSystem: Grabbing as interactable RigidBody3D")
+		# Just grab it directly - no building system involved
+		held_prop_instance = target
+		held_prop_id = -1  # Non-building item
+		held_prop_rotation = 0
+		target.freeze = true
+		_disable_preview_collisions(target)
+		print("CombatSystem: Successfully grabbed %s" % target.name)
+		return
+	
+	# Check for building object (needs anchor + chunk meta)
 	if not target.has_meta("anchor") or not target.has_meta("chunk"):
+		print("CombatSystem: Not a building object (missing anchor/chunk)")
 		return
 	
 	var anchor = target.get_meta("anchor")
 	var chunk = target.get_meta("chunk")
 	
 	if not chunk.objects.has(anchor):
+		print("CombatSystem: Chunk doesn't have this anchor")
 		return
 	
 	var data = chunk.objects[anchor]
@@ -171,6 +231,7 @@ func _try_grab_prop() -> void:
 	held_prop_rotation = data.get("rotation", 0)
 	
 	chunk.remove_object(anchor)
+	print("CombatSystem: Removed building object from chunk")
 	
 	# Spawn temp held visual
 	if has_node("/root/ObjectRegistry"):
@@ -181,6 +242,7 @@ func _try_grab_prop() -> void:
 				held_prop_instance = scene.instantiate()
 				get_tree().root.add_child(held_prop_instance)
 				_disable_preview_collisions(held_prop_instance)
+				print("CombatSystem: Spawned held visual")
 
 ## Grab a dropped physics prop (RigidBody3D with item_data meta)
 func _grab_dropped_prop(target: RigidBody3D) -> void:
@@ -216,42 +278,91 @@ func _grab_dropped_prop(target: RigidBody3D) -> void:
 	DebugSettings.log_player("CombatSystem: Grabbed dropped prop")
 
 func _drop_grabbed_prop() -> void:
-	if not held_prop_instance or held_prop_id < 0:
+	if not held_prop_instance:
 		return
+	
+	print("CombatSystem: Dropping prop (held_prop_id=%d)" % held_prop_id)
 	
 	var drop_pos = held_prop_instance.global_position
 	
-	if building_manager and building_manager.has_method("place_object"):
+	# For building objects, place via building_manager
+	if held_prop_id >= 0 and building_manager and building_manager.has_method("place_object"):
 		building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
+		# Destroy the preview instance
+		if held_prop_instance:
+			held_prop_instance.queue_free()
+	else:
+		# For non-building props (like pistol), just unfreeze and release
+		if held_prop_instance is RigidBody3D:
+			held_prop_instance.freeze = false
+			_enable_preview_collisions(held_prop_instance)
+		print("CombatSystem: Released non-building prop")
 	
-	if held_prop_instance:
-		held_prop_instance.queue_free()
 	held_prop_instance = null
 	held_prop_id = -1
 	held_prop_rotation = 0
 
+## Find a prop that can be picked up (building_manager objects OR dropped physics props)
 func _get_pickup_target() -> Node:
 	var cam = get_viewport().get_camera_3d()
 	if not cam:
+		print("CombatSystem: _get_pickup_target - no camera")
 		return null
 	
 	var origin = cam.global_position
 	var forward = -cam.global_transform.basis.z
 	
+	# Option A: Precise raycast using player.raycast
+	var hit = player.raycast(5.0) if player and player.has_method("raycast") else {}
+	
+	if hit and hit.has("collider"):
+		var col = hit.collider
+		# Check for building_manager placed objects
+		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
+			print("CombatSystem: Direct hit on placed object %s" % col.name)
+			return col
+		# Check for dropped physics props (RigidBody3D with item_data or interactable)
+		if col is RigidBody3D and (col.has_meta("item_data") or col.is_in_group("interactable")):
+			print("CombatSystem: Direct hit on dropped prop %s" % col.name)
+			return col
+	
+	# Option B: Sphere assist for forgiveness
+	var search_origin = hit.position if hit and hit.has("position") else (origin + forward * 2.0)
+	
 	var space_state = cam.get_world_3d().direct_space_state
-	var query = PhysicsRayQueryParameters3D.create(origin, origin + forward * 3.0)
+	var params = PhysicsShapeQueryParameters3D.new()
+	params.shape = SphereShape3D.new()
+	params.shape.radius = 0.4 # 40cm forgiveness
+	params.transform = Transform3D(Basis(), search_origin)
+	params.collision_mask = 0xFFFFFFFF
 	if player:
-		query.exclude = [player.get_rid()]
+		params.exclude = [player.get_rid()]
 	
-	var result = space_state.intersect_ray(query)
-	if result.is_empty():
-		return null
+	var results = space_state.intersect_shape(params, 5)
+	var best_target = null
+	var best_dist = 999.0
 	
-	var collider = result.get("collider")
-	if collider and (collider.is_in_group("placed_objects") or collider.has_meta("item_data")):
-		return collider
+	for result in results:
+		var col = result.collider
+		var is_valid = false
+		# Check for building_manager placed objects
+		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
+			is_valid = true
+		# Check for dropped physics props
+		elif col is RigidBody3D and (col.has_meta("item_data") or col.is_in_group("interactable")):
+			is_valid = true
+		
+		if is_valid:
+			var d = col.global_position.distance_to(search_origin)
+			if d < best_dist:
+				best_dist = d
+				best_target = col
 	
-	return null
+	if best_target:
+		print("CombatSystem: Assisted hit on %s" % best_target.name)
+	else:
+		print("CombatSystem: No pickup target found")
+	return best_target
 
 func _disable_preview_collisions(node: Node) -> void:
 	if node is CollisionShape3D or node is CollisionPolygon3D:
