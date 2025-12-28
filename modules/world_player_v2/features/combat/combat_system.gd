@@ -180,72 +180,75 @@ func _update_held_prop(delta: float) -> void:
 	# Match camera rotation (yaw only) with smooth interpolation
 	var cam_rot_y = cam.global_rotation.y
 	held_prop_instance.rotation.y = lerp_angle(held_prop_instance.rotation.y, cam_rot_y + deg_to_rad(held_prop_rotation * 90.0), delta * 10.0)
-
-func _try_grab_prop() -> void:
-	if held_prop_instance:
-		print("CombatSystem: Already holding prop, returning")
-		return
 	
+	# V1 debug every 60 frames
+	if Engine.get_process_frames() % 60 == 0:
+		print("PropHold: Prop at %s (visible: %s)" % [held_prop_instance.global_position, held_prop_instance.visible])
+
+## Try to grab a prop (building_manager object OR dropped physics prop) - V1 EXACT
+func _try_grab_prop() -> void:
 	var target = _get_pickup_target()
 	if not target:
-		print("CombatSystem: No target found")
 		return
 	
-	print("CombatSystem: Trying to grab %s" % target.name)
-	print("  - is RigidBody3D: %s" % (target is RigidBody3D))
-	print("  - has item_data: %s" % target.has_meta("item_data"))
-	print("  - has anchor: %s" % target.has_meta("anchor"))
-	print("  - has chunk: %s" % target.has_meta("chunk"))
-	print("  - is_in_group placed_objects: %s" % target.is_in_group("placed_objects"))
-	print("  - is_in_group interactable: %s" % target.is_in_group("interactable"))
+	DebugSettings.log_player("PropGrab: Trying to grab %s" % target.name)
 	
-	# Check for dropped physics prop (RigidBody3D with item_data but no anchor)
-	if target is RigidBody3D and target.has_meta("item_data") and not target.has_meta("anchor"):
-		print("CombatSystem: Grabbing as dropped physics prop")
+	# Check if this is a dropped physics prop (has item_data OR is interactable RigidBody3D)
+	# V1: Routes ALL RigidBody3D through _grab_dropped_prop for proper collision handling
+	if target is RigidBody3D and (target.has_meta("item_data") or target.is_in_group("interactable")):
 		_grab_dropped_prop(target)
 		return
 	
-	# Check for RigidBody3D interactable (like pistol)
-	if target is RigidBody3D and target.is_in_group("interactable"):
-		print("CombatSystem: Grabbing as interactable RigidBody3D")
-		# Just grab it directly - no building system involved
-		held_prop_instance = target
-		held_prop_id = -1  # Non-building item
-		held_prop_rotation = 0
-		target.freeze = true
-		_disable_preview_collisions(target)
-		print("CombatSystem: Successfully grabbed %s" % target.name)
-		return
-	
-	# Check for building object (needs anchor + chunk meta)
+	# Otherwise, try building_manager object path
 	if not target.has_meta("anchor") or not target.has_meta("chunk"):
-		print("CombatSystem: Not a building object (missing anchor/chunk)")
+		DebugSettings.log_player("PropGrab: Target has no anchor/chunk metadata")
 		return
 	
 	var anchor = target.get_meta("anchor")
 	var chunk = target.get_meta("chunk")
 	
-	if not chunk.objects.has(anchor):
-		print("CombatSystem: Chunk doesn't have this anchor")
+	if not chunk or not chunk.objects.has(anchor):
+		DebugSettings.log_player("PropPickup: No object data at anchor")
 		return
 	
+	# Read object data before removing
 	var data = chunk.objects[anchor]
 	held_prop_id = data["object_id"]
 	held_prop_rotation = data.get("rotation", 0)
 	
+	# Remove from world
 	chunk.remove_object(anchor)
-	print("CombatSystem: Removed building object from chunk")
 	
-	# Spawn temp held visual
-	if has_node("/root/ObjectRegistry"):
-		var obj_def = ObjectRegistry.get_object(held_prop_id)
-		if obj_def and obj_def.get("scene"):
-			var scene = load(obj_def["scene"])
-			if scene:
-				held_prop_instance = scene.instantiate()
-				get_tree().root.add_child(held_prop_instance)
-				_disable_preview_collisions(held_prop_instance)
-				print("CombatSystem: Spawned held visual")
+	# Spawn temporary held visual
+	var obj_def = ObjectRegistry.get_object(held_prop_id)
+	if obj_def.has("scene"):
+		var packed = load(obj_def.scene)
+		held_prop_instance = packed.instantiate()
+		
+		# Strip physics for holding
+		if held_prop_instance is RigidBody3D:
+			held_prop_instance.freeze = true
+			held_prop_instance.collision_layer = 0
+			held_prop_instance.collision_mask = 0
+		
+		# Disable all collisions
+		_disable_preview_collisions(held_prop_instance)
+		
+		get_tree().root.add_child(held_prop_instance)
+		
+		# Position at camera
+		var cam: Camera3D = null
+		if player and player.has_node("Head/Camera3D"):
+			cam = player.get_node("Head/Camera3D")
+		if not cam and player and player.has_node("Camera3D"):
+			cam = player.get_node("Camera3D")
+		if not cam:
+			cam = get_viewport().get_camera_3d()
+		if cam:
+			held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
+			DebugSettings.log_player("PropPickup: Picked up prop ID %d at %s" % [held_prop_id, held_prop_instance.global_position])
+		else:
+			DebugSettings.log_player("PropPickup: WARNING - No camera, prop may be mispositioned")
 
 ## Grab a dropped physics prop (RigidBody3D with item_data meta) - V1 port
 func _grab_dropped_prop(target: RigidBody3D) -> void:
