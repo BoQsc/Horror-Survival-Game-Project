@@ -34,6 +34,7 @@ var durability_target: Variant = null # Current target being damaged
 var fist_punch_ready: bool = true
 var pistol_fire_ready: bool = true
 var axe_ready: bool = true
+var pending_axe_item: Dictionary = {}  # Store item data when axe swing starts
 var is_reloading: bool = false
 
 # Mode manager reference
@@ -426,6 +427,13 @@ func _on_pistol_fire_ready() -> void:
 
 func _on_axe_ready() -> void:
 	axe_ready = true
+	# Note: damage now happens at 0.83s via _on_axe_hit_moment, not here
+
+## Axe hit moment - called at 0.83s into swing animation
+func _on_axe_hit_moment() -> void:
+	if not pending_axe_item.is_empty():
+		_do_axe_damage(pending_axe_item)
+		pending_axe_item = {}
 
 # ============================================================================
 # PRIMARY ACTIONS
@@ -483,12 +491,16 @@ func do_tool_attack(item: Dictionary) -> void:
 	
 	var item_id = item.get("id", "")
 	
-	# Handle axe animations
+	# Handle axe - damage happens at 0.83s into animation (the visual hit moment)
 	if "axe" in item_id and not "pickaxe" in item_id:
 		if not axe_ready:
 			return
 		axe_ready = false
+		pending_axe_item = item.duplicate()  # Store for damage at hit moment
 		_emit_axe_fired()
+		# Delay damage to 0.50s (when axe visually connects)
+		get_tree().create_timer(0.50).timeout.connect(_on_axe_hit_moment)
+		return  # Exit - damage will happen after delay
 	
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
@@ -528,6 +540,61 @@ func do_tool_attack(item: Dictionary) -> void:
 			mat_id = terrain_manager.get_material_at(position)
 		
 		var actual_radius = max(mining_strength, 0.8)
+		DebugSettings.log_player("CombatSystem: Terrain mine at %s (tool: %s, radius: %.2f, mat: %d)" % [position, item_id, actual_radius, mat_id])
+		print("AXE_TERRAIN_DEBUG: Mining at %s, radius=%.2f, mat=%d" % [position, actual_radius, mat_id])
+		terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+		
+		if mat_id >= 0:
+			_collect_terrain_resource(mat_id)
+
+## Axe damage - called when animation completes (from _on_axe_ready)
+func _do_axe_damage(item: Dictionary) -> void:
+	if not player:
+		return
+	
+	var item_id = item.get("id", "")
+	var hit = _raycast(3.5, true, true)
+	if hit.is_empty():
+		print("AXE_DAMAGE_DEBUG: No hit on animation complete")
+		return
+	
+	var damage = item.get("damage", 1)
+	var mining_strength = item.get("mining_strength", 1.0)
+	var target = hit.get("collider")
+	var position = hit.get("position", Vector3.ZERO)
+	
+	print("AXE_DAMAGE_DEBUG: Hit %s at %s" % [target.name if target else "nothing", position])
+	
+	# Priority 1: Generic Damageable
+	var damageable = _find_damageable(target)
+	if damageable:
+		if damageable.is_in_group("zombies"):
+			damage = 10  # Axe bonus vs zombies
+		damageable.take_damage(damage)
+		durability_target = target.get_rid()
+		_emit_damage_dealt(damageable, damage)
+		return
+	
+	# Priority 2: Vegetation
+	if _try_harvest_vegetation(target, item, position):
+		return
+	
+	# Priority 3: Placed objects
+	if _try_damage_placed_object(target, item, position):
+		return
+	
+	# Priority 4: Building blocks
+	if _try_damage_building_block(target, item, position, hit):
+		return
+	
+	# Priority 5: Terrain mining
+	if terrain_manager and terrain_manager.has_method("modify_terrain"):
+		var mat_id = -1
+		if terrain_manager.has_method("get_material_at"):
+			mat_id = terrain_manager.get_material_at(position)
+		
+		var actual_radius = max(mining_strength, 0.8)
+		print("AXE_DAMAGE_DEBUG: Terrain mine at %s, radius=%.2f" % [position, actual_radius])
 		terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
 		
 		if mat_id >= 0:
