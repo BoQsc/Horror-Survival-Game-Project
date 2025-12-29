@@ -498,8 +498,8 @@ func do_tool_attack(item: Dictionary) -> void:
 		axe_ready = false
 		pending_axe_item = item.duplicate()  # Store for damage at hit moment
 		_emit_axe_fired()
-		# Delay damage to 0.50s (when axe visually connects)
-		get_tree().create_timer(0.50).timeout.connect(_on_axe_hit_moment)
+		# Delay damage to 0.30s (when axe visually connects)
+		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
 		return  # Exit - damage will happen after delay
 	
 	var hit = _raycast(3.5, true, true)
