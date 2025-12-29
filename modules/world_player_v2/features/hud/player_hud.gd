@@ -180,6 +180,13 @@ func handle_slot_drop(source_index: int, target_index: int) -> void:
 	if source_index == target_index:
 		return
 	
+	# If container panel is open, delegate to it for 3-way drag-drop
+	var container_panel = get_tree().get_first_node_in_group("container_panel")
+	if container_panel and container_panel.visible:
+		container_panel.handle_slot_drop(source_index, target_index)
+		_refresh_hotbar_display()
+		return
+	
 	var source_is_hotbar = source_index >= 100
 	var target_is_hotbar = target_index >= 100
 	var source_idx = source_index % 100
