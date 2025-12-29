@@ -155,7 +155,8 @@ func do_primary_action() -> void:
 	var target = Vector3(floor(pos.x) + 0.5, floor(pos.y) + 0.5, floor(pos.z) + 0.5)
 	
 	# Dig with box shape (value > 0 = remove terrain)
-	terrain_manager.modify_terrain(target, BRUSH_SIZE, 1.0, BRUSH_SHAPE, 0)
+	# Use 0.5 (not 1.0) for proper marching cubes interpolation at chunk boundaries
+	terrain_manager.modify_terrain(target, BRUSH_SIZE, 0.5, BRUSH_SHAPE, 0)
 	print("SHOVEL: Dig at %s" % target)
 
 ## Call this from combat_system for right-click
@@ -175,7 +176,8 @@ func do_secondary_action() -> void:
 	var mat_id = MATERIALS[material_index].id + 100
 	
 	# Fill with box shape (value < 0 = add terrain)
-	terrain_manager.modify_terrain(target, BRUSH_SIZE, -1.0, BRUSH_SHAPE, 0, mat_id)
+	# Use -0.5 (not -1.0) for proper marching cubes interpolation at chunk boundaries
+	terrain_manager.modify_terrain(target, BRUSH_SIZE, -0.5, BRUSH_SHAPE, 0, mat_id)
 	print("SHOVEL: Fill at %s with %s (mat_id=%d)" % [target, MATERIALS[material_index].name, mat_id])
 
 func _raycast(distance: float) -> Dictionary:
