@@ -13,6 +13,7 @@ var vegetation_manager: Node = null
 var building_manager: Node = null
 var terrain_interaction: Node = null
 var hotbar: Node = null
+var terraformer: Node = null  # FirstPersonTerraformer component
 
 # Combat state
 var attack_cooldown: float = 0.0
@@ -82,6 +83,8 @@ func _find_managers() -> void:
 		building_manager = get_tree().get_first_node_in_group("building_manager")
 	if not terrain_interaction and player:
 		terrain_interaction = player.get_node_or_null("Modes/TerrainInteraction")
+	if not terraformer and player:
+		terraformer = player.get_node_or_null("Components/FirstPersonTerraformer")
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
@@ -130,13 +133,24 @@ func handle_primary(item: Dictionary) -> void:
 			pass
 		6:  # PROP (pistol, etc.)
 			_do_prop_primary(item)
+		7:  # TERRAFORMER - grid-snapped dig
+			if terraformer and terraformer.has_method("do_primary_action"):
+				terraformer.do_primary_action()
 		_:
 			# Other categories handled by terrain_interaction or building
 			pass
 
-## Handle secondary action (right click) - no combat secondary
-func handle_secondary(_item: Dictionary) -> void:
-	# Combat system has no secondary action
+## Handle secondary action (right click)
+func handle_secondary(item: Dictionary) -> void:
+	var category = item.get("category", 0)
+	
+	# TERRAFORMER - grid-snapped fill with material
+	if category == 7:
+		if terraformer and terraformer.has_method("do_secondary_action"):
+			terraformer.do_secondary_action()
+		return
+	
+	# Combat system has no other secondary actions
 	# Resource/bucket placement is handled by terrain_interaction
 	pass
 

@@ -33,6 +33,9 @@ var durability_memory: Dictionary = {}
 var last_hit_target_key: String = ""
 const DURABILITY_PERSIST_MS: int = 6000
 
+# Terraformer state
+var terraformer_material: String = ""
+
 func _ready() -> void:
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.mode_changed.connect(_on_mode_changed)
@@ -48,6 +51,7 @@ func _ready() -> void:
 		PlayerSignals.durability_cleared.connect(_on_durability_cleared)
 		PlayerSignals.target_material_changed.connect(_on_target_material_changed)
 		PlayerSignals.camera_underwater_toggled.connect(_on_camera_underwater_toggled)
+		PlayerSignals.terraformer_material_changed.connect(_on_terraformer_material_changed)
 	
 	_setup_hotbar()
 	
@@ -493,7 +497,21 @@ func _is_child_of(node: Node, potential_parent: Node) -> bool:
 
 func _on_target_material_changed(material_name: String) -> void:
 	if target_material_label:
-		target_material_label.text = material_name
+		# Show terraformer material if equipped, otherwise show looking-at material
+		if terraformer_material != "":
+			target_material_label.text = "[TF: %s] %s" % [terraformer_material, material_name]
+		else:
+			target_material_label.text = material_name
+
+func _on_terraformer_material_changed(material_name: String) -> void:
+	terraformer_material = material_name
+	if target_material_label:
+		# Update display immediately
+		if material_name == "":
+			# Terraformer unequipped - show just target material
+			terraformer_material = ""
+		else:
+			target_material_label.text = "[TF: %s]" % material_name
 
 func _on_camera_underwater_toggled(is_underwater: bool) -> void:
 	if underwater_overlay:

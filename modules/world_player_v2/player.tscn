@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=19 format=3]
 
 [ext_resource type="Script" path="res://modules/world_player_v2/player.gd" id="1_player"]
 [ext_resource type="Script" path="res://modules/world_player_v2/features/movement/player_movement.gd" id="2_movement"]
@@ -17,6 +17,7 @@
 [ext_resource type="Script" path="res://modules/world_player_v2/features/combat/weapons/first_person_pistol.gd" id="16_pistol"]
 [ext_resource type="Script" path="res://modules/world_player_v2/features/combat/weapons/first_person_axe.gd" id="17_axe"]
 [ext_resource type="Script" path="res://modules/world_player_v2/features/terrain/terrain_interaction.gd" id="18_terrain"]
+[ext_resource type="Script" path="res://modules/world_player_v2/features/combat/weapons/first_person_terraformer.gd" id="19_terraformer"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -59,6 +60,9 @@ script = ExtResource("16_pistol")
 
 [node name="FirstPersonAxe" type="Node" parent="Components"]
 script = ExtResource("17_axe")
+
+[node name="FirstPersonTerraformer" type="Node" parent="Components"]
+script = ExtResource("19_terraformer")
 
 [node name="Systems" type="Node" parent="."]
 

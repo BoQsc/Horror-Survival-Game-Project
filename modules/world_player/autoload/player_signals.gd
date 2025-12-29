@@ -27,6 +27,9 @@ signal pistol_reload()  # Trigger reload animation
 signal axe_fired() # Trigger swing animation
 signal axe_ready() # Animation done, can swing again
 
+# Terraformer events
+signal terraformer_material_changed(material_name: String)
+
 # Interaction events
 signal interaction_available(target: Node, prompt: String)
 signal interaction_unavailable()
