@@ -20,6 +20,7 @@ var current_container: Node = null
 var container_inventory: Node = null
 var player_inventory: Node = null
 var just_closed: bool = false  # Prevents immediate reopening
+var just_opened: bool = false  # Prevents immediate closing
 
 func _ready() -> void:
 	add_to_group("container_panel")
@@ -53,7 +54,7 @@ func _input(event: InputEvent) -> void:
 
 func _on_inventory_toggled(is_open: bool) -> void:
 	# Close container when player inventory opens
-	if is_open and visible:
+	if is_open and visible and not just_opened:
 		close_container()
 
 func open_container(container: Node) -> void:
@@ -92,9 +93,17 @@ func open_container(container: Node) -> void:
 	visible = true
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	
+	# Prevent immediate closing
+	just_opened = true
+	get_tree().create_timer(0.3).timeout.connect(func(): just_opened = false)
+	
 	DebugSettings.log_player("CONTAINER_UI: Opened %s with %d slots" % [container_name, container_inventory.slot_count])
 
 func close_container() -> void:
+	# Don't close if just opened
+	if just_opened:
+		return
+	
 	visible = false
 	current_container = null
 	container_inventory = null
@@ -103,7 +112,7 @@ func close_container() -> void:
 	
 	# Prevent immediate reopening
 	just_closed = true
-	get_tree().create_timer(0.1).timeout.connect(func(): just_closed = false)
+	get_tree().create_timer(0.3).timeout.connect(func(): just_closed = false)
 	
 	if has_node("/root/ContainerSignals"):
 		ContainerSignals.container_closed.emit()
