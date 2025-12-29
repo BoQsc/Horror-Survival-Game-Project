@@ -246,13 +246,14 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 		local_cells.append(local_cell)
 	
 	var chunk = get_chunk(chunk_coord)
-	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
 	
-	# Populate loot for containers if spawned procedurally
-	# Object IDs: 1 = Cardboard Box, 2 = Long Crate
-	if success and is_procedural and scene_instance and scene_instance.has_method("populate_loot"):
-		# Defer to ensure _ready() has completed
-		scene_instance.call_deferred("populate_loot")
+	# Mark container for loot population BEFORE adding to tree
+	# This allows _ready() to populate after creating the inventory
+	if is_procedural and scene_instance and scene_instance.has_method("populate_loot"):
+		scene_instance.set_meta("should_populate_loot", true)
+		print("[LOOT_DEBUG] Marked container for loot population")
+	
+	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
 	
 	return success
 

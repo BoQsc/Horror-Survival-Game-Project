@@ -36,6 +36,13 @@ func _ready() -> void:
 	if has_node("/root/ContainerSignals"):
 		ContainerSignals.container_closed.connect(_on_container_closed)
 	
+	print("[LOOT_DEBUG] Container _ready: %s, has_meta=%s" % [container_name, has_meta("should_populate_loot")])
+	
+	# Auto-populate loot if marked by building system (procedural spawn)
+	if has_meta("should_populate_loot") and get_meta("should_populate_loot"):
+		print("[LOOT_DEBUG] Container auto-populating from _ready")
+		populate_loot()
+	
 	DebugSettings.log_player("CONTAINER: Initialized %s with %d slots" % [container_name, slot_count])
 
 ## Called by player interaction system to get prompt text
@@ -74,7 +81,9 @@ func get_inventory() -> ContainerInventory:
 ## Populate container with random loot (Called by prefab spawner, NOT player placement)
 ## This ensures player-placed containers remain empty
 func populate_loot() -> void:
+	print("[LOOT_DEBUG] populate_loot called on %s, is_populated=%s, has_inventory=%s" % [container_name, is_populated, container_inventory != null])
 	if is_populated or not container_inventory:
+		print("[LOOT_DEBUG] Skipping - already populated or no inventory")
 		return
 	
 	is_populated = true
