@@ -116,7 +116,15 @@ func route_secondary_action(item: Dictionary) -> void:
 		if mode_build and mode_build.has_method("handle_secondary"):
 			mode_build.handle_secondary(item)
 	else: # PLAY mode
-		# Secondary in play mode goes to terrain interaction for bucket/resource placement
+		var category = item.get("category", 0)
+		
+		# TERRAFORMER (shovel) - route to combat_system for fill action
+		if category == 7:
+			if combat_system and combat_system.has_method("handle_secondary"):
+				combat_system.handle_secondary(item)
+			return
+		
+		# Other items - terrain interaction for bucket/resource placement
 		if terrain_interaction and terrain_interaction.has_method("handle_secondary"):
 			terrain_interaction.handle_secondary(item)
 		elif combat_system and combat_system.has_method("handle_secondary"):
