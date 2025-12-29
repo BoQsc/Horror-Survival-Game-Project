@@ -11,7 +11,7 @@ enum ItemCategory {
 	BLOCK, # Cube, Ramp, Stairs - building blocks
 	OBJECT, # Door, Window, Table - functional grid items
 	PROP, # Food cans, decorations - free-placed items
-	TERRAFORMER # Grid-snapped terrain dig/fill tool
+	SHOVEL # Grid-snapped terrain dig/fill tool
 }
 
 # Item structure:
@@ -56,11 +56,11 @@ static func get_test_items() -> Array[Dictionary]:
 			"mining_strength": 0.0,
 			"stack_size": 1
 		},
-		# Slot 3 (key 4): Terraformer
+		# Slot 3 (key 4): Shovel
 		{
-			"id": "terraformer",
-			"name": "Terraformer",
-			"category": ItemCategory.TERRAFORMER,
+			"id": "shovel",
+			"name": "Shovel",
+			"category": ItemCategory.SHOVEL,
 			"damage": 0,
 			"mining_strength": 0.0,
 			"stack_size": 1
@@ -154,7 +154,7 @@ static func is_build_item(item: Dictionary) -> bool:
 
 ## Check if category is a PLAY mode tool
 static func is_play_category(category: ItemCategory) -> bool:
-	return category in [ItemCategory.NONE, ItemCategory.TOOL, ItemCategory.BUCKET, ItemCategory.RESOURCE, ItemCategory.TERRAFORMER]
+	return category in [ItemCategory.NONE, ItemCategory.TOOL, ItemCategory.BUCKET, ItemCategory.RESOURCE, ItemCategory.SHOVEL]
 
 ## Get the legacy Fists item (hidden, not in default hotbar)
 ## Can be spawned via console or given to player programmatically

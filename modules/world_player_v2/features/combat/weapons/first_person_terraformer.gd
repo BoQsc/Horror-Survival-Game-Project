@@ -1,6 +1,6 @@
 extends Node
-class_name FirstPersonTerraformerV2
-## FirstPersonTerraformer - Handles grid-snapped terrain dig/fill with material selection
+class_name FirstPersonShovelV2
+## FirstPersonShovel - Handles grid-snapped terrain dig/fill with material selection
 ## CTRL + 1-7 to select material, Left-click to dig, Right-click to fill
 
 # Material definitions (id matches gen_density.glsl material IDs)
@@ -35,7 +35,7 @@ const BRUSH_SHAPE: int = 1  # 1 = Box shape in modify_density.glsl
 func _ready() -> void:
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
-		push_error("FirstPersonTerraformer: Must be child of Player/Components node")
+		push_error("FirstPersonShovel: Must be child of Player/Components node")
 		return
 	
 	call_deferred("_find_terrain_manager")
@@ -45,12 +45,12 @@ func _ready() -> void:
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
 	
-	print("TERRAFORMER: Initialized, default material = %s" % MATERIALS[material_index].name)
+	print("SHOVEL: Initialized, default material = %s" % MATERIALS[material_index].name)
 
 func _find_terrain_manager() -> void:
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	if not terrain_manager:
-		push_warning("FirstPersonTerraformer: terrain_manager not found")
+		push_warning("FirstPersonShovel: terrain_manager not found")
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
@@ -92,10 +92,10 @@ func _input(event: InputEvent) -> void:
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var was_active = is_active
-	is_active = (item_id == "terraformer")
+	is_active = (item_id == "shovel")
 	
 	if is_active:
-		print("TERRAFORMER: Equipped - CTRL+1-7 to select material, current = %s" % MATERIALS[material_index].name)
+		print("SHOVEL: Equipped - CTRL+1-7 to select material, current = %s" % MATERIALS[material_index].name)
 		# Emit current material for HUD
 		if has_node("/root/PlayerSignals") and PlayerSignals.has_signal("terraformer_material_changed"):
 			PlayerSignals.terraformer_material_changed.emit(MATERIALS[material_index].name)
@@ -112,7 +112,7 @@ func _set_material(index: int) -> void:
 	
 	material_index = index
 	var mat = MATERIALS[material_index]
-	print("TERRAFORMER: Material selected = %s (id=%d)" % [mat.name, mat.id])
+	print("SHOVEL: Material selected = %s (id=%d)" % [mat.name, mat.id])
 	
 	# Emit signal for HUD update
 	if has_node("/root/PlayerSignals") and PlayerSignals.has_signal("terraformer_material_changed"):
@@ -156,7 +156,7 @@ func do_primary_action() -> void:
 	
 	# Dig with box shape (value > 0 = remove terrain)
 	terrain_manager.modify_terrain(target, BRUSH_SIZE, 1.0, BRUSH_SHAPE, 0)
-	print("TERRAFORMER: Dig at %s" % target)
+	print("SHOVEL: Dig at %s" % target)
 
 ## Call this from combat_system for right-click
 func do_secondary_action() -> void:
@@ -176,7 +176,7 @@ func do_secondary_action() -> void:
 	
 	# Fill with box shape (value < 0 = add terrain)
 	terrain_manager.modify_terrain(target, BRUSH_SIZE, -1.0, BRUSH_SHAPE, 0, mat_id)
-	print("TERRAFORMER: Fill at %s with %s (mat_id=%d)" % [target, MATERIALS[material_index].name, mat_id])
+	print("SHOVEL: Fill at %s with %s (mat_id=%d)" % [target, MATERIALS[material_index].name, mat_id])
 
 func _raycast(distance: float) -> Dictionary:
 	if not player:
