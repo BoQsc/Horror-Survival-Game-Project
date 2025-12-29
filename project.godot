@@ -33,7 +33,7 @@ window/size/mode=3
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/3d-first-person-wasd-input-actions/plugin.cfg", "res://addons/camera3d_templates/plugin.cfg")
+enabled=PackedStringArray("res://addons/camera3d_templates/plugin.cfg")
 
 [input]
 
