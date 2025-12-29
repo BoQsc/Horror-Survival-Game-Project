@@ -1907,24 +1907,33 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 	return tex3d
 
 func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array(), cpu_mat: PackedByteArray = PackedByteArray(), start_mod_version: int = 0):
-	# STALE CHECK: Skip updates from older modifications that completed after newer ones
-	if active_chunks.has(coord):
-		var chunk_data = active_chunks[coord]
-		if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
-			DebugSettings.log_chunk("STALE: Skipping update for %s (v%d < v%d)" % [coord, start_mod_version, chunk_data.mod_version])
-			return
-	
+	# For non-batched updates, do stale check here
 	if batch_id == -1:
+		# STALE CHECK for non-batched updates
+		if active_chunks.has(coord):
+			var chunk_data = active_chunks[coord]
+			if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
+				DebugSettings.log_chunk("STALE: Skipping non-batched update for %s (v%d < v%d)" % [coord, start_mod_version, chunk_data.mod_version])
+				return
 		_apply_chunk_update(coord, result, layer, cpu_dens, cpu_mat, start_mod_version)
 		return
 	
+	# BATCHED UPDATES: Must track batch counter even for stale updates
 	if not pending_batches.has(batch_id):
 		pending_batches[batch_id] = {"received": 0, "expected": batch_count, "updates": []}
 	
 	var batch = pending_batches[batch_id]
-	batch.received += 1
+	batch.received += 1  # Always increment, even if stale (to complete the batch)
 	
+	# Only add to updates list if not stale
+	var is_stale = false
 	if active_chunks.has(coord):
+		var chunk_data = active_chunks[coord]
+		if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
+			DebugSettings.log_chunk("STALE: Skipping batched update for %s (v%d < v%d)" % [coord, start_mod_version, chunk_data.mod_version])
+			is_stale = true
+	
+	if not is_stale and active_chunks.has(coord):
 		batch.updates.append({"coord": coord, "result": result, "layer": layer, "cpu_dens": cpu_dens, "cpu_mat": cpu_mat, "start_mod_version": start_mod_version})
 		
 	if batch.received >= batch.expected:
