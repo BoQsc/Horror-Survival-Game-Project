@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3 uid="uid://c8iimeavbdci7"]
+[gd_scene load_steps=18 format=3 uid="uid://be152jvxotx5q"]
 
 [ext_resource type="PackedScene" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
 [ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
@@ -43,7 +43,7 @@ environment = SubResource("Env")
 transform = Transform3D(-0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, 0.75, -0.433013, 0, 0, 0)
 shadow_enabled = true
 
-[node name="WorldPlayerV2" parent="." groups=["player"] instance=ExtResource("1_worldplayer")]
+[node name="WorldPlayerV2" parent="." instance=ExtResource("1_worldplayer")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
 
 [node name="UI" type="Control" parent="."]

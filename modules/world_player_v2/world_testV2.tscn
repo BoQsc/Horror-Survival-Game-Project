@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3 uid="uid://c8iimeavbdci7"]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource type="PackedScene" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
 [ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
