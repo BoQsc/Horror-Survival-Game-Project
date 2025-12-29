@@ -1,6 +1,7 @@
-[gd_scene load_steps=4 format=3 uid="uid://cv1d504wvqoxr"]
+[gd_scene load_steps=6 format=3 uid="uid://cv1d504wvqoxr"]
 
 [ext_resource type="PackedScene" uid="uid://cn6o0wfqp4mky" path="res://models/objects/cardboard/1/cc0_free_cardboard_box.glb" id="1_box"]
+[ext_resource type="Script" path="res://modules/world_player_v2/features/containers/container_interactable.gd" id="2_script"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
 transparency = 1
@@ -8,9 +9,21 @@ albedo_color = Color(0.2, 0.5, 1, 0.3)
 
 [sub_resource type="BoxMesh" id="BoxMesh_1"]
 
-[node name="CardboardBox" type="Node3D"]
+[sub_resource type="BoxShape3D" id="BoxShape3D_1"]
+size = Vector3(0.8, 0.7, 0.8)
+
+[node name="CardboardBox" type="StaticBody3D" groups=["containers", "interactable", "objects"]]
+collision_layer = 4
+collision_mask = 0
+script = ExtResource("2_script")
+slot_count = 6
+container_name = "Cardboard Box"
 
 [node name="BoxModel" parent="." instance=ExtResource("1_box")]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+shape = SubResource("BoxShape3D_1")
 
 [node name="PlacementGuides" type="Node3D" parent="."]
 visible = false

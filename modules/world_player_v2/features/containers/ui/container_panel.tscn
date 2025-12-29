@@ -1,0 +1,71 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://modules/world_player_v2/features/containers/ui/container_panel.gd" id="1_panel"]
+
+[node name="ContainerPanel" type="PanelContainer"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -450.0
+offset_top = -180.0
+offset_right = 450.0
+offset_bottom = 180.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_panel")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="Header" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="VBox/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "CONTAINER"
+horizontal_alignment = 1
+
+[node name="CloseButton" type="Button" parent="VBox/Header"]
+layout_mode = 2
+text = "X"
+
+[node name="HSeparator" type="HSeparator" parent="VBox"]
+layout_mode = 2
+
+[node name="Content" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="ContainerSection" type="VBoxContainer" parent="VBox/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ContainerLabel" type="Label" parent="VBox/Content/ContainerSection"]
+layout_mode = 2
+text = "Container"
+horizontal_alignment = 1
+
+[node name="ContainerGrid" type="GridContainer" parent="VBox/Content/ContainerSection"]
+layout_mode = 2
+size_flags_vertical = 3
+columns = 6
+
+[node name="VSeparator" type="VSeparator" parent="VBox/Content"]
+layout_mode = 2
+
+[node name="InventorySection" type="VBoxContainer" parent="VBox/Content"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="InventoryLabel" type="Label" parent="VBox/Content/InventorySection"]
+layout_mode = 2
+text = "Your Inventory"
+horizontal_alignment = 1
+
+[node name="InventoryGrid" type="GridContainer" parent="VBox/Content/InventorySection"]
+layout_mode = 2
+size_flags_vertical = 3
+columns = 9

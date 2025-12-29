@@ -1,6 +1,7 @@
-[gd_scene load_steps=4 format=3 uid="uid://dsbf11hgy5m0p"]
+[gd_scene load_steps=6 format=3 uid="uid://dsbf11hgy5m0p"]
 
 [ext_resource type="PackedScene" uid="uid://dvdsreoeekta8" path="res://models/objects/crate/1/simple_long_crate.glb" id="1_crate"]
+[ext_resource type="Script" path="res://modules/world_player_v2/features/containers/container_interactable.gd" id="2_script"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
 transparency = 1
@@ -8,10 +9,22 @@ albedo_color = Color(0.2, 0.5, 1, 0.3)
 
 [sub_resource type="BoxMesh" id="BoxMesh_1"]
 
-[node name="SimpleLongCrate" type="Node3D"]
+[sub_resource type="BoxShape3D" id="BoxShape3D_1"]
+size = Vector3(1.8, 0.7, 0.8)
+
+[node name="SimpleLongCrate" type="StaticBody3D" groups=["containers", "interactable", "objects"]]
+collision_layer = 4
+collision_mask = 0
+script = ExtResource("2_script")
+slot_count = 12
+container_name = "Long Crate"
 
 [node name="CrateModel" parent="." instance=ExtResource("1_crate")]
 transform = Transform3D(-1.2523373e-08, 0, 0.2632489, 0, 0.33812726, 0, -0.28650138, 0, -1.1506975e-08, -0.004655361, 0.38655603, -0.05474502)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+shape = SubResource("BoxShape3D_1")
 
 [node name="PlacementGuides" type="Node3D" parent="."]
 visible = false
