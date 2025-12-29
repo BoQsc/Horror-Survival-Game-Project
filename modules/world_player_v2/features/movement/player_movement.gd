@@ -64,6 +64,11 @@ func _physics_process(delta: float) -> void:
 	if not player:
 		return
 	
+	# Skip movement if container UI is open
+	var container_panel = get_tree().get_first_node_in_group("container_panel")
+	if container_panel and container_panel.visible:
+		return
+	
 	_update_water_state()
 	
 	if is_swimming:

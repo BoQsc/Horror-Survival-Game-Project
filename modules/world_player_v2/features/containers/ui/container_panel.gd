@@ -19,8 +19,10 @@ var inventory_slots: Array = []
 var current_container: Node = null
 var container_inventory: Node = null
 var player_inventory: Node = null
+var just_closed: bool = false  # Prevents immediate reopening
 
 func _ready() -> void:
+	add_to_group("container_panel")
 	visible = false
 	close_button.pressed.connect(_on_close_pressed)
 	
@@ -35,12 +37,24 @@ func _ready() -> void:
 	# Try to connect to signals autoload
 	if has_node("/root/ContainerSignals"):
 		ContainerSignals.container_opened.connect(_on_container_opened)
+	
+	# Close container when player inventory opens
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.inventory_toggled.connect(_on_inventory_toggled)
 
 func _input(event: InputEvent) -> void:
 	if visible and event is InputEventKey and event.pressed:
 		if event.keycode == KEY_ESCAPE or event.keycode == KEY_E:
 			close_container()
 			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_I:
+			# Close container first, then let inventory open
+			close_container()
+
+func _on_inventory_toggled(is_open: bool) -> void:
+	# Close container when player inventory opens
+	if is_open and visible:
+		close_container()
 
 func open_container(container: Node) -> void:
 	current_container = container
@@ -86,6 +100,10 @@ func close_container() -> void:
 	container_inventory = null
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	closed.emit()
+	
+	# Prevent immediate reopening
+	just_closed = true
+	get_tree().create_timer(0.1).timeout.connect(func(): just_closed = false)
 	
 	if has_node("/root/ContainerSignals"):
 		ContainerSignals.container_closed.emit()

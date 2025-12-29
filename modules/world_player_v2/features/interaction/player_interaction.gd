@@ -57,6 +57,11 @@ func _input(event: InputEvent) -> void:
 			_exit_vehicle()
 		return
 	
+	# Skip E key processing if container UI is open or was just closed
+	var container_panel = get_tree().get_first_node_in_group("container_panel")
+	if container_panel and (container_panel.visible or container_panel.just_closed):
+		return
+	
 	if event is InputEventKey:
 		if event.keycode == KEY_E:
 			if event.pressed and not event.echo:
