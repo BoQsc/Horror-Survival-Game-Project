@@ -156,10 +156,25 @@ func handle_slot_drop(source_index: int, target_index: int) -> void:
 	if source_index == target_index:
 		return
 	
+	# Slot index ranges:
+	# 0-99: Container slots
+	# 100-109: Hotbar slots
+	# 200+: Player inventory slots
+	
 	var source_is_container = source_index < 100
-	var target_is_container = target_index < 100
+	var source_is_hotbar = source_index >= 100 and source_index < 200
 	var source_is_player = source_index >= 200
+	
+	var target_is_container = target_index < 100
+	var target_is_hotbar = target_index >= 100 and target_index < 200
 	var target_is_player = target_index >= 200
+	
+	# Get hotbar reference if needed
+	var hotbar: Node = null
+	if source_is_hotbar or target_is_hotbar:
+		var player_node = get_tree().get_first_node_in_group("player")
+		if player_node:
+			hotbar = player_node.get_node_or_null("Systems/Hotbar")
 	
 	# Determine source and target inventories
 	var source_inv: Node = null
@@ -170,6 +185,9 @@ func handle_slot_drop(source_index: int, target_index: int) -> void:
 	if source_is_container:
 		source_inv = container_inventory
 		source_idx = source_index
+	elif source_is_hotbar:
+		source_inv = hotbar
+		source_idx = source_index - 100
 	elif source_is_player:
 		source_inv = player_inventory
 		source_idx = source_index - 200
@@ -177,6 +195,9 @@ func handle_slot_drop(source_index: int, target_index: int) -> void:
 	if target_is_container:
 		target_inv = container_inventory
 		target_idx = target_index
+	elif target_is_hotbar:
+		target_inv = hotbar
+		target_idx = target_index - 100
 	elif target_is_player:
 		target_inv = player_inventory
 		target_idx = target_index - 200
@@ -212,8 +233,8 @@ func handle_slot_drop(source_index: int, target_index: int) -> void:
 	
 	refresh_display()
 	
-	# Emit player inventory changed signal if needed
-	if (source_is_player or target_is_player) and has_node("/root/PlayerSignals"):
+	# Emit inventory changed signal if player inventory or hotbar was affected
+	if (source_is_player or target_is_player or source_is_hotbar or target_is_hotbar) and has_node("/root/PlayerSignals"):
 		PlayerSignals.inventory_changed.emit()
 
 func _on_close_pressed() -> void:
