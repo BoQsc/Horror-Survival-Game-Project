@@ -251,7 +251,6 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	# This allows _ready() to populate after creating the inventory
 	if is_procedural and scene_instance and scene_instance.has_method("populate_loot"):
 		scene_instance.set_meta("should_populate_loot", true)
-		print("[LOOT_DEBUG] Marked container for loot population")
 	
 	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
 	
