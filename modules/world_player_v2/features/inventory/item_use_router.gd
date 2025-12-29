@@ -55,16 +55,13 @@ func _process(_delta: float) -> void:
 	
 	# Continuous primary action while holding left mouse
 	# Skip on the same frame as the initial click (already triggered from _input)
-	# NOTE: Skip continuous fire for SHOVEL (category 7) - terrain mods need single-click like legacy
+	# Terrain system now handles rapid mods with per-chunk versioning (stale update detection)
 	if is_primary_held:
 		if primary_triggered_this_frame:
 			primary_triggered_this_frame = false # Reset for next frame
 		else:
 			var item = hotbar.get_selected_item()
-			var category = item.get("category", 0)
-			# Skip continuous fire for SHOVEL - rapid terrain mods cause chunk seams
-			if category != 7:  # 7 = SHOVEL/TERRAFORMER
-				route_primary_action(item)
+			route_primary_action(item)
 
 func _input(event: InputEvent) -> void:
 	if not hotbar or not player:

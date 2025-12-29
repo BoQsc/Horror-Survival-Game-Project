@@ -82,6 +82,8 @@ class ChunkData:
 	# 3D texture for fragment shader sampling
 	var material_texture: ImageTexture3D = null
 	var chunk_material: ShaderMaterial = null # Per-chunk material instance
+	# Modification version - incremented on each modify, used to skip stale updates
+	var mod_version: int = 0
 
 var active_chunks: Dictionary = {}
 
@@ -573,7 +575,16 @@ func get_chunk_surface_height(coord: Vector3i, local_x: int, local_z: int) -> fl
 	return -1000.0
 
 # Updated to accept layer (0=Terrain, 1=Water) and optional material_id
+# Rate limiting to prevent GPU overload from rapid-fire calls
+var _last_modify_time_ms: int = 0
+const MODIFY_COOLDOWN_MS: int = 100  # Max 10 modifications per second
+
 func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0, material_id: int = -1):
+	# RATE LIMITING: Skip if called too quickly (prevents 60 GPU ops/sec when holding mouse)
+	var now_ms = Time.get_ticks_msec()
+	if now_ms - _last_modify_time_ms < MODIFY_COOLDOWN_MS:
+		return  # Skip this call, too soon after last one
+	_last_modify_time_ms = now_ms
 	# Calculate bounds of the modification sphere/box
 	# Add extra margin (1.0) to account for material radius extension and shader sampling
 	var extra_margin = 1.0 if material_id >= 0 else 0.0
@@ -618,6 +629,10 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 						if target_buffer.is_valid():
 							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 							
+							# Increment chunk's modification version and capture for stale detection
+							data.mod_version += 1
+							var start_mod_version = data.mod_version
+							
 							var task = {
 								"type": "modify",
 								"coord": coord,
@@ -629,7 +644,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 								"value": value,
 								"shape": shape,
 								"layer": layer,
-								"material_id": material_id
+								"material_id": material_id,
+								"start_mod_version": start_mod_version  # For stale detection
 							}
 							DebugSettings.log_chunk("modify_terrain TASK: coord=%s mat_id=%d mat_buf_valid=%s" % [coord, material_id, data.material_buffer_terrain.is_valid()])
 							tasks_to_add.append(task)
@@ -1561,8 +1577,9 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	
 	var b_id = task.get("batch_id", -1)
 	var b_count = task.get("batch_count", 1)
+	var start_mod_version = task.get("start_mod_version", 0)
 	
-	call_deferred("complete_modification", task.coord, result, layer, b_id, b_count, cpu_density_floats, cpu_material_bytes)
+	call_deferred("complete_modification", task.coord, result, layer, b_id, b_count, cpu_density_floats, cpu_material_bytes, start_mod_version)
 
 func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
 	if data.size() == 0:
@@ -1889,9 +1906,16 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 	
 	return tex3d
 
-func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array(), cpu_mat: PackedByteArray = PackedByteArray()):
+func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array(), cpu_mat: PackedByteArray = PackedByteArray(), start_mod_version: int = 0):
+	# STALE CHECK: Skip updates from older modifications that completed after newer ones
+	if active_chunks.has(coord):
+		var chunk_data = active_chunks[coord]
+		if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
+			DebugSettings.log_chunk("STALE: Skipping update for %s (v%d < v%d)" % [coord, start_mod_version, chunk_data.mod_version])
+			return
+	
 	if batch_id == -1:
-		_apply_chunk_update(coord, result, layer, cpu_dens, cpu_mat)
+		_apply_chunk_update(coord, result, layer, cpu_dens, cpu_mat, start_mod_version)
 		return
 	
 	if not pending_batches.has(batch_id):
@@ -1901,17 +1925,23 @@ func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batc
 	batch.received += 1
 	
 	if active_chunks.has(coord):
-		batch.updates.append({"coord": coord, "result": result, "layer": layer, "cpu_dens": cpu_dens, "cpu_mat": cpu_mat})
+		batch.updates.append({"coord": coord, "result": result, "layer": layer, "cpu_dens": cpu_dens, "cpu_mat": cpu_mat, "start_mod_version": start_mod_version})
 		
 	if batch.received >= batch.expected:
 		for update in batch.updates:
-			_apply_chunk_update(update.coord, update.result, update.layer, update.cpu_dens, update.get("cpu_mat", PackedByteArray()))
+			_apply_chunk_update(update.coord, update.result, update.layer, update.cpu_dens, update.get("cpu_mat", PackedByteArray()), update.get("start_mod_version", 0))
 		pending_batches.erase(batch_id)
 
-func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_dens: PackedFloat32Array, cpu_mat: PackedByteArray = PackedByteArray()):
+func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_dens: PackedFloat32Array, cpu_mat: PackedByteArray = PackedByteArray(), start_mod_version: int = 0):
 	if not active_chunks.has(coord):
 		return
 	var data = active_chunks[coord]
+	
+	# STALE CHECK: Secondary check at application time (for batched updates)
+	if data != null and start_mod_version > 0 and start_mod_version < data.mod_version:
+		DebugSettings.log_chunk("STALE APPLY: Skipping update for %s (v%d < v%d)" % [coord, start_mod_version, data.mod_version])
+		return
+	
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 	
 	if layer == 0: # Terrain
