@@ -202,7 +202,8 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 	return true
 
 ## Place an object at the given global position (supports fractional Y for terrain surface)
-func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false) -> bool:
+## Set is_procedural=true when spawning from prefab system to trigger loot population
+func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false, is_procedural: bool = false) -> bool:
 	if not ignore_collision and not can_place_object(global_pos, object_id, rotation):
 		return false
 	
@@ -245,7 +246,15 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 		local_cells.append(local_cell)
 	
 	var chunk = get_chunk(chunk_coord)
-	return chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
+	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
+	
+	# Populate loot for containers if spawned procedurally
+	# Object IDs: 1 = Cardboard Box, 2 = Long Crate
+	if success and is_procedural and scene_instance and scene_instance.has_method("populate_loot"):
+		# Defer to ensure _ready() has completed
+		scene_instance.call_deferred("populate_loot")
+	
+	return success
 
 ## Remove an object at the given global position
 func remove_object_at(global_pos: Vector3) -> bool:

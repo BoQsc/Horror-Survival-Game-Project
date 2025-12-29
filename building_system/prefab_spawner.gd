@@ -632,7 +632,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				
 				# Use object_id if available, otherwise try to load scene directly
 				if obj.has("object_id"):
-					if not building_manager.place_object(obj_pos, obj.object_id, combined_rot, true):
+					if not building_manager.place_object(obj_pos, obj.object_id, combined_rot, true, true):
 						# print("DEBUG_MISSING_OBJ: Failed to place object_id %d at %v (Rotation %d)" % [obj.object_id, obj_pos, combined_rot])
 						pass
 				elif obj.has("scene") and obj.scene != "":
