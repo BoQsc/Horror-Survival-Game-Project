@@ -535,9 +535,9 @@ func do_tool_attack(item: Dictionary) -> void:
 	
 	# Priority 5: Terrain instant mine
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
-		var mat_id = -1
-		if terrain_manager.has_method("get_material_at"):
-			mat_id = terrain_manager.get_material_at(position)
+		# Use mesh-based detection (matches HUD) instead of voxel grid
+		var hit_normal = hit.get("normal", Vector3.UP)
+		var mat_id = _get_material_at_hit(target, position, hit_normal)
 		
 		var actual_radius = max(mining_strength, 0.8)
 		DebugSettings.log_player("CombatSystem: Terrain mine at %s (tool: %s, radius: %.2f, mat: %d)" % [position, item_id, actual_radius, mat_id])
@@ -589,12 +589,12 @@ func _do_axe_damage(item: Dictionary) -> void:
 	
 	# Priority 5: Terrain mining
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
-		var mat_id = -1
-		if terrain_manager.has_method("get_material_at"):
-			mat_id = terrain_manager.get_material_at(position)
+		# Use mesh-based detection (matches HUD) instead of voxel grid
+		var hit_normal = hit.get("normal", Vector3.UP)
+		var mat_id = _get_material_at_hit(target, position, hit_normal)
 		
 		var actual_radius = max(mining_strength, 0.8)
-		print("AXE_DAMAGE_DEBUG: Terrain mine at %s, radius=%.2f" % [position, actual_radius])
+		print("AXE_DAMAGE_DEBUG: Terrain mine at %s, radius=%.2f, mat=%d" % [position, actual_radius, mat_id])
 		terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
 		
 		if mat_id >= 0:
@@ -636,6 +636,151 @@ func _raycast(distance: float, collide_with_areas: bool, exclude_water: bool) ->
 	if player and player.has_method("raycast"):
 		return player.raycast(distance, 0xFFFFFFFF, collide_with_areas, exclude_water)
 	return {}
+
+## Get material ID at hit position using mesh vertex colors (most accurate)
+## Falls back to voxel buffer lookup if mesh reading fails
+func _get_material_at_hit(target: Node, hit_pos: Vector3, hit_normal: Vector3) -> int:
+	# Try mesh-based detection first (accurate for small veins like ore)
+	var mat_id = _get_material_from_mesh(target, hit_pos)
+	
+	# Fallback to voxel buffer if mesh reading failed
+	if mat_id < 0 and terrain_manager and terrain_manager.has_method("get_material_at"):
+		# Sample INSIDE terrain, not at surface
+		var sample_pos = hit_pos - hit_normal * 0.3
+		mat_id = terrain_manager.get_material_at(sample_pos)
+	
+	return mat_id
+
+## Get material ID from mesh vertex color at hit point (100% accurate)
+## Finds the exact triangle containing the hit point and interpolates vertex colors
+func _get_material_from_mesh(terrain_node: Node, hit_pos: Vector3) -> int:
+	# Find the MeshInstance3D child of the terrain node
+	var mesh_instance: MeshInstance3D = null
+	for child in terrain_node.get_children():
+		if child is MeshInstance3D:
+			mesh_instance = child
+			break
+	
+	if not mesh_instance or not mesh_instance.mesh:
+		return -1
+	
+	var mesh = mesh_instance.mesh
+	if not mesh is ArrayMesh:
+		return -1
+	
+	# Get mesh data
+	var arrays = mesh.surface_get_arrays(0)
+	if arrays.is_empty():
+		return -1
+	
+	var vertices = arrays[Mesh.ARRAY_VERTEX]
+	var colors = arrays[Mesh.ARRAY_COLOR]
+	
+	if vertices.is_empty() or colors.is_empty():
+		return -1
+	
+	# Convert hit position to local mesh space
+	var local_pos = mesh_instance.global_transform.affine_inverse() * hit_pos
+	
+	# Find the triangle containing the hit point
+	var best_mat_id = -1
+	var best_dist = INF
+	
+	for i in range(0, vertices.size(), 3):
+		if i + 2 >= vertices.size():
+			break
+		
+		var v0 = vertices[i]
+		var v1 = vertices[i + 1]
+		var v2 = vertices[i + 2]
+		
+		# Quick rejection - skip triangles far from hit
+		var tri_center = (v0 + v1 + v2) / 3.0
+		var dist_to_center = local_pos.distance_squared_to(tri_center)
+		if dist_to_center > 4.0:
+			continue
+		
+		# Compute closest point on triangle
+		var closest_on_tri = _closest_point_on_triangle(local_pos, v0, v1, v2)
+		var dist = local_pos.distance_squared_to(closest_on_tri)
+		
+		if dist < best_dist:
+			best_dist = dist
+			# Get barycentric coordinates for interpolation
+			var bary = _barycentric(closest_on_tri, v0, v1, v2)
+			var c0 = colors[i]
+			var c1 = colors[i + 1]
+			var c2 = colors[i + 2]
+			# Interpolate color using barycentric weights
+			var interp_color = c0 * bary.x + c1 * bary.y + c2 * bary.z
+			best_mat_id = int(round(interp_color.r * 255.0))
+	
+	return best_mat_id
+
+## Compute barycentric coordinates of point P in triangle (A, B, C)
+func _barycentric(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> Vector3:
+	var v0 = b - a
+	var v1 = c - a
+	var v2 = p - a
+	
+	var d00 = v0.dot(v0)
+	var d01 = v0.dot(v1)
+	var d11 = v1.dot(v1)
+	var d20 = v2.dot(v0)
+	var d21 = v2.dot(v1)
+	
+	var denom = d00 * d11 - d01 * d01
+	if abs(denom) < 0.00001:
+		return Vector3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
+	
+	var v = (d11 * d20 - d01 * d21) / denom
+	var w = (d00 * d21 - d01 * d20) / denom
+	var u = 1.0 - v - w
+	
+	return Vector3(u, v, w)
+
+## Find the closest point on a triangle to a given point
+func _closest_point_on_triangle(p: Vector3, a: Vector3, b: Vector3, c: Vector3) -> Vector3:
+	var ab = b - a
+	var ac = c - a
+	var ap = p - a
+	
+	var d1 = ab.dot(ap)
+	var d2 = ac.dot(ap)
+	if d1 <= 0.0 and d2 <= 0.0:
+		return a
+	
+	var bp = p - b
+	var d3 = ab.dot(bp)
+	var d4 = ac.dot(bp)
+	if d3 >= 0.0 and d4 <= d3:
+		return b
+	
+	var vc = d1 * d4 - d3 * d2
+	if vc <= 0.0 and d1 >= 0.0 and d3 <= 0.0:
+		var v = d1 / (d1 - d3)
+		return a + ab * v
+	
+	var cp = p - c
+	var d5 = ab.dot(cp)
+	var d6 = ac.dot(cp)
+	if d6 >= 0.0 and d5 <= d6:
+		return c
+	
+	var vb = d5 * d2 - d1 * d6
+	if vb <= 0.0 and d2 >= 0.0 and d6 <= 0.0:
+		var w = d2 / (d2 - d6)
+		return a + ac * w
+	
+	var va = d3 * d6 - d5 * d4
+	if va <= 0.0 and (d4 - d3) >= 0.0 and (d5 - d6) >= 0.0:
+		var w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+		return b + (c - b) * w
+	
+	var denom = 1.0 / (va + vb + vc)
+	var v = vb * denom
+	var w = vc * denom
+	return a + ab * v + ac * w
 
 func _find_damageable(target: Node) -> Node:
 	if not target:
@@ -786,7 +931,9 @@ func _do_terrain_punch(item: Dictionary, position: Vector3) -> void:
 	if terrain_damage[terrain_pos] >= TERRAIN_HP:
 		var mat_id = -1
 		if terrain_manager.has_method("get_material_at"):
-			mat_id = terrain_manager.get_material_at(position)
+			# Sample INSIDE terrain (0.3 units down from surface)
+			var sample_pos = position - Vector3(0, 0.3, 0)
+			mat_id = terrain_manager.get_material_at(sample_pos)
 		
 		var center = Vector3(terrain_pos) + Vector3(0.5, 0.5, 0.5)
 		terrain_manager.modify_terrain(center, 0.6, 1.0, 1, 0, -1)
