@@ -187,23 +187,10 @@ void fragment() {
 	// IDs: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow, 6=Road, 100+=Player
 	int mat_id = int(round(vertex_color.r * 255.0));
 	
-	// Check for player-placed material override from 3D texture
-	// Player materials (100+) are written to material_map when player places blocks
-	bool is_player_placed = false;
-	if (has_material_map) {
-		// Sample material map at vertex position (biased toward solid)
-		vec3 biased_pos = local_vertex - normal * 0.8;
-		vec3 voxel_pos = floor(biased_pos + vec3(0.5));
-		vec3 local_pos = clamp(voxel_pos / 32.0, vec3(0.0), vec3(1.0));
-		float mat_raw = texture(material_map, local_pos).r;
-		int sampled_id = int(round(mat_raw * 255.0));
-		
-		// Player-placed materials (100+) override procedural
-		if (sampled_id >= 100) {
-			mat_id = sampled_id;
-			is_player_placed = true;
-		}
-	}
+	// Player-placed materials detection
+	// The vertex_color already contains correct per-vertex material from marching_cubes.glsl
+	// Material IDs >= 100 indicate player-placed blocks
+	bool is_player_placed = (mat_id >= 100);
 	
 	// === Material Lookup with Smooth Biome Blending ===
 	vec3 base_color;

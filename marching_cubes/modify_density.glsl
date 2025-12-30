@@ -30,6 +30,9 @@ void main() {
     vec3 local_pos = vec3(id);
     vec3 world_pos = local_pos + vec3(params.chunk_offset.xyz);
     
+    // Store original density BEFORE any modification (for "New Matter Only" rule)
+    float original_density = density_buffer.values[index];
+    
     bool modified = false;
     
     if (params.shape_type == 2) {
@@ -46,8 +49,8 @@ void main() {
             density_buffer.values[index] = params.brush_value;
             modified = true;
         }
-    } else if (params.shape_type == 1) {
-        // Box Shape (Hard edges)
+    } else if (params.shape_type == 1 || params.shape_type == 3) {
+        // Box Shape (Hard edges) - Type 1 (Standard) and Type 3 (Precise)
         vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
         float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
         
@@ -69,31 +72,12 @@ void main() {
         }
     }
     
-    // Write material when PLACING terrain (negative brush_value = adding solid)
-    // Different logic for small vs large brushes:
-    // - Small brushes: extended radius BUT only to solid voxels (prevents spill)
-    // - Large brushes: simple extension (enough coverage without spill issues)
-    if (params.material_id >= 0 && params.brush_value < 0.0) {
-        vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
-        float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
-        float brush_radius = params.brush_pos.w;
-        
-        bool should_write = false;
-        
-        if (brush_radius < 1.0) {
-            // SMALL BRUSH: extended radius (+0.6) but only to solid voxels
-            float material_radius = brush_radius + 0.6;
-            float current_density = density_buffer.values[index];
-            should_write = (max_dist <= material_radius && current_density < 0.0);
-        } else {
-            // LARGE BRUSH: simple extension (+0.49), no solid check needed
-            float material_radius = brush_radius + 0.49;
-            should_write = (max_dist <= material_radius);
-        }
-        
-        if (should_write) {
-            material_buffer.values[index] = uint(params.material_id);
-        }
+    // SIMPLE MATERIAL RULE:
+    // If we modified THIS voxel AND we're placing (not digging) AND material_id is set
+    // → write material to THIS voxel
+    // No radius extension. No complexity. Exact match only.
+    if (modified && params.material_id >= 0 && params.brush_value < 0.0) {
+        material_buffer.values[index] = uint(params.material_id);
     }
     
     // NOTE: When digging (brush_value > 0), we do NOT reset materials.
