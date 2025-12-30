@@ -90,10 +90,9 @@ void main() {
             float sample_dist = max(abs(sample_offset.x), max(abs(sample_offset.y), abs(sample_offset.z)));
             should_write = (sample_dist <= 1.0 && original_density > 0.0);
         } else if (brush_radius < 1.0) {
-            // SMALL BRUSH: extended radius (+0.6) but only to solid voxels
-            float material_radius = brush_radius + 0.6;
-            float current_density = density_buffer.values[index];
-            should_write = (max_dist <= material_radius && current_density < 0.0);
+            // SMALL BRUSH: material matches density area exactly (no extension)
+            // This prevents smudging into neighboring voxels
+            should_write = modified;
         } else {
             // LARGE BRUSH: simple extension (+0.49), no solid check needed
             float material_radius = brush_radius + 0.49;

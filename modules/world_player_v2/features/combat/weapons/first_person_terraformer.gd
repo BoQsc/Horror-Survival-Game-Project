@@ -29,7 +29,7 @@ var has_target: bool = false
 
 # Constants
 const RAYCAST_DISTANCE: float = 10.0
-const BRUSH_SIZE: float = 0.6  # Box size for 1x1x1 voxel operations
+const BRUSH_SIZE: float = 0.5  # Exactly covers one grid cell (center ±0.5)
 const BRUSH_SHAPE: int = 1  # 1 = Box shape in modify_density.glsl
 
 func _ready() -> void:
