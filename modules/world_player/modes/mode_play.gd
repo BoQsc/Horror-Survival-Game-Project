@@ -800,21 +800,23 @@ func _do_resource_place(item: Dictionary) -> void:
 	
 	# Use grid-aligned position if targeting is active
 	if has_target:
-		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
-		# Fixed 0.6 brush size, box shape (1), terrain layer (0), with mat_id
-		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0, mat_id)
+		var center = current_target_pos
+		# Fixed 0.25 brush size (Single Vertex), Precise Box shape (3), terrain layer (0), with mat_id
+		# Use -10.0 density for "Hard Place" (Instant Isosurface Snap)
+		terrain_manager.modify_terrain(center, 0.25, -10.0, 3, 0, mat_id)
 		_consume_selected_item()
-		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
+		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s (Hard)" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
 		var hit = player.raycast(5.0)
 		if hit.is_empty():
 			return
 		# Target voxel outside terrain (adjacent to hit surface)
 		var p = hit.position + hit.normal * 0.1
-		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, 0, mat_id)
+		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z))
+		# Hard Place (Single Vertex)
+		terrain_manager.modify_terrain(target_pos, 0.25, -10.0, 3, 0, mat_id)
 		_consume_selected_item()
-		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, target_pos])
+		DebugSettings.log_player("ModePlay: Placed %s (mat:%d) at %s (Hard Fallback)" % [item.get("name", "resource"), mat_id, target_pos])
 
 ## Place vegetation (grass or rock) at raycast hit position
 func _do_vegetation_place(veg_type: String) -> void:

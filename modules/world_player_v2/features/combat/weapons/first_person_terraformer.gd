@@ -152,11 +152,11 @@ func do_primary_action() -> void:
 	
 	# Dig: step INTO the surface to get the voxel to remove
 	var pos = hit.position - hit.normal * 0.1
-	var target = Vector3(floor(pos.x) + 0.5, floor(pos.y) + 0.5, floor(pos.z) + 0.5)
+	var target = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
-	# Dig with box shape (value > 0 = remove terrain)
-	# Use 0.5 (not 1.0) for proper marching cubes interpolation at chunk boundaries
-	terrain_manager.modify_terrain(target, BRUSH_SIZE, 0.5, BRUSH_SHAPE, 0)
+	# DIG: Positive density = Air
+	# Use +10.0 for "Hard Dig" (Instant removal)
+	terrain_manager.modify_terrain(target, BRUSH_SIZE, 10.0, BRUSH_SHAPE, 0, -1)
 	print("SHOVEL: Dig at %s" % target)
 
 ## Call this from combat_system for right-click
@@ -170,14 +170,14 @@ func do_secondary_action() -> void:
 	
 	# Fill: step AWAY from surface to place adjacent voxel
 	var pos = hit.position + hit.normal * 0.1
-	var target = Vector3(floor(pos.x) + 0.5, floor(pos.y) + 0.5, floor(pos.z) + 0.5)
+	var target = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
 	# Get material ID (add 100 offset for player-placed materials)
 	var mat_id = MATERIALS[material_index].id + 100
 	
 	# Fill with box shape (value < 0 = add terrain)
-	# Use -0.5 (not -1.0) for proper marching cubes interpolation at chunk boundaries
-	terrain_manager.modify_terrain(target, BRUSH_SIZE, -0.5, BRUSH_SHAPE, 0, mat_id)
+	# Use -10.0 for "Hard Fill" (Instant solid)
+	terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
 	print("SHOVEL: Fill at %s with %s (mat_id=%d)" % [target, MATERIALS[material_index].name, mat_id])
 
 func _raycast(distance: float) -> Dictionary:
