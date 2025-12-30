@@ -30,6 +30,9 @@ void main() {
     vec3 local_pos = vec3(id);
     vec3 world_pos = local_pos + vec3(params.chunk_offset.xyz);
     
+    // Store original density BEFORE modification (for shovel spill prevention)
+    float original_density = density_buffer.values[index];
+    
     bool modified = false;
     
     if (params.shape_type == 2) {
@@ -81,8 +84,11 @@ void main() {
         bool should_write = false;
         
         if (params.shape_type == 3) {
-            // SHOVEL (Shape 3): Material goes where density was modified. No radius.
-            should_write = modified;
+            // SHOVEL (Shape 3): Mesh-aligned sampling + spill prevention
+            // Write to area sampled by cubes, BUT only if voxel was originally AIR
+            vec3 sample_offset = world_pos - params.brush_pos.xyz + vec3(0.5);
+            float sample_dist = max(abs(sample_offset.x), max(abs(sample_offset.y), abs(sample_offset.z)));
+            should_write = (sample_dist <= 1.0 && original_density > 0.0);
         } else if (brush_radius < 1.0) {
             // SMALL BRUSH: extended radius (+0.6) but only to solid voxels
             float material_radius = brush_radius + 0.6;
