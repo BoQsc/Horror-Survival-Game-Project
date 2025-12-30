@@ -46,8 +46,8 @@ void main() {
             density_buffer.values[index] = params.brush_value;
             modified = true;
         }
-    } else if (params.shape_type == 1) {
-        // Box Shape (Hard edges)
+    } else if (params.shape_type == 1 || params.shape_type == 3) {
+        // Box Shape (Hard edges) - Type 1 (Standard) and Type 3 (Shovel)
         vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
         float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
         
@@ -80,7 +80,10 @@ void main() {
         
         bool should_write = false;
         
-        if (brush_radius < 1.0) {
+        if (params.shape_type == 3) {
+            // SHOVEL (Shape 3): Material goes where density was modified. No radius.
+            should_write = modified;
+        } else if (brush_radius < 1.0) {
             // SMALL BRUSH: extended radius (+0.6) but only to solid voxels
             float material_radius = brush_radius + 0.6;
             float current_density = density_buffer.values[index];
