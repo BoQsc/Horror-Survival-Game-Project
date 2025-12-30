@@ -156,8 +156,8 @@ void main() {
         vec3 v2 = vertList[triTable[cubeIndex * 16 + i + 1]];
         vec3 v3 = vertList[triTable[cubeIndex * 16 + i + 2]];
 
-        // Get material from cube position (matches where modify_density.glsl writes)
-        uint mat_id = get_material_from_buffer(pos);
+        // Get material color from center of cube
+        uint mat_id = get_material_from_buffer(pos + vec3(0.5));
         vec3 mat_color = material_to_color(mat_id);
         
         // Vertex 1
