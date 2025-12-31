@@ -429,6 +429,26 @@ func get_water_density(global_pos: Vector3) -> float:
 		
 	return 1.0
 
+## Returns true when initial terrain chunks are visually ready (meshes created)
+func is_initial_load_complete() -> bool:
+	pending_nodes_mutex.lock()
+	var nodes_empty = pending_nodes.is_empty()
+	pending_nodes_mutex.unlock()
+	return not initial_load_phase and nodes_empty
+
+## Progress: 0.0-1.0 based on chunks loaded during initial phase
+func get_loading_progress() -> float:
+	if initial_load_target_chunks <= 0:
+		return 1.0
+	return clamp(float(chunks_loaded_initial) / initial_load_target_chunks, 0.0, 1.0)
+
+## Get count of pending nodes waiting to be finalized (for loading screen)
+func get_pending_nodes_count() -> int:
+	pending_nodes_mutex.lock()
+	var count = pending_nodes.size()
+	pending_nodes_mutex.unlock()
+	return count
+
 ## Get material ID at world position (reads from CPU-cached chunk data)
 ## Returns -1 if position is outside loaded chunks or no material data
 func get_material_at(global_pos: Vector3) -> int:

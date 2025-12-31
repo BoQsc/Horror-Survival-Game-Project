@@ -1,7 +1,7 @@
 extends CanvasLayer
 class_name LoadingScreen
 ## LoadingScreen - Displays loading progress during game startup
-## Shows progress bar and current loading step in corner
+## Tracks visual completion: terrain meshes, buildings, and vegetation
 
 @onready var panel: PanelContainer = $Panel
 @onready var progress_bar: ProgressBar = $Panel/VBox/ProgressBar
@@ -12,7 +12,7 @@ var fade_timer: float = 0.0
 const FADE_DURATION: float = 0.5
 
 # Loading stages
-enum Stage { TERRAIN, PREFABS, COMPLETE }
+enum Stage { TERRAIN, PREFABS, VEGETATION, COMPLETE }
 var current_stage: Stage = Stage.TERRAIN
 
 func _ready() -> void:
@@ -28,6 +28,7 @@ func _ready() -> void:
 func _start_loading_sequence() -> void:
 	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	var building_generator = get_tree().root.find_child("BuildingGenerator", true, false)
+	var vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 	
 	if not terrain_manager:
 		# No terrain manager, hide after short delay
@@ -36,39 +37,54 @@ func _start_loading_sequence() -> void:
 		_start_fade_out()
 		return
 	
-	# Stage 1: Terrain chunks (vegetation loads automatically with terrain)
+	# Stage 1: Terrain chunks - wait for VISUAL completion (pending_nodes empty)
 	current_stage = Stage.TERRAIN
 	while is_loading and current_stage == Stage.TERRAIN:
 		if terrain_manager and is_instance_valid(terrain_manager):
-			var initial_phase = terrain_manager.get("initial_load_phase")
-			var chunks_loaded = terrain_manager.get("chunks_loaded_initial")
-			var target_chunks = terrain_manager.get("initial_load_target_chunks")
+			# Use new helper methods if available
+			var is_complete = false
+			if terrain_manager.has_method("is_initial_load_complete"):
+				is_complete = terrain_manager.is_initial_load_complete()
+			else:
+				# Fallback to old method
+				is_complete = terrain_manager.get("initial_load_phase") == false
 			
-			if initial_phase == false:
-				# Terrain loading complete, move to next stage
+			if is_complete:
+				# Terrain visually complete, move to next stage
 				update_progress(100.0, "Terrain loaded!")
 				current_stage = Stage.PREFABS
 				break
-			elif target_chunks != null and target_chunks > 0:
-				var percent = (float(chunks_loaded) / float(target_chunks)) * 100.0
-				update_progress(percent, "Loading terrain: %d/%d" % [chunks_loaded, target_chunks])
+			else:
+				# Show progress
+				var progress = 0.0
+				if terrain_manager.has_method("get_loading_progress"):
+					progress = terrain_manager.get_loading_progress() * 100.0
+				else:
+					var chunks_loaded = terrain_manager.get("chunks_loaded_initial")
+					var target = terrain_manager.get("initial_load_target_chunks")
+					if target != null and target > 0:
+						progress = (float(chunks_loaded) / float(target)) * 100.0
+				
+				var pending = 0
+				if terrain_manager.has_method("get_pending_nodes_count"):
+					pending = terrain_manager.get_pending_nodes_count()
+				
+				if pending > 0:
+					update_progress(progress, "Rendering terrain... (%d pending)" % pending)
+				else:
+					update_progress(progress, "Loading terrain...")
 		
 		await get_tree().create_timer(0.1).timeout
 	
-	# Stage 2: Prefab buildings (poll queue until empty or timeout)
+	# Stage 2: Prefab buildings - poll queue until empty (no timeout)
 	if is_loading and current_stage == Stage.PREFABS:
 		if building_generator and is_instance_valid(building_generator):
-			var initial_queue_size = building_generator.get("spawn_queue")
-			if initial_queue_size is Array:
-				initial_queue_size = initial_queue_size.size()
-			else:
-				initial_queue_size = 0
+			var queue = building_generator.get("spawn_queue")
+			var initial_queue_size = queue.size() if queue is Array else 0
 			
 			if initial_queue_size > 0:
-				var timeout = 5.0  # Max wait time
-				var elapsed = 0.0
-				while is_loading and elapsed < timeout:
-					var queue = building_generator.get("spawn_queue")
+				while is_loading:
+					queue = building_generator.get("spawn_queue")
 					var remaining = queue.size() if queue is Array else 0
 					
 					if remaining == 0:
@@ -79,7 +95,33 @@ func _start_loading_sequence() -> void:
 					update_progress(percent, "Spawning buildings: %d/%d" % [spawned, initial_queue_size])
 					
 					await get_tree().create_timer(0.2).timeout
-					elapsed += 0.2
+		
+		current_stage = Stage.VEGETATION
+	
+	# Stage 3: Vegetation - wait for trees/grass/rocks to spawn
+	if is_loading and current_stage == Stage.VEGETATION:
+		if vegetation_manager and is_instance_valid(vegetation_manager):
+			var is_veg_ready = false
+			if vegetation_manager.has_method("is_vegetation_ready"):
+				is_veg_ready = vegetation_manager.is_vegetation_ready()
+			else:
+				is_veg_ready = true # Skip if method not available
+			
+			if not is_veg_ready:
+				update_progress(50.0, "Placing vegetation...")
+				while is_loading:
+					if vegetation_manager.has_method("is_vegetation_ready"):
+						if vegetation_manager.is_vegetation_ready():
+							break
+					else:
+						break
+					
+					var pending = 0
+					if vegetation_manager.has_method("get_pending_chunks_count"):
+						pending = vegetation_manager.get_pending_chunks_count()
+					update_progress(50.0, "Placing vegetation... (%d chunks)" % pending)
+					
+					await get_tree().create_timer(0.2).timeout
 		
 		current_stage = Stage.COMPLETE
 	

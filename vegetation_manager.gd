@@ -82,6 +82,14 @@ var keys_pending_add: Dictionary = {} # Duplicate check
 var keys_pending_remove: Dictionary = {} # Duplicate check
 const MAX_COLLIDER_UPDATES_PER_FRAME = 5
 
+## Returns true when all queued vegetation has been placed (for loading screen)
+func is_vegetation_ready() -> bool:
+	return pending_chunks.is_empty()
+
+## Get count of pending vegetation chunks (for loading screen progress)
+func get_pending_chunks_count() -> int:
+	return pending_chunks.size()
+
 func _ready():
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
