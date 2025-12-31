@@ -6,5 +6,6 @@
 script = ExtResource("1")
 preset_name = "Terrain Inspection"
 description = "Enable yellow target marker and material name UI for terrain debugging."
+is_active = true
 log_player = true
 show_terrain_target_marker = true

@@ -14,11 +14,17 @@ var active_tags: Array[String] = []
 
 
 func _ready() -> void:
-	# Load default preset if none assigned
+	# Load preset from config (set by DebugPreset checkbox in editor)
 	if not current_preset:
-		var default_path = "res://modules/debug_module/presets/default.tres"
-		if ResourceLoader.exists(default_path):
-			current_preset = load(default_path)
+		var active_path = DebugPreset.get_active_preset_path()
+		if active_path and ResourceLoader.exists(active_path):
+			current_preset = load(active_path)
+			print("[DebugManager] Loaded preset from config: ", active_path)
+		else:
+			# Fallback to default
+			var default_path = "res://modules/debug_module/presets/default.tres"
+			if ResourceLoader.exists(default_path):
+				current_preset = load(default_path)
 	
 	call_deferred("_find_managers")
 	call_deferred("_apply_current_preset")

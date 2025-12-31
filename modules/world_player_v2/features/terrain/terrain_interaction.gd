@@ -173,7 +173,7 @@ func _update_target_material() -> void:
 	# Update debug marker position (respects DebugManager preset)
 	if material_target_marker:
 		material_target_marker.global_position = hit_pos
-		var show_marker = true
+		var show_marker = false  # Default OFF
 		if has_node("/root/DebugManager"):
 			show_marker = get_node("/root/DebugManager").should_show_terrain_marker()
 		material_target_marker.visible = show_marker

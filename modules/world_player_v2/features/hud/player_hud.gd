@@ -62,6 +62,8 @@ func _ready() -> void:
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
 	game_menu.visible = false
+	if target_material_label:
+		target_material_label.visible = false  # Hidden until debug preset enables it
 	
 	_setup_visual_overlays()
 
@@ -497,21 +499,33 @@ func _is_child_of(node: Node, potential_parent: Node) -> bool:
 
 func _on_target_material_changed(material_name: String) -> void:
 	if target_material_label:
-		# Show terraformer material if equipped, otherwise show looking-at material
-		if terraformer_material != "":
-			target_material_label.text = "[TF: %s] %s" % [terraformer_material, material_name]
-		else:
-			target_material_label.text = material_name
+		# Check if debug preset allows showing this
+		var show_label = false
+		if has_node("/root/DebugManager"):
+			show_label = get_node("/root/DebugManager").should_show_terrain_marker()
+		target_material_label.visible = show_label
+		
+		if show_label:
+			# Show terraformer material if equipped, otherwise show looking-at material
+			if terraformer_material != "":
+				target_material_label.text = "[TF: %s] %s" % [terraformer_material, material_name]
+			else:
+				target_material_label.text = material_name
 
 func _on_terraformer_material_changed(material_name: String) -> void:
 	terraformer_material = material_name
 	if target_material_label:
-		# Update display immediately
-		if material_name == "":
-			# Terraformer unequipped - show just target material
-			terraformer_material = ""
-		else:
-			target_material_label.text = "[TF: %s]" % material_name
+		# Check if debug preset allows showing this
+		var show_label = false
+		if has_node("/root/DebugManager"):
+			show_label = get_node("/root/DebugManager").should_show_terrain_marker()
+		target_material_label.visible = show_label
+		
+		if show_label:
+			if material_name == "":
+				terraformer_material = ""
+			else:
+				target_material_label.text = "[TF: %s]" % material_name
 
 func _on_camera_underwater_toggled(is_underwater: bool) -> void:
 	if underwater_overlay:

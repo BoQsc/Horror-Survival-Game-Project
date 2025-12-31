@@ -2,30 +2,18 @@
 class_name DebugPreset
 extends Resource
 ## Saveable debug configuration preset.
-## Create .tres files in presets/ folder to save configurations.
-## Click "Activate This Preset" button in Inspector to apply.
+
+const ACTIVE_PRESET_CONFIG = "user://debug_active_preset.cfg"
 
 @export var preset_name: String = ""
 @export_multiline var description: String = ""
-
-# === ACTIVATE BUTTON ===
-## Click to apply this preset to DebugManager
-@export var _activate_preset: bool = false:
+@export var is_active: bool = false:
 	set(value):
-		if value and Engine.is_editor_hint():
-			_activate_preset = false  # Reset button
-			_do_activate()
-
-func _do_activate() -> void:
-	# Find DebugManager autoload and apply this preset
-	var tree = Engine.get_main_loop()
-	if tree and tree.root:
-		var dm = tree.root.get_node_or_null("DebugManager")
-		if dm and dm.has_method("apply_preset"):
-			dm.apply_preset(self)
-			print("[DebugPreset] Activated: ", preset_name)
-		else:
-			push_warning("[DebugPreset] DebugManager not found. Is game running?")
+		var was_active = is_active
+		is_active = value
+		# Only trigger on actual user change in editor (not on resource load)
+		if Engine.is_editor_hint() and resource_path != "" and was_active != value:
+			_on_active_changed(value)
 
 # === CONSOLE LOGGING ===
 @export_group("Console Logging")
@@ -44,10 +32,31 @@ func _do_activate() -> void:
 @export_group("Visual Debug")
 @export var debug_draw_enabled := false
 @export var show_vegetation_collisions := false
-@export var show_terrain_target_marker := false  # Yellow sphere + material name
+@export var show_terrain_target_marker := false
 @export var show_road_zones := false
 @export var show_chunk_bounds := false
 
 # === FEATURE TAGS ===
 @export_group("Feature Tags")
 @export var active_tags: Array[String] = []
+
+func _on_active_changed(active: bool) -> void:
+	if active:
+		# Save this preset's path to config
+		var config = ConfigFile.new()
+		config.set_value("debug", "active_preset", resource_path)
+		config.save(ACTIVE_PRESET_CONFIG)
+		print("[DebugPreset] Set active: %s (%s)" % [preset_name, resource_path])
+	else:
+		# Clear active preset
+		var config = ConfigFile.new()
+		config.set_value("debug", "active_preset", "")
+		config.save(ACTIVE_PRESET_CONFIG)
+		print("[DebugPreset] Deactivated: ", preset_name)
+
+
+static func get_active_preset_path() -> String:
+	var config = ConfigFile.new()
+	if config.load(ACTIVE_PRESET_CONFIG) == OK:
+		return config.get_value("debug", "active_preset", "")
+	return ""
