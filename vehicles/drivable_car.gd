@@ -238,7 +238,7 @@ func _fade_in_driving_loop() -> void:
 	var fade_time: float = 0.2
 	var steps: int = 10
 	var step_time: float = fade_time / steps
-	var target_volume: float = 6.0  # Match the loud volume
+	var target_volume: float = 10.0  # Match the LOUD idle volume
 	
 	for i in range(steps + 1):
 		if not is_player_controlled or not engine_idle_audio:
@@ -283,5 +283,5 @@ func _update_engine_audio() -> void:
 		# Lerp pitch between min and max based on speed
 		engine_idle_audio.pitch_scale = lerp(ENGINE_MIN_PITCH, ENGINE_MAX_PITCH, speed_factor)
 		
-		# Volume responds to speed - LOUD driving loop
-		engine_idle_audio.volume_db = lerp(6.0, 12.0, speed_factor * 0.5)
+		# Volume responds to speed - LOUD driving loop (no limiter)
+		engine_idle_audio.volume_db = lerp(10.0, 15.0, speed_factor)
