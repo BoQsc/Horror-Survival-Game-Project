@@ -6,3 +6,5 @@
 script = ExtResource("1")
 preset_name = "Default"
 description = "All debug options OFF. Use for clean production runs."
+is_active = true
+activate_along = null
