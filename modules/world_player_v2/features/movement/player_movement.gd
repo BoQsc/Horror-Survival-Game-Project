@@ -48,9 +48,9 @@ func _ready() -> void:
 func _setup_footstep_sounds() -> void:
 	# Preload the footstep sounds
 	footstep_sounds = [
-		preload("res://sound/st1-footstep-sfx-323053.mp3"),
-		preload("res://sound/st2-footstep-sfx-323055.mp3"),
-		preload("res://sound/st3-footstep-sfx-323056.mp3")
+		preload("res://game/sound/st1-footstep-sfx-323053.mp3"),
+		preload("res://game/sound/st2-footstep-sfx-323055.mp3"),
+		preload("res://game/sound/st3-footstep-sfx-323056.mp3")
 	]
 	
 	# Create audio player as child of player (like original)

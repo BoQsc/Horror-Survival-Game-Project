@@ -27,7 +27,7 @@ var anim_player: AnimationPlayer = null
 var wall_detector: RayCast3D = null
 
 # --- Sound ---
-const CHASE_SOUND = preload("res://sound/zombie-sound-2-357976.mp3")
+const CHASE_SOUND = preload("res://game/sound/zombie-sound-2-357976.mp3")
 var chase_audio_player: AudioStreamPlayer3D = null
 
 # --- Player reference ---

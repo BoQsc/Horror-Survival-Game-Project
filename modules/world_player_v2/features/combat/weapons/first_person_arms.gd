@@ -10,7 +10,7 @@ class_name FirstPersonArmsV2
 @export var bob_amp: float = 0.0
 
 const ARMS_MODEL_PATH: String = "res://game/assets/psx_first_person_arms.glb"
-const PUNCH_SFX_PATH: String = "res://game/assets/classic-punch-impact-352711.mp3"
+const PUNCH_SFX_PATH: String = "res://game/sound/classic-punch-impact-352711.mp3"
 
 @export var arms_scale: Vector3 = Vector3(0.05, 0.05, 0.05)
 @export var arms_position: Vector3 = Vector3(0.005, -0.27, 0.0)

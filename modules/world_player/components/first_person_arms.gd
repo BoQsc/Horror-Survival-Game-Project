@@ -12,7 +12,7 @@ class_name FirstPersonArms
 
 # Arms model path
 const ARMS_MODEL_PATH: String = "res://game/assets/psx_first_person_arms.glb"
-const PUNCH_SFX_PATH: String = "res://game/assets/classic-punch-impact-352711.mp3"
+const PUNCH_SFX_PATH: String = "res://game/sound/classic-punch-impact-352711.mp3"
 
 # Adjustable transform - tweak in editor!
 @export var arms_scale: Vector3 = Vector3(0.05, 0.05, 0.05)
