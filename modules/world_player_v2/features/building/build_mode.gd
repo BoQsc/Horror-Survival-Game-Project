@@ -130,8 +130,8 @@ func _input(event: InputEvent) -> void:
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				current_rotation = (current_rotation - 1 + 4) % 4
 				print("ModeBuild: Rotation -> %d" % current_rotation)
-		elif event.shift_pressed:
-			# Shift+Scroll: adjust Y offset
+		elif event.alt_pressed:
+			# Alt+Scroll: adjust Y offset
 			if building_api:
 				if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 					building_api.adjust_y_offset(1)
