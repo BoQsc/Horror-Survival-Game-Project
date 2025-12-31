@@ -14,6 +14,13 @@ const WATER_DRAG: float = 2.0
 # Flip recovery threshold
 const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 
+# Audio
+@onready var engine_start_audio: AudioStreamPlayer3D = $EngineStartAudio
+@onready var engine_idle_audio: AudioStreamPlayer3D = $EngineIdleAudio
+const ENGINE_MIN_PITCH: float = 0.8   # Pitch at idle/stationary
+const ENGINE_MAX_PITCH: float = 1.8   # Pitch at top speed
+const ENGINE_SPEED_REF: float = 40.0  # Speed (m/s) for max pitch
+
 signal player_entered(player_node: Node3D)
 signal player_exited(player_node: Node3D)
 
@@ -70,6 +77,7 @@ func enter_vehicle(player_node: Node3D) -> void:
 	occupant = player_node
 	is_player_controlled = true
 	player_entered.emit(player_node)
+	_start_engine_audio()
 
 
 func exit_vehicle() -> Node3D:
@@ -77,6 +85,7 @@ func exit_vehicle() -> Node3D:
 	occupant = null
 	is_player_controlled = false
 	player_exited.emit(exiting)
+	_stop_engine_audio()
 	return exiting
 
 
@@ -117,6 +126,7 @@ func _physics_process(delta: float) -> void:
 	super._physics_process(delta)
 	_apply_water_physics(delta)
 	_check_flip_recovery()
+	_update_engine_audio()
 
 
 func _apply_water_physics(delta: float) -> void:
@@ -193,3 +203,85 @@ func set_camera_active(active: bool) -> void:
 	if cam and cam is Camera3D:
 		cam.current = active
 		print("[Vehicle] Camera active: %s" % active)
+
+
+# === ENGINE AUDIO ===
+const ENGINE_STARTUP_DURATION: float = 5.0  # Seconds startup plays before stopping
+const ENGINE_LOOP_START: float = 0.10  # Loop start point (skip click)
+const ENGINE_LOOP_END: float = 2.30    # Loop end point (avoid end artifact)
+
+## Start engine sound - plays startup while driving loop runs on top
+func _start_engine_audio() -> void:
+	# Play startup sound at full volume
+	if engine_start_audio:
+		engine_start_audio.volume_db = -3.0  # Full startup volume
+		engine_start_audio.play()
+	
+	# Start driving loop immediately - responds to W/S right away
+	if engine_idle_audio and engine_idle_audio.stream:
+		# Enable looping on the stream
+		if engine_idle_audio.stream is AudioStreamMP3:
+			engine_idle_audio.stream.loop = true
+			engine_idle_audio.stream.loop_offset = 0.10  # Skip first 100ms to avoid click
+		# Start quiet then fade in to avoid pop/click
+		engine_idle_audio.volume_db = -40.0  # Start silent
+		engine_idle_audio.play()
+		_fade_in_driving_loop()
+		print("[Vehicle] Engine started - startup + driving loop layered")
+	
+	# Stop startup after 5 seconds (driving loop continues)
+	_stop_startup_after_delay()
+
+
+## Fade in driving loop over 0.2 seconds to avoid click
+func _fade_in_driving_loop() -> void:
+	var fade_time: float = 0.2
+	var steps: int = 10
+	var step_time: float = fade_time / steps
+	var target_volume: float = 6.0  # Match the loud volume
+	
+	for i in range(steps + 1):
+		if not is_player_controlled or not engine_idle_audio:
+			break
+		var t: float = float(i) / float(steps)
+		engine_idle_audio.volume_db = lerp(-40.0, target_volume, t)
+		await get_tree().create_timer(step_time).timeout
+
+
+## Stop startup sound after duration, keep driving loop going
+func _stop_startup_after_delay() -> void:
+	await get_tree().create_timer(ENGINE_STARTUP_DURATION).timeout
+	if engine_start_audio and is_player_controlled:
+		engine_start_audio.stop()
+		print("[Vehicle] Startup complete - driving loop continues")
+
+
+## Stop engine sound
+func _stop_engine_audio() -> void:
+	if engine_start_audio:
+		engine_start_audio.stop()
+	if engine_idle_audio:
+		engine_idle_audio.stop()
+	print("[Vehicle] Engine stopped")
+
+
+## Update engine pitch based on vehicle speed
+func _update_engine_audio() -> void:
+	if not is_player_controlled or not engine_idle_audio:
+		return
+	
+	if engine_idle_audio.playing:
+		# Manual loop boundary check (seek back when reaching end point)
+		var playback_pos = engine_idle_audio.get_playback_position()
+		if playback_pos >= ENGINE_LOOP_END:
+			engine_idle_audio.seek(ENGINE_LOOP_START)
+		
+		# Calculate speed factor (0.0 to 1.0)
+		var speed = linear_velocity.length()
+		var speed_factor = clamp(speed / ENGINE_SPEED_REF, 0.0, 1.0)
+		
+		# Lerp pitch between min and max based on speed
+		engine_idle_audio.pitch_scale = lerp(ENGINE_MIN_PITCH, ENGINE_MAX_PITCH, speed_factor)
+		
+		# Volume responds to speed - LOUD driving loop
+		engine_idle_audio.volume_db = lerp(6.0, 12.0, speed_factor * 0.5)
