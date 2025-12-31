@@ -14,6 +14,10 @@ const WATER_DRAG: float = 2.0
 # Flip recovery threshold
 const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 
+# Boost
+const BOOST_MULTIPLIER: float = 1.5   # Acceleration boost when holding shift
+var is_boosting: bool = false
+
 # Audio
 @onready var engine_start_audio: AudioStreamPlayer3D = $EngineStartAudio
 @onready var engine_idle_audio: AudioStreamPlayer3D = $EngineIdleAudio
@@ -95,7 +99,11 @@ func get_input(delta: float) -> void:
 		player_steer = 0.0
 		player_acceleration = 0.0
 		player_braking = 0.0
+		is_boosting = false
 		return
+	
+	# Check for boost (Shift key)
+	is_boosting = Input.is_action_pressed("sprint")
 	
 	# WASD controls
 	player_input.x = Input.get_axis("move_right", "move_left")
@@ -103,9 +111,13 @@ func get_input(delta: float) -> void:
 	
 	# W/S for forward/backward
 	player_input.y = Input.get_axis("move_backward", "move_forward")
+	
+	# Apply boost multiplier to acceleration
+	var accel_mult: float = BOOST_MULTIPLIER if is_boosting else 1.0
+	
 	if player_input.y > 0.01:
-		# Accelerating forward
-		player_acceleration = player_input.y
+		# Accelerating forward (with boost)
+		player_acceleration = player_input.y * accel_mult
 		player_braking = 0.0
 	elif player_input.y < -0.01:
 		# Trying to brake or reverse
@@ -114,9 +126,9 @@ func get_input(delta: float) -> void:
 			player_braking = -player_input.y * max_brake_force
 			player_acceleration = 0.0
 		else:
-			# Reverse
+			# Reverse (with boost)
 			player_braking = 0.0
-			player_acceleration = player_input.y
+			player_acceleration = player_input.y * accel_mult
 	else:
 		player_acceleration = 0.0
 		player_braking = 0.0
