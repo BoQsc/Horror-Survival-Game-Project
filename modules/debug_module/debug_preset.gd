@@ -1,10 +1,31 @@
+@tool
 class_name DebugPreset
 extends Resource
 ## Saveable debug configuration preset.
 ## Create .tres files in presets/ folder to save configurations.
+## Click "Activate This Preset" button in Inspector to apply.
 
 @export var preset_name: String = ""
 @export_multiline var description: String = ""
+
+# === ACTIVATE BUTTON ===
+## Click to apply this preset to DebugManager
+@export var _activate_preset: bool = false:
+	set(value):
+		if value and Engine.is_editor_hint():
+			_activate_preset = false  # Reset button
+			_do_activate()
+
+func _do_activate() -> void:
+	# Find DebugManager autoload and apply this preset
+	var tree = Engine.get_main_loop()
+	if tree and tree.root:
+		var dm = tree.root.get_node_or_null("DebugManager")
+		if dm and dm.has_method("apply_preset"):
+			dm.apply_preset(self)
+			print("[DebugPreset] Activated: ", preset_name)
+		else:
+			push_warning("[DebugPreset] DebugManager not found. Is game running?")
 
 # === CONSOLE LOGGING ===
 @export_group("Console Logging")

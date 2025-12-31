@@ -28,7 +28,6 @@ PlayerStats="*res://modules/world_player/autoload/player_stats.gd"
 Profiler="*res://modules/frame_profiler.gd"
 ContainerSignals="*res://modules/world_player_v2/features/containers/signals.gd"
 
-
 [display]
 
 window/size/mode=3
