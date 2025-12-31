@@ -170,10 +170,13 @@ func _update_target_material() -> void:
 	var hit_normal = hit.get("normal", Vector3.UP)
 	var mat_name = ""
 	
-	# Update debug marker position
+	# Update debug marker position (respects DebugManager preset)
 	if material_target_marker:
 		material_target_marker.global_position = hit_pos
-		material_target_marker.visible = true
+		var show_marker = true
+		if has_node("/root/DebugManager"):
+			show_marker = get_node("/root/DebugManager").should_show_terrain_marker()
+		material_target_marker.visible = show_marker
 	
 	# Check if we hit terrain (StaticBody3D in 'terrain' group)
 	if target and target.is_in_group("terrain"):

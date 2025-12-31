@@ -1,0 +1,24 @@
+[gd_resource type="Resource" script_class="DebugPreset" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://modules/debug_module/debug_preset.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+preset_name = "Default"
+description = "All debug options OFF. Use for clean production runs."
+log_chunk = false
+log_vegetation = false
+log_entities = false
+log_building = false
+log_save = false
+log_vehicles = false
+log_player = false
+log_roads = false
+log_water = false
+log_performance = false
+debug_draw_enabled = false
+show_vegetation_collisions = false
+show_terrain_target_marker = false
+show_road_zones = false
+show_chunk_bounds = false
+active_tags = []
