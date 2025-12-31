@@ -3,8 +3,8 @@ class_name FirstPersonPistolV2
 ## FirstPersonPistol - Handles first-person pistol visuals with sway, bobbing, shooting animation
 ## Shows pistol when equipped, hides when other items selected.
 
-const PISTOL_SOUND = preload("res://sound/pistol-shot-233473.mp3")
-const RELOAD_SOUND = preload("res://sound/mag-reload-81594.mp3")
+const PISTOL_SOUND = preload("res://game/sound/pistol-shot-233473.mp3")
+const RELOAD_SOUND = preload("res://game/sound/mag-reload-81594.mp3")
 const PISTOL_SCENE_PATH = "res://models/pistol/heavy_pistol_animated.glb"
 
 @export var sway_amount: float = 0.002

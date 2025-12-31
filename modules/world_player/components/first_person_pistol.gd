@@ -4,8 +4,8 @@ class_name FirstPersonPistol
 ## Shows pistol when equipped, hides when other items selected.
 
 # Preload resources
-const PISTOL_SOUND = preload("res://sound/pistol-shot-233473.mp3")
-const RELOAD_SOUND = preload("res://sound/mag-reload-81594.mp3")
+const PISTOL_SOUND = preload("res://game/sound/pistol-shot-233473.mp3")
+const RELOAD_SOUND = preload("res://game/sound/mag-reload-81594.mp3")
 const PISTOL_SCENE_PATH = "res://models/pistol/heavy_pistol_animated.glb"
 
 # Sway & Bobbing Settings - matched to FirstPersonArms
