@@ -20,12 +20,14 @@ config/icon="res://icon.svg"
 [autoload]
 
 DebugSettings="*res://debug_settings.gd"
+DebugManager="*res://modules/debug_module/debug_manager.gd"
 SaveManager="*res://save_manager.gd"
 PerformanceMonitor="*res://performance_monitor.gd"
 PlayerSignals="*res://modules/world_player/autoload/player_signals.gd"
 PlayerStats="*res://modules/world_player/autoload/player_stats.gd"
 Profiler="*res://modules/frame_profiler.gd"
 ContainerSignals="*res://modules/world_player_v2/features/containers/signals.gd"
+
 
 [display]
 
