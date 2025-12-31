@@ -42,6 +42,9 @@ const ACTIVE_PRESET_CONFIG = "user://debug_active_preset.cfg"
 
 func _on_active_changed(active: bool) -> void:
 	if active:
+		# Deactivate all other presets first
+		_deactivate_other_presets()
+		
 		# Save this preset's path to config
 		var config = ConfigFile.new()
 		config.set_value("debug", "active_preset", resource_path)
@@ -53,6 +56,27 @@ func _on_active_changed(active: bool) -> void:
 		config.set_value("debug", "active_preset", "")
 		config.save(ACTIVE_PRESET_CONFIG)
 		print("[DebugPreset] Deactivated: ", preset_name)
+
+
+func _deactivate_other_presets() -> void:
+	# Scan all presets in the presets folder and deactivate them
+	var presets_dir = "res://modules/debug_module/presets/"
+	var dir = DirAccess.open(presets_dir)
+	if not dir:
+		return
+	
+	dir.list_dir_begin()
+	var file_name = dir.get_next()
+	while file_name != "":
+		if file_name.ends_with(".tres") and not dir.current_is_dir():
+			var preset_path = presets_dir + file_name
+			if preset_path != resource_path:  # Don't modify self
+				var preset = load(preset_path) as DebugPreset
+				if preset and preset.is_active:
+					preset.is_active = false
+					ResourceSaver.save(preset, preset_path)
+		file_name = dir.get_next()
+	dir.list_dir_end()
 
 
 static func get_active_preset_path() -> String:
