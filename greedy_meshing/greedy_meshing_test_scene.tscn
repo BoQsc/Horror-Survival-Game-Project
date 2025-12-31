@@ -1,7 +1,7 @@
 [gd_scene load_steps=9 format=3 uid="uid://dj51g58j3pqad"]
 
-[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_hyta6"]
-[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_2n70d"]
+[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_hyta6"]
+[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://modules/world_player_legacy/camera_3d.gd" id="2_2n70d"]
 [ext_resource type="Script" uid="uid://63lls5qaifej" path="res://greedy_meshing/greedy_meshing_test_runner.gd" id="3_testr"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_hyta6"]

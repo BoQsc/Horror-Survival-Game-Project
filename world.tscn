@@ -1,8 +1,8 @@
 [gd_scene load_steps=21 format=3 uid="uid://cubacbxdo4pih"]
 
-[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://character_body_3d.gd" id="1_player"]
-[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://camera_3d.gd" id="2_camera"]
-[ext_resource type="Script" uid="uid://cje44f7r08sot" path="res://player_interaction.gd" id="3_interact"]
+[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_player"]
+[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://modules/world_player_legacy/camera_3d.gd" id="2_camera"]
+[ext_resource type="Script" uid="uid://cje44f7r08sot" path="res://modules/world_player_legacy/player_interaction.gd" id="3_interact"]
 [ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
