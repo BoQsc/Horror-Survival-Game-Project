@@ -58,12 +58,19 @@ func _physics_process(_delta):
 		if not player:
 			return
 	
+	PerformanceMonitor.start_measure("Entity Proximity")
 	_update_entity_proximity()
+	PerformanceMonitor.end_measure("Entity Proximity", 2.0)
+	
+	PerformanceMonitor.start_measure("Entity Dormant Check")
 	_check_dormant_respawns()
+	PerformanceMonitor.end_measure("Entity Dormant Check", 2.0)
 	
 	# Process spawn queue - spawns when terrain is ready
 	if not pending_spawns.is_empty():
+		PerformanceMonitor.start_measure("Entity Spawn Queue")
 		_process_spawn_queue()
+		PerformanceMonitor.end_measure("Entity Spawn Queue", 3.0)
 
 ## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():

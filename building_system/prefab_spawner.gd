@@ -454,9 +454,11 @@ func _parse_compact_objects(compact: Array) -> Array:
 ## skip_blocks: if true, only perform terrain operations (carve/fill) without placing blocks
 ## interior_carve: if true, carve terrain at block positions that intersect with terrain
 func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, foundation_fill: bool = false, skip_blocks: bool = false, interior_carve: bool = false) -> bool:
+	PerformanceMonitor.start_measure("Prefab: " + prefab_name)
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		if not load_prefab_from_file(prefab_name):
+			PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 			return false
 	
 	# Use default submerge of 1 for carve mode (prefabs no longer store this value)
@@ -550,6 +552,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if skip_blocks:
 		var mode_str = "carve-only" if carve_terrain else "fill-only"
 		DebugSettings.log_building("Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
+		PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 		return true
 	
 	# Spawn blocks with rotation
@@ -641,6 +644,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	
 	var mode_str = "carve" if carve_terrain else ("fill" if foundation_fill else "surface")
 	DebugSettings.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
+	PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 	return true
 
 ## Fill terrain gaps under the prefab's foundation layer (Y=0 blocks)
