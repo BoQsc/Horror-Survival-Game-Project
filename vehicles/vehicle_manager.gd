@@ -19,14 +19,18 @@ func _ready() -> void:
 
 func spawn_vehicle(pos: Vector3) -> Node3D:
 	var v = vehicle_scene.instantiate()
-	# Use call_deferred to ensure proper physics initialization
-	get_tree().current_scene.call_deferred("add_child", v)
-	# Add random horizontal offset to prevent collision stacking
+	# Calculate spawn position with random offset
 	var offset = Vector3(randf_range(-2, 2), 3, randf_range(-2, 2))
-	v.global_position = pos + offset
+	var spawn_pos = pos + offset
+	# Set position before adding to tree (use transform.origin, not global_position)
+	v.transform.origin = spawn_pos
+	# Add to scene tree
+	get_tree().current_scene.add_child(v)
+	# Confirm position after in tree
+	v.global_position = spawn_pos
 	vehicles.append(v)
 	vehicle_spawned.emit(v)
-	print("[VehicleManager] spawn_vehicle: Created at %s, total: %d" % [v.global_position, vehicles.size()])
+	print("[VehicleManager] spawn_vehicle: Created at %s, total: %d" % [spawn_pos, vehicles.size()])
 	return v
 
 
