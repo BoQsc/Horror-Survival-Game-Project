@@ -40,14 +40,8 @@ func update(delta: float) -> void:
 	if not player:
 		return
 	
-	# Check if CTRL is held
-	var wants_crouch = Input.is_key_pressed(KEY_CTRL)
-	
-	# Can't crouch while in air
-	if not player.is_on_floor():
-		wants_crouch = false
-	
-	is_crouching = wants_crouch
+	# Check if CTRL is held (works mid-air too)
+	is_crouching = Input.is_key_pressed(KEY_CTRL)
 	
 	# Target values based on crouch state
 	var target_height = CROUCH_HEIGHT if is_crouching else STAND_HEIGHT
