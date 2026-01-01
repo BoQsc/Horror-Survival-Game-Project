@@ -125,7 +125,8 @@ func route_secondary_action(item: Dictionary) -> void:
 			return
 		
 		# VEHICLE (car keys) - spawn vehicle in front of player
-		if category == 9:
+		if category == 8:  # ItemCategory.VEHICLE
+			print("[ItemUseRouter] Car Keys detected, spawning vehicle...")
 			_spawn_vehicle(item)
 			return
 		
