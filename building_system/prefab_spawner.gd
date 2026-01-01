@@ -254,7 +254,10 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 		var block_meta = block.get("meta", 0) # Default to 0 if not specified
 		
 		var pos = world_pos + Vector3(offset)
-		building_manager.set_voxel(pos, block_type, block_meta)
+		building_manager.set_voxel_batched(pos, block_type, block_meta)
+	
+	# Flush all batched voxel changes at once (triggers single mesh rebuild per chunk)
+	building_manager.flush_dirty_chunks()
 	
 	# Spawn interactive door for small_house prefab
 	if prefab_name == "small_house":
@@ -555,7 +558,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 		return true
 	
-	# Spawn blocks with rotation
+	# Spawn blocks with rotation (BATCHED - no mesh rebuild per block)
 	for block in blocks:
 		var offset = block.offset
 		var rotated_offset = _rotate_offset(offset, rotation)
@@ -568,7 +571,10 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			block_meta = (block_meta + rotation) % 4
 		
 		var pos = spawn_pos + Vector3(rotated_offset)
-		building_manager.set_voxel(pos, block_type, block_meta)
+		building_manager.set_voxel_batched(pos, block_type, block_meta)
+	
+	# Flush all batched voxel changes at once (triggers single mesh rebuild per chunk)
+	building_manager.flush_dirty_chunks()
 	
 	# Spawn objects if any
 	if has_meta("prefab_objects"):
@@ -695,10 +701,7 @@ func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
 
 
 func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
-	if not ResourceLoader.exists(scene_path):
-		return
-	
-	var packed = load(scene_path) as PackedScene
+	var packed = ObjectRegistry.get_preloaded_scene(scene_path)
 	if not packed:
 		return
 	

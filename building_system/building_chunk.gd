@@ -273,7 +273,7 @@ func restore_object_visuals():
 		if scene_path == "":
 			continue
 		
-		var packed = load(scene_path)
+		var packed = ObjectRegistry.get_preloaded_scene(scene_path)
 		if not packed:
 			print("BuildingChunk: restore_object_visuals - Failed to load scene: ", scene_path)
 			continue

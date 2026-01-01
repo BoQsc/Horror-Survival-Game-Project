@@ -37,6 +37,43 @@ const OBJECTS = {
 	},
 }
 
+# === PRELOADED SCENE CACHE ===
+# Scenes are preloaded at startup so instantiation doesn't require disk reads
+static var _preloaded_scenes: Dictionary = {}  # scene_path -> PackedScene
+static var _preload_done: bool = false
+
+## Preload all object scenes (call at game startup for faster spawning)
+static func preload_all_scenes() -> void:
+	if _preload_done:
+		return
+	
+	print("[ObjectRegistry] Preloading %d object scenes..." % OBJECTS.size())
+	var start_time = Time.get_ticks_msec()
+	
+	for id in OBJECTS:
+		var obj = OBJECTS[id]
+		var scene_path = obj.get("scene", "")
+		if scene_path != "" and not _preloaded_scenes.has(scene_path):
+			if ResourceLoader.exists(scene_path):
+				_preloaded_scenes[scene_path] = load(scene_path)
+	
+	var elapsed = Time.get_ticks_msec() - start_time
+	print("[ObjectRegistry] Preloaded %d scenes in %dms" % [_preloaded_scenes.size(), elapsed])
+	_preload_done = true
+
+## Get a preloaded scene (returns null if not preloaded)
+static func get_preloaded_scene(scene_path: String) -> PackedScene:
+	if _preloaded_scenes.has(scene_path):
+		return _preloaded_scenes[scene_path]
+	
+	# Fallback: load on demand (slower, but works)
+	if ResourceLoader.exists(scene_path):
+		var packed = load(scene_path) as PackedScene
+		_preloaded_scenes[scene_path] = packed  # Cache for next time
+		return packed
+	
+	return null
+
 ## Get object definition by ID
 static func get_object(id: int) -> Dictionary:
 	return OBJECTS.get(id, {})

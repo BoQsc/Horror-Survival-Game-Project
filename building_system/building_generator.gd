@@ -5,7 +5,7 @@ extends Node3D
 signal building_spawned(position: Vector3, prefab_name: String)
 
 # --- Configuration ---
-@export var enabled: bool = false  # TEMP: Disabled for performance test
+@export var enabled: bool = true  # Now uses batched voxel operations
 @export_range(0.0, 1.0) var building_density: float = 0.3 # Chance per valid spot
 @export var spawn_interval: float = 0.5 # Seconds between spawns
 @export var min_road_distance: int = 2 # Min blocks from road center

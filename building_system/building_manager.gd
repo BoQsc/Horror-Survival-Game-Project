@@ -15,9 +15,15 @@ var visible_chunks: Dictionary = {} # Vector3i -> true
 var chunk_pool: Array[BuildingChunk] = []
 const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 
+# Batched operations - accumulate changes, rebuild once
+var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
+
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
 func _ready():
+	# Preload all object scenes for faster building spawning
+	ObjectRegistry.preload_all_scenes()
+	
 	mesher = BuildingMesher.new()
 	add_child(mesher)
 	
@@ -154,6 +160,45 @@ func set_voxel(global_pos: Vector3, value: int, meta: int = 0):
 	if visible_chunks.has(chunk_coord):
 		chunk.rebuild_mesh()
 
+## Set voxel WITHOUT triggering immediate mesh rebuild (for batch operations)
+## Call flush_dirty_chunks() after all batch operations are complete
+func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0):
+	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
+	var chunk_y = floor(global_pos.y / CHUNK_SIZE)
+	var chunk_z = floor(global_pos.z / CHUNK_SIZE)
+	var chunk_coord = Vector3i(chunk_x, chunk_y, chunk_z)
+	
+	var local_x = int(floor(global_pos.x)) % CHUNK_SIZE
+	var local_y = int(floor(global_pos.y)) % CHUNK_SIZE
+	var local_z = int(floor(global_pos.z)) % CHUNK_SIZE
+	
+	# Handle negative modulo correctly
+	if local_x < 0: local_x += CHUNK_SIZE
+	if local_y < 0: local_y += CHUNK_SIZE
+	if local_z < 0: local_z += CHUNK_SIZE
+	
+	var chunk = get_chunk(chunk_coord)
+	chunk.set_voxel(Vector3i(local_x, local_y, local_z), value, meta)
+	
+	# Always mark chunk as dirty - rebuild will check visibility
+	_dirty_chunks[chunk_coord] = chunk
+
+## Rebuild all chunks that were modified by batched operations
+## Call this once after completing a batch of set_voxel_batched calls
+func flush_dirty_chunks():
+	if _dirty_chunks.is_empty():
+		return
+	
+	# Only rebuild chunks that are currently visible
+	var rebuilt = 0
+	for coord in _dirty_chunks:
+		if visible_chunks.has(coord):
+			_dirty_chunks[coord].rebuild_mesh()
+			rebuilt += 1
+	
+	print("[BatchFlush] Flushed %d dirty chunks (%d rebuilt)" % [_dirty_chunks.size(), rebuilt])
+	_dirty_chunks.clear()
+
 func get_voxel(global_pos: Vector3) -> int:
 	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
 	var chunk_y = floor(global_pos.y / CHUNK_SIZE)
@@ -216,13 +261,12 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	var fractional_pos = global_pos - Vector3(anchor) # Full 3D offset from anchor
 	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
 	
-	# Load and instantiate the scene
+	# Load and instantiate the scene (uses preloaded cache)
 	var scene_path = obj_def.scene
 	var scene_instance: Node3D = null
-	if ResourceLoader.exists(scene_path):
-		var packed = load(scene_path) as PackedScene
-		if packed:
-			scene_instance = packed.instantiate()
+	var packed = ObjectRegistry.get_preloaded_scene(scene_path)
+	if packed:
+		scene_instance = packed.instantiate()
 	
 	# Place in the chunk containing the anchor
 	var chunk_coord = Vector3i(
