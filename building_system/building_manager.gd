@@ -35,8 +35,20 @@ func _process(_delta):
 	if viewer:
 		update_building_chunks()
 
+## Gets effective viewer position - returns vehicle position if player is driving
+func get_viewer_position() -> Vector3:
+	if not viewer:
+		return Vector3.ZERO
+	
+	# Check if player is in a vehicle
+	var vm = get_tree().get_first_node_in_group("vehicle_manager")
+	if vm and "current_player_vehicle" in vm and vm.current_player_vehicle:
+		return vm.current_player_vehicle.global_position
+	
+	return viewer.global_position
+
 func update_building_chunks():
-	var p_pos = viewer.global_position
+	var p_pos = get_viewer_position()
 	var p_chunk_x = floor(p_pos.x / CHUNK_SIZE)
 	var p_chunk_y = floor(p_pos.y / CHUNK_SIZE)
 	var p_chunk_z = floor(p_pos.z / CHUNK_SIZE)

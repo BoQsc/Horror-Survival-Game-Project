@@ -225,6 +225,23 @@ func _ready():
 	initial_load_target_chunks = int(PI * render_distance * render_distance)
 	DebugSettings.log_chunk("Two-phase loading: target=%d chunks, initial=%dms, explore=%dms" % [initial_load_target_chunks, initial_load_delay_ms, exploration_delay_ms])
 
+
+## Gets the effective viewer position for chunk loading.
+## Returns vehicle position when player is driving a vehicle,
+## otherwise returns the player's position.
+func get_viewer_position() -> Vector3:
+	if not viewer:
+		return Vector3.ZERO
+	
+	# Check if player is in a vehicle
+	var vm = get_tree().get_first_node_in_group("vehicle_manager")
+	if vm and "current_player_vehicle" in vm and vm.current_player_vehicle:
+		return vm.current_player_vehicle.global_position
+	
+	# Default: player's position
+	return viewer.global_position
+
+
 func _process(delta):
 	if not viewer:
 		return
@@ -322,7 +339,7 @@ func update_collision_proximity():
 		return
 	collision_update_counter = 0
 	
-	var p_pos = viewer.global_position
+	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
