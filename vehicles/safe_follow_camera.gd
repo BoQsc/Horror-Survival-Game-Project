@@ -1,24 +1,21 @@
 extends Node3D
-## GTA5-style vehicle camera.
-## - Stays perfectly level (no pitch/roll from car)
-## - Smoothly follows behind the car
-## - Free mouse look that gradually returns to behind car
+## GTA5-style vehicle camera - orbits around the CAR.
+## Controls THIS node's position/rotation, lets SpringArm handle camera.
 
 @export var follow_target: Node3D
 
-# Camera follow settings
+# Camera settings
 @export_category("Follow Settings")
 @export var follow_distance: float = 8.0
-@export var follow_height: float = 3.0
-@export var follow_smoothness: float = 15.0  # Higher = tighter follow
-@export var rotation_smoothness: float = 20.0  # Much snappier rotation
+@export var follow_height: float = 2.0
 
-# Mouse look settings
-@export_category("Mouse Look Settings")
+# Mouse orbit settings  
+@export_category("Mouse Orbit Settings")
 @export var mouse_sensitivity: float = 0.003
-@export var return_speed: float = 1.5
-@export var max_pitch: float = 45.0
-@export var min_pitch: float = -20.0
+@export var return_speed: float = 2.0
+@export var return_delay: float = 1.0
+@export var max_pitch_deg: float = 60.0
+@export var min_pitch_deg: float = -20.0
 
 # Zoom settings
 @export_category("Zoom Settings")
@@ -26,88 +23,103 @@ extends Node3D
 @export var min_distance: float = 4.0
 @export var max_distance: float = 20.0
 
-# Internal state
-var target_yaw: float = 0.0
-var current_yaw: float = 0.0
-var mouse_offset_yaw: float = 0.0
-var mouse_offset_pitch: float = 0.0
-var is_mouse_looking: bool = false
+# State
+var orbit_yaw: float = 0.0      # Horizontal angle (radians)
+var orbit_pitch: float = 0.2    # Vertical angle (radians)
 var mouse_idle_timer: float = 0.0
-var cam_position: Vector3 = Vector3.ZERO
+var last_car_yaw: float = 0.0
 
-# References
-var camera_node: Camera3D = null
+# Child nodes
+@onready var pivot: Node3D = $Pivot
+@onready var springarm: SpringArm3D = $Pivot/SpringArm3D
 
 
 func _ready() -> void:
 	set_process_input(true)
 	
-	# Get follow target - if not set, use parent (the car)
 	if not follow_target:
 		follow_target = get_parent()
 	
-	# Find the actual Camera3D node
-	camera_node = find_child("Camera3D", true, false)
-	if not camera_node:
-		camera_node = get_node_or_null("Pivot/SpringArm3D/Camera3D")
+	# Configure spring arm for our distance
+	if springarm:
+		springarm.spring_length = follow_distance
+	if pivot:
+		pivot.position.y = follow_height
 	
-	# CRITICAL: Make camera completely independent of parent transforms
-	if camera_node:
-		camera_node.top_level = true
-	
-	# Initialize camera position
-	if follow_target and is_instance_valid(follow_target) and camera_node:
+	# Initialize orbit yaw to be behind car
+	if follow_target:
 		var car_forward = -follow_target.global_transform.basis.z
 		car_forward.y = 0
-		if car_forward.length() < 0.1:
-			car_forward = Vector3.FORWARD
-		car_forward = car_forward.normalized()
-		
-		var cam_offset = car_forward * -follow_distance + Vector3(0, follow_height, 0)
-		camera_node.global_position = follow_target.global_position + cam_offset
-		camera_node.look_at(follow_target.global_position + Vector3(0, 1, 0), Vector3.UP)
+		if car_forward.length() > 0.1:
+			orbit_yaw = atan2(car_forward.x, car_forward.z)
+			last_car_yaw = orbit_yaw
 	
-	print("[VehicleCam] Ready - target: %s, camera: %s" % [follow_target, camera_node])
+	print("[VehicleCam] Ready - controlling FollowCamera node, target: %s" % follow_target)
 
 
 func _input(event: InputEvent) -> void:
-	if not camera_node or Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
+	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
 		return
 	
-	# Mouse wheel zoom
+	# Zoom with mouse wheel
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			follow_distance = clampf(follow_distance - zoom_speed, min_distance, max_distance)
+			if springarm:
+				springarm.spring_length = follow_distance
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			follow_distance = clampf(follow_distance + zoom_speed, min_distance, max_distance)
+			if springarm:
+				springarm.spring_length = follow_distance
 	
-	# Mouse look
+	# Mouse orbit
 	if event is InputEventMouseMotion:
-		mouse_offset_yaw -= event.relative.x * mouse_sensitivity
-		mouse_offset_pitch -= event.relative.y * mouse_sensitivity
-		mouse_offset_pitch = clamp(mouse_offset_pitch, deg_to_rad(min_pitch), deg_to_rad(max_pitch))
-		is_mouse_looking = true
+		orbit_yaw -= event.relative.x * mouse_sensitivity
+		orbit_pitch -= event.relative.y * mouse_sensitivity
+		orbit_pitch = clamp(orbit_pitch, deg_to_rad(min_pitch_deg), deg_to_rad(max_pitch_deg))
 		mouse_idle_timer = 0.0
 
 
 func _physics_process(delta: float) -> void:
-	if not follow_target or not is_instance_valid(follow_target) or not camera_node:
+	if not follow_target or not is_instance_valid(follow_target):
 		return
 	
-	# Get car's forward direction (horizontal only)
+	# === TRACK CAR ROTATION ===
 	var car_forward = -follow_target.global_transform.basis.z
 	car_forward.y = 0
-	if car_forward.length() < 0.1:
-		car_forward = Vector3.FORWARD
-	car_forward = car_forward.normalized()
+	if car_forward.length() > 0.1:
+		var current_car_yaw = atan2(car_forward.x, car_forward.z)
+		var car_yaw_delta = current_car_yaw - last_car_yaw
+		
+		# Handle wrap-around
+		if car_yaw_delta > PI:
+			car_yaw_delta -= TAU
+		elif car_yaw_delta < -PI:
+			car_yaw_delta += TAU
+		
+		orbit_yaw += car_yaw_delta
+		last_car_yaw = current_car_yaw
 	
-	# Camera position = directly behind car (NO SMOOTHING)
-	var cam_offset = car_forward * follow_distance + Vector3(0, follow_height, 0)
-	var target_pos = follow_target.global_position + cam_offset
+	# === AUTO-RETURN ===
+	mouse_idle_timer += delta
+	if mouse_idle_timer > return_delay:
+		var behind_yaw = last_car_yaw
+		var yaw_diff = behind_yaw - orbit_yaw
+		if yaw_diff > PI:
+			yaw_diff -= TAU
+		elif yaw_diff < -PI:
+			yaw_diff += TAU
+		orbit_yaw += yaw_diff * return_speed * delta
+		orbit_pitch = lerp(orbit_pitch, 0.2, return_speed * delta)
 	
-	# Look at car
-	var look_target = follow_target.global_position + Vector3(0, 1.0, 0)
+	# === POSITION THIS NODE AT CAR ===
+	global_position = follow_target.global_position
 	
-	# FORCE camera position every frame
-	camera_node.global_position = target_pos
-	camera_node.look_at(look_target, Vector3.UP)
+	# === ROTATE THIS NODE TO ORBIT YAW ===
+	# This rotates the entire Pivot/SpringArm/Camera hierarchy around the car
+	var target_basis = Basis.looking_at(Vector3(sin(orbit_yaw), 0, cos(orbit_yaw)), Vector3.UP)
+	global_basis = target_basis
+	
+	# === APPLY PITCH TO PIVOT ===
+	if pivot:
+		pivot.rotation.x = -orbit_pitch
