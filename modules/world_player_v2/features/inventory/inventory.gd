@@ -12,6 +12,10 @@ var slots: Array = []
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
 
+# Audio
+const INVENTORY_OPEN_SOUND = preload("res://game/sound/ui/inventory/1/open-bag-96178.mp3")
+var inventory_audio: AudioStreamPlayer = null
+
 # UI state
 var is_open: bool = false
 
@@ -23,6 +27,12 @@ func _ready() -> void:
 	slots.clear()
 	for i in range(INVENTORY_SIZE):
 		slots.append(_create_empty_stack())
+	
+	# Setup audio (2D player for UI sounds)
+	inventory_audio = AudioStreamPlayer.new()
+	inventory_audio.stream = INVENTORY_OPEN_SOUND
+	inventory_audio.volume_db = -5.0
+	add_child(inventory_audio)
 	
 	DebugSettings.log_player("Inventory: Initialized with %d slots (max stack: %d)" % [INVENTORY_SIZE, MAX_STACK_SIZE])
 
@@ -40,6 +50,14 @@ func toggle_inventory() -> void:
 	is_open = !is_open
 	DebugSettings.log_player("Inventory: %s" % ("Opened" if is_open else "Closed"))
 	
+	# Play sound (different pitch for open vs close)
+	if inventory_audio:
+		if is_open:
+			inventory_audio.pitch_scale = 1.0  # Normal pitch for opening
+		else:
+			inventory_audio.pitch_scale = 0.75  # Lower pitch for closing (inverse feel)
+		inventory_audio.play()
+	
 	# Toggle mouse capture
 	if is_open:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -51,6 +69,10 @@ func toggle_inventory() -> void:
 ## Close inventory (no toggle, just close)
 func close_inventory() -> void:
 	if is_open:
+		# Play close sound
+		if inventory_audio:
+			inventory_audio.pitch_scale = 0.75
+			inventory_audio.play()
 		is_open = false
 		DebugSettings.log_player("Inventory: Closed")
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
