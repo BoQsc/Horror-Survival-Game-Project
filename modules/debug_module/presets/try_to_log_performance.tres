@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="DebugPreset" load_steps=2 format=3 uid="uid://gh7soj50pcqa"]
+
+[ext_resource type="Script" uid="uid://d3qmvfb1idfts" path="res://modules/debug_module/debug_preset.gd" id="1_10q2i"]
+
+[resource]
+script = ExtResource("1_10q2i")
+preset_name = "Default"
+description = "All debug options OFF. Use for clean production runs."
+is_active = true
+log_performance = true
