@@ -22,8 +22,10 @@ var is_populated: bool = false
 const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
 
 # Audio
-const CONTAINER_SOUND_FILE = preload("res://game/sound/containers/cardboard/1/plastic-108360.mp3")
-var container_sound: AudioStreamPlayer3D = null
+const CONTAINER_OPEN_SOUND = preload("res://game/sound/containers/cardboard/1/plastic-108360.mp3")
+const CONTAINER_CLOSE_SOUND = preload("res://game/sound/containers/cardboard/1/object-dropped-on-plastic-bag-81895.mp3")
+var container_open_audio: AudioStreamPlayer3D = null
+var container_close_audio: AudioStreamPlayer3D = null
 
 func _ready() -> void:
 	# Add to groups for detection
@@ -50,11 +52,19 @@ func _ready() -> void:
 	DebugSettings.log_player("CONTAINER: Initialized %s with %d slots" % [container_name, slot_count])
 
 func _setup_audio() -> void:
-	container_sound = AudioStreamPlayer3D.new()
-	container_sound.stream = CONTAINER_SOUND_FILE
-	container_sound.volume_db = -5.0
-	container_sound.max_distance = 15.0
-	add_child(container_sound)
+	# Open sound
+	container_open_audio = AudioStreamPlayer3D.new()
+	container_open_audio.stream = CONTAINER_OPEN_SOUND
+	container_open_audio.volume_db = -5.0
+	container_open_audio.max_distance = 15.0
+	add_child(container_open_audio)
+	
+	# Close sound
+	container_close_audio = AudioStreamPlayer3D.new()
+	container_close_audio.stream = CONTAINER_CLOSE_SOUND
+	container_close_audio.volume_db = -5.0
+	container_close_audio.max_distance = 15.0
+	add_child(container_close_audio)
 
 ## Called by player interaction system to get prompt text
 func get_interaction_prompt() -> String:
@@ -64,18 +74,18 @@ func get_interaction_prompt() -> String:
 
 ## Called when player presses E on this container
 func interact() -> void:
-	# Play sound on interaction
-	if container_sound:
-		container_sound.play()
-	
 	if is_open:
 		# Close the container
+		if container_close_audio:
+			container_close_audio.play()
 		DebugSettings.log_player("CONTAINER: Closing %s" % container_name)
 		if has_node("/root/ContainerSignals"):
 			ContainerSignals.container_closed.emit()
 		is_open = false
 	else:
 		# Open the container
+		if container_open_audio:
+			container_open_audio.play()
 		DebugSettings.log_player("CONTAINER: Opening %s" % container_name)
 		is_open = true
 		if has_node("/root/ContainerSignals"):
@@ -87,6 +97,9 @@ func interact() -> void:
 				hud.open_container(self)
 
 func _on_container_closed() -> void:
+	# Play close sound when closed via UI (E key or Escape)
+	if is_open and container_close_audio:
+		container_close_audio.play()
 	is_open = false
 
 ## Get the inventory for UI access
