@@ -54,9 +54,9 @@ func _input(event: InputEvent) -> void:
 		if new_slot >= 0 and new_slot != selected_slot:
 			select_slot(new_slot)
 	
-	# Scroll wheel to cycle slots (blocked by Ctrl for rotation, Alt for Y offset)
+	# Scroll wheel to cycle slots (blocked by Alt for Y offset, X key for rotation in build mode)
 	if event is InputEventMouseButton and event.pressed:
-		if not event.ctrl_pressed and not event.alt_pressed:
+		if not event.alt_pressed and not Input.is_key_pressed(KEY_X):
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 				select_slot((selected_slot - 1 + SLOT_COUNT) % SLOT_COUNT)
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:

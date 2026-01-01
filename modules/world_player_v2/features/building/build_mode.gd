@@ -121,9 +121,9 @@ func _input(event: InputEvent) -> void:
 					building_api.smart_surface_align = not building_api.smart_surface_align
 					print("ModeBuild: Smart align -> %s" % ("ON" if building_api.smart_surface_align else "OFF"))
 	
-	# Scroll to rotate
+	# X+Scroll to rotate (changed from Ctrl to allow crouch+scroll)
 	if event is InputEventMouseButton and event.pressed:
-		if event.ctrl_pressed:
+		if Input.is_key_pressed(KEY_X):
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 				current_rotation = (current_rotation + 1) % 4
 				print("ModeBuild: Rotation -> %d" % current_rotation)
