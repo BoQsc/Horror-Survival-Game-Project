@@ -25,7 +25,7 @@ extends Node3D
 
 # State
 var orbit_yaw: float = 0.0      # Horizontal angle (radians)
-var orbit_pitch: float = 0.2    # Vertical angle (radians)
+var orbit_pitch: float = -0.27   # Match original scene Pivot angle (~15 degrees down)
 var mouse_idle_timer: float = 0.0
 var last_car_yaw: float = 0.0
 
@@ -110,7 +110,7 @@ func _physics_process(delta: float) -> void:
 		elif yaw_diff < -PI:
 			yaw_diff += TAU
 		orbit_yaw += yaw_diff * return_speed * delta
-		orbit_pitch = lerp(orbit_pitch, 0.2, return_speed * delta)
+		orbit_pitch = lerp(orbit_pitch, -0.27, return_speed * delta)  # Return to original angle
 	
 	# === POSITION THIS NODE AT CAR ===
 	global_position = follow_target.global_position
