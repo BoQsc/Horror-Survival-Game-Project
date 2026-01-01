@@ -17,15 +17,6 @@ func _ready() -> void:
 	add_to_group("vehicle_manager")
 
 
-func _input(event: InputEvent) -> void:
-	# V key to spawn a vehicle near player (for testing)
-	if event is InputEventKey and event.pressed and event.keycode == KEY_V:
-		if player:
-			var spawn_pos = player.global_position + player.global_basis.z * -3.0
-			var v = spawn_vehicle(spawn_pos)
-			print("[VehicleManager] Spawned vehicle at %s (Total: %d)" % [v.global_position, vehicles.size()])
-
-
 func spawn_vehicle(pos: Vector3) -> Node3D:
 	var v = vehicle_scene.instantiate()
 	get_tree().current_scene.add_child(v)
@@ -33,6 +24,24 @@ func spawn_vehicle(pos: Vector3) -> Node3D:
 	vehicles.append(v)
 	vehicle_spawned.emit(v)
 	return v
+
+
+## Pick up vehicle - despawns vehicle and optionally returns Car Keys to player
+func pickup_vehicle(vehicle: Node3D) -> bool:
+	if not vehicle in vehicles:
+		print("[VehicleManager] pickup_vehicle: Vehicle not tracked")
+		return false
+	
+	# Don't allow pickup if player is in this vehicle
+	if current_player_vehicle == vehicle:
+		print("[VehicleManager] pickup_vehicle: Player is in vehicle, exit first")
+		return false
+	
+	# Despawn the vehicle
+	vehicles.erase(vehicle)
+	vehicle.queue_free()
+	print("[VehicleManager] Vehicle picked up (Total remaining: %d)" % vehicles.size())
+	return true
 
 
 func despawn_vehicle(vehicle: Node3D) -> void:

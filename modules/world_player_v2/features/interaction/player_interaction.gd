@@ -16,13 +16,19 @@ var current_prompt: String = ""
 var is_holding_e: bool = false
 var hold_time: float = 0.0
 const BARRICADE_HOLD_TIME: float = 1.0
+const VEHICLE_RADIAL_HOLD_TIME: float = 0.3  # Time to hold E to open radial menu
 
 var is_in_vehicle: bool = false
 var current_vehicle: Node3D = null
 var terrain_manager: Node = null
 
+# Radial menu for vehicle options
+var radial_menu: Control = null
+var radial_menu_open: bool = false
+
 # V2 local path for ItemDefinitions
 const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
+const RadialMenuScript = preload("res://modules/world_player_v2/features/interaction/radial_menu.gd")
 
 func _ready() -> void:
 	player = get_parent().get_parent()
@@ -40,18 +46,57 @@ func _ready() -> void:
 	vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
 	entity_manager = get_tree().get_first_node_in_group("entity_manager")
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	
+	# Create radial menu
+	_setup_radial_menu()
+
+func _setup_radial_menu() -> void:
+	radial_menu = RadialMenuScript.new()
+	radial_menu.name = "RadialMenu"
+	
+	# Add to player HUD
+	var hud = get_tree().get_first_node_in_group("player_hud")
+	if hud:
+		hud.add_child(radial_menu)
+	else:
+		# Fallback: add to CanvasLayer or root
+		var canvas = player.find_child("PlayerHUD", true, false)
+		if canvas:
+			canvas.add_child(radial_menu)
+	
+	# Connect signals
+	radial_menu.option_selected.connect(_on_radial_option_selected)
+	radial_menu.menu_cancelled.connect(_on_radial_menu_cancelled)
 
 func _process(delta: float) -> void:
+	if radial_menu_open:
+		return  # Don't update targets while radial menu is open
+	
 	_update_interaction_target()
 	
 	if is_holding_e:
 		hold_time += delta
-		if hold_time >= BARRICADE_HOLD_TIME and current_target:
+		
+		# Vehicle-specific: show radial menu after short hold
+		if current_target and current_target.is_in_group("vehicle"):
+			if hold_time >= VEHICLE_RADIAL_HOLD_TIME:
+				_show_vehicle_radial_menu(current_target)
+				is_holding_e = false
+				hold_time = 0.0
+		# Non-vehicle: barricade after long hold
+		elif hold_time >= BARRICADE_HOLD_TIME and current_target:
 			_do_barricade()
 			is_holding_e = false
 			hold_time = 0.0
 
 func _input(event: InputEvent) -> void:
+	# Handle radial menu exit
+	if radial_menu_open:
+		if event is InputEventKey and event.keycode == KEY_E and not event.pressed:
+			radial_menu.hide_menu(true)  # Emit selection
+			radial_menu_open = false
+		return
+	
 	if is_in_vehicle:
 		if event is InputEventKey and event.pressed and event.keycode == KEY_E:
 			_exit_vehicle()
@@ -68,7 +113,11 @@ func _input(event: InputEvent) -> void:
 				is_holding_e = true
 				hold_time = 0.0
 			elif not event.pressed:
-				if hold_time < BARRICADE_HOLD_TIME and current_target:
+				# On release: if short tap on vehicle, enter directly
+				if current_target and current_target.is_in_group("vehicle"):
+					if hold_time < VEHICLE_RADIAL_HOLD_TIME:
+						_enter_vehicle(current_target)
+				elif hold_time < BARRICADE_HOLD_TIME and current_target:
 					_do_interaction()
 				is_holding_e = false
 				hold_time = 0.0
@@ -293,3 +342,48 @@ func _exit_vehicle() -> void:
 	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.interaction_performed.emit(null, "exit_vehicle")
+
+
+## Show radial menu for vehicle options
+func _show_vehicle_radial_menu(vehicle: Node3D) -> void:
+	if not radial_menu or radial_menu_open:
+		return
+	
+	var options: Array[String] = ["Enter", "Pick Up", "Cancel"]
+	radial_menu.show_menu(options, vehicle)
+	radial_menu_open = true
+
+## Handle radial menu selection
+func _on_radial_option_selected(option: String) -> void:
+	radial_menu_open = false
+	var target = radial_menu.target_node
+	
+	match option:
+		"Enter":
+			if target and target.is_in_group("vehicle"):
+				_enter_vehicle(target)
+		"Pick Up":
+			if target and target.is_in_group("vehicle"):
+				_pickup_vehicle(target)
+		"Cancel":
+			print("[PlayerInteraction] Radial menu cancelled")
+
+## Handle radial menu cancel
+func _on_radial_menu_cancelled() -> void:
+	radial_menu_open = false
+	print("[PlayerInteraction] Radial menu cancelled")
+
+## Pick up a vehicle (despawn and return Car Keys)
+func _pickup_vehicle(vehicle: Node3D) -> void:
+	if not vehicle_manager or not vehicle_manager.has_method("pickup_vehicle"):
+		print("[PlayerInteraction] No vehicle_manager or pickup_vehicle method")
+		return
+	
+	var success = vehicle_manager.pickup_vehicle(vehicle)
+	if success:
+		print("[PlayerInteraction] Vehicle picked up")
+		# Optionally add Car Keys back to inventory
+		# var car_keys = ItemDefs.get_car_keys_definition()
+		# if hotbar and hotbar.has_method("add_item"):
+		#     hotbar.add_item(car_keys)
+

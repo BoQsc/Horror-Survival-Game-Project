@@ -124,8 +124,37 @@ func route_secondary_action(item: Dictionary) -> void:
 				combat_system.handle_secondary(item)
 			return
 		
+		# VEHICLE (car keys) - spawn vehicle in front of player
+		if category == 9:
+			_spawn_vehicle(item)
+			return
+		
 		# Other items - terrain interaction for bucket/resource placement
 		if terrain_interaction and terrain_interaction.has_method("handle_secondary"):
 			terrain_interaction.handle_secondary(item)
 		elif combat_system and combat_system.has_method("handle_secondary"):
 			combat_system.handle_secondary(item)
+
+## Spawn vehicle from VEHICLE category item (Car Keys)
+func _spawn_vehicle(item: Dictionary) -> void:
+	var vehicle_scene_path = item.get("vehicle_scene", "")
+	if vehicle_scene_path == "":
+		print("ItemUseRouter: No vehicle_scene in item %s" % item.get("name", "unknown"))
+		return
+	
+	# Find vehicle manager
+	var vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+	if not vehicle_manager:
+		print("ItemUseRouter: No vehicle_manager found")
+		return
+	
+	# Check if vehicle manager has method
+	if not vehicle_manager.has_method("spawn_vehicle"):
+		print("ItemUseRouter: vehicle_manager has no spawn_vehicle method")
+		return
+	
+	# Spawn in front of player
+	if player:
+		var spawn_pos = player.global_position + player.global_basis.z * -3.0
+		var v = vehicle_manager.spawn_vehicle(spawn_pos)
+		print("[ItemUseRouter] Spawned vehicle from Car Keys at %s" % v.global_position)

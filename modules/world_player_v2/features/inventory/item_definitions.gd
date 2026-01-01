@@ -11,7 +11,8 @@ enum ItemCategory {
 	BLOCK, # Cube, Ramp, Stairs - building blocks
 	OBJECT, # Door, Window, Table - functional grid items
 	PROP, # Food cans, decorations - free-placed items
-	SHOVEL # Grid-snapped terrain dig/fill tool
+	SHOVEL, # Grid-snapped terrain dig/fill tool
+	VEHICLE # Car Keys, spawn/pickup vehicles
 }
 
 # Item structure:
@@ -115,14 +116,15 @@ static func get_test_items() -> Array[Dictionary]:
 			"mining_strength": 0.0,
 			"stack_size": 16
 		},
-		# Slot 9 (key 0): Empty slot (acts like fists for combat)
+		# Slot 9 (key 0): Car Keys
 		{
-			"id": "empty",
-			"name": "Empty",
-			"category": ItemCategory.NONE,
-			"damage": 1,
-			"mining_strength": 1.0,
-			"stack_size": 1
+			"id": "car_keys",
+			"name": "Car Keys",
+			"category": ItemCategory.VEHICLE,
+			"damage": 0,
+			"mining_strength": 0.0,
+			"stack_size": 1,
+			"vehicle_scene": "res://vehicles/drivable_car.tscn"
 		}
 	]
 
@@ -154,7 +156,7 @@ static func is_build_item(item: Dictionary) -> bool:
 
 ## Check if category is a PLAY mode tool
 static func is_play_category(category: ItemCategory) -> bool:
-	return category in [ItemCategory.NONE, ItemCategory.TOOL, ItemCategory.BUCKET, ItemCategory.RESOURCE, ItemCategory.SHOVEL]
+	return category in [ItemCategory.NONE, ItemCategory.TOOL, ItemCategory.BUCKET, ItemCategory.RESOURCE, ItemCategory.SHOVEL, ItemCategory.VEHICLE]
 
 ## Get the legacy Fists item (hidden, not in default hotbar)
 ## Can be spawned via console or given to player programmatically
@@ -223,4 +225,16 @@ static func get_heavy_pistol_definition() -> Dictionary:
 		"range": 50.0,
 		"stack_size": 1,
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn"
+	}
+
+## Get Car Keys definition (spawns vehicle)
+static func get_car_keys_definition() -> Dictionary:
+	return {
+		"id": "car_keys",
+		"name": "Car Keys",
+		"category": ItemCategory.VEHICLE,
+		"damage": 0,
+		"mining_strength": 0.0,
+		"stack_size": 1,
+		"vehicle_scene": "res://vehicles/drivable_car.tscn"
 	}
