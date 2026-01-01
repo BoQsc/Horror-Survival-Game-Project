@@ -21,6 +21,10 @@ var is_populated: bool = false
 # Item definitions for loot generation
 const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
 
+# Audio
+const CONTAINER_SOUND_FILE = preload("res://game/sound/containers/cardboard/1/plastic-108360.mp3")
+var container_sound: AudioStreamPlayer3D = null
+
 func _ready() -> void:
 	# Add to groups for detection
 	add_to_group("interactable")
@@ -32,6 +36,9 @@ func _ready() -> void:
 	container_inventory.name = "ContainerInventory"
 	add_child(container_inventory)
 	
+	# Setup audio
+	_setup_audio()
+	
 	# Connect to container closed signal
 	if has_node("/root/ContainerSignals"):
 		ContainerSignals.container_closed.connect(_on_container_closed)
@@ -42,6 +49,13 @@ func _ready() -> void:
 	
 	DebugSettings.log_player("CONTAINER: Initialized %s with %d slots" % [container_name, slot_count])
 
+func _setup_audio() -> void:
+	container_sound = AudioStreamPlayer3D.new()
+	container_sound.stream = CONTAINER_SOUND_FILE
+	container_sound.volume_db = -5.0
+	container_sound.max_distance = 15.0
+	add_child(container_sound)
+
 ## Called by player interaction system to get prompt text
 func get_interaction_prompt() -> String:
 	if is_open:
@@ -50,6 +64,10 @@ func get_interaction_prompt() -> String:
 
 ## Called when player presses E on this container
 func interact() -> void:
+	# Play sound on interaction
+	if container_sound:
+		container_sound.play()
+	
 	if is_open:
 		# Close the container
 		DebugSettings.log_player("CONTAINER: Closing %s" % container_name)
