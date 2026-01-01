@@ -22,8 +22,10 @@ var door_static_body: StaticBody3D = null
 var frame_static_body: StaticBody3D = null
 
 # Audio
-var door_sound: AudioStreamPlayer3D = null
-const DOOR_SOUND_FILE = preload("res://game/sound/door/opening-door-411632.mp3")
+var door_open_sound: AudioStreamPlayer3D = null
+var door_close_sound: AudioStreamPlayer3D = null
+const DOOR_OPEN_SOUND_FILE = preload("res://game/sound/door/opening-door-411632.mp3")
+const DOOR_CLOSE_SOUND_FILE = preload("res://game/sound/door/door-close-79921.mp3")
 
 func _ready():
 	current_hp = max_hp
@@ -45,11 +47,19 @@ func _ready():
 	_setup_collisions()
 
 func _setup_audio():
-	door_sound = AudioStreamPlayer3D.new()
-	door_sound.stream = DOOR_SOUND_FILE
-	door_sound.volume_db = -5.0
-	door_sound.max_distance = 20.0
-	add_child(door_sound)
+	# Open sound
+	door_open_sound = AudioStreamPlayer3D.new()
+	door_open_sound.stream = DOOR_OPEN_SOUND_FILE
+	door_open_sound.volume_db = -5.0
+	door_open_sound.max_distance = 20.0
+	add_child(door_open_sound)
+	
+	# Close sound
+	door_close_sound = AudioStreamPlayer3D.new()
+	door_close_sound.stream = DOOR_CLOSE_SOUND_FILE
+	door_close_sound.volume_db = -5.0
+	door_close_sound.max_distance = 20.0
+	add_child(door_close_sound)
 
 func _find_animation_player(node: Node):
 	if node is AnimationPlayer:
@@ -130,16 +140,16 @@ func interact():
 		open_door()
 
 func open_door():
-	if door_sound:
-		door_sound.play()
+	if door_open_sound:
+		door_open_sound.play()
 	if animation_player and animation_player.has_animation("HN_Door_Open"):
 		animation_player.play("HN_Door_Open")
 	is_open = true
 	print("[Door] Opened")
 
 func close_door():
-	if door_sound:
-		door_sound.play()
+	if door_close_sound:
+		door_close_sound.play()
 	if animation_player and animation_player.has_animation("HN_Door_Close"):
 		animation_player.play("HN_Door_Close")
 	is_open = false
