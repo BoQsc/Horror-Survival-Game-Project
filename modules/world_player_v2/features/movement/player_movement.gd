@@ -1,6 +1,7 @@
 extends Node
 class_name PlayerMovementFeature
-## PlayerMovement - Handles player locomotion (walk, sprint, jump, gravity, swim, crouch)
+## PlayerMovement - Handles player locomotion (walk, sprint, jump, gravity, swim)
+## Crouch is handled by sibling PlayerCrouchFeature
 
 # Local signals reference
 var signals: Node = null
@@ -8,18 +9,8 @@ var signals: Node = null
 # Movement constants
 const WALK_SPEED: float = 5.0
 const SPRINT_SPEED: float = 8.5  # ~70% faster than walking
-const CROUCH_SPEED: float = 2.5  # Slower when crouched
 const SWIM_SPEED: float = 4.0
 const JUMP_VELOCITY: float = 4.5
-
-# Crouch settings
-const STAND_HEIGHT: float = 1.8
-const CROUCH_HEIGHT: float = 1.0
-const STAND_COLLISION_Y: float = 0.9   # CollisionShape Y position when standing
-const CROUCH_COLLISION_Y: float = 0.5  # CollisionShape Y position when crouched
-const STAND_CAMERA_Y: float = 1.6      # Camera Y position when standing
-const CROUCH_CAMERA_Y: float = 0.8     # Camera Y position when crouched
-const CROUCH_TRANSITION_SPEED: float = 10.0  # How fast to transition
 
 # Footstep sound settings - matched to original project
 const FOOTSTEP_INTERVAL: float = 0.5  # Time between footsteps walking
@@ -30,12 +21,10 @@ var footstep_player: AudioStreamPlayer3D = null
 
 # State
 var is_sprinting: bool = false
-var is_crouching: bool = false
 
 # References
 var player: CharacterBody3D = null
-var collision_shape: CollisionShape3D = null
-var camera: Camera3D = null
+var crouch: Node = null  # Sibling crouch component (PlayerCrouchFeature)
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 
 # State
@@ -54,14 +43,13 @@ func _ready() -> void:
 		push_error("PlayerMovement: Must be child of Player/Components node")
 		return
 	
-	# Get collision shape and camera references
-	collision_shape = player.get_node_or_null("CollisionShape3D")
-	camera = player.get_node_or_null("Camera3D")
+	# Get sibling crouch component
+	crouch = get_node_or_null("../Crouch") as PlayerCrouchFeature
 	
 	# Defer footstep setup to ensure player is in scene tree
 	call_deferred("_setup_footstep_sounds")
 	
-	DebugSettings.log_player("PlayerMovementFeature: Initialized (crouch enabled)")
+	DebugSettings.log_player("PlayerMovementFeature: Initialized")
 
 func _setup_footstep_sounds() -> void:
 	# Preload the footstep sounds
@@ -130,36 +118,14 @@ func _emit_underwater_toggled(is_underwater: bool) -> void:
 		PlayerSignals.underwater_toggled.emit(is_underwater)
 
 func _handle_walking(delta: float) -> void:
-	handle_crouch(delta)
+	# Update crouch component (if available)
+	if crouch:
+		crouch.update(delta)
+	
 	apply_gravity(delta)
 	handle_jump()
 	handle_movement()
 	handle_footsteps(delta)
-
-func handle_crouch(delta: float) -> void:
-	# Check if CTRL is held (use built-in crouch action or raw key)
-	var wants_crouch = Input.is_key_pressed(KEY_CTRL)
-	
-	# Can't crouch while jumping/in air (optional - remove if you want air crouch)
-	if not player.is_on_floor():
-		wants_crouch = false
-	
-	is_crouching = wants_crouch
-	
-	# Target values based on crouch state
-	var target_height = CROUCH_HEIGHT if is_crouching else STAND_HEIGHT
-	var target_collision_y = CROUCH_COLLISION_Y if is_crouching else STAND_COLLISION_Y
-	var target_camera_y = CROUCH_CAMERA_Y if is_crouching else STAND_CAMERA_Y
-	
-	# Smoothly transition collision shape
-	if collision_shape and collision_shape.shape is CapsuleShape3D:
-		var capsule = collision_shape.shape as CapsuleShape3D
-		capsule.height = lerp(capsule.height, target_height, CROUCH_TRANSITION_SPEED * delta)
-		collision_shape.position.y = lerp(collision_shape.position.y, target_collision_y, CROUCH_TRANSITION_SPEED * delta)
-	
-	# Smoothly transition camera
-	if camera:
-		camera.position.y = lerp(camera.position.y, target_camera_y, CROUCH_TRANSITION_SPEED * delta)
 
 func _handle_swimming(delta: float) -> void:
 	# Neutral buoyancy or slight sinking/floating
@@ -206,6 +172,9 @@ func handle_movement() -> void:
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	var direction := (player.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	
+	# Check crouch state from crouch component
+	var is_crouching = crouch.is_crouching if crouch else false
+	
 	# Can't sprint while crouching
 	if is_crouching:
 		is_sprinting = false
@@ -223,7 +192,7 @@ func handle_movement() -> void:
 	# Select speed based on state: crouch < walk < sprint
 	var current_speed: float
 	if is_crouching:
-		current_speed = CROUCH_SPEED
+		current_speed = crouch.get_speed() if crouch else WALK_SPEED
 	elif is_sprinting:
 		current_speed = SPRINT_SPEED
 	else:
