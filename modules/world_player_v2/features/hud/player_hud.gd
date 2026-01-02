@@ -59,6 +59,14 @@ func _ready() -> void:
 	if exit_btn:
 		exit_btn.pressed.connect(_on_exit_pressed)
 	
+	# Connect collision debugger toggle
+	var collision_toggle = game_menu.get_node_or_null("CollisionDebuggerToggle")
+	if collision_toggle:
+		collision_toggle.toggled.connect(_on_collision_debugger_toggled)
+		# Sync with current state
+		if has_node("/root/CollisionDebugger"):
+			collision_toggle.button_pressed = get_node("/root/CollisionDebugger").enabled
+	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
 	game_menu.visible = false
@@ -312,6 +320,10 @@ func _on_game_menu_toggled(is_open: bool) -> void:
 
 func _on_exit_pressed() -> void:
 	get_tree().quit()
+
+func _on_collision_debugger_toggled(is_enabled: bool) -> void:
+	if has_node("/root/CollisionDebugger"):
+		get_node("/root/CollisionDebugger").enabled = is_enabled
 
 func _on_inventory_changed() -> void:
 	_refresh_hotbar_display()
