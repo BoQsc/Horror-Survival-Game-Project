@@ -88,6 +88,13 @@ func exit_vehicle() -> Node3D:
 	var exiting = occupant
 	occupant = null
 	is_player_controlled = false
+	
+	# CRITICAL: Stop the car completely when player exits
+	# This prevents the car from rolling away or flying off
+	linear_velocity = Vector3.ZERO
+	angular_velocity = Vector3.ZERO
+	brake = 1.0  # Apply full brake
+	
 	player_exited.emit(exiting)
 	_stop_engine_audio()
 	return exiting
@@ -218,9 +225,27 @@ func get_interaction_prompt() -> String:
 
 ## Gets a safe position for player to exit (beside the vehicle)
 func get_exit_position() -> Vector3:
-	# Exit to the left side of the vehicle - LARGE offset to avoid any collision
-	var exit_offset = global_transform.basis.x * -4.0  # 4 meters to the left
-	return global_position + exit_offset + Vector3(0, 1.5, 0)  # 1.5m up
+	# Exit 4m to the left (vehicle-relative)
+	var exit_offset = global_transform.basis.x * -4.0
+	var base_position = global_position + exit_offset
+	
+	# Raycast down to find terrain surface
+	var space_state = get_world_3d().direct_space_state
+	var ray_start = base_position + Vector3(0, 50.0, 0)  # Start high above
+	var ray_end = base_position + Vector3(0, -50.0, 0)   # Check down
+	
+	var query = PhysicsRayQueryParameters3D.create(ray_start, ray_end)
+	query.collision_mask = 1  # Only terrain (layer 1)
+	query.exclude = [get_rid()]  # Don't hit the car
+	
+	var result = space_state.intersect_ray(query)
+	
+	if result:
+		# Found terrain - place player 1m above surface
+		return result.position + Vector3(0, 1.0, 0)
+	else:
+		# No terrain found - use car height as fallback
+		return base_position + Vector3(0, 1.0, 0)
 
 
 ## Enable or disable the follow camera
