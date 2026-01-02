@@ -8,12 +8,13 @@ extends Node3D
 @export_category("Follow Settings")
 @export var follow_distance: float = 8.0
 @export var follow_height: float = 2.0
+@export var rotation_smoothing: float = 8.0  # Higher = snappier, Lower = more lag
 
 # Mouse orbit settings  
 @export_category("Mouse Orbit Settings")
 @export var mouse_sensitivity: float = 0.003
 @export var return_speed: float = 2.0
-@export var return_delay: float = 1.0
+@export var return_delay: float = 5.0  # Wait 5 seconds before auto-return
 @export var max_pitch_deg: float = 60.0
 @export var min_pitch_deg: float = -20.0
 
@@ -84,44 +85,43 @@ func _physics_process(delta: float) -> void:
 	if not follow_target or not is_instance_valid(follow_target):
 		return
 	
-	# === TRACK CAR ROTATION (with lag for cinematic feel) ===
+	# === TRACK CAR ROTATION ===
 	var car_forward = -follow_target.global_transform.basis.z
 	car_forward.y = 0
 	if car_forward.length() > 0.1:
 		var current_car_yaw = atan2(car_forward.x, car_forward.z)
+		var car_yaw_delta = current_car_yaw - last_car_yaw
 		
-		# Calculate yaw difference (handle wrap-around)
-		var yaw_diff = current_car_yaw - orbit_yaw
-		if yaw_diff > PI:
-			yaw_diff -= TAU
-		elif yaw_diff < -PI:
-			yaw_diff += TAU
+		# Handle wrap-around
+		if car_yaw_delta > PI:
+			car_yaw_delta -= TAU
+		elif car_yaw_delta < -PI:
+			car_yaw_delta += TAU
 		
-		# Smooth follow with lag (lower = more lag, higher = faster follow)
-		var rotation_follow_speed = 4.0  # Adjust for more/less lag
-		orbit_yaw += yaw_diff * rotation_follow_speed * delta
-		
+		# Apply CHANGE in car rotation (preserves mouse offset)
+		orbit_yaw += car_yaw_delta
 		last_car_yaw = current_car_yaw
 	
-	# === AUTO-RETURN ===
-	mouse_idle_timer += delta
-	if mouse_idle_timer > return_delay:
-		var behind_yaw = last_car_yaw
-		var yaw_diff = behind_yaw - orbit_yaw
-		if yaw_diff > PI:
-			yaw_diff -= TAU
-		elif yaw_diff < -PI:
-			yaw_diff += TAU
-		orbit_yaw += yaw_diff * return_speed * delta
-		orbit_pitch = lerp(orbit_pitch, -0.27, return_speed * delta)  # Return to original angle
+	
+	# === AUTO-RETURN (DISABLED - was fighting with camera lag) ===
+	# mouse_idle_timer += delta
+	# if mouse_idle_timer > return_delay:
+	# 	var behind_yaw = last_car_yaw
+	# 	var yaw_diff = behind_yaw - orbit_yaw
+	# 	if yaw_diff > PI:
+	# 		yaw_diff -= TAU
+	# 	elif yaw_diff < -PI:
+	# 		yaw_diff += TAU
+	# 	orbit_yaw += yaw_diff * return_speed * delta
+	# 	orbit_pitch = lerp(orbit_pitch, -0.27, return_speed * delta)
 	
 	# === POSITION THIS NODE AT CAR ===
 	global_position = follow_target.global_position
 	
-	# === ROTATE THIS NODE TO ORBIT YAW ===
+	# === ROTATE THIS NODE TO ORBIT YAW (with smooth lag) ===
 	# This rotates the entire Pivot/SpringArm/Camera hierarchy around the car
 	var target_basis = Basis.looking_at(Vector3(sin(orbit_yaw), 0, cos(orbit_yaw)), Vector3.UP)
-	global_basis = target_basis
+	global_basis = global_basis.slerp(target_basis, rotation_smoothing * delta)
 	
 	# === APPLY PITCH TO PIVOT ===
 	if pivot:
