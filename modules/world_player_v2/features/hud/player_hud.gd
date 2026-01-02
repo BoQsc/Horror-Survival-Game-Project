@@ -75,6 +75,14 @@ func _ready() -> void:
 		if has_node("/root/PickaxeDigConfig"):
 			pickaxe_toggle.button_pressed = get_node("/root/PickaxeDigConfig").enabled
 	
+	# Connect target visualizer toggle
+	var visualizer_toggle = game_menu.get_node_or_null("TargetVisualizerToggle")
+	if visualizer_toggle:
+		visualizer_toggle.toggled.connect(_on_target_visualizer_toggled)
+		# Sync with current state
+		if has_node("/root/PickaxeTargetVisualizer"):
+			visualizer_toggle.button_pressed = get_node("/root/PickaxeTargetVisualizer").enabled
+	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
 	game_menu.visible = false
@@ -337,6 +345,11 @@ func _on_pickaxe_dig_mode_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PickaxeDigConfig"):
 		get_node("/root/PickaxeDigConfig").enabled = is_enabled
 		print("PlayerHUD: Enhanced Pickaxe Mode -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_target_visualizer_toggled(is_enabled: bool) -> void:
+	if has_node("/root/PickaxeTargetVisualizer"):
+		get_node("/root/PickaxeTargetVisualizer").enabled = is_enabled
+		print("PlayerHUD: Target Visualizer -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_inventory_changed() -> void:
 	_refresh_hotbar_display()
