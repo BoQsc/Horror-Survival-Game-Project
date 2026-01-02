@@ -21,6 +21,7 @@ signal entity_despawned(entity: Node3D)
 @export var default_entity_scene: PackedScene
 
 var player: Node3D
+var viewer: Node3D  # What to track for spawning (player or vehicle)
 var active_entities: Array[Node3D] = []
 var frozen_entities: Dictionary = {} # entity -> { position: Vector3 }
 var dormant_entities: Array = [] # Stored entities: { position, scene_path, health, state }
@@ -44,8 +45,15 @@ var spawn_rules = {
 }
 
 func _ready():
+	# Register in group for lookup by other systems
+	add_to_group("entity_manager")
+	
+	# Keep running even when player is disabled (e.g., in vehicle)
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
+	viewer = player  # Default viewer is the player
 	if not player:
 		push_warning("EntityManager: Player not found in 'player' group!")
 	
@@ -55,8 +63,13 @@ func _ready():
 func _physics_process(_delta):
 	if not player:
 		player = get_tree().get_first_node_in_group("player")
+		viewer = player
 		if not player:
 			return
+	
+	# Use viewer for position tracking (player or vehicle)
+	if not viewer or not is_instance_valid(viewer):
+		viewer = player
 	
 	PerformanceMonitor.start_measure("Entity Proximity")
 	_update_entity_proximity()
@@ -74,7 +87,7 @@ func _physics_process(_delta):
 
 ## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():
-	var player_pos = player.global_position
+	var player_pos = viewer.global_position if viewer else player.global_position
 	var freeze_dist_sq = freeze_radius * freeze_radius
 	var despawn_dist_sq = despawn_radius * despawn_radius
 	
@@ -175,10 +188,10 @@ func _unfreeze_entity(entity: Node3D):
 
 ## Check if any dormant entities should be respawned (player returned to their area)
 func _check_dormant_respawns():
-	if dormant_entities.is_empty() or not player:
+	if dormant_entities.is_empty() or not viewer:
 		return
 	
-	var player_pos = player.global_position
+	var player_pos = viewer.global_position
 	var completed: Array[int] = []
 	
 	for i in range(dormant_entities.size()):
@@ -311,10 +324,10 @@ func despawn_entity(entity: Node3D, permanent: bool = false):
 ## Spawn an entity at a random position around the player on terrain surface
 ## Adds to spawn queue - actual spawning happens in _process_spawn_queue
 func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
-	if not player:
+	if not viewer:
 		return null
 	
-	var player_pos = player.global_position
+	var player_pos = viewer.global_position
 	
 	# Random angle and distance
 	var angle = randf() * TAU
@@ -335,7 +348,7 @@ func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 ## Process spawn queue - spawns entities immediately when terrain collision is ready via raycast
 ## Event-driven: no hardcoded delays, spawn as soon as raycast hits terrain
 func _process_spawn_queue():
-	if pending_spawns.is_empty() or not player:
+	if pending_spawns.is_empty() or not viewer:
 		return
 	
 	var completed: Array[int] = []
@@ -348,7 +361,7 @@ func _process_spawn_queue():
 		# Check if spawn point is within collision range of player
 		# Collision is only enabled within collision_distance chunks (~93 units for distance=3)
 		# Spawning outside this range = zombie falls through disabled collision
-		var player_pos = player.global_position
+		var player_pos = viewer.global_position
 		var dist_to_player = Vector2(pos.x, pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
 		
 		# Get collision distance from terrain manager (default ~93 units = 3 chunks * 31)

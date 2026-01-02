@@ -310,6 +310,9 @@ func _enter_vehicle(vehicle: Node3D) -> void:
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = vehicle
 	
+	if entity_manager and "viewer" in entity_manager:
+		entity_manager.viewer = vehicle
+	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.interaction_performed.emit(vehicle, "enter_vehicle")
 
@@ -336,6 +339,9 @@ func _exit_vehicle() -> void:
 	
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = player
+	
+	if entity_manager and "viewer" in entity_manager:
+		entity_manager.viewer = player
 	
 	is_in_vehicle = false
 	current_vehicle = null
