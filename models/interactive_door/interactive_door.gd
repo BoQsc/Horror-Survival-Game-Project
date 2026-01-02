@@ -34,16 +34,13 @@ func _ready():
 	add_to_group("placed_objects")
 	add_to_group("breakable")
 	
+	# Defer heavy initialization to first frame to spread load
+	call_deferred("_deferred_init")
+
+func _deferred_init():
 	_find_animation_player(self)
 	_setup_audio()
-	
-	if animation_player:
-		print("[Door] Found AnimationPlayer: %s" % [animation_player.get_animation_list()])
-	
-	# Disable GLB auto-generated collisions first
 	_disable_glb_collisions()
-	
-	# Find and configure scene-defined collisions
 	_setup_collisions()
 
 func _setup_audio():
@@ -83,7 +80,6 @@ func _setup_collisions():
 		door_static_body.add_to_group("placed_objects")
 		door_static_body.set_meta("door", self)
 		door_static_body.set_meta("is_door_panel", true)
-		print("[Door] Door collision configured")
 	else:
 		push_warning("[Door] DoorCollider not found!")
 	
@@ -93,7 +89,6 @@ func _setup_collisions():
 		frame_static_body.add_to_group("placed_objects")
 		frame_static_body.set_meta("door", self)
 		frame_static_body.set_meta("is_frame", true)
-		print("[Door] Frame collision configured")
 	else:
 		push_warning("[Door] FrameCollider not found!")
 
@@ -115,9 +110,7 @@ func _disable_static_bodies_recursive(node: Node):
 			_disable_static_bodies_recursive(child)  # But still check children
 			continue
 		
-		# Remove auto-generated StaticBody3D from GLB import
 		if child is StaticBody3D:
-			print("[Door] Removing GLB auto-generated: %s" % child.name)
 			child.queue_free()
 		else:
 			_disable_static_bodies_recursive(child)
@@ -145,7 +138,6 @@ func open_door():
 	if animation_player and animation_player.has_animation("HN_Door_Open"):
 		animation_player.play("HN_Door_Open")
 	is_open = true
-	print("[Door] Opened")
 
 func close_door():
 	if door_close_sound:
@@ -153,7 +145,6 @@ func close_door():
 	if animation_player and animation_player.has_animation("HN_Door_Close"):
 		animation_player.play("HN_Door_Close")
 	is_open = false
-	print("[Door] Closed")
 
 func get_interaction_prompt() -> String:
 	return "Press E to close" if is_open else "Press E to open"
