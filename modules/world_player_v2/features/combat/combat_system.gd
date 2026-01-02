@@ -443,6 +443,7 @@ func _on_pistol_fire_ready() -> void:
 
 func _on_axe_ready() -> void:
 	axe_ready = true
+	pickaxe_ready = true
 	# Note: damage now happens at 0.83s via _on_axe_hit_moment, not here
 
 ## Axe hit moment - called at 0.83s into swing animation
@@ -542,8 +543,7 @@ func do_tool_attack(item: Dictionary) -> void:
 			# Delay damage to 0.30s (when pickaxe visually connects)
 			get_tree().create_timer(0.30).timeout.connect(_on_pickaxe_hit_moment)
 		
-		# Reset pickaxe ready after full animation duration
-		get_tree().create_timer(0.6).timeout.connect(func(): pickaxe_ready = true)
+		# Pickaxe ready state will be reset by axe_ready signal (from first_person_pickaxe.gd)
 		return  # ALWAYS exit - damage will happen after delay (or not at all if miss)
 	
 	var hit = _raycast(3.5, true, true)
