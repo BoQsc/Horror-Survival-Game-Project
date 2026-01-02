@@ -28,6 +28,7 @@ PlayerStats="*res://modules/world_player/autoload/player_stats.gd"
 ContainerSignals="*res://modules/world_player_v2/features/containers/signals.gd"
 AmbientAudioManager="*res://game/sound/ambient_audio_manager.gd"
 CollisionDebugger="*res://modules/debug_module/collision_debugger.gd"
+PickaxeDigConfig="*res://modules/world_player_v2/features/combat/pickaxe_dig_config.gd"
 
 [display]
 

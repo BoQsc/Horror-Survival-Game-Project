@@ -547,19 +547,60 @@ func do_tool_attack(item: Dictionary) -> void:
 	if _try_damage_building_block(target, item, position, hit):
 		return
 	
-	# Priority 5: Terrain instant mine
+	# Priority 5: Terrain mine
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
+		# Check if enhanced pickaxe mode is enabled for pickaxe items
+		var use_enhanced_mode = false
+		if "pickaxe" in item_id and has_node("/root/PickaxeDigConfig"):
+			use_enhanced_mode = get_node("/root/PickaxeDigConfig").enabled
+		
 		# Use mesh-based detection (matches HUD) instead of voxel grid
 		var hit_normal = hit.get("normal", Vector3.UP)
 		var mat_id = _get_material_at_hit(target, position, hit_normal)
 		
-		var actual_radius = max(mining_strength, 0.8)
-		DebugSettings.log_player("CombatSystem: Terrain mine at %s (tool: %s, radius: %.2f, mat: %d)" % [position, item_id, actual_radius, mat_id])
-		print("AXE_TERRAIN_DEBUG: Mining at %s, radius=%.2f, mat=%d" % [position, actual_radius, mat_id])
-		terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
-		
-		if mat_id >= 0:
-			_collect_terrain_resource(mat_id)
+		if use_enhanced_mode:
+			# ENHANCED MODE: Blocky grid-snapped removal with durability
+			# Apply grid snapping (from editor mode logic)
+			var snapped_pos = position - hit_normal * 0.1
+			snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
+			var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
+			
+			# Initialize damage tracking
+			if not terrain_damage.has(block_pos):
+				terrain_damage[block_pos] = 0
+			
+			# Apply damage
+			terrain_damage[block_pos] += damage
+			var current_hp = TERRAIN_HP - terrain_damage[block_pos]
+			durability_target = block_pos
+			
+			# Emit durability signal for HUD
+			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
+			
+			DebugSettings.log_player("CombatSystem: Enhanced pickaxe hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
+			
+			# Check if terrain cube should break
+			if terrain_damage[block_pos] >= TERRAIN_HP:
+				# Break the block with box shape, size 0.6 (grid-snapped cube)
+				terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
+				terrain_damage.erase(block_pos)
+				_emit_durability_cleared()
+				
+				# Collect resource
+				if mat_id >= 0:
+					_collect_terrain_resource(mat_id)
+				
+				DebugSettings.log_player("CombatSystem: Terrain cube broken at %s" % block_pos)
+		else:
+			# ORIGINAL MODE: Sphere-based instant removal
+			var actual_radius = max(mining_strength, 0.8)
+			DebugSettings.log_player("CombatSystem: Terrain mine at %s (tool: %s, radius: %.2f, mat: %d)" % [position, item_id, actual_radius, mat_id])
+			print("AXE_TERRAIN_DEBUG: Mining at %s, radius=%.2f, mat=%d" % [position, actual_radius, mat_id])
+			terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			
+			if mat_id >= 0:
+				_collect_terrain_resource(mat_id)
+
 
 ## Axe damage - called when animation completes (from _on_axe_ready)
 func _do_axe_damage(item: Dictionary) -> void:
@@ -603,16 +644,57 @@ func _do_axe_damage(item: Dictionary) -> void:
 	
 	# Priority 5: Terrain mining
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
+		# Check if enhanced pickaxe mode is enabled for pickaxe items
+		var use_enhanced_mode = false
+		if "pickaxe" in item_id and has_node("/root/PickaxeDigConfig"):
+			use_enhanced_mode = get_node("/root/PickaxeDigConfig").enabled
+		
 		# Use mesh-based detection (matches HUD) instead of voxel grid
 		var hit_normal = hit.get("normal", Vector3.UP)
 		var mat_id = _get_material_at_hit(target, position, hit_normal)
 		
-		var actual_radius = max(mining_strength, 0.8)
-		print("AXE_DAMAGE_DEBUG: Terrain mine at %s, radius=%.2f, mat=%d" % [position, actual_radius, mat_id])
-		terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
-		
-		if mat_id >= 0:
-			_collect_terrain_resource(mat_id)
+		if use_enhanced_mode:
+			# ENHANCED MODE: Blocky grid-snapped removal with durability
+			# Apply grid snapping (from editor mode logic)
+			var snapped_pos = position - hit_normal * 0.1
+			snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
+			var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
+			
+			# Initialize damage tracking
+			if not terrain_damage.has(block_pos):
+				terrain_damage[block_pos] = 0
+			
+			# Apply damage
+			terrain_damage[block_pos] += damage
+			var current_hp = TERRAIN_HP - terrain_damage[block_pos]
+			durability_target = block_pos
+			
+			# Emit durability signal for HUD
+			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
+			
+			print("AXE_DAMAGE_DEBUG: Enhanced pickaxe hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
+			
+			# Check if terrain cube should break
+			if terrain_damage[block_pos] >= TERRAIN_HP:
+				# Break the block with box shape, size 0.6 (grid-snapped cube)
+				terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
+				terrain_damage.erase(block_pos)
+				_emit_durability_cleared()
+				
+				# Collect resource
+				if mat_id >= 0:
+					_collect_terrain_resource(mat_id)
+				
+				print("AXE_DAMAGE_DEBUG: Terrain cube broken at %s" % block_pos)
+		else:
+			# ORIGINAL MODE: Sphere-based instant removal
+			var actual_radius = max(mining_strength, 0.8)
+			print("AXE_DAMAGE_DEBUG: Terrain mine at %s, radius=%.2f, mat=%d" % [position, actual_radius, mat_id])
+			terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			
+			if mat_id >= 0:
+				_collect_terrain_resource(mat_id)
+
 
 ## Pistol fire
 func do_pistol_fire() -> void:

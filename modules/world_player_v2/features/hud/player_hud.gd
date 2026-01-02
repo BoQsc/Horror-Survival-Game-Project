@@ -67,6 +67,14 @@ func _ready() -> void:
 		if has_node("/root/CollisionDebugger"):
 			collision_toggle.button_pressed = get_node("/root/CollisionDebugger").enabled
 	
+	# Connect pickaxe dig mode toggle
+	var pickaxe_toggle = game_menu.get_node_or_null("PickaxeDigModeToggle")
+	if pickaxe_toggle:
+		pickaxe_toggle.toggled.connect(_on_pickaxe_dig_mode_toggled)
+		# Sync with current state
+		if has_node("/root/PickaxeDigConfig"):
+			pickaxe_toggle.button_pressed = get_node("/root/PickaxeDigConfig").enabled
+	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
 	game_menu.visible = false
@@ -324,6 +332,11 @@ func _on_exit_pressed() -> void:
 func _on_collision_debugger_toggled(is_enabled: bool) -> void:
 	if has_node("/root/CollisionDebugger"):
 		get_node("/root/CollisionDebugger").enabled = is_enabled
+
+func _on_pickaxe_dig_mode_toggled(is_enabled: bool) -> void:
+	if has_node("/root/PickaxeDigConfig"):
+		get_node("/root/PickaxeDigConfig").enabled = is_enabled
+		print("PlayerHUD: Enhanced Pickaxe Mode -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_inventory_changed() -> void:
 	_refresh_hotbar_display()
