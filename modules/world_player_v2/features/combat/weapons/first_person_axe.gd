@@ -131,7 +131,9 @@ func _update_sway_and_bob(delta: float) -> void:
 	mouse_input = Vector2.ZERO
 
 func _on_axe_fired() -> void:
-	_try_attack()
+	# Only respond if axe is currently visible
+	if axe_mesh and axe_mesh.visible:
+		_try_attack()
 
 func _return_to_ready() -> void:
 	is_attacking = false

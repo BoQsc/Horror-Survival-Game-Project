@@ -35,6 +35,7 @@ var durability_target: Variant = null # Current target being damaged
 var fist_punch_ready: bool = true
 var pistol_fire_ready: bool = true
 var axe_ready: bool = true
+var pickaxe_ready: bool = true
 var pending_axe_item: Dictionary = {}  # Store item data when axe swing starts
 var is_reloading: bool = false
 
@@ -516,12 +517,14 @@ func do_tool_attack(item: Dictionary) -> void:
 		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
 		return  # Exit - damage will happen after delay
 	
-	# Handle pickaxe - use same animation timing as axe
+	# Handle pickaxe - use same animation timing as axe but separate ready state
 	if "pickaxe" in item_id:
-		if not axe_ready:
+		if not pickaxe_ready:
 			return
-		axe_ready = false
-		_emit_axe_fired()  # Trigger visual animation
+		pickaxe_ready = false
+		_emit_axe_fired()  # Trigger visual animation (pickaxe reuses axe signal)
+		# Reset pickaxe ready after animation duration
+		get_tree().create_timer(0.6).timeout.connect(func(): pickaxe_ready = true)
 		# Pickaxe damage is instant (no delay needed)
 	
 	var hit = _raycast(3.5, true, true)
