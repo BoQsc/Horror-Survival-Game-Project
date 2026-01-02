@@ -343,6 +343,9 @@ func _exit_vehicle() -> void:
 		var exit_offset = exiting_vehicle.global_transform.basis.x * -4.0
 		player.global_position = exiting_vehicle.global_position + exit_offset + Vector3(0, 1.5, 0)
 	
+	# Face the same direction as the vehicle (add PI to flip 180 degrees due to model orientation)
+	player.rotation.y = exiting_vehicle.rotation.y + PI
+	
 	if exiting_vehicle.has_method("set_camera_active"):
 		exiting_vehicle.set_camera_active(false)
 	
