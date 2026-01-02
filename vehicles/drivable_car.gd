@@ -61,7 +61,7 @@ func _ready() -> void:
 	# === RIGID SUSPENSION (No Body Lean) ===
 	# Very high stiffness effectively locks the suspension
 	# High damping prevents any oscillation
-	max_steer = 0.25  # Gentler steering (default was 0.45)
+	max_steer = 0.40  # Sharp steering for responsive control (was 0.25)
 	
 	for wheel in steering_wheels:
 		wheel.wheel_friction_slip = front_wheel_grip
@@ -109,9 +109,9 @@ func get_input(delta: float) -> void:
 	# Check for boost (Shift key)
 	is_boosting = Input.is_action_pressed("sprint")
 	
-	# WASD controls
+	# WASD controls - INSTANT steering for snappy response
 	player_input.x = Input.get_axis("move_right", "move_left")
-	player_steer = move_toward(player_steer, player_input.x * max_steer, steer_damping * delta)
+	player_steer = player_input.x * max_steer  # Instant, no smoothing
 	
 	# W/S for forward/backward
 	player_input.y = Input.get_axis("move_backward", "move_forward")
