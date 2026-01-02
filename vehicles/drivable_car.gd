@@ -94,6 +94,10 @@ func exit_vehicle() -> Node3D:
 
 
 ## Override to use WASD controls and respect player control state
+## MAXIMUM REVERSE RESPONSIVENESS: Simultaneous brake+reverse, high brake force
+const REVERSE_THRESHOLD_SPEED: float = 5.0  # Start reverse power below this forward speed (m/s)
+const AGGRESSIVE_BRAKE_FORCE: float = 5.0   # 5x stronger than default
+
 func get_input(delta: float) -> void:
 	if not is_player_controlled:
 		player_steer = 0.0
@@ -120,18 +124,29 @@ func get_input(delta: float) -> void:
 		player_acceleration = player_input.y * accel_mult
 		player_braking = 0.0
 	elif player_input.y < -0.01:
-		# Trying to brake or reverse
-		if going_forward():
-			# Brake
-			player_braking = -player_input.y * max_brake_force
+		# AGGRESSIVE REVERSE: Apply braking + reverse power simultaneously
+		var forward_speed = _get_forward_speed()
+		
+		if forward_speed > REVERSE_THRESHOLD_SPEED:
+			# High speed forward - heavy brake only
+			player_braking = -player_input.y * AGGRESSIVE_BRAKE_FORCE
 			player_acceleration = 0.0
+		elif forward_speed > 0.5:
+			# Low speed forward - brake AND start reverse power (arcade style)
+			player_braking = -player_input.y * AGGRESSIVE_BRAKE_FORCE * 0.5
+			player_acceleration = player_input.y * accel_mult * 0.5  # Partial reverse
 		else:
-			# Reverse (with boost)
+			# Stopped or reversing - full reverse power
 			player_braking = 0.0
 			player_acceleration = player_input.y * accel_mult
 	else:
 		player_acceleration = 0.0
 		player_braking = 0.0
+
+
+## Get current forward speed in m/s (positive = forward, negative = reverse)
+func _get_forward_speed() -> float:
+	return -basis.z.dot(linear_velocity)
 
 
 func _physics_process(delta: float) -> void:
