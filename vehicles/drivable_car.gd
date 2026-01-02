@@ -109,9 +109,9 @@ func get_input(delta: float) -> void:
 	# Check for boost (Shift key)
 	is_boosting = Input.is_action_pressed("sprint")
 	
-	# WASD controls - INSTANT steering for snappy response
+	# WASD controls
 	player_input.x = Input.get_axis("move_right", "move_left")
-	player_steer = player_input.x * max_steer  # Instant, no smoothing
+	player_steer = move_toward(player_steer, player_input.x * max_steer, steer_damping * delta)
 	
 	# W/S for forward/backward
 	player_input.y = Input.get_axis("move_backward", "move_forward")
