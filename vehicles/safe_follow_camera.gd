@@ -84,20 +84,23 @@ func _physics_process(delta: float) -> void:
 	if not follow_target or not is_instance_valid(follow_target):
 		return
 	
-	# === TRACK CAR ROTATION ===
+	# === TRACK CAR ROTATION (with lag for cinematic feel) ===
 	var car_forward = -follow_target.global_transform.basis.z
 	car_forward.y = 0
 	if car_forward.length() > 0.1:
 		var current_car_yaw = atan2(car_forward.x, car_forward.z)
-		var car_yaw_delta = current_car_yaw - last_car_yaw
 		
-		# Handle wrap-around
-		if car_yaw_delta > PI:
-			car_yaw_delta -= TAU
-		elif car_yaw_delta < -PI:
-			car_yaw_delta += TAU
+		# Calculate yaw difference (handle wrap-around)
+		var yaw_diff = current_car_yaw - orbit_yaw
+		if yaw_diff > PI:
+			yaw_diff -= TAU
+		elif yaw_diff < -PI:
+			yaw_diff += TAU
 		
-		orbit_yaw += car_yaw_delta
+		# Smooth follow with lag (lower = more lag, higher = faster follow)
+		var rotation_follow_speed = 4.0  # Adjust for more/less lag
+		orbit_yaw += yaw_diff * rotation_follow_speed * delta
+		
 		last_car_yaw = current_car_yaw
 	
 	# === AUTO-RETURN ===
