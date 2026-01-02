@@ -624,9 +624,20 @@ func do_tool_attack(item: Dictionary) -> void:
 		else:
 			# ORIGINAL MODE: Sphere-based instant removal
 			var actual_radius = max(mining_strength, 0.8)
+			
+			# Calculate block position for visual feedback
+			var snapped_pos = position - hit_normal * 0.1
+			var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
+			
+			# Emit visual feedback (0 HP = instant break)
+			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
+			
 			DebugSettings.log_player("CombatSystem: Terrain mine at %s (tool: %s, radius: %.2f, mat: %d)" % [position, item_id, actual_radius, mat_id])
 			print("AXE_TERRAIN_DEBUG: Mining at %s, radius=%.2f, mat=%d" % [position, actual_radius, mat_id])
 			terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			
+			# Clear visual after break
+			_emit_durability_cleared()
 			
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)
@@ -809,7 +820,18 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		else:
 			# ORIGINAL MODE: Sphere-based instant removal
 			var actual_radius = max(item.get("mining_strength", 1.0), 0.8)
+			
+			# Calculate block position for visual feedback
+			var snapped_pos = position - hit_normal * 0.1
+			var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
+			
+			# Emit visual feedback (0 HP = instant break)
+			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
+			
 			terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			
+			# Clear visual after break
+			_emit_durability_cleared()
 			
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)

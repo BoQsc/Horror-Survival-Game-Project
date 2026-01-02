@@ -46,6 +46,9 @@ shadow_enabled = true
 [node name="WorldPlayerV2" parent="." groups=["player"] instance=ExtResource("1_worldplayer")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
 
+[node name="DurabilityVisualDebugger" type="Node3D" parent="WorldPlayerV2"]
+script = preload("res://modules/world_player_v2/features/combat/durability_visual_debugger.gd")
+
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
 anchors_preset = 15
