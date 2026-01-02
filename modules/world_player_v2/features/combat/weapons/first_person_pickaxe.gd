@@ -42,13 +42,16 @@ func _ready() -> void:
 	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
-		# Pickaxe uses same attack timing as axe for now
+		# Pickaxe uses axe_fired signal (pickaxes now emit this)
 		PlayerSignals.axe_fired.connect(_on_pickaxe_fired)
+		# Also listen to hotbar changes for visibility
+		PlayerSignals.hotbar_slot_selected.connect(_on_hotbar_slot_selected)
 
 func _setup_deferred() -> void:
 	_setup_pickaxe_holder()
 	_load_pickaxe_model()
 	_setup_audio()
+	_check_initial_item()
 
 func _setup_pickaxe_holder() -> void:
 	hand_holder = Node3D.new()
@@ -185,7 +188,30 @@ func _try_play_idle() -> void:
 			anim_player.play(a)
 			return
 
+func _check_initial_item() -> void:
+	# Check if pickaxe is equipped on spawn
+	if not player:
+		return
+	
+	var hotbar = player.get_node_or_null("Systems/Hotbar")
+	if hotbar and hotbar.has_method("get_selected_item"):
+		var item = hotbar.get_selected_item()
+		_update_visibility(item)
+
+func _on_hotbar_slot_selected(_slot: int) -> void:
+	# Update visibility when slot changes
+	if not player:
+		return
+	
+	var hotbar = player.get_node_or_null("Systems/Hotbar")
+	if hotbar and hotbar.has_method("get_selected_item"):
+		var item = hotbar.get_selected_item()
+		_update_visibility(item)
+
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
+	_update_visibility(item)
+
+func _update_visibility(item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var should_show = "pickaxe" in item_id
 	
@@ -193,3 +219,4 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 		pickaxe_mesh.visible = should_show
 		if should_show:
 			_try_play_idle()
+			DebugSettings.log_player("FirstPersonPickaxe: Showing pickaxe for item %s" % item_id)

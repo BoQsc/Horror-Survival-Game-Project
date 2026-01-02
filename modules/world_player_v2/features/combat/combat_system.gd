@@ -516,6 +516,14 @@ func do_tool_attack(item: Dictionary) -> void:
 		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
 		return  # Exit - damage will happen after delay
 	
+	# Handle pickaxe - use same animation timing as axe
+	if "pickaxe" in item_id:
+		if not axe_ready:
+			return
+		axe_ready = false
+		_emit_axe_fired()  # Trigger visual animation
+		# Pickaxe damage is instant (no delay needed)
+	
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
 		return
