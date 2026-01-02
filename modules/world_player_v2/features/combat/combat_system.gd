@@ -37,6 +37,7 @@ var pistol_fire_ready: bool = true
 var axe_ready: bool = true
 var pickaxe_ready: bool = true
 var pending_axe_item: Dictionary = {}  # Store item data when axe swing starts
+var pending_pickaxe_hit: Dictionary = {}  # Store hit data when pickaxe swing starts
 var is_reloading: bool = false
 
 # Mode manager reference
@@ -450,6 +451,12 @@ func _on_axe_hit_moment() -> void:
 		_do_axe_damage(pending_axe_item)
 		pending_axe_item = {}
 
+## Pickaxe hit moment - called at 0.30s into swing animation
+func _on_pickaxe_hit_moment() -> void:
+	if not pending_pickaxe_hit.is_empty():
+		_do_pickaxe_damage_delayed(pending_pickaxe_hit)
+		pending_pickaxe_hit = {}
+
 # ============================================================================
 # PRIMARY ACTIONS
 # ============================================================================
@@ -517,15 +524,27 @@ func do_tool_attack(item: Dictionary) -> void:
 		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
 		return  # Exit - damage will happen after delay
 	
-	# Handle pickaxe - use same animation timing as axe but separate ready state
+	# Handle pickaxe - delay damage to match animation, but store hit data now
 	if "pickaxe" in item_id:
 		if not pickaxe_ready:
 			return
 		pickaxe_ready = false
 		_emit_axe_fired()  # Trigger visual animation (pickaxe reuses axe signal)
-		# Reset pickaxe ready after animation duration
+		
+		# Perform raycast NOW to capture current target
+		var hit = _raycast(3.5, true, true)
+		if not hit.is_empty():
+			# Store hit data and item for delayed damage
+			pending_pickaxe_hit = {
+				"item": item.duplicate(),
+				"hit": hit.duplicate()
+			}
+			# Delay damage to 0.30s (when pickaxe visually connects)
+			get_tree().create_timer(0.30).timeout.connect(_on_pickaxe_hit_moment)
+		
+		# Reset pickaxe ready after full animation duration
 		get_tree().create_timer(0.6).timeout.connect(func(): pickaxe_ready = true)
-		# Pickaxe damage is instant (no delay needed)
+		return  # ALWAYS exit - damage will happen after delay (or not at all if miss)
 	
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
@@ -706,6 +725,94 @@ func _do_axe_damage(item: Dictionary) -> void:
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)
 
+
+## Pickaxe damage - called 0.30s after swing starts (using stored hit data)
+func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
+	if not player or not terrain_manager:
+		return
+	
+	var item = pending_data.get("item", {})
+	var hit = pending_data.get("hit", {})
+	
+	if item.is_empty() or hit.is_empty():
+		return
+	
+	var item_id = item.get("id", "")
+	var damage = item.get("damage", 1)
+	var target = hit.get("collider")
+	var position = hit.get("position", Vector3.ZERO)
+	var hit_normal = hit.get("normal", Vector3.UP)
+	
+	print("PICKAXE_DEBUG: Delayed damage at %s" % position)
+	
+	# Priority 1: Generic Damageable
+	var damageable = _find_damageable(target)
+	if damageable:
+		damageable.take_damage(damage)
+		durability_target = target.get_rid()
+		_emit_damage_dealt(damageable, damage)
+		return
+	
+	# Priority 2: Vegetation
+	if _try_harvest_vegetation(target, item, position):
+		return
+	
+	# Priority 3: Placed objects
+	if _try_damage_placed_object(target, item, position):
+		return
+	
+	# Priority 4: Building blocks
+	if _try_damage_building_block(target, item, position, hit):
+		return
+	
+	# Priority 5: Terrain mine (enhanced mode logic)
+	if terrain_manager.has_method("modify_terrain"):
+		# Check if enhanced pickaxe mode is enabled
+		var use_enhanced_mode = false
+		if has_node("/root/PickaxeDigConfig"):
+			use_enhanced_mode = get_node("/root/PickaxeDigConfig").enabled
+		
+		var mat_id = _get_material_at_hit(target, position, hit_normal)
+		
+		if use_enhanced_mode:
+			# ENHANCED MODE: Blocky grid-snapped removal with durability
+			var snapped_pos = position - hit_normal * 0.1
+			snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
+			var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
+			
+			# Initialize damage tracking
+			if not terrain_damage.has(block_pos):
+				terrain_damage[block_pos] = 0
+			
+			# Apply damage
+			terrain_damage[block_pos] += damage
+			var current_hp = TERRAIN_HP - terrain_damage[block_pos]
+			durability_target = block_pos
+			
+			# Emit durability signal for HUD
+			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
+			
+			print("PICKAXE_DEBUG: Enhanced hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
+			
+			# Check if terrain cube should break
+			if terrain_damage[block_pos] >= TERRAIN_HP:
+				# Break the block with box shape, size 0.6 (grid-snapped cube)
+				terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
+				terrain_damage.erase(block_pos)
+				_emit_durability_cleared()
+				
+				# Collect resource
+				if mat_id >= 0:
+					_collect_terrain_resource(mat_id)
+				
+				print("PICKAXE_DEBUG: Terrain cube broken at %s" % block_pos)
+		else:
+			# ORIGINAL MODE: Sphere-based instant removal
+			var actual_radius = max(item.get("mining_strength", 1.0), 0.8)
+			terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			
+			if mat_id >= 0:
+				_collect_terrain_resource(mat_id)
 
 ## Pistol fire
 func do_pistol_fire() -> void:
