@@ -72,6 +72,10 @@ func _process(delta: float) -> void:
 	if radial_menu_open:
 		return  # Don't update targets while radial menu is open
 	
+	# Sync player position to vehicle while inside (so zombies track correctly)
+	if is_in_vehicle and current_vehicle and player:
+		player.global_position = current_vehicle.global_position
+	
 	_update_interaction_target()
 	
 	if is_holding_e:
