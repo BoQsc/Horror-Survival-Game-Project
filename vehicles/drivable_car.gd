@@ -218,9 +218,9 @@ func get_interaction_prompt() -> String:
 
 ## Gets a safe position for player to exit (beside the vehicle)
 func get_exit_position() -> Vector3:
-	# Exit to the left side of the vehicle
-	var exit_offset = global_transform.basis.x * -2.0  # 2 meters to the left
-	return global_position + exit_offset + Vector3(0, 0.5, 0)
+	# Exit to the left side of the vehicle - LARGE offset to avoid any collision
+	var exit_offset = global_transform.basis.x * -4.0  # 4 meters to the left
+	return global_position + exit_offset + Vector3(0, 1.5, 0)  # 1.5m up
 
 
 ## Enable or disable the follow camera

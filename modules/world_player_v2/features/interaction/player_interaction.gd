@@ -324,31 +324,38 @@ func _exit_vehicle() -> void:
 	if not is_in_vehicle or not current_vehicle:
 		return
 	
-	if current_vehicle.has_method("exit_vehicle"):
-		current_vehicle.exit_vehicle()
+	# CRITICAL: Store reference and clear state FIRST to stop _process() position sync
+	var exiting_vehicle = current_vehicle
+	is_in_vehicle = false
+	current_vehicle = null
+	
+	if exiting_vehicle.has_method("exit_vehicle"):
+		exiting_vehicle.exit_vehicle()
 	
 	player.process_mode = Node.PROCESS_MODE_INHERIT
 	player.visible = true
 	
-	if current_vehicle:
-		player.global_position = current_vehicle.global_position + Vector3(2, 1, 0)
+	# Place player OUTSIDE the vehicle using vehicle-relative offset
+	if exiting_vehicle.has_method("get_exit_position"):
+		player.global_position = exiting_vehicle.get_exit_position()
+	else:
+		# Fallback: 4 meters to the left of vehicle (relative to vehicle orientation)
+		var exit_offset = exiting_vehicle.global_transform.basis.x * -4.0
+		player.global_position = exiting_vehicle.global_position + exit_offset + Vector3(0, 1.5, 0)
 	
-	if current_vehicle.has_method("set_camera_active"):
-		current_vehicle.set_camera_active(false)
+	if exiting_vehicle.has_method("set_camera_active"):
+		exiting_vehicle.set_camera_active(false)
 	
 	if vehicle_manager and "current_player_vehicle" in vehicle_manager:
 		vehicle_manager.current_player_vehicle = null
 		if vehicle_manager.has_signal("player_exited_vehicle"):
-			vehicle_manager.player_exited_vehicle.emit(current_vehicle)
+			vehicle_manager.player_exited_vehicle.emit(exiting_vehicle)
 	
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = player
 	
 	if entity_manager and "viewer" in entity_manager:
 		entity_manager.viewer = player
-	
-	is_in_vehicle = false
-	current_vehicle = null
 	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.interaction_performed.emit(null, "exit_vehicle")
