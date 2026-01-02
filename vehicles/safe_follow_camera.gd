@@ -25,7 +25,8 @@ extends Node3D
 @export var max_distance: float = 20.0
 
 # State
-var orbit_yaw: float = 0.0      # Horizontal angle (radians)
+var orbit_yaw: float = 0.0      # Actual camera rotation (smoothed)
+var target_orbit_yaw: float = 0.0  # Target rotation (follows car + mouse)
 var orbit_pitch: float = -0.27   # Match original scene Pivot angle (~15 degrees down)
 var mouse_idle_timer: float = 0.0
 var last_car_yaw: float = 0.0
@@ -53,6 +54,7 @@ func _ready() -> void:
 		car_forward.y = 0
 		if car_forward.length() > 0.1:
 			orbit_yaw = atan2(car_forward.x, car_forward.z)
+			target_orbit_yaw = orbit_yaw
 			last_car_yaw = orbit_yaw
 	
 	print("[VehicleCam] Ready - controlling FollowCamera node, target: %s" % follow_target)
@@ -75,7 +77,7 @@ func _input(event: InputEvent) -> void:
 	
 	# Mouse orbit
 	if event is InputEventMouseMotion:
-		orbit_yaw -= event.relative.x * mouse_sensitivity
+		target_orbit_yaw -= event.relative.x * mouse_sensitivity
 		orbit_pitch -= event.relative.y * mouse_sensitivity
 		orbit_pitch = clamp(orbit_pitch, deg_to_rad(min_pitch_deg), deg_to_rad(max_pitch_deg))
 		mouse_idle_timer = 0.0
@@ -98,9 +100,19 @@ func _physics_process(delta: float) -> void:
 		elif car_yaw_delta < -PI:
 			car_yaw_delta += TAU
 		
-		# Apply CHANGE in car rotation (preserves mouse offset)
-		orbit_yaw += car_yaw_delta
+		# Apply CHANGE in car rotation to TARGET (preserves mouse offset)
+		target_orbit_yaw += car_yaw_delta
 		last_car_yaw = current_car_yaw
+	
+	# === SMOOTH INTERPOLATION ===
+	# This creates the lag when the car turns
+	var yaw_diff = target_orbit_yaw - orbit_yaw
+	# Handle wrap-around for shortest path
+	if yaw_diff > PI:
+		yaw_diff -= TAU
+	elif yaw_diff < -PI:
+		yaw_diff += TAU
+	orbit_yaw += yaw_diff * rotation_smoothing * delta
 	
 	
 	# === AUTO-RETURN (DISABLED - was fighting with camera lag) ===
@@ -118,10 +130,10 @@ func _physics_process(delta: float) -> void:
 	# === POSITION THIS NODE AT CAR ===
 	global_position = follow_target.global_position
 	
-	# === ROTATE THIS NODE TO ORBIT YAW (with smooth lag) ===
+	# === ROTATE THIS NODE TO ORBIT YAW (smoothed above) ===
 	# This rotates the entire Pivot/SpringArm/Camera hierarchy around the car
 	var target_basis = Basis.looking_at(Vector3(sin(orbit_yaw), 0, cos(orbit_yaw)), Vector3.UP)
-	global_basis = global_basis.slerp(target_basis, rotation_smoothing * delta)
+	global_basis = target_basis
 	
 	# === APPLY PITCH TO PIVOT ===
 	if pivot:

@@ -61,7 +61,8 @@ func _ready() -> void:
 	# === RIGID SUSPENSION (No Body Lean) ===
 	# Very high stiffness effectively locks the suspension
 	# High damping prevents any oscillation
-	max_steer = 0.40  # Sharp steering for responsive control (was 0.25)
+	max_steer = 0.25  # Moderate steering - prevents twitchy turns (was 0.40)
+	steer_damping = 6.0  # Fast response to input - prevents drunk-like delay (default 2.0)
 	
 	for wheel in steering_wheels:
 		wheel.wheel_friction_slip = front_wheel_grip
