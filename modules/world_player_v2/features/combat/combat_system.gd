@@ -528,13 +528,24 @@ func do_tool_attack(item: Dictionary) -> void:
 	# Handle pickaxe - delay damage to match animation, but store hit data now
 	if "pickaxe" in item_id:
 		if not pickaxe_ready:
+			print("PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)")
 			return
 		pickaxe_ready = false
 		_emit_axe_fired()  # Trigger visual animation (pickaxe reuses axe signal)
 		
 		# Perform raycast NOW to capture current target
 		var hit = _raycast(3.5, true, true)
+		var player_vel = player.velocity if player else Vector3.ZERO
+		print("PICKAXE_HIT_DEBUG: Swing started | Player velocity: %.2f | Raycast hit: %s" % [player_vel.length(), !hit.is_empty()])
+		
 		if not hit.is_empty():
+			var target = hit.get("collider")
+			var position = hit.get("position", Vector3.ZERO)
+			print("PICKAXE_HIT_DEBUG: HIT registered | Target: %s | Position: %s" % [target.name if target else "null", position])
+			
+			# Visual debug: Spawn marker at hit position
+			_spawn_hit_marker(position, Color.RED)
+			
 			# Store hit data and item for delayed damage
 			pending_pickaxe_hit = {
 				"item": item.duplicate(),
@@ -542,6 +553,8 @@ func do_tool_attack(item: Dictionary) -> void:
 			}
 			# Delay damage to 0.30s (when pickaxe visually connects)
 			get_tree().create_timer(0.30).timeout.connect(_on_pickaxe_hit_moment)
+		else:
+			print("PICKAXE_HIT_DEBUG: MISS - raycast returned empty, no damage will be dealt")
 		
 		# Pickaxe ready state will be reset by axe_ready signal (from first_person_pickaxe.gd)
 		return  # ALWAYS exit - damage will happen after delay (or not at all if miss)
@@ -739,13 +752,17 @@ func _do_axe_damage(item: Dictionary) -> void:
 
 ## Pickaxe damage - called 0.30s after swing starts (using stored hit data)
 func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
+	print("PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED")
+	
 	if not player or not terrain_manager:
+		print("PICKAXE_HIT_DEBUG: ABORTED - player=%s terrain_manager=%s" % [player != null, terrain_manager != null])
 		return
 	
 	var item = pending_data.get("item", {})
 	var hit = pending_data.get("hit", {})
 	
 	if item.is_empty() or hit.is_empty():
+		print("PICKAXE_HIT_DEBUG: ABORTED - item or hit data is empty")
 		return
 	
 	var item_id = item.get("id", "")
@@ -754,7 +771,7 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	var position = hit.get("position", Vector3.ZERO)
 	var hit_normal = hit.get("normal", Vector3.UP)
 	
-	print("PICKAXE_DEBUG: Delayed damage at %s" % position)
+	print("PICKAXE_HIT_DEBUG: Delayed damage executing | Target: %s | Position: %s" % [target.name if target else "null", position])
 	
 	# Priority 1: Generic Damageable
 	var damageable = _find_damageable(target)
@@ -1324,3 +1341,26 @@ func _emit_durability_cleared() -> void:
 		signals.durability_cleared.emit()
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.durability_cleared.emit()
+
+## Spawn a visual debug marker at hit position
+func _spawn_hit_marker(position: Vector3, color: Color) -> void:
+	var marker = MeshInstance3D.new()
+	marker.mesh = SphereMesh.new()
+	marker.mesh.radius = 0.1
+	marker.mesh.height = 0.2
+	
+	var material = StandardMaterial3D.new()
+	material.albedo_color = color
+	material.emission_enabled = true
+	material.emission = color
+	material.emission_energy_multiplier = 2.0
+	marker.set_surface_override_material(0, material)
+	
+	get_tree().root.add_child(marker)
+	marker.global_position = position
+	
+	# Auto-delete after 3 seconds
+	get_tree().create_timer(3.0).timeout.connect(func(): 
+		if is_instance_valid(marker):
+			marker.queue_free()
+	)
