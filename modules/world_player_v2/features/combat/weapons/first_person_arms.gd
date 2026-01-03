@@ -136,13 +136,20 @@ func _process(delta: float) -> void:
 	
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-			# Only punch in PLAY mode, not during building/placement
+			# Only punch in PLAY mode AND with fists (category 0)
 			if mode_manager and mode_manager.has_method("is_play_mode"):
 				if mode_manager.is_play_mode():
-					_try_punch()
+					# Check if holding fists (category 0), not car keys or other items
+					if hotbar and hotbar.has_method("get_selected_item"):
+						var item = hotbar.get_selected_item()
+						if item.get("category", 0) == 0:  # NONE = Fists only
+							_try_punch()
 			elif not mode_manager:
-				# Fallback: punch if no mode_manager (backwards compat)
-				_try_punch()
+				# Fallback: check category even without mode_manager
+				if hotbar and hotbar.has_method("get_selected_item"):
+					var item = hotbar.get_selected_item()
+					if item.get("category", 0) == 0:
+						_try_punch()
 
 func _update_sway_and_bob(delta: float) -> void:
 	if not hand_holder:
