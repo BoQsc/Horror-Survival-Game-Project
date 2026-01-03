@@ -75,6 +75,14 @@ func _ready() -> void:
 		if has_node("/root/PickaxeDigConfig"):
 			pickaxe_toggle.button_pressed = get_node("/root/PickaxeDigConfig").enabled
 	
+	# Connect pickaxe durability toggle
+	var durability_toggle = game_menu.get_node_or_null("PickaxeDurabilityToggle")
+	if durability_toggle:
+		durability_toggle.toggled.connect(_on_pickaxe_durability_toggled)
+		# Sync with current state
+		if has_node("/root/PickaxeDurabilityConfig"):
+			durability_toggle.button_pressed = get_node("/root/PickaxeDurabilityConfig").enabled
+	
 	# Connect target visualizer toggle
 	var visualizer_toggle = game_menu.get_node_or_null("TargetVisualizerToggle")
 	if visualizer_toggle:
@@ -353,6 +361,12 @@ func _on_pickaxe_dig_mode_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PickaxeDigConfig"):
 		get_node("/root/PickaxeDigConfig").enabled = is_enabled
 		print("PlayerHUD: Enhanced Pickaxe Mode -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_pickaxe_durability_toggled(is_enabled: bool) -> void:
+	if has_node("/root/PickaxeDurabilityConfig"):
+		get_node("/root/PickaxeDurabilityConfig").enabled = is_enabled
+		print("PlayerHUD: Pickaxe Durability -> %s" % ("ON (5 hits)" if is_enabled else "OFF (Instant)"))
+
 
 func _on_target_visualizer_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PickaxeTargetVisualizer"):
