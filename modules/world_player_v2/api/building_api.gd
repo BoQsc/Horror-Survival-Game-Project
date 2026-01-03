@@ -257,6 +257,8 @@ func place_block() -> bool:
 	if building_manager.has_method("set_voxel"):
 		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
 		block_placed.emit(current_voxel_pos, current_block_id, current_rotation)
+		if has_node("/root/PlayerSignals"):
+			PlayerSignals.block_placed.emit()
 		print("BuildingAPI: Placed %s at %s (rot: %d)" % [get_block_name(), current_voxel_pos, current_rotation])
 		return true
 	

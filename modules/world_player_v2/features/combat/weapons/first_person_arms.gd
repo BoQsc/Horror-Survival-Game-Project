@@ -58,6 +58,8 @@ func _ready() -> void:
 			PlayerSignals.punch_triggered.connect(_on_punch_triggered)
 		if PlayerSignals.has_signal("resource_placed"):
 			PlayerSignals.resource_placed.connect(_on_resource_placed)
+		if PlayerSignals.has_signal("block_placed"):
+			PlayerSignals.block_placed.connect(_on_block_placed)
 
 func _setup_hand_holder() -> void:
 	hand_holder = Node3D.new()
@@ -208,6 +210,9 @@ func _on_punch_triggered() -> void:
 func _on_resource_placed() -> void:
 	_try_place_animation()
 
+func _on_block_placed() -> void:
+	_try_place_animation()
+
 ## Play the placement (Collect_something) animation (from 0.15s onwards)
 func _try_place_animation() -> void:
 	if place_cooldown > 0 or is_placing:
@@ -230,25 +235,25 @@ func _try_place_animation() -> void:
 
 func _on_place_finished(_anim_name: String) -> void:
 	is_placing = false
-	# Return to collect pose if still holding RESOURCE, otherwise idle
+	# Return to collect pose if still holding RESOURCE or BLOCK, otherwise idle
 	if hotbar and hotbar.has_method("get_selected_item"):
 		var item = hotbar.get_selected_item()
 		var category = item.get("category", 0)
-		if category == 3:  # RESOURCE
+		if category == 3 or category == 4:  # RESOURCE or BLOCK
 			_play_collect_pose()
 			return
 	_try_play_idle()
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var category = item.get("category", 0)
-	# Show arms for NONE (fists) and RESOURCE (dirt/gravel/etc) categories
-	var should_show = (category == 0 or category == 3) # 0=NONE, 3=RESOURCE
+	# Show arms for NONE (fists), RESOURCE (dirt/gravel), and BLOCK (cubes/ramps) categories
+	var should_show = (category == 0 or category == 3 or category == 4) # 0=NONE, 3=RESOURCE, 4=BLOCK
 	
 	if arms_mesh:
 		arms_mesh.visible = should_show
 		if should_show and anim_player:
-			# Use Collect_something pose for RESOURCE items, idle for fists
-			if category == 3: # RESOURCE
+			# Use Collect_something pose for RESOURCE and BLOCK items, idle for fists
+			if category == 3 or category == 4: # RESOURCE or BLOCK
 				_play_collect_pose()
 			else:
 				_try_play_idle()
