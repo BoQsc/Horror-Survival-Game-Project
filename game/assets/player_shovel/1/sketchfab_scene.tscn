@@ -1,0 +1,116 @@
+[gd_scene load_steps=8 format=3 uid="uid://ci11yv4pk4ssf"]
+
+[ext_resource type="PackedScene" uid="uid://5gus5nqkl30l" path="res://game/assets/player_shovel/1/animated_fps_axe.glb" id="1_4farb"]
+[ext_resource type="PackedScene" uid="uid://blvru1vvtgvri" path="res://game/assets/PSX_Tools_GLTF/Shovel.glb" id="2_kc8uy"]
+[ext_resource type="PackedScene" uid="uid://3sp2fvyrqds8" path="res://game/assets/PSX_Tools_GLTF/Pickaxe.glb" id="2_ssctl"]
+[ext_resource type="Texture2D" uid="uid://cj6miytyqxr7b" path="res://game/assets/PSX_Tools_GLTF/Texture/Shovel_DefaultMaterial_BaseColor.png" id="3_7kpw0"]
+[ext_resource type="Texture2D" uid="uid://cm3qkg0vrsarj" path="res://game/assets/PSX_Tools_GLTF/Texture/Pickaxe_DefaultMaterial_BaseColor.png" id="3_kc8uy"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_bqpft"]
+albedo_texture = ExtResource("3_7kpw0")
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_67n8c"]
+albedo_texture = ExtResource("3_kc8uy")
+
+[node name="Sketchfab_Scene" instance=ExtResource("1_4farb")]
+
+[node name="Skeleton3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4" index="0"]
+bones/2/position = Vector3(0, 42.22234, 0)
+bones/5/position = Vector3(-1.1679268, -4.6649013, 9.044512)
+bones/6/rotation = Quaternion(0.4104563, -0.08202222, -0.09917025, 0.90275323)
+bones/7/position = Vector3(-0.09671402, -0.20641518, 19.460037)
+bones/8/rotation = Quaternion(0.70933104, 0.07340664, -0.019109897, 0.7007823)
+bones/9/position = Vector3(0.591732, -0.22970581, 12.10487)
+bones/10/rotation = Quaternion(3.144631e-08, 2.9235235e-08, 0.31909996, 0.94772106)
+bones/11/position = Vector3(1.0559883, -0.40992928, 21.601934)
+bones/12/rotation = Quaternion(0.061512243, -0.0007761894, 0.30989802, 0.9487776)
+bones/13/position = Vector3(-3.9698563, -1.2613697, 6.8821735)
+bones/13/rotation = Quaternion(0.3300024, -0.40513515, 0.6768548, 0.51848966)
+bones/13/scale = Vector3(1.0999995, 1.0999998, 1.0999993)
+bones/16/position = Vector3(0.9061427, 0.91158295, 2.0526962)
+bones/17/rotation = Quaternion(-7.243445e-08, -0.14090124, -1.8814202e-08, 0.9900237)
+bones/18/position = Vector3(-0.70915127, -0.1309433, 4.485161)
+bones/19/rotation = Quaternion(1.9270217e-09, -0.25628948, 2.1197009e-08, 0.9666002)
+bones/20/position = Vector3(-1.7753181, -2.6609573, 11.345734)
+bones/21/rotation = Quaternion(0.46130636, -0.52571434, -0.5103367, 0.50037736)
+bones/22/position = Vector3(0.25137615, 0.105298996, 3.984459)
+bones/23/rotation = Quaternion(0.6575332, -0.0043631224, 0.006092557, 0.7533882)
+bones/24/position = Vector3(-0.044713974, 0.061439514, 3.081606)
+bones/25/rotation = Quaternion(0.5670468, -0.009342403, 0.0053094393, 0.82361543)
+bones/26/position = Vector3(-1.38163, -0.29294968, 10.583976)
+bones/27/rotation = Quaternion(0.46388152, -0.45696715, -0.5273829, 0.5457676)
+bones/28/position = Vector3(0.00023651123, 0.18682766, 3.9356499)
+bones/29/rotation = Quaternion(0.58141327, 4.0064137e-08, -1.8543881e-07, 0.8136085)
+bones/30/position = Vector3(-0.043022156, 0.05797577, 3.6738968)
+bones/31/rotation = Quaternion(0.52249855, 1.2233504e-07, 6.5536225e-09, 0.8526403)
+bones/33/rotation = Quaternion(0.38163432, -0.4743939, -0.49886084, 0.6168011)
+bones/34/position = Vector3(-0.061143875, -0.04353547, 3.9394035)
+bones/35/rotation = Quaternion(0.60042065, -1.3165464e-07, -4.4022357e-07, 0.7996843)
+bones/36/position = Vector3(0.12278366, 0.080135345, 3.1191454)
+bones/37/rotation = Quaternion(0.5620836, 2.702492e-08, 1.1260351e-07, 0.8270805)
+bones/39/rotation = Quaternion(0.44622195, -0.5821089, -0.31815013, 0.60067934)
+bones/40/position = Vector3(-0.08606911, 0.11822891, 2.4593163)
+bones/41/rotation = Quaternion(0.36812505, 9.309204e-08, 5.477856e-08, 0.9297763)
+bones/42/position = Vector3(-0.0047798157, 0.0173378, 1.9161949)
+bones/43/rotation = Quaternion(0.46097508, -6.2575054e-08, 2.8204909e-08, 0.88741314)
+bones/46/position = Vector3(1.1678772, -4.6649084, 9.044466)
+bones/47/rotation = Quaternion(0.37849382, 0.2816277, 0.031442694, 0.8811582)
+bones/48/position = Vector3(0.09675217, -0.20650291, 19.460098)
+bones/49/rotation = Quaternion(0.7058973, -0.07713636, 0.011416577, 0.704009)
+bones/50/position = Vector3(-1.0559196, -0.4098444, 21.601889)
+bones/51/rotation = Quaternion(0.1600335, -0.065864086, -0.013549553, 0.9848186)
+bones/52/position = Vector3(2.8748093, -2.177845, 4.4606514)
+bones/53/rotation = Quaternion(0.45141953, 0.026176006, 0.8055578, 0.38289934)
+bones/54/position = Vector3(-0.90615845, 0.91158295, 2.0526924)
+bones/55/rotation = Quaternion(-0.010811246, 3.8745287e-07, 2.756878e-07, 0.99994165)
+bones/56/position = Vector3(0.7091503, -0.13093567, 4.485155)
+bones/57/rotation = Quaternion(-0.010812189, -8.9411934e-08, 2.0117653e-07, 0.9999415)
+bones/58/position = Vector3(1.7753067, -2.6609364, 11.345707)
+bones/59/rotation = Quaternion(0.05556005, -0.011993679, 0.7991571, 0.5984291)
+bones/60/position = Vector3(-0.25137234, 0.10529709, 3.9844666)
+bones/61/rotation = Quaternion(0.21457984, 0.0067569376, -0.0032453623, 0.9766777)
+bones/62/position = Vector3(0.04469776, 0.06145096, 3.0815897)
+bones/63/rotation = Quaternion(0.10147389, 0.010742988, -0.00016521632, 0.99478024)
+bones/64/position = Vector3(1.3816223, -0.29293442, 10.583946)
+bones/65/rotation = Quaternion(0.07780711, 0.10337125, 0.72678125, 0.67457354)
+bones/66/position = Vector3(-0.00023651123, 0.18682861, 3.935645)
+bones/67/rotation = Quaternion(0.204116, 3.7293003e-07, 2.6637895e-08, 0.9789467)
+bones/68/position = Vector3(0.043022156, 0.057979584, 3.673895)
+bones/69/rotation = Quaternion(0.20411585, 1.5602088e-06, -1.1796689e-06, 0.97894675)
+bones/70/position = Vector3(1.6494637, 2.30484, 9.36614)
+bones/71/rotation = Quaternion(0.004103624, 0.14474586, 0.6730219, 0.7253091)
+bones/72/position = Vector3(0.06115818, -0.04352951, 3.939395)
+bones/73/rotation = Quaternion(0.29534048, 4.429491e-06, -1.7029774e-06, 0.9553921)
+bones/74/position = Vector3(-0.122787476, 0.08016205, 3.1191425)
+bones/75/rotation = Quaternion(0.24999782, -6.5406925e-07, 5.097893e-06, 0.96824646)
+bones/76/position = Vector3(2.6300774, 4.5266285, 8.524273)
+bones/77/rotation = Quaternion(0.011583721, 0.22634676, 0.56426, 0.7938788)
+bones/78/position = Vector3(0.08606911, 0.11822891, 2.4593077)
+bones/79/rotation = Quaternion(0.31776664, 7.622094e-07, -7.307772e-07, 0.948169)
+bones/80/position = Vector3(0.004781723, 0.01733017, 1.9161873)
+bones/81/rotation = Quaternion(0.15001105, 3.1650572e-07, -8.2894405e-07, 0.9886844)
+bones/82/position = Vector3(-0.5917015, -0.22965527, 12.104855)
+
+[node name="BoneAttachment3D" type="BoneAttachment3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="0"]
+transform = Transform3D(0.6217524, 0.7065561, -0.3379379, 0.67436796, -0.70237947, -0.22779547, -0.39831093, -0.086262, -0.91318506, -23.050228, 42.381744, 28.504013)
+bone_name = "Index_Distal_R_013_scaleCompensation"
+bone_idx = 24
+
+[node name="Shovel2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="0" instance=ExtResource("2_kc8uy")]
+transform = Transform3D(0.7334562, 27.739918, 14.843178, -31.296688, -0.8741966, 3.1802413, 3.215618, -14.835554, 27.566774, 5.7, -2.33, -2.903)
+
+[node name="Shovel" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Shovel2" index="0"]
+material_override = SubResource("StandardMaterial3D_bqpft")
+
+[node name="Pickaxe2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="1" instance=ExtResource("2_ssctl")]
+transform = Transform3D(0.74666977, 27.741224, 14.840073, -31.29853, -0.8522922, 3.1679966, 3.1945417, -14.834382, 27.56985, 5.6997786, -2.33041, -2.903328)
+visible = false
+
+[node name="Pickaxe" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Pickaxe2" index="0"]
+material_override = SubResource("StandardMaterial3D_67n8c")
+
+[node name="Object_7" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="1"]
+visible = false
+
+[editable path="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Shovel2"]
+[editable path="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Pickaxe2"]

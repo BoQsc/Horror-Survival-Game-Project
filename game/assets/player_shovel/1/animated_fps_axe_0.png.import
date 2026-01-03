@@ -2,17 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cj6miytyqxr7b"
-path.s3tc="res://.godot/imported/Shovel_DefaultMaterial_BaseColor.png-8f481938f8b7cfb258646d1ec4cab9a7.s3tc.ctex"
+uid="uid://di2ct2ar7gb0d"
+path.s3tc="res://.godot/imported/animated_fps_axe_0.png-bd3d371666d0f56eca8db9436e821c09.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
+generator_parameters={
+"md5": "f499710281a8a706259235b83270715c"
+}
 
 [deps]
 
-source_file="res://game/assets/PSX_Tools_GLTF/Texture/Shovel_DefaultMaterial_BaseColor.png"
-dest_files=["res://.godot/imported/Shovel_DefaultMaterial_BaseColor.png-8f481938f8b7cfb258646d1ec4cab9a7.s3tc.ctex"]
+source_file="res://game/assets/player_shovel/1/animated_fps_axe_0.png"
+dest_files=["res://.godot/imported/animated_fps_axe_0.png-bd3d371666d0f56eca8db9436e821c09.s3tc.ctex"]
 
 [params]
 
