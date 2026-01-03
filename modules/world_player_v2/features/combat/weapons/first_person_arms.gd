@@ -22,6 +22,7 @@ var hand_holder: Node3D = null
 var arms_mesh: Node3D = null
 var anim_player: AnimationPlayer = null
 var punch_sfx: AudioStreamPlayer3D = null
+var hotbar: Node = null
 
 var arms_origin: Vector3 = Vector3.ZERO
 var mouse_input: Vector2 = Vector2.ZERO
@@ -47,6 +48,9 @@ func _ready() -> void:
 	_setup_hand_holder()
 	_load_arms_model()
 	_setup_punch_sfx()
+	
+	# Find hotbar for checking item category
+	hotbar = player.get_node_or_null("Systems/Hotbar")
 	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
@@ -181,13 +185,30 @@ func _try_play_idle() -> void:
 			anim_player.play(anim_name)
 			return
 
+## Play Collect_something pose for holding materials (static pose at 0.15s)
+func _play_collect_pose() -> void:
+	if not anim_player:
+		return
+	
+	var collect_anims = ["Collect_something", "collect", "arms_armature|Collect_something"]
+	for anim_name in anim_player.get_animation_list():
+		for collect_pattern in collect_anims:
+			if collect_pattern.to_lower() in anim_name.to_lower():
+				anim_player.play(anim_name)
+				anim_player.seek(0.15, true)  # Seek to 0.15s and update immediately
+				anim_player.pause()  # Pause to hold the pose
+				return
+	
+	# Fallback to idle if Collect_something not found
+	_try_play_idle()
+
 func _on_punch_triggered() -> void:
 	_try_punch()
 
 func _on_resource_placed() -> void:
 	_try_place_animation()
 
-## Play the placement (Collect_something) animation
+## Play the placement (Collect_something) animation (from 0.15s onwards)
 func _try_place_animation() -> void:
 	if place_cooldown > 0 or is_placing:
 		return
@@ -202,12 +223,20 @@ func _try_place_animation() -> void:
 			for collect_pattern in collect_anims:
 				if collect_pattern.to_lower() in anim_name.to_lower():
 					anim_player.play(anim_name)
+					anim_player.seek(0.15, true)  # Start from 0.15s (skip initial windup)
 					if not anim_player.animation_finished.is_connected(_on_place_finished):
 						anim_player.animation_finished.connect(_on_place_finished, CONNECT_ONE_SHOT)
 					return
 
 func _on_place_finished(_anim_name: String) -> void:
 	is_placing = false
+	# Return to collect pose if still holding RESOURCE, otherwise idle
+	if hotbar and hotbar.has_method("get_selected_item"):
+		var item = hotbar.get_selected_item()
+		var category = item.get("category", 0)
+		if category == 3:  # RESOURCE
+			_play_collect_pose()
+			return
 	_try_play_idle()
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
@@ -218,7 +247,11 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	if arms_mesh:
 		arms_mesh.visible = should_show
 		if should_show and anim_player:
-			_try_play_idle()
+			# Use Collect_something pose for RESOURCE items, idle for fists
+			if category == 3: # RESOURCE
+				_play_collect_pose()
+			else:
+				_try_play_idle()
 
 func set_arms_visible(visible: bool) -> void:
 	if arms_mesh:
