@@ -6,3 +6,4 @@
 gdextension/bin/*.dll
 gdextension/bin/*.a
 gdextension/bin/~*
+gdextension/bin/~high_performance.windows.template_debug.x86_64.dll
