@@ -146,6 +146,10 @@ func do_primary_action() -> void:
 	if not is_active or not terrain_manager:
 		return
 	
+	# Emit animation signal for visual shovel
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.axe_fired.emit()
+	
 	var hit = _raycast(RAYCAST_DISTANCE)
 	if hit.is_empty():
 		return
@@ -163,6 +167,10 @@ func do_primary_action() -> void:
 func do_secondary_action() -> void:
 	if not is_active or not terrain_manager:
 		return
+	
+	# Emit animation signal for visual shovel
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.axe_fired.emit()
 	
 	var hit = _raycast(RAYCAST_DISTANCE)
 	if hit.is_empty():
