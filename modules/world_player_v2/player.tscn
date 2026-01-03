@@ -18,6 +18,7 @@
 [ext_resource type="Script" uid="uid://ccr7ty807oero" path="res://modules/world_player_v2/features/combat/weapons/first_person_axe.gd" id="17_axe"]
 [ext_resource type="Script" path="res://modules/world_player_v2/features/combat/weapons/first_person_pickaxe.gd" id="18_pickaxe"]
 [ext_resource type="Script" uid="uid://twk217xf32bm" path="res://modules/world_player_v2/features/terrain/terrain_interaction.gd" id="18_terrain"]
+[ext_resource type="Script" path="res://modules/world_player_v2/features/combat/weapons/first_person_shovel.gd" id="18_shovel"]
 [ext_resource type="Script" uid="uid://btccyk8is8eo6" path="res://modules/world_player_v2/features/combat/weapons/first_person_terraformer.gd" id="19_terraformer"]
 [ext_resource type="Script" path="res://modules/world_player_v2/features/movement/player_crouch.gd" id="20_crouch"]
 
@@ -68,6 +69,9 @@ script = ExtResource("17_axe")
 
 [node name="FirstPersonPickaxe" type="Node" parent="Components"]
 script = ExtResource("18_pickaxe")
+
+[node name="FirstPersonShovel" type="Node" parent="Components"]
+script = ExtResource("18_shovel")
 
 [node name="FirstPersonTerraformer" type="Node" parent="Components"]
 script = ExtResource("19_terraformer")
