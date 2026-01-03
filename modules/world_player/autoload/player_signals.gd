@@ -18,6 +18,7 @@ signal punch_triggered()
 signal punch_ready()  # Emitted when punch animation finishes, ready for next attack
 signal resource_placed()  # Emitted when resource (dirt/gravel/etc) is placed
 signal block_placed()  # Emitted when building block (cube/ramp/stairs) is placed
+signal object_placed()  # Emitted when object (door/cardboard/etc) is placed
 signal player_died()
 
 # Pistol events

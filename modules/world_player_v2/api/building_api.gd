@@ -417,6 +417,8 @@ func place_object(object_id: int, rotation: int) -> bool:
 		if success:
 			print("BuildingAPI: Placed object %d at %s" % [object_id, final_pos])
 			object_placed.emit(final_pos, object_id, rotation)
+			if has_node("/root/PlayerSignals"):
+				PlayerSignals.object_placed.emit()
 			return true
 		
 		# Retry logic for freestyle: search for nearby empty anchor cell
