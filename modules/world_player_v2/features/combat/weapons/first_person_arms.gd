@@ -29,6 +29,9 @@ var sway_time: float = 0.0
 var is_punching: bool = false
 var punch_cooldown: float = 0.0
 const PUNCH_COOLDOWN_TIME: float = 0.3
+var is_placing: bool = false
+var place_cooldown: float = 0.0
+const PLACE_COOLDOWN_TIME: float = 0.5
 
 func _ready() -> void:
 	player = get_parent().get_parent() as CharacterBody3D
@@ -49,6 +52,8 @@ func _ready() -> void:
 		PlayerSignals.item_changed.connect(_on_item_changed)
 		if PlayerSignals.has_signal("punch_triggered"):
 			PlayerSignals.punch_triggered.connect(_on_punch_triggered)
+		if PlayerSignals.has_signal("resource_placed"):
+			PlayerSignals.resource_placed.connect(_on_resource_placed)
 
 func _setup_hand_holder() -> void:
 	hand_holder = Node3D.new()
@@ -109,6 +114,9 @@ func _process(delta: float) -> void:
 	
 	if punch_cooldown > 0:
 		punch_cooldown -= delta
+	
+	if place_cooldown > 0:
+		place_cooldown -= delta
 	
 	_update_sway_and_bob(delta)
 	
@@ -176,9 +184,36 @@ func _try_play_idle() -> void:
 func _on_punch_triggered() -> void:
 	_try_punch()
 
+func _on_resource_placed() -> void:
+	_try_place_animation()
+
+## Play the placement (Collect_something) animation
+func _try_place_animation() -> void:
+	if place_cooldown > 0 or is_placing:
+		return
+	
+	place_cooldown = PLACE_COOLDOWN_TIME
+	is_placing = true
+	
+	if anim_player:
+		# Look for "Collect_something" animation
+		var collect_anims = ["Collect_something", "collect", "place", "arms_armature|Collect_something"]
+		for anim_name in anim_player.get_animation_list():
+			for collect_pattern in collect_anims:
+				if collect_pattern.to_lower() in anim_name.to_lower():
+					anim_player.play(anim_name)
+					if not anim_player.animation_finished.is_connected(_on_place_finished):
+						anim_player.animation_finished.connect(_on_place_finished, CONNECT_ONE_SHOT)
+					return
+
+func _on_place_finished(_anim_name: String) -> void:
+	is_placing = false
+	_try_play_idle()
+
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var category = item.get("category", 0)
-	var should_show = (category == 0)
+	# Show arms for NONE (fists) and RESOURCE (dirt/gravel/etc) categories
+	var should_show = (category == 0 or category == 3) # 0=NONE, 3=RESOURCE
 	
 	if arms_mesh:
 		arms_mesh.visible = should_show

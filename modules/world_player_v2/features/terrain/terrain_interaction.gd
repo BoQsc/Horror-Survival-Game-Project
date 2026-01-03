@@ -265,6 +265,8 @@ func do_resource_place(item: Dictionary) -> void:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
 		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0, mat_id)
 		_consume_selected_item()
+		if has_node("/root/PlayerSignals"):
+			PlayerSignals.resource_placed.emit()
 		DebugSettings.log_player("TerrainInteraction: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
 		var hit = _raycast(5.0)
