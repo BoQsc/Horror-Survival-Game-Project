@@ -62,6 +62,10 @@ func _ready() -> void:
 			PlayerSignals.block_placed.connect(_on_block_placed)
 		if PlayerSignals.has_signal("object_placed"):
 			PlayerSignals.object_placed.connect(_on_object_placed)
+		if PlayerSignals.has_signal("bucket_placed"):
+			PlayerSignals.bucket_placed.connect(_on_bucket_placed)
+		if PlayerSignals.has_signal("vehicle_spawned"):
+			PlayerSignals.vehicle_spawned.connect(_on_vehicle_spawned)
 
 func _setup_hand_holder() -> void:
 	hand_holder = Node3D.new()
@@ -218,6 +222,12 @@ func _on_block_placed() -> void:
 func _on_object_placed() -> void:
 	_try_place_animation()
 
+func _on_bucket_placed() -> void:
+	_try_place_animation()
+
+func _on_vehicle_spawned() -> void:
+	_try_place_animation()
+
 ## Play the placement (Collect_something) animation (from 0.15s onwards)
 func _try_place_animation() -> void:
 	if place_cooldown > 0 or is_placing:
@@ -240,25 +250,26 @@ func _try_place_animation() -> void:
 
 func _on_place_finished(_anim_name: String) -> void:
 	is_placing = false
-	# Return to collect pose if still holding RESOURCE, BLOCK, or OBJECT, otherwise idle
+	# Return to collect pose if still holding placeable items, otherwise idle
 	if hotbar and hotbar.has_method("get_selected_item"):
 		var item = hotbar.get_selected_item()
 		var category = item.get("category", 0)
-		if category == 3 or category == 4 or category == 5:  # RESOURCE, BLOCK, or OBJECT
+		# Categories: 2=BUCKET, 3=RESOURCE, 4=BLOCK, 5=OBJECT, 8=VEHICLE
+		if category in [2, 3, 4, 5, 8]:
 			_play_collect_pose()
 			return
 	_try_play_idle()
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var category = item.get("category", 0)
-	# Show arms for NONE (fists), RESOURCE (dirt/gravel), BLOCK (cubes/ramps), and OBJECT (doors/cardboard)
-	var should_show = (category == 0 or category == 3 or category == 4 or category == 5) # 0=NONE, 3=RESOURCE, 4=BLOCK, 5=OBJECT
+	# Show arms for placeable/usable items: NONE, BUCKET, RESOURCE, BLOCK, OBJECT, VEHICLE
+	var should_show = (category in [0, 2, 3, 4, 5, 8]) # 0=NONE, 2=BUCKET, 3=RESOURCE, 4=BLOCK, 5=OBJECT, 8=VEHICLE
 	
 	if arms_mesh:
 		arms_mesh.visible = should_show
 		if should_show and anim_player:
-			# Use Collect_something pose for RESOURCE, BLOCK, and OBJECT items, idle for fists
-			if category == 3 or category == 4 or category == 5: # RESOURCE, BLOCK, or OBJECT
+			# Use Collect_something pose for all placeable items, idle for fists
+			if category in [2, 3, 4, 5, 8]:
 				_play_collect_pose()
 			else:
 				_try_play_idle()

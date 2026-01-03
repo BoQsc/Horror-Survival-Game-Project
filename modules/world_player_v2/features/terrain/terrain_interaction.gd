@@ -225,6 +225,8 @@ func do_bucket_place() -> void:
 	if has_target:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
 		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 1)  # Box shape, fill, water layer
+		if has_node("/root/PlayerSignals"):
+			PlayerSignals.bucket_placed.emit()
 		DebugSettings.log_player("TerrainInteraction: Placed water at %s" % current_target_pos)
 	else:
 		var hit = _raycast(5.0)
@@ -232,6 +234,8 @@ func do_bucket_place() -> void:
 			return
 		var pos = hit.position + hit.normal * 0.5
 		terrain_manager.modify_terrain(pos, 0.6, -0.5, 1, 1)
+		if has_node("/root/PlayerSignals"):
+			PlayerSignals.bucket_placed.emit()
 
 # ============================================================================
 # RESOURCE PLACEMENT

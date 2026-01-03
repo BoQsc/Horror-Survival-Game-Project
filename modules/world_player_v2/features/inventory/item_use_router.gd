@@ -158,4 +158,6 @@ func _spawn_vehicle(item: Dictionary) -> void:
 	if player:
 		var spawn_pos = player.global_position + player.global_basis.z * -3.0
 		var v = vehicle_manager.spawn_vehicle(spawn_pos)
+		if has_node("/root/PlayerSignals"):
+			PlayerSignals.vehicle_spawned.emit()
 		print("[ItemUseRouter] Spawned vehicle from Car Keys at %s" % v.global_position)
