@@ -264,12 +264,34 @@ func _pickup_item(target: Node) -> void:
 	
 	# Destroy target if we collected at least one item
 	if remaining < item_count:
+		# Play pickup sound
+		_play_pickup_sound()
+		
 		if remaining <= 0:
 			target.queue_free()
 		elif "item_count" in target:
 			target.item_count = remaining  # Update remaining count
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.interaction_performed.emit(target, "pickup")
+
+func _play_pickup_sound() -> void:
+	if not player:
+		return
+	
+	var audio_player = AudioStreamPlayer3D.new()
+	var sound = load("res://game/sound/player-pickup-item/item-equip-6904.mp3")
+	
+	if sound:
+		audio_player.stream = sound
+		audio_player.volume_db = 0.0
+		audio_player.max_distance = 20.0
+		player.add_child(audio_player)
+		audio_player.play()
+		
+		# Auto-cleanup after sound finishes
+		await audio_player.finished
+		if is_instance_valid(audio_player):
+			audio_player.queue_free()
 
 func _do_barricade() -> void:
 	if not current_target or not hotbar or not building_manager:
