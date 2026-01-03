@@ -1111,7 +1111,12 @@ func _try_damage_building_block(target: Node, item: Dictionary, position: Vector
 	if not chunk:
 		return false
 	
-	var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+	# Use SAME snapping logic as terrain damage (lines 611-613) for consistency with HUD
+	var hit_normal = hit.get("normal", Vector3.UP)
+	var snapped_pos = position - hit_normal * 0.1
+	snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
+	var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
+	
 	var blk_dmg = item.get("damage", 1)
 	var item_id = item.get("id", "")
 	
@@ -1122,6 +1127,7 @@ func _try_damage_building_block(target: Node, item: Dictionary, position: Vector
 	var current_hp = BLOCK_HP - block_damage[block_pos]
 	durability_target = block_pos
 	
+	print("DURABILITY_DEBUG: Building block hit at %s | Damage: %d | HP: %d/%d" % [block_pos, blk_dmg, current_hp, BLOCK_HP])
 	_emit_durability_hit(current_hp, BLOCK_HP, "Block", durability_target)
 	
 	if block_damage[block_pos] >= BLOCK_HP:
@@ -1196,12 +1202,16 @@ func _check_durability_target() -> void:
 	
 	var target = hit.get("collider")
 	var position = hit.get("position", Vector3.ZERO)
+	var hit_normal = hit.get("normal", Vector3.UP)
 	
 	if durability_target is RID:
 		if target and target.get_rid() == durability_target:
 			return
 	elif durability_target is Vector3i:
-		var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+		# Use SAME snapping logic as terrain/building damage (lines 611-613, 1114-1117)
+		var snapped_pos = position - hit_normal * 0.1
+		snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
+		var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
 		if block_pos == durability_target:
 			return
 	

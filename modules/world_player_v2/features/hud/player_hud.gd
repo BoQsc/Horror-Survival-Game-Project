@@ -500,6 +500,7 @@ func _on_durability_hit(current_hp: int, max_hp: int, _target_name: String, targ
 	}
 	last_hit_target_key = key
 	
+	print("DURABILITY_DEBUG: HUD received hit | Target: %s | HP: %.1f%% | Key: %s" % [_target_name, hp_percent, key])
 	durability_bar.value = hp_percent
 	durability_bar.visible = true
 
@@ -567,6 +568,7 @@ func _update_durability_visibility() -> void:
 			durability_bar.visible = true
 			return
 	
+	print("DURABILITY_DEBUG: HUD hiding bar - no match found (looking at different block)")
 	durability_bar.visible = false
 
 func _is_child_of(node: Node, potential_parent: Node) -> bool:
