@@ -499,6 +499,7 @@ func _update_durability_visibility() -> void:
 	
 	var target = hit.get("collider")
 	var position = hit.get("position", Vector3.ZERO)
+	var hit_normal = hit.get("normal", Vector3.UP)
 	
 	var look_rid = target.get_rid() if target else RID()
 	
@@ -511,7 +512,10 @@ func _update_durability_visibility() -> void:
 			if target and look_rid == remembered_target:
 				is_match = true
 		elif remembered_target is Vector3i:
-			var block_pos = Vector3i(floor(position.x), floor(position.y), floor(position.z))
+			# Use SAME snapping logic as combat_system.gd to ensure position matching
+			var snapped_pos = position - hit_normal * 0.1
+			snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
+			var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
 			if block_pos == remembered_target:
 				is_match = true
 		elif remembered_target is Node:
