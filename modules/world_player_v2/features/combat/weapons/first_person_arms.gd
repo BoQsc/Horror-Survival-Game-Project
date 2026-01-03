@@ -23,6 +23,7 @@ var arms_mesh: Node3D = null
 var anim_player: AnimationPlayer = null
 var punch_sfx: AudioStreamPlayer3D = null
 var hotbar: Node = null
+var mode_manager: Node = null
 
 var arms_origin: Vector3 = Vector3.ZERO
 var mouse_input: Vector2 = Vector2.ZERO
@@ -49,8 +50,9 @@ func _ready() -> void:
 	_load_arms_model()
 	_setup_punch_sfx()
 	
-	# Find hotbar for checking item category
+	# Find hotbar and mode manager for checking item category and game mode
 	hotbar = player.get_node_or_null("Systems/Hotbar")
+	mode_manager = player.get_node_or_null("Systems/ModeManager")
 	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
@@ -134,7 +136,13 @@ func _process(delta: float) -> void:
 	
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-			_try_punch()
+			# Only punch in PLAY mode, not during building/placement
+			if mode_manager and mode_manager.has_method("is_play_mode"):
+				if mode_manager.is_play_mode():
+					_try_punch()
+			elif not mode_manager:
+				# Fallback: punch if no mode_manager (backwards compat)
+				_try_punch()
 
 func _update_sway_and_bob(delta: float) -> void:
 	if not hand_holder:
