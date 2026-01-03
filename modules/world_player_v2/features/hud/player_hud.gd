@@ -83,6 +83,14 @@ func _ready() -> void:
 		if has_node("/root/PickaxeTargetVisualizer"):
 			visualizer_toggle.button_pressed = get_node("/root/PickaxeTargetVisualizer").enabled
 	
+	# Connect hit marker toggle
+	var hit_marker_toggle = game_menu.get_node_or_null("HitMarkerToggle")
+	if hit_marker_toggle:
+		hit_marker_toggle.toggled.connect(_on_hit_marker_toggled)
+		# Sync with current state
+		if has_node("/root/HitMarkerConfig"):
+			hit_marker_toggle.button_pressed = get_node("/root/HitMarkerConfig").enabled
+	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
 	game_menu.visible = false
@@ -350,6 +358,11 @@ func _on_target_visualizer_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PickaxeTargetVisualizer"):
 		get_node("/root/PickaxeTargetVisualizer").enabled = is_enabled
 		print("PlayerHUD: Target Visualizer -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_hit_marker_toggled(is_enabled: bool) -> void:
+	if has_node("/root/HitMarkerConfig"):
+		get_node("/root/HitMarkerConfig").enabled = is_enabled
+		print("PlayerHUD: Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_inventory_changed() -> void:
 	_refresh_hotbar_display()

@@ -216,6 +216,14 @@ offset_bottom = 180.0
 button_pressed = true
 text = "Target Visualizer"
 
+[node name="HitMarkerToggle" type="CheckButton" parent="GameMenu"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 190.0
+offset_right = 220.0
+offset_bottom = 220.0
+text = "Show Hit Markers"
+
 [node name="InventoryPanel" parent="." instance=ExtResource("2_inv")]
 
 [node name="ContainerPanel" parent="." instance=ExtResource("4_container")]

@@ -543,8 +543,9 @@ func do_tool_attack(item: Dictionary) -> void:
 			var position = hit.get("position", Vector3.ZERO)
 			print("PICKAXE_HIT_DEBUG: HIT registered | Target: %s | Position: %s" % [target.name if target else "null", position])
 			
-			# Visual debug: Spawn marker at hit position
-			_spawn_hit_marker(position, Color.RED)
+			# Visual debug: Spawn marker at hit position (if enabled)
+			if has_node("/root/HitMarkerConfig") and get_node("/root/HitMarkerConfig").enabled:
+				_spawn_hit_marker(position, Color.RED)
 			
 			# Store hit data and item for delayed damage
 			pending_pickaxe_hit = {
