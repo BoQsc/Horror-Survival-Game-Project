@@ -265,6 +265,10 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	# Show arms for placeable/usable items: NONE, BUCKET, RESOURCE, BLOCK, OBJECT, VEHICLE
 	var should_show = (category in [0, 2, 3, 4, 5, 8]) # 0=NONE, 2=BUCKET, 3=RESOURCE, 4=BLOCK, 5=OBJECT, 8=VEHICLE
 	
+	# CRITICAL: Reset punch state when switching items to prevent stuck state
+	is_punching = false
+	punch_cooldown = 0.0
+	
 	if arms_mesh:
 		arms_mesh.visible = should_show
 		if should_show and anim_player:
@@ -273,6 +277,7 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 				_play_collect_pose()
 			else:
 				_try_play_idle()
+
 
 func set_arms_visible(visible: bool) -> void:
 	if arms_mesh:
