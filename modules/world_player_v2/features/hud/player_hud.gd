@@ -99,6 +99,14 @@ func _ready() -> void:
 		if has_node("/root/HitMarkerConfig"):
 			hit_marker_toggle.button_pressed = get_node("/root/HitMarkerConfig").enabled
 	
+	# Connect pistol hit marker toggle
+	var pistol_marker_toggle = game_menu.get_node_or_null("PistolHitMarkerToggle")
+	if pistol_marker_toggle:
+		pistol_marker_toggle.toggled.connect(_on_pistol_hit_marker_toggled)
+		# Sync with current state
+		if has_node("/root/PistolHitMarkerConfig"):
+			pistol_marker_toggle.button_pressed = get_node("/root/PistolHitMarkerConfig").enabled
+	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
 	game_menu.visible = false
@@ -377,6 +385,11 @@ func _on_hit_marker_toggled(is_enabled: bool) -> void:
 	if has_node("/root/HitMarkerConfig"):
 		get_node("/root/HitMarkerConfig").enabled = is_enabled
 		print("PlayerHUD: Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_pistol_hit_marker_toggled(is_enabled: bool) -> void:
+	if has_node("/root/PistolHitMarkerConfig"):
+		get_node("/root/PistolHitMarkerConfig").enabled = is_enabled
+		print("PlayerHUD: Pistol Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_inventory_changed() -> void:
 	_refresh_hotbar_display()

@@ -1208,6 +1208,11 @@ func _check_durability_target() -> void:
 	durability_target = null
 
 func _spawn_pistol_hit_effect(pos: Vector3) -> void:
+	# Check if markers are enabled
+	if has_node("/root/PistolHitMarkerConfig"):
+		if not get_node("/root/PistolHitMarkerConfig").enabled:
+			return
+	
 	var mesh_instance = MeshInstance3D.new()
 	var sphere = SphereMesh.new()
 	sphere.radius = 0.05
