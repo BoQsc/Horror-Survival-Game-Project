@@ -98,6 +98,10 @@ func rebuild_mesh():
 		mesher.request_mesh_generation(self)
 
 func apply_mesh(arrays: Array, shape: Shape3D = null):
+	if not mesh_instance:
+		push_warning("BuildingChunk.apply_mesh: mesh_instance is null (chunk not ready yet)")
+		return
+	
 	if arrays.size() > 0:
 		var mesh = ArrayMesh.new()
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)

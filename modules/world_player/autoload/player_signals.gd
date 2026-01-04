@@ -58,5 +58,8 @@ signal player_landed()
 signal underwater_toggled(is_underwater: bool)
 signal camera_underwater_toggled(is_underwater: bool)
 
+# Save/Load signals
+signal player_loaded()  # Emitted after player state is loaded from save
+
 func _ready() -> void:
 	DebugManager.log_player("PlayerSignals: Autoload initialized")

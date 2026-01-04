@@ -34,6 +34,7 @@ var pending_spawns: Array = []
 var spawned_chunks: Dictionary = {} # Vector2i -> true (tracks which chunks already spawned entities)
 var zombie_scene: PackedScene = null # Cached zombie scene
 var biome_noise: FastNoiseLite = null # For biome detection (must match GPU)
+var is_loading_save: bool = false # Flag to disable procedural spawning during save load
 
 # Biome-based spawn rules: biome_id -> { "zombie_chance": float }
 # Biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
@@ -485,6 +486,9 @@ func get_save_data() -> Dictionary:
 	}
 
 func load_save_data(data: Dictionary):
+	# Disable procedural spawning during load to prevent duplicates
+	is_loading_save = true
+	
 	# Despawn all existing entities first
 	despawn_all()
 	
@@ -518,6 +522,14 @@ func load_save_data(data: Dictionary):
 				entity.set_meta("entity_type", ent_data.type)
 	
 	DebugManager.log_entities("Loaded %d entities" % data.entities.size())
+	
+	# Re-enable procedural spawning after load completes
+	call_deferred("_finish_load")
+
+## Called after load completes to re-enable procedural spawning
+func _finish_load():
+	is_loading_save = false
+	DebugManager.log_entities("Entity load complete - procedural spawning re-enabled")
 
 # ============ PROCEDURAL SPAWNING ============
 
@@ -556,6 +568,10 @@ func _setup_procedural_spawning():
 ## Called when a terrain chunk is generated
 func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	if not procedural_spawning_enabled:
+		return
+	
+	# Skip procedural spawning if currently loading a save
+	if is_loading_save:
 		return
 	
 	# Only spawn on surface chunks (Y=0)

@@ -107,6 +107,16 @@ func _ready() -> void:
 		if has_node("/root/PistolHitMarkerConfig"):
 			pistol_marker_toggle.button_pressed = get_node("/root/PistolHitMarkerConfig").enabled
 	
+	# Connect QuickSave button (F5)
+	var quicksave_btn = game_menu.get_node_or_null("QuickSaveButton")
+	if quicksave_btn:
+		quicksave_btn.pressed.connect(_on_quicksave_pressed)
+	
+	# Connect QuickLoad button (F8)
+	var quickload_btn = game_menu.get_node_or_null("QuickLoadButton")
+	if quickload_btn:
+		quickload_btn.pressed.connect(_on_quickload_pressed)
+	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
 	game_menu.visible = false
@@ -390,6 +400,21 @@ func _on_pistol_hit_marker_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PistolHitMarkerConfig"):
 		get_node("/root/PistolHitMarkerConfig").enabled = is_enabled
 		print("PlayerHUD: Pistol Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_quicksave_pressed() -> void:
+	if has_node("/root/SaveManager"):
+		get_node("/root/SaveManager").quick_save()
+		print("PlayerHUD: QuickSave triggered (F5)")
+	else:
+		push_error("PlayerHUD: SaveManager not found!")
+
+func _on_quickload_pressed() -> void:
+	if has_node("/root/SaveManager"):
+		get_node("/root/SaveManager").quick_load()
+		print("PlayerHUD: QuickLoad triggered (F8)")
+	else:
+		push_error("PlayerHUD: SaveManager not found!")
+
 
 func _on_inventory_changed() -> void:
 	_refresh_hotbar_display()

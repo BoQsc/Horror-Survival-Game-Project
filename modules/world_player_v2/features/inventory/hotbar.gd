@@ -346,10 +346,17 @@ func load_save_data(data: Dictionary) -> void:
 		while slots.size() < SLOT_COUNT:
 			slots.append(_create_empty_stack())
 	
-	if data.has("selected_slot"):
-		select_slot(data.selected_slot)
-	else:
-		select_slot(0)
+	# Restore selected slot index
+	var slot_to_select = data.get("selected_slot", 0)
+	selected_slot = slot_to_select
+	
+	# Connect to player_loaded signal (one-shot) to re-emit item state after load
+	if has_node("/root/PlayerSignals"):
+		# Use lambda to pass the slot index and disconnect after one use
+		var reconnect_func = func():
+			select_slot(selected_slot)
+			DebugManager.log_player("Hotbar: Reconnected item state after load")
+		PlayerSignals.player_loaded.connect(reconnect_func, CONNECT_ONE_SHOT)
 	
 	DebugManager.log_player("Hotbar: Loaded save data")
 

@@ -235,9 +235,18 @@ func load_game(path: String) -> bool:
 	# V2: Containers (deferred)
 	call_deferred("_load_container_data", save_data.get("containers", {}))
 	
+	# Emit player_loaded signal to reconnect all player systems
+	call_deferred("_emit_player_loaded")
+	
 	DebugManager.log_save("Load complete!")
 	load_completed.emit(true, path)
 	return true
+
+## Emit player_loaded signal (deferred to ensure all systems are ready)
+func _emit_player_loaded():
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.player_loaded.emit()
+		DebugManager.log_save("Player loaded signal emitted - systems should reconnect")
 
 ## Called when terrain chunks around spawn positions are ready
 func _on_spawn_zones_ready(positions: Array):
@@ -245,10 +254,6 @@ func _on_spawn_zones_ready(positions: Array):
 		return
 	
 	DebugManager.log_save("Spawn zones ready - gameplay enabled")
-	
-	# Unfreeze player
-	if player:
-		player.process_mode = Node.PROCESS_MODE_INHERIT
 	
 	# Spawn queued entities now that terrain is ready
 	if not pending_entity_data.is_empty() and entity_manager:
@@ -452,22 +457,14 @@ func _load_player_data(data: Dictionary):
 	if data.has("is_flying") and "is_flying" in player:
 		player.is_flying = data.is_flying
 	
-	# FREEZE player until terrain is ready
+	# NOTE: Player freeze removed for QuickLoad (v2)
+	# QuickLoad doesn't reload the scene, so player can stay active
+	# V1 full scene loads handle freezing separately if needed
 	player.velocity = Vector3.ZERO
-	player.process_mode = Node.PROCESS_MODE_DISABLED
-	DebugManager.log_save("Player frozen at %s, waiting for terrain" % player_pos)
 	
-	# Request terrain around player position
+	# Request terrain around player position (for v1 compatibility)
 	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
 		chunk_manager.request_spawn_zone(player_pos, 2)
-	else:
-		# Fallback: if no spawn zone API, just unfreeze after a delay
-		push_warning("SaveManager: No spawn zone API - using fallback timer")
-		get_tree().create_timer(2.0).timeout.connect(func(): 
-			if player:
-				player.process_mode = Node.PROCESS_MODE_INHERIT
-			is_loading_game = false
-		)
 
 func _load_terrain_data(data: Dictionary):
 	if data.is_empty():
