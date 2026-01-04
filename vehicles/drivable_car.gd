@@ -157,6 +157,7 @@ func _get_forward_speed() -> float:
 func _physics_process(delta: float) -> void:
 	super._physics_process(delta)
 	_apply_water_physics(delta)
+	_apply_low_speed_steering_assist(delta)
 	_check_flip_recovery()
 	_update_engine_audio()
 
@@ -172,6 +173,28 @@ func _apply_water_physics(delta: float) -> void:
 		apply_central_force(Vector3.UP * BUOYANCY_FORCE * min(submerge_depth, 3.0))
 		# Water drag - slow down movement
 		linear_velocity = linear_velocity.lerp(Vector3.ZERO, WATER_DRAG * delta)
+
+
+## ARCADE LOW-SPEED STEERING ASSIST
+## VehicleBody3D steering is velocity-dependent, so at low speeds turning is sluggish.
+## This adds manual angular velocity to ensure sharp turns even when barely moving.
+const LOW_SPEED_THRESHOLD: float = 8.0  # Below this speed, apply steering assist
+const STEERING_ASSIST_STRENGTH: float = 0.5  # Angular velocity multiplier (subtle low-speed assist)
+
+func _apply_low_speed_steering_assist(delta: float) -> void:
+	if not is_player_controlled or player_steer == 0.0:
+		return
+	
+	var speed = linear_velocity.length()
+	if speed < LOW_SPEED_THRESHOLD:
+		# Calculate assist factor (1.0 at standstill, 0.0 at threshold)
+		var assist_factor = 1.0 - (speed / LOW_SPEED_THRESHOLD)
+		assist_factor = ease(assist_factor, 0.5)  # Smooth curve
+		
+		# Apply angular velocity for instant arcade turning
+		var turn_direction = player_steer  # Fixed rotation direction
+		var assist_torque = turn_direction * STEERING_ASSIST_STRENGTH * assist_factor
+		angular_velocity.y += assist_torque * delta * 60.0  # Frame-independent
 
 
 ## Check if player wants to flip the car back over (B key)
