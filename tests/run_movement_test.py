@@ -48,7 +48,7 @@ def main():
     
     bot_found = False
     for line in output.splitlines():
-        if "[BOT]" in line or "[HOTBAR_DEBUG]" in line or "[QUICKLOAD_TEST]" in line or "[ROUTER_DEBUG]" in line or "[COMBAT_DEBUG]" in line:
+        if "[BOT]" in line or "[HOTBAR_DEBUG]" in line or "[QUICKLOAD_TEST]" in line or "[ROUTER_DEBUG]" in line or "[COMBAT_DEBUG]" in line or "[QUICKLOAD_FALL_TEST]" in line:
             print(line)
             bot_found = True
     

@@ -35,6 +35,7 @@ var container_registry: Node = null
 var pending_player_data: Dictionary = {}
 var pending_entity_data: Dictionary = {}
 var pending_vehicle_data: Dictionary = {}
+var pending_player_position_restore: bool = false  # Fix: defer position until terrain collision ready
 var is_loading_game: bool = false
 
 func _ready():
@@ -255,6 +256,15 @@ func _on_spawn_zones_ready(positions: Array):
 	
 	DebugManager.log_save("Spawn zones ready - gameplay enabled")
 	
+	# FIX: Restore player position/rotation NOW that terrain collision is ready
+	if pending_player_position_restore and player and not pending_player_data.is_empty():
+		if pending_player_data.has("position"):
+			player.global_position = _array_to_vec3(pending_player_data.position)
+			DebugManager.log_save("Player position restored: %s" % player.global_position)
+		if pending_player_data.has("rotation"):
+			player.rotation = _array_to_vec3(pending_player_data.rotation)
+		pending_player_position_restore = false
+	
 	# Spawn queued entities now that terrain is ready
 	if not pending_entity_data.is_empty() and entity_manager:
 		if entity_manager.has_method("load_save_data"):
@@ -441,15 +451,21 @@ func _load_player_data(data: Dictionary):
 	if data.is_empty() or not player:
 		return
 	
-	# Store position for spawn zone request
+	# Store position for deferred restoration (FIX: wait for terrain collision)
 	pending_player_data = data
+	pending_player_position_restore = (data.has("position") or data.has("rotation"))
+	
 	var player_pos = Vector3.ZERO
 	
+	# FIX: Don't set position/rotation here - defer until terrain collision ready!
+	# This prevents fall-through when QuickLoading early in game start
 	if data.has("position"):
 		player_pos = _array_to_vec3(data.position)
-		player.global_position = player_pos
-	if data.has("rotation"):
-		player.rotation = _array_to_vec3(data.rotation)
+		# player.global_position = player_pos  # REMOVED - set in _on_spawn_zones_ready()
+	# if data.has("rotation"):
+	#	player.rotation = _array_to_vec3(data.rotation)  # REMOVED - set in _on_spawn_zones_ready()
+	
+	# Camera pitch and flying state are safe to restore immediately (don't affect physics)
 	if data.has("camera_pitch"):
 		var camera = player.get_node_or_null("Camera3D")
 		if camera:
@@ -462,9 +478,11 @@ func _load_player_data(data: Dictionary):
 	# V1 full scene loads handle freezing separately if needed
 	player.velocity = Vector3.ZERO
 	
-	# Request terrain around player position (for v1 compatibility)
+	# Request terrain around player position (for spawn zone readiness)
 	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
 		chunk_manager.request_spawn_zone(player_pos, 2)
+	
+	DebugManager.log_save("Player data loaded - position deferred until terrain ready")
 
 func _load_terrain_data(data: Dictionary):
 	if data.is_empty():
