@@ -161,6 +161,7 @@ func save_game(path: String) -> bool:
 	file.close()
 	
 	DebugManager.log_save("Save complete!")
+	print("[SAVE_NOTIFICATION] Game saved to: %s" % path)
 	save_completed.emit(true, path)
 	return true
 
@@ -240,6 +241,7 @@ func load_game(path: String) -> bool:
 	call_deferred("_emit_player_loaded")
 	
 	DebugManager.log_save("Load complete!")
+	print("[LOAD_NOTIFICATION] Game loaded from: %s" % path)
 	load_completed.emit(true, path)
 	return true
 

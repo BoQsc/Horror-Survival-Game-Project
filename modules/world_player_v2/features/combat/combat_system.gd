@@ -641,10 +641,12 @@ func do_tool_attack(item: Dictionary) -> void:
 			# Emit durability signal for HUD
 			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
 			
+			print("[TERRAIN_MINING] Pickaxe hit %s - HP: %d/%d" % [block_pos, current_hp, TERRAIN_HP])
 			DebugManager.log_player("CombatSystem: Pickaxe hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
 			
 			# Check if terrain cube should break
 			if terrain_damage[block_pos] >= TERRAIN_HP:
+				print("[TERRAIN_MINING] Block %s DESTROYED! (HP reached 0)" % block_pos)
 				if use_enhanced_mode:
 					# Break with box shape
 					terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)

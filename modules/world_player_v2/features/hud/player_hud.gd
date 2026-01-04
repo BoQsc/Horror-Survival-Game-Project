@@ -36,6 +36,10 @@ const DURABILITY_PERSIST_MS: int = 6000
 # Terraformer state
 var terraformer_material: String = ""
 
+# Save/Load notifications
+var notification_label: Label = null
+var notification_timer: float = 0.0
+
 func _ready() -> void:
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.mode_changed.connect(_on_mode_changed)
@@ -135,12 +139,49 @@ func _setup_visual_overlays() -> void:
 		underwater_overlay.visible = false
 		add_child(underwater_overlay)
 		move_child(underwater_overlay, 0)
+	
+	# Create save/load notification label
+	if not notification_label:
+		notification_label = Label.new()
+		notification_label.name = "SaveLoadNotification"
+		notification_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		notification_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		notification_label.set_anchors_preset(Control.PRESET_CENTER)
+		notification_label.offset_top = -100  # Above center
+		notification_label.add_theme_font_size_override("font_size", 32)
+		notification_label.add_theme_color_override("font_color", Color.YELLOW)
+		notification_label.add_theme_color_override("font_outline_color", Color.BLACK)
+		notification_label.add_theme_constant_override("outline_size", 4)
+		notification_label.visible = false
+		notification_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(notification_label)
+		print("[HUD_SETUP] Notification label created")
+	
+	# Connect to SaveManager signals
+	print("[HUD_SETUP] Checking for SaveManagerV2...")
+	if has_node("/root/SaveManagerV2"):
+		print("[HUD_SETUP] SaveManagerV2 found!")
+		var save_mgr = get_node("/root/SaveManagerV2")
+		if not save_mgr.save_completed.is_connected(_on_save_completed):
+			save_mgr.save_completed.connect(_on_save_completed)
+			print("[HUD_SETUP] Connected to save_completed signal")
+		if not save_mgr.load_completed.is_connected(_on_load_completed):
+			save_mgr.load_completed.connect(_on_load_completed)
+			print("[HUD_SETUP] Connected to load_completed signal")
+	else:
+		print("[HUD_SETUP] WARNING: SaveManagerV2 not found at /root/SaveManagerV2!")
 
 func _process(_delta: float) -> void:
 	_update_compass()
 	_update_status_bars()
 	_update_build_mode_info()
 	_update_durability_visibility()
+	
+	# Update notification timer
+	if notification_timer > 0:
+		notification_timer -= _delta
+		if notification_timer <= 0 and notification_label:
+			notification_label.visible = false
 
 func _setup_hotbar() -> void:
 	hotbar_slots.clear()
@@ -639,3 +680,17 @@ func _on_terraformer_material_changed(material_name: String) -> void:
 func _on_camera_underwater_toggled(is_underwater: bool) -> void:
 	if underwater_overlay:
 		underwater_overlay.visible = is_underwater
+
+func _on_save_completed(success: bool, path: String) -> void:
+	if success and notification_label:
+		notification_label.text = "🎮 GAME SAVED!"
+		notification_label.visible = true
+		notification_timer = 2.0  # Show for 2 seconds
+		print("[SAVE_NOTIFICATION] Game saved!")
+
+func _on_load_completed(success: bool, path: String) -> void:
+	if success and notification_label:
+		notification_label.text = "📂 GAME LOADED!"
+		notification_label.visible = true
+		notification_timer = 2.0  # Show for 2 seconds
+		print("[LOAD_NOTIFICATION] Game loaded!")
