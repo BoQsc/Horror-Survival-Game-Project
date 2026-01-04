@@ -4,7 +4,7 @@ extends Node
 
 var target_box: MeshInstance3D = null
 var hit_marker: MeshInstance3D = null
-var enabled: bool = true
+var enabled: bool = false
 
 func _ready() -> void:
 	_create_visuals()
