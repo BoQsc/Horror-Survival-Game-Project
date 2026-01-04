@@ -191,3 +191,33 @@ func _create_empty_stack() -> Dictionary:
 		},
 		"count": 0
 	}
+
+## Serialize inventory contents for saving
+func get_save_data() -> Dictionary:
+	var slots_data = []
+	for slot in slots:
+		slots_data.append({
+			"item": slot.item.duplicate(),
+			"count": slot.count
+		})
+	return {
+		"slots": slots_data,
+		"is_open": is_open
+	}
+
+## Deserialize inventory contents from save
+func load_save_data(data: Dictionary) -> void:
+	if data.has("slots"):
+		var saved_slots = data.slots
+		for i in range(min(saved_slots.size(), INVENTORY_SIZE)):
+			slots[i] = {
+				"item": saved_slots[i].get("item", {}).duplicate(),
+				"count": saved_slots[i].get("count", 0)
+			}
+	
+	# Don't restore open state - always start closed
+	is_open = false
+	
+	PlayerSignals.inventory_changed.emit()
+	DebugManager.log_player("Inventory: Loaded save data")
+

@@ -90,3 +90,30 @@ func get_health_percent() -> float:
 
 func get_stamina_percent() -> float:
 	return stamina / max_stamina
+
+## Serialize stats for saving
+func get_save_data() -> Dictionary:
+	return {
+		"health": health,
+		"max_health": max_health,
+		"stamina": stamina,
+		"max_stamina": max_stamina,
+		"is_dead": is_dead
+	}
+
+## Deserialize stats from save
+func load_save_data(data: Dictionary) -> void:
+	health = data.get("health", max_health)
+	max_health = data.get("max_health", 10)
+	stamina = data.get("stamina", max_stamina)
+	max_stamina = data.get("max_stamina", 100.0)
+	is_dead = data.get("is_dead", false)
+	
+	# Emit signals to update UI
+	if signals and signals.has_signal("health_changed"):
+		signals.health_changed.emit(health, max_health)
+	if signals and signals.has_signal("stamina_changed"):
+		signals.stamina_changed.emit(stamina, max_stamina)
+	
+	DebugManager.log_player("PlayerStats: Loaded save data (Health: %d/%d, Stamina: %.1f/%.1f)" % [health, max_health, stamina, max_stamina])
+

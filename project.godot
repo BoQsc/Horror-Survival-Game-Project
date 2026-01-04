@@ -20,7 +20,8 @@ config/icon="res://icon.svg"
 [autoload]
 
 DebugManager="*res://modules/debug_module/debug_manager.gd"
-SaveManager="*res://save_manager.gd"
+SaveManager="*res://save_manager/save_manager_v2.gd"
+ContainerRegistry="*res://save_manager/container_registry.gd"
 PerformanceMonitor="*res://performance_monitor.gd"
 PlayerSignals="*res://modules/world_player/autoload/player_signals.gd"
 PlayerStats="*res://modules/world_player/autoload/player_stats.gd"

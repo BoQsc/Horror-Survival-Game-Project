@@ -5,9 +5,12 @@ extends Node
 signal save_completed(success: bool, path: String)
 signal load_completed(success: bool, path: String)
 
-const SAVE_VERSION = 1
+const SAVE_VERSION = 2  # V2: Added inventory, hotbar, stats, containers, player state
 const SAVE_DIR = "user://saves/"
 const QUICKSAVE_FILE = "quicksave.json"
+
+# Preload V1 loader for backward compatibility
+const SaveManagerV1 = preload("res://save_manager/save_manager_v1.gd")
 
 # References to game managers (set in _ready or via exports)
 var chunk_manager: Node = null
@@ -19,6 +22,14 @@ var entity_manager: Node = null
 var vehicle_manager: Node = null
 var building_generator: Node = null
 var player: Node = null
+
+# V2: New player system references
+var player_inventory: Node = null
+var player_hotbar: Node = null
+var player_stats: Node = null
+var mode_manager: Node = null
+var crouch_component: Node = null
+var container_registry: Node = null
 
 # Deferred spawn data - waiting for terrain to load
 var pending_player_data: Dictionary = {}
@@ -58,6 +69,31 @@ func _find_managers():
 	if chunk_manager and chunk_manager.has_signal("spawn_zones_ready"):
 		if not chunk_manager.is_connected("spawn_zones_ready", _on_spawn_zones_ready):
 			chunk_manager.connect("spawn_zones_ready", _on_spawn_zones_ready)
+	
+	# V2: Find player components
+	if player:
+		var systems_node = player.get_node_or_null("Systems")
+		if systems_node:
+			player_inventory = systems_node.get_node_or_null("Inventory")
+			player_hotbar = systems_node.get_node_or_null("Hotbar")
+			mode_manager = systems_node.get_node_or_null("ModeManager")
+		
+		var components_node = player.get_node_or_null("Components")
+		if components_node:
+			var movement_node = components_node.get_node_or_null("Movement")
+			if movement_node:
+				crouch_component = movement_node.get_node_or_null("Crouch")
+	
+	# Find player stats (autoload)
+	player_stats = get_node_or_null("/root/PlayerStats")
+	
+	# Get container registry
+	container_registry = get_node_or_null("/root/ContainerRegistry")
+	
+	DebugManager.log_save("V2 Systems: INV=%s HB=%s STATS=%s MODE=%s CROUCH=%s CONT=%s" % [
+		player_inventory != null, player_hotbar != null, player_stats != null,
+		mode_manager != null, crouch_component != null, container_registry != null
+	])
 
 func _input(event):
 	if event is InputEventKey and event.pressed:
@@ -100,7 +136,14 @@ func save_game(path: String) -> bool:
 		"entities": _get_entity_data(),
 		"doors": _get_door_data(),
 		"vehicles": _get_vehicle_data(),
-		"building_spawns": _get_building_spawn_data()
+		"building_spawns": _get_building_spawn_data(),
+		# V2 additions
+		"player_inventory": _get_inventory_data(),
+		"player_hotbar": _get_hotbar_data(),
+		"player_stats": _get_player_stats_data(),
+		"player_state": _get_player_state_data(),
+		"containers": _get_container_data(),
+		"game_settings": _get_game_settings_data()
 	}
 	
 	# Convert to JSON
@@ -150,9 +193,16 @@ func load_game(path: String) -> bool:
 	# Validate version
 	var version = save_data.get("version", 0)
 	if version > SAVE_VERSION:
-		push_error("[SaveManager] Save file version %d is newer than supported %d" % [version, SAVE_VERSION])
+		push_error("[SaveManager] Save version %d newer than supported %d" % [version, SAVE_VERSION])
 		load_completed.emit(false, path)
 		return false
+	
+	# V2: Delegate to v1 loader if v1 save detected
+	if version == 1:
+		DebugManager.log_save("Detected v1 save - delegating to v1 loader")
+		var success = SaveManagerV1.load_v1_save(save_data, self)
+		load_completed.emit(success, path)
+		return success
 	
 	# Load each component
 	# IMPORTANT: Load prefabs FIRST to prevent respawning during chunk generation
@@ -175,6 +225,16 @@ func load_game(path: String) -> bool:
 	call_deferred("_load_door_data", save_data.get("doors", {}))
 	# Vehicles are ALSO deferred until terrain is ready (prevents falling through)
 	pending_vehicle_data = save_data.get("vehicles", {})
+	
+	# V2: Load player systems
+	_load_inventory_data(save_data.get("player_inventory", {}))
+	_load_hotbar_data(save_data.get("player_hotbar", {}))
+	_load_player_stats_data(save_data.get("player_stats", {}))
+	_load_player_state_data(save_data.get("player_state", {}))
+	
+	# V2: Containers (deferred)
+	call_deferred("_load_container_data", save_data.get("containers", {}))
+	
 	DebugManager.log_save("Load complete!")
 	load_completed.emit(true, path)
 	return true
@@ -635,6 +695,92 @@ func _load_door_data(data: Dictionary):
 	
 	DebugManager.log_save("Doors loaded: %d" % data.doors.size())
 
+# ============ V2: NEW PLAYER SYSTEM DATA ============
+
+func _get_inventory_data() -> Dictionary:
+	if not player_inventory or not player_inventory.has_method("get_save_data"):
+		return {}
+	return player_inventory.get_save_data()
+
+func _load_inventory_data(data: Dictionary):
+	if data.is_empty() or not player_inventory or not player_inventory.has_method("load_save_data"):
+		return
+	player_inventory.load_save_data(data)
+
+func _get_hotbar_data() -> Dictionary:
+	if not player_hotbar or not player_hotbar.has_method("get_save_data"):
+		return {}
+	return player_hotbar.get_save_data()
+
+func _load_hotbar_data(data: Dictionary):
+	if data.is_empty() or not player_hotbar or not player_hotbar.has_method("load_save_data"):
+		return
+	player_hotbar.load_save_data(data)
+
+func _get_player_stats_data() -> Dictionary:
+	if not player_stats or not player_stats.has_method("get_save_data"):
+		return {}
+	return player_stats.get_save_data()
+
+func _load_player_stats_data(data: Dictionary):
+	if data.is_empty() or not player_stats or not player_stats.has_method("load_save_data"):
+		return
+	player_stats.load_save_data(data)
+
+func _get_player_state_data() -> Dictionary:
+	var state = {}
+	
+	# Crouch state
+	if crouch_component and "is_crouching" in crouch_component:
+		state["is_crouching"] = crouch_component.is_crouching
+	
+	# Mode state
+	if mode_manager:
+		if "current_mode" in mode_manager:
+			state["current_mode"] = mode_manager.current_mode
+		if "editor_submode" in mode_manager:
+			state["editor_submode"] = mode_manager.editor_submode
+		if "is_flying" in mode_manager:
+			state["is_flying"] = mode_manager.is_flying
+	
+	return state
+
+func _load_player_state_data(data: Dictionary):
+	if data.is_empty():
+		return
+	
+	# Restore crouch state (will be implemented when crouch refactor is done)
+	if data.has("is_crouching") and crouch_component:
+		if crouch_component.has_method("set_crouch_state"):
+			crouch_component.set_crouch_state(data.is_crouching)
+		else:
+			DebugManager.log_save("Note: Crouch state was %s (refactor pending)" % data.is_crouching)
+	
+	# Restore mode state
+	if mode_manager:
+		if data.has("current_mode") and mode_manager.has_method("set_mode"):
+			mode_manager.set_mode(data.current_mode)
+		if data.has("editor_submode") and "editor_submode" in mode_manager:
+			mode_manager.editor_submode = data.editor_submode
+		if data.has("is_flying") and "is_flying" in mode_manager:
+			mode_manager.is_flying = data.is_flying
+
+func _get_container_data() -> Dictionary:
+	if not container_registry or not container_registry.has_method("get_save_data"):
+		return {}
+	return container_registry.get_save_data()
+
+func _load_container_data(data: Dictionary):
+	if data.is_empty() or not container_registry:
+		return
+	
+	if container_registry.has_method("load_save_data"):
+		container_registry.load_save_data(data)
+
+func _get_game_settings_data() -> Dictionary:
+	# TODO: Time of day, weather when implemented
+	return {}
+
 # ============ UTILITY FUNCTIONS ============
 
 func _vec3_to_array(v: Vector3) -> Array:
@@ -652,3 +798,4 @@ func _array_to_vec3i(a: Array) -> Vector3i:
 	if a.size() < 3:
 		return Vector3i.ZERO
 	return Vector3i(int(a[0]), int(a[1]), int(a[2]))
+

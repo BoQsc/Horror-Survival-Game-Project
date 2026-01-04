@@ -317,3 +317,39 @@ func drop_selected_item() -> void:
 		DebugManager.log_player("CRITICAL: Hotbar slot count mismatch! Force clearing.")
 		# Force decrement
 		set_item_at(selected_slot, item, count - 1)
+
+## Serialize hotbar contents for saving
+func get_save_data() -> Dictionary:
+	var slots_data = []
+	for slot in slots:
+		slots_data.append({
+			"item": slot.item.duplicate(),
+			"count": slot.count
+		})
+	return {
+		"slots": slots_data,
+		"selected_slot": selected_slot
+	}
+
+## Deserialize hotbar contents from save (REPLACES starter kit)
+func load_save_data(data: Dictionary) -> void:
+	if data.has("slots"):
+		var saved_slots = data.slots
+		slots.clear()
+		for i in range(min(saved_slots.size(), SLOT_COUNT)):
+			slots.append({
+				"item": saved_slots[i].get("item", {}).duplicate(),
+				"count": saved_slots[i].get("count", 0)
+			})
+		
+		# Fill remaining slots with empty
+		while slots.size() < SLOT_COUNT:
+			slots.append(_create_empty_stack())
+	
+	if data.has("selected_slot"):
+		select_slot(data.selected_slot)
+	else:
+		select_slot(0)
+	
+	DebugManager.log_player("Hotbar: Loaded save data")
+

@@ -15,12 +15,30 @@ var slots: Array = []
 var container_id: String = ""
 
 func _ready() -> void:
-	# Generate unique ID if not set
+	# Generate UUID if not set (ensures uniqueness)
 	if container_id.is_empty():
-		container_id = str(randi())
+		container_id = _generate_uuid()
 	
 	# Initialize slots based on slot_count
 	_initialize_slots()
+	
+	# Auto-register with global registry
+	if has_node("/root/ContainerRegistry"):
+		ContainerRegistry.register_container(self, container_id)
+
+func _exit_tree() -> void:
+	# Unregister when destroyed
+	if has_node("/root/ContainerRegistry"):
+		ContainerRegistry.unregister_container(container_id)
+
+## Generate a unique UUID for this container
+func _generate_uuid() -> String:
+	# Simple UUID generation using time + random + instance ID
+	return "%s-%s-%s" % [
+		Time.get_ticks_msec(),
+		randi(),
+		get_instance_id()
+	]
 
 func _initialize_slots() -> void:
 	slots.clear()
