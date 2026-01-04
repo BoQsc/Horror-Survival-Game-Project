@@ -333,14 +333,22 @@ func get_save_data() -> Dictionary:
 
 ## Deserialize hotbar contents from save (REPLACES starter kit)
 func load_save_data(data: Dictionary) -> void:
+	print("[HOTBAR_DEBUG] load_save_data() called")
+	print("[HOTBAR_DEBUG] Data keys: %s" % str(data.keys()))
+	
 	if data.has("slots"):
 		var saved_slots = data.slots
+		print("[HOTBAR_DEBUG] Loading %d slots from save" % saved_slots.size())
 		slots.clear()
 		for i in range(min(saved_slots.size(), SLOT_COUNT)):
+			var item_data = saved_slots[i].get("item", {}).duplicate()
+			var count = saved_slots[i].get("count", 0)
 			slots.append({
-				"item": saved_slots[i].get("item", {}).duplicate(),
-				"count": saved_slots[i].get("count", 0)
+				"item": item_data,
+				"count": count
 			})
+			if not item_data.is_empty():
+				print("[HOTBAR_DEBUG]   Slot %d: %s x%d" % [i, item_data.get("name", "?"), count])
 		
 		# Fill remaining slots with empty
 		while slots.size() < SLOT_COUNT:
@@ -349,14 +357,24 @@ func load_save_data(data: Dictionary) -> void:
 	# Restore selected slot index
 	var slot_to_select = data.get("selected_slot", 0)
 	selected_slot = slot_to_select
+	print("[HOTBAR_DEBUG] Selected slot set to: %d" % selected_slot)
 	
 	# Connect to player_loaded signal (one-shot) to re-emit item state after load
 	if has_node("/root/PlayerSignals"):
+		print("[HOTBAR_DEBUG] Connecting to player_loaded signal...")
 		# Use lambda to pass the slot index and disconnect after one use
 		var reconnect_func = func():
+			print("[HOTBAR_DEBUG] player_loaded signal received! Re-selecting slot %d" % selected_slot)
+			var item_before = get_selected_item()
+			print("[HOTBAR_DEBUG] Item BEFORE select_slot: %s" % ("empty" if item_before.is_empty() else item_before.get("name", "?")))
 			select_slot(selected_slot)
+			var item_after = get_selected_item()
+			print("[HOTBAR_DEBUG] Item AFTER select_slot: %s" % ("empty" if item_after.is_empty() else item_after.get("name", "?")))
 			DebugManager.log_player("Hotbar: Reconnected item state after load")
 		PlayerSignals.player_loaded.connect(reconnect_func, CONNECT_ONE_SHOT)
+		print("[HOTBAR_DEBUG] Connection established")
+	else:
+		print("[HOTBAR_DEBUG] WARNING: PlayerSignals not found!")
 	
 	DebugManager.log_player("Hotbar: Loaded save data")
 

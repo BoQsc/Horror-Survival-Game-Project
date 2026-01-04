@@ -42,18 +42,18 @@ def main():
     print(output)
     print("=" * 50)
     
-    # Filter for bot output
-    print("\nBOT LINES ONLY:")
+    # Filter for bot and hotbar debug output
+    print("\nBOT & HOTBAR DEBUG:")
     print("=" * 50)
     
     bot_found = False
     for line in output.splitlines():
-        if "[BOT]" in line:
+        if "[BOT]" in line or "[HOTBAR_DEBUG]" in line or "[QUICKLOAD_TEST]" in line or "[ROUTER_DEBUG]" in line or "[COMBAT_DEBUG]" in line:
             print(line)
             bot_found = True
     
     if not bot_found:
-        print("(No bot output found)")
+        print("(No bot or debug output found)")
     
     print("=" * 50)
     return 0

@@ -28,10 +28,12 @@ func _process(delta):
 	# Test sequence:
 	# 0-3s: Move forward
 	# 3-4s: Look down (to see ground)
-	# 4-6s: Mine (left-click repeatedly)
-	# 6-8s: Look up
-	# 8-10s: Move backward
-	# 10s: Done
+	# 4-6s: Mine BEFORE save (left-click repeatedly)
+	# 6-8s: QUICKSAVE (F5)
+	# 8-10s: Move around
+	# 10-14s: QUICKLOAD (F8) - wait for load
+	# 14-16s: Mine AFTER load (left-click repeatedly)
+	# 16s: Done
 	
 	if move_timer < 3.0:
 		if move_timer < 0.1:
@@ -47,25 +49,39 @@ func _process(delta):
 	
 	elif move_timer < 6.0:
 		if move_timer < 4.1:
-			print("[BOT] Phase 3: Mining (left-clicking)")
+			print("[BOT] Phase 3: Mining BEFORE save (testing pickaxe works)")
 		# Click every 0.5 seconds
 		if int(move_timer * 2) != int((move_timer - delta) * 2):
 			_click_left()
-			print("[BOT]   *click* (mining)")
+			print("[BOT]   *click* BEFORE save")
 	
 	elif move_timer < 8.0:
 		if move_timer < 6.1:
-			print("[BOT] Phase 4: Looking back up")
-		# Rotate camera up
-		_rotate_camera_pitch(delta * 0.5)  # Look up
+			print("[BOT] Phase 4: QUICKSAVE (F5)")
+			_press_key(KEY_F5)
+		# Wait
 	
 	elif move_timer < 10.0:
 		if move_timer < 8.1:
-			print("[BOT] Phase 5: Moving backward")
-		Input.action_press("move_backward")
+			print("[BOT] Phase 5: Moving to change state")
+		Input.action_press("move_forward")
+	
+	elif move_timer < 14.0:
+		Input.action_release("move_forward")
+		if move_timer < 10.1:
+			print("[BOT] Phase 6: QUICKLOAD (F8) - THE CRITICAL TEST")
+			_press_key(KEY_F8)
+		# Wait for load to complete
+	
+	elif move_timer < 16.0:
+		if move_timer < 14.1:
+			print("[BOT] Phase 7: Mining AFTER load (does pickaxe still work?)")
+		# Click every 0.5 seconds
+		if int(move_timer * 2) != int((move_timer - delta) * 2):
+			_click_left()
+			print("[BOT]   *click* AFTER load")
 	
 	else:
-		Input.action_release("move_backward")
 		print("[BOT] Test complete!")
 		get_tree().quit()
 
@@ -86,3 +102,13 @@ func _click_left():
 	event_up.button_index = MOUSE_BUTTON_LEFT
 	event_up.pressed = false
 	Input.parse_input_event(event_up)
+
+func _press_key(keycode: int):
+	var event = InputEventKey.new()
+	event.keycode = keycode
+	event.pressed = true
+	Input.parse_input_event(event)
+	
+	await get_tree().process_frame
+	event.pressed = false
+	Input.parse_input_event(event)

@@ -89,19 +89,43 @@ func _input(event: InputEvent) -> void:
 
 ## Route left-click action to appropriate mode handler
 func route_primary_action(item: Dictionary) -> void:
+	print("[ROUTER_DEBUG] route_primary_action called")
+	print("[ROUTER_DEBUG] Item received: %s" % ("empty" if item.is_empty() else item.get("name", "?")))
+	print("[ROUTER_DEBUG] Item type: %s" % item.get("type", "NONE"))
+	
 	if not mode_manager:
+		print("[ROUTER_DEBUG] ERROR: mode_manager is null!")
 		return
+	
+	var current_mode = "UNKNOWN"
+	if mode_manager.is_editor_mode():
+		current_mode = "EDITOR"
+	elif mode_manager.is_build_mode():
+		current_mode = "BUILD"  
+	else:
+		current_mode = "COMBAT"
+	
+	print("[ROUTER_DEBUG] Current mode: %s" % current_mode)
 	
 	# Route to mode handler
 	if mode_manager.is_editor_mode():
+		print("[ROUTER_DEBUG] Routing to ModeEditor...")
 		if mode_editor and mode_editor.has_method("handle_primary"):
 			mode_editor.handle_primary(item)
+		else:
+			print("[ROUTER_DEBUG] ERROR: ModeEditor not found or missing handle_primary!")
 	elif mode_manager.is_build_mode():
+		print("[ROUTER_DEBUG] Routing to ModeBuild...")
 		if mode_build and mode_build.has_method("handle_primary"):
 			mode_build.handle_primary(item)
 	else: # PLAY mode
+		print("[ROUTER_DEBUG] Routing to CombatSystem...")
 		if combat_system and combat_system.has_method("handle_primary"):
+			print("[ROUTER_DEBUG] CombatSystem found, calling handle_primary")
 			combat_system.handle_primary(item)
+		else:
+			print("[ROUTER_DEBUG] ERROR: CombatSystem not found or missing handle_primary!")
+			print("[ROUTER_DEBUG] combat_system = %s" % combat_system)
 
 ## Route right-click action to appropriate mode handler
 func route_secondary_action(item: Dictionary) -> void:

@@ -9,9 +9,12 @@ var clicks_before_save = 0
 var clicks_after_load = 0
 
 func _ready():
+	print("[QUICKLOAD_TEST] _ready() CALLED - Bot is alive!")
 	print("[QUICKLOAD_TEST] Starting QuickLoad bug test...")
-	await get_tree().create_timer(5.0).timeout  # Wait for full load
+	print("[QUICKLOAD_TEST] Waiting 3 seconds for game to load...")
+	await get_tree().create_timer(3.0).timeout
 	
+	print("[QUICKLOAD_TEST] Finding player and camera...")
 	# Find player and camera
 	player = get_tree().get_first_node_in_group("player")
 	if player:
@@ -19,12 +22,13 @@ func _ready():
 	
 	if not player or not camera:
 		print("[QUICKLOAD_TEST] ERROR: Player or Camera not found!")
+		print("[QUICKLOAD_TEST] Player: %s, Camera: %s" % [player, camera])
 		print("[QUICKLOAD_TEST] === TEST FAILED ===")
 		get_tree().quit(1)
 		return
 	
-	print("[QUICKLOAD_TEST] Player and Camera found")
-	print("[QUICKLOAD_TEST] Starting test sequence")
+	print("[QUICKLOAD_TEST] Player and Camera found!")
+	print("[QUICKLOAD_TEST] Starting test sequence...")
 	test_phase = "MOVE_FORWARD"
 
 func _process(delta):
@@ -87,12 +91,20 @@ func _process(delta):
 				print("[QUICKLOAD_TEST] Phase 6: Pressing F8 (QuickLoad) - THE CRITICAL TEST")
 				_press_key(KEY_F8)
 			if test_timer > 4.0:  # Wait for load to complete
+				test_phase = "INSPECT_HOTBAR"
+				test_timer = 0.0
+		
+		"INSPECT_HOTBAR":
+			if test_timer < 0.1:
+				print("[QUICKLOAD_TEST] Phase 7: Inspecting hotbar state after QuickLoad")
+				_inspect_hotbar_state()
+			if test_timer > 1.0:
 				test_phase = "MINE_AFTER_LOAD"
 				test_timer = 0.0
 		
 		"MINE_AFTER_LOAD":
 			if test_timer < 0.1:
-				print("[QUICKLOAD_TEST] Phase 7: Mining AFTER load (testing if pickaxe still works)")
+				print("[QUICKLOAD_TEST] Phase 8: Mining AFTER load (testing if pickaxe still works)")
 			# Click 3 times
 			if int(test_timer * 2) != int((test_timer - delta) * 2):
 				if clicks_after_load < 3:
@@ -160,3 +172,48 @@ func _report_results():
 	
 	print("[QUICKLOAD_TEST] ")
 	print("[QUICKLOAD_TEST] " + separator)
+
+func _inspect_hotbar_state():
+	print("[QUICKLOAD_TEST] === HOTBAR STATE DIAGNOSTIC ===")
+	
+	if not player:
+		print("[QUICKLOAD_TEST] ERROR: Player not found!")
+		return
+	
+	# Find hotbar
+	var hotbar = player.get_node_or_null("Systems/Hotbar")
+	if not hotbar:
+		print("[QUICKLOAD_TEST] ERROR: Hotbar not found!")
+		return
+	
+	# Get hotbar state
+	var selected_slot = hotbar.selected_slot if hotbar.has("selected_slot") else -1
+	print("[QUICKLOAD_TEST] Selected slot index: %d" % selected_slot)
+	
+	# Get selected item
+	var selected_item = {}
+	if hotbar.has_method("get_selected_item"):
+		selected_item = hotbar.get_selected_item()
+	
+	print("[QUICKLOAD_TEST] Selected item data:")
+	if selected_item.is_empty():
+		print("[QUICKLOAD_TEST]   ❌ ITEM IS EMPTY - This is the bug!")
+	else:
+		print("[QUICKLOAD_TEST]   Item name: %s" % selected_item.get("name", "UNKNOWN"))
+		print("[QUICKLOAD_TEST]   Item type: %s" % selected_item.get("type", "UNKNOWN"))
+		print("[QUICKLOAD_TEST]   Full data: %s" % str(selected_item))
+	
+	# Check all slots
+	if hotbar.has("slots"):
+		print("[QUICKLOAD_TEST] All hotbar slots:")
+		var slots = hotbar.slots
+		for i in range(min(slots.size(), 10)):
+			var slot = slots[i]
+			var item = slot.get("item", {})
+			var count = slot.get("count", 0)
+			if not item.is_empty():
+				print("[QUICKLOAD_TEST]   Slot %d: %s x%d" % [i, item.get("name", "?"), count])
+			else:
+				print("[QUICKLOAD_TEST]   Slot %d: empty" % i)
+	
+	print("[QUICKLOAD_TEST] ================================")

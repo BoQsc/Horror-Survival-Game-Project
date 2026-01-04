@@ -12,7 +12,7 @@
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://building_system/debug_teleporter.gd" id="13_debug"]
 [ext_resource type="PackedScene" path="res://modules/world_player/ui_loading_screen/loading_screen.tscn" id="14_loading"]
-[ext_resource type="Script" path="res://tests/minimal_bot.gd" id="15_bot"]
+[ext_resource type="Script" path="res://tests/mining_bot.gd" id="15_bot"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
