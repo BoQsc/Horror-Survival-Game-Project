@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=19 format=3]
 
 [ext_resource type="PackedScene" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
 [ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
@@ -12,6 +12,7 @@
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://building_system/debug_teleporter.gd" id="13_debug"]
 [ext_resource type="PackedScene" path="res://modules/world_player/ui_loading_screen/loading_screen.tscn" id="14_loading"]
+[ext_resource type="Script" path="res://tests/simple_movement_bot.gd" id="15_bot"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -45,9 +46,6 @@ shadow_enabled = true
 
 [node name="WorldPlayerV2" parent="." groups=["player"] instance=ExtResource("1_worldplayer")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
-
-[node name="DurabilityVisualDebugger" type="Node3D" parent="WorldPlayerV2"]
-script = preload("res://modules/world_player_v2/features/combat/durability_visual_debugger.gd")
 
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
@@ -123,3 +121,6 @@ terrain_manager = NodePath("../TerrainManager")
 script = ExtResource("13_debug")
 
 [node name="LoadingScreen" parent="." instance=ExtResource("14_loading")]
+
+[node name="MovementBot" type="Node" parent="."]
+script = ExtResource("15_bot")
