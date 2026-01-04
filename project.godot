@@ -19,7 +19,6 @@ config/icon="res://icon.svg"
 
 [autoload]
 
-DebugSettings="*res://debug_settings.gd"
 DebugManager="*res://modules/debug_module/debug_manager.gd"
 SaveManager="*res://save_manager.gd"
 PerformanceMonitor="*res://performance_monitor.gd"

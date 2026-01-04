@@ -252,7 +252,7 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 		if chunks.has(chunk_coord):
 			var chunk = chunks[chunk_coord]
 			if not chunk.is_cell_available(local):
-				DebugSettings.log_building("DEBUG_MISSING_OBJ: Cell collision at global %v (Chunk %v Local %v) for Object %d" % [cell, chunk_coord, local, object_id])
+				DebugManager.log_building("DEBUG_MISSING_OBJ: Cell collision at global %v (Chunk %v Local %v) for Object %d" % [cell, chunk_coord, local, object_id])
 				return false
 		# If chunk doesn't exist, cell is available (empty terrain)
 	

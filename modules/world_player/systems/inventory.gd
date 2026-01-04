@@ -24,7 +24,7 @@ func _ready() -> void:
 	for i in range(INVENTORY_SIZE):
 		slots.append(_create_empty_stack())
 	
-	DebugSettings.log_player("Inventory: Initialized with %d slots (max stack: %d)" % [INVENTORY_SIZE, MAX_STACK_SIZE])
+	DebugManager.log_player("Inventory: Initialized with %d slots (max stack: %d)" % [INVENTORY_SIZE, MAX_STACK_SIZE])
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -38,7 +38,7 @@ func _input(event: InputEvent) -> void:
 ## Toggle inventory open/closed
 func toggle_inventory() -> void:
 	is_open = !is_open
-	DebugSettings.log_player("Inventory: %s" % ("Opened" if is_open else "Closed"))
+	DebugManager.log_player("Inventory: %s" % ("Opened" if is_open else "Closed"))
 	
 	# Toggle mouse capture
 	if is_open:
@@ -52,7 +52,7 @@ func toggle_inventory() -> void:
 func close_inventory() -> void:
 	if is_open:
 		is_open = false
-		DebugSettings.log_player("Inventory: Closed")
+		DebugManager.log_player("Inventory: Closed")
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		PlayerSignals.inventory_toggled.emit(false)
 
@@ -86,7 +86,7 @@ func add_item(item: Dictionary, count: int = 1) -> int:
 	
 	if remaining < count:
 		PlayerSignals.inventory_changed.emit()
-		DebugSettings.log_player("Inventory: Added %d x %s (%d leftover)" % [count - remaining, item.get("name", "item"), remaining])
+		DebugManager.log_player("Inventory: Added %d x %s (%d leftover)" % [count - remaining, item.get("name", "item"), remaining])
 	
 	return remaining
 
@@ -110,7 +110,7 @@ func remove_item(item_id: String, count: int = 1) -> int:
 	
 	if remaining < count:
 		PlayerSignals.inventory_changed.emit()
-		DebugSettings.log_player("Inventory: Removed %d x %s" % [count - remaining, item_id])
+		DebugManager.log_player("Inventory: Removed %d x %s" % [count - remaining, item_id])
 	
 	return count - remaining # Return how many were actually removed
 

@@ -67,7 +67,7 @@ func open_container(container: Node) -> void:
 		container_inventory = container.get_node("ContainerInventory")
 	
 	if not container_inventory:
-		DebugSettings.log_player("CONTAINER_UI: No inventory found on container")
+		DebugManager.log_player("CONTAINER_UI: No inventory found on container")
 		return
 	
 	# Get container name
@@ -97,7 +97,7 @@ func open_container(container: Node) -> void:
 	just_opened = true
 	get_tree().create_timer(0.3).timeout.connect(func(): just_opened = false)
 	
-	DebugSettings.log_player("CONTAINER_UI: Opened %s with %d slots" % [container_name, container_inventory.slot_count])
+	DebugManager.log_player("CONTAINER_UI: Opened %s with %d slots" % [container_name, container_inventory.slot_count])
 
 func close_container() -> void:
 	# Don't close if just opened
@@ -117,7 +117,7 @@ func close_container() -> void:
 	if has_node("/root/ContainerSignals"):
 		ContainerSignals.container_closed.emit()
 	
-	DebugSettings.log_player("CONTAINER_UI: Closed")
+	DebugManager.log_player("CONTAINER_UI: Closed")
 
 func _setup_container_slots(slot_count: int) -> void:
 	# Clear existing container slots

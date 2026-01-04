@@ -49,7 +49,7 @@ func _ready() -> void:
 	if has_meta("should_populate_loot") and get_meta("should_populate_loot"):
 		populate_loot()
 	
-	DebugSettings.log_player("CONTAINER: Initialized %s with %d slots" % [container_name, slot_count])
+	DebugManager.log_player("CONTAINER: Initialized %s with %d slots" % [container_name, slot_count])
 
 func _setup_audio() -> void:
 	# Open sound
@@ -78,7 +78,7 @@ func interact() -> void:
 		# Close the container
 		if container_close_audio:
 			container_close_audio.play()
-		DebugSettings.log_player("CONTAINER: Closing %s" % container_name)
+		DebugManager.log_player("CONTAINER: Closing %s" % container_name)
 		if has_node("/root/ContainerSignals"):
 			ContainerSignals.container_closed.emit()
 		is_open = false
@@ -86,7 +86,7 @@ func interact() -> void:
 		# Open the container
 		if container_open_audio:
 			container_open_audio.play()
-		DebugSettings.log_player("CONTAINER: Opening %s" % container_name)
+		DebugManager.log_player("CONTAINER: Opening %s" % container_name)
 		is_open = true
 		if has_node("/root/ContainerSignals"):
 			ContainerSignals.container_opened.emit(self)
@@ -148,7 +148,7 @@ func populate_loot() -> void:
 		
 		container_inventory.set_slot(slot_idx, item_entry.item, count)
 	
-	DebugSettings.log_player("CONTAINER: Populated %s with %d items" % [container_name, num_items])
+	DebugManager.log_player("CONTAINER: Populated %s with %d items" % [container_name, num_items])
 
 ## Pick item from weighted loot table
 func _pick_weighted_item(loot_table: Array) -> Dictionary:

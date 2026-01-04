@@ -72,20 +72,6 @@ func _apply_current_preset() -> void:
 	# Merge all presets (primary + addons) using OR logic
 	_merge_all_presets()
 	
-	# Apply merged logging flags to DebugSettings
-	if has_node("/root/DebugSettings"):
-		var ds = get_node("/root/DebugSettings")
-		ds.LOG_CHUNK = _merged_log_chunk
-		ds.LOG_VEGETATION = _merged_log_vegetation
-		ds.LOG_ENTITIES = _merged_log_entities
-		ds.LOG_BUILDING = _merged_log_building
-		ds.LOG_SAVE = _merged_log_save
-		ds.LOG_VEHICLES = _merged_log_vehicles
-		ds.LOG_PLAYER = _merged_log_player
-		ds.LOG_ROADS = _merged_log_roads
-		ds.LOG_WATER = _merged_log_water
-		ds.LOG_PERFORMANCE = _merged_log_performance
-	
 	# Apply DebugDraw state
 	if ClassDB.class_exists("DebugDraw"):
 		DebugDraw.enabled = _merged_debug_draw
@@ -100,6 +86,7 @@ func _apply_current_preset() -> void:
 			_chunk_manager.debug_show_road_zones = _merged_show_road_zones
 		if "debug_chunk_bounds" in _chunk_manager:
 			_chunk_manager.debug_chunk_bounds = _merged_show_chunk_bounds
+
 
 
 func _merge_all_presets() -> void:
@@ -197,3 +184,102 @@ func should_show_terrain_marker() -> bool:
 
 func should_show_vegetation_collisions() -> bool:
 	return _merged_show_vegetation
+
+
+# ============================================================================
+# BACKWARD-COMPATIBLE LOGGING API (replaces DebugSettings)
+# ============================================================================
+
+## Direct logging methods matching DebugSettings API
+func log_chunk(message: String) -> void:
+	if _merged_log_chunk:
+		print("[Chunk] ", message)
+
+func log_vegetation(message: String) -> void:
+	if _merged_log_vegetation:
+		print("[Vegetation] ", message)
+
+func log_entities(message: String) -> void:
+	if _merged_log_entities:
+		print("[Entities] ", message)
+
+func log_building(message: String) -> void:
+	if _merged_log_building:
+		print("[Building] ", message)
+
+func log_save(message: String) -> void:
+	if _merged_log_save:
+		print("[Save] ", message)
+
+func log_vehicles(message: String) -> void:
+	if _merged_log_vehicles:
+		print("[Vehicles] ", message)
+
+func log_player(message: String) -> void:
+	if _merged_log_player:
+		print("[Player] ", message)
+
+func log_roads(message: String) -> void:
+	if _merged_log_roads:
+		print("[Roads] ", message)
+
+func log_water(message: String) -> void:
+	if _merged_log_water:
+		print("[Water] ", message)
+
+func log_performance(message: String) -> void:
+	if _merged_log_performance:
+		print(message)
+
+
+## Category flag accessors (for direct flag checks)
+var LOG_CHUNK: bool:
+	get: return _merged_log_chunk
+var LOG_VEGETATION: bool:
+	get: return _merged_log_vegetation
+var LOG_ENTITIES: bool:
+	get: return _merged_log_entities
+var LOG_BUILDING: bool:
+	get: return _merged_log_building
+var LOG_SAVE: bool:
+	get: return _merged_log_save
+var LOG_VEHICLES: bool:
+	get: return _merged_log_vehicles
+var LOG_PLAYER: bool:
+	get: return _merged_log_player
+var LOG_ROADS: bool:
+	get: return _merged_log_roads
+var LOG_WATER: bool:
+	get: return _merged_log_water
+var LOG_PERFORMANCE: bool:
+	get: return _merged_log_performance
+
+
+## Utility methods from original DebugSettings
+func enable_all() -> void:
+	if current_preset:
+		current_preset.log_chunk = true
+		current_preset.log_vegetation = true
+		current_preset.log_entities = true
+		current_preset.log_building = true
+		current_preset.log_save = true
+		current_preset.log_vehicles = true
+		current_preset.log_player = true
+		current_preset.log_roads = true
+		current_preset.log_water = true
+		current_preset.log_performance = true
+		_apply_current_preset()
+
+func disable_all() -> void:
+	if current_preset:
+		current_preset.log_chunk = false
+		current_preset.log_vegetation = false
+		current_preset.log_entities = false
+		current_preset.log_building = false
+		current_preset.log_save = false
+		current_preset.log_vehicles = false
+		current_preset.log_player = false
+		current_preset.log_roads = false
+		current_preset.log_water = false
+		current_preset.log_performance = false
+		_apply_current_preset()

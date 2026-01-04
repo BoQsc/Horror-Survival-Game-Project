@@ -113,7 +113,7 @@ func _ready():
 		grass_mesh = grass_result.mesh
 		grass_base_transform = grass_result.transform
 		grass_base_transform.origin = Vector3.ZERO
-		DebugSettings.log_vegetation("Loaded grass model from GLB")
+		DebugManager.log_vegetation("Loaded grass model from GLB")
 	else:
 		push_warning("Failed to load grass model, using basic mesh")
 		grass_mesh = create_basic_grass_mesh()
@@ -128,7 +128,7 @@ func _ready():
 		rock_mesh = rock_result.mesh
 		rock_base_transform = rock_result.transform
 		rock_base_transform.origin = Vector3.ZERO
-		DebugSettings.log_vegetation("Loaded rock model from GLB")
+		DebugManager.log_vegetation("Loaded rock model from GLB")
 	else:
 		push_warning("Failed to load rock model, using basic mesh")
 		rock_mesh = create_basic_rock_mesh()
@@ -194,8 +194,8 @@ func _on_chunk_unloaded(coord: Vector3i):
 		return
 	
 	var surface_key = Vector2i(coord.x, coord.z)
-	if DebugSettings.LOG_VEGETATION:
-		DebugSettings.log_vegetation("Chunk unloaded: %s" % coord)
+	if DebugManager.LOG_VEGETATION:
+		DebugManager.log_vegetation("Chunk unloaded: %s" % coord)
 	
 	# Clean up trees (including MultiMesh and colliders)
 	if chunk_tree_data.has(surface_key):
@@ -1571,8 +1571,8 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
 	
-	if DebugSettings.LOG_VEGETATION and valid_transforms.size() > 0:
-		DebugSettings.log_vegetation("Placed %d rocks in chunk %s" % [valid_transforms.size(), coord])
+	if DebugManager.LOG_VEGETATION and valid_transforms.size() > 0:
+		DebugManager.log_vegetation("Placed %d rocks in chunk %s" % [valid_transforms.size(), coord])
 	
 	# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
 	chunk_node.add_child(mmi)
@@ -1748,7 +1748,7 @@ func load_tree_mesh_from_glb(path: String) -> Dictionary:
 	instance.queue_free()
 	
 	if result.mesh:
-		DebugSettings.log_vegetation("Loaded tree mesh from: %s" % path)
+		DebugManager.log_vegetation("Loaded tree mesh from: %s" % path)
 	
 	return result
 
@@ -1921,7 +1921,7 @@ func load_save_data(data: Dictionary):
 				"rotation": r.get("rotation", 0.0)
 			})
 	
-	DebugSettings.log_vegetation("Loaded %d chopped, %d removed grass, %d removed rocks" % [
+	DebugManager.log_vegetation("Loaded %d chopped, %d removed grass, %d removed rocks" % [
 		chopped_trees.size(), removed_grass.size(), removed_rocks.size()
 	])
 

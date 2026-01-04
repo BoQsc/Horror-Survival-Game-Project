@@ -59,4 +59,4 @@ signal underwater_toggled(is_underwater: bool)
 signal camera_underwater_toggled(is_underwater: bool)
 
 func _ready() -> void:
-	DebugSettings.log_player("PlayerSignals: Autoload initialized")
+	DebugManager.log_player("PlayerSignals: Autoload initialized")

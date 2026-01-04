@@ -59,17 +59,17 @@ func _ready() -> void:
 	_log_initialization()
 
 func _log_initialization() -> void:
-	DebugSettings.log_player("WorldPlayerV2: Initialized")
-	DebugSettings.log_player("  Features:")
-	DebugSettings.log_player("    - Movement: %s" % ("OK" if movement_feature else "MISSING"))
-	DebugSettings.log_player("    - Camera: %s" % ("OK" if camera_feature else "MISSING"))
-	DebugSettings.log_player("    - Stats: %s" % ("OK" if stats_feature else "MISSING"))
-	DebugSettings.log_player("    - Combat: %s" % ("OK" if combat_feature else "MISSING"))
-	DebugSettings.log_player("    - Terrain: %s" % ("OK" if terrain_feature else "MISSING"))
-	DebugSettings.log_player("  Managers:")
-	DebugSettings.log_player("    - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
-	DebugSettings.log_player("    - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
-	DebugSettings.log_player("    - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
+	DebugManager.log_player("WorldPlayerV2: Initialized")
+	DebugManager.log_player("  Features:")
+	DebugManager.log_player("    - Movement: %s" % ("OK" if movement_feature else "MISSING"))
+	DebugManager.log_player("    - Camera: %s" % ("OK" if camera_feature else "MISSING"))
+	DebugManager.log_player("    - Stats: %s" % ("OK" if stats_feature else "MISSING"))
+	DebugManager.log_player("    - Combat: %s" % ("OK" if combat_feature else "MISSING"))
+	DebugManager.log_player("    - Terrain: %s" % ("OK" if terrain_feature else "MISSING"))
+	DebugManager.log_player("  Managers:")
+	DebugManager.log_player("    - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
+	DebugManager.log_player("    - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
+	DebugManager.log_player("    - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
 
 # ============================================================================
 # PUBLIC API (delegated to features)

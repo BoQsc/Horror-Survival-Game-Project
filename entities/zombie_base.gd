@@ -54,13 +54,13 @@ func _ready():
 	
 	# Setup animation if found
 	if anim_player:
-		DebugSettings.log_entities("Zombie: Found AnimationPlayer with animations: %s" % [anim_player.get_animation_list()])
+		DebugManager.log_entities("Zombie: Found AnimationPlayer with animations: %s" % [anim_player.get_animation_list()])
 		if anim_player.has_animation("Take 001"):
 			anim_player.play("Take 001")
 			anim_player.get_animation("Take 001").loop_mode = Animation.LOOP_NONE
 		anim_player.callback_mode_process = AnimationPlayer.ANIMATION_CALLBACK_MODE_PROCESS_PHYSICS
 	else:
-		DebugSettings.log_entities("Zombie: No AnimationPlayer found - will work without animations")
+		DebugManager.log_entities("Zombie: No AnimationPlayer found - will work without animations")
 	
 	# Setup chase sound
 	chase_audio_player = AudioStreamPlayer3D.new()
@@ -305,7 +305,7 @@ func _do_attack():
 	if not player:
 		return
 	
-	DebugSettings.log_entities("Zombie attacked player!")
+	DebugManager.log_entities("Zombie attacked player!")
 	zombie_attacked.emit(player)
 	
 	if player.has_method("take_damage"):
@@ -389,7 +389,7 @@ func take_damage(amount: int):
 		return
 	
 	current_health -= amount
-	DebugSettings.log_entities("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
+	DebugManager.log_entities("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
 	
 	if current_health <= 0:
 		die()
@@ -407,7 +407,7 @@ func take_damage(amount: int):
 
 func die():
 	change_state("DEAD")
-	DebugSettings.log_entities("Zombie died!")
+	DebugManager.log_entities("Zombie died!")
 	zombie_died.emit(self)
 	velocity = Vector3.ZERO
 	

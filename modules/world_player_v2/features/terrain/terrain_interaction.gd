@@ -52,7 +52,7 @@ func _ready() -> void:
 	_create_selection_box()
 	_create_material_target_marker()
 	
-	DebugSettings.log_player("TerrainInteractionFeature: Initialized")
+	DebugManager.log_player("TerrainInteractionFeature: Initialized")
 
 func _find_managers() -> void:
 	if not terrain_manager:
@@ -215,7 +215,7 @@ func do_bucket_collect() -> void:
 	
 	var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
 	terrain_manager.modify_terrain(center, 0.6, 0.5, 1, 1)  # Same as placement but positive value
-	DebugSettings.log_player("TerrainInteraction: Collected water at %s" % current_target_pos)
+	DebugManager.log_player("TerrainInteraction: Collected water at %s" % current_target_pos)
 
 ## Place water from bucket
 func do_bucket_place() -> void:
@@ -227,7 +227,7 @@ func do_bucket_place() -> void:
 		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 1)  # Box shape, fill, water layer
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.bucket_placed.emit()
-		DebugSettings.log_player("TerrainInteraction: Placed water at %s" % current_target_pos)
+		DebugManager.log_player("TerrainInteraction: Placed water at %s" % current_target_pos)
 	else:
 		var hit = _raycast(5.0)
 		if hit.is_empty():
@@ -271,7 +271,7 @@ func do_resource_place(item: Dictionary) -> void:
 		_consume_selected_item()
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.resource_placed.emit()
-		DebugSettings.log_player("TerrainInteraction: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
+		DebugManager.log_player("TerrainInteraction: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
 		var hit = _raycast(5.0)
 		if hit.is_empty():
@@ -284,22 +284,22 @@ func do_resource_place(item: Dictionary) -> void:
 ## Place vegetation (grass or rock) at raycast hit position - V1 EXACT
 func _do_vegetation_place(veg_type: String) -> void:
 	if not player or not vegetation_manager:
-		DebugSettings.log_player("TerrainInteraction: Cannot place vegetation - missing player or vegetation_manager")
+		DebugManager.log_player("TerrainInteraction: Cannot place vegetation - missing player or vegetation_manager")
 		return
 	
 	var hit = _raycast(5.0)
 	if hit.is_empty():
-		DebugSettings.log_player("TerrainInteraction: Cannot place vegetation - no hit")
+		DebugManager.log_player("TerrainInteraction: Cannot place vegetation - no hit")
 		return
 	
 	if veg_type == "grass":
 		vegetation_manager.place_grass(hit.position)
 		_consume_selected_item()
-		DebugSettings.log_player("TerrainInteraction: Placed grass at %s" % hit.position)
+		DebugManager.log_player("TerrainInteraction: Placed grass at %s" % hit.position)
 	elif veg_type == "rock":
 		vegetation_manager.place_rock(hit.position)
 		_consume_selected_item()
-		DebugSettings.log_player("TerrainInteraction: Placed rock at %s" % hit.position)
+		DebugManager.log_player("TerrainInteraction: Placed rock at %s" % hit.position)
 
 func _consume_selected_item() -> void:
 	if hotbar and hotbar.has_method("decrement_slot"):

@@ -83,7 +83,7 @@ func _setup_pistol() -> void:
 			# Find animation player
 			anim_player = _find_anim_player(pistol_mesh)
 			
-			DebugSettings.log_player("FirstPersonPistol: Loaded model, AnimPlayer: %s" % ("OK" if anim_player else "NONE"))
+			DebugManager.log_player("FirstPersonPistol: Loaded model, AnimPlayer: %s" % ("OK" if anim_player else "NONE"))
 	else:
 		push_error("FirstPersonPistol: Could not find %s" % PISTOL_SCENE_PATH)
 	
@@ -113,9 +113,9 @@ func _setup_pistol() -> void:
 	
 	if pistol_mesh:
 		pistol_mesh.visible = should_show_pending
-		DebugSettings.log_player("FirstPersonPistol: Setup complete. Visible: %s (Pending: %s, HotbarChk: %s)" % [pistol_mesh.visible, should_show_pending, hotbar_chk])
+		DebugManager.log_player("FirstPersonPistol: Setup complete. Visible: %s (Pending: %s, HotbarChk: %s)" % [pistol_mesh.visible, should_show_pending, hotbar_chk])
 	
-	DebugSettings.log_player("FirstPersonPistol: Component initialized")
+	DebugManager.log_player("FirstPersonPistol: Component initialized")
 
 func _find_anim_player(node: Node) -> AnimationPlayer:
 	if node is AnimationPlayer:
@@ -192,7 +192,7 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	
 	if pistol_mesh:
 		pistol_mesh.visible = should_show
-		DebugSettings.log_player("FirstPersonPistol: Visibility update - ID: %s -> Visible: %s" % [item_id, should_show])
+		DebugManager.log_player("FirstPersonPistol: Visibility update - ID: %s -> Visible: %s" % [item_id, should_show])
 
 func _on_pistol_fired() -> void:
 	if not shot_player:
@@ -276,4 +276,4 @@ func _play_reload_animation() -> void:
 		anim_player.stop()
 	
 	is_reloading = false
-	DebugSettings.log_player("FirstPersonPistol: Reload complete")
+	DebugManager.log_player("FirstPersonPistol: Reload complete")

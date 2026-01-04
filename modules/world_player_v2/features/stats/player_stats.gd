@@ -24,7 +24,7 @@ func _ready() -> void:
 	if not signals:
 		signals = get_node_or_null("signals")
 	
-	DebugSettings.log_player("PlayerStatsFeature: Initialized")
+	DebugManager.log_player("PlayerStatsFeature: Initialized")
 
 func take_damage(amount: int, source: Node = null) -> void:
 	if is_dead:
@@ -32,7 +32,7 @@ func take_damage(amount: int, source: Node = null) -> void:
 	
 	health -= amount
 	health = max(0, health)
-	DebugSettings.log_player("PlayerStats: Took %d damage. Health: %d/%d" % [amount, health, max_health])
+	DebugManager.log_player("PlayerStats: Took %d damage. Health: %d/%d" % [amount, health, max_health])
 	
 	# Emit local signal if available
 	if signals and signals.has_signal("health_changed"):
@@ -51,14 +51,14 @@ func heal(amount: int) -> void:
 	
 	health += amount
 	health = min(health, max_health)
-	DebugSettings.log_player("PlayerStats: Healed %d. Health: %d/%d" % [amount, health, max_health])
+	DebugManager.log_player("PlayerStats: Healed %d. Health: %d/%d" % [amount, health, max_health])
 	
 	if signals and signals.has_signal("health_changed"):
 		signals.health_changed.emit(health, max_health)
 
 func die() -> void:
 	is_dead = true
-	DebugSettings.log_player("PlayerStats: Player died!")
+	DebugManager.log_player("PlayerStats: Player died!")
 	
 	if signals and signals.has_signal("player_died"):
 		signals.player_died.emit()
@@ -71,7 +71,7 @@ func reset() -> void:
 	health = max_health
 	stamina = max_stamina
 	is_dead = false
-	DebugSettings.log_player("PlayerStats: Reset to full")
+	DebugManager.log_player("PlayerStats: Reset to full")
 
 func use_stamina(amount: float) -> bool:
 	if stamina >= amount:

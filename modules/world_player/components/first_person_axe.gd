@@ -54,7 +54,7 @@ func _ready() -> void:
 	PlayerSignals.item_changed.connect(_on_item_changed)
 	PlayerSignals.axe_fired.connect(_on_axe_fired)
 	
-	DebugSettings.log_player("FirstPersonAxe: Initialized")
+	DebugManager.log_player("FirstPersonAxe: Initialized")
 
 func _setup_deferred() -> void:
 	_setup_axe_holder()
@@ -87,10 +87,10 @@ func _load_axe_model() -> void:
 	# Find AnimationPlayer
 	anim_player = _find_anim_player(axe_mesh)
 	if anim_player:
-		DebugSettings.log_player("FirstPersonAxe: Found animations: %s" % str(anim_player.get_animation_list()))
+		DebugManager.log_player("FirstPersonAxe: Found animations: %s" % str(anim_player.get_animation_list()))
 		# Print animations to help us debug
 	
-	DebugSettings.log_player("FirstPersonAxe: Model loaded")
+	DebugManager.log_player("FirstPersonAxe: Model loaded")
 
 func _setup_audio() -> void:
 	if not ResourceLoader.exists(ATTACK_SOUND_PATH):
@@ -104,7 +104,7 @@ func _setup_audio() -> void:
 		audio_player.stream = stream
 		# Attach to player root or camera so it follows, but not hand holder to avoid sway jitter
 		player.add_child(audio_player)
-		DebugSettings.log_player("FirstPersonAxe: Audio setup complete")
+		DebugManager.log_player("FirstPersonAxe: Audio setup complete")
 
 func _find_anim_player(node: Node) -> AnimationPlayer:
 	if node is AnimationPlayer:

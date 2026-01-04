@@ -64,13 +64,13 @@ func _ready() -> void:
 	if PlayerSignals.has_signal("punch_triggered"):
 		PlayerSignals.punch_triggered.connect(_on_punch_triggered)
 	
-	DebugSettings.log_player("FirstPersonArms: Initialized")
+	DebugManager.log_player("FirstPersonArms: Initialized")
 
 func _setup_hand_holder() -> void:
 	hand_holder = Node3D.new()
 	hand_holder.name = "HandHolder"
 	camera.add_child(hand_holder)
-	DebugSettings.log_player("FirstPersonArms: HandHolder created under Camera3D")
+	DebugManager.log_player("FirstPersonArms: HandHolder created under Camera3D")
 
 func _load_arms_model() -> void:
 	if not ResourceLoader.exists(ARMS_MODEL_PATH):
@@ -104,17 +104,17 @@ func _load_arms_model() -> void:
 				break
 	
 	if anim_player:
-		DebugSettings.log_player("FirstPersonArms: Found AnimationPlayer with %d animations" % anim_player.get_animation_list().size())
+		DebugManager.log_player("FirstPersonArms: Found AnimationPlayer with %d animations" % anim_player.get_animation_list().size())
 		# Try to play idle animation
 		_try_play_idle()
 	else:
-		DebugSettings.log_player("FirstPersonArms: No AnimationPlayer found in model")
+		DebugManager.log_player("FirstPersonArms: No AnimationPlayer found in model")
 	
 	# Set camera near clip very small to prevent arms clipping during punch
 	# Note: Can't be exactly 0 (causes projection math issues), 0.001 is minimum
 	camera.near = 0.001
 	
-	DebugSettings.log_player("FirstPersonArms: Arms model loaded and positioned")
+	DebugManager.log_player("FirstPersonArms: Arms model loaded and positioned")
 
 func _setup_punch_sfx() -> void:
 	if ResourceLoader.exists(PUNCH_SFX_PATH):
@@ -122,7 +122,7 @@ func _setup_punch_sfx() -> void:
 		punch_sfx.name = "PunchSFX"
 		punch_sfx.stream = load(PUNCH_SFX_PATH)
 		add_child(punch_sfx)
-		DebugSettings.log_player("FirstPersonArms: Punch SFX loaded")
+		DebugManager.log_player("FirstPersonArms: Punch SFX loaded")
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Capture mouse motion for sway
@@ -231,7 +231,7 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 		if should_show and anim_player:
 			_try_play_idle()
 	
-	DebugSettings.log_player("FirstPersonArms: Item changed - category=%d, arms_visible=%s" % [category, should_show])
+	DebugManager.log_player("FirstPersonArms: Item changed - category=%d, arms_visible=%s" % [category, should_show])
 
 ## Force show/hide arms (for external control)
 func set_arms_visible(visible: bool) -> void:

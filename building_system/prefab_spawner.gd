@@ -94,7 +94,7 @@ func _ready():
 	# Connect to chunk generation signal
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
-		DebugSettings.log_building("PrefabSpawner connected to terrain_manager")
+		DebugManager.log_building("PrefabSpawner connected to terrain_manager")
 	
 	# Setup forest noise (same params as vegetation_manager)
 	forest_noise = FastNoiseLite.new()
@@ -263,7 +263,7 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 	if prefab_name == "small_house":
 		_spawn_door_at_prefab(world_pos)
 	
-	DebugSettings.log_building("Spawned %s at %v" % [prefab_name, world_pos])
+	DebugManager.log_building("Spawned %s at %v" % [prefab_name, world_pos])
 
 ## Spawn an interactive door at the prefab doorway
 func _spawn_door_at_prefab(prefab_world_pos: Vector3):
@@ -294,7 +294,7 @@ func _spawn_door_at_prefab(prefab_world_pos: Vector3):
 	# Track door for cleanup
 	spawned_doors[key] = door_instance
 	
-	DebugSettings.log_building("Spawned door at %v" % door_pos)
+	DebugManager.log_building("Spawned door at %v" % door_pos)
 
 ## Save/Load persistence - prevents prefabs from respawning after load
 func get_save_data() -> Dictionary:
@@ -307,7 +307,7 @@ func load_save_data(data: Dictionary):
 		spawned_positions.clear()
 		for key in data.spawned_positions:
 			spawned_positions[key] = true
-		DebugSettings.log_building("Loaded %d spawned positions" % spawned_positions.size())
+		DebugManager.log_building("Loaded %d spawned positions" % spawned_positions.size())
 
 # ============ USER PREFAB SUPPORT ============
 
@@ -335,7 +335,7 @@ func load_user_prefabs():
 	dir.list_dir_end()
 	
 	if count > 0:
-		DebugSettings.log_building("Loaded %d user prefabs" % count)
+		DebugManager.log_building("Loaded %d user prefabs" % count)
 
 ## Load a single prefab from JSON file (v2 bracket notation format only)
 ## Checks res://prefabs/ first, then user://prefabs/
@@ -346,7 +346,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 		# Fall back to user://prefabs/ (user-created prefabs)
 		path = USER_PREFAB_DIR + prefab_name + ".json"
 		if not FileAccess.file_exists(path):
-			DebugSettings.log_building("Prefab not found in res:// or user:// : %s" % prefab_name)
+			DebugManager.log_building("Prefab not found in res:// or user:// : %s" % prefab_name)
 			return false
 	
 	var file = FileAccess.open(path, FileAccess.READ)
@@ -358,7 +358,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 	
 	var json = JSON.new()
 	if json.parse(json_string) != OK:
-		DebugSettings.log_building("Failed to parse prefab: %s" % prefab_name)
+		DebugManager.log_building("Failed to parse prefab: %s" % prefab_name)
 		return false
 	
 	var data = json.get_data()
@@ -366,7 +366,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 	
 	# v2 format required
 	if version < 2 or not data.has("layers"):
-		DebugSettings.log_building("Prefab '%s' uses old format (v%d). Run convert_prefab.py to upgrade." % [prefab_name, version])
+		DebugManager.log_building("Prefab '%s' uses old format (v%d). Run convert_prefab.py to upgrade." % [prefab_name, version])
 		return false
 	
 	# Parse bracket notation layers
@@ -382,7 +382,7 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 		get_meta("prefab_objects")[prefab_name] = _parse_compact_objects(data.objects)
 	
 
-	DebugSettings.log_building("Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
+	DebugManager.log_building("Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
 	return true
 
 ## Parse bracket notation token to type and meta
@@ -513,7 +513,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			min_y = min(min_y, rotated_offset.y)
 			max_y = max(max_y, rotated_offset.y)
 		
-		DebugSettings.log_building("[InteriorCarve] Prefab Y range: %d to %d, columns: %d" % [min_y, max_y, column_blocks.size()])
+		DebugManager.log_building("[InteriorCarve] Prefab Y range: %d to %d, columns: %d" % [min_y, max_y, column_blocks.size()])
 		
 		# Interior column detection: a column is interior if it has fewer blocks
 		# than the total height span (i.e., there are empty/gap Y levels)
@@ -549,12 +549,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					carve_count += 1
 					y += 1
 		
-		DebugSettings.log_building("[InteriorCarve] Found %d interior columns, carved %d positions" % [interior_count, carve_count])
+		DebugManager.log_building("[InteriorCarve] Found %d interior columns, carved %d positions" % [interior_count, carve_count])
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:
 		var mode_str = "carve-only" if carve_terrain else "fill-only"
-		DebugSettings.log_building("Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
+		DebugManager.log_building("Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 		PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 		return true
 	
@@ -649,7 +649,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
 	
 	var mode_str = "carve" if carve_terrain else ("fill" if foundation_fill else "surface")
-	DebugSettings.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
+	DebugManager.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 	PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 	return true
 
@@ -658,7 +658,7 @@ func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
 	if not terrain_manager or not terrain_manager.has_method("modify_terrain"):
 		return
 	
-	DebugSettings.log_building("[Foundation Fill] Starting fill for prefab at %v" % spawn_pos)
+	DebugManager.log_building("[Foundation Fill] Starting fill for prefab at %v" % spawn_pos)
 	
 	# Find the minimum Y in the prefab (usually 0, but could be offset)
 	var min_y = 999
@@ -682,7 +682,7 @@ func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
 		var target_y = block_world_pos.y
 		var gap = target_y - terrain_y
 		
-		DebugSettings.log_building("  Block at (%d, %d): terrain_y=%.1f, target_y=%.1f, gap=%.1f" % [
+		DebugManager.log_building("  Block at (%d, %d): terrain_y=%.1f, target_y=%.1f, gap=%.1f" % [
 			int(block_world_pos.x), int(block_world_pos.z), terrain_y, target_y, gap])
 		
 		# Only fill if there's a gap (terrain is below foundation)
@@ -697,7 +697,7 @@ func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
 				current_y += 0.8 # Move up slightly less than 1 for overlap
 				fill_count += 1
 	
-	DebugSettings.log_building("[Foundation Fill] Completed: %d fill operations" % fill_count)
+	DebugManager.log_building("[Foundation Fill] Completed: %d fill operations" % fill_count)
 
 
 func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):

@@ -40,9 +40,9 @@ func _ready() -> void:
 		inventory = get_parent().get_parent().find_child("Inventory", true, false)
 		
 	if inventory:
-		DebugSettings.log_player("PlayerInteraction: Found Inventory")
+		DebugManager.log_player("PlayerInteraction: Found Inventory")
 	else:
-		DebugSettings.log_player("PlayerInteraction: CRITICAL - Inventory not found!")
+		DebugManager.log_player("PlayerInteraction: CRITICAL - Inventory not found!")
 	
 	# Find managers via groups
 	await get_tree().process_frame
@@ -51,7 +51,7 @@ func _ready() -> void:
 	entity_manager = get_tree().get_first_node_in_group("entity_manager")
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	
-	DebugSettings.log_player("PlayerInteraction: Initialized")
+	DebugManager.log_player("PlayerInteraction: Initialized")
 
 func _process(delta: float) -> void:
 	# Check for interactable target
@@ -188,7 +188,7 @@ func _do_interaction() -> void:
 	if not current_target:
 		return
 	
-	DebugSettings.log_player("PlayerInteraction: Interacting with %s" % current_target.name)
+	DebugManager.log_player("PlayerInteraction: Interacting with %s" % current_target.name)
 	
 	# Vehicles (check first - legacy priority)
 	if current_target.is_in_group("vehicle"):
@@ -208,7 +208,7 @@ func _do_interaction() -> void:
 		return
 	
 	# Fallback for objects without interact method
-	DebugSettings.log_player("PlayerInteraction: No interact method on %s" % current_target.name)
+	DebugManager.log_player("PlayerInteraction: No interact method on %s" % current_target.name)
 
 ## Pick up an item/prop into inventory
 func _pickup_item(target: Node) -> void:
@@ -267,13 +267,13 @@ func _pickup_item(target: Node) -> void:
 			if hotbar_node.get_count_at(preferred_slot) == 0:
 				hotbar_node.set_item_at(preferred_slot, item_data, 1)
 				added = true
-				DebugSettings.log_player("PlayerInteraction: Returned to preferred slot %d" % preferred_slot)
+				DebugManager.log_player("PlayerInteraction: Returned to preferred slot %d" % preferred_slot)
 		
 		# Fallback to generic add if not added to preferred
 		if not added and hotbar_node.has_method("add_item"):
 			if hotbar_node.add_item(item_data):
 				added = true
-				DebugSettings.log_player("PlayerInteraction: Added to hotbar")
+				DebugManager.log_player("PlayerInteraction: Added to hotbar")
 	
 	# Fallback to inventory
 	if not added:
@@ -281,18 +281,18 @@ func _pickup_item(target: Node) -> void:
 			var leftover = inventory.add_item(item_data, 1)
 			if leftover == 0:
 				added = true
-				DebugSettings.log_player("PlayerInteraction: Added to inventory")
+				DebugManager.log_player("PlayerInteraction: Added to inventory")
 			else:
-				DebugSettings.log_player("PlayerInteraction: Inventory full (leftover: %d)" % leftover)
+				DebugManager.log_player("PlayerInteraction: Inventory full (leftover: %d)" % leftover)
 		else:
-			DebugSettings.log_player("PlayerInteraction: Inventory missing or invalid")
+			DebugManager.log_player("PlayerInteraction: Inventory missing or invalid")
 	
 	if added:
 		# Successfully picked up - remove from world
 		target.queue_free()
 		PlayerSignals.interaction_performed.emit(target, "pickup")
 	else:
-		DebugSettings.log_player("PlayerInteraction: Could not pick up (Hotbar/Inventory full)")
+		DebugManager.log_player("PlayerInteraction: Could not pick up (Hotbar/Inventory full)")
 
 ## Perform barricade action (hold E near door/window with item)
 func _do_barricade() -> void:
@@ -313,19 +313,19 @@ func _do_barricade() -> void:
 	if building_manager.has_method("place_object"):
 		var success = building_manager.place_object(target_pos, object_id, 0)
 		if success:
-			DebugSettings.log_player("PlayerInteraction: Barricaded with %s" % item.get("name", "object"))
+			DebugManager.log_player("PlayerInteraction: Barricaded with %s" % item.get("name", "object"))
 			PlayerSignals.interaction_performed.emit(current_target, "barricade")
 			# TODO: Remove item from hotbar
 		else:
-			DebugSettings.log_player("PlayerInteraction: Could not place barricade")
+			DebugManager.log_player("PlayerInteraction: Could not place barricade")
 
 ## Enter a vehicle (ported from legacy player_interaction.gd)
 func _enter_vehicle(vehicle: Node3D) -> void:
 	if not vehicle or not vehicle.has_method("enter_vehicle"):
-		DebugSettings.log_player("PlayerInteraction: Vehicle has no enter_vehicle method")
+		DebugManager.log_player("PlayerInteraction: Vehicle has no enter_vehicle method")
 		return
 	
-	DebugSettings.log_player("[Vehicle] Entering vehicle")
+	DebugManager.log_player("[Vehicle] Entering vehicle")
 	is_in_vehicle = true
 	current_vehicle = vehicle
 	
@@ -352,7 +352,7 @@ func _enter_vehicle(vehicle: Node3D) -> void:
 	# Switch terrain generation to follow the vehicle
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = vehicle
-		DebugSettings.log_player("[Interaction] Switched terrain viewer to Vehicle")
+		DebugManager.log_player("[Interaction] Switched terrain viewer to Vehicle")
 	
 	PlayerSignals.interaction_performed.emit(vehicle, "enter_vehicle")
 
@@ -361,7 +361,7 @@ func _exit_vehicle() -> void:
 	if not is_in_vehicle or not current_vehicle:
 		return
 	
-	DebugSettings.log_player("[Vehicle] Exiting vehicle")
+	DebugManager.log_player("[Vehicle] Exiting vehicle")
 	
 	# Tell vehicle player is exiting
 	if current_vehicle.has_method("exit_vehicle"):
@@ -388,7 +388,7 @@ func _exit_vehicle() -> void:
 	# Switch terrain generation back to player
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = player
-		DebugSettings.log_player("[Interaction] Switched terrain viewer back to Player")
+		DebugManager.log_player("[Interaction] Switched terrain viewer back to Player")
 	
 	is_in_vehicle = false
 	current_vehicle = null

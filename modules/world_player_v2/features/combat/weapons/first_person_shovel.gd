@@ -221,4 +221,4 @@ func _update_visibility(item: Dictionary) -> void:
 		shovel_mesh.visible = should_show
 		if should_show:
 			_try_play_idle()
-			DebugSettings.log_player("FirstPersonShovel: Showing shovel for item %s" % item_id)
+			DebugManager.log_player("FirstPersonShovel: Showing shovel for item %s" % item_id)

@@ -35,7 +35,7 @@ func _ready() -> void:
 	# Defer footstep setup to ensure player is in scene tree
 	call_deferred("_setup_footstep_sounds")
 	
-	DebugSettings.log_player("PlayerMovement: Component initialized")
+	DebugManager.log_player("PlayerMovement: Component initialized")
 
 func _setup_footstep_sounds() -> void:
 	# Preload the footstep sounds
@@ -50,7 +50,7 @@ func _setup_footstep_sounds() -> void:
 	footstep_player.name = "FootstepPlayer"
 	player.add_child(footstep_player)
 	
-	DebugSettings.log_player("PlayerMovement: Loaded %d footstep sounds" % footstep_sounds.size())
+	DebugManager.log_player("PlayerMovement: Loaded %d footstep sounds" % footstep_sounds.size())
 
 func _physics_process(delta: float) -> void:
 	if not player:

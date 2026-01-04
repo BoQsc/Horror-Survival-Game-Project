@@ -112,7 +112,7 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	var cleanup_status = "CLEANUP ON" if ENABLE_GPU_CLEANUP else "CLEANUP OFF (LEAKING!)"
 	if mesh_gen_count <= 3 or mesh_gen_count % 50 == 0:
 		var estimated_kb = mesh_gen_count * BYTES_PER_CALL / 1024.0
-		DebugSettings.log_building("[BuildingMesher] Mesh #%d | %s | Est. GPU use: %.0f KB" % [mesh_gen_count, cleanup_status, estimated_kb if not ENABLE_GPU_CLEANUP else 0])
+		DebugManager.log_building("[BuildingMesher] Mesh #%d | %s | Est. GPU use: %.0f KB" % [mesh_gen_count, cleanup_status, estimated_kb if not ENABLE_GPU_CLEANUP else 0])
 	
 	# 16x16x16
 	var grid_size = Vector3i(16, 16, 16)

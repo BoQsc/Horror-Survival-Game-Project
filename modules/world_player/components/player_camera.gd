@@ -28,12 +28,12 @@ func _ready() -> void:
 	
 	# Capture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	DebugSettings.log_player("PlayerCamera: Component initialized")
-	DebugSettings.log_player("  - Player: %s" % player.name)
-	DebugSettings.log_player("  - Camera: %s" % camera.name)
+	DebugManager.log_player("PlayerCamera: Component initialized")
+	DebugManager.log_player("  - Player: %s" % player.name)
+	DebugManager.log_player("  - Camera: %s" % camera.name)
 
-	DebugSettings.log_player("  - Player: %s" % player.name)
-	DebugSettings.log_player("  - Camera: %s" % camera.name)
+	DebugManager.log_player("  - Player: %s" % player.name)
+	DebugManager.log_player("  - Camera: %s" % camera.name)
 
 func _physics_process(_delta: float) -> void:
 	check_underwater_visuals()
@@ -116,7 +116,7 @@ func get_camera_position() -> Vector3:
 ## Perform a raycast from camera center
 func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_with_areas: bool = false, exclude_water: bool = false) -> Dictionary:
 	if not camera:
-		DebugSettings.log_player("PlayerCamera: raycast - no camera!")
+		DebugManager.log_player("PlayerCamera: raycast - no camera!")
 		return {}
 	
 	var space_state = player.get_world_3d().direct_space_state

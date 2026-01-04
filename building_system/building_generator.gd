@@ -40,7 +40,7 @@ func get_save_data() -> Dictionary:
 
 func load_save_data(data: Dictionary) -> void:
 	if regenerate_buildings_on_load:
-		DebugSettings.log_building("Regenerate mode enabled - skipping saved state")
+		DebugManager.log_building("Regenerate mode enabled - skipping saved state")
 		return # Debug: regenerate fresh instead of loading
 	
 	spawned_buildings.clear()
@@ -58,13 +58,13 @@ func load_save_data(data: Dictionary) -> void:
 				var pos = Vector3(pos_arr[0], pos_arr[1], pos_arr[2])
 				spawned_buildings[coord].append(pos)
 				global_building_positions.append(pos)
-		DebugSettings.log_building("Loaded %d chunks with building spawn data" % spawned_buildings.size())
+		DebugManager.log_building("Loaded %d chunks with building spawn data" % spawned_buildings.size())
 
 func _ready():
 	# Connect to terrain manager signals
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
-		DebugSettings.log_building("BuildingGenerator connected to chunk_generated signal")
+		DebugManager.log_building("BuildingGenerator connected to chunk_generated signal")
 		
 		# Get road spacing from terrain manager
 		if "procedural_road_spacing" in terrain_manager:
@@ -75,11 +75,11 @@ func _ready():
 		push_warning("[BuildingGenerator] Could not connect to terrain_manager!")
 	
 	if prefab_spawner:
-		DebugSettings.log_building("BuildingGenerator found PrefabSpawner")
+		DebugManager.log_building("BuildingGenerator found PrefabSpawner")
 	else:
 		push_warning("[BuildingGenerator] PrefabSpawner not found!")
 	
-	DebugSettings.log_building("BuildingGenerator ready, enabled=%s, density=%.2f, interval=%.1fs" % [enabled, building_density, spawn_interval])
+	DebugManager.log_building("BuildingGenerator ready, enabled=%s, density=%.2f, interval=%.1fs" % [enabled, building_density, spawn_interval])
 
 func _process(delta):
 	if not enabled or spawn_queue.is_empty():
@@ -153,7 +153,7 @@ func _queue_buildings_for_chunk(chunk_coord: Vector3i, chunk_world_pos: Vector3)
 		global_building_positions.append(spot.position)
 	
 	if spawn_queue.size() > 0:
-		DebugSettings.log_building("Queued %d spots for chunk %v (total queue: %d)" % [spots.size(), chunk_coord, spawn_queue.size()])
+		DebugManager.log_building("Queued %d spots for chunk %v (total queue: %d)" % [spots.size(), chunk_coord, spawn_queue.size()])
 
 ## Find spots adjacent to roads within this chunk
 func _find_road_adjacent_spots(chunk_pos: Vector3, chunk_size: int) -> Array:
@@ -328,7 +328,7 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	
 	# Double-check water at spawn time (chunk may have loaded since queueing)
 	if _is_over_water(spawn_pos):
-		DebugSettings.log_building("Skipped %s at %v - over water" % [prefab_name, spawn_pos])
+		DebugManager.log_building("Skipped %s at %v - over water" % [prefab_name, spawn_pos])
 		return false
 	
 	# Spawn WITHOUT interior carve (false at the end) for performance
@@ -336,7 +336,7 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	
 	if success:
 		building_spawned.emit(spawn_pos, prefab_name)
-		DebugSettings.log_building("Spawned %s at %v" % [prefab_name, spawn_pos])
+		DebugManager.log_building("Spawned %s at %v" % [prefab_name, spawn_pos])
 	
 	return success
 

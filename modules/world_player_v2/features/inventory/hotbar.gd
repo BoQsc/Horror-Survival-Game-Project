@@ -16,7 +16,7 @@ const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_
 func _ready() -> void:
 	_load_dev_starter_kit()
 	
-	DebugSettings.log_player("Hotbar: Initialized with %d slots (max stack: %d)" % [slots.size(), MAX_STACK_SIZE])
+	DebugManager.log_player("Hotbar: Initialized with %d slots (max stack: %d)" % [slots.size(), MAX_STACK_SIZE])
 	
 	# Auto-select first slot
 	select_slot(0)
@@ -71,7 +71,7 @@ func select_slot(index: int) -> void:
 	
 	var item = get_selected_item()
 	var count = get_selected_count()
-	DebugSettings.log_player("Hotbar: Selected slot %d (%s x%d)" % [index, item.get("name", "Empty"), count])
+	DebugManager.log_player("Hotbar: Selected slot %d (%s x%d)" % [index, item.get("name", "Empty"), count])
 	
 	_emit_selection_change()
 	PlayerSignals.hotbar_slot_selected.emit(selected_slot)
@@ -213,7 +213,7 @@ func add_item(item: Dictionary) -> bool:
 		var stack_slot = find_stackable_slot(item_id)
 		if stack_slot >= 0:
 			slots[stack_slot]["count"] += 1
-			DebugSettings.log_player("Hotbar: Stacked %s in slot %d (now x%d)" % [item.get("name", "item"), stack_slot, slots[stack_slot]["count"]])
+			DebugManager.log_player("Hotbar: Stacked %s in slot %d (now x%d)" % [item.get("name", "item"), stack_slot, slots[stack_slot]["count"]])
 			if stack_slot == selected_slot:
 				_emit_selection_change()  # Signal arms to update
 			PlayerSignals.inventory_changed.emit()
@@ -224,10 +224,10 @@ func add_item(item: Dictionary) -> bool:
 	if empty_slot >= 0:
 		# Use set_item_at to properly emit signals (including item_changed for arms visibility)
 		set_item_at(empty_slot, item, 1)
-		DebugSettings.log_player("Hotbar: Added %s to slot %d" % [item.get("name", "item"), empty_slot])
+		DebugManager.log_player("Hotbar: Added %s to slot %d" % [item.get("name", "item"), empty_slot])
 		return true
 	
-	DebugSettings.log_player("Hotbar: No space for %s" % item.get("name", "item"))
+	DebugManager.log_player("Hotbar: No space for %s" % item.get("name", "item"))
 	return false
 
 ## Get slot data in inventory-compatible format {item: Dict, count: int}
@@ -247,13 +247,13 @@ func drop_selected_item() -> void:
 	var count = get_selected_count()
 	
 	if item.get("id", "empty") == "empty" or count <= 0:
-		DebugSettings.log_player("Hotbar: Nothing to drop")
+		DebugManager.log_player("Hotbar: Nothing to drop")
 		return
 	
 	# Get player position for drop
 	var player = get_tree().get_first_node_in_group("player")
 	if not player:
-		DebugSettings.log_player("Hotbar: No player found for drop")
+		DebugManager.log_player("Hotbar: No player found for drop")
 		return
 	
 	var drop_pos = player.global_position - player.global_transform.basis.z * 2.0 + Vector3.UP
@@ -282,7 +282,7 @@ func drop_selected_item() -> void:
 				temp_instance.set_meta("item_data", item.duplicate())
 				temp_instance.set_meta("preferred_slot", selected_slot)
 				
-				DebugSettings.log_player("Hotbar: Dropped %s directly (physics prop)" % item.get("name", "item"))
+				DebugManager.log_player("Hotbar: Dropped %s directly (physics prop)" % item.get("name", "item"))
 				spawned_directly = true
 			else:
 				# Not a RigidBody3D, clean up and use wrapper
@@ -299,21 +299,21 @@ func drop_selected_item() -> void:
 			pickup.preferred_slot = selected_slot
 			pickup.linear_velocity = drop_velocity
 			
-			DebugSettings.log_player("Hotbar: Dropped 1x %s (wrapped)" % item.get("name", "item"))
+			DebugManager.log_player("Hotbar: Dropped 1x %s (wrapped)" % item.get("name", "item"))
 		else:
-			DebugSettings.log_player("Hotbar: Failed to load pickup scene")
+			DebugManager.log_player("Hotbar: Failed to load pickup scene")
 			return
 	
 	# Decrement the slot (drops 1 at a time)
-	DebugSettings.log_player("Hotbar: Decrementing slot %d (current count: %d)" % [selected_slot, count])
+	DebugManager.log_player("Hotbar: Decrementing slot %d (current count: %d)" % [selected_slot, count])
 	var success = decrement_slot(selected_slot, 1)
 	
 	# Verify decrement
 	var new_count = get_count_at(selected_slot)
-	DebugSettings.log_player("Hotbar: Decrement success: %s, New Count: %d" % [success, new_count])
+	DebugManager.log_player("Hotbar: Decrement success: %s, New Count: %d" % [success, new_count])
 	
 	if new_count >= count:
 		# Critical failure: count did not decrease!
-		DebugSettings.log_player("CRITICAL: Hotbar slot count mismatch! Force clearing.")
+		DebugManager.log_player("CRITICAL: Hotbar slot count mismatch! Force clearing.")
 		# Force decrement
 		set_item_at(selected_slot, item, count - 1)

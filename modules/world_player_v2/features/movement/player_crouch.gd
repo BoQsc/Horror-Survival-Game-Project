@@ -32,7 +32,7 @@ func _ready() -> void:
 	collision_shape = player.get_node_or_null("CollisionShape3D")
 	camera = player.get_node_or_null("Camera3D")
 	
-	DebugSettings.log_player("PlayerCrouchFeature: Initialized")
+	DebugManager.log_player("PlayerCrouchFeature: Initialized")
 
 
 ## Call this from player_movement._handle_walking()

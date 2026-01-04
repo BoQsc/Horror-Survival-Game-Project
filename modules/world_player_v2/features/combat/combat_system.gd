@@ -74,7 +74,7 @@ func _ready() -> void:
 		PlayerSignals.pistol_fire_ready.connect(_on_pistol_fire_ready)
 		PlayerSignals.axe_ready.connect(_on_axe_ready)
 	
-	DebugSettings.log_player("CombatSystemFeature: Initialized")
+	DebugManager.log_player("CombatSystemFeature: Initialized")
 
 func _find_managers() -> void:
 	if not terrain_manager:
@@ -114,7 +114,7 @@ func initialize(p_player: Node, p_terrain: Node, p_vegetation: Node, p_building:
 func handle_primary(item: Dictionary) -> void:
 	# V1: If grabbing a prop, don't do other actions
 	if is_grabbing_prop():
-		DebugSettings.log_player("CombatSystem: Grabbing prop, ignoring primary action")
+		DebugManager.log_player("CombatSystem: Grabbing prop, ignoring primary action")
 		return
 	
 	# V1: Attack cooldown check
@@ -225,7 +225,7 @@ func _try_grab_prop() -> void:
 	if not target:
 		return
 	
-	DebugSettings.log_player("PropGrab: Trying to grab %s" % target.name)
+	DebugManager.log_player("PropGrab: Trying to grab %s" % target.name)
 	
 	# Check if this is a dropped physics prop (has item_data OR is interactable RigidBody3D)
 	# V1: Routes ALL RigidBody3D through _grab_dropped_prop for proper collision handling
@@ -235,14 +235,14 @@ func _try_grab_prop() -> void:
 	
 	# Otherwise, try building_manager object path
 	if not target.has_meta("anchor") or not target.has_meta("chunk"):
-		DebugSettings.log_player("PropGrab: Target has no anchor/chunk metadata")
+		DebugManager.log_player("PropGrab: Target has no anchor/chunk metadata")
 		return
 	
 	var anchor = target.get_meta("anchor")
 	var chunk = target.get_meta("chunk")
 	
 	if not chunk or not chunk.objects.has(anchor):
-		DebugSettings.log_player("PropPickup: No object data at anchor")
+		DebugManager.log_player("PropPickup: No object data at anchor")
 		return
 	
 	# Read object data before removing
@@ -280,9 +280,9 @@ func _try_grab_prop() -> void:
 			cam = get_viewport().get_camera_3d()
 		if cam:
 			held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
-			DebugSettings.log_player("PropPickup: Picked up prop ID %d at %s" % [held_prop_id, held_prop_instance.global_position])
+			DebugManager.log_player("PropPickup: Picked up prop ID %d at %s" % [held_prop_id, held_prop_instance.global_position])
 		else:
-			DebugSettings.log_player("PropPickup: WARNING - No camera, prop may be mispositioned")
+			DebugManager.log_player("PropPickup: WARNING - No camera, prop may be mispositioned")
 
 ## Grab a dropped physics prop (RigidBody3D with item_data meta) - V1 port
 func _grab_dropped_prop(target: RigidBody3D) -> void:
@@ -475,7 +475,7 @@ func do_punch(item: Dictionary) -> void:
 	
 	var hit = _raycast(5.0, true, true)
 	if hit.is_empty():
-		DebugSettings.log_player("CombatSystem: Punch - miss")
+		DebugManager.log_player("CombatSystem: Punch - miss")
 		return
 	
 	var damage = item.get("damage", 1)
@@ -626,7 +626,7 @@ func do_tool_attack(item: Dictionary) -> void:
 			# Emit durability signal for HUD
 			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
 			
-			DebugSettings.log_player("CombatSystem: Pickaxe hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
+			DebugManager.log_player("CombatSystem: Pickaxe hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
 			
 			# Check if terrain cube should break
 			if terrain_damage[block_pos] >= TERRAIN_HP:
@@ -644,7 +644,7 @@ func do_tool_attack(item: Dictionary) -> void:
 				if mat_id >= 0:
 					_collect_terrain_resource(mat_id)
 				
-				DebugSettings.log_player("CombatSystem: Terrain cube broken at %s" % block_pos)
+				DebugManager.log_player("CombatSystem: Terrain cube broken at %s" % block_pos)
 		else:
 			# INSTANT MODE: Break immediately based on shape
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
@@ -652,12 +652,12 @@ func do_tool_attack(item: Dictionary) -> void:
 			if use_enhanced_mode:
 				# Instant box removal (terraformer style)
 				terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
-				DebugSettings.log_player("CombatSystem: Instant box removal at %s" % block_pos)
+				DebugManager.log_player("CombatSystem: Instant box removal at %s" % block_pos)
 			else:
 				# Instant sphere removal
 				var actual_radius = max(mining_strength, 0.8)
 				terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
-				DebugSettings.log_player("CombatSystem: Instant sphere removal at %s (radius: %.2f)" % [position, actual_radius])
+				DebugManager.log_player("CombatSystem: Instant sphere removal at %s (radius: %.2f)" % [position, actual_radius])
 			
 			_emit_durability_cleared()
 			
@@ -1256,7 +1256,7 @@ func _collect_terrain_resource(mat_id: int) -> void:
 	# Try to add to hotbar first
 	if hotbar and hotbar.has_method("add_item"):
 		if hotbar.add_item(resource_item):
-			DebugSettings.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
+			DebugManager.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
 			return
 	
 	# Fall back to inventory if hotbar is full
@@ -1264,18 +1264,18 @@ func _collect_terrain_resource(mat_id: int) -> void:
 	if inventory and inventory.has_method("add_item"):
 		var leftover = inventory.add_item(resource_item, 1)
 		if leftover == 0:
-			DebugSettings.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
+			DebugManager.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
 
 func _collect_vegetation_resource(veg_type: String) -> void:
 	var resource_item = ItemDefs.get_vegetation_resource(veg_type)
 	if resource_item.is_empty():
-		DebugSettings.log_player("CombatSystem: No resource for vegetation type '%s'" % veg_type)
+		DebugManager.log_player("CombatSystem: No resource for vegetation type '%s'" % veg_type)
 		return
 	
 	# Try to add to hotbar first (for quick access)
 	if hotbar and hotbar.has_method("add_item"):
 		if hotbar.add_item(resource_item):
-			DebugSettings.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
+			DebugManager.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
 			return
 	
 	# Fall back to inventory if hotbar is full
@@ -1283,11 +1283,11 @@ func _collect_vegetation_resource(veg_type: String) -> void:
 	if inventory and inventory.has_method("add_item"):
 		var leftover = inventory.add_item(resource_item, 1)
 		if leftover == 0:
-			DebugSettings.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
+			DebugManager.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
 		else:
-			DebugSettings.log_player("CombatSystem: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
+			DebugManager.log_player("CombatSystem: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
 	else:
-		DebugSettings.log_player("CombatSystem: No inventory system found")
+		DebugManager.log_player("CombatSystem: No inventory system found")
 
 func _collect_building_resource(voxel_id: int) -> void:
 	var resource_item = ItemDefs.get_item_for_block(voxel_id)
@@ -1297,7 +1297,7 @@ func _collect_building_resource(voxel_id: int) -> void:
 	# Try to add to hotbar first
 	if hotbar and hotbar.has_method("add_item"):
 		if hotbar.add_item(resource_item):
-			DebugSettings.log_player("CombatSystem: Collected 1x building resource to hotbar")
+			DebugManager.log_player("CombatSystem: Collected 1x building resource to hotbar")
 			return
 	
 	# Fall back to inventory if hotbar is full

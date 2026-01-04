@@ -193,7 +193,7 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 func _generate_object_collision(obj: Node3D, anchor: Vector3i):
 	# Skip collision generation for interactable objects (they manage their own)
 	if obj.is_in_group("interactable"):
-		DebugSettings.log_building("BuildingChunk: Skipping collision for interactable object")
+		DebugManager.log_building("BuildingChunk: Skipping collision for interactable object")
 		return
 	# Find all MeshInstance3D children and create collision shapes
 	for child in obj.get_children():

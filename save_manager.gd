@@ -48,7 +48,7 @@ func _find_managers():
 	building_generator = get_node_or_null("/root/MainGame/BuildingGenerator")
 	player = get_tree().get_first_node_in_group("player")
 	
-	DebugSettings.log_save("Managers: CM=%s BM=%s VM=%s RM=%s PF=%s EM=%s VEH=%s P=%s" % [
+	DebugManager.log_save("Managers: CM=%s BM=%s VM=%s RM=%s PF=%s EM=%s VEH=%s P=%s" % [
 		chunk_manager != null, building_manager != null, vegetation_manager != null,
 		road_manager != null, prefab_spawner != null, entity_manager != null,
 		vehicle_manager != null, player != null
@@ -69,7 +69,7 @@ func _input(event):
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		# Auto-save on exit
-		DebugSettings.log_save("Auto-saving on exit...")
+		DebugManager.log_save("Auto-saving on exit...")
 		save_game(SAVE_DIR + "autosave.json")
 		get_tree().quit()
 
@@ -85,7 +85,7 @@ func quick_load():
 
 ## Save game to specified path
 func save_game(path: String) -> bool:
-	DebugSettings.log_save("Saving to: %s" % path)
+	DebugManager.log_save("Saving to: %s" % path)
 	
 	var save_data = {
 		"version": SAVE_VERSION,
@@ -116,13 +116,13 @@ func save_game(path: String) -> bool:
 	file.store_string(json_string)
 	file.close()
 	
-	DebugSettings.log_save("Save complete!")
+	DebugManager.log_save("Save complete!")
 	save_completed.emit(true, path)
 	return true
 
 ## Load game from specified path
 func load_game(path: String) -> bool:
-	DebugSettings.log_save("Loading from: %s" % path)
+	DebugManager.log_save("Loading from: %s" % path)
 	
 	if not FileAccess.file_exists(path):
 		push_error("[SaveManager] Save file not found: " + path)
@@ -175,7 +175,7 @@ func load_game(path: String) -> bool:
 	call_deferred("_load_door_data", save_data.get("doors", {}))
 	# Vehicles are ALSO deferred until terrain is ready (prevents falling through)
 	pending_vehicle_data = save_data.get("vehicles", {})
-	DebugSettings.log_save("Load complete!")
+	DebugManager.log_save("Load complete!")
 	load_completed.emit(true, path)
 	return true
 
@@ -184,7 +184,7 @@ func _on_spawn_zones_ready(positions: Array):
 	if not is_loading_game:
 		return
 	
-	DebugSettings.log_save("Spawn zones ready - gameplay enabled")
+	DebugManager.log_save("Spawn zones ready - gameplay enabled")
 	
 	# Unfreeze player
 	if player:
@@ -268,7 +268,7 @@ func _get_terrain_data() -> Dictionary:
 			})
 		result[key] = mods
 	
-	DebugSettings.log_save("Saved %d terrain chunks" % result.size())
+	DebugManager.log_save("Saved %d terrain chunks" % result.size())
 	return result
 
 func _get_building_data() -> Dictionary:
@@ -395,7 +395,7 @@ func _load_player_data(data: Dictionary):
 	# FREEZE player until terrain is ready
 	player.velocity = Vector3.ZERO
 	player.process_mode = Node.PROCESS_MODE_DISABLED
-	DebugSettings.log_save("Player frozen at %s, waiting for terrain" % player_pos)
+	DebugManager.log_save("Player frozen at %s, waiting for terrain" % player_pos)
 	
 	# Request terrain around player position
 	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
@@ -455,7 +455,7 @@ func _load_terrain_data(data: Dictionary):
 				chunk_data.node_water.queue_free()
 			chunk_manager.active_chunks.erase(coord)
 	
-	DebugSettings.log_save("Terrain loaded: %d chunks, regenerating %d" % [data.size(), affected_chunks.size()])
+	DebugManager.log_save("Terrain loaded: %d chunks, regenerating %d" % [data.size(), affected_chunks.size()])
 
 func _load_building_data(data: Dictionary):
 	if data.is_empty() or not building_manager:
@@ -505,7 +505,7 @@ func _load_building_data(data: Dictionary):
 		# Restore visual instances for placed objects (tables, doors, etc.)
 		chunk.call_deferred("restore_object_visuals")
 	
-	DebugSettings.log_save("Buildings loaded: %d chunks" % data.size())
+	DebugManager.log_save("Buildings loaded: %d chunks" % data.size())
 
 func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:
@@ -557,7 +557,7 @@ func _load_road_data(data: Dictionary):
 					max_id = seg.id
 			road_manager.next_segment_id = max_id + 1
 	
-	DebugSettings.log_save("Roads loaded: %d segments" % (data.segments.size() if data.has("segments") else 0))
+	DebugManager.log_save("Roads loaded: %d segments" % (data.segments.size() if data.has("segments") else 0))
 
 # ============ ENTITY DATA ============
 
@@ -633,7 +633,7 @@ func _load_door_data(data: Dictionary):
 						node.close_door()
 					break
 	
-	DebugSettings.log_save("Doors loaded: %d" % data.doors.size())
+	DebugManager.log_save("Doors loaded: %d" % data.doors.size())
 
 # ============ UTILITY FUNCTIONS ============
 
