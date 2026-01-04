@@ -38,44 +38,44 @@ func _ready() -> void:
 	# Set collision layer 4 for vehicle detection (bit 3)
 	collision_layer = collision_layer | (1 << 3)
 	
-	# === REALISTIC CAR PHYSICS ===
-	# Standard car mass (still heavy but reasonable)
-	mass = 1200.0  # ~1.2 ton sedan
+	# === ARCADE CAR PHYSICS (GTA-STYLE) ===
+	# Lighter mass for snappy acceleration/braking
+	mass = 800.0  # Light arcade feel
 	
-	# Center of mass - slightly low but INSIDE the car body
+	# Center of mass - LOW for stability
 	center_of_mass_mode = CENTER_OF_MASS_MODE_CUSTOM
-	center_of_mass = Vector3(0, -0.3, 0)  # Slightly below center
+	center_of_mass = Vector3(0, -0.5, 0)  # Low center = less tippy
 	
-	# Light damping - let the suspension do the work
-	angular_damp = 0.5
-	linear_damp = 0.05
+	# High damping - CRITICAL for high-speed stability
+	angular_damp = 4.5  # Prevent high-speed oscillation/hopping
+	linear_damp = 0.15  # Quick slow-down when not accelerating
 	
-	# Engine - POWERFUL for fun gameplay
-	max_torque = 4000.0      # Very strong acceleration
-	max_wheel_rpm = 2500.0   # Fast top speed
+	# Engine - POWERFUL for arcade feel
+	max_torque = 5000.0      # Very strong acceleration
+	max_wheel_rpm = 3000.0   # Fast top speed
 	
-	# Tire grip - HIGH to prevent sliding
-	front_wheel_grip = 15.0   # High grip, no slide
-	rear_wheel_grip = 14.0    # Slightly less for mild oversteer
+	# Tire grip - BALANCED (arcade grip with controllable slide)
+	front_wheel_grip = 12.0   # High grip, allows turning
+	rear_wheel_grip = 10.0    # Lower for fun oversteer/drifting
 	
-	# === RIGID SUSPENSION (No Body Lean) ===
-	# Very high stiffness effectively locks the suspension
-	# High damping prevents any oscillation
-	max_steer = 0.25  # Moderate steering - prevents twitchy turns (was 0.40)
-	steer_damping = 6.0  # Fast response to input - prevents drunk-like delay (default 2.0)
+	# === ARCADE SUSPENSION (High-Speed Stable) ===
+	# Stiffer for high-speed stability without losing bump absorption
+	# Very strong damping to kill oscillation during fast turns
+	max_steer = 0.35  # Responsive but not twitchy at speed
+	steer_damping = 6.0  # Fast response with stability
 	
 	for wheel in steering_wheels:
 		wheel.wheel_friction_slip = front_wheel_grip
-		wheel.suspension_stiffness = 500.0   # Extremely stiff - no lean
-		wheel.damping_compression = 10.0     # Heavy damping
-		wheel.damping_relaxation = 10.0      # No bounce
-		wheel.suspension_travel = 0.1        # Minimal travel
+		wheel.suspension_stiffness = 150.0   # Stiffer for high-speed stability
+		wheel.damping_compression = 10.0     # Very strong damping
+		wheel.damping_relaxation = 15.0      # Kill bounce instantly
+		wheel.suspension_travel = 0.2        # Moderate travel
 	for wheel in driving_wheels:
 		wheel.wheel_friction_slip = rear_wheel_grip
-		wheel.suspension_stiffness = 500.0   # Extremely stiff - no lean
-		wheel.damping_compression = 10.0     # Heavy damping
-		wheel.damping_relaxation = 10.0      # No bounce
-		wheel.suspension_travel = 0.1        # Minimal travel
+		wheel.suspension_stiffness = 150.0   # Stiffer for high-speed stability
+		wheel.damping_compression = 10.0     # Very strong damping
+		wheel.damping_relaxation = 15.0      # Kill bounce instantly
+		wheel.suspension_travel = 0.2        # Moderate travel
 
 
 func enter_vehicle(player_node: Node3D) -> void:
@@ -102,9 +102,8 @@ func exit_vehicle() -> Node3D:
 
 
 ## Override to use WASD controls and respect player control state
-## MAXIMUM REVERSE RESPONSIVENESS: Simultaneous brake+reverse, high brake force
-const REVERSE_THRESHOLD_SPEED: float = 5.0  # Start reverse power below this forward speed (m/s)
-const AGGRESSIVE_BRAKE_FORCE: float = 5.0   # 5x stronger than default
+## ARCADE BRAKING: Instant, powerful response
+const ARCADE_BRAKE_POWER: float = 8.0  # Strong instant braking
 
 func get_input(delta: float) -> void:
 	if not is_player_controlled:
@@ -127,27 +126,25 @@ func get_input(delta: float) -> void:
 	# Apply boost multiplier to acceleration
 	var accel_mult: float = BOOST_MULTIPLIER if is_boosting else 1.0
 	
+	# SIMPLIFIED ARCADE CONTROLS
 	if player_input.y > 0.01:
-		# Accelerating forward (with boost)
+		# Forward acceleration
 		player_acceleration = player_input.y * accel_mult
 		player_braking = 0.0
 	elif player_input.y < -0.01:
-		# AGGRESSIVE REVERSE: Apply braking + reverse power simultaneously
+		# Reverse/Brake - simple arcade logic
 		var forward_speed = _get_forward_speed()
 		
-		if forward_speed > REVERSE_THRESHOLD_SPEED:
-			# High speed forward - heavy brake only
-			player_braking = -player_input.y * AGGRESSIVE_BRAKE_FORCE
+		if forward_speed > 2.0:
+			# Moving forward - brake hard
+			player_braking = ARCADE_BRAKE_POWER
 			player_acceleration = 0.0
-		elif forward_speed > 0.5:
-			# Low speed forward - brake AND start reverse power (arcade style)
-			player_braking = -player_input.y * AGGRESSIVE_BRAKE_FORCE * 0.5
-			player_acceleration = player_input.y * accel_mult * 0.5  # Partial reverse
 		else:
-			# Stopped or reversing - full reverse power
+			# Stopped or slow - instant reverse
 			player_braking = 0.0
 			player_acceleration = player_input.y * accel_mult
 	else:
+		# No input - coast (no brake)
 		player_acceleration = 0.0
 		player_braking = 0.0
 
