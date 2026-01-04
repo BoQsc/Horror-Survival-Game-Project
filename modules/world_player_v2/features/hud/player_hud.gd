@@ -157,19 +157,24 @@ func _setup_visual_overlays() -> void:
 		add_child(notification_label)
 		print("[HUD_SETUP] Notification label created")
 	
-	# Connect to SaveManager signals
-	print("[HUD_SETUP] Checking for SaveManagerV2...")
-	if has_node("/root/SaveManagerV2"):
-		print("[HUD_SETUP] SaveManagerV2 found!")
-		var save_mgr = get_node("/root/SaveManagerV2")
-		if not save_mgr.save_completed.is_connected(_on_save_completed):
+	# Connect to SaveManager signals  
+	print("[HUD_SETUP] Checking for SaveManager...")
+	var save_mgr = get_tree().get_first_node_in_group("save_manager")
+	if not save_mgr:
+		# Fallback: try autoload path
+		if has_node("/root/SaveManagerV2"):
+			save_mgr = get_node("/root/SaveManagerV2")
+	
+	if save_mgr:
+		print("[HUD_SETUP] SaveManager found: %s" % save_mgr.name)
+		if save_mgr.has_signal("save_completed") and not save_mgr.save_completed.is_connected(_on_save_completed):
 			save_mgr.save_completed.connect(_on_save_completed)
 			print("[HUD_SETUP] Connected to save_completed signal")
-		if not save_mgr.load_completed.is_connected(_on_load_completed):
+		if save_mgr.has_signal("load_completed") and not save_mgr.load_completed.is_connected(_on_load_completed):
 			save_mgr.load_completed.connect(_on_load_completed)
 			print("[HUD_SETUP] Connected to load_completed signal")
 	else:
-		print("[HUD_SETUP] WARNING: SaveManagerV2 not found at /root/SaveManagerV2!")
+		print("[HUD_SETUP] WARNING: SaveManager not found in scene tree!")
 
 func _process(_delta: float) -> void:
 	_update_compass()

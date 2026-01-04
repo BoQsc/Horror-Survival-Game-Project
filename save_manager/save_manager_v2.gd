@@ -39,6 +39,9 @@ var pending_player_position_restore: bool = false  # Fix: defer position until t
 var is_loading_game: bool = false
 
 func _ready():
+	# Add to group for dynamic lookup by HUD
+	add_to_group("save_manager")
+	
 	# Create saves directory if it doesn't exist
 	if not DirAccess.dir_exists_absolute(SAVE_DIR):
 		DirAccess.make_dir_recursive_absolute(SAVE_DIR)
