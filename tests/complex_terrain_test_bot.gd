@@ -109,24 +109,29 @@ func _process(delta):
 		
 		"COUNT_ZOMBIES_AFTER":
 			if test_timer < 0.1:
+				print("[COMPLEX_TERRAIN_TEST] Phase 8: Counting zombies AFTER load...")
 				_count_zombies("AFTER_LOAD")
 			if test_timer > 1.0:
+				print("[COMPLEX_TERRAIN_TEST] Moving to CHECK_TERRAIN_AFTER phase")
 				test_phase = "CHECK_TERRAIN_AFTER"
 				test_timer = 0.0
 		
 		"CHECK_TERRAIN_AFTER":
 			if test_timer < 0.1:
-				print("[COMPLEX_TERRAIN_TEST] Phase 8: Verifying terrain after load...")
+				print("[COMPLEX_TERRAIN_TEST] Phase 9: Verifying terrain after load...")
 				_check_multiple_blocks("AFTER_LOAD")
 			if test_timer > 1.0:
+				print("[COMPLEX_TERRAIN_TEST] Moving to REPORT phase")
 				test_phase = "REPORT"
 				test_timer = 0.0
 		
 		"REPORT":
+			print("[COMPLEX_TERRAIN_TEST] Generating final report...")
 			_report_results()
 			test_phase = "DONE"
 		
 		"DONE":
+			print("[COMPLEX_TERRAIN_TEST] Test complete, exiting...")
 			get_tree().quit(0)
 
 func _rotate_camera_pitch(amount: float):

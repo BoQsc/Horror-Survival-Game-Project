@@ -5,7 +5,7 @@ import sys
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 MAIN_SCENE = "res://modules/world_player_v2/world_testV2.tscn"
-TIMEOUT = 30  # Seconds - QuickLoad test needs time for save/load cycle
+TIMEOUT = 60  # 30s wait + 15s test = 45s, buffer for safety
 BOT_SCENE = "res://tests/player_bot.tscn"  # Bot scene to add
 def main():
     print("🤖 Running Movement Bot Test...")
@@ -48,7 +48,7 @@ def main():
     
     bot_found = False
     for line in output.splitlines():
-        if "[BOT]" in line or "[HOTBAR_DEBUG]" in line or "[QUICKLOAD_TEST]" in line or "[ROUTER_DEBUG]" in line or "[COMBAT_DEBUG]" in line or "[QUICKLOAD_FALL_TEST]" in line or "[TERRAIN_PERSIST_TEST]" in line or "[COMPLEX_TERRAIN_TEST]" in line or "[TERRAIN_MINING]" in line or "[SAVE_NOTIFICATION]" in line or "[LOAD_NOTIFICATION]" in line or "[HUD_SETUP]" in line or "[HUD_NOTIF_TEST]" in line:
+        if "[BOT]" in line or "[HOTBAR_DEBUG]" in line or "[QUICKLOAD_TEST]" in line or "[ROUTER_DEBUG]" in line or "[COMBAT_DEBUG]" in line or "[QUICKLOAD_FALL_TEST]" in line or "[TERRAIN_PERSIST_TEST]" in line or "[COMPLEX_TERRAIN_TEST]" in line or "[TERRAIN_MINING]" in line or "[SAVE_NOTIFICATION]" in line or "[LOAD_NOTIFICATION]" in line or "[HUD_SETUP]" in line or "[HUD_NOTIF_TEST]" in line or "[ZOMBIE_TEST]" in line or "[ZOMBIE_COUNT_TEST]" in line:
             print(line)
             bot_found = True
     
