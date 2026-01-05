@@ -82,6 +82,9 @@ var keys_pending_add: Dictionary = {} # Duplicate check
 var keys_pending_remove: Dictionary = {} # Duplicate check
 const MAX_COLLIDER_UPDATES_PER_FRAME = 5
 
+# QuickLoad vegetation regeneration - deferred until terrain is ready
+var pending_vegetation_regen: bool = false
+
 ## Returns true when all queued vegetation has been placed (for loading screen)
 func is_vegetation_ready() -> bool:
 	return pending_chunks.is_empty()
@@ -142,6 +145,8 @@ func _ready():
 		terrain_manager.chunk_modified.connect(_on_chunk_modified)
 		if terrain_manager.has_signal("chunk_unloaded"):
 			terrain_manager.chunk_unloaded.connect(_on_chunk_unloaded)
+		if terrain_manager.has_signal("spawn_zones_ready"):
+			terrain_manager.spawn_zones_ready.connect(_on_spawn_zones_ready)
 	
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
@@ -1924,6 +1929,79 @@ func load_save_data(data: Dictionary):
 	DebugManager.log_vegetation("Loaded %d chopped, %d removed grass, %d removed rocks" % [
 		chopped_trees.size(), removed_grass.size(), removed_rocks.size()
 	])
+	
+	# DEFERRED: Set flag to regenerate vegetation when terrain is fully ready
+	# This is triggered by spawn_zones_ready signal (after terrain modifications applied)
+	pending_vegetation_regen = true
+	DebugManager.log_vegetation("Vegetation regeneration pending - waiting for spawn_zones_ready")
+
+## Called when terrain confirms spawn zones are ready (after modifications applied)
+func _on_spawn_zones_ready(_positions: Array) -> void:
+	if pending_vegetation_regen:
+		pending_vegetation_regen = false
+		DebugManager.log_vegetation("spawn_zones_ready received - regenerating vegetation now")
+		_regenerate_all_vegetation()
+
+func _regenerate_all_vegetation():
+	"""Regenerate all visible vegetation to match loaded save state."""
+	# Store coords to regenerate
+	var grass_coords = chunk_grass_data.keys().duplicate()
+	var rock_coords = chunk_rock_data.keys().duplicate()
+	var tree_coords = chunk_tree_data.keys().duplicate()
+	
+	# Clear old grass data and regenerate
+	for coord in grass_coords:
+		if chunk_grass_data.has(coord):
+			var data = chunk_grass_data[coord]
+			if data.has("multimesh") and is_instance_valid(data.multimesh):
+				data.multimesh.queue_free()
+			# Remove all active grass colliders for this chunk
+			for grass in data.get("grass_list", []):
+				var key = _grass_key(coord, grass.index)
+				if active_grass_colliders.has(key):
+					_return_grass_collider_to_pool(active_grass_colliders[key])
+					active_grass_colliders.erase(key)
+			chunk_grass_data.erase(coord)
+	
+	# Clear old rock data and regenerate
+	for coord in rock_coords:
+		if chunk_rock_data.has(coord):
+			var data = chunk_rock_data[coord]
+			if data.has("multimesh") and is_instance_valid(data.multimesh):
+				data.multimesh.queue_free()
+			for rock in data.get("rock_list", []):
+				var key = _rock_key(coord, rock.index)
+				if active_rock_colliders.has(key):
+					_return_rock_collider_to_pool(active_rock_colliders[key])
+					active_rock_colliders.erase(key)
+			chunk_rock_data.erase(coord)
+	
+	# Clear old tree data and regenerate
+	for coord in tree_coords:
+		if chunk_tree_data.has(coord):
+			var data = chunk_tree_data[coord]
+			if data.has("multimesh") and is_instance_valid(data.multimesh):
+				data.multimesh.queue_free()
+			for tree in data.get("trees", []):
+				var key = _tree_key(coord, tree.index)
+				if active_colliders.has(key):
+					_return_collider_to_pool(active_colliders[key])
+					active_colliders.erase(key)
+			chunk_tree_data.erase(coord)
+	
+	# Re-queue all chunks for vegetation generation
+	for coord in grass_coords:
+		if terrain_manager.active_chunks.has(Vector3i(coord.x, 0, coord.y)):
+			var chunk_data = terrain_manager.active_chunks[Vector3i(coord.x, 0, coord.y)]
+			if chunk_data and chunk_data.node_terrain and is_instance_valid(chunk_data.node_terrain):
+				pending_chunks.append({
+					"coord": coord,
+					"chunk_node": chunk_data.node_terrain,
+					"frames_waited": 0,
+					"stage": 0  # 0=Trees, 1=Grass, 2=Rocks
+				})
+	
+	DebugManager.log_vegetation("Regenerating %d vegetation chunks after load" % grass_coords.size())
 
 func _apply_chopped_trees():
 	# Mark trees as dead based on chopped_trees dictionary
