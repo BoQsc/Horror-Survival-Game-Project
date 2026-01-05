@@ -42,9 +42,6 @@ var is_loading_game: bool = false
 # EntityManager checks this in _ready() to skip procedural spawning during QuickLoad
 static var is_quickloading: bool = false
 
-# Debug flag - set to true to enable [ZOMBIE_DUP] logging for save/load debugging
-const DEBUG_ZOMBIE_LOAD: bool = false
-
 func _ready():
 	# Add to group for dynamic lookup by HUD
 	add_to_group("save_manager")
@@ -289,15 +286,8 @@ func _on_spawn_zones_ready(positions: Array):
 	
 	# CRITICAL FIX: Always call load_save_data to clear existing zombies
 	# Even if no entities are saved, we need to clean up procedural spawns
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] entity_manager ref: %s" % entity_manager)
-	if entity_manager:
-		if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] Calling entity_manager.load_save_data()")
-		if entity_manager.has_method("load_save_data"):
-			entity_manager.load_save_data(pending_entity_data)
-		else:
-			if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] entity_manager doesn't have load_save_data method!")
-	else:
-		if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] entity_manager is NULL!")
+	if entity_manager and entity_manager.has_method("load_save_data"):
+		entity_manager.load_save_data(pending_entity_data)
 	
 	# Spawn queued vehicles now that terrain is ready
 	if not pending_vehicle_data.is_empty():

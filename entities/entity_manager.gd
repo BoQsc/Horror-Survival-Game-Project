@@ -5,6 +5,14 @@ extends Node3D
 signal entity_spawned(entity: Node3D)
 signal entity_despawned(entity: Node3D)
 
+# Debug signals - connect from external observer for debugging
+signal debug_load_started()
+signal debug_entities_cleared(killed_count: int)
+signal debug_entities_loaded(loaded_count: int, active_total: int)
+signal debug_chunk_spawn_blocked(chunk: Vector2i, reason: String)
+signal debug_chunk_spawn_processed(chunk: Vector2i)
+signal debug_load_complete(zombies_in_group: int, active_entities: int)
+
 @export var terrain_manager: Node3D # Reference to ChunkManager for terrain interaction
 @export var max_entities: int = 50 # Maximum number of active entities
 @export var spawn_radius: float = 50.0 # Range around player where entities can spawn
@@ -35,9 +43,6 @@ var spawned_chunks: Dictionary = {} # Vector2i -> true (tracks which chunks alre
 var zombie_scene: PackedScene = null # Cached zombie scene
 var biome_noise: FastNoiseLite = null # For biome detection (must match GPU)
 var is_loading_save: bool = false # Flag to disable procedural spawning during save load
-
-# Debug flag - set to true to enable [ZOMBIE_DUP] logging for save/load debugging
-const DEBUG_ZOMBIE_LOAD: bool = false
 
 # Biome-based spawn rules: biome_id -> { "zombie_chance": float }
 # Biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
@@ -516,12 +521,11 @@ func load_save_data(data: Dictionary):
 		if is_instance_valid(zombie):
 			zombie.free()  # Immediate deletion, not deferred
 			zombies_killed += 1
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] Killed %d zombies in group before load" % zombies_killed)
+	debug_entities_cleared.emit(zombies_killed)
 	
 	# Clear tracking arrays since we already freed the entities
 	active_entities.clear()
 	frozen_entities.clear()
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] Cleared active_entities and frozen_entities")
 	
 	# Restore spawned_chunks tracking to prevent duplicate procedural spawns
 	spawned_chunks.clear()
@@ -532,11 +536,11 @@ func load_save_data(data: Dictionary):
 		DebugManager.log_entities("Restored %d spawned chunk records" % spawned_chunks.size())
 	
 	if not data.has("entities"):
-		if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] No entities in save data")
+		debug_entities_loaded.emit(0, 0)
 		call_deferred("_finish_load")
 		return
 	
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] Loading %d entities from save..." % data.entities.size())
+	debug_load_started.emit()
 	for ent_data in data.entities:
 		var pos = Vector3(ent_data.position[0], ent_data.position[1], ent_data.position[2])
 		var rotation_y = ent_data.get("rotation", 0.0)
@@ -555,7 +559,7 @@ func load_save_data(data: Dictionary):
 			if ent_data.has("type"):
 				entity.set_meta("entity_type", ent_data.type)
 	
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] Loaded %d entities, active_entities now: %d" % [data.entities.size(), active_entities.size()])
+	debug_entities_loaded.emit(data.entities.size(), active_entities.size())
 	DebugManager.log_entities("Loaded %d entities" % data.entities.size())
 	
 	# Re-enable procedural spawning after load completes
@@ -564,12 +568,11 @@ func load_save_data(data: Dictionary):
 ## Called after load completes to re-enable procedural spawning
 func _finish_load():
 	var zombies_in_group = get_tree().get_nodes_in_group("zombies").size()
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] _finish_load called - zombies in group: %d, active_entities: %d" % [zombies_in_group, active_entities.size()])
+	debug_load_complete.emit(zombies_in_group, active_entities.size())
 	is_loading_save = false
 	# Setup procedural spawning now (we skipped it in _ready during QuickLoad)
 	if procedural_spawning_enabled and zombie_scene == null:
 		_setup_procedural_spawning()
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] _finish_load complete - is_loading_save now FALSE")
 	DebugManager.log_entities("Entity load complete - procedural spawning re-enabled")
 
 # ============ PROCEDURAL SPAWNING ============
@@ -632,11 +635,10 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	
 	# Skip procedural spawning if currently loading a save (but chunk is still marked)
 	if is_loading_save:
-		if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] Chunk %s skipped - is_loading_save=true" % chunk_key)
+		debug_chunk_spawn_blocked.emit(chunk_key, "loading_save")
 		return
 	
-	# DEBUG: Log every chunk we process
-	if DEBUG_ZOMBIE_LOAD: print("[ZOMBIE_DUP] Processing chunk %s for spawns (is_loading_save=%s)" % [chunk_key, is_loading_save])
+	debug_chunk_spawn_processed.emit(chunk_key)
 	DebugManager.log_entities("Processing chunk %s for spawns" % chunk_key)
 	
 	# Deterministic RNG based on chunk coordinate
