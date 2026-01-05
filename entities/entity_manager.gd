@@ -58,6 +58,14 @@ func _ready():
 	if not player:
 		push_warning("EntityManager: Player not found in 'player' group!")
 	
+	# CRITICAL FIX: Check if we're in the middle of a QuickLoad
+	# If so, skip procedural spawning - load_save_data will handle entities
+	var save_manager = get_node_or_null("/root/SaveManager")
+	if save_manager and save_manager.get("is_quickloading"):
+		DebugManager.log_entities("QuickLoad detected - skipping procedural spawning setup")
+		is_loading_save = true  # Also block procedural spawns via the flag
+		return
+	
 	# Setup procedural spawning
 	_setup_procedural_spawning()
 
@@ -489,8 +497,28 @@ func load_save_data(data: Dictionary):
 	# Disable procedural spawning during load to prevent duplicates
 	is_loading_save = true
 	
-	# Despawn all existing entities first
-	despawn_all()
+	# CRITICAL FIX: Clear any pending procedural spawns queued during scene load
+	# These were queued BEFORE is_loading_save was set, so they would duplicate!
+	pending_spawns.clear()
+	
+	# CRITICAL FIX: Clear dormant entities - these get populated by despawn_all()
+	# and would be respawned by _check_dormant_respawns(), duplicating saved zombies!
+	dormant_entities.clear()
+	
+	# NUCLEAR OPTION: Kill ALL zombies by group, not just those in active_entities
+	# This catches any zombies that spawned via pending_spawns or other paths
+	# IMPORTANT: Use free() not queue_free() for IMMEDIATE removal
+	var zombies_killed = 0
+	for zombie in get_tree().get_nodes_in_group("zombies").duplicate():  # duplicate to avoid modifying during iteration
+		if is_instance_valid(zombie):
+			zombie.free()  # Immediate deletion, not deferred
+			zombies_killed += 1
+	print("[ZOMBIE_DUP] Killed %d zombies in group before load" % zombies_killed)
+	
+	# Clear tracking arrays since we already freed the entities
+	active_entities.clear()
+	frozen_entities.clear()
+	print("[ZOMBIE_DUP] Cleared active_entities and frozen_entities")
 	
 	# Restore spawned_chunks tracking to prevent duplicate procedural spawns
 	spawned_chunks.clear()
@@ -501,8 +529,11 @@ func load_save_data(data: Dictionary):
 		DebugManager.log_entities("Restored %d spawned chunk records" % spawned_chunks.size())
 	
 	if not data.has("entities"):
+		print("[ZOMBIE_DUP] No entities in save data")
+		call_deferred("_finish_load")
 		return
 	
+	print("[ZOMBIE_DUP] Loading %d entities from save..." % data.entities.size())
 	for ent_data in data.entities:
 		var pos = Vector3(ent_data.position[0], ent_data.position[1], ent_data.position[2])
 		var rotation_y = ent_data.get("rotation", 0.0)
@@ -521,6 +552,7 @@ func load_save_data(data: Dictionary):
 			if ent_data.has("type"):
 				entity.set_meta("entity_type", ent_data.type)
 	
+	print("[ZOMBIE_DUP] Loaded %d entities, active_entities now: %d" % [data.entities.size(), active_entities.size()])
 	DebugManager.log_entities("Loaded %d entities" % data.entities.size())
 	
 	# Re-enable procedural spawning after load completes
@@ -528,7 +560,13 @@ func load_save_data(data: Dictionary):
 
 ## Called after load completes to re-enable procedural spawning
 func _finish_load():
+	var zombies_in_group = get_tree().get_nodes_in_group("zombies").size()
+	print("[ZOMBIE_DUP] _finish_load called - zombies in group: %d, active_entities: %d" % [zombies_in_group, active_entities.size()])
 	is_loading_save = false
+	# Setup procedural spawning now (we skipped it in _ready during QuickLoad)
+	if procedural_spawning_enabled and zombie_scene == null:
+		_setup_procedural_spawning()
+	print("[ZOMBIE_DUP] _finish_load complete - is_loading_save now FALSE")
 	DebugManager.log_entities("Entity load complete - procedural spawning re-enabled")
 
 # ============ PROCEDURAL SPAWNING ============
@@ -559,8 +597,13 @@ func _setup_procedural_spawning():
 		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
-		terrain_manager.chunk_generated.connect(_on_chunk_generated)
-		DebugManager.log_entities("Connected to chunk_generated signal - procedural spawning active")
+		# CRITICAL FIX: Check if already connected to prevent duplicate connections during QuickLoad
+		# Without this check, scene reload creates duplicate connections = zombies spawn twice!
+		if not terrain_manager.chunk_generated.is_connected(_on_chunk_generated):
+			terrain_manager.chunk_generated.connect(_on_chunk_generated)
+			DebugManager.log_entities("Connected to chunk_generated signal - procedural spawning active")
+		else:
+			DebugManager.log_entities("Already connected to chunk_generated - skipping duplicate")
 	else:
 		push_warning("[EntityManager] Could not connect to terrain - procedural spawning disabled")
 		procedural_spawning_enabled = false
@@ -568,10 +611,6 @@ func _setup_procedural_spawning():
 ## Called when a terrain chunk is generated
 func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	if not procedural_spawning_enabled:
-		return
-	
-	# Skip procedural spawning if currently loading a save
-	if is_loading_save:
 		return
 	
 	# Only spawn on surface chunks (Y=0)
@@ -584,10 +623,17 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	if spawned_chunks.has(chunk_key):
 		return
 	
-	# Mark chunk as processed immediately (signal only fires once)
+	# CRITICAL: Mark chunk as processed FIRST, before is_loading_save check
+	# This prevents duplicate spawning after load completes
 	spawned_chunks[chunk_key] = true
 	
+	# Skip procedural spawning if currently loading a save (but chunk is still marked)
+	if is_loading_save:
+		print("[ZOMBIE_DUP] Chunk %s skipped - is_loading_save=true" % chunk_key)
+		return
+	
 	# DEBUG: Log every chunk we process
+	print("[ZOMBIE_DUP] Processing chunk %s for spawns (is_loading_save=%s)" % [chunk_key, is_loading_save])
 	DebugManager.log_entities("Processing chunk %s for spawns" % chunk_key)
 	
 	# Deterministic RNG based on chunk coordinate

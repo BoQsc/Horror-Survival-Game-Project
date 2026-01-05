@@ -38,6 +38,10 @@ var pending_vehicle_data: Dictionary = {}
 var pending_player_position_restore: bool = false  # Fix: defer position until terrain collision ready
 var is_loading_game: bool = false
 
+# CRITICAL: Static flag that persists through scene reload
+# EntityManager checks this in _ready() to skip procedural spawning during QuickLoad
+static var is_quickloading: bool = false
+
 func _ready():
 	# Add to group for dynamic lookup by HUD
 	add_to_group("save_manager")
@@ -170,6 +174,8 @@ func save_game(path: String) -> bool:
 
 ## Load game from specified path
 func load_game(path: String) -> bool:
+	# CRITICAL: Set flag BEFORE anything else to prevent procedural spawning during reload
+	is_quickloading = true
 	DebugManager.log_save("Loading from: %s" % path)
 	
 	if not FileAccess.file_exists(path):
@@ -218,6 +224,14 @@ func load_game(path: String) -> bool:
 	# Set loading flag - entities will be deferred until terrain is ready
 	is_loading_game = true
 	pending_entity_data = save_data.get("entities", {})
+	
+	# CRITICAL FIX: Disable procedural entity spawning IMMEDIATELY before terrain regenerates
+	# Otherwise chunk_generated signals queue procedural zombies that duplicate saved ones
+	if entity_manager:
+		entity_manager.is_loading_save = true
+		if "pending_spawns" in entity_manager:
+			entity_manager.pending_spawns.clear()
+		DebugManager.log_save("Blocked procedural spawning before terrain reload")
 	
 	_load_player_data(save_data.get("player", {}))
 	_load_terrain_data(save_data.get("terrain_modifications", {}))
@@ -270,10 +284,17 @@ func _on_spawn_zones_ready(positions: Array):
 			player.rotation = _array_to_vec3(pending_player_data.rotation)
 		pending_player_position_restore = false
 	
-	# Spawn queued entities now that terrain is ready
-	if not pending_entity_data.is_empty() and entity_manager:
+	# CRITICAL FIX: Always call load_save_data to clear existing zombies
+	# Even if no entities are saved, we need to clean up procedural spawns
+	print("[ZOMBIE_DUP] entity_manager ref: %s" % entity_manager)
+	if entity_manager:
+		print("[ZOMBIE_DUP] Calling entity_manager.load_save_data()")
 		if entity_manager.has_method("load_save_data"):
 			entity_manager.load_save_data(pending_entity_data)
+		else:
+			print("[ZOMBIE_DUP] entity_manager doesn't have load_save_data method!")
+	else:
+		print("[ZOMBIE_DUP] entity_manager is NULL!")
 	
 	# Spawn queued vehicles now that terrain is ready
 	if not pending_vehicle_data.is_empty():
@@ -284,6 +305,7 @@ func _on_spawn_zones_ready(positions: Array):
 	pending_entity_data = {}
 	pending_vehicle_data = {}
 	is_loading_game = false
+	is_quickloading = false  # Clear the flag now that load is complete
 
 ## Get list of available save files
 func get_save_files() -> Array[String]:
