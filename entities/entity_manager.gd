@@ -478,6 +478,10 @@ func get_save_data() -> Dictionary:
 		if not is_instance_valid(entity):
 			continue
 		
+		# Skip dead entities - they're pending deletion and shouldn't be saved
+		if "current_state" in entity and entity.current_state == "DEAD":
+			continue
+		
 		var entity_data = {
 			"position": [entity.global_position.x, entity.global_position.y, entity.global_position.z],
 			"rotation": entity.rotation.y,
