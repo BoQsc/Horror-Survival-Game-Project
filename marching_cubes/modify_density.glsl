@@ -30,8 +30,6 @@ void main() {
     vec3 local_pos = vec3(id);
     vec3 world_pos = local_pos + vec3(params.chunk_offset.xyz);
     
-    // Store original density BEFORE modification (for shovel spill prevention)
-    float original_density = density_buffer.values[index];
     
     bool modified = false;
     
@@ -49,8 +47,8 @@ void main() {
             density_buffer.values[index] = params.brush_value;
             modified = true;
         }
-    } else if (params.shape_type == 1 || params.shape_type == 3) {
-        // Box Shape (Hard edges) - Type 1 (Standard) and Type 3 (Shovel)
+    } else if (params.shape_type == 1) {
+        // Box Shape (Hard edges)
         vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
         float max_dist = max(dist_vec.x, max(dist_vec.y, dist_vec.z));
         
@@ -83,13 +81,7 @@ void main() {
         
         bool should_write = false;
         
-        if (params.shape_type == 3) {
-            // SHOVEL (Shape 3): Mesh-aligned sampling + spill prevention
-            // Write to area sampled by cubes, BUT only if voxel was originally AIR
-            vec3 sample_offset = world_pos - params.brush_pos.xyz + vec3(0.5);
-            float sample_dist = max(abs(sample_offset.x), max(abs(sample_offset.y), abs(sample_offset.z)));
-            should_write = (sample_dist <= 1.0 && original_density > 0.0);
-        } else if (brush_radius < 1.0) {
+        if (brush_radius < 1.0) {
             // SMALL BRUSH: material matches density area exactly (no extension)
             // This prevents smudging into neighboring voxels
             should_write = modified;
