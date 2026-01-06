@@ -162,10 +162,8 @@ func _update_targeting() -> void:
 	has_target = true
 	
 	# Calculate target voxel position (grid-snapped)
-	# For digging: step INTO the surface
-	# For placing: step OUT from surface
-	# We show the "place" position by default
-	var pos = hit.position + hit.normal * 0.1
+	# Use exact hit position for accurate crosshair targeting
+	var pos = hit.position + hit.normal   # Offset one full block away from surface
 	current_target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
 	# Update selection box - position at corner to match box shape placement
@@ -207,8 +205,9 @@ func do_secondary_action() -> void:
 	if hit.is_empty():
 		return
 	
-	# Fill: step AWAY from surface to place adjacent voxel
-	var pos = hit.position + hit.normal * 0.1
+	# Fill: use same calculation as cursor for accuracy
+	# Use exact hit position + full block offset for precise targeting
+	var pos = hit.position + hit.normal   # One block away from surface
 	var target = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
 	# Get material ID (add 100 offset for player-placed materials)
