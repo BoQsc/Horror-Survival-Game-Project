@@ -54,9 +54,8 @@ func _find_terrain_manager() -> void:
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
-	var box_mesh = BoxMesh.new()
-	box_mesh.size = Vector3(1.02, 1.02, 1.02)  # Slightly larger to avoid z-fighting
-	selection_box.mesh = box_mesh
+	# Use generated Diamond (Octahedron) mesh instead of BoxMesh
+	selection_box.mesh = _create_diamond_mesh()
 	
 	var material = StandardMaterial3D.new()
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -67,6 +66,38 @@ func _create_selection_box() -> void:
 	selection_box.visible = false
 	
 	get_tree().root.add_child.call_deferred(selection_box)
+
+func _create_diamond_mesh() -> ArrayMesh:
+	var st = SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	
+	# Octahedron vertices (Diamond shape)
+	# Size 0.6 from center = 1.2 total width (fits grid 1.0 nicely with logic)
+	# Adjusted to match BoxMesh sizing roughly (0.5 + small padding)
+	# BoxMesh was 1.02. Diamond endpoints being at 0.51 will touch the boundary.
+	var s = 0.51
+	
+	var top = Vector3(0, s, 0)
+	var bot = Vector3(0, -s, 0)
+	var p1 = Vector3(s, 0, 0)  # Right
+	var p2 = Vector3(0, 0, s)  # Back
+	var p3 = Vector3(-s, 0, 0) # Left
+	var p4 = Vector3(0, 0, -s) # Front
+	
+	# Top Pyramid
+	st.add_vertex(p1); st.add_vertex(top); st.add_vertex(p2)
+	st.add_vertex(p2); st.add_vertex(top); st.add_vertex(p3)
+	st.add_vertex(p3); st.add_vertex(top); st.add_vertex(p4)
+	st.add_vertex(p4); st.add_vertex(top); st.add_vertex(p1)
+	
+	# Bottom Pyramid
+	st.add_vertex(p2); st.add_vertex(bot); st.add_vertex(p1)
+	st.add_vertex(p3); st.add_vertex(bot); st.add_vertex(p2)
+	st.add_vertex(p4); st.add_vertex(bot); st.add_vertex(p3)
+	st.add_vertex(p1); st.add_vertex(bot); st.add_vertex(p4)
+	
+	st.generate_normals()
+	return st.commit()
 
 func _process(_delta: float) -> void:
 	if not is_active or not player:
