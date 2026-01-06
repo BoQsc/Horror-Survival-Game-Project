@@ -162,12 +162,12 @@ func _update_targeting() -> void:
 	has_target = true
 	
 	# Calculate target voxel position (grid-snapped)
-	# Use exact hit position for accurate crosshair targeting
-	var pos = hit.position + hit.normal   # Offset one full block away from surface
+	# Use small offset to step away from surface, then snap to grid
+	var pos = hit.position + hit.normal * 0.1  # Small offset to detect adjacent voxel
 	current_target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
-	# Update selection box - position at corner to match box shape placement
-	selection_box.global_position = current_target_pos
+	# Update selection box - position at CENTER of voxel (diamond is centered at origin)
+	selection_box.global_position = current_target_pos + Vector3(0.5, 0.5, 0.5)
 	selection_box.visible = true
 
 ## Call this from combat_system for left-click
@@ -206,8 +206,8 @@ func do_secondary_action() -> void:
 		return
 	
 	# Fill: use same calculation as cursor for accuracy
-	# Use exact hit position + full block offset for precise targeting
-	var pos = hit.position + hit.normal   # One block away from surface
+	# Use small offset to detect adjacent voxel, matching cursor logic
+	var pos = hit.position + hit.normal * 0.1  # Small offset to detect adjacent voxel
 	var target = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
 	# Get material ID (add 100 offset for player-placed materials)
