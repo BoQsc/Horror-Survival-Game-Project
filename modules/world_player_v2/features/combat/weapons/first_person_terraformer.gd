@@ -168,8 +168,8 @@ func _update_targeting() -> void:
 	var pos = hit.position + hit.normal * 0.1
 	current_target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
-	# Update selection box
-	selection_box.global_position = current_target_pos + Vector3(0.5, 0.5, 0.5)
+	# Update selection box - position at corner to match box shape placement
+	selection_box.global_position = current_target_pos
 	selection_box.visible = true
 
 ## Call this from combat_system for left-click
@@ -216,6 +216,7 @@ func do_secondary_action() -> void:
 	
 	# Fill with box shape (value < 0 = add terrain)
 	# Use -10.0 for "Hard Fill" (Instant solid)
+	print("SHOVEL_DEBUG: modify_terrain(pos=%s, radius=%.2f, value=%.2f, shape=%d, layer=%d, mat=%d)" % [target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id])
 	terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
 	print("SHOVEL: Fill at %s with %s (mat_id=%d)" % [target, MATERIALS[material_index].name, mat_id])
 
