@@ -153,33 +153,47 @@ func _update_targeting() -> void:
 	if not player or not selection_box:
 		return
 	
-	var hit = _raycast(RAYCAST_DISTANCE)
-	if hit.is_empty():
-		selection_box.visible = false
-		has_target = false
-		return
+	# Short raycast to detect holes (empty space at close range)
+	var close_hit = _raycast(2.0)
+	var is_hole = false
 	
-	has_target = true
+	if close_hit.is_empty():
+		is_hole = true
+	elif player and player.has_method("get_global_position"):
+		var dist = player.global_position.distance_to(close_hit.position)
+		is_hole = (dist > 1.5)
 	
-	# Match the placement logic: find hit voxel, then move 1 voxel in normal direction
-	var hit_voxel = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
-	
-	# Determine primary normal direction
-	var normal = hit.normal
-	var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
-	var primary_normal = Vector3.ZERO
-	
-	if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
-		primary_normal.x = sign(normal.x)
-	elif abs_normal.y > abs_normal.z:
-		primary_normal.y = sign(normal.y)
+	if is_hole:
+		# HOLE FILLING MODE: Place at 2m in front
+		var camera = player.get_node_or_null("Head/Camera3D")
+		if not camera:
+			camera = player.get_node_or_null("Camera3D")
+		if not camera:
+			selection_box.visible = false
+			has_target = false
+			return
+		has_target = true
+		var forward_pos = camera.global_position - camera.global_transform.basis.z * 2.0
+		current_target_pos = Vector3(floor(forward_pos.x), floor(forward_pos.y), floor(forward_pos.z))
 	else:
-		primary_normal.z = sign(normal.z)
+		# SURFACE MODE: Use close hit
+		has_target = true
+		var hit_voxel = Vector3(floor(close_hit.position.x), floor(close_hit.position.y), floor(close_hit.position.z))
+		
+		var normal = close_hit.normal
+		var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
+		var primary_normal = Vector3.ZERO
+		
+		if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
+			primary_normal.x = sign(normal.x)
+		elif abs_normal.y > abs_normal.z:
+			primary_normal.y = sign(normal.y)
+		else:
+			primary_normal.z = sign(normal.z)
+		
+		current_target_pos = hit_voxel + primary_normal
 	
-	# Calculate target (1 voxel away from hit)
-	current_target_pos = hit_voxel + primary_normal
-	
-	# Update selection box - position at CENTER of voxel
+	# Update selection box
 	selection_box.global_position = current_target_pos + Vector3(0.5, 0.5, 0.5)
 	selection_box.visible = true
 
@@ -207,42 +221,55 @@ func do_primary_action() -> void:
 
 ## Call this from combat_system for right-click
 func do_secondary_action() -> void:
-	if not is_active or not terrain_manager:
+	if not is_active or not terrain_manager or not player:
 		return
 	
-	# Emit animation signal for visual shovel
+	# Emit animation signal
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.axe_fired.emit()
 	
-	var hit = _raycast(RAYCAST_DISTANCE)
-	if hit.is_empty():
-		return
+	# Use same hole detection as cursor
+	var close_hit = _raycast(2.0)
+	var is_hole = false
 	
-	# NEW APPROACH: Deterministic voxel-based placement
-	# 1. Find which voxel we hit (the existing block)
-	var hit_voxel = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
+	if close_hit.is_empty():
+		is_hole = true
+	elif player and player.has_method("get_global_position"):
+		var dist = player.global_position.distance_to(close_hit.position)
+		is_hole = (dist > 1.5)
 	
-	# 2. Determine primary normal direction (choose strongest component)
-	var normal = hit.normal
-	var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
-	var primary_normal = Vector3.ZERO
+	var target: Vector3
 	
-	if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
-		primary_normal.x = sign(normal.x)  # X is strongest
-	elif abs_normal.y > abs_normal.z:
-		primary_normal.y = sign(normal.y)  # Y is strongest
+	if is_hole:
+		# HOLE FILLING: Place at 2m in front
+		var camera = player.get_node_or_null("Head/Camera3D")
+		if not camera:
+			camera = player.get_node_or_null("Camera3D")
+		if not camera:
+			return
+		var forward_pos = camera.global_position - camera.global_transform.basis.z * 2.0
+		target = Vector3(floor(forward_pos.x), floor(forward_pos.y), floor(forward_pos.z))
 	else:
-		primary_normal.z = sign(normal.z)  # Z is strongest
-	
-	# 3. Place exactly 1 voxel away in the normal direction
-	var target = hit_voxel + primary_normal
-	
-	# Get material ID
-	var mat_id = MATERIALS[material_index].id + 100
+		# SURFACE PLACEMENT
+		var hit_voxel = Vector3(floor(close_hit.position.x), floor(close_hit.position.y), floor(close_hit.position.z))
+		
+		var normal = close_hit.normal
+		var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
+		var primary_normal = Vector3.ZERO
+		
+		if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
+			primary_normal.x = sign(normal.x)
+		elif abs_normal.y > abs_normal.z:
+			primary_normal.y = sign(normal.y)
+		else:
+			primary_normal.z = sign(normal.z)
+		
+		target = hit_voxel + primary_normal
 	
 	# Place terrain
+	var mat_id = MATERIALS[material_index].id + 100
 	terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
-	print("SHOVEL: Placed at %s (from hit_voxel=%s + normal=%s)" % [target, hit_voxel, primary_normal])
+	print("SHOVEL: Placed at %s" % target)
 
 func _raycast(distance: float) -> Dictionary:
 	if not player:
