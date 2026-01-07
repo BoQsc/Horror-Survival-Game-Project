@@ -1,7 +1,7 @@
 [gd_scene load_steps=19 format=3]
 
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
-[ext_resource type="Script" uid="uid://c5lcuqmtp5d3m" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
+[ext_resource type="PackedScene" uid="uid://b8dotn0iuivrd" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
+[ext_resource type="Script" uid="uid://d2oq01pxsr6xj" path="res://marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://marching_cubes/roads/road_manager.gd" id="7_roads"]
@@ -12,7 +12,7 @@
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://building_system/debug_teleporter.gd" id="13_debug"]
 [ext_resource type="PackedScene" path="res://modules/world_player/ui_loading_screen/loading_screen.tscn" id="14_loading"]
-[ext_resource type="Script" path="res://tests/zombie_count_bot.gd" id="15_bot"]
+[ext_resource type="Script" uid="uid://c0jrc1pld8jpq" path="res://addons/tests/zombie_count_bot.gd" id="15_bot"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
