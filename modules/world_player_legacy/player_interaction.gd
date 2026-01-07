@@ -498,7 +498,7 @@ func _unhandled_input(event):
 		elif event.keycode == KEY_F11:
 			# F11: Spawn zombie
 			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
-				var zombie_scene = load("res://entities/zombie_base.tscn")
+				var zombie_scene = load("res://game/entities/zombie_base.tscn")
 				if zombie_scene:
 					var zombie = entity_manager.spawn_entity_near_player(zombie_scene)
 					if zombie:

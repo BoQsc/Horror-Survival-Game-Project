@@ -587,8 +587,8 @@ func _setup_procedural_spawning():
 		return
 	
 	# Load zombie scene for procedural spawning
-	if ResourceLoader.exists("res://entities/zombie_base.tscn"):
-		zombie_scene = load("res://entities/zombie_base.tscn")
+	if ResourceLoader.exists("res://game/entities/zombie_base.tscn"):
+		zombie_scene = load("res://game/entities/zombie_base.tscn")
 		DebugManager.log_entities("Loaded zombie scene for procedural spawning")
 	else:
 		push_warning("[EntityManager] Zombie scene not found - procedural spawning disabled")

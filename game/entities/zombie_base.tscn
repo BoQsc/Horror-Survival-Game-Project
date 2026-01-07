@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3 uid="uid://7iymman0ho4w"]
 
-[ext_resource type="Script" uid="uid://bg3r2ledgpqpk" path="res://entities/zombie_base.gd" id="1_zombie"]
+[ext_resource type="Script" uid="uid://bg3r2ledgpqpk" path="res://game/entities/zombie_base.gd" id="1_zombie"]
 [ext_resource type="PackedScene" uid="uid://bu2dogmupukq3" path="res://models/entities/zombie/1/male_zombie.glb" id="2_model"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]

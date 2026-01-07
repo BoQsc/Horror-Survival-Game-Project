@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3 uid="uid://c1v5ld7qj6rfe"]
 
-[ext_resource type="Script" path="res://entities/entity_base.gd" id="1"]
+[ext_resource type="Script" uid="uid://x8715partdba" path="res://game/entities/entity_base.gd" id="1"]
 
 [sub_resource type="CapsuleShape3D" id="1"]
 radius = 0.4
