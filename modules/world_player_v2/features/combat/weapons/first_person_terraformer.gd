@@ -164,12 +164,17 @@ func _update_targeting() -> void:
 	# Round hit position to nearest voxel - feels most direct/responsive
 	var nearest = Vector3(round(hit.position.x), round(hit.position.y), round(hit.position.z))
 	
-	# Offset 1 unit in normal direction (use sign to get direction)
-	var dir = Vector3(
-		1 if hit.normal.x > 0.3 else (-1 if hit.normal.x < -0.3 else 0),
-		1 if hit.normal.y > 0.3 else (-1 if hit.normal.y < -0.3 else 0),
-		1 if hit.normal.z > 0.3 else (-1 if hit.normal.z < -0.3 else 0)
-	)
+	# Get strongest normal axis only (prevents diagonal jumps)
+	var abs_normal = Vector3(abs(hit.normal.x), abs(hit.normal.y), abs(hit.normal.z))
+	var max_component = max(abs_normal.x, max(abs_normal.y, abs_normal.z))
+	
+	var dir = Vector3.ZERO
+	if abs_normal.x == max_component:
+		dir.x = sign(hit.normal.x)
+	elif abs_normal.y == max_component:
+		dir.y = sign(hit.normal.y)
+	else:
+		dir.z = sign(hit.normal.z)
 	
 	current_target_pos = nearest + dir
 	
