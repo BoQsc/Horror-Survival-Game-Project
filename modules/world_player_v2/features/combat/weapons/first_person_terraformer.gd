@@ -161,12 +161,25 @@ func _update_targeting() -> void:
 	
 	has_target = true
 	
-	# Calculate target voxel position (grid-snapped)
-	# Use small offset to step away from surface, then snap to grid
-	var pos = hit.position + hit.normal * 0.1  # Small offset to detect adjacent voxel
-	current_target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
+	# Match the placement logic: find hit voxel, then move 1 voxel in normal direction
+	var hit_voxel = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
 	
-	# Update selection box - position at CENTER of voxel (diamond is centered at origin)
+	# Determine primary normal direction
+	var normal = hit.normal
+	var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
+	var primary_normal = Vector3.ZERO
+	
+	if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
+		primary_normal.x = sign(normal.x)
+	elif abs_normal.y > abs_normal.z:
+		primary_normal.y = sign(normal.y)
+	else:
+		primary_normal.z = sign(normal.z)
+	
+	# Calculate target (1 voxel away from hit)
+	current_target_pos = hit_voxel + primary_normal
+	
+	# Update selection box - position at CENTER of voxel
 	selection_box.global_position = current_target_pos + Vector3(0.5, 0.5, 0.5)
 	selection_box.visible = true
 
@@ -205,19 +218,31 @@ func do_secondary_action() -> void:
 	if hit.is_empty():
 		return
 	
-	# Fill: use same calculation as cursor for accuracy
-	# Use small offset to detect adjacent voxel, matching cursor logic
-	var pos = hit.position + hit.normal * 0.1  # Small offset to detect adjacent voxel
-	var target = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
+	# NEW APPROACH: Deterministic voxel-based placement
+	# 1. Find which voxel we hit (the existing block)
+	var hit_voxel = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
 	
-	# Get material ID (add 100 offset for player-placed materials)
+	# 2. Determine primary normal direction (choose strongest component)
+	var normal = hit.normal
+	var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
+	var primary_normal = Vector3.ZERO
+	
+	if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
+		primary_normal.x = sign(normal.x)  # X is strongest
+	elif abs_normal.y > abs_normal.z:
+		primary_normal.y = sign(normal.y)  # Y is strongest
+	else:
+		primary_normal.z = sign(normal.z)  # Z is strongest
+	
+	# 3. Place exactly 1 voxel away in the normal direction
+	var target = hit_voxel + primary_normal
+	
+	# Get material ID
 	var mat_id = MATERIALS[material_index].id + 100
 	
-	# Fill with box shape (value < 0 = add terrain)
-	# Use -10.0 for "Hard Fill" (Instant solid)
-	print("SHOVEL_DEBUG: modify_terrain(pos=%s, radius=%.2f, value=%.2f, shape=%d, layer=%d, mat=%d)" % [target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id])
+	# Place terrain
 	terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
-	print("SHOVEL: Fill at %s with %s (mat_id=%d)" % [target, MATERIALS[material_index].name, mat_id])
+	print("SHOVEL: Placed at %s (from hit_voxel=%s + normal=%s)" % [target, hit_voxel, primary_normal])
 
 func _raycast(distance: float) -> Dictionary:
 	if not player:
