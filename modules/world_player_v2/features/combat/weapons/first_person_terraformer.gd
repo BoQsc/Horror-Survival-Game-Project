@@ -167,8 +167,8 @@ func _update_targeting() -> void:
 	# Floor to discrete grid position
 	current_target_pos = Vector3(floor(placement_pos.x), floor(placement_pos.y), floor(placement_pos.z))
 	
-	# Show cursor at voxel center
-	selection_box.global_position = current_target_pos + Vector3(0.5, 0.5, 0.5)
+	# Show cursor at voxel center (voxels are centered at integer coordinates)
+	selection_box.global_position = current_target_pos
 	selection_box.visible = true
 
 ## Call this from combat_system for left-click
