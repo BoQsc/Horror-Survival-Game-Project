@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d2w3ps0w66kq7"
-path.s3tc="res://.godot/imported/hello_neighbor_reality_door_download_1.png-a0484603d4ccd1e6de54c0bf3b9dfc21.s3tc.ctex"
+uid="uid://s0aiynadad6"
+path.s3tc="res://.godot/imported/hello_neighbor_reality_door_download_4.png-7983152df9069d318a69c2c4d041c6d9.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "60eff818732760c259da2ccce8efc024"
+"md5": "a77bc93e8882c39910c7e9a92af9bfc5"
 }
 
 [deps]
 
-source_file="res://models/interactive_door/hello_neighbor_reality_door_download_1.png"
-dest_files=["res://.godot/imported/hello_neighbor_reality_door_download_1.png-a0484603d4ccd1e6de54c0bf3b9dfc21.s3tc.ctex"]
+source_file="res://models/objects/interactive_door/hello_neighbor_reality_door_download_4.png"
+dest_files=["res://.godot/imported/hello_neighbor_reality_door_download_4.png-7983152df9069d318a69c2c4d041c6d9.s3tc.ctex"]
 
 [params]
 

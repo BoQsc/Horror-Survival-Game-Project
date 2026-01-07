@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://biqf2y3w81huo"
-path="res://.godot/imported/hello_neighbor_reality_door_download.glb-80a7dec8aecd36274a801795f94646cc.scn"
+path="res://.godot/imported/hello_neighbor_reality_door_download.glb-0db672219a0c939748555688f779c1e7.scn"
 
 [deps]
 
-source_file="res://models/interactive_door/hello_neighbor_reality_door_download.glb"
-dest_files=["res://.godot/imported/hello_neighbor_reality_door_download.glb-80a7dec8aecd36274a801795f94646cc.scn"]
+source_file="res://models/objects/interactive_door/hello_neighbor_reality_door_download.glb"
+dest_files=["res://.godot/imported/hello_neighbor_reality_door_download.glb-0db672219a0c939748555688f779c1e7.scn"]
 
 [params]
 

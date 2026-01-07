@@ -27,7 +27,7 @@ var spawned_positions: Dictionary = {}
 var spawned_doors: Dictionary = {} # "x_z" -> door instance
 
 # Preload the interactive door scene
-const DOOR_SCENE = preload("res://models/interactive_door/interactive_door.tscn")
+const DOOR_SCENE = preload("res://models/objects/interactive_door/interactive_door.tscn")
 
 # Simple prefab definitions (relative block positions)
 # Block types: 1=Wood, 2=Stone, 3=Ramp, 4=Stairs

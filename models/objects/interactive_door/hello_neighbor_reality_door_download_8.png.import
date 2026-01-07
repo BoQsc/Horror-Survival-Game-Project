@@ -2,20 +2,20 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://n7xmeexk2gjv"
-path.s3tc="res://.godot/imported/hello_neighbor_reality_door_download_3.png-d3cd49b80b184e16aaa7a31c7d848873.s3tc.ctex"
+uid="uid://c8ud61j3qmhxd"
+path.s3tc="res://.godot/imported/hello_neighbor_reality_door_download_8.png-767f3057f41afba8ac8ea5ffcd93f79d.s3tc.ctex"
 metadata={
 "imported_formats": ["s3tc_bptc"],
 "vram_texture": true
 }
 generator_parameters={
-"md5": "3d81f68a6d5675895c8c135bf28e8049"
+"md5": "4a57ee91bfdf0a00bb6c08e165efd8ce"
 }
 
 [deps]
 
-source_file="res://models/interactive_door/hello_neighbor_reality_door_download_3.png"
-dest_files=["res://.godot/imported/hello_neighbor_reality_door_download_3.png-d3cd49b80b184e16aaa7a31c7d848873.s3tc.ctex"]
+source_file="res://models/objects/interactive_door/hello_neighbor_reality_door_download_8.png"
+dest_files=["res://.godot/imported/hello_neighbor_reality_door_download_8.png-767f3057f41afba8ac8ea5ffcd93f79d.s3tc.ctex"]
 
 [params]
 
@@ -25,12 +25,12 @@ compress/lossy_quality=0.7
 compress/uastc_level=0
 compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
-compress/normal_map=0
+compress/normal_map=1
 compress/channel_pack=0
 mipmaps/generate=true
 mipmaps/limit=-1
-roughness/mode=0
-roughness/src_normal=""
+roughness/mode=1
+roughness/src_normal="res://models/objects/interactive_door/hello_neighbor_reality_door_download_8.png"
 process/channel_remap/red=0
 process/channel_remap/green=1
 process/channel_remap/blue=2

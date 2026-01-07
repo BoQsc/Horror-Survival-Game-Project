@@ -22,7 +22,7 @@ const OBJECTS = {
 	},
 	4: {
 		"name": "Door",
-		"scene": "res://models/interactive_door/interactive_door.tscn",
+		"scene": "res://models/objects/interactive_door/interactive_door.tscn",
 		"size": Vector3i(1, 2, 1),
 	},
 	5: {

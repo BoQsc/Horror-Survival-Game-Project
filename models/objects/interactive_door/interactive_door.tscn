@@ -1,7 +1,7 @@
 [gd_scene load_steps=5 format=3 uid="uid://y0c2i7cobaf2"]
 
-[ext_resource type="PackedScene" uid="uid://biqf2y3w81huo" path="res://models/interactive_door/hello_neighbor_reality_door_download.glb" id="1_door"]
-[ext_resource type="Script" uid="uid://c73mi36ajpgu0" path="res://models/interactive_door/interactive_door.gd" id="2_script"]
+[ext_resource type="PackedScene" uid="uid://biqf2y3w81huo" path="res://models/objects/interactive_door/hello_neighbor_reality_door_download.glb" id="1_door"]
+[ext_resource type="Script" uid="uid://c73mi36ajpgu0" path="res://models/objects/interactive_door/interactive_door.gd" id="2_script"]
 
 [sub_resource type="ConcavePolygonShape3D" id="ConcavePolygonShape3D_cg8g3"]
 data = PackedVector3Array(-4.5522, -0.21959999, 0.0013, -4.5522, 0.21959999, 20.771, -4.5522, -0.21959999, 20.771, -4.5522, -0.21959999, 0.0013, -4.5522, 0.21959999, 0.0013, -4.5522, 0.21959999, 20.771, 4.5522, 0.21959999, 20.771, -4.5522, -0.21959999, 20.771, -4.5522, 0.21959999, 20.771, 4.5522, 0.21959999, 20.771, 4.5522, -0.21959999, 20.771, -4.5522, -0.21959999, 20.771, 4.5522, 0.21959999, 0.0013, 4.5522, -0.21959999, 20.771, 4.5522, 0.21959999, 20.771, 4.5522, 0.21959999, 0.0013, 4.5522, -0.21959999, 0.0013, 4.5522, -0.21959999, 20.771, -4.5522, 0.21959999, 0.0013, 4.5522, -0.21959999, 0.0013, 4.5522, 0.21959999, 0.0013, -4.5522, 0.21959999, 0.0013, -4.5522, -0.21959999, 0.0013, 4.5522, -0.21959999, 0.0013, -4.5522, 0.21959999, 0.0013, 4.5522, 0.21959999, 20.771, -4.5522, 0.21959999, 20.771, -4.5522, 0.21959999, 0.0013, 4.5522, 0.21959999, 0.0013, 4.5522, 0.21959999, 20.771, 4.5522, -0.21959999, 0.0013, -4.5522, -0.21959999, 20.771, 4.5522, -0.21959999, 20.771, 4.5522, -0.21959999, 0.0013, -4.5522, -0.21959999, 0.0013, -4.5522, -0.21959999, 20.771)
