@@ -161,13 +161,19 @@ func _update_targeting() -> void:
 	
 	has_target = true
 	
-	# Step away from surface by 0.51 (just over half voxel) to get adjacent voxel
-	var placement_pos = hit.position + hit.normal * 0.51
+	# Round hit position to nearest voxel - feels most direct/responsive
+	var nearest = Vector3(round(hit.position.x), round(hit.position.y), round(hit.position.z))
 	
-	# Floor to discrete grid position
-	current_target_pos = Vector3(floor(placement_pos.x), floor(placement_pos.y), floor(placement_pos.z))
+	# Offset 1 unit in normal direction (use sign to get direction)
+	var dir = Vector3(
+		1 if hit.normal.x > 0.3 else (-1 if hit.normal.x < -0.3 else 0),
+		1 if hit.normal.y > 0.3 else (-1 if hit.normal.y < -0.3 else 0),
+		1 if hit.normal.z > 0.3 else (-1 if hit.normal.z < -0.3 else 0)
+	)
 	
-	# Show cursor at voxel center (voxels are centered at integer coordinates)
+	current_target_pos = nearest + dir
+	
+	# Show cursor
 	selection_box.global_position = current_target_pos
 	selection_box.visible = true
 
