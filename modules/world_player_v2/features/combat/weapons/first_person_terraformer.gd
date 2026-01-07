@@ -161,8 +161,8 @@ func _update_targeting() -> void:
 	
 	has_target = true
 	
-	# Step away from surface by 0.6 (more than half voxel) to get adjacent voxel
-	var placement_pos = hit.position + hit.normal * 0.6
+	# Step away from surface by 0.51 (just over half voxel) to get adjacent voxel
+	var placement_pos = hit.position + hit.normal * 0.51
 	
 	# Floor to discrete grid position
 	current_target_pos = Vector3(floor(placement_pos.x), floor(placement_pos.y), floor(placement_pos.z))
@@ -217,7 +217,9 @@ func _raycast(distance: float) -> Dictionary:
 	if not player:
 		return {}
 	
-	var camera = player.get_node_or_null("Camera3D")
+	var camera = player.get_node_or_null("Head/Camera3D")
+	if not camera:
+		camera = player.get_node_or_null("Camera3D")  # Fallback
 	if not camera:
 		return {}
 	
