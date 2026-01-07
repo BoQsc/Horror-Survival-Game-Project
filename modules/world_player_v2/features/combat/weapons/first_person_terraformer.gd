@@ -153,47 +153,21 @@ func _update_targeting() -> void:
 	if not player or not selection_box:
 		return
 	
-	# Short raycast to detect holes (empty space at close range)
-	var close_hit = _raycast(2.0)
-	var is_hole = false
+	var hit = _raycast(RAYCAST_DISTANCE)
+	if hit.is_empty():
+		selection_box.visible = false
+		has_target = false
+		return
 	
-	if close_hit.is_empty():
-		is_hole = true
-	elif player and player.has_method("get_global_position"):
-		var dist = player.global_position.distance_to(close_hit.position)
-		is_hole = (dist > 1.5)
+	has_target = true
 	
-	if is_hole:
-		# HOLE FILLING MODE: Place at 2m in front
-		var camera = player.get_node_or_null("Head/Camera3D")
-		if not camera:
-			camera = player.get_node_or_null("Camera3D")
-		if not camera:
-			selection_box.visible = false
-			has_target = false
-			return
-		has_target = true
-		var forward_pos = camera.global_position - camera.global_transform.basis.z * 2.0
-		current_target_pos = Vector3(floor(forward_pos.x), floor(forward_pos.y), floor(forward_pos.z))
-	else:
-		# SURFACE MODE: Use close hit
-		has_target = true
-		var hit_voxel = Vector3(floor(close_hit.position.x), floor(close_hit.position.y), floor(close_hit.position.z))
-		
-		var normal = close_hit.normal
-		var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
-		var primary_normal = Vector3.ZERO
-		
-		if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
-			primary_normal.x = sign(normal.x)
-		elif abs_normal.y > abs_normal.z:
-			primary_normal.y = sign(normal.y)
-		else:
-			primary_normal.z = sign(normal.z)
-		
-		current_target_pos = hit_voxel + primary_normal
+	# Step away from surface by 0.6 (more than half voxel) to get adjacent voxel
+	var placement_pos = hit.position + hit.normal * 0.6
 	
-	# Update selection box
+	# Floor to discrete grid position
+	current_target_pos = Vector3(floor(placement_pos.x), floor(placement_pos.y), floor(placement_pos.z))
+	
+	# Show cursor at voxel center
 	selection_box.global_position = current_target_pos + Vector3(0.5, 0.5, 0.5)
 	selection_box.visible = true
 
@@ -221,55 +195,23 @@ func do_primary_action() -> void:
 
 ## Call this from combat_system for right-click
 func do_secondary_action() -> void:
-	if not is_active or not terrain_manager or not player:
+	if not is_active or not terrain_manager:
 		return
 	
 	# Emit animation signal
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.axe_fired.emit()
 	
-	# Use same hole detection as cursor
-	var close_hit = _raycast(2.0)
-	var is_hole = false
+	# Use the EXACT position the cursor shows (NO separate raycast)
+	if not has_target:
+		return
 	
-	if close_hit.is_empty():
-		is_hole = true
-	elif player and player.has_method("get_global_position"):
-		var dist = player.global_position.distance_to(close_hit.position)
-		is_hole = (dist > 1.5)
-	
-	var target: Vector3
-	
-	if is_hole:
-		# HOLE FILLING: Place at 2m in front
-		var camera = player.get_node_or_null("Head/Camera3D")
-		if not camera:
-			camera = player.get_node_or_null("Camera3D")
-		if not camera:
-			return
-		var forward_pos = camera.global_position - camera.global_transform.basis.z * 2.0
-		target = Vector3(floor(forward_pos.x), floor(forward_pos.y), floor(forward_pos.z))
-	else:
-		# SURFACE PLACEMENT
-		var hit_voxel = Vector3(floor(close_hit.position.x), floor(close_hit.position.y), floor(close_hit.position.z))
-		
-		var normal = close_hit.normal
-		var abs_normal = Vector3(abs(normal.x), abs(normal.y), abs(normal.z))
-		var primary_normal = Vector3.ZERO
-		
-		if abs_normal.x > abs_normal.y and abs_normal.x > abs_normal.z:
-			primary_normal.x = sign(normal.x)
-		elif abs_normal.y > abs_normal.z:
-			primary_normal.y = sign(normal.y)
-		else:
-			primary_normal.z = sign(normal.z)
-		
-		target = hit_voxel + primary_normal
+	var target = current_target_pos  # Use what cursor calculated
 	
 	# Place terrain
 	var mat_id = MATERIALS[material_index].id + 100
 	terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
-	print("SHOVEL: Placed at %s" % target)
+	print("SHOVEL: Placed at %s (cursor position)" % target)
 
 func _raycast(distance: float) -> Dictionary:
 	if not player:
