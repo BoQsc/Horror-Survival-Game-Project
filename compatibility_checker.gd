@@ -37,9 +37,12 @@ func _ready():
 		progress.value = 100
 		_load_game()
 	else:
-		status_label.text = "Vulkan not supported - restarting with D3D12..."
+		status_label.text = "Vulkan not supported - D3D12 required"
 		progress.value = 100
-		_restart_with_d3d12()
+		# TEMPORARILY DISABLED - keep logs connected
+		#_restart_with_d3d12()
+		print("ERROR: Vulkan compute pipeline failed - game cannot start")
+		print("Please manually set rendering/rendering_device/driver to 'd3d12' in project settings")
 
 func _using_d3d12() -> bool:
 	"""Check if already running with D3D12 (from project settings or command line)"""
