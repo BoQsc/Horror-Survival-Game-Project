@@ -7,8 +7,9 @@ var current_health: int
 # --- References ---
 @onready var anim_player = $"Sketchfab_Scene zombie".find_child("AnimationPlayer")
 
-# --- Sound ---
-const CHASE_SOUND = preload("res://sfx/zombie-sound-2-357976.mp3")
+# --- Sound --- (TODO: Add audio file back when available)
+#const CHASE_SOUND = preload("res://sfx/zombie-sound-2-357976.mp3")
+var CHASE_SOUND = null  # Audio file missing - disabled for now
 @onready var chase_audio_player: AudioStreamPlayer3D = AudioStreamPlayer3D.new()
 
 # --- State ---

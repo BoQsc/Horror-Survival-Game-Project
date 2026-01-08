@@ -34,7 +34,7 @@ const PLACED_BRICK = 102
 const PLACED_WOOD = 103
 
 # Get display name for a material ID
-static func get_name(id: int) -> String:
+static func get_material_name(id: int) -> String:
 	match id:
 		GRASS: return "Grass"
 		STONE: return "Stone"

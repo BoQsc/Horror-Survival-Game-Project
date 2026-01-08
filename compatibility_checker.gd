@@ -6,6 +6,12 @@ extends Control
 @onready var progress: ProgressBar = $VBoxContainer/ProgressBar
 
 func _ready():
+	# FIRST: Check if D3D12 is already configured - skip ALL checks if so
+	if _using_d3d12():
+		print("[CompatibilityChecker] D3D12 already configured - loading game directly")
+		_load_game()
+		return
+	
 	# If running from editor (detected by --path arg), skip the runtime check entirely
 	# The EditorPlugin should have already configured D3D12 if needed
 	var running_from_editor = false
@@ -19,13 +25,7 @@ func _ready():
 		_load_game()
 		return
 	
-	# For exported builds, check if already using D3D12
-	if _using_d3d12():
-		status_label.text = "Running with D3D12 ✓"
-		_load_game()
-		return
-	
-	# Test Vulkan (exported builds only)
+	# Test Vulkan (exported builds only, when NOT using D3D12)
 	status_label.text = "Testing graphics compatibility..."
 	progress.value = 30
 	
@@ -46,9 +46,9 @@ func _ready():
 
 func _using_d3d12() -> bool:
 	"""Check if already running with D3D12 (from project settings or command line)"""
-	# Check project settings first (set by plugin)
-	var driver_setting = ProjectSettings.get_setting("rendering/rendering_device/driver", "")
-	if driver_setting == "d3d12":
+	# Check Windows-specific project setting (this is what Godot reads on Windows)
+	var driver_windows = ProjectSettings.get_setting("rendering/rendering_device/driver.windows", "")
+	if driver_windows == "d3d12":
 		return true
 	
 	# Check command line args (for exported builds with manual override)

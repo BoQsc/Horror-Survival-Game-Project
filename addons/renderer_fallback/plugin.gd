@@ -5,11 +5,11 @@ func _enter_tree():
 	print("[RendererFallback Plugin] ======== PLUGIN LOADING ========")
 	
 	# Check current renderer setting (Windows-specific)
-	var current_driver = ProjectSettings.get_setting("rendering/rendering_device/driver.windows", "")
-	print("[RendererFallback Plugin] Current driver.windows setting: '%s'" % current_driver)
+	var driver_windows = ProjectSettings.get_setting("rendering/rendering_device/driver.windows", "")
+	print("[RendererFallback Plugin] driver.windows setting: '%s'" % driver_windows)
 	
 	# If already set to D3D12, we're done
-	if current_driver == "d3d12":
+	if driver_windows == "d3d12":
 		print("[RendererFallback Plugin] Already configured for D3D12 ✓")
 		print("[RendererFallback Plugin] ========================================")
 		return
@@ -71,14 +71,15 @@ func _test_vulkan_compute() -> bool:
 
 func _set_d3d12():
 	"""Set D3D12 renderer and save project settings"""
-	var setting_path = "rendering/rendering_device/driver.windows"
+	# Use Windows-specific setting (this is what Godot reads on Windows)
+	var setting_windows = "rendering/rendering_device/driver.windows"
 	
 	# Set the value
-	ProjectSettings.set_setting(setting_path, "d3d12")
+	ProjectSettings.set_setting(setting_windows, "d3d12")
 	
 	# Mark as basic so it gets saved to project.godot
-	ProjectSettings.set_as_basic(setting_path, true)
-	ProjectSettings.set_initial_value(setting_path, "d3d12")
+	ProjectSettings.set_as_basic(setting_windows, true)
+	ProjectSettings.set_initial_value(setting_windows, "d3d12")
 	
 	# Save to disk
 	var err = ProjectSettings.save()
@@ -86,8 +87,8 @@ func _set_d3d12():
 		push_error("[RendererFallback Plugin] Failed to save project.godot! Error: %d" % err)
 		return
 	
-	print("[RendererFallback Plugin] ✓ D3D12 configured as driver.windows in project.godot")
-	print("[RendererFallback Plugin] ✓ Setting saved successfully")
+	print("[RendererFallback Plugin] ✓ D3D12 configured (driver.windows)")
+	print("[RendererFallback Plugin] ✓ Settings saved to project.godot")
 	
 	# Show dialog
 	call_deferred("_show_restart_dialog")
