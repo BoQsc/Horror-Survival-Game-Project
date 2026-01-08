@@ -41,7 +41,7 @@ window/size/mode=3
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/camera3d_templates/plugin.cfg", "res://addons/renderer_fallback/plugin.cfg")
+enabled=PackedStringArray("res://addons/renderer_fallback/plugin.cfg")
 
 [input]
 
