@@ -71,14 +71,23 @@ func _test_vulkan_compute() -> bool:
 
 func _set_d3d12():
 	"""Set D3D12 renderer and save project settings"""
-	ProjectSettings.set_setting("rendering/rendering_device/driver", "d3d12")
+	var setting_path = "rendering/rendering_device/driver"
 	
+	# Set the value
+	ProjectSettings.set_setting(setting_path, "d3d12")
+	
+	# Mark as basic so it gets saved to project.godot
+	ProjectSettings.set_as_basic(setting_path, true)
+	ProjectSettings.set_initial_value(setting_path, "d3d12")
+	
+	# Save to disk
 	var err = ProjectSettings.save()
 	if err != OK:
-		push_error("[RendererFallback Plugin] Failed to save project.godot!")
+		push_error("[RendererFallback Plugin] Failed to save project.godot! Error: %d" % err)
 		return
 	
 	print("[RendererFallback Plugin] ✓ D3D12 configured in project.godot")
+	print("[RendererFallback Plugin] ✓ Setting saved successfully")
 	
 	# Show dialog
 	call_deferred("_show_restart_dialog")
