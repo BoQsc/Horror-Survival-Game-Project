@@ -53,7 +53,9 @@ const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_
 
 # Sound effects
 const TREE_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/giant-axe-strike-hitting-solid-wood-3-450247.mp3"
+const TREE_FALL_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/falling-tree-ai-generated-431321.mp3"
 var tree_hit_audio_player: AudioStreamPlayer3D = null
+var tree_fall_audio_player: AudioStreamPlayer3D = null
 
 func _ready() -> void:
 	# Try to find local signals node
@@ -106,6 +108,17 @@ func _setup_tree_hit_audio() -> void:
 		tree_hit_audio_player.max_distance = 20.0
 		player.add_child(tree_hit_audio_player)
 		print("[COMBAT_AUDIO] Tree hit sound loaded successfully")
+	
+	# Load tree fall sound
+	if ResourceLoader.exists(TREE_FALL_SOUND_PATH):
+		var fall_stream = load(TREE_FALL_SOUND_PATH)
+		if fall_stream and player:
+			tree_fall_audio_player = AudioStreamPlayer3D.new()
+			tree_fall_audio_player.name = "TreeFallAudio"
+			tree_fall_audio_player.stream = fall_stream
+			tree_fall_audio_player.max_distance = 30.0
+			player.add_child(tree_fall_audio_player)
+			print("[COMBAT_AUDIO] Tree fall sound loaded successfully")
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
@@ -1101,6 +1114,11 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 		_emit_durability_hit(current_hp, TREE_HP, "Tree", durability_target)
 		
 		if tree_damage[tree_rid] >= TREE_HP:
+			# Play tree falling sound
+			if tree_fall_audio_player and tree_fall_audio_player.is_inside_tree():
+				tree_fall_audio_player.pitch_scale = randf_range(0.95, 1.05)
+				tree_fall_audio_player.play()
+			
 			vegetation_manager.chop_tree_by_collider(target)
 			tree_damage.erase(tree_rid)
 			_emit_durability_cleared()
