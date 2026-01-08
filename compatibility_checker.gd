@@ -6,13 +6,26 @@ extends Control
 @onready var progress: ProgressBar = $VBoxContainer/ProgressBar
 
 func _ready():
-	# Check if we're already using D3D12
+	# If running from editor (detected by --path arg), skip the runtime check entirely
+	# The EditorPlugin should have already configured D3D12 if needed
+	var running_from_editor = false
+	for arg in OS.get_cmdline_args():
+		if arg.begins_with("--path"):
+			running_from_editor = true
+			break
+	
+	if running_from_editor:
+		print("[CompatibilityChecker] Running from editor - skipping runtime check")
+		_load_game()
+		return
+	
+	# For exported builds, check if already using D3D12
 	if _using_d3d12():
 		status_label.text = "Running with D3D12 ✓"
 		_load_game()
 		return
 	
-	# Test Vulkan
+	# Test Vulkan (exported builds only)
 	status_label.text = "Testing graphics compatibility..."
 	progress.value = 30
 	
@@ -29,7 +42,13 @@ func _ready():
 		_restart_with_d3d12()
 
 func _using_d3d12() -> bool:
-	"""Check if already running with D3D12"""
+	"""Check if already running with D3D12 (from project settings or command line)"""
+	# Check project settings first (set by plugin)
+	var driver_setting = ProjectSettings.get_setting("rendering/rendering_device/driver", "")
+	if driver_setting == "d3d12":
+		return true
+	
+	# Check command line args (for exported builds with manual override)
 	for arg in OS.get_cmdline_user_args():
 		if "d3d12" in arg.to_lower():
 			return true
