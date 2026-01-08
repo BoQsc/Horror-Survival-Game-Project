@@ -75,22 +75,34 @@ func _restart_with_d3d12():
 	"""Restart game with D3D12 renderer"""
 	print("[CompatibilityChecker] Restarting with --rendering-driver d3d12...")
 	
+	# If running from Godot editor, restarting will disconnect logs
+	# Instead, provide instructions for the user
+	if OS.has_feature("editor"):
+		push_error("=".repeat(80))
+		push_error("VULKAN COMPUTE NOT SUPPORTED - D3D12 REQUIRED")
+		push_error("=".repeat(80))
+		push_error("To run this project from the editor:")
+		push_error("1. Go to Project > Project Settings > General")
+		push_error("2. Search for 'rendering/rendering_device/driver'")
+		push_error("3. Set it to 'd3d12'")
+		push_error("4. Restart Godot editor")
+		push_error("=".repeat(80))
+		push_error("OR run from command line with:")
+		push_error('godot.exe --path "%s" --rendering-driver d3d12' % ProjectSettings.globalize_path("res://").get_base_dir())
+		push_error("=".repeat(80))
+		
+		# Don't auto-restart - let user see the error
+		await get_tree().create_timer(5.0).timeout
+		get_tree().quit()
+		return
+	
+	# For exported builds, restart normally
 	var exe = OS.get_executable_path()
 	var args = ["--rendering-driver", "d3d12"]
-	
-	# If running from Godot editor, relaunch through the editor to keep logs
-	if OS.has_feature("editor"):
-		print("[CompatibilityChecker] Detected editor mode - relaunching through Godot editor")
-		# Get project path
-		var project_path = ProjectSettings.globalize_path("res://project.godot")
-		# Editor args: --path <project_path> --rendering-driver d3d12
-		args = ["--path", project_path.get_base_dir(), "--rendering-driver", "d3d12"]
-		print("[CompatibilityChecker] Editor exe: %s" % exe)
-		print("[CompatibilityChecker] Args: %s" % str(args))
-	
 	OS.create_process(exe, args)
 	
 	get_tree().quit()
+
 
 
 func _load_game():
