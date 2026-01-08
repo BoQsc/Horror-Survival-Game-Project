@@ -24,41 +24,41 @@ func _using_d3d12() -> bool:
 	return false
 
 func _test_vulkan_compute() -> bool:
-	"""Test if Vulkan supports compute pipelines by creating a minimal test shader"""
+	"""Test if Vulkan supports compute pipelines using the ACTUAL marching_cubes shader"""
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd:
 		push_error("[RendererFallback] Failed to create RenderingDevice")
 		return false
 	
-	# Create a minimal compute shader to test
-	var test_shader_code = """
-#[compute]
-#version 450
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-layout(set = 0, binding = 0, std430) buffer Data { uint value; } data;
-void main() { data.value = 1; }
-"""
-	
+	# Use the ACTUAL marching_cubes shader that's causing problems
+	# If this succeeds, the game will likely work. If it fails, we MUST use D3D12.
 	var shader_file = RDShaderFile.new()
-	shader_file.set_bytecode(preload("res://marching_cubes/gen_density.glsl").get_spirv())
+	shader_file.set_bytecode(preload("res://marching_cubes/marching_cubes.glsl").get_spirv())
 	
 	# Try to create shader and pipeline
 	var shader = rd.shader_create_from_spirv(shader_file.get_spirv())
 	if not shader.is_valid():
+		print("[RendererFallback] ❌ Marching Cubes shader compilation FAILED")
 		rd.free()
 		return false
 	
 	var pipeline = rd.compute_pipeline_create(shader)
-	var success = pipeline.is_valid()
+	if not pipeline.is_valid():
+		print("[RendererFallback] ❌ Marching Cubes pipeline creation FAILED (Error -13)")
+		if shader.is_valid():
+			rd.free_rid(shader)
+		rd.free()
+		return false
 	
-	# Cleanup
+	# Success - cleanup
+	print("[RendererFallback] ✓ Marching Cubes pipeline created successfully")
 	if pipeline.is_valid():
 		rd.free_rid(pipeline)
 	if shader.is_valid():
 		rd.free_rid(shader)
 	rd.free()
 	
-	return success
+	return true
 
 func _restart_with_d3d12():
 	"""Restart game with D3D12 renderer"""

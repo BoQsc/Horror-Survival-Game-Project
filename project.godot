@@ -33,6 +33,7 @@ PickaxeDurabilityConfig="*res://modules/world_player_v2/features/combat/pickaxe_
 PickaxeTargetVisualizer="*res://modules/world_player_v2/features/combat/pickaxe_target_visualizer.gd"
 HitMarkerConfig="*res://modules/world_player_v2/features/combat/hit_marker_config.gd"
 PistolHitMarkerConfig="*res://modules/world_player_v2/features/debug/pistol_hit_marker_config.gd"
+RendererFallback="*res://addons/renderer_fallback/renderer_fallback.gd"
 
 [display]
 
@@ -40,7 +41,7 @@ window/size/mode=3
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/camera3d_templates/plugin.cfg")
+enabled=PackedStringArray("res://addons/camera3d_templates/plugin.cfg", "res://addons/renderer_fallback/plugin.cfg")
 
 [input]
 
