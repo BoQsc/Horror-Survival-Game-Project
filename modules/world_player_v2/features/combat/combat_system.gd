@@ -54,8 +54,10 @@ const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_
 # Sound effects
 const TREE_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/giant-axe-strike-hitting-solid-wood-3-450247.mp3"
 const TREE_FALL_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/falling-tree-ai-generated-431321.mp3"
+const WOOD_BLOCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-wood-block/wood-being-chopped-1-228496.mp3"
 var tree_hit_audio_player: AudioStreamPlayer3D = null
 var tree_fall_audio_player: AudioStreamPlayer3D = null
+var wood_block_hit_audio_player: AudioStreamPlayer3D = null
 
 func _ready() -> void:
 	# Try to find local signals node
@@ -119,6 +121,17 @@ func _setup_tree_hit_audio() -> void:
 			tree_fall_audio_player.max_distance = 30.0
 			player.add_child(tree_fall_audio_player)
 			print("[COMBAT_AUDIO] Tree fall sound loaded successfully")
+	
+	# Load wood block hit sound
+	if ResourceLoader.exists(WOOD_BLOCK_HIT_SOUND_PATH):
+		var block_stream = load(WOOD_BLOCK_HIT_SOUND_PATH)
+		if block_stream and player:
+			wood_block_hit_audio_player = AudioStreamPlayer3D.new()
+			wood_block_hit_audio_player.name = "WoodBlockHitAudio"
+			wood_block_hit_audio_player.stream = block_stream
+			wood_block_hit_audio_player.max_distance = 20.0
+			player.add_child(wood_block_hit_audio_player)
+			print("[COMBAT_AUDIO] Wood block hit sound loaded successfully")
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
@@ -1187,6 +1200,12 @@ func _try_damage_building_block(target: Node, item: Dictionary, position: Vector
 	block_damage[block_pos] = block_damage.get(block_pos, 0) + blk_dmg
 	var current_hp = BLOCK_HP - block_damage[block_pos]
 	durability_target = block_pos
+	
+	# Play wood block hit sound (start at 40% for snappier feedback)
+	if wood_block_hit_audio_player and wood_block_hit_audio_player.is_inside_tree():
+		wood_block_hit_audio_player.pitch_scale = randf_range(0.8, 1.2)
+		var start_pos = wood_block_hit_audio_player.stream.get_length() * 0.15
+		wood_block_hit_audio_player.play(start_pos)
 	
 	print("DURABILITY_DEBUG: Building block hit at %s | Damage: %d | HP: %d/%d" % [block_pos, blk_dmg, current_hp, BLOCK_HP])
 	_emit_durability_hit(current_hp, BLOCK_HP, "Block", durability_target)
