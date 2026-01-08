@@ -3,6 +3,9 @@ class_name LoadingScreen
 ## LoadingScreen - Displays loading progress during game startup
 ## Tracks visual completion: terrain meshes, buildings, and vegetation
 
+signal loading_complete
+signal terrain_ready  # Emitted when terrain meshes are loaded (before vegetation/buildings)
+
 @onready var panel: PanelContainer = $Panel
 @onready var progress_bar: ProgressBar = $Panel/VBox/ProgressBar
 @onready var status_label: Label = $Panel/VBox/StatusLabel
@@ -10,6 +13,8 @@ class_name LoadingScreen
 var is_loading: bool = true
 var fade_timer: float = 0.0
 const FADE_DURATION: float = 0.5
+
+var has_emitted_terrain_ready: bool = false  # Track if we've signaled player
 
 # Loading stages
 enum Stage { TERRAIN, PREFABS, VEGETATION, COMPLETE }
@@ -64,6 +69,12 @@ func _start_loading_sequence() -> void:
 					var target = terrain_manager.get("initial_load_target_chunks")
 					if target != null and target > 0:
 						progress = (float(chunks_loaded) / float(target)) * 100.0
+				
+				# Emit terrain_ready as soon as first chunks start rendering
+				if progress > 0 and not has_emitted_terrain_ready:
+					terrain_ready.emit()
+					has_emitted_terrain_ready = true
+					print("[LoadingScreen] Terrain rendering started - player can move")
 				
 				var pending = 0
 				if terrain_manager.has_method("get_pending_nodes_count"):
@@ -139,6 +150,7 @@ func update_progress(percent: float, message: String) -> void:
 func _start_fade_out() -> void:
 	is_loading = false
 	fade_timer = FADE_DURATION
+	loading_complete.emit()
 
 func _process(delta: float) -> void:
 	if not is_loading and fade_timer > 0:

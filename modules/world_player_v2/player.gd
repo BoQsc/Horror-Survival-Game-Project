@@ -49,6 +49,28 @@ func _ready() -> void:
 	building_manager = get_tree().get_first_node_in_group("building_manager")
 	vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 	
+	# Freeze player on initial start until terrain loads (not for QuickLoad)
+	var save_manager = get_node_or_null("/root/SaveManager")
+	if save_manager and not save_manager.is_loading_game:
+		# Disable movement feature's physics processing
+		if movement_feature:
+			movement_feature.set_physics_process(false)
+		print("[Player] Frozen until terrain renders")
+		
+		# Wait for LoadingScreen terrain stage to complete
+		var loading_screen = get_tree().root.find_child("LoadingScreen", true, false)
+		if loading_screen and loading_screen.has_signal("terrain_ready"):
+			await loading_screen.terrain_ready
+			
+			# Re-enable movement when terrain is ready
+			if movement_feature:
+				movement_feature.set_physics_process(true)
+			print("[Player] Unfrozen - terrain ready, can walk now")
+		else:
+			# No loading screen or signal, unfreeze immediately
+			if movement_feature:
+				movement_feature.set_physics_process(true)
+	
 	# Initialize features with shared references
 	if combat_feature and combat_feature.has_method("initialize"):
 		combat_feature.initialize(self, terrain_manager, vegetation_manager, building_manager, inventory_feature)
