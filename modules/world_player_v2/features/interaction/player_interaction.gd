@@ -346,27 +346,43 @@ func _exit_vehicle() -> void:
 	if not is_in_vehicle or not current_vehicle:
 		return
 	
-	# CRITICAL: Store reference and clear state FIRST to stop _process() position sync
+	# Store reference and clear state FIRST to stop _process() position sync
 	var exiting_vehicle = current_vehicle
 	is_in_vehicle = false
 	current_vehicle = null
 	
+	# === BULLETPROOF COLLISION PREVENTION ===
+	# Add collision exception BEFORE enabling player physics
+	# This guarantees 100% no collision between player and vehicle
+	if player is PhysicsBody3D and exiting_vehicle is PhysicsBody3D:
+		player.add_collision_exception_with(exiting_vehicle)
+		exiting_vehicle.add_collision_exception_with(player)
+	
+	# Stop the vehicle FIRST (before player is positioned)
 	if exiting_vehicle.has_method("exit_vehicle"):
 		exiting_vehicle.exit_vehicle()
 	
-	player.process_mode = Node.PROCESS_MODE_INHERIT
-	player.visible = true
-	
-	# Place player OUTSIDE the vehicle using vehicle-relative offset
+	# Calculate exit position BEFORE enabling physics
+	var exit_pos: Vector3
 	if exiting_vehicle.has_method("get_exit_position"):
-		player.global_position = exiting_vehicle.get_exit_position()
+		exit_pos = exiting_vehicle.get_exit_position()
 	else:
 		# Fallback: 4 meters to the left of vehicle (relative to vehicle orientation)
 		var exit_offset = exiting_vehicle.global_transform.basis.x * -4.0
-		player.global_position = exiting_vehicle.global_position + exit_offset + Vector3(0, 1.5, 0)
+		exit_pos = exiting_vehicle.global_position + exit_offset + Vector3(0, 1.5, 0)
+	
+	# Set position BEFORE enabling physics (player still frozen at this point)
+	player.global_position = exit_pos
 	
 	# Face the same direction as the vehicle (add PI to flip 180 degrees due to model orientation)
 	player.rotation.y = exiting_vehicle.rotation.y + PI
+	
+	# NOW enable player physics (they are already at safe position with collision exception)
+	player.process_mode = Node.PROCESS_MODE_INHERIT
+	player.visible = true
+	
+	# Remove collision exception after physics frames ensure separation
+	_remove_vehicle_collision_exception_deferred(exiting_vehicle)
 	
 	if exiting_vehicle.has_method("set_camera_active"):
 		exiting_vehicle.set_camera_active(false)
@@ -384,6 +400,19 @@ func _exit_vehicle() -> void:
 	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.interaction_performed.emit(null, "exit_vehicle")
+
+
+## Remove collision exception after multiple physics frames to ensure safe separation
+func _remove_vehicle_collision_exception_deferred(vehicle: Node3D) -> void:
+	# Wait for 3 physics frames to ensure complete separation
+	for i in range(3):
+		await get_tree().physics_frame
+	
+	# Only remove if both still valid
+	if is_instance_valid(player) and is_instance_valid(vehicle):
+		if player is PhysicsBody3D and vehicle is PhysicsBody3D:
+			player.remove_collision_exception_with(vehicle)
+			vehicle.remove_collision_exception_with(player)
 
 
 ## Show radial menu for vehicle options
