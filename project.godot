@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="GPUMarchingCubes"
-run/main_scene="res://modules/world_module/world_test_world_player_v2.tscn"
+run/main_scene="res://compatibility_checker.tscn"
 config/features=PackedStringArray("4.5", "Forward Plus")
 run/max_fps=70
 run/low_processor_mode=true
@@ -33,7 +33,6 @@ PickaxeDurabilityConfig="*res://modules/world_player_v2/features/combat/pickaxe_
 PickaxeTargetVisualizer="*res://modules/world_player_v2/features/combat/pickaxe_target_visualizer.gd"
 HitMarkerConfig="*res://modules/world_player_v2/features/combat/hit_marker_config.gd"
 PistolHitMarkerConfig="*res://modules/world_player_v2/features/debug/pistol_hit_marker_config.gd"
-RendererFallback="*res://addons/renderer_fallback/renderer_fallback.gd"
 
 [display]
 
