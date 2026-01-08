@@ -51,6 +51,10 @@ var held_prop_rotation: int = 0
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
 
+# Sound effects
+const TREE_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/giant-axe-strike-hitting-solid-wood-3-450247.mp3"
+var tree_hit_audio_player: AudioStreamPlayer3D = null
+
 func _ready() -> void:
 	# Try to find local signals node
 	signals = get_node_or_null("../signals")
@@ -67,6 +71,7 @@ func _ready() -> void:
 	
 	# Find managers via groups (deferred)
 	call_deferred("_find_managers")
+	call_deferred("_setup_tree_hit_audio")
 	
 	# Connect to weapon ready signals (backward compat)
 	if has_node("/root/PlayerSignals"):
@@ -87,6 +92,20 @@ func _find_managers() -> void:
 		terrain_interaction = player.get_node_or_null("Modes/TerrainInteraction")
 	if not terraformer and player:
 		terraformer = player.get_node_or_null("Components/FirstPersonTerraformer")
+
+func _setup_tree_hit_audio() -> void:
+	if not ResourceLoader.exists(TREE_HIT_SOUND_PATH):
+		print("[COMBAT_AUDIO] Tree hit sound not found: %s" % TREE_HIT_SOUND_PATH)
+		return
+	
+	var stream = load(TREE_HIT_SOUND_PATH)
+	if stream and player:
+		tree_hit_audio_player = AudioStreamPlayer3D.new()
+		tree_hit_audio_player.name = "TreeHitAudio"
+		tree_hit_audio_player.stream = stream
+		tree_hit_audio_player.max_distance = 20.0
+		player.add_child(tree_hit_audio_player)
+		print("[COMBAT_AUDIO] Tree hit sound loaded successfully")
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
@@ -1073,6 +1092,11 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 		tree_damage[tree_rid] = tree_damage.get(tree_rid, 0) + tree_dmg
 		var current_hp = TREE_HP - tree_damage[tree_rid]
 		durability_target = tree_rid
+		
+		# Play wood hit sound
+		if tree_hit_audio_player and tree_hit_audio_player.is_inside_tree():
+			tree_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+			tree_hit_audio_player.play()
 		
 		_emit_durability_hit(current_hp, TREE_HP, "Tree", durability_target)
 		
