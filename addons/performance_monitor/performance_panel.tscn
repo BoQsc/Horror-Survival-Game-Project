@@ -1,0 +1,48 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" uid="uid://bvkmx3yc2g0qi" path="res://addons/performance_monitor/performance_panel.gd" id="1_panel"]
+
+[node name="PerformancePanel" type="Control"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_panel")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Toolbar" type="HBoxContainer" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="FilterLabel" type="Label" parent="VBoxContainer/Toolbar"]
+layout_mode = 2
+text = "Filter:"
+
+[node name="FilterOption" type="OptionButton" parent="VBoxContainer/Toolbar"]
+layout_mode = 2
+size_flags_horizontal = 0
+
+[node name="ClearButton" type="Button" parent="VBoxContainer/Toolbar"]
+layout_mode = 2
+text = "Clear"
+
+[node name="Spacer" type="Control" parent="VBoxContainer/Toolbar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="SpikeCountLabel" type="Label" parent="VBoxContainer/Toolbar"]
+layout_mode = 2
+text = "Spikes: 0"
+
+[node name="LogList" type="RichTextLabel" parent="VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+bbcode_enabled = true
+scroll_following = true
+selection_enabled = true

@@ -30,6 +30,10 @@ var _merged_show_terrain_marker := false
 var _merged_show_road_zones := false
 var _merged_show_chunk_bounds := false
 
+# Thread-safe cached flag for performance panel routing
+# This is updated from main thread and read from any thread
+var _use_debugger_panel: bool = false
+
 
 func _ready() -> void:
 	# Load primary preset from config
@@ -190,46 +194,66 @@ func should_show_vegetation_collisions() -> bool:
 # BACKWARD-COMPATIBLE LOGGING API (replaces DebugSettings)
 # ============================================================================
 
+## Helper to send logs to the Performance panel via EngineDebugger
+## Thread-safe: uses cached _use_debugger_panel flag
+func _send_to_panel(category: String, message: String) -> void:
+	var full_message = "[%s] %s" % [category, message]
+	
+	if _use_debugger_panel and EngineDebugger.is_active():
+		EngineDebugger.send_message("perf_monitor:log", [category, full_message])
+	else:
+		# Fallback to console
+		print(full_message)
+
+
+## Called by PerformanceMonitor when plugin connects/disconnects
+func set_debugger_panel_enabled(enabled: bool) -> void:
+	_use_debugger_panel = enabled
+
+
 ## Direct logging methods matching DebugSettings API
 func log_chunk(message: String) -> void:
 	if _merged_log_chunk:
-		print("[Chunk] ", message)
+		_send_to_panel("Chunk", message)
 
 func log_vegetation(message: String) -> void:
 	if _merged_log_vegetation:
-		print("[Vegetation] ", message)
+		_send_to_panel("Vegetation", message)
 
 func log_entities(message: String) -> void:
 	if _merged_log_entities:
-		print("[Entities] ", message)
+		_send_to_panel("Entities", message)
 
 func log_building(message: String) -> void:
 	if _merged_log_building:
-		print("[Building] ", message)
+		_send_to_panel("Building", message)
 
 func log_save(message: String) -> void:
 	if _merged_log_save:
-		print("[Save] ", message)
+		_send_to_panel("Save", message)
 
 func log_vehicles(message: String) -> void:
 	if _merged_log_vehicles:
-		print("[Vehicles] ", message)
+		_send_to_panel("Vehicles", message)
 
 func log_player(message: String) -> void:
 	if _merged_log_player:
-		print("[Player] ", message)
+		_send_to_panel("Player", message)
 
 func log_roads(message: String) -> void:
 	if _merged_log_roads:
-		print("[Roads] ", message)
+		_send_to_panel("Roads", message)
 
 func log_water(message: String) -> void:
 	if _merged_log_water:
-		print("[Water] ", message)
+		_send_to_panel("Water", message)
 
 func log_performance(message: String) -> void:
 	if _merged_log_performance:
-		print(message)
+		if EngineDebugger.is_active():
+			EngineDebugger.send_message("perf_monitor:log", ["Performance", message])
+		else:
+			print(message)
 
 
 ## Category flag accessors (for direct flag checks)
