@@ -1204,7 +1204,7 @@ func _try_damage_building_block(target: Node, item: Dictionary, position: Vector
 	# Play wood block hit sound (start at 40% for snappier feedback)
 	if wood_block_hit_audio_player and wood_block_hit_audio_player.is_inside_tree():
 		wood_block_hit_audio_player.pitch_scale = randf_range(0.8, 1.2)
-		var start_pos = wood_block_hit_audio_player.stream.get_length() * 0.13
+		var start_pos = wood_block_hit_audio_player.stream.get_length() * 0.1
 		wood_block_hit_audio_player.play(start_pos)
 	
 	print("DURABILITY_DEBUG: Building block hit at %s | Damage: %d | HP: %d/%d" % [block_pos, blk_dmg, current_hp, BLOCK_HP])
