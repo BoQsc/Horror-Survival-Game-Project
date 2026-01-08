@@ -4,9 +4,9 @@ extends EditorPlugin
 func _enter_tree():
 	print("[RendererFallback Plugin] ======== PLUGIN LOADING ========")
 	
-	# Check current renderer setting
-	var current_driver = ProjectSettings.get_setting("rendering/rendering_device/driver", "")
-	print("[RendererFallback Plugin] Current driver setting: '%s'" % current_driver)
+	# Check current renderer setting (Windows-specific)
+	var current_driver = ProjectSettings.get_setting("rendering/rendering_device/driver.windows", "")
+	print("[RendererFallback Plugin] Current driver.windows setting: '%s'" % current_driver)
 	
 	# If already set to D3D12, we're done
 	if current_driver == "d3d12":
@@ -71,7 +71,7 @@ func _test_vulkan_compute() -> bool:
 
 func _set_d3d12():
 	"""Set D3D12 renderer and save project settings"""
-	var setting_path = "rendering/rendering_device/driver"
+	var setting_path = "rendering/rendering_device/driver.windows"
 	
 	# Set the value
 	ProjectSettings.set_setting(setting_path, "d3d12")
@@ -86,7 +86,7 @@ func _set_d3d12():
 		push_error("[RendererFallback Plugin] Failed to save project.godot! Error: %d" % err)
 		return
 	
-	print("[RendererFallback Plugin] ✓ D3D12 configured in project.godot")
+	print("[RendererFallback Plugin] ✓ D3D12 configured as driver.windows in project.godot")
 	print("[RendererFallback Plugin] ✓ Setting saved successfully")
 	
 	# Show dialog
