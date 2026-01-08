@@ -66,6 +66,11 @@ func check_underwater_visuals() -> void:
 		_emit_camera_underwater_toggled(is_camera_underwater)
 
 func _emit_camera_underwater_toggled(is_underwater: bool) -> void:
+	# Toggle UnderwaterEffect UI directly
+	var ui = get_tree().root.find_child("UnderwaterEffect", true, false)
+	if ui:
+		ui.visible = is_underwater
+	
 	if signals and signals.has_signal("camera_underwater_toggled"):
 		signals.camera_underwater_toggled.emit(is_underwater)
 	# Backward compat
