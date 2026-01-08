@@ -136,4 +136,5 @@ func _restart_with_d3d12():
 
 func _load_game():
 	"""Load the actual game scene"""
-	get_tree().change_scene_to_file("res://modules/world_module/world_test_world_player_v2.tscn")
+	# Defer to avoid "Parent node is busy" error when called from _ready()
+	get_tree().change_scene_to_file.call_deferred("res://modules/world_module/world_test_world_player_v2.tscn")
