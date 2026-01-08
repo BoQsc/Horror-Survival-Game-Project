@@ -587,8 +587,8 @@ func do_tool_attack(item: Dictionary) -> void:
 	# Priority 1: Generic Damageable
 	var damageable = _find_damageable(target)
 	if damageable:
-		if "axe" in item_id and damageable.is_in_group("zombies"):
-			damage = 10  # Axe bonus vs zombies
+		if ("axe" in item_id or "pickaxe" in item_id) and damageable.is_in_group("zombies"):
+			damage = 10  # Axe/Pickaxe bonus vs zombies
 		damageable.take_damage(damage)
 		durability_target = target.get_rid()
 		_emit_damage_dealt(damageable, damage)
@@ -705,7 +705,7 @@ func _do_axe_damage(item: Dictionary) -> void:
 	var damageable = _find_damageable(target)
 	if damageable:
 		if damageable.is_in_group("zombies"):
-			damage = 10  # Axe bonus vs zombies
+			damage = 10  # Axe/Pickaxe bonus vs zombies
 		damageable.take_damage(damage)
 		durability_target = target.get_rid()
 		_emit_damage_dealt(damageable, damage)
@@ -796,6 +796,8 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	# Priority 1: Generic Damageable
 	var damageable = _find_damageable(target)
 	if damageable:
+		if damageable.is_in_group("zombies"):
+			damage = 10  # Axe/Pickaxe bonus vs zombies
 		damageable.take_damage(damage)
 		durability_target = target.get_rid()
 		_emit_damage_dealt(damageable, damage)
