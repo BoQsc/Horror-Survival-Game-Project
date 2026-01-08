@@ -2,18 +2,33 @@
 extends EditorPlugin
 
 func _enter_tree():
+	print("[RendererFallback Plugin] ========================================")
+	print("[RendererFallback Plugin] Plugin loading...")
+	print("[RendererFallback Plugin] Current renderer: %s" % RenderingServer.get_rendering_device().get_device_name())
 	print("[RendererFallback Plugin] Checking Vulkan compute support...")
 	
-	# Test if Vulkan compute works
-	if not _test_vulkan_compute():
+	# Test if Vulkan compute works (with error handling)
+	var vulkan_works = false
+	@warning_ignore("shadowed_variable_base_class")
+	var error = null
+	
+	# Use call_deferred to ensure editor is fully initialized
+	call_deferred("_test_and_configure")
+
+func _test_and_configure():
+	var vulkan_works = _test_vulkan_compute()
+	
+	if not vulkan_works:
 		print("[RendererFallback Plugin] ❌ Vulkan compute failed - auto-configuring D3D12")
 		_configure_d3d12_renderer()
 	else:
-		print("[RendererFallback Plugin] ✓ Vulkan compute works")
+		print("[RendererFallback Plugin] ✓ Vulkan compute works - no action needed")
 	
 	# Add runtime fallback for exported builds
 	add_autoload_singleton("RendererFallback", "res://addons/renderer_fallback/renderer_fallback.gd")
-	print("[RendererFallback Plugin] Installed")
+	print("[RendererFallback Plugin] Autoload added")
+	print("[RendererFallback Plugin] ========================================")
+
 
 func _exit_tree():
 	remove_autoload_singleton("RendererFallback")
