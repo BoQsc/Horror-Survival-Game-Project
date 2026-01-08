@@ -14,8 +14,9 @@ func _enter_tree() -> void:
 	var panel_scene = preload("res://addons/performance_monitor/performance_panel.tscn")
 	panel_instance = panel_scene.instantiate()
 	
-	# Connect debugger to panel
+	# Connect debugger to panel (bidirectional)
 	debugger_plugin.panel = panel_instance
+	panel_instance.set_debugger_plugin(debugger_plugin)
 	
 	# Add to bottom panel (shows as a tab alongside Output, Debugger, etc.)
 	add_control_to_bottom_panel(panel_instance, "Performance")

@@ -3,6 +3,7 @@ extends Node
 
 # Signal for local connections (optional)
 signal spike_logged(category: String, message: String, duration_ms: float, threshold_ms: float)
+signal thresholds_changed()
 
 # Log buffer for history
 var log_buffer: Array = []
@@ -12,9 +13,14 @@ const MAX_BUFFER_SIZE = 200
 var _start_times: Dictionary = {}
 
 # Default thresholds (in milliseconds)
-const THRESHOLD_FRAME_TIME = 20.0
-const THRESHOLD_CHUNK_GEN = 3.0
-const THRESHOLD_VEGETATION = 2.0
+const DEFAULT_THRESHOLDS = {
+	"frame_time": 20.0,
+	"chunk_gen": 3.0,
+	"vegetation": 2.0
+}
+
+# Current thresholds (configurable at runtime)
+var thresholds: Dictionary = DEFAULT_THRESHOLDS.duplicate()
 
 # Whether to send to debugger panel (auto-enabled when debugger active)
 var use_debugger_panel: bool = false
@@ -52,6 +58,24 @@ func _on_debugger_message(message: String, data: Array) -> bool:
 			get_node("/root/DebugManager").set_debugger_panel_enabled(use_debugger_panel)
 		print("[PerformanceMonitor] Panel mode enabled by plugin")
 		return true
+	
+	if message == "perf_monitor:set_threshold":
+		# data = [threshold_name, new_value]
+		if data.size() >= 2:
+			var threshold_name = data[0]
+			var new_value = data[1]
+			if thresholds.has(threshold_name):
+				thresholds[threshold_name] = new_value
+				thresholds_changed.emit()
+				print("[PerformanceMonitor] Threshold '%s' set to %.2fms" % [threshold_name, new_value])
+		return true
+	
+	if message == "perf_monitor:reset_thresholds":
+		thresholds = DEFAULT_THRESHOLDS.duplicate()
+		thresholds_changed.emit()
+		print("[PerformanceMonitor] Thresholds reset to defaults")
+		return true
+	
 	return false
 
 
@@ -119,5 +143,5 @@ func log_entry(category: String, message: String) -> void:
 func _process(delta):
 	# Frame time monitoring
 	var frame_ms = delta * 1000.0
-	if frame_ms > THRESHOLD_FRAME_TIME:
-		log_spike("Frame Time", frame_ms, THRESHOLD_FRAME_TIME)
+	if frame_ms > thresholds.get("frame_time", 20.0):
+		log_spike("Frame Time", frame_ms, thresholds["frame_time"])

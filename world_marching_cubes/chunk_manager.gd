@@ -254,7 +254,7 @@ func _process(delta):
 	
 	PerformanceMonitor.start_measure("Chunk Update")
 	update_chunks()
-	PerformanceMonitor.end_measure("Chunk Update", PerformanceMonitor.THRESHOLD_CHUNK_GEN) # Should be fast (< 2ms)
+	PerformanceMonitor.end_measure("Chunk Update", PerformanceMonitor.thresholds.get("chunk_gen", 3.0)) # Should be fast (< 2ms)
 	
 	PerformanceMonitor.start_measure("Node Finalization")
 	process_pending_nodes()
