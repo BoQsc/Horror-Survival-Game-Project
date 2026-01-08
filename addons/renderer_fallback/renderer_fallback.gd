@@ -64,20 +64,26 @@ func _restart_with_d3d12():
 	"""Restart game with D3D12 renderer"""
 	print("[RendererFallback] Restarting with --rendering-driver d3d12...")
 	
-	# If running from Godot editor, restarting will disconnect logs
-	# Instead, provide instructions for the user
-	if OS.has_feature("editor"):
+	# Check if running from Godot editor by looking for --path in command line args
+	var running_from_editor = false
+	for arg in OS.get_cmdline_args():
+		if arg.begins_with("--path"):
+			running_from_editor = true
+			break
+	
+	# If running from Godot editor, show error instead of restarting
+	if running_from_editor:
 		push_error("=".repeat(80))
 		push_error("VULKAN COMPUTE NOT SUPPORTED - D3D12 REQUIRED")
 		push_error("=".repeat(80))
-		push_error("To run this project from the editor:")
+		push_error("Running from Godot Editor detected!")
+		push_error("")
+		push_error("Please set D3D12 renderer in Project Settings:")
 		push_error("1. Go to Project > Project Settings > General")
 		push_error("2. Search for 'rendering/rendering_device/driver'")
 		push_error("3. Set it to 'd3d12'")
-		push_error("4. Restart Godot editor")
-		push_error("=".repeat(80))
-		push_error("OR run from command line with:")
-		push_error('godot.exe --path "%s" --rendering-driver d3d12' % ProjectSettings.globalize_path("res://").get_base_dir())
+		push_error("4. Close and restart Godot editor")
+		push_error("5. Run the game again (F5)")
 		push_error("=".repeat(80))
 		
 		# Don't auto-restart - let user see the error
@@ -92,3 +98,4 @@ func _restart_with_d3d12():
 	
 	await get_tree().create_timer(0.3).timeout
 	get_tree().quit()
+
