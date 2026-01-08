@@ -98,4 +98,3 @@ func _restart_with_d3d12():
 	
 	await get_tree().create_timer(0.3).timeout
 	get_tree().quit()
-

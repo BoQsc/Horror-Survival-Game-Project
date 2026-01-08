@@ -92,7 +92,7 @@ func _show_restart_dialog():
 DirectX 12 has been automatically configured.
 
 Please CLOSE and RESTART Godot editor now."""
-	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_SCREEN
+	dialog.initial_position = Window.WINDOW_INITIAL_POSITION_CENTER_PRIMARY_SCREEN
 	
 	EditorInterface.get_base_control().add_child(dialog)
 	dialog.popup_centered()
