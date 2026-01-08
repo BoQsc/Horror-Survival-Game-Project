@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ci5t8ucwrfllx"
-path="res://.godot/imported/wood-block-texture.png-339b0939ba7fa7a1e4e1ea98ff9f251a.ctex"
+path="res://.godot/imported/wood-block-texture.png-966c761007cb76d4c79dcfa8eb7ddfd0.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://greedy_meshing/wood-block-texture.png"
-dest_files=["res://.godot/imported/wood-block-texture.png-339b0939ba7fa7a1e4e1ea98ff9f251a.ctex"]
+source_file="res://world_greedy_meshing/wood-block-texture.png"
+dest_files=["res://.godot/imported/wood-block-texture.png-966c761007cb76d4c79dcfa8eb7ddfd0.ctex"]
 
 [params]
 

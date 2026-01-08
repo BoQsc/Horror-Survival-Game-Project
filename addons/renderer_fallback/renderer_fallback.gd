@@ -36,7 +36,7 @@ func _test_vulkan_compute() -> bool:
 	# Use the ACTUAL marching_cubes shader that's causing problems
 	# If this succeeds, the game will likely work. If it fails, we MUST use D3D12.
 	var shader_file = RDShaderFile.new()
-	shader_file.set_bytecode(preload("res://marching_cubes/marching_cubes.glsl").get_spirv())
+	shader_file.set_bytecode(preload("res://world_marching_cubes/marching_cubes.glsl").get_spirv())
 	
 	# Try to create shader and pipeline
 	var shader = rd.shader_create_from_spirv(shader_file.get_spirv())

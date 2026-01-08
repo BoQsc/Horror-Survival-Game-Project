@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b6vulqpj04vd1"
-path="res://.godot/imported/rocky-texture.jpg-f648a0a58e797bb02ee1e141d74a142e.ctex"
+uid="uid://b7loymk84lui3"
+path="res://.godot/imported/green-grass-texture.jpg-910b7b801d754ebeb1478c95a799daf3.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://marching_cubes/rocky-texture.jpg"
-dest_files=["res://.godot/imported/rocky-texture.jpg-f648a0a58e797bb02ee1e141d74a142e.ctex"]
+source_file="res://world_marching_cubes/green-grass-texture.jpg"
+dest_files=["res://.godot/imported/green-grass-texture.jpg-910b7b801d754ebeb1478c95a799daf3.ctex"]
 
 [params]
 

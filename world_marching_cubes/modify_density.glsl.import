@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cp3gaftkjwphd"
+path="res://.godot/imported/modify_density.glsl-1158c38914f5dd69368d3d6f66ee9dc3.res"
+
+[deps]
+
+source_file="res://world_marching_cubes/modify_density.glsl"
+dest_files=["res://.godot/imported/modify_density.glsl-1158c38914f5dd69368d3d6f66ee9dc3.res"]
+
+[params]
+

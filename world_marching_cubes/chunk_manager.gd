@@ -167,22 +167,22 @@ func _ready():
 
 
 	# Load shaders (Data only, safe on Main Thread)
-	shader_gen_spirv = load("res://marching_cubes/gen_density.glsl").get_spirv()
-	shader_gen_water_spirv = load("res://marching_cubes/gen_water_density.glsl").get_spirv() # New
-	shader_mod_spirv = load("res://marching_cubes/modify_density.glsl").get_spirv()
-	shader_mesh_spirv = load("res://marching_cubes/marching_cubes.glsl").get_spirv()
+	shader_gen_spirv = load("res://world_marching_cubes/gen_density.glsl").get_spirv()
+	shader_gen_water_spirv = load("res://world_marching_cubes/gen_water_density.glsl").get_spirv() # New
+	shader_mod_spirv = load("res://world_marching_cubes/modify_density.glsl").get_spirv()
+	shader_mesh_spirv = load("res://world_marching_cubes/marching_cubes.glsl").get_spirv()
 	
 	# Setup Terrain Shader Material
-	var shader = load("res://marching_cubes/terrain.gdshader")
+	var shader = load("res://world_marching_cubes/terrain.gdshader")
 	material_terrain = ShaderMaterial.new()
 	material_terrain.shader = shader
 	
-	material_terrain.set_shader_parameter("texture_grass", load("res://marching_cubes/green-grass-texture.jpg"))
-	material_terrain.set_shader_parameter("texture_rock", load("res://marching_cubes/rocky-texture.jpg"))
-	material_terrain.set_shader_parameter("texture_stone", load("res://marching_cubes/stone_material.png")) # Underground/gravel
-	material_terrain.set_shader_parameter("texture_sand", load("res://marching_cubes/sand-texture.jpg"))
-	material_terrain.set_shader_parameter("texture_snow", load("res://marching_cubes/snow-texture.jpg") if FileAccess.file_exists("res://marching_cubes/snow-texture.jpg") else load("res://marching_cubes/rocky-texture.jpg"))
-	material_terrain.set_shader_parameter("texture_road", load("res://marching_cubes/asphalt-texture.png"))
+	material_terrain.set_shader_parameter("texture_grass", load("res://world_marching_cubes/green-grass-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_rock", load("res://world_marching_cubes/rocky-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_stone", load("res://world_marching_cubes/stone_material.png")) # Underground/gravel
+	material_terrain.set_shader_parameter("texture_sand", load("res://world_marching_cubes/sand-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_snow", load("res://world_marching_cubes/snow-texture.jpg") if FileAccess.file_exists("res://world_marching_cubes/snow-texture.jpg") else load("res://world_marching_cubes/rocky-texture.jpg"))
+	material_terrain.set_shader_parameter("texture_road", load("res://world_marching_cubes/asphalt-texture.png"))
 	material_terrain.set_shader_parameter("uv_scale", 0.5)
 	material_terrain.set_shader_parameter("global_snow_amount", 0.0)
 	# Procedural road texture settings (sync with density shader)
@@ -198,14 +198,14 @@ func _ready():
 	
 	# Setup Water Material
 	material_water = ShaderMaterial.new()
-	material_water.shader = load("res://marching_cubes/water.gdshader")
+	material_water.shader = load("res://world_marching_cubes/water.gdshader")
 	# Dark green water colors
 	material_water.set_shader_parameter("albedo", Color(0.05, 0.18, 0.12))
 	material_water.set_shader_parameter("albedo_deep", Color(0.01, 0.06, 0.04))
 	material_water.set_shader_parameter("albedo_shallow", Color(0.1, 0.3, 0.2))
 	material_water.set_shader_parameter("beer_factor", 0.25)
 	# Water normal texture for detailed ripples
-	var water_normal = load("res://marching_cubes/water_texture.png")
+	var water_normal = load("res://world_marching_cubes/water_texture.png")
 	if water_normal:
 		material_water.set_shader_parameter("water_normal_texture", water_normal)
 	

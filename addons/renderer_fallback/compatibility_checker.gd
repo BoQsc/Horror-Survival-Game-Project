@@ -63,7 +63,7 @@ func _test_vulkan_compute() -> bool:
 	
 	# Use the actual marching_cubes shader
 	var shader_file = RDShaderFile.new()
-	shader_file.set_bytecode(preload("res://marching_cubes/marching_cubes.glsl").get_spirv())
+	shader_file.set_bytecode(preload("res://world_marching_cubes/marching_cubes.glsl").get_spirv())
 	
 	# Try to create shader and pipeline
 	var shader = rd.shader_create_from_spirv(shader_file.get_spirv())

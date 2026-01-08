@@ -29,7 +29,7 @@ func _init():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
 	
-	compute_shader = load("res://greedy_meshing/greedy_meshing.glsl")
+	compute_shader = load("res://world_greedy_meshing/greedy_meshing.glsl")
 	
 	thread = Thread.new()
 	thread.start(_thread_loop)

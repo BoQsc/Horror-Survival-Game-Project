@@ -24,7 +24,7 @@ func _ready():
 	semaphore = Semaphore.new()
 	
 	# Load compute shader
-	compute_shader = load("res://greedy_meshing/greedy_meshing.glsl")
+	compute_shader = load("res://world_greedy_meshing/greedy_meshing.glsl")
 	
 	if compute_shader:
 		print("Compute shader loaded successfully!")

@@ -35,7 +35,7 @@ func _test_vulkan_compute() -> bool:
 		return false
 	
 	# Load shader
-	var shader_path = "res://marching_cubes/marching_cubes.glsl"
+	var shader_path = "res://world_marching_cubes/marching_cubes.glsl"
 	if not FileAccess.file_exists(shader_path):
 		push_error("[RendererFallback Plugin] Shader not found: %s" % shader_path)
 		rd.free()

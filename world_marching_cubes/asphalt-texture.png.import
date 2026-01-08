@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://jkp25i7rvrxm"
-path="res://.godot/imported/stone_material.png-2fe44675b39618e361c22b77f3a41c80.ctex"
+uid="uid://baasnuej5kj2d"
+path="res://.godot/imported/asphalt-texture.png-2b4f9518a24bf77037f036b386408c96.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://marching_cubes/stone_material.png"
-dest_files=["res://.godot/imported/stone_material.png-2fe44675b39618e361c22b77f3a41c80.ctex"]
+source_file="res://world_marching_cubes/asphalt-texture.png"
+dest_files=["res://.godot/imported/asphalt-texture.png-2b4f9518a24bf77037f036b386408c96.ctex"]
 
 [params]
 

@@ -1,8 +1,8 @@
 [gd_scene load_steps=9 format=3 uid="uid://mlh78pg25c1t"]
 
-[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_hyta6"]
-[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://modules/world_player_legacy/camera_3d.gd" id="2_2n70d"]
-[ext_resource type="Script" uid="uid://6ni8vcn4j6p" path="res://greedy_meshing_large_test_runner.gd" id="3_large"]
+[ext_resource type="Script" uid="uid://bxnlk20bjv2eg" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_hyta6"]
+[ext_resource type="Script" uid="uid://bu6aawvhphoci" path="res://modules/world_player_legacy/camera_3d.gd" id="2_2n70d"]
+[ext_resource type="Script" uid="uid://6ni8vcn4j6p" path="res://world_greedy_meshing/greedy_meshing_large_test_runner.gd" id="3_large"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_hyta6"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)

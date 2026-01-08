@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ccmfcpq77vryp"
-path="res://.godot/imported/snow-texture.jpg-9741b77c96abf21ef6b350d5677d197d.ctex"
+uid="uid://crrjdhe423mn7"
+path="res://.godot/imported/asphalt-texture-original.png-d782e469f4df2ef097e3f32894178eea.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://marching_cubes/snow-texture.jpg"
-dest_files=["res://.godot/imported/snow-texture.jpg-9741b77c96abf21ef6b350d5677d197d.ctex"]
+source_file="res://world_marching_cubes/asphalt-texture-original.png"
+dest_files=["res://.godot/imported/asphalt-texture-original.png-d782e469f4df2ef097e3f32894178eea.ctex"]
 
 [params]
 
@@ -23,7 +23,7 @@ compress/rdo_quality_loss=0.0
 compress/hdr_compression=1
 compress/normal_map=0
 compress/channel_pack=0
-mipmaps/generate=true
+mipmaps/generate=false
 mipmaps/limit=-1
 roughness/mode=0
 roughness/src_normal=""

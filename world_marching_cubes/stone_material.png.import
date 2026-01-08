@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bepkn5ubnh0le"
-path="res://.godot/imported/sand-texture.jpg-1038d591bfdfdb90a2dae0c3a11a404d.ctex"
+uid="uid://jkp25i7rvrxm"
+path="res://.godot/imported/stone_material.png-9ed4ab857b7bf179602561a355fe181c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://marching_cubes/sand-texture.jpg"
-dest_files=["res://.godot/imported/sand-texture.jpg-1038d591bfdfdb90a2dae0c3a11a404d.ctex"]
+source_file="res://world_marching_cubes/stone_material.png"
+dest_files=["res://.godot/imported/stone_material.png-9ed4ab857b7bf179602561a355fe181c.ctex"]
 
 [params]
 

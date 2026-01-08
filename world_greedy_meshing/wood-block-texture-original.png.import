@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://crrjdhe423mn7"
-path="res://.godot/imported/asphalt-texture-original.png-73489550f86e6d534cbcb7c27d6fe12c.ctex"
+uid="uid://3uc8lpck564t"
+path="res://.godot/imported/wood-block-texture-original.png-ba22bcd71686b79e9b29b38d286a6e83.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://marching_cubes/asphalt-texture-original.png"
-dest_files=["res://.godot/imported/asphalt-texture-original.png-73489550f86e6d534cbcb7c27d6fe12c.ctex"]
+source_file="res://world_greedy_meshing/wood-block-texture-original.png"
+dest_files=["res://.godot/imported/wood-block-texture-original.png-ba22bcd71686b79e9b29b38d286a6e83.ctex"]
 
 [params]
 

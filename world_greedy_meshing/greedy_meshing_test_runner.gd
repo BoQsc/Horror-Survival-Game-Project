@@ -4,7 +4,7 @@ var building_manager: Node
 
 func _ready():
 	# Instantiate the BuildingManager
-	building_manager = load("res://building_system/building_manager.gd").new()
+	building_manager = load("res://world_building_system/building_manager.gd").new()
 	add_child(building_manager)
 	
 	# Create an initial chunk at (0,0,0) with a solid sphere

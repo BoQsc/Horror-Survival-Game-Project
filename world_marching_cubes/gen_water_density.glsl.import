@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://d2alwp5hc80iu"
+path="res://.godot/imported/gen_water_density.glsl-2e32ad3fad7a85ec32c6309b1293b56e.res"
+
+[deps]
+
+source_file="res://world_marching_cubes/gen_water_density.glsl"
+dest_files=["res://.godot/imported/gen_water_density.glsl-2e32ad3fad7a85ec32c6309b1293b56e.res"]
+
+[params]
+

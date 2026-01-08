@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://3uc8lpck564t"
-path="res://.godot/imported/wood-block-texture-original.png-e1ecfa9660f91e678f82542bc7e20399.ctex"
+uid="uid://ds70lnxg1qdml"
+path="res://.godot/imported/water_texture.png-a73b895d0b038ea7e10fef23ff19e3ed.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://greedy_meshing/wood-block-texture-original.png"
-dest_files=["res://.godot/imported/wood-block-texture-original.png-e1ecfa9660f91e678f82542bc7e20399.ctex"]
+source_file="res://world_marching_cubes/water_texture.png"
+dest_files=["res://.godot/imported/water_texture.png-a73b895d0b038ea7e10fef23ff19e3ed.ctex"]
 
 [params]
 

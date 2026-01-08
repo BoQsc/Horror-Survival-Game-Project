@@ -8,7 +8,7 @@ const CHUNK_SIZE = 16
 
 func _ready():
 	# Instantiate the BuildingManager
-	building_manager = load("res://building_system/building_manager.gd").new()
+	building_manager = load("res://world_building_system/building_manager.gd").new()
 	add_child(building_manager)
 	
 	print("Generating LARGE test world...")
