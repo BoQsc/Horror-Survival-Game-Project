@@ -75,7 +75,7 @@ func _restart_with_d3d12():
 		# Editor args: --path <project_path> --rendering-driver d3d12
 		args = ["--path", project_path.get_base_dir(), "--rendering-driver", "d3d12"]
 		print("[RendererFallback] Editor exe: %s" % exe)
-		print("[RendererFallback] Args: %s" % args)
+		print("[RendererFallback] Args: %s" % str(args))
 	
 	OS.create_process(exe, args)
 	

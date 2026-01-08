@@ -86,7 +86,7 @@ func _restart_with_d3d12():
 		# Editor args: --path <project_path> --rendering-driver d3d12
 		args = ["--path", project_path.get_base_dir(), "--rendering-driver", "d3d12"]
 		print("[CompatibilityChecker] Editor exe: %s" % exe)
-		print("[CompatibilityChecker] Args: %s" % args)
+		print("[CompatibilityChecker] Args: %s" % str(args))
 	
 	OS.create_process(exe, args)
 	
