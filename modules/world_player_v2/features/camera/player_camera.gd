@@ -16,6 +16,7 @@ var camera: Camera3D = null
 
 # State
 var is_camera_underwater: bool = false
+var underwater_audio: AudioStreamPlayer = null
 
 func _ready() -> void:
 	# Try to find local signals node
@@ -70,6 +71,19 @@ func _emit_camera_underwater_toggled(is_underwater: bool) -> void:
 	var ui = get_tree().root.find_child("UnderwaterEffect", true, false)
 	if ui:
 		ui.visible = is_underwater
+	
+	# Toggle underwater ambience audio
+	if not underwater_audio:
+		underwater_audio = AudioStreamPlayer.new()
+		underwater_audio.stream = load("res://game/sound/player-swims-underwater/underwater-ambience-376890.mp3")
+		underwater_audio.bus = "Master"
+		add_child(underwater_audio)
+	
+	if is_underwater:
+		if not underwater_audio.playing:
+			underwater_audio.play()
+	else:
+		underwater_audio.stop()
 	
 	if signals and signals.has_signal("camera_underwater_toggled"):
 		signals.camera_underwater_toggled.emit(is_underwater)
