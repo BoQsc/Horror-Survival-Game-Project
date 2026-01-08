@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, cull_back, depth_draw_always, depth_prepass_alpha;
+render_mode blend_mix, cull_disabled, depth_draw_always, depth_prepass_alpha;
 
 // Water colors - dark green tones
 uniform vec3 albedo : source_color = vec3(0.05, 0.18, 0.12);          // Dark green
