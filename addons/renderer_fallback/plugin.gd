@@ -70,25 +70,74 @@ func _test_vulkan_compute() -> bool:
 	return true
 
 func _set_d3d12():
-	"""Set D3D12 renderer and save project settings"""
-	# Use Windows-specific setting (this is what Godot reads on Windows)
-	var setting_windows = "rendering/rendering_device/driver.windows"
+	"""Set D3D12 renderer by directly modifying project.godot file"""
+	var project_path = "res://project.godot"
+	var setting_line = 'rendering_device/driver.windows="d3d12"'
 	
-	# Set the value
-	ProjectSettings.set_setting(setting_windows, "d3d12")
-	
-	# Mark as basic so it gets saved to project.godot
-	ProjectSettings.set_as_basic(setting_windows, true)
-	ProjectSettings.set_initial_value(setting_windows, "d3d12")
-	
-	# Save to disk
-	var err = ProjectSettings.save()
-	if err != OK:
-		push_error("[RendererFallback Plugin] Failed to save project.godot! Error: %d" % err)
+	# Read the current file
+	var file = FileAccess.open(project_path, FileAccess.READ)
+	if not file:
+		push_error("[RendererFallback Plugin] Cannot open project.godot for reading")
 		return
 	
-	print("[RendererFallback Plugin] ✓ D3D12 configured (driver.windows)")
-	print("[RendererFallback Plugin] ✓ Settings saved to project.godot")
+	var content = file.get_as_text()
+	file.close()
+	
+	# Check if setting already exists
+	if setting_line in content:
+		print("[RendererFallback Plugin] Setting already in project.godot")
+		return
+	
+	# Find [rendering] section and add setting after it
+	var lines = content.split("\n")
+	var new_lines: Array[String] = []
+	var found_rendering = false
+	var added = false
+	
+	for line in lines:
+		new_lines.append(line)
+		if line.strip_edges() == "[rendering]" and not added:
+			found_rendering = true
+		elif found_rendering and not added and (line.begins_with("[") or line.begins_with("rendering_device/")):
+			# Add our setting right after [rendering] section header or before first rendering_device setting
+			if line.begins_with("rendering_device/"):
+				# Insert before this line
+				new_lines.pop_back()
+				new_lines.append(setting_line)
+				new_lines.append(line)
+				added = true
+			elif line.begins_with("["):
+				# New section started, insert before it
+				new_lines.pop_back()
+				new_lines.append(setting_line)
+				new_lines.append("")
+				new_lines.append(line)
+				added = true
+	
+	# If [rendering] section exists but we didn't add yet, add at end
+	if found_rendering and not added:
+		new_lines.append(setting_line)
+		added = true
+	
+	# If no [rendering] section, add one at the end
+	if not found_rendering:
+		new_lines.append("")
+		new_lines.append("[rendering]")
+		new_lines.append("")
+		new_lines.append(setting_line)
+		added = true
+	
+	# Write the modified content
+	file = FileAccess.open(project_path, FileAccess.WRITE)
+	if not file:
+		push_error("[RendererFallback Plugin] Cannot open project.godot for writing")
+		return
+	
+	file.store_string("\n".join(new_lines))
+	file.close()
+	
+	print("[RendererFallback Plugin] ✓ Added driver.windows=d3d12 to project.godot")
+	print("[RendererFallback Plugin] ✓ Please RESTART Godot for changes to take effect")
 	
 	# Show dialog
 	call_deferred("_show_restart_dialog")
