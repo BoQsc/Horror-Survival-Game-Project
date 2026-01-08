@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3 uid="uid://cjkx8y4n5bhqm"]
 
-[ext_resource type="Script" path="res://compatibility_checker.gd" id="1_1x2y3"]
+[ext_resource type="Script" path="res://addons/renderer_fallback/compatibility_checker.gd" id="1_1x2y3"]
 
 [node name="CompatibilityChecker" type="Control"]
 layout_mode = 3
