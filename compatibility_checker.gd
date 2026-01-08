@@ -22,11 +22,11 @@ func _ready():
 	if _test_vulkan_compute():
 		status_label.text = "Vulkan compute works ✓"
 		progress.value = 100
-		_load_game()
+		_load_game()  # Instant load
 	else:
 		status_label.text = "Vulkan not supported - restarting with D3D12..."
 		progress.value = 100
-		await get_tree().create_timer(1.0).timeout
+		await get_tree().create_timer(0.1).timeout  # Just enough to show message
 		_restart_with_d3d12()
 
 func _using_d3d12() -> bool:
@@ -79,10 +79,8 @@ func _restart_with_d3d12():
 	var exe = OS.get_executable_path()
 	OS.create_process(exe, ["--rendering-driver", "d3d12"])
 	
-	await get_tree().create_timer(0.3).timeout
 	get_tree().quit()
 
 func _load_game():
 	"""Load the actual game scene"""
-	await get_tree().create_timer(0.3).timeout
 	get_tree().change_scene_to_file("res://modules/world_module/world_test_world_player_v2.tscn")
