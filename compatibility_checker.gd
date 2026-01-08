@@ -22,11 +22,10 @@ func _ready():
 	if _test_vulkan_compute():
 		status_label.text = "Vulkan compute works ✓"
 		progress.value = 100
-		_load_game()  # Instant load
+		_load_game()
 	else:
 		status_label.text = "Vulkan not supported - restarting with D3D12..."
 		progress.value = 100
-		await get_tree().create_timer(0.1).timeout  # Just enough to show message
 		_restart_with_d3d12()
 
 func _using_d3d12() -> bool:
