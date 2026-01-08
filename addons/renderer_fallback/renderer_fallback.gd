@@ -65,7 +65,19 @@ func _restart_with_d3d12():
 	print("[RendererFallback] Restarting with --rendering-driver d3d12...")
 	
 	var exe = OS.get_executable_path()
-	OS.create_process(exe, ["--rendering-driver", "d3d12"])
+	var args = ["--rendering-driver", "d3d12"]
+	
+	# If running from Godot editor, relaunch through the editor to keep logs
+	if OS.has_feature("editor"):
+		print("[RendererFallback] Detected editor mode - relaunching through Godot editor")
+		# Get project path
+		var project_path = ProjectSettings.globalize_path("res://project.godot")
+		# Editor args: --path <project_path> --rendering-driver d3d12
+		args = ["--path", project_path.get_base_dir(), "--rendering-driver", "d3d12"]
+		print("[RendererFallback] Editor exe: %s" % exe)
+		print("[RendererFallback] Args: %s" % args)
+	
+	OS.create_process(exe, args)
 	
 	# Wait a moment then quit
 	await get_tree().create_timer(0.3).timeout

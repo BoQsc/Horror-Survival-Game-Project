@@ -76,9 +76,22 @@ func _restart_with_d3d12():
 	print("[CompatibilityChecker] Restarting with --rendering-driver d3d12...")
 	
 	var exe = OS.get_executable_path()
-	OS.create_process(exe, ["--rendering-driver", "d3d12"])
+	var args = ["--rendering-driver", "d3d12"]
+	
+	# If running from Godot editor, relaunch through the editor to keep logs
+	if OS.has_feature("editor"):
+		print("[CompatibilityChecker] Detected editor mode - relaunching through Godot editor")
+		# Get project path
+		var project_path = ProjectSettings.globalize_path("res://project.godot")
+		# Editor args: --path <project_path> --rendering-driver d3d12
+		args = ["--path", project_path.get_base_dir(), "--rendering-driver", "d3d12"]
+		print("[CompatibilityChecker] Editor exe: %s" % exe)
+		print("[CompatibilityChecker] Args: %s" % args)
+	
+	OS.create_process(exe, args)
 	
 	get_tree().quit()
+
 
 func _load_game():
 	"""Load the actual game scene"""
