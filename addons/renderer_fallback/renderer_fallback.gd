@@ -12,7 +12,10 @@ func _enter_tree():
 	print("[RendererFallback] Testing Vulkan compute compatibility...")
 	if not _test_vulkan_compute():
 		print("[RendererFallback] ❌ Vulkan compute FAILED - switching to D3D12")
-		_restart_with_d3d12()
+		# TEMPORARILY DISABLED - keep logs connected
+		#_restart_with_d3d12()
+		push_error("ERROR: Vulkan compute failed - D3D12 required")
+		push_error("Plugin should have configured this automatically")
 	else:
 		print("[RendererFallback] ✓ Vulkan compute works")
 
