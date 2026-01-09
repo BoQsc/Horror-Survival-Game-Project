@@ -5,6 +5,7 @@ extends Control
 const MAX_LOG_ENTRIES = 500
 const SEVERITY_COLORS = {
 	"SPIKE": Color(1.0, 0.4, 0.3),       # Red-orange for spikes
+	"FRAME": Color(1.0, 0.6, 0.2),       # Orange for frame summaries
 	"Building": Color(0.5, 0.8, 1.0),    # Light blue for building
 	"BatchFlush": Color(0.7, 0.9, 0.7),  # Light green for batch
 	"Chunk": Color(0.9, 0.7, 0.5),       # Orange for chunks
@@ -16,7 +17,8 @@ const SEVERITY_COLORS = {
 	"Roads": Color(0.7, 0.7, 0.7),       # Gray for roads
 	"Water": Color(0.4, 0.7, 1.0),       # Blue for water
 	"Performance": Color(1.0, 0.6, 0.3), # Orange for performance
-	"Config": Color(0.3, 1.0, 0.5),      # Bright green for config confirmations
+	"Config": Color(0.3, 1.0, 0.5),      # Bright green for config
+	"Other": Color(0.6, 0.6, 0.6),       # Gray for "Other" time
 	"default": Color(0.9, 0.9, 0.9)      # Light gray default
 }
 
@@ -42,8 +44,8 @@ var all_logs: Array[Dictionary] = []
 var spike_count: int = 0
 var current_filter: String = "All"
 
-# Categories for filtering
-var categories = ["All", "SPIKE", "Building", "Chunk", "Vegetation", "Entities", "Save", "Vehicles", "Player", "Roads", "Water", "Performance"]
+# Categories for filtering (add FRAME for frame summaries)
+var categories = ["All", "FRAME", "Building", "Chunk", "Vegetation", "Entities", "Save", "Vehicles", "Player", "Roads", "Water", "Config"]
 
 # Reference to debugger plugin for sending messages
 var _debugger_plugin = null
@@ -163,12 +165,79 @@ func _refresh_display() -> void:
 
 func _update_spike_count() -> void:
 	if spike_count_label:
-		spike_count_label.text = "Spikes: %d" % spike_count
+		spike_count_label.text = "Frames: %d" % spike_count
 
 
-## Called by the debugger plugin to add a log entry
+## Called by the debugger plugin to add a simple log entry
 func add_log(category: String, message: String) -> void:
 	_add_log_entry(category, message, Time.get_ticks_msec())
-	if category == "SPIKE" or message.begins_with("[SPIKE]"):
-		spike_count += 1
-		_update_spike_count()
+
+
+## Called by debugger plugin to add a frame summary (grouped view)
+func add_frame_summary(summary: Dictionary) -> void:
+	if not log_list:
+		return
+	
+	var frame_num = summary.get("frame", 0)
+	var total_ms = summary.get("total_ms", 0.0)
+	var measures = summary.get("measures", [])
+	
+	# Store as log entry
+	var entry = {
+		"category": "FRAME",
+		"message": "Frame #%d: %.1fms" % [frame_num, total_ms],
+		"timestamp": Time.get_ticks_msec(),
+		"summary": summary
+	}
+	all_logs.append(entry)
+	if all_logs.size() > MAX_LOG_ENTRIES:
+		all_logs.pop_front()
+	
+	# Update spike count
+	spike_count += 1
+	_update_spike_count()
+	
+	# Only display if filter matches
+	if current_filter != "All" and current_filter != "FRAME":
+		return
+	
+	# Display frame header
+	var header_color = SEVERITY_COLORS.get("FRAME", Color.ORANGE)
+	var time_str = "%d.%03d" % [entry.timestamp / 1000, entry.timestamp % 1000]
+	
+	log_list.push_color(Color(0.6, 0.6, 0.6))
+	log_list.add_text("[%s] " % time_str)
+	log_list.pop()
+	
+	log_list.push_color(header_color)
+	log_list.add_text("▼ Frame #%d - Total: %.1fms" % [frame_num, total_ms])
+	log_list.pop()
+	log_list.newline()
+	
+	# Display breakdown (sorted by impact - already sorted in game)
+	for i in range(measures.size()):
+		var m = measures[i]
+		var name = m.get("name", "Unknown")
+		var ms = m.get("ms", 0.0)
+		var pct = m.get("pct", 0.0)
+		
+		# Choose color based on measure name or default
+		var measure_color = SEVERITY_COLORS.get(name, SEVERITY_COLORS["default"])
+		if name == "Other":
+			measure_color = SEVERITY_COLORS["Other"]
+		
+		# Indent and tree-like display
+		var prefix = "   └─ " if i == measures.size() - 1 else "   ├─ "
+		
+		log_list.push_color(Color(0.5, 0.5, 0.5))
+		log_list.add_text(prefix)
+		log_list.pop()
+		
+		log_list.push_color(measure_color)
+		log_list.add_text("%s: %.1fms (%.0f%%)" % [name, ms, pct])
+		log_list.pop()
+		log_list.newline()
+	
+	# Auto-scroll to bottom
+	log_list.scroll_to_line(log_list.get_line_count() - 1)
+
