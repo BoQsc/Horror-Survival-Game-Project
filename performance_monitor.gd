@@ -122,8 +122,14 @@ func _send_frame_summary(total_frame_ms: float) -> void:
 	for m in sorted_measures:
 		measured_total += m.duration_ms
 	
-	# Calculate "Other" (unmeasured time)
-	var other_ms = max(0.0, total_frame_ms - measured_total)
+	# Get Godot's built-in performance data (in seconds, convert to ms)
+	var physics_time_ms = Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+	var _render_time_ms = Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0  # Includes rendering prep
+	var navigation_time_ms = Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0
+	
+	# Get render info for context
+	var draw_calls = Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)
+	var objects_drawn = Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)
 	
 	# Build summary data
 	var summary = {
@@ -131,7 +137,9 @@ func _send_frame_summary(total_frame_ms: float) -> void:
 		"total_ms": total_frame_ms,
 		"threshold_ms": thresholds.get("frame_time", 20.0),
 		"measures": [],
-		"other_ms": other_ms
+		"other_ms": 0.0,
+		"draw_calls": int(draw_calls),
+		"objects": int(objects_drawn)
 	}
 	
 	# Add measures with percentages (only include significant ones > 0.1ms)
@@ -144,14 +152,34 @@ func _send_frame_summary(total_frame_ms: float) -> void:
 				"pct": pct
 			})
 	
-	# Add "Other" if significant
+	# Add Godot engine times (these are automatically tracked by the engine)
+	if physics_time_ms >= 0.1:
+		var pct = (physics_time_ms / total_frame_ms) * 100.0 if total_frame_ms > 0 else 0.0
+		summary.measures.append({"name": "Engine: Physics", "ms": physics_time_ms, "pct": pct})
+		measured_total += physics_time_ms
+	
+	if navigation_time_ms >= 0.1:
+		var pct = (navigation_time_ms / total_frame_ms) * 100.0 if total_frame_ms > 0 else 0.0
+		summary.measures.append({"name": "Engine: Navigation", "ms": navigation_time_ms, "pct": pct})
+		measured_total += navigation_time_ms
+	
+	# Calculate "Other" (unmeasured time - likely GPU/Render)
+	var other_ms = max(0.0, total_frame_ms - measured_total)
+	summary.other_ms = other_ms
+	
+	# Add render context as "GPU/Render" estimate
 	if other_ms >= 0.1:
 		var other_pct = (other_ms / total_frame_ms) * 100.0 if total_frame_ms > 0 else 0.0
+		# Label it as GPU if draw calls are high
+		var label = "GPU/Render" if draw_calls > 100 else "Unmeasured"
 		summary.measures.append({
-			"name": "Other",
+			"name": label + " (%d draws)" % int(draw_calls),
 			"ms": other_ms,
 			"pct": other_pct
 		})
+	
+	# Re-sort by duration after adding engine times
+	summary.measures.sort_custom(func(a, b): return a.ms > b.ms)
 	
 	# Add to log buffer
 	var frame_entry = {

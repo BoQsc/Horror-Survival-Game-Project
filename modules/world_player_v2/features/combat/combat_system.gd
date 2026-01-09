@@ -134,11 +134,13 @@ func _setup_tree_hit_audio() -> void:
 			print("[COMBAT_AUDIO] Wood block hit sound loaded successfully")
 
 func _process(delta: float) -> void:
+	PerformanceMonitor.start_measure("Combat System")
 	if attack_cooldown > 0:
 		attack_cooldown -= delta
 	
 	_update_held_prop(delta)
 	_check_durability_target()
+	PerformanceMonitor.end_measure("Combat System", 1.0)
 
 ## Initialize references (called by parent after scene ready)
 func initialize(p_player: Node, p_terrain: Node, p_vegetation: Node, p_building: Node, p_hotbar: Node) -> void:

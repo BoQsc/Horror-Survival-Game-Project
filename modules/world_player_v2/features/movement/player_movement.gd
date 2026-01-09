@@ -67,12 +67,15 @@ func _setup_footstep_sounds() -> void:
 	DebugManager.log_player("PlayerMovement: Loaded %d footstep sounds" % footstep_sounds.size())
 
 func _physics_process(delta: float) -> void:
+	PerformanceMonitor.start_measure("Player Movement")
 	if not player:
+		PerformanceMonitor.end_measure("Player Movement", 1.0)
 		return
 	
 	# Skip movement if container UI is open
 	var container_panel = get_tree().get_first_node_in_group("container_panel")
 	if container_panel and container_panel.visible:
+		PerformanceMonitor.end_measure("Player Movement", 1.0)
 		return
 	
 	_update_water_state()
@@ -86,6 +89,7 @@ func _physics_process(delta: float) -> void:
 	
 	# Detect landing
 	check_landing()
+	PerformanceMonitor.end_measure("Player Movement", 1.0)
 
 func _update_water_state() -> void:
 	# Check Center of Mass (+0.9 is approx center of 1.8m player)
