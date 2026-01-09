@@ -6,6 +6,5 @@
 script = ExtResource("1_10q2i")
 preset_name = "Default"
 description = "All debug options OFF. Use for clean production runs."
-is_active = true
 log_building = true
 log_performance = true
