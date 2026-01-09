@@ -16,6 +16,7 @@ const SEVERITY_COLORS = {
 	"Roads": Color(0.7, 0.7, 0.7),       # Gray for roads
 	"Water": Color(0.4, 0.7, 1.0),       # Blue for water
 	"Performance": Color(1.0, 0.6, 0.3), # Orange for performance
+	"Config": Color(0.3, 1.0, 0.5),      # Bright green for config confirmations
 	"default": Color(0.9, 0.9, 0.9)      # Light gray default
 }
 
@@ -71,12 +72,9 @@ func set_debugger_plugin(plugin) -> void:
 
 
 func _send_threshold_to_game(threshold_name: String, value: float) -> void:
-	# Send threshold change to the running game via debugger
-	if _debugger_plugin:
-		var sessions = _debugger_plugin.get_sessions()
-		for s in sessions:
-			if s.is_active():
-				s.send_message("perf_monitor:set_threshold", [threshold_name, value])
+	# Send threshold change to the running game via debugger plugin
+	if _debugger_plugin and _debugger_plugin.has_method("send_threshold"):
+		_debugger_plugin.send_threshold(threshold_name, value)
 
 
 func _on_frame_time_changed(value: float) -> void:
@@ -98,11 +96,8 @@ func _on_reset_thresholds() -> void:
 	veg_spinbox.value = DEFAULT_THRESHOLDS["vegetation"]
 	
 	# Send reset command to game
-	if _debugger_plugin:
-		var sessions = _debugger_plugin.get_sessions()
-		for s in sessions:
-			if s.is_active():
-				s.send_message("perf_monitor:reset_thresholds", [])
+	if _debugger_plugin and _debugger_plugin.has_method("send_reset_thresholds"):
+		_debugger_plugin.send_reset_thresholds()
 
 
 func _on_filter_changed(index: int) -> void:

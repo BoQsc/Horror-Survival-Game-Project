@@ -27,8 +27,22 @@ func _capture(message: String, data: Array, _session_id: int) -> bool:
 func _setup_session(session_id: int) -> void:
 	_sessions.append(session_id)
 	# Tell the game to enable debugger panel mode
+	_send_to_active_sessions("perf_monitor:enable_panel", [true])
+
+
+## Send a message to all active debugging sessions (editor → game)
+func _send_to_active_sessions(message: String, data: Array) -> void:
 	var sessions = get_sessions()
 	for s in sessions:
 		if s.is_active():
-			# Send message to enable panel mode in PerformanceMonitor
-			s.send_message("perf_monitor:enable_panel", [true])
+			s.send_message(message, data)
+
+
+## Called by the panel to send threshold changes to the game
+func send_threshold(threshold_name: String, value: float) -> void:
+	_send_to_active_sessions("perf_monitor:set_threshold", [threshold_name, value])
+
+
+## Called by the panel to reset all thresholds in the game
+func send_reset_thresholds() -> void:
+	_send_to_active_sessions("perf_monitor:reset_thresholds", [])

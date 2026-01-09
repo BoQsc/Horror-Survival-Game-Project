@@ -51,29 +51,31 @@ func _enable_panel_mode() -> void:
 
 func _on_debugger_message(message: String, data: Array) -> bool:
 	# Handle messages FROM the editor plugin
-	if message == "perf_monitor:enable_panel":
+	# Note: Godot may send with or without the prefix, so check both
+	
+	if message == "perf_monitor:enable_panel" or message == "enable_panel":
 		use_debugger_panel = data[0] if data.size() > 0 else true
-		# Also update DebugManager's cached flag for thread-safe logging
 		if has_node("/root/DebugManager"):
 			get_node("/root/DebugManager").set_debugger_panel_enabled(use_debugger_panel)
-		print("[PerformanceMonitor] Panel mode enabled by plugin")
 		return true
 	
-	if message == "perf_monitor:set_threshold":
-		# data = [threshold_name, new_value]
+	if message == "perf_monitor:set_threshold" or message == "set_threshold":
 		if data.size() >= 2:
 			var threshold_name = data[0]
 			var new_value = data[1]
 			if thresholds.has(threshold_name):
 				thresholds[threshold_name] = new_value
 				thresholds_changed.emit()
-				print("[PerformanceMonitor] Threshold '%s' set to %.2fms" % [threshold_name, new_value])
+				# Echo back to panel so user sees confirmation
+				if use_debugger_panel and EngineDebugger.is_active():
+					EngineDebugger.send_message("perf_monitor:log", ["Config", "[CONFIG] Threshold '%s' set to %.2fms" % [threshold_name, new_value]])
 		return true
 	
-	if message == "perf_monitor:reset_thresholds":
+	if message == "perf_monitor:reset_thresholds" or message == "reset_thresholds":
 		thresholds = DEFAULT_THRESHOLDS.duplicate()
 		thresholds_changed.emit()
-		print("[PerformanceMonitor] Thresholds reset to defaults")
+		if use_debugger_panel and EngineDebugger.is_active():
+			EngineDebugger.send_message("perf_monitor:log", ["Config", "[CONFIG] Thresholds reset to defaults"])
 		return true
 	
 	return false
