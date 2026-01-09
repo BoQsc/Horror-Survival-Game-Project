@@ -9,7 +9,7 @@
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://world_marching_cubes/roads/road_manager.gd" id="7_roads"]
 [ext_resource type="Script" uid="uid://ds7smfcuouehv" path="res://world_building_system/prefab_spawner.gd" id="8_prefabs"]
 [ext_resource type="PackedScene" uid="uid://dxkm8p7qhwvam" path="res://game/entities/entity_manager.tscn" id="9_entities"]
-[ext_resource type="Script" uid="uid://o0r1v40u60lk" path="res://vehicles/vehicle_manager.gd" id="10_vehicles"]
+[ext_resource type="Script" uid="uid://o0r1v40u60lk" path="res://world_vehicles/vehicle_manager.gd" id="10_vehicles"]
 [ext_resource type="Script" uid="uid://bts6arlg03cxx" path="res://world_building_system/prefab_capture.gd" id="11_prefab_capture"]
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://world_building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://world_building_system/debug_teleporter.gd" id="13_debug"]

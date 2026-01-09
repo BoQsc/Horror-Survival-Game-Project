@@ -311,10 +311,10 @@ func load_save_data(data: Dictionary):
 
 # ============ USER PREFAB SUPPORT ============
 
-const USER_PREFAB_DIR = "user://prefabs/"
-const RES_PREFAB_DIR = "res://prefabs/"
+const USER_PREFAB_DIR = "user://world_prefabs/"
+const RES_PREFAB_DIR = "res://world_prefabs/"
 
-## Load all user prefabs from user://prefabs/ directory
+## Load all user prefabs from user://world_prefabs/ directory
 func load_user_prefabs():
 	if not DirAccess.dir_exists_absolute(USER_PREFAB_DIR):
 		return
@@ -338,12 +338,12 @@ func load_user_prefabs():
 		DebugManager.log_building("Loaded %d user prefabs" % count)
 
 ## Load a single prefab from JSON file (v2 bracket notation format only)
-## Checks res://prefabs/ first, then user://prefabs/
+## Checks res://world_prefabs/ first, then user://world_prefabs/
 func load_prefab_from_file(prefab_name: String) -> bool:
-	# Try res://prefabs/ first (built-in prefabs)
+	# Try res://world_prefabs/ first (built-in prefabs)
 	var path = RES_PREFAB_DIR + prefab_name + ".json"
 	if not FileAccess.file_exists(path):
-		# Fall back to user://prefabs/ (user-created prefabs)
+		# Fall back to user://world_prefabs/ (user-created prefabs)
 		path = USER_PREFAB_DIR + prefab_name + ".json"
 		if not FileAccess.file_exists(path):
 			DebugManager.log_building("Prefab not found in res:// or user:// : %s" % prefab_name)
@@ -710,12 +710,12 @@ func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
 	instance.global_position = pos
 	instance.rotation_degrees.y = rotation_y
 
-## Get list of available prefabs from both res://prefabs/ and user://prefabs/
+## Get list of available prefabs from both res://world_prefabs/ and user://world_prefabs/
 func get_available_prefabs() -> Array[String]:
 	var result: Array[String] = []
 	var seen: Dictionary = {} # Track names to avoid duplicates
 	
-	# Check res://prefabs/ first (built-in prefabs)
+	# Check res://world_prefabs/ first (built-in prefabs)
 	var res_dir = DirAccess.open(RES_PREFAB_DIR)
 	if res_dir:
 		res_dir.list_dir_begin()
@@ -729,7 +729,7 @@ func get_available_prefabs() -> Array[String]:
 			file_name = res_dir.get_next()
 		res_dir.list_dir_end()
 	
-	# Check user://prefabs/ (user-created prefabs)
+	# Check user://world_prefabs/ (user-created prefabs)
 	if DirAccess.dir_exists_absolute(USER_PREFAB_DIR):
 		var user_dir = DirAccess.open(USER_PREFAB_DIR)
 		if user_dir:

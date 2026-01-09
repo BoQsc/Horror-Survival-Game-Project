@@ -271,7 +271,7 @@ func _process_fly_movement(_delta: float) -> void:
 func _load_prefabs() -> void:
 	available_prefabs.clear()
 	
-	var prefab_dir = "res://prefabs/"
+	var prefab_dir = "res://world_prefabs/"
 	var dir = DirAccess.open(prefab_dir)
 	
 	if dir:

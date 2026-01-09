@@ -1,11 +1,11 @@
-[gd_scene load_steps=7 format=3 uid="uid://drivable_car_scene"]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="PackedScene" uid="uid://7l1irinimxa" path="res://addons/srcoder_simplecar/car.tscn" id="1_car"]
-[ext_resource type="Script" path="res://vehicles/drivable_car.gd" id="2_script"]
+[ext_resource type="Script" uid="uid://dydkfttprvoiy" path="res://world_vehicles/drivable_car.gd" id="2_script"]
 [ext_resource type="PackedScene" uid="uid://rjx8tx5y7j2p" path="res://addons/srcoder_simplecar/follow_camera.tscn" id="3_camera"]
-[ext_resource type="Script" path="res://vehicles/safe_follow_camera.gd" id="4_safe_cam"]
-[ext_resource type="AudioStream" path="res://game/sound/vehicle/car/1/car-engine-start-44357.mp3" id="5_engine_start"]
-[ext_resource type="AudioStream" path="res://game/sound/vehicle/car/1/car-idle-84718.mp3" id="6_engine_idle"]
+[ext_resource type="Script" uid="uid://50wfr03juc23" path="res://world_vehicles/safe_follow_camera.gd" id="4_safe_cam"]
+[ext_resource type="AudioStream" uid="uid://bej2jpmtw0x6t" path="res://game/sound/vehicle/car/1/car-engine-start-44357.mp3" id="5_engine_start"]
+[ext_resource type="AudioStream" uid="uid://x45uqspvobtf" path="res://game/sound/vehicle/car/1/car-idle-84718.mp3" id="6_engine_idle"]
 
 [node name="DrivableCar" instance=ExtResource("1_car")]
 script = ExtResource("2_script")

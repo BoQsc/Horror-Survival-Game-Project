@@ -21,7 +21,7 @@ var marker_a: MeshInstance3D = null
 var marker_b: MeshInstance3D = null
 var selection_box: MeshInstance3D = null  # Transparent box showing selection region
 
-const PREFAB_DIR = "user://prefabs/"
+const PREFAB_DIR = "user://world_prefabs/"
 
 func _ready():
 	# Create prefabs directory

@@ -8,7 +8,7 @@ signal player_exited_vehicle(vehicle: Node3D)
 
 var vehicles: Array[Node3D] = []
 var current_player_vehicle: Node3D = null
-var vehicle_scene: PackedScene = preload("res://vehicles/drivable_car.tscn")
+var vehicle_scene: PackedScene = preload("res://world_vehicles/drivable_car.tscn")
 
 @export var player: Node3D
 

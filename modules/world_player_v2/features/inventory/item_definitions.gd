@@ -124,7 +124,7 @@ static func get_test_items() -> Array[Dictionary]:
 			"damage": 0,
 			"mining_strength": 0.0,
 			"stack_size": 1,
-			"vehicle_scene": "res://vehicles/drivable_car.tscn"
+			"vehicle_scene": "res://world_vehicles/drivable_car.tscn"
 		}
 	]
 
@@ -236,5 +236,5 @@ static func get_car_keys_definition() -> Dictionary:
 		"damage": 0,
 		"mining_strength": 0.0,
 		"stack_size": 1,
-		"vehicle_scene": "res://vehicles/drivable_car.tscn"
+		"vehicle_scene": "res://world_vehicles/drivable_car.tscn"
 	}
