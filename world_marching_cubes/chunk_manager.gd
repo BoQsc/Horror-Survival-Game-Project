@@ -1138,13 +1138,20 @@ func _thread_function():
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 	
 	# Create REUSABLE Buffers for meshing (9 floats per vertex: pos + normal + color)
+	# TERRAIN buffers
 	var output_bytes_size = MAX_TRIANGLES * 3 * 9 * 4
-	var vertex_buffer = rd.storage_buffer_create(output_bytes_size)
-	
+	var vertex_buffer_terrain = rd.storage_buffer_create(output_bytes_size)
 	var counter_data = PackedByteArray()
 	counter_data.resize(4)
 	counter_data.encode_u32(0, 0)
-	var counter_buffer = rd.storage_buffer_create(4, counter_data)
+	var counter_buffer_terrain = rd.storage_buffer_create(4, counter_data)
+	
+	# WATER buffers (separate to enable batch dispatching - reduces GPU syncs by 50%)
+	var vertex_buffer_water = rd.storage_buffer_create(output_bytes_size)
+	var counter_data_w = PackedByteArray()
+	counter_data_w.resize(4)
+	counter_data_w.encode_u32(0, 0)
+	var counter_buffer_water = rd.storage_buffer_create(4, counter_data_w)
 	
 	# In-flight chunks: dispatched but not yet read back
 	var in_flight: Array[Dictionary] = []
@@ -1165,7 +1172,7 @@ func _thread_function():
 			if in_flight.size() > 0:
 				rd.sync()
 				for flight_data in in_flight:
-					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
 				in_flight.clear()
 			continue
 			
@@ -1178,15 +1185,15 @@ func _thread_function():
 			if in_flight.size() > 0:
 				rd.sync()
 				for fd in in_flight:
-					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
 				in_flight.clear()
-			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer)
+			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain)
 		elif task.type == "generate":
 			# Complete any in-flight before starting new generation
 			if in_flight.size() > 0:
 				rd.sync()
 				for flight_data in in_flight:
-					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
 				in_flight.clear()
 			
 			# Dispatch all GPU work, NO sync - will be completed next iteration
@@ -1199,7 +1206,7 @@ func _thread_function():
 				if in_flight.size() >= MAX_IN_FLIGHT:
 					rd.sync()
 					for fd in in_flight:
-						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer)
+						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
 					in_flight.clear()
 					
 					# Two-phase loading: fast initial load, then throttled exploration
@@ -1220,8 +1227,10 @@ func _thread_function():
 				rd.free_rid(task.rid)
 	
 	# Cleanup
-	rd.free_rid(vertex_buffer)
-	rd.free_rid(counter_buffer)
+	rd.free_rid(vertex_buffer_terrain)
+	rd.free_rid(counter_buffer_terrain)
+	rd.free_rid(vertex_buffer_water)
+	rd.free_rid(counter_buffer_water)
 	rd.free_rid(pipe_gen)
 	rd.free_rid(pipe_gen_water)
 	rd.free_rid(pipe_mod)
@@ -1312,28 +1321,28 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	}
 
 # Complete readback and queue to CPU workers (called after density sync)
-func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer, counter_buffer):
+# OPTIMIZED: Uses separate buffers for terrain/water to enable batch dispatch with single sync
+func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water):
 	var coord = flight_data.coord
 	var chunk_pos = flight_data.chunk_pos
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 	
-	# Dispatch BOTH mesh shaders, THEN sync once (reduces stalls)
-	# Note: We need separate vertex/counter buffers to batch both, so we do them sequentially
-	# but with minimal sync (each mesh needs its own readback before the buffer is reused)
+	# BATCH DISPATCH: Dispatch BOTH mesh shaders, THEN sync ONCE (reduces GPU stalls by 50%)
+	# Terrain mesh (uses material buffer for vertex colors) -> terrain buffers
+	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain)
 	
-	# Terrain mesh (uses material buffer for vertex colors)
-	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
+	# Water mesh (uses terrain's material buffer for now) -> water buffers
+	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water)
+	
+	# SINGLE SYNC for both dispatches (was 2 syncs before!)
 	rd.submit()
 	rd.sync()
-	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_t)
 	
-	# Water mesh (no material buffer, use terrain's for now)
-	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer, counter_buffer)
-	rd.submit()
-	rd.sync()
-	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh_w)
+	# Readback both meshes (GPU work already complete)
+	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer_terrain, counter_buffer_terrain, set_mesh_t)
+	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer_water, counter_buffer_water, set_mesh_w)
 	
 	# Readback density for physics
 	var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
