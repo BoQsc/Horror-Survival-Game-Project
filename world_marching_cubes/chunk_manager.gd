@@ -1618,6 +1618,8 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	
 	call_deferred("complete_modification", task.coord, result, layer, b_id, b_count, cpu_density_floats, cpu_material_bytes, start_mod_version)
 
+var _meshbuilder_logged: bool = false
+
 func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
 	if data.size() == 0:
 		return null
@@ -1626,6 +1628,9 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayM
 	
 	# Try using GDExtension "MeshBuilder" for extreme speed (10-50x faster)
 	if ClassDB.class_exists("MeshBuilder"):
+		if not _meshbuilder_logged:
+			_meshbuilder_logged = true
+			print("[ChunkManager] ✓ MeshBuilder GDExtension LOADED - using fast C++ path")
 		var builder = ClassDB.instantiate("MeshBuilder")
 		# 9 stride = pos(3) + norm(3) + col(3)
 		var mesh = builder.build_mesh_native(data, 9)
