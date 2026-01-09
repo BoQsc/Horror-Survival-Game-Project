@@ -1002,6 +1002,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	for tree in tree_list:
 		var persist_key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
 		if chopped_trees.has(persist_key):
+			print("DEBUG_VEG_PERSIST: Tree FILTERED at pos=%s key=%s (found in chopped_trees)" % [tree.world_pos, persist_key])
 			tree.alive = false
 			# Hide in MultiMesh
 			var t = Transform3D()
@@ -1031,6 +1032,7 @@ func chop_tree_by_collider(collider: Node) -> bool:
 			# Add to chopped_trees for persistence across chunk unloads
 			var persist_key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
 			chopped_trees[persist_key] = true
+			print("DEBUG_VEG_PERSIST: Tree CHOPPED - stored key=%s pos=%s (total_chopped=%d)" % [persist_key, tree.world_pos, chopped_trees.size()])
 			
 			# Hide in MultiMesh
 			var mmi = data.multimesh as MultiMeshInstance3D
@@ -1195,6 +1197,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			# Skip if this grass was previously removed
 			var pos_hash = _position_hash(hit_pos)
 			if removed_grass.has(pos_hash):
+				print("DEBUG_VEG_PERSIST: Grass FILTERED at pos=%s hash=%s (found in removed_grass)" % [hit_pos, pos_hash])
 				continue
 			
 			# Skip if underwater
@@ -1306,6 +1309,7 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 			# Store removal for persistence (using position hash)
 			var pos_hash = _position_hash(grass.world_pos)
 			removed_grass[pos_hash] = true
+			print("DEBUG_VEG_PERSIST: Grass HARVESTED - stored hash=%s pos=%s (total_removed=%d)" % [pos_hash, grass.world_pos, removed_grass.size()])
 			
 			# Hide in MultiMesh (only if valid)
 			if data.has("multimesh") and is_instance_valid(data.multimesh):
@@ -1328,8 +1332,12 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 	return false
 
 # Helper to create position hash for persistence
+# NOTE: int() truncates toward zero, which could cause issues near coordinate 0
+# e.g. int(-0.5) = 0, int(0.5) = 0 - these would collide!
 func _position_hash(pos: Vector3) -> String:
-	return "%d_%d" % [int(pos.x), int(pos.z)]
+	var hash_x = int(floor(pos.x))  # Use floor for consistent rounding
+	var hash_z = int(floor(pos.z))
+	return "%d_%d" % [hash_x, hash_z]
 
 func place_grass(world_pos: Vector3) -> bool:
 	# Find which chunk this position belongs to
@@ -1506,6 +1514,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			# Skip if this rock was previously removed
 			var pos_hash = _position_hash(hit_pos)
 			if removed_rocks.has(pos_hash):
+				print("DEBUG_VEG_PERSIST: Rock FILTERED at pos=%s hash=%s (found in removed_rocks)" % [hit_pos, pos_hash])
 				continue
 			
 			# Skip if underwater
@@ -1622,6 +1631,7 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 			# Store removal for persistence
 			var pos_hash = _position_hash(rock.world_pos)
 			removed_rocks[pos_hash] = true
+			print("DEBUG_VEG_PERSIST: Rock HARVESTED - stored hash=%s pos=%s (total_removed=%d)" % [pos_hash, rock.world_pos, removed_rocks.size()])
 			
 			# Hide in MultiMesh (only if valid)
 			if data.has("multimesh") and is_instance_valid(data.multimesh):
