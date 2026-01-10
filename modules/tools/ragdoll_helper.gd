@@ -6,8 +6,8 @@ extends Node
 ## 2. RUNTIME: Holds the Root/Hips up so it stands.
 
 @export_group("1. Joint Setup (Editor)")
-@export var joint_stiffness_deg: float = 2.0 ## Lower = Stiffer. Limits the angle bones can bend.
-@export var joint_damping: float = 10.0 ## Higher = Syrupy usage. Stops wobbling.
+@export var max_rotation_angle: float = 30.0 ## Max degrees a joint can bend from straight. (e.g. 0=Rigid, 30=Stiff, 90=Flexible)
+@export var joint_damping: float = 5.0 ## Resistance to motion.
 @export var run_setup: bool = false : set = _on_run_setup
 
 @export_group("2. Runtime Balance")
@@ -18,6 +18,7 @@ extends Node
 @export var balance_power: float = 4000.0
 
 var root_bone: PhysicalBone3D
+var all_bones: Array[PhysicalBone3D] = []
 
 func _ready():
 	if Engine.is_editor_hint(): return
@@ -27,27 +28,29 @@ func _ready():
 	if sim:
 		for child in sim.get_children():
 			if child is PhysicalBone3D:
+				all_bones.append(child)
 				# Heuristic: First bone or name match
 				if not root_bone: root_bone = child
 				elif "root" in child.name.to_lower() or "pelvis" in child.name.to_lower():
 					root_bone = child
-					break
+					# break # Don't break, need to find all bones
 		if root_bone:
-			print("RagdollHelper: Holding up ", root_bone.name)
+			print("RagdollHelper: Managed ", all_bones.size(), " bones. Holding Root: ", root_bone.name)
 
 func _physics_process(delta):
 	if Engine.is_editor_hint() or not active or not root_bone: return
 	
-	# 1. Anti-Gravity (Float)
-	# Apply force UP to cancel gravity
+	# 1. Anti-Gravity (Float) - Apply to ALL BONES
+	# Otherwise heavy limbs drag the root down.
 	var g_vec = ProjectSettings.get_setting("physics/3d/default_gravity_vector")
 	var g_mag = ProjectSettings.get_setting("physics/3d/default_gravity")
-	var up_force = -g_vec * g_mag * root_bone.mass * gravity_cancel
-	# Manual Force Integration (PhysicalBone3D lacks apply_central_force)
-	# F = ma -> a = F/m
-	if root_bone.mass > 0:
-		var accel = up_force / root_bone.mass
-		root_bone.linear_velocity += accel * delta
+	# acceleration = -g * cancel
+	var counter_accel = -g_vec * g_mag * gravity_cancel
+	
+	for pb in all_bones:
+		# Manual Velocity Integration
+		# v += a * dt
+		pb.linear_velocity += counter_accel * delta
 	
 	# 2. Balance (Keep Upright)
 	# Torque to align Local UP with World UP
@@ -83,8 +86,10 @@ func _apply_joint_setup():
 			child.joint_type = PhysicalBone3D.JOINT_TYPE_CONE
 			
 			# 2. Tight Limits (Stiffness)
-			child.set("joint_constraints/swing_span", joint_stiffness_deg)
-			child.set("joint_constraints/twist_span", joint_stiffness_deg)
+			# swing_span: Side-to-side rotation limit.
+			# twist_span: Twisting rotation limit.
+			child.set("joint_constraints/swing_span", max_rotation_angle)
+			child.set("joint_constraints/twist_span", max_rotation_angle)
 			
 			# 3. High Damping (No jitter)
 			child.set("joint_constraints/damping", joint_damping)
@@ -94,7 +99,7 @@ func _apply_joint_setup():
 			
 			count += 1
 			
-	print("RagdollHelper: Stiffened ", count, " bones with ", joint_stiffness_deg, " deg limits.")
+	print("RagdollHelper: Limited ", count, " bones to ", max_rotation_angle, " degrees.")
 
 func _find_simulator():
 	# 1. Is it this node?
