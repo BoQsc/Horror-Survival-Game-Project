@@ -27,8 +27,8 @@ var radial_menu: Control = null
 var radial_menu_open: bool = false
 
 # V2 local path for ItemDefinitions
-const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
-const RadialMenuScript = preload("res://modules/world_player_v2/features/interaction/radial_menu.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
+const RadialMenuScript = preload("res://modules/world_player_v2/features/player_interaction/radial_menu.gd")
 
 func _ready() -> void:
 	player = get_parent().get_parent()

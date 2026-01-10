@@ -1,9 +1,9 @@
 [gd_scene load_steps=5 format=3]
 
-[ext_resource type="Script" path="res://modules/world_player_v2/features/hud/player_hud.gd" id="1_hud"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/inventory/ui/inventory_panel.tscn" id="2_inv"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/inventory/ui/inventory_slot.tscn" id="3_slot"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/containers/ui/container_panel.tscn" id="4_container"]
+[ext_resource type="Script" uid="uid://dflhel6eekhjm" path="res://modules/world_player_v2/features/player_hud/player_hud.gd" id="1_hud"]
+[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/player_inventory/ui/inventory_panel.tscn" id="2_inv"]
+[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/player_inventory/ui/inventory_slot.tscn" id="3_slot"]
+[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/player_containers/ui/container_panel.tscn" id="4_container"]
 
 [node name="PlayerHUD" type="CanvasLayer"]
 script = ExtResource("1_hud")

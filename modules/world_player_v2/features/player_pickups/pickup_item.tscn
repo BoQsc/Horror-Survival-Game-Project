@@ -1,6 +1,7 @@
 [gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://modules/world_player_v2/features/pickups/pickup_item.gd" id="1_pickup"]
+[ext_resource type="Script" uid="uid://bv7d7w04c2fi8" path="res://modules/world_player_v2/features/player_pickups/pickup_item.gd" id="1_pickup"]
+
 
 [sub_resource type="BoxShape3D" id="1"]
 size = Vector3(0.4, 0.4, 0.4)

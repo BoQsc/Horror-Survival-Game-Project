@@ -11,7 +11,7 @@ var slots: Array = []
 var selected_slot: int = 0
 
 # Preload item definitions
-const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
 
 func _ready() -> void:
 	_load_dev_starter_kit()
@@ -290,7 +290,7 @@ func drop_selected_item() -> void:
 	
 	# Fallback: use PickupItem wrapper for non-physics items
 	if not spawned_directly:
-		var pickup_scene = load("res://modules/world_player_v2/features/pickups/pickup_item.tscn")
+		var pickup_scene = load("res://modules/world_player_v2/features/player_pickups/pickup_item.tscn")
 		if pickup_scene:
 			var pickup = pickup_scene.instantiate()
 			get_tree().root.add_child(pickup)

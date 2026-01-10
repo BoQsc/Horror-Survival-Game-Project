@@ -37,7 +37,7 @@ var last_target_material: String = ""
 var material_target_marker: MeshInstance3D = null
 
 # Preload item definitions
-const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
 
 func _ready() -> void:
 	# Try to find local signals node

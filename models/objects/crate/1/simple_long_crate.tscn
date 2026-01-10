@@ -1,7 +1,7 @@
 [gd_scene load_steps=6 format=3 uid="uid://dsbf11hgy5m0p"]
 
 [ext_resource type="PackedScene" uid="uid://dvdsreoeekta8" path="res://models/objects/crate/1/simple_long_crate.glb" id="1_crate"]
-[ext_resource type="Script" path="res://modules/world_player_v2/features/containers/container_interactable.gd" id="2_script"]
+[ext_resource type="Script" uid="uid://go63djbgtrcl" path="res://modules/world_player_v2/features/player_containers/container_interactable.gd" id="2_script"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
 transparency = 1

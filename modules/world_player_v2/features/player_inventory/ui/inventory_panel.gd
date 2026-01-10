@@ -8,8 +8,8 @@ signal item_dropped_outside(item_data: Dictionary, count: int, world_position: V
 @onready var inventory_grid: GridContainer = $VBox/InventoryGrid
 
 # V2 paths
-const InventorySlotScene = preload("res://modules/world_player_v2/features/inventory/ui/inventory_slot.tscn")
-const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
+const InventorySlotScene = preload("res://modules/world_player_v2/features/player_inventory/ui/inventory_slot.tscn")
+const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
 
 var inventory_slots: Array = []
 var inventory_ref: Node = null
@@ -135,7 +135,7 @@ func _spawn_pickup(item: Dictionary, count: int, pos: Vector3, velocity: Vector3
 	
 	if not spawned_directly:
 		# V2 path
-		var pickup_scene = load("res://modules/world_player_v2/features/pickups/pickup_item.tscn")
+		var pickup_scene = load("res://modules/world_player_v2/features/player_pickups/pickup_item.tscn")
 		if not pickup_scene:
 			return
 		

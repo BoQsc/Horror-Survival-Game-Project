@@ -49,7 +49,7 @@ var held_prop_id: int = -1
 var held_prop_rotation: int = 0
 
 # Preload item definitions
-const ItemDefs = preload("res://modules/world_player_v2/features/inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
 
 # Sound effects
 const TREE_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/giant-axe-strike-hitting-solid-wood-3-450247.mp3"
