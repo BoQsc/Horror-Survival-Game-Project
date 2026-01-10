@@ -314,48 +314,44 @@ func _physics_process(_delta):
 		# Wait 5 frames for colliders before starting anything
 		if item.frames_waited < 5:
 			item.frames_waited += 1
-			return # Wait
+			# Continue to collider updates
 			
-		if is_instance_valid(item.chunk_node):
+		elif is_instance_valid(item.chunk_node):
 			# Stage 0: Trees
 			if item.stage == 0:
 				PerformanceMonitor.start_measure("Veg Spawn: Trees")
 				_place_vegetation_for_chunk(item.coord, item.chunk_node)
 				PerformanceMonitor.end_measure("Veg Spawn: Trees", 2.0)
 				item.stage = 1
-				return # Done for this frame
 				
 			# Stage 1: Grass
-			if item.stage == 1:
+			elif item.stage == 1:
 				PerformanceMonitor.start_measure("Veg Spawn: Grass")
 				_place_grass_for_chunk(item.coord, item.chunk_node)
 				PerformanceMonitor.end_measure("Veg Spawn: Grass", 2.0)
 				item.stage = 2
-				return # Done for this frame
 				
 			# Stage 2: Rocks
-			if item.stage == 2:
+			elif item.stage == 2:
 				PerformanceMonitor.start_measure("Veg Spawn: Rocks")
 				_place_rocks_for_chunk(item.coord, item.chunk_node)
 				PerformanceMonitor.end_measure("Veg Spawn: Rocks", 2.0)
 				
 				# All stages done
 				pending_chunks.pop_front()
-				return # Done for this frame
 		else:
 			# Invalid chunk, remove
 			pending_chunks.pop_front()
-			return
 	
-	# Only update colliders if we didn't just place vegetation (spread work)
+	# ALWAYS update colliders, even while chunks are loading
 	collider_update_counter += 1
-	if collider_update_counter >= 15: # Increased from 10 to reduce work
+	if collider_update_counter >= 15:
 		collider_update_counter = 0
 		PerformanceMonitor.start_measure("Veg Collider Update")
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
-		_cleanup_orphan_colliders() # Clean up any stranded colliders
+		_cleanup_orphan_colliders()
 		PerformanceMonitor.end_measure("Veg Collider Update", 2.0)
 	
 	# Always process incremental updates (Add/Remove actual nodes)
