@@ -18,6 +18,18 @@ var camera: Camera3D = null
 var is_camera_underwater: bool = false
 var underwater_audio: AudioStreamPlayer = null
 
+# Underwater Fog Settings
+@export_group("Underwater Fog")
+@export var underwater_fog_enabled: bool = true
+@export var underwater_fog_color: Color = Color(0.02, 0.18, 0.12)
+@export var underwater_fog_density: float = 0.15
+
+# Fog State Backup
+var _world_env: WorldEnvironment = null
+var _original_fog_enabled: bool = false
+var _original_fog_color: Color
+var _original_fog_density: float
+
 func _ready() -> void:
 	# Try to find local signals node
 	signals = get_node_or_null("../signals")
@@ -34,6 +46,9 @@ func _ready() -> void:
 	if not camera:
 		push_error("PlayerCamera: Camera3D not found as child of Player")
 		return
+		
+	# Find WorldEnvironment for fog control
+	_world_env = get_tree().root.find_child("WorldEnvironment", true, false)
 	
 	# Capture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -82,8 +97,29 @@ func _emit_camera_underwater_toggled(is_underwater: bool) -> void:
 	if is_underwater:
 		if not underwater_audio.playing:
 			underwater_audio.play()
+		
+		# Enable Underwater Fog
+		if underwater_fog_enabled and _world_env and _world_env.environment:
+			var env = _world_env.environment
+			# Backup original settings
+			_original_fog_enabled = env.fog_enabled
+			_original_fog_color = env.fog_light_color
+			_original_fog_density = env.fog_density
+			
+			# Apply underwater settings
+			env.fog_enabled = true
+			env.fog_light_color = underwater_fog_color
+			env.fog_density = underwater_fog_density
+			
 	else:
 		underwater_audio.stop()
+		
+		# Restore Original Fog
+		if underwater_fog_enabled and _world_env and _world_env.environment:
+			var env = _world_env.environment
+			env.fog_enabled = _original_fog_enabled
+			env.fog_light_color = _original_fog_color
+			env.fog_density = _original_fog_density
 	
 	if signals and signals.has_signal("camera_underwater_toggled"):
 		signals.camera_underwater_toggled.emit(is_underwater)
