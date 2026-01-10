@@ -51,6 +51,8 @@ func _scale_physical_bone(pb: PhysicalBone3D):
 		if child is CollisionShape3D:
 			_scale_collision_shape(child)
 
+const MIN_SIZE = 0.005 # 5mm minimum to satisfy Jolt
+
 func _scale_collision_shape(cshape: CollisionShape3D):
 	# Position (stored on CS node)
 	cshape.position = _get_scaled_value(cshape, "init_pos", cshape.position)
@@ -59,17 +61,18 @@ func _scale_collision_shape(cshape: CollisionShape3D):
 	var s = cshape.shape
 	
 	if s is CapsuleShape3D:
-		s.radius = _get_scaled_value(cshape, "init_radius", s.radius)
-		s.height = _get_scaled_value(cshape, "init_height", s.height)
+		s.radius = max(_get_scaled_value(cshape, "init_radius", s.radius), MIN_SIZE)
+		s.height = max(_get_scaled_value(cshape, "init_height", s.height), MIN_SIZE)
 	elif s is SphereShape3D:
-		s.radius = _get_scaled_value(cshape, "init_radius", s.radius)
+		s.radius = max(_get_scaled_value(cshape, "init_radius", s.radius), MIN_SIZE)
 	elif s is BoxShape3D:
-		s.size = _get_scaled_value(cshape, "init_size", s.size)
+		var sz = _get_scaled_value(cshape, "init_size", s.size)
+		s.size = Vector3(max(sz.x, MIN_SIZE), max(sz.y, MIN_SIZE), max(sz.z, MIN_SIZE))
 	elif s is CylinderShape3D:
-		s.radius = _get_scaled_value(cshape, "init_radius", s.radius)
-		s.height = _get_scaled_value(cshape, "init_height", s.height)
+		s.radius = max(_get_scaled_value(cshape, "init_radius", s.radius), MIN_SIZE)
+		s.height = max(_get_scaled_value(cshape, "init_height", s.height), MIN_SIZE)
 	elif s is SeparationRayShape3D:
-		s.length = _get_scaled_value(cshape, "init_len", s.length)
+		s.length = max(_get_scaled_value(cshape, "init_len", s.length), MIN_SIZE)
 
 # Helper to retrieve original, store if missing, and return scaled
 func _get_scaled_value(storage_node: Node, key: String, current_value):
