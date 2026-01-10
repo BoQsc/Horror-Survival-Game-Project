@@ -21,6 +21,8 @@ func _on_reset_storage(val):
 		reset_storage = false
 
 func apply_scale_to_hierarchy():
+	if simulator_path.is_empty():
+		simulator_path = "."
 	var sim_node = get_node_or_null(simulator_path)
 	if not sim_node:
 		return
