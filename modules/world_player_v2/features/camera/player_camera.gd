@@ -17,6 +17,7 @@ var camera: Camera3D = null
 # State
 var is_camera_underwater: bool = false
 var underwater_audio: AudioStreamPlayer = null
+var splash_audio: AudioStreamPlayer = null
 
 # Underwater Fog Settings
 @export_group("Underwater Fog")
@@ -87,14 +88,22 @@ func _emit_camera_underwater_toggled(is_underwater: bool) -> void:
 	if ui:
 		ui.visible = is_underwater
 	
-	# Toggle underwater ambience audio
+	# Initialize Audio
 	if not underwater_audio:
 		underwater_audio = AudioStreamPlayer.new()
-		underwater_audio.stream = load("res://game/sound/player-swims-underwater/underwater-ambience-376890.mp3")
+		underwater_audio.stream = load("res://game/sound/player-swims-water/swimming-sounds-331502.mp3")
 		underwater_audio.bus = "Master"
 		add_child(underwater_audio)
+		
+	if not splash_audio:
+		splash_audio = AudioStreamPlayer.new()
+		splash_audio.stream = load("res://game/sound/player-swims-enter-the-water/water-splash-02-352021.mp3")
+		splash_audio.bus = "Master"
+		add_child(splash_audio)
 	
 	if is_underwater:
+		# ENTERING WATER
+		splash_audio.play()
 		if not underwater_audio.playing:
 			underwater_audio.play()
 		
@@ -112,6 +121,8 @@ func _emit_camera_underwater_toggled(is_underwater: bool) -> void:
 			env.fog_density = underwater_fog_density
 			
 	else:
+		# EXITING WATER
+		splash_audio.play()
 		underwater_audio.stop()
 		
 		# Restore Original Fog
