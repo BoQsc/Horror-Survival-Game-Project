@@ -39,12 +39,33 @@ func apply_scale_to_hierarchy():
 			_scale_physical_bone(bone)
 
 func _scale_physical_bone(pb: PhysicalBone3D):
-	# Handle Offsets (stored on PB node)
+	# 1. POSITION: Scale relative to the skeleton hierarchy
+	pb.position = _get_scaled_value(pb, "init_bone_pos", pb.position)
+	
+	# 2. BASIS SCALING (Fixes Giant Gizmos):
+	# We must normalize the basis (remove import scale) and apply scale_factor
+	# for the Node itself, and its offsets.
+
+	# Node Basis
+	if not pb.has_meta("init_basis"): pb.set_meta("init_basis", pb.transform.basis)
+	var node_basis: Basis = pb.get_meta("init_basis")
+	pb.transform.basis = node_basis.orthonormalized().scaled(Vector3.ONE * scale_factor)
+
+	# Body Offset Basis (Fixes Body Gizmo size)
 	var body_off = pb.body_offset
+	if not pb.has_meta("init_body_basis"): pb.set_meta("init_body_basis", body_off.basis)
+	var body_basis: Basis = pb.get_meta("init_body_basis")
+	body_off.basis = body_basis.orthonormalized().scaled(Vector3.ONE * scale_factor)
+	# Body Offset Origin
 	body_off.origin = _get_scaled_value(pb, "init_body_off_orig", body_off.origin)
 	pb.body_offset = body_off
 	
+	# Joint Offset Basis (Fixes Joint Gizmo size)
 	var joint_off = pb.joint_offset
+	if not pb.has_meta("init_joint_basis"): pb.set_meta("init_joint_basis", joint_off.basis)
+	var joint_basis: Basis = pb.get_meta("init_joint_basis")
+	joint_off.basis = joint_basis.orthonormalized().scaled(Vector3.ONE * scale_factor)
+	# Joint Offset Origin
 	joint_off.origin = _get_scaled_value(pb, "init_joint_off_orig", joint_off.origin)
 	pb.joint_offset = joint_off
 
@@ -56,10 +77,15 @@ func _scale_physical_bone(pb: PhysicalBone3D):
 const MIN_SIZE = 0.005 # 5mm minimum to satisfy Jolt
 
 func _scale_collision_shape(cshape: CollisionShape3D):
-	# Position (stored on CS node)
-	cshape.position = _get_scaled_value(cshape, "init_pos", cshape.position)
+	# Position (stored on CS node) - UN-SCALED because parent pb.scale handles it?
+	# Wait. If parent pb.scale is 0.06, and we want position X.
+	# The global position is pb.global_transform * local_pos.
+	# pb.transform is scaled 0.06. So local_pos is multiplied by 0.06.
+	# So we should set local_pos to the ORIGINAL unscaled value.
+	cshape.position = _get_base_value(cshape, "init_pos", cshape.position)
 	
-	if not cshape.shape: return
+	# SHAPE PARAMETERS: Inherit Parent Scale (0.06).
+	# Use Base (Unscaled) values.
 	var s = cshape.shape
 	
 	if s is CapsuleShape3D:
@@ -85,6 +111,13 @@ func _get_scaled_value(storage_node: Node, key: String, current_value):
 	var original = storage_node.get_meta(key)
 	return original * scale_factor
 
+# Helper to get base value WITHOUT scaling (for shapes that inherit node scale)
+func _get_base_value(storage_node: Node, key: String, current_value):
+	if not storage_node.has_meta(key):
+		storage_node.set_meta(key, current_value) # Store current (which should be base if huge)
+		if debug_mode: print("  Stored base ", key, " for ", storage_node.name)
+	return storage_node.get_meta(key)
+
 func _clear_metadata():
 	var sim_node = get_node_or_null(simulator_path)
 	if not sim_node: return
@@ -98,7 +131,7 @@ func _clear_metadata():
 	for n in nodes:
 		all_nodes.append_array(n.find_children("*", "CollisionShape3D"))
 		
-	var keys = ["init_body_off_orig", "init_joint_off_orig", "init_pos", "init_radius", "init_height", "init_size", "init_len"]
+	var keys = ["init_basis", "init_body_basis", "init_joint_basis", "init_bone_pos", "init_body_off_orig", "init_joint_off_orig", "init_pos", "init_radius", "init_height", "init_size", "init_len"]
 	
 	for n in all_nodes:
 		for k in keys:
