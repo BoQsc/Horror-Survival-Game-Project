@@ -10,6 +10,7 @@ extends Node
 @export var debug_mode: bool = false
 @export_group("Operations")
 @export var reset_storage: bool = false : set = _on_reset_storage
+@export var remove_fingers: bool = false : set = _on_remove_fingers
 
 func _set_scale_factor(val):
 	scale_factor = val
@@ -19,6 +20,30 @@ func _on_reset_storage(val):
 	if val:
 		_clear_metadata()
 		reset_storage = false
+
+func _on_remove_fingers(val):
+	if val:
+		_delete_finger_bones()
+		remove_fingers = false
+
+func _delete_finger_bones():
+	var sim_node = get_node_or_null(simulator_path)
+	if not sim_node: 
+		if simulator_path.is_empty(): sim_node = self
+		else: return
+
+	if sim_node is Skeleton3D:
+		var found = sim_node.find_child("PhysicalBoneSimulator3D")
+		if found: sim_node = found
+	
+	var bones = sim_node.find_children("*", "PhysicalBone3D", true)
+	var count = 0
+	for bone in bones:
+		if "finger" in bone.name.to_lower():
+			bone.free() # Immediate free for tool script
+			count += 1
+	
+	print("PBS: Removed ", count, " finger bones.")
 
 func apply_scale_to_hierarchy():
 	if simulator_path.is_empty():
