@@ -111,6 +111,7 @@ func route_primary_action(item: Dictionary) -> void:
 		if mode_editor and mode_editor.has_method("handle_primary"):
 			mode_editor.handle_primary(item)
 		else:
+			pass
 
 	elif mode_manager.is_build_mode():
 
@@ -122,6 +123,7 @@ func route_primary_action(item: Dictionary) -> void:
 
 			combat_system.handle_primary(item)
 		else:
+			pass
 
 
 ## Route right-click action to appropriate mode handler
