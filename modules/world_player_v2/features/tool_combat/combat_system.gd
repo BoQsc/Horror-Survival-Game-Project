@@ -159,9 +159,7 @@ func initialize(p_player: Node, p_terrain: Node, p_vegetation: Node, p_building:
 
 ## Handle primary action (left click) - mode dispatch (V1 EXACT)
 func handle_primary(item: Dictionary) -> void:
-	print("[COMBAT_DEBUG] handle_primary called")
-	print("[COMBAT_DEBUG] Item: %s" % item.get("name", "?"))
-	print("[COMBAT_DEBUG] Item data: %s" % str(item))
+
 	
 	# V1: If grabbing a prop, don't do other actions
 	if is_grabbing_prop():
@@ -170,37 +168,37 @@ func handle_primary(item: Dictionary) -> void:
 	
 	# V1: Attack cooldown check
 	if attack_cooldown > 0:
-		print("[COMBAT_DEBUG] Attack on cooldown: %0.2fs" % attack_cooldown)
+
 		return
 	
 	# BUG FIX: JSON deserialization converts all numbers to floats (1.0 vs 1)
 	# The match statement requires exact type match, so we must cast to int
 	var category = int(item.get("category", 0))
-	print("[COMBAT_DEBUG] Item category: %d" % category)
+
 	
 	match category:
 		0:  # NONE - Fists
-			print("[COMBAT_DEBUG] Routing to do_punch (fists)")
+
 			do_punch(item)
 		1:  # TOOL
-			print("[COMBAT_DEBUG] Routing to do_tool_attack (tool)")
+
 			do_tool_attack(item)
 		2:  # BUCKET - V1 routes to _do_bucket_collect
-			print("[COMBAT_DEBUG] Routing to bucket collect")
+
 			if terrain_interaction and terrain_interaction.has_method("do_bucket_collect"):
 				terrain_interaction.do_bucket_collect()
 		3:  # RESOURCE - no primary action (V1: pass)
-			print("[COMBAT_DEBUG] Resource - no primary action")
+
 			pass
 		6:  # PROP (pistol, etc.)
-			print("[COMBAT_DEBUG] Routing to prop primary")
+
 			_do_prop_primary(item)
 		7:  # TERRAFORMER - grid-snapped dig
-			print("[COMBAT_DEBUG] Routing to terraformer")
+
 			if terraformer and terraformer.has_method("do_primary_action"):
 				terraformer.do_primary_action()
 		_:
-			print("[COMBAT_DEBUG] Unknown category - no action")
+
 			# Other categories handled by terrain_interaction or building
 			pass
 
