@@ -377,4 +377,3 @@ func load_save_data(data: Dictionary) -> void:
 		print("[HOTBAR_DEBUG] WARNING: PlayerSignals not found!")
 	
 	DebugManager.log_player("Hotbar: Loaded save data")
-

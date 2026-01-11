@@ -8,7 +8,7 @@ signal item_dropped_outside(item_data: Dictionary, count: int, world_position: V
 @onready var inventory_grid: GridContainer = $VBox/InventoryGrid
 
 # V2 paths
-const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui/inventory_slot.tscn")
+const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 var inventory_slots: Array = []

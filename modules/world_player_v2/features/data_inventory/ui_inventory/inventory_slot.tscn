@@ -1,6 +1,7 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" uid="uid://ciky5afhqini5" path="res://modules/world_player_v2/features/data_inventory/ui/inventory_slot.gd" id="1_slot"]
+[ext_resource type="Script" uid="uid://ciky5afhqini5" path="res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.gd" id="1_slot"]
+
 
 
 [node name="InventorySlot" type="PanelContainer"]

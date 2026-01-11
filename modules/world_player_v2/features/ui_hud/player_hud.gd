@@ -23,7 +23,7 @@ var hotbar_ref: Node = null
 var inventory_ref: Node = null
 
 # V2 path
-const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui/inventory_slot.tscn")
+const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
 
 var is_editor_mode: bool = false
 var current_editor_submode: int = 0

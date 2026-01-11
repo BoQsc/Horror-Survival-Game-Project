@@ -220,4 +220,3 @@ func load_save_data(data: Dictionary) -> void:
 	
 	PlayerSignals.inventory_changed.emit()
 	DebugManager.log_player("Inventory: Loaded save data")
-

@@ -12,7 +12,7 @@ signal closed()
 @onready var container_label: Label = $VBox/Content/ContainerSection/ContainerLabel
 
 # Reuse inventory slot scene
-const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui/inventory_slot.tscn")
+const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
 
 var container_slots: Array = []
 var inventory_slots: Array = []
