@@ -1368,27 +1368,37 @@ func _spawn_pistol_hit_effect(pos: Vector3) -> void:
 			mesh_instance.queue_free()
 	)
 
-## Helper to play a specific range of an audio file
-func _play_audio_range(player: AudioStreamPlayer3D, range_data: Array) -> void:
-	if not player or not player.is_inside_tree() or range_data.size() < 2:
+## Helper to play a specific range of an audio file using a temporary player
+func _play_audio_range(template_player: AudioStreamPlayer3D, range_data: Array) -> void:
+	if not template_player or range_data.size() < 2:
 		return
 		
 	var start_time = range_data[0]
 	var duration = range_data[1]
 	
-	player.pitch_scale = randf_range(0.95, 1.05)
-	player.play(start_time)
-	print("[COMBAT_AUDIO] Playing range: %.2f to %.2f (Dur: %.2f)" % [start_time, start_time + duration, duration])
+	# Create a temporary player to allow overlapping sounds
+	var temp_player = AudioStreamPlayer3D.new()
+	temp_player.stream = template_player.stream
+	temp_player.max_distance = template_player.max_distance
+	temp_player.unit_size = template_player.unit_size
+	temp_player.bus = template_player.bus
+	temp_player.pitch_scale = randf_range(0.95, 1.05)
 	
-	# Schedule stop
+	# Add to scene
+	if player:
+		player.add_child(temp_player)
+	else:
+		get_tree().root.add_child(temp_player)
+		temp_player.global_position = template_player.global_position
+	
+	temp_player.play(start_time)
+	print("[COMBAT_AUDIO] Playing range: %.2f to %.2f (Dur: %.2f) [TempPlayer]" % [start_time, start_time + duration, duration])
+	
+	# Schedule self-destruction
 	get_tree().create_timer(duration).timeout.connect(func():
-		if is_instance_valid(player) and player.playing:
-			# Only stop if we are still within reasonable time (prevent cutting off new sounds)
-			# Though for a single channel player, a new play() would override anyway.
-			# But this timer might stop the NEW sound if we don't check.
-			# A simple check is closest we can get without managing playback IDs.
-			# ideally we'd tracking the "current play session"
-			player.stop()
+		if is_instance_valid(temp_player):
+			temp_player.stop()
+			temp_player.queue_free()
 	)
 # ============================================================================
 # RESOURCE COLLECTION
