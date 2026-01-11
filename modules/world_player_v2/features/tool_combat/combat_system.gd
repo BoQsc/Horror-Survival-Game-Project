@@ -54,7 +54,14 @@ const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/
 # Sound effects
 const TREE_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/giant-axe-strike-hitting-solid-wood-3-450247.mp3"
 const TREE_FALL_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/falling-tree-ai-generated-431321.mp3"
-const WOOD_BLOCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-wood-block/wood-being-chopped-1-228496.mp3"
+const WOOD_BLOCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-wood-block/wooden_crate_smash-1-387904.mp3"
+# Audio ranges for wood hit/break: [start, duration]
+const WOOD_AUDIO_RANGES = {
+	"hit_1": [0.00, 0.86],
+	"hit_2": [2.45, 0.70], # 3.15 - 2.45
+	"hit_3": [4.21, 0.90], # 5.11 - 4.21
+	"break": [6.40, 1.64]  # 8.04 - 6.40
+}
 const PLANT_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-plant-03-266292.mp3"
 const ROCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-rock-03-266305.mp3"
 var tree_hit_audio_player: AudioStreamPlayer3D = null
@@ -126,16 +133,16 @@ func _setup_audio() -> void:
 			player.add_child(tree_fall_audio_player)
 			print("[COMBAT_AUDIO] Tree fall sound loaded successfully")
 	
-	# Load wood block hit sound
+	# Load wood block hit sound (multipart file)
 	if ResourceLoader.exists(WOOD_BLOCK_HIT_SOUND_PATH):
 		var block_stream = load(WOOD_BLOCK_HIT_SOUND_PATH)
 		if block_stream and player:
 			wood_block_hit_audio_player = AudioStreamPlayer3D.new()
 			wood_block_hit_audio_player.name = "WoodBlockHitAudio"
 			wood_block_hit_audio_player.stream = block_stream
-			wood_block_hit_audio_player.max_distance = 20.0
+			wood_block_hit_audio_player.max_distance = 25.0
 			player.add_child(wood_block_hit_audio_player)
-			print("[COMBAT_AUDIO] Wood block hit sound loaded successfully")
+			print("[COMBAT_AUDIO] Wood multipart sound loaded successfully")
 			
 	# Load plant hit sound
 	if ResourceLoader.exists(PLANT_HIT_SOUND_PATH):
@@ -446,7 +453,7 @@ func _get_pickup_target() -> Node:
 	var forward = -cam.global_transform.basis.z
 	
 	# Option A: Precise raycast using player.raycast
-	var hit = player.raycast(5.0) if player and player.has_method("raycast") else {}
+	var hit = player.raycast(5.0, 0xFFFFFFFF, true, true) if player and player.has_method("raycast") else {}
 	
 	if hit and hit.has("collider"):
 		var col = hit.collider
@@ -1235,11 +1242,13 @@ func _try_damage_building_block(target: Node, item: Dictionary, position: Vector
 	var current_hp = BLOCK_HP - block_damage[block_pos]
 	durability_target = block_pos
 	
-	# Play wood block hit sound (start at 40% for snappier feedback)
-	if wood_block_hit_audio_player and wood_block_hit_audio_player.is_inside_tree():
-		wood_block_hit_audio_player.pitch_scale = randf_range(0.8, 1.2)
-		var start_pos = wood_block_hit_audio_player.stream.get_length() * 0.1
-		wood_block_hit_audio_player.play(start_pos)
+	if block_damage[block_pos] >= BLOCK_HP:
+		# Play break sound (range 4)
+		_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["break"])
+	else:
+		# Play random hit sound (ranges 1-3)
+		var rand_idx = randi() % 3 + 1
+		_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["hit_%d" % rand_idx])
 	
 	print("DURABILITY_DEBUG: Building block hit at %s | Damage: %d | HP: %d/%d" % [block_pos, blk_dmg, current_hp, BLOCK_HP])
 	_emit_durability_hit(current_hp, BLOCK_HP, "Block", durability_target)
@@ -1354,10 +1363,33 @@ func _spawn_pistol_hit_effect(pos: Vector3) -> void:
 	get_tree().root.add_child(mesh_instance)
 	mesh_instance.global_position = pos
 	
-	await get_tree().create_timer(2.0).timeout
-	if is_instance_valid(mesh_instance):
-		mesh_instance.queue_free()
+	await get_tree().create_timer(2.0).timeout.connect(func(): 
+		if is_instance_valid(mesh_instance):
+			mesh_instance.queue_free()
+	)
 
+## Helper to play a specific range of an audio file
+func _play_audio_range(player: AudioStreamPlayer3D, range_data: Array) -> void:
+	if not player or not player.is_inside_tree() or range_data.size() < 2:
+		return
+		
+	var start_time = range_data[0]
+	var duration = range_data[1]
+	
+	player.pitch_scale = randf_range(0.95, 1.05)
+	player.play(start_time)
+	print("[COMBAT_AUDIO] Playing range: %.2f to %.2f (Dur: %.2f)" % [start_time, start_time + duration, duration])
+	
+	# Schedule stop
+	get_tree().create_timer(duration).timeout.connect(func():
+		if is_instance_valid(player) and player.playing:
+			# Only stop if we are still within reasonable time (prevent cutting off new sounds)
+			# Though for a single channel player, a new play() would override anyway.
+			# But this timer might stop the NEW sound if we don't check.
+			# A simple check is closest we can get without managing playback IDs.
+			# ideally we'd tracking the "current play session"
+			player.stop()
+	)
 # ============================================================================
 # RESOURCE COLLECTION
 # ============================================================================
