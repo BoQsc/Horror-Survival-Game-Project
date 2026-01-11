@@ -55,9 +55,13 @@ const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/
 const TREE_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/giant-axe-strike-hitting-solid-wood-3-450247.mp3"
 const TREE_FALL_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/falling-tree-ai-generated-431321.mp3"
 const WOOD_BLOCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-wood-block/wood-being-chopped-1-228496.mp3"
+const PLANT_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-plant-03-266292.mp3"
+const ROCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-rock-03-266305.mp3"
 var tree_hit_audio_player: AudioStreamPlayer3D = null
 var tree_fall_audio_player: AudioStreamPlayer3D = null
 var wood_block_hit_audio_player: AudioStreamPlayer3D = null
+var plant_hit_audio_player: AudioStreamPlayer3D = null
+var rock_hit_audio_player: AudioStreamPlayer3D = null
 
 func _ready() -> void:
 	# Try to find local signals node
@@ -75,7 +79,7 @@ func _ready() -> void:
 	
 	# Find managers via groups (deferred)
 	call_deferred("_find_managers")
-	call_deferred("_setup_tree_hit_audio")
+	call_deferred("_setup_audio")
 	
 	# Connect to weapon ready signals (backward compat)
 	if has_node("/root/PlayerSignals"):
@@ -97,19 +101,19 @@ func _find_managers() -> void:
 	if not terraformer and player:
 		terraformer = player.get_node_or_null("Components/FirstPersonTerraformer")
 
-func _setup_tree_hit_audio() -> void:
-	if not ResourceLoader.exists(TREE_HIT_SOUND_PATH):
+func _setup_audio() -> void:
+	# Load tree hit sound
+	if ResourceLoader.exists(TREE_HIT_SOUND_PATH):
+		var stream = load(TREE_HIT_SOUND_PATH)
+		if stream and player:
+			tree_hit_audio_player = AudioStreamPlayer3D.new()
+			tree_hit_audio_player.name = "TreeHitAudio"
+			tree_hit_audio_player.stream = stream
+			tree_hit_audio_player.max_distance = 20.0
+			player.add_child(tree_hit_audio_player)
+			print("[COMBAT_AUDIO] Tree hit sound loaded successfully")
+	else:
 		print("[COMBAT_AUDIO] Tree hit sound not found: %s" % TREE_HIT_SOUND_PATH)
-		return
-	
-	var stream = load(TREE_HIT_SOUND_PATH)
-	if stream and player:
-		tree_hit_audio_player = AudioStreamPlayer3D.new()
-		tree_hit_audio_player.name = "TreeHitAudio"
-		tree_hit_audio_player.stream = stream
-		tree_hit_audio_player.max_distance = 20.0
-		player.add_child(tree_hit_audio_player)
-		print("[COMBAT_AUDIO] Tree hit sound loaded successfully")
 	
 	# Load tree fall sound
 	if ResourceLoader.exists(TREE_FALL_SOUND_PATH):
@@ -132,6 +136,28 @@ func _setup_tree_hit_audio() -> void:
 			wood_block_hit_audio_player.max_distance = 20.0
 			player.add_child(wood_block_hit_audio_player)
 			print("[COMBAT_AUDIO] Wood block hit sound loaded successfully")
+			
+	# Load plant hit sound
+	if ResourceLoader.exists(PLANT_HIT_SOUND_PATH):
+		var plant_stream = load(PLANT_HIT_SOUND_PATH)
+		if plant_stream and player:
+			plant_hit_audio_player = AudioStreamPlayer3D.new()
+			plant_hit_audio_player.name = "PlantHitAudio"
+			plant_hit_audio_player.stream = plant_stream
+			plant_hit_audio_player.max_distance = 15.0
+			player.add_child(plant_hit_audio_player)
+			print("[COMBAT_AUDIO] Plant hit sound loaded successfully")
+
+	# Load rock hit sound
+	if ResourceLoader.exists(ROCK_HIT_SOUND_PATH):
+		var rock_stream = load(ROCK_HIT_SOUND_PATH)
+		if rock_stream and player:
+			rock_hit_audio_player = AudioStreamPlayer3D.new()
+			rock_hit_audio_player.name = "RockHitAudio"
+			rock_hit_audio_player.stream = rock_stream
+			rock_hit_audio_player.max_distance = 20.0
+			player.add_child(rock_hit_audio_player)
+			print("[COMBAT_AUDIO] Rock hit sound loaded successfully")
 
 func _process(delta: float) -> void:
 	PerformanceMonitor.start_measure("Combat System")
@@ -1139,11 +1165,19 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 		return true
 	
 	elif target.is_in_group("grass"):
+		if plant_hit_audio_player and plant_hit_audio_player.is_inside_tree():
+			plant_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+			plant_hit_audio_player.play()
+			
 		vegetation_manager.harvest_grass_by_collider(target)
 		_collect_vegetation_resource("fiber")
 		return true
 	
 	elif target.is_in_group("rocks"):
+		if rock_hit_audio_player and rock_hit_audio_player.is_inside_tree():
+			rock_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+			rock_hit_audio_player.play()
+			
 		vegetation_manager.harvest_rock_by_collider(target)
 		_collect_vegetation_resource("rock")
 		return true
