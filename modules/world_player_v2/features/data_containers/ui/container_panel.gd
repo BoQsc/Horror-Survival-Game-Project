@@ -12,7 +12,7 @@ signal closed()
 @onready var container_label: Label = $VBox/Content/ContainerSection/ContainerLabel
 
 # Reuse inventory slot scene
-const InventorySlotScene = preload("res://modules/world_player_v2/features/player_inventory/ui/inventory_slot.tscn")
+const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui/inventory_slot.tscn")
 
 var container_slots: Array = []
 var inventory_slots: Array = []
@@ -293,7 +293,7 @@ func _spawn_pickup_in_world(item: Dictionary, count: int) -> void:
 				temp_instance.queue_free()
 	
 	# Fallback to pickup item
-	var pickup_scene = load("res://modules/world_player_v2/features/player_pickups/pickup_item.tscn")
+	var pickup_scene = load("res://modules/world_player_v2/features/data_pickups/pickup_item.tscn")
 	if pickup_scene:
 		var pickup = pickup_scene.instantiate()
 		get_tree().root.add_child(pickup)

@@ -23,7 +23,7 @@ var hotbar_ref: Node = null
 var inventory_ref: Node = null
 
 # V2 path
-const InventorySlotScene = preload("res://modules/world_player_v2/features/player_inventory/ui/inventory_slot.tscn")
+const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui/inventory_slot.tscn")
 
 var is_editor_mode: bool = false
 var current_editor_submode: int = 0
@@ -276,7 +276,7 @@ func _spawn_pickup(item: Dictionary, count: int, pos: Vector3, velocity: Vector3
 	
 	if not spawned_directly:
 		# V2 path
-		var pickup_scene = load("res://modules/world_player_v2/features/player_pickups/pickup_item.tscn")
+		var pickup_scene = load("res://modules/world_player_v2/features/data_pickups/pickup_item.tscn")
 		if not pickup_scene:
 			return
 		

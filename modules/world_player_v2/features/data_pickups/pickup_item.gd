@@ -20,7 +20,7 @@ var can_pickup: bool = false
 var time_spawned: float = 0.0
 
 # V2 path
-const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 func _ready() -> void:
 	time_spawned = Time.get_ticks_msec() / 1000.0
@@ -178,7 +178,7 @@ func _try_collect(player: Node3D) -> void:
 ## Spawn a pickup at position with velocity
 static func spawn_pickup(parent: Node, data: Dictionary, count: int, pos: Vector3, velocity: Vector3 = Vector3.ZERO) -> PickupItemV2:
 	# V2 path
-	var scene = load("res://modules/world_player_v2/features/player_pickups/pickup_item.tscn")
+	var scene = load("res://modules/world_player_v2/features/data_pickups/pickup_item.tscn")
 	var instance = scene.instantiate() as PickupItemV2
 	
 	parent.add_child(instance)

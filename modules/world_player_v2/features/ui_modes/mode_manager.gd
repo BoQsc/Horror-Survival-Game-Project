@@ -13,7 +13,7 @@ var previous_mode: Mode = Mode.PLAY # For returning from EDITOR
 var hotbar: Node = null
 
 # Preload item definitions (v2 path)
-const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 # EDITOR submodes
 enum EditorSubmode {TERRAIN, WATER, ROAD, PREFAB, FLY}

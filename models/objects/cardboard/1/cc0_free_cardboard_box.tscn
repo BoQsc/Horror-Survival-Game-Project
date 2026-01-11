@@ -1,7 +1,7 @@
 [gd_scene load_steps=6 format=3 uid="uid://cv1d504wvqoxr"]
 
 [ext_resource type="PackedScene" uid="uid://cn6o0wfqp4mky" path="res://models/objects/cardboard/1/cc0_free_cardboard_box.glb" id="1_box"]
-[ext_resource type="Script" uid="uid://go63djbgtrcl" path="res://modules/world_player_v2/features/player_containers/container_interactable.gd" id="2_script"]
+[ext_resource type="Script" uid="uid://go63djbgtrcl" path="res://modules/world_player_v2/features/data_containers/container_interactable.gd" id="2_script"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
 transparency = 1

@@ -141,7 +141,7 @@ match category:
 
 ## The Fix
 
-**File:** `modules/world_player_v2/features/player_combat/combat_system.gd`  
+**File:** `modules/world_player_v2/features/tool_combat/combat_system.gd`  
 **Line:** 131
 
 ```gdscript
@@ -227,12 +227,12 @@ This fix prevents similar bugs in any code using `match` on JSON-deserialized da
 ## Files Modified
 
 ### Core Fix
-- `modules/world_player_v2/features/player_combat/combat_system.gd` (line 131)
+- `modules/world_player_v2/features/tool_combat/combat_system.gd` (line 131)
 
 ### Debug Logging (can be removed later)
-- `modules/world_player_v2/features/player_inventory/hotbar.gd`
-- `modules/world_player_v2/features/player_inventory/item_use_router.gd`
-- `modules/world_player_v2/features/player_combat/combat_system.gd`
+- `modules/world_player_v2/features/data_inventory/hotbar.gd`
+- `modules/world_player_v2/features/data_inventory/item_use_router.gd`
+- `modules/world_player_v2/features/tool_combat/combat_system.gd`
 
 ### Testing Infrastructure
 - `tests/mining_bot.gd` - QuickLoad test bot

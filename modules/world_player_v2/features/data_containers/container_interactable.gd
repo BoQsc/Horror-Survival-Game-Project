@@ -19,7 +19,7 @@ var is_open: bool = false
 var is_populated: bool = false
 
 # Item definitions for loot generation
-const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 # Audio
 const CONTAINER_OPEN_SOUND = preload("res://game/sound/containers/cardboard/1/plastic-108360.mp3")

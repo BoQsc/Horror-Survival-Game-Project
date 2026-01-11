@@ -15,7 +15,7 @@ var is_dragging: bool = false
 var drag_was_handled: bool = false
 
 # V2 path
-const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 func _ready() -> void:
 	mouse_filter = MOUSE_FILTER_STOP

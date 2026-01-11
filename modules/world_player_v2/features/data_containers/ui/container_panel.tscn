@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" uid="uid://co4byn04m71dj" path="res://modules/world_player_v2/features/player_containers/ui/container_panel.gd" id="1_panel"]
+[ext_resource type="Script" uid="uid://co4byn04m71dj" path="res://modules/world_player_v2/features/data_containers/ui/container_panel.gd" id="1_panel"]
 
 
 [node name="ContainerPanel" type="PanelContainer"]

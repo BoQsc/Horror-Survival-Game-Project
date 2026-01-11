@@ -5,7 +5,7 @@ class_name ModeBuildV2
 
 # Preload API scripts (v2 paths)
 const BuildingAPIScript = preload("res://modules/world_player_v2/api/building_api.gd")
-const ItemDefinitions = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
+const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 const ItemCategory = ItemDefinitions.ItemCategory
 
 # References

@@ -10,7 +10,7 @@ const MAX_STACK_SIZE: int = 3 # Maximum items per stack (matches hotbar)
 var slots: Array = []
 
 # Preload item definitions
-const ItemDefs = preload("res://modules/world_player_v2/features/player_inventory/item_definitions.gd")
+const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 # Audio
 const INVENTORY_OPEN_SOUND = preload("res://game/sound/ui/inventory/1/open-bag-96178.mp3")

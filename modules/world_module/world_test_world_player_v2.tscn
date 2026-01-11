@@ -12,7 +12,7 @@
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://world_building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://world_building_system/debug_teleporter.gd" id="13_debug"]
 [ext_resource type="PackedScene" path="res://modules/world_player/ui_loading_screen/loading_screen.tscn" id="14_loading"]
-[ext_resource type="Shader" uid="uid://c7lniwsexkctm" path="res://modules/world_player_v2/features/player_camera/underwater_screen.gdshader" id="15_underwater"]
+[ext_resource type="Shader" uid="uid://c7lniwsexkctm" path="res://modules/world_player_v2/features/body_camera/underwater_screen.gdshader" id="15_underwater"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
