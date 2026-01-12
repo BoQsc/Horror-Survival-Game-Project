@@ -8,7 +8,7 @@ const SWAY_AMOUNT: float = 0.002
 const SWAY_SMOOTHING: float = 10.0
 const BOB_FREQ: float = 10.0
 const BOB_AMP: float = 0.01
-const ATTACK_SOUND_PATH: String = "res://game/assets/player_axe/1/violent-sword-slice-393839.mp3"
+const ATTACK_SOUND_PATH: String = "res://game/sound/player-weapon-tool-swing/item-swing-sfx-2-409076.mp3"
 
 @export var axe_scale: Vector3 = Vector3(0.6, 0.6, 0.6)
 @export var axe_position: Vector3 = Vector3(0.215, -0.785, -0.015)
