@@ -64,11 +64,16 @@ const WOOD_AUDIO_RANGES = {
 }
 const PLANT_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-plant-03-266292.mp3"
 const ROCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-rock-03-266305.mp3"
+const TERRAIN_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-terrain/ground-impact-352053.mp3"
+const TERRAIN_BREAK_SOUND_PATH: String = "res://game/sound/player-hitting-terrain-breaks/impact-109588.mp3"
 var tree_hit_audio_player: AudioStreamPlayer3D = null
 var tree_fall_audio_player: AudioStreamPlayer3D = null
 var wood_block_hit_audio_player: AudioStreamPlayer3D = null
 var plant_hit_audio_player: AudioStreamPlayer3D = null
 var rock_hit_audio_player: AudioStreamPlayer3D = null
+var terrain_hit_audio_player: AudioStreamPlayer3D = null
+var terrain_break_audio_player: AudioStreamPlayer3D = null
+var hit_marker_player: AudioStreamPlayer = null
 
 func _ready() -> void:
 	# Try to find local signals node
@@ -164,7 +169,38 @@ func _setup_audio() -> void:
 			rock_hit_audio_player.stream = rock_stream
 			rock_hit_audio_player.max_distance = 20.0
 			player.add_child(rock_hit_audio_player)
+
 			print("[COMBAT_AUDIO] Rock hit sound loaded successfully")
+
+	# Load terrain hit sound
+	if ResourceLoader.exists(TERRAIN_HIT_SOUND_PATH):
+		var terrain_stream = load(TERRAIN_HIT_SOUND_PATH)
+		if terrain_stream and player:
+			terrain_hit_audio_player = AudioStreamPlayer3D.new()
+			terrain_hit_audio_player.name = "TerrainHitAudio"
+			terrain_hit_audio_player.stream = terrain_stream
+			terrain_hit_audio_player.max_distance = 20.0
+			player.add_child(terrain_hit_audio_player)
+			print("[COMBAT_AUDIO] Terrain hit sound loaded successfully")
+
+	# Setup hit marker (2D)
+	hit_marker_player = AudioStreamPlayer.new()
+	hit_marker_player.name = "HitMarkerAudio"
+	hit_marker_player.volume_db = -5.0
+	hit_marker_player.max_polyphony = 5
+	player.add_child(hit_marker_player)
+
+	# Load terrain hit sound
+	# Load terrain break sound
+	if ResourceLoader.exists(TERRAIN_BREAK_SOUND_PATH):
+		var break_stream = load(TERRAIN_BREAK_SOUND_PATH)
+		if break_stream and player:
+			terrain_break_audio_player = AudioStreamPlayer3D.new()
+			terrain_break_audio_player.name = "TerrainBreakAudio"
+			terrain_break_audio_player.stream = break_stream
+			terrain_break_audio_player.max_distance = 25.0
+			player.add_child(terrain_break_audio_player)
+			print("[COMBAT_AUDIO] Terrain break sound loaded successfully")
 
 func _process(delta: float) -> void:
 	PerformanceMonitor.start_measure("Combat System")
@@ -722,9 +758,18 @@ func do_tool_attack(item: Dictionary) -> void:
 			print("[TERRAIN_MINING] Pickaxe hit %s - HP: %d/%d" % [block_pos, current_hp, TERRAIN_HP])
 			DebugManager.log_player("CombatSystem: Pickaxe hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
 			
+			if terrain_hit_audio_player:
+				terrain_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+				terrain_hit_audio_player.play()
+			
 			# Check if terrain cube should break
 			if terrain_damage[block_pos] >= TERRAIN_HP:
 				print("[TERRAIN_MINING] Block %s DESTROYED! (HP reached 0)" % block_pos)
+				
+				if terrain_break_audio_player:
+					terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
+					terrain_break_audio_player.play()
+				
 				if use_enhanced_mode:
 					# Break with box shape
 					terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
@@ -826,6 +871,11 @@ func _do_axe_damage(item: Dictionary) -> void:
 			durability_target = block_pos
 			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
 			print("AXE_DAMAGE_DEBUG: Pickaxe hit %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
+			
+			if terrain_hit_audio_player:
+				terrain_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+				terrain_hit_audio_player.play()
+			
 			if terrain_damage[block_pos] >= TERRAIN_HP:
 				if use_enhanced_mode:
 					terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
@@ -917,7 +967,16 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 			durability_target = block_pos
 			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
 			print("PICKAXE_DEBUG: Hit %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
+			
+			if terrain_hit_audio_player:
+				terrain_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+				terrain_hit_audio_player.play()
+				
 			if terrain_damage[block_pos] >= TERRAIN_HP:
+				if terrain_break_audio_player:
+					terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
+					terrain_break_audio_player.play()
+					
 				if use_enhanced_mode:
 					terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
 				else:
@@ -1296,9 +1355,19 @@ func _do_terrain_punch(item: Dictionary, position: Vector3) -> void:
 	var current_hp = TERRAIN_HP - terrain_damage[terrain_pos]
 	durability_target = terrain_pos
 	
+
+	
 	_emit_durability_hit(current_hp, TERRAIN_HP, "Terrain", durability_target)
 	
+	if terrain_hit_audio_player:
+		terrain_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+		terrain_hit_audio_player.play()
+	
 	if terrain_damage[terrain_pos] >= TERRAIN_HP:
+		if terrain_break_audio_player:
+			terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
+			terrain_break_audio_player.play()
+			
 		var mat_id = -1
 		if terrain_manager.has_method("get_material_at"):
 			# Sample INSIDE terrain (0.3 units down from surface)
