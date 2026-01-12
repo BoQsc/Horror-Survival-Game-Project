@@ -397,6 +397,9 @@ func take_damage(amount: int):
 	if current_health <= 0:
 		die()
 	else:
+		# If user wanted hit reaction with physical impulse (e.g. shot), we'd need active ragdoll.
+		# For now, sticking to animation hit reaction but keeping structure open.
+
 		# Random hit reaction
 		hit_anim_variant = randi() % 2
 		
@@ -419,17 +422,34 @@ func die():
 	if col:
 		col.disabled = true
 	
-	# Play death animation
-	if anim_player and anim_player.has_animation("Take 001"):
-		anim_player.play("Take 001")
-		anim_player.seek(9.5, true)
-		
-		await get_tree().create_timer(0.9).timeout
-		anim_player.pause()
+	# Start ragdoll
+	var skeleton = get_node_or_null("ZombieModel/Armature/Skeleton3D")
+	if skeleton:
+		# Use physical bones if available
+		anim_player.stop()
+		skeleton.physical_bones_start_simulation()
+	else:
+		# Fallback to animation if no skeleton found
+		if anim_player and anim_player.has_animation("Take 001"):
+			anim_player.play("Take 001")
+			anim_player.seek(9.5, true)
+			
+			await get_tree().create_timer(0.9).timeout
+			anim_player.pause()
 	
 	# Disappear after delay
-	await get_tree().create_timer(3.0).timeout
+	await get_tree().create_timer(5.0).timeout
 	queue_free()
+
+func apply_hit_impulse(impulse: Vector3, position: Vector3):
+	var skeleton = get_node_or_null("ZombieModel/Armature/Skeleton3D")
+	if skeleton:
+		# Note: This only works if physical bones are active. 
+		# For "Active Ragdoll" hit reaction without full ragdoll, 
+		# we would need partial simulation which is complex.
+		# For now, this is useful if we transition to ragdoll on death.
+		pass
+
 
 ## Override EntityBase on_spawn
 func on_spawn(manager: Node3D):
