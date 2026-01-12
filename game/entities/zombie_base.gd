@@ -28,7 +28,9 @@ var wall_detector: RayCast3D = null
 
 # --- Sound ---
 const CHASE_SOUND = preload("res://game/sound/zombie-sound-2-357976.mp3")
+const HIT_SOUND = preload("res://game/sound/player-hitting-zombie/blade-piercing-body-352462.mp3")
 var chase_audio_player: AudioStreamPlayer3D = null
+var hit_audio_player: AudioStreamPlayer3D = null
 
 # --- Player reference ---
 var player: Node3D = null
@@ -69,6 +71,13 @@ func _ready():
 	chase_audio_player.volume_db = -5.0
 	chase_audio_player.max_distance = 20.0
 	chase_audio_player.autoplay = false
+	
+	# Setup hit sound
+	hit_audio_player = AudioStreamPlayer3D.new()
+	add_child(hit_audio_player)
+	hit_audio_player.stream = HIT_SOUND
+	hit_audio_player.volume_db = -2.0
+	hit_audio_player.max_distance = 15.0
 	
 	# Setup wall detector
 	wall_detector = RayCast3D.new()
@@ -393,6 +402,10 @@ func take_damage(amount: int):
 	
 	current_health -= amount
 	DebugManager.log_entities("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
+	
+	if hit_audio_player:
+		hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+		hit_audio_player.play()
 	
 	if current_health <= 0:
 		die()
