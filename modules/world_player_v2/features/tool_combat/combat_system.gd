@@ -62,7 +62,7 @@ const WOOD_AUDIO_RANGES = {
 	"hit_3": [4.21, 0.90], # 5.11 - 4.21
 	"break": [6.40, 1.64]  # 8.04 - 6.40
 }
-const PLANT_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-plant-03-266292.mp3"
+const PLANT_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/leafpilehit-107714.mp3"
 const ROCK_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-grass-plant-or-rock/hit-rock-03-266305.mp3"
 const TERRAIN_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-terrain/ground-impact-352053.mp3"
 const TERRAIN_BREAK_SOUND_PATH: String = "res://game/sound/player-hitting-terrain-breaks/impact-109588.mp3"
