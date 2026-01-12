@@ -396,14 +396,14 @@ func start_chase():
 		change_state("CHASE")
 
 # --- DAMAGE SYSTEM ---
-func take_damage(amount: int):
+func take_damage(amount: int, source: String = "generic"):
 	if current_state == "DEAD":
 		return
 	
 	current_health -= amount
 	DebugManager.log_entities("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
 	
-	if hit_audio_player:
+	if hit_audio_player and source != "pistol":
 		hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
 		hit_audio_player.play()
 	
