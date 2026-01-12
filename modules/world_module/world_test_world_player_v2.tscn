@@ -1,6 +1,7 @@
-[gd_scene load_steps=20 format=3 uid="uid://be152jvxotx5q"]
+[gd_scene load_steps=21 format=3 uid="uid://be152jvxotx5q"]
 
 [ext_resource type="PackedScene" uid="uid://b8dotn0iuivrd" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
+[ext_resource type="PackedScene" uid="uid://dusp0hitkv8d0" path="res://models/entities/player/node_3d_test_scene.tscn" id="2_fmx6u"]
 [ext_resource type="Script" uid="uid://d2oq01pxsr6xj" path="res://world_marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://world_building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://bmf31iakbdeu4" path="res://vegetation_manager.gd" id="6_vegetation"]
@@ -12,7 +13,7 @@
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://world_building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://world_building_system/debug_teleporter.gd" id="13_debug"]
 [ext_resource type="PackedScene" path="res://modules/world_player/ui_loading_screen/loading_screen.tscn" id="14_loading"]
-[ext_resource type="Shader" uid="uid://c7lniwsexkctm" path="res://modules/world_player_v2/features/body_camera/underwater_screen.gdshader" id="15_underwater"]
+[ext_resource type="Shader" uid="uid://cnr7goje1oos5" path="res://modules/world_player_v2/features/body_camera/underwater_screen.gdshader" id="15_underwater"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
 sky_horizon_color = Color(0.64625, 0.65575, 0.67075, 1)
@@ -53,6 +54,10 @@ shadow_enabled = true
 
 [node name="WorldPlayerV2" parent="." instance=ExtResource("1_worldplayer")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
+
+[node name="Node3dTestScene" parent="WorldPlayerV2" instance=ExtResource("2_fmx6u")]
+transform = Transform3D(-0.9848077, 0, -0.17364822, 0, 1, 0, 0.17364822, 0, -0.9848077, 0, 0, 0.47238725)
+visible = false
 
 [node name="UI" type="Control" parent="."]
 layout_mode = 3
