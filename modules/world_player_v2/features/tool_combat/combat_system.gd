@@ -654,7 +654,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
 		return  # Exit - damage will happen after delay
 	
-	# Handle pickaxe - delay damage to match animation, but store hit data now
+	# Handle pickaxe - delay raycast AND damage to match animation (Option A: Raycast at Impact)
 	if "pickaxe" in item_id:
 		if not pickaxe_ready:
 			print("PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)")
@@ -662,32 +662,17 @@ func do_tool_attack(item: Dictionary) -> void:
 		pickaxe_ready = false
 		_emit_axe_fired()  # Trigger visual animation (pickaxe reuses axe signal)
 		
-		# Perform raycast NOW to capture current target
-		var hit = _raycast(3.5, true, true)
-		var player_vel = player.velocity if player else Vector3.ZERO
-		print("PICKAXE_HIT_DEBUG: Swing started | Player velocity: %.2f | Raycast hit: %s" % [player_vel.length(), !hit.is_empty()])
+		# Store ONLY item data - raycast will happen at impact moment (0.30s)
+		pending_pickaxe_hit = {
+			"item": item.duplicate()
+		}
+		print("PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)")
 		
-		if not hit.is_empty():
-			var target = hit.get("collider")
-			var position = hit.get("position", Vector3.ZERO)
-			print("PICKAXE_HIT_DEBUG: HIT registered | Target: %s | Position: %s" % [target.name if target else "null", position])
-			
-			# Visual debug: Spawn marker at hit position (if enabled)
-			if has_node("/root/HitMarkerConfig") and get_node("/root/HitMarkerConfig").enabled:
-				_spawn_hit_marker(position, Color.RED)
-			
-			# Store hit data and item for delayed damage
-			pending_pickaxe_hit = {
-				"item": item.duplicate(),
-				"hit": hit.duplicate()
-			}
-			# Delay damage to 0.30s (when pickaxe visually connects)
-			get_tree().create_timer(0.30).timeout.connect(_on_pickaxe_hit_moment)
-		else:
-			print("PICKAXE_HIT_DEBUG: MISS - raycast returned empty, no damage will be dealt")
+		# Delay BOTH raycast and damage to 0.30s (when pickaxe visually connects)
+		get_tree().create_timer(0.30).timeout.connect(_on_pickaxe_hit_moment)
 		
 		# Pickaxe ready state will be reset by axe_ready signal (from first_person_pickaxe.gd)
-		return  # ALWAYS exit - damage will happen after delay (or not at all if miss)
+		return  # Exit - raycast and damage will happen after delay
 	
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
@@ -898,19 +883,25 @@ func _do_axe_damage(item: Dictionary) -> void:
 				_collect_terrain_resource(mat_id)
 
 
-## Pickaxe damage - called 0.30s after swing starts (using stored hit data)
+## Pickaxe damage - called 0.30s after swing starts (Option A: Raycast at Impact)
 func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
-	print("PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED")
+	print("PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW")
 	
 	if not player or not terrain_manager:
 		print("PICKAXE_HIT_DEBUG: ABORTED - player=%s terrain_manager=%s" % [player != null, terrain_manager != null])
 		return
 	
 	var item = pending_data.get("item", {})
-	var hit = pending_data.get("hit", {})
 	
-	if item.is_empty() or hit.is_empty():
-		print("PICKAXE_HIT_DEBUG: ABORTED - item or hit data is empty")
+	if item.is_empty():
+		print("PICKAXE_HIT_DEBUG: ABORTED - item data is empty")
+		return
+	
+	# OPTION A: Perform raycast NOW at impact time (what you're aiming at when pickaxe connects)
+	var hit = _raycast(3.5, true, true)
+	
+	if hit.is_empty():
+		print("PICKAXE_HIT_DEBUG: MISS at impact time - no target in crosshair")
 		return
 	
 	var item_id = item.get("id", "")
@@ -919,7 +910,11 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	var position = hit.get("position", Vector3.ZERO)
 	var hit_normal = hit.get("normal", Vector3.UP)
 	
-	print("PICKAXE_HIT_DEBUG: Delayed damage executing | Target: %s | Position: %s" % [target.name if target else "null", position])
+	print("PICKAXE_HIT_DEBUG: HIT at impact time | Target: %s | Position: %s" % [target.name if target else "null", position])
+	
+	# Visual debug: Spawn marker at hit position (if enabled)
+	if has_node("/root/HitMarkerConfig") and get_node("/root/HitMarkerConfig").enabled:
+		_spawn_hit_marker(position, Color.GREEN)  # Green = impact-time hit
 	
 	# Priority 1: Generic Damageable
 	var damageable = _find_damageable(target)
