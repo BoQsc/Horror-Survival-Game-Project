@@ -26,11 +26,17 @@ func _ready() -> void:
 	if not hotbar:
 		push_warning("ModeManager: Hotbar not found, mode switching will be limited")
 	
-	# Connect to hotbar item changes
+	# Connect to signals
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
+		PlayerSignals.editor_submode_changed.connect(_on_editor_submode_changed)
 	
 	print("ModeManager: Initialized in %s mode" % get_mode_name())
+
+func _on_editor_submode_changed(submode: int, _name: String) -> void:
+	# Sync internal state with hotbar selection
+	editor_submode = submode as EditorSubmode
+	print("ModeManager: Editor submode synced -> %s" % get_submode_name())
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:

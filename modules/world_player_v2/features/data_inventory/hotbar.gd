@@ -41,13 +41,15 @@ func _enter_editor_mode() -> void:
 	_is_editor_mode = true
 	_load_editor_slots()
 	select_slot(0)
-	DebugManager.log_player("Hotbar: Entered editor mode")
+	PlayerSignals.inventory_changed.emit()
+	print("Hotbar: Entered editor mode, slots: %d" % slots.size())
 
 func _exit_editor_mode() -> void:
 	slots = _player_slots.duplicate(true)  # Restore from backup
 	_is_editor_mode = false
 	select_slot(0)
-	DebugManager.log_player("Hotbar: Exited editor mode")
+	PlayerSignals.inventory_changed.emit()
+	print("Hotbar: Exited editor mode, slots restored")
 
 func _load_editor_slots() -> void:
 	slots.clear()
@@ -105,6 +107,7 @@ func _input(event: InputEvent) -> void:
 				select_slot((selected_slot + 1) % SLOT_COUNT)
 
 func select_slot(index: int) -> void:
+	print("Hotbar: select_slot(%d) called, current=%d" % [index, selected_slot])
 	if index < 0 or index >= SLOT_COUNT:
 		return
 	
@@ -121,6 +124,11 @@ func select_slot(index: int) -> void:
 func _emit_selection_change() -> void:
 	var item = get_selected_item()
 	PlayerSignals.item_changed.emit(selected_slot, item)
+	
+	# Sync editor submode when in editor mode
+	if _is_editor_mode and item.has("editor_submode"):
+		var submode = item.get("editor_submode", 0)
+		PlayerSignals.editor_submode_changed.emit(submode, item.get("name", "Unknown"))
 
 ## Get the currently selected item data (just the item, not count)
 func get_selected_item() -> Dictionary:

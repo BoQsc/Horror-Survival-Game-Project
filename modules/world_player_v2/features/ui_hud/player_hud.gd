@@ -370,8 +370,7 @@ func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 	_update_hotbar_display()
 
 func _on_item_changed(slot: int, item: Dictionary) -> void:
-	if is_editor_mode:
-		return
+	# Allow updates in both player and editor modes
 	if slot >= 0 and slot < hotbar_slots.size():
 		var count = 1
 		if hotbar_ref and hotbar_ref.has_method("get_count_at"):
@@ -385,8 +384,7 @@ func _on_item_changed(slot: int, item: Dictionary) -> void:
 			selected_item_label.text = item.get("name", "Empty")
 
 func _on_hotbar_slot_selected(slot: int) -> void:
-	if is_editor_mode:
-		return
+	# Allow updates in both player and editor modes
 	
 	for i in range(hotbar_slots.size()):
 		if i == slot:
