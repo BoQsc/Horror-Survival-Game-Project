@@ -10,16 +10,58 @@ const MAX_STACK_SIZE: int = 3 # Maximum items per stack
 var slots: Array = []
 var selected_slot: int = 0
 
+# Editor mode support
+var _player_slots: Array = []  # Backup of player slots when in editor mode
+var _is_editor_mode: bool = false
+
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 func _ready() -> void:
 	_load_dev_starter_kit()
 	
+	# Listen to mode changes
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.mode_changed.connect(_on_mode_changed)
+	
 	DebugManager.log_player("Hotbar: Initialized with %d slots (max stack: %d)" % [slots.size(), MAX_STACK_SIZE])
 	
 	# Auto-select first slot
 	select_slot(0)
+
+## Handle mode changes - swap slots between player and editor
+func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
+	if new_mode == "EDITOR" and not _is_editor_mode:
+		_enter_editor_mode()
+	elif new_mode != "EDITOR" and _is_editor_mode:
+		_exit_editor_mode()
+
+func _enter_editor_mode() -> void:
+	_player_slots = slots.duplicate(true)  # Deep copy backup
+	_is_editor_mode = true
+	_load_editor_slots()
+	select_slot(0)
+	DebugManager.log_player("Hotbar: Entered editor mode")
+
+func _exit_editor_mode() -> void:
+	slots = _player_slots.duplicate(true)  # Restore from backup
+	_is_editor_mode = false
+	select_slot(0)
+	DebugManager.log_player("Hotbar: Exited editor mode")
+
+func _load_editor_slots() -> void:
+	slots.clear()
+	var tools = [
+		{"id": "editor_terrain", "name": "Terrain", "category": 0, "editor_submode": 0},
+		{"id": "editor_water", "name": "Water", "category": 0, "editor_submode": 1},
+		{"id": "editor_road", "name": "Road", "category": 0, "editor_submode": 2},
+		{"id": "editor_prefab", "name": "Prefab", "category": 0, "editor_submode": 3},
+		{"id": "editor_fly", "name": "Fly", "category": 0, "editor_submode": 4},
+	]
+	for tool_item in tools:
+		slots.append({"item": tool_item, "count": 1})
+	while slots.size() < SLOT_COUNT:
+		slots.append(_create_empty_stack())
 
 ## Load default developer starter kit items
 func _load_dev_starter_kit() -> void:

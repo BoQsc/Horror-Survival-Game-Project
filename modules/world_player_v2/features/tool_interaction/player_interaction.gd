@@ -457,4 +457,3 @@ func _pickup_vehicle(vehicle: Node3D) -> void:
 		# var car_keys = ItemDefs.get_car_keys_definition()
 		# if hotbar and hotbar.has_method("add_item"):
 		#     hotbar.add_item(car_keys)
-
