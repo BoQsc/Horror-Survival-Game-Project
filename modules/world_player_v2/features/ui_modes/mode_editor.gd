@@ -120,8 +120,19 @@ func _input(event: InputEvent) -> void:
 				brush_size = max(brush_size - 0.5, 0.5)
 				print("ModeEditor: Brush size -> %.1f" % brush_size)
 
-func handle_primary(_item: Dictionary) -> void:
+func handle_primary(item: Dictionary) -> void:
 	if not mode_manager:
+		return
+	
+	# If item is not an editor tool, delegate to build/play mode handlers
+	if not item.has("editor_submode"):
+		# Try build mode for building items
+		var build_mode = get_node_or_null("../ModeBuild")
+		var combat = get_node_or_null("../CombatSystem")
+		if build_mode and build_mode.has_method("handle_primary"):
+			build_mode.handle_primary(item)
+		elif combat and combat.has_method("handle_primary"):
+			combat.handle_primary(item)
 		return
 	
 	var submode = mode_manager.editor_submode
@@ -133,8 +144,18 @@ func handle_primary(_item: Dictionary) -> void:
 		3: pass
 		5: _do_legacy_dirt_dig()
 
-func handle_secondary(_item: Dictionary) -> void:
+func handle_secondary(item: Dictionary) -> void:
 	if not mode_manager:
+		return
+	
+	# If item is not an editor tool, delegate to build/play mode handlers
+	if not item.has("editor_submode"):
+		var build_mode = get_node_or_null("../ModeBuild")
+		var combat = get_node_or_null("../CombatSystem")
+		if build_mode and build_mode.has_method("handle_secondary"):
+			build_mode.handle_secondary(item)
+		elif combat and combat.has_method("handle_secondary"):
+			combat.handle_secondary(item)
 		return
 	
 	var submode = mode_manager.editor_submode

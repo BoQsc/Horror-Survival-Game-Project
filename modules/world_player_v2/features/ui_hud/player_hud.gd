@@ -513,38 +513,17 @@ func _on_editor_submode_changed(submode: int, _submode_name: String) -> void:
 		_update_hotbar_display()
 
 func _update_hotbar_display() -> void:
-	if is_editor_mode:
-		for i in range(hotbar_slots.size()):
-			if i < EDITOR_SUBMODE_NAMES.size():
-				var editor_item = {"id": "editor_mode", "name": EDITOR_SUBMODE_NAMES[i]}
-				var wrapped = {"item": editor_item, "count": 1}
-				hotbar_slots[i].set_slot_data(wrapped, i + 100)
-				if i == current_editor_submode:
-					hotbar_slots[i].modulate = Color.YELLOW
-				else:
-					hotbar_slots[i].modulate = Color.WHITE
-			else:
-				var empty_item = {"id": "empty", "name": "Empty"}
-				var wrapped = {"item": empty_item, "count": 0}
-				hotbar_slots[i].set_slot_data(wrapped, i + 100)
-				hotbar_slots[i].modulate = Color.DIM_GRAY
+	# Use same display logic for both player and editor modes
+	_refresh_hotbar_display()
+	
+	if hotbar_ref:
+		var selected = hotbar_ref.get_selected_index()
+		if selected >= 0 and selected < hotbar_slots.size():
+			hotbar_slots[selected].modulate = Color.YELLOW
 		
 		if selected_item_label:
-			if current_editor_submode < EDITOR_SUBMODE_NAMES.size():
-				selected_item_label.text = EDITOR_SUBMODE_NAMES[current_editor_submode]
-			else:
-				selected_item_label.text = "Editor"
-	else:
-		_refresh_hotbar_display()
-		
-		if hotbar_ref:
-			var selected = hotbar_ref.get_selected_index()
-			if selected >= 0 and selected < hotbar_slots.size():
-				hotbar_slots[selected].modulate = Color.YELLOW
-			
-			if selected_item_label:
-				var item = hotbar_ref.get_item_at(selected)
-				selected_item_label.text = item.get("name", "Empty")
+			var item = hotbar_ref.get_item_at(selected)
+			selected_item_label.text = item.get("name", "Empty")
 
 func _target_to_key(target_ref: Variant) -> String:
 	if target_ref is RID:

@@ -37,19 +37,17 @@ func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 		_exit_editor_mode()
 
 func _enter_editor_mode() -> void:
-	_player_slots = slots.duplicate(true)  # Deep copy backup
+	_player_slots = slots.duplicate(true)
 	_is_editor_mode = true
 	_load_editor_slots()
 	select_slot(0)
 	PlayerSignals.inventory_changed.emit()
-	print("Hotbar: Entered editor mode, slots: %d" % slots.size())
 
 func _exit_editor_mode() -> void:
-	slots = _player_slots.duplicate(true)  # Restore from backup
+	slots = _player_slots.duplicate(true)
 	_is_editor_mode = false
 	select_slot(0)
 	PlayerSignals.inventory_changed.emit()
-	print("Hotbar: Exited editor mode, slots restored")
 
 func _load_editor_slots() -> void:
 	slots.clear()
@@ -107,7 +105,6 @@ func _input(event: InputEvent) -> void:
 				select_slot((selected_slot + 1) % SLOT_COUNT)
 
 func select_slot(index: int) -> void:
-	print("Hotbar: select_slot(%d) called, current=%d" % [index, selected_slot])
 	if index < 0 or index >= SLOT_COUNT:
 		return
 	

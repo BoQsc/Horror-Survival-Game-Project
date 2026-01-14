@@ -34,9 +34,7 @@ func _ready() -> void:
 	print("ModeManager: Initialized in %s mode" % get_mode_name())
 
 func _on_editor_submode_changed(submode: int, _name: String) -> void:
-	# Sync internal state with hotbar selection
 	editor_submode = submode as EditorSubmode
-	print("ModeManager: Editor submode synced -> %s" % get_submode_name())
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -93,16 +91,6 @@ func toggle_editor_mode() -> void:
 		"ON" if current_mode == Mode.EDITOR else "OFF",
 		get_submode_name()
 	])
-
-## Set EDITOR submode
-func set_editor_submode(submode: EditorSubmode) -> void:
-	if current_mode != Mode.EDITOR:
-		return
-	
-	editor_submode = submode
-	print("ModeManager: Editor submode -> %s" % get_submode_name())
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.editor_submode_changed.emit(editor_submode, get_submode_name())
 
 ## Toggle fly mode (EDITOR only)
 func toggle_fly_mode() -> void:
