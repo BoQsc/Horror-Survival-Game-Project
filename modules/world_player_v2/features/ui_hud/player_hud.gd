@@ -25,10 +25,6 @@ var inventory_ref: Node = null
 # V2 path
 const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
 
-var is_editor_mode: bool = false
-var current_editor_submode: int = 0
-const EDITOR_SUBMODE_NAMES = ["Terrain", "Water", "Road", "Prefab", "Fly", "OldDirt"]
-
 var durability_memory: Dictionary = {}
 var last_hit_target_key: String = ""
 const DURABILITY_PERSIST_MS: int = 6000
@@ -357,7 +353,6 @@ func _update_status_bars() -> void:
 
 func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 	mode_label.text = new_mode
-	is_editor_mode = (new_mode == "EDITOR")
 	
 	match new_mode:
 		"PLAY":
@@ -507,10 +502,8 @@ func _update_build_mode_info() -> void:
 		build_info_label.text = "[%s] Rot:%s %s" % [mode_str, rot_str, y_str]
 		build_info_label.visible = true
 
-func _on_editor_submode_changed(submode: int, _submode_name: String) -> void:
-	current_editor_submode = submode
-	if is_editor_mode:
-		_update_hotbar_display()
+func _on_editor_submode_changed(_submode: int, _submode_name: String) -> void:
+	_update_hotbar_display()
 
 func _update_hotbar_display() -> void:
 	# Use same display logic for both player and editor modes
