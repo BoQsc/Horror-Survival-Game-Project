@@ -94,8 +94,18 @@ func _process(_delta: float) -> void:
 			building_api.destroy_preview()
 
 func _input(event: InputEvent) -> void:
-	# Only handle input in BUILD mode
-	if not mode_manager or not mode_manager.is_build_mode():
+	# Handle input in BUILD mode, or in EDITOR mode with building item
+	var should_handle_input = false
+	if mode_manager:
+		if mode_manager.is_build_mode():
+			should_handle_input = true
+		elif mode_manager.is_editor_mode():
+			var item_data = _get_current_item_data()
+			var category = item_data.get("category", 0) if item_data else 0
+			if category in [ItemCategory.BLOCK, ItemCategory.OBJECT, ItemCategory.PROP]:
+				should_handle_input = true
+	
+	if not should_handle_input:
 		return
 	
 	# E key: Hold for freestyle placement (legacy port)

@@ -131,6 +131,14 @@ func route_secondary_action(item: Dictionary) -> void:
 	if not mode_manager:
 		return
 	
+	var category = item.get("category", 0)
+	
+	# VEHICLE (car keys) - works in all modes
+	if category == 8:  # ItemCategory.VEHICLE
+		print("[ItemUseRouter] Car Keys detected, spawning vehicle...")
+		_spawn_vehicle(item)
+		return
+	
 	# Route to mode handler
 	if mode_manager.is_editor_mode():
 		if mode_editor and mode_editor.has_method("handle_secondary"):
@@ -139,18 +147,10 @@ func route_secondary_action(item: Dictionary) -> void:
 		if mode_build and mode_build.has_method("handle_secondary"):
 			mode_build.handle_secondary(item)
 	else: # PLAY mode
-		var category = item.get("category", 0)
-		
 		# TERRAFORMER (shovel) - route to combat_system for fill action
 		if category == 7:
 			if combat_system and combat_system.has_method("handle_secondary"):
 				combat_system.handle_secondary(item)
-			return
-		
-		# VEHICLE (car keys) - spawn vehicle in front of player
-		if category == 8:  # ItemCategory.VEHICLE
-			print("[ItemUseRouter] Car Keys detected, spawning vehicle...")
-			_spawn_vehicle(item)
 			return
 		
 		# Other items - terrain interaction for bucket/resource placement
