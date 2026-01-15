@@ -148,8 +148,16 @@ func handle_secondary(item: Dictionary) -> void:
 	if not mode_manager:
 		return
 	
-	# If item is not an editor tool, delegate to build/play mode handlers
+	# If item is not an editor tool, handle based on category
 	if not item.has("editor_submode"):
+		var category = item.get("category", 0)
+		
+		# VEHICLE category (car keys) - spawn vehicle directly
+		if category == 8:  # ItemCategory.VEHICLE
+			_spawn_vehicle(item)
+			return
+		
+		# Building items - delegate to build mode
 		var build_mode = get_node_or_null("../ModeBuild")
 		var combat = get_node_or_null("../CombatSystem")
 		if build_mode and build_mode.has_method("handle_secondary"):
@@ -166,6 +174,25 @@ func handle_secondary(item: Dictionary) -> void:
 		2: _do_road_click()
 		3: _do_prefab_place()
 		5: _do_legacy_dirt_place()
+
+## Spawn vehicle (for car keys in editor mode)
+func _spawn_vehicle(item: Dictionary) -> void:
+	var vehicle_scene_path = item.get("vehicle_scene", "")
+	if vehicle_scene_path == "":
+		print("ModeEditor: No vehicle_scene in item %s" % item.get("name", "unknown"))
+		return
+	
+	var vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+	if not vehicle_manager or not vehicle_manager.has_method("spawn_vehicle"):
+		print("ModeEditor: No vehicle_manager found")
+		return
+	
+	if player:
+		var spawn_pos = player.global_position + player.global_basis.z * -3.0
+		var v = vehicle_manager.spawn_vehicle(spawn_pos)
+		if has_node("/root/PlayerSignals"):
+			PlayerSignals.vehicle_spawned.emit()
+		print("ModeEditor: Spawned vehicle from Car Keys at %s" % v.global_position)
 
 func _do_terrain_dig() -> void:
 	if not player or not terrain_manager:

@@ -43,8 +43,20 @@ func _ready() -> void:
 	print("ModeBuild: Initialized")
 
 func _process(_delta: float) -> void:
-	# Update selection box when in build mode
-	if mode_manager and mode_manager.is_build_mode() and building_api:
+	# Check if we should show building visuals
+	# Either in BUILD mode, or in EDITOR mode with a building item selected
+	var should_show_visuals = false
+	if mode_manager and building_api:
+		if mode_manager.is_build_mode():
+			should_show_visuals = true
+		elif mode_manager.is_editor_mode():
+			# In editor mode, show visuals if current item is a building item
+			var item_data = _get_current_item_data()
+			var category = item_data.get("category", 0) if item_data else 0
+			if category in [ItemCategory.BLOCK, ItemCategory.OBJECT, ItemCategory.PROP]:
+				should_show_visuals = true
+	
+	if should_show_visuals:
 		# Update targeting from player raycast
 		if player and player.has_method("raycast"):
 			var hit = player.raycast(10.0)
@@ -76,7 +88,7 @@ func _process(_delta: float) -> void:
 			# BLOCK/PROP: destroy preview, show selection box
 			building_api.destroy_preview()
 	else:
-		# Hide when not in build mode
+		# Hide when not showing visuals
 		if building_api:
 			building_api.hide_visuals()
 			building_api.destroy_preview()

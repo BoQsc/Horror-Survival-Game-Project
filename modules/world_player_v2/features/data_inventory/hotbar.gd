@@ -11,14 +11,17 @@ var slots: Array = []
 var selected_slot: int = 0
 
 # Editor mode support
-var _player_slots: Array = []  # Backup of player slots when in editor mode
+var _player_slots: Array = []  # Player slots (saved when entering editor)
+var _editor_slots: Array = []  # Editor slots (persistent, separate from player)
 var _is_editor_mode: bool = false
+var _editor_initialized: bool = false  # Only initialize editor slots once
 
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 func _ready() -> void:
 	_load_dev_starter_kit()
+	_init_editor_slots()  # Initialize editor slots once
 	
 	# Listen to mode changes
 	if has_node("/root/PlayerSignals"):
@@ -37,20 +40,28 @@ func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 		_exit_editor_mode()
 
 func _enter_editor_mode() -> void:
+	# Save current player slots
 	_player_slots = slots.duplicate(true)
+	# Switch to editor slots
+	slots = _editor_slots.duplicate(true)
 	_is_editor_mode = true
-	_load_editor_slots()
 	select_slot(0)
 	PlayerSignals.inventory_changed.emit()
 
 func _exit_editor_mode() -> void:
+	# Save current editor slots
+	_editor_slots = slots.duplicate(true)
+	# Switch back to player slots
 	slots = _player_slots.duplicate(true)
 	_is_editor_mode = false
 	select_slot(0)
 	PlayerSignals.inventory_changed.emit()
 
-func _load_editor_slots() -> void:
-	slots.clear()
+## Initialize editor slots once (5 tools + 5 empty for player items)
+func _init_editor_slots() -> void:
+	if _editor_initialized:
+		return
+	_editor_slots.clear()
 	var tools = [
 		{"id": "editor_terrain", "name": "Terrain", "category": 0, "editor_submode": 0},
 		{"id": "editor_water", "name": "Water", "category": 0, "editor_submode": 1},
@@ -59,9 +70,10 @@ func _load_editor_slots() -> void:
 		{"id": "editor_fly", "name": "Fly", "category": 0, "editor_submode": 4},
 	]
 	for tool_item in tools:
-		slots.append({"item": tool_item, "count": 1})
-	while slots.size() < SLOT_COUNT:
-		slots.append(_create_empty_stack())
+		_editor_slots.append({"item": tool_item, "count": 1})
+	while _editor_slots.size() < SLOT_COUNT:
+		_editor_slots.append(_create_empty_stack())
+	_editor_initialized = true
 
 ## Load default developer starter kit items
 func _load_dev_starter_kit() -> void:
