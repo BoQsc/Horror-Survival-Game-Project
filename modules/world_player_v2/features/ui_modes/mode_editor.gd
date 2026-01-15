@@ -124,13 +124,16 @@ func handle_primary(item: Dictionary) -> void:
 	if not mode_manager:
 		return
 	
-	# If item is not an editor tool, delegate to build/play mode handlers
+	# If item is not an editor tool, delegate based on category
 	if not item.has("editor_submode"):
-		# Try build mode for building items
+		var category = item.get("category", 0)
 		var build_mode = get_node_or_null("../ModeBuild")
 		var combat = get_node_or_null("../CombatSystem")
-		if build_mode and build_mode.has_method("handle_primary"):
+		
+		# Building items (BLOCK=4, OBJECT=5, PROP=6) -> build_mode
+		if category in [4, 5, 6] and build_mode and build_mode.has_method("handle_primary"):
 			build_mode.handle_primary(item)
+		# Everything else (empty, tools, etc.) -> combat for punching/attacking
 		elif combat and combat.has_method("handle_primary"):
 			combat.handle_primary(item)
 		return
@@ -148,12 +151,16 @@ func handle_secondary(item: Dictionary) -> void:
 	if not mode_manager:
 		return
 	
-	# If item is not an editor tool, delegate to build/play mode handlers
+	# If item is not an editor tool, delegate based on category
 	if not item.has("editor_submode"):
+		var category = item.get("category", 0)
 		var build_mode = get_node_or_null("../ModeBuild")
 		var combat = get_node_or_null("../CombatSystem")
-		if build_mode and build_mode.has_method("handle_secondary"):
+		
+		# Building items (BLOCK=4, OBJECT=5, PROP=6) -> build_mode
+		if category in [4, 5, 6] and build_mode and build_mode.has_method("handle_secondary"):
 			build_mode.handle_secondary(item)
+		# Everything else -> combat
 		elif combat and combat.has_method("handle_secondary"):
 			combat.handle_secondary(item)
 		return
