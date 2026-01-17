@@ -1,0 +1,8 @@
+world_player needs to be (updated) inspected and deleted after audit of successful transition to v2.
+world_player_legacy might be useful as groundwork but will need to be reintegrated into v2
+
+res://modules/debug_module/ needs to be moved and reintegrated to res://addons/debug_menu/
+
+The whole res://modules/tools/ folder is all about researching and making a zombie ragdoll.
+It might have failed a bit. A good resource is the end this video. Althought we couldn't make ragdoll work still.
+Needs investigation into zombie model by someone else.
