@@ -1,0 +1,222 @@
+
+Horror Survival Game Project (0.0.0.0)
+First Person Sandbox Hybrid Voxel Survival Game Project.
+Technology: Marching Cubes, Greedy Meshing, GDExtension.
+Languages: GLSL Shader, GDScript, C++
+Minimum requirement: NVIDIA GeForce GTX 1060 with Max-Q Design
+Project Author: BoQsc
+Year: 2025
+
+Credits:
+
+__Terrain_images\textures__
+Gemini Nano Banana 2 Pro
+
+__Assets__
+
+pine_tree_-_ps1_low_poly.glb
+Wersaus33
+https://sketchfab.com/3d-models/pine-tree-ps1-low-poly-d71ceeb303644e649d09fe8038aa5e47
+
+rigged_animated_cinematic_quality_tree_4.glb
+EFX
+https://sketchfab.com/3d-models/rigged-animated-cinematic-quality-tree-4-544329bb254d4e45b5eae96ccc5bacf6
+
+simple_rock_-_ps1_low_poly.glb
+Wersaus33
+https://sketchfab.com/3d-models/simple-rock-ps1-low-poly-63872ba39caf4fa09d6c6bc2b05d8582
+
+heavy_pistol_animated.glb
+DJMaesen
+https://sketchfab.com/3d-models/heavy-pistol-animated-b7c78c533ced40cd986c44594b778ed6
+
+window.glb
+Joshua Wood
+https://sketchfab.com/3d-models/window-af3ba48119bc482a8d0077f0f265cd4a
+
+psx_wooden_table.glb
+Charckes
+https://sketchfab.com/3d-models/psx-wooden-table-cf41551a07d5492bae1bff6b81cb2e00
+
+hello_neighbor_reality_door_download.glb
+Viktor™
+https://sketchfab.com/3d-models/hello-neighbor-reality-door-download-4f25ef507b3641ce8933406bf3955b9e
+
+simple_long_crate.glb
+Blender3D
+https://sketchfab.com/3d-models/simple-long-crate-2d48359fb3d449899f9dee69dc1fa46b
+
+cc0_free_cardboard_box.glb
+Viktor Sano
+https://sketchfab.com/3d-models/cc0-free-cardboard-box-e7a46c7b163c477296a3986323ccc826
+
+grass_lowpoly.glb
+adam127
+https://sketchfab.com/3d-models/grass-lowpoly-81df6ee21a0246748f9db4f26e62a5f0
+
+realistics_grass_06.glb
+POLYSCAN
+https://sketchfab.com/3d-models/realistics-grass-06-b5956b7d4d1f4ff6ae1dd1320dab0d12
+
+male_zombie.glb
+hebagad408
+https://sketchfab.com/3d-models/male-zombie-c86683678a2248b2bf142cf7c41eebde
+
+
+psx_first_person_arms.glb
+Drillimpact
+https://sketchfab.com/3d-models/psx-first-person-arms-efd731f559a14ab48e29c8a200d71788
+
+animated_fps_axe.glb
+Levraicoincoin
+https://sketchfab.com/3d-models/animated-fps-axe-3c4e32a07d4146c69e297b26c565f343
+
+
+PSX_Tools_GLTF folder
+PSX Small Tools Pack
+https://amos-makes.itch.io/psx-tools
+
+
+sedan-sports.glb
+https://github.com/SteveRodkiss/srcoder_simplecar
+https://kenney.nl/assets/car-kit
+
+___Audio___
+
+DRAGON-STUDIO
+
+zombie-sound-2-357976.mp3
+https://pixabay.com/sound-effects/horror-zombie-sound-2-357976/
+
+
+seth-m (Freesound)
+car-idle-84718.mp3
+https://pixabay.com/sound-effects/city-car-idle-84718/
+
+tbsounddesigns (Freesound)
+car-engine-start-44357.mp3
+https://pixabay.com/sound-effects/technology-car-engine-start-44357/
+
+
+Rickplayer (Freesound)
+open-bag-96178.mp3
+https://pixabay.com/sound-effects/film-special-effects-open-bag-96178/
+
+
+Data_pion
+St1 - Footstep sfx
+St2 - Footstep sfx
+St3 - Footstep sfx
+https://pixabay.com/sound-effects/film-special-effects-st1-footstep-sfx-323053/
+
+OxidVideos
+tem-swing-sfx-2-409076.mp3
+https://pixabay.com/sound-effects/film-special-effects-item-swing-sfx-2-409076/
+
+DRAGON-STUDIO
+swimming-sounds-331502.mp3
+https://pixabay.com/sound-effects/nature-swimming-sounds-331502/
+
+
+DRAGON-STUDIO
+underwater-ambience-376890.mp3
+https://pixabay.com/sound-effects/nature-underwater-ambience-376890/
+
+
+Universfield
+water-splash-02-352021.mp3
+https://pixabay.com/sound-effects/nature-water-splash-02-352021/
+
+mrickey13 (Freesound)
+item-equip-6904.mp3
+https://pixabay.com/sound-effects/film-special-effects-item-equip-6904/
+
+Universfield
+blade-piercing-body-352462.mp3
+https://pixabay.com/sound-effects/film-special-effects-blade-piercing-body-352462/
+
+yodguard
+wooden_crate_smash-1-387904.mp3
+https://pixabay.com/sound-effects/film-special-effects-wooden-crate-smash-1-387904/
+
+LazyChillZone
+wood-being-chopped-1-228496.mp3
+https://pixabay.com/tr/sound-effects/film-ve-%c3%b6zel-efektler-wood-being-chopped-1-228496/
+
+yodguard
+giant-axe-strike-hitting-solid-wood-3-450247.mp3
+https://pixabay.com/sound-effects/giant-axe-strike-hitting-solid-wood-3-450247/
+
+Mollyroselee
+falling-tree-ai-generated-431321.mp3
+https://pixabay.com/sound-effects/nature-falling-tree-ai-generated-431321/
+
+
+Liecio
+impact-109588.mp3
+https://pixabay.com/sound-effects/film-special-effects-impact-109588/
+
+
+Universfield
+ground-impact-352053.mp3
+https://pixabay.com/sound-effects/film-special-effects-ground-impact-352053/
+
+morganpurkis (Freesound)
+https://pixabay.com/sound-effects/nature-rustling-grass-4-101281/
+
+
+j1987 (Freesound)
+leafpilehit-107714.mp3
+https://pixabay.com/es/sound-effects/pel%c3%adculas-y-efectos-especiales-leafpilehit-107714/
+
+u_xjrmmgxfru
+hit-rock-03-266305.mp3
+https://pixabay.com/sound-effects/film-special-effects-hit-rock-03-266305/
+
+
+u_xjrmmgxfru
+hit-plant-03-266292.mp3
+https://pixabay.com/sound-effects/film-special-effects-hit-plant-03-266292/
+
+mrfriends
+pistol-shot-233473.mp3
+https://pixabay.com/sound-effects/film-special-effects-pistol-shot-233473/
+
+SamsterBirdies (Freesound)
+mag-reload-81594.mp3
+https://pixabay.com/sound-effects/film-special-effects-mag-reload-81594/
+
+NightVoice (Freesound)
+forest-birds-55305.mp3
+https://pixabay.com/sound-effects/nature-forest-birds-55305/
+
+prsvl (Freesound)
+calm-garden-ambience-29993.mp3
+https://pixabay.com/sound-effects/nature-calm-garden-ambience-29993/
+
+SoundReality
+opening-door-411632.mp3
+https://pixabay.com/sound-effects/household-opening-door-411632/
+
+
+Amphibio (Freesound)
+door-close-79921.mp3
+https://pixabay.com/sound-effects/household-door-close-79921/
+
+Q.K. (Freesound)
+plastic-108360.mp3
+https://pixabay.com/sound-effects/film-special-effects-plastic-108360/
+
+
+Dalesome (Freesound)
+object-dropped-on-plastic-bag-81895.mp3
+https://pixabay.com/pt/sound-effects/filme-e-efeitos-especiais-object-dropped-on-plastic-bag-81895/
+
+
+classic-punch-impact-352711.mp3
+Universfield
+https://pixabay.com/sound-effects/film-special-effects-classic-punch-impact-352711/
+
+DRAGON-STUDIO
+violent-sword-slice-393839.mp3
+https://pixabay.com/sound-effects/film-special-effects-violent-sword-slice-393839/
