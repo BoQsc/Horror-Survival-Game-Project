@@ -6,6 +6,7 @@ Languages: GLSL Shader, GDScript, C++
 Minimum requirement: NVIDIA GeForce GTX 1060 with Max-Q Design
 Project Author: BoQsc
 Year: 2025
+Free and Open Source under CC0 License.
 
 Credits:
 
