@@ -6,3 +6,9 @@ res://modules/debug_module/ needs to be moved and reintegrated to res://addons/d
 The whole res://modules/tools/ folder is all about researching and making a zombie ragdoll.
 It might have failed a bit. A good resource is the end this video. Althought we couldn't make ragdoll work still.
 Needs investigation into zombie model by someone else.
+
+The shovel item is also needing research on how to place and isolate materials correctly, it is nowhere complete.
+Along with the axe, pickaxe and others.
+
+Needs porting of prefab placing mode from legacy.
+We had ability to select two points and save prefab, althought not the surrounding terrain.
