@@ -9,6 +9,9 @@ Year: 2025
 Free and Open Source under CC0 License.
 
 Credits:
+icon.svg
+https://commons.wikimedia.org/wiki/File:Biohazard_symbol.svg
+https://commons.wikimedia.org/wiki/File:Zombie_symbol_hazard.png
 
 __Terrain_images\textures__
 Gemini Nano Banana 2 Pro
