@@ -26,6 +26,10 @@ gdextension/bin/~high_performance.windows.template_debug.x86_64.dll
 # Ignore generated test extension
 addons/gdextension_setup/testextension/
 
-# Ignore any nested project.godot files (prevent "weird template" issues)
+# CRITICAL: GODOT ASSET LIBRARY FIX
+# The Godot Asset Library scans for the 'first' project.godot it finds.
+# If a project contains nested templates or addons with their own project.godot,
+# the Asset Library might install THAT instead of the root project.
+# We explicitly ignore ALL project.godot files and then un-ignore ONLY the root one.
 project.godot
 !/project.godot
