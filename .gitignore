@@ -25,3 +25,7 @@ gdextension/bin/~high_performance.windows.template_debug.x86_64.dll
 
 # Ignore generated test extension
 addons/gdextension_setup/testextension/
+
+# Ignore any nested project.godot files (prevent "weird template" issues)
+project.godot
+!/project.godot
