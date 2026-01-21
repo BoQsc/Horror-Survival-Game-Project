@@ -16,8 +16,12 @@ data_*/
 mono_crash.*.json
 
 
+
 # GDExtension build artifacts (only track after successful build)
 gdextension/bin/*.dll
 gdextension/bin/*.a
 gdextension/bin/~*
 gdextension/bin/~high_performance.windows.template_debug.x86_64.dll
+
+# Ignore generated test extension
+addons/gdextension_setup/testextension/
