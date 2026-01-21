@@ -32,7 +32,7 @@ layout(push_constant) uniform PushConstants {
 const int CHUNK_SIZE = 32;
 const float ISO_LEVEL = 0.0;
 
-#include "res://world_marching_cubes/marching_cubes_lookup_table.glsl"
+#include "res://world_marching_cubes/marching_cubes_lookup_table.glslinc"
 
 float get_density_from_buffer(vec3 p) {
     // p is local coordinates (0..32)
