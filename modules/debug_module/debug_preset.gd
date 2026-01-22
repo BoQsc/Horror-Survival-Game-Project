@@ -99,14 +99,14 @@ func _deactivate_other_presets(include_addons: bool = false) -> void:
 			if preset_path != resource_path:  # Don't modify self
 				var preset = load(preset_path) as DebugPreset
 				if preset:
-					var changed = false
+					var has_changed = false
 					if preset.is_active:
 						preset.is_active = false
-						changed = true
+						has_changed = true
 					if include_addons and preset.activate_along:
 						preset.activate_along = false
-						changed = true
-					if changed:
+						has_changed = true
+					if has_changed:
 						ResourceSaver.save(preset, preset_path)
 		file_name = dir.get_next()
 	dir.list_dir_end()
