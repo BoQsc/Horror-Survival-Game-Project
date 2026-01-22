@@ -115,12 +115,9 @@ func _get_dig_target(hit: Dictionary) -> Vector3:
 
 ## Calculate place target using integer grid coordinates
 func _get_place_target(hit: Dictionary) -> Vector3:
-	# Round to nearest grid point
-	var nearest = Vector3(round(hit.position.x), round(hit.position.y), round(hit.position.z))
-	# Get strongest normal direction
-	var dir = _get_strongest_normal_direction(hit.normal)
-	# Step one voxel in normal direction
-	return nearest + dir
+	# Simply round to the nearest grid point where camera is aimed
+	# This targets the empty space you're looking at
+	return Vector3(round(hit.position.x), round(hit.position.y), round(hit.position.z))
 
 ## Get strongest normal direction (returns unit vector on primary axis)
 func _get_strongest_normal_direction(normal: Vector3) -> Vector3:
