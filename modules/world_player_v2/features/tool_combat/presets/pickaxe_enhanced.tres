@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="TerrainToolBehavior" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://modules/world_player_v2/features/tool_combat/terrain_tool_behavior.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+display_name = "Enhanced Pickaxe"
+shape_type = 1
+radius = 0.6
+strength = 1.0
+snap_to_grid = true
+raycast_distance = 3.5
+use_raycast_normal = false
+material_id = -1

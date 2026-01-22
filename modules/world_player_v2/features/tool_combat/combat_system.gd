@@ -706,86 +706,97 @@ func do_tool_attack(item: Dictionary) -> void:
 		return
 	
 	# Priority 5: Terrain mine
-	if terrain_manager and terrain_manager.has_method("modify_terrain"):
-		# Check if enhanced pickaxe mode is enabled for pickaxe items
-		var use_enhanced_mode = false
-		if "pickaxe" in item_id and has_node("/root/PickaxeDigConfig"):
-			use_enhanced_mode = get_node("/root/PickaxeDigConfig").enabled
+	if terrain_manager:
+		# --- STRATEGY PATTERN REFACTOR ---
+		# Get the behavior strategy for this tool
+		var behavior = null
 		
-		# Check if durability is enabled (independent of enhanced mode)
-		var use_durability = false
-		if "pickaxe" in item_id and has_node("/root/PickaxeDurabilityConfig"):
-			use_durability = get_node("/root/PickaxeDurabilityConfig").enabled
+		# Resolve behavior via Registry (using the simplified singleton-like access for now)
+		# In a full Autoload setup, this would be global.
+		var registry_script = load("res://modules/world_player_v2/features/tool_combat/terrain_tool_registry.gd")
+		if registry_script:
+			# Instantiate strictly to query defaults/overrides
+			# Ideally this is a persistent node, but for this refactor we instantiate-dump or use static if possible.
+			# To remain efficient, we should have cached this. But let's keep it safe.
+			var registry = registry_script.new()
+			registry._load_defaults() # Ensure defaults are loaded
+			
+			# Check global overrides
+			if "pickaxe" in item_id:
+				var enhanced_enabled = false
+				if has_node("/root/PickaxeDigConfig") and get_node("/root/PickaxeDigConfig").enabled:
+					enhanced_enabled = true
+				
+				# Map legacy globals to specific presets
+				if enhanced_enabled:
+					behavior = registry.get_tool_behavior("pickaxe_enhanced")
+				else:
+					behavior = registry.get_tool_behavior("pickaxe_classic")
+			else:
+				# Generic lookup
+				behavior = registry.get_tool_behavior(item_id)
+				
+			registry.free() # Cleanup
 		
-		# Use mesh-based detection (matches HUD) instead of voxel grid
+		# Fallback if no behavior found (e.g. unknown tool)
+		if not behavior:
+			# Create a temporary default behavior
+			behavior = TerrainToolBehavior.new()
+			behavior.radius = max(item.get("mining_strength", 1.0), 0.8)
+			behavior.shape_type = TerrainToolBehavior.ShapeType.SPHERE
+		
+		# Now apply the behavior (handling durability logic here in CombatSystem)
 		var hit_normal = hit.get("normal", Vector3.UP)
 		var mat_id = _get_material_at_hit(target, position, hit_normal)
 		
-		# Calculate snapped position for both modes
+		# Check durability config
+		var use_durability = false
+		if "pickaxe" in item_id and has_node("/root/PickaxeDurabilityConfig"):
+			use_durability = get_node("/root/PickaxeDurabilityConfig").enabled
+			
+		# Snap for durability tracking based on COMPATIBILITY mode
+		# We must track grid damage even if using sphere tool, if durability is ON.
 		var snapped_pos = position - hit_normal * 0.1
 		snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
 		var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
 		
 		if use_durability:
-			# DURABILITY MODE: Track hits regardless of shape
-			# Initialize damage tracking
+			# DURABILITY MODE: Track hits
 			if not terrain_damage.has(block_pos):
 				terrain_damage[block_pos] = 0
 			
-			# Apply damage
 			terrain_damage[block_pos] += damage
 			var current_hp = TERRAIN_HP - terrain_damage[block_pos]
 			durability_target = block_pos
 			
-			# Emit durability signal for HUD
 			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
-			
-			print("[TERRAIN_MINING] Pickaxe hit %s - HP: %d/%d" % [block_pos, current_hp, TERRAIN_HP])
-			DebugManager.log_player("CombatSystem: Pickaxe hit terrain cube %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
 			
 			if terrain_hit_audio_player:
 				terrain_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
 				terrain_hit_audio_player.play()
 			
-			# Check if terrain cube should break
 			if terrain_damage[block_pos] >= TERRAIN_HP:
-				print("[TERRAIN_MINING] Block %s DESTROYED! (HP reached 0)" % block_pos)
-				
+				# DESTROYED
 				if terrain_break_audio_player:
 					terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
 					terrain_break_audio_player.play()
 				
-				if use_enhanced_mode:
-					# Break with box shape
-					terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
-				else:
-					# Break with sphere
-					var actual_radius = max(mining_strength, 0.8)
-					terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+				# EXECUTE STRATEGY
+				behavior.apply(terrain_manager, position, hit_normal)
 				
 				terrain_damage.erase(block_pos)
 				_emit_durability_cleared()
 				
 				if mat_id >= 0:
 					_collect_terrain_resource(mat_id)
-				
-				DebugManager.log_player("CombatSystem: Terrain cube broken at %s" % block_pos)
 		else:
-			# INSTANT MODE: Break immediately based on shape
+			# INSTANT MODE
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
 			
-			if use_enhanced_mode:
-				# Instant box removal (terraformer style)
-				terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
-				DebugManager.log_player("CombatSystem: Instant box removal at %s" % block_pos)
-			else:
-				# Instant sphere removal
-				var actual_radius = max(mining_strength, 0.8)
-				terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
-				DebugManager.log_player("CombatSystem: Instant sphere removal at %s (radius: %.2f)" % [position, actual_radius])
+			# EXECUTE STRATEGY
+			behavior.apply(terrain_manager, position, hit_normal)
 			
 			_emit_durability_cleared()
-			
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)
 
