@@ -8,7 +8,7 @@ var addon_presets: Array[DebugPreset] = []
 # Cached references to managers (found on ready)
 var _vegetation_manager: Node = null
 var _chunk_manager: Node = null
-var _terrain_interaction: Node = null
+
 
 # Tag-based logging storage
 var active_tags: Array[String] = []
