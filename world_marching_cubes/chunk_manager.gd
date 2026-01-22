@@ -413,6 +413,48 @@ func _sort_pending_by_distance():
 		return dist_a < dist_b
 	)
 
+
+## Get terrain density at world position (reads from CPU-cached chunk data)
+## Returns positive for air, negative for solid. Returns 1.0 if chunk not loaded.
+func get_terrain_density(global_pos: Vector3) -> float:
+	# Find Chunk (3D coordinates)
+	var chunk_x = int(floor(global_pos.x / CHUNK_STRIDE))
+	var chunk_y = int(floor(global_pos.y / CHUNK_STRIDE))
+	var chunk_z = int(floor(global_pos.z / CHUNK_STRIDE))
+	var coord = Vector3i(chunk_x, chunk_y, chunk_z)
+	
+	if not active_chunks.has(coord):
+		print("[DENSITY_DEBUG] Chunk %s not loaded for pos %s" % [coord, global_pos])
+		return 1.0 # Air (chunk not loaded)
+		
+	var data = active_chunks[coord]
+	if data == null or data.cpu_density_terrain.is_empty():
+		print("[DENSITY_DEBUG] Chunk %s has no density data" % coord)
+		return 1.0
+		
+	# Find local position within chunk
+	var chunk_origin = Vector3(chunk_x * CHUNK_STRIDE, chunk_y * CHUNK_STRIDE, chunk_z * CHUNK_STRIDE)
+	var local_pos = global_pos - chunk_origin
+	
+	# Round to nearest grid point
+	var ix = int(round(local_pos.x))
+	var iy = int(round(local_pos.y))
+	var iz = int(round(local_pos.z))
+	
+	if ix < 0 or ix >= DENSITY_GRID_SIZE or iy < 0 or iy >= DENSITY_GRID_SIZE or iz < 0 or iz >= DENSITY_GRID_SIZE:
+		print("[DENSITY_DEBUG] Local pos (%d,%d,%d) out of bounds for %s" % [ix, iy, iz, global_pos])
+		return 1.0 # Out of bounds
+		
+	var index = ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+	
+	if index >= 0 and index < data.cpu_density_terrain.size():
+		var density = data.cpu_density_terrain[index]
+		print("[DENSITY_DEBUG] Read density=%.3f at global=%s chunk=%s local=(%d,%d,%d) index=%d" % [density, global_pos, coord, ix, iy, iz, index])
+		return density
+		
+	print("[DENSITY_DEBUG] Index %d out of range (size=%d)" % [index, data.cpu_density_terrain.size()])
+	return 1.0
+
 func get_water_density(global_pos: Vector3) -> float:
 	# Find Chunk (3D coordinates)
 	var chunk_x = int(floor(global_pos.x / CHUNK_STRIDE))
