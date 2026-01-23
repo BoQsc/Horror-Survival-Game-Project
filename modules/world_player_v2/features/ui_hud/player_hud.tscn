@@ -243,20 +243,29 @@ offset_bottom = 300.0
 button_pressed = true
 text = "Pistol Red Markers"
 
+[node name="TerrainInfoToggle" type="CheckButton" parent="GameMenu"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 310.0
+offset_right = 220.0
+offset_bottom = 340.0
+button_pressed = false
+text = "Show Terrain Info"
+
 [node name="QuickSaveButton" type="Button" parent="GameMenu"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 320.0
+offset_top = 360.0
 offset_right = 220.0
-offset_bottom = 360.0
+offset_bottom = 400.0
 text = "QuickSave (F5)"
 
 [node name="QuickLoadButton" type="Button" parent="GameMenu"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 370.0
+offset_top = 410.0
 offset_right = 220.0
-offset_bottom = 410.0
+offset_bottom = 450.0
 text = "QuickLoad (F8)"
 
 [node name="InventoryPanel" parent="." instance=ExtResource("2_inv")]

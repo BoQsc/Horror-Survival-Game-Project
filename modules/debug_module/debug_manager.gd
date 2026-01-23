@@ -185,6 +185,9 @@ func remove_tag(tag: String) -> void:
 func should_show_terrain_marker() -> bool:
 	return _merged_show_terrain_marker
 
+func set_show_terrain_marker(enabled: bool) -> void:
+	_merged_show_terrain_marker = enabled
+
 
 func should_show_vegetation_collisions() -> bool:
 	return _merged_show_vegetation

@@ -107,6 +107,14 @@ func _ready() -> void:
 		if has_node("/root/PistolHitMarkerConfig"):
 			pistol_marker_toggle.button_pressed = get_node("/root/PistolHitMarkerConfig").enabled
 	
+	# Connect terrain info toggle
+	var terrain_info_toggle = game_menu.get_node_or_null("TerrainInfoToggle")
+	if terrain_info_toggle:
+		terrain_info_toggle.toggled.connect(_on_terrain_info_toggled)
+		# Sync with current state
+		if has_node("/root/DebugManager"):
+			terrain_info_toggle.button_pressed = get_node("/root/DebugManager").should_show_terrain_marker()
+	
 	# Connect QuickSave button (F5)
 	var quicksave_btn = game_menu.get_node_or_null("QuickSaveButton")
 	if quicksave_btn:
@@ -439,6 +447,19 @@ func _on_pistol_hit_marker_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PistolHitMarkerConfig"):
 		get_node("/root/PistolHitMarkerConfig").enabled = is_enabled
 		print("PlayerHUD: Pistol Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_terrain_info_toggled(is_enabled: bool) -> void:
+	if has_node("/root/DebugManager"):
+		get_node("/root/DebugManager").set_show_terrain_marker(is_enabled)
+		print("PlayerHUD: Terrain Info -> %s" % ("ON" if is_enabled else "OFF"))
+		
+		# Force update visibility immediately
+		if target_material_label:
+			target_material_label.visible = is_enabled
+			# If turning on, we might want to refresh the text if it's currently empty/stale,
+			# but usually the next raycast update will handle it in _process.
+			if is_enabled and target_material_label.text == "":
+				target_material_label.text = "Waiting for target..."
 
 func _on_quicksave_pressed() -> void:
 	if has_node("/root/SaveManager"):
