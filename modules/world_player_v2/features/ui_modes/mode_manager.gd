@@ -16,7 +16,7 @@ var hotbar: Node = null
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 
 # EDITOR submodes
-enum EditorSubmode {TERRAIN, WATER, ROAD, PREFAB, FLY}
+enum EditorSubmode {TERRAIN, WATER, ROAD, PREFAB}
 var editor_submode: EditorSubmode = EditorSubmode.TERRAIN
 var is_flying: bool = false
 
@@ -119,7 +119,6 @@ func get_submode_name() -> String:
 		EditorSubmode.WATER: return "Water"
 		EditorSubmode.ROAD: return "Road"
 		EditorSubmode.PREFAB: return "Prefab"
-		EditorSubmode.FLY: return "Fly"
 	return "Unknown"
 
 ## Check if currently in a specific mode
