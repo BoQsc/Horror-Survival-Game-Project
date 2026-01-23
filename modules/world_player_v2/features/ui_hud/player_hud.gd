@@ -36,6 +36,9 @@ var terraformer_material: String = ""
 var notification_label: Label = null
 var notification_timer: float = 0.0
 
+# UI State
+var show_terrain_info: bool = false
+
 func _ready() -> void:
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.mode_changed.connect(_on_mode_changed)
@@ -111,9 +114,7 @@ func _ready() -> void:
 	var terrain_info_toggle = game_menu.get_node_or_null("TerrainInfoToggle")
 	if terrain_info_toggle:
 		terrain_info_toggle.toggled.connect(_on_terrain_info_toggled)
-		# Sync with current state
-		if has_node("/root/DebugManager"):
-			terrain_info_toggle.button_pressed = get_node("/root/DebugManager").should_show_terrain_marker()
+		terrain_info_toggle.button_pressed = show_terrain_info
 	
 	# Connect QuickSave button (F5)
 	var quicksave_btn = game_menu.get_node_or_null("QuickSaveButton")
@@ -449,17 +450,15 @@ func _on_pistol_hit_marker_toggled(is_enabled: bool) -> void:
 		print("PlayerHUD: Pistol Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_terrain_info_toggled(is_enabled: bool) -> void:
-	if has_node("/root/DebugManager"):
-		get_node("/root/DebugManager").set_show_terrain_marker(is_enabled)
-		print("PlayerHUD: Terrain Info -> %s" % ("ON" if is_enabled else "OFF"))
-		
-		# Force update visibility immediately
-		if target_material_label:
-			target_material_label.visible = is_enabled
-			# If turning on, we might want to refresh the text if it's currently empty/stale,
-			# but usually the next raycast update will handle it in _process.
-			if is_enabled and target_material_label.text == "":
-				target_material_label.text = "Waiting for target..."
+	show_terrain_info = is_enabled
+	print("PlayerHUD: Terrain Info -> %s" % ("ON" if is_enabled else "OFF"))
+	
+	# Force update visibility immediately
+	if target_material_label:
+		target_material_label.visible = is_enabled
+		# If turning on, we might want to refresh the text if it's currently empty/stale
+		if is_enabled and target_material_label.text == "":
+			target_material_label.text = "Waiting for target..."
 
 func _on_quicksave_pressed() -> void:
 	if has_node("/root/SaveManager"):
@@ -645,13 +644,9 @@ func _is_child_of(node: Node, potential_parent: Node) -> bool:
 
 func _on_target_material_changed(material_name: String) -> void:
 	if target_material_label:
-		# Check if debug preset allows showing this
-		var show_label = false
-		if has_node("/root/DebugManager"):
-			show_label = get_node("/root/DebugManager").should_show_terrain_marker()
-		target_material_label.visible = show_label
+		target_material_label.visible = show_terrain_info
 		
-		if show_label:
+		if show_terrain_info:
 			# Show terraformer material if equipped, otherwise show looking-at material
 			if terraformer_material != "":
 				target_material_label.text = "[TF: %s] %s" % [terraformer_material, material_name]
@@ -661,13 +656,9 @@ func _on_target_material_changed(material_name: String) -> void:
 func _on_terraformer_material_changed(material_name: String) -> void:
 	terraformer_material = material_name
 	if target_material_label:
-		# Check if debug preset allows showing this
-		var show_label = false
-		if has_node("/root/DebugManager"):
-			show_label = get_node("/root/DebugManager").should_show_terrain_marker()
-		target_material_label.visible = show_label
+		target_material_label.visible = show_terrain_info
 		
-		if show_label:
+		if show_terrain_info:
 			if material_name == "":
 				terraformer_material = ""
 			else:
