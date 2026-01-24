@@ -1,5 +1,5 @@
 extends CanvasLayer
-class_name LoadingScreen
+# class_name removed to avoid conflict with V2 LoadingScreen
 ## LoadingScreen - Displays loading progress during game startup
 ## Tracks visual completion: terrain meshes, buildings, and vegetation
 
