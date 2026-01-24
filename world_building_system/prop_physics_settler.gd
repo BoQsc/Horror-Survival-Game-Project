@@ -1,5 +1,7 @@
 extends RigidBody3D
 
+const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
+
 func _ready():
 	# Bump up significantly to ensure we clear any terrain noise
 	global_position.y += 0.5
