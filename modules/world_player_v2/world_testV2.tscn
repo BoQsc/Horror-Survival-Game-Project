@@ -11,7 +11,7 @@
 [ext_resource type="Script" uid="uid://bts6arlg03cxx" path="res://world_building_system/prefab_capture.gd" id="11_prefab_capture"]
 [ext_resource type="Script" uid="uid://c00fsbscdns7l" path="res://world_building_system/building_generator.gd" id="12_building_generator"]
 [ext_resource type="Script" uid="uid://ctq5qui81d2k0" path="res://world_building_system/debug_teleporter.gd" id="13_debug"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/ui_loading_screen/loading_screen.tscn" id="14_loading"]
+[ext_resource type="PackedScene" path="res://modules/world_player_v2/loading_screen.tscn" id="14_loading"]
 [ext_resource type="Script" uid="uid://c0jrc1pld8jpq" path="res://addons/tests/zombie_count_bot.gd" id="15_bot"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMat"]
