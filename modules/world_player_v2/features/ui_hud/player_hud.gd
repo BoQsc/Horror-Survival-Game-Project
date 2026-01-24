@@ -438,7 +438,7 @@ func _on_collision_debugger_toggled(is_enabled: bool) -> void:
 func _on_pickaxe_dig_mode_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PickaxeDigConfig"):
 		get_node("/root/PickaxeDigConfig").enabled = is_enabled
-		print("PlayerHUD: Enhanced Pickaxe Mode -> %s" % ("ON" if is_enabled else "OFF"))
+		print("PlayerHUD: Block Pickaxe Mode -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_pickaxe_durability_toggled(is_enabled: bool) -> void:
 	if has_node("/root/PickaxeDurabilityConfig"):

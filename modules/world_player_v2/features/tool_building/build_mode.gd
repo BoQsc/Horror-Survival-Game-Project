@@ -138,10 +138,10 @@ func _input(event: InputEvent) -> void:
 				if building_api:
 					building_api.cycle_placement_mode()
 			KEY_Z:
-				# Toggle smart surface align (legacy port)
+				# Toggle surface align (legacy port)
 				if building_api:
-					building_api.smart_surface_align = not building_api.smart_surface_align
-					print("ModeBuild: Smart align -> %s" % ("ON" if building_api.smart_surface_align else "OFF"))
+					building_api.surface_align_enabled = not building_api.surface_align_enabled
+					print("ModeBuild: Surface align -> %s" % ("ON" if building_api.surface_align_enabled else "OFF"))
 	
 	# X+Scroll to rotate (changed from Ctrl to allow crouch+scroll)
 	if event is InputEventMouseButton and event.pressed:

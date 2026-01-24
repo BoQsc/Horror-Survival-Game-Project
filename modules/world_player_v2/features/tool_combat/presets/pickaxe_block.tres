@@ -4,7 +4,7 @@
 
 [resource]
 script = ExtResource("1_script")
-display_name = "Enhanced Pickaxe"
+display_name = "Block Pickaxe"
 shape_type = 1
 radius = 0.6
 strength = 1.0

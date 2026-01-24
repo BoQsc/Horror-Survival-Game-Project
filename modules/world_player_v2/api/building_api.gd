@@ -24,7 +24,7 @@ var has_target: bool = false
 
 # Freestyle placement (Hold E/MMB for exact placement, legacy port)
 var is_freestyle: bool = false
-var smart_surface_align: bool = true # Sample terrain corners for anti-clip
+var surface_align_enabled: bool = true # Sample terrain corners for anti-clip
 var freestyle_rotation_offset: float = 0.0 # Fine rotation in freestyle mode
 
 # Object Preview System (ported from legacy)
@@ -158,9 +158,9 @@ func update_targeting(hit: Dictionary) -> void:
 		current_voxel_pos = pos # Exact position
 		current_remove_voxel_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 		
-		# Apply smart surface align if enabled
-		if smart_surface_align:
-			current_precise_hit_y = apply_smart_surface_align(pos, current_object_id, current_object_rotation)
+		# Apply surface align if enabled
+		if surface_align_enabled:
+			current_precise_hit_y = apply_surface_align(pos, current_object_id, current_object_rotation)
 			current_voxel_pos.y = current_precise_hit_y
 		
 		# Apply Y offset (finer for freestyle: 0.1 steps)
@@ -507,9 +507,9 @@ func _get_physics_height_at(x: float, z: float, start_y: float) -> float:
 	
 	return start_y
 
-## Apply smart surface align: sample corners and use highest Y
-func apply_smart_surface_align(center: Vector3, object_id: int, rotation: int) -> float:
-	if not smart_surface_align:
+## Apply surface align: sample corners and use highest Y
+func apply_surface_align(center: Vector3, object_id: int, rotation: int) -> float:
+	if not surface_align_enabled:
 		return center.y
 	
 	var obj_size = _get_object_size(object_id, rotation)
