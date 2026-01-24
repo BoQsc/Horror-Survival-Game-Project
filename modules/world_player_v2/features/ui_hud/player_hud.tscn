@@ -206,7 +206,7 @@ offset_top = 110.0
 offset_right = 220.0
 offset_bottom = 140.0
 button_pressed = true
-text = "Enhanced Pickaxe Mode"
+text = "Block Pickaxe Mode"
 
 [node name="PickaxeDurabilityToggle" type="CheckButton" parent="GameMenu"]
 layout_mode = 0
