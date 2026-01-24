@@ -1,5 +1,5 @@
 extends Node
-## PickaxeDigConfig - Global configuration for enhanced pickaxe digging mode
+## PickaxeDigConfig - Global configuration for block-style pickaxe digging mode
 ## Autoload singleton that stores pickaxe digging mode state
 
 ## When enabled, pickaxes use blocky grid-snapped terrain removal (like editor mode)

@@ -728,13 +728,13 @@ func do_tool_attack(item: Dictionary) -> void:
 			
 			# Check global overrides
 			if "pickaxe" in item_id:
-				var enhanced_enabled = false
+				var block_mode_enabled = false
 				if has_node("/root/PickaxeDigConfig") and get_node("/root/PickaxeDigConfig").enabled:
-					enhanced_enabled = true
+					block_mode_enabled = true
 				
 				# Map legacy globals to specific presets
-				if enhanced_enabled:
-					behavior = registry.get_tool_behavior("pickaxe_enhanced")
+				if block_mode_enabled:
+					behavior = registry.get_tool_behavior("pickaxe_block")
 				else:
 					behavior = registry.get_tool_behavior("pickaxe_classic")
 			else:
