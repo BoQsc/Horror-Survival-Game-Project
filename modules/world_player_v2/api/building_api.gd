@@ -385,7 +385,7 @@ func hide_visuals() -> void:
 
 ## Place object with fractional Y (ported from legacy handle_object_input)
 ## Uses: current_voxel_pos (X/Z grid), current_precise_hit_y (fractional Y)
-## Supports: freestyle placement, smart surface align, retry logic
+## Supports: freestyle placement, surface align, retry logic
 func place_object(object_id: int, rotation: int) -> bool:
 	if not building_manager:
 		print("BuildingAPI: No building_manager")
