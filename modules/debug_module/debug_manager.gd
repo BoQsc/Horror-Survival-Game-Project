@@ -76,9 +76,11 @@ func _apply_current_preset() -> void:
 	# Merge all presets (primary + addons) using OR logic
 	_merge_all_presets()
 	
-	# Apply DebugDraw state
-	if ClassDB.class_exists("DebugDraw"):
-		DebugDraw.enabled = _merged_debug_draw
+	# Apply DebugDraw state (use dynamic access to avoid parser errors if addon not present)
+	if Engine.has_singleton("DebugDraw"):
+		var debug_draw = Engine.get_singleton("DebugDraw")
+		if debug_draw:
+			debug_draw.enabled = _merged_debug_draw
 	
 	# Apply vegetation collision visibility
 	if _vegetation_manager and "debug_collision" in _vegetation_manager:
