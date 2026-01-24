@@ -116,6 +116,27 @@ func _ready() -> void:
 		terrain_info_toggle.toggled.connect(_on_terrain_info_toggled)
 		terrain_info_toggle.button_pressed = show_terrain_info
 	
+	# Connect pickaxe sliders
+	var cooldown_slider = game_menu.get_node_or_null("AttackCooldownSlider")
+	var cooldown_label = game_menu.get_node_or_null("AttackCooldownLabel")
+	if cooldown_slider:
+		cooldown_slider.value_changed.connect(_on_attack_cooldown_changed.bind(cooldown_label))
+		# Sync with config
+		if has_node("/root/PickaxeDigConfig"):
+			cooldown_slider.value = get_node("/root/PickaxeDigConfig").attack_cooldown
+			if cooldown_label:
+				cooldown_label.text = "Attack Cooldown: %.2fs" % cooldown_slider.value
+	
+	var radius_slider = game_menu.get_node_or_null("MiningRadiusSlider")
+	var radius_label = game_menu.get_node_or_null("MiningRadiusLabel")
+	if radius_slider:
+		radius_slider.value_changed.connect(_on_mining_radius_changed.bind(radius_label))
+		# Sync with config
+		if has_node("/root/PickaxeDigConfig"):
+			radius_slider.value = get_node("/root/PickaxeDigConfig").mining_radius
+			if radius_label:
+				radius_label.text = "Mining Radius: %.2f" % radius_slider.value
+	
 	# Connect QuickSave button (F5)
 	var quicksave_btn = game_menu.get_node_or_null("QuickSaveButton")
 	if quicksave_btn:
@@ -459,6 +480,20 @@ func _on_terrain_info_toggled(is_enabled: bool) -> void:
 		# If turning on, we might want to refresh the text if it's currently empty/stale
 		if is_enabled and target_material_label.text == "":
 			target_material_label.text = "Waiting for target..."
+
+func _on_attack_cooldown_changed(value: float, label: Label) -> void:
+	if has_node("/root/PickaxeDigConfig"):
+		get_node("/root/PickaxeDigConfig").attack_cooldown = value
+	if label:
+		label.text = "Attack Cooldown: %.2fs" % value
+	print("PlayerHUD: Attack Cooldown -> %.2fs" % value)
+
+func _on_mining_radius_changed(value: float, label: Label) -> void:
+	if has_node("/root/PickaxeDigConfig"):
+		get_node("/root/PickaxeDigConfig").mining_radius = value
+	if label:
+		label.text = "Mining Radius: %.2f" % value
+	print("PlayerHUD: Mining Radius -> %.2f" % value)
 
 func _on_quicksave_pressed() -> void:
 	if has_node("/root/SaveManager"):

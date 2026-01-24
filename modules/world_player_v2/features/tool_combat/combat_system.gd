@@ -17,7 +17,12 @@ var terraformer: Node = null  # FirstPersonTerraformer component
 
 # Combat state
 var attack_cooldown: float = 0.0
-const ATTACK_COOLDOWN_TIME: float = 0.3
+
+## Get attack cooldown from config (with fallback)
+func _get_attack_cooldown_time() -> float:
+	if has_node("/root/PickaxeDigConfig"):
+		return get_node("/root/PickaxeDigConfig").attack_cooldown
+	return 0.3  # Default fallback
 
 # Durability system - blocks/objects require multiple hits
 const BLOCK_HP: int = 10  # Building blocks take 10 damage to destroy
@@ -639,7 +644,7 @@ func do_tool_attack(item: Dictionary) -> void:
 	if not player:
 		return
 	
-	attack_cooldown = ATTACK_COOLDOWN_TIME
+	attack_cooldown = _get_attack_cooldown_time()
 	
 	var item_id = item.get("id", "")
 	
@@ -740,10 +745,19 @@ func do_tool_attack(item: Dictionary) -> void:
 		
 		# Fallback if no behavior found (e.g. unknown tool)
 		if not behavior:
-			# Create a temporary default behavior
+			# Create a temporary default behavior using config values
 			behavior = TerrainToolBehavior.new()
-			behavior.radius = max(item.get("mining_strength", 1.0), 0.8)
+			var config_radius = 1.0
+			if has_node("/root/PickaxeDigConfig"):
+				config_radius = get_node("/root/PickaxeDigConfig").mining_radius
+			behavior.radius = max(config_radius, 0.5)
 			behavior.shape_type = TerrainToolBehavior.ShapeType.SPHERE
+		
+		# OVERRIDE: Apply config values to behavior (overrides preset .tres values)
+		if behavior and "pickaxe" in item_id and has_node("/root/PickaxeDigConfig"):
+			var config = get_node("/root/PickaxeDigConfig")
+			behavior.radius = max(config.mining_radius, 0.5)
+			# Debug: print("Pickaxe radius override: %.2f" % behavior.radius)
 		
 		# Now apply the behavior (handling durability logic here in CombatSystem)
 		var hit_normal = hit.get("normal", Vector3.UP)
@@ -984,20 +998,31 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 					terrain_break_audio_player.play()
 					
 				if use_enhanced_mode:
-					terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
+					var config_radius = 0.6
+					if has_node("/root/PickaxeDigConfig"):
+						config_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
+					terrain_manager.modify_terrain(snapped_pos, config_radius, 1.0, 1, 0)
 				else:
-					var actual_radius = max(item.get("mining_strength", 1.0), 0.8)
+					var actual_radius = 1.0
+					if has_node("/root/PickaxeDigConfig"):
+						actual_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
 					terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
 				terrain_damage.erase(block_pos)
 				_emit_durability_cleared()
 				if mat_id >= 0:
 					_collect_terrain_resource(mat_id)
 		else:
+			# INSTANT MODE - no durability tracking
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
 			if use_enhanced_mode:
-				terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
+				var config_radius = 0.6
+				if has_node("/root/PickaxeDigConfig"):
+					config_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
+				terrain_manager.modify_terrain(snapped_pos, config_radius, 1.0, 1, 0)
 			else:
-				var actual_radius = max(item.get("mining_strength", 1.0), 0.8)
+				var actual_radius = 1.0
+				if has_node("/root/PickaxeDigConfig"):
+					actual_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
 				terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
 			_emit_durability_cleared()
 			if mat_id >= 0:

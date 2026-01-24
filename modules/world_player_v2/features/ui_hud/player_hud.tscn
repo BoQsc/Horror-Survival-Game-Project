@@ -252,20 +252,58 @@ offset_bottom = 340.0
 button_pressed = false
 text = "Show Terrain Info"
 
+[node name="AttackCooldownLabel" type="Label" parent="GameMenu"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 350.0
+offset_right = 220.0
+offset_bottom = 370.0
+text = "Attack Cooldown: 0.30s"
+
+[node name="AttackCooldownSlider" type="HSlider" parent="GameMenu"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 375.0
+offset_right = 220.0
+offset_bottom = 395.0
+min_value = 0.1
+max_value = 1.0
+step = 0.05
+value = 0.3
+
+[node name="MiningRadiusLabel" type="Label" parent="GameMenu"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 405.0
+offset_right = 220.0
+offset_bottom = 425.0
+text = "Mining Radius: 1.00"
+
+[node name="MiningRadiusSlider" type="HSlider" parent="GameMenu"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 430.0
+offset_right = 220.0
+offset_bottom = 450.0
+min_value = 0.5
+max_value = 3.0
+step = 0.1
+value = 1.0
+
 [node name="QuickSaveButton" type="Button" parent="GameMenu"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 360.0
+offset_top = 470.0
 offset_right = 220.0
-offset_bottom = 400.0
+offset_bottom = 510.0
 text = "QuickSave (F5)"
 
 [node name="QuickLoadButton" type="Button" parent="GameMenu"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 410.0
+offset_top = 520.0
 offset_right = 220.0
-offset_bottom = 450.0
+offset_bottom = 560.0
 text = "QuickLoad (F8)"
 
 [node name="InventoryPanel" parent="." instance=ExtResource("2_inv")]
