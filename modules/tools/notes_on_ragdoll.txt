@@ -3,5 +3,11 @@ The model had to be resized/increased to 8.0 height before physical skeleton is 
 Then you would apply physical_bone_scaler.gd resizing script to the newly created PhysicalBoneSimulator3D with scale factor of 0.24 for this specific zombie model.
 Then basic ragdoll_tester.gd would be needed to apply to the root node2d for activation of the ragdoll.
 
-It is recommendded to remove small bones before testing as ragdolls still as a base not working as expected, maybe needs movement constraints.
+It is recommended to remove small bones before testing as ragdolls still as a base not working as expected, maybe needs movement constraints.
 There is a button in physical_bone_scaler.gd for that.
+
+
+Using hingejoint
+Enabling angular joint constraints and setting to 45.0 and -45.0 helped to progress.
+Disabling male_zombie.glb "Apply Root Scale" and reimporting also was key way to progress.
+Physicalbonesimulator scale factor 0.33

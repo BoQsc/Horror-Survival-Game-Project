@@ -1,0 +1,9 @@
+[gd_scene format=3 uid="uid://kbfhcj5emt05"]
+
+[ext_resource type="PackedScene" uid="uid://bu2dogmupukq3" path="res://models/entities/zombie/1/male_zombie.glb" id="1_0d3bm"]
+
+[node name="SketfabScene3" type="Node3D" unique_id=1325255468]
+
+[node name="Sketchfab_Scene" parent="." unique_id=705114376 instance=ExtResource("1_0d3bm")]
+
+[editable path="Sketchfab_Scene"]
