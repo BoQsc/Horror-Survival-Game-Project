@@ -13,5 +13,5 @@ Along with the axe, pickaxe and others.
 Needs porting of prefab placing mode from legacy.
 We had ability to select two points and save prefab, althought not the surrounding terrain.
 
-We need to place vegetation_mangaer.gd into subfolder. It might end up in something like world_object_placement or world_plants or world_object_spanwer
+We need to place vegetation_manager.gd into subfolder. It might end up in something like world_object_placement or world_plants or world_object_spanwer
 We also need to unify the modification of terrain under world_woxel_brush folder.
