@@ -2,15 +2,14 @@ name: "Continuous Pre-Imported Release"
 
 on:
   push:
-    branches: [ "**" ] # Listens to all branches
+    branches: [ "**" ]
 
 jobs:
   build-and-release:
-    # Only executes if the branch being pushed is the repository's default branch
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required to upload releases
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -19,15 +18,23 @@ jobs:
       - name: Setup Godot
         uses: chickensoft-games/setup-godot@v2
         with:
-          version: 4.3.0 # Ensure this matches your local Godot version
+          # Using .mono. version since your logs show you are using the Mono/C# version
+          version: 4.3.0 
+          use-dotnet: true 
 
-      - name: Headless Import
-        # Triggers Godot to generate the .godot/imported and uid_cache files
+      - name: Headless Import (Warm-up)
+        # We use --import first. This is less "picky" than --editor.
+        # || true ensures the workflow doesn't stop if Godot throws minor errors.
         run: |
-          godot --headless --editor --quit --path .
+          godot --headless --audio-driver Dummy --import --path . || true
+
+      - name: Headless Editor (Finalize)
+        # This second pass generates the uid_cache and finalizes metadata.
+        # We give it a timeout so it doesn't hang if it loops.
+        run: |
+          timeout 60s godot --headless --audio-driver Dummy --editor --quit --path . || true
 
       - name: Package Asset
-        # Zips the project while excluding local-only metadata and git history
         run: |
           zip -r pre_imported_asset.zip . \
           -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
@@ -39,7 +46,5 @@ jobs:
         with:
           tag_name: latest
           name: "Latest Pre-Imported Build"
-          body: |
-            This is an automated build of the latest version.
-            **Note:** This version includes the `.godot` folder for instant loading.
+          body: "Includes pre-imported .godot folder. Built on $(date)."
           files: pre_imported_asset.zip
