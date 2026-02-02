@@ -1,0 +1,7 @@
+[gd_resource type="Resource" script_class="VoxelBrush" format=3 uid="uid://gai0t6bj5btx"]
+
+[ext_resource type="Script" path="res://world_voxel_brush/voxel_brush.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+display_name = "Classic Pickaxe"

@@ -11,28 +11,14 @@ var player: Node = null
 var terrain_manager: Node = null
 var vegetation_manager: Node = null
 var hotbar: Node = null
+var brush_registry: Node = null
 
 # Selection box for RESOURCE/BUCKET placement
 var selection_box: MeshInstance3D = null
 var current_target_pos: Vector3 = Vector3.ZERO
 var has_target: bool = false
 
-# Material display - lookup and tracking
-const MATERIAL_NAMES = {
-	-1: "Unknown",
-	0: "Grass",
-	1: "Stone",
-	2: "Ore",
-	3: "Sand",
-	4: "Gravel",
-	5: "Snow",
-	6: "Road",
-	9: "Granite",
-	100: "[P] Grass",
-	101: "[P] Stone",
-	102: "[P] Sand",
-	103: "[P] Snow"
-}
+# Material display - tracking
 var last_target_material: String = ""
 var material_target_marker: MeshInstance3D = null
 
@@ -61,6 +47,8 @@ func _find_managers() -> void:
 		vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 	if not hotbar and player:
 		hotbar = player.get_node_or_null("Systems/Hotbar")
+	if not brush_registry:
+		brush_registry = get_tree().get_first_node_in_group("brush_registry")
 
 func _process(_delta: float) -> void:
 	_update_terrain_targeting()
@@ -189,7 +177,10 @@ func _update_target_material() -> void:
 			var sample_pos = hit_pos - hit_normal * 0.1
 			mat_id = _get_material_at(sample_pos)
 		
-		mat_name = MATERIAL_NAMES.get(mat_id, "Unknown (%d)" % mat_id)
+		if brush_registry:
+			mat_name = brush_registry.get_material_name(mat_id)
+		else:
+			mat_name = "Unknown (%d)" % mat_id
 	elif target and target.is_in_group("building_chunks"):
 		mat_name = "Building Block"
 	elif target and target.is_in_group("trees"):

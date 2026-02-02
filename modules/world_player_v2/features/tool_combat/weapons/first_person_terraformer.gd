@@ -5,24 +5,15 @@ class_name FirstPersonShovelV2
 ## Dig mode (red) = remove blocks, Place mode (green) = add blocks
 
 # Material definitions (id matches gen_density.glsl material IDs)
-const MATERIALS = [
-	{"id": 0, "name": "Grass", "key": KEY_1},
-	{"id": 1, "name": "Stone", "key": KEY_2},
-	{"id": 2, "name": "Ore", "key": KEY_3},
-	{"id": 3, "name": "Sand", "key": KEY_4},
-	{"id": 4, "name": "Gravel", "key": KEY_5},
-	{"id": 5, "name": "Snow", "key": KEY_6},
-	{"id": 9, "name": "Granite", "key": KEY_7}
-]
-
-# Current state
-var material_index: int = 0  # Default to Grass
-var is_active: bool = false  # Whether terraformer is equipped
-var dig_mode: bool = false   # false = Place mode (default), true = Dig mode
-
 # References
 var player: CharacterBody3D = null
 var terrain_manager: Node = null
+var brush_registry: Node = null
+
+# Current state
+var material_index: int = 0  # Default to Grass (Centralized)
+var is_active: bool = false  # Whether terraformer is equipped
+var dig_mode: bool = false   # false = Place mode (default), true = Dig mode
 
 # Selection box visualization
 var selection_box: MeshInstance3D = null
@@ -52,12 +43,17 @@ func _ready() -> void:
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
 	
-	print("SHOVEL: Initialized, mode = %s, material = %s" % [_get_mode_name(), MATERIALS[material_index].name])
+	var mat_name = "Grass"
+	if brush_registry and material_index < brush_registry.STANDARD_MATERIALS.size():
+		mat_name = brush_registry.STANDARD_MATERIALS[material_index].name
+	print("SHOVEL: Initialized, mode = %s, material = %s" % [_get_mode_name(), mat_name])
 
 func _find_terrain_manager() -> void:
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	if not terrain_manager:
 		push_warning("FirstPersonShovel: terrain_manager not found")
+	if not brush_registry:
+		brush_registry = get_tree().get_first_node_in_group("brush_registry")
 
 func _create_selection_box() -> void:
 	selection_box = MeshInstance3D.new()
@@ -170,9 +166,9 @@ func _input(event: InputEvent) -> void:
 			return
 		
 		# CTRL + 1-7 for material selection
-		if event.ctrl_pressed:
-			for i in range(MATERIALS.size()):
-				if event.keycode == MATERIALS[i].key:
+		if event.ctrl_pressed and brush_registry:
+			for i in range(brush_registry.STANDARD_MATERIALS.size()):
+				if event.keycode == brush_registry.STANDARD_MATERIALS[i].key:
 					_set_material(i)
 					get_viewport().set_input_as_handled()
 					return
@@ -183,11 +179,14 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	is_active = (item_id == "shovel")
 	
 	if is_active:
-		print("SHOVEL: Equipped - P to toggle mode, CTRL+1-7 for material. Mode=%s Material=%s" % [_get_mode_name(), MATERIALS[material_index].name])
+		var mat_name = "Grass"
+		if brush_registry:
+			mat_name = brush_registry.STANDARD_MATERIALS[material_index].name
+		print("SHOVEL: Equipped - P to toggle mode, CTRL+1-7 for material. Mode=%s Material=%s" % [_get_mode_name(), mat_name])
 		# Emit current state for HUD
 		if has_node("/root/PlayerSignals"):
 			if PlayerSignals.has_signal("terraformer_material_changed"):
-				PlayerSignals.terraformer_material_changed.emit(MATERIALS[material_index].name)
+				PlayerSignals.terraformer_material_changed.emit(mat_name)
 			if PlayerSignals.has_signal("terraformer_mode_changed"):
 				PlayerSignals.terraformer_mode_changed.emit(_get_mode_name())
 		_update_cursor_color()
@@ -202,16 +201,19 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 			selection_box.visible = false
 
 func _set_material(index: int) -> void:
-	if index < 0 or index >= MATERIALS.size():
+	if not brush_registry or index < 0 or index >= brush_registry.STANDARD_MATERIALS.size():
 		return
 	
 	material_index = index
-	var mat = MATERIALS[material_index]
-	print("SHOVEL: Material = %s (id=%d)" % [mat.name, mat.id])
+	var mat_name = "Grass"
+	if brush_registry:
+		var mat = brush_registry.STANDARD_MATERIALS[material_index]
+		mat_name = mat.name
+		print("SHOVEL: Material = %s (id=%d)" % [mat.name, mat.id])
 	
 	# Emit signal for HUD update
 	if has_node("/root/PlayerSignals") and PlayerSignals.has_signal("terraformer_material_changed"):
-		PlayerSignals.terraformer_material_changed.emit(mat.name)
+		PlayerSignals.terraformer_material_changed.emit(mat_name)
 
 # ============================================================================
 # TARGETING - Cursor shows voxel-centered position
@@ -280,9 +282,16 @@ func _do_dig(target: Vector3) -> void:
 ## Perform place at voxel-centered position
 func _do_place(target: Vector3) -> void:
 	# PLACE: Negative density = Solid (-10.0 for instant fill)
-	var mat_id = MATERIALS[material_index].id + 100
+	var mat_id = 0
+	if brush_registry:
+		mat_id = brush_registry.STANDARD_MATERIALS[material_index].id
+	
+	mat_id += 100
 	terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
-	print("SHOVEL: PLACE at %s (material=%s)" % [target, MATERIALS[material_index].name])
+	var mat_name = "Grass"
+	if brush_registry:
+		mat_name = brush_registry.STANDARD_MATERIALS[material_index].name
+	print("SHOVEL: PLACE at %s (material=%s)" % [target, mat_name])
 
 # ============================================================================
 # RAYCAST
@@ -317,11 +326,15 @@ func _raycast(distance: float) -> Dictionary:
 
 ## Get current material name (for HUD)
 func get_current_material_name() -> String:
-	return MATERIALS[material_index].name
+	if brush_registry:
+		return brush_registry.STANDARD_MATERIALS[material_index].name
+	return "Grass"
 
 ## Get current material ID
 func get_current_material_id() -> int:
-	return MATERIALS[material_index].id
+	if brush_registry:
+		return brush_registry.STANDARD_MATERIALS[material_index].id
+	return 0
 
 ## Get current mode name (for HUD)
 func get_current_mode() -> String:

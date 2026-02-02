@@ -1,0 +1,10 @@
+[gd_resource type="Resource" script_class="VoxelBrush" format=3 uid="uid://do6ahxisu22q1"]
+
+[ext_resource type="Script" path="res://world_voxel_brush/voxel_brush.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+display_name = "Block Pickaxe"
+shape_type = 1
+radius = 0.6
+snap_to_grid = true

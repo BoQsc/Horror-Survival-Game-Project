@@ -1,7 +1,0 @@
-[gd_resource type="Resource" script_class="TerrainToolBehavior" format=3 uid="uid://gai0t6bj5btx"]
-
-[ext_resource type="Script" uid="uid://linc5navm6f4" path="res://modules/world_player_v2/features/tool_combat/terrain_tool_behavior.gd" id="1_script"]
-
-[resource]
-script = ExtResource("1_script")
-display_name = "Classic Pickaxe"

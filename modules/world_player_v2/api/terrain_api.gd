@@ -6,6 +6,7 @@ class_name TerrainAPIV2
 # Manager reference
 var terrain_manager: Node = null
 var player: Node = null
+var brush_registry: Node = null
 
 # State
 var blocky_mode: bool = true # Default to blocky
@@ -26,9 +27,9 @@ const LAYER_WATER: int = 1
 signal terrain_modified(position: Vector3, layer: int)
 
 func _ready() -> void:
-	# Find terrain manager via group
-	await get_tree().process_frame
+	# Find brush registry
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	brush_registry = get_tree().get_first_node_in_group("brush_registry")
 	
 	# Create selection box
 	_create_selection_box()
@@ -162,9 +163,17 @@ func dig(hit: Dictionary, layer: int = LAYER_TERRAIN) -> bool:
 		print("TerrainAPI: Dig (blocky) at %s" % target_pos)
 	else:
 		# Smooth: dig sphere
-		terrain_manager.modify_terrain(hit.position, brush_size, 1.0, 0, layer) # Shape 0 = Sphere
+		var behavior = null
+		if brush_registry:
+			behavior = brush_registry.get_tool_brush("pickaxe_classic")
+		
+		var radius_to_use = brush_size
+		if behavior:
+			radius_to_use = behavior.radius
+			
+		terrain_manager.modify_terrain(hit.position, radius_to_use, 1.0, 0, layer) # Shape 0 = Sphere
 		terrain_modified.emit(hit.position, layer)
-		print("TerrainAPI: Dig (smooth) at %s, radius %.1f" % [hit.position, brush_size])
+		print("TerrainAPI: Dig (smooth) at %s, radius %.1f" % [hit.position, radius_to_use])
 	
 	return true
 

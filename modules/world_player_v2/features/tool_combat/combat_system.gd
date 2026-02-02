@@ -14,6 +14,7 @@ var building_manager: Node = null
 var terrain_interaction: Node = null
 var hotbar: Node = null
 var terraformer: Node = null  # FirstPersonTerraformer component
+var brush_registry: Node = null # Centralized VoxelBrush registry
 
 # Combat state
 var attack_cooldown: float = 0.0
@@ -117,6 +118,8 @@ func _find_managers() -> void:
 		terrain_interaction = player.get_node_or_null("Modes/TerrainInteraction")
 	if not terraformer and player:
 		terraformer = player.get_node_or_null("Components/FirstPersonTerraformer")
+	if not brush_registry:
+		brush_registry = get_tree().get_first_node_in_group("brush_registry")
 
 func _setup_audio() -> void:
 	# Load tree hit sound
@@ -712,20 +715,10 @@ func do_tool_attack(item: Dictionary) -> void:
 	
 	# Priority 5: Terrain mine
 	if terrain_manager:
-		# --- STRATEGY PATTERN REFACTOR ---
-		# Get the behavior strategy for this tool
-		var behavior = null
+		var behavior: VoxelBrush = null
 		
-		# Resolve behavior via Registry (using the simplified singleton-like access for now)
-		# In a full Autoload setup, this would be global.
-		var registry_script = load("res://modules/world_player_v2/features/tool_combat/terrain_tool_registry.gd")
-		if registry_script:
-			# Instantiate strictly to query defaults/overrides
-			# Ideally this is a persistent node, but for this refactor we instantiate-dump or use static if possible.
-			# To remain efficient, we should have cached this. But let's keep it safe.
-			var registry = registry_script.new()
-			registry._load_defaults() # Ensure defaults are loaded
-			
+		# Resolve behavior via Registry
+		if brush_registry:
 			# Check global overrides
 			if "pickaxe" in item_id:
 				var block_mode_enabled = false
@@ -734,24 +727,22 @@ func do_tool_attack(item: Dictionary) -> void:
 				
 				# Map legacy globals to specific presets
 				if block_mode_enabled:
-					behavior = registry.get_tool_behavior("pickaxe_block")
+					behavior = brush_registry.get_tool_brush("pickaxe_block")
 				else:
-					behavior = registry.get_tool_behavior("pickaxe_classic")
+					behavior = brush_registry.get_tool_brush("pickaxe_classic")
 			else:
 				# Generic lookup
-				behavior = registry.get_tool_behavior(item_id)
-				
-			registry.free() # Cleanup
+				behavior = brush_registry.get_tool_brush(item_id)
 		
 		# Fallback if no behavior found (e.g. unknown tool)
 		if not behavior:
 			# Create a temporary default behavior using config values
-			behavior = TerrainToolBehavior.new()
+			behavior = VoxelBrush.new()
 			var config_radius = 1.0
 			if has_node("/root/PickaxeDigConfig"):
 				config_radius = get_node("/root/PickaxeDigConfig").mining_radius
 			behavior.radius = max(config_radius, 0.5)
-			behavior.shape_type = TerrainToolBehavior.ShapeType.SPHERE
+			behavior.shape_type = VoxelBrush.ShapeType.SPHERE
 		
 		# OVERRIDE: Apply config values to behavior (overrides preset .tres values)
 		if behavior and "pickaxe" in item_id and has_node("/root/PickaxeDigConfig"):

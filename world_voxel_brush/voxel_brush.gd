@@ -1,5 +1,5 @@
 extends Resource
-class_name TerrainToolBehavior
+class_name VoxelBrush
 
 ## Shape types matching modify_density.glsl
 enum ShapeType {
