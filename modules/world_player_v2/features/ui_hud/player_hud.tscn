@@ -1,15 +1,13 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene format=3 uid="uid://gkgsovnvgi0q"]
 
 [ext_resource type="Script" uid="uid://dflhel6eekhjm" path="res://modules/world_player_v2/features/ui_hud/player_hud.gd" id="1_hud"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_panel.tscn" id="2_inv"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn" id="3_slot"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/data_containers/ui/container_panel.tscn" id="4_container"]
+[ext_resource type="PackedScene" uid="uid://d1rcybdixu8hn" path="res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_panel.tscn" id="2_inv"]
+[ext_resource type="PackedScene" uid="uid://bhkrqy3764208" path="res://modules/world_player_v2/features/data_containers/ui/container_panel.tscn" id="4_container"]
 
-
-[node name="PlayerHUD" type="CanvasLayer"]
+[node name="PlayerHUD" type="CanvasLayer" unique_id=482305022]
 script = ExtResource("1_hud")
 
-[node name="ModeIndicator" type="Label" parent="."]
+[node name="ModeIndicator" type="Label" parent="." unique_id=906847146]
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -21,7 +19,7 @@ text = "PLAY"
 horizontal_alignment = 2
 vertical_alignment = 1
 
-[node name="BuildInfoLabel" type="Label" parent="."]
+[node name="BuildInfoLabel" type="Label" parent="." unique_id=843359846]
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -29,11 +27,10 @@ offset_left = -200.0
 offset_top = 40.0
 offset_right = -10.0
 offset_bottom = 60.0
-text = ""
 horizontal_alignment = 2
 vertical_alignment = 1
 
-[node name="TargetMaterial" type="Label" parent="."]
+[node name="TargetMaterial" type="Label" parent="." unique_id=818818900]
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -41,11 +38,10 @@ offset_left = -150.0
 offset_top = 60.0
 offset_right = -10.0
 offset_bottom = 80.0
-text = ""
 horizontal_alignment = 2
 vertical_alignment = 1
 
-[node name="Crosshair" type="TextureRect" parent="."]
+[node name="Crosshair" type="TextureRect" parent="." unique_id=262524472]
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
@@ -57,7 +53,7 @@ offset_right = 8.0
 offset_bottom = 8.0
 mouse_filter = 2
 
-[node name="CrosshairDot" type="ColorRect" parent="Crosshair"]
+[node name="CrosshairDot" type="ColorRect" parent="Crosshair" unique_id=2039276119]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -68,9 +64,11 @@ offset_left = -2.0
 offset_top = -2.0
 offset_right = 2.0
 offset_bottom = 2.0
+grow_horizontal = 2
+grow_vertical = 2
 color = Color(1, 1, 1, 0.8)
 
-[node name="DurabilityBar" type="ProgressBar" parent="."]
+[node name="DurabilityBar" type="ProgressBar" parent="." unique_id=1535563915]
 visible = false
 anchors_preset = 8
 anchor_left = 0.5
@@ -81,11 +79,9 @@ offset_left = -40.0
 offset_top = 20.0
 offset_right = 40.0
 offset_bottom = 30.0
-max_value = 100.0
-value = 0.0
 show_percentage = false
 
-[node name="InteractionPrompt" type="Label" parent="."]
+[node name="InteractionPrompt" type="Label" parent="." unique_id=548691570]
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -99,7 +95,7 @@ text = "[E] Interact"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="StatusBars" type="VBoxContainer" parent="."]
+[node name="StatusBars" type="VBoxContainer" parent="." unique_id=1600620939]
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
@@ -108,21 +104,19 @@ offset_top = -80.0
 offset_right = 220.0
 offset_bottom = -20.0
 
-[node name="HealthBar" type="ProgressBar" parent="StatusBars"]
+[node name="HealthBar" type="ProgressBar" parent="StatusBars" unique_id=1171499634]
 custom_minimum_size = Vector2(200, 25)
 layout_mode = 2
-max_value = 100.0
 value = 100.0
 show_percentage = false
 
-[node name="StaminaBar" type="ProgressBar" parent="StatusBars"]
+[node name="StaminaBar" type="ProgressBar" parent="StatusBars" unique_id=96455976]
 custom_minimum_size = Vector2(200, 20)
 layout_mode = 2
-max_value = 100.0
 value = 100.0
 show_percentage = false
 
-[node name="Compass" type="Label" parent="."]
+[node name="Compass" type="Label" parent="." unique_id=1015249581]
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
@@ -134,7 +128,7 @@ text = "N"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="HotbarPanel" type="Panel" parent="."]
+[node name="HotbarPanel" type="Panel" parent="." unique_id=1441702882]
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -145,7 +139,7 @@ offset_top = -85.0
 offset_right = 425.0
 offset_bottom = -10.0
 
-[node name="HotbarContainer" type="HBoxContainer" parent="HotbarPanel"]
+[node name="HotbarContainer" type="HBoxContainer" parent="HotbarPanel" unique_id=214381274]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -154,9 +148,11 @@ offset_left = 5.0
 offset_top = 5.0
 offset_right = -5.0
 offset_bottom = -5.0
+grow_horizontal = 2
+grow_vertical = 2
 alignment = 1
 
-[node name="SelectedItemLabel" type="Label" parent="."]
+[node name="SelectedItemLabel" type="Label" parent="." unique_id=1728145825]
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -167,23 +163,25 @@ offset_top = -70.0
 offset_right = 640.0
 offset_bottom = -30.0
 text = "Fists"
-horizontal_alignment = 0
 vertical_alignment = 1
 
-[node name="GameMenu" type="Control" parent="."]
+[node name="GameMenu" type="Control" parent="." unique_id=1663756056]
 visible = false
+layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 
-[node name="MenuBackground" type="ColorRect" parent="GameMenu"]
+[node name="MenuBackground" type="ColorRect" parent="GameMenu" unique_id=1560707201]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 color = Color(0, 0, 0, 0.5)
 
-[node name="ExitButton" type="Button" parent="GameMenu"]
+[node name="ExitButton" type="Button" parent="GameMenu" unique_id=186084057]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 20.0
@@ -191,7 +189,7 @@ offset_right = 150.0
 offset_bottom = 60.0
 text = "Exit Game"
 
-[node name="CollisionDebuggerToggle" type="CheckButton" parent="GameMenu"]
+[node name="CollisionDebuggerToggle" type="CheckButton" parent="GameMenu" unique_id=1547686241]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 70.0
@@ -199,7 +197,7 @@ offset_right = 220.0
 offset_bottom = 100.0
 text = "Collision Debugger"
 
-[node name="PickaxeDigModeToggle" type="CheckButton" parent="GameMenu"]
+[node name="PickaxeDigModeToggle" type="CheckButton" parent="GameMenu" unique_id=1911315868]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 110.0
@@ -208,7 +206,7 @@ offset_bottom = 140.0
 button_pressed = true
 text = "Block Pickaxe Mode"
 
-[node name="PickaxeDurabilityToggle" type="CheckButton" parent="GameMenu"]
+[node name="PickaxeDurabilityToggle" type="CheckButton" parent="GameMenu" unique_id=1178565425]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 150.0
@@ -217,16 +215,15 @@ offset_bottom = 180.0
 button_pressed = true
 text = "Pickaxe Durability"
 
-[node name="TargetVisualizerToggle" type="CheckButton" parent="GameMenu"]
+[node name="TargetVisualizerToggle" type="CheckButton" parent="GameMenu" unique_id=258259359]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 190.0
 offset_right = 220.0
 offset_bottom = 220.0
-button_pressed = false
 text = "Target Visualizer"
 
-[node name="HitMarkerToggle" type="CheckButton" parent="GameMenu"]
+[node name="HitMarkerToggle" type="CheckButton" parent="GameMenu" unique_id=1825117809]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 230.0
@@ -234,7 +231,7 @@ offset_right = 220.0
 offset_bottom = 260.0
 text = "Show Hit Markers"
 
-[node name="PistolHitMarkerToggle" type="CheckButton" parent="GameMenu"]
+[node name="PistolHitMarkerToggle" type="CheckButton" parent="GameMenu" unique_id=708070018]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 270.0
@@ -243,18 +240,15 @@ offset_bottom = 300.0
 button_pressed = true
 text = "Pistol Red Markers"
 
-[node name="TerrainInfoToggle" type="CheckButton" parent="GameMenu"]
+[node name="TerrainInfoToggle" type="CheckButton" parent="GameMenu" unique_id=814410833]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 310.0
 offset_right = 220.0
 offset_bottom = 340.0
-button_pressed = false
 text = "Show Terrain Info"
 
-
-
-[node name="MiningRadiusLabel" type="Label" parent="GameMenu"]
+[node name="MiningRadiusLabel" type="Label" parent="GameMenu" unique_id=680204721]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 405.0
@@ -262,7 +256,7 @@ offset_right = 220.0
 offset_bottom = 425.0
 text = "Mining Radius: 1.00"
 
-[node name="MiningRadiusSlider" type="HSlider" parent="GameMenu"]
+[node name="MiningRadiusSlider" type="HSlider" parent="GameMenu" unique_id=1394098675]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 430.0
@@ -273,7 +267,7 @@ max_value = 3.0
 step = 0.1
 value = 1.0
 
-[node name="QuickSaveButton" type="Button" parent="GameMenu"]
+[node name="QuickSaveButton" type="Button" parent="GameMenu" unique_id=1870332335]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 470.0
@@ -281,7 +275,7 @@ offset_right = 220.0
 offset_bottom = 510.0
 text = "QuickSave (F5)"
 
-[node name="QuickLoadButton" type="Button" parent="GameMenu"]
+[node name="QuickLoadButton" type="Button" parent="GameMenu" unique_id=1377812926]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 520.0
@@ -289,6 +283,6 @@ offset_right = 220.0
 offset_bottom = 560.0
 text = "QuickLoad (F8)"
 
-[node name="InventoryPanel" parent="." instance=ExtResource("2_inv")]
+[node name="InventoryPanel" parent="." unique_id=212941941 instance=ExtResource("2_inv")]
 
-[node name="ContainerPanel" parent="." instance=ExtResource("4_container")]
+[node name="ContainerPanel" parent="." unique_id=1450455450 instance=ExtResource("4_container")]

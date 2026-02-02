@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=4 uid="uid://optvuskqumr4"]
+[gd_scene format=4 uid="uid://optvuskqumr4"]
 
 [ext_resource type="Texture2D" uid="uid://b8ctuid3ym8rp" path="res://models/pistol/heavy_pistol_animated_3.png" id="1_vxa7l"]
 [ext_resource type="Texture2D" uid="uid://cs1g5i5bcuv2q" path="res://models/pistol/heavy_pistol_animated_4.png" id="2_k20bf"]
@@ -289,63 +289,55 @@ _surfaces = [{
 blend_shape_mode = 0
 shadow_mesh = SubResource("ArrayMesh_scsik")
 
-[node name="HeavyPistolWithoutHands" type="Node3D"]
+[node name="HeavyPistolWithoutHands" type="Node3D" unique_id=1668415075]
 
-[node name="Talon" type="Node3D" parent="."]
+[node name="Talon" type="Node3D" parent="." unique_id=1020405486]
 transform = Transform3D(0.01, 0, 0, 0, 0.01, -2.220446e-18, 0, 2.220446e-18, 0.01, 0, 0, 0)
 
-[node name="base" type="Node3D" parent="Talon"]
+[node name="base" type="Node3D" parent="Talon" unique_id=649733731]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.030765643, 0.87508756, 0.13028747)
 
-[node name="base_talon_0" type="MeshInstance3D" parent="Talon/base"]
+[node name="base_talon_0" type="MeshInstance3D" parent="Talon/base" unique_id=1291039840]
 mesh = SubResource("ArrayMesh_lvtvf")
-skeleton = NodePath("")
 
-[node name="slidecatch" type="Node3D" parent="Talon"]
+[node name="slidecatch" type="Node3D" parent="Talon" unique_id=233645368]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6560338, 4.642443, 5.076739)
 
-[node name="slidecatch_talon_0" type="MeshInstance3D" parent="Talon/slidecatch"]
+[node name="slidecatch_talon_0" type="MeshInstance3D" parent="Talon/slidecatch" unique_id=213739464]
 mesh = SubResource("ArrayMesh_iut0p")
-skeleton = NodePath("")
 
-[node name="clip" type="Node3D" parent="Talon"]
+[node name="clip" type="Node3D" parent="Talon" unique_id=1324077539]
 transform = Transform3D(1, 0, 0, 0, 0.9654117, -0.26073024, 0, 0.26073024, 0.9654117, 0, 1.0444477, 0.40162927)
 
-[node name="clip_talon_0" type="MeshInstance3D" parent="Talon/clip"]
+[node name="clip_talon_0" type="MeshInstance3D" parent="Talon/clip" unique_id=2012328311]
 mesh = SubResource("ArrayMesh_irc1i")
-skeleton = NodePath("")
 
-[node name="bullet" type="Node3D" parent="Talon/clip"]
+[node name="bullet" type="Node3D" parent="Talon/clip" unique_id=1773986700]
 transform = Transform3D(1, 0, 0, 0, 0.9654117, 0.26073024, 0, -0.26073024, 0.9654117, 0, 4.2766223, -0.07376971)
 
-[node name="bullet_talon_0" type="MeshInstance3D" parent="Talon/clip/bullet"]
+[node name="bullet_talon_0" type="MeshInstance3D" parent="Talon/clip/bullet" unique_id=1685000873]
 mesh = SubResource("ArrayMesh_7lxum")
-skeleton = NodePath("")
 
-[node name="bullet2" type="Node3D" parent="Talon/clip"]
+[node name="bullet2" type="Node3D" parent="Talon/clip" unique_id=1379556804]
 transform = Transform3D(1, 0, 0, 0, 0.9654117, 0.26073024, 0, -0.26073024, 0.9654117, 1.865912e-16, 2.5144813, -0.05948015)
 
-[node name="bullet2_talon_0" type="MeshInstance3D" parent="Talon/clip/bullet2"]
+[node name="bullet2_talon_0" type="MeshInstance3D" parent="Talon/clip/bullet2" unique_id=848990417]
 mesh = SubResource("ArrayMesh_lsiuq")
-skeleton = NodePath("")
 
-[node name="trigger" type="Node3D" parent="Talon"]
+[node name="trigger" type="Node3D" parent="Talon" unique_id=2006374118]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.482194, 5.3002815)
 
-[node name="trigger_talon_0" type="MeshInstance3D" parent="Talon/trigger"]
+[node name="trigger_talon_0" type="MeshInstance3D" parent="Talon/trigger" unique_id=1068970124]
 mesh = SubResource("ArrayMesh_m01po")
-skeleton = NodePath("")
 
-[node name="hammer" type="Node3D" parent="Talon"]
+[node name="hammer" type="Node3D" parent="Talon" unique_id=706634649]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.328992, -4.3304634)
 
-[node name="hammer_talon_0" type="MeshInstance3D" parent="Talon/hammer"]
+[node name="hammer_talon_0" type="MeshInstance3D" parent="Talon/hammer" unique_id=1868677928]
 mesh = SubResource("ArrayMesh_hf8hc")
-skeleton = NodePath("")
 
-[node name="slide" type="Node3D" parent="Talon"]
+[node name="slide" type="Node3D" parent="Talon" unique_id=259706527]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8.172725, 8.528239)
 
-[node name="slide_talon_0" type="MeshInstance3D" parent="Talon/slide"]
+[node name="slide_talon_0" type="MeshInstance3D" parent="Talon/slide" unique_id=244207320]
 mesh = SubResource("ArrayMesh_586nm")
-skeleton = NodePath("")

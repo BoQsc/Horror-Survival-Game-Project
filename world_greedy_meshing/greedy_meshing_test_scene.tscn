@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://dj51g58j3pqad"]
+[gd_scene format=3 uid="uid://dj51g58j3pqad"]
 
 [ext_resource type="Script" uid="uid://bxnlk20bjv2eg" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_hyta6"]
 [ext_resource type="Script" uid="uid://bu6aawvhphoci" path="res://modules/world_player_legacy/camera_3d.gd" id="2_2n70d"]
@@ -21,31 +21,31 @@ glow_enabled = true
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_30qkp"]
 
-[node name="GreedyMeshing" type="Node3D"]
+[node name="GreedyMeshing" type="Node3D" unique_id=856819554]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1575207827]
 environment = SubResource("Environment_5q0hh")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=2014078364]
 transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
 shadow_enabled = true
 
-[node name="CSGBox3D" type="CSGBox3D" parent="."]
+[node name="CSGBox3D" type="CSGBox3D" parent="." unique_id=1108120821]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 26.485477, 0)
 use_collision = true
 
-[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
+[node name="CharacterBody3D" type="CharacterBody3D" parent="." unique_id=2090389329]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 28.217464, 0)
 script = ExtResource("1_hyta6")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D" unique_id=697288963]
 shape = SubResource("CapsuleShape3D_b2hlg")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="CharacterBody3D"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="CharacterBody3D" unique_id=316218205]
 mesh = SubResource("CapsuleMesh_30qkp")
 
-[node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
+[node name="Camera3D" type="Camera3D" parent="CharacterBody3D" unique_id=1014900518]
 script = ExtResource("2_2n70d")
 
-[node name="TestRunner" type="Node3D" parent="."]
+[node name="TestRunner" type="Node3D" parent="." unique_id=1809711384]
 script = ExtResource("3_testr")

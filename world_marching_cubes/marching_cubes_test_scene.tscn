@@ -1,8 +1,8 @@
-[gd_scene load_steps=9 format=3 uid="uid://ipiv2ivbm1cr"]
+[gd_scene format=3 uid="uid://ipiv2ivbm1cr"]
 
-[ext_resource type="Script" uid="uid://boyv8u5gclqum" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_a202f"]
-[ext_resource type="Script" uid="uid://cb5ijpk37p6ah" path="res://modules/world_player_legacy/camera_3d.gd" id="2_a0tk4"]
-[ext_resource type="Script" uid="uid://c1xwl5r0i1xs2" path="res://world_marching_cubes/chunk_manager.gd" id="2_chunk"]
+[ext_resource type="Script" uid="uid://bxnlk20bjv2eg" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_a202f"]
+[ext_resource type="Script" uid="uid://bu6aawvhphoci" path="res://modules/world_player_legacy/camera_3d.gd" id="2_a0tk4"]
+[ext_resource type="Script" uid="uid://d2oq01pxsr6xj" path="res://world_marching_cubes/chunk_manager.gd" id="2_chunk"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_4xowi"]
 sky_horizon_color = Color(0.66224277, 0.6717428, 0.6867428, 1)
@@ -21,32 +21,32 @@ glow_enabled = true
 
 [sub_resource type="CapsuleMesh" id="CapsuleMesh_noarx"]
 
-[node name="Node3D" type="Node3D"]
+[node name="Node3D" type="Node3D" unique_id=879403854]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1687658978]
 environment = SubResource("Environment_noarx")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1010611957]
 transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
 shadow_enabled = true
 
-[node name="CSGBox3D" type="CSGBox3D" parent="."]
+[node name="CSGBox3D" type="CSGBox3D" parent="." unique_id=1273848287]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 22.87539, 0)
 use_collision = true
 
-[node name="CharacterBody3D" type="CharacterBody3D" parent="."]
+[node name="CharacterBody3D" type="CharacterBody3D" parent="." unique_id=1811202856]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 28.217464, 0)
 script = ExtResource("1_a202f")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CharacterBody3D" unique_id=1995444296]
 shape = SubResource("CapsuleShape3D_noarx")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="CharacterBody3D"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="CharacterBody3D" unique_id=922943417]
 mesh = SubResource("CapsuleMesh_noarx")
 
-[node name="Camera3D" type="Camera3D" parent="CharacterBody3D"]
+[node name="Camera3D" type="Camera3D" parent="CharacterBody3D" unique_id=2078911063]
 script = ExtResource("2_a0tk4")
 
-[node name="ChunkManager" type="MeshInstance3D" parent="." node_paths=PackedStringArray("viewer")]
+[node name="ChunkManager" type="MeshInstance3D" parent="." unique_id=960864410 node_paths=PackedStringArray("viewer")]
 script = ExtResource("2_chunk")
 viewer = NodePath("../CharacterBody3D")

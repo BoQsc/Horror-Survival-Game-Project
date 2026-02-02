@@ -1,8 +1,8 @@
-[gd_scene load_steps=18 format=4 uid="uid://7l1irinimxa"]
+[gd_scene format=4 uid="uid://7l1irinimxa"]
 
 [ext_resource type="Texture2D" uid="uid://d00a8fn18o6y3" path="res://addons/srcoder_simplecar/assets/models/Textures/colormap.png" id="1_n0mcw"]
 [ext_resource type="PhysicsMaterial" uid="uid://cuw7isymmyyku" path="res://addons/srcoder_simplecar/assets/materials/metal_physics_material.phymat" id="1_vukum"]
-[ext_resource type="Script" path="res://addons/srcoder_simplecar/assets/scripts/car.gd" id="1_ymx53"]
+[ext_resource type="Script" uid="uid://cwh8pk8p0bp2x" path="res://addons/srcoder_simplecar/assets/scripts/car.gd" id="1_ymx53"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_bwqi7"]
 resource_name = "colormap"
@@ -215,26 +215,24 @@ _surfaces = [{
 blend_shape_mode = 0
 shadow_mesh = SubResource("ArrayMesh_jalnx")
 
-[node name="car" type="VehicleBody3D"]
+[node name="car" type="VehicleBody3D" unique_id=703025854]
 collision_layer = 2
 physics_material_override = ExtResource("1_vukum")
 script = ExtResource("1_ymx53")
 
-[node name="body" type="MeshInstance3D" parent="."]
+[node name="body" type="MeshInstance3D" parent="." unique_id=1991129371]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.025)
 mesh = SubResource("ArrayMesh_wqhfy")
-skeleton = NodePath("")
 
-[node name="spoiler" type="MeshInstance3D" parent="body"]
+[node name="spoiler" type="MeshInstance3D" parent="body" unique_id=429828073]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, -1.04369)
 mesh = SubResource("ArrayMesh_6em3i")
-skeleton = NodePath("")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1255631523]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, -0.025)
 shape = SubResource("ConvexPolygonShape3D_1nhew")
 
-[node name="WheelBackRight" type="VehicleWheel3D" parent="."]
+[node name="WheelBackRight" type="VehicleWheel3D" parent="." unique_id=374980277]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.45, 0.3, -0.653875)
 wheel_roll_influence = 1.0
 wheel_radius = 0.3
@@ -243,12 +241,11 @@ suspension_stiffness = 100.0
 damping_compression = 2.3
 damping_relaxation = 2.5
 
-[node name="wheel-back-right" type="MeshInstance3D" parent="WheelBackRight"]
+[node name="wheel-back-right" type="MeshInstance3D" parent="WheelBackRight" unique_id=154683844]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.15, 0, -0.00657403)
 mesh = SubResource("ArrayMesh_blm54")
-skeleton = NodePath("")
 
-[node name="WheelBackLeft" type="VehicleWheel3D" parent="."]
+[node name="WheelBackLeft" type="VehicleWheel3D" parent="." unique_id=514633445]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.45, 0.3, -0.653875)
 wheel_roll_influence = 1.0
 wheel_radius = 0.3
@@ -257,12 +254,11 @@ suspension_stiffness = 100.0
 damping_compression = 2.3
 damping_relaxation = 2.5
 
-[node name="wheel-back-left" type="MeshInstance3D" parent="WheelBackLeft"]
+[node name="wheel-back-left" type="MeshInstance3D" parent="WheelBackLeft" unique_id=473026546]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.15, 0, -0.00657403)
 mesh = SubResource("ArrayMesh_bcio1")
-skeleton = NodePath("")
 
-[node name="WheelFrontRight" type="VehicleWheel3D" parent="."]
+[node name="WheelFrontRight" type="VehicleWheel3D" parent="." unique_id=527902903]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.45, 0.3, 0.656971)
 use_as_steering = true
 wheel_roll_influence = 1.0
@@ -272,12 +268,11 @@ suspension_stiffness = 100.0
 damping_compression = 2.3
 damping_relaxation = 2.5
 
-[node name="wheel-front-right" type="MeshInstance3D" parent="WheelFrontRight"]
+[node name="wheel-front-right" type="MeshInstance3D" parent="WheelFrontRight" unique_id=302113265]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.15, 0, 0.00257409)
 mesh = SubResource("ArrayMesh_pme3t")
-skeleton = NodePath("")
 
-[node name="WheelFrontLeft" type="VehicleWheel3D" parent="."]
+[node name="WheelFrontLeft" type="VehicleWheel3D" parent="." unique_id=2134287308]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.45, 0.3, 0.656971)
 use_as_steering = true
 wheel_roll_influence = 1.0
@@ -287,7 +282,6 @@ suspension_stiffness = 100.0
 damping_compression = 2.3
 damping_relaxation = 2.5
 
-[node name="wheel-front-left" type="MeshInstance3D" parent="WheelFrontLeft"]
+[node name="wheel-front-left" type="MeshInstance3D" parent="WheelFrontLeft" unique_id=457118137]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.15, 0, 0.00257409)
 mesh = SubResource("ArrayMesh_h7tpb")
-skeleton = NodePath("")

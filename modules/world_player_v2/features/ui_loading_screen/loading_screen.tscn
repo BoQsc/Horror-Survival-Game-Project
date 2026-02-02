@@ -1,38 +1,31 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://caenys1afe2uf"]
 
-[ext_resource type="Script" path="res://modules/world_player_v2/features/ui_loading_screen/loading_screen.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://b718hmy6nfd8s" path="res://modules/world_player_v2/features/ui_loading_screen/loading_screen.gd" id="1_script"]
 
-[node name="LoadingScreen" type="CanvasLayer"]
+[node name="LoadingScreen" type="CanvasLayer" unique_id=1560120558]
 layer = 100
 script = ExtResource("1_script")
 
-[node name="Panel" type="PanelContainer" parent="."]
-anchors_preset = 0
-anchor_top = 0.0
-anchor_bottom = 0.0
+[node name="Panel" type="PanelContainer" parent="." unique_id=1660372839]
 offset_left = 20.0
 offset_top = 20.0
 offset_right = 320.0
 offset_bottom = 100.0
-grow_vertical = 1
 
-[node name="VBox" type="VBoxContainer" parent="Panel"]
+[node name="VBox" type="VBoxContainer" parent="Panel" unique_id=875743496]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="TitleLabel" type="Label" parent="Panel/VBox"]
+[node name="TitleLabel" type="Label" parent="Panel/VBox" unique_id=127767411]
 layout_mode = 2
 text = "Loading..."
 horizontal_alignment = 1
 
-[node name="ProgressBar" type="ProgressBar" parent="Panel/VBox"]
+[node name="ProgressBar" type="ProgressBar" parent="Panel/VBox" unique_id=1849872979]
 custom_minimum_size = Vector2(280, 24)
 layout_mode = 2
-max_value = 100.0
-value = 0.0
-show_percentage = true
 
-[node name="StatusLabel" type="Label" parent="Panel/VBox"]
+[node name="StatusLabel" type="Label" parent="Panel/VBox" unique_id=251582440]
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Initializing..."

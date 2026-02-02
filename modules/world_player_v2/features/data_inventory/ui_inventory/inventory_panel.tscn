@@ -1,10 +1,8 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://d1rcybdixu8hn"]
 
 [ext_resource type="Script" uid="uid://dd2k5k02tkrrx" path="res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_panel.gd" id="1_panel"]
 
-
-
-[node name="InventoryPanel" type="PanelContainer"]
+[node name="InventoryPanel" type="PanelContainer" unique_id=1339772604]
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
@@ -18,18 +16,18 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_panel")
 
-[node name="VBox" type="VBoxContainer" parent="."]
+[node name="VBox" type="VBoxContainer" parent="." unique_id=1600002443]
 layout_mode = 2
 
-[node name="Title" type="Label" parent="VBox"]
+[node name="Title" type="Label" parent="VBox" unique_id=1709527222]
 layout_mode = 2
 text = "INVENTORY"
 horizontal_alignment = 1
 
-[node name="HSeparator" type="HSeparator" parent="VBox"]
+[node name="HSeparator" type="HSeparator" parent="VBox" unique_id=113990102]
 layout_mode = 2
 
-[node name="InventoryGrid" type="GridContainer" parent="VBox"]
+[node name="InventoryGrid" type="GridContainer" parent="VBox" unique_id=1266378996]
 layout_mode = 2
 size_flags_vertical = 3
 columns = 9

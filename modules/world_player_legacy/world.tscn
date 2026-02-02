@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3 uid="uid://cubacbxdo4pih"]
+[gd_scene format=3 uid="uid://cubacbxdo4pih"]
 
 [ext_resource type="Script" uid="uid://bxnlk20bjv2eg" path="res://modules/world_player_legacy/character_body_3d.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://bu6aawvhphoci" path="res://modules/world_player_legacy/camera_3d.gd" id="2_camera"]
@@ -41,29 +41,29 @@ transparency = 1
 shading_mode = 0
 albedo_color = Color(0, 0, 1, 0.5)
 
-[node name="MainGame" type="Node3D"]
+[node name="MainGame" type="Node3D" unique_id=1144467830]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1069729171]
 environment = SubResource("Env")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=1864915801]
 transform = Transform3D(-0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, 0.75, -0.433013, 0, 0, 0)
 shadow_enabled = true
 
-[node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
+[node name="Player" type="CharacterBody3D" parent="." unique_id=149843148 groups=["player"]]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
 collision_mask = 137
 script = ExtResource("1_player")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player" unique_id=434019204]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.38883972, 0)
 shape = SubResource("PlayerShape")
 
-[node name="Camera3D" type="Camera3D" parent="Player"]
+[node name="Camera3D" type="Camera3D" parent="Player" unique_id=322302696]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.6, 0)
 script = ExtResource("2_camera")
 
-[node name="InteractionController" type="Node" parent="Player/Camera3D" node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager", "road_manager", "entity_manager", "vehicle_manager")]
+[node name="InteractionController" type="Node" parent="Player/Camera3D" unique_id=856840305 node_paths=PackedStringArray("terrain_manager", "building_manager", "vegetation_manager", "road_manager", "entity_manager", "vehicle_manager")]
 script = ExtResource("3_interact")
 terrain_manager = NodePath("../../../TerrainManager")
 building_manager = NodePath("../../../BuildingManager")
@@ -72,11 +72,11 @@ road_manager = NodePath("../../../RoadManager")
 entity_manager = NodePath("../../../EntityManager")
 vehicle_manager = NodePath("../../../VehicleManager")
 
-[node name="MeshInstance3D" type="MeshInstance3D" parent="Player"]
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Player" unique_id=2000436398]
 visible = false
 mesh = SubResource("CapsuleMesh_16slq")
 
-[node name="UI" type="Control" parent="."]
+[node name="UI" type="Control" parent="." unique_id=1535096023]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -85,7 +85,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="Crosshair" type="ColorRect" parent="UI"]
+[node name="Crosshair" type="ColorRect" parent="UI" unique_id=2110451670]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -100,7 +100,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="ModeLabel" type="Label" parent="UI"]
+[node name="ModeLabel" type="Label" parent="UI" unique_id=977009778]
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
@@ -112,7 +112,7 @@ offset_bottom = -20.0
 grow_vertical = 0
 text = "Mode: TERRAIN"
 
-[node name="UnderwaterEffect" type="ColorRect" parent="UI"]
+[node name="UnderwaterEffect" type="ColorRect" parent="UI" unique_id=778994189]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -123,13 +123,13 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.05, 0.2, 0.12, 0.4)
 
-[node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer") groups=["terrain_manager"]]
+[node name="TerrainManager" type="Node3D" parent="." unique_id=638695498 node_paths=PackedStringArray("viewer") groups=["terrain_manager"]]
 script = ExtResource("4_terrain")
 viewer = NodePath("../Player")
 min_finalization_interval_ms = 0
 exploration_delay_ms = 0
 
-[node name="VegetationManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager") groups=["vegetation_manager"]]
+[node name="VegetationManager" type="Node3D" parent="." unique_id=1130440771 node_paths=PackedStringArray("terrain_manager") groups=["vegetation_manager"]]
 script = ExtResource("6_vegetation")
 terrain_manager = NodePath("../TerrainManager")
 tree_y_offset = 9.5
@@ -138,39 +138,39 @@ grass_collision_radius = 0.7
 rock_scale = 0.3
 rock_y_offset = 0.3
 
-[node name="BuildingManager" type="Node3D" parent="." groups=["building_manager"]]
+[node name="BuildingManager" type="Node3D" parent="." unique_id=1428463413 groups=["building_manager"]]
 script = ExtResource("5_buildings")
 
-[node name="RoadManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
+[node name="RoadManager" type="Node3D" parent="." unique_id=897867087 node_paths=PackedStringArray("terrain_manager")]
 script = ExtResource("7_roads")
 terrain_manager = NodePath("../TerrainManager")
 
-[node name="PrefabSpawner" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager", "building_manager")]
+[node name="PrefabSpawner" type="Node3D" parent="." unique_id=1681486356 node_paths=PackedStringArray("terrain_manager", "building_manager")]
 script = ExtResource("8_prefabs")
 terrain_manager = NodePath("../TerrainManager")
 building_manager = NodePath("../BuildingManager")
 
-[node name="PrefabCapture" type="Node" parent="." node_paths=PackedStringArray("building_manager", "player")]
+[node name="PrefabCapture" type="Node" parent="." unique_id=260368468 node_paths=PackedStringArray("building_manager", "player")]
 script = ExtResource("11_prefab_capture")
 building_manager = NodePath("../BuildingManager")
 player = NodePath("../Player")
 
-[node name="EntityManager" parent="." node_paths=PackedStringArray("terrain_manager") instance=ExtResource("9_entities")]
+[node name="EntityManager" parent="." unique_id=556227880 node_paths=PackedStringArray("terrain_manager") instance=ExtResource("9_entities")]
 terrain_manager = NodePath("../TerrainManager")
 
-[node name="VehicleManager" type="Node" parent="." node_paths=PackedStringArray("player") groups=["vehicle_manager"]]
+[node name="VehicleManager" type="Node" parent="." unique_id=1942167055 node_paths=PackedStringArray("player") groups=["vehicle_manager"]]
 script = ExtResource("10_vehicles")
 player = NodePath("../Player")
 
-[node name="SelectionBox" type="MeshInstance3D" parent="."]
+[node name="SelectionBox" type="MeshInstance3D" parent="." unique_id=684841965]
 visible = false
 mesh = SubResource("BoxMesh_selection")
 surface_material_override/0 = SubResource("StandardMaterial3D_selection")
 
-[node name="BuildingGenerator" type="Node3D" parent="." node_paths=PackedStringArray("prefab_spawner", "terrain_manager")]
+[node name="BuildingGenerator" type="Node3D" parent="." unique_id=2097106365 node_paths=PackedStringArray("prefab_spawner", "terrain_manager")]
 script = ExtResource("12_building_generator")
 prefab_spawner = NodePath("../PrefabSpawner")
 terrain_manager = NodePath("../TerrainManager")
 
-[node name="DebugTeleporter" type="Node" parent="."]
+[node name="DebugTeleporter" type="Node" parent="." unique_id=1109757197]
 script = ExtResource("13_debug")

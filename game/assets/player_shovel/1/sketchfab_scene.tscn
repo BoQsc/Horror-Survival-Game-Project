@@ -1,4 +1,4 @@
-[gd_scene load_steps=8 format=3 uid="uid://ci11yv4pk4ssf"]
+[gd_scene format=3 uid="uid://ci11yv4pk4ssf"]
 
 [ext_resource type="PackedScene" uid="uid://5gus5nqkl30l" path="res://game/assets/player_shovel/1/animated_fps_axe.glb" id="1_4farb"]
 [ext_resource type="PackedScene" uid="uid://blvru1vvtgvri" path="res://game/assets/PSX_Tools_GLTF/Shovel.glb" id="2_kc8uy"]
@@ -12,9 +12,9 @@ albedo_texture = ExtResource("3_7kpw0")
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_67n8c"]
 albedo_texture = ExtResource("3_kc8uy")
 
-[node name="Sketchfab_Scene" instance=ExtResource("1_4farb")]
+[node name="Sketchfab_Scene" unique_id=2035419553 instance=ExtResource("1_4farb")]
 
-[node name="Skeleton3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4" index="0"]
+[node name="Skeleton3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4" parent_id_path=PackedInt32Array(2000174109) index="0" unique_id=1228803941]
 bones/2/position = Vector3(0, 42.22234, 0)
 bones/5/position = Vector3(-1.1679268, -4.6649013, 9.044512)
 bones/6/rotation = Quaternion(0.4104563, -0.08202222, -0.09917025, 0.90275323)
@@ -91,25 +91,25 @@ bones/80/position = Vector3(0.004781723, 0.01733017, 1.9161873)
 bones/81/rotation = Quaternion(0.15001105, 3.1650572e-07, -8.2894405e-07, 0.9886844)
 bones/82/position = Vector3(-0.5917015, -0.22965527, 12.104855)
 
-[node name="BoneAttachment3D" type="BoneAttachment3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="0"]
+[node name="BoneAttachment3D" type="BoneAttachment3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="0" unique_id=368052569]
 transform = Transform3D(0.6217524, 0.7065561, -0.3379379, 0.67436796, -0.70237947, -0.22779547, -0.39831093, -0.086262, -0.91318506, -23.050228, 42.381744, 28.504013)
 bone_name = "Index_Distal_R_013_scaleCompensation"
 bone_idx = 24
 
-[node name="Shovel2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="0" instance=ExtResource("2_kc8uy")]
+[node name="Shovel2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="0" unique_id=632097680 instance=ExtResource("2_kc8uy")]
 transform = Transform3D(0.7334562, 27.739918, 14.843178, -31.296688, -0.8741966, 3.1802413, 3.215618, -14.835554, 27.566774, 5.7, -2.33, -2.903)
 
-[node name="Shovel" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Shovel2" index="0"]
+[node name="Shovel" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Shovel2" index="0" unique_id=1765179955]
 material_override = SubResource("StandardMaterial3D_bqpft")
 
-[node name="Pickaxe2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="1" instance=ExtResource("2_ssctl")]
+[node name="Pickaxe2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="1" unique_id=529194541 instance=ExtResource("2_ssctl")]
 transform = Transform3D(0.74666977, 27.741224, 14.840073, -31.29853, -0.8522922, 3.1679966, 3.1945417, -14.834382, 27.56985, 5.6997786, -2.33041, -2.903328)
 visible = false
 
-[node name="Pickaxe" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Pickaxe2" index="0"]
+[node name="Pickaxe" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Pickaxe2" index="0" unique_id=1901019631]
 material_override = SubResource("StandardMaterial3D_67n8c")
 
-[node name="Object_7" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="1"]
+[node name="Object_7" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="1" unique_id=941819721]
 visible = false
 
 [editable path="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Shovel2"]

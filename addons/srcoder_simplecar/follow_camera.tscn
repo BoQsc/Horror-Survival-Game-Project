@@ -1,15 +1,15 @@
-[gd_scene load_steps=2 format=3 uid="uid://rjx8tx5y7j2p"]
+[gd_scene format=3 uid="uid://rjx8tx5y7j2p"]
 
-[ext_resource type="Script" path="res://addons/srcoder_simplecar/assets/scripts/follow_camera.gd" id="1_1bo7l"]
+[ext_resource type="Script" uid="uid://dc1aywjex8kw2" path="res://addons/srcoder_simplecar/assets/scripts/follow_camera.gd" id="1_1bo7l"]
 
-[node name="FollowCamera" type="Node3D"]
+[node name="FollowCamera" type="Node3D" unique_id=564867387]
 script = ExtResource("1_1bo7l")
 
-[node name="Pivot" type="Node3D" parent="."]
+[node name="Pivot" type="Node3D" parent="." unique_id=589024294]
 transform = Transform3D(1, 0, 0, 0, 0.96363, -0.267238, 0, 0.267238, 0.96363, 0, 2, 0)
 
-[node name="SpringArm3D" type="SpringArm3D" parent="Pivot"]
+[node name="SpringArm3D" type="SpringArm3D" parent="Pivot" unique_id=147218080]
 transform = Transform3D(-1, 0, -8.74228e-08, 0, 1, 0, 8.74228e-08, 0, -1, 0, 0, 0)
 spring_length = 5.0
 
-[node name="Camera3D" type="Camera3D" parent="Pivot/SpringArm3D"]
+[node name="Camera3D" type="Camera3D" parent="Pivot/SpringArm3D" unique_id=2123320084]

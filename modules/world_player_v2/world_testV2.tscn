@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3]
+[gd_scene format=3 uid="uid://b7qp0dwnl5jfi"]
 
 [ext_resource type="PackedScene" uid="uid://b8dotn0iuivrd" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
 [ext_resource type="Script" uid="uid://d2oq01pxsr6xj" path="res://world_marching_cubes/chunk_manager.gd" id="4_terrain"]
@@ -35,19 +35,19 @@ transparency = 1
 shading_mode = 0
 albedo_color = Color(0, 0, 1, 0.5)
 
-[node name="MainGame" type="Node3D"]
+[node name="MainGame" type="Node3D" unique_id=2100630731]
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=297828557]
 environment = SubResource("Env")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=157847809]
 transform = Transform3D(-0.866025, -0.433013, 0.25, 0, 0.5, 0.866025, -0.5, 0.75, -0.433013, 0, 0, 0)
 shadow_enabled = true
 
-[node name="WorldPlayerV2" parent="." groups=["player"] instance=ExtResource("1_worldplayer")]
+[node name="WorldPlayerV2" parent="." unique_id=1915358162 instance=ExtResource("1_worldplayer")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
 
-[node name="UI" type="Control" parent="."]
+[node name="UI" type="Control" parent="." unique_id=1007044120]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -56,7 +56,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="UnderwaterEffect" type="ColorRect" parent="UI"]
+[node name="UnderwaterEffect" type="ColorRect" parent="UI" unique_id=403967126]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -67,13 +67,13 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.05, 0.2, 0.12, 0.4)
 
-[node name="TerrainManager" type="Node3D" parent="." node_paths=PackedStringArray("viewer") groups=["terrain_manager"]]
+[node name="TerrainManager" type="Node3D" parent="." unique_id=707892765 node_paths=PackedStringArray("viewer") groups=["terrain_manager"]]
 script = ExtResource("4_terrain")
 viewer = NodePath("../WorldPlayerV2")
 min_finalization_interval_ms = 0
 exploration_delay_ms = 0
 
-[node name="VegetationManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager") groups=["vegetation_manager"]]
+[node name="VegetationManager" type="Node3D" parent="." unique_id=533363145 node_paths=PackedStringArray("terrain_manager") groups=["vegetation_manager"]]
 script = ExtResource("6_vegetation")
 terrain_manager = NodePath("../TerrainManager")
 tree_y_offset = 9.5
@@ -83,44 +83,44 @@ rock_scale = 0.3
 rock_y_offset = 0.3
 debug_collision = true
 
-[node name="BuildingManager" type="Node3D" parent="." groups=["building_manager"]]
+[node name="BuildingManager" type="Node3D" parent="." unique_id=363641758 groups=["building_manager"]]
 script = ExtResource("5_buildings")
 
-[node name="RoadManager" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager")]
+[node name="RoadManager" type="Node3D" parent="." unique_id=24779456 node_paths=PackedStringArray("terrain_manager")]
 script = ExtResource("7_roads")
 terrain_manager = NodePath("../TerrainManager")
 
-[node name="PrefabSpawner" type="Node3D" parent="." node_paths=PackedStringArray("terrain_manager", "building_manager")]
+[node name="PrefabSpawner" type="Node3D" parent="." unique_id=501872725 node_paths=PackedStringArray("terrain_manager", "building_manager")]
 script = ExtResource("8_prefabs")
 terrain_manager = NodePath("../TerrainManager")
 building_manager = NodePath("../BuildingManager")
 
-[node name="PrefabCapture" type="Node" parent="." node_paths=PackedStringArray("building_manager", "player")]
+[node name="PrefabCapture" type="Node" parent="." unique_id=252624345 node_paths=PackedStringArray("building_manager", "player")]
 script = ExtResource("11_prefab_capture")
 building_manager = NodePath("../BuildingManager")
 player = NodePath("../WorldPlayerV2")
 
-[node name="EntityManager" parent="." node_paths=PackedStringArray("terrain_manager") instance=ExtResource("9_entities")]
+[node name="EntityManager" parent="." unique_id=1285987309 node_paths=PackedStringArray("terrain_manager") instance=ExtResource("9_entities")]
 terrain_manager = NodePath("../TerrainManager")
 
-[node name="VehicleManager" type="Node" parent="." node_paths=PackedStringArray("player") groups=["vehicle_manager"]]
+[node name="VehicleManager" type="Node" parent="." unique_id=192407766 node_paths=PackedStringArray("player") groups=["vehicle_manager"]]
 script = ExtResource("10_vehicles")
 player = NodePath("../WorldPlayerV2")
 
-[node name="SelectionBox" type="MeshInstance3D" parent="."]
+[node name="SelectionBox" type="MeshInstance3D" parent="." unique_id=1017420439]
 visible = false
 mesh = SubResource("BoxMesh_selection")
 surface_material_override/0 = SubResource("StandardMaterial3D_selection")
 
-[node name="BuildingGenerator" type="Node3D" parent="." node_paths=PackedStringArray("prefab_spawner", "terrain_manager")]
+[node name="BuildingGenerator" type="Node3D" parent="." unique_id=1053176188 node_paths=PackedStringArray("prefab_spawner", "terrain_manager")]
 script = ExtResource("12_building_generator")
 prefab_spawner = NodePath("../PrefabSpawner")
 terrain_manager = NodePath("../TerrainManager")
 
-[node name="DebugTeleporter" type="Node" parent="."]
+[node name="DebugTeleporter" type="Node" parent="." unique_id=870446265]
 script = ExtResource("13_debug")
 
-[node name="LoadingScreen" parent="." instance=ExtResource("14_loading")]
+[node name="LoadingScreen" parent="." unique_id=698491220 instance=ExtResource("14_loading")]
 
-[node name="MovementBot" type="Node" parent="."]
+[node name="MovementBot" type="Node" parent="." unique_id=1669615035]
 script = ExtResource("15_bot")

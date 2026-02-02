@@ -1,4 +1,4 @@
-[gd_resource type="Resource" script_class="DebugPreset" load_steps=2 format=3 uid="uid://dh38betf5v1fs"]
+[gd_resource type="Resource" script_class="DebugPreset" format=3 uid="uid://dh38betf5v1fs"]
 
 [ext_resource type="Script" uid="uid://d3qmvfb1idfts" path="res://modules/debug_module/debug_preset.gd" id="1"]
 

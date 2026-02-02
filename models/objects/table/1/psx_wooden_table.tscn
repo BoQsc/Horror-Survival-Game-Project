@@ -1,8 +1,8 @@
-[gd_scene load_steps=2 format=3 uid="uid://cjxk8n3dpwl7r"]
+[gd_scene format=3 uid="uid://cjxk8n3dpwl7r"]
 
 [ext_resource type="PackedScene" uid="uid://b136ef17311m2" path="res://models/objects/table/1/psx_wooden_table.glb" id="1_table"]
 
-[node name="WoodenTable" type="Node3D"]
+[node name="WoodenTable" type="Node3D" unique_id=725416520]
 
-[node name="TableModel" parent="." instance=ExtResource("1_table")]
+[node name="TableModel" parent="." unique_id=1245058612 instance=ExtResource("1_table")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 0.8463341, -0.009635806, 0, 0.03223294)

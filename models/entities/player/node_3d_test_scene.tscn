@@ -1,13 +1,13 @@
-[gd_scene load_steps=3 format=3 uid="uid://dusp0hitkv8d0"]
+[gd_scene format=3 uid="uid://dusp0hitkv8d0"]
 
 [ext_resource type="PackedScene" uid="uid://be1binfphvmu0" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/Superhero_Male_FullBody.gltf" id="1_pwhec"]
 [ext_resource type="AnimationLibrary" uid="uid://cul84upoj7eq7" path="res://models/entities/player/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb" id="2_oayt6"]
 
-[node name="Node3dTestScene" type="Node3D"]
+[node name="Node3dTestScene" type="Node3D" unique_id=1829496466]
 
-[node name="Superhero_Male_FullBody" parent="." instance=ExtResource("1_pwhec")]
+[node name="Superhero_Male_FullBody" parent="." unique_id=384777518 instance=ExtResource("1_pwhec")]
 
-[node name="GeneralSkeleton" parent="Superhero_Male_FullBody/Armature" index="0"]
+[node name="GeneralSkeleton" parent="Superhero_Male_FullBody/Armature" parent_id_path=PackedInt32Array(384777518, 1162859224) index="0" unique_id=495731351]
 bones/1/position = Vector3(-0.017148115, 0.8420209, -0.05858512)
 bones/1/rotation = Quaternion(0.049559444, 0.0021041625, -0.042366628, 0.9978701)
 bones/3/rotation = Quaternion(0.08276675, -0.08574591, 0.030762302, 0.9923966)
@@ -61,9 +61,7 @@ bones/61/rotation = Quaternion(-0.0018678583, 0.994403, -0.10554378, -0.00444943
 bones/62/rotation = Quaternion(-0.06950274, 0.7346937, -0.6746438, -0.015821138)
 bones/63/rotation = Quaternion(-3.1501894e-08, 0.9999532, 0.009681463, -1.6779929e-09)
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="Superhero_Male_FullBody"]
-libraries = {
-&"AnimationLibrary_Godot_Standard": ExtResource("2_oayt6")
-}
+[node name="AnimationPlayer" type="AnimationPlayer" parent="Superhero_Male_FullBody" unique_id=1280506922]
+libraries/AnimationLibrary_Godot_Standard = ExtResource("2_oayt6")
 
 [editable path="Superhero_Male_FullBody"]

@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://dcvqp5qoe32ho"]
+[gd_scene format=3 uid="uid://dcvqp5qoe32ho"]
 
 [ext_resource type="PackedScene" uid="uid://drqqs2s0kk1da" path="res://game/assets/player_pickaxe/1/animated_fps_axe.glb" id="1_g06f0"]
 [ext_resource type="PackedScene" uid="uid://3sp2fvyrqds8" path="res://game/assets/PSX_Tools_GLTF/Pickaxe.glb" id="2_l3r5l"]
@@ -7,9 +7,9 @@
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_67n8c"]
 albedo_texture = ExtResource("3_bmcki")
 
-[node name="Sketchfab_Scene" instance=ExtResource("1_g06f0")]
+[node name="Sketchfab_Scene" unique_id=1140126433 instance=ExtResource("1_g06f0")]
 
-[node name="Skeleton3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4" index="0"]
+[node name="Skeleton3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4" parent_id_path=PackedInt32Array(2057631108) index="0" unique_id=1228575093]
 bones/2/position = Vector3(0, 42.235878, 0)
 bones/5/position = Vector3(-1.167923, -4.6649017, 9.044511)
 bones/6/rotation = Quaternion(0.40887606, -0.081989214, -0.10024227, 0.90335464)
@@ -86,18 +86,18 @@ bones/80/position = Vector3(0.004781723, 0.01733017, 1.9161873)
 bones/81/rotation = Quaternion(0.15394966, 2.4506525e-07, -8.445329e-07, 0.9880788)
 bones/82/position = Vector3(-0.5917015, -0.22965527, 12.104855)
 
-[node name="BoneAttachment3D" type="BoneAttachment3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="0"]
+[node name="BoneAttachment3D" type="BoneAttachment3D" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="0" unique_id=276928642]
 transform = Transform3D(0.6284963, 0.69843704, -0.3423132, 0.66361254, -0.7110614, -0.2324009, -0.40572307, -0.081100136, -0.9103909, -23.021881, 42.220074, 28.41932)
 bone_name = "Index_Distal_R_013_scaleCompensation"
 bone_idx = 24
 
-[node name="Pickaxe2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="0" instance=ExtResource("2_l3r5l")]
+[node name="Pickaxe2" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D" index="0" unique_id=1535202891 instance=ExtResource("2_l3r5l")]
 transform = Transform3D(0.74666977, 27.741224, 14.840073, -31.29853, -0.8522922, 3.1679966, 3.1945417, -14.834382, 27.56985, 5.6997786, -2.33041, -2.903328)
 
-[node name="Pickaxe" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Pickaxe2" index="0"]
+[node name="Pickaxe" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Pickaxe2" index="0" unique_id=1901019631]
 material_override = SubResource("StandardMaterial3D_67n8c")
 
-[node name="Object_7" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="1"]
+[node name="Object_7" parent="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D" index="1" unique_id=1555432335]
 visible = false
 
 [editable path="Sketchfab_model/9332242f24e24f078b2c8a68859fc8cf_fbx/Object_2/RootNode/Object_4/Skeleton3D/BoneAttachment3D/Pickaxe2"]

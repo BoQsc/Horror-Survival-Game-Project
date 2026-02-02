@@ -1,4 +1,4 @@
-[gd_scene load_steps=23 format=3 uid="uid://b8dotn0iuivrd"]
+[gd_scene format=3 uid="uid://b8dotn0iuivrd"]
 
 [ext_resource type="Script" uid="uid://xuh2opiptmhm" path="res://modules/world_player_v2/player.gd" id="1_player"]
 [ext_resource type="Script" uid="uid://c8y54d5s4ct3h" path="res://modules/world_player_v2/features/body_movement/player_movement.gd" id="2_movement"]
@@ -26,80 +26,80 @@
 radius = 0.4
 height = 1.8
 
-[node name="WorldPlayerV2" type="CharacterBody3D" groups=["player"]]
+[node name="WorldPlayerV2" type="CharacterBody3D" unique_id=1407863051 groups=["player"]]
 collision_layer = 3
 collision_mask = 141
 script = ExtResource("1_player")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1230838101]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 shape = SubResource("CapsuleShape3D_1")
 
-[node name="Camera3D" type="Camera3D" parent="."]
+[node name="Camera3D" type="Camera3D" parent="." unique_id=99209871]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
 current = true
 
-[node name="Components" type="Node" parent="."]
+[node name="Components" type="Node" parent="." unique_id=1427498458]
 
-[node name="Movement" type="Node" parent="Components"]
+[node name="Movement" type="Node" parent="Components" unique_id=220644372]
 script = ExtResource("2_movement")
 
-[node name="Crouch" type="Node" parent="Components"]
+[node name="Crouch" type="Node" parent="Components" unique_id=2002990050]
 script = ExtResource("20_crouch")
 
-[node name="Camera" type="Node" parent="Components"]
+[node name="Camera" type="Node" parent="Components" unique_id=203183034]
 script = ExtResource("3_camera")
 
-[node name="Interaction" type="Node" parent="Components"]
+[node name="Interaction" type="Node" parent="Components" unique_id=1375155833]
 script = ExtResource("11_interaction")
 
-[node name="Combat" type="Node" parent="Components"]
+[node name="Combat" type="Node" parent="Components" unique_id=1873923154]
 script = ExtResource("12_combat")
 
-[node name="FirstPersonArms" type="Node" parent="Components"]
+[node name="FirstPersonArms" type="Node" parent="Components" unique_id=225734447]
 script = ExtResource("15_arms")
 
-[node name="FirstPersonPistol" type="Node" parent="Components"]
+[node name="FirstPersonPistol" type="Node" parent="Components" unique_id=1493372584]
 script = ExtResource("16_pistol")
 
-[node name="FirstPersonAxe" type="Node" parent="Components"]
+[node name="FirstPersonAxe" type="Node" parent="Components" unique_id=1382367844]
 script = ExtResource("17_axe")
 
-[node name="FirstPersonPickaxe" type="Node" parent="Components"]
+[node name="FirstPersonPickaxe" type="Node" parent="Components" unique_id=189054909]
 script = ExtResource("18_pickaxe")
 
-[node name="FirstPersonShovel" type="Node" parent="Components"]
+[node name="FirstPersonShovel" type="Node" parent="Components" unique_id=1725517849]
 script = ExtResource("18_shovel")
 
-[node name="FirstPersonTerraformer" type="Node" parent="Components"]
+[node name="FirstPersonTerraformer" type="Node" parent="Components" unique_id=1390293725]
 script = ExtResource("19_terraformer")
 
-[node name="Systems" type="Node" parent="."]
+[node name="Systems" type="Node" parent="." unique_id=2037328224]
 
-[node name="Hotbar" type="Node" parent="Systems"]
+[node name="Hotbar" type="Node" parent="Systems" unique_id=1640631760]
 script = ExtResource("4_hotbar")
 
-[node name="ModeManager" type="Node" parent="Systems"]
+[node name="ModeManager" type="Node" parent="Systems" unique_id=426304060]
 script = ExtResource("5_mode_manager")
 
-[node name="ItemUseRouter" type="Node" parent="Systems"]
+[node name="ItemUseRouter" type="Node" parent="Systems" unique_id=1589343242]
 script = ExtResource("6_item_router")
 
-[node name="Inventory" type="Node" parent="Systems"]
+[node name="Inventory" type="Node" parent="Systems" unique_id=20864748]
 script = ExtResource("10_inventory")
 
-[node name="Modes" type="Node" parent="."]
+[node name="Modes" type="Node" parent="." unique_id=696676715]
 
-[node name="CombatSystem" type="Node" parent="Modes"]
+[node name="CombatSystem" type="Node" parent="Modes" unique_id=290197051]
 script = ExtResource("7_combat_system")
 
-[node name="ModeBuild" type="Node" parent="Modes"]
+[node name="ModeBuild" type="Node" parent="Modes" unique_id=1665229686]
 script = ExtResource("8_mode_build")
 
-[node name="ModeEditor" type="Node" parent="Modes"]
+[node name="ModeEditor" type="Node" parent="Modes" unique_id=689688287]
 script = ExtResource("9_mode_editor")
 
-[node name="TerrainInteraction" type="Node" parent="Modes"]
+[node name="TerrainInteraction" type="Node" parent="Modes" unique_id=1896542659]
 script = ExtResource("18_terrain")
 
-[node name="PlayerHUD" parent="." instance=ExtResource("13_hud")]
+[node name="PlayerHUD" parent="." unique_id=871822519 instance=ExtResource("13_hud")]

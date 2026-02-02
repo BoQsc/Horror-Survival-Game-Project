@@ -1,4 +1,4 @@
-[gd_scene load_steps=3 format=3 uid="uid://dh7g2mqnl5t8f"]
+[gd_scene format=3 uid="uid://dh7g2mqnl5t8f"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_box"]
 size = Vector3(1.9, 0.1, 1.9)
@@ -6,30 +6,30 @@ size = Vector3(1.9, 0.1, 1.9)
 [sub_resource type="BoxShape3D" id="BoxShape3D_col"]
 size = Vector3(1.9, 0.9, 1.9)
 
-[node name="Table" type="Node3D" groups=["objects"]]
+[node name="Table" type="Node3D" unique_id=495006315 groups=["objects"]]
 
-[node name="TableTop" type="MeshInstance3D" parent="."]
+[node name="TableTop" type="MeshInstance3D" parent="." unique_id=167807177]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5, 0.85, 0.5)
 mesh = SubResource("BoxMesh_box")
 
-[node name="Leg1" type="MeshInstance3D" parent="."]
+[node name="Leg1" type="MeshInstance3D" parent="." unique_id=27871681]
 transform = Transform3D(0.1, 0, 0, 0, 0.4, 0, 0, 0, 0.1, 0.1, 0.4, 0.1)
 mesh = SubResource("BoxMesh_box")
 
-[node name="Leg2" type="MeshInstance3D" parent="."]
+[node name="Leg2" type="MeshInstance3D" parent="." unique_id=1853406733]
 transform = Transform3D(0.1, 0, 0, 0, 0.4, 0, 0, 0, 0.1, 0.9, 0.4, 0.1)
 mesh = SubResource("BoxMesh_box")
 
-[node name="Leg3" type="MeshInstance3D" parent="."]
+[node name="Leg3" type="MeshInstance3D" parent="." unique_id=1444127393]
 transform = Transform3D(0.1, 0, 0, 0, 0.4, 0, 0, 0, 0.1, 0.1, 0.4, 0.9)
 mesh = SubResource("BoxMesh_box")
 
-[node name="Leg4" type="MeshInstance3D" parent="."]
+[node name="Leg4" type="MeshInstance3D" parent="." unique_id=1801836650]
 transform = Transform3D(0.1, 0, 0, 0, 0.4, 0, 0, 0, 0.1, 0.9, 0.4, 0.9)
 mesh = SubResource("BoxMesh_box")
 
-[node name="StaticBody3D" type="StaticBody3D" parent="."]
+[node name="StaticBody3D" type="StaticBody3D" parent="." unique_id=328222180]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.5, 0.45, 0.5)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D" unique_id=2137245380]
 shape = SubResource("BoxShape3D_col")

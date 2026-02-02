@@ -1,8 +1,8 @@
-[gd_scene load_steps=2 format=3 uid="uid://67wx1k6uu5nj"]
+[gd_scene format=3 uid="uid://67wx1k6uu5nj"]
 
 [ext_resource type="PackedScene" uid="uid://drk8pkv75dikl" path="res://models/objects/window/1/window.glb" id="1_window"]
 
-[node name="Window" type="Node3D"]
+[node name="Window" type="Node3D" unique_id=1628956002]
 
-[node name="WindowModel" parent="." instance=ExtResource("1_window")]
+[node name="WindowModel" parent="." unique_id=203419837 instance=ExtResource("1_window")]
 transform = Transform3D(0.51306266, 0, 0, 0, 0.5053189, 0, 0, 0, 1.251, -0.025541507, 0.4883341, 0.4110645)
