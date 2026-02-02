@@ -1,0 +1,45 @@
+name: "Continuous Pre-Imported Release"
+
+on:
+  push:
+    branches: [ "**" ] # Listens to all branches
+
+jobs:
+  build-and-release:
+    # Only executes if the branch being pushed is the repository's default branch
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to upload releases
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.3.0 # Ensure this matches your local Godot version
+
+      - name: Headless Import
+        # Triggers Godot to generate the .godot/imported and uid_cache files
+        run: |
+          godot --headless --editor --quit --path .
+
+      - name: Package Asset
+        # Zips the project while excluding local-only metadata and git history
+        run: |
+          zip -r pre_imported_asset.zip . \
+          -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
+
+      - name: Update Release
+        uses: andelf/nightly-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: latest
+          name: "Latest Pre-Imported Build"
+          body: |
+            This is an automated build of the latest version.
+            **Note:** This version includes the `.godot` folder for instant loading.
+          files: pre_imported_asset.zip
