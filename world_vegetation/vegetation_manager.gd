@@ -1,4 +1,6 @@
 extends Node3D
+class_name VegetationManager
+
 
 signal tree_chopped(world_position: Vector3)
 signal grass_harvested(world_position: Vector3)
