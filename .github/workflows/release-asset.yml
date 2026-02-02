@@ -15,26 +15,26 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Godot
+      - name: Setup Godot (Mono/C#)
         uses: chickensoft-games/setup-godot@v2
         with:
-          # Using .mono. version since your logs show you are using the Mono/C# version
-          version: 4.3.0 
+          version: 4.3.0
           use-dotnet: true 
 
-      - name: Headless Import (Warm-up)
-        # We use --import first. This is less "picky" than --editor.
-        # || true ensures the workflow doesn't stop if Godot throws minor errors.
+      - name: Headless Import (Shader Pass)
+        # Using opengl3 forces the engine to initialize a software rendering device 
+        # that can compile GLSL shaders without a physical GPU.
         run: |
-          godot --headless --audio-driver Dummy --import --path . || true
+          godot --headless --audio-driver Dummy --rendering-driver opengl3 --import --path . || true
 
-      - name: Headless Editor (Finalize)
-        # This second pass generates the uid_cache and finalizes metadata.
-        # We give it a timeout so it doesn't hang if it loops.
+      - name: Headless Editor (Metadata Pass)
+        # This pass generates the .godot/imported/ folder and uid_cache.
+        # We give it a 60s timeout to prevent hanging.
         run: |
-          timeout 60s godot --headless --audio-driver Dummy --editor --quit --path . || true
+          timeout 60s godot --headless --audio-driver Dummy --rendering-driver opengl3 --editor --quit --path . || true
 
       - name: Package Asset
+        # This zip command ensures we take the imported data but leave your local editor junk.
         run: |
           zip -r pre_imported_asset.zip . \
           -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
@@ -46,5 +46,5 @@ jobs:
         with:
           tag_name: latest
           name: "Latest Pre-Imported Build"
-          body: "Includes pre-imported .godot folder. Built on $(date)."
+          body: "This build includes the pre-imported .godot folder for instant setup."
           files: pre_imported_asset.zip
