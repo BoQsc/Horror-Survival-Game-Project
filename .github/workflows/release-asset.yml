@@ -7,7 +7,10 @@ on:
 jobs:
   build-and-release:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Using a Docker container that has Vulkan/Mesa pre-installed and configured
     runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
     permissions:
       contents: write
 
@@ -15,19 +18,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Godot (Mono/C#)
-        uses: chickensoft-games/setup-godot@v2
-        with:
-          version: 4.3.0
-          use-dotnet: true 
-
-      - name: Install Mesa, Xvfb, and Vulkan Tools
-        run: |
-          sudo apt-get update
-          # We add vulkan-tools and libvulkan-dev to ensure the KHR extensions are visible
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 mesa-utils xvfb vulkan-tools libvulkan-dev
-
-      - name: Patch Project Settings (Force Forward+)
+      - name: Patch Project Settings (Unlock GLSL)
         run: |
           sed -i 's/rendering_method="gl_compatibility"/rendering_method="forward_plus"/g' project.godot
           sed -i 's/rendering_method.mobile="gl_compatibility"/rendering_method.mobile="forward_plus"/g' project.godot
@@ -43,39 +34,19 @@ jobs:
             fi
           done
 
-      - name: Import Assets (Manual X11 + Lavapipe)
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          GALLIUM_DRIVER: "llvmpipe"
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          DISPLAY: ":99"
+      - name: Import Assets
         run: |
-          # 1. Start Xvfb in the background
-          Xvfb :99 -screen 0 1280x720x24 &
-          sleep 3 # Give the X server time to initialize
-          
-          # 2. Run Godot to import assets
-          # We use the vulkan driver because RDShaders require it to compile
-          godot --audio-driver Dummy --rendering-driver vulkan --import --path . || true
-
-      - name: Finalize Metadata (Editor Pass)
-        env:
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          GALLIUM_DRIVER: "llvmpipe"
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-          DISPLAY: ":99"
-        run: |
-          # Second pass to ensure all UIDs and .godot paths are finalized
-          timeout 60s godot --audio-driver Dummy --rendering-driver vulkan --editor --quit --path . || true
+          # This container has a 'virtual' GPU already configured
+          godot --headless --audio-driver Dummy --import --path . || true
 
       - name: Verify SPIR-V Generation
         run: |
-          echo "--- Searching for compiled .res files in .godot/imported ---"
-          # Look specifically for the files that your GDScript was failing to find
-          find .godot/imported/ -name "*.res" | xargs du -h || echo "❌ Shaders failed to compile!"
+          echo "--- Checking for compiled shaders ---"
+          find .godot/imported/ -name "*.res" | xargs du -h || echo "❌ Shaders missing!"
 
       - name: Package Asset
         run: |
+          apt-get update && apt-get install -y zip
           zip -r pre_imported_asset.zip . \
           -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
 
@@ -86,5 +57,4 @@ jobs:
         with:
           tag_name: latest
           name: "Latest Pre-Imported Build"
-          body: "Smart build: Fixed Vulkan Surface error using manual X11 display and Lavapipe."
           files: pre_imported_asset.zip
