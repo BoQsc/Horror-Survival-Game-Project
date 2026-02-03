@@ -7,7 +7,6 @@ on:
 jobs:
   build-and-release:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    # Using a Docker container that has Vulkan/Mesa pre-installed and configured
     runs-on: ubuntu-latest
     container:
       image: barichello/godot-ci:4.3
@@ -34,15 +33,27 @@ jobs:
             fi
           done
 
-      - name: Import Assets
+      - name: Import Assets (Bypass Headless Block)
         run: |
-          # This container has a 'virtual' GPU already configured
-          godot --headless --audio-driver Dummy --import --path . || true
+          # Install virtual display and software GPU drivers inside the container
+          apt-get update && apt-get install -y xvfb libvulkan1 mesa-vulkan-drivers
+          
+          # We REMOVE --headless and use xvfb-run. 
+          # This is the only way Godot 4.3 allows GLSL/SPIR-V compilation in CI.
+          xvfb-run --server-args="-screen 0 1024x768x24" \
+            godot --audio-driver Dummy --rendering-driver vulkan --import --path . || true
+
+      - name: Finalize Metadata (Virtual GUI Mode)
+        run: |
+          # Second pass to finalize .godot folder structure
+          timeout 60s xvfb-run --server-args="-screen 0 1024x768x24" \
+            godot --audio-driver Dummy --rendering-driver vulkan --editor --quit --path . || true
 
       - name: Verify SPIR-V Generation
         run: |
-          echo "--- Checking for compiled shaders ---"
-          find .godot/imported/ -name "*.res" | xargs du -h || echo "❌ Shaders missing!"
+          echo "--- Checking .godot/imported for compiled shader binaries ---"
+          # This lists the actual compiled results. If this is empty, the crash will persist.
+          find .godot/imported/ -name "*.res" | xargs du -h || echo "❌ No compiled shaders found!"
 
       - name: Package Asset
         run: |
@@ -57,4 +68,5 @@ jobs:
         with:
           tag_name: latest
           name: "Latest Pre-Imported Build"
+          body: "Bypassed Godot 4.3 headless GLSL restriction using Xvfb-run inside Docker."
           files: pre_imported_asset.zip
