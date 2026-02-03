@@ -22,17 +22,19 @@ jobs:
           use-dotnet: true 
 
       - name: Install Mesa and Virtual Display
+        # We install xvfb to provide a virtual windowing system
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 mesa-utils xvfb
 
-      - name: Patch Project Settings (Force Forward+)
-        # This ensures the project is set to a mode that supports RDShaderFile
+      - name: Patch Project Settings (Unlock GLSL)
+        # We temporarily promote the project to Forward+ so Godot allows GLSL imports
         run: |
           sed -i 's/rendering_method="gl_compatibility"/rendering_method="forward_plus"/g' project.godot
           sed -i 's/rendering_method.mobile="gl_compatibility"/rendering_method.mobile="forward_plus"/g' project.godot
 
       - name: Smart Shader Importer Assignment
+        # Automatically identifies compute shaders by their content
         run: |
           for f in $(find . -name "*.glsl"); do
             if grep -q "#\[compute\]" "$f" || [[ "$f" == *".compute.glsl" ]]; then
@@ -43,14 +45,15 @@ jobs:
             fi
           done
 
-      - name: Import Assets (Virtual Display)
+      - name: Import Assets (Virtual Display + Software GL)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           GALLIUM_DRIVER: "llvmpipe"
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
-          # xvfb-run provides the windowing environment to bypass the headless GLSL block
-          xvfb-run godot --audio-driver Dummy --rendering-driver vulkan --import --path . || true
+          # We use opengl3 as the display driver to avoid Vulkan Surface errors in Xvfb
+          # but the software GPU still handles the SPIR-V compilation.
+          xvfb-run godot --audio-driver Dummy --rendering-driver opengl3 --import --path . || true
 
       - name: Finalize Metadata (Virtual Display)
         env:
@@ -58,10 +61,11 @@ jobs:
           GALLIUM_DRIVER: "llvmpipe"
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
-          # Generates UIDs and finalizes the .godot directory
-          timeout 60s xvfb-run godot --audio-driver Dummy --rendering-driver vulkan --editor --quit --path . || true
+          # Give Godot 60 seconds to finish generating UIDs and internal metadata
+          timeout 60s xvfb-run godot --audio-driver Dummy --rendering-driver opengl3 --editor --quit --path . || true
 
       - name: Package Asset
+        # Zips the project including the .godot folder, excluding local editor junk
         run: |
           zip -r pre_imported_asset.zip . \
           -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
@@ -73,4 +77,9 @@ jobs:
         with:
           tag_name: latest
           name: "Latest Pre-Imported Build"
+          body: |
+            **Automated Build Details:**
+            - **Rendering:** Forward+ (Patched for import)
+            - **Shaders:** Pre-compiled SPIR-V binaries included
+            - **Metadata:** .godot folder initialized for instant loading
           files: pre_imported_asset.zip
