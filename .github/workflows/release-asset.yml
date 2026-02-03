@@ -36,11 +36,11 @@ jobs:
           sed -i 's/rendering_method.mobile="gl_compatibility"/rendering_method.mobile="forward_plus"/g' project.godot
 
       - name: Import Assets (Bypass Headless Restriction)
-        # We use xvfb-run inside the container to avoid the "Headless GLSL" block
+        # Added libfontconfig1, libxcursor1, libxinerama1, and libxi6 to allow Xvfb/Godot to initialize
         run: |
-          apt-get update && apt-get install -y xvfb libvulkan1 mesa-vulkan-drivers
+          apt-get update && apt-get install -y xvfb libvulkan1 mesa-vulkan-drivers libfontconfig1 libxcursor1 libxinerama1 libxrandr2 libxi6
           xvfb-run --server-args="-screen 0 1024x768x24" \
-            godot --audio-driver Dummy --rendering-driver vulkan --import --path . || true
+            godot --audio-driver Dummy --rendering-driver vulkan --import --path .
 
       - name: Finalize Metadata (Virtual GUI Mode)
         run: |
@@ -50,21 +50,21 @@ jobs:
       - name: Verify SPIR-V Generation
         run: |
           echo "--- Verifying compiled shader binaries ---"
-          # Check if the .godot folder actually contains the compiled resources
           if [ -d ".godot/imported" ]; then
-            find .godot/imported/ -name "*.res" | xargs du -h || echo "⚠️ No .res files found in .godot/imported/"
+            # We expect to see many .res files here now. 
+            # If this list is empty, the DisplayServer likely failed again.
+            find .godot/imported/ -name "*.res" | xargs du -h || (echo "❌ No .res files found!" && exit 1)
           else
             echo "❌ ERROR: .godot/imported directory does not exist!"
             exit 1
           fi
 
       - name: Set Final Project Configuration
-        # Lock the project to Vulkan/Forward+ before packaging
         run: |
           # 1. Ensure method is Forward+
           sed -i 's/rendering_method="gl_compatibility"/rendering_method="forward_plus"/g' project.godot
           
-          # 2. Force Windows driver to Vulkan (more robustly)
+          # 2. Force Windows driver to Vulkan
           if grep -q "rendering/renderer/rendering_device/driver.windows" project.godot; then
             sed -i 's/rendering\/renderer\/rendering_device\/driver.windows=.*/rendering\/renderer\/rendering_device\/driver.windows="vulkan"/g' project.godot
           elif grep -q "\[rendering\]" project.godot; then
@@ -75,8 +75,9 @@ jobs:
 
       - name: Package Asset
         run: |
+          # Install zip if not present
           apt-get update && apt-get install -y zip
-          # Explicitly include the hidden .godot folder which contains the compiled SPIR-V
+          # Package the root and the now-populated .godot folder
           zip -r pre_imported_asset.zip . .godot \
           -x "*.git*" ".github/*"
 
@@ -91,5 +92,5 @@ jobs:
             **Automated Build Details:**
             - **Shaders:** Pre-compiled SPIR-V (Compute) binaries included in `.godot/`.
             - **Renderer:** Forced to **Forward+ (Vulkan)** for compute compatibility.
-            - **CI Method:** Xvfb-GUI Bypass (Godot 4.6).
+            - **CI Method:** Xvfb-GUI (with fix for missing X11 libs).
           files: pre_imported_asset.zip
