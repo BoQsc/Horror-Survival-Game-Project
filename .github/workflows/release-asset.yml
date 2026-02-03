@@ -6,6 +6,7 @@ on:
 
 jobs:
   build-and-release:
+    # Only run on the repository's default branch
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -22,29 +23,43 @@ jobs:
           use-dotnet: true 
 
       - name: Install Mesa Software Drivers
-        # This installs the software-based OpenGL/Vulkan drivers for Linux
+        # Ensures we have the 'llvmpipe' and 'lavapipe' software renderers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1-mesa
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1 mesa-utils
+
+      - name: Force Correct Importer Settings
+        # This fixes the "label" issue. It forces Godot to treat GLSL as 
+        # Compute Shaders (RDShaderFile) instead of plain text.
+        run: |
+          for f in $(find . -name "*.glsl"); do
+            echo "Forcing RDShader importer for $f"
+            echo '[remap]
+          importer="rd_shader"
+          type="RDShaderFile"' > "${f}.import"
+          done
 
       - name: Headless Import (Force Software GPU)
         env:
-          # These two variables tell the OS: "Do not look for a hardware GPU, use the CPU to render."
+          # Tell the system to use the CPU for Graphics/Compute
           LIBGL_ALWAYS_SOFTWARE: "1"
           GALLIUM_DRIVER: "llvmpipe"
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
-          # We use opengl3 because it is most compatible with software rendering
+          # Pass 1: Handle raw resource conversion
           godot --headless --audio-driver Dummy --rendering-driver opengl3 --import --path . || true
 
       - name: Headless Editor (Final Pass)
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           GALLIUM_DRIVER: "llvmpipe"
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
         run: |
-          # Second pass to ensure metadata/UIDs are finalized with the "GPU" active
+          # Pass 2: Finalize metadata and uid_cache
           timeout 60s godot --headless --audio-driver Dummy --rendering-driver opengl3 --editor --quit --path . || true
 
       - name: Package Asset
+        # Zips the project including the .godot/imported folder
         run: |
           zip -r pre_imported_asset.zip . \
           -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
@@ -56,4 +71,5 @@ jobs:
         with:
           tag_name: latest
           name: "Latest Pre-Imported Build"
+          body: "Automated build with pre-compiled shaders and .godot metadata."
           files: pre_imported_asset.zip
