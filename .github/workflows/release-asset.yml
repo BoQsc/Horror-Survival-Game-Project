@@ -50,26 +50,34 @@ jobs:
       - name: Verify SPIR-V Generation
         run: |
           echo "--- Verifying compiled shader binaries ---"
-          find .godot/imported/ -name "*.res" | xargs du -h || echo "❌ No compiled shaders found!"
+          # Check if the .godot folder actually contains the compiled resources
+          if [ -d ".godot/imported" ]; then
+            find .godot/imported/ -name "*.res" | xargs du -h || echo "⚠️ No .res files found in .godot/imported/"
+          else
+            echo "❌ ERROR: .godot/imported directory does not exist!"
+            exit 1
+          fi
 
       - name: Set Final Project Configuration
         # Lock the project to Vulkan/Forward+ before packaging
         run: |
           # 1. Ensure method is Forward+
           sed -i 's/rendering_method="gl_compatibility"/rendering_method="forward_plus"/g' project.godot
-          # 2. Force Windows driver to Vulkan (overwrites D3D12 fallbacks from CI logs)
+          
+          # 2. Force Windows driver to Vulkan (more robustly)
           if grep -q "rendering/renderer/rendering_device/driver.windows" project.godot; then
             sed -i 's/rendering\/renderer\/rendering_device\/driver.windows=.*/rendering\/renderer\/rendering_device\/driver.windows="vulkan"/g' project.godot
+          elif grep -q "\[rendering\]" project.godot; then
+            sed -i '/\[rendering\]/a renderer/rendering_device/driver.windows="vulkan"' project.godot
           else
-            echo '' >> project.godot
-            echo '[rendering]' >> project.godot
-            echo 'renderer/rendering_device/driver.windows="vulkan"' >> project.godot
+            echo -e '\n[rendering]\nrenderer/rendering_device/driver.windows="vulkan"' >> project.godot
           fi
 
       - name: Package Asset
         run: |
           apt-get update && apt-get install -y zip
-          zip -r pre_imported_asset.zip . \
+          # Explicitly include the hidden .godot folder which contains the compiled SPIR-V
+          zip -r pre_imported_asset.zip . .godot \
           -x "*.git*" ".github/*"
 
       - name: Update Release
@@ -81,7 +89,7 @@ jobs:
           name: "Latest Pre-Imported Build"
           body: |
             **Automated Build Details:**
-            - **Shaders:** Pre-compiled SPIR-V (Compute) binaries included.
+            - **Shaders:** Pre-compiled SPIR-V (Compute) binaries included in `.godot/`.
             - **Renderer:** Forced to **Forward+ (Vulkan)** for compute compatibility.
-            - **CI Method:** Xvfb-GUI Bypass (Godot 4.3).
+            - **CI Method:** Xvfb-GUI Bypass (Godot 4.6).
           files: pre_imported_asset.zip
