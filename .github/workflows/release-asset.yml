@@ -21,20 +21,30 @@ jobs:
           version: 4.3.0
           use-dotnet: true 
 
-      - name: Headless Import (Shader Pass)
-        # Using opengl3 forces the engine to initialize a software rendering device 
-        # that can compile GLSL shaders without a physical GPU.
+      - name: Install Mesa Software Drivers
+        # This installs the software-based OpenGL/Vulkan drivers for Linux
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers libegl1-mesa
+
+      - name: Headless Import (Force Software GPU)
+        env:
+          # These two variables tell the OS: "Do not look for a hardware GPU, use the CPU to render."
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: "llvmpipe"
+        run: |
+          # We use opengl3 because it is most compatible with software rendering
           godot --headless --audio-driver Dummy --rendering-driver opengl3 --import --path . || true
 
-      - name: Headless Editor (Metadata Pass)
-        # This pass generates the .godot/imported/ folder and uid_cache.
-        # We give it a 60s timeout to prevent hanging.
+      - name: Headless Editor (Final Pass)
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: "llvmpipe"
         run: |
+          # Second pass to ensure metadata/UIDs are finalized with the "GPU" active
           timeout 60s godot --headless --audio-driver Dummy --rendering-driver opengl3 --editor --quit --path . || true
 
       - name: Package Asset
-        # This zip command ensures we take the imported data but leave your local editor junk.
         run: |
           zip -r pre_imported_asset.zip . \
           -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
@@ -46,5 +56,4 @@ jobs:
         with:
           tag_name: latest
           name: "Latest Pre-Imported Build"
-          body: "This build includes the pre-imported .godot folder for instant setup."
           files: pre_imported_asset.zip
