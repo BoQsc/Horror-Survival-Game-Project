@@ -70,7 +70,7 @@ jobs:
         run: |
           apt-get update && apt-get install -y zip
           zip -r pre_imported_asset.zip . \
-          -x "*.git*" ".github/*" ".godot/editor/*" ".godot/shader_cache/*"
+          -x "*.git*" ".github/*"
 
       - name: Update Release
         uses: andelf/nightly-release@v1
