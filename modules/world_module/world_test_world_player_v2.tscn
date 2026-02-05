@@ -82,7 +82,7 @@ mouse_filter = 2
 [node name="TerrainManager" type="Node3D" parent="." unique_id=665583371 node_paths=PackedStringArray("viewer") groups=["terrain_manager"]]
 script = ExtResource("4_terrain")
 viewer = NodePath("../WorldPlayerV2")
-crystal_cell_size = 10.0
+crystal_cell_size = 2.0
 min_finalization_interval_ms = 0
 exploration_delay_ms = 0
 
