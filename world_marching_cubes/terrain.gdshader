@@ -44,6 +44,8 @@ uniform bool has_material_map = false;  // Whether this chunk has player-placed 
 // Debug visualization
 uniform bool debug_show_chunk_bounds = false;  // Toggle to show chunk boundary lines
 uniform bool debug_show_road_zones = false;   // Toggle to show road zone detection
+uniform bool debug_show_crystal_seams = false; // Toggle to show diamond grid seams
+uniform float crystal_cell_size = 2.0;         // Size of diamond cells for seam visualization
 
 varying vec3 world_pos;
 varying vec3 world_normal;
@@ -338,5 +340,21 @@ void fragment() {
 		if (dist_y < line_width) {
 			ALBEDO = mix(ALBEDO, vec3(0.0, 0.0, 1.0), 0.8);  // Blue for Y bounds
 		}
+	}
+	
+	// --- Debug: Crystal Seam Visualization ---
+	// Shows diamond grid boundaries where terrain will break predictably
+	if (debug_show_crystal_seams) {
+		// Manhattan distance creates diamond-shaped cells
+		// We calculate position within a repeating diamond cell
+		float manhattan = abs(world_pos.x) + abs(world_pos.y) + abs(world_pos.z);
+		float cell_pos = mod(manhattan, crystal_cell_size);
+		
+		// Draw seams at cell boundaries (where cell_pos is near 0 or crystal_cell_size)
+		float seam_width = 0.15;
+		float seam = 1.0 - smoothstep(0.0, seam_width, cell_pos) * smoothstep(0.0, seam_width, crystal_cell_size - cell_pos);
+		
+		// Subtle dark seams to show break lines
+		ALBEDO = mix(ALBEDO, vec3(0.1, 0.08, 0.06), seam * 0.5);
 	}
 }

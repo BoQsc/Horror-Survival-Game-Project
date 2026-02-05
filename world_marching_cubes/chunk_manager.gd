@@ -33,6 +33,11 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var procedural_road_width: float = 8.0 # Width of roads
 @export var debug_show_road_zones: bool = false # Debug: show road alignment (Yellow=correct, Red=spillover, Green=crack)
 
+## Crystalline Terrain (diamond grid quantization)
+## 0 = smooth terrain (default), >0 = quantize to diamond cells of this size
+## Try values like 2.0 for visible crystalline structure
+@export var crystal_cell_size: float = 0.0
+
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
 var mutex: Mutex
@@ -1313,7 +1318,9 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
 	# Pass 0.0 for road spacing if disabled
 	var actual_road_spacing = procedural_road_spacing if procedural_roads_enabled else 0.0
-	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, terrain_height, actual_road_spacing, procedural_road_width])
+	# Push constant: 48 bytes = 12 floats (GLSL pads to 16-byte alignment)
+	# vec4 (4) + 5 floats + 3 padding = 12 floats
+	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, terrain_height, actual_road_spacing, procedural_road_width, crystal_cell_size, 0.0, 0.0, 0.0])
 	rd.compute_list_set_push_constant(list, push_data_t.to_byte_array(), push_data_t.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()

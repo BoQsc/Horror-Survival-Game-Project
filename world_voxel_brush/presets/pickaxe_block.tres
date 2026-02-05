@@ -5,6 +5,6 @@
 [resource]
 script = ExtResource("1_script")
 display_name = "Block Pickaxe"
-shape_type = 1
-radius = 0.6
+shape_type = 3
+radius = 2.0
 snap_to_grid = true

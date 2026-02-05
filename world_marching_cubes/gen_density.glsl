@@ -1,5 +1,6 @@
 #[compute]
 #version 450
+// v2: Added crystal_cell_size for diamond grid quantization
 
 // 33x33x33 grid points to cover a 32x32x32 voxel chunk + 1 neighbor edge
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
@@ -20,6 +21,7 @@ layout(push_constant) uniform PushConstants {
     float terrain_height;
     float road_spacing;  // Grid spacing for roads (0 = no procedural roads)
     float road_width;    // Width of roads
+    float crystal_cell_size; // 0 = smooth terrain, >0 = quantize to diamond cells
 } params;
 
 // === Noise Functions ===
@@ -157,11 +159,31 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
 float get_density(vec3 pos) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     
-    // Base terrain
+    // Optional: Quantize to diamond grid for crystalline terrain
+    // When crystal_cell_size > 0, density is sampled at diamond cell centers
+    // This creates discrete "breakable units" that match the diamond brush
+    vec3 sample_pos = world_pos;
+    if (params.crystal_cell_size > 0.0) {
+        // Calculate which diamond cell this voxel belongs to
+        // Diamond cells are defined by Manhattan distance layers
+        float manhattan = abs(world_pos.x) + abs(world_pos.y) + abs(world_pos.z);
+        float cell_index = floor(manhattan / params.crystal_cell_size);
+        
+        // Snap to cell center by quantizing each axis contribution
+        // This creates a stepped effect where each diamond shell has uniform density
+        float cell_center_manhattan = (cell_index + 0.5) * params.crystal_cell_size;
+        float current_manhattan = manhattan;
+        if (current_manhattan > 0.001) {
+            float scale = cell_center_manhattan / current_manhattan;
+            sample_pos = world_pos * scale;
+        }
+    }
+    
+    // Base terrain (use sample_pos for quantized, world_pos for smooth)
     float base_height = params.terrain_height;
-    float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height; 
+    float hill_height = noise(vec3(sample_pos.x, 0.0, sample_pos.z) * params.noise_freq) * params.terrain_height; 
     float terrain_height = base_height + hill_height;
-    float density = world_pos.y - terrain_height;
+    float density = world_pos.y - terrain_height;  // Use world_pos.y for correct height
     
     // Procedural roads
     float road_height;

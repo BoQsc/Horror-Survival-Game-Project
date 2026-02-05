@@ -160,40 +160,46 @@ void main() {
         uint mat_id = get_material_from_buffer(pos + vec3(0.5));
         vec3 mat_color = material_to_color(mat_id);
         
+        // FLAT SHADING: Calculate ONE normal per triangle (face normal)
+        // This creates sharp, faceted edges instead of smooth interpolation
+        vec3 edge1 = v2 - v1;
+        vec3 edge2 = v3 - v1;
+        vec3 face_normal = normalize(cross(edge1, edge2));
+        
+        // Use the same face normal for all 3 vertices (flat shading)
+        
         // Vertex 1
-        vec3 n1 = get_normal(v1);
         mesh_output.vertices[start_ptr + 0] = v1.x;
         mesh_output.vertices[start_ptr + 1] = v1.y;
         mesh_output.vertices[start_ptr + 2] = v1.z;
-        mesh_output.vertices[start_ptr + 3] = n1.x;
-        mesh_output.vertices[start_ptr + 4] = n1.y;
-        mesh_output.vertices[start_ptr + 5] = n1.z;
+        mesh_output.vertices[start_ptr + 3] = face_normal.x;
+        mesh_output.vertices[start_ptr + 4] = face_normal.y;
+        mesh_output.vertices[start_ptr + 5] = face_normal.z;
         mesh_output.vertices[start_ptr + 6] = mat_color.r;
         mesh_output.vertices[start_ptr + 7] = mat_color.g;
         mesh_output.vertices[start_ptr + 8] = mat_color.b;
         
         // Vertex 3 (note: order is 1,3,2 for winding)
-        vec3 n3 = get_normal(v3);
         mesh_output.vertices[start_ptr + 9] = v3.x;
         mesh_output.vertices[start_ptr + 10] = v3.y;
         mesh_output.vertices[start_ptr + 11] = v3.z;
-        mesh_output.vertices[start_ptr + 12] = n3.x;
-        mesh_output.vertices[start_ptr + 13] = n3.y;
-        mesh_output.vertices[start_ptr + 14] = n3.z;
+        mesh_output.vertices[start_ptr + 12] = face_normal.x;
+        mesh_output.vertices[start_ptr + 13] = face_normal.y;
+        mesh_output.vertices[start_ptr + 14] = face_normal.z;
         mesh_output.vertices[start_ptr + 15] = mat_color.r;
         mesh_output.vertices[start_ptr + 16] = mat_color.g;
         mesh_output.vertices[start_ptr + 17] = mat_color.b;
         
         // Vertex 2
-        vec3 n2 = get_normal(v2);
         mesh_output.vertices[start_ptr + 18] = v2.x;
         mesh_output.vertices[start_ptr + 19] = v2.y;
         mesh_output.vertices[start_ptr + 20] = v2.z;
-        mesh_output.vertices[start_ptr + 21] = n2.x;
-        mesh_output.vertices[start_ptr + 22] = n2.y;
-        mesh_output.vertices[start_ptr + 23] = n2.z;
+        mesh_output.vertices[start_ptr + 21] = face_normal.x;
+        mesh_output.vertices[start_ptr + 22] = face_normal.y;
+        mesh_output.vertices[start_ptr + 23] = face_normal.z;
         mesh_output.vertices[start_ptr + 24] = mat_color.r;
         mesh_output.vertices[start_ptr + 25] = mat_color.g;
         mesh_output.vertices[start_ptr + 26] = mat_color.b;
+
     }
 }
