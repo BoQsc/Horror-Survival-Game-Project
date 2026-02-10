@@ -158,22 +158,37 @@ func dig(hit: Dictionary, layer: int = LAYER_TERRAIN) -> bool:
 		# Blocky: dig single voxel
 		var pos = hit.position - hit.normal * 0.1
 		var target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z)) + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(target_pos, 0.6, 0.5, 1, layer) # Shape 1 = Box, 0.5 = dig
+		
+		var behavior = null
+		if brush_registry:
+			behavior = brush_registry.get_tool_brush("api_block")
+			
+		if behavior:
+			var old_layer = behavior.layer
+			behavior.layer = layer
+			behavior.apply(terrain_manager, target_pos, Vector3.UP)
+			behavior.layer = old_layer
+		else:
+			terrain_manager.modify_terrain(target_pos, 0.6, 0.5, 1, layer) # Fallback
+			
 		terrain_modified.emit(target_pos, layer)
 		print("TerrainAPI: Dig (blocky) at %s" % target_pos)
 	else:
 		# Smooth: dig sphere
 		var behavior = null
 		if brush_registry:
-			behavior = brush_registry.get_tool_brush("pickaxe_classic")
+			behavior = brush_registry.get_tool_brush("api_sphere")
 		
-		var radius_to_use = brush_size
 		if behavior:
-			radius_to_use = behavior.radius
+			var old_layer = behavior.layer
+			behavior.layer = layer
+			behavior.apply(terrain_manager, hit.position, hit.normal)
+			behavior.layer = old_layer
+		else:
+			terrain_manager.modify_terrain(hit.position, brush_size, 1.0, 0, layer) # Fallback
 			
-		terrain_manager.modify_terrain(hit.position, radius_to_use, 1.0, 0, layer) # Shape 0 = Sphere
 		terrain_modified.emit(hit.position, layer)
-		print("TerrainAPI: Dig (smooth) at %s, radius %.1f" % [hit.position, radius_to_use])
+		print("TerrainAPI: Dig (smooth) at %s" % hit.position)
 	
 	return true
 
@@ -186,14 +201,43 @@ func raise(hit: Dictionary, layer: int = LAYER_TERRAIN) -> bool:
 		# Blocky: place single voxel (adjacent to surface)
 		var pos = hit.position + hit.normal * 0.1
 		var target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z)) + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, layer) # -0.5 = fill
+		
+		var behavior = null
+		if brush_registry:
+			behavior = brush_registry.get_tool_brush("api_block")
+			
+		if behavior:
+			var old_layer = behavior.layer
+			var old_strength = behavior.strength
+			behavior.layer = layer
+			behavior.strength = -abs(old_strength) # Ensure placing
+			behavior.apply(terrain_manager, target_pos, Vector3.UP)
+			behavior.layer = old_layer
+			behavior.strength = old_strength
+		else:
+			terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, layer) # Fallback
+			
 		terrain_modified.emit(target_pos, layer)
 		print("TerrainAPI: Raise (blocky) at %s" % target_pos)
 	else:
 		# Smooth: raise sphere
-		terrain_manager.modify_terrain(hit.position, brush_size, -1.0, 0, layer)
+		var behavior = null
+		if brush_registry:
+			behavior = brush_registry.get_tool_brush("api_sphere")
+			
+		if behavior:
+			var old_layer = behavior.layer
+			var old_strength = behavior.strength
+			behavior.layer = layer
+			behavior.strength = -abs(old_strength) # Ensure placing
+			behavior.apply(terrain_manager, hit.position, hit.normal)
+			behavior.layer = old_layer
+			behavior.strength = old_strength
+		else:
+			terrain_manager.modify_terrain(hit.position, brush_size, -1.0, 0, layer) # Fallback
+			
 		terrain_modified.emit(hit.position, layer)
-		print("TerrainAPI: Raise (smooth) at %s, radius %.1f" % [hit.position, brush_size])
+		print("TerrainAPI: Raise (smooth) at %s" % hit.position)
 	
 	return true
 

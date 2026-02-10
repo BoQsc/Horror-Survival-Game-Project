@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="VoxelBrush" format=3 uid="uid://eb76wrbu1c5"]
+
+[ext_resource type="Script" path="res://world_voxel_brush/voxel_brush.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+display_name = "API Sphere"
+shape_type = 0
+radius = 4.0
+strength = 1.0
+snap_to_grid = false
+raycast_distance = 50.0
+layer = 0
+material_id = -1

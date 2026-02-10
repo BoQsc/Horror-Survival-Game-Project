@@ -205,7 +205,20 @@ func do_bucket_collect() -> void:
 		return
 	
 	var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
-	terrain_manager.modify_terrain(center, 0.6, 0.5, 1, 1)  # Same as placement but positive value
+	
+	var behavior = null
+	if brush_registry:
+		behavior = brush_registry.get_tool_brush("bucket")
+	
+	if behavior:
+		# Temporarily override strength for collection (positive = remove)
+		var old_strength = behavior.strength
+		behavior.strength = abs(old_strength)
+		behavior.apply(terrain_manager, center, Vector3.UP)
+		behavior.strength = old_strength
+	else:
+		terrain_manager.modify_terrain(center, 0.6, 0.5, 1, 1)  # Fallback
+		
 	DebugManager.log_player("TerrainInteraction: Collected water at %s" % current_target_pos)
 
 ## Place water from bucket
@@ -215,7 +228,16 @@ func do_bucket_place() -> void:
 	
 	if has_target:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 1)  # Box shape, fill, water layer
+		
+		var behavior = null
+		if brush_registry:
+			behavior = brush_registry.get_tool_brush("bucket")
+			
+		if behavior:
+			behavior.apply(terrain_manager, center, Vector3.UP)
+		else:
+			terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 1)  # Fallback
+			
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.bucket_placed.emit()
 		DebugManager.log_player("TerrainInteraction: Placed water at %s" % current_target_pos)
@@ -224,7 +246,16 @@ func do_bucket_place() -> void:
 		if hit.is_empty():
 			return
 		var pos = hit.position + hit.normal * 0.5
-		terrain_manager.modify_terrain(pos, 0.6, -0.5, 1, 1)
+		
+		var behavior = null
+		if brush_registry:
+			behavior = brush_registry.get_tool_brush("bucket")
+			
+		if behavior:
+			behavior.apply(terrain_manager, pos, hit.normal)
+		else:
+			terrain_manager.modify_terrain(pos, 0.6, -0.5, 1, 1)  # Fallback
+			
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.bucket_placed.emit()
 
@@ -258,7 +289,15 @@ func do_resource_place(item: Dictionary) -> void:
 	
 	if has_target:
 		var center = current_target_pos + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(center, 0.6, -0.5, 1, 0, mat_id)
+		
+		var behavior = VoxelBrush.new()
+		behavior.shape_type = VoxelBrush.ShapeType.BOX
+		behavior.radius = 0.6
+		behavior.strength = -0.5
+		behavior.layer = 0
+		behavior.material_id = mat_id
+		behavior.apply(terrain_manager, center, Vector3.UP)
+		
 		_consume_selected_item()
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.resource_placed.emit()
@@ -269,7 +308,15 @@ func do_resource_place(item: Dictionary) -> void:
 			return
 		var p = hit.position + hit.normal * 0.1
 		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, 0, mat_id)
+		
+		var behavior = VoxelBrush.new()
+		behavior.shape_type = VoxelBrush.ShapeType.BOX
+		behavior.radius = 0.6
+		behavior.strength = -0.5
+		behavior.layer = 0
+		behavior.material_id = mat_id
+		behavior.apply(terrain_manager, target_pos, hit.normal)
+		
 		_consume_selected_item()
 
 ## Place vegetation (grass or rock) at raycast hit position - V1 EXACT

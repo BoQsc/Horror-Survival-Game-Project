@@ -1416,7 +1416,15 @@ func _do_terrain_punch(item: Dictionary, position: Vector3) -> void:
 			mat_id = terrain_manager.get_material_at(sample_pos)
 		
 		var center = Vector3(terrain_pos) + Vector3(0.5, 0.5, 0.5)
-		terrain_manager.modify_terrain(center, 0.6, 1.0, 1, 0, -1)
+		var behavior = null
+		if brush_registry:
+			behavior = brush_registry.get_tool_brush("fist_punch")
+			
+		if behavior:
+			behavior.apply(terrain_manager, center, Vector3.UP)
+		else:
+			# Safety fallback (matching legacy behavior)
+			terrain_manager.modify_terrain(center, 0.6, 1.0, 1, 0, -1)
 		
 		if mat_id >= 0:
 			_collect_terrain_resource(mat_id)

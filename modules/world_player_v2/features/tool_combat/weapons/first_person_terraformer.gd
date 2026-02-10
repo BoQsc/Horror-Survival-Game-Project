@@ -275,19 +275,40 @@ func do_secondary_action() -> void:
 
 ## Perform dig at voxel-centered position
 func _do_dig(target: Vector3) -> void:
-	# DIG: Positive density = Air (+10.0 for instant removal)
-	terrain_manager.modify_terrain(target, BRUSH_SIZE, 10.0, BRUSH_SHAPE, 0, -1)
+	var behavior = null
+	if brush_registry:
+		behavior = brush_registry.get_tool_brush("terraformer_dig")
+		
+	if behavior:
+		behavior.apply(terrain_manager, target, Vector3.UP)
+	else:
+		# Fallback: Positive density = Air (+10.0 for instant removal)
+		terrain_manager.modify_terrain(target, BRUSH_SIZE, 10.0, BRUSH_SHAPE, 0, -1)
+	
 	print("SHOVEL: DIG at %s" % target)
 
 ## Perform place at voxel-centered position
 func _do_place(target: Vector3) -> void:
-	# PLACE: Negative density = Solid (-10.0 for instant fill)
 	var mat_id = 0
 	if brush_registry:
 		mat_id = brush_registry.STANDARD_MATERIALS[material_index].id
 	
 	mat_id += 100
-	terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
+	
+	var behavior = null
+	if brush_registry:
+		behavior = brush_registry.get_tool_brush("terraformer_place")
+		
+	if behavior:
+		# Temporarily set material ID from shovel's current selection
+		var old_mat = behavior.material_id
+		behavior.material_id = mat_id
+		behavior.apply(terrain_manager, target, Vector3.UP)
+		behavior.material_id = old_mat
+	else:
+		# Fallback: Negative density = Solid (-10.0 for instant fill)
+		terrain_manager.modify_terrain(target, BRUSH_SIZE, -10.0, BRUSH_SHAPE, 0, mat_id)
+		
 	var mat_name = "Grass"
 	if brush_registry:
 		mat_name = brush_registry.STANDARD_MATERIALS[material_index].name

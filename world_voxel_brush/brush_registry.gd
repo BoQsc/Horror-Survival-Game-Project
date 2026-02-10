@@ -44,16 +44,25 @@ func _load_defaults() -> void:
 	var block_mode = load(PRESET_PATH + "pickaxe_block.tres")
 	var terra_dig = load(PRESET_PATH + "terraformer_dig.tres")
 	var terra_place = load(PRESET_PATH + "terraformer_place.tres")
+	var fist = load(PRESET_PATH + "fist_punch.tres")
+	var bucket = load(PRESET_PATH + "bucket.tres")
+	var api_block = load(PRESET_PATH + "api_block.tres")
+	var api_sphere = load(PRESET_PATH + "api_sphere.tres")
 	
 	if classic: register_tool("pickaxe_classic", classic)
 	if block_mode: register_tool("pickaxe_block", block_mode)
 	if terra_dig: register_tool("terraformer_dig", terra_dig)
 	if terra_place: register_tool("terraformer_place", terra_place)
+	if fist: register_tool("fist_punch", fist)
+	if bucket: register_tool("bucket", bucket)
+	if api_block: register_tool("api_block", api_block)
+	if api_sphere: register_tool("api_sphere", api_sphere)
 	
 	# Set default assignments
 	if block_mode: register_tool("pickaxe", block_mode)
 	if terra_dig: register_tool("shovel_primary", terra_dig)
 	if terra_place: register_tool("shovel_secondary", terra_place)
+	if fist: register_tool("fist", fist)
 
 func register_tool(item_id: String, active_brush: VoxelBrush) -> void:
 	_tool_assignments[item_id] = active_brush

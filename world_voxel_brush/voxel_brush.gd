@@ -19,6 +19,7 @@ enum ShapeType {
 @export var snap_to_grid: bool = false
 @export var raycast_distance: float = 3.5
 @export var use_raycast_normal: bool = false ## If true, offsets target by normal (useful for placing ON faces)
+@export var layer: int = 0 ## 0 = Terrain, 1 = Water
 
 @export_group("Material")
 @export var material_id: int = -1 ## -1 = Don't change material
@@ -41,4 +42,4 @@ func apply(terrain_manager: Node, hit_position: Vector3, hit_normal: Vector3) ->
 	
 	# Execute
 	# Note: ChunkManager modify_terrain signature: (pos, radius, value, shape, layer, material_id)
-	terrain_manager.modify_terrain(target_pos, radius, strength, int(shape_type), 0, material_id)
+	terrain_manager.modify_terrain(target_pos, radius, strength, int(shape_type), layer, material_id)
