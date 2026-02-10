@@ -864,6 +864,25 @@ func _do_axe_damage(item: Dictionary) -> void:
 		snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
 		var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
 		
+		# Resolve brush behavior via Registry
+		var behavior: VoxelBrush = null
+		if brush_registry and "pickaxe" in item_id:
+			var block_mode_enabled = false
+			if has_node("/root/PickaxeDigConfig") and get_node("/root/PickaxeDigConfig").enabled:
+				block_mode_enabled = true
+			
+			# Map to specific presets
+			if block_mode_enabled:
+				behavior = brush_registry.get_tool_brush("pickaxe_block")
+			else:
+				behavior = brush_registry.get_tool_brush("pickaxe_classic")
+		
+		# Fallback if no behavior found
+		if not behavior:
+			behavior = VoxelBrush.new()
+			behavior.radius = max(mining_strength, 0.8)
+			behavior.shape_type = VoxelBrush.ShapeType.SPHERE
+		
 		if use_durability:
 			if not terrain_damage.has(block_pos):
 				terrain_damage[block_pos] = 0
@@ -878,22 +897,16 @@ func _do_axe_damage(item: Dictionary) -> void:
 				terrain_hit_audio_player.play()
 			
 			if terrain_damage[block_pos] >= TERRAIN_HP:
-				if use_enhanced_mode:
-					terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
-				else:
-					var actual_radius = max(mining_strength, 0.8)
-					terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+				# EXECUTE STRATEGY using brush registry
+				behavior.apply(terrain_manager, position, hit_normal)
 				terrain_damage.erase(block_pos)
 				_emit_durability_cleared()
 				if mat_id >= 0:
 					_collect_terrain_resource(mat_id)
 		else:
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
-			if use_enhanced_mode:
-				terrain_manager.modify_terrain(snapped_pos, 0.6, 1.0, 1, 0)
-			else:
-				var actual_radius = max(mining_strength, 0.8)
-				terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			# EXECUTE STRATEGY using brush registry
+			behavior.apply(terrain_manager, position, hit_normal)
 			_emit_durability_cleared()
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)
@@ -970,6 +983,28 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		snapped_pos = Vector3(floor(snapped_pos.x) + 0.5, floor(snapped_pos.y) + 0.5, floor(snapped_pos.z) + 0.5)
 		var block_pos = Vector3i(floor(snapped_pos.x), floor(snapped_pos.y), floor(snapped_pos.z))
 		
+		# Resolve brush behavior via Registry
+		var behavior: VoxelBrush = null
+		if brush_registry:
+			var block_mode_enabled = false
+			if has_node("/root/PickaxeDigConfig") and get_node("/root/PickaxeDigConfig").enabled:
+				block_mode_enabled = true
+			
+			# Map to specific presets
+			if block_mode_enabled:
+				behavior = brush_registry.get_tool_brush("pickaxe_block")
+			else:
+				behavior = brush_registry.get_tool_brush("pickaxe_classic")
+		
+		# Fallback if no behavior found
+		if not behavior:
+			behavior = VoxelBrush.new()
+			var config_radius = 1.0
+			if has_node("/root/PickaxeDigConfig"):
+				config_radius = get_node("/root/PickaxeDigConfig").mining_radius
+			behavior.radius = max(config_radius, 0.5)
+			behavior.shape_type = VoxelBrush.ShapeType.SPHERE
+		
 		if use_durability:
 			if not terrain_damage.has(block_pos):
 				terrain_damage[block_pos] = 0
@@ -988,16 +1023,8 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 					terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
 					terrain_break_audio_player.play()
 					
-				if use_enhanced_mode:
-					var config_radius = 0.6
-					if has_node("/root/PickaxeDigConfig"):
-						config_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
-					terrain_manager.modify_terrain(snapped_pos, config_radius, 1.0, 1, 0)
-				else:
-					var actual_radius = 1.0
-					if has_node("/root/PickaxeDigConfig"):
-						actual_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
-					terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+				# EXECUTE STRATEGY using brush registry
+				behavior.apply(terrain_manager, position, hit_normal)
 				terrain_damage.erase(block_pos)
 				_emit_durability_cleared()
 				if mat_id >= 0:
@@ -1005,16 +1032,8 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		else:
 			# INSTANT MODE - no durability tracking
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
-			if use_enhanced_mode:
-				var config_radius = 0.6
-				if has_node("/root/PickaxeDigConfig"):
-					config_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
-				terrain_manager.modify_terrain(snapped_pos, config_radius, 1.0, 1, 0)
-			else:
-				var actual_radius = 1.0
-				if has_node("/root/PickaxeDigConfig"):
-					actual_radius = max(get_node("/root/PickaxeDigConfig").mining_radius, 0.5)
-				terrain_manager.modify_terrain(position, actual_radius, 1.0, 0, 0)
+			# EXECUTE STRATEGY using brush registry
+			behavior.apply(terrain_manager, position, hit_normal)
 			_emit_durability_cleared()
 			if mat_id >= 0:
 				_collect_terrain_resource(mat_id)

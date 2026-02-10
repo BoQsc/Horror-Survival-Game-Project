@@ -56,6 +56,15 @@ void main() {
             density_buffer.values[index] = params.brush_value;
             modified = true;
         }
+    } else if (params.shape_type == 3) {
+        // Diamond Shape (Manhattan Distance / Octahedron)
+        vec3 dist_vec = abs(world_pos - params.brush_pos.xyz);
+        float manhattan_dist = dist_vec.x + dist_vec.y + dist_vec.z;
+        
+        if (manhattan_dist <= params.brush_pos.w) {
+            density_buffer.values[index] = params.brush_value;
+            modified = true;
+        }
     } else {
         // Sphere Shape (Smooth falloff)
         float dist = distance(world_pos, params.brush_pos.xyz);

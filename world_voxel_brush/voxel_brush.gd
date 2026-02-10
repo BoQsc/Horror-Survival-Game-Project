@@ -5,7 +5,8 @@ class_name VoxelBrush
 enum ShapeType {
 	SPHERE = 0,
 	BOX = 1,
-	COLUMN = 2
+	COLUMN = 2,
+	DIAMOND = 3
 }
 
 @export_group("Tool Settings")

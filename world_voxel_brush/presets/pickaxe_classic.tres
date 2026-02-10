@@ -5,3 +5,5 @@
 [resource]
 script = ExtResource("1_script")
 display_name = "Classic Pickaxe"
+shape_type = 3
+radius = 2.0
