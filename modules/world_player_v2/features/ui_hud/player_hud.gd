@@ -75,40 +75,40 @@ func _ready() -> void:
 	if pickaxe_toggle:
 		pickaxe_toggle.toggled.connect(_on_pickaxe_dig_mode_toggled)
 		# Sync with current state
-		if has_node("/root/PickaxeDigConfig"):
-			pickaxe_toggle.button_pressed = get_node("/root/PickaxeDigConfig").enabled
+		if has_node("/root/ToolConfig"):
+			pickaxe_toggle.button_pressed = get_node("/root/ToolConfig").pickaxe_dig_enabled
 	
 	# Connect pickaxe durability toggle
 	var durability_toggle = game_menu.get_node_or_null("PickaxeDurabilityToggle")
 	if durability_toggle:
 		durability_toggle.toggled.connect(_on_pickaxe_durability_toggled)
 		# Sync with current state
-		if has_node("/root/PickaxeDurabilityConfig"):
-			durability_toggle.button_pressed = get_node("/root/PickaxeDurabilityConfig").enabled
+		if has_node("/root/ToolConfig"):
+			durability_toggle.button_pressed = get_node("/root/ToolConfig").pickaxe_durability_enabled
 	
 	# Connect target visualizer toggle
 	var visualizer_toggle = game_menu.get_node_or_null("TargetVisualizerToggle")
 	if visualizer_toggle:
 		visualizer_toggle.toggled.connect(_on_target_visualizer_toggled)
 		# Sync with current state
-		if has_node("/root/PickaxeTargetVisualizer"):
-			visualizer_toggle.button_pressed = get_node("/root/PickaxeTargetVisualizer").enabled
+		if has_node("/root/ToolConfig"):
+			visualizer_toggle.button_pressed = get_node("/root/ToolConfig").target_visualizer_enabled
 	
 	# Connect hit marker toggle
 	var hit_marker_toggle = game_menu.get_node_or_null("HitMarkerToggle")
 	if hit_marker_toggle:
 		hit_marker_toggle.toggled.connect(_on_hit_marker_toggled)
 		# Sync with current state
-		if has_node("/root/HitMarkerConfig"):
-			hit_marker_toggle.button_pressed = get_node("/root/HitMarkerConfig").enabled
+		if has_node("/root/ToolConfig"):
+			hit_marker_toggle.button_pressed = get_node("/root/ToolConfig").hit_marker_enabled
 	
 	# Connect pistol hit marker toggle
 	var pistol_marker_toggle = game_menu.get_node_or_null("PistolHitMarkerToggle")
 	if pistol_marker_toggle:
 		pistol_marker_toggle.toggled.connect(_on_pistol_hit_marker_toggled)
 		# Sync with current state
-		if has_node("/root/PistolHitMarkerConfig"):
-			pistol_marker_toggle.button_pressed = get_node("/root/PistolHitMarkerConfig").enabled
+		if has_node("/root/ToolConfig"):
+			pistol_marker_toggle.button_pressed = get_node("/root/ToolConfig").pistol_hit_marker_enabled
 	
 	# Connect terrain info toggle
 	var terrain_info_toggle = game_menu.get_node_or_null("TerrainInfoToggle")
@@ -123,8 +123,8 @@ func _ready() -> void:
 	if radius_slider:
 		radius_slider.value_changed.connect(_on_mining_radius_changed.bind(radius_label))
 		# Sync with config
-		if has_node("/root/PickaxeDigConfig"):
-			radius_slider.value = get_node("/root/PickaxeDigConfig").mining_radius
+		if has_node("/root/ToolConfig"):
+			radius_slider.value = get_node("/root/ToolConfig").pickaxe_mining_radius
 			if radius_label:
 				radius_label.text = "Mining Radius: %.2f" % radius_slider.value
 	
@@ -436,29 +436,29 @@ func _on_collision_debugger_toggled(is_enabled: bool) -> void:
 		get_node("/root/CollisionDebugger").enabled = is_enabled
 
 func _on_pickaxe_dig_mode_toggled(is_enabled: bool) -> void:
-	if has_node("/root/PickaxeDigConfig"):
-		get_node("/root/PickaxeDigConfig").enabled = is_enabled
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").pickaxe_dig_enabled = is_enabled
 		print("PlayerHUD: Block Pickaxe Mode -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_pickaxe_durability_toggled(is_enabled: bool) -> void:
-	if has_node("/root/PickaxeDurabilityConfig"):
-		get_node("/root/PickaxeDurabilityConfig").enabled = is_enabled
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").pickaxe_durability_enabled = is_enabled
 		print("PlayerHUD: Pickaxe Durability -> %s" % ("ON (5 hits)" if is_enabled else "OFF (Instant)"))
 
 
 func _on_target_visualizer_toggled(is_enabled: bool) -> void:
-	if has_node("/root/PickaxeTargetVisualizer"):
-		get_node("/root/PickaxeTargetVisualizer").enabled = is_enabled
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").target_visualizer_enabled = is_enabled
 		print("PlayerHUD: Target Visualizer -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_hit_marker_toggled(is_enabled: bool) -> void:
-	if has_node("/root/HitMarkerConfig"):
-		get_node("/root/HitMarkerConfig").enabled = is_enabled
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").hit_marker_enabled = is_enabled
 		print("PlayerHUD: Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_pistol_hit_marker_toggled(is_enabled: bool) -> void:
-	if has_node("/root/PistolHitMarkerConfig"):
-		get_node("/root/PistolHitMarkerConfig").enabled = is_enabled
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").pistol_hit_marker_enabled = is_enabled
 		print("PlayerHUD: Pistol Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_terrain_info_toggled(is_enabled: bool) -> void:
@@ -475,8 +475,8 @@ func _on_terrain_info_toggled(is_enabled: bool) -> void:
 
 
 func _on_mining_radius_changed(value: float, label: Label) -> void:
-	if has_node("/root/PickaxeDigConfig"):
-		get_node("/root/PickaxeDigConfig").mining_radius = value
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").pickaxe_mining_radius = value
 	if label:
 		label.text = "Mining Radius: %.2f" % value
 	print("PlayerHUD: Mining Radius -> %.2f" % value)

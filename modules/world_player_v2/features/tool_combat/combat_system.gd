@@ -21,8 +21,8 @@ var attack_cooldown: float = 0.0
 
 ## Get attack cooldown from config (with fallback)
 func _get_attack_cooldown_time() -> float:
-	if has_node("/root/PickaxeDigConfig"):
-		return get_node("/root/PickaxeDigConfig").attack_cooldown
+	if has_node("/root/ToolConfig"):
+		return get_node("/root/ToolConfig").pickaxe_attack_cooldown
 	return 0.3  # Default fallback
 
 # Durability system - blocks/objects require multiple hits
@@ -722,7 +722,7 @@ func do_tool_attack(item: Dictionary) -> void:
 			# Check global overrides
 			if "pickaxe" in item_id:
 				var block_mode_enabled = false
-				if has_node("/root/PickaxeDigConfig") and get_node("/root/PickaxeDigConfig").enabled:
+				if has_node("/root/ToolConfig") and get_node("/root/ToolConfig").pickaxe_dig_enabled:
 					block_mode_enabled = true
 				
 				# Map legacy globals to specific presets
@@ -739,15 +739,15 @@ func do_tool_attack(item: Dictionary) -> void:
 			# Create a temporary default behavior using config values
 			behavior = VoxelBrush.new()
 			var config_radius = 1.0
-			if has_node("/root/PickaxeDigConfig"):
-				config_radius = get_node("/root/PickaxeDigConfig").mining_radius
+			if has_node("/root/ToolConfig"):
+				config_radius = get_node("/root/ToolConfig").pickaxe_mining_radius
 			behavior.radius = max(config_radius, 0.5)
 			behavior.shape_type = VoxelBrush.ShapeType.SPHERE
 		
 		# OVERRIDE: Apply config values to behavior (overrides preset .tres values)
-		if behavior and "pickaxe" in item_id and has_node("/root/PickaxeDigConfig"):
-			var config = get_node("/root/PickaxeDigConfig")
-			behavior.radius = max(config.mining_radius, 0.5)
+		if behavior and "pickaxe" in item_id and has_node("/root/ToolConfig"):
+			var config = get_node("/root/ToolConfig")
+			behavior.radius = max(config.pickaxe_mining_radius, 0.5)
 			# Debug: print("Pickaxe radius override: %.2f" % behavior.radius)
 		
 		# Now apply the behavior (handling durability logic here in CombatSystem)
@@ -756,8 +756,8 @@ func do_tool_attack(item: Dictionary) -> void:
 		
 		# Check durability config
 		var use_durability = false
-		if "pickaxe" in item_id and has_node("/root/PickaxeDurabilityConfig"):
-			use_durability = get_node("/root/PickaxeDurabilityConfig").enabled
+		if "pickaxe" in item_id and has_node("/root/ToolConfig"):
+			use_durability = get_node("/root/ToolConfig").pickaxe_durability_enabled
 			
 		# Snap for durability tracking based on COMPATIBILITY mode
 		# We must track grid damage even if using sphere tool, if durability is ON.
@@ -850,12 +850,12 @@ func _do_axe_damage(item: Dictionary) -> void:
 	# Priority 5: Terrain mining
 	if terrain_manager and terrain_manager.has_method("modify_terrain"):
 		var use_enhanced_mode = false
-		if "pickaxe" in item_id and has_node("/root/PickaxeDigConfig"):
-			use_enhanced_mode = get_node("/root/PickaxeDigConfig").enabled
+		if "pickaxe" in item_id and has_node("/root/ToolConfig"):
+			use_enhanced_mode = get_node("/root/ToolConfig").pickaxe_dig_enabled
 		
 		var use_durability = false
-		if "pickaxe" in item_id and has_node("/root/PickaxeDurabilityConfig"):
-			use_durability = get_node("/root/PickaxeDurabilityConfig").enabled
+		if "pickaxe" in item_id and has_node("/root/ToolConfig"):
+			use_durability = get_node("/root/ToolConfig").pickaxe_durability_enabled
 		
 		var hit_normal = hit.get("normal", Vector3.UP)
 		var mat_id = _get_material_at_hit(target, position, hit_normal)
@@ -868,7 +868,7 @@ func _do_axe_damage(item: Dictionary) -> void:
 		var behavior: VoxelBrush = null
 		if brush_registry and "pickaxe" in item_id:
 			var block_mode_enabled = false
-			if has_node("/root/PickaxeDigConfig") and get_node("/root/PickaxeDigConfig").enabled:
+			if has_node("/root/ToolConfig") and get_node("/root/ToolConfig").pickaxe_dig_enabled:
 				block_mode_enabled = true
 			
 			# Map to specific presets
@@ -942,7 +942,7 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	print("PICKAXE_HIT_DEBUG: HIT at impact time | Target: %s | Position: %s" % [target.name if target else "null", position])
 	
 	# Visual debug: Spawn marker at hit position (if enabled)
-	if has_node("/root/HitMarkerConfig") and get_node("/root/HitMarkerConfig").enabled:
+	if has_node("/root/ToolConfig") and get_node("/root/ToolConfig").hit_marker_enabled:
 		_spawn_hit_marker(position, Color.GREEN)  # Green = impact-time hit
 	
 	# Priority 1: Generic Damageable
@@ -970,12 +970,12 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	# Priority 5: Terrain mine (delayed pickaxe damage)
 	if terrain_manager.has_method("modify_terrain"):
 		var use_enhanced_mode = false
-		if has_node("/root/PickaxeDigConfig"):
-			use_enhanced_mode = get_node("/root/PickaxeDigConfig").enabled
+		if has_node("/root/ToolConfig"):
+			use_enhanced_mode = get_node("/root/ToolConfig").pickaxe_dig_enabled
 		
 		var use_durability = false
-		if has_node("/root/PickaxeDurabilityConfig"):
-			use_durability = get_node("/root/PickaxeDurabilityConfig").enabled
+		if has_node("/root/ToolConfig"):
+			use_durability = get_node("/root/ToolConfig").pickaxe_durability_enabled
 		
 		var mat_id = _get_material_at_hit(target, position, hit_normal)
 		
@@ -987,7 +987,7 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		var behavior: VoxelBrush = null
 		if brush_registry:
 			var block_mode_enabled = false
-			if has_node("/root/PickaxeDigConfig") and get_node("/root/PickaxeDigConfig").enabled:
+			if has_node("/root/ToolConfig") and get_node("/root/ToolConfig").pickaxe_dig_enabled:
 				block_mode_enabled = true
 			
 			# Map to specific presets
@@ -1000,8 +1000,8 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		if not behavior:
 			behavior = VoxelBrush.new()
 			var config_radius = 1.0
-			if has_node("/root/PickaxeDigConfig"):
-				config_radius = get_node("/root/PickaxeDigConfig").mining_radius
+			if has_node("/root/ToolConfig"):
+				config_radius = get_node("/root/ToolConfig").pickaxe_mining_radius
 			behavior.radius = max(config_radius, 0.5)
 			behavior.shape_type = VoxelBrush.ShapeType.SPHERE
 		
@@ -1460,8 +1460,8 @@ func _check_durability_target() -> void:
 
 func _spawn_pistol_hit_effect(pos: Vector3) -> void:
 	# Check if markers are enabled
-	if has_node("/root/PistolHitMarkerConfig"):
-		if not get_node("/root/PistolHitMarkerConfig").enabled:
+	if has_node("/root/ToolConfig"):
+		if not get_node("/root/ToolConfig").pistol_hit_marker_enabled:
 			return
 	
 	var mesh_instance = MeshInstance3D.new()
