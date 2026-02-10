@@ -11,6 +11,7 @@ config_version=5
 [application]
 
 config/name="GPUMarchingCubes"
+config/tags=PackedStringArray("open_source")
 run/main_scene="res://addons/renderer_fallback/compatibility_checker.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 run/max_fps=70
@@ -28,11 +29,7 @@ PlayerStats="*res://modules/world_player_v2/autoload/player_stats.gd"
 ContainerSignals="*res://modules/world_player_v2/features/data_containers/signals.gd"
 AmbientAudioManager="*res://game/sound/ambient_audio_manager.gd"
 CollisionDebugger="*res://modules/debug_module/collision_debugger.gd"
-PickaxeDigConfig="*res://modules/world_player_v2/features/tool_combat/pickaxe_dig_config.gd"
-PickaxeDurabilityConfig="*res://modules/world_player_v2/features/tool_combat/pickaxe_durability_config.gd"
-PickaxeTargetVisualizer="*res://modules/world_player_v2/features/tool_combat/pickaxe_target_visualizer.gd"
-HitMarkerConfig="*res://modules/world_player_v2/features/tool_combat/hit_marker_config.gd"
-PistolHitMarkerConfig="*res://modules/world_player_v2/features/ui_debug/pistol_hit_marker_config.gd"
+ToolConfig="*res://modules/world_player_v2/features/tool_combat/tool_config.gd"
 RendererFallback="*res://addons/renderer_fallback/renderer_fallback.gd"
 
 [display]
