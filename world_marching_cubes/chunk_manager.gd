@@ -846,6 +846,22 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 		DebugManager.log_chunk("fill_column: NO TASKS QUEUED - chunk not loaded or no valid buffer")
 
 func _exit_tree():
+	# CRITICAL: Clean up all GPU resources BEFORE terminating threads
+	# This fixes 682 resource leaks (StorageBuffers, Meshes, Collision, Materials)
+	DebugManager.log_chunk("ChunkManager: Starting cleanup of %d active chunks" % active_chunks.size())
+	
+	# 1. Unload all active chunks (frees meshes, collision, GPU buffers)
+	var coords_to_unload = active_chunks.keys()
+	for coord in coords_to_unload:
+		_unload_chunk(coord)
+	
+	# 2. Clear pending nodes queue (prevents creating nodes after cleanup)
+	if pending_nodes_mutex:
+		pending_nodes_mutex.lock()
+		pending_nodes.clear()
+		pending_nodes_mutex.unlock()
+	
+	# 3. Signal threads to exit
 	mutex.lock()
 	exit_thread = true
 	mutex.unlock()
@@ -857,14 +873,21 @@ func _exit_tree():
 	for i in range(CPU_WORKER_COUNT):
 		cpu_semaphore.post()
 	
-	# Wait for GPU thread
+	# 5. Wait for GPU thread to finish (processes remaining "free" tasks)
 	if compute_thread and compute_thread.is_alive():
+		DebugManager.log_chunk("ChunkManager: Waiting for GPU thread to finish...")
 		compute_thread.wait_to_finish()
+		DebugManager.log_chunk("ChunkManager: GPU thread finished")
 	
-	# Wait for CPU workers
-	for thread in cpu_threads:
+	# 6. Wait for CPU workers to finish
+	for i in range(cpu_threads.size()):
+		var thread = cpu_threads[i]
 		if thread and thread.is_alive():
+			DebugManager.log_chunk("ChunkManager: Waiting for CPU worker %d to finish..." % i)
 			thread.wait_to_finish()
+	
+	DebugManager.log_chunk("ChunkManager: Cleanup complete, all resources freed")
+
 
 func update_chunks():
 	if terrain_grid:
