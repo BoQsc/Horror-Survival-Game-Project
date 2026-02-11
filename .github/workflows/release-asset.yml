@@ -51,8 +51,6 @@ jobs:
         run: |
           echo "--- Verifying compiled shader binaries ---"
           if [ -d ".godot/imported" ]; then
-            # We expect to see many .res files here now. 
-            # If this list is empty, the DisplayServer likely failed again.
             find .godot/imported/ -name "*.res" | xargs du -h || (echo "❌ No .res files found!" && exit 1)
           else
             echo "❌ ERROR: .godot/imported directory does not exist!"
@@ -75,11 +73,14 @@ jobs:
 
       - name: Package Asset
         run: |
-          # Install zip if not present
           apt-get update && apt-get install -y zip
-          # Package the root and the now-populated .godot folder
+          
+          # 1. Zip the primary HSG asset
           zip -r hsg-pre_imported_asset.zip . .godot \
           -x "*.git*" ".github/*"
+          
+          # 2. Duplicate it to the legacy name for migration compatibility
+          cp hsg-pre_imported_asset.zip pre_imported_asset.zip
 
       - name: Update Release
         uses: andelf/nightly-release@v1
@@ -93,4 +94,7 @@ jobs:
             - **Shaders:** Pre-compiled SPIR-V (Compute) binaries included in `.godot/`.
             - **Renderer:** Forced to **Forward+ (Vulkan)** for compute compatibility.
             - **CI Method:** Xvfb-GUI (with fix for missing X11 libs).
-          files: hsg-pre_imported_asset.zip
+            - **Migration Status:** Dual-release enabled (`hsg-` and legacy filenames).
+          files: |
+            hsg-pre_imported_asset.zip
+            pre_imported_asset.zip
