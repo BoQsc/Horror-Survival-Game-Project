@@ -78,7 +78,7 @@ jobs:
           # Install zip if not present
           apt-get update && apt-get install -y zip
           # Package the root and the now-populated .godot folder
-          zip -r pre_imported_asset.zip . .godot \
+          zip -r hsg-pre_imported_asset.zip . .godot \
           -x "*.git*" ".github/*"
 
       - name: Update Release
@@ -93,4 +93,4 @@ jobs:
             - **Shaders:** Pre-compiled SPIR-V (Compute) binaries included in `.godot/`.
             - **Renderer:** Forced to **Forward+ (Vulkan)** for compute compatibility.
             - **CI Method:** Xvfb-GUI (with fix for missing X11 libs).
-          files: pre_imported_asset.zip
+          files: hsg-pre_imported_asset.zip
