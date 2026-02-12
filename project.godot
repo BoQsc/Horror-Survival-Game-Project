@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="GPUMarchingCubes"
+config/name="Horror Survival Game Project"
 config/tags=PackedStringArray("creative_commons", "open_source")
 run/main_scene="res://addons/renderer_fallback/compatibility_checker.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
