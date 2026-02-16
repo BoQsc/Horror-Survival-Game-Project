@@ -34,8 +34,9 @@ func _ready() -> void:
 	
 	_active_player = _player_a
 	
-	# Auto-start grasslands ambient
-	play_ambient(TRACK_GRASSLANDS)
+	# Auto-start grasslands ambient (ASYNC to prevent startup freeze)
+	# play_ambient(TRACK_GRASSLANDS)
+	_load_initial_track_async()
 	print("[AMBIENT_AUDIO] Manager initialized")
 
 
@@ -143,7 +144,44 @@ func _crossfade_to(stream: AudioStream) -> void:
 	_tween.tween_callback(old_player.stop)
 
 
-func _on_fade_out_complete() -> void:
 	_active_player.stop()
 	_is_playing = false
 	_current_track = ""
+
+
+func _load_initial_track_async() -> void:
+	# Start background load
+	ResourceLoader.load_threaded_request(TRACK_GRASSLANDS)
+	
+	# Poll in a lightweight way until ready
+	var check_timer = Timer.new()
+	check_timer.wait_time = 0.1
+	check_timer.autostart = true
+	check_timer.one_shot = false
+	check_timer.timeout.connect(func():
+		var status = ResourceLoader.load_threaded_get_status(TRACK_GRASSLANDS)
+		if status == ResourceLoader.THREAD_LOAD_LOADED:
+			var stream = ResourceLoader.load_threaded_get(TRACK_GRASSLANDS)
+			if stream:
+				play_ambient_stream(stream, TRACK_GRASSLANDS)
+			check_timer.queue_free()
+		elif status == ResourceLoader.THREAD_LOAD_FAILED or status == ResourceLoader.THREAD_LOAD_INVALID_RESOURCE:
+			push_error("[AMBIENT_AUDIO] Failed to async load initial track")
+			check_timer.queue_free()
+	)
+	add_child(check_timer)
+
+## Play a pre-loaded stream (internal use)
+func play_ambient_stream(stream: AudioStream, track_path: String, fade_in: bool = true) -> void:
+	if track_path == _current_track and _is_playing:
+		return
+		
+	_current_track = track_path
+	
+	if _is_playing:
+		_crossfade_to(stream)
+	else:
+		_start_fresh(stream, fade_in)
+	
+	_is_playing = true
+	print("[AMBIENT_AUDIO] Playing (Async): ", track_path)

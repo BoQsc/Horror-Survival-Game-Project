@@ -22,7 +22,9 @@ const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
 func _ready():
 	# Preload all object scenes for faster building spawning
-	ObjectRegistry.preload_all_scenes()
+	# OPTIMIZATION: Disabled synchronous preloading to fix startup freeze. 
+	# Objects will be lazy-loaded on first use by ObjectRegistry.
+	# ObjectRegistry.preload_all_scenes()
 	
 	mesher = BuildingMesher.new()
 	add_child(mesher)

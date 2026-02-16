@@ -20,6 +20,9 @@ var has_emitted_terrain_ready: bool = false  # Track if we've signaled player
 enum Stage { TERRAIN, PREFABS, VEGETATION, COMPLETE }
 var current_stage: Stage = Stage.TERRAIN
 
+# If true, disables auto-detection logic (used by Bootstrap)
+var manual_mode: bool = false
+
 func _ready() -> void:
 	# Start visible
 	visible = true
@@ -31,6 +34,9 @@ func _ready() -> void:
 	_start_loading_sequence()
 
 func _start_loading_sequence() -> void:
+	if manual_mode:
+		return
+		
 	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	var building_generator = get_tree().root.find_child("BuildingGenerator", true, false)
 	var vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
