@@ -8,9 +8,9 @@ This document explores the "Natural Qualities" of the Marching Cubes implementat
 > [!NOTE]
 > Currently, the system uses **Additive Density**. This creates "Density Memory" where overlapping brushes build up weight, making it hard to predict exactly where the surface will land.
 
-- **Fundamental Change**: Switch to **Signed Distance Field (SDF) Composition**.
-- **Operation**: Use `min()` for union (placing) and `max(a, -b)` for subtraction (digging).
-- **Result**: Perfect geometric accuracy. A 1.5m sphere brush will always produce a 1.5m sphere segment, regardless of how many times you click.
+- **Fundamental Change**: Switch to **Signed Distance Field (SDF) Composition based on Manhattan Distance**.
+- **Primary Primitive**: The **Octahedron** (`abs(x) + abs(y) + abs(z) - r`).
+- **Result**: Perfect geometric accuracy for 45-degree slopes. An Octahedron brush perfectly bisects the voxel grid, ensuring that the Marching Cubes algorithm always finds the "true" surface at the grid boundaries.
 
 ### 2. Interaction Quality: Gradient Slope (Hardness)
 - **Observation**: The "jelly" look occurs when the density gradient is too shallow at the surface (`ISO_LEVEL`).
@@ -61,16 +61,18 @@ To achieve the "Solid, Grid-Based" feel of Minecraft within a smooth Marching Cu
 - **Voxel-Aligned SDFs**: Using a "Box SDF" instead of a "Sphere SDF" for placement ensures that the added density perfectly fills the grid cells, preventing the rounded corners that typically break the "Minecraft" aesthetic.
 
 ### 7. The Power of the Octahedron (Diamond Shape)
-The Octahedron (implemented via Manhattan distance) is a unique "natural quality" of the voxel grid that bridged the gap between Blocky and Organic terrain.
+The Octahedron is the **Primary Placement Tool** for all "Solid State" terrain. It bridges the gap between Blocky and Organic terrain.
 
-- **45-Degree Consistency**: The diamond shape naturally produces perfect 45-degree slopes. This is ideal for gameplay-critical terrain like **ramps** or **stairs** that need to be predictable for player movement/climbing.
-- **Filling "Corner Gaps"**: When filling terrain, the "points" of the octahedron can reach into tight voxel corners that a sphere would miss (due to curvature) or a box would over-fill (due to volume). 
-- **Structural Naturalism**: It creates "crystalline" or "jagged" structures. Using an octahedron-based fill for caves or mountain peaks gives them a distinct, sharp identity that feels more "designed" than smooth spheres but less "synthetic" than perfect cubes.
-- **Geometric Dualism**: In Voxel math, the Octahedron is the "dual" of the Cube. Using them together allows for a complete "Structural Grammar" — Cubes for foundations, Octahedrons for slanted roofs/peaks.
+- **45-Degree Consistency**: The diamond shape naturally produces perfect 45-degree slopes. This is our standard for **ramps** and **stairs**.
+- **Filling "Corner Gaps"**: When filling terrain, the "points" of the octahedron reach into tight voxel corners that a sphere would miss, ensuring "Solid" fills are actually airtight.
+- **Structural Naturalism**: It creates "crystalline" or "jagged" structures. By making the Octahedron the default placement brush, user-built terrain maintains a distinct, sharp identity that feels "designed" and structured.
+- **Geometric Dualism**: We will use a "Dual Mode" brush—Cubes for foundations/walls, Octahedrons for slanted features—providing a complete Building Grammar.
 
-### 8. Robustness: "GPU Safety & Recovery"
-- Change the modification storage to a **Circular Command Buffer**. Instead of storing the "final density", store a list of **SDF Commands** (Sphere at X, Box at Y). 
-- This makes the terrain **Fundamentally Changeable**: you could "move" a previously placed block by simply updating the command buffer and re-generating the chunk.
+### 8. Network Synchronization: "Command-SDF Sync"
+In a **multiplayer/dedicated server** context, syncing voxel density is bandwidth-prohibitive.
+- **Protocol**: The server acts as a **Command Authority**. When a player digs or builds, the server validates the SDF command and broadcasts the *command*, not the *result*.
+- **Headless Validation**: The Dedicated Server uses the C++ GDExtension to run the Manhattan SDF logic on the CPU to validate player collisions (preventing walking through walls) without needing a GPU.
+- **Latency Compensation**: Clients can apply SDF commands locally immediately for 0-latency feedback (Client-side Prediction) while the server confirms the operation.
 
 ## 🔍 Is it simple enough?
 **No.** Currently, the CPU doesn't know *what* is in the terrain, it only sees the *result* (Density). 
