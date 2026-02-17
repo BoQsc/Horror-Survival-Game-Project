@@ -33,6 +33,11 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var procedural_road_width: float = 8.0 # Width of roads
 @export var debug_show_road_zones: bool = false # Debug: show road alignment (Yellow=correct, Red=spillover, Green=crack)
 
+## Shading Mode: Flat or Smooth
+## Flat = Sharp faceted edges, fixes texture spillover
+## Smooth = Gradient-based normals, softer appearance
+@export var use_flat_shading: bool = false
+
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
 var mutex: Mutex
@@ -1471,7 +1476,7 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 	rd.compute_list_bind_uniform_set(list, set_mesh, 0)
 	
 	var push_data = PackedFloat32Array([
-		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 1.0 if use_flat_shading else 0.0,
 		noise_frequency, terrain_height, 0.0, 0.0
 	])
 	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)

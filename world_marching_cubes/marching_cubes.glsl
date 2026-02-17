@@ -161,7 +161,19 @@ void main() {
         vec3 mat_color = material_to_color(mat_id);
         
         // Vertex 1
-        vec3 n1 = get_normal(v1);
+        bool use_flat = params.chunk_offset.w > 0.5;
+        vec3 n1;
+        vec3 face_normal;
+        if (use_flat) {
+            // FLAT SHADING: Use face normal
+            vec3 edge1 = v2 - v1;
+            vec3 edge2 = v3 - v1;
+            face_normal = normalize(cross(edge1, edge2));
+            n1 = face_normal;
+        } else {
+            // SMOOTH SHADING: Use gradient normal
+            n1 = get_normal(v1);
+        }
         mesh_output.vertices[start_ptr + 0] = v1.x;
         mesh_output.vertices[start_ptr + 1] = v1.y;
         mesh_output.vertices[start_ptr + 2] = v1.z;
@@ -173,7 +185,12 @@ void main() {
         mesh_output.vertices[start_ptr + 8] = mat_color.b;
         
         // Vertex 3 (note: order is 1,3,2 for winding)
-        vec3 n3 = get_normal(v3);
+        vec3 n3;
+        if (use_flat) {
+            n3 = face_normal;
+        } else {
+            n3 = get_normal(v3);
+        }
         mesh_output.vertices[start_ptr + 9] = v3.x;
         mesh_output.vertices[start_ptr + 10] = v3.y;
         mesh_output.vertices[start_ptr + 11] = v3.z;
@@ -185,7 +202,12 @@ void main() {
         mesh_output.vertices[start_ptr + 17] = mat_color.b;
         
         // Vertex 2
-        vec3 n2 = get_normal(v2);
+        vec3 n2;
+        if (use_flat) {
+            n2 = face_normal;
+        } else {
+            n2 = get_normal(v2);
+        }
         mesh_output.vertices[start_ptr + 18] = v2.x;
         mesh_output.vertices[start_ptr + 19] = v2.y;
         mesh_output.vertices[start_ptr + 20] = v2.z;
