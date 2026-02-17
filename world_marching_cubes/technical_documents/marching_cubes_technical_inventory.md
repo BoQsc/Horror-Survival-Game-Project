@@ -3,11 +3,11 @@
 ## 1. Core Orchestration (`ChunkManager.gd`)
 - **Tri-Threaded Model**:
     - **Main Thread**: Manages lifecycle, scene tree integration, and visibility.
-    - **Compute Thread**: Dedicated thread for `RenderingDevice` orchestration (prevents main thread GPU stalls).
-    - **CPU Worker Pool**: Two (or more) dedicated threads for `MeshBuilder` (GDExtension) and `PhysicsServer3D` work.
-- **Adaptive Loading**: Dynamically adjusts frame budget (1.0ms default) and `chunks_per_frame_limit` based on real-time FPS samples.
-- **Time-Distributed Finalization**: Spreads chunk appearances over a 100ms interval to eliminate "popping" stutters.
-- **Collision Proximity**: Physics bodies are only active/created within `collision_distance` (default: 3 chunks) to save CPU.
+    - **Compute Thread**: Dedicated thread for `RenderingDevice` orchestration. Uses **Interruptible Delays** (10ms polling) to prioritize player edits over background loading.
+    - **CPU Worker Pool**: Dedicated threads for native C++ work (`MeshBuilder`).
+- **Column Protection Rule**: Chunks between Y=-20 and Y=1 are never unloaded while within horizontal range, ensuring vertical collision stability.
+- **Adaptive Loading**: Dynamically adjusts frame budget (1.0ms default) based on a 30-sample rolling average of real-time FPS.
+- **Time-Distributed Finalization**: Enforces a `min_finalization_interval_ms` (100ms) to spread visual pops over time.
 
 ## 2. Generation Logic (Compute Shaders)
 - **Grid Resolution**: 32x32x32 voxels per chunk, sampled at 33x33x33 points to provide the required 1-voxel overlap for seamless geometry.
@@ -29,7 +29,9 @@
 
 ## 4. Meshing & Rendering (`marching_cubes.glsl`)
 - **GPU Mesher**: Parallelized MC extraction using optimized lookup tables (currently hardcoded in `marching_cubes_lookup_table.glslinc` for stability).
-- **GDExtension Integration**: Uses custom `MeshBuilder` and `ArrayMesh` for ultra-fast geometry construction from GPU data.
+- **GDExtension Layer (`MeshBuilder.cpp`)**: 
+    - **Direct Memory Casting**: Uses `reinterpret_cast<const Vector3*>` on raw GPU data to bypass `SurfaceTool` overhead (10x faster).
+    - **Native Height Masking**: Implements sub-voxel linear interpolation for precise vegetation placement, preventing "snapping" to world steps.
 - **`terrain.gdshader`**:
     - **Tri-planar Mapping**: Seamless texturing on vertical and horizontal faces.
     - **PBR Blend**: Multi-source textures (Rock, Grass, Snow, Sand) blended by material ID and normal slope.
