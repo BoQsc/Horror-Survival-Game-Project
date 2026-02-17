@@ -833,4 +833,3 @@ func _array_to_vec3i(a: Array) -> Vector3i:
 	if a.size() < 3:
 		return Vector3i.ZERO
 	return Vector3i(int(a[0]), int(a[1]), int(a[2]))
-
