@@ -276,27 +276,6 @@ void fragment() {
 	float road_intensity = is_player_placed ? 0.0 : road_raw * road_slope_mask;
 	base_color = mix(base_color, col_road, road_intensity);
 	
-	// === Procedural Road Edge Blending (toggleable) ===
-	// Creates soft gradient at road edges, extending OUTWARD into terrain
-	// ROOT FIX: Only apply blending at ACTUAL road surface level (not underground)
-	if (road_edge_blend_enabled && !is_player_placed && mat_id_A != 6 && mat_id_B != 6) {
-		float road_dist = get_procedural_road_dist(world_pos.xz);
-		float road_edge = procedural_road_width * 0.43;
-		float outer_limit = road_edge + road_edge_blend_width;
-		
-		if (road_dist < outer_limit) {
-			// Get the actual road height at this XZ position
-			float road_height = get_road_height(world_pos.xz);
-			// Only blend if we're AT road surface level (within 1.5 units)
-			float height_diff = world_pos.y - road_height;
-			if (height_diff >= -0.5 && height_diff < 1.5) {
-				float edge_blend = 1.0 - smoothstep(road_edge, outer_limit, road_dist);
-				edge_blend *= road_slope_mask;  // Only horizontal surfaces
-				base_color = mix(base_color, col_road, edge_blend);
-			}
-		}
-	}
-	
 	
 	// === Dynamic Weather Snow ===
 	// Applies based on global_snow_amount, sticks to flat surfaces
