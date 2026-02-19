@@ -249,17 +249,8 @@ void main() {
     float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;
     float terrain_height = base_height + hill_height;
     
-    // Account for road excavation in material calculation
-    float road_height;
-    float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
-    float effective_height = terrain_height;
-    if (road_dist < params.road_width * 2.0) {
-        // Near a road - use road height as the "surface" for material depth
-        float blend = smoothstep(params.road_width * 2.0, params.road_width * 0.5, road_dist);
-        effective_height = mix(terrain_height, road_height, blend);
-    }
-    
+    // Material depth is strictly based on the original terrain surface to prevent rectangular stone artifacts around roads
     density_buffer.values[index] = get_density(pos);
-    material_buffer.values[index] = get_material(pos, effective_height);
+    material_buffer.values[index] = get_material(pos, terrain_height);
 }
 

@@ -116,6 +116,18 @@ float noise3d(vec3 x) {
 	               mix(hash3d(i + vec3(0,1,1)), hash3d(i + vec3(1,1,1)), f.x), f.y), f.z);
 }
 
+// 3D Fractal Brownian Motion for seamless underground variation
+float fbm3d(vec3 p) {
+	float f = 0.0;
+	float w = 0.5;
+	for (int i = 0; i < 3; i++) {
+		f += w * noise3d(p);
+		p *= 2.0;
+		w *= 0.5;
+	}
+	return f;
+}
+
 // Get road height at a given XZ position (matches gen_density.glsl logic)
 float get_road_height(vec2 pos) {
 	float spacing = procedural_road_spacing;
@@ -170,22 +182,74 @@ vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos
 	return samp;
 }
 
-// Resolve a material ID to its texture color
-// Used by both single-material and dual-material blending paths
-vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road) {
-	// Player-placed materials (100+): unwrap to base ID
-	int id = mat_id;
-	if (id >= 100) id = id - 100;
+// Procedural Fragment Material - Completely bypasses vertex color jagged edges
+// Calculates natural terrain texture dynamically per-pixel
+vec3 get_procedural_color(vec3 w_pos, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road) {
+	float t_height = terrain_height + noise3d(vec3(w_pos.x, 0.0, w_pos.z) * noise_frequency) * terrain_height;
+	float depth = t_height - w_pos.y;
 	
-	if (id == 0) return col_grass;
-	else if (id == 1) return col_stone;
-	else if (id == 2) return col_stone * vec3(1.2, 1.0, 0.5);  // Ore
-	else if (id == 3) return col_sand;
-	else if (id == 4) return col_stone;  // Gravel
-	else if (id == 5) return col_snow;
-	else if (id == 6) return col_road;
-	else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
-	else return col_grass;  // Default fallback
+	// 1. Base Biome (Surface)
+	float biome_val = fbm(w_pos.xz * biome_scale);
+	float blend_w = 0.002; // Tighter blend to match voxel material data exactly
+	float w_sand = 1.0 - smoothstep(-0.2 - blend_w, -0.2 + blend_w, biome_val);
+	float w_snow = smoothstep(0.6 - blend_w, 0.6 + blend_w, biome_val);
+	float w_gravel = smoothstep(0.2 - blend_w, 0.2 + blend_w, biome_val) * (1.0 - w_snow);
+	float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
+	vec3 final_col = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
+	
+	// 2. Procedural Road Overlay
+	if (procedural_road_enabled) {
+		float r_dist = get_procedural_road_dist(w_pos.xz);
+		float r_height = get_road_height(w_pos.xz);
+		float r_height_diff = abs(w_pos.y - r_height);
+		
+		// Smoothstep edges of the road
+		float r_mix = 1.0 - smoothstep(max(0.0, procedural_road_width * 0.5 - 1.0), procedural_road_width * 0.5 + road_edge_blend_width, r_dist);
+		float r_h_mix = 1.0 - smoothstep(1.5, 3.0, r_height_diff);
+		float is_road = r_mix * r_h_mix;
+		final_col = mix(final_col, col_road, is_road);
+	}
+	
+	// 3. Underground Blending
+	// Exclude roads from immediate stone transition beneath surface
+	float is_r = (procedural_road_enabled) ? (1.0 - smoothstep(procedural_road_width * 0.5 - 1.0, procedural_road_width * 0.5 + road_edge_blend_width, get_procedural_road_dist(w_pos.xz))) : 0.0;
+	float underground_mix = smoothstep(8.0, 12.0, depth) * (1.0 - (is_r * smoothstep(8.0, 15.0, depth)));
+	
+	if (underground_mix > 0.0) {
+		vec3 under_col = col_stone;
+		float ore_noise = noise3d(w_pos * 0.15);
+		if (ore_noise > 0.75 && depth > 8.0) {
+			under_col = col_stone * vec3(1.2, 1.0, 0.5); // Ore
+		} else {
+			float stone_var = fbm3d(w_pos * 0.02);
+			if (stone_var > 0.25) under_col = col_stone * vec3(0.7, 0.65, 0.6); // Granite
+		}
+		final_col = mix(final_col, under_col, underground_mix);
+	}
+	
+	return final_col;
+}
+
+// Resolve a material ID to its texture color
+vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road, vec3 procedural_col) {
+	bool is_placed = (mat_id >= 100);
+	int id = is_placed ? (mat_id - 100) : mat_id;
+	
+	if (is_placed) {
+		// Player-placed materials (100+): Use absolute texture
+		if (id == 0) return col_grass;
+		else if (id == 1) return col_stone;
+		else if (id == 2) return col_stone * vec3(1.2, 1.0, 0.5);  // Ore
+		else if (id == 3) return col_sand;
+		else if (id == 4) return col_stone;  // Gravel
+		else if (id == 5) return col_snow;
+		else if (id == 6) return col_road;
+		else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
+		else return col_grass;
+	} else {
+		// Natural voxel: Ignore jagged vertex ID, generate color per-pixel perfectly
+		return procedural_col;
+	}
 }
 
 void fragment() {
@@ -231,32 +295,17 @@ void fragment() {
 	// === Material Color Resolution ===
 	vec3 base_color;
 	
-	// Surface biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
-	bool A_is_biome = (mat_id_A == 0 || mat_id_A == 3 || mat_id_A == 4 || mat_id_A == 5);
-	bool B_is_biome = (mat_id_B == 0 || mat_id_B == 3 || mat_id_B == 4 || mat_id_B == 5);
+	// Pre-calculate the computationally perfect procedural layer
+	vec3 procedural_perfect_color = get_procedural_color(world_pos, col_grass, col_stone, col_sand, col_snow, col_road);
 	
-	// When BOTH materials are surface biomes, use per-pixel fbm blending
-	// instead of per-vertex dual-material blend. This avoids jagged triangle
-	// patches at biome boundaries.
-	bool use_biome_fbm = (A_is_biome && B_is_biome && !is_player_placed && biome_blending_enabled);
-	
-	if (use_biome_fbm) {
-		// Per-pixel biome blending — smooth transitions driven by world-space noise
-		float biome_val = fbm(world_pos.xz * biome_scale);
-		float blend_width = 0.002;
-		float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
-		float w_snow = smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val);
-		float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - w_snow);
-		float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
-		base_color = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
-	} else if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
-		// Single material — direct lookup
+	if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
+		// Single material lookup
 		int mat_id = (abs(blend) < 0.001) ? mat_id_A : ((blend > 0.999) ? mat_id_B : mat_id_A);
-		base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road);
+		base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
 	} else {
-		// Two different non-biome materials — BLEND between them
-		vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road);
-		vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road);
+		// Dual material transition (Smoothly blends natural terrain with player-placed blocks)
+		vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
+		vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
 		base_color = mix(color_A, color_B, blend);
 	}
 
