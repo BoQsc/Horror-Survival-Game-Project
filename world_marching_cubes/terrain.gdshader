@@ -212,8 +212,19 @@ void fragment() {
 	// Underground/special materials: use mat_id directly
 	bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
 	
+<<<<<<< Updated upstream
 	if (is_surface_biome && !is_player_placed && biome_blending_enabled) {
 		// Per-pixel biome calculation using same thresholds as gen_density.glsl
+=======
+	// Use per-pixel fbm when ANY material is a surface biome.
+	// Underground stone (corners 0-3 checked first) often becomes mat_A,
+	// blocking fbm if we require BOTH to be biomes.
+	// Road texture is applied separately via the road overlay below.
+	bool use_biome_fbm = ((A_is_biome || B_is_biome) && !is_player_placed && biome_blending_enabled);
+	
+	if (use_biome_fbm) {
+		// Per-pixel biome blending — smooth transitions driven by world-space noise
+>>>>>>> Stashed changes
 		float biome_val = fbm(world_pos.xz * biome_scale);
 		
 		// Universal blend width for all biome transitions
@@ -227,6 +238,13 @@ void fragment() {
 		
 		// Blend all surface biome colors
 		base_color = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
+<<<<<<< Updated upstream
+=======
+	} else if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
+		// Single non-biome material — direct lookup
+		int mat_id = (abs(blend) < 0.001) ? mat_id_A : ((blend > 0.999) ? mat_id_B : mat_id_A);
+		base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road);
+>>>>>>> Stashed changes
 	} else {
 		// Non-surface biomes: use mat_id directly (no blending)
 		if (mat_id == 0) base_color = col_grass;
