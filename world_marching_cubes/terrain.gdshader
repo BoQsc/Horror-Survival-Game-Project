@@ -229,27 +229,32 @@ void fragment() {
 	}
 	
 	// === Material Color Resolution ===
-	// Resolve a material ID to its texture color
 	vec3 base_color;
 	
-	// Check if both materials are the same (common case: no blending needed)
-	if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
-		// Single material — use mat_A directly
+	// Surface biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
+	bool A_is_biome = (mat_id_A == 0 || mat_id_A == 3 || mat_id_A == 4 || mat_id_A == 5);
+	bool B_is_biome = (mat_id_B == 0 || mat_id_B == 3 || mat_id_B == 4 || mat_id_B == 5);
+	
+	// When BOTH materials are surface biomes, use per-pixel fbm blending
+	// instead of per-vertex dual-material blend. This avoids jagged triangle
+	// patches at biome boundaries.
+	bool use_biome_fbm = (A_is_biome && B_is_biome && !is_player_placed && biome_blending_enabled);
+	
+	if (use_biome_fbm) {
+		// Per-pixel biome blending — smooth transitions driven by world-space noise
+		float biome_val = fbm(world_pos.xz * biome_scale);
+		float blend_width = 0.002;
+		float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
+		float w_snow = smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val);
+		float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - w_snow);
+		float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
+		base_color = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
+	} else if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
+		// Single material — direct lookup
 		int mat_id = (abs(blend) < 0.001) ? mat_id_A : ((blend > 0.999) ? mat_id_B : mat_id_A);
-		bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
-		if (is_surface_biome && !is_player_placed && biome_blending_enabled) {
-			float biome_val = fbm(world_pos.xz * biome_scale);
-			float blend_width = 0.002;
-			float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
-			float w_snow = smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val);
-			float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - w_snow);
-			float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
-			base_color = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
-		} else {
-			base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road);
-		}
+		base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road);
 	} else {
-		// Two different materials — BLEND between them
+		// Two different non-biome materials — BLEND between them
 		vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road);
 		vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road);
 		base_color = mix(color_A, color_B, blend);
