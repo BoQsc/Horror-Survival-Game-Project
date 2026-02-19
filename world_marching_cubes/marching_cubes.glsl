@@ -61,15 +61,23 @@ uint get_material_from_buffer(vec3 p) {
     return material_buffer.values[index];
 }
 
-// Convert material ID to RGB color for vertex color
-// R channel encodes material ID (0-255), G=1 marks valid material
-// Material IDs: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow, 6=Road, 100+=Player
-vec3 material_to_color(uint mat_id) {
-    // Encode material ID in R channel (normalized to 0-1)
-    // Fragment shader decodes: int id = int(round(color.r * 255.0))
-    float encoded_id = float(mat_id) / 255.0;
-    return vec3(encoded_id, 1.0, 0.0);  // G=1 marks valid, B unused
+// Dual-material encoding for vertex color:
+// R = mat_A / 255.0 (primary material ID)
+// G = mat_B / 255.0 (secondary material ID)
+// B = blend factor (0.0 = 100% mat_A, 1.0 = 100% mat_B)
+// Material IDs: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow, 6=Road, 9=Granite, 100+=Player
+
+float encode_mat(uint mat_id) {
+    return float(mat_id) / 255.0;
 }
+
+// Edge-to-corner mapping (standard MC edge numbering)
+// Each edge connects two corners: edge_corners[edge*2] and edge_corners[edge*2+1]
+const int edge_corners[24] = int[](
+    0,1, 1,2, 2,3, 3,0,   // edges 0-3
+    4,5, 5,6, 6,7, 7,4,   // edges 4-7
+    0,4, 1,5, 2,6, 3,7    // edges 8-11
+);
 
 vec3 get_normal(vec3 pos) {
     // Calculate gradient from the buffer
@@ -147,20 +155,60 @@ void main() {
     if ((edgeTable[cubeIndex] & 1024) != 0) vertList[10] = interpolate_vertex(corners[2], corners[6], densities[2], densities[6]);
     if ((edgeTable[cubeIndex] & 2048) != 0) vertList[11] = interpolate_vertex(corners[3], corners[7], densities[3], densities[7]);
 
+    // === DUAL-MATERIAL DETECTION ===
+    // Find the two materials present among solid corners in this cube.
+    // mat_A = primary (first solid corner found)
+    // mat_B = secondary (first DIFFERENT material found, or same as mat_A)
+    uint mat_A = 0u;
+    uint mat_B = 0u;
+    bool found_A = false;
+    bool found_B = false;
+    for (int c = 0; c < 8; c++) {
+        if (densities[c] < ISO_LEVEL) {
+            uint m = get_material_from_buffer(corners[c]);
+            if (!found_A) {
+                mat_A = m;
+                found_A = true;
+            } else if (m != mat_A && !found_B) {
+                mat_B = m;
+                found_B = true;
+            }
+        }
+    }
+    if (!found_B) mat_B = mat_A;  // Only one material in this cube
+
+    float encoded_A = encode_mat(mat_A);
+    float encoded_B = encode_mat(mat_B);
+
+    // === PER-VERTEX BLEND FACTORS ===
+    // For each edge vertex, check which material is on the solid side.
+    // blend = 0.0 if solid corner has mat_A, blend = 1.0 if mat_B.
+    float blendList[12];
+    for (int e = 0; e < 12; e++) {
+        if ((edgeTable[cubeIndex] & (1 << e)) != 0) {
+            int c1 = edge_corners[e * 2];
+            int c2 = edge_corners[e * 2 + 1];
+            // Find the solid corner on this edge
+            int solid_c = (densities[c1] < ISO_LEVEL) ? c1 : c2;
+            uint solid_mat = get_material_from_buffer(corners[solid_c]);
+            blendList[e] = (solid_mat == mat_A) ? 0.0 : 1.0;
+        }
+    }
+
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
         uint idx = atomicAdd(counter.triangle_count, 1);
         uint start_ptr = idx * 27;  // 9 floats per vertex (pos + normal + color) 
 
-        vec3 v1 = vertList[triTable[cubeIndex * 16 + i]];
-        vec3 v2 = vertList[triTable[cubeIndex * 16 + i + 1]];
-        vec3 v3 = vertList[triTable[cubeIndex * 16 + i + 2]];
+        int e1 = triTable[cubeIndex * 16 + i];
+        int e2 = triTable[cubeIndex * 16 + i + 1];
+        int e3 = triTable[cubeIndex * 16 + i + 2];
 
-        // Get material color from center of cube
-        uint mat_id = get_material_from_buffer(pos + vec3(0.5));
-        vec3 mat_color = material_to_color(mat_id);
+        vec3 v1 = vertList[e1];
+        vec3 v2 = vertList[e2];
+        vec3 v3 = vertList[e3];
         
-        // Vertex 1
+        // Vertex 1: R=mat_A, G=mat_B, B=blend
         vec3 n1 = get_normal(v1);
         mesh_output.vertices[start_ptr + 0] = v1.x;
         mesh_output.vertices[start_ptr + 1] = v1.y;
@@ -168,9 +216,9 @@ void main() {
         mesh_output.vertices[start_ptr + 3] = n1.x;
         mesh_output.vertices[start_ptr + 4] = n1.y;
         mesh_output.vertices[start_ptr + 5] = n1.z;
-        mesh_output.vertices[start_ptr + 6] = mat_color.r;
-        mesh_output.vertices[start_ptr + 7] = mat_color.g;
-        mesh_output.vertices[start_ptr + 8] = mat_color.b;
+        mesh_output.vertices[start_ptr + 6] = encoded_A;
+        mesh_output.vertices[start_ptr + 7] = encoded_B;
+        mesh_output.vertices[start_ptr + 8] = blendList[e1];
         
         // Vertex 3 (note: order is 1,3,2 for winding)
         vec3 n3 = get_normal(v3);
@@ -180,9 +228,9 @@ void main() {
         mesh_output.vertices[start_ptr + 12] = n3.x;
         mesh_output.vertices[start_ptr + 13] = n3.y;
         mesh_output.vertices[start_ptr + 14] = n3.z;
-        mesh_output.vertices[start_ptr + 15] = mat_color.r;
-        mesh_output.vertices[start_ptr + 16] = mat_color.g;
-        mesh_output.vertices[start_ptr + 17] = mat_color.b;
+        mesh_output.vertices[start_ptr + 15] = encoded_A;
+        mesh_output.vertices[start_ptr + 16] = encoded_B;
+        mesh_output.vertices[start_ptr + 17] = blendList[e3];
         
         // Vertex 2
         vec3 n2 = get_normal(v2);
@@ -192,8 +240,8 @@ void main() {
         mesh_output.vertices[start_ptr + 21] = n2.x;
         mesh_output.vertices[start_ptr + 22] = n2.y;
         mesh_output.vertices[start_ptr + 23] = n2.z;
-        mesh_output.vertices[start_ptr + 24] = mat_color.r;
-        mesh_output.vertices[start_ptr + 25] = mat_color.g;
-        mesh_output.vertices[start_ptr + 26] = mat_color.b;
+        mesh_output.vertices[start_ptr + 24] = encoded_A;
+        mesh_output.vertices[start_ptr + 25] = encoded_B;
+        mesh_output.vertices[start_ptr + 26] = blendList[e2];
     }
 }

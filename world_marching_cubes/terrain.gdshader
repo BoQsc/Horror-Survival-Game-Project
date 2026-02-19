@@ -47,7 +47,9 @@ uniform bool debug_show_road_zones = false;   // Toggle to show road zone detect
 
 varying vec3 world_pos;
 varying vec3 world_normal;
-varying vec3 vertex_color;  // Material color from GPU (legacy, kept for compatibility)
+// Dual-material system: flat = no GPU interpolation, smooth = interpolated
+varying flat vec2 material_ids;   // R=mat_A/255, G=mat_B/255 (NOT interpolated)
+varying float blend_factor;       // 0.0=100% mat_A, 1.0=100% mat_B (smoothly interpolated)
 
 // Simple 2D hash/noise for biomes
 vec2 hash(vec2 p) {
@@ -154,8 +156,10 @@ varying vec3 local_vertex;  // Mesh vertex in local chunk space (0-32)
 void vertex() {
 	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	world_normal = (MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz;
-	vertex_color = COLOR.rgb;  // Pass material color to fragment
-	local_vertex = VERTEX;  // Pass local position for 3D texture sampling
+	// Dual-material: R=mat_A, G=mat_B, B=blend
+	material_ids = COLOR.rg;    // flat — provoking vertex, no interpolation
+	blend_factor = COLOR.b;     // smooth — GPU interpolates across triangle
+	local_vertex = VERTEX;
 }
 
 vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos) {
@@ -164,6 +168,24 @@ vec4 triplanar_texture(sampler2D p_sampler, vec3 p_weights, vec3 p_triplanar_pos
 	samp += texture(p_sampler, p_triplanar_pos.xz) * p_weights.y;
 	samp += texture(p_sampler, p_triplanar_pos.zy * vec2(-1.0, 1.0)) * p_weights.x;
 	return samp;
+}
+
+// Resolve a material ID to its texture color
+// Used by both single-material and dual-material blending paths
+vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road) {
+	// Player-placed materials (100+): unwrap to base ID
+	int id = mat_id;
+	if (id >= 100) id = id - 100;
+	
+	if (id == 0) return col_grass;
+	else if (id == 1) return col_stone;
+	else if (id == 2) return col_stone * vec3(1.2, 1.0, 0.5);  // Ore
+	else if (id == 3) return col_sand;
+	else if (id == 4) return col_stone;  // Gravel
+	else if (id == 5) return col_snow;
+	else if (id == 6) return col_road;
+	else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
+	else return col_grass;  // Default fallback
 }
 
 void fragment() {
@@ -182,75 +204,55 @@ void fragment() {
 	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
 	vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
 	
-	// === NEW: Material from Vertex Color (set by marching_cubes.glsl) ===
-	// Material ID is encoded in vertex_color.r channel
-	// IDs: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow, 6=Road, 100+=Player
-	int mat_id = int(round(vertex_color.r * 255.0));
+	// === DUAL-MATERIAL DECODING ===
+	// material_ids is flat (from provoking vertex, NOT interpolated)
+	// blend_factor is smooth (GPU interpolated across triangle)
+	int mat_id_A = int(round(material_ids.x * 255.0));
+	int mat_id_B = int(round(material_ids.y * 255.0));
+	float blend = clamp(blend_factor, 0.0, 1.0);
 	
 	// Check for player-placed material override from 3D texture
-	// Player materials (100+) are written to material_map when player places blocks
 	bool is_player_placed = false;
 	if (has_material_map) {
-		// Sample material map at vertex position (biased toward solid)
 		vec3 biased_pos = local_vertex - normal * 0.8;
 		vec3 voxel_pos = floor(biased_pos + vec3(0.5));
 		vec3 local_pos = clamp(voxel_pos / 32.0, vec3(0.0), vec3(1.0));
 		float mat_raw = texture(material_map, local_pos).r;
 		int sampled_id = int(round(mat_raw * 255.0));
-		
-		// Player-placed materials (100+) override procedural
 		if (sampled_id >= 100) {
-			mat_id = sampled_id;
 			is_player_placed = true;
 		}
 	}
+	// Also flag if vertex data indicates player material
+	if (mat_id_A >= 100 || mat_id_B >= 100) {
+		is_player_placed = true;
+	}
 	
-	// === Material Lookup with Smooth Biome Blending ===
+	// === Material Color Resolution ===
+	// Resolve a material ID to its texture color
 	vec3 base_color;
 	
-	// Surface biomes: calculate color from per-pixel fbm (smooth blending)
-	// Underground/special materials: use mat_id directly
-	bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
-	
-	if (is_surface_biome && !is_player_placed && biome_blending_enabled) {
-		// Per-pixel biome calculation using same thresholds as gen_density.glsl
-		float biome_val = fbm(world_pos.xz * biome_scale);
-		
-		// Universal blend width for all biome transitions
-		float blend_width = 0.002;  // Adjust this single value to change all blend sharpness
-		
-		// Biome thresholds: Sand < -0.2, Grass -0.2 to 0.2, Gravel 0.2 to 0.6, Snow > 0.6
-		float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
-		float w_snow = smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val);
-		float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - w_snow);
-		float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
-		
-		// Blend all surface biome colors
-		base_color = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
+	// Check if both materials are the same (common case: no blending needed)
+	if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
+		// Single material — use mat_A directly
+		int mat_id = (abs(blend) < 0.001) ? mat_id_A : ((blend > 0.999) ? mat_id_B : mat_id_A);
+		bool is_surface_biome = (mat_id == 0 || mat_id == 3 || mat_id == 4 || mat_id == 5);
+		if (is_surface_biome && !is_player_placed && biome_blending_enabled) {
+			float biome_val = fbm(world_pos.xz * biome_scale);
+			float blend_width = 0.002;
+			float w_sand = 1.0 - smoothstep(-0.2 - blend_width, -0.2 + blend_width, biome_val);
+			float w_snow = smoothstep(0.6 - blend_width, 0.6 + blend_width, biome_val);
+			float w_gravel = smoothstep(0.2 - blend_width, 0.2 + blend_width, biome_val) * (1.0 - w_snow);
+			float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
+			base_color = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
+		} else {
+			base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road);
+		}
 	} else {
-		// Non-surface biomes: use mat_id directly (no blending)
-		if (mat_id == 0) base_color = col_grass;
-		else if (mat_id == 1) base_color = col_stone;
-		else if (mat_id == 2) base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore
-		else if (mat_id == 3) base_color = col_sand;
-		else if (mat_id == 4) base_color = col_stone;  // Gravel
-		else if (mat_id == 5) base_color = col_snow;
-		else if (mat_id == 6) base_color = col_road;
-		else if (mat_id == 9) base_color = col_stone * vec3(0.7, 0.65, 0.6);  // Granite
-		else if (mat_id >= 100) {
-			// Player-placed materials: base mat_id + 100
-			// Matches item_definitions: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow
-			int base_id = mat_id - 100;
-			if (base_id == 0) base_color = col_grass;
-			else if (base_id == 1) base_color = col_stone;
-			else if (base_id == 2) base_color = col_stone * vec3(1.2, 1.0, 0.5);  // Ore
-			else if (base_id == 3) base_color = col_sand;
-			else if (base_id == 4) base_color = col_stone;  // Gravel
-			else if (base_id == 5) base_color = col_snow;
-			else if (base_id == 6) base_color = col_road;
-			else if (base_id == 9) base_color = col_stone * vec3(0.7, 0.65, 0.6);  // Granite
-			else base_color = col_stone;
-		} else base_color = col_grass;
+		// Two different materials — BLEND between them
+		vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road);
+		vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road);
+		base_color = mix(color_A, color_B, blend);
 	}
 
 	// Slope needed for road and weather effects
@@ -259,7 +261,7 @@ void fragment() {
 	// === Slope-based Cliff Rock (visual enhancement, not material change) ===
 	// Only apply to SURFACE cliffs (above threshold). Underground shows raw materials.
 	// This ensures players can see stone, ore, etc. when mining underground.
-	if (cliff_rock_enabled && !is_player_placed && mat_id != 6) {
+	if (cliff_rock_enabled && !is_player_placed && mat_id_A != 6 && mat_id_B != 6) {
 		// Height-based surface check with smooth transition
 		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
 		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;
@@ -277,7 +279,7 @@ void fragment() {
 	// === Procedural Road Edge Blending (toggleable) ===
 	// Creates soft gradient at road edges, extending OUTWARD into terrain
 	// ROOT FIX: Only apply blending at ACTUAL road surface level (not underground)
-	if (road_edge_blend_enabled && !is_player_placed && mat_id != 6) {
+	if (road_edge_blend_enabled && !is_player_placed && mat_id_A != 6 && mat_id_B != 6) {
 		float road_dist = get_procedural_road_dist(world_pos.xz);
 		float road_edge = procedural_road_width * 0.43;
 		float outer_limit = road_edge + road_edge_blend_width;
@@ -311,7 +313,7 @@ void fragment() {
 	if (debug_show_road_zones) {
 		float road_dist_debug = get_procedural_road_dist(world_pos.xz);
 		bool in_procedural_road = (road_dist_debug < procedural_road_width);
-		bool voxel_is_road = (mat_id == 6);
+		bool voxel_is_road = (mat_id_A == 6 || mat_id_B == 6);
 		
 		if (voxel_is_road && in_procedural_road) {
 			ALBEDO = mix(ALBEDO, vec3(1.0, 1.0, 0.0), 0.6);  // Yellow = both agree
