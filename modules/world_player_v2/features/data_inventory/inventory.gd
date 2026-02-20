@@ -107,8 +107,10 @@ func add_item(item: Dictionary, count: int = 1) -> int:
 			remaining -= to_add
 	
 	if remaining < count:
+		var added_count = count - remaining
 		PlayerSignals.inventory_changed.emit()
-		DebugManager.log_player("Inventory: Added %d x %s (%d leftover)" % [count - remaining, item.get("name", "item"), remaining])
+		PlayerSignals.item_added.emit(item, added_count)
+		DebugManager.log_player("Inventory: Added %d x %s (%d leftover)" % [added_count, item.get("name", "item"), remaining])
 	
 	return remaining
 

@@ -276,6 +276,7 @@ func add_item(item: Dictionary) -> bool:
 			if stack_slot == selected_slot:
 				_emit_selection_change()  # Signal arms to update
 			PlayerSignals.inventory_changed.emit()
+			PlayerSignals.item_added.emit(item, 1)
 			return true
 	
 	# Find empty slot
@@ -284,6 +285,7 @@ func add_item(item: Dictionary) -> bool:
 		# Use set_item_at to properly emit signals (including item_changed for arms visibility)
 		set_item_at(empty_slot, item, 1)
 		DebugManager.log_player("Hotbar: Added %s to slot %d" % [item.get("name", "item"), empty_slot])
+		PlayerSignals.item_added.emit(item, 1)
 		return true
 	
 	DebugManager.log_player("Hotbar: No space for %s" % item.get("name", "item"))

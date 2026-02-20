@@ -55,6 +55,7 @@ func _ready() -> void:
 		PlayerSignals.target_material_changed.connect(_on_target_material_changed)
 		PlayerSignals.camera_underwater_toggled.connect(_on_camera_underwater_toggled)
 		PlayerSignals.terraformer_material_changed.connect(_on_terraformer_material_changed)
+		PlayerSignals.item_added.connect(_on_item_added)
 	
 	_setup_hotbar()
 	
@@ -146,6 +147,8 @@ func _ready() -> void:
 	
 	_setup_visual_overlays()
 
+var item_notification_container: VBoxContainer = null
+
 func _setup_visual_overlays() -> void:
 	if not underwater_overlay:
 		underwater_overlay = ColorRect.new()
@@ -173,6 +176,20 @@ func _setup_visual_overlays() -> void:
 		notification_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(notification_label)
 		print("[HUD_SETUP] Notification label created")
+
+	# Create item notification container
+	if not item_notification_container:
+		item_notification_container = VBoxContainer.new()
+		item_notification_container.name = "ItemNotificationContainer"
+		item_notification_container.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+		item_notification_container.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		item_notification_container.grow_vertical = Control.GROW_DIRECTION_BOTH
+		item_notification_container.offset_right = -50
+		item_notification_container.offset_top = -200
+		item_notification_container.offset_bottom = 200
+		item_notification_container.alignment = BoxContainer.ALIGNMENT_END
+		item_notification_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(item_notification_container)
 	
 	# Connect to SaveManager signals  
 	print("[HUD_SETUP] Checking for SaveManager...")
@@ -192,6 +209,30 @@ func _setup_visual_overlays() -> void:
 			print("[HUD_SETUP] Connected to load_completed signal")
 	else:
 		print("[HUD_SETUP] WARNING: SaveManager not found in scene tree!")
+
+func _on_item_added(item_data: Dictionary, amount: int) -> void:
+	print("HUD: _on_item_added received: %s x%d" % [item_data.get("name", "Unknown"), amount])
+	if amount <= 0 or not item_notification_container:
+		return
+		
+	var item_name = item_data.get("name", "Unknown Item")
+	var label = Label.new()
+	label.text = "+%d %s" % [amount, item_name]
+	label.add_theme_font_size_override("font_size", 24)
+	label.add_theme_color_override("font_color", Color.WHITE)
+	label.add_theme_color_override("font_outline_color", Color.BLACK)
+	label.add_theme_constant_override("outline_size", 4)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	
+	item_notification_container.add_child(label)
+	print("HUD: Added label to container: ", item_notification_container)
+	
+	var tween = create_tween()
+	# Wait 2 seconds, then fade out over 1 second, then remove
+	tween.tween_interval(2.0)
+	tween.tween_property(label, "modulate:a", 0.0, 1.0)
+	tween.tween_callback(label.queue_free)
 
 func _process(_delta: float) -> void:
 	_update_compass()

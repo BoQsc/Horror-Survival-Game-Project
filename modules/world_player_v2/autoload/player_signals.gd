@@ -23,6 +23,8 @@ signal item_used(item_data: Dictionary, action: String)
 @warning_ignore("unused_signal")
 signal item_changed(slot: int, item_data: Dictionary)
 @warning_ignore("unused_signal")
+signal item_added(item_data: Dictionary, amount: int)
+@warning_ignore("unused_signal")
 signal hotbar_slot_selected(slot: int)
 
 # Mode events
