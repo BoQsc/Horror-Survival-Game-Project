@@ -32,6 +32,13 @@ public:
     // Native implementation of collision shape creation
     // Generates ConcavePolygonShape3D directly from raw vertex data
     Ref<ConcavePolygonShape3D> build_collision_shape(const PackedFloat32Array& data, int stride);
+	
+	// Fast conversion from PackedByteArray to PackedFloat32Array
+	PackedFloat32Array bytes_to_floats(const PackedByteArray& data);
+	
+	// Fast ArrayMesh creation specifically for the Building Greedy Mesher
+	// Bypasses GDScript Variant loop unpacking 
+	Ref<ArrayMesh> build_building_mesh(const PackedByteArray& vertex_bytes, const PackedByteArray& normal_bytes, const PackedByteArray& uv_bytes, const PackedByteArray& index_bytes, int vertex_count, int index_count);
 };
 
 }

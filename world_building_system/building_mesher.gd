@@ -124,17 +124,27 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	rd.buffer_update(counter_buffer, 0, 4, zero_data)
 	rd.buffer_update(index_counter_buffer, 0, 4, zero_data)
 	
+	var builder = null
+	if ClassDB.class_exists("MeshBuilder"):
+		builder = ClassDB.instantiate("MeshBuilder")
+		
 	# Convert Data to Floats
 	var float_data = PackedFloat32Array()
-	float_data.resize(v_bytes.size())
-	for i in range(v_bytes.size()):
-		float_data[i] = float(v_bytes[i])
+	if builder:
+		float_data = builder.bytes_to_floats(v_bytes)
+	else:
+		float_data.resize(v_bytes.size())
+		for i in range(v_bytes.size()):
+			float_data[i] = float(v_bytes[i])
 		
 	# Convert Meta to Floats
 	var meta_data = PackedFloat32Array()
-	meta_data.resize(v_meta.size())
-	for i in range(v_meta.size()):
-		meta_data[i] = float(v_meta[i])
+	if builder:
+		meta_data = builder.bytes_to_floats(v_meta)
+	else:
+		meta_data.resize(v_meta.size())
+		for i in range(v_meta.size()):
+			meta_data[i] = float(v_meta[i])
 	
 	# Texture 0: IDs
 	var fmt = RDTextureFormat.new()
@@ -241,31 +251,40 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		var index_bytes = rd.buffer_get_data(index_buffer, 0, actual_index_count * 4)
 		
 		# Convert
-		var vertices = []
-		var vertices_floats = vertex_bytes.to_float32_array()
-		vertices.resize(actual_vertex_count)
-		for i in range(actual_vertex_count):
-			vertices[i] = Vector3(vertices_floats[i * 3], vertices_floats[i * 3 + 1], vertices_floats[i * 3 + 2])
-			
-		var normals = []
-		var normals_floats = normal_bytes.to_float32_array()
-		normals.resize(actual_vertex_count)
-		for i in range(actual_vertex_count):
-			normals[i] = Vector3(normals_floats[i * 3], normals_floats[i * 3 + 1], normals_floats[i * 3 + 2])
+		var mesh: ArrayMesh = null
+		if builder:
+			mesh = builder.build_building_mesh(vertex_bytes, normal_bytes, uv_bytes, index_bytes, actual_vertex_count, actual_index_count)
+			if mesh:
+				for i in range(mesh.get_surface_count()):
+					arrays = mesh.surface_get_arrays(i)
+		
+		# Fallback to GDScript if builder missing
+		if not mesh:
+			var vertices = []
+			var vertices_floats = vertex_bytes.to_float32_array()
+			vertices.resize(actual_vertex_count)
+			for i in range(actual_vertex_count):
+				vertices[i] = Vector3(vertices_floats[i * 3], vertices_floats[i * 3 + 1], vertices_floats[i * 3 + 2])
+				
+			var normals = []
+			var normals_floats = normal_bytes.to_float32_array()
+			normals.resize(actual_vertex_count)
+			for i in range(actual_vertex_count):
+				normals[i] = Vector3(normals_floats[i * 3], normals_floats[i * 3 + 1], normals_floats[i * 3 + 2])
 
-		var uvs = []
-		var uvs_floats = uv_bytes.to_float32_array()
-		uvs.resize(actual_vertex_count)
-		for i in range(actual_vertex_count):
-			uvs[i] = Vector2(uvs_floats[i * 2], uvs_floats[i * 2 + 1])
-			
-		var indices = index_bytes.to_int32_array()
+			var uvs = []
+			var uvs_floats = uv_bytes.to_float32_array()
+			uvs.resize(actual_vertex_count)
+			for i in range(actual_vertex_count):
+				uvs[i] = Vector2(uvs_floats[i * 2], uvs_floats[i * 2 + 1])
+				
+			var indices = index_bytes.to_int32_array()
 
-		arrays.resize(ArrayMesh.ARRAY_MAX)
-		arrays[ArrayMesh.ARRAY_VERTEX] = PackedVector3Array(vertices)
-		arrays[ArrayMesh.ARRAY_NORMAL] = PackedVector3Array(normals)
-		arrays[ArrayMesh.ARRAY_TEX_UV] = PackedVector2Array(uvs)
-		arrays[ArrayMesh.ARRAY_INDEX] = indices
+			arrays.resize(ArrayMesh.ARRAY_MAX)
+			arrays[ArrayMesh.ARRAY_VERTEX] = PackedVector3Array(vertices)
+			arrays[ArrayMesh.ARRAY_NORMAL] = PackedVector3Array(normals)
+			arrays[ArrayMesh.ARRAY_TEX_UV] = PackedVector2Array(uvs)
+			arrays[ArrayMesh.ARRAY_INDEX] = indices
 		
 	# Cleanup GPU resources - controlled by ENABLE_GPU_CLEANUP toggle
 	# ORDER MATTERS: Free uniform_set FIRST (it holds references to textures/sampler)

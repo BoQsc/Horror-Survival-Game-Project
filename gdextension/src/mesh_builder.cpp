@@ -17,6 +17,10 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("build_mesh_native", "data", "stride"), &MeshBuilder::build_mesh_native);
     ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
+	
+	// Fast conversion methods and custom building mesher
+	ClassDB::bind_method(D_METHOD("bytes_to_floats", "data"), &MeshBuilder::bytes_to_floats);
+	ClassDB::bind_method(D_METHOD("build_building_mesh", "vertex_bytes", "normal_bytes", "uv_bytes", "index_bytes", "vertex_count", "index_count"), &MeshBuilder::build_building_mesh);
 }
 
 Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, int stride) {
@@ -143,4 +147,78 @@ Ref<ConcavePolygonShape3D> MeshBuilder::build_collision_shape(const PackedFloat3
     shape->set_faces(faces);
     
     return shape;
+}
+
+PackedFloat32Array MeshBuilder::bytes_to_floats(const PackedByteArray& data) {
+    PackedFloat32Array floats;
+    int count = data.size();
+    floats.resize(count);
+    
+    const uint8_t* src = data.ptr();
+    float* dst = floats.ptrw();
+    
+    for (int i = 0; i < count; ++i) {
+        dst[i] = static_cast<float>(src[i]);
+    }
+    
+    return floats;
+}
+
+Ref<ArrayMesh> MeshBuilder::build_building_mesh(const PackedByteArray& vertex_bytes, const PackedByteArray& normal_bytes, const PackedByteArray& uv_bytes, const PackedByteArray& index_bytes, int vertex_count, int index_count) {
+    if (vertex_count <= 0 || index_count <= 0) {
+        return Ref<ArrayMesh>();
+    }
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedVector2Array uvs;
+    PackedInt32Array indices;
+
+    vertices.resize(vertex_count);
+    normals.resize(vertex_count);
+    uvs.resize(vertex_count);
+    indices.resize(index_count);
+
+    Vector3* v_ptr = vertices.ptrw();
+    Vector3* n_ptr = normals.ptrw();
+    Vector2* uv_ptr = uvs.ptrw();
+    int32_t* idx_ptr = indices.ptrw();
+
+    const float* src_v = reinterpret_cast<const float*>(vertex_bytes.ptr());
+    const float* src_n = reinterpret_cast<const float*>(normal_bytes.ptr());
+    const float* src_uv = reinterpret_cast<const float*>(uv_bytes.ptr());
+    const int32_t* src_idx = reinterpret_cast<const int32_t*>(index_bytes.ptr());
+
+    // 1. Unpack Vertices (vec3)
+    for (int i = 0; i < vertex_count; ++i) {
+        v_ptr[i] = Vector3(src_v[i * 3], src_v[i * 3 + 1], src_v[i * 3 + 2]);
+    }
+
+    // 2. Unpack Normals (vec3)
+    for (int i = 0; i < vertex_count; ++i) {
+        n_ptr[i] = Vector3(src_n[i * 3], src_n[i * 3 + 1], src_n[i * 3 + 2]);
+    }
+
+    // 3. Unpack UVs (vec2)
+    for (int i = 0; i < vertex_count; ++i) {
+        uv_ptr[i] = Vector2(src_uv[i * 2], src_uv[i * 2 + 1]);
+    }
+	
+	// 4. Unpack Indices (int32)
+	for (int i = 0; i < index_count; ++i) {
+		idx_ptr[i] = src_idx[i];
+	}
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+
+    Ref<ArrayMesh> mesh;
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+
+    return mesh;
 }
