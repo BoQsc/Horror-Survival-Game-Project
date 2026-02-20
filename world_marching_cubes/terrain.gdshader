@@ -319,7 +319,8 @@ void fragment() {
 		// Height-based surface check with smooth transition
 		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
 		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;
-		base_color = mix(base_color, col_rock, cliff_mix);
+		// Apply partial transparency to the rock texture so the underlying material remains slightly visible (e.g. 80% max opacity)
+		base_color = mix(base_color, col_rock, cliff_mix * 0.8);
 	}
 	
 	// === Player Road Overlay (from road_mask texture) ===
