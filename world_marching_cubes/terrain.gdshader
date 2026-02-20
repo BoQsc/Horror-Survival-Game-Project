@@ -197,23 +197,9 @@ vec3 get_procedural_color(vec3 w_pos, vec3 col_grass, vec3 col_stone, vec3 col_s
 	float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
 	vec3 final_col = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
 	
-	// 2. Procedural Road Overlay
-	if (procedural_road_enabled) {
-		float r_dist = get_procedural_road_dist(w_pos.xz);
-		float r_height = get_road_height(w_pos.xz);
-		float r_height_diff = abs(w_pos.y - r_height);
-		
-		// Smoothstep edges of the road
-		float r_mix = 1.0 - smoothstep(max(0.0, procedural_road_width * 0.5 - 1.0), procedural_road_width * 0.5 + road_edge_blend_width, r_dist);
-		float r_h_mix = 1.0 - smoothstep(1.5, 3.0, r_height_diff);
-		float is_road = r_mix * r_h_mix;
-		final_col = mix(final_col, col_road, is_road);
-	}
-	
-	// 3. Underground Blending
-	// Exclude roads from immediate stone transition beneath surface
-	float is_r = (procedural_road_enabled) ? (1.0 - smoothstep(procedural_road_width * 0.5 - 1.0, procedural_road_width * 0.5 + road_edge_blend_width, get_procedural_road_dist(w_pos.xz))) : 0.0;
-	float underground_mix = smoothstep(8.0, 12.0, depth) * (1.0 - (is_r * smoothstep(8.0, 15.0, depth)));
+	// 2. Underground Blending
+	// Base the stone transition purely on depth from the natural terrain surface
+	float underground_mix = smoothstep(8.0, 12.0, depth);
 	
 	if (underground_mix > 0.0) {
 		vec3 under_col = col_stone;
@@ -225,6 +211,22 @@ vec3 get_procedural_color(vec3 w_pos, vec3 col_grass, vec3 col_stone, vec3 col_s
 			if (stone_var > 0.25) under_col = col_stone * vec3(0.7, 0.65, 0.6); // Granite
 		}
 		final_col = mix(final_col, under_col, underground_mix);
+	}
+	
+	// 3. Procedural Road Overlay
+	// Apply AFTER underground blending! If a road cuts deep into a hill,
+	// the ground is stone, but the road overlays asphalt on top of the stone.
+	// This naturally fixes the problem without infinite cylinder mask hacks.
+	if (procedural_road_enabled) {
+		float r_dist = get_procedural_road_dist(w_pos.xz);
+		float r_height = get_road_height(w_pos.xz);
+		float r_height_diff = abs(w_pos.y - r_height);
+		
+		// Smoothstep edges of the road
+		float r_mix = 1.0 - smoothstep(max(0.0, procedural_road_width * 0.5 - 1.0), procedural_road_width * 0.5 + road_edge_blend_width, r_dist);
+		float r_h_mix = 1.0 - smoothstep(1.5, 3.0, r_height_diff);
+		float is_road = r_mix * r_h_mix;
+		final_col = mix(final_col, col_road, is_road);
 	}
 	
 	return final_col;
