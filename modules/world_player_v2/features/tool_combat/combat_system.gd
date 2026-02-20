@@ -796,6 +796,10 @@ func do_tool_attack(item: Dictionary) -> void:
 					_collect_terrain_resource(mat_id)
 		else:
 			# INSTANT MODE
+			if terrain_break_audio_player:
+				terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
+				terrain_break_audio_player.play()
+				
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
 			
 			# EXECUTE STRATEGY
@@ -1031,6 +1035,10 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 					_collect_terrain_resource(mat_id)
 		else:
 			# INSTANT MODE - no durability tracking
+			if terrain_break_audio_player:
+				terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
+				terrain_break_audio_player.play()
+				
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
 			# EXECUTE STRATEGY using brush registry
 			behavior.apply(terrain_manager, position, hit_normal)
