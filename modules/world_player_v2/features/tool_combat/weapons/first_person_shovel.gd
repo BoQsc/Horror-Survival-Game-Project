@@ -211,6 +211,10 @@ func _on_hotbar_slot_selected(_slot: int) -> void:
 		_update_visibility(item)
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
+	is_attacking = false
+	cooldown = 0.0
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.axe_ready.emit()
 	_update_visibility(item)
 
 func _update_visibility(item: Dictionary) -> void:

@@ -154,6 +154,9 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var should_show = (item_id == "heavy_pistol")
 	should_show_pending = should_show
 	
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.pistol_fire_ready.emit()
+	
 	if pistol_mesh:
 		pistol_mesh.visible = should_show
 

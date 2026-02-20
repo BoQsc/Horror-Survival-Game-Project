@@ -104,8 +104,18 @@ func _ready() -> void:
 		PlayerSignals.punch_ready.connect(_on_punch_ready)
 		PlayerSignals.pistol_fire_ready.connect(_on_pistol_fire_ready)
 		PlayerSignals.axe_ready.connect(_on_axe_ready)
+		PlayerSignals.item_changed.connect(_on_item_changed)
 	
 	DebugManager.log_player("CombatSystemFeature: Initialized")
+
+func _on_item_changed(_slot: int, _item: Dictionary) -> void:
+	# Cancel any pending hits from delayed attacks when weapons change
+	pending_axe_item.clear()
+	pending_pickaxe_hit.clear()
+	
+	# Add an equip delay to prevent bypass of weapon cooldowns via rapid switching
+	if attack_cooldown < 0.3:
+		attack_cooldown = 0.3
 
 func _find_managers() -> void:
 	if not terrain_manager:

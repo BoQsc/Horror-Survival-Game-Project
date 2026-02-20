@@ -190,6 +190,11 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var should_show = "axe" in item_id and not "pickaxe" in item_id
 	
+	is_attacking = false
+	cooldown = 0.0
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.axe_ready.emit()
+	
 	if axe_mesh:
 		axe_mesh.visible = should_show
 		if should_show:

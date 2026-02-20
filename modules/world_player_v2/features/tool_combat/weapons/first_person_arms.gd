@@ -283,6 +283,8 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	# CRITICAL: Reset punch state when switching items to prevent stuck state
 	is_punching = false
 	punch_cooldown = 0.0
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.punch_ready.emit()
 	
 	if arms_mesh:
 		arms_mesh.visible = should_show
