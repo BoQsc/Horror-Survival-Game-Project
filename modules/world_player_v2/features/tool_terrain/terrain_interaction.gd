@@ -131,7 +131,7 @@ func _update_terrain_targeting() -> void:
 	has_target = true
 	
 	# Calculate adjacent voxel position (where block will be placed)
-	var pos = hit.position + hit.normal * 0.1
+	var pos = hit.position + hit.normal * 0.6
 	current_target_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
 	
 	# Update selection box position
@@ -245,7 +245,7 @@ func do_bucket_place() -> void:
 		var hit = _raycast(5.0)
 		if hit.is_empty():
 			return
-		var pos = hit.position + hit.normal * 0.5
+		var pos = hit.position + hit.normal * 0.6
 		
 		var behavior = null
 		if brush_registry:
@@ -306,7 +306,7 @@ func do_resource_place(item: Dictionary) -> void:
 		var hit = _raycast(5.0)
 		if hit.is_empty():
 			return
-		var p = hit.position + hit.normal * 0.1
+		var p = hit.position + hit.normal * 0.6
 		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
 		
 		var behavior = VoxelBrush.new()
