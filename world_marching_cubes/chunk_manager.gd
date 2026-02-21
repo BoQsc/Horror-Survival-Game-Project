@@ -29,6 +29,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 
 ## Procedural Road Network (generated with terrain)
 @export var procedural_roads_enabled: bool = true # Toggle to disable procedural roads
+@export var procedural_road_wide_shoulders: bool = false # Toggle to enable wide terrain flattening alongside roads (for buildings)
 @export var procedural_road_spacing: float = 100.0 # Distance between roads
 @export var procedural_road_width: float = 8.0 # Width of roads
 @export var debug_show_road_zones: bool = false # Debug: show road alignment (Yellow=correct, Red=spillover, Green=crack)
@@ -1336,7 +1337,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
 	# Pass 0.0 for road spacing if disabled
 	var actual_road_spacing = procedural_road_spacing if procedural_roads_enabled else 0.0
-	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, terrain_height, actual_road_spacing, procedural_road_width])
+	var wide_shoulders_val = 1.0 if procedural_road_wide_shoulders else 0.0
+	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, wide_shoulders_val, noise_frequency, terrain_height, actual_road_spacing, procedural_road_width])
 	rd.compute_list_set_push_constant(list, push_data_t.to_byte_array(), push_data_t.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()

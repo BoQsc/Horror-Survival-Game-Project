@@ -15,7 +15,7 @@ layout(set = 0, binding = 1, std430) restrict buffer MaterialBuffer {
 } material_buffer;
 
 layout(push_constant) uniform PushConstants {
-    vec4 chunk_offset; // .xyz is position
+    vec4 chunk_offset; // .xyz is position, .w is wide_shoulders
     float noise_freq;
     float terrain_height;
     float road_spacing;  // Grid spacing for roads (0 = no procedural roads)
@@ -163,18 +163,23 @@ float get_density(vec3 pos) {
     float terrain_height = base_height + hill_height;
     float density = world_pos.y - terrain_height;
     
-    // Procedural roads
+    // Procedural roads - expanded flattened area to accommodate buildings alongside roads
     float road_height;
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     
-    if (road_dist < params.road_width) {
+    // Check if wide shoulders toggle is active (> 0.5)
+    bool use_wide_shoulders = params.chunk_offset.w > 0.5;
+    
+    // Widen the flattened area to accommodate buildings (houses spawn up to ~14 blocks from road center)
+    float flatten_width = use_wide_shoulders ? (params.road_width + 25.0) : params.road_width;
+    float flat_zone_end = use_wide_shoulders ? (params.road_width * 0.5 + 15.0) : (params.road_width * 0.5);
+    
+    if (road_dist < flatten_width) {
         // SMOOTH ROAD SURFACE: follows the interpolated road_height directly
-        // road_height already contains smooth transitions between Y levels
-        // calculated in get_road_info() using smoothstep blending
         float road_density = world_pos.y - road_height;
         
-        // Blend factor: 1.0 in center, 0.0 at edges
-        float blend = smoothstep(params.road_width, params.road_width * 0.5, road_dist);
+        // Blend factor: 1.0 in flat zone, blending to 0.0 at the edge of the flatten_width
+        float blend = smoothstep(flatten_width, flat_zone_end, road_dist);
         
         density = mix(density, road_density, blend);
     }
