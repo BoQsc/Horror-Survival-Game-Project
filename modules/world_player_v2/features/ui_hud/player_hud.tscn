@@ -5,6 +5,7 @@
 [ext_resource type="PackedScene" uid="uid://bhkrqy3764208" path="res://modules/world_player_v2/features/data_containers/ui/container_panel.tscn" id="4_container"]
 
 [node name="PlayerHUD" type="CanvasLayer" unique_id=482305022]
+layer = 101
 script = ExtResource("1_hud")
 
 [node name="ModeIndicator" type="Label" parent="." unique_id=906847146]

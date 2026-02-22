@@ -7,17 +7,11 @@ layer = 100
 script = ExtResource("1_script")
 
 [node name="Panel" type="PanelContainer" parent="." unique_id=1660372839]
-anchors_preset = 3
-anchor_left = 1.0
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_left = -320.0
-offset_top = -100.0
-offset_right = -20.0
-offset_bottom = -20.0
-grow_horizontal = 0
-grow_vertical = 0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 320.0
+offset_bottom = 100.0
+
 
 [node name="VBox" type="VBoxContainer" parent="Panel" unique_id=875743496]
 layout_mode = 2
