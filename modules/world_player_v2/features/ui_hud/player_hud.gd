@@ -117,6 +117,33 @@ func _ready() -> void:
 		terrain_info_toggle.toggled.connect(_on_terrain_info_toggled)
 		terrain_info_toggle.button_pressed = show_terrain_info
 	
+	# Connect chunk bounds toggle
+	var chunk_bounds_toggle = game_menu.get_node_or_null("ChunkBoundsToggle")
+	if chunk_bounds_toggle:
+		chunk_bounds_toggle.toggled.connect(_on_chunk_bounds_toggled)
+		# Sync with terrain manager if possible
+		var tm = get_tree().get_first_node_in_group("terrain_manager")
+		if tm and "debug_chunk_bounds" in tm:
+			chunk_bounds_toggle.button_pressed = tm.debug_chunk_bounds
+	
+	# Connect road zones toggle
+	var road_zones_toggle = game_menu.get_node_or_null("RoadZonesToggle")
+	if road_zones_toggle:
+		road_zones_toggle.toggled.connect(_on_road_zones_toggled)
+		# Sync with terrain manager if possible
+		var tm = get_tree().get_first_node_in_group("terrain_manager")
+		if tm and "debug_show_road_zones" in tm:
+			road_zones_toggle.button_pressed = tm.debug_show_road_zones
+
+	# Connect spawning buttons
+	var spawn_entity_btn = game_menu.get_node_or_null("SpawnEntityButton")
+	if spawn_entity_btn:
+		spawn_entity_btn.pressed.connect(_on_spawn_entity_pressed)
+	
+	var spawn_zombie_btn = game_menu.get_node_or_null("SpawnZombieButton")
+	if spawn_zombie_btn:
+		spawn_zombie_btn.pressed.connect(_on_spawn_zombie_pressed)
+	
 
 	
 	var radius_slider = game_menu.get_node_or_null("MiningRadiusSlider")
@@ -512,6 +539,49 @@ func _on_terrain_info_toggled(is_enabled: bool) -> void:
 		# If turning on, we might want to refresh the text if it's currently empty/stale
 		if is_enabled and target_material_label.text == "":
 			target_material_label.text = "Waiting for target..."
+
+func _on_chunk_bounds_toggled(is_enabled: bool) -> void:
+	var tm = get_tree().get_first_node_in_group("terrain_manager")
+	if tm and tm.has_method("set_debug_chunk_bounds"):
+		tm.set_debug_chunk_bounds(is_enabled)
+	elif tm and "debug_chunk_bounds" in tm:
+		# Fallback if method not present yet
+		tm.debug_chunk_bounds = is_enabled
+		# Manual update if needed (matching chunk_manager.gd logic)
+		if tm.has_method("update_debug_visuals"):
+			tm.update_debug_visuals()
+		print("PlayerHUD: Chunk Bounds -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_road_zones_toggled(is_enabled: bool) -> void:
+	var tm = get_tree().get_first_node_in_group("terrain_manager")
+	if tm and tm.has_method("set_debug_show_road_zones"):
+		tm.set_debug_show_road_zones(is_enabled)
+	elif tm and "debug_show_road_zones" in tm:
+		# Fallback if method not present yet
+		tm.debug_show_road_zones = is_enabled
+		print("PlayerHUD: Road Zones -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_spawn_entity_pressed() -> void:
+	var em = get_tree().get_first_node_in_group("entity_manager")
+	if em and em.has_method("spawn_entity_near_player"):
+		var entity = em.spawn_entity_near_player()
+		if entity:
+			print("PlayerHUD: Spawned test entity at %s" % entity.global_position)
+	else:
+		push_error("PlayerHUD: Entity manager or spawn_entity_near_player not found!")
+
+func _on_spawn_zombie_pressed() -> void:
+	var em = get_tree().get_first_node_in_group("entity_manager")
+	if em and em.has_method("spawn_entity_near_player"):
+		var zombie_scene = load("res://game/entities/zombie_base.tscn")
+		if zombie_scene:
+			var zombie = em.spawn_entity_near_player(zombie_scene)
+			if zombie:
+				print("PlayerHUD: Spawned ZOMBIE at %s" % zombie.global_position)
+		else:
+			push_error("PlayerHUD: Zombie scene not found!")
+	else:
+		push_error("PlayerHUD: Entity manager or spawn_entity_near_player not found!")
 
 
 

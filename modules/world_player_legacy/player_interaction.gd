@@ -481,20 +481,7 @@ func _unhandled_input(event):
 				print("[PREFAB] Interior carve: %s" % ("ON" if prefab_interior_carve else "OFF"))
 				update_ui()
 
-		elif event.keycode == KEY_F10:
-			# F10: Spawn test entity (default capsule)
-			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
-				var entity = entity_manager.spawn_entity_near_player()
-				if entity:
-					print("Spawned entity at %s (Total: %d)" % [entity.global_position, entity_manager.get_entity_count()])
-		elif event.keycode == KEY_F11:
-			# F11: Spawn zombie
-			if entity_manager and entity_manager.has_method("spawn_entity_near_player"):
-				var zombie_scene = load("res://game/entities/zombie_base.tscn")
-				if zombie_scene:
-					var zombie = entity_manager.spawn_entity_near_player(zombie_scene)
-					if zombie:
-						print("Spawned ZOMBIE at %s (Total: %d)" % [zombie.global_position, entity_manager.get_entity_count()])
+
 	
 	if event is InputEventMouseButton:
 		if event.pressed:

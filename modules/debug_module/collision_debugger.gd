@@ -28,13 +28,9 @@ func _ready():
 	print("[CollisionDebugger] Ready - Press F10 to toggle, hold Left Alt to inspect")
 
 
-func _unhandled_input(event):
-	# F10 toggles the debugger
-	if event is InputEventKey and event.pressed and event.keycode == KEY_F10:
-		enabled = !enabled
-		print("[CollisionDebugger] %s" % ("ENABLED" if enabled else "DISABLED"))
-		if not enabled:
-			label.visible = false
+func _unhandled_input(_event):
+	pass
+
 
 
 func _process(_delta):

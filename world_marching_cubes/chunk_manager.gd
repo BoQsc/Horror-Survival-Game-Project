@@ -277,28 +277,29 @@ func _process(delta):
 
 var debug_chunk_bounds: bool = false
 
-func _unhandled_input(event):
-	# F9 toggles chunk boundary visualization
-	if event is InputEventKey and event.pressed and event.keycode == KEY_F9:
-		debug_chunk_bounds = !debug_chunk_bounds
-		DebugManager.log_chunk("Chunk bounds visualization: %s" % ("ON" if debug_chunk_bounds else "OFF"))
-		# Update all chunk materials
-		for coord in active_chunks:
-			var data = active_chunks[coord]
-			if data and data.chunk_material:
-				data.chunk_material.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
-		material_terrain.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
-	
-	# F10 toggles road zone visualization (Yellow=correct, Red=spillover, Green=crack)
-	if event is InputEventKey and event.pressed and event.keycode == KEY_F10:
-		debug_show_road_zones = !debug_show_road_zones
-		DebugManager.log_chunk("Road zones visualization: %s" % ("ON" if debug_show_road_zones else "OFF"))
-		# Update all chunk materials
-		for coord in active_chunks:
-			var data = active_chunks[coord]
-			if data and data.chunk_material:
-				data.chunk_material.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
-		material_terrain.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
+func _unhandled_input(_event):
+	pass
+
+func set_debug_chunk_bounds(enabled: bool) -> void:
+	debug_chunk_bounds = enabled
+	DebugManager.log_chunk("Chunk bounds visualization: %s" % ("ON" if debug_chunk_bounds else "OFF"))
+	# Update all chunk materials
+	for coord in active_chunks:
+		var data = active_chunks[coord]
+		if data and data.chunk_material:
+			data.chunk_material.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
+	material_terrain.set_shader_parameter("debug_show_chunk_bounds", debug_chunk_bounds)
+
+func set_debug_show_road_zones(enabled: bool) -> void:
+	debug_show_road_zones = enabled
+	DebugManager.log_chunk("Road zones visualization: %s" % ("ON" if debug_show_road_zones else "OFF"))
+	# Update all chunk materials
+	for coord in active_chunks:
+		var data = active_chunks[coord]
+		if data and data.chunk_material:
+			data.chunk_material.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
+	material_terrain.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
+
 
 func _update_fps_tracking(delta: float):
 	var instant_fps = 1.0 / delta if delta > 0 else 60.0
