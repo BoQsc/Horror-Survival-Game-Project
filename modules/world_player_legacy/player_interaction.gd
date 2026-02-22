@@ -45,7 +45,6 @@ var available_prefabs: Array[String] = []
 var current_prefab_index: int = 0
 var prefab_rotation: int = 0  # 0, 1, 2, 3 = 0°, 90°, 180°, 270°
 var prefab_carve_mode: bool = false  # If true, carve terrain and submerge. If false, place on top.
-var prefab_foundation_fill: bool = false  # If true, grow terrain under prefab foundation to fill gaps
 var prefab_carve_fill_mode: bool = false  # If true, carve first then fill after delay
 var prefab_snap_to_road: bool = false  # If true, snap prefab Y to nearest road height
 var prefab_road_snap_y_offset: int = 0  # Manual Y offset when using road snap (scroll wheel)
@@ -451,28 +450,21 @@ func _unhandled_input(event):
 				_update_prefab_preview()
 				update_ui()
 		elif event.keycode == KEY_C:
-			# C key: cycle prefab placement mode (Surface -> Carve -> Fill -> Carve+Fill -> Surface)
+			# C key: cycle prefab placement mode (Surface -> Carve -> Carve+Fill -> Surface)
 			if current_mode == Mode.PREFAB:
-				if not prefab_carve_mode and not prefab_foundation_fill and not prefab_carve_fill_mode:
+				if not prefab_carve_mode and not prefab_carve_fill_mode:
 					# Surface -> Carve
 					prefab_carve_mode = true
-					prefab_foundation_fill = false
-					prefab_carve_fill_mode = false
-				elif prefab_carve_mode and not prefab_foundation_fill and not prefab_carve_fill_mode:
-					# Carve -> Fill
+					# _show_help_message("Prefab Mode: CARVE (Submerged)")
+				elif prefab_carve_mode:
+					# Carve -> Carve+Fill
 					prefab_carve_mode = false
-					prefab_foundation_fill = true
-					prefab_carve_fill_mode = false
-				elif not prefab_carve_mode and prefab_foundation_fill and not prefab_carve_fill_mode:
-					# Fill -> Carve+Fill
-					prefab_carve_mode = false
-					prefab_foundation_fill = false
 					prefab_carve_fill_mode = true
+					# _show_help_message("Prefab Mode: CARVE + FILL (10s delay)")
 				else:
 					# Carve+Fill -> Surface
-					prefab_carve_mode = false
-					prefab_foundation_fill = false
 					prefab_carve_fill_mode = false
+					# _show_help_message("Prefab Mode: SURFACE")
 				var mode_str = _get_prefab_mode_str()
 				print("[PREFAB] Placement mode: %s" % mode_str)
 				update_ui()
@@ -667,8 +659,6 @@ func _get_prefab_mode_str() -> String:
 		return "Carve+Fill"
 	elif prefab_carve_mode:
 		return "Carve"
-	elif prefab_foundation_fill:
-		return "Fill"
 	else:
 		return "Surface"
 
@@ -1898,7 +1888,7 @@ func _place_current_prefab():
 			# Carve+Fill mode: First carve (no blocks), wait 10 seconds, then fill+place blocks
 			print("[PREFAB] Carve+Fill mode: Carving terrain (no blocks yet)...")
 			# Step 1: Carve terrain only - skip_blocks=true means no blocks placed
-			var carve_success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 1, prefab_rotation, true, false, true)
+			var carve_success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 1, prefab_rotation, true, true)
 			if carve_success:
 				print("[PREFAB] Carve complete. Waiting 10 seconds before fill+blocks...")
 				# Step 2: Wait 10 seconds, then fill terrain AND place blocks
@@ -1908,7 +1898,7 @@ func _place_current_prefab():
 		else:
 			# Normal modes: Surface, Carve, or Fill
 			var submerge = 1 if prefab_carve_mode else 0
-			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, prefab_foundation_fill, false, prefab_interior_carve)
+			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, false, prefab_interior_carve)
 			if success:
 				print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, mode_str])
 			else:
@@ -1975,7 +1965,7 @@ func _schedule_prefab_fill(prefab_name: String, spawn_pos: Vector3, rotation: in
 			print("[PREFAB] Carve+Fill mode: Now filling terrain and placing blocks...")
 			# Call with submerge=0 (same as standalone Fill mode), foundation_fill=true
 			# This fills terrain AND places blocks at the surface level
-			var fill_success = spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, true, false)
+			var fill_success = spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, false, false)
 			if fill_success:
 				print("[PREFAB] Fill+blocks complete for %s at %v" % [prefab_name, spawn_pos])
 			else:

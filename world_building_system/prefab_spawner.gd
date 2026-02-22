@@ -204,19 +204,12 @@ func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 			if _is_forested_area(spawn_x, spawn_z):
 				continue
 			
-			# Sample terrain height at multiple points (building is 3x3)
-			# Use the MAXIMUM height to prevent the building from being buried
-			var h1 = _get_terrain_height(spawn_x, spawn_z)
-			var h2 = _get_terrain_height(spawn_x + 3, spawn_z)
-			var h3 = _get_terrain_height(spawn_x, spawn_z + 3)
-			var h4 = _get_terrain_height(spawn_x + 3, spawn_z + 3)
+			# Use procedural road height for exact road alignment
+			var terrain_y = get_procedural_road_height(spawn_x, spawn_z)
+			if terrain_y <= 0:
+				terrain_y = 12.0 # Fallback
 			
-			# Use max height to ensure building sits on highest point
-			var terrain_y = max(max(h1, h2), max(h3, h4))
-			if terrain_y < 0:
-				terrain_y = 15.0 # Fallback
-			
-			# Place floor at terrain level (prefab floor is at Y=0)
+			# Place floor at terrain level
 			var spawn_pos = Vector3(spawn_x, terrain_y, spawn_z)
 			
 			# Spawn a prefab
@@ -226,6 +219,85 @@ func _get_terrain_height(x: float, z: float) -> float:
 	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
 		return terrain_manager.get_terrain_height(x, z)
 	return -1.0
+
+# === PROCEDURAL ROAD SYNC (Matching gen_density.glsl) ===
+
+func _fract(x: float) -> float:
+	return x - floor(x)
+
+func _procedural_hash(p: Vector3) -> float:
+	var h = Vector3(
+		_fract(p.x * 0.3183099 + 0.1),
+		_fract(p.y * 0.3183099 + 0.1),
+		_fract(p.z * 0.3183099 + 0.1)
+	)
+	h *= 17.0
+	return _fract(h.x * h.y * h.z * (h.x + h.y + h.z))
+
+func _procedural_noise(p: Vector3) -> float:
+	var i = Vector3(floor(p.x), floor(p.y), floor(p.z))
+	var f = Vector3(_fract(p.x), _fract(p.y), _fract(p.z))
+	
+	# Hermite interpolation f = f*f*(3-2*f)
+	var f_interp = Vector3(
+		f.x * f.x * (3.0 - 2.0 * f.x),
+		f.y * f.y * (3.0 - 2.0 * f.y),
+		f.z * f.z * (3.0 - 2.0 * f.z)
+	)
+	
+	var h000 = _procedural_hash(i + Vector3(0,0,0))
+	var h100 = _procedural_hash(i + Vector3(1,0,0))
+	var h010 = _procedural_hash(i + Vector3(0,1,0))
+	var h110 = _procedural_hash(i + Vector3(1,1,0))
+	var h001 = _procedural_hash(i + Vector3(0,0,1))
+	var h101 = _procedural_hash(i + Vector3(1,0,1))
+	var h011 = _procedural_hash(i + Vector3(0,1,1))
+	var h111 = _procedural_hash(i + Vector3(1,1,1))
+	
+	return lerp(
+		lerp(lerp(h000, h100, f_interp.x), lerp(h010, h110, f_interp.x), f_interp.y),
+		lerp(lerp(h001, h101, f_interp.x), lerp(h011, h111, f_interp.x), f_interp.y),
+		f_interp.z
+	)
+
+## Returns the exact procedural road height at a given world X,Z
+func get_procedural_road_height(x: float, z: float) -> float:
+	if road_spacing <= 0:
+		return 0.0
+	
+	var cell_x = floor(x / road_spacing)
+	var cell_z = floor(z / road_spacing)
+	
+	var local_x = fmod(x, road_spacing)
+	if local_x < 0: local_x += road_spacing
+	var local_z = fmod(z, road_spacing)
+	if local_z < 0: local_z += road_spacing
+	
+	# Match shader noise scale 0.008 and amplitude 3.0 + 12.0 base
+	var h1 = _procedural_noise(Vector3(cell_x * road_spacing, 0.0, cell_z * road_spacing) * 0.008) * 3.0 + 12.0
+	var h2 = _procedural_noise(Vector3((cell_x + 1.0) * road_spacing, 0.0, cell_z * road_spacing) * 0.008) * 3.0 + 12.0
+	var h3 = _procedural_noise(Vector3(cell_x * road_spacing, 0.0, (cell_z + 1.0) * road_spacing) * 0.008) * 3.0 + 12.0
+	var h4 = _procedural_noise(Vector3((cell_x + 1.0) * road_spacing, 0.0, (cell_z + 1.0) * road_spacing) * 0.008) * 3.0 + 12.0
+	
+	var tx = local_x / road_spacing
+	var tz = local_z / road_spacing
+	var interp_h = lerp(lerp(h1, h2, tx), lerp(h3, h4, tx), tz)
+	
+	# Stepped road logic (matching shader)
+	var base_level = floor(interp_h)
+	var frac = interp_h - base_level
+	var flat_size = 0.45
+	
+	if frac < flat_size:
+		return base_level
+	elif frac > 1.0 - flat_size:
+		return base_level + 1.0
+	else:
+		var ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size)
+		# smoothstep ramp_t = t * t * (3.0 - 2.0 * t)
+		ramp_t = ramp_t * ramp_t * (3.0 - 2.0 * ramp_t)
+		return base_level + ramp_t
+
 
 var vegetation_manager: Node3D # Cached reference
 
@@ -453,10 +525,10 @@ func _parse_compact_objects(compact: Array) -> Array:
 ## submerge_offset: how many blocks to bury into terrain (negative Y adjustment)
 ## rotation: 0-3 for 0°, 90°, 180°, 270° rotation
 ## carve_terrain: if true, carve out terrain where submerged blocks go
-## foundation_fill: if true, grow terrain under foundation blocks to fill gaps
+## foundation_fill: [REMOVED]
 ## skip_blocks: if true, only perform terrain operations (carve/fill) without placing blocks
 ## interior_carve: if true, carve terrain at block positions that intersect with terrain
-func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, foundation_fill: bool = false, skip_blocks: bool = false, interior_carve: bool = false) -> bool:
+func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, skip_blocks: bool = false, interior_carve: bool = false) -> bool:
 	PerformanceMonitor.start_measure("Prefab: " + prefab_name)
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
@@ -477,10 +549,6 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
 	
 	var blocks = prefabs[prefab_name]
-	
-	# Foundation fill mode: grow terrain under foundation blocks
-	if foundation_fill:
-		_fill_foundation_terrain(blocks, spawn_pos, rotation)
 	
 	# Carve terrain for submerged blocks (only in carve mode)
 	if carve_terrain:
@@ -648,56 +716,10 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					var scene_rot_y = obj.get("rotation_y", 0) + (rotation * 90)
 					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
 	
-	var mode_str = "carve" if carve_terrain else ("fill" if foundation_fill else "surface")
+	var mode_str = "carve" if carve_terrain else "surface"
 	DebugManager.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 	PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 	return true
-
-## Fill terrain gaps under the prefab's foundation layer (Y=0 blocks)
-func _fill_foundation_terrain(blocks: Array, spawn_pos: Vector3, rotation: int):
-	if not terrain_manager or not terrain_manager.has_method("modify_terrain"):
-		return
-	
-	DebugManager.log_building("[Foundation Fill] Starting fill for prefab at %v" % spawn_pos)
-	
-	# Find the minimum Y in the prefab (usually 0, but could be offset)
-	var min_y = 999
-	for block in blocks:
-		if block.offset.y < min_y:
-			min_y = block.offset.y
-	
-	# Process only foundation layer blocks (blocks at min_y)
-	var fill_count = 0
-	for block in blocks:
-		if block.offset.y != min_y:
-			continue
-		
-		var rotated_offset = _rotate_offset(block.offset, rotation)
-		var block_world_pos = spawn_pos + Vector3(rotated_offset)
-		
-		# Sample terrain height at this X,Z position
-		var terrain_y = _get_terrain_height(block_world_pos.x + 0.5, block_world_pos.z + 0.5)
-		
-		# Target Y is just below the foundation block (fill up to the block's bottom)
-		var target_y = block_world_pos.y
-		var gap = target_y - terrain_y
-		
-		DebugManager.log_building("  Block at (%d, %d): terrain_y=%.1f, target_y=%.1f, gap=%.1f" % [
-			int(block_world_pos.x), int(block_world_pos.z), terrain_y, target_y, gap])
-		
-		# Only fill if there's a gap (terrain is below foundation)
-		if gap > 0.2:
-			# Fill in 1-block increments from terrain up to foundation
-			# Each fill creates solid terrain at that level
-			var current_y = terrain_y + 0.5 # Start half a block above terrain
-			while current_y < target_y:
-				var fill_pos = Vector3(block_world_pos.x + 0.5, current_y, block_world_pos.z + 0.5)
-				# Strong fill: shape 1 = box, value -2.0 = aggressive terrain add
-				terrain_manager.modify_terrain(fill_pos, 0.6, -2.0, 1, 0) # Box shape, STRONG fill
-				current_y += 0.8 # Move up slightly less than 1 for overlap
-				fill_count += 1
-	
-	DebugManager.log_building("[Foundation Fill] Completed: %d fill operations" % fill_count)
 
 
 func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):

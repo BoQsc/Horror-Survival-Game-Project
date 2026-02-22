@@ -331,8 +331,8 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 		DebugManager.log_building("Skipped %s at %v - over water" % [prefab_name, spawn_pos])
 		return false
 	
-	# Spawn WITHOUT interior carve (false at the end) for performance
-	var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, false, false, false)
+	# Spawn with synchronized height (no flattening required)
+	var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, false, false)
 	
 	if success:
 		building_spawned.emit(spawn_pos, prefab_name)
@@ -342,29 +342,14 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 
 ## Get road height at position
 func _get_road_height(x: float, z: float) -> float:
-	if road_spacing <= 0:
-		return 12.0
+	if prefab_spawner and prefab_spawner.has_method("get_procedural_road_height"):
+		return prefab_spawner.get_procedural_road_height(x, z)
 	
-	var nearest_x_road = round(x / road_spacing) * road_spacing
-	var nearest_z_road = round(z / road_spacing) * road_spacing
-	
-	var dist_to_x = abs(x - nearest_x_road)
-	var dist_to_z = abs(z - nearest_z_road)
-	
-	var road_x_sample: float
-	var road_z_sample: float
-	
-	if dist_to_x < dist_to_z:
-		road_x_sample = nearest_x_road
-		road_z_sample = z
-	else:
-		road_x_sample = x
-		road_z_sample = nearest_z_road
-	
+	# Fallback if PrefabSpawner not available
 	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-		var h = terrain_manager.get_terrain_height(road_x_sample, road_z_sample)
+		var h = terrain_manager.get_terrain_height(x, z)
 		if h > 0:
-			return floor(h)
+			return h
 	
 	return 12.0
 
