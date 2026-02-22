@@ -59,12 +59,12 @@ func _ready() -> void:
 	
 	_setup_hotbar()
 	
-	var exit_btn = game_menu.get_node_or_null("ExitButton")
+	var exit_btn = game_menu.find_child("ExitButton", true, false)
 	if exit_btn:
 		exit_btn.pressed.connect(_on_exit_pressed)
 	
 	# Connect collision debugger toggle
-	var collision_toggle = game_menu.get_node_or_null("CollisionDebuggerToggle")
+	var collision_toggle = game_menu.find_child("CollisionDebuggerToggle", true, false)
 	if collision_toggle:
 		collision_toggle.toggled.connect(_on_collision_debugger_toggled)
 		# Sync with current state
@@ -72,7 +72,7 @@ func _ready() -> void:
 			collision_toggle.button_pressed = get_node("/root/CollisionDebugger").enabled
 	
 	# Connect pickaxe dig mode toggle
-	var pickaxe_toggle = game_menu.get_node_or_null("PickaxeDigModeToggle")
+	var pickaxe_toggle = game_menu.find_child("PickaxeDigModeToggle", true, false)
 	if pickaxe_toggle:
 		pickaxe_toggle.toggled.connect(_on_pickaxe_dig_mode_toggled)
 		# Sync with current state
@@ -80,7 +80,7 @@ func _ready() -> void:
 			pickaxe_toggle.button_pressed = get_node("/root/ToolConfig").pickaxe_dig_enabled
 	
 	# Connect pickaxe durability toggle
-	var durability_toggle = game_menu.get_node_or_null("PickaxeDurabilityToggle")
+	var durability_toggle = game_menu.find_child("PickaxeDurabilityToggle", true, false)
 	if durability_toggle:
 		durability_toggle.toggled.connect(_on_pickaxe_durability_toggled)
 		# Sync with current state
@@ -88,7 +88,7 @@ func _ready() -> void:
 			durability_toggle.button_pressed = get_node("/root/ToolConfig").pickaxe_durability_enabled
 	
 	# Connect target visualizer toggle
-	var visualizer_toggle = game_menu.get_node_or_null("TargetVisualizerToggle")
+	var visualizer_toggle = game_menu.find_child("TargetVisualizerToggle", true, false)
 	if visualizer_toggle:
 		visualizer_toggle.toggled.connect(_on_target_visualizer_toggled)
 		# Sync with current state
@@ -96,7 +96,7 @@ func _ready() -> void:
 			visualizer_toggle.button_pressed = get_node("/root/ToolConfig").target_visualizer_enabled
 	
 	# Connect hit marker toggle
-	var hit_marker_toggle = game_menu.get_node_or_null("HitMarkerToggle")
+	var hit_marker_toggle = game_menu.find_child("HitMarkerToggle", true, false)
 	if hit_marker_toggle:
 		hit_marker_toggle.toggled.connect(_on_hit_marker_toggled)
 		# Sync with current state
@@ -104,7 +104,7 @@ func _ready() -> void:
 			hit_marker_toggle.button_pressed = get_node("/root/ToolConfig").hit_marker_enabled
 	
 	# Connect pistol hit marker toggle
-	var pistol_marker_toggle = game_menu.get_node_or_null("PistolHitMarkerToggle")
+	var pistol_marker_toggle = game_menu.find_child("PistolHitMarkerToggle", true, false)
 	if pistol_marker_toggle:
 		pistol_marker_toggle.toggled.connect(_on_pistol_hit_marker_toggled)
 		# Sync with current state
@@ -112,13 +112,13 @@ func _ready() -> void:
 			pistol_marker_toggle.button_pressed = get_node("/root/ToolConfig").pistol_hit_marker_enabled
 	
 	# Connect terrain info toggle
-	var terrain_info_toggle = game_menu.get_node_or_null("TerrainInfoToggle")
+	var terrain_info_toggle = game_menu.find_child("TerrainInfoToggle", true, false)
 	if terrain_info_toggle:
 		terrain_info_toggle.toggled.connect(_on_terrain_info_toggled)
 		terrain_info_toggle.button_pressed = show_terrain_info
 	
 	# Connect chunk bounds toggle
-	var chunk_bounds_toggle = game_menu.get_node_or_null("ChunkBoundsToggle")
+	var chunk_bounds_toggle = game_menu.find_child("ChunkBoundsToggle", true, false)
 	if chunk_bounds_toggle:
 		chunk_bounds_toggle.toggled.connect(_on_chunk_bounds_toggled)
 		# Sync with terrain manager if possible
@@ -127,27 +127,27 @@ func _ready() -> void:
 			chunk_bounds_toggle.button_pressed = tm.debug_chunk_bounds
 	
 	# Connect road zones toggle
-	var road_zones_toggle = game_menu.get_node_or_null("RoadZonesToggle")
+	var road_zones_toggle = game_menu.find_child("RoadZonesToggle", true, false)
 	if road_zones_toggle:
 		road_zones_toggle.toggled.connect(_on_road_zones_toggled)
 		# Sync with terrain manager if possible
 		var tm = get_tree().get_first_node_in_group("terrain_manager")
 		if tm and "debug_show_road_zones" in tm:
 			road_zones_toggle.button_pressed = tm.debug_show_road_zones
-
+ 
 	# Connect spawning buttons
-	var spawn_entity_btn = game_menu.get_node_or_null("SpawnEntityButton")
+	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
 	if spawn_entity_btn:
 		spawn_entity_btn.pressed.connect(_on_spawn_entity_pressed)
 	
-	var spawn_zombie_btn = game_menu.get_node_or_null("SpawnZombieButton")
+	var spawn_zombie_btn = game_menu.find_child("SpawnZombieButton", true, false)
 	if spawn_zombie_btn:
 		spawn_zombie_btn.pressed.connect(_on_spawn_zombie_pressed)
 	
-
+ 
 	
-	var radius_slider = game_menu.get_node_or_null("MiningRadiusSlider")
-	var radius_label = game_menu.get_node_or_null("MiningRadiusLabel")
+	var radius_slider = game_menu.find_child("MiningRadiusSlider", true, false)
+	var radius_label = game_menu.find_child("MiningRadiusLabel", true, false)
 	if radius_slider:
 		radius_slider.value_changed.connect(_on_mining_radius_changed.bind(radius_label))
 		# Sync with config
@@ -157,14 +157,15 @@ func _ready() -> void:
 				radius_label.text = "Mining Radius: %.2f" % radius_slider.value
 	
 	# Connect QuickSave button (F5)
-	var quicksave_btn = game_menu.get_node_or_null("QuickSaveButton")
+	var quicksave_btn = game_menu.find_child("QuickSaveButton", true, false)
 	if quicksave_btn:
 		quicksave_btn.pressed.connect(_on_quicksave_pressed)
 	
 	# Connect QuickLoad button (F8)
-	var quickload_btn = game_menu.get_node_or_null("QuickLoadButton")
+	var quickload_btn = game_menu.find_child("QuickLoadButton", true, false)
 	if quickload_btn:
 		quickload_btn.pressed.connect(_on_quickload_pressed)
+
 	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false

@@ -181,139 +181,135 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0, 0, 0, 0.5)
 
-[node name="ExitButton" type="Button" parent="GameMenu" unique_id=186084057]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 20.0
-offset_right = 150.0
-offset_bottom = 60.0
-text = "Exit Game"
+[node name="CenterContainer" type="CenterContainer" parent="GameMenu"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
 
-[node name="CollisionDebuggerToggle" type="CheckButton" parent="GameMenu" unique_id=1547686241]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 70.0
-offset_right = 220.0
-offset_bottom = 100.0
-text = "Collision Debugger"
+[node name="SettingsHBox" type="HBoxContainer" parent="GameMenu/CenterContainer"]
+custom_minimum_size = Vector2(600, 0)
+layout_mode = 2
+theme_override_constants/separation = 50
 
-[node name="PickaxeDigModeToggle" type="CheckButton" parent="GameMenu" unique_id=1911315868]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 110.0
-offset_right = 220.0
-offset_bottom = 140.0
+[node name="GameplayPanel" type="VBoxContainer" parent="GameMenu/CenterContainer/SettingsHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="GameplayLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Gameplay Settings"
+
+[node name="PickaxeDigModeToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel" unique_id=1911315868]
+layout_mode = 2
 button_pressed = true
 text = "Block Pickaxe Mode"
 
-[node name="PickaxeDurabilityToggle" type="CheckButton" parent="GameMenu" unique_id=1178565425]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 150.0
-offset_right = 220.0
-offset_bottom = 180.0
+[node name="PickaxeDurabilityToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel" unique_id=1178565425]
+layout_mode = 2
 button_pressed = true
 text = "Pickaxe Durability"
 
-[node name="TargetVisualizerToggle" type="CheckButton" parent="GameMenu" unique_id=258259359]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 190.0
-offset_right = 220.0
-offset_bottom = 220.0
-text = "Target Visualizer"
-
-[node name="HitMarkerToggle" type="CheckButton" parent="GameMenu" unique_id=1825117809]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 230.0
-offset_right = 220.0
-offset_bottom = 260.0
+[node name="HitMarkerToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel" unique_id=1825117809]
+layout_mode = 2
 text = "Show Hit Markers"
 
-[node name="PistolHitMarkerToggle" type="CheckButton" parent="GameMenu" unique_id=708070018]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 270.0
-offset_right = 220.0
-offset_bottom = 300.0
+[node name="PistolHitMarkerToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel" unique_id=708070018]
+layout_mode = 2
 button_pressed = true
 text = "Pistol Red Markers"
 
-[node name="TerrainInfoToggle" type="CheckButton" parent="GameMenu" unique_id=814410833]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 310.0
-offset_right = 220.0
-offset_bottom = 340.0
-text = "Show Terrain Info"
+[node name="HSeparator" type="HSeparator" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel"]
+layout_mode = 2
 
-[node name="ChunkBoundsToggle" type="CheckButton" parent="GameMenu" unique_id=123456789]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 350.0
-offset_right = 220.0
-offset_bottom = 380.0
-text = "Show Chunk Bounds"
-
-[node name="RoadZonesToggle" type="CheckButton" parent="GameMenu" unique_id=123456790]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 390.0
-offset_right = 220.0
-offset_bottom = 420.0
-text = "Show Road Zones"
-
-[node name="SpawnEntityButton" type="Button" parent="GameMenu" unique_id=123456791]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 430.0
-offset_right = 220.0
-offset_bottom = 460.0
-text = "Spawn Test Entity"
-
-[node name="SpawnZombieButton" type="Button" parent="GameMenu" unique_id=123456792]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 470.0
-offset_right = 220.0
-offset_bottom = 500.0
-text = "Spawn Zombie"
-
-[node name="MiningRadiusLabel" type="Label" parent="GameMenu" unique_id=680204721]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 515.0
-offset_right = 220.0
-offset_bottom = 535.0
+[node name="MiningRadiusLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel" unique_id=680204721]
+layout_mode = 2
 text = "Mining Radius: 1.00"
 
-[node name="MiningRadiusSlider" type="HSlider" parent="GameMenu" unique_id=1394098675]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 540.0
-offset_right = 220.0
-offset_bottom = 560.0
+[node name="MiningRadiusSlider" type="HSlider" parent="GameMenu/CenterContainer/SettingsHBox/GameplayPanel" unique_id=1394098675]
+layout_mode = 2
 min_value = 0.5
 max_value = 3.0
 step = 0.1
 value = 1.0
 
-[node name="QuickSaveButton" type="Button" parent="GameMenu" unique_id=1870332335]
+[node name="DebugPanel" type="VBoxContainer" parent="GameMenu/CenterContainer/SettingsHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="DebugLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Debug Settings"
+
+[node name="CollisionDebuggerToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=1547686241]
+layout_mode = 2
+text = "Collision Debugger"
+
+[node name="TargetVisualizerToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=258259359]
+layout_mode = 2
+text = "Target Visualizer"
+
+[node name="TerrainInfoToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=814410833]
+layout_mode = 2
+text = "Show Terrain Info"
+
+[node name="ChunkBoundsToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456789]
+layout_mode = 2
+text = "Show Chunk Bounds"
+
+[node name="RoadZonesToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456790]
+layout_mode = 2
+text = "Show Road Zones"
+
+[node name="HSeparator" type="HSeparator" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel"]
+layout_mode = 2
+
+[node name="SpawnEntityButton" type="Button" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456791]
+custom_minimum_size = Vector2(0, 35)
+layout_mode = 2
+text = "Spawn Test Entity"
+
+[node name="SpawnZombieButton" type="Button" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456792]
+custom_minimum_size = Vector2(0, 35)
+layout_mode = 2
+text = "Spawn Zombie"
+
+[node name="ActionButtons" type="VBoxContainer" parent="GameMenu"]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 580.0
+offset_top = 20.0
 offset_right = 220.0
-offset_bottom = 620.0
+offset_bottom = 170.0
+theme_override_constants/separation = 10
+
+[node name="ExitButton" type="Button" parent="GameMenu/ActionButtons" unique_id=186084057]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Exit Game"
+
+[node name="QuickSaveButton" type="Button" parent="GameMenu/ActionButtons" unique_id=1870332335]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
 text = "QuickSave (F5)"
 
-[node name="QuickLoadButton" type="Button" parent="GameMenu" unique_id=1377812926]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 630.0
-offset_right = 220.0
-offset_bottom = 670.0
+[node name="QuickLoadButton" type="Button" parent="GameMenu/ActionButtons" unique_id=1377812926]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
 text = "QuickLoad (F8)"
+
+
+
+
 
 
 [node name="InventoryPanel" parent="." unique_id=212941941 instance=ExtResource("2_inv")]
