@@ -205,7 +205,7 @@ func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 				continue
 			
 			# Use procedural road height for exact road alignment
-			var terrain_y = get_procedural_road_height(spawn_x, spawn_z)
+			var terrain_y = floor(get_procedural_road_height(spawn_x, spawn_z))
 			if terrain_y <= 0:
 				terrain_y = 12.0 # Fallback
 			

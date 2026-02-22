@@ -1908,41 +1908,15 @@ func _place_current_prefab():
 
 ## Calculate road height at a given X, Z position by finding nearest road and sampling terrain
 func _get_road_height_at(x: float, z: float) -> float:
+	if prefab_spawner and prefab_spawner.has_method("get_procedural_road_height"):
+		return prefab_spawner.get_procedural_road_height(x, z)
+	
 	if not terrain_manager:
 		return -1.0
 	
-	# Get road spacing from terrain manager
-	var spacing = 100.0  # Default
-	if "procedural_road_spacing" in terrain_manager:
-		spacing = terrain_manager.procedural_road_spacing
-	
-	if spacing <= 0:
-		return -1.0  # No roads
-	
-	# Find nearest road (roads are at grid edges: x % spacing == 0 or z % spacing == 0)
-	# Check both the X-aligned and Z-aligned roads and use the closer one
-	var nearest_x_road = round(x / spacing) * spacing  # Nearest road running along X
-	var nearest_z_road = round(z / spacing) * spacing  # Nearest road running along Z
-	
-	var dist_to_x_road = abs(x - nearest_x_road)
-	var dist_to_z_road = abs(z - nearest_z_road)
-	
-	# Sample terrain height ON the road (at the road center)
-	var road_x: float
-	var road_z: float
-	
-	if dist_to_x_road < dist_to_z_road:
-		# Closer to an X-aligned road (vertical line at x = nearest_x_road)
-		road_x = nearest_x_road
-		road_z = z
-	else:
-		# Closer to a Z-aligned road (horizontal line at z = nearest_z_road)
-		road_x = x
-		road_z = nearest_z_road
-	
-	# Query actual terrain height at the road position
+	# Fallback if PrefabSpawner logic not available
 	if terrain_manager.has_method("get_terrain_height"):
-		return terrain_manager.get_terrain_height(road_x, road_z)
+		return terrain_manager.get_terrain_height(x, z)
 	
 	return -1.0
 

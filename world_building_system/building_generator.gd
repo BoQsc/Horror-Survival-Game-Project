@@ -323,7 +323,7 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 		return false
 	
 	# Get road height at this position
-	var road_y = _get_road_height(pos.x, pos.z)
+	var road_y = floor(_get_road_height(pos.x, pos.z))
 	var spawn_pos = Vector3(floor(pos.x), road_y, floor(pos.z))
 	
 	# Double-check water at spawn time (chunk may have loaded since queueing)
