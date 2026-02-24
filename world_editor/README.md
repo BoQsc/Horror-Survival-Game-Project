@@ -64,4 +64,41 @@ Generator defaults **must match** `chunk_manager.gd` procedural defaults for com
 | `road_width` | 8.0 | 8.0 |
 
 > [!NOTE]
-> The noise functions differ (GPU custom hash vs CPU FastNoiseLite), so terrain patterns won't be identical — but height range and feature scale will match.
+> The noise functions differ (GPU custom hash vs CPU FastNoiseLite `TYPE_VALUE`), so terrain patterns won't be identical — but height range and feature scale will match.
+
+## Terrain Presets
+
+The world editor offers terrain style presets that auto-fill `terrain_height` and `noise_freq`:
+
+| Preset | `terrain_height` | `noise_freq` | Character |
+|---|---|---|---|
+| **Flat** | 3.0 | 0.02 | Nearly flat, ideal for city-building |
+| **Plains** | 5.0 | 0.05 | Gentle rolling, mostly above water |
+| **Hills** (default) | 10.0 | 0.1 | Matches procedural defaults |
+| **Mountains** | 14.0 | 0.15 | Dramatic peaks, deep valleys |
+
+Users can still override individual values after selecting a preset.
+
+## Future: GPU-Identical Generation
+
+> [!IMPORTANT]
+> To achieve **pixel-perfect matching** with procedural terrain, run the **same GPU shader** to generate the heightmap instead of CPU noise.
+
+Current pipeline has a mismatch:
+```
+CPU (FastNoiseLite TYPE_VALUE) → PNG → GPU (shader reads PNG)
+```
+
+Ideal pipeline:
+```
+GPU (gen_density.glsl) → PNG → GPU (shader reads PNG)
+```
+
+**Implementation plan:**
+1. Write a compute shader that samples `get_density()` at Y=surface for a 2048×2048 XZ grid
+2. Dispatch on `RenderingDevice`, read back with `texture_get_data()`
+3. Save as heightmap PNG (same format as current)
+4. Same approach for biome + road data
+5. Result: identical terrain because it's literally the same noise code
+
+This also solves the performance issue (sub-second generation vs current ~10s GDScript loop).

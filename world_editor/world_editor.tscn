@@ -51,6 +51,11 @@ layout_mode = 2
 text = "Play >"
 theme_override_font_sizes/font_size = 14
 
+[node name="ExitBtn" type="Button" parent="TopBar"]
+layout_mode = 2
+text = "Exit"
+theme_override_font_sizes/font_size = 14
+
 [node name="Spacer" type="Control" parent="TopBar"]
 layout_mode = 2
 size_flags_horizontal = 3
@@ -128,6 +133,25 @@ min_value = 1.0
 max_value = 999999.0
 value = 12345.0
 
+[node name="PresetRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="PresetLabel" type="Label" parent="HSplit/SettingsPanel/VBox/PresetRow"]
+layout_mode = 2
+text = "Terrain Style"
+size_flags_horizontal = 3
+
+[node name="PresetOption" type="OptionButton" parent="HSplit/SettingsPanel/VBox/PresetRow"]
+layout_mode = 2
+item_count = 4
+popup/item_0/text = "Flat"
+popup/item_1/text = "Plains"
+popup/item_2/text = "Hills (default, matches procedural gameplay mode)"
+popup/item_2/id = 2
+popup/item_3/text = "Mountains"
+popup/item_3/id = 3
+selected = 2
+
 [node name="HeightRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
 layout_mode = 2
 
@@ -138,10 +162,10 @@ size_flags_horizontal = 3
 
 [node name="HeightInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/HeightRow"]
 layout_mode = 2
-min_value = 5.0
-max_value = 100.0
+min_value = 1.0
+max_value = 15.0
 step = 1.0
-value = 20.0
+value = 10.0
 
 [node name="FreqRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
 layout_mode = 2
@@ -154,9 +178,9 @@ size_flags_horizontal = 3
 [node name="FreqInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/FreqRow"]
 layout_mode = 2
 min_value = 0.001
-max_value = 0.1
+max_value = 0.2
 step = 0.001
-value = 0.02
+value = 0.1
 
 [node name="RoadSpacingRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
 layout_mode = 2

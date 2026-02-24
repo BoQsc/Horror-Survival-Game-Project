@@ -12,6 +12,7 @@ const SAVE_BASE = "user://worlds/"
 @onready var progress_label: Label = $TopBar/ProgressLabel
 @onready var seed_input: SpinBox = $HSplit/SettingsPanel/VBox/SeedRow/SeedInput
 @onready var height_input: SpinBox = $HSplit/SettingsPanel/VBox/HeightRow/HeightInput
+@onready var preset_option: OptionButton = $HSplit/SettingsPanel/VBox/PresetRow/PresetOption
 @onready var freq_input: SpinBox = $HSplit/SettingsPanel/VBox/FreqRow/FreqInput
 @onready var road_spacing_input: SpinBox = $HSplit/SettingsPanel/VBox/RoadSpacingRow/RoadSpacingInput
 @onready var world_name_input: LineEdit = $HSplit/SettingsPanel/VBox/NameRow/NameInput
@@ -19,6 +20,7 @@ const SAVE_BASE = "user://worlds/"
 @onready var save_btn: Button = $TopBar/SaveBtn
 @onready var load_btn: Button = $TopBar/LoadBtn
 @onready var play_btn: Button = $TopBar/PlayBtn
+@onready var exit_btn: Button = $TopBar/ExitBtn
 @onready var world_list: ItemList = $HSplit/SettingsPanel/VBox/WorldList
 
 var generator: WorldMapGenerator = null
@@ -26,6 +28,14 @@ var current_images: Dictionary = {}
 var preview_texture: ImageTexture = null
 var is_generating: bool = false
 var gen_thread: Thread = null
+
+# Terrain presets: [terrain_height, noise_freq]
+const TERRAIN_PRESETS = {
+	0: {"name": "Flat", "height": 3.0, "freq": 0.02},
+	1: {"name": "Plains", "height": 5.0, "freq": 0.05},
+	2: {"name": "Hills", "height": 10.0, "freq": 0.1},
+	3: {"name": "Mountains", "height": 14.0, "freq": 0.15},
+}
 var loaded_world_path: String = ""
 
 # Paint state
@@ -46,6 +56,8 @@ func _ready() -> void:
 	save_btn.pressed.connect(_on_save_pressed)
 	load_btn.pressed.connect(_on_load_pressed)
 	play_btn.pressed.connect(_on_play_pressed)
+	exit_btn.pressed.connect(_on_exit_pressed)
+	preset_option.item_selected.connect(_on_preset_selected)
 	world_list.item_selected.connect(_on_world_selected)
 	
 	progress_bar.visible = false
@@ -98,6 +110,16 @@ func _refresh_world_list() -> void:
 func _on_world_selected(index: int) -> void:
 	var folder_name = world_list.get_item_metadata(index)
 	world_name_input.text = folder_name
+
+func _on_preset_selected(index: int) -> void:
+	if TERRAIN_PRESETS.has(index):
+		var preset = TERRAIN_PRESETS[index]
+		height_input.value = preset.height
+		freq_input.value = preset.freq
+		print("[WorldEditor] Preset '%s': height=%.1f, freq=%.3f" % [preset.name, preset.height, preset.freq])
+
+func _on_exit_pressed() -> void:
+	get_tree().quit()
 
 func _on_load_pressed() -> void:
 	var world_name = world_name_input.text.strip_edges()

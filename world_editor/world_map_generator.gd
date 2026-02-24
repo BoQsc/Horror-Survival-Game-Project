@@ -30,7 +30,7 @@ enum MaterialID {
 func _init_noise() -> void:
 	_height_noise = FastNoiseLite.new()
 	_height_noise.seed = world_seed
-	_height_noise.noise_type = FastNoiseLite.TYPE_VALUE_CUBIC
+	_height_noise.noise_type = FastNoiseLite.TYPE_VALUE  # Matches shader hash noise range [0,1]
 	_height_noise.frequency = noise_freq
 	
 	_biome_noise = FastNoiseLite.new()
