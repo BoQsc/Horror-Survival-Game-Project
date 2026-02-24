@@ -381,60 +381,67 @@ func drop_selected_item() -> void:
 
 ## Serialize hotbar contents for saving
 func get_save_data() -> Dictionary:
+	# ALWAYS save the player inventory slots, even if we are currently in EDITOR mode
+	# If in editor mode, player inventory is in _player_slots
+	var slots_to_save = _player_slots if _is_editor_mode else slots
+	
 	var slots_data = []
-	for slot in slots:
+	for slot in slots_to_save:
 		slots_data.append({
 			"item": slot.item.duplicate(),
 			"count": slot.count
 		})
 	return {
 		"slots": slots_data,
-		"selected_slot": selected_slot
+		"selected_slot": selected_slot,
+		"is_editor_active": _is_editor_mode
 	}
 
-## Deserialize hotbar contents from save (REPLACES starter kit)
+## Deserialize hotbar contents from save
 func load_save_data(data: Dictionary) -> void:
 	print("[HOTBAR_DEBUG] load_save_data() called")
-	print("[HOTBAR_DEBUG] Data keys: %s" % str(data.keys()))
 	
 	if data.has("slots"):
 		var saved_slots = data.slots
 		print("[HOTBAR_DEBUG] Loading %d slots from save" % saved_slots.size())
-		slots.clear()
+		
+		var loaded_slots = []
 		for i in range(min(saved_slots.size(), SLOT_COUNT)):
 			var item_data = saved_slots[i].get("item", {}).duplicate()
-			var count = saved_slots[i].get("count", 0)
-			slots.append({
+			var count = int(saved_slots[i].get("count", 0))
+			loaded_slots.append({
 				"item": item_data,
 				"count": count
 			})
-			if not item_data.is_empty():
-				print("[HOTBAR_DEBUG]   Slot %d: %s x%d" % [i, item_data.get("name", "?"), count])
 		
 		# Fill remaining slots with empty
-		while slots.size() < SLOT_COUNT:
-			slots.append(_create_empty_stack())
+		while loaded_slots.size() < SLOT_COUNT:
+			loaded_slots.append(_create_empty_stack())
+			
+		# Assign to the correct arrays
+		# Logic: Saved 'slots' are ALWAYS the player inventory
+		# If the save says the user was in editor mode, we put them in _player_slots 
+		# and re-initialize the active 'slots' with editor tools.
+		# Note: SaveManager will trigger mode restoration later via ModeManager
+		_is_editor_mode = data.get("is_editor_active", false)
+		
+		if _is_editor_mode:
+			_player_slots = loaded_slots.duplicate(true)
+			_init_editor_slots()
+			slots = _editor_slots.duplicate(true)
+		else:
+			slots = loaded_slots.duplicate(true)
+			_player_slots = slots.duplicate(true) # Set as default backup
 	
 	# Restore selected slot index
-	var slot_to_select = data.get("selected_slot", 0)
-	selected_slot = slot_to_select
-	print("[HOTBAR_DEBUG] Selected slot set to: %d" % selected_slot)
+	selected_slot = data.get("selected_slot", 0)
 	
-	# Connect to player_loaded signal (one-shot) to re-emit item state after load
+	# Connect to player_loaded signal to re-emit item state
 	if has_node("/root/PlayerSignals"):
-		print("[HOTBAR_DEBUG] Connecting to player_loaded signal...")
-		# Use lambda to pass the slot index and disconnect after one use
 		var reconnect_func = func():
-			print("[HOTBAR_DEBUG] player_loaded signal received! Re-selecting slot %d" % selected_slot)
-			var item_before = get_selected_item()
-			print("[HOTBAR_DEBUG] Item BEFORE select_slot: %s" % ("empty" if item_before.is_empty() else item_before.get("name", "?")))
 			select_slot(selected_slot)
-			var item_after = get_selected_item()
-			print("[HOTBAR_DEBUG] Item AFTER select_slot: %s" % ("empty" if item_after.is_empty() else item_after.get("name", "?")))
-			DebugManager.log_player("Hotbar: Reconnected item state after load")
+			PlayerSignals.inventory_changed.emit()
+			DebugManager.log_player("Hotbar: Synced state after world load")
 		PlayerSignals.player_loaded.connect(reconnect_func, CONNECT_ONE_SHOT)
-		print("[HOTBAR_DEBUG] Connection established")
-	else:
-		print("[HOTBAR_DEBUG] WARNING: PlayerSignals not found!")
 	
-	DebugManager.log_player("Hotbar: Loaded save data")
+	DebugManager.log_player("Hotbar: Loaded save data (EditorActive: %s)" % _is_editor_mode)

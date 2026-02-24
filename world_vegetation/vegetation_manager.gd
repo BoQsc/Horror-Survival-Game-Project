@@ -5,6 +5,7 @@ class_name VegetationManager
 signal tree_chopped(world_position: Vector3)
 signal grass_harvested(world_position: Vector3)
 signal rock_harvested(world_position: Vector3)
+signal all_vegetation_ready # Emitted when initial load batch finishes
 
 @export var terrain_manager: Node3D
 @export var tree_model_path: String = "res://models/tree/1/pine_tree_-_ps1_low_poly.glb"
@@ -86,6 +87,8 @@ const MAX_COLLIDER_UPDATES_PER_FRAME = 5
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
+var is_initial_load_batch: bool = false # Mark as initial load to signal completion
+var initial_load_count: int = 0 # Specifically track chunks from the load regeneration
 
 ## Returns true when all queued vegetation has been placed (for loading screen)
 func is_vegetation_ready() -> bool:
@@ -106,12 +109,6 @@ func _ready():
 		push_warning("Failed to load tree model, falling back to basic mesh")
 		tree_mesh = create_basic_tree_mesh()
 	
-	forest_noise = FastNoiseLite.new()
-	forest_noise.frequency = 0.05
-	# Derive seed from world seed for reproducibility
-	var base_seed = terrain_manager.world_seed if terrain_manager else 12345
-	forest_noise.seed = base_seed
-	
 	# Load grass mesh
 	var grass_result = load_tree_mesh_from_glb(grass_model_path)
 	if grass_result.mesh:
@@ -122,10 +119,6 @@ func _ready():
 	else:
 		push_warning("Failed to load grass model, using basic mesh")
 		grass_mesh = create_basic_grass_mesh()
-	
-	grass_noise = FastNoiseLite.new()
-	grass_noise.frequency = 0.08 # Different pattern from trees
-	grass_noise.seed = base_seed + 1 # Offset for different pattern
 	
 	# Load rock mesh
 	var rock_result = load_tree_mesh_from_glb(rock_model_path)
@@ -138,9 +131,8 @@ func _ready():
 		push_warning("Failed to load rock model, using basic mesh")
 		rock_mesh = create_basic_rock_mesh()
 	
-	rock_noise = FastNoiseLite.new()
-	rock_noise.frequency = 0.06 # Different pattern from grass/trees
-	rock_noise.seed = base_seed + 2 # Offset for different pattern
+	# Initialize noise generators with current seed
+	initialize_noise()
 	
 	if terrain_manager:
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
@@ -152,6 +144,25 @@ func _ready():
 	
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
+
+## Initialize or re-initialize noise generators based on current terrain seed
+func initialize_noise():
+	# Derive seed from world seed for reproducibility
+	var base_seed = terrain_manager.world_seed if terrain_manager else 12345
+	
+	forest_noise = FastNoiseLite.new()
+	forest_noise.frequency = 0.05
+	forest_noise.seed = base_seed
+	
+	grass_noise = FastNoiseLite.new()
+	grass_noise.frequency = 0.08
+	grass_noise.seed = base_seed + 1
+	
+	rock_noise = FastNoiseLite.new()
+	rock_noise.frequency = 0.06
+	rock_noise.seed = base_seed + 2
+	
+	DebugManager.log_vegetation("Vegetation noise initialized with seed: %d" % base_seed)
 
 # Called when terrain is modified (player edits) - reparent vegetation, don't regenerate
 func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
@@ -279,8 +290,12 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 
 func _cleanup_chunk_trees(coord: Vector2i):
 	if chunk_tree_data.has(coord):
-		# Return colliders to pool
 		var data = chunk_tree_data[coord]
+		# FIX: Properly free the MultiMeshInstance3D to prevent "ghost" trees
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			data.multimesh.queue_free()
+			
+		# Return colliders to pool
 		for tree in data.trees:
 			var key = _tree_key(coord, tree.index)
 			if active_colliders.has(key):
@@ -291,6 +306,10 @@ func _cleanup_chunk_trees(coord: Vector2i):
 func _cleanup_chunk_grass(coord: Vector2i):
 	if chunk_grass_data.has(coord):
 		var data = chunk_grass_data[coord]
+		# FIX: Properly free the MultiMeshInstance3D
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			data.multimesh.queue_free()
+			
 		for grass in data.grass_list:
 			var key = _grass_key(coord, grass.index)
 			if active_grass_colliders.has(key):
@@ -301,6 +320,10 @@ func _cleanup_chunk_grass(coord: Vector2i):
 func _cleanup_chunk_rocks(coord: Vector2i):
 	if chunk_rock_data.has(coord):
 		var data = chunk_rock_data[coord]
+		# FIX: Properly free the MultiMeshInstance3D
+		if data.has("multimesh") and is_instance_valid(data.multimesh):
+			data.multimesh.queue_free()
+			
 		for rock in data.rock_list:
 			var key = _rock_key(coord, rock.index)
 			if active_rock_colliders.has(key):
@@ -341,6 +364,16 @@ func _physics_process(_delta):
 				
 				# All stages done
 				pending_chunks.pop_front()
+				
+				# Check if initial load batch is complete
+				if is_initial_load_batch:
+					initial_load_count -= 1
+					if initial_load_count <= 0:
+						is_initial_load_batch = false
+						initial_load_count = 0 
+						all_vegetation_ready.emit()
+						DebugManager.log_vegetation("Initial load batch finished - signaling all_vegetation_ready")
+					DebugManager.log_vegetation("Initial load vegetation batch complete - signaling readiness")
 		else:
 			# Invalid chunk, remove
 			pending_chunks.pop_front()
@@ -998,7 +1031,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	# Apply chopped_trees filter - hide trees that were previously chopped
 	for tree in tree_list:
-		var persist_key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+		var persist_key = _position_hash(tree.world_pos)
 		if chopped_trees.has(persist_key):
 			print("DEBUG_VEG_PERSIST: Tree FILTERED at pos=%s key=%s (found in chopped_trees)" % [tree.world_pos, persist_key])
 			tree.alive = false
@@ -1028,7 +1061,7 @@ func chop_tree_by_collider(collider: Node) -> bool:
 			tree.alive = false
 			
 			# Add to chopped_trees for persistence across chunk unloads
-			var persist_key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+			var persist_key = _position_hash(tree.world_pos)
 			chopped_trees[persist_key] = true
 			print("DEBUG_VEG_PERSIST: Tree CHOPPED - stored key=%s pos=%s (total_chopped=%d)" % [persist_key, tree.world_pos, chopped_trees.size()])
 			
@@ -1873,7 +1906,6 @@ func create_basic_rock_mesh() -> Mesh:
 	
 	st.index()
 	return st.commit()
-
 ## Save/Load persistence for vegetation state
 func get_save_data() -> Dictionary:
 	# Collect all chopped trees from active chunks
@@ -1883,7 +1915,7 @@ func get_save_data() -> Dictionary:
 		for tree in data.trees:
 			if not tree.alive:
 				# Store as position hash
-				var key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+				var key = _position_hash(tree.world_pos)
 				all_chopped.append(key)
 	# Also include previously stored chopped trees (from unloaded chunks)
 	for key in chopped_trees:
@@ -1947,69 +1979,16 @@ func load_save_data(data: Dictionary):
 func _on_spawn_zones_ready(_positions: Array) -> void:
 	if pending_vegetation_regen:
 		pending_vegetation_regen = false
-		DebugManager.log_vegetation("spawn_zones_ready received - regenerating vegetation now")
-		_regenerate_all_vegetation()
-
-func _regenerate_all_vegetation():
-	"""Regenerate all visible vegetation to match loaded save state."""
-	# Store coords to regenerate
-	var grass_coords = chunk_grass_data.keys().duplicate()
-	var rock_coords = chunk_rock_data.keys().duplicate()
-	var tree_coords = chunk_tree_data.keys().duplicate()
-	
-	# Clear old grass data and regenerate
-	for coord in grass_coords:
-		if chunk_grass_data.has(coord):
-			var data = chunk_grass_data[coord]
-			if data.has("multimesh") and is_instance_valid(data.multimesh):
-				data.multimesh.queue_free()
-			# Remove all active grass colliders for this chunk
-			for grass in data.get("grass_list", []):
-				var key = _grass_key(coord, grass.index)
-				if active_grass_colliders.has(key):
-					_return_grass_collider_to_pool(active_grass_colliders[key])
-					active_grass_colliders.erase(key)
-			chunk_grass_data.erase(coord)
-	
-	# Clear old rock data and regenerate
-	for coord in rock_coords:
-		if chunk_rock_data.has(coord):
-			var data = chunk_rock_data[coord]
-			if data.has("multimesh") and is_instance_valid(data.multimesh):
-				data.multimesh.queue_free()
-			for rock in data.get("rock_list", []):
-				var key = _rock_key(coord, rock.index)
-				if active_rock_colliders.has(key):
-					_return_rock_collider_to_pool(active_rock_colliders[key])
-					active_rock_colliders.erase(key)
-			chunk_rock_data.erase(coord)
-	
-	# Clear old tree data and regenerate
-	for coord in tree_coords:
-		if chunk_tree_data.has(coord):
-			var data = chunk_tree_data[coord]
-			if data.has("multimesh") and is_instance_valid(data.multimesh):
-				data.multimesh.queue_free()
-			for tree in data.get("trees", []):
-				var key = _tree_key(coord, tree.index)
-				if active_colliders.has(key):
-					_return_collider_to_pool(active_colliders[key])
-					active_colliders.erase(key)
-			chunk_tree_data.erase(coord)
-	
-	# Re-queue all chunks for vegetation generation
-	for coord in grass_coords:
-		if terrain_manager.active_chunks.has(Vector3i(coord.x, 0, coord.y)):
-			var chunk_data = terrain_manager.active_chunks[Vector3i(coord.x, 0, coord.y)]
-			if chunk_data and chunk_data.node_terrain and is_instance_valid(chunk_data.node_terrain):
-				pending_chunks.append({
-					"coord": coord,
-					"chunk_node": chunk_data.node_terrain,
-					"frames_waited": 0,
-					"stage": 0  # 0=Trees, 1=Grass, 2=Rocks
-				})
-	
-	DebugManager.log_vegetation("Regenerating %d vegetation chunks after load" % grass_coords.size())
+		is_initial_load_batch = true
+		initial_load_count = pending_chunks.size()
+		
+		# If queue is empty, signal ready now
+		if initial_load_count <= 0:
+			all_vegetation_ready.emit()
+			is_initial_load_batch = false
+			DebugManager.log_vegetation("No vegetation chunks pending - signaling ready")
+		else:
+			DebugManager.log_vegetation("Initial load batch set to %d chunks (based on current queue)" % initial_load_count)
 
 func _apply_chopped_trees():
 	# Mark trees as dead based on chopped_trees dictionary
@@ -2017,7 +1996,7 @@ func _apply_chopped_trees():
 		var data = chunk_tree_data[coord]
 		var mmi = data.multimesh as MultiMeshInstance3D
 		for tree in data.trees:
-			var key = "%d_%d" % [int(tree.world_pos.x), int(tree.world_pos.z)]
+			var key = _position_hash(tree.world_pos)
 			if chopped_trees.has(key) and tree.alive:
 				tree.alive = false
 				# Hide in MultiMesh
@@ -2036,3 +2015,41 @@ func _serialize_placed_list(list: Array) -> Array:
 			"rotation": item.get("rotation", 0.0)
 		})
 	return result
+
+## Clear all internal vegetation data for a fresh start (e.g. before loading a save)
+func clear_all_data():
+	# Stop all pending work
+	pending_chunks.clear()
+	pending_grass_placements.clear()
+	pending_rock_placements.clear()
+	pending_collider_adds.clear()
+	pending_collider_removes.clear()
+	keys_pending_add.clear()
+	keys_pending_remove.clear()
+	
+	# Clear active visual data
+	var grass_coords = chunk_grass_data.keys().duplicate()
+	for coord in grass_coords:
+		_cleanup_chunk_grass(coord)
+	
+	var rock_coords = chunk_rock_data.keys().duplicate()
+	for coord in rock_coords:
+		_cleanup_chunk_rocks(coord)
+		
+	var tree_coords = chunk_tree_data.keys().duplicate()
+	for coord in tree_coords:
+		_cleanup_chunk_trees(coord)
+		
+	# Clear persistent tracking
+	removed_grass.clear()
+	removed_rocks.clear()
+	chopped_trees.clear()
+	placed_grass.clear()
+	placed_rocks.clear()
+	
+	# Reset states
+	pending_vegetation_regen = false
+	is_initial_load_batch = false
+	initial_load_count = 0
+	
+	DebugManager.log_vegetation("VegetationManager: All data cleared for new session")

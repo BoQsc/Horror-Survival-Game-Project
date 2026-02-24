@@ -64,3 +64,24 @@ func get_health_percent() -> float:
 
 func get_stamina_percent() -> float:
 	return stamina / max_stamina
+
+## Save/Load persistence
+func get_save_data() -> Dictionary:
+	return {
+		"health": health,
+		"max_health": max_health,
+		"stamina": stamina,
+		"is_dead": is_dead
+	}
+
+func load_save_data(data: Dictionary) -> void:
+	if data.has("health"):
+		health = int(data.health)
+	if data.has("max_health"):
+		max_health = int(data.max_health)
+	if data.has("stamina"):
+		stamina = data.stamina
+	if data.has("is_dead"):
+		is_dead = data.is_dead
+	
+	DebugManager.log_player("PlayerStats: Loaded (HP: %d, Stamina: %.1f)" % [health, stamina])

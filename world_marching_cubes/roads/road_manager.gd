@@ -195,3 +195,53 @@ func clear_all_roads():
 	next_segment_id = 0
 	road_mask_image.fill(Color.BLACK)
 	road_mask_texture.update(road_mask_image)
+
+## Save road data
+func get_save_data() -> Dictionary:
+	var segments = []
+	for segment_id in road_segments:
+		var seg = road_segments[segment_id]
+		var points = []
+		for p in seg.points:
+			points.append([p.x, p.y, p.z])
+		segments.append({
+			"id": segment_id,
+			"points": points,
+			"width": seg.width,
+			"is_trail": seg.is_trail
+		})
+	return { "segments": segments }
+
+## Load road data
+func load_save_data(data: Dictionary) -> void:
+	clear_all_roads()
+	
+	if data.has("segments"):
+		for seg_data in data.segments:
+			var points: Array[Vector3] = []
+			for p_arr in seg_data.points:
+				points.append(Vector3(p_arr[0], p_arr[1], p_arr[2]))
+			
+			var segment_id = seg_data.id
+			var width = seg_data.width
+			var is_trail = seg_data.is_trail
+			
+			road_segments[segment_id] = {
+				"points": points,
+				"width": width,
+				"is_trail": is_trail
+			}
+			
+			# Repaint road on mask
+			for i in range(points.size() - 1):
+				_paint_road_on_mask(points[i], points[i + 1], width)
+		
+		# Update next_segment_id
+		if data.segments.size() > 0:
+			var max_id = 0
+			for seg in data.segments:
+				if seg.id > max_id:
+					max_id = seg.id
+			next_segment_id = max_id + 1
+	
+	print("[RoadManager] Loaded %d road segments" % road_segments.size())

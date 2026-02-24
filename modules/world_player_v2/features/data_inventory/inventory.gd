@@ -214,7 +214,7 @@ func load_save_data(data: Dictionary) -> void:
 		for i in range(min(saved_slots.size(), INVENTORY_SIZE)):
 			slots[i] = {
 				"item": saved_slots[i].get("item", {}).duplicate(),
-				"count": saved_slots[i].get("count", 0)
+				"count": int(saved_slots[i].get("count", 0))
 			}
 	
 	# Don't restore open state - always start closed

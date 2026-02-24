@@ -166,6 +166,9 @@ func _ready() -> void:
 	if quickload_btn:
 		quickload_btn.pressed.connect(_on_quickload_pressed)
 
+	# Deferred connection to SaveManager to avoid race conditions during scene load
+	call_deferred("_connect_to_save_manager")
+
 	
 	mode_label.text = "PLAY"
 	interaction_prompt.visible = false
@@ -192,16 +195,19 @@ func _setup_visual_overlays() -> void:
 	if not notification_label:
 		notification_label = Label.new()
 		notification_label.name = "SaveLoadNotification"
-		notification_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		notification_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		notification_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		notification_label.set_anchors_preset(Control.PRESET_CENTER)
-		notification_label.offset_top = -100  # Above center
-		notification_label.add_theme_font_size_override("font_size", 32)
-		notification_label.add_theme_color_override("font_color", Color.YELLOW)
+		notification_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		notification_label.offset_top = 50
+		notification_label.offset_right = -50
+		notification_label.add_theme_font_size_override("font_size", 28)
+		notification_label.add_theme_color_override("font_color", Color.WHITE)
 		notification_label.add_theme_color_override("font_outline_color", Color.BLACK)
 		notification_label.add_theme_constant_override("outline_size", 4)
 		notification_label.visible = false
 		notification_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# Ensure it grows inward from the right
+		notification_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 		add_child(notification_label)
 		print("[HUD_SETUP] Notification label created")
 
@@ -219,24 +225,30 @@ func _setup_visual_overlays() -> void:
 		item_notification_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(item_notification_container)
 	
-	# Connect to SaveManager signals  
-	print("[HUD_SETUP] Checking for SaveManager...")
+	
+	# Initial check (standardization to SaveManager as per project logic)
+	_connect_to_save_manager()
+
+func _connect_to_save_manager() -> void:
+	print("[HUD_SETUP] Connecting to SaveManager...")
 	var save_mgr = get_tree().get_first_node_in_group("save_manager")
 	if not save_mgr:
-		# Fallback: try autoload path
-		if has_node("/root/SaveManagerV2"):
-			save_mgr = get_node("/root/SaveManagerV2")
+		# Standardized to SaveManager matching project.godot
+		if has_node("/root/SaveManager"):
+			save_mgr = get_node("/root/SaveManager")
 	
 	if save_mgr:
-		print("[HUD_SETUP] SaveManager found: %s" % save_mgr.name)
 		if save_mgr.has_signal("save_completed") and not save_mgr.save_completed.is_connected(_on_save_completed):
 			save_mgr.save_completed.connect(_on_save_completed)
 			print("[HUD_SETUP] Connected to save_completed signal")
 		if save_mgr.has_signal("load_completed") and not save_mgr.load_completed.is_connected(_on_load_completed):
 			save_mgr.load_completed.connect(_on_load_completed)
 			print("[HUD_SETUP] Connected to load_completed signal")
+		# Check if already connected but name in log was missing
+		if not save_mgr.save_completed.is_connected(_on_save_completed):
+			print("[HUD_SETUP] WARNING: Failed to connect to signals even with SaveManager ref")
 	else:
-		print("[HUD_SETUP] WARNING: SaveManager not found in scene tree!")
+		print("[HUD_SETUP] WARNING: SaveManager not found in scene tree yet (will be handled by group signals if registered later)")
 
 func _on_item_added(item_data: Dictionary, amount: int) -> void:
 	print("HUD: _on_item_added received: %s x%d" % [item_data.get("name", "Unknown"), amount])
@@ -801,16 +813,16 @@ func _on_camera_underwater_toggled(is_underwater: bool) -> void:
 	if underwater_overlay:
 		underwater_overlay.visible = is_underwater
 
-func _on_save_completed(success: bool, path: String) -> void:
+func _on_save_completed(success: bool, _path: String) -> void:
 	if success and notification_label:
-		notification_label.text = "🎮 GAME SAVED!"
+		notification_label.text = "GAME SAVED"
 		notification_label.visible = true
 		notification_timer = 2.0  # Show for 2 seconds
 		print("[SAVE_NOTIFICATION] Game saved!")
 
-func _on_load_completed(success: bool, path: String) -> void:
+func _on_load_completed(success: bool, _path: String) -> void:
 	if success and notification_label:
-		notification_label.text = "📂 GAME LOADED!"
+		notification_label.text = "GAME LOADED"
 		notification_label.visible = true
 		notification_timer = 2.0  # Show for 2 seconds
 		print("[LOAD_NOTIFICATION] Game loaded!")

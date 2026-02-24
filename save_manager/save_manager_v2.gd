@@ -5,12 +5,10 @@ extends Node
 signal save_completed(success: bool, path: String)
 signal load_completed(success: bool, path: String)
 
-const SAVE_VERSION = 2  # V2: Added inventory, hotbar, stats, containers, player state
+# V2: Added inventory, hotbar, stats, containers, player state
+const SAVE_VERSION = 2
 const SAVE_DIR = "user://saves/"
 const QUICKSAVE_FILE = "quicksave.json"
-
-# Preload V1 loader for backward compatibility
-const SaveManagerV1 = preload("res://save_manager/save_manager_v1.gd")
 
 # References to game managers (set in _ready or via exports)
 var chunk_manager: Node = null
@@ -29,6 +27,10 @@ var player_hotbar: Node = null
 var player_stats: Node = null
 var mode_manager: Node = null
 var crouch_component: Node = null
+var player_movement: Node = null
+var player_camera: Node = null
+var player_combat: Node = null
+var player_terrain: Node = null
 var container_registry: Node = null
 
 # Deferred spawn data - waiting for terrain to load
@@ -37,10 +39,24 @@ var pending_entity_data: Dictionary = {}
 var pending_vehicle_data: Dictionary = {}
 var pending_player_position_restore: bool = false  # Fix: defer position until terrain collision ready
 var is_loading_game: bool = false
+var current_save_path: String = "" # Tracks current active save path
 
 # CRITICAL: Static flag that persists through scene reload
 # EntityManager checks this in _ready() to skip procedural spawning during QuickLoad
 static var is_quickloading: bool = false
+
+var awaiting_terrain_ready: bool = false
+var awaiting_vegetation_ready: bool = false
+var load_safety_timer: SceneTreeTimer = null # Safety timeout to prevent infinite hang
+
+# Autosave settings
+var autosave_enabled: bool = true
+var autosave_interval_seconds: float = 300.0 # 5 minutes
+var _autosave_timer: Timer = null
+
+# Thread Management
+var _save_threads: Array[Thread] = []
+var _is_saving: bool = false # Prevent concurrent saves to avoid file corruption
 
 func _ready():
 	# Add to group for dynamic lookup by HUD
@@ -50,21 +66,71 @@ func _ready():
 	if not DirAccess.dir_exists_absolute(SAVE_DIR):
 		DirAccess.make_dir_recursive_absolute(SAVE_DIR)
 	
+	# Setup Autosave
+	_setup_autosave()
+	
 	# Find managers (deferred to ensure scene is ready)
 	call_deferred("_find_managers")
 
-func _find_managers():
-	chunk_manager = get_tree().get_first_node_in_group("terrain_manager")
-	if not chunk_manager:
-		chunk_manager = get_node_or_null("/root/MainGame/TerrainManager")
+func _setup_autosave():
+	if _autosave_timer:
+		_autosave_timer.queue_free()
 	
-	building_manager = get_node_or_null("/root/MainGame/BuildingManager")
-	vegetation_manager = get_node_or_null("/root/MainGame/VegetationManager")
-	road_manager = get_node_or_null("/root/MainGame/RoadManager")
-	prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
-	entity_manager = get_node_or_null("/root/MainGame/EntityManager")
+	_autosave_timer = Timer.new()
+	_autosave_timer.name = "AutosaveTimer"
+	_autosave_timer.one_shot = false
+	_autosave_timer.wait_time = autosave_interval_seconds
+	_autosave_timer.autostart = autosave_enabled
+	_autosave_timer.timeout.connect(_on_autosave_timeout)
+	add_child(_autosave_timer)
+	
+	if autosave_enabled:
+		_autosave_timer.start()
+		DebugManager.log_save("Autosave enabled: %d seconds" % autosave_interval_seconds)
+
+func _on_autosave_timeout():
+	if is_loading_game: return
+	DebugManager.log_save("Autosave triggered...")
+	save_game(SAVE_DIR + "autosave.json")
+
+func _find_managers():
+	# Terrain
+	chunk_manager = get_tree().get_first_node_in_group("terrain_manager")
+	
+	# Building
+	building_manager = get_tree().get_first_node_in_group("building_manager")
+	if not building_manager:
+		building_manager = get_node_or_null("/root/MainGame/BuildingManager")
+	
+	# Vegetation
+	vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	if not vegetation_manager:
+		vegetation_manager = get_node_or_null("/root/MainGame/VegetationManager")
+	
+	# Roads
+	road_manager = get_tree().get_first_node_in_group("road_manager")
+	if not road_manager:
+		road_manager = get_node_or_null("/root/MainGame/RoadManager")
+	
+	# Prefabs
+	prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
+	if not prefab_spawner:
+		prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
+	
+	# Entities
+	entity_manager = get_tree().get_first_node_in_group("entity_manager")
+	if not entity_manager:
+		entity_manager = get_node_or_null("/root/MainGame/EntityManager")
+	
+	# Vehicles
 	vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
-	building_generator = get_node_or_null("/root/MainGame/BuildingGenerator")
+	
+	# Building Generator
+	building_generator = get_tree().get_first_node_in_group("building_generator")
+	if not building_generator:
+		building_generator = get_node_or_null("/root/MainGame/BuildingGenerator")
+	
+	# Player
 	player = get_tree().get_first_node_in_group("player")
 	
 	DebugManager.log_save("Managers: CM=%s BM=%s VM=%s RM=%s PF=%s EM=%s VEH=%s P=%s" % [
@@ -78,6 +144,11 @@ func _find_managers():
 		if not chunk_manager.is_connected("spawn_zones_ready", _on_spawn_zones_ready):
 			chunk_manager.connect("spawn_zones_ready", _on_spawn_zones_ready)
 	
+	# Connect to vegetation_manager's all_vegetation_ready signal
+	if vegetation_manager and vegetation_manager.has_signal("all_vegetation_ready"):
+		if not vegetation_manager.is_connected("all_vegetation_ready", _on_all_vegetation_ready):
+			vegetation_manager.connect("all_vegetation_ready", _on_all_vegetation_ready)
+	
 	# V2: Find player components
 	if player:
 		var systems_node = player.get_node_or_null("Systems")
@@ -88,9 +159,16 @@ func _find_managers():
 		
 		var components_node = player.get_node_or_null("Components")
 		if components_node:
+			player_movement = components_node.get_node_or_null("Movement")
+			player_camera = components_node.get_node_or_null("Camera")
 			var movement_node = components_node.get_node_or_null("Movement")
 			if movement_node:
 				crouch_component = movement_node.get_node_or_null("Crouch")
+		
+		var modes_node = player.get_node_or_null("Modes")
+		if modes_node:
+			player_combat = modes_node.get_node_or_null("CombatSystem")
+			player_terrain = modes_node.get_node_or_null("TerrainInteraction")
 	
 	# Find player stats (autoload)
 	player_stats = get_node_or_null("/root/PlayerStats")
@@ -113,9 +191,21 @@ func _input(event):
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		# Auto-save on exit
-		DebugManager.log_save("Auto-saving on exit...")
-		save_game(SAVE_DIR + "autosave.json")
+		DebugManager.log_save("Auto-saving on exit (FORCED SYNCHRONOUS)...")
+		# Kill the window immediately but keep the thread alive? 
+		# No, better to block for a second to ensure file is written.
+		_save_game_internal(SAVE_DIR + "autosave.json") # Call synchronous version for exit
 		get_tree().quit()
+
+func _process(_delta):
+	# Cleanup finished threads
+	var i = _save_threads.size() - 1
+	while i >= 0:
+		if not _save_threads[i].is_alive():
+			_save_threads[i].wait_to_finish()
+			_save_threads.remove_at(i)
+			_is_saving = false
+		i -= 1
 
 ## Quick save to default slot
 func quick_save():
@@ -124,14 +214,52 @@ func quick_save():
 
 ## Quick load from default slot
 func quick_load():
+	_find_managers() # Ensure we have latest references
 	var path = SAVE_DIR + QUICKSAVE_FILE
 	load_game(path)
 
 ## Save game to specified path
 func save_game(path: String) -> bool:
-	DebugManager.log_save("Saving to: %s" % path)
+	_find_managers() # Ensure we have latest references
+	if is_loading_game:
+		push_warning("SaveManager: Cannot save while loading")
+		return false
 	
-	var save_data = {
+	if _is_saving:
+		push_warning("SaveManager: Save already in progress, skipping...")
+		return false
+	
+	DebugManager.log_save("Saving to: %s (Threaded)" % path)
+	_is_saving = true
+	
+	var save_data = _gather_save_data()
+	
+	# Start thread for JSON processing and file writing
+	var thread = Thread.new()
+	var error = thread.start(_threaded_save.bind(path, save_data))
+	
+	if error != OK:
+		push_error("SaveManager: Failed to start save thread")
+		_is_saving = false
+		return false
+	
+	_save_threads.append(thread)
+	return true
+
+## Internal synchronous save for critical moments (e.g. exit)
+func _save_game_internal(path: String) -> bool:
+	var data = _gather_save_data()
+	var json_string = JSON.stringify(data, "\t")
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	if file:
+		file.store_string(json_string)
+		file.close()
+		DebugManager.log_save("Synchronous save complete: %s" % path)
+		return true
+	return false
+
+func _gather_save_data() -> Dictionary:
+	return {
 		"version": SAVE_VERSION,
 		"timestamp": Time.get_datetime_string_from_system(),
 		"game_seed": _get_world_seed(),
@@ -153,31 +281,49 @@ func save_game(path: String) -> bool:
 		"containers": _get_container_data(),
 		"game_settings": _get_game_settings_data()
 	}
-	
-	# Convert to JSON
-	var json_string = JSON.stringify(save_data, "\t")
+
+func _threaded_save(path: String, data: Dictionary):
+	# Convert to JSON (heavy operation)
+	var json_string = JSON.stringify(data, "\t")
 	
 	# Write to file
 	var file = FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
 		push_error("[SaveManager] Failed to open file for writing: " + path)
-		save_completed.emit(false, path)
-		return false
+		call_deferred("emit_signal", "save_completed", false, path)
+		return
 	
 	file.store_string(json_string)
 	file.close()
 	
-	DebugManager.log_save("Save complete!")
+	DebugManager.log_save("Threaded save complete!")
+	call_deferred("_finalize_save", path)
+
+func _finalize_save(path: String):
 	print("[SAVE_NOTIFICATION] Game saved to: %s" % path)
 	save_completed.emit(true, path)
-	return true
 
 ## Load game from specified path
 func load_game(path: String) -> bool:
+	_find_managers() # Ensure we have latest references
 	# CRITICAL: Set flag BEFORE anything else to prevent procedural spawning during reload
 	is_quickloading = true
 	DebugManager.log_save("Loading from: %s" % path)
+	current_save_path = path
+
+	# CRITICAL: Strict input freeze during load
+	if player_camera and "mouse_look_enabled" in player_camera:
+		player_camera.mouse_look_enabled = false
+		DebugManager.log_save("Player camera mouse look LOCKED for load sequence")
 	
+	# CRITICAL: Immediate Cleanup of entities to prevent ghosts during load
+	if entity_manager:
+		entity_manager.is_loading_save = true
+		if entity_manager.has_method("clear_all_entities"):
+			entity_manager.clear_all_entities()
+		DebugManager.log_save("Immediate entity cleanup triggered")
+	
+	# Open file
 	if not FileAccess.file_exists(path):
 		push_error("[SaveManager] Save file not found: " + path)
 		load_completed.emit(false, path)
@@ -208,18 +354,34 @@ func load_game(path: String) -> bool:
 		load_completed.emit(false, path)
 		return false
 	
-	# V2: Delegate to v1 loader if v1 save detected
+	# V2: Handle legacy v1 saves directly (consolidated)
 	if version == 1:
-		DebugManager.log_save("Detected v1 save - delegating to v1 loader")
-		var success = SaveManagerV1.load_v1_save(save_data, self)
-		load_completed.emit(success, path)
-		return success
+		DebugManager.log_save("Detected v1 save - using legacy consolidation path")
+		_load_v1_legacy_data(save_data)
+		load_completed.emit(true, path)
+		return true
 	
 	# Load each component
 	# IMPORTANT: Load prefabs FIRST to prevent respawning during chunk generation
 	_load_prefab_data(save_data.get("prefabs", {}))
 	# Load building spawn state BEFORE chunks generate
 	_load_building_spawn_data(save_data.get("building_spawns", {}))
+	
+	# CRITICAL: Disable player physics and interaction EARLY to allow immediate position restoration
+	if player:
+		player.set_physics_process(false)
+		if player_movement:
+			player_movement.set_physics_process(false)
+			player_movement.set_process(false)
+		if player_camera:
+			player_camera.set_process(false)
+		if player_combat:
+			player_combat.set_physics_process(false)
+			player_combat.set_process(false)
+		if player_terrain:
+			player_terrain.set_physics_process(false)
+			player_terrain.set_process(false)
+		DebugManager.log_save("Player and sub-components frozen EARLY for position restoration")
 	
 	# Set loading flag - entities will be deferred until terrain is ready
 	is_loading_game = true
@@ -233,34 +395,79 @@ func load_game(path: String) -> bool:
 			entity_manager.pending_spawns.clear()
 		DebugManager.log_save("Blocked procedural spawning before terrain reload")
 	
-	_load_player_data(save_data.get("player", {}))
-	_load_terrain_data(save_data.get("terrain_modifications", {}))
-	_load_building_data(save_data.get("buildings", {}))
-	_load_vegetation_data(save_data.get("vegetation", {}))
-	_load_road_data(save_data.get("roads", {}))
-	# Entities are deferred - they will spawn in _on_spawn_zones_ready()
-	# _load_entity_data is NOT called here anymore
-	# Doors are loaded after buildings (since doors are placed in building chunks)
-	call_deferred("_load_door_data", save_data.get("doors", {}))
-	# Vehicles are ALSO deferred until terrain is ready (prevents falling through)
-	pending_vehicle_data = save_data.get("vehicles", {})
+	# V2: Initialize all data-driven managers FIRST
+	# This ensures they have their "chopped trees", "inventory", etc. before chunks generate
+	_load_world_seed(int(save_data.get("game_seed", 12345)))
 	
-	# V2: Load player systems
+	# CRITICAL: Clear all existing vegetation data before loading new state
+	if vegetation_manager and vegetation_manager.has_method("clear_all_data"):
+		vegetation_manager.clear_all_data()
+		
+	_load_vegetation_data(save_data.get("vegetation", {}))
+	_load_building_data(save_data.get("buildings", {}))
+	_load_road_data(save_data.get("roads", {}))
 	_load_inventory_data(save_data.get("player_inventory", {}))
 	_load_hotbar_data(save_data.get("player_hotbar", {}))
 	_load_player_stats_data(save_data.get("player_stats", {}))
 	_load_player_state_data(save_data.get("player_state", {}))
+	_load_game_settings_data(save_data.get("game_settings", {}))
 	
-	# V2: Containers (deferred)
+	# Prime deferred loaders
+	call_deferred("_load_door_data", save_data.get("doors", {}))
 	call_deferred("_load_container_data", save_data.get("containers", {}))
+	pending_vehicle_data = save_data.get("vehicles", {})
 	
-	# Emit player_loaded signal to reconnect all player systems
-	call_deferred("_emit_player_loaded")
+	# Load terrain modifications (clears world)
+	_load_terrain_data(save_data.get("terrain_modifications", {}))
 	
-	DebugManager.log_save("Load complete!")
-	print("[LOAD_NOTIFICATION] Game loaded from: %s" % path)
-	load_completed.emit(true, path)
+	# Readiness flags - set before triggering world gen
+	awaiting_terrain_ready = true
+	# Only wait for vegetation if there is data to process
+	awaiting_vegetation_ready = not save_data.get("vegetation", {}).is_empty() and vegetation_manager != null
+	
+	DebugManager.log_save("Awaiting: Terrain=%s Vegetation=%s" % [awaiting_terrain_ready, awaiting_vegetation_ready])
+	
+	# Finally, trigger the world generation by requesting the player's zone
+	# This MUST be last because it triggers signals that managers above react to
+	_load_player_data(save_data.get("player", {}))
+	
+	# 10. Instantiate Loading Screen (if not already present)
+	# This provide visual feedback for the background world generation
+	_show_loading_screen()
+	
+	# V2 FIX: DON'T emit load_completed or print "Game loaded" here!
+	# We are still waiting for terrain and vegetation.
+	DebugManager.log_save("Load initiated - awaiting world generation...")
+	
+	# Start safety timeout
+	_start_load_safety_timeout(8.0) 
+	
 	return true
+
+## Instantiate and show the loading screen overlay
+func _show_loading_screen():
+	# Don't spawn if already exists
+	if get_tree().root.find_child("LoadingScreen", true, false):
+		return
+		
+	var screen_path = "res://modules/world_player_v2/features/ui_loading_screen/loading_screen.tscn"
+	if ResourceLoader.exists(screen_path):
+		var screen_scene = load(screen_path)
+		var screen_instance = screen_scene.instantiate()
+		get_tree().root.add_child(screen_instance)
+		DebugManager.log_save("Loading screen spawned")
+
+## Safety timeout to prevent being stuck forever if signals are dropped
+func _start_load_safety_timeout(seconds: float):
+	load_safety_timer = get_tree().create_timer(seconds)
+	load_safety_timer.timeout.connect(_on_load_timeout)
+
+func _on_load_timeout():
+	if is_loading_game:
+		push_warning("SaveManager: LOAD TIMEOUT REACHED! Forcing unfreeze.")
+		awaiting_terrain_ready = false
+		awaiting_vegetation_ready = false
+		_check_world_readiness()
 
 ## Emit player_loaded signal (deferred to ensure all systems are ready)
 func _emit_player_loaded():
@@ -269,20 +476,56 @@ func _emit_player_loaded():
 		DebugManager.log_save("Player loaded signal emitted - systems should reconnect")
 
 ## Called when terrain chunks around spawn positions are ready
-func _on_spawn_zones_ready(positions: Array):
-	if not is_loading_game:
+func _on_spawn_zones_ready(_positions: Array):
+	if not is_loading_game or not awaiting_terrain_ready:
 		return
 	
-	DebugManager.log_save("Spawn zones ready - gameplay enabled")
+	awaiting_terrain_ready = false
+	DebugManager.log_save("Terrain ready - checking if vegetation is also ready")
+	_check_world_readiness()
+
+## Called when vegetation manager finishes its initial load batch
+func _on_all_vegetation_ready():
+	if not is_loading_game or not awaiting_vegetation_ready:
+		return
+		
+	awaiting_vegetation_ready = false
+	DebugManager.log_save("Vegetation ready - checking if terrain is also ready")
+	_check_world_readiness()
+
+## Finalize loading when all systems are ready
+func _check_world_readiness():
+	if awaiting_terrain_ready or awaiting_vegetation_ready:
+		DebugManager.log_save("Still waiting for: %s%s" % [
+			"Terrain " if awaiting_terrain_ready else "",
+			"Vegetation" if awaiting_vegetation_ready else ""
+		])
+		return
 	
-	# FIX: Restore player position/rotation NOW that terrain collision is ready
-	if pending_player_position_restore and player and not pending_player_data.is_empty():
-		if pending_player_data.has("position"):
-			player.global_position = _array_to_vec3(pending_player_data.position)
-			DebugManager.log_save("Player position restored: %s" % player.global_position)
-		if pending_player_data.has("rotation"):
-			player.rotation = _array_to_vec3(pending_player_data.rotation)
-		pending_player_position_restore = false
+	DebugManager.log_save("All world components ready - final unfreeze")
+	
+	# Re-enable player physics now that ground is solid
+	if player:
+		player.set_physics_process(true)
+		if player_movement:
+			player_movement.set_physics_process(true)
+			player_movement.set_process(true)
+		if player_camera:
+			player_camera.set_process(true)
+			if "mouse_look_enabled" in player_camera:
+				player_camera.mouse_look_enabled = true
+		
+		# FORCE mouse capture to ensure the player has control immediately
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		DebugManager.log_save("Forced mouse capture on unfreeze")
+		
+		if player_combat:
+			player_combat.set_physics_process(true)
+			player_combat.set_process(true)
+		if player_terrain:
+			player_terrain.set_physics_process(true)
+			player_terrain.set_process(true)
+		DebugManager.log_save("Player and sub-components re-enabled")
 	
 	# CRITICAL FIX: Always call load_save_data to clear existing zombies
 	# Even if no entities are saved, we need to clean up procedural spawns
@@ -298,6 +541,11 @@ func _on_spawn_zones_ready(positions: Array):
 	pending_entity_data = {}
 	pending_vehicle_data = {}
 	is_loading_game = false
+	
+	# FINAL NOTIFICATION: Now that everything is unfrozen and ready
+	DebugManager.log_save("Load process fully complete!")
+	print("[LOAD_NOTIFICATION] Game loaded and world ready!")
+	load_completed.emit(true, current_save_path) # current_save_path should be tracked
 	is_quickloading = false  # Clear the flag now that load is complete
 
 ## Get list of available save files
@@ -415,26 +663,9 @@ func _get_vegetation_data() -> Dictionary:
 	return {}
 
 func _get_road_data() -> Dictionary:
-	if not road_manager:
-		return {}
-	
-	if not "road_segments" in road_manager:
-		return {}
-	
-	var segments = []
-	for segment_id in road_manager.road_segments:
-		var seg = road_manager.road_segments[segment_id]
-		var points = []
-		for p in seg.points:
-			points.append(_vec3_to_array(p))
-		segments.append({
-			"id": segment_id,
-			"points": points,
-			"width": seg.width,
-			"is_trail": seg.is_trail
-		})
-	
-	return { "segments": segments }
+	if road_manager and road_manager.has_method("get_save_data"):
+		return road_manager.get_save_data()
+	return {}
 
 func _get_prefab_data() -> Dictionary:
 	if not prefab_spawner:
@@ -471,21 +702,22 @@ func _load_player_data(data: Dictionary):
 	if data.is_empty() or not player:
 		return
 	
-	# Store position for deferred restoration (FIX: wait for terrain collision)
+	# Store data for logic that might check it later
 	pending_player_data = data
-	pending_player_position_restore = (data.has("position") or data.has("rotation"))
 	
 	var player_pos = Vector3.ZERO
 	
-	# FIX: Don't set position/rotation here - defer until terrain collision ready!
-	# This prevents fall-through when QuickLoading early in game start
+	# IMMEDIATE RESTORATION: Set position/rotation right away
+	# Safe because physics_process is already disabled in load_game()
 	if data.has("position"):
 		player_pos = _array_to_vec3(data.position)
-		# player.global_position = player_pos  # REMOVED - set in _on_spawn_zones_ready()
-	# if data.has("rotation"):
-	#	player.rotation = _array_to_vec3(data.rotation)  # REMOVED - set in _on_spawn_zones_ready()
+		player.global_position = player_pos
+		DebugManager.log_save("Player position restored IMMEDIATELY: %s" % player_pos)
+		
+	if data.has("rotation"):
+		player.rotation = _array_to_vec3(data.rotation)
 	
-	# Camera pitch and flying state are safe to restore immediately (don't affect physics)
+	# Camera pitch and flying state
 	if data.has("camera_pitch"):
 		var camera = player.get_node_or_null("Camera3D")
 		if camera:
@@ -493,30 +725,30 @@ func _load_player_data(data: Dictionary):
 	if data.has("is_flying") and "is_flying" in player:
 		player.is_flying = data.is_flying
 	
-	# NOTE: Player freeze removed for QuickLoad (v2)
-	# QuickLoad doesn't reload the scene, so player can stay active
-	# V1 full scene loads handle freezing separately if needed
+	# Reset velocity
 	player.velocity = Vector3.ZERO
 	
 	# Request terrain around player position (for spawn zone readiness)
 	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
 		chunk_manager.request_spawn_zone(player_pos, 2)
 	
-	DebugManager.log_save("Player data loaded - position deferred until terrain ready")
+	DebugManager.log_save("Player data loaded - position restored, physics pending world load")
 
 func _load_terrain_data(data: Dictionary):
-	if data.is_empty():
-		return
 	if not chunk_manager:
 		push_error("SaveManager: Cannot load terrain - chunk_manager is null!")
 		return
 	
-	if not "stored_modifications" in chunk_manager:
-		push_error("SaveManager: chunk_manager has no stored_modifications property!")
-		return
+	# CRITICAL: Atomic reset of all background tasks and existing chunks
+	# This prevents "double rendering" and redundant generation during load
+	if chunk_manager.has_method("clear_all_chunks"):
+		chunk_manager.clear_all_chunks()
+	else:
+		# Fallback to manual clear if API changed (should not happen with v2)
+		chunk_manager.stored_modifications.clear()
 	
-	# Clear existing modifications
-	chunk_manager.stored_modifications.clear()
+	if data.is_empty():
+		return
 	
 	# Load new modifications
 	for key in data:
@@ -537,20 +769,7 @@ func _load_terrain_data(data: Dictionary):
 			})
 		chunk_manager.stored_modifications[coord] = mods
 	
-	# Force regeneration of affected chunks by marking them for reload
-	# This ensures the loaded modifications are actually applied
-	var affected_chunks = chunk_manager.stored_modifications.keys()
-	for coord in affected_chunks:
-		if chunk_manager.active_chunks.has(coord):
-			# Clear from active chunks to force regeneration
-			var chunk_data = chunk_manager.active_chunks[coord]
-			if chunk_data and chunk_data.node_terrain:
-				chunk_data.node_terrain.queue_free()
-			if chunk_data and chunk_data.node_water:
-				chunk_data.node_water.queue_free()
-			chunk_manager.active_chunks.erase(coord)
-	
-	DebugManager.log_save("Terrain loaded: %d chunks, regenerating %d" % [data.size(), affected_chunks.size()])
+	DebugManager.log_save("Terrain modifications loaded: %d chunks" % data.size())
 
 func _load_building_data(data: Dictionary):
 	if data.is_empty() or not building_manager:
@@ -602,6 +821,15 @@ func _load_building_data(data: Dictionary):
 	
 	DebugManager.log_save("Buildings loaded: %d chunks" % data.size())
 
+func _load_world_seed(seed_val: int):
+	if chunk_manager and "world_seed" in chunk_manager:
+		chunk_manager.world_seed = seed_val
+		DebugManager.log_save("World seed restored to ChunkManager: %d" % seed_val)
+	
+	if vegetation_manager and vegetation_manager.has_method("initialize_noise"):
+		vegetation_manager.initialize_noise()
+		DebugManager.log_save("VegetationManager noise re-initialized with new seed")
+
 func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:
 		return
@@ -616,43 +844,8 @@ func _load_road_data(data: Dictionary):
 	if data.is_empty() or not road_manager:
 		return
 	
-	if not "road_segments" in road_manager:
-		return
-	
-	# Clear existing roads
-	if road_manager.has_method("clear_all_roads"):
-		road_manager.clear_all_roads()
-	
-	# Load road segments
-	if data.has("segments"):
-		for seg_data in data.segments:
-			var points: Array[Vector3] = []
-			for p in seg_data.points:
-				points.append(_array_to_vec3(p))
-			
-			var segment_id = seg_data.id
-			var width = seg_data.width
-			var is_trail = seg_data.is_trail
-			
-			road_manager.road_segments[segment_id] = {
-				"points": points,
-				"width": width,
-				"is_trail": is_trail
-			}
-			
-			# Repaint road on mask
-			for i in range(points.size() - 1):
-				road_manager._paint_road_on_mask(points[i], points[i + 1], width)
-		
-		# Update next_segment_id
-		if data.segments.size() > 0:
-			var max_id = 0
-			for seg in data.segments:
-				if seg.id > max_id:
-					max_id = seg.id
-			road_manager.next_segment_id = max_id + 1
-	
-	DebugManager.log_save("Roads loaded: %d segments" % (data.segments.size() if data.has("segments") else 0))
+	if road_manager.has_method("load_save_data"):
+		road_manager.load_save_data(data)
 
 # ============ ENTITY DATA ============
 
@@ -763,42 +956,46 @@ func _load_player_stats_data(data: Dictionary):
 	player_stats.load_save_data(data)
 
 func _get_player_state_data() -> Dictionary:
-	var state = {}
+	var data = {}
+	if crouch_component:
+		data["is_crouching"] = crouch_component.is_crouching
 	
-	# Crouch state
-	if crouch_component and "is_crouching" in crouch_component:
-		state["is_crouching"] = crouch_component.is_crouching
-	
-	# Mode state
 	if mode_manager:
-		if "current_mode" in mode_manager:
-			state["current_mode"] = mode_manager.current_mode
-		if "editor_submode" in mode_manager:
-			state["editor_submode"] = mode_manager.editor_submode
-		if "is_flying" in mode_manager:
-			state["is_flying"] = mode_manager.is_flying
-	
-	return state
+		if mode_manager.has_method("get_save_data"):
+			var mode_data = mode_manager.get_save_data()
+			for key in mode_data:
+				data[key] = mode_data[key]
+		else:
+			data["current_mode"] = mode_manager.current_mode
+			data["editor_submode"] = mode_manager.editor_submode
+			data["is_flying"] = mode_manager.is_flying
+			
+	return data
 
 func _load_player_state_data(data: Dictionary):
 	if data.is_empty():
 		return
 	
-	# Restore crouch state (will be implemented when crouch refactor is done)
+	# Restore crouch state
 	if data.has("is_crouching") and crouch_component:
 		if crouch_component.has_method("set_crouch_state"):
 			crouch_component.set_crouch_state(data.is_crouching)
 		else:
-			DebugManager.log_save("Note: Crouch state was %s (refactor pending)" % data.is_crouching)
+			# Fallback if method missing
+			crouch_component.is_crouching = data.is_crouching
 	
 	# Restore mode state
 	if mode_manager:
-		if data.has("current_mode") and mode_manager.has_method("set_mode"):
-			mode_manager.set_mode(data.current_mode)
-		if data.has("editor_submode") and "editor_submode" in mode_manager:
-			mode_manager.editor_submode = data.editor_submode
-		if data.has("is_flying") and "is_flying" in mode_manager:
-			mode_manager.is_flying = data.is_flying
+		if mode_manager.has_method("load_save_data"):
+			mode_manager.load_save_data(data)
+		else:
+			# Fallback for old versions
+			if data.has("current_mode") and mode_manager.has_method("set_mode"):
+				mode_manager.set_mode(data.current_mode)
+			if data.has("editor_submode") and "editor_submode" in mode_manager:
+				mode_manager.editor_submode = data.editor_submode
+			if data.has("is_flying") and "is_flying" in mode_manager:
+				mode_manager.is_flying = data.is_flying
 
 func _get_container_data() -> Dictionary:
 	if not container_registry or not container_registry.has_method("get_save_data"):
@@ -813,8 +1010,52 @@ func _load_container_data(data: Dictionary):
 		container_registry.load_save_data(data)
 
 func _get_game_settings_data() -> Dictionary:
-	# TODO: Time of day, weather when implemented
-	return {}
+	var settings = {
+		"autosave_enabled": autosave_enabled,
+		"autosave_interval": autosave_interval_seconds,
+		"time_of_day": 0.5, # Placeholder for TimeManager
+		"weather": "clear", # Placeholder for WeatherManager
+		"difficulty": "normal"
+	}
+	return settings
+
+func _load_game_settings_data(data: Dictionary):
+	if data.is_empty():
+		return
+	
+	if data.has("autosave_enabled"):
+		autosave_enabled = data.autosave_enabled
+	if data.has("autosave_interval"):
+		autosave_interval_seconds = data.autosave_interval
+		_setup_autosave() # Re-apply interval
+	
+	# Restore time/weather once those systems exist
+	DebugManager.log_save("Game settings loaded (Time: %s, Weather: %s)" % [
+		data.get("time_of_day", "?"), data.get("weather", "?")
+	])
+
+## Legacy V1 data loader (consolidated into V2)
+func _load_v1_legacy_data(save_data: Dictionary):
+	# Load prefabs first (prevents respawning during chunk generation)
+	_load_prefab_data(save_data.get("prefabs", {}))
+	_load_building_spawn_data(save_data.get("building_spawns", {}))
+	
+	# Set loading flag - entities will be deferred until terrain is ready
+	is_loading_game = true
+	pending_entity_data = save_data.get("entities", {})
+	
+	# Load core systems
+	_load_player_data(save_data.get("player", {}))
+	_load_terrain_data(save_data.get("terrain_modifications", {}))
+	_load_building_data(save_data.get("buildings", {}))
+	_load_vegetation_data(save_data.get("vegetation", {}))
+	_load_road_data(save_data.get("roads", {}))
+	
+	# Defer doors and vehicles
+	call_deferred("_load_door_data", save_data.get("doors", {}))
+	pending_vehicle_data = save_data.get("vehicles", {})
+	
+	DebugManager.log_save("V1 legacy load complete (new systems will use defaults)")
 
 # ============ UTILITY FUNCTIONS ============
 

@@ -27,8 +27,21 @@ func _ready() -> void:
 		panel.modulate.a = 1.0
 	
 	# Find managers and start monitoring
+	_connect_to_save_manager()
 	await get_tree().process_frame
 	_start_loading_sequence()
+
+func _connect_to_save_manager() -> void:
+	if has_node("/root/SaveManager"):
+		var sm = get_node("/root/SaveManager")
+		if not sm.is_connected("load_completed", _on_save_manager_load_completed):
+			sm.load_completed.connect(_on_save_manager_load_completed)
+
+func _on_save_manager_load_completed(_success: bool, _path: String) -> void:
+	# Force fade out when SaveManager says it's done
+	if is_loading:
+		DebugManager.log_save("LoadingScreen: Force fade out from SaveManager load_completed")
+		_start_fade_out()
 
 func _start_loading_sequence() -> void:
 	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")

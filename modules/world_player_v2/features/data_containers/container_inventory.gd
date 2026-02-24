@@ -157,7 +157,7 @@ func serialize() -> Dictionary:
 ## Deserialize container contents from save data
 func deserialize(data: Dictionary) -> void:
 	container_id = data.get("container_id", str(randi()))
-	slot_count = data.get("slot_count", 6)
+	slot_count = int(data.get("slot_count", 6))
 	
 	_initialize_slots()
 	
@@ -166,5 +166,5 @@ func deserialize(data: Dictionary) -> void:
 		var saved = saved_slots[i]
 		slots[i] = {
 			"item": saved.get("item", {}).duplicate(),
-			"count": saved.get("count", 0)
+			"count": int(saved.get("count", 0))
 		}

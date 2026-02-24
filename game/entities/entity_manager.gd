@@ -125,8 +125,8 @@ func _update_entity_proximity():
 		elif dist_sq > freeze_dist_sq:
 			# In freeze zone - disable physics
 			_freeze_entity(entity)
-		else:
-			# In active zone - ensure physics enabled
+		elif not is_loading_save:
+			# In active zone - ensure physics enabled (ONLY if not loading)
 			_unfreeze_entity(entity)
 	
 	# Clean up invalid entities from tracking (reverse order to preserve indices)
@@ -158,6 +158,9 @@ func _freeze_entity(entity: Node3D):
 
 ## Unfreeze an entity - re-enable physics
 func _unfreeze_entity(entity: Node3D):
+	if is_loading_save:
+		return # Block unfreezing while world is still loading
+		
 	if not frozen_entities.has(entity):
 		return # Not frozen
 	
@@ -487,6 +490,14 @@ func get_save_data() -> Dictionary:
 			"rotation": entity.rotation.y,
 		}
 		
+		# Store health if available
+		if "current_health" in entity:
+			entity_data["health"] = entity.current_health
+		
+		# Store AI state if available
+		if "current_state" in entity:
+			entity_data["state"] = entity.current_state
+		
 		# Store entity type if available
 		if entity.has_meta("entity_type"):
 			entity_data["type"] = entity.get_meta("entity_type")
@@ -505,10 +516,7 @@ func get_save_data() -> Dictionary:
 		"spawned_chunks": chunks_data
 	}
 
-func load_save_data(data: Dictionary):
-	# Disable procedural spawning during load to prevent duplicates
-	is_loading_save = true
-	
+func clear_all_entities():
 	# CRITICAL FIX: Clear any pending procedural spawns queued during scene load
 	# These were queued BEFORE is_loading_save was set, so they would duplicate!
 	pending_spawns.clear()
@@ -530,6 +538,14 @@ func load_save_data(data: Dictionary):
 	# Clear tracking arrays since we already freed the entities
 	active_entities.clear()
 	frozen_entities.clear()
+	DebugManager.log_entities("EntityManager: NUCLEAR CLEANUP - %d entities removed" % zombies_killed)
+
+func load_save_data(data: Dictionary):
+	# Disable procedural spawning during load to prevent duplicates
+	is_loading_save = true
+	
+	# Perform immediate cleanup
+	clear_all_entities()
 	
 	# Restore spawned_chunks tracking to prevent duplicate procedural spawns
 	spawned_chunks.clear()
@@ -560,6 +576,14 @@ func load_save_data(data: Dictionary):
 		
 		if entity:
 			entity.rotation.y = rotation_y
+			
+			# Restore health/state BEFORE first frame
+			if ent_data.has("health") and "current_health" in entity:
+				entity.current_health = ent_data.health
+			
+			if ent_data.has("state") and entity.has_method("change_state"):
+				entity.change_state(ent_data.state)
+			
 			if ent_data.has("type"):
 				entity.set_meta("entity_type", ent_data.type)
 	

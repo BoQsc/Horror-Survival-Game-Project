@@ -92,6 +92,24 @@ func toggle_editor_mode() -> void:
 		get_submode_name()
 	])
 
+func get_save_data() -> Dictionary:
+	return {
+		"current_mode": current_mode,
+		"previous_mode": previous_mode,
+		"editor_submode": editor_submode,
+		"is_flying": is_flying
+	}
+
+func load_save_data(data: Dictionary) -> void:
+	if data.has("previous_mode"):
+		previous_mode = data.previous_mode as Mode
+	if data.has("current_mode"):
+		set_mode(data.current_mode as Mode)
+	if data.has("editor_submode"):
+		editor_submode = data.editor_submode as EditorSubmode
+	if data.has("is_flying"):
+		is_flying = data.is_flying
+
 ## Toggle fly mode (EDITOR only)
 func toggle_fly_mode() -> void:
 	if current_mode != Mode.EDITOR:

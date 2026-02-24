@@ -62,3 +62,8 @@ func update(delta: float) -> void:
 ## Get current movement speed multiplier
 func get_speed() -> float:
 	return CROUCH_SPEED
+
+## Set crouch state (for save restoration)
+func set_crouch_state(crouch: bool) -> void:
+	is_crouching = crouch
+	DebugManager.log_player("PlayerCrouch: State restored to %s" % crouch)

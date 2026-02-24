@@ -316,6 +316,14 @@ func _update_fps_tracking(delta: float):
 	current_fps = total / fps_samples.size()
 
 func _adjust_adaptive_loading():
+	# BOOSTED LOADING: During initial load (like save load), bypass FPS throttling
+	# to ensure world generates as fast as possible regardless of temporary FPS dips
+	if initial_load_phase:
+		loading_paused = false
+		adaptive_frame_budget_ms = 4.0 # High budget for speed
+		chunks_per_frame_limit = 4    # Force multiple chunks per frame
+		return
+
 	if current_fps < min_acceptable_fps:
 		# FPS is too low - pause loading completely
 		loading_paused = true
@@ -959,6 +967,9 @@ func _load_chunk(coord: Vector3i):
 	semaphore.post()
 
 func _unload_chunk(coord: Vector3i):
+	if not active_chunks.has(coord):
+		return
+		
 	mutex.lock()
 	var i = task_queue.size() - 1
 	while i >= 0:
@@ -991,6 +1002,44 @@ func _unload_chunk(coord: Vector3i):
 	
 	active_chunks.erase(coord)
 	chunk_unloaded.emit(coord)
+
+## Atomic world reset: cancels all background work and clears active chunks
+## Used during Save/Load to prevent "double rendering" and redundant processing
+func clear_all_chunks():
+	DebugManager.log_chunk("ChunkManager: ATOMIC CLEAR INITIATED")
+	
+	# 1. Clear background task queues immediately
+	mutex.lock()
+	task_queue.clear()
+	mutex.unlock()
+	
+	cpu_mutex.lock()
+	cpu_task_queue.clear()
+	cpu_mutex.unlock()
+	
+	# 2. Clear finalization queue
+	pending_nodes_mutex.lock()
+	pending_nodes.clear()
+	pending_nodes_mutex.unlock()
+	
+	# 3. Wipe all active chunks (frees Meshes, RIDs, and Collision)
+	# Working on a copy of keys because _unload_chunk modifies the dictionary
+	var coords = active_chunks.keys()
+	DebugManager.log_chunk("ChunkManager: Unloading %d active chunks..." % coords.size())
+	for coord in coords:
+		_unload_chunk(coord)
+	
+	# 4. Reset internal state
+	active_chunks.clear()
+	if terrain_grid and terrain_grid.has_method("clear"):
+		terrain_grid.clear()
+		DebugManager.log_chunk("ChunkManager: C++ TerrainGrid cleared")
+		
+	pending_spawn_zones.clear()
+	modification_batch_id = 0
+	pending_batches.clear()
+	
+	DebugManager.log_chunk("ChunkManager: Atomic clear complete - background tasks stopped")
 
 func _update_chunks_gdscript():
 	var p_pos = viewer.global_position
@@ -1826,6 +1875,9 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		for t in tasks: semaphore.post()
 		return
 	
+	if initial_load_phase:
+		chunks_loaded_initial += 1
+		
 	pending_nodes_mutex.lock()
 	
 	# Split into two separate tasks to spread main-thread load
@@ -2156,6 +2208,14 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
 	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
 	
+	# RESET LOADING PHASE for Save/Load tracking
+	initial_load_phase = true
+	# Target chunks in a square/circle around spawn (radius 2 = 5x5 chunks = 25 chunks)
+	# But request_spawn_zone also checks Y-1, 0, +1 layers (3 layers).
+	initial_load_target_chunks = (radius * 2 + 1) * (radius * 2 + 1) * 3 
+	chunks_loaded_initial = 0
+	DebugManager.log_chunk("SpawnZone reset loading phase: target=%d" % initial_load_target_chunks)
+
 	var pending_coords: Array[Vector3i] = []
 	
 	# Collect chunks in radius and request generation for any not loaded
@@ -2233,6 +2293,11 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 	
 	# Emit signal if any zones completed
 	if not ready_positions.is_empty():
+		# TERMINATE INITIAL LOAD PHASE: Switch to slower/throttled exploration mode
+		if initial_load_phase:
+			initial_load_phase = false
+			DebugManager.log_chunk("Initial load phase COMPLETE - switching to exploration throttle")
+			
 		DebugManager.log_chunk("SpawnZone %d zones ready" % ready_positions.size())
 		spawn_zones_ready.emit(ready_positions)
 

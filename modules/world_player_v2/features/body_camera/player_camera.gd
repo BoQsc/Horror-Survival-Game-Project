@@ -16,6 +16,7 @@ var camera: Camera3D = null
 
 # State
 var is_camera_underwater: bool = false
+var mouse_look_enabled: bool = true
 var underwater_audio: AudioStreamPlayer = null
 var splash_audio: AudioStreamPlayer = null
 
@@ -160,7 +161,7 @@ func _input(event: InputEvent) -> void:
 	if not player or not camera:
 		return
 	
-	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
+	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED and mouse_look_enabled:
 		handle_mouse_look(event.relative)
 
 func _emit_game_menu_toggled(is_open: bool) -> void:
