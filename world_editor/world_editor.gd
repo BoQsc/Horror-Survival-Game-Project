@@ -37,8 +37,8 @@ var is_painting: bool = false
 
 func _ready() -> void:
 	seed_input.value = 12345
-	height_input.value = 20.0
-	freq_input.value = 0.02
+	height_input.value = 10.0
+	freq_input.value = 0.1
 	road_spacing_input.value = 100.0
 	world_name_input.text = "my_world"
 	
@@ -127,8 +127,8 @@ func _on_load_pressed() -> void:
 	if loaded.has("metadata"):
 		var meta = loaded.metadata
 		seed_input.value = float(meta.get("world_seed", 12345))
-		height_input.value = float(meta.get("terrain_height", 20.0))
-		freq_input.value = float(meta.get("noise_freq", 0.02))
+		height_input.value = float(meta.get("terrain_height", 10.0))
+		freq_input.value = float(meta.get("noise_freq", 0.1))
 		road_spacing_input.value = float(meta.get("road_spacing", 100.0))
 	
 	loaded_world_path = world_path

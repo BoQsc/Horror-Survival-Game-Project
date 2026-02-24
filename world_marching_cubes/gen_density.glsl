@@ -221,6 +221,9 @@ float get_density(vec3 pos) {
     // === WORLD MAP MODE: read height from PNG buffer ===
     if (params.use_world_map > 0.5) {
         float map_height = sample_world_height(world_pos.xz);
+        // Clamp height to fit within Y=0 chunk (0-32 voxels).
+        // Without this, heights >32 have no isosurface in the chunk → see-through holes.
+        map_height = clamp(map_height, 1.0, 28.0);
         return world_pos.y - map_height;
     }
     
@@ -334,7 +337,7 @@ void main() {
     // Calculate terrain height for material determination
     float terrain_height;
     if (params.use_world_map > 0.5) {
-        terrain_height = sample_world_height(world_pos.xz);
+        terrain_height = clamp(sample_world_height(world_pos.xz), 1.0, 28.0);
     } else {
         float base_height = params.terrain_height;
         float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;

@@ -28,3 +28,40 @@ Current generation uses **GDScript + FastNoiseLite** which is functional but slo
    - Generate at 512×512 for interactive editing (16x fewer pixels)
    - Upscale to 2048×2048 only when saving/exporting
    - Quick interim solution, no native code needed
+
+## Height Constraint (IMPORTANT)
+
+Terrain heights **must fit within a single Y=0 chunk** (0–32 voxels). The height formula is:
+
+```
+height = terrain_height + noise[0..1] × terrain_height
+       = terrain_height × (1 + noise)
+max_height = 2 × terrain_height
+```
+
+**Rule: `terrain_height` must be ≤ 15.0** (so max height = 30, safely within chunk bounds of 32).
+
+| `terrain_height` | Height Range | Fits in chunk? |
+|---|---|---|
+| 10.0 (default) | [10, 20] | ✅ |
+| 15.0 (max safe) | [15, 30] | ✅ |
+| 20.0 (old default) | [20, 40] | ❌ See-through holes! |
+
+This constraint is:
+- **Enforced** in `world_map_generator.gd` (clamps to 15.0 with a warning)
+- **Safety-netted** in `gen_density.glsl` (shader clamps decoded height to [1, 28])
+- The procedural system (`chunk_manager.gd`) uses `terrain_height=10.0` by default and works correctly
+
+## Parameter Alignment
+
+Generator defaults **must match** `chunk_manager.gd` procedural defaults for comparable terrain quality:
+
+| Parameter | `chunk_manager.gd` | `world_map_generator.gd` |
+|---|---|---|
+| `terrain_height` | 10.0 | 10.0 |
+| `noise_frequency` | 0.1 | 0.1 |
+| `road_spacing` | 100.0 | 100.0 |
+| `road_width` | 8.0 | 8.0 |
+
+> [!NOTE]
+> The noise functions differ (GPU custom hash vs CPU FastNoiseLite), so terrain patterns won't be identical — but height range and feature scale will match.

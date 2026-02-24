@@ -5,9 +5,10 @@ class_name WorldMapGenerator
 
 const MAP_SIZE: int = 2048  # 1 pixel = 1 meter
 
-# Terrain parameters
-var noise_freq: float = 0.02
-var terrain_height: float = 20.0
+# CONSTRAINT: max decoded height = 2 * terrain_height must be < CHUNK_SIZE (32)
+# Max safe value is 15.0 (2*15=30 < 32). Default matches chunk_manager.gd procedural terrain.
+var noise_freq: float = 0.1  # Must match chunk_manager.gd noise_frequency for similar terrain
+var terrain_height: float = 10.0
 var road_spacing: float = 100.0
 var road_width: float = 8.0
 var wide_shoulders: bool = false
@@ -50,6 +51,11 @@ func _init_noise() -> void:
 # ============================================================================
 
 func generate_world() -> Dictionary:
+	# Enforce height constraint: 2 * terrain_height must fit within CHUNK_SIZE (32)
+	# Heights range from terrain_height to 2*terrain_height, so max terrain_height = 15
+	if terrain_height > 15.0:
+		print("[WorldMapGen] WARNING: terrain_height %.1f exceeds safe max 15.0, clamping" % terrain_height)
+		terrain_height = 15.0
 	_init_noise()
 	var half = MAP_SIZE / 2
 	var total = MAP_SIZE * MAP_SIZE
