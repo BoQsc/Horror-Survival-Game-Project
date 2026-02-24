@@ -59,6 +59,8 @@ func _init_road_shader():
 			mat.set_shader_parameter("road_mask_offset", Vector2.ZERO)
 
 ## Paint road onto mask texture
+var road_debug_enabled: bool = false # Set to true for road mask debug output
+
 func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	# Shader UV formula: road_uv = world_pos.xz * MASK_SCALE + 0.5
 	# So pixel = UV * MASK_SIZE = (world_pos * MASK_SCALE + 0.5) * MASK_SIZE
@@ -67,10 +69,6 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	var center = MASK_SIZE / 2.0
 	var scale_factor = MASK_SCALE * MASK_SIZE  # pixels per meter
 	
-	print("Road mask paint: scale_factor=%f, center=%d" % [scale_factor, int(center)])
-	print("  Start world: (%f, %f) -> pixel: (%d, %d)" % [start.x, start.z, int(start.x * scale_factor + center), int(start.z * scale_factor + center)])
-	print("  End world: (%f, %f) -> pixel: (%d, %d)" % [end.x, end.z, int(end.x * scale_factor + center), int(end.z * scale_factor + center)])
-	
 	# Paint line from start to end - dense steps for full coverage
 	var length = start.distance_to(end)
 	var steps = int(length * 2) + 1  # Every 0.5 meters for dense coverage
@@ -78,7 +76,6 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	# Width in pixels - scale_factor converts meters to pixels
 	var pixel_radius = int((width / 2.0) * scale_factor)
 	if pixel_radius < 2: pixel_radius = 2
-	print("  Road width=%fm, pixel_radius=%d" % [width, pixel_radius])
 	
 	for i in range(steps + 1):
 		var t = float(i) / float(steps) if steps > 0 else 0.0
@@ -103,9 +100,10 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	# Update texture
 	road_mask_texture.update(road_mask_image)
 	
-	# Save mask for debugging
-	road_mask_image.save_png("user://road_mask_debug.png")
-	print("  Saved mask to user://road_mask_debug.png")
+	# Debug output only when explicitly enabled
+	if road_debug_enabled:
+		road_mask_image.save_png("user://road_mask_debug.png")
+		print("ROAD_DEBUG: Painted segment, pixel_radius=%d" % pixel_radius)
 
 ## Start building a new road/trail
 func start_road(is_trail: bool = false):

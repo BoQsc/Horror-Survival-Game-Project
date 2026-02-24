@@ -74,7 +74,7 @@ func get_save_data() -> Dictionary:
 	return {"vehicles": data}
 
 
-## Load vehicles from save data
+## Load vehicles from save data (bypasses spawn_vehicle to avoid random offset drift)
 func load_save_data(data: Dictionary) -> void:
 	# Clear existing vehicles
 	for v in vehicles:
@@ -83,11 +83,18 @@ func load_save_data(data: Dictionary) -> void:
 	vehicles.clear()
 	current_player_vehicle = null
 	
-	# Spawn saved vehicles
+	# Restore saved vehicles at their EXACT saved positions (no random offset)
 	for vd in data.get("vehicles", []):
 		var pos_arr = vd.get("position", [0, 0, 0])
 		var rot_arr = vd.get("rotation", [0, 0, 0])
-		var v = spawn_vehicle(Vector3(pos_arr[0], pos_arr[1], pos_arr[2]))
-		v.rotation = Vector3(rot_arr[0], rot_arr[1], rot_arr[2])
+		var saved_pos = Vector3(pos_arr[0], pos_arr[1], pos_arr[2])
+		var saved_rot = Vector3(rot_arr[0], rot_arr[1], rot_arr[2])
+		
+		var v = vehicle_scene.instantiate()
+		v.transform.origin = saved_pos
+		get_tree().current_scene.add_child(v)
+		v.global_position = saved_pos
+		v.rotation = saved_rot
+		vehicles.append(v)
 	
-	print("[VehicleManager] Loaded %d vehicles" % vehicles.size())
+	print("[VehicleManager] Loaded %d vehicles (exact positions)" % vehicles.size())

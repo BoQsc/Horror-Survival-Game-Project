@@ -409,6 +409,10 @@ func load_save_data(data: Dictionary) -> void:
 		for i in range(min(saved_slots.size(), SLOT_COUNT)):
 			var item_data = saved_slots[i].get("item", {}).duplicate()
 			var count = int(saved_slots[i].get("count", 0))
+			# FIX: JSON deserializes all numbers as floats (e.g. category=4.0)
+			# GDScript's `in` and `match` require exact type match (4.0 != 4)
+			# Cast all numeric item fields to int to restore correct types
+			_fix_item_types(item_data)
 			loaded_slots.append({
 				"item": item_data,
 				"count": count
@@ -445,3 +449,16 @@ func load_save_data(data: Dictionary) -> void:
 		PlayerSignals.player_loaded.connect(reconnect_func, CONNECT_ONE_SHOT)
 	
 	DebugManager.log_player("Hotbar: Loaded save data (EditorActive: %s)" % _is_editor_mode)
+
+## Fix numeric types after JSON deserialization
+## JSON stores all numbers as floats (e.g. category=4.0, damage=1.0)
+## GDScript's `in`, `match`, and `==` do strict type comparison (4.0 != 4)
+## This breaks all category-based dispatch in 12+ systems (arms, build, combat, etc.)
+func _fix_item_types(item: Dictionary) -> void:
+	# Integer fields that must be cast from float
+	var int_keys = ["category", "damage", "mining_strength", "block_type", "block_meta",
+		"object_id", "editor_submode", "rotation"]
+	for key in int_keys:
+		if item.has(key) and item[key] is float:
+			item[key] = int(item[key])
+

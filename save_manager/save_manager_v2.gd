@@ -4,6 +4,7 @@ extends Node
 
 signal save_completed(success: bool, path: String)
 signal load_completed(success: bool, path: String)
+signal load_step(step_name: String, step_index: int, total_steps: int)
 
 # V2: Added inventory, hotbar, stats, containers, player state
 const SAVE_VERSION = 2
@@ -91,7 +92,9 @@ func _setup_autosave():
 		DebugManager.log_save("Autosave enabled: %d seconds" % autosave_interval_seconds)
 
 func _on_autosave_timeout():
-	if is_loading_game: return
+	if is_loading_game or _is_saving:
+		DebugManager.log_save("Autosave skipped (loading=%s, saving=%s)" % [is_loading_game, _is_saving])
+		return
 	DebugManager.log_save("Autosave triggered...")
 	save_game(SAVE_DIR + "autosave.json")
 
@@ -186,8 +189,14 @@ func _find_managers():
 func _input(event):
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_F5:
+			if is_loading_game:
+				DebugManager.log_save("F5 ignored - load in progress")
+				return
 			quick_save()
 		elif event.keycode == KEY_F8:
+			if is_loading_game:
+				DebugManager.log_save("F8 ignored - load already in progress")
+				return
 			quick_load()
 
 func _notification(what):
@@ -258,10 +267,16 @@ func save_game(path: String) -> bool:
 func _save_game_internal(path: String) -> bool:
 	var data = _gather_save_data()
 	var json_string = JSON.stringify(data, "\t")
-	var file = FileAccess.open(path, FileAccess.WRITE)
+	# Atomic write: write to .tmp then rename to prevent corruption on crash
+	var tmp_path = path + ".tmp"
+	var file = FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file:
 		file.store_string(json_string)
 		file.close()
+		# Atomic rename over the real file
+		var dir = DirAccess.open(SAVE_DIR)
+		if dir:
+			dir.rename(tmp_path, path)
 		DebugManager.log_save("Synchronous save complete: %s" % path)
 		return true
 	return false
@@ -294,15 +309,21 @@ func _threaded_save(path: String, data: Dictionary):
 	# Convert to JSON (heavy operation)
 	var json_string = JSON.stringify(data, "\t")
 	
-	# Write to file
-	var file = FileAccess.open(path, FileAccess.WRITE)
+	# Atomic write: write to .tmp then rename to prevent corruption on crash
+	var tmp_path = path + ".tmp"
+	var file = FileAccess.open(tmp_path, FileAccess.WRITE)
 	if file == null:
-		push_error("[SaveManager] Failed to open file for writing: " + path)
+		push_error("[SaveManager] Failed to open file for writing: " + tmp_path)
 		call_deferred("emit_signal", "save_completed", false, path)
 		return
 	
 	file.store_string(json_string)
 	file.close()
+	
+	# Atomic rename over the real file (prevents 0-byte on crash)
+	var dir = DirAccess.open(path.get_base_dir())
+	if dir:
+		dir.rename(tmp_path, path)
 	
 	DebugManager.log_save("Threaded save complete!")
 	call_deferred("_finalize_save", path)
@@ -313,11 +334,20 @@ func _finalize_save(path: String):
 
 ## Load game from specified path
 func load_game(path: String) -> bool:
+	# Guard against double-load (F8 pressed twice)
+	if is_loading_game:
+		DebugManager.log_save("Load rejected - already loading")
+		return false
+	
 	_find_managers() # Ensure we have latest references
 	# CRITICAL: Set flag BEFORE anything else to prevent procedural spawning during reload
 	is_quickloading = true
 	DebugManager.log_save("Loading from: %s" % path)
 	current_save_path = path
+	
+	# Stop autosave timer during load to prevent saving partial state
+	if _autosave_timer:
+		_autosave_timer.stop()
 
 	# CRITICAL: Strict input freeze during load
 	if player_camera and "mouse_look_enabled" in player_camera:
@@ -358,10 +388,24 @@ func load_game(path: String) -> bool:
 	
 	var save_data = json.get_data()
 	
+	# Structural validation: ensure save_data is a Dictionary with minimum required keys
+	if not save_data is Dictionary:
+		push_error("[SaveManager] Save data is not a Dictionary")
+		_reset_load_flags()
+		load_completed.emit(false, path)
+		return false
+	
 	# Validate version
 	var version = save_data.get("version", 0)
 	if version > SAVE_VERSION:
 		push_error("[SaveManager] Save version %d newer than supported %d" % [version, SAVE_VERSION])
+		_reset_load_flags()
+		load_completed.emit(false, path)
+		return false
+	
+	# Validate critical keys exist (prevents silent state reset from truncated files)
+	if not save_data.has("player") and not save_data.has("game_seed"):
+		push_error("[SaveManager] Save file appears truncated/corrupted - missing player and seed data")
 		_reset_load_flags()
 		load_completed.emit(false, path)
 		return false
@@ -393,6 +437,7 @@ func load_game(path: String) -> bool:
 		DebugManager.log_save("Player and sub-components frozen EARLY for position restoration")
 	
 	# Set loading flag - entities will be deferred until terrain is ready
+	load_step.emit("Loading prefabs", 1, 10)
 	is_loading_game = true
 	pending_entity_data = save_data.get("entities", {})
 	
@@ -406,19 +451,23 @@ func load_game(path: String) -> bool:
 	
 	# V2: Initialize all data-driven managers FIRST
 	# This ensures they have their "chopped trees", "inventory", etc. before chunks generate
+	load_step.emit("Restoring world seed", 2, 10)
 	_load_world_seed(int(save_data.get("game_seed", 12345)))
 	
 	# CRITICAL: Clear all existing vegetation data before loading new state
 	if vegetation_manager and vegetation_manager.has_method("clear_all_data"):
 		vegetation_manager.clear_all_data()
-		
+	
+	load_step.emit("Loading vegetation", 3, 10)
 	_load_vegetation_data(save_data.get("vegetation", {}))
 	_load_road_data(save_data.get("roads", {}))
+	load_step.emit("Loading player data", 4, 10)
 	_load_inventory_data(save_data.get("player_inventory", {}))
 	_load_hotbar_data(save_data.get("player_hotbar", {}))
 	_load_player_stats_data(save_data.get("player_stats", {}))
 	_load_player_state_data(save_data.get("player_state", {}))
 	_load_game_settings_data(save_data.get("game_settings", {}))
+	load_step.emit("Loading containers & vehicles", 5, 10)
 	
 	# Store door/container/vehicle data as pending - loaded in _check_world_readiness
 	# when buildings have actually spawned (doors & containers live inside buildings)
@@ -428,9 +477,11 @@ func load_game(path: String) -> bool:
 	
 	# Load terrain modifications (clears world) - MUST happen before building data
 	# since clear_all_chunks destroys any meshes rebuilt prematurely
+	load_step.emit("Loading terrain", 6, 10)
 	_load_terrain_data(save_data.get("terrain_modifications", {}))
 	
 	# Load building data AFTER terrain is cleared so meshes aren't wasted
+	load_step.emit("Loading buildings", 7, 10)
 	_load_building_data(save_data.get("buildings", {}))
 	
 	# Readiness flags - set before triggering world gen
@@ -440,20 +491,20 @@ func load_game(path: String) -> bool:
 	
 	DebugManager.log_save("Awaiting: Terrain=%s Vegetation=%s" % [awaiting_terrain_ready, awaiting_vegetation_ready])
 	
+	# Show loading screen BEFORE triggering world gen (so it catches early signals)
+	_show_loading_screen()
+	
 	# Finally, trigger the world generation by requesting the player's zone
 	# This MUST be last because it triggers signals that managers above react to
+	load_step.emit("Generating terrain", 8, 10)
 	_load_player_data(save_data.get("player", {}))
-	
-	# 10. Instantiate Loading Screen (if not already present)
-	# This provide visual feedback for the background world generation
-	_show_loading_screen()
 	
 	# V2 FIX: DON'T emit load_completed or print "Game loaded" here!
 	# We are still waiting for terrain and vegetation.
 	DebugManager.log_save("Load initiated - awaiting world generation...")
 	
-	# Start safety timeout
-	_start_load_safety_timeout(8.0) 
+	# Start safety timeout (15s to accommodate large worlds)
+	_start_load_safety_timeout(15.0)
 	
 	return true
 
@@ -542,6 +593,7 @@ func _check_world_readiness():
 	
 	# CRITICAL FIX: Always call load_save_data to clear existing zombies
 	# Even if no entities are saved, we need to clean up procedural spawns
+	load_step.emit("Loading entities", 9, 10)
 	if entity_manager and entity_manager.has_method("load_save_data"):
 		entity_manager.load_save_data(pending_entity_data)
 	
@@ -564,7 +616,17 @@ func _check_world_readiness():
 	pending_container_data = {}
 	is_loading_game = false
 	
+	# Restart autosave timer now that load is complete
+	if _autosave_timer and autosave_enabled:
+		_autosave_timer.start()
+	
+	# CRITICAL: Emit player_loaded signal so hotbar/combat/HUD reconnect
+	# Hotbar's load_save_data connects to this (one-shot) to re-emit select_slot & item_changed
+	# Without this, the combat system never knows what item is selected → no hand visual
+	call_deferred("_emit_player_loaded")
+	
 	# FINAL NOTIFICATION: Now that everything is unfrozen and ready
+	load_step.emit("Complete", 10, 10)
 	DebugManager.log_save("Load process fully complete!")
 	print("[LOAD_NOTIFICATION] Game loaded and world ready!")
 	load_completed.emit(true, current_save_path)
@@ -1068,9 +1130,26 @@ func _reset_load_flags():
 	pending_container_data = {}
 	if entity_manager:
 		entity_manager.is_loading_save = false
-	if player_camera and "mouse_look_enabled" in player_camera:
-		player_camera.mouse_look_enabled = true
-	DebugManager.log_save("Load flags reset after failure")
+	# Unfreeze player (they may have been frozen before the failure)
+	if player:
+		player.set_physics_process(true)
+		if player_movement:
+			player_movement.set_physics_process(true)
+			player_movement.set_process(true)
+		if player_camera:
+			player_camera.set_process(true)
+			if "mouse_look_enabled" in player_camera:
+				player_camera.mouse_look_enabled = true
+		if player_combat:
+			player_combat.set_physics_process(true)
+			player_combat.set_process(true)
+		if player_terrain:
+			player_terrain.set_physics_process(true)
+			player_terrain.set_process(true)
+	# Restart autosave
+	if _autosave_timer and autosave_enabled:
+		_autosave_timer.start()
+	DebugManager.log_save("Load flags reset after failure - player unfrozen")
 
 # ============ UTILITY FUNCTIONS ============
 

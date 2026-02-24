@@ -15,6 +15,9 @@ var fade_timer: float = 0.0
 const FADE_DURATION: float = 0.5
 
 var has_emitted_terrain_ready: bool = false  # Track if we've signaled player
+var save_manager_step: String = ""  # Current step from SaveManager
+var save_manager_step_index: int = 0
+var save_manager_total_steps: int = 10
 
 # Loading stages
 enum Stage { TERRAIN, PREFABS, VEGETATION, COMPLETE }
@@ -36,12 +39,22 @@ func _connect_to_save_manager() -> void:
 		var sm = get_node("/root/SaveManager")
 		if not sm.is_connected("load_completed", _on_save_manager_load_completed):
 			sm.load_completed.connect(_on_save_manager_load_completed)
+		if sm.has_signal("load_step") and not sm.is_connected("load_step", _on_load_step):
+			sm.load_step.connect(_on_load_step)
 
 func _on_save_manager_load_completed(_success: bool, _path: String) -> void:
 	# Force fade out when SaveManager says it's done
 	if is_loading:
 		DebugManager.log_save("LoadingScreen: Force fade out from SaveManager load_completed")
 		_start_fade_out()
+
+func _on_load_step(step_name: String, step_index: int, total_steps: int) -> void:
+	save_manager_step = step_name
+	save_manager_step_index = step_index
+	save_manager_total_steps = total_steps
+	# Update display with step info
+	var step_percent = (float(step_index) / float(total_steps)) * 100.0
+	update_progress(step_percent, "%s (%d/%d)" % [step_name, step_index, total_steps])
 
 func _start_loading_sequence() -> void:
 	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
