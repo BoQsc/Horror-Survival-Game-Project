@@ -878,12 +878,21 @@ func _load_building_data(data: Dictionary):
 		if chunk_data.has("meta"):
 			chunk.voxel_meta = Marshalls.base64_to_raw(chunk_data.meta)
 		
-		# Load objects
-		if chunk_data.has("objects"):
+		# Check if voxels are all empty (building was destroyed)
+		var has_voxels = false
+		for byte_idx in chunk.voxel_bytes.size():
+			if chunk.voxel_bytes.decode_u8(byte_idx) > 0:
+				has_voxels = true
+				break
+		
+		# Load objects ONLY if the chunk has actual voxel data
+		# Prevents orphaned floating objects when building was destroyed
+		if chunk_data.has("objects") and has_voxels:
 			for obj_data in chunk_data.objects:
 				var anchor = _array_to_vec3i(obj_data.anchor)
-				var object_id = obj_data.object_id
-				var rotation = obj_data.rotation
+				# FIX: JSON floats → int for ObjectRegistry lookups and rotation checks
+				var object_id = int(obj_data.object_id)
+				var rotation = int(obj_data.rotation)
 				var fractional_y = obj_data.get("fractional_y", 0.0)
 				
 				# Store object data (visual will be created on rebuild)
@@ -897,11 +906,16 @@ func _load_building_data(data: Dictionary):
 				var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
 				for cell in cells:
 					chunk.occupied_by_object[cell] = anchor
+		elif chunk_data.has("objects") and not has_voxels:
+			DebugManager.log_save("Skipped %d orphan objects in empty building chunk %s" % [chunk_data.objects.size(), key])
 		
-		chunk.is_empty = false
-		chunk.rebuild_mesh()
-		# Restore visual instances for placed objects (tables, doors, etc.)
-		chunk.call_deferred("restore_object_visuals")
+		if has_voxels:
+			chunk.is_empty = false
+			chunk.rebuild_mesh()
+			# Restore visual instances for placed objects (tables, doors, etc.)
+			chunk.call_deferred("restore_object_visuals")
+		else:
+			chunk.is_empty = true
 	
 	DebugManager.log_save("Buildings loaded: %d chunks" % data.size())
 
