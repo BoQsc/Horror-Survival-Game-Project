@@ -20,7 +20,68 @@ layout(push_constant) uniform PushConstants {
     float terrain_height;
     float road_spacing;  // Grid spacing for roads (0 = no procedural roads)
     float road_width;    // Width of roads
+    float use_world_map; // >0.5 = read from world map buffers instead of noise
+    float map_size;      // 2048.0 (pixels = meters)
+    float map_half;      // 1024.0 (center offset)
+    float max_height;    // terrain_height * 2.5 (height normalization)
 } params;
+
+// === World Map Buffers (set 1) — uploaded from editor PNGs ===
+// Only bound when use_world_map > 0.5
+layout(set = 1, binding = 0, std430) restrict readonly buffer HeightmapBuffer {
+    uint values[];  // R8 bytes packed as uint (4 pixels per uint)
+} heightmap_buf;
+
+layout(set = 1, binding = 1, std430) restrict readonly buffer BiomeBuffer {
+    uint values[];  // R8 biome IDs packed as uint
+} biome_buf;
+
+layout(set = 1, binding = 2, std430) restrict readonly buffer RoadBuffer {
+    uint values[];  // RG8 packed: R=is_road, G=road_height
+} road_buf;
+
+// Read a single byte from a packed uint buffer at pixel index
+uint read_byte(uint idx, uint buffer_type) {
+    uint word_idx = idx / 4u;
+    uint byte_offset = idx % 4u;
+    uint word;
+    if (buffer_type == 0u) word = heightmap_buf.values[word_idx];
+    else if (buffer_type == 1u) word = biome_buf.values[word_idx];
+    else word = road_buf.values[word_idx];
+    return (word >> (byte_offset * 8u)) & 0xFFu;
+}
+
+// Sample world map height at world XZ (returns terrain height in world units)
+float sample_world_height(vec2 world_xz) {
+    float px = clamp(world_xz.x + params.map_half, 0.0, params.map_size - 1.0);
+    float pz = clamp(world_xz.y + params.map_half, 0.0, params.map_size - 1.0);
+    uint idx = uint(pz) * uint(params.map_size) + uint(px);
+    float h_norm = float(read_byte(idx, 0u)) / 255.0;
+    return h_norm * params.max_height;
+}
+
+// Sample world map biome at world XZ (returns material ID)
+uint sample_world_biome(vec2 world_xz) {
+    float px = clamp(world_xz.x + params.map_half, 0.0, params.map_size - 1.0);
+    float pz = clamp(world_xz.y + params.map_half, 0.0, params.map_size - 1.0);
+    uint idx = uint(pz) * uint(params.map_size) + uint(px);
+    return read_byte(idx, 1u);
+}
+
+// Sample world map road at world XZ (returns vec2: x=is_road[0-255], y=road_height_byte)
+vec2 sample_world_road(vec2 world_xz) {
+    float px = clamp(world_xz.x + params.map_half, 0.0, params.map_size - 1.0);
+    float pz = clamp(world_xz.y + params.map_half, 0.0, params.map_size - 1.0);
+    uint idx = uint(pz) * uint(params.map_size) + uint(px);
+    // RG8: 2 bytes per pixel
+    uint byte_idx = idx * 2u;
+    uint word_idx = byte_idx / 4u;
+    uint byte_off = byte_idx % 4u;
+    uint word = road_buf.values[word_idx];
+    float r = float((word >> (byte_off * 8u)) & 0xFFu);
+    float g = float((word >> ((byte_off + 1u) * 8u)) & 0xFFu);
+    return vec2(r, g);
+}
 
 // === Noise Functions ===
 float hash(vec3 p) {
@@ -157,6 +218,13 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
 float get_density(vec3 pos) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     
+    // === WORLD MAP MODE: read height from PNG buffer ===
+    if (params.use_world_map > 0.5) {
+        float map_height = sample_world_height(world_pos.xz);
+        return world_pos.y - map_height;
+    }
+    
+    // === PROCEDURAL MODE: compute from noise ===
     // Base terrain
     float base_height = params.terrain_height;
     float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height; 
@@ -201,6 +269,20 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     float depth = terrain_height_at_pos - world_pos.y;
     
+    // === WORLD MAP MODE: read biome from PNG buffer ===
+    if (params.use_world_map > 0.5) {
+        // Underground: still use procedural stone/ore
+        if (depth > 10.0) {
+            float ore_noise = noise(world_pos * 0.15);
+            if (ore_noise > 0.75 && depth > 8.0) return 2u;
+            float stone_var = fbm3d(world_pos * 0.02);
+            if (stone_var > 0.25) return 9u;
+            return 1u;
+        }
+        return sample_world_biome(world_pos.xz);
+    }
+    
+    // === PROCEDURAL MODE ===
     // 1. ROADS - on the road surface (height tolerance for voxel grid, tight horizontal bounds)
     float road_height;
     float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
@@ -250,9 +332,14 @@ void main() {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     
     // Calculate terrain height for material determination
-    float base_height = params.terrain_height;
-    float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;
-    float terrain_height = base_height + hill_height;
+    float terrain_height;
+    if (params.use_world_map > 0.5) {
+        terrain_height = sample_world_height(world_pos.xz);
+    } else {
+        float base_height = params.terrain_height;
+        float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;
+        terrain_height = base_height + hill_height;
+    }
     
     // Material depth is strictly based on the original terrain surface to prevent rectangular stone artifacts around roads
     density_buffer.values[index] = get_density(pos);

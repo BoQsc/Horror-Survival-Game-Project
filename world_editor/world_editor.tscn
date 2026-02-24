@@ -1,0 +1,211 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://world_editor/world_editor.gd" id="1_script"]
+
+[node name="WorldEditor" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="BG" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.12, 0.12, 0.14, 1)
+
+[node name="TopBar" type="HBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 8.0
+offset_bottom = 48.0
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="TopBar"]
+layout_mode = 2
+text = "  World Editor"
+theme_override_font_sizes/font_size = 20
+
+[node name="GenerateBtn" type="Button" parent="TopBar"]
+layout_mode = 2
+text = "Generate"
+theme_override_font_sizes/font_size = 14
+
+[node name="SaveBtn" type="Button" parent="TopBar"]
+layout_mode = 2
+text = "Save"
+theme_override_font_sizes/font_size = 14
+
+[node name="LoadBtn" type="Button" parent="TopBar"]
+layout_mode = 2
+text = "Load"
+theme_override_font_sizes/font_size = 14
+
+[node name="PlayBtn" type="Button" parent="TopBar"]
+layout_mode = 2
+text = "Play >"
+theme_override_font_sizes/font_size = 14
+
+[node name="Spacer" type="Control" parent="TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ProgressBar" type="ProgressBar" parent="TopBar"]
+custom_minimum_size = Vector2(200, 0)
+layout_mode = 2
+
+[node name="ProgressLabel" type="Label" parent="TopBar"]
+layout_mode = 2
+text = "Ready"
+theme_override_font_sizes/font_size = 12
+
+[node name="HSplit" type="HSplitContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = 56.0
+offset_left = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+split_offset = -280
+
+[node name="CanvasPanel" type="PanelContainer" parent="HSplit"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Canvas" type="TextureRect" parent="HSplit/CanvasPanel"]
+layout_mode = 2
+stretch_mode = 5
+expand_mode = 1
+
+[node name="SettingsPanel" type="PanelContainer" parent="HSplit"]
+custom_minimum_size = Vector2(260, 0)
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="HSplit/SettingsPanel"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="SettingsTitle" type="Label" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+text = "World Settings"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 16
+
+[node name="Sep1" type="HSeparator" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="NameRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="NameLabel" type="Label" parent="HSplit/SettingsPanel/VBox/NameRow"]
+layout_mode = 2
+text = "World Name"
+size_flags_horizontal = 3
+
+[node name="NameInput" type="LineEdit" parent="HSplit/SettingsPanel/VBox/NameRow"]
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+text = "my_world"
+
+[node name="SeedRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="SeedLabel" type="Label" parent="HSplit/SettingsPanel/VBox/SeedRow"]
+layout_mode = 2
+text = "Seed"
+size_flags_horizontal = 3
+
+[node name="SeedInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/SeedRow"]
+layout_mode = 2
+min_value = 1.0
+max_value = 999999.0
+value = 12345.0
+
+[node name="HeightRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="HeightLabel" type="Label" parent="HSplit/SettingsPanel/VBox/HeightRow"]
+layout_mode = 2
+text = "Terrain Height"
+size_flags_horizontal = 3
+
+[node name="HeightInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/HeightRow"]
+layout_mode = 2
+min_value = 5.0
+max_value = 100.0
+step = 1.0
+value = 20.0
+
+[node name="FreqRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="FreqLabel" type="Label" parent="HSplit/SettingsPanel/VBox/FreqRow"]
+layout_mode = 2
+text = "Noise Frequency"
+size_flags_horizontal = 3
+
+[node name="FreqInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/FreqRow"]
+layout_mode = 2
+min_value = 0.001
+max_value = 0.1
+step = 0.001
+value = 0.02
+
+[node name="RoadSpacingRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="RoadSpacingLabel" type="Label" parent="HSplit/SettingsPanel/VBox/RoadSpacingRow"]
+layout_mode = 2
+text = "Road Spacing"
+size_flags_horizontal = 3
+
+[node name="RoadSpacingInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/RoadSpacingRow"]
+layout_mode = 2
+min_value = 50.0
+max_value = 500.0
+step = 10.0
+value = 100.0
+
+[node name="Sep2" type="HSeparator" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="ToolsTitle" type="Label" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+text = "Paint Tools"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 14
+
+[node name="ToolsInfo" type="Label" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+text = "1 = Sand  2 = Snow  3 = Gravel
+4 = Road   5 = Erase  0 = None"
+theme_override_font_sizes/font_size = 11
+
+[node name="Sep3" type="HSeparator" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+
+[node name="WorldsLabel" type="Label" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+text = "Existing Worlds"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 14
+
+[node name="WorldList" type="ItemList" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 120)
+theme_override_font_sizes/font_size = 11
+
+[node name="InfoLabel" type="Label" parent="HSplit/SettingsPanel/VBox"]
+layout_mode = 2
+text = "Map: 2048×2048 (2km × 2km)
+Click world → Load to edit"
+theme_override_font_sizes/font_size = 11
+autowrap_mode = 2

@@ -22,6 +22,9 @@ var vehicle_manager: Node = null
 var building_generator: Node = null
 var player: Node = null
 
+# World Editor integration: set before scene change, consumed by chunk_manager on _ready
+var pending_world_definition_path: String = ""
+
 # V2: New player system references
 var player_inventory: Node = null
 var player_hotbar: Node = null
@@ -286,6 +289,7 @@ func _gather_save_data() -> Dictionary:
 		"version": SAVE_VERSION,
 		"timestamp": Time.get_datetime_string_from_system(),
 		"game_seed": _get_world_seed(),
+		"world_definition_path": _get_world_definition_path(),
 		"player": _get_player_data(),
 		"terrain_modifications": _get_terrain_data(),
 		"buildings": _get_building_data(),
@@ -453,6 +457,7 @@ func load_game(path: String) -> bool:
 	# This ensures they have their "chopped trees", "inventory", etc. before chunks generate
 	load_step.emit("Restoring world seed", 2, 10)
 	_load_world_seed(int(save_data.get("game_seed", 12345)))
+	_load_world_definition_path(save_data.get("world_definition_path", ""))
 	
 	# CRITICAL: Clear all existing vegetation data before loading new state
 	if vegetation_manager and vegetation_manager.has_method("clear_all_data"):
@@ -927,6 +932,23 @@ func _load_world_seed(seed_val: int):
 	if vegetation_manager and vegetation_manager.has_method("initialize_noise"):
 		vegetation_manager.initialize_noise()
 		DebugManager.log_save("VegetationManager noise re-initialized with new seed")
+
+func _get_world_definition_path() -> String:
+	if chunk_manager and "world_definition_path" in chunk_manager:
+		return chunk_manager.world_definition_path
+	return ""
+
+func _load_world_definition_path(path: String):
+	if chunk_manager and "world_definition_path" in chunk_manager:
+		chunk_manager.world_definition_path = path
+		if path != "":
+			chunk_manager.world_map_active = true
+			if "terrain_height" in chunk_manager:
+				chunk_manager.world_map_max_height = chunk_manager.terrain_height * 2.5
+			DebugManager.log_save("World map path restored: %s" % path)
+		else:
+			chunk_manager.world_map_active = false
+			DebugManager.log_save("No world map path — using procedural terrain")
 
 func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:

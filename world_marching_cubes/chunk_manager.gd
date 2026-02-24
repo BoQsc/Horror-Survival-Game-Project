@@ -34,6 +34,14 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var procedural_road_width: float = 8.0 # Width of roads
 @export var debug_show_road_zones: bool = false # Debug: show road alignment (Yellow=correct, Red=spillover, Green=crack)
 
+## World Map Editor Integration
+## When set, the terrain reads height/biome/road data from PNGs instead of procedural noise
+@export var world_definition_path: String = ""
+var world_map_active: bool = false
+var world_map_size: float = 2048.0
+var world_map_half: float = 1024.0
+var world_map_max_height: float = 50.0  # terrain_height * 2.5
+
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
 var mutex: Mutex
@@ -209,6 +217,22 @@ func _ready():
 	var water_normal = load("res://world_marching_cubes/water_texture.png")
 	if water_normal:
 		material_water.set_shader_parameter("water_normal_texture", water_normal)
+	
+	# Activate world map if a definition path is set (directly or via SaveManager autoload)
+	if world_definition_path == "":
+		# Check if SaveManager has a pending path from the World Editor
+		var sm = Engine.get_singleton("SaveManager") if Engine.has_singleton("SaveManager") else null
+		if not sm:
+			sm = get_node_or_null("/root/SaveManager")
+		if sm and "pending_world_definition_path" in sm and sm.pending_world_definition_path != "":
+			world_definition_path = sm.pending_world_definition_path
+			sm.pending_world_definition_path = ""  # Consume it
+			print("[ChunkManager] World map path from SaveManager: %s" % world_definition_path)
+	
+	if world_definition_path != "":
+		world_map_active = true
+		world_map_max_height = terrain_height * 2.5
+		print("[ChunkManager] World map mode: %s" % world_definition_path)
 	
 	# Start GPU thread
 	compute_thread = Thread.new()
@@ -1253,6 +1277,73 @@ func _thread_function():
 	var pipe_mod = rd.compute_pipeline_create(sid_mod)
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 	
+	# === World Map Buffers (uploaded from editor PNGs) ===
+	var world_map_heightmap_buf: RID = RID()
+	var world_map_biome_buf: RID = RID()
+	var world_map_road_buf: RID = RID()
+	var world_map_set1: RID = RID()  # Uniform set 1 for world map bindings
+	
+	if world_map_active and world_definition_path != "":
+		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
+		var loaded = WorldMapGen.load_world(world_definition_path)
+		
+		if loaded.has("heightmap") and loaded.has("biomes") and loaded.has("roads"):
+			var hmap: Image = loaded.heightmap
+			var bmap: Image = loaded.biomes
+			var rmap: Image = loaded.roads
+			
+			# Upload raw bytes as storage buffers
+			var h_bytes = hmap.get_data()
+			var b_bytes = bmap.get_data()
+			var r_bytes = rmap.get_data()
+			
+			# Pad to 4-byte alignment for uint packing
+			while h_bytes.size() % 4 != 0: h_bytes.append(0)
+			while b_bytes.size() % 4 != 0: b_bytes.append(0)
+			while r_bytes.size() % 4 != 0: r_bytes.append(0)
+			
+			world_map_heightmap_buf = rd.storage_buffer_create(h_bytes.size(), h_bytes)
+			world_map_biome_buf = rd.storage_buffer_create(b_bytes.size(), b_bytes)
+			world_map_road_buf = rd.storage_buffer_create(r_bytes.size(), r_bytes)
+			
+			# Read metadata for map params
+			if loaded.has("metadata"):
+				var meta = loaded.metadata
+				world_map_size = float(meta.get("map_size", 2048))
+				world_map_half = world_map_size / 2.0
+				world_map_max_height = float(meta.get("terrain_height", 20.0)) * 2.5
+			
+			DebugManager.log_chunk("World map loaded: %s (%dx%d, max_h=%.1f)" % [world_definition_path, int(world_map_size), int(world_map_size), world_map_max_height])
+		else:
+			push_error("[ChunkManager] World map at %s missing required PNGs" % world_definition_path)
+			world_map_active = false
+	
+	# Always create dummy buffers if not loaded (shader declares set 1 even when unused)
+	if not world_map_heightmap_buf.is_valid():
+		var dummy = PackedByteArray()
+		dummy.resize(4)
+		world_map_heightmap_buf = rd.storage_buffer_create(4, dummy)
+		world_map_biome_buf = rd.storage_buffer_create(4, dummy)
+		world_map_road_buf = rd.storage_buffer_create(4, dummy)
+	
+	# Create uniform set 1 (always bound — real data or dummy)
+	var u_hmap = RDUniform.new()
+	u_hmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_hmap.binding = 0
+	u_hmap.add_id(world_map_heightmap_buf)
+	
+	var u_bmap = RDUniform.new()
+	u_bmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_bmap.binding = 1
+	u_bmap.add_id(world_map_biome_buf)
+	
+	var u_rmap = RDUniform.new()
+	u_rmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_rmap.binding = 2
+	u_rmap.add_id(world_map_road_buf)
+	
+	world_map_set1 = rd.uniform_set_create([u_hmap, u_bmap, u_rmap], sid_gen, 1)
+	
 	# Create REUSABLE Buffers for meshing (9 floats per vertex: pos + normal + color)
 	# TERRAIN buffers
 	var output_bytes_size = MAX_TRIANGLES * 3 * 9 * 4
@@ -1356,6 +1447,11 @@ func _thread_function():
 	rd.free_rid(sid_mod)
 	rd.free_rid(sid_mesh)
 	
+	# Free world map buffers
+	if world_map_heightmap_buf.is_valid(): rd.free_rid(world_map_heightmap_buf)
+	if world_map_biome_buf.is_valid(): rd.free_rid(world_map_biome_buf)
+	if world_map_road_buf.is_valid(): rd.free_rid(world_map_road_buf)
+	
 	rd.free()
 
 # Dispatch generation work WITHOUT syncing - returns in-flight data for later readback
@@ -1385,10 +1481,19 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen)
 	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
+	
+	# Always bind world map buffers on set 1 (real data or dummy)
+	rd.compute_list_bind_uniform_set(list, world_map_set1, 1)
+	
 	# Pass 0.0 for road spacing if disabled
 	var actual_road_spacing = procedural_road_spacing if procedural_roads_enabled else 0.0
 	var wide_shoulders_val = 1.0 if procedural_road_wide_shoulders else 0.0
-	var push_data_t = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, wide_shoulders_val, noise_frequency, terrain_height, actual_road_spacing, procedural_road_width])
+	var use_world_map_val = 1.0 if world_map_active else 0.0
+	var push_data_t = PackedFloat32Array([
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, wide_shoulders_val,
+		noise_frequency, terrain_height, actual_road_spacing, procedural_road_width,
+		use_world_map_val, world_map_size, world_map_half, world_map_max_height
+	])
 	rd.compute_list_set_push_constant(list, push_data_t.to_byte_array(), push_data_t.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
