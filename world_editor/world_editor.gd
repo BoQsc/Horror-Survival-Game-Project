@@ -205,12 +205,15 @@ func _on_generation_complete(images: Dictionary) -> void:
 	is_generating = false
 	generate_btn.disabled = false
 	progress_bar.visible = false
-	progress_label.text = "Generated — %d×%d" % [WorldMapGen.MAP_SIZE, WorldMapGen.MAP_SIZE]
 	save_btn.disabled = false
 	play_btn.disabled = false
 	
 	_update_preview()
-	print("[WorldEditor] Generation complete!")
+	
+	# Auto-save after generation
+	_on_save_pressed()
+	progress_label.text = "Generated & saved — %d×%d" % [WorldMapGen.MAP_SIZE, WorldMapGen.MAP_SIZE]
+	print("[WorldEditor] Generation complete — auto-saved")
 
 # ============================================================================
 # PREVIEW — colorized composite of heightmap + biomes + roads
