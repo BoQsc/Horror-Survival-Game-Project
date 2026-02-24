@@ -41,6 +41,10 @@ var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
 var world_map_max_height: float = 50.0  # terrain_height * 2.5
+var _world_map_heightmap_buf: RID = RID()
+var _world_map_biome_buf: RID = RID()
+var _world_map_road_buf: RID = RID()
+var _world_map_set1: RID = RID()  # Uniform set 1 for world map bindings
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -1278,10 +1282,6 @@ func _thread_function():
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 	
 	# === World Map Buffers (uploaded from editor PNGs) ===
-	var world_map_heightmap_buf: RID = RID()
-	var world_map_biome_buf: RID = RID()
-	var world_map_road_buf: RID = RID()
-	var world_map_set1: RID = RID()  # Uniform set 1 for world map bindings
 	
 	if world_map_active and world_definition_path != "":
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
@@ -1302,9 +1302,9 @@ func _thread_function():
 			while b_bytes.size() % 4 != 0: b_bytes.append(0)
 			while r_bytes.size() % 4 != 0: r_bytes.append(0)
 			
-			world_map_heightmap_buf = rd.storage_buffer_create(h_bytes.size(), h_bytes)
-			world_map_biome_buf = rd.storage_buffer_create(b_bytes.size(), b_bytes)
-			world_map_road_buf = rd.storage_buffer_create(r_bytes.size(), r_bytes)
+			_world_map_heightmap_buf = rd.storage_buffer_create(h_bytes.size(), h_bytes)
+			_world_map_biome_buf = rd.storage_buffer_create(b_bytes.size(), b_bytes)
+			_world_map_road_buf = rd.storage_buffer_create(r_bytes.size(), r_bytes)
 			
 			# Read metadata for map params
 			if loaded.has("metadata"):
@@ -1319,30 +1319,30 @@ func _thread_function():
 			world_map_active = false
 	
 	# Always create dummy buffers if not loaded (shader declares set 1 even when unused)
-	if not world_map_heightmap_buf.is_valid():
+	if not _world_map_heightmap_buf.is_valid():
 		var dummy = PackedByteArray()
 		dummy.resize(4)
-		world_map_heightmap_buf = rd.storage_buffer_create(4, dummy)
-		world_map_biome_buf = rd.storage_buffer_create(4, dummy)
-		world_map_road_buf = rd.storage_buffer_create(4, dummy)
+		_world_map_heightmap_buf = rd.storage_buffer_create(4, dummy)
+		_world_map_biome_buf = rd.storage_buffer_create(4, dummy)
+		_world_map_road_buf = rd.storage_buffer_create(4, dummy)
 	
 	# Create uniform set 1 (always bound — real data or dummy)
 	var u_hmap = RDUniform.new()
 	u_hmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_hmap.binding = 0
-	u_hmap.add_id(world_map_heightmap_buf)
+	u_hmap.add_id(_world_map_heightmap_buf)
 	
 	var u_bmap = RDUniform.new()
 	u_bmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_bmap.binding = 1
-	u_bmap.add_id(world_map_biome_buf)
+	u_bmap.add_id(_world_map_biome_buf)
 	
 	var u_rmap = RDUniform.new()
 	u_rmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_rmap.binding = 2
-	u_rmap.add_id(world_map_road_buf)
+	u_rmap.add_id(_world_map_road_buf)
 	
-	world_map_set1 = rd.uniform_set_create([u_hmap, u_bmap, u_rmap], sid_gen, 1)
+	_world_map_set1 = rd.uniform_set_create([u_hmap, u_bmap, u_rmap], sid_gen, 1)
 	
 	# Create REUSABLE Buffers for meshing (9 floats per vertex: pos + normal + color)
 	# TERRAIN buffers
@@ -1448,9 +1448,9 @@ func _thread_function():
 	rd.free_rid(sid_mesh)
 	
 	# Free world map buffers
-	if world_map_heightmap_buf.is_valid(): rd.free_rid(world_map_heightmap_buf)
-	if world_map_biome_buf.is_valid(): rd.free_rid(world_map_biome_buf)
-	if world_map_road_buf.is_valid(): rd.free_rid(world_map_road_buf)
+	if _world_map_heightmap_buf.is_valid(): rd.free_rid(_world_map_heightmap_buf)
+	if _world_map_biome_buf.is_valid(): rd.free_rid(_world_map_biome_buf)
+	if _world_map_road_buf.is_valid(): rd.free_rid(_world_map_road_buf)
 	
 	rd.free()
 
@@ -1483,7 +1483,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
 	
 	# Always bind world map buffers on set 1 (real data or dummy)
-	rd.compute_list_bind_uniform_set(list, world_map_set1, 1)
+	rd.compute_list_bind_uniform_set(list, _world_map_set1, 1)
 	
 	# Pass 0.0 for road spacing if disabled
 	var actual_road_spacing = procedural_road_spacing if procedural_roads_enabled else 0.0

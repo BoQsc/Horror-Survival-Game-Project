@@ -288,12 +288,23 @@ func _on_play_pressed() -> void:
 		world_name = "unnamed_world"
 	
 	var world_path = SAVE_BASE + world_name
+	
+	# Save first to ensure PNGs are on disk
 	_on_save_pressed()
 	
-	# TODO Phase 3: Set global autoload with world_path, then change scene
-	# For now, store in ProjectSettings and print
-	print("[WorldEditor] Play → world_path: %s" % world_path)
-	progress_label.text = "Play: %s (game integration pending)" % world_name
+	# Set the path on SaveManager autoload (persists across scene changes)
+	var sm = get_node_or_null("/root/SaveManager")
+	if sm and "pending_world_definition_path" in sm:
+		sm.pending_world_definition_path = world_path
+		print("[WorldEditor] Play → world_path set on SaveManager: %s" % world_path)
+	else:
+		push_error("[WorldEditor] SaveManager not found! Cannot transition to game.")
+		progress_label.text = "ERROR: SaveManager autoload missing"
+		return
+	
+	# Transition to the game scene
+	progress_label.text = "Launching game..."
+	get_tree().change_scene_to_file.call_deferred("res://modules/world_module/world_test_world_player_v2.tscn")
 
 # ============================================================================
 # PAINT TOOLS
