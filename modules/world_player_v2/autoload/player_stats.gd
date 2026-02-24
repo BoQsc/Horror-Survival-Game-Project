@@ -71,6 +71,7 @@ func get_save_data() -> Dictionary:
 		"health": health,
 		"max_health": max_health,
 		"stamina": stamina,
+		"max_stamina": max_stamina,
 		"is_dead": is_dead
 	}
 
@@ -81,7 +82,9 @@ func load_save_data(data: Dictionary) -> void:
 		max_health = int(data.max_health)
 	if data.has("stamina"):
 		stamina = data.stamina
+	if data.has("max_stamina"):
+		max_stamina = data.max_stamina
 	if data.has("is_dead"):
 		is_dead = data.is_dead
 	
-	DebugManager.log_player("PlayerStats: Loaded (HP: %d, Stamina: %.1f)" % [health, stamina])
+	DebugManager.log_player("PlayerStats: Loaded (HP: %d/%d, Stamina: %.1f/%.1f)" % [health, max_health, stamina, max_stamina])

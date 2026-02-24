@@ -511,9 +511,21 @@ func get_save_data() -> Dictionary:
 	for key in spawned_chunks.keys():
 		chunks_data.append([key.x, key.y])
 	
+	# Serialize dormant entities (despawned due to distance but still alive)
+	var dormant_data: Array = []
+	for d in dormant_entities:
+		var d_entry = {
+			"position": [d.position.x, d.position.y, d.position.z],
+			"scene_path": d.get("scene_path", ""),
+			"health": d.get("health", -1),
+			"state": d.get("state", "")
+		}
+		dormant_data.append(d_entry)
+	
 	return {
 		"entities": entities_data,
-		"spawned_chunks": chunks_data
+		"spawned_chunks": chunks_data,
+		"dormant_entities": dormant_data
 	}
 
 func clear_all_entities():
@@ -589,6 +601,18 @@ func load_save_data(data: Dictionary):
 	
 	debug_entities_loaded.emit(data.entities.size(), active_entities.size())
 	DebugManager.log_entities("Loaded %d entities" % data.entities.size())
+	
+	# Restore dormant entities (despawned due to distance in previous session)
+	if data.has("dormant_entities"):
+		for d in data.dormant_entities:
+			var pos = Vector3(d.position[0], d.position[1], d.position[2])
+			dormant_entities.append({
+				"position": pos,
+				"scene_path": d.get("scene_path", ""),
+				"health": d.get("health", -1),
+				"state": d.get("state", "")
+			})
+		DebugManager.log_entities("Restored %d dormant entities" % data.dormant_entities.size())
 	
 	# Re-enable procedural spawning after load completes
 	call_deferred("_finish_load")

@@ -37,6 +37,8 @@ var container_registry: Node = null
 var pending_player_data: Dictionary = {}
 var pending_entity_data: Dictionary = {}
 var pending_vehicle_data: Dictionary = {}
+var pending_door_data: Dictionary = {} # Deferred until world ready
+var pending_container_data: Dictionary = {} # Deferred until world ready
 var pending_player_position_restore: bool = false  # Fix: defer position until terrain collision ready
 var is_loading_game: bool = false
 var current_save_path: String = "" # Tracks current active save path
@@ -192,8 +194,12 @@ func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		# Auto-save on exit
 		DebugManager.log_save("Auto-saving on exit (FORCED SYNCHRONOUS)...")
-		# Kill the window immediately but keep the thread alive? 
-		# No, better to block for a second to ensure file is written.
+		# Wait for any active threaded save to finish first to avoid file corruption
+		for thread in _save_threads:
+			if thread.is_alive():
+				thread.wait_to_finish()
+		_save_threads.clear()
+		_is_saving = false
 		_save_game_internal(SAVE_DIR + "autosave.json") # Call synchronous version for exit
 		get_tree().quit()
 
@@ -204,8 +210,10 @@ func _process(_delta):
 		if not _save_threads[i].is_alive():
 			_save_threads[i].wait_to_finish()
 			_save_threads.remove_at(i)
-			_is_saving = false
 		i -= 1
+	# Only clear _is_saving when ALL threads are done
+	if _save_threads.is_empty():
+		_is_saving = false
 
 ## Quick save to default slot
 func quick_save():
@@ -326,12 +334,14 @@ func load_game(path: String) -> bool:
 	# Open file
 	if not FileAccess.file_exists(path):
 		push_error("[SaveManager] Save file not found: " + path)
+		_reset_load_flags()
 		load_completed.emit(false, path)
 		return false
 	
 	var file = FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		push_error("[SaveManager] Failed to open file for reading: " + path)
+		_reset_load_flags()
 		load_completed.emit(false, path)
 		return false
 	
@@ -342,6 +352,7 @@ func load_game(path: String) -> bool:
 	var parse_result = json.parse(json_string)
 	if parse_result != OK:
 		push_error("[SaveManager] Failed to parse JSON: " + json.get_error_message())
+		_reset_load_flags()
 		load_completed.emit(false, path)
 		return false
 	
@@ -351,15 +362,13 @@ func load_game(path: String) -> bool:
 	var version = save_data.get("version", 0)
 	if version > SAVE_VERSION:
 		push_error("[SaveManager] Save version %d newer than supported %d" % [version, SAVE_VERSION])
+		_reset_load_flags()
 		load_completed.emit(false, path)
 		return false
 	
-	# V2: Handle legacy v1 saves directly (consolidated)
+	# V1 saves now use the same V2 pipeline (missing V2 keys default to empty)
 	if version == 1:
-		DebugManager.log_save("Detected v1 save - using legacy consolidation path")
-		_load_v1_legacy_data(save_data)
-		load_completed.emit(true, path)
-		return true
+		DebugManager.log_save("Detected v1 save - upgrading to V2 pipeline")
 	
 	# Load each component
 	# IMPORTANT: Load prefabs FIRST to prevent respawning during chunk generation
@@ -404,7 +413,6 @@ func load_game(path: String) -> bool:
 		vegetation_manager.clear_all_data()
 		
 	_load_vegetation_data(save_data.get("vegetation", {}))
-	_load_building_data(save_data.get("buildings", {}))
 	_load_road_data(save_data.get("roads", {}))
 	_load_inventory_data(save_data.get("player_inventory", {}))
 	_load_hotbar_data(save_data.get("player_hotbar", {}))
@@ -412,13 +420,18 @@ func load_game(path: String) -> bool:
 	_load_player_state_data(save_data.get("player_state", {}))
 	_load_game_settings_data(save_data.get("game_settings", {}))
 	
-	# Prime deferred loaders
-	call_deferred("_load_door_data", save_data.get("doors", {}))
-	call_deferred("_load_container_data", save_data.get("containers", {}))
+	# Store door/container/vehicle data as pending - loaded in _check_world_readiness
+	# when buildings have actually spawned (doors & containers live inside buildings)
+	pending_door_data = save_data.get("doors", {})
+	pending_container_data = save_data.get("containers", {})
 	pending_vehicle_data = save_data.get("vehicles", {})
 	
-	# Load terrain modifications (clears world)
+	# Load terrain modifications (clears world) - MUST happen before building data
+	# since clear_all_chunks destroys any meshes rebuilt prematurely
 	_load_terrain_data(save_data.get("terrain_modifications", {}))
+	
+	# Load building data AFTER terrain is cleared so meshes aren't wasted
+	_load_building_data(save_data.get("buildings", {}))
 	
 	# Readiness flags - set before triggering world gen
 	awaiting_terrain_ready = true
@@ -536,16 +549,25 @@ func _check_world_readiness():
 	if not pending_vehicle_data.is_empty():
 		_load_vehicle_data(pending_vehicle_data)
 	
+	# Load doors and containers NOW that buildings have had time to spawn
+	# (They were deferred from load_game because buildings need terrain first)
+	if not pending_door_data.is_empty():
+		_load_door_data(pending_door_data)
+	if not pending_container_data.is_empty():
+		_load_container_data(pending_container_data)
+	
 	# Clear pending data
 	pending_player_data = {}
 	pending_entity_data = {}
 	pending_vehicle_data = {}
+	pending_door_data = {}
+	pending_container_data = {}
 	is_loading_game = false
 	
 	# FINAL NOTIFICATION: Now that everything is unfrozen and ready
 	DebugManager.log_save("Load process fully complete!")
 	print("[LOAD_NOTIFICATION] Game loaded and world ready!")
-	load_completed.emit(true, current_save_path) # current_save_path should be tracked
+	load_completed.emit(true, current_save_path)
 	is_quickloading = false  # Clear the flag now that load is complete
 
 ## Get list of available save files
@@ -1034,28 +1056,21 @@ func _load_game_settings_data(data: Dictionary):
 		data.get("time_of_day", "?"), data.get("weather", "?")
 	])
 
-## Legacy V1 data loader (consolidated into V2)
-func _load_v1_legacy_data(save_data: Dictionary):
-	# Load prefabs first (prevents respawning during chunk generation)
-	_load_prefab_data(save_data.get("prefabs", {}))
-	_load_building_spawn_data(save_data.get("building_spawns", {}))
-	
-	# Set loading flag - entities will be deferred until terrain is ready
-	is_loading_game = true
-	pending_entity_data = save_data.get("entities", {})
-	
-	# Load core systems
-	_load_player_data(save_data.get("player", {}))
-	_load_terrain_data(save_data.get("terrain_modifications", {}))
-	_load_building_data(save_data.get("buildings", {}))
-	_load_vegetation_data(save_data.get("vegetation", {}))
-	_load_road_data(save_data.get("roads", {}))
-	
-	# Defer doors and vehicles
-	call_deferred("_load_door_data", save_data.get("doors", {}))
-	pending_vehicle_data = save_data.get("vehicles", {})
-	
-	DebugManager.log_save("V1 legacy load complete (new systems will use defaults)")
+## Reset all load-related flags on failure (prevents permanent state corruption)
+func _reset_load_flags():
+	is_quickloading = false
+	is_loading_game = false
+	awaiting_terrain_ready = false
+	awaiting_vegetation_ready = false
+	pending_entity_data = {}
+	pending_vehicle_data = {}
+	pending_door_data = {}
+	pending_container_data = {}
+	if entity_manager:
+		entity_manager.is_loading_save = false
+	if player_camera and "mouse_look_enabled" in player_camera:
+		player_camera.mouse_look_enabled = true
+	DebugManager.log_save("Load flags reset after failure")
 
 # ============ UTILITY FUNCTIONS ============
 
