@@ -157,11 +157,47 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	if coord.y != 0:
 		return
 	
-	# Check for road intersections in this chunk
+	# World map mode: spawn baked buildings from world_meta.json
+	if terrain_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active:
+		_spawn_baked_buildings(coord)
+		return
+	
+	# Procedural mode: check for road intersections in this chunk
 	var chunk_world_x = coord.x * 31 # CHUNK_STRIDE
 	var chunk_world_z = coord.z * 31 # Use .z for Z coordinate (Vector3i)
 	
 	_check_and_spawn_buildings(chunk_world_x, chunk_world_z)
+
+## Spawn pre-baked buildings from the world map generator
+## Buildings whose XZ falls within this chunk's bounds are spawned
+func _spawn_baked_buildings(coord: Vector3i):
+	if not terrain_manager or not "_world_map_buildings" in terrain_manager:
+		return
+	
+	var chunk_stride = 31
+	var chunk_x = coord.x * chunk_stride
+	var chunk_z = coord.z * chunk_stride
+	
+	for bldg in terrain_manager._world_map_buildings:
+		var bx = float(bldg.get("x", 0))
+		var bz = float(bldg.get("z", 0))
+		var by = float(bldg.get("y", 12))
+		var btype = str(bldg.get("type", "small_house"))
+		
+		# Check if this building falls within this chunk
+		if bx >= chunk_x and bx < chunk_x + chunk_stride \
+			and bz >= chunk_z and bz < chunk_z + chunk_stride:
+			var key = "baked_%d_%d" % [int(bx), int(bz)]
+			if spawned_positions.has(key):
+				continue
+			spawned_positions[key] = true
+			
+			# Skip forested areas
+			if _is_forested_area(bx, bz):
+				continue
+			
+			var spawn_pos = Vector3(bx, by, bz)
+			_spawn_prefab(btype, spawn_pos)
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 	if road_spacing <= 0:

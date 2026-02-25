@@ -44,7 +44,10 @@ var world_map_max_height: float = 50.0  # terrain_height * 2.5
 var _world_map_heightmap_buf: RID = RID()
 var _world_map_biome_buf: RID = RID()
 var _world_map_road_buf: RID = RID()
-var _world_map_set1: RID = RID()  # Uniform set 1 for world map bindings
+var _world_map_water_buf: RID = RID()
+var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
+var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
+var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -1309,6 +1312,18 @@ func _thread_function():
 			_world_map_biome_buf = rd.storage_buffer_create(b_bytes.size(), b_bytes)
 			_world_map_road_buf = rd.storage_buffer_create(r_bytes.size(), r_bytes)
 			
+			# Upload water map if available
+			if loaded.has("water"):
+				var wmap: Image = loaded.water
+				var w_bytes = wmap.get_data()
+				while w_bytes.size() % 4 != 0: w_bytes.append(0)
+				_world_map_water_buf = rd.storage_buffer_create(w_bytes.size(), w_bytes)
+			
+			# Load baked buildings
+			if loaded.has("buildings"):
+				_world_map_buildings = loaded.buildings
+				print("[ChunkManager] Loaded %d baked buildings" % _world_map_buildings.size())
+			
 			# Read metadata for map params
 			if loaded.has("metadata"):
 				var meta = loaded.metadata
@@ -1328,6 +1343,10 @@ func _thread_function():
 		_world_map_heightmap_buf = rd.storage_buffer_create(4, dummy)
 		_world_map_biome_buf = rd.storage_buffer_create(4, dummy)
 		_world_map_road_buf = rd.storage_buffer_create(4, dummy)
+	if not _world_map_water_buf.is_valid():
+		var dummy = PackedByteArray()
+		dummy.resize(4)
+		_world_map_water_buf = rd.storage_buffer_create(4, dummy)
 	
 	# Create uniform set 1 (always bound — real data or dummy)
 	var u_hmap = RDUniform.new()
@@ -1346,6 +1365,13 @@ func _thread_function():
 	u_rmap.add_id(_world_map_road_buf)
 	
 	_world_map_set1 = rd.uniform_set_create([u_hmap, u_bmap, u_rmap], sid_gen, 1)
+	
+	# Create uniform set 1 for water shader (water map buffer)
+	var u_wmap = RDUniform.new()
+	u_wmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_wmap.binding = 0
+	u_wmap.add_id(_world_map_water_buf)
+	_world_map_water_set1 = rd.uniform_set_create([u_wmap], sid_gen_water, 1)
 	
 	# Create REUSABLE Buffers for meshing (9 floats per vertex: pos + normal + color)
 	# TERRAIN buffers
@@ -1454,6 +1480,7 @@ func _thread_function():
 	if _world_map_heightmap_buf.is_valid(): rd.free_rid(_world_map_heightmap_buf)
 	if _world_map_biome_buf.is_valid(): rd.free_rid(_world_map_biome_buf)
 	if _world_map_road_buf.is_valid(): rd.free_rid(_world_map_road_buf)
+	if _world_map_water_buf.is_valid(): rd.free_rid(_world_map_water_buf)
 	
 	rd.free()
 
@@ -1512,7 +1539,9 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen_water)
 	rd.compute_list_bind_uniform_set(list, set_gen_w, 0)
-	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, water_level, 0.0, 0.0])
+	rd.compute_list_bind_uniform_set(list, _world_map_water_set1, 1)
+	var use_wm_w = 1.0 if world_map_active else 0.0
+	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, water_level, use_wm_w, world_map_size, world_map_half, 0.0, 0.0, 0.0])
 	rd.compute_list_set_push_constant(list, push_data_w.to_byte_array(), push_data_w.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()

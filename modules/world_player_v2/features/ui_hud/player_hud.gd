@@ -225,6 +225,11 @@ func _setup_visual_overlays() -> void:
 		item_notification_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(item_notification_container)
 	
+	# Create minimap (top-left, only visible in world map mode)
+	var minimap = HUDMinimap.new()
+	minimap.name = "Minimap"
+	minimap.position = Vector2(15, 90)  # Below compass area
+	add_child(minimap)
 	
 	# Initial check (standardization to SaveManager as per project logic)
 	_connect_to_save_manager()

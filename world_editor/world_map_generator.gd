@@ -13,6 +13,9 @@ var road_spacing: float = 100.0
 var road_width: float = 8.0
 var wide_shoulders: bool = false
 var world_seed: int = 12345
+var lake_threshold: float = 0.35  # Fraction of max height below which lakes form
+var spawn_distance_from_road: float = 15.0
+var building_spawn_chance: float = 0.3
 
 # Progress callback
 var progress_callback: Callable = Callable()
@@ -21,6 +24,7 @@ var progress_callback: Callable = Callable()
 var _height_noise: FastNoiseLite
 var _biome_noise: FastNoiseLite
 var _road_height_noise: FastNoiseLite
+var _lake_noise: FastNoiseLite
 
 enum MaterialID {
 	GRASS = 0, STONE = 1, ORE = 2, SAND = 3,
@@ -45,6 +49,12 @@ func _init_noise() -> void:
 	_road_height_noise.seed = world_seed + 200
 	_road_height_noise.noise_type = FastNoiseLite.TYPE_VALUE_CUBIC
 	_road_height_noise.frequency = 0.008
+	
+	_lake_noise = FastNoiseLite.new()
+	_lake_noise.seed = world_seed + 300
+	_lake_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	_lake_noise.frequency = 0.0008  # Very low frequency = few large lake regions
+	_lake_noise.fractal_type = FastNoiseLite.FRACTAL_NONE  # No fractal = smooth blobs, not scattered dots
 
 # ============================================================================
 # OPTIMIZED GENERATION — raw byte arrays, no set_pixel
@@ -68,8 +78,9 @@ func generate_world() -> Dictionary:
 	# Roads: 2 bytes per pixel (RG8)
 	var road_bytes = PackedByteArray()
 	road_bytes.resize(total * 2)
-	var struct_bytes = PackedByteArray()
-	struct_bytes.resize(total)
+	# Water map: R8, 255 = water, 0 = dry
+	var water_bytes = PackedByteArray()
+	water_bytes.resize(total)
 	
 	var max_h = terrain_height * 2.5
 	var half_road_w = road_width * 0.5
@@ -178,14 +189,89 @@ func generate_world() -> Dictionary:
 			road_bytes[ridx] = is_road_byte
 			road_bytes[ridx + 1] = road_h_byte
 	
-	# PASS 3: Convert byte arrays to Images
+	# PASS 3: Lakes — large coherent water bodies, exclude roads
 	if progress_callback.is_valid():
-		progress_callback.call(90.0, "Building images")
+		progress_callback.call(90.0, "Generating lakes")
 	
+	# Lakes are defined purely by low-frequency noise — no height dependency
+	# This creates a few large, smooth lake shapes instead of scattered dots
+	var water_road_buffer = half_road_w + 20.0  # Keep water this far from road centers
+	for z in MAP_SIZE:
+		var wz = float(z - half)
+		var row_offset = z * MAP_SIZE
+		for x in MAP_SIZE:
+			var wx = float(x - half)
+			var idx = row_offset + x
+			
+			# Skip near roads — compute distance to nearest road line
+			if road_spacing > 0.0:
+				var local_x = fmod(wx, road_spacing)
+				var local_z = fmod(wz, road_spacing)
+				if local_x < 0: local_x += road_spacing
+				if local_z < 0: local_z += road_spacing
+				var dist_x = minf(local_x, road_spacing - local_x)
+				var dist_z = minf(local_z, road_spacing - local_z)
+				var min_dist = minf(dist_x, dist_z)
+				if min_dist < water_road_buffer:
+					continue
+			
+			# Lake noise: only strong positive values become lakes (large smooth blobs)
+			var lake_val = _lake_noise.get_noise_2d(wx, wz)
+			if lake_val > 0.3:
+				water_bytes[idx] = 255
+	
+	# PASS 4: Bake building positions at road intersections
+	if progress_callback.is_valid():
+		progress_callback.call(95.0, "Placing buildings")
+	
+	var buildings: Array = []
+	if road_spacing > 0.0:
+		var grid_min = int(-half / road_spacing) - 1
+		var grid_max = int(half / road_spacing) + 1
+		
+		for cx in range(grid_min, grid_max + 1):
+			for cz in range(grid_min, grid_max + 1):
+				var key = "%d_%d" % [cx, cz]
+				var rng = RandomNumberGenerator.new()
+				rng.seed = hash(key) + 42
+				
+				# Chance to spawn
+				if rng.randf() > building_spawn_chance:
+					continue
+				
+				# Pick side of road
+				var side = 1.0 if rng.randf() > 0.5 else -1.0
+				var spawn_x = cx * road_spacing + spawn_distance_from_road * side
+				var spawn_z = cz * road_spacing + spawn_distance_from_road
+				
+				# Check within map bounds
+				var px = int(spawn_x + half)
+				var pz = int(spawn_z + half)
+				if px < 0 or px >= MAP_SIZE or pz < 0 or pz >= MAP_SIZE:
+					continue
+				
+				# Skip if on water
+				var bidx = pz * MAP_SIZE + px
+				if water_bytes[bidx] > 128:
+					continue
+				
+				# Get terrain height from heightmap for placement
+				var terrain_y = float(height_bytes[bidx]) / 255.0 * max_h
+				
+				buildings.append({
+					"x": spawn_x,
+					"y": floor(terrain_y),
+					"z": spawn_z,
+					"type": "small_house"
+				})
+	
+	print("[WorldMapGen] Baked %d buildings, lakes generated" % buildings.size())
+	
+	# Convert byte arrays to Images
 	var heightmap = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, height_bytes)
 	var biome_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, biome_bytes)
 	var road_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RG8, road_bytes)
-	var structure_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, struct_bytes)
+	var water_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, water_bytes)
 	
 	if progress_callback.is_valid():
 		progress_callback.call(100.0, "Complete")
@@ -194,7 +280,8 @@ func generate_world() -> Dictionary:
 		"heightmap": heightmap,
 		"biomes": biome_map,
 		"roads": road_map,
-		"structures": structure_map
+		"water": water_map,
+		"buildings": buildings
 	}
 
 # ============================================================================
@@ -203,19 +290,25 @@ func generate_world() -> Dictionary:
 
 func save_world(path: String, images: Dictionary) -> bool:
 	DirAccess.make_dir_recursive_absolute(path)
+	# Save image files (skip non-Image entries like "buildings")
 	for key in images:
-		var err = (images[key] as Image).save_png(path.path_join(key + ".png"))
-		if err != OK:
-			push_error("[WorldMapGen] Failed to save %s" % key)
-			return false
+		if images[key] is Image:
+			var err = (images[key] as Image).save_png(path.path_join(key + ".png"))
+			if err != OK:
+				push_error("[WorldMapGen] Failed to save %s" % key)
+				return false
 	
 	var meta = {
-		"version": 1, "map_size": MAP_SIZE,
+		"version": 2, "map_size": MAP_SIZE,
 		"noise_freq": noise_freq, "terrain_height": terrain_height,
 		"road_spacing": road_spacing, "road_width": road_width,
 		"world_seed": world_seed,
 		"created": Time.get_datetime_string_from_system()
 	}
+	# Store baked building positions in metadata
+	if images.has("buildings"):
+		meta["buildings"] = images.buildings
+	
 	var file = FileAccess.open(path.path_join("world_meta.json"), FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(meta, "\t"))
@@ -230,10 +323,13 @@ static func load_world(path: String) -> Dictionary:
 		"heightmap": Image.FORMAT_R8,
 		"biomes": Image.FORMAT_R8,
 		"roads": Image.FORMAT_RG8,
-		"structures": Image.FORMAT_R8
+		"water": Image.FORMAT_R8
 	}
-	for img_name in ["heightmap", "biomes", "roads", "structures"]:
+	for img_name in ["heightmap", "biomes", "roads", "water"]:
 		var fp = path.path_join(img_name + ".png")
+		# Backward compat: old worlds saved "structures.png" instead of "water.png"
+		if not FileAccess.file_exists(fp) and img_name == "water":
+			fp = path.path_join("structures.png")
 		if FileAccess.file_exists(fp):
 			var img = Image.load_from_file(fp)
 			if img:
@@ -246,5 +342,11 @@ static func load_world(path: String) -> Dictionary:
 		var f = FileAccess.open(mp, FileAccess.READ)
 		if f:
 			var j = JSON.new(); j.parse(f.get_as_text())
-			result["metadata"] = j.get_data(); f.close()
+			var meta = j.get_data()
+			result["metadata"] = meta
+			# Load baked buildings from metadata
+			if meta.has("buildings"):
+				result["buildings"] = meta.buildings
+			f.close()
 	return result
+

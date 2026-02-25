@@ -141,7 +141,7 @@ func _on_load_pressed() -> void:
 		return
 	
 	current_images = {}
-	for key in ["heightmap", "biomes", "roads", "structures"]:
+	for key in ["heightmap", "biomes", "roads", "water", "buildings"]:
 		if loaded.has(key):
 			current_images[key] = loaded[key]
 	
@@ -233,6 +233,8 @@ func _update_preview() -> void:
 	var h_data = hmap.get_data()
 	var b_data = bmap.get_data()
 	var r_data = rmap.get_data() if rmap else PackedByteArray()
+	var wmap: Image = current_images.water if current_images.has("water") else null
+	var w_data = wmap.get_data() if wmap else PackedByteArray()
 	
 	var preview_bytes = PackedByteArray()
 	preview_bytes.resize(w * h * 3)  # RGB8
@@ -261,6 +263,10 @@ func _update_preview() -> void:
 			var ri = i * 2
 			if ri < r_data.size() and r_data[ri] > 128:
 				base = [64, 64, 77]
+		
+		# Water overlay (blue)
+		if w_data.size() > 0 and i < w_data.size() and w_data[i] > 128:
+			base = [40, 80, 160]
 		
 		var pi = i * 3
 		preview_bytes[pi] = int(clampf(base[0] * shade, 0, 255))
