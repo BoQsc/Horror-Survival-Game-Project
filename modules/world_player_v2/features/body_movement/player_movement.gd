@@ -87,6 +87,18 @@ func _physics_process(delta: float) -> void:
 	
 	player.move_and_slide()
 	
+	# Clamp player to world map boundaries (only in world map mode)
+	if "terrain_manager" in player and player.terrain_manager \
+		and "world_map_active" in player.terrain_manager and player.terrain_manager.world_map_active:
+		var half = player.terrain_manager.world_map_half - 6.0  # Margin before the wall
+		var pos = player.global_position
+		pos.x = clampf(pos.x, -half, half)
+		pos.z = clampf(pos.z, -half, half)
+		if pos != player.global_position:
+			player.global_position = pos
+			player.velocity.x = 0.0
+			player.velocity.z = 0.0
+	
 	# Detect landing
 	check_landing()
 	PerformanceMonitor.end_measure("Player Movement", 1.0)

@@ -220,6 +220,25 @@ float get_density(vec3 pos) {
     
     // === WORLD MAP MODE: read height from PNG buffer ===
     if (params.use_world_map > 0.5) {
+        // --- Boundary wall: solid wall at map edges ---
+        float edge_margin = 4.0;  // Wall thickness in voxels
+        float dist_to_edge_x = min(world_pos.x + params.map_half, params.map_half - world_pos.x);
+        float dist_to_edge_z = min(world_pos.z + params.map_half, params.map_half - world_pos.z);
+        float dist_to_edge = min(dist_to_edge_x, dist_to_edge_z);
+        
+        if (dist_to_edge <= 0.0) {
+            return -10.0;  // Fully solid beyond boundary
+        }
+        if (dist_to_edge < edge_margin) {
+            // Wall rises from terrain to sky as we approach the edge
+            float wall_blend = 1.0 - (dist_to_edge / edge_margin);  // 0 at margin, 1 at edge
+            float wall_height = mix(28.0, 32.0, wall_blend);  // Rise to chunk top
+            if (world_pos.y > wall_height) {
+                return world_pos.y - wall_height;  // Air above wall top
+            }
+            return -10.0 * wall_blend;  // Increasingly solid near edge
+        }
+        
         float map_height = sample_world_height(world_pos.xz);
         // Clamp height to fit within Y=0 chunk (0-32 voxels).
         // Without this, heights >32 have no isosurface in the chunk → see-through holes.
