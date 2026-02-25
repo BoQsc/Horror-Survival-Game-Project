@@ -7,7 +7,7 @@ const MINIMAP_SIZE: int = 180  # Pixels on screen
 const MINIMAP_RADIUS: int = 120  # World units shown around player
 
 var _texture_rect: TextureRect
-var _player_dot: ColorRect
+var _player_arrow: Polygon2D
 var _border: Panel
 var _coord_label: Label
 var _minimap_image: Image  # Cached full-map preview
@@ -43,13 +43,17 @@ func _ready() -> void:
 	_texture_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_border.add_child(_texture_rect)
 	
-	# Create player dot (centered)
-	_player_dot = ColorRect.new()
-	_player_dot.size = Vector2(6, 6)
-	_player_dot.position = Vector2(MINIMAP_SIZE / 2 - 3 + 2, MINIMAP_SIZE / 2 - 3 + 2)
-	_player_dot.color = Color(1, 0.2, 0.2, 1.0)  # Red dot
-	_player_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_border.add_child(_player_dot)
+	# Create player arrow (centered, rotatable)
+	_player_arrow = Polygon2D.new()
+	_player_arrow.polygon = PackedVector2Array([
+		Vector2(0, -7),   # Tip (forward)
+		Vector2(-5, 5),   # Bottom left
+		Vector2(0, 2),    # Notch
+		Vector2(5, 5)     # Bottom right
+	])
+	_player_arrow.color = Color(1, 0.15, 0.15, 1.0)  # Red
+	_player_arrow.position = Vector2(MINIMAP_SIZE / 2 + 2, MINIMAP_SIZE / 2 + 2)
+	_border.add_child(_player_arrow)
 	
 	# Create coordinate label below minimap
 	_coord_label = Label.new()
@@ -135,7 +139,7 @@ func _build_minimap_image() -> void:
 	print("[Minimap] Built %dx%d minimap image" % [w, h])
 
 func _process(_delta: float) -> void:
-	if not visible or not _minimap_image or not _player:
+	if not _minimap_image or not _player:
 		return
 	
 	if not _terrain_manager or not "world_map_active" in _terrain_manager:
@@ -143,6 +147,14 @@ func _process(_delta: float) -> void:
 	if not _terrain_manager.world_map_active:
 		visible = false
 		return
+	
+	# Hide behind ESC menu
+	var game_menu = get_parent().get_node_or_null("GameMenu") if get_parent() else null
+	if game_menu and game_menu.visible:
+		visible = false
+		return
+	
+	visible = true
 	
 	var player_pos = _player.global_position
 	var map_half = _terrain_manager.world_map_half
@@ -166,6 +178,11 @@ func _process(_delta: float) -> void:
 	cropped.resize(MINIMAP_SIZE, MINIMAP_SIZE, Image.INTERPOLATE_NEAREST)
 	
 	_texture_rect.texture = ImageTexture.create_from_image(cropped)
+	
+	# Rotate arrow to match player facing direction
+	var forward = -_player.global_transform.basis.z
+	var angle = atan2(forward.x, -forward.z)  # North (-Z) is 0 rad (UP)
+	_player_arrow.rotation = angle
 	
 	# Update coordinate label
 	_coord_label.text = "%d, %d" % [int(player_pos.x), int(player_pos.z)]

@@ -1,8 +1,8 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://btl80i4k7jant"]
 
-[ext_resource type="Script" path="res://world_editor/world_editor.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://823d20xci4ba" path="res://world_editor/world_editor.gd" id="1_script"]
 
-[node name="WorldEditor" type="Control"]
+[node name="WorldEditor" type="Control" unique_id=628635437]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -11,225 +11,232 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_script")
 
-[node name="BG" type="ColorRect" parent="."]
+[node name="BG" type="ColorRect" parent="." unique_id=1273935724]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
 color = Color(0.12, 0.12, 0.14, 1)
 
-[node name="TopBar" type="HBoxContainer" parent="."]
+[node name="TopBar" type="HBoxContainer" parent="." unique_id=947658093]
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
 offset_top = 8.0
 offset_bottom = 48.0
+grow_horizontal = 2
 theme_override_constants/separation = 12
 
-[node name="Title" type="Label" parent="TopBar"]
+[node name="Title" type="Label" parent="TopBar" unique_id=1322593610]
 layout_mode = 2
-text = "  World Editor"
 theme_override_font_sizes/font_size = 20
+text = "  World Editor"
 
-[node name="GenerateBtn" type="Button" parent="TopBar"]
+[node name="GenerateBtn" type="Button" parent="TopBar" unique_id=2054319802]
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
 text = "Generate"
-theme_override_font_sizes/font_size = 14
 
-[node name="SaveBtn" type="Button" parent="TopBar"]
+[node name="SaveBtn" type="Button" parent="TopBar" unique_id=1442168179]
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
 text = "Save"
-theme_override_font_sizes/font_size = 14
 
-[node name="LoadBtn" type="Button" parent="TopBar"]
+[node name="LoadBtn" type="Button" parent="TopBar" unique_id=1475292288]
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
 text = "Load"
-theme_override_font_sizes/font_size = 14
 
-[node name="PlayBtn" type="Button" parent="TopBar"]
+[node name="PlayBtn" type="Button" parent="TopBar" unique_id=890765227]
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
 text = "Play >"
-theme_override_font_sizes/font_size = 14
 
-[node name="ExitBtn" type="Button" parent="TopBar"]
+[node name="ExitBtn" type="Button" parent="TopBar" unique_id=445891524]
 layout_mode = 2
-text = "Exit"
 theme_override_font_sizes/font_size = 14
+text = "Exit"
 
-[node name="Spacer" type="Control" parent="TopBar"]
+[node name="Spacer" type="Control" parent="TopBar" unique_id=2031690850]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="ProgressBar" type="ProgressBar" parent="TopBar"]
+[node name="ProgressBar" type="ProgressBar" parent="TopBar" unique_id=280227786]
 custom_minimum_size = Vector2(200, 0)
 layout_mode = 2
 
-[node name="ProgressLabel" type="Label" parent="TopBar"]
+[node name="ProgressLabel" type="Label" parent="TopBar" unique_id=1735104143]
 layout_mode = 2
-text = "Ready"
 theme_override_font_sizes/font_size = 12
+text = "Ready"
 
-[node name="HSplit" type="HSplitContainer" parent="."]
+[node name="HSplit" type="HSplitContainer" parent="." unique_id=245039541]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_top = 56.0
 offset_left = 8.0
+offset_top = 56.0
 offset_right = -8.0
 offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 2
+split_offsets = PackedInt32Array(-280)
 split_offset = -280
 
-[node name="CanvasPanel" type="PanelContainer" parent="HSplit"]
+[node name="CanvasPanel" type="PanelContainer" parent="HSplit" unique_id=219376495]
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="Canvas" type="TextureRect" parent="HSplit/CanvasPanel"]
+[node name="Canvas" type="TextureRect" parent="HSplit/CanvasPanel" unique_id=1229295357]
 layout_mode = 2
-stretch_mode = 5
 expand_mode = 1
+stretch_mode = 5
 
-[node name="SettingsPanel" type="PanelContainer" parent="HSplit"]
+[node name="SettingsPanel" type="PanelContainer" parent="HSplit" unique_id=775799336]
 custom_minimum_size = Vector2(260, 0)
 layout_mode = 2
 
-[node name="VBox" type="VBoxContainer" parent="HSplit/SettingsPanel"]
+[node name="VBox" type="VBoxContainer" parent="HSplit/SettingsPanel" unique_id=1139373713]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="SettingsTitle" type="Label" parent="HSplit/SettingsPanel/VBox"]
+[node name="SettingsTitle" type="Label" parent="HSplit/SettingsPanel/VBox" unique_id=1321433672]
 layout_mode = 2
+theme_override_font_sizes/font_size = 16
 text = "World Settings"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 16
 
-[node name="Sep1" type="HSeparator" parent="HSplit/SettingsPanel/VBox"]
+[node name="Sep1" type="HSeparator" parent="HSplit/SettingsPanel/VBox" unique_id=820761670]
 layout_mode = 2
 
-[node name="NameRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+[node name="NameRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox" unique_id=269631642]
 layout_mode = 2
 
-[node name="NameLabel" type="Label" parent="HSplit/SettingsPanel/VBox/NameRow"]
+[node name="NameLabel" type="Label" parent="HSplit/SettingsPanel/VBox/NameRow" unique_id=1196651443]
 layout_mode = 2
-text = "World Name"
 size_flags_horizontal = 3
+text = "World Name"
 
-[node name="NameInput" type="LineEdit" parent="HSplit/SettingsPanel/VBox/NameRow"]
+[node name="NameInput" type="LineEdit" parent="HSplit/SettingsPanel/VBox/NameRow" unique_id=279472263]
 custom_minimum_size = Vector2(120, 0)
 layout_mode = 2
 text = "my_world"
 
-[node name="SeedRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+[node name="SeedRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox" unique_id=1586172625]
 layout_mode = 2
 
-[node name="SeedLabel" type="Label" parent="HSplit/SettingsPanel/VBox/SeedRow"]
+[node name="SeedLabel" type="Label" parent="HSplit/SettingsPanel/VBox/SeedRow" unique_id=824099961]
 layout_mode = 2
-text = "Seed"
 size_flags_horizontal = 3
+text = "Seed"
 
-[node name="SeedInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/SeedRow"]
+[node name="SeedInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/SeedRow" unique_id=300031986]
 layout_mode = 2
 min_value = 1.0
 max_value = 999999.0
 value = 12345.0
 
-[node name="PresetRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+[node name="PresetRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox" unique_id=1852191063]
 layout_mode = 2
 
-[node name="PresetLabel" type="Label" parent="HSplit/SettingsPanel/VBox/PresetRow"]
+[node name="PresetLabel" type="Label" parent="HSplit/SettingsPanel/VBox/PresetRow" unique_id=499656390]
 layout_mode = 2
-text = "Terrain Style"
 size_flags_horizontal = 3
+text = "Terrain Style"
 
-[node name="PresetOption" type="OptionButton" parent="HSplit/SettingsPanel/VBox/PresetRow"]
+[node name="PresetOption" type="OptionButton" parent="HSplit/SettingsPanel/VBox/PresetRow" unique_id=2063277753]
 layout_mode = 2
+selected = 2
 item_count = 4
 popup/item_0/text = "Flat"
+popup/item_0/id = 0
 popup/item_1/text = "Plains"
+popup/item_1/id = 1
 popup/item_2/text = "Hills (default, matches procedural gameplay mode)"
 popup/item_2/id = 2
 popup/item_3/text = "Mountains"
 popup/item_3/id = 3
-selected = 2
 
-[node name="HeightRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+[node name="HeightRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox" unique_id=800995363]
 layout_mode = 2
 
-[node name="HeightLabel" type="Label" parent="HSplit/SettingsPanel/VBox/HeightRow"]
+[node name="HeightLabel" type="Label" parent="HSplit/SettingsPanel/VBox/HeightRow" unique_id=552280101]
 layout_mode = 2
-text = "Terrain Height"
 size_flags_horizontal = 3
+text = "Terrain Height"
 
-[node name="HeightInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/HeightRow"]
+[node name="HeightInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/HeightRow" unique_id=669867451]
 layout_mode = 2
 min_value = 1.0
 max_value = 15.0
-step = 1.0
 value = 10.0
 
-[node name="FreqRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+[node name="FreqRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox" unique_id=345647403]
 layout_mode = 2
 
-[node name="FreqLabel" type="Label" parent="HSplit/SettingsPanel/VBox/FreqRow"]
+[node name="FreqLabel" type="Label" parent="HSplit/SettingsPanel/VBox/FreqRow" unique_id=801855413]
 layout_mode = 2
-text = "Noise Frequency"
 size_flags_horizontal = 3
+text = "Noise Frequency"
 
-[node name="FreqInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/FreqRow"]
+[node name="FreqInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/FreqRow" unique_id=1603342826]
 layout_mode = 2
 min_value = 0.001
 max_value = 0.2
 step = 0.001
 value = 0.1
 
-[node name="RoadSpacingRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox"]
+[node name="RoadSpacingRow" type="HBoxContainer" parent="HSplit/SettingsPanel/VBox" unique_id=490280112]
 layout_mode = 2
 
-[node name="RoadSpacingLabel" type="Label" parent="HSplit/SettingsPanel/VBox/RoadSpacingRow"]
+[node name="RoadSpacingLabel" type="Label" parent="HSplit/SettingsPanel/VBox/RoadSpacingRow" unique_id=1610475547]
 layout_mode = 2
-text = "Road Spacing"
 size_flags_horizontal = 3
+text = "Road Spacing"
 
-[node name="RoadSpacingInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/RoadSpacingRow"]
+[node name="RoadSpacingInput" type="SpinBox" parent="HSplit/SettingsPanel/VBox/RoadSpacingRow" unique_id=516585670]
 layout_mode = 2
 min_value = 50.0
 max_value = 500.0
 step = 10.0
 value = 100.0
 
-[node name="Sep2" type="HSeparator" parent="HSplit/SettingsPanel/VBox"]
+[node name="Sep2" type="HSeparator" parent="HSplit/SettingsPanel/VBox" unique_id=1554219864]
 layout_mode = 2
 
-[node name="ToolsTitle" type="Label" parent="HSplit/SettingsPanel/VBox"]
+[node name="ToolsTitle" type="Label" parent="HSplit/SettingsPanel/VBox" unique_id=1415113117]
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
 text = "Paint Tools"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 14
 
-[node name="ToolsInfo" type="Label" parent="HSplit/SettingsPanel/VBox"]
+[node name="ToolsInfo" type="Label" parent="HSplit/SettingsPanel/VBox" unique_id=984572647]
 layout_mode = 2
+theme_override_font_sizes/font_size = 11
 text = "1 = Sand  2 = Snow  3 = Gravel
 4 = Road   5 = Erase  0 = None"
-theme_override_font_sizes/font_size = 11
 
-[node name="Sep3" type="HSeparator" parent="HSplit/SettingsPanel/VBox"]
+[node name="Sep3" type="HSeparator" parent="HSplit/SettingsPanel/VBox" unique_id=236268419]
 layout_mode = 2
 
-[node name="WorldsLabel" type="Label" parent="HSplit/SettingsPanel/VBox"]
+[node name="WorldsLabel" type="Label" parent="HSplit/SettingsPanel/VBox" unique_id=1209994492]
 layout_mode = 2
+theme_override_font_sizes/font_size = 14
 text = "Existing Worlds"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 14
 
-[node name="WorldList" type="ItemList" parent="HSplit/SettingsPanel/VBox"]
+[node name="WorldList" type="ItemList" parent="HSplit/SettingsPanel/VBox" unique_id=1414633105]
+custom_minimum_size = Vector2(0, 120)
 layout_mode = 2
 size_flags_vertical = 3
-custom_minimum_size = Vector2(0, 120)
 theme_override_font_sizes/font_size = 11
 
-[node name="InfoLabel" type="Label" parent="HSplit/SettingsPanel/VBox"]
+[node name="InfoLabel" type="Label" parent="HSplit/SettingsPanel/VBox" unique_id=857036153]
 layout_mode = 2
+theme_override_font_sizes/font_size = 11
 text = "Map: 2048×2048 (2km × 2km)
 Click world → Load to edit"
-theme_override_font_sizes/font_size = 11
 autowrap_mode = 2

@@ -231,6 +231,10 @@ func _setup_visual_overlays() -> void:
 	minimap.position = Vector2(15, 90)  # Below compass area
 	add_child(minimap)
 	
+	# Ensure it renders behind GameMenu and other overlays
+	if has_node("GameMenu"):
+		move_child(minimap, get_node("GameMenu").get_index())
+	
 	# Initial check (standardization to SaveManager as per project logic)
 	_connect_to_save_manager()
 
