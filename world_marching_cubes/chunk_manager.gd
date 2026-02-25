@@ -236,7 +236,10 @@ func _ready():
 	if world_definition_path != "":
 		world_map_active = true
 		world_map_max_height = terrain_height * 2.5
-		print("[ChunkManager] World map mode: %s" % world_definition_path)
+		# Disable procedural road overlay in fragment shader — world map roads
+		# are controlled by the material buffer (depth-limited to 2 blocks)
+		material_terrain.set_shader_parameter("procedural_road_enabled", false)
+		print("[ChunkManager] World map mode: %s (procedural road overlay disabled)" % world_definition_path)
 	
 	# Start GPU thread
 	compute_thread = Thread.new()

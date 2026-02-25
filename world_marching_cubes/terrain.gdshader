@@ -249,7 +249,8 @@ vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col
 		else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
 		else return col_grass;
 	} else {
-		// Natural voxel: Ignore jagged vertex ID, generate color per-pixel perfectly
+		// Natural voxel: honor road material, otherwise use procedural per-pixel color
+		if (id == 6) return col_road;
 		return procedural_col;
 	}
 }

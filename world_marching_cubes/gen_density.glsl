@@ -282,7 +282,17 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
             if (stone_var > 0.25) return 9u;
             return 1u;
         }
-        return sample_world_biome(world_pos.xz);
+        // Check road buffer — roads override biome (only top 2 blocks, like procedural mode)
+        vec2 road_data = sample_world_road(world_pos.xz);
+        if (road_data.x > 128.0 && depth < 2.0) {
+            return 6u;  // Road (asphalt)
+        }
+        uint biome_id = sample_world_biome(world_pos.xz);
+        // Biome PNG also stores road (6) — enforce same depth limit
+        if (biome_id == 6u) {
+            return (depth < 2.0) ? 6u : 0u;  // Road surface only, grass below
+        }
+        return biome_id;
     }
     
     // === PROCEDURAL MODE ===
