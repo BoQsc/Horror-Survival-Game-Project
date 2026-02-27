@@ -117,29 +117,21 @@ func _physics_process(delta: float) -> void:
 	PerformanceMonitor.end_measure("Player Movement", 1.0)
 
 func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
-	# Less restrictive: allow step up even if technically "in air" for 1-2 frames
-	# due to Godot's capsule bouncing on the step corner, as long as we aren't jumping up fast.
 	if player.velocity.y > JUMP_VELOCITY * 0.5:
 		return
 		
-	# Use raw input direction instead of velocity, because playing pushing into a wall 
-	# has their h_velocity zero'd out by move_and_slide()
 	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
 	if input_dir.length_squared() < 0.1:
 		return
 		
 	var dir := (player.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 	
-	# Detect if we hit a wall
 	if player.get_slide_collision_count() == 0:
 		return
 		
 	var hit_wall = false
 	for i in range(player.get_slide_collision_count()):
 		var col = player.get_slide_collision(i)
-		# Is it a wall? (angle > 45 deg or normal mostly horizontal)
-		# Capsule collision normal on a sharp corner might be exactly 45 deg! (0.785 rad)
-		# Lowering the threshold to 0.5 just to be safe.
 		if col.get_angle() > 0.5:  
 			hit_wall = true
 			break
@@ -147,44 +139,68 @@ func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 	if not hit_wall:
 		return
 		
-	# Physics state for raycasting
 	var space = player.get_world_3d().direct_space_state
-	# Capsule radius is typically 0.5. We must cast *past* the capsule radius!
-	var forward_distance = 0.65
-	var offset = dir * forward_distance
+	var move_dist = current_speed() * delta
 	
-	# 1. Cast high ray forward to check if there is headroom.
-	# We start slightly above max_step_height to see if the space above the step is clear.
-	var high_start = player.global_position + Vector3(0, MAX_STEP_HEIGHT + 0.1, 0)
-	var high_end = high_start + offset
-	var high_query = PhysicsRayQueryParameters3D.create(high_start, high_end, player.collision_mask, [player.get_rid()])
-	var high_result = space.intersect_ray(high_query)
+	# Step 1: Can we move forward if we were higher up?
+	# We use body_test_motion to sweep the player's entire collision capsule forward
+	var params = PhysicsTestMotionParameters3D.new()
+	var result = PhysicsTestMotionResult3D.new()
 	
-	if high_result:
-		return # Blocking wall above the step
+	# Start at a theoretical position on top of the maximum step height
+	var test_pos = player.global_transform
+	test_pos.origin.y += MAX_STEP_HEIGHT
+	
+	params.from = test_pos
+	params.motion = dir * move_dist * 2.0  # Sweep forward
+	params.margin = 0.08
+	params.exclude_bodies = [player.get_rid()]
+	
+	var blocked_high = PhysicsServer3D.body_test_motion(player.get_rid(), params, result)
+	
+	# If we hit a wall even when lifted up, it's too tall to step over
+	if blocked_high and result.get_collision_normal().angle_to(Vector3.UP) > 0.5:
+		return
 		
-	# 2. Cast down ray from high_end to find the step height
-	var down_end = high_end + Vector3(0, -MAX_STEP_HEIGHT - 0.2, 0)
-	var down_query = PhysicsRayQueryParameters3D.create(high_end, down_end, player.collision_mask, [player.get_rid()])
-	var down_result = space.intersect_ray(down_query)
-	
-	if down_result:
-		var step_y = down_result.position.y
-		var player_y = player.global_position.y
-		var diff = step_y - player_y
+	# Step 2: Since we can move forward up there, let's find exactly how far down the floor is.
+	# We create a shape query matching the player's collider
+	# We rely on the player's CollisionShape3D component
+	var col_shape_node = player.get_node_or_null("CollisionShape3D")
+	if not col_shape_node or not col_shape_node.shape:
+		return
 		
-		# Only step up if the difference is between 0.05 and MAX_STEP_HEIGHT
+	# Sweep DOWN from the safely moved-forward high position
+	var down_params = PhysicsTestMotionParameters3D.new()
+	var down_result = PhysicsTestMotionResult3D.new()
+	
+	# We position the query slightly forward on XZ, and MAX_STEP_HEIGHT up on Y
+	var sweep_start = player.global_transform
+	sweep_start.origin += dir * 0.2
+	sweep_start.origin.y += MAX_STEP_HEIGHT
+	
+	down_params.from = sweep_start
+	down_params.motion = Vector3(0, -MAX_STEP_HEIGHT - 0.2, 0) # Sweep down past current feet
+	down_params.margin = 0.08
+	down_params.exclude_bodies = [player.get_rid()]
+	
+	var hit_floor = PhysicsServer3D.body_test_motion(player.get_rid(), down_params, down_result)
+	
+	if hit_floor:
+		var step_y = down_result.get_travel().y
+		# The travel vector is how far down it moved before hitting. 
+		# We started MAX_STEP_HEIGHT above feet. So if it travels down less than MAX_STEP_HEIGHT,
+		# the floor is higher than our current feet.
+		
+		var diff = MAX_STEP_HEIGHT + step_y # step_y is negative
+		
 		if diff > 0.05 and diff <= MAX_STEP_HEIGHT:
-			# Valid step found! Snap player up.
 			var cam = player.get_node_or_null("Camera3D")
 			if cam:
-				cam.position.y -= diff # Offset camera down to counter player moving up
+				cam.position.y -= diff 
 			
 			var new_pos = player.global_position
-			new_pos.y = step_y + 0.01  # Small margin
-			
-			# To move forward smoothly, preserve momentum in XZ
-			new_pos += offset * (current_speed() * delta)
+			new_pos.y += diff + 0.001 
+			new_pos += dir * move_dist * 0.5 # nudge forward to get onto the step completely
 			
 			player.global_position = new_pos
 			is_stair_stepping = true
