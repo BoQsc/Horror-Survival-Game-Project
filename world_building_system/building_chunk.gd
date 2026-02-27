@@ -57,6 +57,9 @@ func _ready():
 	
 	# Setup Node Structure
 	static_body = StaticBody3D.new()
+	# The StaticBody3D needs the group so physics raycasts can identify what they hit
+	static_body.add_to_group("building_chunks")
+	
 	# Layer 1 = Default (Player/Physics)
 	# Layer 10 (512) = Terrain Special (for PickupItem detection)
 	static_body.collision_layer = 1 + 512 

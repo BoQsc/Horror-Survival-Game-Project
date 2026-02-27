@@ -186,6 +186,14 @@ func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 	var hit_floor = PhysicsServer3D.body_test_motion(player.get_rid(), down_params, down_result)
 	
 	if hit_floor:
+		# EXPLICIT TERRAIN CHECK: Only allow stair stepping on actual building blocks, not raw terrain.
+		# Check if the collider we are stepping onto is a building.
+		var floor_collider = down_result.get_collider()
+		if not floor_collider or not (floor_collider is Node) or (not floor_collider.is_in_group("building_chunks") and not floor_collider.is_in_group("placed_objects")):
+			# We are trying to step onto natural terrain or something else. Do not engage stair script.
+			# DebugManager.log_player("StairStep Ignored: Collider is %s, Groups: %s" % [floor_collider.name if floor_collider is Node else floor_collider, floor_collider.get_groups() if floor_collider is Node else "None"])
+			return
+			
 		var step_y = down_result.get_travel().y
 		# The travel vector is how far down it moved before hitting. 
 		# We started MAX_STEP_HEIGHT above feet. So if it travels down less than MAX_STEP_HEIGHT,
@@ -200,7 +208,12 @@ func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 			
 			var new_pos = player.global_position
 			new_pos.y += diff + 0.001 
-			new_pos += dir * move_dist * 0.5 # nudge forward to get onto the step completely
+			
+			# We DO NOT nudge the player forward here. 
+			# Adding forward position mathematically causes "hyper speed" climbing on steep, stepped terrain
+			# (like a mountain) because it bypasses collision velocity limits. 
+			# By only lifting the player up, `move_and_slide` on the NEXT physics frame 
+			# will naturally move them forward using their preserved input velocity now that the wall is gone.
 			
 			player.global_position = new_pos
 			is_stair_stepping = true
