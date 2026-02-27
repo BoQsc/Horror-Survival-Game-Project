@@ -32,6 +32,11 @@ var was_on_floor: bool = true
 var is_swimming: bool = false
 var was_swimming: bool = false
 
+# Stair Stepping
+const MAX_STEP_HEIGHT: float = 0.6
+const STEP_FORWARD_MARGIN: float = 0.1
+var is_stair_stepping: bool = false
+
 func _ready() -> void:
 	# Try to find local signals node
 	signals = get_node_or_null("../signals")
@@ -85,7 +90,11 @@ func _physics_process(delta: float) -> void:
 	else:
 		_handle_walking(delta)
 	
+	var pre_move_pos = player.global_position
 	player.move_and_slide()
+	
+	if not is_swimming:
+		_handle_stair_stepping(delta, pre_move_pos)
 	
 	# Clamp player to world map boundaries (only in world map mode)
 	if "terrain_manager" in player and player.terrain_manager \
@@ -102,6 +111,82 @@ func _physics_process(delta: float) -> void:
 	# Detect landing
 	check_landing()
 	PerformanceMonitor.end_measure("Player Movement", 1.0)
+
+func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
+	if not player.is_on_floor() or player.velocity.y > 0.1:
+		return
+		
+	# Use raw input direction instead of velocity, because playing pushing into a wall 
+	# has their h_velocity zero'd out by move_and_slide()
+	var input_dir := Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	if input_dir.length_squared() < 0.1:
+		return
+		
+	var dir := (player.transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	
+	# Detect if we hit a wall
+	if player.get_slide_collision_count() == 0:
+		return
+		
+	var hit_wall = false
+	for i in range(player.get_slide_collision_count()):
+		var col = player.get_slide_collision(i)
+		# Is it a wall? (angle > 45 deg or normal mostly horizontal)
+		if col.get_angle() > 0.8:  
+			hit_wall = true
+			break
+			
+	if not hit_wall:
+		return
+		
+	# Physics state for raycasting
+	var space = player.get_world_3d().direct_space_state
+	# Capsule radius is typically 0.5. We must cast *past* the capsule radius!
+	var forward_distance = 0.6 
+	var offset = dir * forward_distance
+	
+	# 1. Cast high ray forward to check if there is headroom.
+	# We start slightly above max_step_height to see if the space above the step is clear.
+	var high_start = player.global_position + Vector3(0, MAX_STEP_HEIGHT + 0.1, 0)
+	var high_end = high_start + offset
+	var high_query = PhysicsRayQueryParameters3D.create(high_start, high_end, player.collision_mask, [player.get_rid()])
+	var high_result = space.intersect_ray(high_query)
+	
+	if high_result:
+		# print("StairStep: Blocked above step")
+		return # Blocking wall above the step
+		
+	# 2. Cast down ray from high_end to find the step height
+	var down_end = high_end + Vector3(0, -MAX_STEP_HEIGHT - 0.2, 0)
+	var down_query = PhysicsRayQueryParameters3D.create(high_end, down_end, player.collision_mask, [player.get_rid()])
+	var down_result = space.intersect_ray(down_query)
+	
+	if down_result:
+		var step_y = down_result.position.y
+		var player_y = player.global_position.y
+		var diff = step_y - player_y
+		
+		# Only step up if the difference is between 0.05 and MAX_STEP_HEIGHT
+		if diff > 0.05 and diff <= MAX_STEP_HEIGHT:
+			# Valid step found! Snap player up.
+			var cam = player.get_node_or_null("Camera3D")
+			if cam:
+				cam.position.y -= diff # Offset camera down to counter player moving up
+			
+			var new_pos = player.global_position
+			new_pos.y = step_y + 0.01  # Small margin
+			
+			# To move forward smoothly, preserve momentum in XZ
+			new_pos += offset * (current_speed() * delta)
+			
+			player.global_position = new_pos
+			is_stair_stepping = true
+
+func current_speed() -> float:
+	var is_crouching = crouch.is_crouching if crouch else false
+	if is_crouching: return crouch.get_speed() if crouch else WALK_SPEED
+	elif is_sprinting: return SPRINT_SPEED
+	else: return WALK_SPEED
 
 func _update_water_state() -> void:
 	# Check Center of Mass (+0.9 is approx center of 1.8m player)
