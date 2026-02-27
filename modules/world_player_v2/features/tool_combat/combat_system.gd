@@ -911,6 +911,10 @@ func _do_axe_damage(item: Dictionary) -> void:
 				terrain_hit_audio_player.play()
 			
 			if terrain_damage[block_pos] >= TERRAIN_HP:
+				if terrain_break_audio_player:
+					terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
+					terrain_break_audio_player.play()
+					
 				# EXECUTE STRATEGY using brush registry
 				behavior.apply(terrain_manager, position, hit_normal)
 				terrain_damage.erase(block_pos)
@@ -918,6 +922,10 @@ func _do_axe_damage(item: Dictionary) -> void:
 				if mat_id >= 0:
 					_collect_terrain_resource(mat_id)
 		else:
+			if terrain_break_audio_player:
+				terrain_break_audio_player.pitch_scale = randf_range(0.95, 1.05)
+				terrain_break_audio_player.play()
+				
 			_emit_durability_hit(0, TERRAIN_HP, "Terrain", block_pos)
 			# EXECUTE STRATEGY using brush registry
 			behavior.apply(terrain_manager, position, hit_normal)
