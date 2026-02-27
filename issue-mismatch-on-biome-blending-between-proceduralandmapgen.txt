@@ -1,0 +1,18 @@
+Issue: Mismatch on Biome Blending between Procedural and Map Generator
+
+Description:
+There is a visual mismatch in how biome borders (and underground transitions) are blended between the Procedural Generation mode and the Map Generation mode.
+Note: While playing the game, you will notice that there are rectangular patches near road where biome meets road.
+
+1. Procedural Generation:
+The procedural terrain evaluates a continuous fractal noise value (FBM) per-pixel directly in the fragment shader (`terrain.gdshader`). This continuous value allows the shader to use `smoothstep` to create perfectly smooth, gradient transitions (e.g., 20-30 meters wide) between different biomes like grass, sand, and snow. It completely bypasses the raw integer chunk material IDs for its surface painting.
+
+2. Map Generator:
+The map generator generates a `biomes.png` image. Originally, this image stored discrete integer IDs (e.g., 0 for grass, 3 for sand). Because the map generator data is categorical, the shader could not perform continuous `smoothstep` math on it, resulting in blockier, voxel-aligned material transitions. 
+
+Attempts to fix:
+- Option A (Multi-tap Fragment Blur): Attempted to sample the `biomes.png` texture in the shader and blur it across neighboring pixels. This failed to replicate the wide, lush blending of the procedural noise and introduced syntax errors.
+- Option B (Continuous Noise Baking): Attempted to change the `world_map_generator.gd` to bake the raw, continuous FBM `-1.0 to 1.0` noise directly into the PNG as a 0-255 grayscale value, and decode it in the shader. This proved difficult to implement stably without breaking the underlying Voxel/Marching Cubes material block extraction.
+
+Current Status:
+Reverted back to the original implementation. The terrain remains blockier in Map Generator mode compared to Procedural mode.
