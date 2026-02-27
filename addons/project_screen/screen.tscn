@@ -1,0 +1,44 @@
+[gd_scene format=3 uid="uid://dyd33k87ye1xe"]
+
+[ext_resource type="Texture2D" uid="uid://da4kklukkog0p" path="res://icon.svg" id="1_m6pik"]
+
+[node name="Screen" type="Control" unique_id=1010826600]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 6
+size_flags_vertical = 6
+
+[node name="ColorRect" type="ColorRect" parent="." unique_id=647808659]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.14044744, 0.14044744, 0.14044744, 1)
+
+[node name="CenterContainer" type="CenterContainer" parent="." unique_id=1249920050]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer" unique_id=1469902420]
+layout_mode = 2
+
+[node name="TextureRect" type="TextureRect" parent="CenterContainer/VBoxContainer" unique_id=1982923845]
+custom_minimum_size = Vector2(100, 100)
+layout_mode = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+texture = ExtResource("1_m6pik")
+
+[node name="Label" type="Label" parent="CenterContainer/VBoxContainer" unique_id=24781394]
+layout_mode = 2
+text = "Horror Survival Game Project"
