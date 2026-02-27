@@ -200,9 +200,10 @@ static func get_vegetation_resource(veg_type: String) -> Dictionary:
 
 ## Get resource item by material ID
 static func get_resource_for_material(mat_id: int) -> Dictionary:
+	var base_mat_id = mat_id % 100 if mat_id >= 100 else mat_id
 	var resources = get_terrain_resources()
-	if resources.has(mat_id):
-		return resources[mat_id].duplicate()
+	if resources.has(base_mat_id):
+		return resources[base_mat_id].duplicate()
 	# Fallback to stone
 	return resources[1].duplicate()
 
