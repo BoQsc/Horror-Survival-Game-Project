@@ -44,6 +44,8 @@ uniform bool has_material_map = false;  // Whether this chunk has player-placed 
 // Debug visualization
 uniform bool debug_show_chunk_bounds = false;  // Toggle to show chunk boundary lines
 uniform bool debug_show_road_zones = false;   // Toggle to show road zone detection
+uniform bool use_world_map = false;           // Use exact material IDs instead of procedural noise
+
 
 varying vec3 world_pos;
 varying vec3 world_normal;
@@ -237,8 +239,8 @@ vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col
 	bool is_placed = (mat_id >= 100);
 	int id = is_placed ? (mat_id - 100) : mat_id;
 	
-	if (is_placed) {
-		// Player-placed materials (100+): Use absolute texture
+	if (is_placed || use_world_map) {
+		// Player-placed materials (100+) or World Map natural voxels: Use absolute texture
 		if (id == 0) return col_grass;
 		else if (id == 1) return col_stone;
 		else if (id == 2) return col_stone * vec3(1.2, 1.0, 0.5);  // Ore
@@ -249,7 +251,7 @@ vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col
 		else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
 		else return col_grass;
 	} else {
-		// Natural voxel: honor road material, otherwise use procedural per-pixel color
+		// Procedural Natural voxel: honor road material, otherwise use procedural per-pixel color
 		if (id == 6) return col_road;
 		return procedural_col;
 	}

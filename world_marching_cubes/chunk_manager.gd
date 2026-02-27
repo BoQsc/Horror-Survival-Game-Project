@@ -242,6 +242,7 @@ func _ready():
 		# Disable procedural road overlay in fragment shader — world map roads
 		# are controlled by the material buffer (depth-limited to 2 blocks)
 		material_terrain.set_shader_parameter("procedural_road_enabled", false)
+		material_terrain.set_shader_parameter("use_world_map", true)
 		print("[ChunkManager] World map mode: %s (procedural road overlay disabled)" % world_definition_path)
 	
 	# Start GPU thread
