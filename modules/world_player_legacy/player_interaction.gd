@@ -377,7 +377,8 @@ func _unhandled_input(event):
 			elif current_mode == Mode.MATERIAL:
 				material_brush_index = 0  # Small brush
 				material_brush_radius = material_brush_sizes[material_brush_index]
-			update_ui()
+			elif current_mode == Mode.BUILDING:
+				current_block_id = 5 # Stairs (2-Step)
 			update_ui()
 		elif event.keycode == KEY_6:
 			if current_mode == Mode.CONSTRUCT:
@@ -592,9 +593,10 @@ func update_ui():
 		if current_block_id == 2: block_name = "Ramp"
 		elif current_block_id == 3: block_name = "Sphere"
 		elif current_block_id == 4: block_name = "Stairs"
+		elif current_block_id == 5: block_name = "Stairs (2-Step)"
 		var mode_names = ["Snap", "Embed", "Auto"]
 		var mode_str = mode_names[placement_mode]
-		mode_label.text = "Mode: BUILDING (%s)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate, [V] Mode" % [mode_str, block_name, current_rotation]
+		mode_label.text = "Mode: BUILDING (%s)\nBlock: %s (Rot: %d)\nL-Click: Remove, R-Click: Add\nCTRL+Scroll: Rotate, [V] Mode\n[1-5] Select Block" % [mode_str, block_name, current_rotation]
 	elif current_mode == Mode.OBJECT:
 		var obj = ObjectRegistry.get_object(current_object_id)
 		var obj_name = obj.name if obj else "Unknown"

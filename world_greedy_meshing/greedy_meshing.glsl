@@ -316,6 +316,83 @@ void add_stairs(vec3 pos, uint r) {
     vec3 r_left = rotate_vector(left, r);
     vec3 r_right = rotate_vector(right, r);
     
+    // Configurable number of steps
+    int N_STEPS = 4;
+    float step_size = 1.0 / float(N_STEPS);
+    
+    // Generate N steps
+    for (int i = 0; i < N_STEPS; i++) {
+        float z_start = float(i) * step_size;
+        float y_top = float(i + 1) * step_size;
+        float y_bot = float(i) * step_size;
+        
+        // --- Treads (Horizontal Tops) ---
+        // Origin: X=0, Y=y_top, Z=z_start. U(1,0,0). V(0,0,1) len=step_size.
+        // But the previous config started from right (X=1) and used U(-1,0,0). Let's stick to convention.
+        // Origin (1, y_top, z_start). U(-1,0,0). V(0,0,1) len step_size.
+        vec3 p_st = pos + rotate_local(vec3(1.0, y_top, z_start), r);
+        vec3 u_st = rotate_vector(vec3(-1,0,0), r);
+        vec3 v_st = rotate_vector(vec3(0,0,1), r);
+        add_quad(p_st, u_st, v_st, 1.0, step_size, r_up);
+        
+        // --- Risers (Vertical Fronts) ---
+        // Origin (1, y_bot, z_start). U(-1,0,0). V(0,1,0) len step_size.
+        vec3 p_sf = pos + rotate_local(vec3(1.0, y_bot, z_start), r);
+        vec3 u_sf = rotate_vector(vec3(-1,0,0), r);
+        vec3 v_sf = rotate_vector(vec3(0,1,0), r);
+        add_quad(p_sf, u_sf, v_sf, 1.0, step_size, r_front);
+        
+        // --- Left Side Quads ---
+        // Origin (0, 0, z_start). U(0,0,1) len step_size. V(0,1,0) len y_top.
+        vec3 p_l = pos + rotate_local(vec3(0.0, 0.0, z_start), r);
+        vec3 u_l = rotate_vector(vec3(0,0,1), r);
+        vec3 v_l = rotate_vector(vec3(0,1,0), r);
+        add_quad(p_l, u_l, v_l, step_size, y_top, r_left);
+        
+        // --- Right Side Quads ---
+        // Origin (1, 0, z_start + step_size) -> Wait, original Right started at +Z and went -Z for correct winding.
+        // Original: Right 1 (Front/Bottom) Origin (1,0,0.5). U(0,0,-1) len 0.5. V(0,1,0) len 0.5
+        // So Origin (1, 0, z_start + step_size). U(0,0,-1) len step_size. V(0,1,0) len y_top
+        vec3 p_r = pos + rotate_local(vec3(1.0, 0.0, z_start + step_size), r);
+        vec3 u_r = rotate_vector(vec3(0,0,-1), r);
+        vec3 v_r = rotate_vector(vec3(0,1,0), r);
+        add_quad(p_r, u_r, v_r, step_size, y_top, r_right);
+    }
+    
+    // --- Common ---
+    
+    // Bottom (Full)
+    // Origin (0,0,0). U(1,0,0). V(0,0,1).
+    vec3 p_bot = pos + rotate_local(vec3(0.0, 0.0, 0.0), r);
+    vec3 u_bot = rotate_vector(vec3(1,0,0), r);
+    vec3 v_bot = rotate_vector(vec3(0,0,1), r);
+    add_quad(p_bot, u_bot, v_bot, 1.0, 1.0, r_down);
+    
+    // Back (Full)
+    // Origin (0,0,1). U(1,0,0). V(0,1,0).
+    vec3 p_back = pos + rotate_local(vec3(0.0, 0.0, 1.0), r);
+    vec3 u_back = rotate_vector(vec3(1,0,0), r);
+    vec3 v_back = rotate_vector(vec3(0,1,0), r);
+    add_quad(p_back, u_back, v_back, 1.0, 1.0, r_back);
+}
+
+void add_stairs_2step(vec3 pos, uint r) {
+    // Normals (Local)
+    vec3 up = vec3(0,1,0);
+    vec3 down = vec3(0,-1,0);
+    vec3 front = vec3(0,0,-1); // "Front" faces -Z
+    vec3 back = vec3(0,0,1);
+    vec3 left = vec3(-1,0,0);
+    vec3 right = vec3(1,0,0);
+    
+    // Rotate Normals
+    vec3 r_up = rotate_vector(up, r);
+    vec3 r_down = rotate_vector(down, r);
+    vec3 r_front = rotate_vector(front, r);
+    vec3 r_back = rotate_vector(back, r);
+    vec3 r_left = rotate_vector(left, r);
+    vec3 r_right = rotate_vector(right, r);
+    
     // --- Step 1 (Bottom/Front) ---
     
     // 1. Bottom Step Top (Horizontal)
@@ -428,6 +505,12 @@ void main() {
     if (type == 4u) {
         uint meta = uint(round(texelFetch(voxel_meta, id, 0).r));
         add_stairs(pos, meta);
+        return;
+    }
+    
+    if (type == 5u) {
+        uint meta = uint(round(texelFetch(voxel_meta, id, 0).r));
+        add_stairs_2step(pos, meta);
         return;
     }
     

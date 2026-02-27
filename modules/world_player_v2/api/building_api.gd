@@ -48,7 +48,7 @@ var auto_embed_threshold: float = 0.2
 var fill_info: Dictionary = {}
 
 # Block names for UI
-const BLOCK_NAMES = ["", "Cube", "Ramp", "Sphere", "Stairs"]
+const BLOCK_NAMES = ["", "Cube", "Ramp", "Sphere", "Stairs", "Stairs (2-Step)"]
 
 signal block_placed(position: Vector3, block_id: int, rotation: int)
 signal block_removed(position: Vector3)
@@ -99,14 +99,14 @@ func _create_grid_visualizer() -> void:
 	
 	get_tree().root.add_child.call_deferred(grid_visualizer)
 
-## Set current block type (1-4)
+## Set current block type (1-5)
 func set_block_id(id: int) -> void:
-	current_block_id = clampi(id, 1, 4)
+	current_block_id = clampi(id, 1, 5)
 	print("BuildingAPI: Block -> %s" % get_block_name())
 
 ## Get current block name
 func get_block_name() -> String:
-	if current_block_id >= 1 and current_block_id <= 4:
+	if current_block_id >= 1 and current_block_id <= 5:
 		return BLOCK_NAMES[current_block_id]
 	return "Unknown"
 
