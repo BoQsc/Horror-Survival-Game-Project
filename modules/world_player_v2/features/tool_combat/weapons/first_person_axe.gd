@@ -3,7 +3,7 @@ class_name FirstPersonAxeV2
 ## FirstPersonAxe - Handles first-person axe visuals
 ## Shows axe when equipped, plays animations on attack
 
-const AXE_SCENE_PATH: String = "res://game/assets/player_axe/1/animated_fps_axe.glb"
+const AXE_SCENE_PATH: String = "res://models/items/player_axe/1/animated_fps_axe.glb"
 const SWAY_AMOUNT: float = 0.002
 const SWAY_SMOOTHING: float = 10.0
 const BOB_FREQ: float = 10.0

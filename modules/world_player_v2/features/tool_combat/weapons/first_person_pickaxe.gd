@@ -3,7 +3,7 @@ class_name FirstPersonPickaxeV2
 ## FirstPersonPickaxe - Handles first-person pickaxe visuals
 ## Shows pickaxe when equipped, plays animations on attack
 
-const PICKAXE_SCENE_PATH: String = "res://game/assets/player_pickaxe/1/sketchfab_scene.tscn"
+const PICKAXE_SCENE_PATH: String = "res://models/items/player_pickaxe/1/sketchfab_scene.tscn"
 const SWAY_AMOUNT: float = 0.002
 const SWAY_SMOOTHING: float = 10.0
 const BOB_FREQ: float = 10.0

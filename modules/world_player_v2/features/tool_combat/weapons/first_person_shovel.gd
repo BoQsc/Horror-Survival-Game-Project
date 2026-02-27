@@ -3,7 +3,7 @@ class_name FirstPersonShovel
 ## FirstPersonShovel - Handles first-person shovel visuals
 ## Shows shovel when equipped, plays animations on attack
 
-const SHOVEL_SCENE_PATH: String = "res://game/assets/player_shovel/1/sketchfab_scene.tscn"
+const SHOVEL_SCENE_PATH: String = "res://models/items/player_shovel/1/sketchfab_scene.tscn"
 const SWAY_AMOUNT: float = 0.002
 const SWAY_SMOOTHING: float = 10.0
 const BOB_FREQ: float = 10.0
