@@ -110,10 +110,16 @@ func _physics_process(delta: float) -> void:
 	
 	# Detect landing
 	check_landing()
+	
+	# Reset stair stepping flag for the next frame
+	is_stair_stepping = false
+	
 	PerformanceMonitor.end_measure("Player Movement", 1.0)
 
 func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
-	if not player.is_on_floor() or player.velocity.y > 0.1:
+	# Less restrictive: allow step up even if technically "in air" for 1-2 frames
+	# due to Godot's capsule bouncing on the step corner, as long as we aren't jumping up fast.
+	if player.velocity.y > JUMP_VELOCITY * 0.5:
 		return
 		
 	# Use raw input direction instead of velocity, because playing pushing into a wall 
@@ -132,7 +138,9 @@ func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 	for i in range(player.get_slide_collision_count()):
 		var col = player.get_slide_collision(i)
 		# Is it a wall? (angle > 45 deg or normal mostly horizontal)
-		if col.get_angle() > 0.8:  
+		# Capsule collision normal on a sharp corner might be exactly 45 deg! (0.785 rad)
+		# Lowering the threshold to 0.5 just to be safe.
+		if col.get_angle() > 0.5:  
 			hit_wall = true
 			break
 			
@@ -142,7 +150,7 @@ func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 	# Physics state for raycasting
 	var space = player.get_world_3d().direct_space_state
 	# Capsule radius is typically 0.5. We must cast *past* the capsule radius!
-	var forward_distance = 0.6 
+	var forward_distance = 0.65
 	var offset = dir * forward_distance
 	
 	# 1. Cast high ray forward to check if there is headroom.
@@ -153,7 +161,6 @@ func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 	var high_result = space.intersect_ray(high_query)
 	
 	if high_result:
-		# print("StairStep: Blocked above step")
 		return # Blocking wall above the step
 		
 	# 2. Cast down ray from high_end to find the step height
@@ -335,11 +342,16 @@ func _play_random_footstep() -> void:
 	footstep_player.play()
 
 func check_landing() -> void:
-	var on_floor_now = player.is_on_floor()
+	# If we are being forced up a step by the custom stair script, 
+	# Godot might temporarily think we are airborne.
+	# We force 'on_floor_now' to be true here so we don't trigger a landing sound next frame.
+	var on_floor_now = player.is_on_floor() or is_stair_stepping
+	
 	if on_floor_now and not was_on_floor:
 		_emit_landed()
 		# Play footstep on landing too
 		_play_random_footstep()
+		
 	was_on_floor = on_floor_now
 
 func _emit_landed() -> void:
