@@ -179,6 +179,12 @@ func _process(_delta: float) -> void:
 	
 	_texture_rect.texture = ImageTexture.create_from_image(cropped)
 	
+	# Update arrow position dynamically to handle world map borders
+	var scale_factor = float(MINIMAP_SIZE) / float(crop_size)
+	var arrow_x = (px - float(x0)) * scale_factor + 2.0  # +2 accounts for texture rect margin
+	var arrow_y = (pz - float(z0)) * scale_factor + 2.0
+	_player_arrow.position = Vector2(arrow_x, arrow_y)
+	
 	# Rotate arrow to match player facing direction
 	var forward = -_player.global_transform.basis.z
 	var angle = atan2(forward.x, -forward.z)  # North (-Z) is 0 rad (UP)
