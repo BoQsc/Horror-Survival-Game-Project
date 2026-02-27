@@ -9,31 +9,37 @@ const OBJECTS = {
 		"name": "Cardboard Box",
 		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.tscn",
 		"size": Vector3i(1, 1, 1),
+		"material": "paper",
 	},
 	2: {
 		"name": "Long Crate",
 		"scene": "res://models/objects/crate/1/simple_long_crate.tscn", 
 		"size": Vector3i(2, 1, 1),
+		"material": "wood",
 	},
 	3: {
 		"name": "Wooden Table",
 		"scene": "res://models/objects/table/1/psx_wooden_table.tscn",
 		"size": Vector3i(2, 1, 1),
+		"material": "wood",
 	},
 	4: {
 		"name": "Door",
 		"scene": "res://models/objects/interactive_door/interactive_door.tscn",
 		"size": Vector3i(1, 2, 1),
+		"material": "wood",
 	},
 	5: {
 		"name": "Window",
 		"scene": "res://models/objects/window/1/window.tscn",
 		"size": Vector3i(1, 1, 1),
+		"material": "wood",
 	},
 	6: {
 		"name": "Heavy Pistol",
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn",
 		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
+		"material": "metal",
 	},
 }
 

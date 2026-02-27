@@ -1326,6 +1326,22 @@ func _try_damage_placed_object(target: Node, item: Dictionary, _position: Vector
 	
 	_emit_durability_hit(current_hp, OBJECT_HP, target.name, durability_target)
 	
+	# Play sound if object is made of wood
+	if target.has_meta("anchor") and target.has_meta("chunk"):
+		var anchor = target.get_meta("anchor")
+		var chunk = target.get_meta("chunk")
+		if chunk and chunk.objects.has(anchor):
+			var object_id = chunk.objects[anchor].get("object_id", 0)
+			var obj_def = ObjectRegistry.get_object(object_id)
+			if obj_def.get("material", "") == "wood":
+				if object_damage[obj_rid] >= OBJECT_HP:
+					# Play break sound (range 4)
+					_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["break"])
+				else:
+					# Play random hit sound (ranges 1-3)
+					var rand_idx = randi() % 3 + 1
+					_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["hit_%d" % rand_idx])
+
 	if object_damage[obj_rid] >= OBJECT_HP:
 		if target.has_meta("anchor") and target.has_meta("chunk"):
 			var anchor = target.get_meta("anchor")
