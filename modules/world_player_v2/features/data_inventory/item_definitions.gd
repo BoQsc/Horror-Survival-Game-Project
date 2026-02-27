@@ -61,9 +61,9 @@ static func get_test_items() -> Array[Dictionary]:
 		{
 			"id": "shovel",
 			"name": "Shovel",
-			"category": ItemCategory.SHOVEL,
-			"damage": 0,
-			"mining_strength": 0.0,
+			"category": ItemCategory.TOOL,
+			"damage": 2,
+			"mining_strength": 1.5,
 			"stack_size": 1
 		},
 		# Slot 4 (key 5): Dirt

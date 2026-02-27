@@ -672,8 +672,8 @@ func do_tool_attack(item: Dictionary) -> void:
 		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
 		return  # Exit - damage will happen after delay
 	
-	# Handle pickaxe - delay raycast AND damage to match animation (Option A: Raycast at Impact)
-	if "pickaxe" in item_id:
+	# Handle pickaxe/shovel - delay raycast AND damage to match animation (Option A: Raycast at Impact)
+	if "pickaxe" in item_id or "shovel" in item_id:
 		if not pickaxe_ready:
 			print("PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)")
 			return
@@ -730,7 +730,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		# Resolve behavior via Registry
 		if brush_registry:
 			# Check global overrides
-			if "pickaxe" in item_id:
+			if "pickaxe" in item_id or "shovel" in item_id:
 				var block_mode_enabled = false
 				if has_node("/root/ToolConfig") and get_node("/root/ToolConfig").pickaxe_dig_enabled:
 					block_mode_enabled = true
@@ -755,7 +755,7 @@ func do_tool_attack(item: Dictionary) -> void:
 			behavior.shape_type = VoxelBrush.ShapeType.SPHERE
 		
 		# OVERRIDE: Apply config values to behavior (overrides preset .tres values)
-		if behavior and "pickaxe" in item_id and has_node("/root/ToolConfig"):
+		if behavior and ("pickaxe" in item_id or "shovel" in item_id) and has_node("/root/ToolConfig"):
 			var config = get_node("/root/ToolConfig")
 			behavior.radius = max(config.pickaxe_mining_radius, 0.5)
 			# Debug: print("Pickaxe radius override: %.2f" % behavior.radius)
@@ -766,7 +766,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		
 		# Check durability config
 		var use_durability = false
-		if "pickaxe" in item_id and has_node("/root/ToolConfig"):
+		if ("pickaxe" in item_id or "shovel" in item_id) and has_node("/root/ToolConfig"):
 			use_durability = get_node("/root/ToolConfig").pickaxe_durability_enabled
 			
 		# Snap for durability tracking based on COMPATIBILITY mode

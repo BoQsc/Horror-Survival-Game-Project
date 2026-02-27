@@ -176,7 +176,7 @@ func _input(event: InputEvent) -> void:
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var was_active = is_active
-	is_active = (item_id == "shovel")
+	is_active = (item_id == "terraformer")
 	
 	if is_active:
 		var mat_name = "Grass"

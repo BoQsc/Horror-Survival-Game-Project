@@ -19,6 +19,9 @@ var prefab_spawner: Node = null
 # API reference for terrain visualization
 var terrain_api: Node = null
 
+# Terraformer tool reference
+var terraformer: Node = null
+
 # Editor state
 var brush_size: float = 4.0
 var brush_shape: int = 0 # 0=Sphere, 1=Box
@@ -47,6 +50,7 @@ func _ready() -> void:
 	# Find movement component
 	if player:
 		movement_component = player.get_node_or_null("Components/Movement")
+		terraformer = player.get_node_or_null("Components/FirstPersonTerraformer")
 	
 	# Find managers via groups
 	await get_tree().process_frame
@@ -145,6 +149,9 @@ func handle_primary(item: Dictionary) -> void:
 		1: _do_water_remove()
 		2: _do_road_click()
 		3: pass
+		4: 
+			if terraformer and terraformer.has_method("do_primary_action"):
+				terraformer.do_primary_action()
 		5: _do_legacy_dirt_dig()
 
 func handle_secondary(item: Dictionary) -> void:
@@ -172,6 +179,9 @@ func handle_secondary(item: Dictionary) -> void:
 		1: _do_water_add()
 		2: _do_road_click()
 		3: _do_prefab_place()
+		4: 
+			if terraformer and terraformer.has_method("do_secondary_action"):
+				terraformer.do_secondary_action()
 		5: _do_legacy_dirt_place()
 
 func _do_terrain_dig() -> void:

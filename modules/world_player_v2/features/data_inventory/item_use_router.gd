@@ -95,13 +95,12 @@ func route_primary_action(item: Dictionary) -> void:
 
 		return
 	
-	var current_mode = "UNKNOWN"
 	if mode_manager.is_editor_mode():
-		current_mode = "EDITOR"
+		pass
 	elif mode_manager.is_build_mode():
-		current_mode = "BUILD"  
+		pass
 	else:
-		current_mode = "COMBAT"
+		pass
 	
 
 	

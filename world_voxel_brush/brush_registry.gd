@@ -59,9 +59,11 @@ func _load_defaults() -> void:
 	if api_sphere: register_tool("api_sphere", api_sphere)
 	
 	# Set default assignments
-	if block_mode: register_tool("pickaxe", block_mode)
-	if terra_dig: register_tool("shovel_primary", terra_dig)
-	if terra_place: register_tool("shovel_secondary", terra_place)
+	if block_mode: 
+		register_tool("pickaxe", block_mode)
+		register_tool("shovel", block_mode)
+	if terra_dig: register_tool("terraformer_dig", terra_dig)
+	if terra_place: register_tool("terraformer_place", terra_place)
 	if fist: register_tool("fist", fist)
 
 func register_tool(item_id: String, active_brush: VoxelBrush) -> void:
