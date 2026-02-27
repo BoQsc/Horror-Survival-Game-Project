@@ -152,7 +152,6 @@ func handle_primary(item: Dictionary) -> void:
 		4: 
 			if terraformer and terraformer.has_method("do_primary_action"):
 				terraformer.do_primary_action()
-		5: _do_legacy_dirt_dig()
 
 func handle_secondary(item: Dictionary) -> void:
 	if not mode_manager:
@@ -182,7 +181,6 @@ func handle_secondary(item: Dictionary) -> void:
 		4: 
 			if terraformer and terraformer.has_method("do_secondary_action"):
 				terraformer.do_secondary_action()
-		5: _do_legacy_dirt_place()
 
 func _do_terrain_dig() -> void:
 	if not player or not terrain_manager:
@@ -325,31 +323,3 @@ func _get_current_prefab_name() -> String:
 	if available_prefabs.is_empty():
 		return "None"
 	return available_prefabs[current_prefab_index].get_file().get_basename()
-
-func _do_legacy_dirt_dig() -> void:
-	if not player or not terrain_manager:
-		return
-	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
-	if hit.is_empty():
-		return
-	
-	var position = hit.get("position", Vector3.ZERO)
-	position = position - hit.get("normal", Vector3.ZERO) * 0.1
-	position = Vector3(floor(position.x) + 0.5, floor(position.y) + 0.5, floor(position.z) + 0.5)
-	
-	terrain_manager.modify_terrain(position, 0.6, 0.5, 1, 0)
-
-func _do_legacy_dirt_place() -> void:
-	if not player or not terrain_manager:
-		return
-	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
-	if hit.is_empty():
-		return
-	
-	var position = hit.get("position", Vector3.ZERO)
-	position = position + hit.get("normal", Vector3.ZERO) * 0.1
-	position = Vector3(floor(position.x) + 0.5, floor(position.y) + 0.5, floor(position.z) + 0.5)
-	
-	terrain_manager.modify_terrain(position, 0.6, -0.5, 1, 0)

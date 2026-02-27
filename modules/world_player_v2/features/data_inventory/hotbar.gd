@@ -67,7 +67,6 @@ func _init_editor_slots() -> void:
 		{"id": "editor_water", "name": "Water", "category": 0, "editor_submode": 1},
 		{"id": "editor_road", "name": "Road", "category": 0, "editor_submode": 2},
 		{"id": "editor_prefab", "name": "Prefab", "category": 0, "editor_submode": 3},
-		{"id": "editor_legacy_dirt", "name": "OldDirt", "category": 0, "editor_submode": 5},
 		{"id": "terraformer", "name": "Terra", "category": 7, "editor_submode": 4},
 	]
 	for tool_item in tools:
