@@ -56,7 +56,8 @@ var semaphore: Semaphore
 var exit_thread: bool = false
 
 # CPU Worker Pool (for mesh building and collision)
-const CPU_WORKER_COUNT = 2
+# Dynamically scale workers based on available CPU cores (leave 2 for OS/Main Thread)
+var _cpu_worker_count: int = max(2, OS.get_processor_count() - 2)
 var cpu_threads: Array[Thread] = []
 var cpu_task_queue: Array[Dictionary] = []
 var cpu_mutex: Mutex
@@ -250,11 +251,11 @@ func _ready():
 	compute_thread.start(_thread_function)
 	
 	# Start CPU worker pool
-	for i in range(CPU_WORKER_COUNT):
+	for i in range(_cpu_worker_count):
 		var thread = Thread.new()
 		thread.start(_cpu_thread_function)
 		cpu_threads.append(thread)
-	DebugManager.log_chunk("Started %d CPU workers" % CPU_WORKER_COUNT)
+	DebugManager.log_chunk("Started %d CPU workers" % _cpu_worker_count)
 	
 	# Calculate initial load target (all chunks within render distance)
 	# For ground-level players, we only load Y=0, same chunk count as before
@@ -915,7 +916,7 @@ func _exit_tree():
 	semaphore.post()
 	
 	# Signal all CPU workers to exit
-	for i in range(CPU_WORKER_COUNT):
+	for i in range(_cpu_worker_count):
 		cpu_semaphore.post()
 	
 	# 5. Wait for GPU thread to finish (processes remaining "free" tasks)
