@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://dyd33k87ye1xe"]
 
 [ext_resource type="Texture2D" uid="uid://da4kklukkog0p" path="res://icon.svg" id="1_m6pik"]
+[ext_resource type="Texture2D" uid="uid://cblrhxvlkufkt" path="res://addons/project_screen/CC0_button.png" id="2_cej3u"]
 
 [node name="Screen" type="Control" unique_id=1010826600]
 layout_mode = 3
@@ -42,3 +43,43 @@ texture = ExtResource("1_m6pik")
 [node name="Label" type="Label" parent="CenterContainer/VBoxContainer" unique_id=24781394]
 layout_mode = 2
 text = "Horror Survival Game Project"
+horizontal_alignment = 1
+
+[node name="CenterContainer2" type="CenterContainer" parent="." unique_id=950620154]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -20.0
+offset_top = -40.0
+offset_right = 20.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer2" unique_id=661878152]
+layout_mode = 2
+
+[node name="Label2" type="Label" parent="CenterContainer2/VBoxContainer" unique_id=1955913008]
+layout_mode = 2
+text = "CC0 This work has been marked as dedicated to the public domain."
+
+[node name="TextureRect2" type="TextureRect" parent="CenterContainer2/VBoxContainer/Label2" unique_id=1058503793]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -87.28999
+offset_top = -71.5
+offset_right = 62.710022
+offset_bottom = -21.45
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 4
+size_flags_vertical = 4
+texture = ExtResource("2_cej3u")
+expand_mode = 3
