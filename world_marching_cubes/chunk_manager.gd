@@ -101,11 +101,16 @@ class ChunkData:
 	var chunk_material: ShaderMaterial = null # Per-chunk material instance
 	# Modification version - incremented on each modify, used to skip stale updates
 	var mod_version: int = 0
+	var lod: int = 0 # 0=FULL, 1=HALF, 2=QUARTER, etc.
 
 var active_chunks: Dictionary = {}
 
 # Collision distance - only enable collision within this range (cheaper than render_distance)
 @export var collision_distance: int = 3 # Chunks within this get collision
+
+## LOD Distances (Thresholds in units from player to switch to higher LOD)
+## Distances are in world units (meters).
+@export var lod_distances: Array[float] = [64.0, 128.0, 256.0, 512.0]
 
 # Time-budgeted node creation - prevents stutters from multiple chunks completing at once
 var pending_nodes: Array[Dictionary] = [] # Queue of completed chunks waiting for node creation
@@ -784,7 +789,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 						chunks_to_generate.append({
 							"type": "generate",
 							"coord": coord,
-							"pos": chunk_pos
+							"pos": chunk_pos,
+							"lod": calculate_lod(coord)
 						})
 	
 	# Queue chunk generations with high priority (before other generates but after modifies)
@@ -950,8 +956,13 @@ func _update_chunks_native():
 	var is_above_ground = p_chunk_y >= 0
 	
 	# 1. Update Grid (C++)
+	# We expand the search radius to reach the furthest LOD distance
+	var max_lod_dist = lod_distances.back() if lod_distances.size() > 0 else 0.0
+	var lod_chunk_radius = int(ceil(max_lod_dist / CHUNK_STRIDE))
+	var effective_radius = max(render_distance, lod_chunk_radius + 2) # +1 for boundary safety
+	
 	# Returns { "load": [Vector3i], "unload": [Vector3i] }
-	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE)
+	var result = terrain_grid.update(p_pos, effective_radius, is_above_ground, CHUNK_STRIDE)
 	
 	# 2. Process Unloads
 	for coord in result["unload"]:
@@ -988,19 +999,90 @@ func _update_chunks_native():
 				chunks_queued += 1
 
 func _load_chunk(coord: Vector3i):
+	# FIND FINAL LOD (Coarsest possible resolution that can cover this slot):
+	var final_lod = 0
+	for L in range(lod_distances.size(), 0, -1):
+		var step = int(pow(2, L))
+		# FLAT ANCHORING: Anchor only X and Z to the LOD grid.
+		# Original Y is preserved to prevent vertical "floating" gaps.
+		var anchor = Vector3i(
+			int(floor(float(coord.x) / step)) * step,
+			coord.y,
+			int(floor(float(coord.z) / step)) * step
+		)
+		# If the anchor is far enough to support resolution L, we use it.
+		if calculate_lod(anchor) >= L:
+			final_lod = L
+			break
+	
+	# Only the ANCHOR for the chosen LOD spawns.
+	var final_step = int(pow(2, final_lod))
+	var final_anchor = Vector3i(
+		int(floor(float(coord.x) / final_step)) * final_step,
+		coord.y,
+		int(floor(float(coord.z) / final_step)) * final_step
+	)
+	
+	# 2. STATE SYNC:
+	if coord == final_anchor:
+		# We are the representative for this area.
+		if active_chunks.has(coord):
+			var data = active_chunks[coord]
+			if data != null:
+				if data.get("lod", 0) != final_lod:
+					# Resolution mismatch - reload!
+					_unload_chunk(coord)
+				else:
+					return # Already loaded correctly
+			else:
+				return # Already pending
+	else:
+		# We are NOT the representative. If we have a chunk here, it's stale (LOD change).
+		if active_chunks.has(coord):
+			var data = active_chunks[coord]
+			if data != null:
+				_unload_chunk(coord)
+		return
+
+	# 3. LOAD:
 	active_chunks[coord] = null
 	
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 	var task = {
 		"type": "generate",
 		"coord": coord,
-		"pos": chunk_pos
+		"pos": chunk_pos,
+		"lod": final_lod
 	}
 	
 	mutex.lock()
-	task_queue.append(task)
+	if final_lod > 0:
+		task_queue.push_front(task) # High priority for distant horizon
+	else:
+		task_queue.append(task)
 	mutex.unlock()
 	semaphore.post()
+
+func calculate_lod(coord: Vector3i) -> int:
+	if not viewer: return 0
+	
+	var p_pos = get_viewer_position()
+	var chunk_center = Vector3(
+		(coord.x + 0.5) * CHUNK_STRIDE,
+		(coord.y + 0.5) * CHUNK_STRIDE,
+		(coord.z + 0.5) * CHUNK_STRIDE
+	)
+	
+	var dist = p_pos.distance_to(chunk_center)
+	
+	var lod = 0
+	for i in range(lod_distances.size()):
+		if dist > lod_distances[i]:
+			lod = i + 1
+		else:
+			break
+			
+	return lod
 
 func _unload_chunk(coord: Vector3i):
 	if not active_chunks.has(coord):
@@ -1097,8 +1179,13 @@ func _update_chunks_gdscript():
 		var dz = coord.z - center_chunk.z
 		var dist_xz = sqrt(dx * dx + dz * dz)
 		
+		# 0. We expand the search radius to reach the furthest LOD distance
+		var max_lod_dist = lod_distances.back() if lod_distances.size() > 0 else 0.0
+		var lod_chunk_radius = int(ceil(max_lod_dist / CHUNK_STRIDE))
+		var effective_radius = max(render_distance, lod_chunk_radius + 2)
+
 		# Unload if too far horizontally
-		if dist_xz > render_distance + 2:
+		if dist_xz > effective_radius:
 			chunks_to_remove.append(coord)
 		# For non-terrain layers, also unload if too far vertically
 		elif not is_terrain_layer and abs(dy) > 3:
@@ -1155,15 +1242,19 @@ func _update_chunks_gdscript():
 	if DebugManager.LOG_CHUNK and initial_load_phase and chunks_loaded_initial == 0:
 		DebugManager.log_chunk("Loading center=%s chunks_per_frame=%d" % [center_chunk, chunks_per_frame_limit])
 	
+	var max_lod_dist = lod_distances.back() if lod_distances.size() > 0 else 0.0
+	var lod_chunk_radius = int(ceil(max_lod_dist / CHUNK_STRIDE))
+	var effective_radius = max(render_distance, lod_chunk_radius + 2)
+	
 	if is_above_ground:
 		# Only load Y=0 layer for performance
 		# Underground chunks load on-demand when player digs (via modify_terrain)
 		# They're protected from unloading by is_terrain_layer check
 		var y_to_load: Array[int] = [0]
-		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
-			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
+		for x in range(center_chunk.x - effective_radius, center_chunk.x + effective_radius + 1):
+			for z in range(center_chunk.z - effective_radius, center_chunk.z + effective_radius + 1):
 				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
-				if dist_xz > render_distance:
+				if dist_xz > effective_radius:
 					continue
 				
 				for y in y_to_load:
@@ -1175,25 +1266,7 @@ func _update_chunks_gdscript():
 					if active_chunks.has(coord):
 						continue
 
-					active_chunks[coord] = null
-					
-					# Debug: track when underground chunks are queued
-					if DebugManager.LOG_CHUNK and y < 0:
-						DebugManager.log_chunk("Queuing underground Y=%d at (%d, %d)" % [y, x, z])
-					
-					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
-					
-					var task = {
-						"type": "generate",
-						"coord": coord,
-						"pos": chunk_pos
-					}
-					
-					mutex.lock()
-					task_queue.append(task)
-					mutex.unlock()
-					semaphore.post()
-					
+					_load_chunk(coord)
 					chunks_queued_this_frame += 1
 		
 		# Also load chunks with stored modifications (player builds) within range
@@ -1206,26 +1279,19 @@ func _update_chunks_gdscript():
 				
 				# Check if chunk is within horizontal render distance
 				var dist_xz = Vector2(coord.x, coord.z).distance_to(Vector2(center_chunk.x, center_chunk.z))
-				if dist_xz > render_distance:
+				if dist_xz > effective_radius:
 					continue
 				
-				active_chunks[coord] = null
-				var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-				var task = {"type": "generate", "coord": coord, "pos": chunk_pos}
-				
-				mutex.lock()
-				task_queue.append(task)
-				mutex.unlock()
-				semaphore.post()
+				_load_chunk(coord)
 				chunks_queued_this_frame += 1
 	else:
 		# Player is underground or flying - load multiple Y layers
 		var y_layers = [center_chunk.y - 1, center_chunk.y, center_chunk.y + 1, 0] # Include terrain layer 0
 		
-		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
-			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
+		for x in range(center_chunk.x - effective_radius, center_chunk.x + effective_radius + 1):
+			for z in range(center_chunk.z - effective_radius, center_chunk.z + effective_radius + 1):
 				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
-				if dist_xz > render_distance:
+				if dist_xz > effective_radius:
 					continue
 				
 				for y in y_layers:
@@ -1239,21 +1305,7 @@ func _update_chunks_gdscript():
 					if active_chunks.has(coord):
 						continue
 
-					active_chunks[coord] = null
-					
-					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
-					
-					var task = {
-						"type": "generate",
-						"coord": coord,
-						"pos": chunk_pos
-					}
-					
-					mutex.lock()
-					task_queue.append(task)
-					mutex.unlock()
-					semaphore.post()
-					
+					_load_chunk(coord)
 					chunks_queued_this_frame += 1
 
 ## Interruptible delay - checks for high-priority tasks every 10ms
@@ -1393,7 +1445,7 @@ func _thread_function():
 	
 	# In-flight chunks: dispatched but not yet read back
 	var in_flight: Array[Dictionary] = []
-	const MAX_IN_FLIGHT = 1 # Limit to prevent GPU overload
+	const MAX_IN_FLIGHT = 12 # High throughput for Infinite Horizon
 	
 	while true:
 		# 1. Check for new tasks FIRST (prioritize modifications before completing in-flight work)
@@ -1517,14 +1569,18 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	# Always bind world map buffers on set 1 (real data or dummy)
 	rd.compute_list_bind_uniform_set(list, _world_map_set1, 1)
 	
+	var lod_step = pow(2.0, task.get("lod", 0))
+	
 	# Pass 0.0 for road spacing if disabled
 	var actual_road_spacing = procedural_road_spacing if procedural_roads_enabled else 0.0
 	var wide_shoulders_val = 1.0 if procedural_road_wide_shoulders else 0.0
 	var use_world_map_val = 1.0 if world_map_active else 0.0
 	var push_data_t = PackedFloat32Array([
 		chunk_pos.x, chunk_pos.y, chunk_pos.z, wide_shoulders_val,
+		lod_step, # Index 4
 		noise_frequency, terrain_height, actual_road_spacing, procedural_road_width,
-		use_world_map_val, world_map_size, world_map_half, world_map_max_height
+		use_world_map_val, world_map_size, world_map_half, world_map_max_height,
+		0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 # Total 20 floats (80 bytes)
 	])
 	rd.compute_list_set_push_constant(list, push_data_t.to_byte_array(), push_data_t.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
@@ -1543,7 +1599,13 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	rd.compute_list_bind_uniform_set(list, set_gen_w, 0)
 	rd.compute_list_bind_uniform_set(list, _world_map_water_set1, 1)
 	var use_wm_w = 1.0 if world_map_active else 0.0
-	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, water_level, use_wm_w, world_map_size, world_map_half, 0.0, 0.0, 0.0])
+	var push_data_w = PackedFloat32Array([
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, 
+		lod_step, # Index 4
+		noise_frequency, water_level, use_wm_w, world_map_size, 
+		world_map_half, 0.0, 0.0, 0.0,
+		0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 # Total 20 floats (80 bytes)
+	])
 	rd.compute_list_set_push_constant(list, push_data_w.to_byte_array(), push_data_w.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
@@ -1573,7 +1635,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"chunk_pos": chunk_pos,
 		"dens_buf_terrain": dens_buf_terrain,
 		"dens_buf_water": dens_buf_water,
-		"mat_buf_terrain": mat_buf_terrain
+		"mat_buf_terrain": mat_buf_terrain,
+		"lod": task.get("lod", 0)
 	}
 
 # Complete readback and queue to CPU workers (called after density sync)
@@ -1587,10 +1650,10 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 	
 	# BATCH DISPATCH: Dispatch BOTH mesh shaders, THEN sync ONCE (reduces GPU stalls by 50%)
 	# Terrain mesh (uses material buffer for vertex colors) -> terrain buffers
-	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain)
+	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain, flight_data.lod)
 	
 	# Water mesh (uses terrain's material buffer for now) -> water buffers
-	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water)
+	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water, flight_data.lod)
 	
 	# SINGLE SYNC for both dispatches (was 2 syncs before!)
 	rd.submit()
@@ -1622,13 +1685,14 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 		"cpu_mat_t": cpu_material_bytes, # Material data for 3D texture
 		"dens_buf_terrain": dens_buf_terrain,
 		"dens_buf_water": dens_buf_water,
-		"mat_buf_terrain": mat_buf_terrain # Material buffer for modify path
+		"mat_buf_terrain": mat_buf_terrain, # Material buffer for modify path
+		"lod": flight_data.lod
 	})
 	cpu_mutex.unlock()
 	cpu_semaphore.post()
 
 # GPU meshing dispatch only - NO sync, returns uniform set for later cleanup
-func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> RID:
+func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, lod: int = 0) -> RID:
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
 	zero_data.resize(4)
@@ -1661,9 +1725,12 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
 	rd.compute_list_bind_uniform_set(list, set_mesh, 0)
 	
+	var lod_step = pow(2.0, lod)
 	var push_data = PackedFloat32Array([
-		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
-		noise_frequency, terrain_height, 0.0, 0.0
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, # .w padding
+		lod_step, # Index 4
+		noise_frequency, terrain_height, 0.0, 0.0,
+		0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 # Total 20 floats (80 bytes)
 	])
 	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
 	
@@ -1691,8 +1758,8 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 	return vert_floats
 
 # Legacy function for modify path (still needs sync inline)
-func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> PackedFloat32Array:
-	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer)
+func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, lod: int = 0) -> PackedFloat32Array:
+	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, lod)
 	rd.submit()
 	rd.sync()
 	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh)
@@ -1774,27 +1841,32 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
 	
-	var push_data = PackedByteArray()
-	push_data.resize(48)
-	var buffer = StreamPeerBuffer.new()
-	buffer.data_array = push_data
+	var lod = calculate_lod(Vector3i(chunk_pos / CHUNK_STRIDE))
+	var lod_step = pow(2.0, lod)
 	
-	buffer.put_float(chunk_pos.x)
-	buffer.put_float(chunk_pos.y)
-	buffer.put_float(chunk_pos.z)
-	buffer.put_float(0.0)
+	var push_floats = PackedFloat32Array()
+	push_floats.resize(20)
 	
-	buffer.put_float(mod.brush_pos.x)
-	buffer.put_float(mod.brush_pos.y)
-	buffer.put_float(mod.brush_pos.z)
-	buffer.put_float(mod.radius)
+	push_floats[0] = chunk_pos.x
+	push_floats[1] = chunk_pos.y
+	push_floats[2] = chunk_pos.z
+	push_floats[3] = 0.0 # y_min (for Column shape)
 	
-	buffer.put_float(mod.value)
-	buffer.put_32(mod.get("shape", 0))
-	buffer.put_32(mod.get("material_id", -1)) # Material ID
-	buffer.put_float(0.0) # Padding
+	push_floats[4] = lod_step # Index 4
 	
-	rd.compute_list_set_push_constant(list, buffer.data_array, buffer.data_array.size())
+	push_floats[5] = mod.brush_pos.x
+	push_floats[6] = mod.brush_pos.y
+	push_floats[7] = mod.brush_pos.z
+	push_floats[8] = mod.radius
+	
+	push_floats[9] = mod.value
+	push_floats[10] = float(mod.get("shape", 0)) 
+	push_floats[11] = float(mod.get("material_id", -1))
+	push_floats[12] = float(mod.get("y_max", 0.0))
+	
+	# Padding 12-15 are already 0.0 from resize
+	
+	rd.compute_list_set_push_constant(list, push_floats.to_byte_array(), push_floats.size() * 4)
 	rd.compute_list_dispatch(list, 9, 9, 9)
 	rd.compute_list_end()
 	rd.submit()
@@ -1831,7 +1903,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
 	
 	var push_data = PackedByteArray()
-	push_data.resize(48)
+	push_data.resize(80) # Standard 20 floats
 	var buffer = StreamPeerBuffer.new()
 	buffer.data_array = push_data
 	
@@ -1855,6 +1927,8 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	buffer.put_32(task.get("shape", 0))
 	buffer.put_32(material_id) # Material ID (int32)
 	buffer.put_float(y_max_val) # y_max for Column shape
+	# Pad remaining 7 floats
+	for i in range(7): buffer.put_float(0.0)
 	
 	rd.compute_list_set_push_constant(list, buffer.data_array, buffer.data_array.size())
 	rd.compute_list_dispatch(list, 9, 9, 9)
@@ -1865,7 +1939,8 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 	
 	var material = material_terrain if layer == 0 else material_water
-	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material, vertex_buffer, counter_buffer)
+	var lod = calculate_lod(task.coord)
+	var result = run_gpu_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, lod)
 	
 	var cpu_density_floats = PackedFloat32Array()
 	# Read back density for this layer
@@ -1932,7 +2007,7 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayM
 	
 	return mesh
 
-func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer):
+func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer, lod: int = 0):
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
 	zero_data.resize(4)
@@ -1969,9 +2044,12 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
 	rd.compute_list_bind_uniform_set(list, set_mesh, 0)
 	
+	var lod_step = pow(2.0, lod)
 	var push_data = PackedFloat32Array([
-		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
-		noise_frequency, terrain_height, 0.0, 0.0
+		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, # .w padding
+		lod_step, # Index 4
+		noise_frequency, terrain_height, 0.0, 0.0,
+		0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 # Total 20 floats (80 bytes)
 	])
 	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
 	
@@ -2127,6 +2205,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.cpu_density_terrain = item.cpu_dens
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
+		data.lod = item.get("lod", 0)
 		
 		PerformanceMonitor.end_measure("Finalize: Data", 0.1)
 		
@@ -2374,7 +2453,8 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 					var task = {
 						"type": "generate",
 						"coord": coord,
-						"pos": chunk_pos
+						"pos": chunk_pos,
+						"lod": 0 # Spawn zones always full detail
 					}
 					mutex.lock()
 					task_queue.push_front(task) # Priority: push to front

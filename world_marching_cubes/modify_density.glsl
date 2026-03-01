@@ -14,11 +14,13 @@ layout(set = 0, binding = 1, std430) restrict buffer MaterialBuffer {
 
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset;   // .xyz = position, .w = y_min (for Column shape)
-    vec4 brush_pos;      // .xyz = world pos, .w = radius (or y_max for Column)
-    float brush_value;   // +1 to dig, -1 to place
-    int shape_type;      // 0 = Sphere, 1 = Box, 2 = Column
-    int material_id;     // -1 = no change, 0+ = specific material
-    float y_max;         // For Column shape: max Y bound
+    float lod_step;      // Index 4
+    vec4 brush_pos;      // Index 5,6,7,8: .xyz = world pos, .w = radius
+    float brush_value;   // Index 9
+    int shape_type;      // Index 10
+    int material_id;     // Index 11
+    float y_max;         // Index 12
+    float _pad[7];       // Total 20 floats = 80 bytes
 } params;
 
 void main() {

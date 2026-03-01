@@ -16,12 +16,13 @@ layout(set = 1, binding = 0, std430) restrict readonly buffer WaterMapBuffer {
 
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position
-    float noise_freq; 
-    float water_level;
-    float use_world_map; // >0.5 = read from water map buffer
-    float map_size;      // 2048.0
-    float map_half;      // 1024.0
-    float _pad0;
+    float lod_step;    // Index 4
+    float noise_freq;  // Index 5
+    float water_level; // Index 6
+    float use_world_map;
+    float map_size;
+    float map_half;
+    float _pad[10];    // Total 20 floats = 80 bytes
 } params;
 
 // Read a single byte from a packed uint buffer at pixel index
@@ -59,7 +60,7 @@ void main() {
 
     uint index = id.x + (id.y * 33) + (id.z * 33 * 33);
     vec3 pos = vec3(id);
-    vec3 world_pos = pos + params.chunk_offset.xyz;
+    vec3 world_pos = (pos * params.lod_step) + params.chunk_offset.xyz;
     
     // === WORLD MAP MODE: use water map ===
     if (params.use_world_map > 0.5) {

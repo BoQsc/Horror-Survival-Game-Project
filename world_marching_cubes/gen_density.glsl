@@ -16,14 +16,16 @@ layout(set = 0, binding = 1, std430) restrict buffer MaterialBuffer {
 
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position, .w is wide_shoulders
-    float noise_freq;
-    float terrain_height;
-    float road_spacing;  // Grid spacing for roads (0 = no procedural roads)
-    float road_width;    // Width of roads
-    float use_world_map; // >0.5 = read from world map buffers instead of noise
-    float map_size;      // 2048.0 (pixels = meters)
-    float map_half;      // 1024.0 (center offset)
-    float max_height;    // terrain_height * 2.5 (height normalization)
+    float lod_step;    // Index 4
+    float noise_freq;  // Index 5
+    float terrain_height; // Index 6
+    float road_spacing;
+    float road_width;
+    float use_world_map;
+    float map_size;
+    float map_half;
+    float max_height;
+    float _pad[7];     // Total 20 floats = 80 bytes (due to 16-byte struct alignment)
 } params;
 
 // === World Map Buffers (set 1) — uploaded from editor PNGs ===
@@ -216,7 +218,7 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
 }
 
 float get_density(vec3 pos) {
-    vec3 world_pos = pos + params.chunk_offset.xyz;
+    vec3 world_pos = (pos * params.lod_step) + params.chunk_offset.xyz;
     
     // === WORLD MAP MODE: read height from PNG buffer ===
     if (params.use_world_map > 0.5) {
@@ -240,9 +242,6 @@ float get_density(vec3 pos) {
         }
         
         float map_height = sample_world_height(world_pos.xz);
-        // Clamp height to fit within Y=0 chunk (0-32 voxels).
-        // Without this, heights >32 have no isosurface in the chunk → see-through holes.
-        map_height = clamp(map_height, 1.0, 28.0);
         return world_pos.y - map_height;
     }
     
@@ -288,7 +287,7 @@ float get_density(vec3 pos) {
 // 100+ = Player-placed materials
 
 uint get_material(vec3 pos, float terrain_height_at_pos) {
-    vec3 world_pos = pos + params.chunk_offset.xyz;
+    vec3 world_pos = (pos * params.lod_step) + params.chunk_offset.xyz;
     float depth = terrain_height_at_pos - world_pos.y;
     
     // === WORLD MAP MODE: read biome from PNG buffer ===
@@ -361,12 +360,12 @@ void main() {
 
     uint index = id.x + (id.y * 33) + (id.z * 33 * 33);
     vec3 pos = vec3(id);
-    vec3 world_pos = pos + params.chunk_offset.xyz;
+    vec3 world_pos = (pos * params.lod_step) + params.chunk_offset.xyz;
     
     // Calculate terrain height for material determination
     float terrain_height;
     if (params.use_world_map > 0.5) {
-        terrain_height = clamp(sample_world_height(world_pos.xz), 1.0, 28.0);
+        terrain_height = sample_world_height(world_pos.xz);
     } else {
         float base_height = params.terrain_height;
         float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;

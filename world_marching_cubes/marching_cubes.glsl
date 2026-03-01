@@ -24,9 +24,11 @@ layout(set = 0, binding = 3, std430) restrict buffer MaterialBuffer {
 } material_buffer;
 
 layout(push_constant) uniform PushConstants {
-    vec4 chunk_offset; // .xyz is position
-    float noise_freq;
-    float terrain_height;
+    vec4 chunk_offset; // .xyz is position, .w is padding
+    float lod_step;    // Index 4
+    float noise_freq;  // Index 5
+    float terrain_height; // Index 6
+    float _pad[13];    // Total 20 floats = 80 bytes
 } params;
 
 const int CHUNK_SIZE = 32;
@@ -204,12 +206,46 @@ void main() {
         int e2 = triTable[cubeIndex * 16 + i + 1];
         int e3 = triTable[cubeIndex * 16 + i + 2];
 
-        vec3 v1 = vertList[e1];
-        vec3 v2 = vertList[e2];
-        vec3 v3 = vertList[e3];
+        vec3 l1 = vertList[e1];
+        vec3 l2 = vertList[e2];
+        vec3 l3 = vertList[e3];
+
+        vec3 v1 = l1 * params.lod_step;
+        vec3 v2 = l2 * params.lod_step;
+        vec3 v3 = l3 * params.lod_step;
         
-        // Vertex 1: R=mat_A, G=mat_B, B=blend
-        vec3 n1 = get_normal(v1);
+        // --- SKIRT LOGIC ---
+        // Push vertices at the grid boundaries slightly "outward"
+        float skirt_width = 0.5 * params.lod_step;
+        
+        if (l1.x < 0.01) v1.x -= skirt_width;
+        if (l1.x > float(CHUNK_SIZE) - 0.01) v1.x += skirt_width;
+        if (l1.y < 0.01) v1.y -= skirt_width;
+        if (l1.y > float(CHUNK_SIZE) - 0.01) v1.y += skirt_width;
+        if (l1.z < 0.01) v1.z -= skirt_width;
+        if (l1.z > float(CHUNK_SIZE) - 0.01) v1.z += skirt_width;
+        
+        if (l3.x < 0.01) v3.x -= skirt_width;
+        if (l3.x > float(CHUNK_SIZE) - 0.01) v3.x += skirt_width;
+        if (l3.y < 0.01) v3.y -= skirt_width;
+        if (l3.y > float(CHUNK_SIZE) - 0.01) v3.y += skirt_width;
+        if (l3.z < 0.01) v3.z -= skirt_width;
+        if (l3.z > float(CHUNK_SIZE) - 0.01) v3.z += skirt_width;
+        
+        if (l2.x < 0.01) v2.x -= skirt_width;
+        if (l2.x > float(CHUNK_SIZE) - 0.01) v2.x += skirt_width;
+        if (l2.y < 0.01) v2.y -= skirt_width;
+        if (l2.y > float(CHUNK_SIZE) - 0.01) v2.y += skirt_width;
+        if (l2.z < 0.01) v2.z -= skirt_width;
+        if (l2.z > float(CHUNK_SIZE) - 0.01) v2.z += skirt_width;
+
+        // Normals: MUST calculate from local (unscaled) coordinates, then normalize.
+        // Using world-scaled coordinates led to clamped samples at chunk edges.
+        vec3 n1 = normalize(get_normal(l1));
+        vec3 n3 = normalize(get_normal(l3));
+        vec3 n2 = normalize(get_normal(l2));
+
+        // Vertex 1
         mesh_output.vertices[start_ptr + 0] = v1.x;
         mesh_output.vertices[start_ptr + 1] = v1.y;
         mesh_output.vertices[start_ptr + 2] = v1.z;
@@ -220,8 +256,7 @@ void main() {
         mesh_output.vertices[start_ptr + 7] = encoded_B;
         mesh_output.vertices[start_ptr + 8] = blendList[e1];
         
-        // Vertex 3 (note: order is 1,3,2 for winding)
-        vec3 n3 = get_normal(v3);
+        // Vertex 3
         mesh_output.vertices[start_ptr + 9] = v3.x;
         mesh_output.vertices[start_ptr + 10] = v3.y;
         mesh_output.vertices[start_ptr + 11] = v3.z;
@@ -233,7 +268,6 @@ void main() {
         mesh_output.vertices[start_ptr + 17] = blendList[e3];
         
         // Vertex 2
-        vec3 n2 = get_normal(v2);
         mesh_output.vertices[start_ptr + 18] = v2.x;
         mesh_output.vertices[start_ptr + 19] = v2.y;
         mesh_output.vertices[start_ptr + 20] = v2.z;
