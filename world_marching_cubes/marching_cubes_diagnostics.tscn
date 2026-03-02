@@ -1,0 +1,4 @@
+[gd_scene format=3 uid="uid://b8x8x8x8x8x8"]
+[ext_resource type="Script" path="res://world_marching_cubes/marching_cubes_diagnostics.gd" id="1_diag"]
+[node name="4090Diagnostic" type="Node"]
+script = ExtResource("1_diag")
