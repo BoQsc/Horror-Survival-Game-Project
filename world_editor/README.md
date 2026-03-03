@@ -144,3 +144,13 @@ Tracks building block positions on the world map and minimap as colored pixels.
 | `hud_minimap.gd` | Bakes building data at startup, receives pixel updates via `minimap_image` reference |
 | `chunk_manager.gd` | Loads `buildings.png` from world data |
 | `prefab_spawner.gd` | Relays `building_map` from chunk_manager to building_manager |
+
+### Known Limitations
+
+> [!WARNING]
+> **2D heightmap vs 3D terrain mismatch**: The generator validates building placement against the 2D heightmap (1 height value per pixel), but the actual Marching Cubes terrain has voxel-level detail (steep edges, noise-driven cliffs) that the heightmap doesn't capture. Buildings may appear on the map but fail to spawn on valid ground at runtime.
+
+**Future fixes:**
+1. **Runtime validation** — After block placement, verify ground contact and remove failed buildings + clear map pixels
+2. **Terrain flattening** — Carve flat pads into terrain at building positions before placing
+3. **GPU height sampling** — Use the actual density shader for true 3D height during generation

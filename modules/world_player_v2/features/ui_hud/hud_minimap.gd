@@ -209,7 +209,7 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _build_minimap_image() -> void:
-	# Build COMPLETE map image ONCE (terrain + roads + water + buildings from PNG)
+	# Build base map ONCE (terrain + roads + water). Buildings added at runtime only.
 	if not _terrain_manager or not "world_definition_path" in _terrain_manager:
 		return
 	
@@ -234,10 +234,6 @@ func _build_minimap_image() -> void:
 		b_data = loaded.biomes.get_data()
 	else:
 		return
-	
-	# Load building footprints from PNG (baked at generation time)
-	var bldg_map: Image = loaded.get("building_map", null)
-	var bldg_data: PackedByteArray = bldg_map.get_data() if bldg_map else PackedByteArray()
 	
 	var w = hmap.get_width()
 	var h = hmap.get_height()
@@ -267,17 +263,13 @@ func _build_minimap_image() -> void:
 		if w_data.size() > 0 and i < w_data.size() and w_data[i] > 128:
 			r = 40; g = 80; b = 160
 		
-		# Building overlay from baked PNG
-		if bldg_data.size() > 0 and i < bldg_data.size() and bldg_data[i] > 128:
-			r = 220; g = 80; b = 40
-		
 		var pi = i * 3
 		map_pixels[pi] = int(clampf(r * shade, 0, 255))
 		map_pixels[pi + 1] = int(clampf(g * shade, 0, 255))
 		map_pixels[pi + 2] = int(clampf(b * shade, 0, 255))
 	
 	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, map_pixels)
-	print("[Minimap] Built %dx%d map (buildings baked from PNG)" % [w, h])
+	print("[Minimap] Built %dx%d base map (buildings added at runtime)" % [w, h])
 
 func _process(_delta: float) -> void:
 	if not _minimap_image or not _player:
