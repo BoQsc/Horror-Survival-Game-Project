@@ -79,6 +79,19 @@ The world editor offers terrain style presets that auto-fill `terrain_height` an
 
 Users can still override individual values after selecting a preset.
 
+## Road Edge Blending (World Map vs Procedural)
+
+World map roads are baked as voxel material IDs (`mat_id=6`) at 1-meter resolution, which caused **rectangular/blocky edges** at road-to-biome transitions. Procedural mode didn't have this because it blends roads per-pixel with `smoothstep()`.
+
+**How it was solved** (2 changes):
+
+1. **`road_manager.gd`** — `RoadManager` was overwriting the world map's `road_mask` texture with a blank one during `_init_road_shader()`. Added a guard: if `world_map_active` is true, skip initialization so ChunkManager's road data is preserved.
+
+2. **`terrain.gdshader`** — Added `apply_world_map_road()` that samples the `road_mask` texture per-pixel with `filter_linear` + `smoothstep` blending. In world map mode, road voxels (`id == 6`) now return the procedurally-blended color instead of flat `col_road`, so the `road_mask` overlay controls the smooth transition.
+
+> [!NOTE]
+> All changes are gated by `use_world_map` — procedural mode is completely unaffected.
+
 ## Future: GPU-Identical Generation
 
 > [!IMPORTANT]
