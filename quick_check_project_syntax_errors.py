@@ -8,7 +8,7 @@ PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 TIMEOUT = 3  # Seconds to run
 
 def main():
-    print(f"🚀 Running Godot for {TIMEOUT}s...")
+    print(f"Running Godot for {TIMEOUT}s...")
     print("-" * 50)
     
     cmd = [
@@ -33,7 +33,7 @@ def main():
         while True:
             # Check for timeout
             if time.time() - start_time > TIMEOUT:
-                print(f"\n🛑 Time limit reached ({TIMEOUT}s). Terminating...")
+                print(f"\nTime limit reached ({TIMEOUT}s). Terminating...")
                 process.terminate()
                 break
             

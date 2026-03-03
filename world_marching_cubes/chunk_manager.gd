@@ -45,9 +45,11 @@ var _world_map_heightmap_buf: RID = RID()
 var _world_map_biome_buf: RID = RID()
 var _world_map_road_buf: RID = RID()
 var _world_map_water_buf: RID = RID()
+var _lookup_table_buffer: RID = RID()
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
+var _lookup_table_set0: RID = RID()  # Global Lookup SSBO set
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -1377,19 +1379,30 @@ func _thread_function():
 	
 	# Create REUSABLE Buffers for meshing (9 floats per vertex: pos + normal + color)
 	# TERRAIN buffers
-	var output_bytes_size = MAX_TRIANGLES * 3 * 9 * 4
+	var output_bytes_size = MAX_TRIANGLES * 3 * 12 * 4 # 12 floats per vertex for 16-byte alignment
 	var vertex_buffer_terrain = rd.storage_buffer_create(output_bytes_size)
 	var counter_data = PackedByteArray()
-	counter_data.resize(4)
+	counter_data.resize(16) # Padded to 16 bytes for 4090
 	counter_data.encode_u32(0, 0)
-	var counter_buffer_terrain = rd.storage_buffer_create(4, counter_data)
+	var counter_buffer_terrain = rd.storage_buffer_create(16, counter_data)
 	
 	# WATER buffers (separate to enable batch dispatching - reduces GPU syncs by 50%)
 	var vertex_buffer_water = rd.storage_buffer_create(output_bytes_size)
 	var counter_data_w = PackedByteArray()
-	counter_data_w.resize(4)
+	counter_data_w.resize(16) # Padded to 16 bytes for 4090
 	counter_data_w.encode_u32(0, 0)
-	var counter_buffer_water = rd.storage_buffer_create(4, counter_data_w)
+	var counter_buffer_water = rd.storage_buffer_create(16, counter_data_w)
+	
+	# Initialize Lookup SSBO (MANDATORY for 4090)
+	_initialize_lookup_buffer(rd)
+	
+	# Create Uniform Set 0 (Global/Lookup)
+	var u_lookup = RDUniform.new()
+	u_lookup.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_lookup.binding = 4
+	u_lookup.add_id(_lookup_table_buffer)
+	var lookup_set0 = rd.uniform_set_create([u_lookup], sid_mesh, 0)
+	_lookup_table_set0 = lookup_set0 # Store as member for dispatch
 	
 	# In-flight chunks: dispatched but not yet read back
 	var in_flight: Array[Dictionary] = []
@@ -1629,11 +1642,11 @@ func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_
 
 # GPU meshing dispatch only - NO sync, returns uniform set for later cleanup
 func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> RID:
-	# Reset Counter to 0
+	# Reset Counter to 0 (Padded to 16 bytes for 4090)
 	var zero_data = PackedByteArray()
-	zero_data.resize(4)
+	zero_data.resize(16)
 	zero_data.encode_u32(0, 0)
-	rd.buffer_update(counter_buffer, 0, 4, zero_data)
+	rd.buffer_update(counter_buffer, 0, 16, zero_data)
 	
 	var u_vert = RDUniform.new()
 	u_vert.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
@@ -1655,11 +1668,12 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 	u_mat.binding = 3
 	u_mat.add_id(material_buffer)
 	
-	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat], sid_mesh, 0)
+	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat], sid_mesh, 1) # Set 1 because 0 is Lookup
 	
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
-	rd.compute_list_bind_uniform_set(list, set_mesh, 0)
+	rd.compute_list_bind_uniform_set(list, _lookup_table_set0, 0) # Global Lookup (Binding 4)
+	rd.compute_list_bind_uniform_set(list, set_mesh, 1)
 	
 	var push_data = PackedFloat32Array([
 		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
@@ -1667,7 +1681,7 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 	])
 	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
 	
-	var groups = CHUNK_SIZE / 8
+	var groups = CHUNK_SIZE / 4
 	rd.compute_list_dispatch(list, groups, groups, groups)
 	rd.compute_list_end()
 	# NO submit/sync here - caller handles it
@@ -1676,13 +1690,13 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 
 # Readback mesh data AFTER sync has been called
 func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer, set_mesh: RID) -> PackedFloat32Array:
-	# Read back vertex data
+	# Read back vertex data (Stride 12 for 16-byte alignment)
 	var count_bytes = rd.buffer_get_data(counter_buffer)
-	var tri_count = count_bytes.decode_u32(0)
+	var tri_count = count_bytes.decode_u32(0) # First 4 bytes of 16-byte uvec4
 	
 	var vert_floats = PackedFloat32Array()
 	if tri_count > 0:
-		var total_floats = tri_count * 3 * 9 # 9 floats per vertex: pos(3) + normal(3) + color(3)
+		var total_floats = tri_count * 3 * 12 # 12 floats per vertex
 		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		vert_floats = vert_bytes.to_float32_array()
 		
@@ -1730,7 +1744,7 @@ func _cpu_thread_function():
 			
 			# Use optimized GDExtension for collision if available
 			if builder:
-				shape_terrain = builder.build_collision_shape(task.vert_floats_terrain, 9)
+				shape_terrain = builder.build_collision_shape(task.vert_floats_terrain, 12)
 			elif mesh_terrain:
 				shape_terrain = mesh_terrain.create_trimesh_shape()
 		
@@ -1742,7 +1756,7 @@ func _cpu_thread_function():
 			
 			# Use optimized GDExtension for collision if available
 			if builder:
-				shape_water = builder.build_collision_shape(task.vert_floats_water, 9)
+				shape_water = builder.build_collision_shape(task.vert_floats_water, 12)
 			elif mesh_water:
 				shape_water = mesh_water.create_trimesh_shape()
 		
@@ -1898,7 +1912,7 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayM
 			print("[ChunkManager] ✓ MeshBuilder GDExtension LOADED - using fast C++ path")
 		var builder = ClassDB.instantiate("MeshBuilder")
 		# 9 stride = pos(3) + norm(3) + col(3)
-		var mesh = builder.build_mesh_native(data, 9)
+		var mesh = builder.build_mesh_native(data, 12)
 		if mesh:
 			mesh.surface_set_material(0, material_instance)
 			return mesh
@@ -2444,3 +2458,54 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 func request_spawn_zones(positions: Array[Vector3], radius: int = 2):
 	for pos in positions:
 		request_spawn_zone(pos, radius)
+func _initialize_lookup_buffer(rd: RenderingDevice):
+	var include_path = "res://world_marching_cubes/marching_cubes_lookup_table.glslinc"
+	var file = FileAccess.open(include_path, FileAccess.READ)
+	if not file:
+		push_error("[ChunkManager] FAILED to load lookup table include!")
+		return
+	
+	var content = file.get_as_text()
+	file.close()
+	
+	# Parse edgeTable
+	var edge_data = PackedInt32Array()
+	var re_edge = RegEx.new()
+	re_edge.compile("0x[0-9a-fA-F]+")
+	var matches = re_edge.search_all(content)
+	
+	# First 256 matches are edgeTable
+	for i in range(256):
+		if i < matches.size():
+			edge_data.append(matches[i].get_string().hex_to_int())
+		else:
+			edge_data.append(0)
+			
+	# Next 4096 matches are triTable
+	var tri_data = PackedInt32Array()
+	# The table has negative numbers too (-1), so we need a different regex for the rest
+	var re_tri = RegEx.new()
+	re_tri.compile("-?\\d+")
+	
+	# Re-read to simplify parsing for triTable specifically
+	# We know triTable starts after "triTable[4096] = int[]("
+	var tri_start = content.find("triTable[4096]")
+	var tri_content = content.substr(tri_start)
+	var tri_matches = re_tri.search_all(tri_content)
+	
+	for i in range(4096):
+		if i < tri_matches.size():
+			tri_data.append(int(tri_matches[i].get_string()))
+		else:
+			tri_data.append(-1)
+			
+	# Combine into one buffer
+	var combined_bytes = PackedByteArray()
+	combined_bytes.resize((256 + 4096) * 4)
+	for i in range(256):
+		combined_bytes.encode_s32(i * 4, edge_data[i])
+	for i in range(4096):
+		combined_bytes.encode_s32((256 + i) * 4, tri_data[i])
+		
+	_lookup_table_buffer = rd.storage_buffer_create(combined_bytes.size(), combined_bytes)
+	DebugManager.log_chunk("Initialized Lookup SSBO (%d bytes)" % combined_bytes.size())
