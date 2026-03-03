@@ -115,3 +115,32 @@ GPU (gen_density.glsl) → PNG → GPU (shader reads PNG)
 5. Result: identical terrain because it's literally the same noise code
 
 This also solves the performance issue (sub-second generation vs current ~10s GDScript loop).
+
+## Building Map Layer
+
+Tracks building block positions on the world map and minimap as colored pixels.
+
+### Data Flow
+
+1. **Generation** (`world_map_generator.gd` Pass 4) — Stamps 10×10 footprints for each baked building onto `building_map` (R8 Image). Saved as `buildings.png` alongside other map layers.
+2. **World Editor** (`world_editor.gd`) — Renders building pixels as bright red-orange (220, 80, 40) in the preview overlay.
+3. **Game Load** (`chunk_manager.gd`) — Loads `buildings.png` into `_world_map_building_map`, passes to `building_manager` via `prefab_spawner`.
+4. **Minimap** (`hud_minimap.gd`) — Bakes building data from PNG into the base map image once at startup. Zero per-frame overhead.
+5. **Runtime Updates** (`building_manager.gd`) — `set_voxel_batched()` calls `_update_building_map_pixel()` which writes one pixel to both `building_map` and `minimap_image`. Tracks ALL building types (prefabs + player builds).
+
+### Performance Design
+
+- **Zero per-frame cost** — Minimap `_process()` does only crop/resize/display (same as before this feature)
+- **Single-pixel updates** — Building changes write 1 pixel to the minimap image directly, no loops or rebuilds
+- **One-time startup cost** — Building data baked into minimap during initial map build (same pass as terrain/roads/water)
+
+### Key Files
+
+| File | Role |
+|---|---|
+| `building_manager.gd` | Owns `building_map` Image, updates pixels on block place/remove, writes to `minimap_image` |
+| `world_map_generator.gd` | Stamps footprints in Pass 4, saves `buildings.png` |
+| `world_editor.gd` | Renders building overlay in editor preview |
+| `hud_minimap.gd` | Bakes building data at startup, receives pixel updates via `minimap_image` reference |
+| `chunk_manager.gd` | Loads `buildings.png` from world data |
+| `prefab_spawner.gd` | Relays `building_map` from chunk_manager to building_manager |
