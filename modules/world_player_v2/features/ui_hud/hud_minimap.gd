@@ -111,14 +111,14 @@ func _build_minimap_image() -> void:
 	for i in range(w * h):
 		var height_val = float(h_data[i]) / 255.0
 		var shade = 0.5 + height_val * 0.5
-		var biome = b_data[i]
+		# Decode continuous biome noise value: [0,255] → [-1,1]
+		var bv = float(b_data[i]) / 255.0 * 2.0 - 1.0
 		
-		# Biome colors
+		# Biome colors (same thresholds as gen_density.glsl and terrain.gdshader)
 		var r: int = 80; var g: int = 160; var b: int = 60  # Grass default
-		if biome == 3: r = 194; g = 178; b = 128  # Sand
-		elif biome == 5: r = 230; g = 230; b = 240  # Snow
-		elif biome == 4: r = 140; g = 130; b = 115  # Gravel
-		elif biome == 6: r = 64; g = 64; b = 77  # Road
+		if bv < -0.2: r = 194; g = 178; b = 128  # Sand
+		elif bv > 0.6: r = 230; g = 230; b = 240  # Snow
+		elif bv > 0.2: r = 140; g = 130; b = 115  # Gravel
 		
 		# Road overlay
 		if r_data.size() > 0:

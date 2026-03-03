@@ -107,13 +107,10 @@ func generate_world() -> Dictionary:
 			var h = terrain_height + (h_raw * 0.5 + 0.5) * terrain_height
 			height_bytes[idx] = int(clampf(h / max_h, 0.0, 1.0) * 255.0)
 			
-			# Biome
+			# Biome — store continuous noise value for per-pixel shader blending
+			# Maps [-1,1] → [0,255]. Shader decodes and applies smoothstep thresholds.
 			var bv = _biome_noise.get_noise_2d(wx, wz)
-			var biome: int = MaterialID.GRASS
-			if bv < -0.2: biome = MaterialID.SAND
-			elif bv > 0.6: biome = MaterialID.SNOW
-			elif bv > 0.2: biome = MaterialID.GRAVEL
-			biome_bytes[idx] = biome
+			biome_bytes[idx] = int(clampf((bv + 1.0) / 2.0, 0.0, 1.0) * 255.0)
 	
 	# PASS 2: Roads (grid math + road height noise)
 	if progress_callback.is_valid():
@@ -175,7 +172,7 @@ func generate_world() -> Dictionary:
 					
 					if min_dist < half_road_w:
 						is_road_byte = 255
-						biome_bytes[idx] = MaterialID.ROAD
+						# Roads identified via road buffer, biome keeps continuous noise value
 						# Overwrite height with road height
 						height_bytes[idx] = int(clampf(r_height / max_h, 0.0, 1.0) * 255.0)
 					else:

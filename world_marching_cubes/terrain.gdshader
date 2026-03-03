@@ -46,6 +46,11 @@ uniform bool debug_show_chunk_bounds = false;  // Toggle to show chunk boundary 
 uniform bool debug_show_road_zones = false;   // Toggle to show road zone detection
 uniform bool use_world_map = false;           // Use exact material IDs instead of procedural noise
 
+// World map biome texture — stores continuous noise values for per-pixel blending
+uniform sampler2D biome_noise_map : hint_default_black, filter_linear, repeat_disable;
+uniform float biome_map_size = 2048.0;        // World map size in pixels/meters
+uniform float biome_map_half = 1024.0;        // Half of map size (center offset)
+
 
 varying vec3 world_pos;
 varying vec3 world_normal;
@@ -234,13 +239,49 @@ vec3 get_procedural_color(vec3 w_pos, vec3 col_grass, vec3 col_stone, vec3 col_s
 	return final_col;
 }
 
+// World Map Fragment Material - samples the continuous biome noise texture per-pixel
+// Uses the same smoothstep math as get_procedural_color but reads noise from the biome map
+vec3 get_worldmap_color(vec3 w_pos, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road) {
+	float t_height = terrain_height + noise3d(vec3(w_pos.x, 0.0, w_pos.z) * noise_frequency) * terrain_height;
+	float depth = t_height - w_pos.y;
+	
+	// 1. Sample biome noise from texture (continuous value: [0,255] encoded as [0,1])
+	vec2 biome_uv = (w_pos.xz + biome_map_half) / biome_map_size;
+	float biome_raw = texture(biome_noise_map, biome_uv).r;  // [0,1]
+	float biome_val = biome_raw * 2.0 - 1.0;  // Decode to [-1,1]
+	
+	// Apply smoothstep blending (same thresholds as procedural mode)
+	float blend_w = 0.06;  // Smooth blend width for natural gradients
+	float w_sand = 1.0 - smoothstep(-0.2 - blend_w, -0.2 + blend_w, biome_val);
+	float w_snow = smoothstep(0.6 - blend_w, 0.6 + blend_w, biome_val);
+	float w_gravel = smoothstep(0.2 - blend_w, 0.2 + blend_w, biome_val) * (1.0 - w_snow);
+	float w_grass = max(0.0, 1.0 - w_sand - w_snow - w_gravel);
+	vec3 final_col = col_grass * w_grass + col_sand * w_sand + col_stone * w_gravel + col_snow * w_snow;
+	
+	// 2. Underground Blending (same as procedural)
+	float underground_mix = smoothstep(8.0, 12.0, depth);
+	if (underground_mix > 0.0) {
+		vec3 under_col = col_stone;
+		float ore_noise = noise3d(w_pos * 0.15);
+		if (ore_noise > 0.75 && depth > 8.0) {
+			under_col = col_stone * vec3(1.2, 1.0, 0.5);
+		} else {
+			float stone_var = fbm3d(w_pos * 0.02);
+			if (stone_var > 0.25) under_col = col_stone * vec3(0.7, 0.65, 0.6);
+		}
+		final_col = mix(final_col, under_col, underground_mix);
+	}
+	
+	return final_col;
+}
+
 // Resolve a material ID to its texture color
-vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road, vec3 procedural_col) {
+vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road, vec3 procedural_col, vec3 worldmap_col) {
 	bool is_placed = (mat_id >= 100);
 	int id = is_placed ? (mat_id - 100) : mat_id;
 	
-	if (is_placed || use_world_map) {
-		// Player-placed materials (100+) or World Map natural voxels: Use absolute texture
+	if (is_placed) {
+		// Player-placed materials (100+): Use absolute texture
 		if (id == 0) return col_grass;
 		else if (id == 1) return col_stone;
 		else if (id == 2) return col_stone * vec3(1.2, 1.0, 0.5);  // Ore
@@ -251,9 +292,9 @@ vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col
 		else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
 		else return col_grass;
 	} else {
-		// Procedural Natural voxel: honor road material, otherwise use procedural per-pixel color
+		// Natural voxel: honor road material, otherwise use per-pixel blended color
 		if (id == 6) return col_road;
-		return procedural_col;
+		return use_world_map ? worldmap_col : procedural_col;
 	}
 }
 
@@ -302,15 +343,17 @@ void fragment() {
 	
 	// Pre-calculate the computationally perfect procedural layer
 	vec3 procedural_perfect_color = get_procedural_color(world_pos, col_grass, col_stone, col_sand, col_snow, col_road);
+	// Pre-calculate world map per-pixel blended color (only meaningful when use_world_map is true)
+	vec3 worldmap_perfect_color = use_world_map ? get_worldmap_color(world_pos, col_grass, col_stone, col_sand, col_snow, col_road) : vec3(0.0);
 	
 	if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
 		// Single material lookup
 		int mat_id = (abs(blend) < 0.001) ? mat_id_A : ((blend > 0.999) ? mat_id_B : mat_id_A);
-		base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
+		base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color, worldmap_perfect_color);
 	} else {
 		// Dual material transition (Smoothly blends natural terrain with player-placed blocks)
-		vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
-		vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
+		vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color, worldmap_perfect_color);
+		vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color, worldmap_perfect_color);
 		base_color = mix(color_A, color_B, blend);
 	}
 

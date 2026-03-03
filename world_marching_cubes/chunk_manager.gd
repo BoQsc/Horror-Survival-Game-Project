@@ -244,6 +244,20 @@ func _ready():
 		# are controlled by the material buffer (depth-limited to 2 blocks)
 		material_terrain.set_shader_parameter("procedural_road_enabled", false)
 		material_terrain.set_shader_parameter("use_world_map", true)
+		# Load biome image and pass as texture for per-pixel blending in fragment shader
+		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
+		var loaded = WorldMapGen.load_world(world_definition_path)
+		if loaded.has("biomes"):
+			var bmap: Image = loaded.biomes
+			var biome_tex = ImageTexture.create_from_image(bmap)
+			material_terrain.set_shader_parameter("biome_noise_map", biome_tex)
+		if loaded.has("metadata"):
+			var meta = loaded.metadata
+			world_map_size = float(meta.get("map_size", 2048))
+			world_map_half = world_map_size / 2.0
+			world_map_max_height = float(meta.get("terrain_height", 20.0)) * 2.5
+		material_terrain.set_shader_parameter("biome_map_size", world_map_size)
+		material_terrain.set_shader_parameter("biome_map_half", world_map_half)
 		print("[ChunkManager] World map mode: %s (procedural road overlay disabled)" % world_definition_path)
 	
 	# Start GPU thread

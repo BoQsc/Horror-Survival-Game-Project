@@ -253,10 +253,15 @@ func _update_preview() -> void:
 	
 	for i in w * h:
 		var h_val = float(h_data[i]) / 255.0
-		var biome_id = b_data[i]
+		# Decode continuous biome noise: [0,255] → [-1,1]
+		var bv = float(b_data[i]) / 255.0 * 2.0 - 1.0
 		var shade = 0.6 + h_val * 0.8
 		
-		var base = biome_lut.get(biome_id, default_color)
+		# Biome color from continuous noise thresholds
+		var base = [77, 153, 51]  # Grass default
+		if bv < -0.2: base = [217, 199, 140]  # Sand
+		elif bv > 0.6: base = [230, 235, 242]  # Snow
+		elif bv > 0.2: base = [140, 128, 115]  # Gravel
 		
 		# Road overlay
 		if r_data.size() > 0:
@@ -379,7 +384,13 @@ func _paint_biome(cx: int, cz: int) -> void:
 	if not current_images.has("biomes"):
 		return
 	var bmap: Image = current_images.biomes
-	var biome_norm = float(paint_biome_id) / 255.0
+	# Convert paint_biome_id to a continuous noise center value
+	# Sand=-0.5, Gravel=0.4, Snow=0.8, Grass=0.0 → encode to [0,1]
+	var noise_center: float = 0.0
+	if paint_biome_id == 3: noise_center = -0.5  # Sand
+	elif paint_biome_id == 4: noise_center = 0.4  # Gravel
+	elif paint_biome_id == 5: noise_center = 0.8  # Snow
+	var biome_norm = (noise_center + 1.0) / 2.0
 	
 	for dx in range(-brush_size, brush_size + 1):
 		for dz in range(-brush_size, brush_size + 1):
@@ -417,7 +428,8 @@ func _erase_at(cx: int, cz: int) -> void:
 				var x = cx + dx
 				var z = cz + dz
 				if x >= 0 and x < bmap.get_width() and z >= 0 and z < bmap.get_height():
-					bmap.set_pixel(x, z, Color(0, 0, 0, 1))
+					# Erase biome to grass (continuous noise center = 0.0 → encoded 0.5)
+					bmap.set_pixel(x, z, Color(0.5, 0, 0, 1))
 					rmap.set_pixel(x, z, Color(0, 0, 0, 1))
 	_update_preview()
 
