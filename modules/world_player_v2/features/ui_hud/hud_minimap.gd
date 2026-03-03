@@ -1,10 +1,11 @@
 extends Control
 class_name HUDMinimap
 ## HUD Minimap — shows player position on the world map
-## Only visible in world map mode
+## Only visible in world map mode. Press M for full map view.
 
 const MINIMAP_SIZE: int = 180  # Pixels on screen
 const MINIMAP_RADIUS: int = 120  # World units shown around player
+const FULLMAP_SIZE: int = 600  # Full map overlay size on screen
 
 var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
@@ -14,6 +15,14 @@ var _minimap_image: Image  # Base map with buildings baked in (updated in-place 
 var _terrain_manager: Node = null
 var _building_manager: Node = null
 var _player: Node = null
+
+# Full map overlay
+var _fullmap_panel: Panel = null
+var _fullmap_texture: TextureRect = null
+var _fullmap_arrow: Polygon2D = null
+var _fullmap_coord: Label = null
+var _fullmap_hint: Label = null
+var _fullmap_open: bool = false
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -66,6 +75,9 @@ func _ready() -> void:
 	_coord_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_border.add_child(_coord_label)
 	
+	# Create full map overlay (hidden by default)
+	_create_fullmap_overlay()
+	
 	# Deferred setup
 	call_deferred("_deferred_init")
 
@@ -80,6 +92,104 @@ func _deferred_init() -> void:
 		# Give building_manager a reference so it can update pixels directly
 		if _building_manager and _minimap_image:
 			_building_manager.minimap_image = _minimap_image
+
+func _create_fullmap_overlay() -> void:
+	# Dark background panel
+	_fullmap_panel = Panel.new()
+	_fullmap_panel.name = "FullMapOverlay"
+	_fullmap_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fullmap_panel.visible = false
+	
+	var bg_style = StyleBoxFlat.new()
+	bg_style.bg_color = Color(0, 0, 0, 0.85)
+	bg_style.border_color = Color(0.5, 0.5, 0.5, 0.8)
+	bg_style.set_border_width_all(2)
+	bg_style.corner_radius_top_left = 6
+	bg_style.corner_radius_top_right = 6
+	bg_style.corner_radius_bottom_left = 6
+	bg_style.corner_radius_bottom_right = 6
+	_fullmap_panel.add_theme_stylebox_override("panel", bg_style)
+	add_child(_fullmap_panel)
+	
+	# Map texture
+	_fullmap_texture = TextureRect.new()
+	_fullmap_texture.position = Vector2(4, 4)
+	_fullmap_texture.size = Vector2(FULLMAP_SIZE, FULLMAP_SIZE)
+	_fullmap_texture.stretch_mode = TextureRect.STRETCH_SCALE
+	_fullmap_texture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_fullmap_texture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fullmap_panel.add_child(_fullmap_texture)
+	
+	# Player arrow on full map
+	_fullmap_arrow = Polygon2D.new()
+	_fullmap_arrow.polygon = PackedVector2Array([
+		Vector2(0, -10),
+		Vector2(-7, 7),
+		Vector2(0, 3),
+		Vector2(7, 7)
+	])
+	_fullmap_arrow.color = Color(1, 0.15, 0.15, 1.0)
+	_fullmap_panel.add_child(_fullmap_arrow)
+	
+	# Coordinate label
+	_fullmap_coord = Label.new()
+	_fullmap_coord.position = Vector2(4, FULLMAP_SIZE + 8)
+	_fullmap_coord.size = Vector2(FULLMAP_SIZE, 20)
+	_fullmap_coord.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_fullmap_coord.add_theme_font_size_override("font_size", 13)
+	_fullmap_coord.add_theme_color_override("font_color", Color(0.9, 0.9, 0.9, 1))
+	_fullmap_coord.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fullmap_panel.add_child(_fullmap_coord)
+	
+	# Hint label
+	_fullmap_hint = Label.new()
+	_fullmap_hint.position = Vector2(4, FULLMAP_SIZE + 28)
+	_fullmap_hint.size = Vector2(FULLMAP_SIZE, 20)
+	_fullmap_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_fullmap_hint.text = "Press M or Esc to close"
+	_fullmap_hint.add_theme_font_size_override("font_size", 11)
+	_fullmap_hint.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 0.8))
+	_fullmap_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fullmap_panel.add_child(_fullmap_hint)
+
+func _show_fullmap() -> void:
+	if not _minimap_image:
+		return
+	_fullmap_open = true
+	
+	# Position centered on screen
+	var vp_size = get_viewport().get_visible_rect().size
+	var panel_w = FULLMAP_SIZE + 8
+	var panel_h = FULLMAP_SIZE + 56
+	_fullmap_panel.position = Vector2((vp_size.x - panel_w) / 2, (vp_size.y - panel_h) / 2)
+	_fullmap_panel.size = Vector2(panel_w, panel_h)
+	
+	# Show the full map image
+	var full_img = _minimap_image.duplicate()
+	full_img.resize(FULLMAP_SIZE, FULLMAP_SIZE, Image.INTERPOLATE_BILINEAR)
+	_fullmap_texture.texture = ImageTexture.create_from_image(full_img)
+	
+	_fullmap_panel.visible = true
+	_border.visible = false  # Hide minimap while full map is open
+
+func _hide_fullmap() -> void:
+	_fullmap_open = false
+	_fullmap_panel.visible = false
+	_border.visible = true
+
+func _input(event: InputEvent) -> void:
+	if not visible:
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_M:
+			if _fullmap_open:
+				_hide_fullmap()
+			else:
+				_show_fullmap()
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_ESCAPE and _fullmap_open:
+			_hide_fullmap()
+			get_viewport().set_input_as_handled()
 
 func _build_minimap_image() -> void:
 	# Build COMPLETE map image ONCE (terrain + roads + water + buildings from PNG)
@@ -178,6 +288,18 @@ func _process(_delta: float) -> void:
 	var px = player_pos.x + map_half
 	var pz = player_pos.z + map_half
 	
+	# Player facing direction
+	var forward = -_player.global_transform.basis.z
+	var angle = atan2(forward.x, -forward.z)
+	
+	# Update full map overlay if open
+	if _fullmap_open:
+		var scale_fm = float(FULLMAP_SIZE) / float(map_size)
+		_fullmap_arrow.position = Vector2(px * scale_fm + 4, pz * scale_fm + 4)
+		_fullmap_arrow.rotation = angle
+		_fullmap_coord.text = "%d, %d" % [int(player_pos.x), int(player_pos.z)]
+		return  # Skip minimap update while full map is open
+	
 	# Crop region around player
 	var crop_size = MINIMAP_RADIUS * 2
 	var x0 = int(px - MINIMAP_RADIUS)
@@ -199,8 +321,6 @@ func _process(_delta: float) -> void:
 	_player_arrow.position = Vector2(arrow_x, arrow_y)
 	
 	# Rotate arrow to match player facing direction
-	var forward = -_player.global_transform.basis.z
-	var angle = atan2(forward.x, -forward.z)  # North (-Z) is 0 rad (UP)
 	_player_arrow.rotation = angle
 	
 	# Update coordinate label

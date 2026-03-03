@@ -41,7 +41,7 @@ func get_building_map() -> Image:
 	return building_map
 
 ## Update a pixel on the building_map when a block is placed or removed
-## Also updates the minimap image directly (single pixel, zero overhead)
+## Also updates the minimap image directly for real-time feedback
 func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
 	_ensure_building_map()
 	var half = MAP_SIZE / 2
@@ -52,12 +52,11 @@ func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
 	var val = 1.0 if is_set else 0.0
 	building_map.set_pixel(px, pz, Color(val, 0, 0, 1))
 	
-	# Update minimap directly (single pixel write)
+	# Update minimap directly (single pixel write — real-time for player builds)
 	if minimap_image:
 		if is_set:
 			minimap_image.set_pixel(px, pz, Color(0.86, 0.31, 0.16, 1.0))
 		else:
-			# Restore original terrain color — use a neutral green as fallback
 			minimap_image.set_pixel(px, pz, Color(0.31, 0.63, 0.24, 1.0))
 
 func _ready():

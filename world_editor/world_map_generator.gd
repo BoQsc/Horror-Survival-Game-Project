@@ -221,7 +221,7 @@ func generate_world() -> Dictionary:
 			if lake_val > 0.3:
 				water_bytes[idx] = 255
 	
-	# PASS 4: Bake building positions at road intersections
+	# PASS 4: Bake building positions at road intersections (VALIDATED)
 	if progress_callback.is_valid():
 		progress_callback.call(95.0, "Placing buildings")
 	
@@ -229,6 +229,24 @@ func generate_world() -> Dictionary:
 	var building_bytes = PackedByteArray()
 	building_bytes.resize(total)
 	building_bytes.fill(0)
+	
+	# Rejection stats
+	var bldg_stats = {
+		"attempted": 0,
+		"placed": 0,
+		"rejected_chance": 0,
+		"rejected_bounds": 0,
+		"rejected_water": 0,
+		"rejected_slope": 0,
+		"rejected_forest": 0,
+		"rejected_height": 0
+	}
+	
+	# Forest noise for checking forested areas (matches prefab_spawner)
+	var forest_noise = FastNoiseLite.new()
+	forest_noise.noise_type = FastNoiseLite.TYPE_VALUE
+	forest_noise.seed = world_seed + 100
+	forest_noise.frequency = 0.02
 	
 	var buildings: Array = []
 	if road_spacing > 0.0:
@@ -241,8 +259,11 @@ func generate_world() -> Dictionary:
 				var rng = RandomNumberGenerator.new()
 				rng.seed = hash(key) + 42
 				
+				bldg_stats.attempted += 1
+				
 				# Chance to spawn
 				if rng.randf() > building_spawn_chance:
+					bldg_stats.rejected_chance += 1
 					continue
 				
 				# Pick side of road
@@ -253,17 +274,52 @@ func generate_world() -> Dictionary:
 				# Check within map bounds
 				var px = int(spawn_x + half)
 				var pz = int(spawn_z + half)
-				if px < 0 or px >= MAP_SIZE or pz < 0 or pz >= MAP_SIZE:
+				if px < 2 or px >= MAP_SIZE - 2 or pz < 2 or pz >= MAP_SIZE - 2:
+					bldg_stats.rejected_bounds += 1
 					continue
 				
-				# Skip if on water
 				var bidx = pz * MAP_SIZE + px
+				
+				# Check: water
 				if water_bytes[bidx] > 128:
+					bldg_stats.rejected_water += 1
 					continue
 				
-				# Get terrain height from heightmap for placement
+				# Check: terrain height sanity
 				var terrain_y = float(height_bytes[bidx]) / 255.0 * max_h
+				if terrain_y < 2.0 or terrain_y > 28.0:
+					bldg_stats.rejected_height += 1
+					continue
 				
+				# Check: terrain slope (max height diff across 5x5 footprint)
+				var min_h_local = terrain_y
+				var max_h_local = terrain_y
+				for sx in range(-2, 3):
+					for sz in range(-2, 3):
+						var si = (pz + sz) * MAP_SIZE + (px + sx)
+						if si >= 0 and si < total:
+							var sh = float(height_bytes[si]) / 255.0 * max_h
+							min_h_local = min(min_h_local, sh)
+							max_h_local = max(max_h_local, sh)
+				if max_h_local - min_h_local > 3.0:
+					bldg_stats.rejected_slope += 1
+					continue
+				
+				# Check: forest (matches prefab_spawner._is_forested_area)
+				var is_forested = false
+				for dx in range(-2, 5, 2):
+					for dz in range(-2, 5, 2):
+						if forest_noise.get_noise_2d(spawn_x + dx, spawn_z + dz) >= 0.4:
+							is_forested = true
+							break
+					if is_forested:
+						break
+				if is_forested:
+					bldg_stats.rejected_forest += 1
+					continue
+				
+				# ALL CHECKS PASSED — place building
+				bldg_stats.placed += 1
 				buildings.append({
 					"x": spawn_x,
 					"y": floor(terrain_y),
@@ -271,7 +327,7 @@ func generate_world() -> Dictionary:
 					"type": "small_house"
 				})
 				
-				# Stamp building footprint onto building_bytes (10×10 so it's visible on map)
+				# Stamp building footprint onto building_bytes (10x10 visible on map)
 				var stamp_size = 10
 				var stamp_half = stamp_size / 2
 				for fx in range(stamp_size):
@@ -281,7 +337,12 @@ func generate_world() -> Dictionary:
 						if fpx >= 0 and fpx < MAP_SIZE and fpz >= 0 and fpz < MAP_SIZE:
 							building_bytes[fpz * MAP_SIZE + fpx] = 255
 	
-	print("[WorldMapGen] Baked %d buildings, lakes generated" % buildings.size())
+	print("[WorldMapGen] Buildings: %d placed / %d attempted (water:%d slope:%d forest:%d height:%d bounds:%d chance:%d)" % [
+		bldg_stats.placed, bldg_stats.attempted,
+		bldg_stats.rejected_water, bldg_stats.rejected_slope,
+		bldg_stats.rejected_forest, bldg_stats.rejected_height,
+		bldg_stats.rejected_bounds, bldg_stats.rejected_chance
+	])
 	
 	# Convert byte arrays to Images
 	var heightmap = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, height_bytes)
@@ -299,7 +360,8 @@ func generate_world() -> Dictionary:
 		"roads": road_map,
 		"water": water_map,
 		"building_map": building_map,
-		"buildings": buildings
+		"buildings": buildings,
+		"building_stats": bldg_stats
 	}
 
 # ============================================================================

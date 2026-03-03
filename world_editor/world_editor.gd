@@ -45,6 +45,10 @@ var brush_size: int = 5
 var paint_biome_id: int = 0
 var is_painting: bool = false
 
+# Programmatic UI
+var building_stats_label: Label = null
+var legend_container: VBoxContainer = null
+
 func _ready() -> void:
 	seed_input.value = 12345
 	height_input.value = 10.0
@@ -67,6 +71,8 @@ func _ready() -> void:
 	
 	# Scan for existing worlds on startup
 	_refresh_world_list()
+	_create_building_stats_label()
+	_create_map_legend()
 	print("[WorldEditor] Ready — found %d existing worlds" % world_list.item_count)
 
 # ============================================================================
@@ -209,6 +215,10 @@ func _on_generation_complete(images: Dictionary) -> void:
 	play_btn.disabled = false
 	
 	_update_preview()
+	
+	# Show building stats if available
+	if images.has("building_stats"):
+		_update_building_stats(images.building_stats)
 	
 	# Auto-save after generation
 	_on_save_pressed()
@@ -443,3 +453,93 @@ func _process(_delta: float) -> void:
 		current_tool = Tool.ERASE
 	elif Input.is_key_pressed(KEY_0):
 		current_tool = Tool.NONE
+
+# ============================================================================
+# BUILDING STATS + MAP LEGEND
+# ============================================================================
+
+func _create_building_stats_label() -> void:
+	var vbox = $HSplit/SettingsPanel/VBox
+	
+	var sep = HSeparator.new()
+	sep.name = "BuildingSep"
+	vbox.add_child(sep)
+	
+	building_stats_label = Label.new()
+	building_stats_label.name = "BuildingStats"
+	building_stats_label.text = "Buildings: Generate a world to see stats"
+	building_stats_label.add_theme_font_size_override("font_size", 11)
+	building_stats_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.6, 1))
+	building_stats_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	vbox.add_child(building_stats_label)
+
+func _update_building_stats(stats: Dictionary) -> void:
+	if not building_stats_label:
+		return
+	var placed = stats.get("placed", 0)
+	var attempted = stats.get("attempted", 0)
+	var lines = "Buildings: %d placed / %d intersections\n" % [placed, attempted]
+	var rejected_water = stats.get("rejected_water", 0)
+	var rejected_slope = stats.get("rejected_slope", 0)
+	var rejected_forest = stats.get("rejected_forest", 0)
+	var rejected_height = stats.get("rejected_height", 0)
+	var rejected_chance = stats.get("rejected_chance", 0)
+	var rejected_bounds = stats.get("rejected_bounds", 0)
+	var total_rejected = rejected_water + rejected_slope + rejected_forest + rejected_height + rejected_bounds
+	lines += "Rejected: %d " % total_rejected
+	if total_rejected > 0:
+		var reasons = []
+		if rejected_water > 0: reasons.append("water:%d" % rejected_water)
+		if rejected_slope > 0: reasons.append("slope:%d" % rejected_slope)
+		if rejected_forest > 0: reasons.append("forest:%d" % rejected_forest)
+		if rejected_height > 0: reasons.append("height:%d" % rejected_height)
+		if rejected_bounds > 0: reasons.append("bounds:%d" % rejected_bounds)
+		lines += "(%s)" % ", ".join(reasons)
+	lines += "\nSkipped (chance): %d" % rejected_chance
+	building_stats_label.text = lines
+
+func _create_map_legend() -> void:
+	var vbox = $HSplit/SettingsPanel/VBox
+	
+	var sep = HSeparator.new()
+	sep.name = "LegendSep"
+	vbox.add_child(sep)
+	
+	var title = Label.new()
+	title.name = "LegendTitle"
+	title.text = "Map Legend"
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color(1, 1, 1, 0.9))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+	
+	legend_container = VBoxContainer.new()
+	legend_container.name = "LegendContainer"
+	vbox.add_child(legend_container)
+	
+	var entries = [
+		[Color(0.31, 0.63, 0.24), "Grass"],
+		[Color(0.76, 0.70, 0.50), "Sand"],
+		[Color(0.90, 0.90, 0.94), "Snow"],
+		[Color(0.55, 0.51, 0.45), "Gravel"],
+		[Color(0.25, 0.25, 0.30), "Roads"],
+		[Color(0.16, 0.31, 0.63), "Water"],
+		[Color(0.86, 0.31, 0.16), "Buildings"],
+	]
+	
+	for entry in entries:
+		var row = HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		
+		var swatch = ColorRect.new()
+		swatch.color = entry[0]
+		swatch.custom_minimum_size = Vector2(14, 14)
+		row.add_child(swatch)
+		
+		var lbl = Label.new()
+		lbl.text = entry[1]
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 0.9))
+		row.add_child(lbl)
+		
+		legend_container.add_child(row)
