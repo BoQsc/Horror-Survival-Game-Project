@@ -52,6 +52,11 @@ func _create_road_mask():
 
 func _init_road_shader():
 	if terrain_manager and "material_terrain" in terrain_manager:
+		# Don't overwrite world map road settings if they were already set by ChunkManager
+		if "world_map_active" in terrain_manager and terrain_manager.world_map_active:
+			print("[RoadManager] World map active, skipping road_mask initialization")
+			return
+			
 		var mat = terrain_manager.material_terrain
 		if mat:
 			mat.set_shader_parameter("road_mask", road_mask_texture)

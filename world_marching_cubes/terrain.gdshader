@@ -261,7 +261,9 @@ vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col
 		else return col_grass;
 	} else {
 		// Natural voxel: honor road material, otherwise use procedural per-pixel color
-		if (id == 6) return col_road;
+		// In world map mode, we use procedural_col (which already has apply_world_map_road blending)
+		// even for voxels tagged as ID 6 to ensure smooth per-pixel edges.
+		if (id == 6 && !use_world_map) return col_road;
 		return procedural_col;
 	}
 }
