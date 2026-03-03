@@ -10,8 +10,9 @@ var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
 var _border: Panel
 var _coord_label: Label
-var _minimap_image: Image  # Cached full-map preview
+var _minimap_image: Image  # Base map with buildings baked in (updated in-place on changes)
 var _terrain_manager: Node = null
+var _building_manager: Node = null
 var _player: Node = null
 
 func _ready() -> void:
@@ -70,14 +71,18 @@ func _ready() -> void:
 
 func _deferred_init() -> void:
 	_terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	_building_manager = get_tree().get_first_node_in_group("building_manager")
 	_player = get_tree().get_first_node_in_group("player")
 	
 	if _terrain_manager and "world_map_active" in _terrain_manager and _terrain_manager.world_map_active:
 		_build_minimap_image()
 		visible = true
+		# Give building_manager a reference so it can update pixels directly
+		if _building_manager and _minimap_image:
+			_building_manager.minimap_image = _minimap_image
 
 func _build_minimap_image() -> void:
-	# Load world map images to build a colored minimap
+	# Build COMPLETE map image ONCE (terrain + roads + water + buildings from PNG)
 	if not _terrain_manager or not "world_definition_path" in _terrain_manager:
 		return
 	
@@ -95,7 +100,6 @@ func _build_minimap_image() -> void:
 	var rmap: Image = loaded.get("roads", null)
 	var wmap: Image = loaded.get("water", null)
 	
-	# Use GPU-generated biome data (same fbm() as terrain shader) if available
 	var b_data: PackedByteArray
 	if _terrain_manager and "gpu_biome_map" in _terrain_manager and _terrain_manager.gpu_biome_map.size() > 0:
 		b_data = _terrain_manager.gpu_biome_map
@@ -103,6 +107,10 @@ func _build_minimap_image() -> void:
 		b_data = loaded.biomes.get_data()
 	else:
 		return
+	
+	# Load building footprints from PNG (baked at generation time)
+	var bldg_map: Image = loaded.get("building_map", null)
+	var bldg_data: PackedByteArray = bldg_map.get_data() if bldg_map else PackedByteArray()
 	
 	var w = hmap.get_width()
 	var h = hmap.get_height()
@@ -117,24 +125,24 @@ func _build_minimap_image() -> void:
 	for i in range(w * h):
 		var height_val = float(h_data[i]) / 255.0
 		var shade = 0.5 + height_val * 0.5
-		# GPU biome data stores discrete biome IDs (computed by same fbm() as shader)
 		var biome = b_data[i] if i < b_data.size() else 0
 		
-		# Biome colors
-		var r: int = 80; var g: int = 160; var b: int = 60  # Grass default
-		if biome == 3: r = 194; g = 178; b = 128  # Sand
-		elif biome == 5: r = 230; g = 230; b = 240  # Snow
-		elif biome == 4: r = 140; g = 130; b = 115  # Gravel
+		var r: int = 80; var g: int = 160; var b: int = 60
+		if biome == 3: r = 194; g = 178; b = 128
+		elif biome == 5: r = 230; g = 230; b = 240
+		elif biome == 4: r = 140; g = 130; b = 115
 		
-		# Road overlay
 		if r_data.size() > 0:
 			var ri = i * 2
 			if ri < r_data.size() and r_data[ri] > 128:
 				r = 64; g = 64; b = 77
 		
-		# Water overlay
 		if w_data.size() > 0 and i < w_data.size() and w_data[i] > 128:
 			r = 40; g = 80; b = 160
+		
+		# Building overlay from baked PNG
+		if bldg_data.size() > 0 and i < bldg_data.size() and bldg_data[i] > 128:
+			r = 220; g = 80; b = 40
 		
 		var pi = i * 3
 		map_pixels[pi] = int(clampf(r * shade, 0, 255))
@@ -142,7 +150,7 @@ func _build_minimap_image() -> void:
 		map_pixels[pi + 2] = int(clampf(b * shade, 0, 255))
 	
 	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, map_pixels)
-	print("[Minimap] Built %dx%d minimap image" % [w, h])
+	print("[Minimap] Built %dx%d map (buildings baked from PNG)" % [w, h])
 
 func _process(_delta: float) -> void:
 	if not _minimap_image or not _player:
@@ -179,10 +187,9 @@ func _process(_delta: float) -> void:
 	x0 = clampi(x0, 0, int(map_size) - crop_size)
 	z0 = clampi(z0, 0, int(map_size) - crop_size)
 	
-	# Extract sub-region
+	# Extract sub-region — no building processing, all baked into _minimap_image
 	var cropped = _minimap_image.get_region(Rect2i(x0, z0, crop_size, crop_size))
 	cropped.resize(MINIMAP_SIZE, MINIMAP_SIZE, Image.INTERPOLATE_NEAREST)
-	
 	_texture_rect.texture = ImageTexture.create_from_image(cropped)
 	
 	# Update arrow position dynamically to handle world map borders

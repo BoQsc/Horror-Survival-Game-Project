@@ -20,6 +20,46 @@ var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing r
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
+# Building map layer — tracks building block footprints on a 2D map
+const MAP_SIZE: int = 2048  # Must match WorldMapGenerator.MAP_SIZE
+var building_map: Image = null  # R8 image, 255 = building, 0 = empty
+var minimap_image: Image = null  # Reference to HUDMinimap's RGB8 image (set by minimap)
+
+## Initialize building_map if not already loaded from disk
+func _ensure_building_map() -> void:
+	if building_map == null:
+		building_map = Image.create(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8)
+		building_map.fill(Color(0, 0, 0, 1))
+
+## Set building_map from loaded data (called by chunk_manager on world load)
+func set_building_map(img: Image) -> void:
+	building_map = img
+
+## Get the current building_map for saving / preview
+func get_building_map() -> Image:
+	_ensure_building_map()
+	return building_map
+
+## Update a pixel on the building_map when a block is placed or removed
+## Also updates the minimap image directly (single pixel, zero overhead)
+func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
+	_ensure_building_map()
+	var half = MAP_SIZE / 2
+	var px = int(floor(global_pos.x)) + half
+	var pz = int(floor(global_pos.z)) + half
+	if px < 0 or px >= MAP_SIZE or pz < 0 or pz >= MAP_SIZE:
+		return
+	var val = 1.0 if is_set else 0.0
+	building_map.set_pixel(px, pz, Color(val, 0, 0, 1))
+	
+	# Update minimap directly (single pixel write)
+	if minimap_image:
+		if is_set:
+			minimap_image.set_pixel(px, pz, Color(0.86, 0.31, 0.16, 1.0))
+		else:
+			# Restore original terrain color — use a neutral green as fallback
+			minimap_image.set_pixel(px, pz, Color(0.31, 0.63, 0.24, 1.0))
+
 func _ready():
 	# Preload all object scenes for faster building spawning
 	ObjectRegistry.preload_all_scenes()
@@ -168,6 +208,9 @@ func set_voxel(global_pos: Vector3, value: int, meta: int = 0):
 	var chunk = get_chunk(chunk_coord)
 	chunk.set_voxel(Vector3i(local_x, local_y, local_z), value, meta)
 	
+	# Update building map
+	_update_building_map_pixel(global_pos, value > 0)
+	
 	# Trigger rebuild for this chunk if it's visible
 	if visible_chunks.has(chunk_coord):
 		chunk.rebuild_mesh()
@@ -191,6 +234,9 @@ func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0):
 	
 	var chunk = get_chunk(chunk_coord)
 	chunk.set_voxel(Vector3i(local_x, local_y, local_z), value, meta)
+	
+	# Update building map
+	_update_building_map_pixel(global_pos, value > 0)
 	
 	# Always mark chunk as dirty - rebuild will check visibility
 	_dirty_chunks[chunk_coord] = chunk
@@ -335,4 +381,8 @@ func remove_object_at(global_pos: Vector3) -> bool:
 	if anchor == null:
 		return false
 	
-	return chunk.remove_object(anchor)
+	var result = chunk.remove_object(anchor)
+	if result:
+		# Clear this cell on the building map
+		_update_building_map_pixel(global_pos, false)
+	return result

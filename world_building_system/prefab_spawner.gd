@@ -108,6 +108,10 @@ func _ready():
 			road_spacing = terrain_manager.procedural_road_spacing
 		if "procedural_road_width" in terrain_manager:
 			road_width = terrain_manager.procedural_road_width
+		# Pass building_map from terrain_manager to building_manager (world map mode)
+		if building_manager and "_world_map_building_map" in terrain_manager and terrain_manager._world_map_building_map:
+			building_manager.set_building_map(terrain_manager._world_map_building_map)
+			DebugManager.log_building("PrefabSpawner: Passed building_map to BuildingManager")
 
 func _process(_delta):
 	_cleanup_distant_doors()

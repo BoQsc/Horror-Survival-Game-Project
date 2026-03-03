@@ -48,6 +48,7 @@ var _world_map_water_buf: RID = RID()
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
+var _world_map_building_map: Image = null  # R8 building footprint map from buildings.png
 var gpu_biome_map: PackedByteArray = PackedByteArray()  # GPU-generated biome map for minimap (uses same fbm() as shader)
 
 # GPU Threading (single thread for compute shaders)
@@ -1385,6 +1386,11 @@ func _thread_function():
 			if loaded.has("buildings"):
 				_world_map_buildings = loaded.buildings
 				print("[ChunkManager] Loaded %d baked buildings" % _world_map_buildings.size())
+			
+			# Load building footprint map
+			if loaded.has("building_map"):
+				_world_map_building_map = loaded.building_map
+				print("[ChunkManager] Loaded building_map (%dx%d)" % [_world_map_building_map.get_width(), _world_map_building_map.get_height()])
 			
 			# Read metadata for map params
 			if loaded.has("metadata"):

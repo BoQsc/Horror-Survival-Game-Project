@@ -225,6 +225,11 @@ func generate_world() -> Dictionary:
 	if progress_callback.is_valid():
 		progress_callback.call(95.0, "Placing buildings")
 	
+	# Building map — R8 image tracking building footprints
+	var building_bytes = PackedByteArray()
+	building_bytes.resize(total)
+	building_bytes.fill(0)
+	
 	var buildings: Array = []
 	if road_spacing > 0.0:
 		var grid_min = int(-half / road_spacing) - 1
@@ -265,6 +270,16 @@ func generate_world() -> Dictionary:
 					"z": spawn_z,
 					"type": "small_house"
 				})
+				
+				# Stamp building footprint onto building_bytes (10×10 so it's visible on map)
+				var stamp_size = 10
+				var stamp_half = stamp_size / 2
+				for fx in range(stamp_size):
+					for fz in range(stamp_size):
+						var fpx = px - stamp_half + fx
+						var fpz = pz - stamp_half + fz
+						if fpx >= 0 and fpx < MAP_SIZE and fpz >= 0 and fpz < MAP_SIZE:
+							building_bytes[fpz * MAP_SIZE + fpx] = 255
 	
 	print("[WorldMapGen] Baked %d buildings, lakes generated" % buildings.size())
 	
@@ -273,6 +288,7 @@ func generate_world() -> Dictionary:
 	var biome_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, biome_bytes)
 	var road_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RG8, road_bytes)
 	var water_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, water_bytes)
+	var building_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, building_bytes)
 	
 	if progress_callback.is_valid():
 		progress_callback.call(100.0, "Complete")
@@ -282,6 +298,7 @@ func generate_world() -> Dictionary:
 		"biomes": biome_map,
 		"roads": road_map,
 		"water": water_map,
+		"building_map": building_map,
 		"buildings": buildings
 	}
 
@@ -324,9 +341,10 @@ static func load_world(path: String) -> Dictionary:
 		"heightmap": Image.FORMAT_R8,
 		"biomes": Image.FORMAT_R8,
 		"roads": Image.FORMAT_RG8,
-		"water": Image.FORMAT_R8
+		"water": Image.FORMAT_R8,
+		"building_map": Image.FORMAT_R8
 	}
-	for img_name in ["heightmap", "biomes", "roads", "water"]:
+	for img_name in ["heightmap", "biomes", "roads", "water", "building_map"]:
 		var fp = path.path_join(img_name + ".png")
 		# Backward compat: old worlds saved "structures.png" instead of "water.png"
 		if not FileAccess.file_exists(fp) and img_name == "water":
