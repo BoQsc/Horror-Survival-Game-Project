@@ -23,6 +23,10 @@ var _fullmap_arrow: Polygon2D = null
 var _fullmap_coord: Label = null
 var _fullmap_hint: Label = null
 var _fullmap_open: bool = false
+var _fullmap_zoom: float = 1.0  # 1.0 = full map, higher = zoomed in
+const FULLMAP_ZOOM_MIN: float = 1.0
+const FULLMAP_ZOOM_MAX: float = 8.0
+const FULLMAP_ZOOM_STEP: float = 0.5
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -156,6 +160,7 @@ func _show_fullmap() -> void:
 	if not _minimap_image:
 		return
 	_fullmap_open = true
+	_fullmap_zoom = 1.0  # Reset zoom on open
 	
 	# Position centered on screen
 	var vp_size = get_viewport().get_visible_rect().size
@@ -164,18 +169,20 @@ func _show_fullmap() -> void:
 	_fullmap_panel.position = Vector2((vp_size.x - panel_w) / 2, (vp_size.y - panel_h) / 2)
 	_fullmap_panel.size = Vector2(panel_w, panel_h)
 	
-	# Show the full map image
-	var full_img = _minimap_image.duplicate()
-	full_img.resize(FULLMAP_SIZE, FULLMAP_SIZE, Image.INTERPOLATE_BILINEAR)
-	_fullmap_texture.texture = ImageTexture.create_from_image(full_img)
-	
 	_fullmap_panel.visible = true
 	_border.visible = false  # Hide minimap while full map is open
+	_update_fullmap_hint()
 
 func _hide_fullmap() -> void:
 	_fullmap_open = false
 	_fullmap_panel.visible = false
 	_border.visible = true
+
+func _update_fullmap_hint() -> void:
+	if _fullmap_zoom <= 1.0:
+		_fullmap_hint.text = "Scroll to zoom • Press M or Esc to close"
+	else:
+		_fullmap_hint.text = "Zoom: %.0fx • Scroll to zoom • M / Esc to close" % _fullmap_zoom
 
 func _input(event: InputEvent) -> void:
 	if not visible:
@@ -189,6 +196,16 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif event.keycode == KEY_ESCAPE and _fullmap_open:
 			_hide_fullmap()
+			get_viewport().set_input_as_handled()
+	# Scroll wheel zoom on full map
+	if _fullmap_open and event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_fullmap_zoom = min(_fullmap_zoom + FULLMAP_ZOOM_STEP, FULLMAP_ZOOM_MAX)
+			_update_fullmap_hint()
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_fullmap_zoom = max(_fullmap_zoom - FULLMAP_ZOOM_STEP, FULLMAP_ZOOM_MIN)
+			_update_fullmap_hint()
 			get_viewport().set_input_as_handled()
 
 func _build_minimap_image() -> void:
@@ -294,8 +311,23 @@ func _process(_delta: float) -> void:
 	
 	# Update full map overlay if open
 	if _fullmap_open:
-		var scale_fm = float(FULLMAP_SIZE) / float(map_size)
-		_fullmap_arrow.position = Vector2(px * scale_fm + 4, pz * scale_fm + 4)
+		var img_w = _minimap_image.get_width()
+		var img_h = _minimap_image.get_height()
+		
+		# Compute visible region based on zoom (centered on player)
+		var view_size = int(float(img_w) / _fullmap_zoom)
+		var cx = int(px) - view_size / 2
+		var cz = int(pz) - view_size / 2
+		cx = clampi(cx, 0, img_w - view_size)
+		cz = clampi(cz, 0, img_h - view_size)
+		
+		var cropped = _minimap_image.get_region(Rect2i(cx, cz, view_size, view_size))
+		cropped.resize(FULLMAP_SIZE, FULLMAP_SIZE, Image.INTERPOLATE_BILINEAR)
+		_fullmap_texture.texture = ImageTexture.create_from_image(cropped)
+		
+		# Player arrow position relative to crop
+		var scale_fm = float(FULLMAP_SIZE) / float(view_size)
+		_fullmap_arrow.position = Vector2((px - float(cx)) * scale_fm + 4, (pz - float(cz)) * scale_fm + 4)
 		_fullmap_arrow.rotation = angle
 		_fullmap_coord.text = "%d, %d" % [int(player_pos.x), int(player_pos.z)]
 		return  # Skip minimap update while full map is open
