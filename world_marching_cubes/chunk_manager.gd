@@ -48,6 +48,7 @@ var _world_map_water_buf: RID = RID()
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
+var gpu_biome_map: PackedByteArray = PackedByteArray()  # GPU-generated biome map for minimap (uses same fbm() as shader)
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -244,21 +245,23 @@ func _ready():
 		# are controlled by the material buffer (depth-limited to 2 blocks)
 		material_terrain.set_shader_parameter("procedural_road_enabled", false)
 		material_terrain.set_shader_parameter("use_world_map", true)
-		# Load biome image and pass as texture for per-pixel blending in fragment shader
+		# Read metadata for map params (biome blending now uses GPU fbm() directly, no texture needed)
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 		var loaded = WorldMapGen.load_world(world_definition_path)
-		if loaded.has("biomes"):
-			var bmap: Image = loaded.biomes
-			var biome_tex = ImageTexture.create_from_image(bmap)
-			material_terrain.set_shader_parameter("biome_noise_map", biome_tex)
 		if loaded.has("metadata"):
 			var meta = loaded.metadata
 			world_map_size = float(meta.get("map_size", 2048))
 			world_map_half = world_map_size / 2.0
 			world_map_max_height = float(meta.get("terrain_height", 20.0)) * 2.5
-		material_terrain.set_shader_parameter("biome_map_size", world_map_size)
-		material_terrain.set_shader_parameter("biome_map_half", world_map_half)
-		print("[ChunkManager] World map mode: %s (procedural road overlay disabled)" % world_definition_path)
+		# Pass world map road image as road_mask for per-pixel road edge blending
+		# UV mapping: road_uv = world_pos.xz * scale + 0.5 = (world_pos.xz + half) / size
+		if loaded.has("roads"):
+			var rmap: Image = loaded.roads
+			var road_tex = ImageTexture.create_from_image(rmap)
+			material_terrain.set_shader_parameter("road_mask", road_tex)
+			material_terrain.set_shader_parameter("road_mask_offset", Vector2(0.0, 0.0))
+			material_terrain.set_shader_parameter("road_mask_scale", 1.0 / world_map_size)
+		print("[ChunkManager] World map mode: %s (GPU fbm biomes, per-pixel road overlay)" % world_definition_path)
 	
 	# Start GPU thread
 	compute_thread = Thread.new()
@@ -1302,6 +1305,49 @@ func _thread_function():
 	var pipe_gen_water = rd.compute_pipeline_create(sid_gen_water)
 	var pipe_mod = rd.compute_pipeline_create(sid_mod)
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
+	
+	# === GPU Biome Map Generation (for minimap — uses same fbm() as terrain shader) ===
+	if world_map_active:
+		var biome_spirv = load("res://world_marching_cubes/gen_biome_map.glsl").get_spirv()
+		var sid_biome = rd.shader_create_from_spirv(biome_spirv)
+		var pipe_biome = rd.compute_pipeline_create(sid_biome)
+		
+		var map_size_i = int(world_map_size)
+		var buf_size = map_size_i * map_size_i
+		# Pad to 4-byte alignment
+		while buf_size % 4 != 0: buf_size += 1
+		var biome_init = PackedByteArray()
+		biome_init.resize(buf_size)
+		biome_init.fill(0)
+		var biome_buf_rid = rd.storage_buffer_create(buf_size, biome_init)
+		
+		var u_biome = RDUniform.new()
+		u_biome.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+		u_biome.binding = 0
+		u_biome.add_id(biome_buf_rid)
+		var biome_set = rd.uniform_set_create([u_biome], sid_biome, 0)
+		
+		# Push constants: map_size, map_half, pad, pad
+		var pc = PackedFloat32Array([world_map_size, world_map_half, 0.0, 0.0])
+		var pc_bytes = pc.to_byte_array()
+		
+		var cl = rd.compute_list_begin()
+		rd.compute_list_bind_compute_pipeline(cl, pipe_biome)
+		rd.compute_list_bind_uniform_set(cl, biome_set, 0)
+		rd.compute_list_set_push_constant(cl, pc_bytes, pc_bytes.size())
+		var groups = int(ceil(world_map_size / 16.0))
+		rd.compute_list_dispatch(cl, groups, groups, 1)
+		rd.compute_list_end()
+		rd.submit()
+		rd.sync()
+		
+		# Read back GPU-generated biome data
+		gpu_biome_map = rd.buffer_get_data(biome_buf_rid)
+		gpu_biome_map.resize(map_size_i * map_size_i)  # Trim to exact size
+		
+		rd.free_rid(biome_buf_rid)
+		rd.free_rid(sid_biome)
+		DebugManager.log_chunk("GPU biome map generated (%dx%d) using shader fbm()" % [map_size_i, map_size_i])
 	
 	# === World Map Buffers (uploaded from editor PNGs) ===
 	

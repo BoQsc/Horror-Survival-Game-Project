@@ -88,37 +88,43 @@ func _build_minimap_image() -> void:
 	var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 	var loaded = WorldMapGen.load_world(path)
 	
-	if not loaded.has("heightmap") or not loaded.has("biomes"):
+	if not loaded.has("heightmap"):
 		return
 	
 	var hmap: Image = loaded.heightmap
-	var bmap: Image = loaded.biomes
 	var rmap: Image = loaded.get("roads", null)
 	var wmap: Image = loaded.get("water", null)
+	
+	# Use GPU-generated biome data (same fbm() as terrain shader) if available
+	var b_data: PackedByteArray
+	if _terrain_manager and "gpu_biome_map" in _terrain_manager and _terrain_manager.gpu_biome_map.size() > 0:
+		b_data = _terrain_manager.gpu_biome_map
+	elif loaded.has("biomes"):
+		b_data = loaded.biomes.get_data()
+	else:
+		return
 	
 	var w = hmap.get_width()
 	var h = hmap.get_height()
 	
 	var h_data = hmap.get_data()
-	var b_data = bmap.get_data()
 	var r_data = rmap.get_data() if rmap else PackedByteArray()
 	var w_data = wmap.get_data() if wmap else PackedByteArray()
 	
-	# Build RGB image
-	var rgb_bytes = PackedByteArray()
-	rgb_bytes.resize(w * h * 3)
+	var map_pixels = PackedByteArray()
+	map_pixels.resize(w * h * 3)
 	
 	for i in range(w * h):
 		var height_val = float(h_data[i]) / 255.0
 		var shade = 0.5 + height_val * 0.5
-		# Decode continuous biome noise value: [0,255] → [-1,1]
-		var bv = float(b_data[i]) / 255.0 * 2.0 - 1.0
+		# GPU biome data stores discrete biome IDs (computed by same fbm() as shader)
+		var biome = b_data[i] if i < b_data.size() else 0
 		
-		# Biome colors (same thresholds as gen_density.glsl and terrain.gdshader)
+		# Biome colors
 		var r: int = 80; var g: int = 160; var b: int = 60  # Grass default
-		if bv < -0.2: r = 194; g = 178; b = 128  # Sand
-		elif bv > 0.6: r = 230; g = 230; b = 240  # Snow
-		elif bv > 0.2: r = 140; g = 130; b = 115  # Gravel
+		if biome == 3: r = 194; g = 178; b = 128  # Sand
+		elif biome == 5: r = 230; g = 230; b = 240  # Snow
+		elif biome == 4: r = 140; g = 130; b = 115  # Gravel
 		
 		# Road overlay
 		if r_data.size() > 0:
@@ -131,11 +137,11 @@ func _build_minimap_image() -> void:
 			r = 40; g = 80; b = 160
 		
 		var pi = i * 3
-		rgb_bytes[pi] = int(clampf(r * shade, 0, 255))
-		rgb_bytes[pi + 1] = int(clampf(g * shade, 0, 255))
-		rgb_bytes[pi + 2] = int(clampf(b * shade, 0, 255))
+		map_pixels[pi] = int(clampf(r * shade, 0, 255))
+		map_pixels[pi + 1] = int(clampf(g * shade, 0, 255))
+		map_pixels[pi + 2] = int(clampf(b * shade, 0, 255))
 	
-	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, rgb_bytes)
+	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, map_pixels)
 	print("[Minimap] Built %dx%d minimap image" % [w, h])
 
 func _process(_delta: float) -> void:

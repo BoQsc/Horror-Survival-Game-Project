@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b40abvmx4upq0"
+path="res://.godot/imported/gen_biome_map.glsl-4165c9d4bb75c2866c3e3bb88ffa42bc.res"
+
+[deps]
+
+source_file="res://world_marching_cubes/gen_biome_map.glsl"
+dest_files=["res://.godot/imported/gen_biome_map.glsl-4165c9d4bb75c2866c3e3bb88ffa42bc.res"]
+
+[params]
+

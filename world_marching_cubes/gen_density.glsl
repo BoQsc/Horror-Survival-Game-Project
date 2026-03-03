@@ -306,14 +306,12 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
         if (road_data.x > 128.0 && depth < 2.0) {
             return 6u;  // Road (asphalt)
         }
-        // Biome buffer stores continuous noise value: [0,255] → [-1.0, 1.0]
-        float biome_val = float(sample_world_biome(world_pos.xz)) / 255.0 * 2.0 - 1.0;
-        uint biome_id;
-        if (biome_val < -0.2) biome_id = 3u;      // Sand
-        else if (biome_val > 0.6) biome_id = 5u;   // Snow
-        else if (biome_val > 0.2) biome_id = 4u;   // Gravel
-        else biome_id = 0u;                         // Grass
-        return biome_id;
+        // Biome: use same GPU fbm() as procedural mode for perfect shader alignment
+        float biome_val = fbm(world_pos.xz * 0.002);
+        if (biome_val < -0.2) return 3u;      // Sand
+        if (biome_val > 0.6) return 5u;        // Snow
+        if (biome_val > 0.2) return 4u;        // Gravel
+        return 0u;                              // Grass
     }
     
     // === PROCEDURAL MODE ===
