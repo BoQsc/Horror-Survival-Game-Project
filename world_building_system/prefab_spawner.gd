@@ -112,6 +112,8 @@ func _ready():
 		if building_manager and "_world_map_building_map" in terrain_manager and terrain_manager._world_map_building_map:
 			building_manager.set_building_map(terrain_manager._world_map_building_map)
 			DebugManager.log_building("PrefabSpawner: Passed building_map to BuildingManager")
+	
+	load_user_prefabs()
 
 func _process(_delta):
 	_cleanup_distant_doors()
@@ -172,26 +174,28 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	
 	_check_and_spawn_buildings(chunk_world_x, chunk_world_z)
 
-## Spawn pre-baked buildings from the world map generator
-## Buildings whose XZ falls within this chunk's bounds are spawned unconditionally
-## Generator is the single source of truth — if it's in world_meta.json, it spawns
+## Spawn pre-baked buildings from the world map generator.
+## Buildings whose XZ falls within this chunk's bounds are spawned unconditionally.
+## Uses actual runtime terrain height (get_terrain_height) instead of the baked Y estimate,
+## and routes all user JSON prefabs through spawn_user_prefab with interior_carve=true so
+## terrain inside the building footprint is carved out even on bumpy ground.
 func _spawn_baked_buildings(coord: Vector3i):
 	if not terrain_manager or not "_world_map_buildings" in terrain_manager:
 		return
-	
+
 	var chunk_stride = 31
 	var chunk_x = coord.x * chunk_stride
 	var chunk_z = coord.z * chunk_stride
-	
+
 	if building_manager and not building_manager.world_map_mode:
 		building_manager.world_map_mode = true
-	
+
 	for bldg in terrain_manager._world_map_buildings:
 		var bx = float(bldg.get("x", 0))
 		var bz = float(bldg.get("z", 0))
 		var by = float(bldg.get("y", 12))
 		var btype = str(bldg.get("type", "small_house"))
-		
+
 		# Check if this building falls within this chunk
 		if bx >= chunk_x and bx < chunk_x + chunk_stride \
 			and bz >= chunk_z and bz < chunk_z + chunk_stride:
@@ -199,9 +203,53 @@ func _spawn_baked_buildings(coord: Vector3i):
 			if spawned_positions.has(key):
 				continue
 			spawned_positions[key] = true
-			
+
+			# --- Runtime terrain height correction ---
+			# The baked Y comes from the 8-bit quantized heightmap and may be ±1 unit off.
+			# Query the actual terrain isosurface height at this XZ position so the building
+			# sits on the real ground, not the approximated PNG height.
+			var terrain_y = _get_terrain_height(bx, bz)
+			if terrain_y > -500.0:
+				# Use runtime surface. Floor it to keep buildings integers-aligned.
+				# road_y stored in bldg is used as a reference: if terrain is very close to
+				# road height, prefer road_y (buildings near roads should sit at road level).
+				var road_y = float(bldg.get("road_y", terrain_y))
+				var diff_from_road = abs(terrain_y - road_y)
+				if diff_from_road < 2.0:
+					# Very close to road level — snap to road height for alignment
+					by = floor(road_y)
+				else:
+					by = floor(terrain_y)
+				DebugManager.log_building("[BakedSpawn] %s at (%.1f,%.1f,%.1f) — runtime_y=%.2f road_y=%.2f baked_y=%.1f → final_y=%.1f" % [
+					btype, bx, terrain_y, bz, terrain_y, road_y, float(bldg.get("y", 12)), by
+				])
+			else:
+				# Terrain not loaded yet — use baked Y as fallback
+				by = floor(by)
+				DebugManager.log_building("[BakedSpawn] %s at (%.1f,?,%.1f) — terrain not loaded, using baked_y=%.1f" % [
+					btype, bx, bz, by
+				])
+
 			var spawn_pos = Vector3(bx, by, bz)
-			_spawn_prefab(btype, spawn_pos)
+
+			# --- Spawn path decision ---
+			# For JSON prefabs (loaded from res://world_prefabs/), use spawn_user_prefab with
+			# interior_carve=true to hollow out any terrain inside the building footprint.
+			# The hardcoded "small_house" block array falls back to the old _spawn_prefab path.
+			var is_json_prefab = (btype != "small_house") or FileAccess.file_exists("res://world_prefabs/" + btype + ".json")
+			if is_json_prefab:
+				# Ensure the prefab is loaded (may not be in dict yet if JSON was added after _ready)
+				if not prefabs.has(btype):
+					load_prefab_from_file(btype)
+				if prefabs.has(btype):
+					# submerge_offset=1 buries the foundation 1 block into ground (prevents floating),
+					# interior_carve=true removes terrain inside the building volume.
+					spawn_user_prefab(btype, spawn_pos, 1, 0, false, false, true)
+				else:
+					DebugManager.log_building("[BakedSpawn] WARN: prefab '%s' not found — skipping" % btype)
+			else:
+				# Hardcoded small_house block array (no JSON file)
+				_spawn_prefab(btype, spawn_pos)
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 	if road_spacing <= 0:
@@ -426,28 +474,26 @@ func load_save_data(data: Dictionary):
 const USER_PREFAB_DIR = "user://world_prefabs/"
 const RES_PREFAB_DIR = "res://world_prefabs/"
 
-## Load all user prefabs from user://world_prefabs/ directory
+## Load all user prefabs from res://world_prefabs/ and user://world_prefabs/
 func load_user_prefabs():
-	if not DirAccess.dir_exists_absolute(USER_PREFAB_DIR):
-		return
-	
-	var dir = DirAccess.open(USER_PREFAB_DIR)
-	if not dir:
-		return
-	
 	var count = 0
-	dir.list_dir_begin()
-	var file_name = dir.get_next()
-	while file_name != "":
-		if file_name.ends_with(".json"):
-			var prefab_name = file_name.replace(".json", "")
-			if load_prefab_from_file(prefab_name):
-				count += 1
-		file_name = dir.get_next()
-	dir.list_dir_end()
+	
+	for dir_path in [RES_PREFAB_DIR, USER_PREFAB_DIR]:
+		if DirAccess.dir_exists_absolute(dir_path):
+			var dir = DirAccess.open(dir_path)
+			if dir:
+				dir.list_dir_begin()
+				var file_name = dir.get_next()
+				while file_name != "":
+					if file_name.ends_with(".json"):
+						var prefab_name = file_name.replace(".json", "")
+						if load_prefab_from_file(prefab_name):
+							count += 1
+					file_name = dir.get_next()
+				dir.list_dir_end()
 	
 	if count > 0:
-		DebugManager.log_building("Loaded %d user prefabs" % count)
+		DebugManager.log_building("Loaded %d custom JSON prefabs" % count)
 
 ## Load a single prefab from JSON file (v2 bracket notation format only)
 ## Checks res://world_prefabs/ first, then user://world_prefabs/

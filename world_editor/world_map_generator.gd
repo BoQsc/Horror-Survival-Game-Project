@@ -248,6 +248,7 @@ func generate_world() -> Dictionary:
 	forest_noise.seed = world_seed + 100
 	forest_noise.frequency = 0.02
 	
+	var available_prefabs = _get_available_prefabs()
 	var buildings: Array = []
 	if road_spacing > 0.0:
 		var grid_min = int(-half / road_spacing) - 1
@@ -320,11 +321,39 @@ func generate_world() -> Dictionary:
 				
 				# ALL CHECKS PASSED — place building
 				bldg_stats.placed += 1
+				var selected_prefab = available_prefabs[rng.randi() % available_prefabs.size()]
+				
+				# Compute road height at this cell intersection for runtime snapping.
+				# The building spawn point is offset from the road, but the road surface
+				# height (road_y) is baked so PrefabSpawner can align the building to the
+				# road level at runtime when terrain_y is within 2 units of road_y.
+				var road_cell_x = cx * road_spacing
+				var road_cell_z = cz * road_spacing
+				var r_h1 = _road_height_noise.get_noise_2d(road_cell_x, road_cell_z) * 3.0 + 12.0
+				var r_h2 = _road_height_noise.get_noise_2d(road_cell_x + road_spacing, road_cell_z) * 3.0 + 12.0
+				var r_h3 = _road_height_noise.get_noise_2d(road_cell_x, road_cell_z + road_spacing) * 3.0 + 12.0
+				var r_h4 = _road_height_noise.get_noise_2d(road_cell_x + road_spacing, road_cell_z + road_spacing) * 3.0 + 12.0
+				# Interpolate at the road intersection center (0,0 of cell)
+				var road_y_center = lerp(lerp(r_h1, r_h2, 0.0), lerp(r_h3, r_h4, 0.0), 0.0)
+				# Step it the same way the shader does
+				var base_lvl = floor(road_y_center)
+				var frac_v = road_y_center - base_lvl
+				var road_y_stepped: float
+				if frac_v < 0.45:
+					road_y_stepped = base_lvl
+				elif frac_v > 0.55:
+					road_y_stepped = base_lvl + 1.0
+				else:
+					var ramp_t = (frac_v - 0.45) / 0.1
+					ramp_t = ramp_t * ramp_t * (3.0 - 2.0 * ramp_t)
+					road_y_stepped = base_lvl + ramp_t
+				
 				buildings.append({
 					"x": spawn_x,
 					"y": floor(terrain_y),
 					"z": spawn_z,
-					"type": "small_house"
+					"road_y": floor(road_y_stepped),
+					"type": selected_prefab
 				})
 				
 				# Stamp building footprint onto building_bytes (10x10 visible on map)
@@ -395,6 +424,26 @@ func save_world(path: String, images: Dictionary) -> bool:
 		file.close()
 	print("[WorldMapGen] Saved to: %s" % path)
 	return true
+
+func _get_available_prefabs() -> Array[String]:
+	var prefabs: Array[String] = []
+	for dir_path in ["res://world_prefabs/", "user://world_prefabs/"]:
+		if DirAccess.dir_exists_absolute(dir_path):
+			var dir = DirAccess.open(dir_path)
+			if dir:
+				dir.list_dir_begin()
+				var file_name = dir.get_next()
+				while file_name != "":
+					if file_name.ends_with(".json"):
+						prefabs.append(file_name.replace(".json", ""))
+					file_name = dir.get_next()
+				dir.list_dir_end()
+	
+	# Always include small_house: it's the hardcoded block-array prefab used as a safe default.
+	# JSON prefabs in res://world_prefabs/ are also added.
+	if not "small_house" in prefabs:
+		prefabs.append("small_house")
+	return prefabs
 
 static func load_world(path: String) -> Dictionary:
 	var result = {}
