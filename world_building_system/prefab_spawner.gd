@@ -199,12 +199,14 @@ func _spawn_baked_buildings(coord: Vector3i):
 			
 			# Skip forested areas
 			if _is_forested_area(bx, bz):
+				_clear_minimap_building(bx, bz)
 				continue
 			
 			# Validate terrain with physics raycasts
 			var validated = _validate_terrain_for_building(bx, by, bz)
 			if not validated.valid:
 				DebugManager.log_building("REJECTED %s at (%d,%d): %s" % [btype, int(bx), int(bz), validated.reason])
+				_clear_minimap_building(bx, bz)
 				continue
 			
 			# Use raycast-found ground Y for accurate placement
@@ -256,6 +258,12 @@ func _validate_terrain_for_building(x: float, baked_y: float, z: float) -> Dicti
 	var ground_y = floor(ground_heights[0])
 	
 	return { "valid": true, "ground_y": ground_y, "reason": "ok" }
+
+## Clear a rejected building's pixels from the minimap
+func _clear_minimap_building(world_x: float, world_z: float) -> void:
+	var minimap = get_tree().get_first_node_in_group("hud_minimap")
+	if minimap and minimap.has_method("clear_building_area"):
+		minimap.clear_building_area(world_x, world_z)
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 	if road_spacing <= 0:
