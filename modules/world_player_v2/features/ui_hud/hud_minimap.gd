@@ -12,6 +12,9 @@ var _player_arrow: Polygon2D
 var _border: Panel
 var _coord_label: Label
 var _minimap_image: Image  # Frozen map from PNG — never modified at runtime
+var _minimap_texture: ImageTexture # VRAM texture representing the full map
+var _minimap_atlas: AtlasTexture # GPU region for minimap UI
+var _fullmap_atlas: AtlasTexture # GPU region for full map UI
 var _terrain_manager: Node = null
 var _building_manager: Node = null
 var _player: Node = null
@@ -279,6 +282,18 @@ func _build_minimap_image() -> void:
 		map_pixels[pi + 2] = int(clampf(b * shade, 0, 255))
 	
 	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, map_pixels)
+	_minimap_texture = ImageTexture.create_from_image(_minimap_image)
+	
+	if not _minimap_atlas:
+		_minimap_atlas = AtlasTexture.new()
+		_texture_rect.texture = _minimap_atlas
+	_minimap_atlas.atlas = _minimap_texture
+	
+	if not _fullmap_atlas:
+		_fullmap_atlas = AtlasTexture.new()
+		_fullmap_texture.texture = _fullmap_atlas
+	_fullmap_atlas.atlas = _minimap_texture
+	
 	print("[Minimap] Built %dx%d frozen map" % [w, h])
 
 func _process(_delta: float) -> void:
@@ -323,9 +338,7 @@ func _process(_delta: float) -> void:
 		cx = clampi(cx, 0, img_w - view_size)
 		cz = clampi(cz, 0, img_h - view_size)
 		
-		var cropped = _minimap_image.get_region(Rect2i(cx, cz, view_size, view_size))
-		cropped.resize(FULLMAP_SIZE, FULLMAP_SIZE, Image.INTERPOLATE_BILINEAR)
-		_fullmap_texture.texture = ImageTexture.create_from_image(cropped)
+		_fullmap_atlas.region = Rect2(cx, cz, view_size, view_size)
 		
 		# Player arrow position relative to crop
 		var scale_fm = float(FULLMAP_SIZE) / float(view_size)
@@ -339,14 +352,16 @@ func _process(_delta: float) -> void:
 	var x0 = int(px - MINIMAP_RADIUS)
 	var z0 = int(pz - MINIMAP_RADIUS)
 	
-	# Clamp to image bounds
-	x0 = clampi(x0, 0, int(map_size) - crop_size)
-	z0 = clampi(z0, 0, int(map_size) - crop_size)
+	var img_w = _minimap_image.get_width()
+	var img_h = _minimap_image.get_height()
 	
-	# Extract sub-region — no building processing, all baked into _minimap_image
-	var cropped = _minimap_image.get_region(Rect2i(x0, z0, crop_size, crop_size))
-	cropped.resize(MINIMAP_SIZE, MINIMAP_SIZE, Image.INTERPOLATE_NEAREST)
-	_texture_rect.texture = ImageTexture.create_from_image(cropped)
+	# Clamp to image bounds
+	x0 = clampi(x0, 0, img_w - crop_size)
+	z0 = clampi(z0, 0, img_h - crop_size)
+	
+	# Update atlas UV coordinates (GPU handles stretching via parent TextureRect)
+	if _minimap_atlas.region != Rect2(x0, z0, crop_size, crop_size):
+		_minimap_atlas.region = Rect2(x0, z0, crop_size, crop_size)
 	
 	# Update arrow position dynamically to handle world map borders
 	var scale_factor = float(MINIMAP_SIZE) / float(crop_size)

@@ -105,6 +105,9 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D) -> void:
 	if not enabled:
 		return
 	
+	if terrain_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active:
+		return # Let PrefabSpawner handle pre-baked buildings; do not spawn procedurally
+	
 	var chunk_world_pos = Vector3(coord.x * 32, coord.y * 32, coord.z * 32)
 	_queue_buildings_for_chunk(coord, chunk_world_pos)
 

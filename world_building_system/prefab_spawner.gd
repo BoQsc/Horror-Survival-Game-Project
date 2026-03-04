@@ -112,10 +112,6 @@ func _ready():
 		if building_manager and "_world_map_building_map" in terrain_manager and terrain_manager._world_map_building_map:
 			building_manager.set_building_map(terrain_manager._world_map_building_map)
 			DebugManager.log_building("PrefabSpawner: Passed building_map to BuildingManager")
-		# Set world_map_mode to disable runtime minimap pixel writes (PNG is pre-baked)
-		if building_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active:
-			building_manager.world_map_mode = true
-			DebugManager.log_building("PrefabSpawner: world_map_mode=true (minimap writes disabled)")
 
 func _process(_delta):
 	_cleanup_distant_doors()
@@ -187,6 +183,9 @@ func _spawn_baked_buildings(coord: Vector3i):
 	var chunk_x = coord.x * chunk_stride
 	var chunk_z = coord.z * chunk_stride
 	
+	if building_manager and not building_manager.world_map_mode:
+		building_manager.world_map_mode = true
+	
 	for bldg in terrain_manager._world_map_buildings:
 		var bx = float(bldg.get("x", 0))
 		var bz = float(bldg.get("z", 0))
@@ -200,10 +199,6 @@ func _spawn_baked_buildings(coord: Vector3i):
 			if spawned_positions.has(key):
 				continue
 			spawned_positions[key] = true
-			
-			# Skip forested areas (generator already checks, but double-check)
-			if _is_forested_area(bx, bz):
-				continue
 			
 			var spawn_pos = Vector3(bx, by, bz)
 			_spawn_prefab(btype, spawn_pos)
