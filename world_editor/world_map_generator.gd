@@ -15,7 +15,7 @@ var wide_shoulders: bool = false
 var world_seed: int = 12345
 var lake_threshold: float = 0.35  # Fraction of max height below which lakes form
 var spawn_distance_from_road: float = 15.0
-var building_spawn_chance: float = 0.3
+var building_spawn_chance: float = 0.6
 
 # Progress callback
 var progress_callback: Callable = Callable()
@@ -285,23 +285,23 @@ func generate_world() -> Dictionary:
 					bldg_stats.rejected_water += 1
 					continue
 				
-				# Check: terrain height sanity
-				var terrain_y = float(height_bytes[bidx]) / 255.0 * max_h
-				if terrain_y < 2.0 or terrain_y > 28.0:
+				# Check: terrain height sanity (clamped like shader: clamp(h, 1.0, 28.0))
+				var terrain_y = clampf(float(height_bytes[bidx]) / 255.0 * max_h, 1.0, 28.0)
+				if terrain_y < 3.0 or terrain_y > 26.0:
 					bldg_stats.rejected_height += 1
 					continue
 				
-				# Check: terrain slope (max height diff across 5x5 footprint)
+				# Check: terrain slope across 7x7 footprint (matches runtime ±3 raycast)
 				var min_h_local = terrain_y
 				var max_h_local = terrain_y
-				for sx in range(-2, 3):
-					for sz in range(-2, 3):
+				for sx in range(-3, 4):
+					for sz in range(-3, 4):
 						var si = (pz + sz) * MAP_SIZE + (px + sx)
 						if si >= 0 and si < total:
-							var sh = float(height_bytes[si]) / 255.0 * max_h
+							var sh = clampf(float(height_bytes[si]) / 255.0 * max_h, 1.0, 28.0)
 							min_h_local = min(min_h_local, sh)
 							max_h_local = max(max_h_local, sh)
-				if max_h_local - min_h_local > 3.0:
+				if max_h_local - min_h_local > 2.5:
 					bldg_stats.rejected_slope += 1
 					continue
 				

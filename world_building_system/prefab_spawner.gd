@@ -112,6 +112,10 @@ func _ready():
 		if building_manager and "_world_map_building_map" in terrain_manager and terrain_manager._world_map_building_map:
 			building_manager.set_building_map(terrain_manager._world_map_building_map)
 			DebugManager.log_building("PrefabSpawner: Passed building_map to BuildingManager")
+		# Set world_map_mode to disable runtime minimap pixel writes (PNG is pre-baked)
+		if building_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active:
+			building_manager.world_map_mode = true
+			DebugManager.log_building("PrefabSpawner: world_map_mode=true (minimap writes disabled)")
 
 func _process(_delta):
 	_cleanup_distant_doors()
@@ -173,8 +177,8 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	_check_and_spawn_buildings(chunk_world_x, chunk_world_z)
 
 ## Spawn pre-baked buildings from the world map generator
-## Buildings whose XZ falls within this chunk's bounds are spawned
-## Validates actual 3D terrain with physics raycasts before placement
+## Buildings whose XZ falls within this chunk's bounds are spawned unconditionally
+## Generator is the single source of truth — if it's in world_meta.json, it spawns
 func _spawn_baked_buildings(coord: Vector3i):
 	if not terrain_manager or not "_world_map_buildings" in terrain_manager:
 		return
@@ -197,73 +201,12 @@ func _spawn_baked_buildings(coord: Vector3i):
 				continue
 			spawned_positions[key] = true
 			
-			# Skip forested areas
+			# Skip forested areas (generator already checks, but double-check)
 			if _is_forested_area(bx, bz):
-				_clear_minimap_building(bx, bz)
 				continue
 			
-			# Validate terrain with physics raycasts
-			var validated = _validate_terrain_for_building(bx, by, bz)
-			if not validated.valid:
-				DebugManager.log_building("REJECTED %s at (%d,%d): %s" % [btype, int(bx), int(bz), validated.reason])
-				_clear_minimap_building(bx, bz)
-				continue
-			
-			# Use raycast-found ground Y for accurate placement
-			var spawn_pos = Vector3(bx, validated.ground_y, bz)
+			var spawn_pos = Vector3(bx, by, bz)
 			_spawn_prefab(btype, spawn_pos)
-
-## Validate terrain at building position using physics raycasts
-## Returns { valid: bool, ground_y: float, reason: String }
-func _validate_terrain_for_building(x: float, baked_y: float, z: float) -> Dictionary:
-	var space = get_world_3d().direct_space_state
-	if not space:
-		return { "valid": false, "ground_y": baked_y, "reason": "no_physics" }
-	
-	# Cast rays at center + 4 corners (±3 offset for building footprint)
-	var offsets = [
-		Vector2(0, 0),    # Center
-		Vector2(-3, -3),  # Corner 1
-		Vector2(3, -3),   # Corner 2
-		Vector2(-3, 3),   # Corner 3
-		Vector2(3, 3),    # Corner 4
-	]
-	
-	var ground_heights: Array = []
-	var ray_from_y = 50.0  # Cast from high above
-	var ray_to_y = -5.0    # Cast below terrain
-	
-	for ofs in offsets:
-		var from = Vector3(x + ofs.x, ray_from_y, z + ofs.y)
-		var to = Vector3(x + ofs.x, ray_to_y, z + ofs.y)
-		var query = PhysicsRayQueryParameters3D.create(from, to)
-		query.hit_from_inside = false
-		var result = space.intersect_ray(query)
-		if result.is_empty():
-			# No ground at this point — terrain not loaded or void
-			return { "valid": false, "ground_y": baked_y, "reason": "no_ground" }
-		ground_heights.append(result.position.y)
-	
-	# Check slope: max height difference across footprint
-	var min_y = ground_heights[0]
-	var max_y = ground_heights[0]
-	for h in ground_heights:
-		min_y = min(min_y, h)
-		max_y = max(max_y, h)
-	
-	if max_y - min_y > 3.0:
-		return { "valid": false, "ground_y": ground_heights[0], "reason": "steep_slope_%.1f" % (max_y - min_y) }
-	
-	# Use center ray ground Y (floor it for voxel alignment)
-	var ground_y = floor(ground_heights[0])
-	
-	return { "valid": true, "ground_y": ground_y, "reason": "ok" }
-
-## Clear a rejected building's pixels from the minimap
-func _clear_minimap_building(world_x: float, world_z: float) -> void:
-	var minimap = get_tree().get_first_node_in_group("hud_minimap")
-	if minimap and minimap.has_method("clear_building_area"):
-		minimap.clear_building_area(world_x, world_z)
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 	if road_spacing <= 0:

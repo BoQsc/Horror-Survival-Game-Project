@@ -24,6 +24,7 @@ const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 const MAP_SIZE: int = 2048  # Must match WorldMapGenerator.MAP_SIZE
 var building_map: Image = null  # R8 image, 255 = building, 0 = empty
 var minimap_image: Image = null  # Reference to HUDMinimap's RGB8 image (set by minimap)
+var world_map_mode: bool = false  # Set at startup — disables minimap writes (PNG is pre-baked)
 
 ## Initialize building_map if not already loaded from disk
 func _ensure_building_map() -> void:
@@ -41,7 +42,8 @@ func get_building_map() -> Image:
 	return building_map
 
 ## Update a pixel on the building_map when a block is placed or removed
-## Also updates the minimap image directly for real-time feedback
+## In world map mode: minimap writes disabled (pre-baked from PNG, corrections via clear_building_area)
+## In procedural mode: minimap writes enabled for real-time building feedback
 func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
 	_ensure_building_map()
 	var half = MAP_SIZE / 2
@@ -52,8 +54,8 @@ func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
 	var val = 1.0 if is_set else 0.0
 	building_map.set_pixel(px, pz, Color(val, 0, 0, 1))
 	
-	# Update minimap directly (single pixel write — real-time for player builds)
-	if minimap_image:
+	# Only write minimap pixels in procedural mode (world map mode is pre-baked)
+	if minimap_image and not world_map_mode:
 		if is_set:
 			minimap_image.set_pixel(px, pz, Color(0.86, 0.31, 0.16, 1.0))
 		else:

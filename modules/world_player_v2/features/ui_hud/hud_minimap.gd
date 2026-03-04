@@ -11,8 +11,7 @@ var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
 var _border: Panel
 var _coord_label: Label
-var _minimap_image: Image  # Base map with buildings baked in (updated in-place on changes)
-var _base_terrain_bytes: PackedByteArray  # Cached terrain-only colors for restoration
+var _minimap_image: Image  # Frozen map from PNG — never modified at runtime
 var _terrain_manager: Node = null
 var _building_manager: Node = null
 var _player: Node = null
@@ -211,8 +210,8 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _build_minimap_image() -> void:
-	# Build COMPLETE map ONCE (terrain + roads + water + buildings from PNG).
-	# Buildings that fail terrain validation at runtime will be cleared by prefab_spawner.
+	# Build FROZEN map once (terrain + roads + water + buildings from PNG).
+	# Never modified at runtime — generator is the single source of truth.
 	if not _terrain_manager or not "world_definition_path" in _terrain_manager:
 		return
 	
@@ -238,7 +237,7 @@ func _build_minimap_image() -> void:
 	else:
 		return
 	
-	# Load building footprints from PNG (shown immediately, corrected at runtime)
+	# Load building footprints from PNG
 	var bldg_map: Image = loaded.get("building_map", null)
 	var bldg_data: PackedByteArray = bldg_map.get_data() if bldg_map else PackedByteArray()
 	
@@ -251,10 +250,6 @@ func _build_minimap_image() -> void:
 	
 	var map_pixels = PackedByteArray()
 	map_pixels.resize(w * h * 3)
-	
-	# Cache base terrain colors for later restoration when clearing buildings
-	_base_terrain_bytes = PackedByteArray()
-	_base_terrain_bytes.resize(w * h * 3)
 	
 	for i in range(w * h):
 		var height_val = float(h_data[i]) / 255.0
@@ -274,51 +269,17 @@ func _build_minimap_image() -> void:
 		if w_data.size() > 0 and i < w_data.size() and w_data[i] > 128:
 			r = 40; g = 80; b = 160
 		
-		# Store base terrain color (without buildings)
-		var pi = i * 3
-		var cr = int(clampf(r * shade, 0, 255))
-		var cg = int(clampf(g * shade, 0, 255))
-		var cb = int(clampf(b * shade, 0, 255))
-		_base_terrain_bytes[pi] = cr
-		_base_terrain_bytes[pi + 1] = cg
-		_base_terrain_bytes[pi + 2] = cb
-		
-		# Apply building overlay on top
+		# Building overlay
 		if bldg_data.size() > 0 and i < bldg_data.size() and bldg_data[i] > 128:
-			cr = int(clampf(220 * shade, 0, 255))
-			cg = int(clampf(80 * shade, 0, 255))
-			cb = int(clampf(40 * shade, 0, 255))
+			r = 220; g = 80; b = 40
 		
-		map_pixels[pi] = cr
-		map_pixels[pi + 1] = cg
-		map_pixels[pi + 2] = cb
+		var pi = i * 3
+		map_pixels[pi] = int(clampf(r * shade, 0, 255))
+		map_pixels[pi + 1] = int(clampf(g * shade, 0, 255))
+		map_pixels[pi + 2] = int(clampf(b * shade, 0, 255))
 	
 	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, map_pixels)
-	print("[Minimap] Built %dx%d map (buildings shown, corrected at runtime)" % [w, h])
-
-## Clear a building's pixels from the minimap (restores terrain color)
-## Called by prefab_spawner when a building fails terrain validation
-func clear_building_area(world_x: float, world_z: float) -> void:
-	if not _minimap_image or _base_terrain_bytes.is_empty():
-		return
-	var map_w = _minimap_image.get_width()
-	var half = map_w / 2
-	var px = int(world_x) + half
-	var pz = int(world_z) + half
-	var stamp = 10
-	var stamp_half = stamp / 2
-	for fx in range(stamp):
-		for fz in range(stamp):
-			var sx = px - stamp_half + fx
-			var sz = pz - stamp_half + fz
-			if sx >= 0 and sx < map_w and sz >= 0 and sz < map_w:
-				var pi = (sz * map_w + sx) * 3
-				if pi + 2 < _base_terrain_bytes.size():
-					_minimap_image.set_pixel(sx, sz, Color(
-						float(_base_terrain_bytes[pi]) / 255.0,
-						float(_base_terrain_bytes[pi + 1]) / 255.0,
-						float(_base_terrain_bytes[pi + 2]) / 255.0
-					))
+	print("[Minimap] Built %dx%d frozen map" % [w, h])
 
 func _process(_delta: float) -> void:
 	if not _minimap_image or not _player:
