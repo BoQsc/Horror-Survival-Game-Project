@@ -51,13 +51,32 @@ uint read_byte(uint idx, uint buffer_type) {
     return (word >> (byte_offset * 8u)) & 0xFFu;
 }
 
-// Sample world map height at world XZ (returns terrain height in world units)
+// Sample world map height at world XZ with BILINEAR INTERPOLATION.
+// Without interpolation, adjacent 1m pixels create hard height steps
+// that Marching Cubes renders as triangular spike artifacts.
 float sample_world_height(vec2 world_xz) {
     float px = clamp(world_xz.x + params.map_half, 0.0, params.map_size - 1.0);
     float pz = clamp(world_xz.y + params.map_half, 0.0, params.map_size - 1.0);
-    uint idx = uint(pz) * uint(params.map_size) + uint(px);
-    float h_norm = float(read_byte(idx, 0u)) / 255.0;
-    return h_norm * params.max_height;
+    
+    // Bilinear interpolation: sample 4 neighboring pixels and blend
+    float fx = floor(px);
+    float fz = floor(pz);
+    float tx = px - fx;  // Fractional X (0..1)
+    float tz = pz - fz;  // Fractional Z (0..1)
+    
+    uint ix = uint(fx);
+    uint iz = uint(fz);
+    uint ix1 = min(ix + 1u, uint(params.map_size) - 1u);
+    uint iz1 = min(iz + 1u, uint(params.map_size) - 1u);
+    uint map_w = uint(params.map_size);
+    
+    float h00 = float(read_byte(iz  * map_w + ix,  0u)) / 255.0;
+    float h10 = float(read_byte(iz  * map_w + ix1, 0u)) / 255.0;
+    float h01 = float(read_byte(iz1 * map_w + ix,  0u)) / 255.0;
+    float h11 = float(read_byte(iz1 * map_w + ix1, 0u)) / 255.0;
+    
+    float h = mix(mix(h00, h10, tx), mix(h01, h11, tx), tz);
+    return h * params.max_height;
 }
 
 // Sample world map biome at world XZ (returns material ID)
@@ -241,7 +260,6 @@ float get_density(vec3 pos) {
         
         float map_height = sample_world_height(world_pos.xz);
         // Clamp height to fit within Y=0 chunk (0-32 voxels).
-        // Without this, heights >32 have no isosurface in the chunk → see-through holes.
         map_height = clamp(map_height, 1.0, 28.0);
         return world_pos.y - map_height;
     }

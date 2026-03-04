@@ -338,50 +338,58 @@ func _generate_town_internal_roads(town: Dictionary) -> Array:
 func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_bytes: PackedByteArray,
 		road_bytes: PackedByteArray, max_h: float, half: int, r_width: float) -> void:
 	var half_w = r_width * 0.5
-	# Blend zone must be wide enough for smooth Marching Cubes transitions.
-	# Too narrow = sharp height discontinuity = triangular spike artifacts.
-	var flatten_w = r_width + 15.0  # 15m shoulder on each side beyond road edge
+	var flatten_w = r_width + 15.0  # Smooth blend shoulder
 	
 	for seg in segments:
 		var from_v: Vector2 = seg["from"]
 		var to_v: Vector2 = seg["to"]
-		var length = from_v.distance_to(to_v)
-		if length < 1.0:
+		var seg_len = from_v.distance_to(to_v)
+		if seg_len < 1.0:
 			continue
-		var dir = (to_v - from_v).normalized()
-		var normal = Vector2(-dir.y, dir.x)  # Perpendicular
+		var dir = (to_v - from_v) / seg_len  # Normalized direction
 		
-		# Walk along the road in 1-meter steps
-		var steps = int(ceil(length))
-		for step in range(steps + 1):
-			var t = float(step) / float(steps)
-			var center = from_v.lerp(to_v, t)
-			
-			# Road height at this point
-			var r_height = _get_road_height_at(center.x, center.y)
-			var r_height_byte = int(clampf(r_height / 64.0, 0.0, 1.0) * 255.0)
-			var h_byte = int(clampf(r_height / max_h, 0.0, 1.0) * 255.0)
-			
-			# Paint road pixels perpendicular to the direction
-			for w in range(int(-flatten_w), int(flatten_w) + 1):
-				var p = center + normal * float(w)
-				var px = int(p.x + half)
-				var pz = int(p.y + half)
-				if px < 0 or px >= MAP_SIZE or pz < 0 or pz >= MAP_SIZE:
+		# Bounding box of segment, expanded by flatten_w
+		var min_x = int(min(from_v.x, to_v.x) - flatten_w) + half
+		var max_x = int(max(from_v.x, to_v.x) + flatten_w) + half
+		var min_z = int(min(from_v.y, to_v.y) - flatten_w) + half
+		var max_z = int(max(from_v.y, to_v.y) + flatten_w) + half
+		min_x = clampi(min_x, 0, MAP_SIZE - 1)
+		max_x = clampi(max_x, 0, MAP_SIZE - 1)
+		min_z = clampi(min_z, 0, MAP_SIZE - 1)
+		max_z = clampi(max_z, 0, MAP_SIZE - 1)
+		
+		# Scan every pixel in the bounding box
+		for pz in range(min_z, max_z + 1):
+			var wz = float(pz - half)
+			for px in range(min_x, max_x + 1):
+				var wx = float(px - half)
+				var point = Vector2(wx, wz)
+				
+				# Compute perpendicular distance from point to line segment
+				var ap = point - from_v
+				var t = clampf(ap.dot(dir), 0.0, seg_len)  # Project onto segment
+				var closest = from_v + dir * t
+				var dist = point.distance_to(closest)
+				
+				if dist > flatten_w:
 					continue
+				
+				# Road height at the closest point on the segment
+				var r_height = _get_road_height_at(closest.x, closest.y)
 				var idx = pz * MAP_SIZE + px
 				var ridx = idx * 2
 				
-				var dist_from_center = absf(float(w))
-				if dist_from_center < half_w:
-					# Road surface
+				if dist < half_w:
+					# Road surface — overwrite height, biome, and road mask
+					var r_height_byte = int(clampf(r_height / 64.0, 0.0, 1.0) * 255.0)
+					var h_byte = int(clampf(r_height / max_h, 0.0, 1.0) * 255.0)
 					road_bytes[ridx] = 255
 					road_bytes[ridx + 1] = r_height_byte
 					biome_bytes[idx] = MaterialID.ROAD
 					height_bytes[idx] = h_byte
 				else:
-					# Blend zone — lerp terrain toward road height
-					var blend_t = clampf((dist_from_center - half_w) / (flatten_w - half_w), 0.0, 1.0)
+					# Blend zone — smooth lerp from road height to terrain height
+					var blend_t = clampf((dist - half_w) / (flatten_w - half_w), 0.0, 1.0)
 					var orig_h = float(height_bytes[idx]) / 255.0 * max_h
 					var blended = lerp(r_height, orig_h, blend_t)
 					height_bytes[idx] = int(clampf(blended / max_h, 0.0, 1.0) * 255.0)
