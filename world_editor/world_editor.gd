@@ -48,6 +48,7 @@ var is_painting: bool = false
 # Programmatic UI
 var building_stats_label: Label = null
 var legend_container: VBoxContainer = null
+var road_mode_toggle: CheckBox = null  # false=Town, true=Grid
 
 func _ready() -> void:
 	seed_input.value = 12345
@@ -68,6 +69,26 @@ func _ready() -> void:
 	progress_label.text = "Ready"
 	save_btn.disabled = true
 	play_btn.disabled = true
+	
+	# Create road mode toggle (Town vs Grid)
+	var vbox = $HSplit/SettingsPanel/VBox
+	var road_mode_row = HBoxContainer.new()
+	var road_mode_label = Label.new()
+	road_mode_label.text = "Road Mode"
+	road_mode_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	road_mode_row.add_child(road_mode_label)
+	road_mode_toggle = CheckBox.new()
+	road_mode_toggle.text = "Legacy Grid"
+	road_mode_toggle.button_pressed = false  # Default: Town mode (MST)
+	road_mode_row.add_child(road_mode_toggle)
+	# Insert after RoadSpacingRow
+	var idx = vbox.get_child_count()
+	for i in range(vbox.get_child_count()):
+		if vbox.get_child(i).name == "Sep2":
+			idx = i
+			break
+	vbox.add_child(road_mode_row)
+	vbox.move_child(road_mode_row, idx)
 	
 	# Scan for existing worlds on startup
 	_refresh_world_list()
@@ -186,6 +207,7 @@ func _on_generate_pressed() -> void:
 	generator.terrain_height = height_input.value
 	generator.noise_freq = freq_input.value
 	generator.road_spacing = road_spacing_input.value
+	generator.use_grid_roads = road_mode_toggle.button_pressed if road_mode_toggle else false
 	generator.progress_callback = Callable(self, "_on_gen_progress")
 	
 	gen_thread = Thread.new()

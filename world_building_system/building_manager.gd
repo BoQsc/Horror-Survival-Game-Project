@@ -54,12 +54,16 @@ func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
 	var val = 1.0 if is_set else 0.0
 	building_map.set_pixel(px, pz, Color(val, 0, 0, 1))
 	
-	# Only write minimap pixels in procedural mode (world map mode is pre-baked)
-	if minimap_image and not world_map_mode:
+	# Update minimap pixels for real-time feedback (both procedural and world map modes)
+	if minimap_image:
 		if is_set:
 			minimap_image.set_pixel(px, pz, Color(0.86, 0.31, 0.16, 1.0))
 		else:
 			minimap_image.set_pixel(px, pz, Color(0.31, 0.63, 0.24, 1.0))
+		# Signal minimap to re-upload texture to GPU
+		var hud_minimap = get_tree().get_first_node_in_group("hud_minimap")
+		if hud_minimap and hud_minimap.has_method("mark_dirty"):
+			hud_minimap.mark_dirty()
 
 func _ready():
 	# Preload all object scenes for faster building spawning

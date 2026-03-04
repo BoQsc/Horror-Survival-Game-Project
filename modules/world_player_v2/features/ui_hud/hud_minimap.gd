@@ -11,7 +11,8 @@ var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
 var _border: Panel
 var _coord_label: Label
-var _minimap_image: Image  # Frozen map from PNG — never modified at runtime
+var _minimap_image: Image  # Live map from PNG — updated in real-time for terrain/building changes
+var _minimap_dirty: bool = false  # Set when pixels change; texture re-uploaded once per frame
 var _minimap_texture: ImageTexture # VRAM texture representing the full map
 var _minimap_atlas: AtlasTexture # GPU region for minimap UI
 var _fullmap_atlas: AtlasTexture # GPU region for full map UI
@@ -100,6 +101,9 @@ func _deferred_init() -> void:
 		# Give building_manager a reference so it can update pixels directly
 		if _building_manager and _minimap_image:
 			_building_manager.minimap_image = _minimap_image
+		# Connect to terrain modification signal for real-time map updates
+		if _terrain_manager.has_signal("chunk_modified"):
+			_terrain_manager.chunk_modified.connect(_on_terrain_modified)
 
 func _create_fullmap_overlay() -> void:
 	# Dark background panel
@@ -294,9 +298,49 @@ func _build_minimap_image() -> void:
 		_fullmap_texture.texture = _fullmap_atlas
 	_fullmap_atlas.atlas = _minimap_texture
 	
-	print("[Minimap] Built %dx%d frozen map" % [w, h])
+	print("[Minimap] Built %dx%d live map (real-time updates enabled)" % [w, h])
+
+## Mark the minimap as needing a GPU texture re-upload (called by building_manager or internally)
+func mark_dirty() -> void:
+	_minimap_dirty = true
+
+## Called when terrain is modified (dig/build) — update the affected pixel on the minimap
+func _on_terrain_modified(coord: Vector3i, _chunk_node: Node3D) -> void:
+	if not _minimap_image or not _terrain_manager:
+		return
+	var map_half = _terrain_manager.world_map_half
+	var map_size = _terrain_manager.world_map_size
+	var stride = 31  # CHUNK_STRIDE
+	# Update all pixels in the modified chunk's XZ footprint
+	var base_x = coord.x * stride
+	var base_z = coord.z * stride
+	for lx in range(0, stride, 4):  # Sample every 4th pixel for performance
+		for lz in range(0, stride, 4):
+			var wx = float(base_x + lx)
+			var wz = float(base_z + lz)
+			var px = int(wx + map_half)
+			var pz = int(wz + map_half)
+			if px < 0 or px >= int(map_size) or pz < 0 or pz >= int(map_size):
+				continue
+			# Get current terrain height to compute shade
+			var h = _terrain_manager.get_terrain_height(wx, wz)
+			if h <= -500.0:
+				continue
+			var max_h = _terrain_manager.terrain_height * 2.5
+			var shade = 0.5 + clampf(h / max_h, 0.0, 1.0) * 0.5
+			# Use grass color as default for modified terrain
+			var r = clampf(80.0 * shade / 255.0, 0.0, 1.0)
+			var g = clampf(160.0 * shade / 255.0, 0.0, 1.0)
+			var b = clampf(60.0 * shade / 255.0, 0.0, 1.0)
+			_minimap_image.set_pixel(px, pz, Color(r, g, b, 1.0))
+	_minimap_dirty = true
 
 func _process(_delta: float) -> void:
+	# Batch texture re-upload if any pixels were modified this frame
+	if _minimap_dirty and _minimap_image and _minimap_texture:
+		_minimap_texture.update(_minimap_image)
+		_minimap_dirty = false
+	
 	if not _minimap_image or not _player:
 		return
 	
