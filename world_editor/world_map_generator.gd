@@ -546,20 +546,31 @@ func _generate_town_buildings(towns: Array, height_bytes: PackedByteArray,
 					if not _validate_building_spot(bldg_x + bw * 0.5, bldg_z + bd * 0.5, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats):
 						continue
 					
+					# Intersection clearance - don't place buildings exactly centered on the cross-roads
+					var dist_to_intersection = center.distance_to(Vector2(town.x, town.z))
+					if dist_to_intersection < 18.0:
+						continue
+					
 					# Road clearance — check that the footprint doesn't overlap road pixels
+					# We need to expand the check slightly to avoid buildings right on the edge
 					var on_road = false
-					var px_c = int(bldg_x + bw * 0.5 + half)
-					var pz_c = int(bldg_z + bd * 0.5 + half)
-					for dx in range(int(-bw * 0.5), int(bw * 0.5) + 1, 2):
-						for dz in range(int(-bd * 0.5), int(bd * 0.5) + 1, 2):
-							var rpx = clampi(px_c + dx, 0, MAP_SIZE - 1)
-							var rpz = clampi(pz_c + dz, 0, MAP_SIZE - 1)
+					var margin = 2.0
+					var check_min_x = int(bldg_x - margin + half)
+					var check_max_x = int(bldg_x + bw + margin + half)
+					var check_min_z = int(bldg_z - margin + half)
+					var check_max_z = int(bldg_z + bd + margin + half)
+					
+					for cz in range(check_min_z, check_max_z + 1):
+						for cx in range(check_min_x, check_max_x + 1):
+							var rpx = clampi(cx, 0, MAP_SIZE - 1)
+							var rpz = clampi(cz, 0, MAP_SIZE - 1)
 							var ridx = (rpz * MAP_SIZE + rpx) * 2
 							if road_bytes[ridx] > 128:
 								on_road = true
 								break
 						if on_road:
 							break
+					
 					if on_road:
 						continue
 					
@@ -999,6 +1010,8 @@ func _get_available_prefabs() -> Array[String]:
 	
 	if not "small_house" in prefabs:
 		prefabs.append("small_house")
+	if not "new_wooden_house_2floor" in prefabs:
+		prefabs.append("new_wooden_house_2floor")
 	return prefabs
 
 static func load_world(path: String) -> Dictionary:

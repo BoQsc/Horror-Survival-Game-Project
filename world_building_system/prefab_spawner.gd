@@ -210,18 +210,11 @@ func _spawn_baked_buildings(coord: Vector3i):
 			# sits on the real ground, not the approximated PNG height.
 			var terrain_y = _get_terrain_height(bx, bz)
 			if terrain_y > -500.0:
-				# Use runtime surface. Floor it to keep buildings integers-aligned.
-				# road_y stored in bldg is used as a reference: if terrain is very close to
-				# road height, prefer road_y (buildings near roads should sit at road level).
-				var road_y = float(bldg.get("road_y", terrain_y))
-				var diff_from_road = abs(terrain_y - road_y)
-				if diff_from_road < 2.0:
-					# Very close to road level — snap to road height for alignment
-					by = floor(road_y)
-				else:
-					by = floor(terrain_y)
-				DebugManager.log_building("[BakedSpawn] %s at (%.1f,%.1f,%.1f) — runtime_y=%.2f road_y=%.2f baked_y=%.1f → final_y=%.1f" % [
-					btype, bx, terrain_y, bz, terrain_y, road_y, float(bldg.get("y", 12)), by
+				# Use runtime surface. It was flattened to an exact integer (by = floor(terrain_y)) during generation.
+				# We round it to easily recover that exact integer despite noise/quantization tiny offsets.
+				by = floor(terrain_y + 0.5)
+				DebugManager.log_building("[BakedSpawn] %s at (%.1f,%.1f,%.1f) — runtime_y=%.2f baked_y=%.1f → final_y=%.1f" % [
+					btype, bx, terrain_y, bz, terrain_y, float(bldg.get("y", 12)), by
 				])
 			else:
 				# Terrain not loaded yet — use baked Y as fallback
@@ -677,8 +670,9 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				var terrain_y = _get_terrain_height(pos.x + 0.5, pos.z + 0.5)
 				if terrain_y <= 0:
 					continue
-				# Carve from floor to terrain surface (or ceiling, whichever is lower)
-				var y_start = min_offset.y
+				# Carve from ground floor to terrain surface (or ceiling, whichever is lower)
+				# Start carving from submerge_offset so we don't hollow out the dirt holding up the foundation!
+				var y_start = max(min_offset.y, submerge_offset)
 				var y_end = min(max_offset.y, int(terrain_y - spawn_pos.y) + 1)
 				for cy in range(y_start, y_end + 1):
 					var carve_pos = spawn_pos + Vector3(float(cx) + 0.5, float(cy) + 0.5, float(cz) + 0.5)
@@ -704,7 +698,8 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		for step in range(1, 3):
 			for lateral in range(min_offset.x if door_dir.z != 0 else min_offset.z,
 					(max_offset.x if door_dir.z != 0 else max_offset.z) + 1):
-				for cy in range(min_offset.y, min_offset.y + 3):  # Door height = 3 blocks
+				var door_y_start = max(min_offset.y, submerge_offset)
+				for cy in range(door_y_start, door_y_start + 3):  # Door height = 3 blocks
 					var carve_x: float
 					var carve_z: float
 					if door_dir.x != 0:
