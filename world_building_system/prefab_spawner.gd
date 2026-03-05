@@ -649,61 +649,73 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					# Dig a small box at this position (shape 1 = box, value > 0 = dig)
 					terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
 	
-	# Interior carve: carve only at interior positions (where there are gaps in Y levels)
-	# Walls have blocks at many consecutive Y levels, interior floors have gaps
+	# Full-volume carve: clear ALL terrain within the building's bounding box
+	# This prevents terrain from poking through walls, floors, or windows.
 	if interior_carve and terrain_manager and terrain_manager.has_method("modify_terrain"):
-		# Build occupancy map: track which X,Z columns have blocks and at what Y levels
-		var column_blocks = {} # Key: Vector2i(x,z), Value: Array of Y values
-		var min_y = 999
-		var max_y = -999
+		# Compute building bounding box from block positions
+		var min_offset = Vector3i(999, 999, 999)
+		var max_offset = Vector3i(-999, -999, -999)
 		
 		for block in blocks:
 			var offset = block.offset
-			var rotated_offset = _rotate_offset(offset, rotation)
-			var key = Vector2i(rotated_offset.x, rotated_offset.z)
-			if not column_blocks.has(key):
-				column_blocks[key] = []
-			column_blocks[key].append(rotated_offset.y)
-			min_y = min(min_y, rotated_offset.y)
-			max_y = max(max_y, rotated_offset.y)
+			var rotated = _rotate_offset(offset, rotation)
+			min_offset.x = min(min_offset.x, rotated.x)
+			min_offset.y = min(min_offset.y, rotated.y)
+			min_offset.z = min(min_offset.z, rotated.z)
+			max_offset.x = max(max_offset.x, rotated.x)
+			max_offset.y = max(max_offset.y, rotated.y)
+			max_offset.z = max(max_offset.z, rotated.z)
 		
-		DebugManager.log_building("[InteriorCarve] Prefab Y range: %d to %d, columns: %d" % [min_y, max_y, column_blocks.size()])
-		
-		# Interior column detection: a column is interior if it has fewer blocks
-		# than the total height span (i.e., there are empty/gap Y levels)
-		var prefab_height = max_y - min_y + 1
 		var carve_count = 0
-		var interior_count = 0
 		
-		for xz_key in column_blocks:
-			var y_levels = column_blocks[xz_key]
-			var block_count = y_levels.size()
-			
-			# Interior = has gaps in Y levels (fewer blocks than height span)
-			# Wall = fully filled column (block at every Y level)
-			var is_interior = block_count < prefab_height
-			
-			if not is_interior:
-				continue # Skip fully-filled wall columns
-			
-			interior_count += 1
-			
-			# Get world position for this column at floor level
-			var pos = spawn_pos + Vector3(xz_key.x, min_y, xz_key.y)
-			
-			# Check terrain height at this X,Z position
-			var terrain_y = _get_terrain_height(pos.x + 0.5, pos.z + 0.5)
-			
-			# If terrain surface is above this floor, carve upward
-			if terrain_y > 0 and pos.y <= terrain_y:
-				var y = int(pos.y)
-				while y <= int(terrain_y):
-					var carve_pos = Vector3(pos.x + 0.5, float(y) + 0.5, pos.z + 0.5)
-					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0) # Box shape, dig
+		# Carve every position inside the bounding box where terrain exists
+		for cx in range(min_offset.x, max_offset.x + 1):
+			for cz in range(min_offset.z, max_offset.z + 1):
+				var pos = spawn_pos + Vector3(cx, 0, cz)
+				var terrain_y = _get_terrain_height(pos.x + 0.5, pos.z + 0.5)
+				if terrain_y <= 0:
+					continue
+				# Carve from floor to terrain surface (or ceiling, whichever is lower)
+				var y_start = min_offset.y
+				var y_end = min(max_offset.y, int(terrain_y - spawn_pos.y) + 1)
+				for cy in range(y_start, y_end + 1):
+					var carve_pos = spawn_pos + Vector3(float(cx) + 0.5, float(cy) + 0.5, float(cz) + 0.5)
+					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)
 					carve_count += 1
-					y += 1
 		
-		DebugManager.log_building("[InteriorCarve] Found %d interior columns, carved %d positions" % [interior_count, carve_count])
+		# Door clearance: carve 2 blocks in front of the entrance
+		# Default door is at -Z face (rotation 0). Compute door direction based on rotation.
+		var door_dir = Vector3i(0, 0, -1)  # Default: -Z
+		match rotation:
+			1: door_dir = Vector3i(1, 0, 0)   # +X
+			2: door_dir = Vector3i(0, 0, 1)   # +Z
+			3: door_dir = Vector3i(-1, 0, 0)  # -X
+		
+		# Find the door edge of the building
+		var door_edge: int
+		if door_dir.x != 0:
+			door_edge = max_offset.x if door_dir.x > 0 else min_offset.x
+		else:
+			door_edge = max_offset.z if door_dir.z > 0 else min_offset.z
+		
+		# Carve 2 blocks outward from the door face
+		for step in range(1, 3):
+			for lateral in range(min_offset.x if door_dir.z != 0 else min_offset.z,
+					(max_offset.x if door_dir.z != 0 else max_offset.z) + 1):
+				for cy in range(min_offset.y, min_offset.y + 3):  # Door height = 3 blocks
+					var carve_x: float
+					var carve_z: float
+					if door_dir.x != 0:
+						carve_x = float(door_edge + door_dir.x * step)
+						carve_z = float(lateral)
+					else:
+						carve_x = float(lateral)
+						carve_z = float(door_edge + door_dir.z * step)
+					var carve_pos = spawn_pos + Vector3(carve_x + 0.5, float(cy) + 0.5, carve_z + 0.5)
+					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)
+					carve_count += 1
+		
+		DebugManager.log_building("[FullCarve] Carved %d positions (box: %v to %v)" % [carve_count, min_offset, max_offset])
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:

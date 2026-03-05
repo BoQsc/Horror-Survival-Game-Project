@@ -410,8 +410,34 @@ func _get_road_height_at(wx: float, wz: float) -> float:
 		return base_level + ramp_t
 
 # ============================================================================
-# TOWN BUILDING LOTS
+# TOWN BUILDING LOTS — organized along roads, facing road, collision-checked
 # ============================================================================
+
+## Get the footprint (width, depth) of a prefab by name. Reads JSON if available.
+func _get_prefab_footprint(prefab_name: String) -> Vector2i:
+	# Try to read from JSON prefab files
+	for dir_path in ["res://world_prefabs/", "user://world_prefabs/"]:
+		var fp = dir_path + prefab_name + ".json"
+		if FileAccess.file_exists(fp):
+			var file = FileAccess.open(fp, FileAccess.READ)
+			if file:
+				var json = JSON.new()
+				if json.parse(file.get_as_text()) == OK:
+					var data = json.get_data()
+					if data.has("size"):
+						var s = data["size"]
+						return Vector2i(int(s[0]), int(s[2]))  # Width (X), Depth (Z)
+				file.close()
+	# Fallback: small_house = ~3x3, generic = 10x12
+	if prefab_name == "small_house":
+		return Vector2i(3, 3)
+	return Vector2i(10, 12)
+
+## Check if two axis-aligned rectangles overlap (with margin)
+func _rects_overlap(ax: float, az: float, aw: float, ad: float,
+		bx: float, bz: float, bw: float, bd: float, margin: float) -> bool:
+	return not (ax + aw + margin <= bx or bx + bw + margin <= ax or
+				az + ad + margin <= bz or bz + bd + margin <= az)
 
 func _generate_town_buildings(towns: Array, height_bytes: PackedByteArray,
 		water_bytes: PackedByteArray, road_bytes: PackedByteArray,
@@ -423,44 +449,158 @@ func _generate_town_buildings(towns: Array, height_bytes: PackedByteArray,
 	forest_noise.frequency = 0.02
 	var available_prefabs = _get_available_prefabs()
 	
+	# Pre-compute footprints for each prefab
+	var footprints: Dictionary = {}
+	for pname in available_prefabs:
+		footprints[pname] = _get_prefab_footprint(pname)
+	
 	for town in towns:
 		var rng = RandomNumberGenerator.new()
 		rng.seed = hash("%d_%d" % [int(town.x), int(town.z)]) + 42
 		
 		var placed_in_town = 0
 		var target = town.building_count
-		var attempts = target * 8
 		
-		for _attempt in range(attempts):
-			if placed_in_town >= target:
-				break
-			
-			bldg_stats.attempted += 1
-			
-			# Pick a random position within town radius, offset from roads
-			var angle = rng.randf() * TAU
-			var dist = rng.randf_range(spawn_distance_from_road, town.radius)
-			var spawn_x = town.x + cos(angle) * dist
-			var spawn_z = town.z + sin(angle) * dist
-			
-			if not _validate_building_spot(spawn_x, spawn_z, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats):
+		# Track occupied footprints for collision detection (list of Rect2)
+		var occupied: Array = []  # Array of {x, z, w, d} dicts
+		
+		# Internal roads: cross pattern centered on town
+		var road_r = town.radius * 0.8
+		var town_roads = [
+			# N/S road
+			{"from": Vector2(town.x, town.z - road_r), "to": Vector2(town.x, town.z + road_r), "axis": "ns"},
+			# E/W road
+			{"from": Vector2(town.x - road_r, town.z), "to": Vector2(town.x + road_r, town.z), "axis": "ew"},
+		]
+		
+		# Place lots along each internal road, alternating sides
+		var lot_spacing = 14.0  # Distance between lot centers along the road
+		var road_setback = 10.0  # Distance from road center to building center
+		
+		for road in town_roads:
+			var from_v: Vector2 = road["from"]
+			var to_v: Vector2 = road["to"]
+			var road_len = from_v.distance_to(to_v)
+			if road_len < lot_spacing:
 				continue
+			var road_dir = (to_v - from_v).normalized()
+			var road_normal = Vector2(-road_dir.y, road_dir.x)  # Perpendicular
 			
-			var px = int(spawn_x + half)
-			var pz = int(spawn_z + half)
-			var bidx = pz * MAP_SIZE + px
-			var terrain_y = clampf(float(height_bytes[bidx]) / 255.0 * max_h, 1.0, 28.0)
+			# For N/S road (axis="ns"): road_dir=(0,1), normal=(−1,0)
+			# For E/W road (axis="ew"): road_dir=(1,0), normal=(0,1)
 			
-			# Get road height for alignment
-			var road_y = _get_road_height_at(town.x, town.z)
+			# Determine rotation for buildings on each side:
+			# rot=0: door faces -Z, rot=1: door faces +X, rot=2: door faces +Z, rot=3: door faces -X
+			var rot_left: int
+			var rot_right: int
+			if road["axis"] == "ns":
+				# N/S road: left side is -X, door faces +X (rot=1); right side is +X, door faces -X (rot=3)
+				rot_left = 1
+				rot_right = 3
+			else:
+				# E/W road: left side is -Z, door faces +Z (rot=2); right side is +Z, door faces -Z (rot=0)
+				rot_left = 2
+				rot_right = 0
 			
-			bldg_stats.placed += 1
-			placed_in_town += 1
-			buildings.append({
-				"x": spawn_x, "y": floor(terrain_y), "z": spawn_z,
-				"road_y": floor(road_y),
-				"type": available_prefabs[rng.randi() % available_prefabs.size()]
-			})
+			# Generate lots along the road
+			var num_lots = int(floor(road_len / lot_spacing))
+			var start_offset = (road_len - num_lots * lot_spacing) * 0.5 + lot_spacing * 0.5
+			
+			for lot_idx in range(num_lots):
+				if placed_in_town >= target:
+					break
+				
+				var t = start_offset + lot_idx * lot_spacing
+				var center = from_v + road_dir * t
+				
+				# Try both sides of the road
+				for side in [-1.0, 1.0]:
+					if placed_in_town >= target:
+						break
+					
+					bldg_stats.attempted += 1
+					
+					var spawn_pos_2d = center + road_normal * (road_setback * side)
+					var spawn_x = spawn_pos_2d.x
+					var spawn_z = spawn_pos_2d.y
+					var rot = rot_left if side < 0 else rot_right
+					
+					# Choose prefab
+					var prefab_name = available_prefabs[rng.randi() % available_prefabs.size()]
+					var fp = footprints.get(prefab_name, Vector2i(10, 12))
+					var bw = float(fp.x)
+					var bd = float(fp.y)
+					
+					# For rotated buildings, swap width/depth
+					if rot == 1 or rot == 3:
+						var tmp = bw
+						bw = bd
+						bd = tmp
+					
+					# Building footprint origin (bottom-left corner)
+					# Must be snapped to integer to align block grid and continuous object coordinates
+					var bldg_x = floor(spawn_x - bw * 0.5)
+					var bldg_z = floor(spawn_z - bd * 0.5)
+					
+					# Validate spot
+					if not _validate_building_spot(bldg_x + bw * 0.5, bldg_z + bd * 0.5, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats):
+						continue
+					
+					# Road clearance — check that the footprint doesn't overlap road pixels
+					var on_road = false
+					var px_c = int(bldg_x + bw * 0.5 + half)
+					var pz_c = int(bldg_z + bd * 0.5 + half)
+					for dx in range(int(-bw * 0.5), int(bw * 0.5) + 1, 2):
+						for dz in range(int(-bd * 0.5), int(bd * 0.5) + 1, 2):
+							var rpx = clampi(px_c + dx, 0, MAP_SIZE - 1)
+							var rpz = clampi(pz_c + dz, 0, MAP_SIZE - 1)
+							var ridx = (rpz * MAP_SIZE + rpx) * 2
+							if road_bytes[ridx] > 128:
+								on_road = true
+								break
+						if on_road:
+							break
+					if on_road:
+						continue
+					
+					# Collision detection — check against already-placed buildings
+					var overlaps = false
+					for occ in occupied:
+						if _rects_overlap(bldg_x, bldg_z, bw, bd,
+								occ.x, occ.z, occ.w, occ.d, 2.0):
+							overlaps = true
+							break
+					if overlaps:
+						continue
+					
+					# Use terrain height at the building's position
+					var px_b = int(bldg_x + bw * 0.5 + half)
+					var pz_b = int(bldg_z + bd * 0.5 + half)
+					var bidx = pz_b * MAP_SIZE + px_b
+					var terrain_y = clampf(float(height_bytes[bidx]) / 255.0 * max_h, 1.0, 28.0)
+					var road_y = _get_road_height_at(center.x, center.y)
+					var bldg_y = floor(terrain_y)
+					
+					# Flatten terrain under building footprint in the heightmap
+					# This ensures the building sits on perfectly flat ground
+					var flat_h_byte = int(clampf(bldg_y / max_h, 0.0, 1.0) * 255.0)
+					var pad = 2  # Extra margin around footprint
+					for fz in range(-pad, int(bd) + pad + 1):
+						for fx in range(-pad, int(bw) + pad + 1):
+							var fpx = clampi(int(bldg_x + half) + fx, 0, MAP_SIZE - 1)
+							var fpz = clampi(int(bldg_z + half) + fz, 0, MAP_SIZE - 1)
+							height_bytes[fpz * MAP_SIZE + fpx] = flat_h_byte
+					
+					occupied.append({"x": bldg_x, "z": bldg_z, "w": bw, "d": bd})
+					bldg_stats.placed += 1
+					placed_in_town += 1
+					
+					# Store the CORNER coordinate so prefab blocks spawn exactly within the pad
+					buildings.append({
+						"x": bldg_x, "y": bldg_y, "z": bldg_z,
+						"road_y": floor(road_y),
+						"type": prefab_name
+					})
 		
 		print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
 
