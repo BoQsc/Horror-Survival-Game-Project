@@ -581,15 +581,40 @@ func _generate_town_buildings(towns: Array, height_bytes: PackedByteArray,
 					var road_y = _get_road_height_at(center.x, center.y)
 					var bldg_y = floor(terrain_y)
 					
-					# Flatten terrain under building footprint in the heightmap
-					# This ensures the building sits on perfectly flat ground
+					# Smooth terrain pad under building
 					var flat_h_byte = int(clampf(bldg_y / max_h, 0.0, 1.0) * 255.0)
-					var pad = 2  # Extra margin around footprint
+					var pad = 6  # Outer margin for blending
 					for fz in range(-pad, int(bd) + pad + 1):
 						for fx in range(-pad, int(bw) + pad + 1):
 							var fpx = clampi(int(bldg_x + half) + fx, 0, MAP_SIZE - 1)
 							var fpz = clampi(int(bldg_z + half) + fz, 0, MAP_SIZE - 1)
-							height_bytes[fpz * MAP_SIZE + fpx] = flat_h_byte
+							var h_idx = fpz * MAP_SIZE + fpx
+							var orig_h_byte = height_bytes[h_idx]
+							
+							# Calculate distance to building footprint box
+							# Building box is 0 to bw in X, 0 to bd in Z (local space)
+							var dx = max(0.0, max(0.0 - fx, fx - bw))
+							var dz = max(0.0, max(0.0 - fz, fz - bd))
+							var dist = sqrt(dx*dx + dz*dz)
+							
+							if dist <= 1.0:
+								height_bytes[h_idx] = flat_h_byte
+							elif dist < 6.0:
+								# Hermite blend
+								var blend_t = (dist - 1.0) / 5.0
+								var smooth_t = blend_t * blend_t * (3.0 - 2.0 * blend_t)
+								height_bytes[h_idx] = int(lerp(float(flat_h_byte), float(orig_h_byte), smooth_t))
+					
+					# Paint a driveway from building to road
+					var dir_to_road = (center - spawn_pos_2d).normalized()
+					var drive_len = center.distance_to(spawn_pos_2d)
+					for dt in range(int(drive_len)):
+						var dp = spawn_pos_2d + dir_to_road * float(dt)
+						for wx in range(-1, 2):
+							for wy in range(-1, 2):
+								var dpx = clampi(int(dp.x + half) + wx, 0, MAP_SIZE - 1)
+								var dpz = clampi(int(dp.y + half) + wy, 0, MAP_SIZE - 1)
+								road_bytes[(dpz * MAP_SIZE + dpx) * 2] = 255  # Main road material
 					
 					occupied.append({"x": bldg_x, "z": bldg_z, "w": bw, "d": bd})
 					bldg_stats.placed += 1
@@ -599,6 +624,7 @@ func _generate_town_buildings(towns: Array, height_bytes: PackedByteArray,
 					buildings.append({
 						"x": bldg_x, "y": bldg_y, "z": bldg_z,
 						"road_y": floor(road_y),
+						"rotation": rot,
 						"type": prefab_name
 					})
 		

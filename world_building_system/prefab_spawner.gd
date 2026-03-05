@@ -244,7 +244,9 @@ func _spawn_baked_buildings(coord: Vector3i):
 				if prefabs.has(btype):
 					# submerge_offset=1 buries the foundation 1 block into ground (prevents floating),
 					# interior_carve=true removes terrain inside the building volume.
-					spawn_user_prefab(btype, spawn_pos, 1, 0, false, false, true)
+					# rotation from baked data (0-3, facing nearest road)
+					var rot = int(bldg.get("rotation", 0))
+					spawn_user_prefab(btype, spawn_pos, 1, rot, false, false, true)
 				else:
 					DebugManager.log_building("[BakedSpawn] WARN: prefab '%s' not found — skipping" % btype)
 			else:
