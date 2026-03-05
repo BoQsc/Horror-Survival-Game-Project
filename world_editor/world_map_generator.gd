@@ -526,12 +526,20 @@ func _generate_town_buildings(towns: Array, height_bytes: PackedByteArray,
 					var rot = rot_left if side < 0 else rot_right
 					
 					# Choose prefab
-					var prefab_name = available_prefabs[rng.randi() % available_prefabs.size()]
+					var prefab_name = ""
+					# Guarantee at least one 2-floor house per town (place it on the first successful lot)
+					if placed_in_town == 0 and "new_wooden_house_2floor" in available_prefabs:
+						prefab_name = "new_wooden_house_2floor"
+					else:
+						prefab_name = available_prefabs[rng.randi() % available_prefabs.size()]
+					
 					var fp = footprints.get(prefab_name, Vector2i(10, 12))
 					var bw = float(fp.x)
 					var bd = float(fp.y)
 					
 					# For rotated buildings, swap width/depth
+					# rot=0 (-Z), rot=1 (+X), rot=2 (+Z), rot=3 (-X)
+					# If facing X axis (1 or 3), swap width and depth for the bounding box
 					if rot == 1 or rot == 3:
 						var tmp = bw
 						bw = bd
@@ -552,13 +560,11 @@ func _generate_town_buildings(towns: Array, height_bytes: PackedByteArray,
 						continue
 					
 					# Road clearance — check that the footprint doesn't overlap road pixels
-					# We need to expand the check slightly to avoid buildings right on the edge
 					var on_road = false
-					var margin = 2.0
-					var check_min_x = int(bldg_x - margin + half)
-					var check_max_x = int(bldg_x + bw + margin + half)
-					var check_min_z = int(bldg_z - margin + half)
-					var check_max_z = int(bldg_z + bd + margin + half)
+					var check_min_x = int(bldg_x + half)
+					var check_max_x = int(bldg_x + bw + half)
+					var check_min_z = int(bldg_z + half)
+					var check_max_z = int(bldg_z + bd + half)
 					
 					for cz in range(check_min_z, check_max_z + 1):
 						for cx in range(check_min_x, check_max_x + 1):
