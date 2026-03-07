@@ -1,7 +1,6 @@
 [gd_scene format=3 uid="uid://be152jvxotx5q"]
 
 [ext_resource type="PackedScene" uid="uid://b8dotn0iuivrd" path="res://modules/world_player_v2/player.tscn" id="1_worldplayer"]
-[ext_resource type="PackedScene" uid="uid://dusp0hitkv8d0" path="res://models/entities/player/node_3d_test_scene.tscn" id="2_fmx6u"]
 [ext_resource type="Script" uid="uid://d2oq01pxsr6xj" path="res://world_marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://world_building_system/building_manager.gd" id="5_buildings"]
 [ext_resource type="Script" uid="uid://c31576os7r5vc" path="res://world_vegetation/vegetation_manager.gd" id="6_vegetation"]
@@ -54,10 +53,6 @@ shadow_enabled = true
 
 [node name="WorldPlayerV2" parent="." unique_id=679681981 instance=ExtResource("1_worldplayer")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 131.172, 0)
-
-[node name="Node3dTestScene" parent="WorldPlayerV2" unique_id=1924489324 instance=ExtResource("2_fmx6u")]
-transform = Transform3D(-0.9848077, 0, -0.17364822, 0, 1, 0, 0.17364822, 0, -0.9848077, 0, 0, 0.47238725)
-visible = false
 
 [node name="UI" type="Control" parent="." unique_id=96397387]
 layout_mode = 3

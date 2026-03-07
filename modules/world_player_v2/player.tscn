@@ -1,8 +1,10 @@
 [gd_scene format=3 uid="uid://b8dotn0iuivrd"]
 
 [ext_resource type="Script" uid="uid://xuh2opiptmhm" path="res://modules/world_player_v2/player.gd" id="1_player"]
+[ext_resource type="PackedScene" uid="uid://be1binfphvmu0" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/Superhero_Male_FullBody.gltf" id="2_h0vda"]
 [ext_resource type="Script" uid="uid://c8y54d5s4ct3h" path="res://modules/world_player_v2/features/body_movement/player_movement.gd" id="2_movement"]
 [ext_resource type="Script" uid="uid://b2srj3lepsdhr" path="res://modules/world_player_v2/features/body_camera/player_camera.gd" id="3_camera"]
+[ext_resource type="AnimationLibrary" uid="uid://cul84upoj7eq7" path="res://models/entities/player/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb" id="3_j78ds"]
 [ext_resource type="Script" uid="uid://cuskdtp03uds8" path="res://modules/world_player_v2/features/data_inventory/hotbar.gd" id="4_hotbar"]
 [ext_resource type="Script" uid="uid://bto1a6aotugyy" path="res://modules/world_player_v2/features/ui_modes/mode_manager.gd" id="5_mode_manager"]
 [ext_resource type="Script" uid="uid://bg0nkbklyomn1" path="res://modules/world_player_v2/features/data_inventory/item_use_router.gd" id="6_item_router"]
@@ -12,7 +14,7 @@
 [ext_resource type="Script" uid="uid://dqq53ig6w7wm4" path="res://modules/world_player_v2/features/data_inventory/inventory.gd" id="10_inventory"]
 [ext_resource type="Script" uid="uid://cwvskb6au45e2" path="res://modules/world_player_v2/features/tool_interaction/player_interaction.gd" id="11_interaction"]
 [ext_resource type="Script" uid="uid://jc5j38s1vbni" path="res://modules/world_player_v2/features/tool_combat/player_combat.gd" id="12_combat"]
-[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/ui_hud/player_hud.tscn" id="13_hud"]
+[ext_resource type="PackedScene" uid="uid://gkgsovnvgi0q" path="res://modules/world_player_v2/features/ui_hud/player_hud.tscn" id="13_hud"]
 [ext_resource type="Script" uid="uid://x7daoavkwyr7" path="res://modules/world_player_v2/features/tool_combat/weapons/first_person_arms.gd" id="15_arms"]
 [ext_resource type="Script" uid="uid://cs5ph0nb42pji" path="res://modules/world_player_v2/features/tool_combat/weapons/first_person_pistol.gd" id="16_pistol"]
 [ext_resource type="Script" uid="uid://ccr7ty807oero" path="res://modules/world_player_v2/features/tool_combat/weapons/first_person_axe.gd" id="17_axe"]
@@ -34,6 +36,69 @@ script = ExtResource("1_player")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1230838101]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 shape = SubResource("CapsuleShape3D_1")
+
+[node name="WorldPlayerFullBody" type="Node3D" parent="." unique_id=1829496466]
+transform = Transform3D(-0.99999994, 0, -8.742277e-08, 0, 1, 0, 8.742277e-08, 0, -0.99999994, 0, 0, 0)
+visible = false
+
+[node name="Superhero_Male_FullBody" parent="WorldPlayerFullBody" unique_id=384777518 instance=ExtResource("2_h0vda")]
+
+[node name="GeneralSkeleton" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature" parent_id_path=PackedInt32Array(384777518, 1299914517) index="0" unique_id=1290942985]
+bones/1/position = Vector3(0, 0.9491, -0.051870793)
+bones/1/rotation = Quaternion(2.682209e-07, 0, 0, 1)
+bones/3/rotation = Quaternion(-1.4528631e-07, 0, 0, 1)
+bones/4/rotation = Quaternion(-4.4703484e-08, 0, 0, 1)
+bones/5/rotation = Quaternion(2.2351742e-08, 0, 0, 1)
+bones/6/rotation = Quaternion(2.3841858e-07, 0, 0, 1)
+bones/7/rotation = Quaternion(0.5, 0.49999988, 0.5, -0.5000001)
+bones/8/rotation = Quaternion(1.6391276e-07, 1, 4.4703476e-08, -2.9802319e-08)
+bones/9/rotation = Quaternion(-1.1590383e-07, -0.70710695, -1.0536709e-08, 0.7071066)
+bones/10/rotation = Quaternion(-1.8751639e-07, 0.70710707, 1.07511596e-07, 0.7071065)
+bones/11/rotation = Quaternion(3.5762793e-07, -3.725291e-07, 5.960465e-08, 1)
+bones/12/rotation = Quaternion(0, -1.1920929e-07, 5.9604645e-08, 1)
+bones/13/rotation = Quaternion(0, 0, 5.9604645e-08, 1)
+bones/15/rotation = Quaternion(3.1292439e-07, -2.3841858e-07, 5.9604645e-08, 1)
+bones/16/rotation = Quaternion(-2.9802322e-08, -1.1920929e-07, 2.9802322e-08, 1)
+bones/17/rotation = Quaternion(0, -5.960466e-08, -2.980233e-08, 1)
+bones/19/rotation = Quaternion(3.4272674e-07, -2.831221e-07, 2.9802326e-08, 1)
+bones/20/rotation = Quaternion(0, -1.0430813e-07, 5.9604645e-08, 1)
+bones/23/rotation = Quaternion(2.8312203e-07, -4.4703478e-07, 5.9604638e-08, 1)
+bones/24/rotation = Quaternion(2.9802322e-08, -8.940697e-08, 8.940697e-08, 1)
+bones/25/rotation = Quaternion(0, 0, -5.9604645e-08, 1)
+bones/27/rotation = Quaternion(-0.2141867, 0.67388695, 0.21418685, 0.67388755)
+bones/28/rotation = Quaternion(-1.3411045e-07, -5.9604645e-08, -5.9604645e-08, 1)
+bones/29/rotation = Quaternion(1.4901161e-08, 7.4505806e-08, 2.9802322e-08, 1)
+bones/31/rotation = Quaternion(0.5, -0.49999988, -0.5, -0.5000001)
+bones/32/rotation = Quaternion(-1.3411044e-07, 1, 7.45058e-08, 2.9802319e-08)
+bones/33/rotation = Quaternion(-1.3697726e-07, 0.707107, -1.0536716e-08, 0.70710665)
+bones/34/rotation = Quaternion(-1.8728218e-07, -0.7071071, -1.07745805e-07, 0.7071064)
+bones/35/rotation = Quaternion(3.8743025e-07, 3.8743025e-07, -8.940698e-08, 1)
+bones/36/rotation = Quaternion(-2.9802322e-08, 1.1920929e-07, -2.9802322e-08, 1)
+bones/37/rotation = Quaternion(0, -1.4901161e-08, -1.4901161e-08, 1)
+bones/39/rotation = Quaternion(4.0233135e-07, 2.2351742e-07, -5.9604645e-08, 1)
+bones/40/rotation = Quaternion(-2.9802322e-08, 1.1920929e-07, -2.9802322e-08, 1)
+bones/41/rotation = Quaternion(1.4901165e-08, 1.4901165e-08, 4.4703494e-08, 1)
+bones/43/rotation = Quaternion(3.8743025e-07, 3.2782557e-07, -8.940698e-08, 1)
+bones/44/rotation = Quaternion(-1.4901161e-08, 1.3411045e-07, -7.4505806e-08, 1)
+bones/45/rotation = Quaternion(1.4901161e-08, 1.4901161e-08, 0, 1)
+bones/47/rotation = Quaternion(3.874302e-07, 3.2782555e-07, -8.940697e-08, 1)
+bones/48/rotation = Quaternion(-1.4901161e-08, 1.0430813e-07, -2.9802322e-08, 1)
+bones/49/rotation = Quaternion(0, 5.9604645e-08, 0, 1)
+bones/51/rotation = Quaternion(-0.21418679, -0.6738869, -0.21418697, 0.6738875)
+bones/52/rotation = Quaternion(1.4901163e-08, 8.940698e-08, -5.960465e-08, 1)
+bones/53/rotation = Quaternion(5.9604638e-08, -2.9802319e-08, -2.9802319e-08, 1)
+bones/55/rotation = Quaternion(0, 2.115965e-06, 1, 0)
+bones/56/rotation = Quaternion(4.9513798e-09, 1, -3.8300645e-06, 6.331045e-10)
+bones/57/rotation = Quaternion(2.9611997e-09, 0.70710546, -0.7071081, -3.4551082e-09)
+bones/58/rotation = Quaternion(4.409676e-08, 1, 5.9604645e-08, 1.9452786e-08)
+bones/60/rotation = Quaternion(-6.510936e-11, 2.115965e-06, 1, -9.305792e-09)
+bones/61/rotation = Quaternion(5.2846154e-09, 1, -3.8300645e-06, 2.7046976e-10)
+bones/62/rotation = Quaternion(-3.0824259e-09, 0.70710546, -0.7071081, 3.164744e-09)
+bones/63/rotation = Quaternion(4.409676e-08, 1, 5.9604645e-08, 1.9452786e-08)
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="WorldPlayerFullBody/Superhero_Male_FullBody" unique_id=1280506922]
+libraries/AnimationLibrary_Godot_Standard = ExtResource("3_j78ds")
+autoplay = &"AnimationLibrary_Godot_Standard/A_TPose"
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=99209871]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
@@ -103,3 +168,5 @@ script = ExtResource("9_mode_editor")
 script = ExtResource("18_terrain")
 
 [node name="PlayerHUD" parent="." unique_id=871822519 instance=ExtResource("13_hud")]
+
+[editable path="WorldPlayerFullBody/Superhero_Male_FullBody"]
