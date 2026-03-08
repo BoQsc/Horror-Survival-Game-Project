@@ -8,7 +8,8 @@ var signals: Node = null
 
 # Sensitivity
 const MOUSE_SENSITIVITY: float = 0.002
-const PITCH_LIMIT: float = 89.0 # Degrees
+@export var pitch_limit_up: float = 89.0    # Degrees
+@export var pitch_limit_down: float = 80.0  # Degrees (Limited to avoid looking into own body)
 
 # References
 var player: CharacterBody3D = null
@@ -202,7 +203,7 @@ func handle_mouse_look(motion: Vector2) -> void:
 	# Vertical rotation (pitch)
 	# We use a dedicated variable to avoid diagonal drift caused by local basis accumulation
 	_camera_pitch -= motion.y * MOUSE_SENSITIVITY
-	_camera_pitch = clamp(_camera_pitch, deg_to_rad(-PITCH_LIMIT), deg_to_rad(PITCH_LIMIT))
+	_camera_pitch = clamp(_camera_pitch, deg_to_rad(-pitch_limit_down), deg_to_rad(pitch_limit_up))
 	
 	# Force absolute orientation on the camera to ensure looking UP/DOWN is perfectly vertical
 	camera.rotation = Vector3(_camera_pitch, 0, 0)
