@@ -30,6 +30,7 @@
 [ext_resource type="PackedScene" uid="uid://1xh5cq6f56t3" path="res://models/pistol/heavy_pistol_animated.glb" id="PackedScene_Pistol"]
 [ext_resource type="PackedScene" uid="uid://ci11yv4pk4ssf" path="res://models/items/player_shovel/1/sketchfab_scene.tscn" id="PackedScene_Shovel"]
 
+[ext_resource type="PackedScene" uid="uid://69rh9gdi9rfbh" path="res://models/items/psx_first_person_arms.glb" id="PackedScene_Arms"]
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
 height = 1.8
@@ -153,6 +154,12 @@ visible = false
 [node name="PistolMesh" parent="Camera3D/PistolHolder" unique_id=357143249 instance=ExtResource("PackedScene_Pistol")]
 transform = Transform3D(-0.00492404, 0, 0.00086824, 0, 0.005, 0, -0.00086824, 0, -0.00492404, 0.093, -0.094, -0.155)
 visible = false
+
+[node name="HandHolder" type="Node3D" parent="Camera3D" unique_id="238401278"]
+
+[node name="ArmsMesh" parent="Camera3D/HandHolder" unique_id="510449233" instance=ExtResource("PackedScene_Arms")]
+transform = Transform3D(-0.0494444, 0, -0.00742183, 0, 0.05, 0, 0.00742183, 0, -0.0494444, 0.005, -0.27, 0)
+
 
 [node name="Components" type="Node" parent="." unique_id=1427498458]
 

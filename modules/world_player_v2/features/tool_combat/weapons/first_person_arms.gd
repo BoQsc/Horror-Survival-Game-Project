@@ -70,26 +70,13 @@ func _ready() -> void:
 			PlayerSignals.vehicle_spawned.connect(_on_vehicle_spawned)
 
 func _setup_hand_holder() -> void:
-	hand_holder = Node3D.new()
-	hand_holder.name = "HandHolder"
-	camera.add_child(hand_holder)
+	hand_holder = camera.get_node_or_null("HandHolder")
 
 func _load_arms_model() -> void:
-	if not ResourceLoader.exists(ARMS_MODEL_PATH):
+	if not hand_holder or hand_holder.get_child_count() == 0:
 		return
 	
-	var arms_scene = load(ARMS_MODEL_PATH)
-	if not arms_scene:
-		return
-	
-	arms_mesh = arms_scene.instantiate()
-	arms_mesh.name = "ArmsMesh"
-	arms_mesh.scale = arms_scale
-	arms_mesh.position = arms_position
-	arms_mesh.rotation_degrees = arms_rotation
-	arms_mesh.visible = true
-	
-	hand_holder.add_child(arms_mesh)
+	arms_mesh = hand_holder.get_child(0)
 	arms_origin = arms_mesh.position
 	
 	anim_player = arms_mesh.get_node_or_null("AnimationPlayer")
