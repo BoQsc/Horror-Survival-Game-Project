@@ -14,12 +14,12 @@ const PITCH_LIMIT: float = 89.0 # Degrees
 var player: CharacterBody3D = null
 var camera: Camera3D = null
 
-# State
 @export var use_fullbody_raycast: bool = false
+var _camera_pitch: float = 0.0
 var is_camera_underwater: bool = false
 var mouse_look_enabled: bool = true
 var underwater_audio: AudioStreamPlayer = null
-var splash_audio: AudioStreamPlayer = null
+@export var splash_audio: AudioStreamPlayer = null
 
 # Underwater Fog Settings
 @export_group("Underwater Fog")
@@ -55,6 +55,10 @@ func _ready() -> void:
 	
 	# Capture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	
+	# Initialize pitch from current camera rotation to avoid snapping
+	_camera_pitch = camera.rotation.x
+	
 	DebugManager.log_player("PlayerCameraFeature: Initialized")
 	DebugManager.log_player("  - Player: %s" % player.name)
 	DebugManager.log_player("  - Camera: %s" % camera.name)
@@ -177,21 +181,20 @@ func _get_inventory() -> Node:
 	return null
 
 func _process(_delta: float) -> void:
-	if not player or not camera or not use_fullbody_raycast:
-		return
-	var marker = player.get_node_or_null("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
-	
-	if marker:
-		# Project the marker far in front of the camera for the body to look at.
-		marker.global_position = camera.global_position - camera.global_transform.basis.z * 50.0
+	# Note: Marker projection logic moved to camera_3d.gd for frame-perfect alignment
+	pass
 
 func handle_mouse_look(motion: Vector2) -> void:
 	# Horizontal rotation (yaw) - rotate player body
 	player.rotate_y(-motion.x * MOUSE_SENSITIVITY)
 	
-	# Vertical rotation (pitch) - ALWAYS rotate camera directly and independently
-	camera.rotate_x(-motion.y * MOUSE_SENSITIVITY)
-	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-PITCH_LIMIT), deg_to_rad(PITCH_LIMIT))
+	# Vertical rotation (pitch)
+	# We use a dedicated variable to avoid diagonal drift caused by local basis accumulation
+	_camera_pitch -= motion.y * MOUSE_SENSITIVITY
+	_camera_pitch = clamp(_camera_pitch, deg_to_rad(-PITCH_LIMIT), deg_to_rad(PITCH_LIMIT))
+	
+	# Force absolute orientation on the camera to ensure looking UP/DOWN is perfectly vertical
+	camera.rotation = Vector3(_camera_pitch, 0, 0)
 
 ## Get the camera's forward direction (for targeting)
 func get_look_direction() -> Vector3:
