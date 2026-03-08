@@ -25,12 +25,12 @@
 [ext_resource type="Script" uid="uid://twk217xf32bm" path="res://modules/world_player_v2/features/tool_terrain/terrain_interaction.gd" id="18_terrain"]
 [ext_resource type="Script" uid="uid://btccyk8is8eo6" path="res://modules/world_player_v2/features/tool_combat/weapons/first_person_terraformer.gd" id="19_terraformer"]
 [ext_resource type="Script" uid="uid://bskmyabeyh05o" path="res://modules/world_player_v2/features/body_movement/player_crouch.gd" id="20_crouch"]
+[ext_resource type="PackedScene" uid="uid://cm3wcl38banmc" path="res://models/items/psx_first_person_arms.glb" id="PackedScene_Arms"]
 [ext_resource type="PackedScene" uid="uid://ctjuobbcbf10y" path="res://models/items/player_axe/1/animated_fps_axe.glb" id="PackedScene_Axe"]
 [ext_resource type="PackedScene" uid="uid://dcvqp5qoe32ho" path="res://models/items/player_pickaxe/1/sketchfab_scene.tscn" id="PackedScene_Pickaxe"]
 [ext_resource type="PackedScene" uid="uid://1xh5cq6f56t3" path="res://models/pistol/heavy_pistol_animated.glb" id="PackedScene_Pistol"]
 [ext_resource type="PackedScene" uid="uid://ci11yv4pk4ssf" path="res://models/items/player_shovel/1/sketchfab_scene.tscn" id="PackedScene_Shovel"]
 
-[ext_resource type="PackedScene" uid="uid://69rh9gdi9rfbh" path="res://models/items/psx_first_person_arms.glb" id="PackedScene_Arms"]
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
 height = 1.8
@@ -155,11 +155,10 @@ visible = false
 transform = Transform3D(-0.00492404, 0, 0.00086824, 0, 0.005, 0, -0.00086824, 0, -0.00492404, 0.093, -0.094, -0.155)
 visible = false
 
-[node name="HandHolder" type="Node3D" parent="Camera3D" unique_id="238401278"]
+[node name="HandHolder" type="Node3D" parent="Camera3D" unique_id=238401278]
 
-[node name="ArmsMesh" parent="Camera3D/HandHolder" unique_id="510449233" instance=ExtResource("PackedScene_Arms")]
+[node name="ArmsMesh" parent="Camera3D/HandHolder" unique_id=510449233 instance=ExtResource("PackedScene_Arms")]
 transform = Transform3D(-0.0494444, 0, -0.00742183, 0, 0.05, 0, 0.00742183, 0, -0.0494444, 0.005, -0.27, 0)
-
 
 [node name="Components" type="Node" parent="." unique_id=1427498458]
 
