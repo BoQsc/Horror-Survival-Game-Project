@@ -85,7 +85,7 @@ bones/6/scale = Vector3(0.001, 0.001, 0.001)
 bones/7/rotation = Quaternion(0.59081525, 0.38837975, 0.38854486, -0.59087354)
 bones/8/rotation = Quaternion(0.67941606, 0.70449984, -0.2050888, 0.0035128882)
 bones/9/rotation = Quaternion(0.24467261, -0.7499937, 0.40718168, 0.4602692)
-bones/10/rotation = Quaternion(-0.24305363, 0.09718298, 0.17409563, 0.9493004)
+bones/10/rotation = Quaternion(-0.24305364, 0.09718298, 0.17409565, 0.9493004)
 bones/11/rotation = Quaternion(-2.0861629e-07, 0, -1.4901163e-07, 1)
 bones/12/rotation = Quaternion(0.3495668, -8.940697e-08, -2.115965e-06, 0.9369115)
 bones/13/rotation = Quaternion(0.26146048, -1.6391277e-07, -1.4901161e-06, 0.9652142)
@@ -133,7 +133,7 @@ bones/64/rotation = Quaternion(0.9943512, 3.1587284e-08, 1.2258993e-08, -0.10614
 bones/64/scale = Vector3(0.9999997, 0.99999976, 0.9999998)
 
 [node name="Marker3D" type="Marker3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="3" unique_id=1918885063]
-transform = Transform3D(-0.9010746, -0.15187049, 0.40619534, 0, 0.9366718, 0.35020658, -0.43365788, 0.3155636, -0.8440116, -0.03545714, 1.525, 0.9549998)
+transform = Transform3D(-0.97475845, 0.07818383, -0.2091117, 0, 0.93667173, 0.35020643, 0.22324958, 0.34136838, -0.9130292, -0.008923763, 1.525, 0.9549997)
 
 [node name="LookAtModifier3D" type="LookAtModifier3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="4" unique_id=1160894857]
 transform = Transform3D(-0.9999991, -8.561554e-08, -1.9892113e-07, -1.4979011e-07, 0.93682307, 0.3498036, 1.564052e-07, 0.34980315, -0.9368222, -0.028919274, 1.0718297, -0.042961482)
@@ -143,7 +143,7 @@ bone = 3
 origin_offset = Vector3(0.13, 0.22, 0)
 
 [node name="BoneAttachment3D" type="BoneAttachment3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="5" unique_id=170684142]
-transform = Transform3D(0.0009829078, -0.0001000652, 0.00015452849, 0.00012745269, 0.0009755667, -0.000178957, -0.00013284545, 0.00019559328, 0.00097164564, 0.016605001, 1.560483, -0.07366617)
+transform = Transform3D(0.0009795553, -9.263899e-05, 0.00017857662, 0.00012494833, 0.0009758556, -0.0001791473, -0.00015766897, 0.00019779755, 0.00096747954, 0.017447492, 1.5604316, -0.07426177)
 bone_name = "Head"
 bone_idx = 6
 
@@ -160,7 +160,7 @@ tree_root = SubResource("AnimationNodeBlendTree_geui2")
 parameters/Blend2/blend_amount = 1.0
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=99209871]
-transform = Transform3D(1, 5.5034846e-08, 2.8082104e-07, -1.4979011e-07, 0.93682307, 0.3498036, -2.4382823e-07, -0.3498036, 0.93682307, -0.043446757, 1.6925647, -0.09877669)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.04896926, 1.6924806, -0.097412564)
 current = true
 
 [node name="ShovelHolder" type="Node3D" parent="Camera3D" unique_id=295153256]
