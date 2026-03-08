@@ -253,6 +253,11 @@ text = "Debug Settings"
 layout_mode = 2
 text = "Collision Debugger"
 
+[node name="GazeDebugToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456793]
+layout_mode = 2
+button_pressed = true
+text = "Gaze Visualizer"
+
 [node name="TargetVisualizerToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=258259359]
 layout_mode = 2
 text = "Target Visualizer"

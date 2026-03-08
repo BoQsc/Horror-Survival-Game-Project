@@ -186,15 +186,36 @@ func _process(_delta: float) -> void:
 		return
 	var marker = player.get_node_or_null("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
 	if marker:
-		# LOGICAL PROJECTION: Calculate where we SHOULD be looking based on input, 
-		# not where the head physically is. This breaks the jitter feedback loop.
+		# LOGICAL PROJECTION: Calculate look direction
 		var forward = Vector3.FORWARD
 		forward = forward.rotated(Vector3.RIGHT, _camera_pitch)
 		forward = forward.rotated(Vector3.UP, player.rotation.y)
 		
 		# Offset from player origin to roughly eye-level (1.6m)
 		var logical_eye_pos = player.global_position + Vector3(0, 1.6, 0)
-		marker.global_position = logical_eye_pos + (forward * 50.0)
+		var fixed_target = logical_eye_pos + (forward * 50.0)
+		
+		# STABLE SKELETON TARGET: Always at 50m to prevent torso/hand "reaction" to close objects
+		marker.global_position = fixed_target
+		
+		# DYNAMIC VISUALIZER: Raycast independently for the sphere
+		var sphere = marker.get_node_or_null("DebugSphere")
+		if sphere:
+			var gaze_enabled = true
+			if has_node("/root/ToolConfig"):
+				gaze_enabled = get_node("/root/ToolConfig").gaze_debug_enabled
+			
+			sphere.visible = gaze_enabled
+			if gaze_enabled:
+				var space_state = player.get_world_3d().direct_space_state
+				var query = PhysicsRayQueryParameters3D.create(logical_eye_pos, fixed_target)
+				query.exclude = [player.get_rid()]
+				var result = space_state.intersect_ray(query)
+				
+				if result:
+					sphere.global_position = result.position
+				else:
+					sphere.global_position = fixed_target
 
 func handle_mouse_look(motion: Vector2) -> void:
 	# Horizontal rotation (yaw) - rotate player body

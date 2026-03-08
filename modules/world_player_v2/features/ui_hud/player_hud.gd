@@ -71,6 +71,14 @@ func _ready() -> void:
 		if has_node("/root/CollisionDebugger"):
 			collision_toggle.button_pressed = get_node("/root/CollisionDebugger").enabled
 	
+	# Connect gaze visualizer toggle
+	var gaze_toggle = game_menu.find_child("GazeDebugToggle", true, false)
+	if gaze_toggle:
+		gaze_toggle.toggled.connect(_on_gaze_debug_toggled)
+		# Sync with current state
+		if has_node("/root/ToolConfig"):
+			gaze_toggle.button_pressed = get_node("/root/ToolConfig").gaze_debug_enabled
+	
 	# Connect pickaxe dig mode toggle
 	var pickaxe_toggle = game_menu.find_child("PickaxeDigModeToggle", true, false)
 	if pickaxe_toggle:
@@ -540,6 +548,11 @@ func _on_target_visualizer_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").target_visualizer_enabled = is_enabled
 		print("PlayerHUD: Target Visualizer -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_gaze_debug_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").gaze_debug_enabled = is_enabled
+		print("PlayerHUD: Gaze Visualizer -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_hit_marker_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):

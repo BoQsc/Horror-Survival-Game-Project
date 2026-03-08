@@ -40,10 +40,11 @@ var hit_marker_enabled: bool = false
 var pistol_hit_marker_enabled: bool = true
 
 # ============================================================================
-# TARGET VISUALIZER
+# TARGET VISUALIZER & GAZE DEBUG
 # ============================================================================
 
 var target_visualizer_enabled: bool = false
+var gaze_debug_enabled: bool = true
 var _target_box: MeshInstance3D = null
 var _hit_marker: MeshInstance3D = null
 
