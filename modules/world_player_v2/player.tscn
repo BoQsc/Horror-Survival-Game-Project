@@ -54,6 +54,7 @@ bones/1/rotation = Quaternion(0.19644907, -0.009493879, 0.047328465, 0.9793252)
 bones/3/rotation = Quaternion(0.070223525, 0.06654279, -0.02275955, 0.9950491)
 bones/4/rotation = Quaternion(0.2015063, 0.20369086, 0.027791258, 0.9576706)
 bones/5/rotation = Quaternion(-0.1332307, -0.13905446, -0.02621839, 0.9809313)
+bones/6/rotation = Quaternion(-0.15212578, -0.13852307, -0.028895546, 0.97817904)
 bones/6/scale = Vector3(0.001, 0.001, 0.001)
 bones/7/rotation = Quaternion(0.51945925, 0.4797296, 0.47976214, -0.5194708)
 bones/8/rotation = Quaternion(-0.08443274, 0.90523, -0.41638786, 0.0071319034)
@@ -106,12 +107,12 @@ bones/64/rotation = Quaternion(0.9943512, 3.1587284e-08, 1.2258993e-08, -0.10614
 bones/64/scale = Vector3(0.9999997, 0.99999976, 0.9999998)
 
 [node name="BoneAttachment3D" type="BoneAttachment3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="3" unique_id=170684142]
-transform = Transform3D(0.00095995277, -1.4384225e-05, 0.00027979238, 0.00018416368, 0.00078499207, -0.00059149915, -0.0002111265, 0.00061933877, 0.0007562043, -0.017700484, 1.4092714, 0.33647987)
+transform = Transform3D(0.001, -9.458745e-11, 1.4551915e-10, 1.3096724e-10, 0.0009368231, -0.0003498036, -8.731149e-11, 0.0003498036, 0.000936823, -0.017700484, 1.4092714, 0.33647987)
 bone_name = "Head"
 bone_idx = 6
 
 [node name="RemoteTransform3D" type="RemoteTransform3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/BoneAttachment3D" unique_id=2048767786]
-transform = Transform3D(-1.0000008, 1.937151e-07, -4.4703484e-07, 1.937151e-07, 1.0000006, -5.066395e-07, 4.917383e-07, -6.556511e-07, -1.0000017, -3.5984497, 153.73474, 20.249573)
+transform = Transform3D(-1.0000012, 2.0861623e-07, -4.470347e-07, 1.4901133e-08, 1.0000001, -4.4703484e-07, 4.1723246e-07, -1.3113022e-06, -1.0000017, -7.282177, 84.162964, 94.44177)
 remote_path = NodePath("../../../../../../Camera3D")
 update_rotation = false
 update_scale = false
@@ -122,7 +123,7 @@ libraries/AnimationLibrary_Godot_Standard = ExtResource("3_j78ds")
 autoplay = &"AnimationLibrary_Godot_Standard/Sprint"
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=99209871]
-transform = Transform3D(1, 5.5034846e-08, 2.8082104e-07, -1.4979011e-07, 0.93682307, 0.3498036, -2.4382823e-07, -0.3498036, 0.93682307, 0.017700464, 1.5173116, -0.44776624)
+transform = Transform3D(1, 5.5034846e-08, 2.8082104e-07, -1.4979011e-07, 0.93682307, 0.3498036, -2.4382823e-07, -0.3498036, 0.93682307, 0.024982613, 1.4550811, -0.45439556)
 current = true
 
 [node name="Components" type="Node" parent="." unique_id=1427498458]
