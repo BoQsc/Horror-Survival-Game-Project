@@ -48,33 +48,12 @@ func _ready() -> void:
 		PlayerSignals.hotbar_slot_selected.connect(_on_hotbar_slot_selected)
 
 func _setup_deferred() -> void:
-	_setup_pickaxe_holder()
-	_load_pickaxe_model()
+	hand_holder = camera.get_node_or_null("PickaxeHolder")
+	if hand_holder and hand_holder.get_child_count() > 0:
+		pickaxe_mesh = hand_holder.get_child(0)
+		anim_player = _find_anim_player(pickaxe_mesh)
 	_setup_audio()
 	_check_initial_item()
-
-func _setup_pickaxe_holder() -> void:
-	hand_holder = Node3D.new()
-	hand_holder.name = "PickaxeHolder"
-	camera.add_child(hand_holder)
-
-func _load_pickaxe_model() -> void:
-	if not ResourceLoader.exists(PICKAXE_SCENE_PATH):
-		return
-	
-	var scene = load(PICKAXE_SCENE_PATH)
-	if not scene:
-		return
-	
-	pickaxe_mesh = scene.instantiate()
-	hand_holder.add_child(pickaxe_mesh)
-	
-	pickaxe_mesh.scale = pickaxe_scale
-	pickaxe_mesh.position = pickaxe_position
-	pickaxe_mesh.rotation_degrees = pickaxe_rotation
-	pickaxe_mesh.visible = false
-	
-	anim_player = _find_anim_player(pickaxe_mesh)
 
 func _setup_audio() -> void:
 	if not ResourceLoader.exists(ATTACK_SOUND_PATH):

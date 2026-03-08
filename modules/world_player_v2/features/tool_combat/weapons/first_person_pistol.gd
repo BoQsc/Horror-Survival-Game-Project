@@ -53,23 +53,14 @@ func _ready() -> void:
 		PlayerSignals.pistol_reload.connect(_on_pistol_reload)
 
 func _setup_pistol() -> void:
-	hand_holder = Node3D.new()
-	hand_holder.name = "PistolHolder"
-	camera.add_child(hand_holder)
-	
-	if ResourceLoader.exists(PISTOL_SCENE_PATH):
-		var pistol_scene = load(PISTOL_SCENE_PATH)
-		if pistol_scene:
-			pistol_mesh = pistol_scene.instantiate()
-			hand_holder.add_child(pistol_mesh)
-			
-			pistol_mesh.scale = pistol_scale
-			pistol_mesh.position = pistol_position
-			pistol_mesh.rotation_degrees = pistol_rotation
-			
-			pistol_origin = pistol_position
-			
-			anim_player = _find_anim_player(pistol_mesh)
+	hand_holder = camera.get_node_or_null("PistolHolder")
+	if not hand_holder:
+		push_error("FirstPersonPistol: PistolHolder not found")
+		return
+	pistol_mesh = hand_holder.get_child(0) if hand_holder.get_child_count() > 0 else null
+	if pistol_mesh:
+		pistol_origin = pistol_position
+		anim_player = _find_anim_player(pistol_mesh)
 	
 	shot_player = AudioStreamPlayer3D.new()
 	shot_player.name = "PistolShotAudio"

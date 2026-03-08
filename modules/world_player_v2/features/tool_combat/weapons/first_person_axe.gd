@@ -45,32 +45,11 @@ func _ready() -> void:
 		PlayerSignals.axe_fired.connect(_on_axe_fired)
 
 func _setup_deferred() -> void:
-	_setup_axe_holder()
-	_load_axe_model()
+	hand_holder = camera.get_node_or_null("AxeHolder")
+	if hand_holder and hand_holder.get_child_count() > 0:
+		axe_mesh = hand_holder.get_child(0)
+		anim_player = _find_anim_player(axe_mesh)
 	_setup_audio()
-
-func _setup_axe_holder() -> void:
-	hand_holder = Node3D.new()
-	hand_holder.name = "AxeHolder"
-	camera.add_child(hand_holder)
-
-func _load_axe_model() -> void:
-	if not ResourceLoader.exists(AXE_SCENE_PATH):
-		return
-	
-	var scene = load(AXE_SCENE_PATH)
-	if not scene:
-		return
-	
-	axe_mesh = scene.instantiate()
-	hand_holder.add_child(axe_mesh)
-	
-	axe_mesh.scale = axe_scale
-	axe_mesh.position = axe_position
-	axe_mesh.rotation_degrees = axe_rotation
-	axe_mesh.visible = false
-	
-	anim_player = _find_anim_player(axe_mesh)
 
 func _setup_audio() -> void:
 	if not ResourceLoader.exists(ATTACK_SOUND_PATH):

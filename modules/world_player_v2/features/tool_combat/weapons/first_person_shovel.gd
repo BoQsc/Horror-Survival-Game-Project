@@ -48,33 +48,12 @@ func _ready() -> void:
 		PlayerSignals.hotbar_slot_selected.connect(_on_hotbar_slot_selected)
 
 func _setup_deferred() -> void:
-	_setup_shovel_holder()
-	_load_shovel_model()
+	hand_holder = camera.get_node_or_null("ShovelHolder")
+	if hand_holder and hand_holder.get_child_count() > 0:
+		shovel_mesh = hand_holder.get_child(0)
+		anim_player = _find_anim_player(shovel_mesh)
 	_setup_audio()
 	_check_initial_item()
-
-func _setup_shovel_holder() -> void:
-	hand_holder = Node3D.new()
-	hand_holder.name = "ShovelHolder"
-	camera.add_child(hand_holder)
-
-func _load_shovel_model() -> void:
-	if not ResourceLoader.exists(SHOVEL_SCENE_PATH):
-		return
-	
-	var scene = load(SHOVEL_SCENE_PATH)
-	if not scene:
-		return
-	
-	shovel_mesh = scene.instantiate()
-	hand_holder.add_child(shovel_mesh)
-	
-	shovel_mesh.scale = shovel_scale
-	shovel_mesh.position = shovel_position
-	shovel_mesh.rotation_degrees = shovel_rotation
-	shovel_mesh.visible = false
-	
-	anim_player = _find_anim_player(shovel_mesh)
 
 func _setup_audio() -> void:
 	if not ResourceLoader.exists(ATTACK_SOUND_PATH):
