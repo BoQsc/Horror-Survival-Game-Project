@@ -117,7 +117,7 @@ bone_name = "Head"
 bone_idx = 6
 
 [node name="RemoteTransform3D" type="RemoteTransform3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/BoneAttachment3D" unique_id=2048767786]
-transform = Transform3D(-1.0000012, 2.0861623e-07, -4.470347e-07, 1.4901133e-08, 1.0000001, -4.4703484e-07, 4.1723246e-07, -1.3113022e-06, -1.0000017, -7.282177, 84.162964, 94.44177)
+transform = Transform3D(-1.0000007, 2.0861617e-07, -4.4703452e-07, 1.49011266e-08, 0.9999997, -4.470346e-07, 4.172323e-07, -1.3113015e-06, -1.0000012, -7.2821794, 158.87964, 152.69208)
 remote_path = NodePath("../../../../../../Camera3D")
 update_rotation = false
 update_scale = false
@@ -128,7 +128,7 @@ libraries/AnimationLibrary_Godot_Standard = ExtResource("3_j78ds")
 autoplay = &"AnimationLibrary_Godot_Standard/Sprint"
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=99209871]
-transform = Transform3D(1, 5.5034846e-08, 2.8082104e-07, -1.4979011e-07, 0.93682307, 0.3498036, -2.4382823e-07, -0.3498036, 0.93682307, 0.024982613, 1.4550811, -0.45439556)
+transform = Transform3D(1, 5.5034846e-08, 2.8082104e-07, -1.4979011e-07, 0.93682307, 0.3498036, -2.4382823e-07, -0.3498036, 0.93682307, 0.024982607, 1.5047013, -0.53510195)
 current = true
 
 [node name="ShovelHolder" type="Node3D" parent="Camera3D" unique_id=295153256]
