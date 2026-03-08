@@ -13,7 +13,7 @@ const ARMS_MODEL_PATH: String = "res://models/items/psx_first_person_arms.glb"
 const PUNCH_SFX_PATH: String = "res://game/sound/classic-punch-impact-352711.mp3"
 
 @export var arms_scale: Vector3 = Vector3(0.05, 0.05, 0.05)
-@export var arms_position: Vector3 = Vector3(0.12, -0.32, -0.05)
+@export var arms_position: Vector3 = Vector3(0.005, -0.27, 0.0)
 @export var arms_rotation: Vector3 = Vector3(-1.345, 189.54, 0.0)
 
 var player: CharacterBody3D = null

@@ -11,7 +11,7 @@ func _ready() -> void:
 	# will forcefully snap the camera to the bone, fighting our smooth math.
 	update_position = false
 
-func _physics_process(delta: float) -> void:
+func _process(delta: float) -> void:
 	# Make sure we actually have a valid node assigned in the remote_path
 	if remote_path.is_empty():
 		return

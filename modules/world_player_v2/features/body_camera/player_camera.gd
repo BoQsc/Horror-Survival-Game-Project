@@ -176,26 +176,22 @@ func _get_inventory() -> Node:
 		return player.get_node_or_null("Systems/Inventory")
 	return null
 
+func _process(_delta: float) -> void:
+	if not player or not camera or not use_fullbody_raycast:
+		return
+	var marker = player.get_node_or_null("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
+	
+	if marker:
+		# Project the marker far in front of the camera for the body to look at.
+		marker.global_position = camera.global_position - camera.global_transform.basis.z * 50.0
+
 func handle_mouse_look(motion: Vector2) -> void:
 	# Horizontal rotation (yaw) - rotate player body
 	player.rotate_y(-motion.x * MOUSE_SENSITIVITY)
 	
-	var marker = null
-	if use_fullbody_raycast and player.has_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D"):
-		marker = player.get_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
-	
-	if marker:
-		# Vertical rotation (pitch) - rotate Marker3D
-		# Since camera looks at the marker, rotating the marker moves the aim up/down
-		marker.position.y += motion.y * MOUSE_SENSITIVITY * -3.0  # Optional heuristic for marker movement
-		
-		# The LookAtModifier might override the bone if we rotate it, so we physically move the marker up and down
-		# relative to its horizontal distance, describing an arc. We can just clamp its height.
-		marker.position.y = clamp(marker.position.y, 0.0, 3.0)
-	else:
-		# Fallback: Vertical rotation (pitch) - rotate camera only
-		camera.rotate_x(-motion.y * MOUSE_SENSITIVITY)
-		camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-PITCH_LIMIT), deg_to_rad(PITCH_LIMIT))
+	# Vertical rotation (pitch) - ALWAYS rotate camera directly and independently
+	camera.rotate_x(-motion.y * MOUSE_SENSITIVITY)
+	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-PITCH_LIMIT), deg_to_rad(PITCH_LIMIT))
 
 ## Get the camera's forward direction (for targeting)
 func get_look_direction() -> Vector3:
