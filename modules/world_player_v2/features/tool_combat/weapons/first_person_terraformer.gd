@@ -223,8 +223,16 @@ func _update_targeting() -> void:
 	if not player or not selection_box:
 		return
 	
-	var hit = player.raycast(RAYCAST_DISTANCE)
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	
+	# Range check (10.0m reach)
+	var in_range = false
+	if not hit.is_empty():
+		var cam_pos = player.get_camera_position()
+		if hit.position.distance_to(cam_pos) <= RAYCAST_DISTANCE:
+			in_range = true
+	
+	if not in_range:
 		selection_box.visible = false
 		has_target = false
 		return

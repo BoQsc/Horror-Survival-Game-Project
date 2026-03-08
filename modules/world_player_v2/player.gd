@@ -115,6 +115,12 @@ func raycast(distance: float = 10.0, mask: int = 0xFFFFFFFF, collide_with_areas:
 		return camera_feature.raycast(distance, mask, collide_with_areas, exclude_water)
 	return {}
 
+## Get authoritative gaze hit from camera (per-frame raycast)
+func get_gaze_hit() -> Dictionary:
+	if camera_feature and camera_feature.has_method("get_gaze_hit"):
+		return camera_feature.get_gaze_hit()
+	return {}
+
 ## Take damage
 func take_damage(amount: int, source: Node = null) -> void:
 	if stats_feature and stats_feature.has_method("take_damage"):

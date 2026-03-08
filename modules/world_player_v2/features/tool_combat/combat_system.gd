@@ -506,8 +506,12 @@ func _get_pickup_target() -> Node:
 	var origin = cam.global_position
 	var forward = -cam.global_transform.basis.z
 	
-	# Option A: Precise raycast using player.raycast
-	var hit = player.raycast(5.0, 0xFFFFFFFF, true, true) if player and player.has_method("raycast") else {}
+	# Option A: Precise hit using shared Gaze Provider
+	var hit = player.get_gaze_hit() if player and player.has_method("get_gaze_hit") else {}
+	
+	# Check distance (5.0m reach)
+	if hit and hit.has("position") and hit.position.distance_to(origin) > 5.0:
+		hit = {} # Too far
 	
 	if hit and hit.has("collider"):
 		var col = hit.collider
@@ -620,9 +624,11 @@ func do_punch(item: Dictionary) -> void:
 	fist_punch_ready = false
 	_emit_punch_triggered()
 	
-	var hit = player.raycast(5.0, true, true)
-	if hit.is_empty():
-		DebugManager.log_player("CombatSystem: Punch - miss")
+	var hit = player.get_gaze_hit()
+	
+	# Distance check for punch (2.5m reach)
+	if hit.is_empty() or hit.position.distance_to(player.get_camera_position()) > 2.5:
+		DebugManager.log_player("CombatSystem: Punch - miss (too far or no hit)")
 		return
 	
 	var damage = item.get("damage", 1)
@@ -672,28 +678,26 @@ func do_tool_attack(item: Dictionary) -> void:
 		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
 		return  # Exit - damage will happen after delay
 	
-	# Handle pickaxe/shovel - delay raycast AND damage to match animation (Option A: Raycast at Impact)
+	# Handle pickaxe/shovel - use shared gaze result at impact moment
 	if "pickaxe" in item_id or "shovel" in item_id:
 		if not pickaxe_ready:
-			print("PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)")
 			return
 		pickaxe_ready = false
-		_emit_axe_fired()  # Trigger visual animation (pickaxe reuses axe signal)
+		_emit_axe_fired()
 		
-		# Store ONLY item data - raycast will happen at impact moment (0.30s)
-		pending_pickaxe_hit = {
-			"item": item.duplicate()
-		}
-		print("PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)")
-		
-		# Delay BOTH raycast and damage to 0.30s (when pickaxe visually connects)
-		get_tree().create_timer(0.30).timeout.connect(_on_pickaxe_hit_moment)
-		
-		# Pickaxe ready state will be reset by axe_ready signal (from first_person_pickaxe.gd)
-		return  # Exit - raycast and damage will happen after delay
+		# Delay to match animation, then check the shared Gaze hit
+		get_tree().create_timer(0.30).timeout.connect(func():
+			var hit = player.get_gaze_hit()
+			var reach = 3.5
+			if not hit.is_empty() and hit.position.distance_to(player.get_camera_position()) <= reach:
+				_do_pickaxe_damage_delayed({"item": item.duplicate(), "hit": hit})
+			pending_pickaxe_hit = {}
+		)
+		return
 	
-	var hit = player.raycast(3.5, true, true)
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	var reach = 3.5
+	if hit.is_empty() or hit.position.distance_to(player.get_camera_position()) > reach:
 		return
 	
 	var damage = item.get("damage", 1)

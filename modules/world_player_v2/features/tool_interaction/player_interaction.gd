@@ -127,12 +127,19 @@ func _input(event: InputEvent) -> void:
 				hold_time = 0.0
 
 func _update_interaction_target() -> void:
-	if not player or not player.has_method("raycast"):
+	if not player or not player.has_method("get_gaze_hit"):
 		return
 	
-	var hit = player.raycast(5.0)
+	var hit = player.get_gaze_hit()
 	
-	if hit.is_empty():
+	# Range check (5.0m interaction reach)
+	var in_range = false
+	if not hit.is_empty():
+		var cam_pos = player.get_camera_position()
+		if hit.position.distance_to(cam_pos) <= 5.0:
+			in_range = true
+	
+	if not in_range:
 		_clear_target()
 		return
 	

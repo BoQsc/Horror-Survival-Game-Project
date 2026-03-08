@@ -15,12 +15,14 @@ const MOUSE_SENSITIVITY: float = 0.002
 var player: CharacterBody3D = null
 var camera: Camera3D = null
 
-@export var use_fullbody_raycast: bool = false
+@export var splash_audio: AudioStreamPlayer = null
+
+# Gaze Provider state
+var _current_gaze_hit: Dictionary = {}
 var _camera_pitch: float = 0.0
 var is_camera_underwater: bool = false
 var mouse_look_enabled: bool = true
 var underwater_audio: AudioStreamPlayer = null
-@export var splash_audio: AudioStreamPlayer = null
 
 # Underwater Fog Settings
 @export_group("Underwater Fog")
@@ -212,6 +214,21 @@ func _process(_delta: float) -> void:
 					sphere.global_position = result.position
 				else:
 					sphere.global_position = fixed_target
+		
+		# AUTHORITATIVE RAYCAST: Single source of truth for all tools
+		_update_gaze_raycast(ray_origin, fixed_target)
+
+func _update_gaze_raycast(from: Vector3, to: Vector3) -> void:
+	var space_state = player.get_world_3d().direct_space_state
+	var query = PhysicsRayQueryParameters3D.create(from, to)
+	query.collide_with_areas = true # Standardize on hitting triggers/areas too
+	query.exclude = [player.get_rid()]
+	
+	_current_gaze_hit = space_state.intersect_ray(query)
+	# Add metadata for easier consumption by tools
+	if not _current_gaze_hit.is_empty():
+		_current_gaze_hit["origin"] = from
+		_current_gaze_hit["direction"] = (to - from).normalized()
 
 func handle_mouse_look(motion: Vector2) -> void:
 	# Horizontal rotation (yaw) - rotate player body
@@ -231,46 +248,36 @@ func get_look_direction() -> Vector3:
 		return -camera.global_transform.basis.z
 	return Vector3.FORWARD
 
+## Get the authoritative gaze hit for this frame
+func get_gaze_hit() -> Dictionary:
+	return _current_gaze_hit
+
 ## Get the camera's global position
 func get_camera_position() -> Vector3:
 	if camera:
 		return camera.global_position
 	return Vector3.ZERO
 
-## Perform a raycast from camera center
+## Perform a manual raycast (legacy/specific needs)
 func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_with_areas: bool = false, exclude_water: bool = false) -> Dictionary:
 	if not camera:
-		DebugManager.log_player("PlayerCamera: raycast - no camera!")
 		return {}
 	
 	var space_state = player.get_world_3d().direct_space_state
-	
-	# Determine raycast origin
 	var from = camera.global_position
 	var direction = -camera.global_transform.basis.z
-	
-	if use_fullbody_raycast and player.has_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D"):
-		var marker = player.get_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
-		from = marker.global_position
-		# We keep the camera's looking direction, but originate the line from the hand
-		# If you wanted it to shoot exactly where the hand points, you'd use -marker.global_transform.basis.z
-	
 	var to = from + direction * distance
 	
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = collision_mask
 	query.collide_with_areas = collide_with_areas
-	
-	# Exclude the player body from being hit by its own hand ray
 	query.exclude = [player.get_rid()]
 	
 	if exclude_water:
-		# Cast ray, if we hit water, continue through it
 		var result = space_state.intersect_ray(query)
 		while result and result.collider and result.collider.is_in_group("water"):
-			# Add hit collider to exclude list and raycast again from hit point
 			query.exclude.append(result.collider.get_rid())
-			query.from = result.position + direction * 0.01 # Move slightly past
+			query.from = result.position + direction * 0.01
 			result = space_state.intersect_ray(query)
 		return result
 	
