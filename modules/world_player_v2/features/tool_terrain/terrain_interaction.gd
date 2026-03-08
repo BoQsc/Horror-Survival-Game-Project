@@ -122,7 +122,7 @@ func _update_terrain_targeting() -> void:
 		return
 	
 	# Raycast to find target
-	var hit = _raycast(5.0)
+	var hit = player.raycast(5.0)
 	if hit.is_empty():
 		selection_box.visible = false
 		has_target = false
@@ -144,7 +144,7 @@ func _update_target_material() -> void:
 			material_target_marker.visible = false
 		return
 	
-	var hit = _raycast(10.0)  # V1 uses 10.0 range for material detection
+	var hit = player.raycast(10.0)  # V1 uses 10.0 range for material detection
 	if hit.is_empty():
 		if last_target_material != "":
 			last_target_material = ""
@@ -242,7 +242,7 @@ func do_bucket_place() -> void:
 			PlayerSignals.bucket_placed.emit()
 		DebugManager.log_player("TerrainInteraction: Placed water at %s" % current_target_pos)
 	else:
-		var hit = _raycast(5.0)
+		var hit = player.raycast(5.0)
 		if hit.is_empty():
 			return
 		var pos = hit.position + hit.normal * 0.6
@@ -303,7 +303,7 @@ func do_resource_place(item: Dictionary) -> void:
 			PlayerSignals.resource_placed.emit()
 		DebugManager.log_player("TerrainInteraction: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
-		var hit = _raycast(5.0)
+		var hit = player.raycast(5.0)
 		if hit.is_empty():
 			return
 		var p = hit.position + hit.normal * 0.6
@@ -325,7 +325,7 @@ func _do_vegetation_place(veg_type: String) -> void:
 		DebugManager.log_player("TerrainInteraction: Cannot place vegetation - missing player or vegetation_manager")
 		return
 	
-	var hit = _raycast(5.0)
+	var hit = player.raycast(5.0)
 	if hit.is_empty():
 		DebugManager.log_player("TerrainInteraction: Cannot place vegetation - no hit")
 		return

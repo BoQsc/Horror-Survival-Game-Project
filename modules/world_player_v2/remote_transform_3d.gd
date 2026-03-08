@@ -2,7 +2,7 @@ extends RemoteTransform3D
 
 @export_category("Shock Absorber")
 ## How fast the target catches up to the bone. Lower is smoother but lags more.
-@export var position_smoothing: float = 0.0 
+@export var position_smoothing: float = 15.0 
 ## Toggle to easily turn the shock absorber on or off for testing.
 @export var enable_smoothing: bool = true
 

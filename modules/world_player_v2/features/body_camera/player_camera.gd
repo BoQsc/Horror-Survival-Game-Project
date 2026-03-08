@@ -15,6 +15,7 @@ var player: CharacterBody3D = null
 var camera: Camera3D = null
 
 # State
+@export var use_fullbody_raycast: bool = false
 var is_camera_underwater: bool = false
 var mouse_look_enabled: bool = true
 var underwater_audio: AudioStreamPlayer = null
@@ -179,11 +180,22 @@ func handle_mouse_look(motion: Vector2) -> void:
 	# Horizontal rotation (yaw) - rotate player body
 	player.rotate_y(-motion.x * MOUSE_SENSITIVITY)
 	
-	# Vertical rotation (pitch) - rotate camera only
-	camera.rotate_x(-motion.y * MOUSE_SENSITIVITY)
+	var marker = null
+	if use_fullbody_raycast and player.has_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D"):
+		marker = player.get_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
 	
-	# Clamp pitch to prevent flipping
-	camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-PITCH_LIMIT), deg_to_rad(PITCH_LIMIT))
+	if marker:
+		# Vertical rotation (pitch) - rotate Marker3D
+		# Since camera looks at the marker, rotating the marker moves the aim up/down
+		marker.position.y += motion.y * MOUSE_SENSITIVITY * -3.0  # Optional heuristic for marker movement
+		
+		# The LookAtModifier might override the bone if we rotate it, so we physically move the marker up and down
+		# relative to its horizontal distance, describing an arc. We can just clamp its height.
+		marker.position.y = clamp(marker.position.y, 0.0, 3.0)
+	else:
+		# Fallback: Vertical rotation (pitch) - rotate camera only
+		camera.rotate_x(-motion.y * MOUSE_SENSITIVITY)
+		camera.rotation.x = clamp(camera.rotation.x, deg_to_rad(-PITCH_LIMIT), deg_to_rad(PITCH_LIMIT))
 
 ## Get the camera's forward direction (for targeting)
 func get_look_direction() -> Vector3:
@@ -205,15 +217,24 @@ func raycast(distance: float = 10.0, collision_mask: int = 0xFFFFFFFF, collide_w
 	
 	var space_state = player.get_world_3d().direct_space_state
 	
-	# Use camera position and direction for raycast
+	# Determine raycast origin
 	var from = camera.global_position
-	var direction = - camera.global_transform.basis.z
+	var direction = -camera.global_transform.basis.z
+	
+	if use_fullbody_raycast and player.has_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D"):
+		var marker = player.get_node("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
+		from = marker.global_position
+		# We keep the camera's looking direction, but originate the line from the hand
+		# If you wanted it to shoot exactly where the hand points, you'd use -marker.global_transform.basis.z
+	
 	var to = from + direction * distance
 	
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.collision_mask = collision_mask
 	query.collide_with_areas = collide_with_areas
-	query.exclude = [player]
+	
+	# Exclude the player body from being hit by its own hand ray
+	query.exclude = [player.get_rid()]
 	
 	if exclude_water:
 		# Cast ray, if we hit water, continue through it

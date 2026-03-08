@@ -223,7 +223,7 @@ func _update_targeting() -> void:
 	if not player or not selection_box:
 		return
 	
-	var hit = _raycast(RAYCAST_DISTANCE)
+	var hit = player.raycast(RAYCAST_DISTANCE)
 	if hit.is_empty():
 		selection_box.visible = false
 		has_target = false
@@ -317,29 +317,6 @@ func _do_place(target: Vector3) -> void:
 # ============================================================================
 # RAYCAST
 # ============================================================================
-
-func _raycast(distance: float) -> Dictionary:
-	if not player:
-		return {}
-	
-	var camera = player.get_node_or_null("Head/Camera3D")
-	if not camera:
-		camera = player.get_node_or_null("Camera3D")  # Fallback
-	if not camera:
-		return {}
-	
-	var space_state = player.get_world_3d().direct_space_state
-	if not space_state:
-		return {}
-	
-	var from = camera.global_position
-	var to = from + (-camera.global_transform.basis.z) * distance
-	
-	var query = PhysicsRayQueryParameters3D.create(from, to)
-	query.exclude = [player.get_rid()]
-	query.collision_mask = 1 | 512  # Terrain layers
-	
-	return space_state.intersect_ray(query)
 
 # ============================================================================
 # PUBLIC API

@@ -620,7 +620,7 @@ func do_punch(item: Dictionary) -> void:
 	fist_punch_ready = false
 	_emit_punch_triggered()
 	
-	var hit = _raycast(5.0, true, true)
+	var hit = player.raycast(5.0, true, true)
 	if hit.is_empty():
 		DebugManager.log_player("CombatSystem: Punch - miss")
 		return
@@ -692,7 +692,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		# Pickaxe ready state will be reset by axe_ready signal (from first_person_pickaxe.gd)
 		return  # Exit - raycast and damage will happen after delay
 	
-	var hit = _raycast(3.5, true, true)
+	var hit = player.raycast(3.5, true, true)
 	if hit.is_empty():
 		return
 	
@@ -827,7 +827,7 @@ func _do_axe_damage(item: Dictionary) -> void:
 		return
 	
 	var item_id = item.get("id", "")
-	var hit = _raycast(3.5, true, true)
+	var hit = player.raycast(3.5, true, true)
 	if hit.is_empty():
 		print("AXE_DAMAGE_DEBUG: No hit on animation complete")
 		return
@@ -949,7 +949,7 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		return
 	
 	# OPTION A: Perform raycast NOW at impact time (what you're aiming at when pickaxe connects)
-	var hit = _raycast(3.5, true, true)
+	var hit = player.raycast(3.5, true, true)
 	
 	if hit.is_empty():
 		print("PICKAXE_HIT_DEBUG: MISS at impact time - no target in crosshair")
@@ -1075,7 +1075,7 @@ func do_pistol_fire() -> void:
 	pistol_fire_ready = false
 	_emit_pistol_fired()
 	
-	var hit = _raycast(50.0, true, true)
+	var hit = player.raycast(50.0, true, true)
 	if hit.is_empty():
 		return
 	
@@ -1478,7 +1478,7 @@ func _check_durability_target() -> void:
 	if durability_target == null or not player:
 		return
 	
-	var hit = _raycast(5.0, true, true)
+	var hit = player.raycast(5.0, true, true)
 	if hit.is_empty():
 		durability_target = null
 		return
