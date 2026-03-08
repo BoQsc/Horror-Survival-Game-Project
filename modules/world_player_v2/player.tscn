@@ -3,7 +3,6 @@
 [ext_resource type="Script" uid="uid://xuh2opiptmhm" path="res://modules/world_player_v2/player.gd" id="1_player"]
 [ext_resource type="PackedScene" uid="uid://be1binfphvmu0" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/Superhero_Male_FullBody.gltf" id="2_h0vda"]
 [ext_resource type="Script" uid="uid://c8y54d5s4ct3h" path="res://modules/world_player_v2/features/body_movement/player_movement.gd" id="2_movement"]
-[ext_resource type="Script" uid="uid://caaun6o6k11wy" path="res://modules/world_player_v2/remote_transform_3d.gd" id="3_1y5kt"]
 [ext_resource type="Script" uid="uid://b2srj3lepsdhr" path="res://modules/world_player_v2/features/body_camera/player_camera.gd" id="3_camera"]
 [ext_resource type="Script" uid="uid://lsek5fcjcrk1" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/superhero_male_full_body.gd" id="3_drim2"]
 [ext_resource type="AnimationLibrary" uid="uid://cul84upoj7eq7" path="res://models/entities/player/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb" id="3_j78ds"]
@@ -78,10 +77,10 @@ first_person_mode = true
 [node name="GeneralSkeleton" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature" parent_id_path=PackedInt32Array(384777518, 1299914517) index="0" unique_id=1290942985]
 bones/1/position = Vector3(0.0030250472, 0.9081308, -0.08927988)
 bones/1/rotation = Quaternion(-0.048240125, -0.115877554, -0.005634602, 0.9920754)
-bones/3/rotation = Quaternion(0.04091549, 0.011309382, 0.0047589242, 0.99908733)
-bones/4/rotation = Quaternion(0.12278223, 0.032598455, -0.016175795, 0.9917663)
-bones/5/rotation = Quaternion(-0.08209324, -0.021350266, 0.013311872, 0.9963071)
-bones/6/rotation = Quaternion(0.048984505, -0.019581767, 0.014569956, 0.99850136)
+bones/3/rotation = Quaternion(0.041152585, -0.003130123, 0.0036092154, 0.99914145)
+bones/4/rotation = Quaternion(0.123141505, -0.0098925475, -0.0016677745, 0.9923385)
+bones/5/rotation = Quaternion(-0.08219641, 0.0067673237, 0.0021378107, 0.99659085)
+bones/6/rotation = Quaternion(0.062771685, 0.0070724683, 0.0005715353, 0.9980027)
 bones/6/scale = Vector3(0.001, 0.001, 0.001)
 bones/7/rotation = Quaternion(0.59081525, 0.38837975, 0.38854486, -0.59087354)
 bones/8/rotation = Quaternion(0.67941606, 0.70449984, -0.2050888, 0.0035128882)
@@ -121,14 +120,14 @@ bones/49/rotation = Quaternion(0.3906144, 0.0147405695, 3.0696388e-06, 0.9204363
 bones/51/rotation = Quaternion(-0.06001975, -0.7160839, -0.2818967, 0.6357324)
 bones/52/rotation = Quaternion(0.18916614, -0.26830974, 0.13073356, 0.9354864)
 bones/53/rotation = Quaternion(0.41658878, -0.1903992, -0.1352644, 0.8785815)
-bones/55/rotation = Quaternion(-5.9978767e-05, 0.22880402, 0.9734348, -0.008575302)
-bones/56/rotation = Quaternion(-0.00036626088, 0.96314996, -0.26896018, -0.0015970275)
-bones/57/rotation = Quaternion(-0.005175674, 0.67030776, -0.74192166, -0.014593903)
-bones/58/rotation = Quaternion(4.2797886e-08, 1, 8.091147e-09, 2.7112222e-08)
-bones/60/rotation = Quaternion(-0.00011357061, -0.09850159, 0.9950044, -0.01623701)
-bones/61/rotation = Quaternion(-0.0006733959, 0.96282196, -0.27012232, -0.0027034224)
-bones/62/rotation = Quaternion(-0.00072480086, 0.65544415, -0.75517607, -0.01007913)
-bones/63/rotation = Quaternion(-0.0005237647, 0.99991786, 0.012806886, -1.71503e-05)
+bones/55/rotation = Quaternion(-0.00015936258, 0.37562424, 0.92649186, -0.022784118)
+bones/56/rotation = Quaternion(-0.008084135, 0.75967264, -0.6501821, -0.009772319)
+bones/57/rotation = Quaternion(-0.023377944, 0.86049724, -0.5089055, -0.0036417167)
+bones/58/rotation = Quaternion(4.3849697e-09, 1, 4.391054e-08, 4.8679983e-08)
+bones/60/rotation = Quaternion(-0.00016488059, -0.033566482, 0.99915856, -0.023572158)
+bones/61/rotation = Quaternion(-0.00013925674, 0.9961328, -0.08783929, -0.0019656941)
+bones/62/rotation = Quaternion(-0.009856056, 0.68100864, -0.7322003, 0.0035717862)
+bones/63/rotation = Quaternion(-0.0035290397, 0.9963482, 0.08530909, -0.00030748916)
 bones/64/position = Vector3(0.097707644, -1.2449944, -0.8470346)
 bones/64/rotation = Quaternion(0.9943512, 3.1587284e-08, 1.2258993e-08, -0.1061401)
 bones/64/scale = Vector3(0.9999997, 0.99999976, 0.9999998)
@@ -144,16 +143,15 @@ bone = 3
 origin_offset = Vector3(0.13, 0.22, 0)
 
 [node name="BoneAttachment3D" type="BoneAttachment3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="5" unique_id=170684142]
-transform = Transform3D(0.0009575929, -0.0001606615, -0.00023917298, 1.3668454e-05, 0.0008544988, -0.0005192736, 0.00028780033, 0.0004939837, 0.00082045776, -0.04671814, 1.5239673, 0.11636422)
+transform = Transform3D(0.0009661666, -0.00014754273, -0.0002115496, 9.474242e-06, 0.000839967, -0.00054255506, 0.00025774466, 0.0005221943, 0.0008129458, -0.052232254, 1.5238724, 0.1152249)
 bone_name = "Head"
 bone_idx = 6
 
 [node name="RemoteTransform3D" type="RemoteTransform3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/BoneAttachment3D" unique_id=2048767786]
-transform = Transform3D(0.97374815, -0.21569887, -0.07271117, 0.21349838, 0.9762466, -0.03687781, 0.07893866, 0.020386368, 0.9966706, 17.624048, 33.00659, 63.548096)
+transform = Transform3D(0.99994355, 0.01042182, 0.0020724088, -0.010451779, 0.99983263, 0.015016764, -0.0019155443, -0.015037715, 0.999885, 110.36102, 83.36975, 60.59558)
 remote_path = NodePath("../../../../../../Camera3D")
 update_rotation = false
 update_scale = false
-script = ExtResource("3_1y5kt")
 
 [node name="AnimationTree" type="AnimationTree" parent="WorldPlayerFullBody/Superhero_Male_FullBody" unique_id=504003565]
 libraries/AnimationLibrary_Godot_Standard = ExtResource("3_j78ds")
@@ -162,7 +160,7 @@ parameters/Blend2/blend_amount = 1.0
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=99209871 node_paths=PackedStringArray("target")]
 process_priority = 100
-transform = Transform3D(0.9657381, 0.09400044, -0.24189635, 0, 0.93209624, 0.36221072, 0.25951865, -0.34980068, 0.90016085, 0.05034333, 1.5194134, -0.18987966)
+transform = Transform3D(0.9657381, 0.09400044, -0.24189635, 0, 0.93209624, 0.36221072, 0.25951865, -0.34980068, 0.90016085, -0.029275324, 1.5620694, -0.23646598)
 current = true
 script = ExtResource("6_3kcug")
 target = NodePath("../WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")

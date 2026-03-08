@@ -181,8 +181,19 @@ func _get_inventory() -> Node:
 	return null
 
 func _process(_delta: float) -> void:
-	# Note: Marker projection logic moved to camera_3d.gd for frame-perfect alignment
-	pass
+	if not player or not camera:
+		return
+	var marker = player.get_node_or_null("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
+	if marker:
+		# LOGICAL PROJECTION: Calculate where we SHOULD be looking based on input, 
+		# not where the head physically is. This breaks the jitter feedback loop.
+		var forward = Vector3.FORWARD
+		forward = forward.rotated(Vector3.RIGHT, _camera_pitch)
+		forward = forward.rotated(Vector3.UP, player.rotation.y)
+		
+		# Offset from player origin to roughly eye-level (1.6m)
+		var logical_eye_pos = player.global_position + Vector3(0, 1.6, 0)
+		marker.global_position = logical_eye_pos + (forward * 50.0)
 
 func handle_mouse_look(motion: Vector2) -> void:
 	# Horizontal rotation (yaw) - rotate player body
