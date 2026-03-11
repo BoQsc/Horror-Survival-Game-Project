@@ -2,17 +2,14 @@
 extends Node
 class_name HipStabilizer
 ## Super simple hip stabilizer.
-## On any animation graph change: wait, capture mid-frame, hold it forever.
+## On any animation graph change: instantly simulates 0.5s, captures mid-frame, holds it forever.
 
 @export var enabled: bool = true
 @export var bone_name: String = "Hips"
-@export var capture_delay: float = 0.5
 
 var _skeleton: Skeleton3D = null
 var _anim_tree: AnimationTree = null
 var _bone_idx: int = -1
-var _waiting: bool = false
-var _wait_timer: float = 0.0
 var _has_capture: bool = false
 var _frozen_pos: Vector3
 var _frozen_rot: Quaternion
@@ -40,30 +37,25 @@ func _ready() -> void:
 		call_deferred("_trigger_capture")
 
 func _trigger_capture() -> void:
-	# Ignore trigger if we're already waiting
-	if _waiting:
+	if not _skeleton or _bone_idx < 0 or not _anim_tree:
 		return
 		
-	_waiting = true
-	_wait_timer = 0.0
-	_has_capture = false
-	print("[HIP_STAB] Node connection changed! Unfreezing hips & waiting %.1fs..." % capture_delay)
+	# Instantly simulate 0.5 seconds of animation to find the middle pose
+	var was_active = _anim_tree.active
+	
+	# Force an update step by advancing the tree manually
+	_anim_tree.advance(0.5)
+	
+	# Immediately grab the calculated pose
+	_frozen_pos = _skeleton.get_bone_pose_position(_bone_idx)
+	_frozen_rot = _skeleton.get_bone_pose_rotation(_bone_idx)
+	_has_capture = true
+	
+	print("[HIP_STAB] Node connection changed! Instantly captured pose 0.5s in: %s" % _frozen_pos)
 
 func _process(delta: float) -> void:
 	if not enabled or not _skeleton or _bone_idx < 0:
 		return
-	
-	if _waiting:
-		_wait_timer += delta
-		if _wait_timer >= capture_delay:
-			# Time to capture!
-			_frozen_pos = _skeleton.get_bone_pose_position(_bone_idx)
-			_frozen_rot = _skeleton.get_bone_pose_rotation(_bone_idx)
-			
-			_waiting = false
-			_has_capture = true
-			print("[HIP_STAB] Capured mid-frame! Freezing hips at pos: %s" % _frozen_pos)
-		return # Let the animation play freely while we wait
 		
 	if _has_capture:
 		# Freeze it
