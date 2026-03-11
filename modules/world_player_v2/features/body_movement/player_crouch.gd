@@ -78,18 +78,24 @@ func _update_animation_state() -> void:
 	if not _sm_playback:
 		return
 	
+	var input_dir = Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	var is_moving = input_dir.length() > 0.1
+	
 	if is_crouching:
-		# Check if player is moving
-		var input_dir = Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
-		if input_dir.length() > 0.1:
-			_sm_playback.travel("Crouch_Fwd")
+		if is_moving:
+			_sm_playback.travel(&"Crouch_Fwd")
 		else:
-			_sm_playback.travel("Crouch_Idle")
-		print("[CROUCH] -> Crouch")
+			_sm_playback.travel(&"Crouch_Idle")
 	else:
-		_sm_playback.travel("Walk")
-		print("[CROUCH] -> Walk")
-
+		# player_movement will handle Walk/Sprint/Idle transitions when standing
+		# We just need to give it a nudge if standing up
+		if is_moving:
+			if Input.is_action_pressed("sprint") and player.is_on_floor():
+				_sm_playback.travel(&"Sprint")
+			else:
+				_sm_playback.travel(&"Walk")
+		else:
+			_sm_playback.travel(&"Idle")
 
 func _update_crouch_movement_anim() -> void:
 	if not _sm_playback:
@@ -100,9 +106,9 @@ func _update_crouch_movement_anim() -> void:
 	var current_node = _sm_playback.get_current_node()
 	
 	if is_moving and current_node == &"Crouch_Idle":
-		_sm_playback.travel("Crouch_Fwd")
+		_sm_playback.travel(&"Crouch_Fwd")
 	elif not is_moving and current_node == &"Crouch_Fwd":
-		_sm_playback.travel("Crouch_Idle")
+		_sm_playback.travel(&"Crouch_Idle")
 
 
 ## Get current movement speed multiplier

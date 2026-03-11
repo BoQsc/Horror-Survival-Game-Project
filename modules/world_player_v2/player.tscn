@@ -74,7 +74,7 @@ animation = &"AnimationLibrary_Godot_Standard/Walk"
 
 [sub_resource type="AnimationNodeBlend2" id="AnimationNodeBlend2_7cx4r"]
 filter_enabled = true
-filters = ["", "%GeneralSkeleton:Chest", "%GeneralSkeleton:Head", "%GeneralSkeleton:LeftHand", "%GeneralSkeleton:LeftIndexDistal", "%GeneralSkeleton:LeftIndexIntermediate", "%GeneralSkeleton:LeftIndexProximal", "%GeneralSkeleton:LeftLittleDistal", "%GeneralSkeleton:LeftLittleIntermediate", "%GeneralSkeleton:LeftLittleProximal", "%GeneralSkeleton:LeftLowerArm", "%GeneralSkeleton:LeftMiddleDistal", "%GeneralSkeleton:LeftMiddleIntermediate", "%GeneralSkeleton:LeftMiddleProximal", "%GeneralSkeleton:LeftRingDistal", "%GeneralSkeleton:LeftRingIntermediate", "%GeneralSkeleton:LeftRingProximal", "%GeneralSkeleton:LeftShoulder", "%GeneralSkeleton:LeftThumbDistal", "%GeneralSkeleton:LeftThumbMetacarpal", "%GeneralSkeleton:LeftThumbProximal", "%GeneralSkeleton:LeftUpperArm", "%GeneralSkeleton:Neck", "%GeneralSkeleton:RightHand", "%GeneralSkeleton:RightIndexDistal", "%GeneralSkeleton:RightIndexIntermediate", "%GeneralSkeleton:RightIndexProximal", "%GeneralSkeleton:RightLittleDistal", "%GeneralSkeleton:RightLittleIntermediate", "%GeneralSkeleton:RightLittleProximal", "%GeneralSkeleton:RightLowerArm", "%GeneralSkeleton:RightMiddleDistal", "%GeneralSkeleton:RightMiddleIntermediate", "%GeneralSkeleton:RightMiddleProximal", "%GeneralSkeleton:RightRingDistal", "%GeneralSkeleton:RightRingIntermediate", "%GeneralSkeleton:RightRingProximal", "%GeneralSkeleton:RightShoulder", "%GeneralSkeleton:RightThumbDistal", "%GeneralSkeleton:RightThumbMetacarpal", "%GeneralSkeleton:RightThumbProximal", "%GeneralSkeleton:RightUpperArm", "%GeneralSkeleton:UpperChest"]
+filters = ["%GeneralSkeleton:Chest", "%GeneralSkeleton:Head", "%GeneralSkeleton:LeftHand", "%GeneralSkeleton:LeftIndexDistal", "%GeneralSkeleton:LeftIndexIntermediate", "%GeneralSkeleton:LeftIndexProximal", "%GeneralSkeleton:LeftLittleDistal", "%GeneralSkeleton:LeftLittleIntermediate", "%GeneralSkeleton:LeftLittleProximal", "%GeneralSkeleton:LeftLowerArm", "%GeneralSkeleton:LeftMiddleDistal", "%GeneralSkeleton:LeftMiddleIntermediate", "%GeneralSkeleton:LeftMiddleProximal", "%GeneralSkeleton:LeftRingDistal", "%GeneralSkeleton:LeftRingIntermediate", "%GeneralSkeleton:LeftRingProximal", "%GeneralSkeleton:LeftShoulder", "%GeneralSkeleton:LeftThumbDistal", "%GeneralSkeleton:LeftThumbMetacarpal", "%GeneralSkeleton:LeftThumbProximal", "%GeneralSkeleton:LeftUpperArm", "%GeneralSkeleton:Neck", "%GeneralSkeleton:RightHand", "%GeneralSkeleton:RightIndexDistal", "%GeneralSkeleton:RightIndexIntermediate", "%GeneralSkeleton:RightIndexProximal", "%GeneralSkeleton:RightLittleDistal", "%GeneralSkeleton:RightLittleIntermediate", "%GeneralSkeleton:RightLittleProximal", "%GeneralSkeleton:RightLowerArm", "%GeneralSkeleton:RightMiddleDistal", "%GeneralSkeleton:RightMiddleIntermediate", "%GeneralSkeleton:RightMiddleProximal", "%GeneralSkeleton:RightRingDistal", "%GeneralSkeleton:RightRingIntermediate", "%GeneralSkeleton:RightRingProximal", "%GeneralSkeleton:RightShoulder", "%GeneralSkeleton:RightThumbDistal", "%GeneralSkeleton:RightThumbMetacarpal", "%GeneralSkeleton:RightThumbProximal", "%GeneralSkeleton:RightUpperArm", "%GeneralSkeleton:UpperChest"]
 
 [sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_sm_crouch_fwd"]
 animation = &"AnimationLibrary_Godot_Standard/Crouch_Fwd"
@@ -84,6 +84,12 @@ animation = &"AnimationLibrary_Godot_Standard/Crouch_Idle"
 
 [sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_sm_walk"]
 animation = &"AnimationLibrary_Godot_Standard/Walk"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_sm_idle"]
+animation = &"AnimationLibrary_Godot_Standard/Idle"
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_sm_sprint"]
+animation = &"AnimationLibrary_Godot_Standard/Sprint"
 
 [sub_resource type="AnimationNodeStateMachineTransition" id="walk_to_crouch_idle"]
 xfade_time = 0.15
@@ -103,15 +109,49 @@ xfade_time = 0.15
 [sub_resource type="AnimationNodeStateMachineTransition" id="crouch_fwd_to_walk"]
 xfade_time = 0.15
 
+[sub_resource type="AnimationNodeStateMachineTransition" id="idle_to_walk"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="walk_to_idle"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="idle_to_crouch_idle"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="crouch_idle_to_idle"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="walk_to_sprint"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="sprint_to_walk"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="sprint_to_crouch_idle"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="sprint_to_crouch_fwd"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="crouch_idle_to_sprint"]
+xfade_time = 0.15
+
+[sub_resource type="AnimationNodeStateMachineTransition" id="crouch_fwd_to_sprint"]
+xfade_time = 0.15
+
 [sub_resource type="AnimationNodeStateMachine" id="AnimationNodeStateMachine_7cx4r"]
 states/Crouch_Fwd/node = SubResource("AnimationNodeAnimation_sm_crouch_fwd")
 states/Crouch_Fwd/position = Vector2(200, 100)
 states/Crouch_Idle/node = SubResource("AnimationNodeAnimation_sm_crouch_idle")
 states/Crouch_Idle/position = Vector2(0, 100)
+states/Idle/node = SubResource("AnimationNodeAnimation_sm_idle")
+states/Idle/position = Vector2(0, -100)
+states/Sprint/node = SubResource("AnimationNodeAnimation_sm_sprint")
+states/Sprint/position = Vector2(400, -100)
 states/Walk/node = SubResource("AnimationNodeAnimation_sm_walk")
-states/Walk/position = Vector2(0, 0)
-transitions = ["Walk", "Crouch_Idle", SubResource("walk_to_crouch_idle"), "Crouch_Idle", "Walk", SubResource("crouch_idle_to_walk"), "Crouch_Idle", "Crouch_Fwd", SubResource("crouch_idle_to_crouch_fwd"), "Crouch_Fwd", "Crouch_Idle", SubResource("crouch_fwd_to_crouch_idle"), "Walk", "Crouch_Fwd", SubResource("walk_to_crouch_fwd"), "Crouch_Fwd", "Walk", SubResource("crouch_fwd_to_walk")]
-graph_offset = Vector2(-100, -50)
+states/Walk/position = Vector2(200, -100)
+transitions = ["Walk", "Crouch_Idle", SubResource("walk_to_crouch_idle"), "Crouch_Idle", "Walk", SubResource("crouch_idle_to_walk"), "Crouch_Idle", "Crouch_Fwd", SubResource("crouch_idle_to_crouch_fwd"), "Crouch_Fwd", "Crouch_Idle", SubResource("crouch_fwd_to_crouch_idle"), "Walk", "Crouch_Fwd", SubResource("walk_to_crouch_fwd"), "Crouch_Fwd", "Walk", SubResource("crouch_fwd_to_walk"), "Idle", "Walk", SubResource("idle_to_walk"), "Walk", "Idle", SubResource("walk_to_idle"), "Idle", "Crouch_Idle", SubResource("idle_to_crouch_idle"), "Crouch_Idle", "Idle", SubResource("crouch_idle_to_idle"), "Walk", "Sprint", SubResource("walk_to_sprint"), "Sprint", "Walk", SubResource("sprint_to_walk"), "Sprint", "Crouch_Idle", SubResource("sprint_to_crouch_idle"), "Sprint", "Crouch_Fwd", SubResource("sprint_to_crouch_fwd"), "Crouch_Idle", "Sprint", SubResource("crouch_idle_to_sprint"), "Crouch_Fwd", "Sprint", SubResource("crouch_fwd_to_sprint")]
+graph_offset = Vector2(-200, -150)
 
 [sub_resource type="AnimationNodeBlendTree" id="AnimationNodeBlendTree_geui2"]
 graph_offset = Vector2(-502.0157, -65.78154)

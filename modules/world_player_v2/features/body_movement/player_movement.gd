@@ -27,6 +27,10 @@ var player: CharacterBody3D = null
 var crouch: Node = null  # Sibling crouch component (PlayerCrouchFeature)
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 
+# Animation state machine
+var _sm_playback: AnimationNodeStateMachinePlayback = null
+var _last_anim_state: StringName = &""
+
 # State
 var was_on_floor: bool = true
 var is_swimming: bool = false
@@ -50,6 +54,17 @@ func _ready() -> void:
 	
 	# Get sibling crouch component
 	crouch = get_node_or_null("../Crouch") as PlayerCrouchFeature
+
+	# Find AnimationTree state machine playback
+	var full_body = player.get_node_or_null("WorldPlayerFullBody/Superhero_Male_FullBody")
+	if full_body:
+		var anim_tree = full_body.get_node_or_null("AnimationTree")
+		if anim_tree:
+			_sm_playback = anim_tree.get("parameters/StateMachine/playback")
+			if _sm_playback:
+				_sm_playback.start("Idle")
+				_last_anim_state = &"Idle"
+				print("[MOVEMENT] StateMachine playback found and started on Idle")
 	
 	# Defer footstep setup to ensure player is in scene tree
 	call_deferred("_setup_footstep_sounds")
@@ -263,6 +278,9 @@ func _handle_walking(delta: float) -> void:
 	handle_jump()
 	handle_movement()
 	handle_footsteps(delta)
+	_update_body_animation()
+
+
 
 func _handle_swimming(delta: float) -> void:
 	# Neutral buoyancy or slight sinking/floating
@@ -341,6 +359,32 @@ func handle_movement() -> void:
 	else:
 		player.velocity.x = move_toward(player.velocity.x, 0, current_speed)
 		player.velocity.z = move_toward(player.velocity.z, 0, current_speed)
+
+func _update_body_animation() -> void:
+	if not _sm_playback:
+		return
+	
+	var is_crouching = crouch.is_crouching if crouch else false
+	var input_dir = Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	var is_moving = input_dir.length() > 0.1
+	
+	# Only manage Walk, Sprint, and Idle when NOT crouching.
+	# Crouch transitions are managed entirely by PlayerCrouchFeature.
+	if is_crouching:
+		return
+	
+	var target_state: StringName
+	if is_sprinting and is_moving:
+		target_state = &"Sprint"
+	elif is_moving:
+		target_state = &"Walk"
+	else:
+		target_state = &"Idle"
+	
+	# Only travel if state changed
+	if target_state != _last_anim_state:
+		_sm_playback.travel(target_state)
+		_last_anim_state = target_state
 
 # Matches original project's footstep logic exactly
 func handle_footsteps(delta: float) -> void:

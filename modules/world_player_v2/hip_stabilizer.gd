@@ -15,19 +15,11 @@ var _bone_idx: int = -1
 var _player: CharacterBody3D = null  # Cached player ref
 var _crouch_node: Node = null  # Cached crouch component ref
 
-# Standing pose (captured from Walk animation)
-var _standing_pos: Vector3
-var _standing_rot: Quaternion
-var _has_standing: bool = false
-
-# Crouching pose (captured on first crouch frame by reading what animation wants)
-var _crouching_pos: Vector3
-var _crouching_rot: Quaternion
-var _has_crouching: bool = false
-var _needs_crouch_capture: bool = false  # Flag: capture on next frame when crouching
-
-# Current blend: 0.0 = standing, 1.0 = crouching
-var _crouch_blend: float = 0.0
+var _pose_positions: Dictionary = {}
+var _pose_rotations: Dictionary = {}
+var _poses_captured: bool = false
+var _current_target_pos: Vector3
+var _current_target_rot: Quaternion
 
 # We must wait exactly 2 frames at startup so the AnimationTree 
 # fully initializes the skeleton out of its default T-pose.
@@ -60,32 +52,41 @@ func _ready() -> void:
 		_player = node
 		_crouch_node = _player.get_node_or_null("Components/Crouch")
 		if _crouch_node:
-			print("[HIP_STAB] Crouch component found at: %s" % _crouch_node.get_path())
-		else:
-			print("[HIP_STAB] No Crouch component found")
-	else:
-		print("[HIP_STAB] Could not find player CharacterBody3D (got: %s)" % (node.name if node else "null"))
+			print("[HIP_STAB] Crouch component found.")
 
 func _on_tree_changed() -> void:
-	# Only re-capture if we've already done startup capture
 	if _startup_frames >= 2:
-		_capture_standing_pose("Node Connection Changed")
+		_capture_all_poses()
 
-func _capture_standing_pose(reason: String = "Unknown") -> void:
+func _capture_all_poses() -> void:
 	if not _skeleton or _bone_idx < 0 or not _anim_tree:
 		return
+		
+	var playback = _anim_tree.get("parameters/StateMachine/playback") as AnimationNodeStateMachinePlayback
+	if not playback:
+		return
+		
+	var states_to_capture = ["Idle", "Walk", "Sprint", "Crouch_Idle"]
+	var original_node = playback.get_current_node()
+
+	for state in states_to_capture:
+		playback.start(state)
+		# Advance slightly into the animation to capture a settled, mid-stride height
+		_anim_tree.advance(0.3)
+		
+		_pose_positions[state] = _skeleton.get_bone_pose_position(_bone_idx)
+		_pose_rotations[state] = _skeleton.get_bone_pose_rotation(_bone_idx)
 	
-	# Simulate 0.5s of Walk animation to find mid-stride pose
-	_anim_tree.advance(0.5)
+	if original_node:
+		playback.start(original_node)
+	else:
+		playback.start("Idle")
+		
+	_current_target_pos = _pose_positions["Idle"]
+	_current_target_rot = _pose_rotations["Idle"]
+	_poses_captured = true
 	
-	_standing_pos = _skeleton.get_bone_pose_position(_bone_idx)
-	_standing_rot = _skeleton.get_bone_pose_rotation(_bone_idx)
-	_has_standing = true
-	
-	# Mark that we need to capture crouch pose on first crouch
-	_needs_crouch_capture = true
-	
-	print("[HIP_STAB] [%s] Standing pose captured: %s" % [reason, _standing_pos])
+	print("[HIP_STAB] Captured static poses: ", _pose_positions)
 
 func _process(delta: float) -> void:
 	if not enabled or not _skeleton or _bone_idx < 0:
@@ -95,36 +96,42 @@ func _process(delta: float) -> void:
 	if _startup_frames < 2:
 		_startup_frames += 1
 		if _startup_frames == 2:
-			_capture_standing_pose("Game Startup")
+			_capture_all_poses()
+		return
+		
+	if not _poses_captured:
 		return
 	
-	# Determine crouch state
-	var is_crouching = false
-	if _crouch_node and "is_crouching" in _crouch_node:
-		is_crouching = _crouch_node.is_crouching
+	# 1. Determine the target state the player logically wants to be in
+	var is_crouching = _crouch_node.is_crouching if _crouch_node else false
+	var input_dir = Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+	var is_moving = input_dir.length() > 0.1
 	
-	# Capture crouch pose on the first frame we're actually crouching
-	# At this point the animation system has already computed the crouch pose
-	# for the skeleton, so we can read it BEFORE we override
-	if is_crouching and _needs_crouch_capture:
-		_crouching_pos = _skeleton.get_bone_pose_position(_bone_idx)
-		_crouching_rot = _skeleton.get_bone_pose_rotation(_bone_idx)
-		_has_crouching = true
-		_needs_crouch_capture = false
-		print("[HIP_STAB] Crouch pose captured (live): %s (standing was: %s)" % [_crouching_pos, _standing_pos])
-	
-	# Blend toward target
-	var target_blend = 1.0 if is_crouching else 0.0
-	_crouch_blend = move_toward(_crouch_blend, target_blend, crouch_blend_speed * delta)
-	
-	if _has_standing:
-		var final_pos = _standing_pos
-		var final_rot = _standing_rot
+	var target_state = "Idle"
+	if is_crouching:
+		target_state = "Crouch_Idle"
+	else:
+		var is_sprinting = false
+		var movement_node = _player.get_node_or_null("Components/Movement")
+		if movement_node and "is_sprinting" in movement_node:
+			is_sprinting = movement_node.is_sprinting
+			
+		if is_moving and is_sprinting:
+			target_state = "Sprint"
+		elif is_moving:
+			target_state = "Walk"
+			
+	# Fallback if state wasn't captured (shouldn't happen)
+	if not _pose_positions.has(target_state):
+		target_state = "Idle"
 		
-		if _has_crouching:
-			final_pos = _standing_pos.lerp(_crouching_pos, _crouch_blend)
-			final_rot = _standing_rot.slerp(_crouching_rot, _crouch_blend)
-		
-		# ALWAYS override — hips never get animated directly
-		_skeleton.set_bone_pose_position(_bone_idx, final_pos)
-		_skeleton.set_bone_pose_rotation(_bone_idx, final_rot)
+	# 2. Smoothly blend the frozen hips to that target state's height over time
+	var desired_pos = _pose_positions[target_state]
+	var desired_rot = _pose_rotations[target_state]
+	
+	_current_target_pos = _current_target_pos.lerp(desired_pos, crouch_blend_speed * delta)
+	_current_target_rot = _current_target_rot.slerp(desired_rot, crouch_blend_speed * delta)
+	
+	# 3. OVERRIDE: Freeze the hips exactly at the blended target state, deleting animation bob entirely.
+	_skeleton.set_bone_pose_position(_bone_idx, _current_target_pos)
+	_skeleton.set_bone_pose_rotation(_bone_idx, _current_target_rot)
