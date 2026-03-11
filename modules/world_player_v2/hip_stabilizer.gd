@@ -2,7 +2,7 @@
 extends Node
 class_name HipStabilizer
 ## Super simple hip stabilizer.
-## On any animation graph change: instantly simulates 0.5s, captures mid-frame, holds it forever.
+## On startup or animation graph change: instantly simulates 0.5s, captures mid-frame, holds it forever.
 
 @export var enabled: bool = true
 @export var bone_name: String = "Hips"
@@ -13,6 +13,10 @@ var _bone_idx: int = -1
 var _has_capture: bool = false
 var _frozen_pos: Vector3
 var _frozen_rot: Quaternion
+
+# We must wait exactly 2 frames at startup so the AnimationTree 
+# fully initializes the skeleton out of its default T-pose.
+var _startup_frames: int = 0
 
 func _ready() -> void:
 	process_priority = 90
@@ -29,14 +33,16 @@ func _ready() -> void:
 	if _anim_tree:
 		print("[HIP_STAB] AnimationTree found.")
 		if _anim_tree.tree_root:
-			if not _anim_tree.tree_root.is_connected("changed", _trigger_capture):
-				_anim_tree.tree_root.connect("changed", _trigger_capture)
+			if not _anim_tree.tree_root.is_connected("changed", _on_tree_changed):
+				_anim_tree.tree_root.connect("changed", _on_tree_changed)
 				print("[HIP_STAB] Connected to tree_root changes (Node Connections!)")
-		
-		# Give the tree a frame to initialize
-		call_deferred("_trigger_capture")
 
-func _trigger_capture() -> void:
+func _on_tree_changed() -> void:
+	# Only capture tree changes if we've already done our startup capture
+	if _startup_frames >= 2:
+		_trigger_capture("Node Connection Changed")
+
+func _trigger_capture(reason: String = "Unknown") -> void:
 	if not _skeleton or _bone_idx < 0 or not _anim_tree:
 		return
 		
@@ -51,10 +57,17 @@ func _trigger_capture() -> void:
 	_frozen_rot = _skeleton.get_bone_pose_rotation(_bone_idx)
 	_has_capture = true
 	
-	print("[HIP_STAB] Node connection changed! Instantly captured pose 0.5s in: %s" % _frozen_pos)
+	print("[HIP_STAB] [%s] Instantly captured pose 0.5s in: %s" % [reason, _frozen_pos])
 
 func _process(delta: float) -> void:
 	if not enabled or not _skeleton or _bone_idx < 0:
+		return
+		
+	# Delay startup capture by exactly 2 frames to ensure Skeleton3D is posed
+	if _startup_frames < 2:
+		_startup_frames += 1
+		if _startup_frames == 2:
+			_trigger_capture("Game Startup")
 		return
 		
 	if _has_capture:
