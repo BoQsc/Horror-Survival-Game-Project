@@ -103,23 +103,28 @@ func _process(delta: float) -> void:
 		return
 	
 	# 1. Determine the target state the player logically wants to be in
-	var is_crouching = _crouch_node.is_crouching if _crouch_node else false
-	var input_dir = Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
-	var is_moving = input_dir.length() > 0.1
-	
 	var target_state = "Idle"
-	if is_crouching:
-		target_state = "Crouch_Idle"
-	else:
-		var is_sprinting = false
-		var movement_node = _player.get_node_or_null("Components/Movement")
-		if movement_node and "is_sprinting" in movement_node:
-			is_sprinting = movement_node.is_sprinting
+	
+	if not Engine.is_editor_hint():
+		var is_crouching = false
+		if _crouch_node and "is_crouching" in _crouch_node:
+			is_crouching = _crouch_node.get("is_crouching")
 			
-		if is_moving and is_sprinting:
-			target_state = "Sprint"
-		elif is_moving:
-			target_state = "Walk"
+		var input_dir = Input.get_vector("move_left", "move_right", "move_forward", "move_backward")
+		var is_moving = input_dir.length() > 0.1
+		
+		if is_crouching:
+			target_state = "Crouch_Idle"
+		else:
+			var is_sprinting = false
+			var movement_node = _player.get_node_or_null("Components/Movement")
+			if movement_node and "is_sprinting" in movement_node:
+				is_sprinting = movement_node.get("is_sprinting")
+				
+			if is_moving and is_sprinting:
+				target_state = "Sprint"
+			elif is_moving:
+				target_state = "Walk"
 			
 	# Fallback if state wasn't captured (shouldn't happen)
 	if not _pose_positions.has(target_state):
