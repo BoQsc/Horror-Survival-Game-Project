@@ -3,7 +3,7 @@ class_name PrefabCapture
 
 ## Prefab Capture Tool
 ## Allows capturing player-built structures as reusable prefabs
-## Press P to enter selection mode, click two corners to define region
+## Triggered via Escape menu "Capture Prefab" button.
 
 signal prefab_captured(prefab_name: String, path: String)
 
@@ -24,6 +24,7 @@ var selection_box: MeshInstance3D = null  # Transparent box showing selection re
 const PREFAB_DIR = "user://world_prefabs/"
 
 func _ready():
+	add_to_group("prefab_capture")
 	# Create prefabs directory
 	if not DirAccess.dir_exists_absolute(PREFAB_DIR):
 		DirAccess.make_dir_recursive_absolute(PREFAB_DIR)
@@ -109,11 +110,7 @@ func _update_selection_box(c1: Vector3, c2: Vector3):
 
 
 func _input(event):
-	if event is InputEventKey and event.pressed and event.keycode == KEY_P:
-		if state == State.IDLE:
-			_enter_selection_mode()
-		else:
-			_cancel_selection()
+	# Key binding removed - now triggered via Escape menu
 	
 	if state != State.IDLE and event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_LEFT:
