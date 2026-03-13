@@ -137,6 +137,11 @@ func _process(delta: float) -> void:
 	_current_target_pos = _current_target_pos.lerp(desired_pos, crouch_blend_speed * delta)
 	_current_target_rot = _current_target_rot.slerp(desired_rot, crouch_blend_speed * delta)
 	
+	# NEUTRALIZE ROLL: Ensure hips stay horizontal to prevent camera/torso tilt
+	var euler = _current_target_rot.get_euler()
+	euler.z = 0.0 # Force roll to zero
+	_current_target_rot = Quaternion.from_euler(euler)
+	
 	# 3. OVERRIDE: Freeze the hips exactly at the blended target state, deleting animation bob entirely.
 	_skeleton.set_bone_pose_position(_bone_idx, _current_target_pos)
 	_skeleton.set_bone_pose_rotation(_bone_idx, _current_target_rot)
