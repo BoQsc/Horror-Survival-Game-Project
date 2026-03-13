@@ -7,7 +7,7 @@
 [ext_resource type="Script" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/superhero_male_full_body.gd" id="3_drim2"]
 [ext_resource type="AnimationLibrary" uid="uid://cul84upoj7eq7" path="res://models/entities/player/Animation Library[Standard]/Godot/AnimationLibrary_Godot_Standard.glb" id="3_j78ds"]
 [ext_resource type="Script" uid="uid://cuskdtp03uds8" path="res://modules/world_player_v2/features/data_inventory/hotbar.gd" id="4_hotbar"]
-[ext_resource type="AnimationLibrary" uid="uid://dtj6hq8q2nv8o" path="res://models/entities/player/First_Person_Animations.001.glb" id="5_3kcug"]
+[ext_resource type="AnimationLibrary" uid="uid://cmqqbgmd72lby" path="res://models/entities/player/First_Person_Animations.001.glb" id="5_3kcug"]
 [ext_resource type="Script" uid="uid://bto1a6aotugyy" path="res://modules/world_player_v2/features/ui_modes/mode_manager.gd" id="5_mode_manager"]
 [ext_resource type="Script" path="res://modules/world_player_v2/camera_3d.gd" id="6_3kcug"]
 [ext_resource type="Script" uid="uid://bg0nkbklyomn1" path="res://modules/world_player_v2/features/data_inventory/item_use_router.gd" id="6_item_router"]
@@ -46,14 +46,6 @@ material = SubResource("StandardMaterial3D_debug")
 radius = 0.1
 height = 0.2
 
-[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_3kcug"]
-animation = &"First_Person_Animations.001/Idle_Hands_002"
-use_custom_timeline = true
-timeline_length = 2.115
-stretch_time_scale = true
-start_offset = 0.0
-loop_mode = 1
-
 [sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_7cx4r"]
 animation = &"AnimationLibrary_Godot_Standard/Crouch_Fwd"
 
@@ -75,6 +67,14 @@ animation = &"AnimationLibrary_Godot_Standard/Walk"
 [sub_resource type="AnimationNodeBlend2" id="AnimationNodeBlend2_7cx4r"]
 filter_enabled = true
 filters = ["%GeneralSkeleton:Chest", "%GeneralSkeleton:Head", "%GeneralSkeleton:LeftHand", "%GeneralSkeleton:LeftIndexDistal", "%GeneralSkeleton:LeftIndexIntermediate", "%GeneralSkeleton:LeftIndexProximal", "%GeneralSkeleton:LeftLittleDistal", "%GeneralSkeleton:LeftLittleIntermediate", "%GeneralSkeleton:LeftLittleProximal", "%GeneralSkeleton:LeftLowerArm", "%GeneralSkeleton:LeftMiddleDistal", "%GeneralSkeleton:LeftMiddleIntermediate", "%GeneralSkeleton:LeftMiddleProximal", "%GeneralSkeleton:LeftRingDistal", "%GeneralSkeleton:LeftRingIntermediate", "%GeneralSkeleton:LeftRingProximal", "%GeneralSkeleton:LeftShoulder", "%GeneralSkeleton:LeftThumbDistal", "%GeneralSkeleton:LeftThumbMetacarpal", "%GeneralSkeleton:LeftThumbProximal", "%GeneralSkeleton:LeftUpperArm", "%GeneralSkeleton:Neck", "%GeneralSkeleton:RightHand", "%GeneralSkeleton:RightIndexDistal", "%GeneralSkeleton:RightIndexIntermediate", "%GeneralSkeleton:RightIndexProximal", "%GeneralSkeleton:RightLittleDistal", "%GeneralSkeleton:RightLittleIntermediate", "%GeneralSkeleton:RightLittleProximal", "%GeneralSkeleton:RightLowerArm", "%GeneralSkeleton:RightMiddleDistal", "%GeneralSkeleton:RightMiddleIntermediate", "%GeneralSkeleton:RightMiddleProximal", "%GeneralSkeleton:RightRingDistal", "%GeneralSkeleton:RightRingIntermediate", "%GeneralSkeleton:RightRingProximal", "%GeneralSkeleton:RightShoulder", "%GeneralSkeleton:RightThumbDistal", "%GeneralSkeleton:RightThumbMetacarpal", "%GeneralSkeleton:RightThumbProximal", "%GeneralSkeleton:RightUpperArm", "%GeneralSkeleton:UpperChest"]
+
+[sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_3kcug"]
+animation = &"First_Person_Animations.001/Idle_Hands_002"
+use_custom_timeline = true
+timeline_length = 2.115
+stretch_time_scale = false
+start_offset = 0.0
+loop_mode = 1
 
 [sub_resource type="AnimationNodeAnimation" id="AnimationNodeAnimation_sm_crouch_fwd"]
 animation = &"AnimationLibrary_Godot_Standard/Crouch_Fwd"
@@ -154,7 +154,7 @@ transitions = ["Walk", "Crouch_Idle", SubResource("walk_to_crouch_idle"), "Crouc
 graph_offset = Vector2(-200, -150)
 
 [sub_resource type="AnimationNodeBlendTree" id="AnimationNodeBlendTree_geui2"]
-graph_offset = Vector2(-275.0157, 173.21846)
+graph_offset = Vector2(-47.989258, 101.16635)
 nodes/output/position = Vector2(1120, 60)
 nodes/Animation/node = SubResource("AnimationNodeAnimation_geui2")
 nodes/Animation/position = Vector2(-280, -60)
@@ -196,47 +196,46 @@ first_person_mode = true
 
 [node name="GeneralSkeleton" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature" parent_id_path=PackedInt32Array(384777518, 1299914517) index="0" unique_id=1290942985]
 bones/1/position = Vector3(0.0055048675, 0.9081753, -0.089551486)
-bones/1/rotation = Quaternion(-0.046280317, -0.11588845, -0.005405691, 0.99216855)
+bones/1/rotation = Quaternion(-0.04628032, -0.11588847, -0.0054056915, 0.9921685)
 bones/2/scale = Vector3(0.9999997, 0.99999976, 0.99999994)
 bones/6/scale = Vector3(0.001, 0.001, 0.001)
-bones/7/rotation = Quaternion(0.36768907, 0.60410756, 0.60391504, -0.36762148)
-bones/8/rotation = Quaternion(0.37734878, 0.8310008, -0.40529406, -0.052746773)
-bones/9/rotation = Quaternion(0.13894437, -0.5266766, 0.7867276, 0.2904584)
-bones/10/rotation = Quaternion(0.09508071, 0.57979417, 0.22568631, 0.77708703)
-bones/11/rotation = Quaternion(0.02569218, 4.475961e-08, -1.4889936e-07, 0.9996699)
-bones/12/rotation = Quaternion(0.02569221, 2.8063774e-10, -1.1909704e-07, 0.9996699)
-bones/13/rotation = Quaternion(0.02569215, 2.9970707e-08, -1.4901161e-07, 0.9996699)
-bones/15/rotation = Quaternion(0.02722874, -0.0012873709, -1.4889935e-07, 0.9996284)
-bones/16/rotation = Quaternion(0.027232498, -0.0012049527, -1.7870167e-07, 0.9996284)
-bones/17/rotation = Quaternion(0.02722967, -0.0012664647, -1.7881396e-07, 0.9996285)
-bones/19/rotation = Quaternion(0.6676882, -0.044844817, -5.245097e-06, 0.74308914)
-bones/20/rotation = Quaternion(0.514597, -0.035425168, -3.7552047e-06, 0.8567001)
-bones/21/rotation = Quaternion(0.5094438, -0.034446426, -3.814698e-06, 0.8598142)
-bones/23/rotation = Quaternion(0.5809455, -0.020695109, -4.4998137e-06, 0.81367934)
-bones/24/rotation = Quaternion(0.36252448, -0.012905542, -2.5319873e-06, 0.93188494)
-bones/25/rotation = Quaternion(0.20629385, -0.0077847093, -1.4007092e-06, 0.9784591)
-bones/27/rotation = Quaternion(-0.4375308, 0.6299079, 0.09907895, 0.634008)
-bones/28/rotation = Quaternion(0.21954922, 0.10063159, 0.07140029, 0.9677673)
-bones/29/rotation = Quaternion(0.10301197, 0.047080666, 0.033447426, 0.9930022)
-bones/31/rotation = Quaternion(0.34357873, -0.6181576, -0.617934, -0.34350023)
-bones/32/rotation = Quaternion(-0.37734884, 0.8310008, -0.40529406, 0.05274702)
-bones/33/rotation = Quaternion(0.13894436, 0.52667654, -0.7867277, 0.2904581)
-bones/34/rotation = Quaternion(0.09508074, -0.57979405, -0.22568628, 0.777087)
-bones/35/rotation = Quaternion(0.025692165, 1.4845034e-08, 1.4889936e-07, 0.9996699)
-bones/36/rotation = Quaternion(0.025692135, -4.4703484e-08, 1.4901161e-07, 0.9996699)
-bones/37/rotation = Quaternion(0.025692195, -1.4901161e-08, 1.1932154e-07, 0.9996699)
-bones/39/rotation = Quaternion(0.027228698, 0.0012873114, 1.4912388e-07, 0.9996285)
-bones/40/rotation = Quaternion(0.027232468, 0.0012050272, 5.949239e-08, 0.9996285)
-bones/41/rotation = Quaternion(0.027229726, 0.0012664794, 1.7870167e-07, 0.9996284)
-bones/43/rotation = Quaternion(0.66768837, 0.04484444, 5.0069025e-06, 0.743089)
-bones/44/rotation = Quaternion(0.5145971, 0.03542506, 3.606081e-06, 0.8567)
-bones/45/rotation = Quaternion(0.5094438, 0.03444615, 3.6059687e-06, 0.8598142)
-bones/47/rotation = Quaternion(0.5809455, 0.020695172, 4.440209e-06, 0.81367934)
-bones/48/rotation = Quaternion(0.3625245, 0.012905363, 2.473593e-06, 0.93188494)
-bones/49/rotation = Quaternion(0.20629384, 0.007784605, 1.4306237e-06, 0.9784591)
-bones/51/rotation = Quaternion(-0.43753088, -0.62990767, -0.09907914, 0.6340082)
-bones/52/rotation = Quaternion(0.21954899, -0.100631766, -0.07140089, 0.9677673)
-bones/53/rotation = Quaternion(0.103011936, -0.047080725, -0.0334473, 0.9930021)
+bones/7/rotation = Quaternion(0.13182119, 0.72127783, 0.668926, -0.122145206)
+bones/8/rotation = Quaternion(0.1247222, 0.9515922, -0.10661085, 0.2599056)
+bones/9/rotation = Quaternion(0.3467744, -0.84824336, 0.39046165, 0.0881514)
+bones/10/rotation = Quaternion(0.16190836, 0.8507838, 0.040551648, 0.49830538)
+bones/11/rotation = Quaternion(0.0617041, 1.2491336e-07, -4.768372e-07, 0.99809456)
+bones/12/rotation = Quaternion(2.9802322e-08, 3.8999428e-08, 1.6183204e-08, 1)
+bones/13/rotation = Quaternion(0, 2.2816222e-08, -3.678842e-08, 1)
+bones/15/rotation = Quaternion(0.061635267, -0.002914086, -5.066395e-07, 0.99809456)
+bones/16/rotation = Quaternion(-1.4901163e-08, -1.4901163e-08, 1.4901163e-08, 1)
+bones/17/rotation = Quaternion(1.839421e-08, -4.1210434e-08, 1.839421e-08, 1)
+bones/19/rotation = Quaternion(0.61928785, -0.04159407, -4.768372e-06, 0.7840617)
+bones/20/rotation = Quaternion(0.6192176, -0.042627264, -4.362547e-06, 0.7840616)
+bones/21/rotation = Quaternion(0.6192691, -0.041872535, -4.3809423e-06, 0.7840616)
+bones/23/rotation = Quaternion(0.5997873, -0.021366332, -4.500179e-06, 0.7998742)
+bones/24/rotation = Quaternion(0.5997878, -0.02135192, -4.077521e-06, 0.79987425)
+bones/25/rotation = Quaternion(0.5997408, -0.02263188, -4.1249364e-06, 0.7998743)
+bones/27/rotation = Quaternion(-0.47001722, 0.56829536, 0.044710264, 0.6738881)
+bones/28/rotation = Quaternion(0.04472161, 0.00816759, -0.07767741, 0.9959416)
+bones/29/rotation = Quaternion(-0.080189936, -0.035585403, -0.11734552, 0.98920846)
+bones/31/rotation = Quaternion(0.13182117, -0.72127783, -0.66892594, -0.12214525)
+bones/32/rotation = Quaternion(-0.12514116, 0.9516028, -0.10521719, -0.26023293)
+bones/33/rotation = Quaternion(0.21967705, 0.9644208, -0.12745024, 0.07342444)
+bones/34/rotation = Quaternion(-0.021162426, -0.83083653, 0.07271265, 0.55134004)
+bones/35/rotation = Quaternion(0.061704148, -1.3411046e-07, 4.768372e-07, 0.99809456)
+bones/36/rotation = Quaternion(2.9802322e-08, 2.9802322e-08, -2.9802322e-08, 1)
+bones/37/rotation = Quaternion(2.9802322e-08, 2.9802322e-08, -2.9802322e-08, 1)
+bones/39/rotation = Quaternion(0.061635256, 0.0029141102, 4.470349e-07, 0.99809456)
+bones/41/rotation = Quaternion(-1.4901163e-08, -1.4901163e-08, 3.4930503e-09, 1)
+bones/43/rotation = Quaternion(0.6192878, 0.04159386, 4.5667416e-06, 0.7840617)
+bones/44/rotation = Quaternion(0.6192176, 0.042627163, 4.362547e-06, 0.78406155)
+bones/45/rotation = Quaternion(0.61926895, 0.04187214, 4.3511395e-06, 0.7840617)
+bones/47/rotation = Quaternion(0.44250768, 0.015763486, 3.3161587e-06, 0.89662623)
+bones/48/rotation = Quaternion(0.44250792, 0.015752638, 3.0736892e-06, 0.89662623)
+bones/49/rotation = Quaternion(0.4424734, 0.016696956, 3.0696392e-06, 0.89662623)
+bones/51/rotation = Quaternion(-0.4700173, -0.56829506, -0.0447105, 0.67388827)
+bones/52/rotation = Quaternion(0.04472173, -0.008167674, 0.07767729, 0.9959416)
+bones/53/rotation = Quaternion(-0.08018995, 0.03558551, 0.11734529, 0.98920846)
 bones/64/position = Vector3(0.097707644, -1.2449944, -0.8470346)
 bones/64/rotation = Quaternion(0.9943512, 3.1587284e-08, 1.2258993e-08, -0.1061401)
 bones/64/scale = Vector3(0.9999997, 0.99999976, 0.9999998)
@@ -255,7 +254,7 @@ bone = 3
 relative = true
 
 [node name="BoneAttachment3D" type="BoneAttachment3D" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="5" unique_id=170684142]
-transform = Transform3D(0.000999768, 2.1525486e-05, 6.899238e-09, -2.1524647e-05, 0.000999726, 9.182759e-06, 1.9064547e-07, -9.180762e-06, 0.0009999578, 0.008733148, 1.5619369, -0.09000188)
+transform = Transform3D(0.000999768, 2.1525488e-05, 6.899238e-09, -2.1524655e-05, 0.000999726, 9.1827515e-06, 1.9063056e-07, -9.180755e-06, 0.0009999579, 0.008733149, 1.5619369, -0.09000188)
 bone_name = "Head"
 bone_idx = 6
 
@@ -277,7 +276,7 @@ parameters/Blend2/blend_amount = 1.0
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=99209871 node_paths=PackedStringArray("target")]
 process_priority = 100
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.010670782, 1.6523713, 0.04083026)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.010670783, 1.6523713, 0.040830255)
 current = true
 script = ExtResource("6_3kcug")
 target = NodePath("../WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
