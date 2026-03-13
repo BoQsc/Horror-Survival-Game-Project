@@ -312,6 +312,10 @@ text = "Select Animation:"
 layout_mode = 2
 clip_text = true
 
+[node name="PinPreviewToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/AnimationPreviewPanel" unique_id=123456803]
+layout_mode = 2
+text = "Pin Previewer"
+
 [node name="ActionButtons" type="VBoxContainer" parent="GameMenu"]
 layout_mode = 0
 offset_left = 20.0
@@ -346,3 +350,58 @@ text = "QuickLoad (F8)"
 [node name="InventoryPanel" parent="." unique_id=212941941 instance=ExtResource("2_inv")]
 
 [node name="ContainerPanel" parent="." unique_id=1450455450 instance=ExtResource("4_container")]
+
+[node name="PinnedPreviewPanel" type="Control" parent="." unique_id=123456804]
+visible = false
+layout_mode = 3
+anchors_preset = 6
+anchor_left = 1.0
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -250.0
+offset_right = -20.0
+offset_bottom = 250.0
+grow_horizontal = 0
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="Panel" type="Panel" parent="PinnedPreviewPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="PinnedPreviewPanel/Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 10.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = -10.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 5
+
+[node name="Label" type="Label" parent="PinnedPreviewPanel/Panel/VBox"]
+layout_mode = 2
+text = "Quick Preview"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="PinnedPreviewPanel/Panel/VBox"]
+layout_mode = 2
+
+[node name="ScrollContainer" type="ScrollContainer" parent="PinnedPreviewPanel/Panel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="PinnedList" type="VBoxContainer" parent="PinnedPreviewPanel/Panel/VBox/ScrollContainer" unique_id=123456805]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 2

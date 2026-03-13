@@ -18,6 +18,9 @@ class_name PlayerHUDV2
 @onready var target_material_label: Label = $TargetMaterial
 @onready var anim_preview_toggle: CheckButton = find_child("AnimPreviewToggle", true, false)
 @onready var animation_selector: OptionButton = find_child("AnimationSelector", true, false)
+@onready var pin_preview_toggle: CheckButton = find_child("PinPreviewToggle", true, false)
+@onready var pinned_preview_panel: Control = find_child("PinnedPreviewPanel", true, false)
+@onready var pinned_list: VBoxContainer = find_child("PinnedList", true, false)
 
 var underwater_overlay: ColorRect = null
 var hotbar_slots: Array = []
@@ -182,6 +185,8 @@ func _ready() -> void:
 		anim_preview_toggle.toggled.connect(_on_anim_preview_toggled)
 	if animation_selector:
 		animation_selector.item_selected.connect(_on_animation_selected)
+	if pin_preview_toggle:
+		pin_preview_toggle.toggled.connect(_on_pin_preview_toggled)
 
 	# Deferred connection to SaveManager to avoid race conditions during scene load
 	call_deferred("_connect_to_save_manager")
@@ -574,6 +579,8 @@ func _refresh_animation_list() -> void:
 	
 	anim_list.sort()
 	
+	_populate_pinned_list(anim_list)
+	
 	for anim in anim_list:
 		animation_selector.add_item(anim)
 		if anim == current_text:
@@ -597,9 +604,44 @@ func _on_animation_selected(index: int) -> void:
 		return
 	
 	var anim_name = animation_selector.get_item_text(index)
+	_activate_animation(anim_name)
+
+func _on_pin_preview_toggled(is_pinned: bool) -> void:
+	if pinned_preview_panel:
+		pinned_preview_panel.visible = is_pinned
+
+func _populate_pinned_list(anim_list: Array) -> void:
+	if not pinned_list:
+		return
+	
+	# Clear existing
+	for child in pinned_list.get_children():
+		child.queue_free()
+	
+	# Add buttons
+	for anim_name in anim_list:
+		var btn = Button.new()
+		btn.text = anim_name.split("/")[-1] # Show short name
+		btn.tooltip_text = anim_name
+		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.clip_text = true
+		btn.pressed.connect(func(): _activate_animation(anim_name))
+		pinned_list.add_child(btn)
+
+func _activate_animation(anim_name: String) -> void:
+	if not player_anim_tree:
+		return
+		
 	var root = player_anim_tree.tree_root
 	if not root is AnimationNodeBlendTree:
 		return
+
+	# Force preview ON if we click a button
+	player_anim_tree.set("parameters/Blend2/blend_amount", 1.0)
+	if anim_preview_toggle:
+		# Temporarily disconnect to avoid signal recursion if we wanted, 
+		# but setter is fine here as it's UI state.
+		anim_preview_toggle.button_pressed = true
 
 	# Find the target node name
 	var target_node_name = ""
