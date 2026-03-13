@@ -597,6 +597,13 @@ func _on_anim_preview_toggled(is_enabled: bool) -> void:
 	
 	# Blend 1.0 = preview (Animation 2), 0.0 = locomotion (StateMachine)
 	player_anim_tree.set("parameters/Blend2/blend_amount", 1.0 if is_enabled else 0.0)
+	
+	# Clear highlights if disabled
+	if not is_enabled and pinned_list:
+		for child in pinned_list.get_children():
+			if child is Button:
+				child.modulate = Color.WHITE
+	
 	print("PlayerHUD: Animation Preview -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_animation_selected(index: int) -> void:
@@ -671,6 +678,15 @@ func _activate_animation(anim_name: String) -> void:
 			var anim = lib.get_animation(lib_parts[1])
 			if anim:
 				anim.loop_mode = Animation.LOOP_LINEAR
+	
+	# Update pinned list highlights
+	if pinned_list:
+		for child in pinned_list.get_children():
+			if child is Button:
+				if child.tooltip_text == anim_name:
+					child.modulate = Color.YELLOW
+				else:
+					child.modulate = Color.WHITE
 	
 	print("PlayerHUD: Previewing animation -> %s" % anim_name)
 
