@@ -546,32 +546,12 @@ func _refresh_animation_list() -> void:
 		if player_node:
 			player_anim_tree = player_node.find_child("AnimationTree", true, false)
 			if player_anim_tree:
-				print("[ANIM_DEBUG] Found AnimationTree. Active: ", player_anim_tree.active)
-				
 				if not player_anim_tree.active:
 					player_anim_tree.active = true
-					print("[ANIM_DEBUG] Forced AnimationTree active")
 				
-				# Wait a few frames to ensure parameters are populated
+				# Wait a few frames to ensure parameters are fully ready
 				await get_tree().process_frame
 				await get_tree().process_frame
-				await get_tree().process_frame
-				
-				print("[ANIM_DEBUG] === ANIMATION TREE DUMP ===")
-				print("[ANIM_DEBUG] Path: ", player_anim_tree.get_path())
-				
-				var root = player_anim_tree.tree_root
-				if root is AnimationNodeBlendTree:
-					print("[ANIM_DEBUG] Root is BlendTree. Nodes:")
-					var nodes = []
-					# In Godot 4, get_node_list returns an array of StringNames
-					for node_name in root.get_node_list():
-						var node = root.get_node(node_name)
-						print("  - ", node_name, " (", node.get_class(), ")")
-						if node is AnimationNodeAnimation:
-							print("    -> Parameter candidate: parameters/", node_name, "/animation")
-				else:
-					print("[ANIM_DEBUG] Root is NOT a BlendTree: ", root.get_class() if root else "null")
 	
 	if not player_anim_tree:
 		print("[ANIM_DEBUG] ERROR: AnimationTree still not found")
@@ -583,6 +563,10 @@ func _refresh_animation_list() -> void:
 	
 	var anim_list = []
 	for lib_name in player_anim_tree.get_animation_library_list():
+		# Filter out standard locomotion animations as requested
+		if lib_name == "AnimationLibrary_Godot_Standard":
+			continue
+			
 		var lib = player_anim_tree.get_animation_library(lib_name)
 		for anim_name in lib.get_animation_list():
 			var full_name = str(lib_name) + "/" + str(anim_name)
@@ -613,50 +597,29 @@ func _on_animation_selected(index: int) -> void:
 		return
 	
 	var anim_name = animation_selector.get_item_text(index)
-	print("[ANIM_DEBUG] Attempting to set animation: ", anim_name)
-	
 	var root = player_anim_tree.tree_root
 	if not root is AnimationNodeBlendTree:
-		print("[ANIM_DEBUG] ERROR: Root is not BlendTree, cannot discover nodes")
 		return
 
-	# Search for the user's specific name first (it might have spaces)
+	# Find the target node name
 	var target_node_name = ""
 	for node_name in root.get_node_list():
-		if node_name == "Full Body First Person Animation" or node_name == "Animation 2" or node_name == "PreviewAnim":
+		if node_name == "Full Body First Person Animation" or node_name == "PreviewAnim" or node_name == "Animation 2":
 			target_node_name = node_name
 			break
 	
-	# If not found by specific name, find the first AnimationNodeAnimation that isn't locomotion
+	# Fallback to first suitable node
 	if target_node_name == "":
 		for node_name in root.get_node_list():
 			var node = root.get_node(node_name)
-			if node is AnimationNodeAnimation:
-				if "StateMachine" in node_name or "locomotion" in node_name.to_lower():
-					continue
+			if node is AnimationNodeAnimation and not ("locomotion" in node_name.to_lower()):
 				target_node_name = node_name
 				break
 
 	if target_node_name != "":
 		var anim_node = root.get_node(target_node_name)
 		if anim_node is AnimationNodeAnimation:
-			print("[ANIM_DEBUG] Found AnimationNodeAnimation '", target_node_name, "'. Current: ", anim_node.animation)
 			anim_node.animation = anim_name
-			
-			# Verify
-			print("[ANIM_DEBUG] Node animation property set to: ", anim_node.animation)
-			
-			if anim_node.animation == anim_name:
-				print("[ANIM_DEBUG] SUCCESS: Direct property set verified.")
-			else:
-				print("[ANIM_DEBUG] !! ERROR: Direct property set failed to stick!")
-		else:
-			print("[ANIM_DEBUG] !! ERROR: Node '", target_node_name, "' is NOT an AnimationNodeAnimation (type: ", anim_node.get_class(), ")")
-			# Fallback to parameters/ set just in case
-			var path = "parameters/" + str(target_node_name) + "/animation"
-			player_anim_tree.set(path, anim_name)
-	else:
-		print("[ANIM_DEBUG] ERROR: Could not find ANY valid animation node in BlendTree!")
 	
 	# Force looping for preview
 	var lib_parts = anim_name.split("/")
