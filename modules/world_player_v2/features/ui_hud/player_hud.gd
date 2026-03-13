@@ -668,7 +668,11 @@ func _activate_animation(anim_name: String) -> void:
 	if target_node_name != "":
 		var anim_node = root.get_node(target_node_name)
 		if anim_node is AnimationNodeAnimation:
+			# ROBUST RESTART: Godot's internal Branch timers reset when the tree is deactivated/reactivated.
+			# This is a "sledgehammer" fix to ensure 0.0s start even on repeat clicks.
+			player_anim_tree.active = false
 			anim_node.animation = anim_name
+			player_anim_tree.active = true
 	
 	# Force looping for preview
 	var lib_parts = anim_name.split("/")
