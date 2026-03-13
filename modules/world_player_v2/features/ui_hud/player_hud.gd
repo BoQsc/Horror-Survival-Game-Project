@@ -16,11 +16,14 @@ class_name PlayerHUDV2
 @onready var game_menu: Control = $GameMenu
 @onready var selected_item_label: Label = $SelectedItemLabel
 @onready var target_material_label: Label = $TargetMaterial
+@onready var anim_preview_toggle: CheckButton = find_child("AnimPreviewToggle", true, false)
+@onready var animation_selector: OptionButton = find_child("AnimationSelector", true, false)
 
 var underwater_overlay: ColorRect = null
 var hotbar_slots: Array = []
 var hotbar_ref: Node = null
 var inventory_ref: Node = null
+var player_anim_tree: AnimationTree = null
 
 # V2 path
 const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
@@ -173,6 +176,12 @@ func _ready() -> void:
 	var quickload_btn = game_menu.find_child("QuickLoadButton", true, false)
 	if quickload_btn:
 		quickload_btn.pressed.connect(_on_quickload_pressed)
+
+	# Connect Animation Previewer
+	if anim_preview_toggle:
+		anim_preview_toggle.toggled.connect(_on_anim_preview_toggled)
+	if animation_selector:
+		animation_selector.item_selected.connect(_on_animation_selected)
 
 	# Deferred connection to SaveManager to avoid race conditions during scene load
 	call_deferred("_connect_to_save_manager")
@@ -525,6 +534,140 @@ func _on_inventory_toggled(_is_open: bool) -> void:
 
 func _on_game_menu_toggled(is_open: bool) -> void:
 	game_menu.visible = is_open
+	if is_open:
+		_refresh_animation_list()
+
+func _refresh_animation_list() -> void:
+	if not animation_selector:
+		return
+	
+	if not player_anim_tree:
+		var player_node = get_tree().get_first_node_in_group("player")
+		if player_node:
+			player_anim_tree = player_node.find_child("AnimationTree", true, false)
+			if player_anim_tree:
+				print("[ANIM_DEBUG] Found AnimationTree. Active: ", player_anim_tree.active)
+				
+				if not player_anim_tree.active:
+					player_anim_tree.active = true
+					print("[ANIM_DEBUG] Forced AnimationTree active")
+				
+				# Wait a few frames to ensure parameters are populated
+				await get_tree().process_frame
+				await get_tree().process_frame
+				await get_tree().process_frame
+				
+				print("[ANIM_DEBUG] === ANIMATION TREE DUMP ===")
+				print("[ANIM_DEBUG] Path: ", player_anim_tree.get_path())
+				
+				var root = player_anim_tree.tree_root
+				if root is AnimationNodeBlendTree:
+					print("[ANIM_DEBUG] Root is BlendTree. Nodes:")
+					var nodes = []
+					# In Godot 4, get_node_list returns an array of StringNames
+					for node_name in root.get_node_list():
+						var node = root.get_node(node_name)
+						print("  - ", node_name, " (", node.get_class(), ")")
+						if node is AnimationNodeAnimation:
+							print("    -> Parameter candidate: parameters/", node_name, "/animation")
+				else:
+					print("[ANIM_DEBUG] Root is NOT a BlendTree: ", root.get_class() if root else "null")
+	
+	if not player_anim_tree:
+		print("[ANIM_DEBUG] ERROR: AnimationTree still not found")
+		return
+	
+	# Clear and repopulate
+	var current_text = animation_selector.get_item_text(animation_selector.selected) if animation_selector.selected >= 0 else ""
+	animation_selector.clear()
+	
+	var anim_list = []
+	for lib_name in player_anim_tree.get_animation_library_list():
+		var lib = player_anim_tree.get_animation_library(lib_name)
+		for anim_name in lib.get_animation_list():
+			var full_name = str(lib_name) + "/" + str(anim_name)
+			anim_list.append(full_name)
+	
+	anim_list.sort()
+	
+	for anim in anim_list:
+		animation_selector.add_item(anim)
+		if anim == current_text:
+			animation_selector.selected = animation_selector.get_item_count() - 1
+	
+	# Initial sync of toggle with blend_amount
+	if anim_preview_toggle:
+		var blend = player_anim_tree.get("parameters/Blend2/blend_amount")
+		anim_preview_toggle.button_pressed = (blend > 0.5)
+
+func _on_anim_preview_toggled(is_enabled: bool) -> void:
+	if not player_anim_tree:
+		return
+	
+	# Blend 1.0 = preview (Animation 2), 0.0 = locomotion (StateMachine)
+	player_anim_tree.set("parameters/Blend2/blend_amount", 1.0 if is_enabled else 0.0)
+	print("PlayerHUD: Animation Preview -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_animation_selected(index: int) -> void:
+	if not player_anim_tree or not animation_selector:
+		return
+	
+	var anim_name = animation_selector.get_item_text(index)
+	print("[ANIM_DEBUG] Attempting to set animation: ", anim_name)
+	
+	var root = player_anim_tree.tree_root
+	if not root is AnimationNodeBlendTree:
+		print("[ANIM_DEBUG] ERROR: Root is not BlendTree, cannot discover nodes")
+		return
+
+	# Search for the user's specific name first (it might have spaces)
+	var target_node_name = ""
+	for node_name in root.get_node_list():
+		if node_name == "Full Body First Person Animation" or node_name == "Animation 2" or node_name == "PreviewAnim":
+			target_node_name = node_name
+			break
+	
+	# If not found by specific name, find the first AnimationNodeAnimation that isn't locomotion
+	if target_node_name == "":
+		for node_name in root.get_node_list():
+			var node = root.get_node(node_name)
+			if node is AnimationNodeAnimation:
+				if "StateMachine" in node_name or "locomotion" in node_name.to_lower():
+					continue
+				target_node_name = node_name
+				break
+
+	if target_node_name != "":
+		var anim_node = root.get_node(target_node_name)
+		if anim_node is AnimationNodeAnimation:
+			print("[ANIM_DEBUG] Found AnimationNodeAnimation '", target_node_name, "'. Current: ", anim_node.animation)
+			anim_node.animation = anim_name
+			
+			# Verify
+			print("[ANIM_DEBUG] Node animation property set to: ", anim_node.animation)
+			
+			if anim_node.animation == anim_name:
+				print("[ANIM_DEBUG] SUCCESS: Direct property set verified.")
+			else:
+				print("[ANIM_DEBUG] !! ERROR: Direct property set failed to stick!")
+		else:
+			print("[ANIM_DEBUG] !! ERROR: Node '", target_node_name, "' is NOT an AnimationNodeAnimation (type: ", anim_node.get_class(), ")")
+			# Fallback to parameters/ set just in case
+			var path = "parameters/" + str(target_node_name) + "/animation"
+			player_anim_tree.set(path, anim_name)
+	else:
+		print("[ANIM_DEBUG] ERROR: Could not find ANY valid animation node in BlendTree!")
+	
+	# Force looping for preview
+	var lib_parts = anim_name.split("/")
+	if lib_parts.size() == 2:
+		var lib = player_anim_tree.get_animation_library(lib_parts[0])
+		if lib:
+			var anim = lib.get_animation(lib_parts[1])
+			if anim:
+				anim.loop_mode = Animation.LOOP_LINEAR
+	
+	print("PlayerHUD: Previewing animation -> %s" % anim_name)
 
 func _on_exit_pressed() -> void:
 	get_tree().quit()

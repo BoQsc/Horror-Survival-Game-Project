@@ -287,6 +287,31 @@ custom_minimum_size = Vector2(0, 35)
 layout_mode = 2
 text = "Spawn Zombie"
 
+[node name="AnimationPreviewPanel" type="VBoxContainer" parent="GameMenu/CenterContainer/SettingsHBox" unique_id=123456800]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 10
+
+[node name="AnimPreviewLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/AnimationPreviewPanel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Animation Previewer"
+
+[node name="AnimPreviewToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/AnimationPreviewPanel" unique_id=123456801]
+layout_mode = 2
+text = "Enable Preview"
+
+[node name="HSeparator" type="HSeparator" parent="GameMenu/CenterContainer/SettingsHBox/AnimationPreviewPanel"]
+layout_mode = 2
+
+[node name="SelectAnimLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/AnimationPreviewPanel"]
+layout_mode = 2
+text = "Select Animation:"
+
+[node name="AnimationSelector" type="OptionButton" parent="GameMenu/CenterContainer/SettingsHBox/AnimationPreviewPanel" unique_id=123456802]
+layout_mode = 2
+clip_text = true
+
 [node name="ActionButtons" type="VBoxContainer" parent="GameMenu"]
 layout_mode = 0
 offset_left = 20.0
