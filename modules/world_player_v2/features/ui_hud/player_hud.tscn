@@ -287,6 +287,11 @@ layout_mode = 2
 button_pressed = true
 text = "View Bobbing"
 
+[node name="ClippingToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456796]
+layout_mode = 2
+button_pressed = true
+text = "Leg Clipping Fix"
+
 [node name="HSeparator" type="HSeparator" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel"]
 layout_mode = 2
 

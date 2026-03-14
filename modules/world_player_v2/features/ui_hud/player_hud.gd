@@ -161,6 +161,12 @@ func _ready() -> void:
 		bob_toggle.toggled.connect(_on_bob_toggled)
 		if has_node("/root/ToolConfig"):
 			bob_toggle.button_pressed = get_node("/root/ToolConfig").fp_bob_enabled
+			
+	var clipping_toggle = game_menu.find_child("ClippingToggle", true, false)
+	if clipping_toggle:
+		clipping_toggle.toggled.connect(_on_clipping_toggled)
+		if has_node("/root/ToolConfig"):
+			clipping_toggle.button_pressed = get_node("/root/ToolConfig").fp_clipping_prevention_enabled
  
 	# Connect spawning buttons
 	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
@@ -786,6 +792,11 @@ func _on_bob_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").fp_bob_enabled = is_enabled
 		print("PlayerHUD: View Bobbing -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_clipping_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").fp_clipping_prevention_enabled = is_enabled
+		print("PlayerHUD: Leg Clipping Fix -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_spawn_entity_pressed() -> void:
 	var em = get_tree().get_first_node_in_group("entity_manager")

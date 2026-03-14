@@ -4,6 +4,7 @@ class_name FullBodyArmsV2
 ## This script is separate from the legacy first_person_arms.gd.
 
 var anim_tree: AnimationTree = null
+var combat_playback: AnimationNodeStateMachinePlayback = null
 var current_category: int = -1
 var is_in_combat_stance: bool = false
 
@@ -23,13 +24,15 @@ func _ready() -> void:
 		anim_tree.active = true
 		anim_tree.animation_finished.connect(_on_animation_finished)
 		
+		# Get the playback for our dedicated CombatSM StateMachine
+		combat_playback = anim_tree.get("parameters/CombatSM/playback")
+		
 		# Robustness: Also connect to the underlying AnimationPlayer.
-		# AnimationTree's animation_finished signal doesn't always fire for BlendTree nodes.
 		var anim_player = anim_tree.get_animation_player()
 		if anim_player:
 			anim_player.animation_finished.connect(_on_animation_finished)
 			
-		print("FullBodyArms: Linked to AnimationTree and AnimationPlayer")
+		print("FullBodyArms: Linked to AnimationTree (CombatSM: %s)" % ("OK" if combat_playback else "MISSING"))
 		
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
@@ -93,54 +96,25 @@ func _on_punch_triggered() -> void:
 		# Logic continues in _on_animation_finished
 
 func _set_anim_properly(anim_name: String) -> void:
-	if not anim_tree: return
+	if not combat_playback: return
 	
-	var root = anim_tree.tree_root
-	if not root is AnimationNodeBlendTree:
-		print("FullBodyArms: tree_root is not BlendTree")
-		return
-		
-	# Find the target node name
-	var target_node_name = ""
-	for node_name in root.get_node_list():
-		if node_name == "Full Body First Person Animation" or node_name == "PreviewAnim" or node_name == "Animation 2":
-			target_node_name = node_name
-			break
+	# EXPLICIT LOOP CONTROL:
+	# Animation resources are SHARED. If the Previewer (ESC menu) turned on looping,
+	# we must turn it off for one-shots, otherwise animation_finished never fires.
+	var lib = anim_tree.get_animation_library("First_Person_Animations.001")
+	if lib:
+		var anim = lib.get_animation(anim_name)
+		if anim:
+			# Categorize animations: "Idle" animations loop, others are one-shot.
+			# CRITICAL: "Transition_From_Idle..." contains "Idle" but MUST NOT loop.
+			var should_loop = ("Idle" in anim_name) and not ("Transition" in anim_name)
+			
+			if should_loop:
+				anim.loop_mode = Animation.LOOP_LINEAR
+			else:
+				anim.loop_mode = Animation.LOOP_NONE
 	
-	if target_node_name == "":
-		print("FullBodyArms: Could not find animation node in BlendTree")
-		return
-		
-	var anim_node = root.get_node(target_node_name)
-	if anim_node is AnimationNodeAnimation:
-		# CRITICAL FIX: Custom timeline overrides standard loop logic and can cause infinite restarts
-		anim_node.use_custom_timeline = false
-		
-		var lib_prefix = "First_Person_Animations.001/"
-		var full_name = lib_prefix + anim_name
-		
-		# EXPLICIT LOOP CONTROL:
-		# Animation resources are SHARED. If the Previewer (ESC menu) turned on looping,
-		# we must turn it off for one-shots, otherwise animation_finished never fires.
-		var lib = anim_tree.get_animation_library("First_Person_Animations.001")
-		if lib:
-			var anim = lib.get_animation(anim_name)
-			if anim:
-				# Categorize animations: "Idle" animations loop, others are one-shot.
-				# CRITICAL: "Transition_From_Idle..." contains "Idle" but MUST NOT loop.
-				var should_loop = ("Idle" in anim_name) and not ("Transition" in anim_name)
-				
-				if should_loop:
-					anim.loop_mode = Animation.LOOP_LINEAR
-					anim_node.loop_mode = 2 # AnimationNodeAnimation.LOOP_LINEAR
-				else:
-					anim.loop_mode = Animation.LOOP_NONE
-					anim_node.loop_mode = 1 # AnimationNodeAnimation.LOOP_NONE
-					
-				print("FullBodyArms: Applied ", full_name, " (ResLoop: ", anim.loop_mode, " NodeLoop: ", anim_node.loop_mode, ")")
-		
-		# Robust Update: Deactivate, set, reactivate
-		# This forces the AnimationTree to re-sample from time 0 with the new loop settings
-		anim_tree.active = false
-		anim_node.animation = full_name
-		anim_tree.active = true
+	# Robust Update: Start the state in our dedicated CombatSM StateMachine.
+	# This avoids resetting the entire AnimationTree and locomotion StateMachine.
+	combat_playback.start(anim_name)
+	print("FullBodyArms: Started state ", anim_name, " in CombatSM")

@@ -198,8 +198,22 @@ func _process(_delta: float) -> void:
 		# RAYCAST ORIGIN: Use the actual camera position for the ray start to ensure crosshair accuracy
 		var ray_origin = camera.global_position
 		
-		# STABLE SKELETON TARGET: Always at 100m to prevent torso/hand "reaction" to close objects
-		marker.global_position = fixed_target
+		# SKELETON TARGET BIAS: Push forward when looking down to avoid clipping knees
+		# We only bias the marker (what the skeleton looks at), not the actual raycast.
+		var bias_strength = 0.0
+		var config = get_node_or_null("/root/ToolConfig")
+		
+		if config and config.fp_clipping_prevention_enabled and _camera_pitch < 0.0: # Looking down
+			# At -90 degrees (1.57 rad), we push it forward significantly
+			# We multiply by crouch factor because knees are closer when crouching
+			var is_crouching = player.get("is_crouching") if "is_crouching" in player else false
+			var crouch_factor = 3.0 if is_crouching else 1.0
+			bias_strength = abs(_camera_pitch) * 5.0 * crouch_factor
+		
+		var biased_target = fixed_target + (player.global_transform.basis * Vector3.FORWARD * bias_strength)
+		
+		# SKELETON TARGET: Use the biased version to keep the torso/arms forward
+		marker.global_position = biased_target
 		
 		# DYNAMIC VISUALIZER: Raycast independently for the sphere
 		var sphere = marker.get_node_or_null("DebugSphere")
