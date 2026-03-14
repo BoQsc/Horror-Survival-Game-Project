@@ -121,9 +121,11 @@ func _update_terrain_targeting() -> void:
 		has_target = false
 		return
 	
-	# Raycast to find target
-	var hit = player.raycast(5.0)
-	if hit.is_empty():
+	# Gaze-based targeting
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 5.0:
 		selection_box.visible = false
 		has_target = false
 		return
@@ -144,8 +146,10 @@ func _update_target_material() -> void:
 			material_target_marker.visible = false
 		return
 	
-	var hit = player.raycast(10.0)  # V1 uses 10.0 range for material detection
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 10.0:
 		if last_target_material != "":
 			last_target_material = ""
 			_emit_target_material_changed("")
@@ -242,8 +246,10 @@ func do_bucket_place() -> void:
 			PlayerSignals.bucket_placed.emit()
 		DebugManager.log_player("TerrainInteraction: Placed water at %s" % current_target_pos)
 	else:
-		var hit = player.raycast(5.0)
-		if hit.is_empty():
+		var hit = player.get_gaze_hit()
+		var cam_pos = player.get_camera_position()
+		
+		if hit.is_empty() or hit.position.distance_to(cam_pos) > 5.0:
 			return
 		var pos = hit.position + hit.normal * 0.6
 		
@@ -303,8 +309,10 @@ func do_resource_place(item: Dictionary) -> void:
 			PlayerSignals.resource_placed.emit()
 		DebugManager.log_player("TerrainInteraction: Placed %s (mat:%d) at %s" % [item.get("name", "resource"), mat_id, current_target_pos])
 	else:
-		var hit = player.raycast(5.0)
-		if hit.is_empty():
+		var hit = player.get_gaze_hit()
+		var cam_pos = player.get_camera_position()
+		
+		if hit.is_empty() or hit.position.distance_to(cam_pos) > 5.0:
 			return
 		var p = hit.position + hit.normal * 0.6
 		var target_pos = Vector3(floor(p.x), floor(p.y), floor(p.z)) + Vector3(0.5, 0.5, 0.5)
@@ -325,9 +333,11 @@ func _do_vegetation_place(veg_type: String) -> void:
 		DebugManager.log_player("TerrainInteraction: Cannot place vegetation - missing player or vegetation_manager")
 		return
 	
-	var hit = player.raycast(5.0)
-	if hit.is_empty():
-		DebugManager.log_player("TerrainInteraction: Cannot place vegetation - no hit")
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 5.0:
+		DebugManager.log_player("TerrainInteraction: Cannot place vegetation - no hit or out of reach")
 		return
 	
 	if veg_type == "grass":
@@ -349,8 +359,10 @@ func _consume_selected_item() -> void:
 # ============================================================================
 
 func _raycast(distance: float) -> Dictionary:
-	if player and player.has_method("raycast"):
-		return player.raycast(distance)
+	if player and player.has_method("get_gaze_hit"):
+		var hit = player.get_gaze_hit()
+		if not hit.is_empty() and hit.position.distance_to(player.get_camera_position()) <= distance:
+			return hit
 	return {}
 
 ## Get material ID from mesh vertex color at hit point (100% accurate)

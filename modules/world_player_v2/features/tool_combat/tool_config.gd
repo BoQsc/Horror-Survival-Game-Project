@@ -127,8 +127,8 @@ func _process(_delta: float) -> void:
 		return
 	
 	# Perform raycast
-	var hit = player.raycast(5.0, 0xFFFFFFFF, true, true)
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	if hit.is_empty() or hit.position.distance_to(player.get_camera_position()) > 5.0:
 		if _target_box:
 			_target_box.visible = false
 		if _hit_marker:

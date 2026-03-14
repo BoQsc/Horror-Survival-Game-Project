@@ -831,9 +831,12 @@ func _do_axe_damage(item: Dictionary) -> void:
 		return
 	
 	var item_id = item.get("id", "")
-	var hit = player.raycast(3.5, true, true)
-	if hit.is_empty():
-		print("AXE_DAMAGE_DEBUG: No hit on animation complete")
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	# Reach check (3.5m for axe)
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 3.5:
+		print("AXE_DAMAGE_DEBUG: No hit or out of reach on animation complete")
 		return
 	
 	var damage = item.get("damage", 1)
@@ -952,11 +955,12 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		print("PICKAXE_HIT_DEBUG: ABORTED - item data is empty")
 		return
 	
-	# OPTION A: Perform raycast NOW at impact time (what you're aiming at when pickaxe connects)
-	var hit = player.raycast(3.5, true, true)
+	# AUTHORITATIVE: Use the frame-authoritative gaze hit
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
 	
-	if hit.is_empty():
-		print("PICKAXE_HIT_DEBUG: MISS at impact time - no target in crosshair")
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 3.5:
+		print("PICKAXE_HIT_DEBUG: MISS or out of reach at impact time")
 		return
 	
 	var item_id = item.get("id", "")
@@ -1079,8 +1083,9 @@ func do_pistol_fire() -> void:
 	pistol_fire_ready = false
 	_emit_pistol_fired()
 	
-	var hit = player.raycast(50.0, true, true)
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	# Range check (50.0m for pistol)
+	if hit.is_empty() or hit.position.distance_to(player.get_camera_position()) > 50.0:
 		return
 	
 	var target = hit.get("collider", null)
@@ -1100,9 +1105,11 @@ func do_pistol_fire() -> void:
 # HELPER FUNCTIONS
 # ============================================================================
 
-func _raycast(distance: float, collide_with_areas: bool, exclude_water: bool) -> Dictionary:
-	if player and player.has_method("raycast"):
-		return player.raycast(distance, 0xFFFFFFFF, collide_with_areas, exclude_water)
+func _raycast(distance: float, _collide_with_areas: bool, _exclude_water: bool) -> Dictionary:
+	if player and player.has_method("get_gaze_hit"):
+		var hit = player.get_gaze_hit()
+		if not hit.is_empty() and hit.position.distance_to(player.get_camera_position()) <= distance:
+			return hit
 	return {}
 
 ## Get material ID at hit position using mesh vertex colors (most accurate)
@@ -1482,8 +1489,8 @@ func _check_durability_target() -> void:
 	if durability_target == null or not player:
 		return
 	
-	var hit = player.raycast(5.0, true, true)
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	if hit.is_empty() or hit.position.distance_to(player.get_camera_position()) > 5.0:
 		durability_target = null
 		return
 	

@@ -43,7 +43,10 @@ func do_attack(item: Dictionary) -> Dictionary:
 	if category == 1: # TOOL
 		attack_range = TOOL_RANGE
 	
-	var hit = player.raycast(attack_range) if player.has_method("raycast") else {}
+	var hit = player.get_gaze_hit() if player.has_method("get_gaze_hit") else {}
+	# Reach check
+	if not hit.is_empty() and hit.position.distance_to(player.get_camera_position()) > attack_range:
+		hit = {}
 	
 	if hit.is_empty():
 		_on_attack_miss()

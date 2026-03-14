@@ -57,12 +57,19 @@ func _process(_delta: float) -> void:
 				should_show_visuals = true
 	
 	if should_show_visuals:
-		# Update targeting from player raycast
-		if player and player.has_method("raycast"):
-			var hit = player.raycast(10.0)
-			building_api.update_targeting(hit)
-			# Sync rotation
-			building_api.current_rotation = current_rotation
+		# Update targeting from player gaze
+		if player and player.has_method("get_gaze_hit"):
+			var hit = player.get_gaze_hit()
+			var cam_pos = player.get_camera_position()
+			
+			# Reach check (10.0m for build mode)
+			if hit.is_empty() or hit.position.distance_to(cam_pos) > 10.0:
+				building_api.hide_visuals()
+				building_api.destroy_preview()
+			else:
+				building_api.update_targeting(hit)
+				# Sync rotation
+				building_api.current_rotation = current_rotation
 		
 		# MMB Freestyle toggle (continuous check, legacy port)
 		var was_freestyle = building_api.is_freestyle
@@ -197,9 +204,11 @@ func _do_block_remove() -> void:
 		print("ModeBuild: Remove failed - no player or building_manager")
 		return
 	
-	var hit = player.raycast(10.0) if player.has_method("raycast") else {}
-	if hit.is_empty():
-		print("ModeBuild: Remove failed - no raycast hit")
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 10.0:
+		print("ModeBuild: Remove failed - out of reach or no hit")
 		return
 	
 	var target = hit.get("collider")
@@ -263,8 +272,10 @@ func _do_block_place(item: Dictionary) -> void:
 		return
 	
 	# Fallback: old calculation if building_api not available
-	var hit = player.raycast(10.0) if player.has_method("raycast") else {}
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 10.0:
 		return
 	
 	var fb_position = hit.get("position", Vector3.ZERO) + hit.get("normal", Vector3.UP) * 0.5
@@ -281,8 +292,10 @@ func _do_object_remove() -> void:
 	if not player or not building_manager:
 		return
 	
-	var hit = player.raycast(10.0) if player.has_method("raycast") else {}
-	if hit.is_empty():
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 10.0:
 		return
 	
 	var target = hit.get("collider")
@@ -347,9 +360,11 @@ func _do_prop_place(item: Dictionary) -> void:
 				print("ModeBuild: Cannot place prop - cells occupied")
 		return
 	
-	# Free placement: use raw raycast position
-	var hit = player.raycast(10.0) if player.has_method("raycast") else {}
-	if hit.is_empty():
+	# Free placement: use raw gaze position
+	var hit = player.get_gaze_hit()
+	var cam_pos = player.get_camera_position()
+	
+	if hit.is_empty() or hit.position.distance_to(cam_pos) > 10.0:
 		return
 	
 	var free_pos = hit.get("position", Vector3.ZERO)

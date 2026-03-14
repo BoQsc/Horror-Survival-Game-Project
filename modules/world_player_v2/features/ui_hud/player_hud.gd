@@ -926,12 +926,12 @@ func _update_durability_visibility() -> void:
 		return
 	
 	var player_node = get_tree().get_first_node_in_group("player")
-	if not player_node or not player_node.has_method("raycast"):
+	if not player_node: # Ensure player_node exists before calling methods on it
 		return
-	
-	var hit = player_node.raycast(5.0, 0xFFFFFFFF, true, true)
-	if hit.is_empty():
-		durability_bar.visible = false
+	var hit = player_node.get_gaze_hit()
+	# Range check (5.0m for interaction)
+	if hit.is_empty() or hit.position.distance_to(player_node.get_camera_position()) > 5.0:
+		durability_bar.visible = false # Hide bar if no hit or out of range
 		return
 	
 	var target = hit.get("collider")

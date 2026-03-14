@@ -78,8 +78,8 @@ func _process(_delta: float) -> void:
 		var submode = mode_manager.editor_submode
 		if submode == 0 or submode == 1: # TERRAIN or WATER
 			terrain_api.blocky_mode = blocky_mode
-			if player and player.has_method("raycast"):
-				var hit = player.raycast(100.0)
+			if player and player.has_method("get_gaze_hit"):
+				var hit = player.get_gaze_hit()
 				terrain_api.update_targeting(hit)
 		else:
 			terrain_api.hide_visuals()
@@ -186,7 +186,7 @@ func _do_terrain_dig() -> void:
 	if not player or not terrain_manager:
 		return
 	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
+	var hit = player.get_gaze_hit() if player.has_method("get_gaze_hit") else {}
 	if hit.is_empty():
 		return
 	
@@ -205,7 +205,7 @@ func _do_terrain_place() -> void:
 	if not player or not terrain_manager:
 		return
 	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
+	var hit = player.get_gaze_hit() if player.has_method("get_gaze_hit") else {}
 	if hit.is_empty():
 		return
 	
@@ -224,7 +224,7 @@ func _do_water_remove() -> void:
 	if not player or not terrain_manager:
 		return
 	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
+	var hit = player.get_gaze_hit() if player.has_method("get_gaze_hit") else {}
 	if hit.is_empty():
 		return
 	
@@ -235,7 +235,7 @@ func _do_water_add() -> void:
 	if not player or not terrain_manager:
 		return
 	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
+	var hit = player.get_gaze_hit() if player.has_method("get_gaze_hit") else {}
 	if hit.is_empty():
 		return
 	
@@ -246,7 +246,7 @@ func _do_road_click() -> void:
 	if not player or not road_manager:
 		return
 	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
+	var hit = player.get_gaze_hit() if player.has_method("get_gaze_hit") else {}
 	if hit.is_empty():
 		return
 	
@@ -269,7 +269,7 @@ func _do_prefab_place() -> void:
 	if available_prefabs.is_empty():
 		return
 	
-	var hit = player.raycast(100.0) if player.has_method("raycast") else {}
+	var hit = player.get_gaze_hit() if player.has_method("get_gaze_hit") else {}
 	if hit.is_empty():
 		return
 	

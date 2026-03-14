@@ -191,7 +191,7 @@ func _process(_delta: float) -> void:
 		# USE ACTUAL CAMERA TRANSFORM: Eliminate parallax by using the real camera position/direction
 		var ray_origin = camera.global_position
 		var ray_dir = -camera.global_transform.basis.z
-		var fixed_target = ray_origin + (ray_dir * 50.0)
+		var fixed_target = ray_origin + (ray_dir * 100.0)
 		
 		# STABLE SKELETON TARGET: Always at 50m to prevent torso/hand "reaction" to close objects
 		marker.global_position = fixed_target
