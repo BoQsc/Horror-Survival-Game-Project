@@ -67,13 +67,13 @@ func _update_state() -> void:
 	# Path to the Blend2 node that overrides upper body
 	var blend_path = "parameters/Blend2/blend_amount"
 	
-	# Categories: 0=NONE (Fists), 3=RESOURCE (Materials)
+	# Categories: 0=NONE (Fists), 2=BUCKET, 3=RESOURCE, 4=BLOCK, 5=OBJECT, 7=TERRAFORMER, 8=VEHICLE
 	if current_category == 0:
 		# Combat Mode
 		anim_tree.set(blend_path, 1.0)
 		_enter_combat_stance()
-	elif current_category == 3:
-		# Material Hold Mode
+	elif current_category in [2, 3, 4, 5, 7, 8]:
+		# Hold Mode (Materials, Blocks, Objects, etc.)
 		anim_tree.set(blend_path, 1.0)
 		_set_anim_properly("Idle_Hand_001")
 		is_in_combat_stance = false
