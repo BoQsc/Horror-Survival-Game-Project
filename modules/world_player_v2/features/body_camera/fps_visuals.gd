@@ -114,7 +114,8 @@ func _update_flare(delta: float, config: Node) -> void:
 		# Increase flare as we look down. Scale by crouching.
 		var crouch_node = player.get_node_or_null("Components/Crouch")
 		var crouch_mult = 2.0 if crouch_node and crouch_node.get("is_crouching") else 1.0
-		target_flare = abs(pitch) * flare_amount * crouch_mult
+		var base_flare = abs(pitch) * flare_amount * crouch_mult
+		target_flare = base_flare * config.fp_clipping_flare_mult
 	
 	_current_flare = lerp(_current_flare, target_flare, delta * flare_smoothing)
 

@@ -167,6 +167,18 @@ func _ready() -> void:
 		clipping_toggle.toggled.connect(_on_clipping_toggled)
 		if has_node("/root/ToolConfig"):
 			clipping_toggle.button_pressed = get_node("/root/ToolConfig").fp_clipping_prevention_enabled
+
+	var reach_slider = game_menu.find_child("ReachSlider", true, false)
+	if reach_slider:
+		reach_slider.value_changed.connect(_on_reach_changed)
+		if has_node("/root/ToolConfig"):
+			reach_slider.value = get_node("/root/ToolConfig").fp_clipping_reach_mult
+
+	var flare_slider = game_menu.find_child("FlareSlider", true, false)
+	if flare_slider:
+		flare_slider.value_changed.connect(_on_flare_changed)
+		if has_node("/root/ToolConfig"):
+			flare_slider.value = get_node("/root/ToolConfig").fp_clipping_flare_mult
  
 	# Connect spawning buttons
 	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
@@ -797,6 +809,16 @@ func _on_clipping_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").fp_clipping_prevention_enabled = is_enabled
 		print("PlayerHUD: Leg Clipping Fix -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_reach_changed(value: float) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").fp_clipping_reach_mult = value
+		print("PlayerHUD: Leg Clipping Reach -> %.2f" % value)
+
+func _on_flare_changed(value: float) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").fp_clipping_flare_mult = value
+		print("PlayerHUD: Leg Clipping Flare -> %.2f" % value)
 
 func _on_spawn_entity_pressed() -> void:
 	var em = get_tree().get_first_node_in_group("entity_manager")

@@ -208,7 +208,8 @@ func _process(_delta: float) -> void:
 			# We multiply by crouch factor because knees are closer when crouching
 			var is_crouching = player.get("is_crouching") if "is_crouching" in player else false
 			var crouch_factor = 3.0 if is_crouching else 1.0
-			bias_strength = abs(_camera_pitch) * 5.0 * crouch_factor
+			var base_bias = abs(_camera_pitch) * 5.0 * crouch_factor
+			bias_strength = base_bias * config.fp_clipping_reach_mult
 		
 		var biased_target = fixed_target + (player.global_transform.basis * Vector3.FORWARD * bias_strength)
 		
