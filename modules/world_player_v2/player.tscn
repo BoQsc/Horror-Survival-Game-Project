@@ -27,6 +27,7 @@
 [ext_resource type="Script" uid="uid://btccyk8is8eo6" path="res://modules/world_player_v2/features/tool_combat/weapons/first_person_terraformer.gd" id="19_terraformer"]
 [ext_resource type="Script" uid="uid://bskmyabeyh05o" path="res://modules/world_player_v2/features/body_movement/player_crouch.gd" id="20_crouch"]
 [ext_resource type="Script" path="res://modules/world_player_v2/hip_stabilizer.gd" id="21_hip_stab"]
+[ext_resource type="Script" path="res://modules/world_player_v2/features/tool_combat/weapons/full_body_arms.gd" id="22_full_body_arms"]
 [ext_resource type="PackedScene" uid="uid://cm3wcl38banmc" path="res://models/items/psx_first_person_arms.glb" id="PackedScene_Arms"]
 [ext_resource type="PackedScene" uid="uid://ctjuobbcbf10y" path="res://models/items/player_axe/1/animated_fps_axe.glb" id="PackedScene_Axe"]
 [ext_resource type="PackedScene" uid="uid://dcvqp5qoe32ho" path="res://models/items/player_pickaxe/1/sketchfab_scene.tscn" id="PackedScene_Pickaxe"]
@@ -336,6 +337,9 @@ script = ExtResource("12_combat")
 
 [node name="FirstPersonArms" type="Node" parent="Components" unique_id=225734447]
 script = ExtResource("15_arms")
+
+[node name="FullBodyArms" type="Node" parent="Components" unique_id=988776655]
+script = ExtResource("22_full_body_arms")
 
 [node name="FirstPersonPistol" type="Node" parent="Components" unique_id=1493372584]
 script = ExtResource("16_pistol")
