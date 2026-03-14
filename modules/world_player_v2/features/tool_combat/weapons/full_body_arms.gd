@@ -22,7 +22,14 @@ func _ready() -> void:
 	if anim_tree:
 		anim_tree.active = true
 		anim_tree.animation_finished.connect(_on_animation_finished)
-		print("FullBodyArms: Linked to AnimationTree and connected signals")
+		
+		# Robustness: Also connect to the underlying AnimationPlayer.
+		# AnimationTree's animation_finished signal doesn't always fire for BlendTree nodes.
+		var anim_player = anim_tree.get_animation_player()
+		if anim_player:
+			anim_player.animation_finished.connect(_on_animation_finished)
+			
+		print("FullBodyArms: Linked to AnimationTree and AnimationPlayer")
 		
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.item_changed.connect(_on_item_changed)
@@ -33,12 +40,12 @@ func _on_animation_finished(anim_name: StringName) -> void:
 	var name_str = str(anim_name)
 	if "Transition_From_Idle_To_Attack_001" in name_str:
 		if current_category == 0:
-			_set_anim_properly("Attack_Hands_Idle_001")
+			_set_anim_properly("Atack_Hands_Idle_001")
 			is_in_combat_stance = true
 			
 	elif "Attack_Quick_Jab_RH_001" in name_str:
 		if current_category == 0:
-			_set_anim_properly("Attack_Hands_Idle_001")
+			_set_anim_properly("Atack_Hands_Idle_001")
 		
 		# UNBLOCK combat system when the punch animation actually ends
 		if has_node("/root/PlayerSignals"):
@@ -46,6 +53,12 @@ func _on_animation_finished(anim_name: StringName) -> void:
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	current_category = int(item.get("category", 0))
+	
+	# FAILSAVE: Unblock the CombatSystem on every item switch.
+	# This ensures we don't get stuck if a punch was interrupted by a fast swap.
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.punch_ready.emit()
+		
 	_update_state()
 
 func _update_state() -> void:
@@ -62,7 +75,7 @@ func _update_state() -> void:
 	elif current_category == 3:
 		# Material Hold Mode
 		anim_tree.set(blend_path, 1.0)
-		_set_anim_properly("Idle_Hands_001")
+		_set_anim_properly("Idle_Hand_001")
 		is_in_combat_stance = false
 	else:
 		# Other items (Tools, etc.) - Let locomotion handle it
@@ -100,18 +113,34 @@ func _set_anim_properly(anim_name: String) -> void:
 		
 	var anim_node = root.get_node(target_node_name)
 	if anim_node is AnimationNodeAnimation:
+		# CRITICAL FIX: Custom timeline overrides standard loop logic and can cause infinite restarts
+		anim_node.use_custom_timeline = false
+		
 		var lib_prefix = "First_Person_Animations.001/"
 		var full_name = lib_prefix + anim_name
 		
-		# Ensure one-shot animations are not looping so signals fire
-		if "Jab" in anim_name or "Transition" in anim_name:
-			var lib = anim_tree.get_animation_library("First_Person_Animations.001")
-			if lib:
-				var anim = lib.get_animation(anim_name)
-				if anim:
+		# EXPLICIT LOOP CONTROL:
+		# Animation resources are SHARED. If the Previewer (ESC menu) turned on looping,
+		# we must turn it off for one-shots, otherwise animation_finished never fires.
+		var lib = anim_tree.get_animation_library("First_Person_Animations.001")
+		if lib:
+			var anim = lib.get_animation(anim_name)
+			if anim:
+				# Categorize animations: "Idle" animations loop, others are one-shot.
+				# CRITICAL: "Transition_From_Idle..." contains "Idle" but MUST NOT loop.
+				var should_loop = ("Idle" in anim_name) and not ("Transition" in anim_name)
+				
+				if should_loop:
+					anim.loop_mode = Animation.LOOP_LINEAR
+					anim_node.loop_mode = 2 # AnimationNodeAnimation.LOOP_LINEAR
+				else:
 					anim.loop_mode = Animation.LOOP_NONE
+					anim_node.loop_mode = 1 # AnimationNodeAnimation.LOOP_NONE
+					
+				print("FullBodyArms: Applied ", full_name, " (ResLoop: ", anim.loop_mode, " NodeLoop: ", anim_node.loop_mode, ")")
 		
 		# Robust Update: Deactivate, set, reactivate
+		# This forces the AnimationTree to re-sample from time 0 with the new loop settings
 		anim_tree.active = false
 		anim_node.animation = full_name
 		anim_tree.active = true
