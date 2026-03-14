@@ -52,7 +52,7 @@ var gaze_debug_enabled: bool = true
 
 var fp_sway_enabled: bool = true
 var fp_bob_enabled: bool = true
-var fp_clipping_prevention_enabled: bool = true
+var fp_clipping_prevention_enabled: bool = false
 var fp_clipping_reach_mult: float = 1.0
 var fp_clipping_flare_mult: float = 1.0
 

@@ -289,7 +289,7 @@ text = "View Bobbing"
 
 [node name="ClippingToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456796]
 layout_mode = 2
-button_pressed = true
+button_pressed = false
 text = "Leg Clipping Fix"
 
 [node name="ReachLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel"]
