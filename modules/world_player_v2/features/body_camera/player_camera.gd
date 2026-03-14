@@ -188,12 +188,17 @@ func _process(_delta: float) -> void:
 		return
 	var marker = player.get_node_or_null("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton/Marker3D")
 	if marker:
-		# USE ACTUAL CAMERA TRANSFORM: Eliminate parallax by using the real camera position/direction
-		var ray_origin = camera.global_position
-		var ray_dir = -camera.global_transform.basis.z
-		var fixed_target = ray_origin + (ray_dir * 100.0)
+		# STABLE ORIGIN: Root position + head height (1.6m)
+		# We use the stable player orientation and pitch to avoid feedback loops with the skeleton
+		var stable_origin = player.global_position + Vector3(0, 1.6, 0)
+		var look_quat = Quaternion(Vector3.RIGHT, _camera_pitch)
+		var look_dir = (player.global_transform.basis * Basis(look_quat)) * Vector3.FORWARD
+		var fixed_target = stable_origin + (look_dir * 100.0)
 		
-		# STABLE SKELETON TARGET: Always at 50m to prevent torso/hand "reaction" to close objects
+		# RAYCAST ORIGIN: Use the actual camera position for the ray start to ensure crosshair accuracy
+		var ray_origin = camera.global_position
+		
+		# STABLE SKELETON TARGET: Always at 100m to prevent torso/hand "reaction" to close objects
 		marker.global_position = fixed_target
 		
 		# DYNAMIC VISUALIZER: Raycast independently for the sphere

@@ -148,6 +148,19 @@ func _ready() -> void:
 		var tm = get_tree().get_first_node_in_group("terrain_manager")
 		if tm and "debug_show_road_zones" in tm:
 			road_zones_toggle.button_pressed = tm.debug_show_road_zones
+	
+	# Connect FP visual effects toggles
+	var sway_toggle = game_menu.find_child("SwayToggle", true, false)
+	if sway_toggle:
+		sway_toggle.toggled.connect(_on_sway_toggled)
+		if has_node("/root/ToolConfig"):
+			sway_toggle.button_pressed = get_node("/root/ToolConfig").fp_sway_enabled
+			
+	var bob_toggle = game_menu.find_child("BobToggle", true, false)
+	if bob_toggle:
+		bob_toggle.toggled.connect(_on_bob_toggled)
+		if has_node("/root/ToolConfig"):
+			bob_toggle.button_pressed = get_node("/root/ToolConfig").fp_bob_enabled
  
 	# Connect spawning buttons
 	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
@@ -763,6 +776,16 @@ func _on_road_zones_toggled(is_enabled: bool) -> void:
 		# Fallback if method not present yet
 		tm.debug_show_road_zones = is_enabled
 		print("PlayerHUD: Road Zones -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_sway_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").fp_sway_enabled = is_enabled
+		print("PlayerHUD: View Sway -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_bob_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").fp_bob_enabled = is_enabled
+		print("PlayerHUD: View Bobbing -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_spawn_entity_pressed() -> void:
 	var em = get_tree().get_first_node_in_group("entity_manager")

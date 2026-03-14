@@ -11,6 +11,7 @@ class_name WorldPlayerV2
 var movement_feature: Node = null
 var camera_feature: Node = null
 var stats_feature: Node = null
+var fps_visuals_feature: Node = null
 
 # Gameplay features
 var combat_feature: Node = null
@@ -30,6 +31,7 @@ func _ready() -> void:
 	if components_node:
 		movement_feature = components_node.get_node_or_null("Movement")
 		camera_feature = components_node.get_node_or_null("Camera")
+		fps_visuals_feature = components_node.get_node_or_null("FPSVisuals")
 		# Note: Stats is not in tscn yet - uses PlayerStats autoload
 	
 	# Find Modes (CombatSystem, BuildMode, ModeEditor, TerrainInteraction)
