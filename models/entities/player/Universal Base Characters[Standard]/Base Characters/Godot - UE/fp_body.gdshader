@@ -27,7 +27,7 @@ uniform float     normal_scale        : hint_range(-16.0, 16.0) = 1.0;
 // Standard PBR inputs finished
 varying float v_local_y;
 varying float v_weight;
-varying float v_bone;
+varying flat float v_bone;
 
 void vertex() {
 	v_local_y = VERTEX.y;
