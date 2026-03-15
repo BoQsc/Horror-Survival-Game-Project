@@ -252,10 +252,10 @@ func _update_shader_params(is_fp: bool) -> void:
 				
 				has_shader_mat = true
 				
-				# HEAD HIDING: Persistent in First Person
-				mat.set_shader_parameter("fp_hide_head", is_fp)
+				# Head Hiding (Original Logic)
+				mat.set_shader_parameter("is_first_person", is_fp)
 				
-				# VIEWMODEL OVERLAY: Configurable toggle
+				# Viewmodel Overlay (Togglable)
 				var overlay_on = is_fp
 				if has_node("/root/ToolConfig"):
 					overlay_on = is_fp and get_node("/root/ToolConfig").fp_viewmodel_enabled
@@ -264,11 +264,7 @@ func _update_shader_params(is_fp: bool) -> void:
 				mat.set_shader_parameter("neck_cutoff_y", neck_cutoff_y)
 				mat.set_shader_parameter("torso_y", _torso_y)
 				
-				# HEAD/NECK MASKING
-				mat.set_shader_parameter("head_bone_idx", float(_head_bone_idx))
-				mat.set_shader_parameter("neck_bone_idx", float(_neck_bone_idx))
-				
-				# Pass leg bone range for exclusion mask
+				# Pass leg bone range for exclusion mask (still needed for viewmodel stability)
 				mat.set_shader_parameter("min_leg_idx", float(_min_leg_idx))
 				mat.set_shader_parameter("max_leg_idx", float(_max_leg_idx))
 				

@@ -1,14 +1,10 @@
 shader_type spatial;
 render_mode blend_mix, depth_draw_always, cull_back, diffuse_burley, specular_schlick_ggx;
 
-// Increase render priority to ensure it renders after environment
-// (Not strictly necessary with depth-shifting but helps avoid edge cases)
-// NOTE: Setting this on the material in player.tscn instead of here.
-
-uniform bool  fp_hide_head   = false;
+uniform bool  is_first_person = false;
 uniform bool  fp_overlay_active = false;
 uniform float neck_cutoff_y   : hint_range(0.0, 3.0) = 1.55;
-uniform float torso_y         : hint_range(0.0, 3.0) = 0.8; // Dynamic anchor from script
+uniform float torso_y         : hint_range(0.0, 3.0) = 0.8; 
 uniform float min_leg_idx     = -1.0;
 uniform float max_leg_idx     = -1.0;
 
@@ -20,11 +16,8 @@ uniform sampler2D roughness_texture   : hint_default_white;
 uniform sampler2D metallic_texture    : hint_default_white;
 uniform float     roughness           : hint_range(0.0, 1.0) = 1.0;
 uniform float     metallic            : hint_range(0.0, 1.0) = 0.0;
-uniform float head_bone_idx   = -1.0;
-uniform float neck_bone_idx   = -1.0;
 uniform float     normal_scale        : hint_range(-16.0, 16.0) = 1.0;
 
-// Standard PBR inputs finished
 varying float v_local_y;
 varying float v_weight;
 varying flat float v_bone;
@@ -36,36 +29,31 @@ void vertex() {
 	// 1. Initial Projection
 	vec4 pos = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
 	
-	// 2. Viewmodel Overlay (Togglable)
+	// 2. Calculate Masking Weight (ALWAYS calculated so head-hiding stays safe)
+	float weight = smoothstep(torso_y - 0.5, torso_y - 0.2, VERTEX.y);
+	// Bone Exclusion: Strictly isolate legs from the "floating" effect
+	if (min_leg_idx > 0.0 && v_bone >= min_leg_idx && v_bone <= max_leg_idx) {
+		weight = 0.0;
+	}
+	v_weight = weight;
+	
+	// 3. Viewmodel Overlay effect (Togglable depth pulling)
 	if (fp_overlay_active) {
-		// Masking: Above hips get the treatment.
-		float weight = smoothstep(torso_y - 0.5, torso_y - 0.2, VERTEX.y);
-		
-		// Bone Exclusion: Strictly isolate legs
-		if (min_leg_idx > 0.0 && v_bone >= min_leg_idx && v_bone <= max_leg_idx) {
-			weight = 0.0;
-		}
-		
-		v_weight = weight;
-		
-		// Stable depth-pulling: mix current depth with a slightly nearer value based on weight.
-		// Pulling toward pos.w * 0.98 ensures it stays just inside the near plane.
 		pos.z = mix(pos.z, pos.w * 0.98, 0.4 * v_weight);
-	} else {
-		v_weight = 0.0;
+	}
+
+	// 4. Head Hiding (Original height-based logic)
+	if (is_first_person) {
+		// Safety: Only clip if this is clearly NOT one of the protected arms/torso vertices
+		if (VERTEX.y > neck_cutoff_y && v_weight < 0.5) {
+			pos = vec4(2.0, 2.0, 2.0, 1.0);
+		}
 	}
 	
 	POSITION = pos;
 }
 
 void fragment() {
-	// BONE-BASED MASKING: Hide pixels associated with head/neck bones in FP
-	if (fp_hide_head) {
-		if (abs(v_bone - head_bone_idx) < 0.1 || abs(v_bone - neck_bone_idx) < 0.1) {
-			discard;
-		}
-	}
-
 	vec4 albedo_tex = texture(albedo_texture, UV) * albedo_color;
 	ALBEDO = albedo_tex.rgb;
 	ALPHA = albedo_tex.a;
