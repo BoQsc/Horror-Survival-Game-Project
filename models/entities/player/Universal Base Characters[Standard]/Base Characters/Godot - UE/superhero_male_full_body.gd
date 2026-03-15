@@ -41,6 +41,7 @@ var _cached_meshes: Array[MeshInstance3D] = []
 var _cached_materials: Array[ShaderMaterial] = []
 var _min_leg_idx: int = -1
 var _max_leg_idx: int = -1
+var _neck_bone_idx: int = -1
 var _instance_id: String = "INIT"
 var _last_glob_enabled: bool = true
 
@@ -86,6 +87,10 @@ func _ready() -> void:
 				if not "upperarm" in b_name: # Avoid accidental arms
 					_min_leg_idx = min(_min_leg_idx, i)
 					_max_leg_idx = max(_max_leg_idx, i)
+					
+		_neck_bone_idx = _skeleton.find_bone("Neck")
+		if _neck_bone_idx == -1:
+			_neck_bone_idx = _skeleton.find_bone("Neck1")
 
 	# Always start clean
 	_skeleton.set_bone_pose_scale(_head_bone_idx, VISIBLE_SCALE)
@@ -226,6 +231,13 @@ func _update_shader_params(is_fp: bool) -> void:
 							new_mat.set_shader_parameter("normal_texture", mat.normal_texture)
 						if "normal_scale" in mat:
 							new_mat.set_shader_parameter("normal_scale", mat.normal_scale)
+					if "emission_enabled" in mat and mat.emission_enabled:
+						if "emission_texture" in mat:
+							new_mat.set_shader_parameter("emission_texture", mat.emission_texture)
+						if "emission" in mat:
+							new_mat.set_shader_parameter("emission_color", mat.emission)
+						if "emission_energy_multiplier" in mat:
+							new_mat.set_shader_parameter("emission_energy", mat.emission_energy_multiplier)
 							
 				mesh.set_surface_override_material(i, new_mat)
 				mat = new_mat
@@ -240,14 +252,21 @@ func _update_shader_params(is_fp: bool) -> void:
 				
 				has_shader_mat = true
 				
-				# EFFECTIVE FP: Only apply overlay if BOTH mode and global toggle are active
-				var effect_enabled = is_fp
-				if has_node("/root/ToolConfig"):
-					effect_enabled = is_fp and get_node("/root/ToolConfig").fp_viewmodel_enabled
+				# HEAD HIDING: Persistent in First Person
+				mat.set_shader_parameter("fp_hide_head", is_fp)
 				
-				mat.set_shader_parameter("is_first_person", effect_enabled)
+				# VIEWMODEL OVERLAY: Configurable toggle
+				var overlay_on = is_fp
+				if has_node("/root/ToolConfig"):
+					overlay_on = is_fp and get_node("/root/ToolConfig").fp_viewmodel_enabled
+				mat.set_shader_parameter("fp_overlay_active", overlay_on)
+				
 				mat.set_shader_parameter("neck_cutoff_y", neck_cutoff_y)
 				mat.set_shader_parameter("torso_y", _torso_y)
+				
+				# HEAD/NECK MASKING
+				mat.set_shader_parameter("head_bone_idx", float(_head_bone_idx))
+				mat.set_shader_parameter("neck_bone_idx", float(_neck_bone_idx))
 				
 				# Pass leg bone range for exclusion mask
 				mat.set_shader_parameter("min_leg_idx", float(_min_leg_idx))

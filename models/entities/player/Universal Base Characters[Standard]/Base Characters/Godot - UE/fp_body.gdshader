@@ -5,7 +5,8 @@ render_mode blend_mix, depth_draw_always, cull_back, diffuse_burley, specular_sc
 // (Not strictly necessary with depth-shifting but helps avoid edge cases)
 // NOTE: Setting this on the material in player.tscn instead of here.
 
-uniform bool  is_first_person = false;
+uniform bool  fp_hide_head   = false;
+uniform bool  fp_overlay_active = false;
 uniform float neck_cutoff_y   : hint_range(0.0, 3.0) = 1.55;
 uniform float torso_y         : hint_range(0.0, 3.0) = 0.8; // Dynamic anchor from script
 uniform float min_leg_idx     = -1.0;
@@ -19,48 +20,50 @@ uniform sampler2D roughness_texture   : hint_default_white;
 uniform sampler2D metallic_texture    : hint_default_white;
 uniform float     roughness           : hint_range(0.0, 1.0) = 1.0;
 uniform float     metallic            : hint_range(0.0, 1.0) = 0.0;
+uniform float head_bone_idx   = -1.0;
+uniform float neck_bone_idx   = -1.0;
 uniform float     normal_scale        : hint_range(-16.0, 16.0) = 1.0;
 
 // Standard PBR inputs finished
 varying float v_local_y;
 varying float v_weight;
+varying float v_bone;
 
 void vertex() {
 	v_local_y = VERTEX.y;
+	v_bone = float(BONE_INDICES.x);
 	
-	// Default neck-hiding logic
-	if (is_first_person && VERTEX.y > neck_cutoff_y) {
-		POSITION = vec4(2.0, 2.0, 2.0, 1.0);
-	}
+	// 1. Initial Projection
+	vec4 pos = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
 	
-	// VIEWMODEL OVERLAY: Pull depth closer to camera to avoid clipping
-	if (is_first_person) {
-		vec4 pos = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
-		
-		// ROBUST MASKING: 
-		// 1. Start with a very generous height mask. Anything above 'hips - 0.5m' is potential viewmodel.
+	// 2. Viewmodel Overlay (Togglable)
+	if (fp_overlay_active) {
+		// Masking: Above hips get the treatment.
 		float weight = smoothstep(torso_y - 0.5, torso_y - 0.2, VERTEX.y);
 		
-		// 2. BONE-RANGE EXCLUSION: If it's a leg, strictly exclude it. 
-		// This is the most reliable way to handle crouching.
-		if (min_leg_idx > 0.0 && float(BONE_INDICES.x) >= min_leg_idx && float(BONE_INDICES.x) <= max_leg_idx) {
+		// Bone Exclusion: Strictly isolate legs
+		if (min_leg_idx > 0.0 && v_bone >= min_leg_idx && v_bone <= max_leg_idx) {
 			weight = 0.0;
 		}
 		
 		v_weight = weight;
 		
-		// OVERLAY: Push toward the front (Near Plane)
-		pos.z = mix(pos.z, pos.w * 0.8, 0.4 * v_weight);
-		
-		POSITION = pos;
+		// Stable depth-pulling: mix current depth with a slightly nearer value based on weight.
+		// Pulling toward pos.w * 0.98 ensures it stays just inside the near plane.
+		pos.z = mix(pos.z, pos.w * 0.98, 0.4 * v_weight);
 	} else {
 		v_weight = 0.0;
 	}
+	
+	POSITION = pos;
 }
 
 void fragment() {
-	if (is_first_person && v_local_y > neck_cutoff_y) {
-		discard;
+	// BONE-BASED MASKING: Hide pixels associated with head/neck bones in FP
+	if (fp_hide_head) {
+		if (abs(v_bone - head_bone_idx) < 0.1 || abs(v_bone - neck_bone_idx) < 0.1) {
+			discard;
+		}
 	}
 
 	vec4 albedo_tex = texture(albedo_texture, UV) * albedo_color;
