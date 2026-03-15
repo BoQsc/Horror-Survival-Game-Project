@@ -195,10 +195,35 @@ func _update_shader_params(is_fp: bool) -> void:
 	
 	var count = 0
 	for mesh in meshes:
+		# SHADOW PROXYING:
+		# If this is not a proxy, make it one or handle the main mesh
+		if mesh.name.ends_with("_ShadowProxy"):
+			continue
+			
 		_cached_meshes.append(mesh)
 		
-		# CULLING FIX: Prevent disappearing when vertices are pulled forward/up
+		# 1. Main Mesh: Viewmodel only, NO shadow casting (Prevents shader collision)
+		mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mesh.extra_cull_margin = 10.0
+		
+		# 2. Shadow Proxy: Standard Godot Shadow Pass (Perfect depth)
+		var proxy_name = mesh.name + "_ShadowProxy"
+		var proxy = mesh.get_node_or_null(proxy_name)
+		if not proxy:
+			proxy = MeshInstance3D.new()
+			proxy.name = proxy_name
+			mesh.add_child(proxy)
+			if not Engine.is_editor_hint():
+				proxy.owner = mesh.get_tree().current_scene
+		
+		proxy.mesh = mesh.mesh
+		proxy.skin = mesh.skin
+		proxy.skeleton = proxy.get_path_to(_skeleton)
+		proxy.transform = Transform3D.IDENTITY # Stay on parent
+		
+		# Invisible to eyes, but visible to Sun
+		proxy.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+		proxy.extra_cull_margin = 1.0
 		
 		var has_shader_mat = false
 		var surface_count = mesh.get_surface_override_material_count()

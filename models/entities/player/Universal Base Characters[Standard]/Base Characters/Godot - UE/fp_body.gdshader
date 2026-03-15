@@ -26,12 +26,12 @@ void vertex() {
 	v_local_y = VERTEX.y;
 	v_bone = float(BONE_INDICES.x);
 	
-	// 1. Initial Projection
+	// 1. Initial Projection (Standard Camera View)
 	vec4 pos = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
 	
-	// 2. Calculate Masking Weight (ALWAYS calculated so head-hiding stays safe)
+	// 2. Calculate Masking Weight (ALWAYS needed for arm/torso stability)
 	float weight = smoothstep(torso_y - 0.5, torso_y - 0.2, VERTEX.y);
-	// Bone Exclusion: Strictly isolate legs from the "floating" effect
+	// Bone Exclusion: Strictly isolate legs from the viewmodel effect
 	if (min_leg_idx > 0.0 && v_bone >= min_leg_idx && v_bone <= max_leg_idx) {
 		weight = 0.0;
 	}
@@ -39,12 +39,14 @@ void vertex() {
 	
 	// 3. Viewmodel Overlay effect (Togglable depth pulling)
 	if (fp_overlay_active) {
+		// Pure visual pulling for the camera. 
+		// Since cast_shadow = OFF, we don't need to fear the Sun!
 		pos.z = mix(pos.z, pos.w * 0.98, 0.4 * v_weight);
 	}
 
 	// 4. Head Hiding (Original height-based logic)
 	if (is_first_person) {
-		// Safety: Only clip if this is clearly NOT one of the protected arms/torso vertices
+		// Hide head from your eyes
 		if (VERTEX.y > neck_cutoff_y && v_weight < 0.5) {
 			pos = vec4(2.0, 2.0, 2.0, 1.0);
 		}
