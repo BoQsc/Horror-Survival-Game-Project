@@ -292,6 +292,11 @@ layout_mode = 2
 button_pressed = false
 text = "Leg Clipping Fix"
 
+[node name="ViewmodelToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456799]
+layout_mode = 2
+button_pressed = true
+text = "Viewmodel Overlay"
+
 [node name="ReachLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel"]
 layout_mode = 2
 text = "Leg Clipping: Reach"

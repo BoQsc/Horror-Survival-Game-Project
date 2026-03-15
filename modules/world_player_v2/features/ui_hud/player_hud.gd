@@ -168,6 +168,12 @@ func _ready() -> void:
 		if has_node("/root/ToolConfig"):
 			clipping_toggle.button_pressed = get_node("/root/ToolConfig").fp_clipping_prevention_enabled
 
+	var viewmodel_toggle = game_menu.find_child("ViewmodelToggle", true, false)
+	if viewmodel_toggle:
+		viewmodel_toggle.toggled.connect(_on_viewmodel_toggled)
+		if has_node("/root/ToolConfig"):
+			viewmodel_toggle.button_pressed = get_node("/root/ToolConfig").fp_viewmodel_enabled
+
 	var reach_slider = game_menu.find_child("ReachSlider", true, false)
 	if reach_slider:
 		reach_slider.value_changed.connect(_on_reach_changed)
@@ -804,6 +810,11 @@ func _on_bob_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").fp_bob_enabled = is_enabled
 		print("PlayerHUD: View Bobbing -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_viewmodel_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").fp_viewmodel_enabled = is_enabled
+		print("PlayerHUD: Viewmodel Overlay -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_clipping_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):

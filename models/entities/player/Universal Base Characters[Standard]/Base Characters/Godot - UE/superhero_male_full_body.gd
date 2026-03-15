@@ -9,10 +9,15 @@ extends Node3D
 
 @export var skeleton_path: NodePath = "WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton"
 @export var head_bone_name: String = "Head"
+@export var spine_bone_name: String = "Hips" # Root of torso for stable upward masking
+@export var neck_cutoff_y: float = 1.55
+var _torso_y: float = 0.8
 @export var transition_duration: float = 0.15
 
 ## Extra nodes to hide in first person (drag Eyebrows, Eyes here)
 @export var extra_head_nodes: Array[NodePath] = []
+
+@export var viewmodel_shader: Shader = preload("res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/fp_body.gdshader")
 
 @export var first_person_mode: bool = false:
 	set(value):
@@ -31,29 +36,88 @@ var _skeleton: Skeleton3D
 var _head_bone_idx: int = -1
 var _active_tween: Tween = null
 var _ready_called: bool = false
+var _spine_bone_idx: int = -1
+var _cached_meshes: Array[MeshInstance3D] = []
+var _cached_materials: Array[ShaderMaterial] = []
+var _min_leg_idx: int = -1
+var _max_leg_idx: int = -1
+var _instance_id: String = "INIT"
 
-# Near-zero scale — visually invisible but det != 0
-# so BoneAttachment3D (camera) stays valid
+
 const HIDDEN_SCALE := Vector3(0.001, 0.001, 0.001)
 const VISIBLE_SCALE := Vector3.ONE
 
 
 func _ready() -> void:
-	_skeleton = get_node_or_null(skeleton_path)
+	_instance_id = str(randi() % 9999)
+	if Engine.is_editor_hint(): _instance_id = "ED-" + _instance_id
+	
+	if skeleton_path.is_empty():
+		push_error("HeadToggle: skeleton_path is empty.")
+		return
+	
+	_skeleton = get_node(skeleton_path)
 	if _skeleton == null:
-		push_error("HeadToggle: Skeleton3D not found at: '%s'" % skeleton_path)
 		return
 
+	# Force-cleanup old junk values from previous versions
+	if spine_bone_name == "Spine1" or spine_bone_name == "Neck":
+		spine_bone_name = "Hips"
+
 	_head_bone_idx = _skeleton.find_bone(head_bone_name)
+	_spine_bone_idx = _skeleton.find_bone(spine_bone_name)
+	
 	if _head_bone_idx == -1:
-		push_error("HeadToggle: Bone '%s' not found. Bones: %s" % [head_bone_name, _get_all_bone_names()])
-		return
+		push_error("HeadToggle: Bone '%s' not found." % head_bone_name)
+	
+	if _spine_bone_idx == -1:
+		# Try fallback "Spine"
+		_spine_bone_idx = _skeleton.find_bone("Spine")
+		if _spine_bone_idx == -1:
+			push_error("FP_BODY: Spine/Chest bone not found.")
+	else:
+		# Find all leg bones and their range
+		_min_leg_idx = 999
+		_max_leg_idx = -1
+		for i in _skeleton.get_bone_count():
+			var b_name = _skeleton.get_bone_name(i).to_lower()
+			if "leg" in b_name or "foot" in b_name or "toe" in b_name:
+				if not "upperarm" in b_name: # Avoid accidental arms
+					_min_leg_idx = min(_min_leg_idx, i)
+					_max_leg_idx = max(_max_leg_idx, i)
 
 	# Always start clean
 	_skeleton.set_bone_pose_scale(_head_bone_idx, VISIBLE_SCALE)
 
 	_ready_called = true
 	_apply_instant(first_person_mode)
+
+
+var _log_timer: float = 0.0
+func _process(_delta: float) -> void:
+	if not _ready_called:
+		return
+		
+	# Sync with global config toggle
+	if has_node("/root/ToolConfig"):
+		var global_enabled = get_node("/root/ToolConfig").fp_viewmodel_enabled
+		if first_person_mode != global_enabled:
+			first_person_mode = global_enabled
+	
+	if not first_person_mode:
+		return
+	
+	if _spine_bone_idx != -1 and _skeleton:
+		# Use global pose origin for height relative to model root (feet)
+		var pose = _skeleton.get_bone_global_pose(_spine_bone_idx)
+		_torso_y = pose.origin.y
+		_update_torso_y_only(_torso_y)
+
+
+func _update_torso_y_only(y: float) -> void:
+	for mat in _cached_materials:
+		if is_instance_valid(mat):
+			mat.set_shader_parameter("torso_y", y)
 
 
 # ─────────────────────────────────────────────
@@ -82,6 +146,7 @@ func _apply_instant(hide_head: bool) -> void:
 		return
 	_skeleton.set_bone_pose_scale(_head_bone_idx, HIDDEN_SCALE if hide_head else VISIBLE_SCALE)
 	_set_extra_nodes_visible(not hide_head)
+	_update_shader_params(hide_head)
 
 
 func _tween_head(hide_head: bool) -> void:
@@ -93,28 +158,20 @@ func _tween_head(hide_head: bool) -> void:
 
 	var from_scale: Vector3 = _skeleton.get_bone_pose_scale(_head_bone_idx)
 	var to_scale: Vector3 = HIDDEN_SCALE if hide_head else VISIBLE_SCALE
-
-	# Hide extra nodes immediately when going FP
-	if hide_head:
-		_set_extra_nodes_visible(false)
-
-	_active_tween = create_tween()
-	_active_tween.set_ease(Tween.EASE_IN_OUT)
-	_active_tween.set_trans(Tween.TRANS_CUBIC)
+	
+	_active_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	_active_tween.tween_method(
-		func(s: Vector3) -> void:
-			if _skeleton and _head_bone_idx != -1:
-				_skeleton.set_bone_pose_scale(_head_bone_idx, s),
+		func(v: Vector3): _skeleton.set_bone_pose_scale(_head_bone_idx, v),
 		from_scale,
 		to_scale,
 		transition_duration
 	)
-
-	# Show extra nodes only after tween finishes when returning to 3rd person
-	if not hide_head:
-		_active_tween.tween_callback(func() -> void:
-			_set_extra_nodes_visible(true)
-		)
+	_active_tween.finished.connect(func(): if not hide_head: _set_extra_nodes_visible(true))
+	
+	if hide_head:
+		_set_extra_nodes_visible(false)
+	
+	_update_shader_params(hide_head)
 
 
 func _set_extra_nodes_visible(show: bool) -> void:
@@ -122,6 +179,57 @@ func _set_extra_nodes_visible(show: bool) -> void:
 		var node := get_node_or_null(path)
 		if node:
 			node.visible = show
+
+
+func _update_shader_params(is_fp: bool) -> void:
+	var meshes = find_children("*", "MeshInstance3D", true, false)
+	_cached_meshes.clear()
+	_cached_materials.clear()
+	
+	var count = 0
+	for mesh in meshes:
+		_cached_meshes.append(mesh)
+		var has_shader_mat = false
+		var surface_count = mesh.get_surface_override_material_count()
+		var mesh_count = 0
+		if mesh.mesh: mesh_count = mesh.mesh.get_surface_count()
+		var total_slots = max(surface_count, mesh_count)
+		
+		for i in total_slots:
+			var mat = mesh.get_active_material(i)
+			if not mat is ShaderMaterial:
+				var new_mat = ShaderMaterial.new()
+				new_mat.shader = viewmodel_shader
+				if mat and "albedo_texture" in mat:
+					new_mat.set_shader_parameter("albedo_texture", mat.albedo_texture)
+				mesh.set_surface_override_material(i, new_mat)
+				mat = new_mat
+			
+			if mat is ShaderMaterial:
+				# Force material unique per Instance ID to avoid "Zombie Rig" fighting
+				var expected_name = "LOCAL_" + _instance_id
+				if mat.resource_name != expected_name:
+					mat = mat.duplicate()
+					mat.resource_name = expected_name
+					mesh.set_surface_override_material(i, mat)
+				
+				has_shader_mat = true
+				mat.set_shader_parameter("is_first_person", is_fp)
+				mat.set_shader_parameter("neck_cutoff_y", neck_cutoff_y)
+				mat.set_shader_parameter("torso_y", _torso_y)
+				
+				# Pass leg bone range for exclusion mask
+				mat.set_shader_parameter("min_leg_idx", float(_min_leg_idx))
+				mat.set_shader_parameter("max_leg_idx", float(_max_leg_idx))
+				
+				_cached_materials.append(mat)
+		
+		if has_shader_mat:
+			count += 1
+	
+	# Optional: add a quiet print for non-editor only
+	if not Engine.is_editor_hint():
+		print_rich("[color=cyan]FPS Overlay:[/color] Updated %d meshes." % count)
 
 
 func _get_all_bone_names() -> Array:

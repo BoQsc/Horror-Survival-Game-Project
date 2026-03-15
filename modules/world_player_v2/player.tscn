@@ -34,6 +34,10 @@
 [ext_resource type="PackedScene" uid="uid://dcvqp5qoe32ho" path="res://models/items/player_pickaxe/1/sketchfab_scene.tscn" id="PackedScene_Pickaxe"]
 [ext_resource type="PackedScene" uid="uid://1xh5cq6f56t3" path="res://models/pistol/heavy_pistol_animated.glb" id="PackedScene_Pistol"]
 [ext_resource type="PackedScene" uid="uid://ci11yv4pk4ssf" path="res://models/items/player_shovel/1/sketchfab_scene.tscn" id="PackedScene_Shovel"]
+[ext_resource type="Texture2D" uid="uid://b444o0q2jq7pu" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/T_Superhero_Male_Dark.png" id="Texture_BaseColor"]
+[ext_resource type="Texture2D" uid="uid://dw222kgrcfsx3" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/T_Superhero_Male_Normal.png" id="Texture_Normal"]
+[ext_resource type="Texture2D" uid="uid://dqc0ulaqu8mxx" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/T_Superhero_Male_Roughness.png" id="Texture_Roughness"]
+[ext_resource type="Shader" uid="uid://bcnf85ehkanjm" path="res://models/entities/player/Universal Base Characters[Standard]/Base Characters/Godot - UE/fp_body.gdshader" id="Shader_Body"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
@@ -199,6 +203,38 @@ nodes/CombatSM/position = Vector2(160, 420)
 nodes/StateMachine/node = SubResource("AnimationNodeStateMachine_7cx4r")
 nodes/StateMachine/position = Vector2(180, 160)
 node_connections = [&"output", 0, &"Blend2", &"Blend2", 0, &"StateMachine", &"Blend2", 1, &"CombatSM"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_body"]
+render_priority = 10
+shader = ExtResource("Shader_Body")
+shader_parameter/is_first_person = true
+shader_parameter/neck_cutoff_y = 1.55
+shader_parameter/viewmodel_fov = 75.0
+shader_parameter/albedo_color = Color(1, 1, 1, 1)
+shader_parameter/albedo_texture = ExtResource("Texture_BaseColor")
+shader_parameter/normal_texture = ExtResource("Texture_Normal")
+shader_parameter/roughness_texture = ExtResource("Texture_Roughness")
+shader_parameter/metallic_texture = ExtResource("Texture_Roughness")
+shader_parameter/roughness = 1.0
+shader_parameter/metallic = 0.0
+shader_parameter/normal_scale = 1.0
+shader_parameter/debug_tint = Color(1, 1, 1, 1)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_face"]
+render_priority = 10
+shader = ExtResource("Shader_Body")
+shader_parameter/is_first_person = true
+shader_parameter/neck_cutoff_y = 5.0
+shader_parameter/viewmodel_fov = 75.0
+shader_parameter/albedo_color = Color(1, 1, 1, 1)
+shader_parameter/albedo_texture = ExtResource("Texture_BaseColor")
+shader_parameter/normal_texture = ExtResource("Texture_Normal")
+shader_parameter/roughness_texture = ExtResource("Texture_Roughness")
+shader_parameter/metallic_texture = ExtResource("Texture_Roughness")
+shader_parameter/roughness = 1.0
+shader_parameter/metallic = 0.0
+shader_parameter/normal_scale = 1.0
+shader_parameter/debug_tint = Color(1, 1, 1, 1)
 
 [node name="WorldPlayerV2" type="CharacterBody3D" unique_id=1407863051 groups=["player"]]
 collision_layer = 3
@@ -410,5 +446,14 @@ script = ExtResource("9_mode_editor")
 script = ExtResource("18_terrain")
 
 [node name="PlayerHUD" parent="." unique_id=871822519 instance=ExtResource("13_hud")]
+
+[node name="Eyebrows" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="0"]
+surface_material_override/0 = SubResource("ShaderMaterial_face")
+
+[node name="Eyes" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="1"]
+surface_material_override/0 = SubResource("ShaderMaterial_face")
+
+[node name="SuperHero_Male" parent="WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton" index="2"]
+surface_material_override/0 = SubResource("ShaderMaterial_body")
 
 [editable path="WorldPlayerFullBody/Superhero_Male_FullBody"]
