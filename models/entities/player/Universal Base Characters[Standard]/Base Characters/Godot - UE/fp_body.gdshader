@@ -37,10 +37,12 @@ void vertex() {
 	if (is_first_person) {
 		vec4 pos = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
 		
-		// Mask upwards from the Hips anchor (~0.9m) to cover torso/arms.
-		float weight = smoothstep(torso_y - 0.4, torso_y + 0.1, VERTEX.y);
+		// ROBUST MASKING: 
+		// 1. Start with a very generous height mask. Anything above 'hips - 0.5m' is potential viewmodel.
+		float weight = smoothstep(torso_y - 0.5, torso_y - 0.2, VERTEX.y);
 		
-		// BONE-RANGE EXCLUSION: Skip overlay if vertex is primary-weighted to the leg range.
+		// 2. BONE-RANGE EXCLUSION: If it's a leg, strictly exclude it. 
+		// This is the most reliable way to handle crouching.
 		if (min_leg_idx > 0.0 && float(BONE_INDICES.x) >= min_leg_idx && float(BONE_INDICES.x) <= max_leg_idx) {
 			weight = 0.0;
 		}

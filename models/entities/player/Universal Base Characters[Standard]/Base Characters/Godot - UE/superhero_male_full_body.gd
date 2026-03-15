@@ -42,6 +42,7 @@ var _cached_materials: Array[ShaderMaterial] = []
 var _min_leg_idx: int = -1
 var _max_leg_idx: int = -1
 var _instance_id: String = "INIT"
+var _last_glob_enabled: bool = true
 
 
 const HIDDEN_SCALE := Vector3(0.001, 0.001, 0.001)
@@ -98,11 +99,12 @@ func _process(_delta: float) -> void:
 	if not _ready_called:
 		return
 		
-	# Sync with global config toggle
 	if has_node("/root/ToolConfig"):
 		var global_enabled = get_node("/root/ToolConfig").fp_viewmodel_enabled
-		if first_person_mode != global_enabled:
-			first_person_mode = global_enabled
+		if global_enabled != _last_glob_enabled:
+			_last_glob_enabled = global_enabled
+			if first_person_mode:
+				_update_shader_params(true)
 	
 	if not first_person_mode:
 		return
@@ -189,6 +191,10 @@ func _update_shader_params(is_fp: bool) -> void:
 	var count = 0
 	for mesh in meshes:
 		_cached_meshes.append(mesh)
+		
+		# CULLING FIX: Prevent disappearing when vertices are pulled forward/up
+		mesh.extra_cull_margin = 10.0
+		
 		var has_shader_mat = false
 		var surface_count = mesh.get_surface_override_material_count()
 		var mesh_count = 0
@@ -200,8 +206,27 @@ func _update_shader_params(is_fp: bool) -> void:
 			if not mat is ShaderMaterial:
 				var new_mat = ShaderMaterial.new()
 				new_mat.shader = viewmodel_shader
-				if mat and "albedo_texture" in mat:
-					new_mat.set_shader_parameter("albedo_texture", mat.albedo_texture)
+				
+				# MATERIAL POLISH: Copy all common PBR properties from original material
+				if mat:
+					if "albedo_color" in mat: 
+						new_mat.set_shader_parameter("albedo_color", mat.albedo_color)
+					if "albedo_texture" in mat: 
+						new_mat.set_shader_parameter("albedo_texture", mat.albedo_texture)
+					if "roughness" in mat:
+						new_mat.set_shader_parameter("roughness", mat.roughness)
+					if "roughness_texture" in mat:
+						new_mat.set_shader_parameter("roughness_texture", mat.roughness_texture)
+					if "metallic" in mat:
+						new_mat.set_shader_parameter("metallic", mat.metallic)
+					if "metallic_texture" in mat:
+						new_mat.set_shader_parameter("metallic_texture", mat.metallic_texture)
+					if "normal_enabled" in mat and mat.normal_enabled:
+						if "normal_texture" in mat:
+							new_mat.set_shader_parameter("normal_texture", mat.normal_texture)
+						if "normal_scale" in mat:
+							new_mat.set_shader_parameter("normal_scale", mat.normal_scale)
+							
 				mesh.set_surface_override_material(i, new_mat)
 				mat = new_mat
 			
@@ -214,7 +239,13 @@ func _update_shader_params(is_fp: bool) -> void:
 					mesh.set_surface_override_material(i, mat)
 				
 				has_shader_mat = true
-				mat.set_shader_parameter("is_first_person", is_fp)
+				
+				# EFFECTIVE FP: Only apply overlay if BOTH mode and global toggle are active
+				var effect_enabled = is_fp
+				if has_node("/root/ToolConfig"):
+					effect_enabled = is_fp and get_node("/root/ToolConfig").fp_viewmodel_enabled
+				
+				mat.set_shader_parameter("is_first_person", effect_enabled)
 				mat.set_shader_parameter("neck_cutoff_y", neck_cutoff_y)
 				mat.set_shader_parameter("torso_y", _torso_y)
 				
