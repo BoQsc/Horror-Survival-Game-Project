@@ -31,115 +31,143 @@ var _current_bob: Vector3 = Vector3.ZERO
 var _current_sway: Vector3 = Vector3.ZERO
 var _current_flare: float = 0.0
 var _mouse_input: Vector2 = Vector2.ZERO
+var _last_applied_flare: float = 0.0
+
 
 func _ready() -> void:
 	# Priority 95 so we run AFTER HipStabilizer (90) and AFTER AnimationTree
 	process_priority = 95
-	
+
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
 		push_error("FPSVisuals: Must be child of Player/Components node")
 		return
-	
+
 	camera = player.get_node_or_null("Camera3D")
 	if camera:
 		hand_holder = camera.get_node_or_null("HandHolder")
-	
+
 	arm_marker = player.find_child("Marker3D", true, false)
-	
+
 	# Find skeleton: Components -> Player -> WorldPlayerFullBody -> Model -> Armature -> GeneralSkeleton
 	skeleton = player.get_node_or_null("WorldPlayerFullBody/Superhero_Male_FullBody/Armature/GeneralSkeleton")
 	if skeleton:
 		_l_arm_idx = skeleton.find_bone("LeftUpperArm")
 		_r_arm_idx = skeleton.find_bone("RightUpperArm")
-	
+
 	print("FPSVisuals: Ready. Camera: %s, Skeleton: %s" % [
 		"OK" if camera else "MISSING",
 		"OK" if skeleton else "MISSING"
 	])
 
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 		_mouse_input = event.relative
 
+
 func _process(delta: float) -> void:
 	if not player or not camera or not has_node("/root/ToolConfig"):
 		return
-	
-	var config = get_node("/root/ToolConfig")
+
+	var config: Node = get_node("/root/ToolConfig")
+	var full_body_mode: bool = _is_full_body_overlay_enabled(config)
 	_update_bob(delta, config)
 	_update_sway(delta, config)
-	_update_flare(delta, config)
-	_apply_visuals()
+	_update_flare(delta, config, full_body_mode)
+	_apply_visuals(full_body_mode, config)
+
+
+func _is_full_body_overlay_enabled(config: Node) -> bool:
+	return config != null and "full_body_first_person_enabled" in config and bool(config.full_body_first_person_enabled)
+
 
 func _update_bob(delta: float, config: Node) -> void:
 	if not config.fp_bob_enabled:
 		_current_bob = _current_bob.lerp(Vector3.ZERO, delta * bob_smoothing)
 		return
-		
-	# View Bobbing
+
 	var speed = player.velocity.length()
 	var target_bob = Vector3.ZERO
-	
+
 	if player.is_on_floor() and speed > 0.5:
 		var speed_mult = clamp(speed / 5.0, 0.5, 1.5)
 		_bob_time += delta * speed_mult
-		
+
 		target_bob.y = sin(_bob_time * bob_freq) * bob_amp
 		target_bob.x = cos(_bob_time * bob_freq * 2.0) * bob_amp * 0.5
-	
+
 	_current_bob = _current_bob.lerp(target_bob, delta * bob_smoothing)
+
 
 func _update_sway(delta: float, config: Node) -> void:
 	if not config.fp_sway_enabled:
 		_current_sway = _current_sway.lerp(Vector3.ZERO, delta * sway_smoothing)
 		return
-		
-	# Mouse Movement Sway
+
 	var target_sway = Vector3(
 		-_mouse_input.x * sway_amount * 0.005,
 		_mouse_input.y * sway_amount * 0.005,
 		0
 	)
-	
+
 	_current_sway = _current_sway.lerp(target_sway, delta * sway_smoothing)
 	_mouse_input = Vector2.ZERO
 
-func _update_flare(delta: float, config: Node) -> void:
-	# Calculate flaring based on pitch (looking down)
-	var pitch = camera.rotation.x
-	var target_flare = 0.0
-	
-	if config.fp_clipping_prevention_enabled and pitch < 0.0: # Looking down
-		# Increase flare as we look down. Scale by crouching.
-		var crouch_node = player.get_node_or_null("Components/Crouch")
-		var crouch_mult = 2.0 if crouch_node and crouch_node.get("is_crouching") else 1.0
-		var base_flare = abs(pitch) * flare_amount * crouch_mult
+
+func _update_flare(delta: float, config: Node, full_body_mode: bool) -> void:
+	var target_flare: float = 0.0
+	var pitch: float = camera.rotation.x
+
+	if not full_body_mode and config.fp_clipping_prevention_enabled and pitch < 0.0:
+		var crouch_node: Node = player.get_node_or_null("Components/Crouch")
+		var crouch_mult: float = 2.0 if crouch_node and crouch_node.get("is_crouching") else 1.0
+		var base_flare: float = abs(pitch) * flare_amount * crouch_mult
 		target_flare = base_flare * config.fp_clipping_flare_mult
-	
+
 	_current_flare = lerp(_current_flare, target_flare, delta * flare_smoothing)
 
-func _apply_visuals() -> void:
+
+func _get_overlay_stability_scale(config: Node, full_body_mode: bool) -> float:
+	if not full_body_mode or config == null or not ("full_body_first_person_chest_bias" in config):
+		return 1.0
+
+	var bias: float = float(config.full_body_first_person_chest_bias)
+	return clamp(1.0 - (bias * 1.5), 0.6, 1.25)
+
+
+func _apply_visuals(full_body_mode: bool, config: Node) -> void:
+	var overlay_stability_scale: float = _get_overlay_stability_scale(config, full_body_mode)
+
 	# Keep the camera rotation clean (no procedural tilt)
 	camera.rotation.z = 0.0
-	
+
 	# View Lag (subtle camera shift) + Walking Bob
-	camera.h_offset = (_current_bob.x * 0.2) + (_current_sway.x * 0.4)
-	camera.v_offset = (_current_bob.y * 0.2) + (_current_sway.y * 0.4)
-	
-	# Apply Bob and Sway to legacy Arms (HandHolder)
+	camera.h_offset = ((_current_bob.x * 0.2) + (_current_sway.x * 0.4)) * overlay_stability_scale
+	camera.v_offset = ((_current_bob.y * 0.2) + (_current_sway.y * 0.4)) * overlay_stability_scale
+
+	# Keep legacy holder motion only for the legacy viewmodel path.
 	if hand_holder:
-		hand_holder.position.x = (_current_bob.x * 1.5) + (_current_sway.x * 1.2)
-		hand_holder.position.y = (_current_bob.y * 1.5) + (_current_sway.y * 1.2)
-		
-	# Apply Elbow Flaring to Full Body Skeleton
+		if full_body_mode:
+			hand_holder.position = Vector3.ZERO
+		else:
+			hand_holder.position.x = (_current_bob.x * 1.5) + (_current_sway.x * 1.2)
+			hand_holder.position.y = (_current_bob.y * 1.5) + (_current_sway.y * 1.2)
+
+	# Apply Elbow Flaring to Full Body Skeleton only for the legacy / clipping-prevention path.
 	if skeleton and _l_arm_idx >= 0 and _r_arm_idx >= 0:
-		# L flare: Rotate outward (relative to bone axis, usually local Z or X)
-		# For this model, Z outward is usually positive/negative depending on bind pose.
-		# We'll flare them "out" away from the thighs.
-		var flare_rot_l = Quaternion(Vector3.FORWARD, _current_flare * 0.5)
-		var flare_rot_r = Quaternion(Vector3.FORWARD, -_current_flare * 0.5)
-		
-		# Apply on top of animation pose
-		skeleton.set_bone_pose_rotation(_l_arm_idx, skeleton.get_bone_pose_rotation(_l_arm_idx) * flare_rot_l)
-		skeleton.set_bone_pose_rotation(_r_arm_idx, skeleton.get_bone_pose_rotation(_r_arm_idx) * flare_rot_r)
+		var current_l: Quaternion = skeleton.get_bone_pose_rotation(_l_arm_idx)
+		var current_r: Quaternion = skeleton.get_bone_pose_rotation(_r_arm_idx)
+
+		if absf(_last_applied_flare) > 0.0001:
+			current_l = current_l * Quaternion(Vector3.FORWARD, -_last_applied_flare * 0.5)
+			current_r = current_r * Quaternion(Vector3.FORWARD, _last_applied_flare * 0.5)
+
+		var flare_scale: float = _current_flare
+		if absf(flare_scale) > 0.0001:
+			current_l = current_l * Quaternion(Vector3.FORWARD, flare_scale * 0.5)
+			current_r = current_r * Quaternion(Vector3.FORWARD, -flare_scale * 0.5)
+
+		skeleton.set_bone_pose_rotation(_l_arm_idx, current_l)
+		skeleton.set_bone_pose_rotation(_r_arm_idx, current_r)
+		_last_applied_flare = flare_scale

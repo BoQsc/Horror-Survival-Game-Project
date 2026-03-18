@@ -56,6 +56,12 @@ var fp_clipping_prevention_enabled: bool = false
 var fp_clipping_reach_mult: float = 1.0
 var fp_clipping_flare_mult: float = 1.0
 
+## Full-body first-person overlay that clips the mesh from the chest upward.
+var full_body_first_person_enabled: bool = true
+var full_body_first_person_debug_colors: bool = false
+var full_body_first_person_chest_bias: float = 0.02
+var full_body_first_person_chest_feather: float = 0.08
+
 var _target_box: MeshInstance3D = null
 var _hit_marker: MeshInstance3D = null
 

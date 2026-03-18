@@ -202,8 +202,11 @@ func _process(_delta: float) -> void:
 		# We only bias the marker (what the skeleton looks at), not the actual raycast.
 		var bias_strength = 0.0
 		var config = get_node_or_null("/root/ToolConfig")
+		var full_body_overlay_enabled = false
+		if config and "full_body_first_person_enabled" in config:
+			full_body_overlay_enabled = bool(config.full_body_first_person_enabled)
 		
-		if config and config.fp_clipping_prevention_enabled and _camera_pitch < 0.0: # Looking down
+		if config and config.fp_clipping_prevention_enabled and not full_body_overlay_enabled and _camera_pitch < 0.0: # Looking down
 			# At -90 degrees (1.57 rad), we push it forward significantly
 			# We multiply by crouch factor because knees are closer when crouching
 			var is_crouching = player.get("is_crouching") if "is_crouching" in player else false

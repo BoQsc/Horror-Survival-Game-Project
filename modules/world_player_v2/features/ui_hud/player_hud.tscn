@@ -292,6 +292,26 @@ layout_mode = 2
 button_pressed = false
 text = "Leg Clipping Fix"
 
+[node name="FullBodyOverlayToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456799]
+layout_mode = 2
+button_pressed = true
+text = "Full Body Overlay"
+
+[node name="FullBodyOverlayDebugToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456808]
+layout_mode = 2
+text = "Overlay Debug Colors"
+
+[node name="FullBodyOverlayBiasLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456809]
+layout_mode = 2
+text = "Overlay Stability"
+
+[node name="FullBodyOverlayBiasSlider" type="HSlider" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456810]
+layout_mode = 2
+min_value = -0.15
+max_value = 0.15
+step = 0.01
+value = 0.02
+
 [node name="ReachLabel" type="Label" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel"]
 layout_mode = 2
 text = "Leg Clipping: Reach"

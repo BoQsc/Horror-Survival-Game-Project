@@ -168,6 +168,18 @@ func _ready() -> void:
 		if has_node("/root/ToolConfig"):
 			clipping_toggle.button_pressed = get_node("/root/ToolConfig").fp_clipping_prevention_enabled
 
+	var full_body_overlay_toggle = game_menu.find_child("FullBodyOverlayToggle", true, false)
+	if full_body_overlay_toggle:
+		full_body_overlay_toggle.toggled.connect(_on_full_body_overlay_toggled)
+		if has_node("/root/ToolConfig"):
+			full_body_overlay_toggle.button_pressed = get_node("/root/ToolConfig").full_body_first_person_enabled
+
+	var full_body_overlay_debug_toggle = game_menu.find_child("FullBodyOverlayDebugToggle", true, false)
+	if full_body_overlay_debug_toggle:
+		full_body_overlay_debug_toggle.toggled.connect(_on_full_body_overlay_debug_toggled)
+		if has_node("/root/ToolConfig"):
+			full_body_overlay_debug_toggle.button_pressed = get_node("/root/ToolConfig").full_body_first_person_debug_colors
+
 	var reach_slider = game_menu.find_child("ReachSlider", true, false)
 	if reach_slider:
 		reach_slider.value_changed.connect(_on_reach_changed)
@@ -179,6 +191,12 @@ func _ready() -> void:
 		flare_slider.value_changed.connect(_on_flare_changed)
 		if has_node("/root/ToolConfig"):
 			flare_slider.value = get_node("/root/ToolConfig").fp_clipping_flare_mult
+
+	var full_body_overlay_bias_slider = game_menu.find_child("FullBodyOverlayBiasSlider", true, false)
+	if full_body_overlay_bias_slider:
+		full_body_overlay_bias_slider.value_changed.connect(_on_full_body_overlay_bias_changed)
+		if has_node("/root/ToolConfig"):
+			full_body_overlay_bias_slider.value = get_node("/root/ToolConfig").full_body_first_person_chest_bias
  
 	# Connect spawning buttons
 	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
@@ -809,6 +827,21 @@ func _on_clipping_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").fp_clipping_prevention_enabled = is_enabled
 		print("PlayerHUD: Leg Clipping Fix -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_full_body_overlay_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").full_body_first_person_enabled = is_enabled
+		print("PlayerHUD: Full Body Overlay -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_full_body_overlay_debug_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").full_body_first_person_debug_colors = is_enabled
+		print("PlayerHUD: Overlay Debug Colors -> %s" % ("ON" if is_enabled else "OFF"))
+
+func _on_full_body_overlay_bias_changed(value: float) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").full_body_first_person_chest_bias = value
+		print("PlayerHUD: Overlay Stability -> %.2f" % value)
 
 func _on_reach_changed(value: float) -> void:
 	if has_node("/root/ToolConfig"):
