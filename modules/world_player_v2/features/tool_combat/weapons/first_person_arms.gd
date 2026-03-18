@@ -35,6 +35,11 @@ var is_placing: bool = false
 var place_cooldown: float = 0.0
 const PLACE_COOLDOWN_TIME: float = 0.5
 
+
+func _is_full_body_first_person_enabled() -> bool:
+	var config := get_node_or_null("/root/ToolConfig")
+	return config != null and "full_body_first_person_enabled" in config and bool(config.full_body_first_person_enabled)
+
 func _ready() -> void:
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
@@ -73,6 +78,11 @@ func _setup_hand_holder() -> void:
 	hand_holder = camera.get_node_or_null("HandHolder")
 
 func _load_arms_model() -> void:
+	if _is_full_body_first_person_enabled():
+		if hand_holder:
+			hand_holder.visible = false
+		return
+
 	if not hand_holder or hand_holder.get_child_count() == 0:
 		return
 	
@@ -104,6 +114,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	if not arms_mesh:
+		return
+
+	if _is_full_body_first_person_enabled():
+		arms_mesh.visible = false
 		return
 	
 	arms_mesh.scale = arms_scale
@@ -263,6 +277,11 @@ func _on_place_finished(_anim_name: String) -> void:
 	_try_play_idle()
 
 func _on_item_changed(_slot: int, item: Dictionary) -> void:
+	if _is_full_body_first_person_enabled():
+		if arms_mesh:
+			arms_mesh.visible = false
+		return
+
 	var category = item.get("category", 0)
 	# Show arms for placeable/usable items: NONE, BUCKET, RESOURCE, BLOCK, OBJECT, TERRAFORMER, VEHICLE
 	var should_show = (category in [0, 2, 3, 4, 5, 7, 8]) 
@@ -284,6 +303,8 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 
 
 func set_arms_visible(visible: bool) -> void:
+	if _is_full_body_first_person_enabled():
+		visible = false
 	if arms_mesh:
 		arms_mesh.visible = visible
 		if visible:
