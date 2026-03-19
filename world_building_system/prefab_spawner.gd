@@ -1,6 +1,8 @@
 extends Node3D
 class_name PrefabSpawner
 
+const PrefabGeometry = preload("res://world_building_system/prefab_geometry.gd")
+
 ## Spawns prefab buildings near procedural roads
 ## Uses the existing building system so buildings are destructible/mutable
 
@@ -207,8 +209,14 @@ func _spawn_baked_buildings(coord: Vector3i):
 			# Use the baked Y exactly. The generator has already flattened the lot
 			# and baked the final height, so runtime height probing can only drift.
 			by = floor(by)
-
-			var spawn_pos = Vector3(bx, by, bz)
+			var rot = int(bldg.get("rotation", 0))
+			var spawn_pos = Vector3(
+				float(bldg.get("spawn_origin_x", bx)),
+				float(bldg.get("spawn_origin_y", by)),
+				float(bldg.get("spawn_origin_z", bz))
+			)
+			if not bldg.has("spawn_origin_x"):
+				spawn_pos = PrefabGeometry.get_spawn_origin_for_occupied_min(btype, Vector3(bx, by, bz), rot)
 
 			# --- Spawn path decision ---
 			# For JSON prefabs (loaded from res://world_prefabs/), use spawn_user_prefab with
@@ -222,8 +230,6 @@ func _spawn_baked_buildings(coord: Vector3i):
 				if prefabs.has(btype):
 					# World map mode is baked and flattened already, so do not carve terrain
 					# or shift the prefab downward here.
-					# rotation from baked data (0-3, facing nearest road)
-					var rot = int(bldg.get("rotation", 0))
 					spawn_user_prefab(btype, spawn_pos, 0, rot, false, false, false)
 				else:
 					DebugManager.log_building("[BakedSpawn] WARN: prefab '%s' not found — skipping" % btype)
