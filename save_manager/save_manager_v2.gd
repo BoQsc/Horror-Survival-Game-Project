@@ -285,6 +285,7 @@ func _save_game_internal(path: String) -> bool:
 	return false
 
 func _gather_save_data() -> Dictionary:
+	var world_map_mode = chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active
 	return {
 		"version": SAVE_VERSION,
 		"timestamp": Time.get_datetime_string_from_system(),
@@ -292,14 +293,14 @@ func _gather_save_data() -> Dictionary:
 		"world_definition_path": _get_world_definition_path(),
 		"player": _get_player_data(),
 		"terrain_modifications": _get_terrain_data(),
-		"buildings": _get_building_data(),
+		"buildings": {} if world_map_mode else _get_building_data(),
 		"vegetation": _get_vegetation_data(),
 		"roads": _get_road_data(),
-		"prefabs": _get_prefab_data(),
+		"prefabs": {} if world_map_mode else _get_prefab_data(),
 		"entities": _get_entity_data(),
 		"doors": _get_door_data(),
 		"vehicles": _get_vehicle_data(),
-		"building_spawns": _get_building_spawn_data(),
+		"building_spawns": {} if world_map_mode else _get_building_spawn_data(),
 		# V2 additions
 		"player_inventory": _get_inventory_data(),
 		"player_hotbar": _get_hotbar_data(),
@@ -417,6 +418,10 @@ func load_game(path: String) -> bool:
 	# V1 saves now use the same V2 pipeline (missing V2 keys default to empty)
 	if version == 1:
 		DebugManager.log_save("Detected v1 save - upgrading to V2 pipeline")
+
+	# Establish world-map mode before any building-related loaders run.
+	# This prevents procedural or runtime building layers from restoring at all.
+	_load_world_definition_path(save_data.get("world_definition_path", ""))
 	
 	# Load each component
 	# IMPORTANT: Load prefabs FIRST to prevent respawning during chunk generation
@@ -457,7 +462,6 @@ func load_game(path: String) -> bool:
 	# This ensures they have their "chopped trees", "inventory", etc. before chunks generate
 	load_step.emit("Restoring world seed", 2, 10)
 	_load_world_seed(int(save_data.get("game_seed", 12345)))
-	_load_world_definition_path(save_data.get("world_definition_path", ""))
 	
 	# CRITICAL: Clear all existing vegetation data before loading new state
 	if vegetation_manager and vegetation_manager.has_method("clear_all_data"):
@@ -706,6 +710,8 @@ func _get_terrain_data() -> Dictionary:
 func _get_building_data() -> Dictionary:
 	if not building_manager:
 		return {}
+	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
+		return {}
 	
 	if not "chunks" in building_manager:
 		return {}
@@ -768,6 +774,8 @@ func _get_prefab_data() -> Dictionary:
 func _get_building_spawn_data() -> Dictionary:
 	if not building_generator:
 		return {}
+	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
+		return {}
 	if building_generator.has_method("get_save_data"):
 		return building_generator.get_save_data()
 	return {}
@@ -777,12 +785,16 @@ func _get_building_spawn_data() -> Dictionary:
 func _load_prefab_data(data: Dictionary):
 	if data.is_empty() or not prefab_spawner:
 		return
+	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
+		return
 	
 	if prefab_spawner.has_method("load_save_data"):
 		prefab_spawner.load_save_data(data)
 
 func _load_building_spawn_data(data: Dictionary):
 	if data.is_empty() or not building_generator:
+		return
+	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
 		return
 	if building_generator.has_method("load_save_data"):
 		building_generator.load_save_data(data)
@@ -862,6 +874,9 @@ func _load_terrain_data(data: Dictionary):
 
 func _load_building_data(data: Dictionary):
 	if data.is_empty() or not building_manager:
+		return
+	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
+		DebugManager.log_save("World map active - skipping runtime building chunk restore")
 		return
 	
 	if not "chunks" in building_manager:

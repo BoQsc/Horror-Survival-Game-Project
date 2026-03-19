@@ -176,9 +176,9 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 
 ## Spawn pre-baked buildings from the world map generator.
 ## Buildings whose XZ falls within this chunk's bounds are spawned unconditionally.
-## Uses actual runtime terrain height (get_terrain_height) instead of the baked Y estimate,
-## and routes all user JSON prefabs through spawn_user_prefab with interior_carve=true so
-## terrain inside the building footprint is carved out even on bumpy ground.
+## Uses the baked Y estimate from the world map generator.
+## World map mode is already flattened at generation time, so we avoid any
+## runtime carving here to keep the map sealed and the spawn position exact.
 func _spawn_baked_buildings(coord: Vector3i):
 	if not terrain_manager or not "_world_map_buildings" in terrain_manager:
 		return
@@ -204,24 +204,9 @@ func _spawn_baked_buildings(coord: Vector3i):
 				continue
 			spawned_positions[key] = true
 
-			# --- Runtime terrain height correction ---
-			# The baked Y comes from the 8-bit quantized heightmap and may be ±1 unit off.
-			# Query the actual terrain isosurface height at this XZ position so the building
-			# sits on the real ground, not the approximated PNG height.
-			var terrain_y = _get_terrain_height(bx, bz)
-			if terrain_y > -500.0:
-				# Use runtime surface. It was flattened to an exact integer (by = floor(terrain_y)) during generation.
-				# We round it to easily recover that exact integer despite noise/quantization tiny offsets.
-				by = floor(terrain_y + 0.5)
-				DebugManager.log_building("[BakedSpawn] %s at (%.1f,%.1f,%.1f) — runtime_y=%.2f baked_y=%.1f → final_y=%.1f" % [
-					btype, bx, terrain_y, bz, terrain_y, float(bldg.get("y", 12)), by
-				])
-			else:
-				# Terrain not loaded yet — use baked Y as fallback
-				by = floor(by)
-				DebugManager.log_building("[BakedSpawn] %s at (%.1f,?,%.1f) — terrain not loaded, using baked_y=%.1f" % [
-					btype, bx, bz, by
-				])
+			# Use the baked Y exactly. The generator has already flattened the lot
+			# and baked the final height, so runtime height probing can only drift.
+			by = floor(by)
 
 			var spawn_pos = Vector3(bx, by, bz)
 
@@ -235,11 +220,11 @@ func _spawn_baked_buildings(coord: Vector3i):
 				if not prefabs.has(btype):
 					load_prefab_from_file(btype)
 				if prefabs.has(btype):
-					# submerge_offset=1 buries the foundation 1 block into ground (prevents floating),
-					# interior_carve=true removes terrain inside the building volume.
+					# World map mode is baked and flattened already, so do not carve terrain
+					# or shift the prefab downward here.
 					# rotation from baked data (0-3, facing nearest road)
 					var rot = int(bldg.get("rotation", 0))
-					spawn_user_prefab(btype, spawn_pos, 1, rot, false, false, true)
+					spawn_user_prefab(btype, spawn_pos, 0, rot, false, false, false)
 				else:
 					DebugManager.log_building("[BakedSpawn] WARN: prefab '%s' not found — skipping" % btype)
 			else:

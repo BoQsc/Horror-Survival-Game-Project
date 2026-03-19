@@ -45,6 +45,8 @@ func get_building_map() -> Image:
 ## In world map mode: minimap writes disabled (pre-baked from PNG, corrections via clear_building_area)
 ## In procedural mode: minimap writes enabled for real-time building feedback
 func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
+	if world_map_mode:
+		return
 	_ensure_building_map()
 	var half = MAP_SIZE / 2
 	var px = int(floor(global_pos.x)) + half

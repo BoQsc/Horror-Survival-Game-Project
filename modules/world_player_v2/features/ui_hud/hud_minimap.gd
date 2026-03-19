@@ -98,9 +98,10 @@ func _deferred_init() -> void:
 	if _terrain_manager and "world_map_active" in _terrain_manager and _terrain_manager.world_map_active:
 		_build_minimap_image()
 		visible = true
-		# Give building_manager a reference so it can update pixels directly
-		if _building_manager and _minimap_image:
-			_building_manager.minimap_image = _minimap_image
+		# World map mode is baked-only: keep the HUD image immutable so runtime
+		# placement cannot create double marks or drift from the baked PNG.
+		if _building_manager:
+			_building_manager.world_map_mode = true
 		# Connect to terrain modification signal for real-time map updates
 		if _terrain_manager.has_signal("chunk_modified"):
 			_terrain_manager.chunk_modified.connect(_on_terrain_modified)

@@ -108,7 +108,7 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D) -> void:
 	if terrain_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active:
 		return # Let PrefabSpawner handle pre-baked buildings; do not spawn procedurally
 	
-	var chunk_world_pos = Vector3(coord.x * 32, coord.y * 32, coord.z * 32)
+	var chunk_world_pos = Vector3(coord.x * 31, coord.y * 31, coord.z * 31)
 	_queue_buildings_for_chunk(coord, chunk_world_pos)
 
 ## Queue buildings for a chunk (non-blocking)
@@ -123,7 +123,7 @@ func _queue_buildings_for_chunk(chunk_coord: Vector3i, chunk_world_pos: Vector3)
 	
 	spawned_buildings[chunk_coord] = []
 	
-	var chunk_size = 32
+	var chunk_size = 31
 	var spots = _find_road_adjacent_spots(chunk_world_pos, chunk_size)
 	
 	for spot in spots:
