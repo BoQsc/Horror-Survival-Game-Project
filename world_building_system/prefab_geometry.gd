@@ -1,6 +1,7 @@
 extends RefCounted
 class_name PrefabGeometry
 
+const ObjectRegistry = preload("res://world_building_system/object_registry.gd")
 const RES_PREFAB_DIR := "res://world_prefabs/"
 const USER_PREFAB_DIR := "user://world_prefabs/"
 
@@ -62,6 +63,43 @@ static func get_spawn_origin_for_occupied_min(prefab_name: String, occupied_min:
 	var min_offset: Vector3i = bounds.get("min", Vector3i.ZERO)
 	return occupied_min - Vector3(min_offset.x, 0.0, min_offset.z)
 
+static func get_primary_door_world_center(prefab_name: String, spawn_origin: Vector3, rotation: int) -> Variant:
+	var geometry := get_prefab_geometry(prefab_name)
+	var objects: Array = geometry.get("objects", [])
+	for obj in objects:
+		if int(obj.get("object_id", -1)) != 4:
+			continue
+
+		var vec_offset := Vector3(
+			float(obj.get("x", 0.0)),
+			float(obj.get("y", 0.0)),
+			float(obj.get("z", 0.0))
+		)
+		var rotated_corner := _rotate_vector3_offset(vec_offset, rotation)
+		var grid_correction := _get_grid_correction(rotation)
+		var target_corner := spawn_origin + rotated_corner + grid_correction
+
+		var obj_def := ObjectRegistry.get_object(4)
+		var obj_size := Vector3(1.0, 2.0, 1.0)
+		if not obj_def.is_empty():
+			var size: Vector3i = obj_def.get("size", Vector3i(1, 2, 1))
+			obj_size = Vector3(float(size.x), float(size.y), float(size.z))
+
+		var obj_local_rot := int(obj.get("rotation", 0))
+		var local_size := obj_size
+		if obj_local_rot == 1 or obj_local_rot == 3:
+			local_size = Vector3(obj_size.z, obj_size.y, obj_size.x)
+
+		var half_size := local_size * 0.5
+		var rotated_half_size := _rotate_vector3_offset(half_size, rotation)
+		rotated_half_size.y = 0.0
+		return target_corner + rotated_half_size
+
+	if prefab_name == "small_house":
+		return spawn_origin + _rotate_vector3_offset(Vector3(1.5, 1.0, 0.0), rotation)
+
+	return null
+
 static func _build_prefab_geometry(prefab_name: String) -> Dictionary:
 	if prefab_name == "small_house":
 		var offsets: Array = [
@@ -79,7 +117,14 @@ static func _build_prefab_geometry(prefab_name: String) -> Dictionary:
 		]
 		return {
 			"name": prefab_name,
-			"offsets": offsets
+			"offsets": offsets,
+			"objects": [{
+				"object_id": 4,
+				"x": 1.0,
+				"y": 1.0,
+				"z": 0.0,
+				"rotation": 0
+			}]
 		}
 
 	var data := _load_prefab_json(prefab_name)
@@ -102,7 +147,8 @@ static func _build_prefab_geometry(prefab_name: String) -> Dictionary:
 
 	return {
 		"name": prefab_name,
-		"offsets": offsets
+		"offsets": offsets,
+		"objects": _parse_compact_objects(data.get("objects", []))
 	}
 
 static func _load_prefab_json(prefab_name: String) -> Dictionary:
@@ -142,6 +188,19 @@ static func _parse_block_offsets(layers: Array) -> Array:
 static func _is_filled_token(token: String) -> bool:
 	return token != "" and token != "."
 
+static func _parse_compact_objects(compact: Array) -> Array:
+	var result: Array = []
+	for obj in compact:
+		if obj is Array and obj.size() >= 5:
+			result.append({
+				"object_id": int(obj[0]),
+				"x": float(obj[1]),
+				"y": float(obj[2]),
+				"z": float(obj[3]),
+				"rotation": int(obj[4])
+			})
+	return result
+
 static func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
 	match rotation:
 		0:
@@ -153,3 +212,25 @@ static func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
 		3:
 			return Vector3i(offset.z, offset.y, -offset.x)
 	return offset
+
+static func _rotate_vector3_offset(offset: Vector3, rotation: int) -> Vector3:
+	match rotation:
+		0:
+			return offset
+		1:
+			return Vector3(-offset.z, offset.y, offset.x)
+		2:
+			return Vector3(-offset.x, offset.y, -offset.z)
+		3:
+			return Vector3(offset.z, offset.y, -offset.x)
+	return offset
+
+static func _get_grid_correction(rotation: int) -> Vector3:
+	match rotation:
+		1:
+			return Vector3(1, 0, 0)
+		2:
+			return Vector3(1, 0, 1)
+		3:
+			return Vector3(0, 0, 1)
+	return Vector3.ZERO

@@ -78,7 +78,8 @@ func _ready() -> void:
 	road_mode_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	road_mode_row.add_child(road_mode_label)
 	road_mode_toggle = CheckBox.new()
-	road_mode_toggle.text = "Legacy Grid"
+	road_mode_toggle.text = "Use Legacy Grid"
+	road_mode_toggle.tooltip_text = "Off = Town Layout, On = Legacy Grid"
 	road_mode_toggle.button_pressed = false  # Default: Town mode (MST)
 	road_mode_row.add_child(road_mode_toggle)
 	# Insert after RoadSpacingRow
@@ -179,6 +180,8 @@ func _on_load_pressed() -> void:
 		height_input.value = float(meta.get("terrain_height", 10.0))
 		freq_input.value = float(meta.get("noise_freq", 0.1))
 		road_spacing_input.value = float(meta.get("road_spacing", 100.0))
+		if road_mode_toggle:
+			road_mode_toggle.button_pressed = bool(meta.get("use_grid_roads", false))
 	
 	loaded_world_path = world_path
 	save_btn.disabled = false
