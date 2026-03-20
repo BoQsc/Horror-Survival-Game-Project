@@ -524,7 +524,22 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 		if not has_meta("prefab_objects"):
 			set_meta("prefab_objects", {})
 		get_meta("prefab_objects")[prefab_name] = _parse_compact_objects(data.objects)
-	
+
+	var validation := PrefabGeometry.get_prefab_validation(prefab_name)
+	if not bool(validation.get("valid_for_spawn", true)):
+		DebugManager.log_building("[PrefabValidation] '%s' has errors: %s" % [
+			prefab_name,
+			"; ".join(validation.get("errors", []))
+		])
+	else:
+		var warnings: Array = validation.get("warnings", [])
+		if warnings.is_empty():
+			DebugManager.log_building("Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
+			return true
+		DebugManager.log_building("[PrefabValidation] '%s' warnings: %s" % [
+			prefab_name,
+			"; ".join(warnings)
+		])
 
 	DebugManager.log_building("Loaded prefab '%s' with %d blocks" % [prefab_name, blocks.size()])
 	return true
@@ -611,7 +626,14 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	# Use default submerge of 1 for carve mode (prefabs no longer store this value)
 	if carve_terrain:
 		submerge_offset = 1
-	
+
+	var placement_profile := PrefabGeometry.get_placement_profile(prefab_name)
+	if bool(placement_profile.get("auto_carve_volume", false)):
+		interior_carve = true
+	var rotated_bounds := PrefabGeometry.get_rotated_bounds(prefab_name, rotation)
+	var min_offset: Vector3i = rotated_bounds.get("min", Vector3i.ZERO)
+	var max_offset: Vector3i = rotated_bounds.get("max", Vector3i.ZERO)
+
 	# Adjust Y to submerge into terrain
 	var spawn_pos = world_pos - Vector3(0, submerge_offset, 0)
 	
@@ -624,86 +646,43 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	
 	# Carve terrain for submerged blocks (only in carve mode)
 	if carve_terrain:
-		for block in blocks:
-			var offset = block.offset
-			var rotated_offset = _rotate_offset(offset, rotation)
-			var pos = spawn_pos + Vector3(rotated_offset)
-			
-			# If this block is at or below terrain surface, carve it out
-			if pos.y <= world_pos.y:
-				if terrain_manager and terrain_manager.has_method("modify_terrain"):
-					# Dig a small box at this position (shape 1 = box, value > 0 = dig)
-					terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
+		if _can_use_column_terrain_ops():
+			_carve_submerged_block_columns(blocks, spawn_pos, rotation, world_pos.y)
+		else:
+			for block in blocks:
+				var offset = block.offset
+				var rotated_offset = _rotate_offset(offset, rotation)
+				var pos = spawn_pos + Vector3(rotated_offset)
+				
+				# If this block is at or below terrain surface, carve it out
+				if pos.y <= world_pos.y:
+					if terrain_manager and terrain_manager.has_method("modify_terrain"):
+						# Dig a small box at this position (shape 1 = box, value > 0 = dig)
+						terrain_manager.modify_terrain(pos + Vector3(0.5, 0.5, 0.5), 0.6, 1.0, 1, 0)
 	
 	# Full-volume carve: clear ALL terrain within the building's bounding box
 	# This prevents terrain from poking through walls, floors, or windows.
-	if interior_carve and terrain_manager and terrain_manager.has_method("modify_terrain"):
-		# Compute building bounding box from block positions
-		var min_offset = Vector3i(999, 999, 999)
-		var max_offset = Vector3i(-999, -999, -999)
-		
-		for block in blocks:
-			var offset = block.offset
-			var rotated = _rotate_offset(offset, rotation)
-			min_offset.x = min(min_offset.x, rotated.x)
-			min_offset.y = min(min_offset.y, rotated.y)
-			min_offset.z = min(min_offset.z, rotated.z)
-			max_offset.x = max(max_offset.x, rotated.x)
-			max_offset.y = max(max_offset.y, rotated.y)
-			max_offset.z = max(max_offset.z, rotated.z)
-		
-		var carve_count = 0
-		
-		# Carve every position inside the bounding box where terrain exists
-		for cx in range(min_offset.x, max_offset.x + 1):
-			for cz in range(min_offset.z, max_offset.z + 1):
-				var pos = spawn_pos + Vector3(cx, 0, cz)
-				var terrain_y = _get_terrain_height(pos.x + 0.5, pos.z + 0.5)
-				if terrain_y <= 0:
-					continue
-				# Carve from ground floor to terrain surface (or ceiling, whichever is lower)
-				# Start carving from submerge_offset so we don't hollow out the dirt holding up the foundation!
-				var y_start = max(min_offset.y, submerge_offset)
-				var y_end = min(max_offset.y, int(terrain_y - spawn_pos.y) + 1)
-				for cy in range(y_start, y_end + 1):
-					var carve_pos = spawn_pos + Vector3(float(cx) + 0.5, float(cy) + 0.5, float(cz) + 0.5)
-					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)
-					carve_count += 1
-		
-		# Door clearance: carve 2 blocks in front of the entrance
-		# Default door is at -Z face (rotation 0). Compute door direction based on rotation.
-		var door_dir = Vector3i(0, 0, -1)  # Default: -Z
-		match rotation:
-			1: door_dir = Vector3i(1, 0, 0)   # +X
-			2: door_dir = Vector3i(0, 0, 1)   # +Z
-			3: door_dir = Vector3i(-1, 0, 0)  # -X
-		
-		# Find the door edge of the building
-		var door_edge: int
-		if door_dir.x != 0:
-			door_edge = max_offset.x if door_dir.x > 0 else min_offset.x
-		else:
-			door_edge = max_offset.z if door_dir.z > 0 else min_offset.z
-		
-		# Carve 2 blocks outward from the door face
-		for step in range(1, 3):
-			for lateral in range(min_offset.x if door_dir.z != 0 else min_offset.z,
-					(max_offset.x if door_dir.z != 0 else max_offset.z) + 1):
-				var door_y_start = max(min_offset.y, submerge_offset)
-				for cy in range(door_y_start, door_y_start + 3):  # Door height = 3 blocks
-					var carve_x: float
-					var carve_z: float
-					if door_dir.x != 0:
-						carve_x = float(door_edge + door_dir.x * step)
-						carve_z = float(lateral)
-					else:
-						carve_x = float(lateral)
-						carve_z = float(door_edge + door_dir.z * step)
-					var carve_pos = spawn_pos + Vector3(carve_x + 0.5, float(cy) + 0.5, carve_z + 0.5)
-					terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)
-					carve_count += 1
-		
-		DebugManager.log_building("[FullCarve] Carved %d positions (box: %v to %v)" % [carve_count, min_offset, max_offset])
+	if interior_carve:
+		var carve_count := 0
+		if _can_use_column_terrain_ops():
+			carve_count = _carve_prefab_volume_columns(spawn_pos, min_offset, max_offset, submerge_offset)
+		elif terrain_manager and terrain_manager.has_method("modify_terrain"):
+			# Carve every position inside the bounding box where terrain exists
+			for cx in range(min_offset.x, max_offset.x + 1):
+				for cz in range(min_offset.z, max_offset.z + 1):
+					var pos = spawn_pos + Vector3(cx, 0, cz)
+					var terrain_y = _get_terrain_height(pos.x + 0.5, pos.z + 0.5)
+					if terrain_y <= 0:
+						continue
+					# Carve from ground floor to terrain surface (or ceiling, whichever is lower)
+					# Start carving from submerge_offset so we don't hollow out the dirt holding up the foundation!
+					var y_start = max(min_offset.y, submerge_offset)
+					var y_end = min(max_offset.y, int(terrain_y - spawn_pos.y) + 1)
+					for cy in range(y_start, y_end + 1):
+						var carve_pos = spawn_pos + Vector3(float(cx) + 0.5, float(cy) + 0.5, float(cz) + 0.5)
+						terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)
+						carve_count += 1
+		DebugManager.log_building("[FullCarve] Carved %d columns for '%s' (box: %v to %v)" % [carve_count, prefab_name, min_offset, max_offset])
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:
@@ -801,11 +780,126 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				elif obj.has("scene") and obj.scene != "":
 					var scene_rot_y = obj.get("rotation_y", 0) + (rotation * 90)
 					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
+
+	if not skip_blocks and _should_seal_prefab_foundation(placement_profile):
+		var sealed_columns := _seal_prefab_foundation(prefab_name, spawn_pos, placement_profile, min_offset, max_offset)
+		if sealed_columns > 0:
+			DebugManager.log_building("[FoundationSeal] Sealed %d columns for '%s'" % [sealed_columns, prefab_name])
 	
 	var mode_str = "carve" if carve_terrain else "surface"
 	DebugManager.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 	PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 	return true
+
+func _can_use_column_terrain_ops() -> bool:
+	return terrain_manager and terrain_manager.has_method("fill_column")
+
+func _is_world_map_mode() -> bool:
+	return terrain_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active
+
+func _carve_submerged_block_columns(blocks: Array, spawn_pos: Vector3, rotation: int, surface_y: float) -> int:
+	var columns: Dictionary = {}
+	for block in blocks:
+		var rotated_offset = _rotate_offset(block.offset, rotation)
+		var world_x: int = int(floor(spawn_pos.x)) + rotated_offset.x
+		var world_y: int = int(floor(spawn_pos.y)) + rotated_offset.y
+		var world_z: int = int(floor(spawn_pos.z)) + rotated_offset.z
+		if float(world_y) > surface_y:
+			continue
+		var key := Vector2i(world_x, world_z)
+		if not columns.has(key):
+			columns[key] = {
+				"min_y": world_y,
+				"max_y": world_y
+			}
+			continue
+		var entry: Dictionary = columns[key]
+		entry["min_y"] = mini(int(entry.get("min_y", world_y)), world_y)
+		entry["max_y"] = maxi(int(entry.get("max_y", world_y)), world_y)
+		columns[key] = entry
+
+	for key in columns:
+		var info: Dictionary = columns[key]
+		terrain_manager.fill_column(
+			float(key.x) + 0.5,
+			float(key.y) + 0.5,
+			float(info.get("min_y", 0)),
+			float(info.get("max_y", 0)) + 1.0,
+			0.8,
+			0
+		)
+	return columns.size()
+
+func _carve_prefab_volume_columns(spawn_pos: Vector3, min_offset: Vector3i, max_offset: Vector3i, submerge_offset: int) -> int:
+	var carve_count := 0
+	for cx in range(min_offset.x, max_offset.x + 1):
+		for cz in range(min_offset.z, max_offset.z + 1):
+			var world_x = int(floor(spawn_pos.x)) + cx
+			var world_z = int(floor(spawn_pos.z)) + cz
+			var terrain_y = _get_terrain_height(float(world_x) + 0.5, float(world_z) + 0.5)
+			if terrain_y <= 0:
+				continue
+			var y_start = max(min_offset.y, submerge_offset)
+			var y_end = min(max_offset.y, int(floor(terrain_y - spawn_pos.y)) + 1)
+			if y_end < y_start:
+				continue
+			terrain_manager.fill_column(
+				float(world_x) + 0.5,
+				float(world_z) + 0.5,
+				spawn_pos.y + float(y_start),
+				spawn_pos.y + float(y_end) + 1.0,
+				0.8,
+				0
+			)
+			carve_count += 1
+	return carve_count
+
+func _should_seal_prefab_foundation(placement_profile: Dictionary) -> bool:
+	if not _can_use_column_terrain_ops():
+		return false
+	if _is_world_map_mode():
+		return false
+	return bool(placement_profile.get("seal_foundation", true))
+
+func _seal_prefab_foundation(prefab_name: String, spawn_pos: Vector3, placement_profile: Dictionary,
+		min_offset: Vector3i, max_offset: Vector3i) -> int:
+	var max_gap := float(placement_profile.get("max_foundation_gap", 3.0))
+	if max_gap <= 0.0:
+		return 0
+
+	var grade_world_y = spawn_pos.y + float(placement_profile.get("grade_y", 0))
+	var outer_min_x = min_offset.x - 1
+	var outer_max_x = max_offset.x + 1
+	var outer_min_z = min_offset.z - 1
+	var outer_max_z = max_offset.z + 1
+	var filled_columns := 0
+
+	for local_z in range(outer_min_z, outer_max_z + 1):
+		for local_x in range(outer_min_x, outer_max_x + 1):
+			var on_ring = (
+				local_x == outer_min_x or local_x == outer_max_x or
+				local_z == outer_min_z or local_z == outer_max_z
+			)
+			if not on_ring:
+				continue
+			var world_x = int(floor(spawn_pos.x)) + local_x
+			var world_z = int(floor(spawn_pos.z)) + local_z
+			var terrain_y = _get_terrain_height(float(world_x) + 0.5, float(world_z) + 0.5)
+			if terrain_y <= 0.0:
+				continue
+			var gap = grade_world_y - terrain_y
+			if gap <= 0.05 or gap > max_gap:
+				continue
+			terrain_manager.fill_column(
+				float(world_x) + 0.5,
+				float(world_z) + 0.5,
+				terrain_y,
+				grade_world_y,
+				-0.8,
+				0
+			)
+			filled_columns += 1
+	return filled_columns
 
 
 func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):

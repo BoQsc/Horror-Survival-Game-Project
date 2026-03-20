@@ -2,6 +2,8 @@ extends Node3D
 ## Procedural Building Generator
 ## Spawns prefab buildings along roads with throttled queue
 
+const PrefabGeometry = preload("res://world_building_system/prefab_geometry.gd")
+
 signal building_spawned(position: Vector3, prefab_name: String)
 
 # --- Configuration ---
@@ -327,10 +329,11 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	
 	# Get road height at this position
 	var road_y = floor(_get_road_height(pos.x, pos.z))
-	var spawn_pos = Vector3(floor(pos.x), road_y, floor(pos.z))
+	var ground_anchor = Vector3(floor(pos.x), road_y, floor(pos.z))
+	var spawn_pos = PrefabGeometry.get_spawn_origin_for_occupied_min(prefab_name, ground_anchor, rotation)
 	
 	# Double-check water at spawn time (chunk may have loaded since queueing)
-	if _is_over_water(spawn_pos):
+	if _is_over_water(ground_anchor):
 		DebugManager.log_building("Skipped %s at %v - over water" % [prefab_name, spawn_pos])
 		return false
 	

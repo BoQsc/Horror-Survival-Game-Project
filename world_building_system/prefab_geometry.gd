@@ -58,10 +58,22 @@ static func get_rotated_bounds(prefab_name: String, rotation: int) -> Dictionary
 static func get_rotated_footprint(prefab_name: String, rotation: int) -> Vector2i:
 	return get_rotated_bounds(prefab_name, rotation).get("footprint", Vector2i.ONE)
 
+static func get_placement_profile(prefab_name: String) -> Dictionary:
+	return get_prefab_geometry(prefab_name).get("placement_profile", _default_placement_profile())
+
+static func get_prefab_validation(prefab_name: String) -> Dictionary:
+	return get_prefab_geometry(prefab_name).get("validation", {
+		"valid_for_spawn": true,
+		"errors": [],
+		"warnings": []
+	})
+
 static func get_spawn_origin_for_occupied_min(prefab_name: String, occupied_min: Vector3, rotation: int) -> Vector3:
 	var bounds := get_rotated_bounds(prefab_name, rotation)
 	var min_offset: Vector3i = bounds.get("min", Vector3i.ZERO)
-	return occupied_min - Vector3(min_offset.x, 0.0, min_offset.z)
+	var placement := get_placement_profile(prefab_name)
+	var grade_y := float(placement.get("grade_y", 0))
+	return occupied_min - Vector3(min_offset.x, grade_y, min_offset.z)
 
 static func get_primary_door_world_center(prefab_name: String, spawn_origin: Vector3, rotation: int) -> Variant:
 	var geometry := get_prefab_geometry(prefab_name)
@@ -118,6 +130,12 @@ static func _build_prefab_geometry(prefab_name: String) -> Dictionary:
 		return {
 			"name": prefab_name,
 			"offsets": offsets,
+			"placement_profile": _default_placement_profile(),
+			"validation": {
+				"valid_for_spawn": true,
+				"errors": [],
+				"warnings": []
+			},
 			"objects": [{
 				"object_id": 4,
 				"x": 1.0,
@@ -131,7 +149,13 @@ static func _build_prefab_geometry(prefab_name: String) -> Dictionary:
 	if data.is_empty():
 		return {
 			"name": prefab_name,
-			"offsets": [Vector3i.ZERO]
+			"offsets": [Vector3i.ZERO],
+			"placement_profile": _default_placement_profile(),
+			"validation": {
+				"valid_for_spawn": false,
+				"errors": ["missing prefab data"],
+				"warnings": []
+			}
 		}
 
 	var offsets := _parse_block_offsets(data.get("layers", []))
@@ -145,10 +169,15 @@ static func _build_prefab_geometry(prefab_name: String) -> Dictionary:
 				for z in range(sz):
 					offsets.append(Vector3i(x, y, z))
 
+	var placement_profile := _parse_placement_profile(data, offsets)
+	var objects := _parse_compact_objects(data.get("objects", []))
+
 	return {
 		"name": prefab_name,
 		"offsets": offsets,
-		"objects": _parse_compact_objects(data.get("objects", []))
+		"objects": objects,
+		"placement_profile": placement_profile,
+		"validation": _validate_prefab_geometry(prefab_name, offsets, objects, placement_profile)
 	}
 
 static func _load_prefab_json(prefab_name: String) -> Dictionary:
@@ -200,6 +229,154 @@ static func _parse_compact_objects(compact: Array) -> Array:
 				"rotation": int(obj[4])
 			})
 	return result
+
+static func _default_placement_profile() -> Dictionary:
+	return {
+		"grade_y": 0,
+		"auto_carve_volume": false,
+		"seal_foundation": true,
+		"max_foundation_gap": 3.0,
+		"require_windows": true
+	}
+
+static func _parse_placement_profile(data: Dictionary, offsets: Array) -> Dictionary:
+	var profile := _default_placement_profile()
+	var placement: Dictionary = data.get("placement", {})
+	if placement.is_empty():
+		return profile
+
+	var min_y := 0
+	var max_y := 0
+	if not offsets.is_empty():
+		min_y = offsets[0].y
+		max_y = offsets[0].y
+		for offset in offsets:
+			min_y = mini(min_y, offset.y)
+			max_y = maxi(max_y, offset.y)
+
+	var grade_y := int(placement.get("grade_y", profile.get("grade_y", 0)))
+	profile["grade_y"] = clampi(grade_y, min_y, maxi(min_y, max_y))
+	profile["auto_carve_volume"] = bool(placement.get("auto_carve_volume", profile.get("grade_y", 0) > min_y))
+	profile["seal_foundation"] = bool(placement.get("seal_foundation", profile.get("seal_foundation", true)))
+	profile["max_foundation_gap"] = clampf(
+		float(placement.get("max_foundation_gap", profile.get("max_foundation_gap", 3.0))),
+		0.0,
+		12.0
+	)
+	profile["require_windows"] = bool(placement.get("require_windows", profile.get("require_windows", true)))
+	return profile
+
+static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objects: Array, placement_profile: Dictionary) -> Dictionary:
+	var result := {
+		"valid_for_spawn": true,
+		"errors": [],
+		"warnings": [],
+		"door_count": 0,
+		"window_count": 0
+	}
+	if offsets.is_empty():
+		result["valid_for_spawn"] = false
+		result["errors"].append("no solid voxels found")
+		return result
+
+	var solid_cells: Dictionary = {}
+	var min_x: int = offsets[0].x
+	var max_x: int = offsets[0].x
+	var min_z: int = offsets[0].z
+	var max_z: int = offsets[0].z
+	for offset in offsets:
+		solid_cells[offset] = true
+		min_x = mini(min_x, offset.x)
+		max_x = maxi(max_x, offset.x)
+		min_z = mini(min_z, offset.z)
+		max_z = maxi(max_z, offset.z)
+
+	for obj in objects:
+		var object_id := int(obj.get("object_id", -1))
+		var object_name := str(object_id)
+		var obj_def := ObjectRegistry.get_object(object_id)
+		if not obj_def.is_empty():
+			object_name = str(obj_def.get("name", object_name))
+		else:
+			result["warnings"].append("unknown object id %d" % object_id)
+
+		if object_id == 4:
+			result["door_count"] = int(result["door_count"]) + 1
+		elif object_id == 5:
+			result["window_count"] = int(result["window_count"]) + 1
+
+		var anchor := Vector3i(
+			int(floor(float(obj.get("x", 0.0)))),
+			int(floor(float(obj.get("y", 0.0)))),
+			int(floor(float(obj.get("z", 0.0))))
+		)
+		var rotation := int(obj.get("rotation", 0))
+		var size := ObjectRegistry.get_rotated_size(object_id, rotation)
+		var occupied_cells: Array[Vector3i] = []
+		for x in range(size.x):
+			for y in range(size.y):
+				for z in range(size.z):
+					var cell := anchor + Vector3i(x, y, z)
+					occupied_cells.append(cell)
+
+		if object_id != 4 and object_id != 5:
+			for cell in occupied_cells:
+				if solid_cells.has(cell):
+					result["errors"].append("%s overlaps solid voxel at %s" % [object_name, cell])
+
+		if (object_id == 4 or object_id == 5) and not _object_touches_exterior(occupied_cells, solid_cells, min_x, max_x, min_z, max_z):
+			result["warnings"].append("%s is not placed on the prefab exterior shell" % object_name)
+
+	if prefab_name != "small_house" and int(result.get("door_count", 0)) <= 0:
+		result["errors"].append("missing door object")
+	if int(result.get("window_count", 0)) <= 0:
+		result["warnings"].append("no window objects found")
+
+	var errors: Array = result["errors"]
+	result["valid_for_spawn"] = errors.is_empty()
+	return result
+
+static func _object_touches_exterior(occupied_cells: Array[Vector3i], solid_cells: Dictionary,
+		min_x: int, max_x: int, min_z: int, max_z: int) -> bool:
+	if not _occupied_cells_touch_structure(occupied_cells, solid_cells):
+		return false
+	var dirs = [
+		Vector2i(-1, 0),
+		Vector2i(1, 0),
+		Vector2i(0, -1),
+		Vector2i(0, 1)
+	]
+	for cell in occupied_cells:
+		for dir in dirs:
+			if _ray_reaches_exterior(cell, dir, solid_cells, min_x, max_x, min_z, max_z):
+				return true
+	return false
+
+static func _occupied_cells_touch_structure(occupied_cells: Array[Vector3i], solid_cells: Dictionary) -> bool:
+	var dirs = [
+		Vector3i(-1, 0, 0),
+		Vector3i(1, 0, 0),
+		Vector3i(0, -1, 0),
+		Vector3i(0, 1, 0),
+		Vector3i(0, 0, -1),
+		Vector3i(0, 0, 1)
+	]
+	for cell in occupied_cells:
+		for dir in dirs:
+			if solid_cells.has(cell + dir):
+				return true
+	return false
+
+static func _ray_reaches_exterior(cell: Vector3i, dir: Vector2i, solid_cells: Dictionary,
+		min_x: int, max_x: int, min_z: int, max_z: int) -> bool:
+	var probe_x := cell.x + dir.x
+	var probe_z := cell.z + dir.y
+	while probe_x >= min_x and probe_x <= max_x and probe_z >= min_z and probe_z <= max_z:
+		if solid_cells.has(Vector3i(probe_x, cell.y, probe_z)):
+			return false
+		probe_x += dir.x
+		probe_z += dir.y
+	return true
 
 static func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
 	match rotation:

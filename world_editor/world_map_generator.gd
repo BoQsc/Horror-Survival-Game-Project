@@ -122,7 +122,7 @@ func generate_world() -> Dictionary:
 			var idx = row_offset + x
 			var h_raw = _height_noise.get_noise_2d(wx, wz)
 			var h = terrain_height + (h_raw * 0.5 + 0.5) * terrain_height
-			height_bytes[idx] = int(clampf(h / max_h, 0.0, 1.0) * 255.0)
+			height_bytes[idx] = _encode_height_byte(h, max_h)
 			var bv = _biome_noise.get_noise_2d(wx, wz)
 			var biome: int = MaterialID.GRASS
 			if bv < -0.2: biome = MaterialID.SAND
@@ -1041,7 +1041,7 @@ func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_byte
 				if dist < half_w_local:
 					# Road surface — overwrite height, biome, and road mask
 					var r_height_byte = int(clampf(r_height / 64.0, 0.0, 1.0) * 255.0)
-					var h_byte = int(clampf(r_height / max_h, 0.0, 1.0) * 255.0)
+					var h_byte = _encode_height_byte(r_height, max_h)
 					road_bytes[ridx] = 255
 					road_bytes[ridx + 1] = r_height_byte
 					biome_bytes[idx] = MaterialID.ROAD
@@ -1051,7 +1051,7 @@ func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_byte
 					var blend_t = clampf((dist - half_w_local) / (flatten_local - half_w_local), 0.0, 1.0)
 					var orig_h = float(height_bytes[idx]) / 255.0 * max_h
 					var blended = lerp(r_height, orig_h, blend_t)
-					height_bytes[idx] = int(clampf(blended / max_h, 0.0, 1.0) * 255.0)
+					height_bytes[idx] = _encode_height_byte(blended, max_h)
 
 func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_bytes: PackedByteArray,
 		road_bytes: PackedByteArray, max_h: float, half: int) -> void:
@@ -1089,7 +1089,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 				var idx = pz * MAP_SIZE + px
 				var ridx = idx * 2
 				if dist < half_w_local:
-					var h_byte = int(clampf(path_y / max_h, 0.0, 1.0) * 255.0)
+					var h_byte = _encode_height_byte(path_y, max_h)
 					var r_height_byte = int(clampf(path_y / 64.0, 0.0, 1.0) * 255.0)
 					road_bytes[ridx] = max(road_bytes[ridx], 196)
 					road_bytes[ridx + 1] = max(road_bytes[ridx + 1], r_height_byte)
@@ -1101,7 +1101,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 					smooth_t = smooth_t * smooth_t * (3.0 - 2.0 * smooth_t)
 					var orig_h = float(height_bytes[idx]) / 255.0 * max_h
 					var blended = lerp(path_y, orig_h, smooth_t)
-					height_bytes[idx] = int(clampf(blended / max_h, 0.0, 1.0) * 255.0)
+					height_bytes[idx] = _encode_height_byte(blended, max_h)
 
 func _get_road_height_at(wx: float, wz: float) -> float:
 	# Same formula as chunk_manager gen_density shader
@@ -1278,6 +1278,9 @@ func _sample_world_height(wx: float, wz: float, height_bytes: PackedByteArray, m
 	var pz = clampi(int(round(wz)) + half, 0, MAP_SIZE - 1)
 	return clampf(float(height_bytes[pz * MAP_SIZE + px]) / 255.0 * max_h, 1.0, 28.0)
 
+func _encode_height_byte(height: float, max_h: float) -> int:
+	return int(round(clampf(height / max_h, 0.0, 1.0) * 255.0))
+
 func _append_path_segment(path_segments: Array, from_v: Vector2, to_v: Vector2, width: float, from_y: float, to_y: float) -> void:
 	if from_v.distance_to(to_v) < 0.35:
 		return
@@ -1327,7 +1330,7 @@ func _append_baked_building(buildings: Array, path_segments: Array, height_bytes
 		"x": bldg_x, "y": bldg_y, "z": bldg_z,
 		"anchor_mode": "occupied_min",
 		"spawn_origin_x": spawn_origin.x,
-		"spawn_origin_y": bldg_y,
+		"spawn_origin_y": spawn_origin.y,
 		"spawn_origin_z": spawn_origin.z,
 		"footprint_w": footprint.x,
 		"footprint_d": footprint.y,
@@ -1589,6 +1592,10 @@ func _place_town_landmarks(town: Dictionary, layout: Dictionary, catalog: Dictio
 func _build_prefab_catalog(available_prefabs: Array[String]) -> Dictionary:
 	var catalog: Dictionary = {}
 	for pname in available_prefabs:
+		var validation := PrefabGeometry.get_prefab_validation(pname)
+		if not bool(validation.get("valid_for_spawn", true)):
+			print("[WorldMapGen] Skipping prefab '%s': %s" % [pname, "; ".join(validation.get("errors", []))])
+			continue
 		var fp = _get_prefab_footprint(pname)
 		catalog[pname] = {
 			"name": pname,
@@ -1933,7 +1940,7 @@ func _sample_support_height(wx: float, wz: float, height_bytes: PackedByteArray,
 	return clampf(float(height_bytes[pz * MAP_SIZE + px]) / 255.0 * max_h, 1.0, 28.0)
 
 func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z: float, footprint: Vector2i, bldg_y: float, max_h: float, half: int, support_info: Dictionary = {}) -> void:
-	var flat_h_byte = int(clampf(bldg_y / max_h, 0.0, 1.0) * 255.0)
+	var flat_h_byte = _encode_height_byte(bldg_y, max_h)
 	var longest_side = max(float(footprint.x), float(footprint.y))
 	var support_range = float(support_info.get("height_range", 0.0))
 	var pad = max(6, int(ceil(longest_side * 0.5 + support_range * 1.25)))
@@ -2145,7 +2152,7 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 				"x": sx, "y": floor(terrain_y), "z": sz,
 				"anchor_mode": "occupied_min",
 				"spawn_origin_x": spawn_origin.x,
-				"spawn_origin_y": floor(terrain_y),
+				"spawn_origin_y": spawn_origin.y,
 				"spawn_origin_z": spawn_origin.z,
 				"footprint_w": footprint.x,
 				"footprint_d": footprint.y,
@@ -2329,13 +2336,13 @@ func _generate_grid_roads(height_bytes: PackedByteArray, biome_bytes: PackedByte
 					if min_dist < half_road_w:
 						is_road_byte = 255
 						biome_bytes[idx] = MaterialID.ROAD
-						height_bytes[idx] = int(clampf(r_height / max_h, 0.0, 1.0) * 255.0)
+						height_bytes[idx] = _encode_height_byte(r_height, max_h)
 					else:
 						var t = clampf((min_dist - flat_zone_end) / (flatten_width - flat_zone_end), 0.0, 1.0)
 						var blend = 1.0 - t
 						var orig_h = float(height_bytes[idx]) / 255.0 * max_h
 						var blended = lerp(orig_h, r_height, blend)
-						height_bytes[idx] = int(clampf(blended / max_h, 0.0, 1.0) * 255.0)
+						height_bytes[idx] = _encode_height_byte(blended, max_h)
 			
 			road_bytes[ridx] = is_road_byte
 			road_bytes[ridx + 1] = road_h_byte
@@ -2397,7 +2404,7 @@ func _generate_grid_buildings(height_bytes: PackedByteArray, water_bytes: Packed
 					"x": spawn_x, "y": floor(terrain_y), "z": spawn_z,
 					"anchor_mode": "occupied_min",
 					"spawn_origin_x": spawn_origin.x,
-					"spawn_origin_y": floor(terrain_y),
+					"spawn_origin_y": spawn_origin.y,
 					"spawn_origin_z": spawn_origin.z,
 					"footprint_w": footprint.x,
 					"footprint_d": footprint.y,

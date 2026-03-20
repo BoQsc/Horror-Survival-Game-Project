@@ -124,6 +124,10 @@
 		". [1] [1] [1] [1] [1] [1] [1] [1] .",
 		". . . . . . . . . ."
 	],
+	"placement": {
+		"grade_y": 0,
+		"auto_carve_volume": false
+	},
 	"objects": [
 		[
 			4,
