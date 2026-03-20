@@ -3,6 +3,8 @@ class_name BuildingAPIV2
 ## BuildingAPI - Block and object placement functions for BUILD mode
 ## Ported from legacy player_interaction.gd
 
+const FoundationSupport = preload("res://world_building_system/foundation_support.gd")
+
 # Manager references
 var building_manager: Node = null
 var terrain_manager: Node = null
@@ -20,6 +22,7 @@ var current_object_rotation: int = 0
 var current_voxel_pos: Vector3 = Vector3.ZERO
 var current_remove_voxel_pos: Vector3 = Vector3.ZERO
 var current_precise_hit_y: float = 0.0 # Fractional Y for objects (sits on terrain)
+var current_support_info: Dictionary = {}
 var has_target: bool = false
 
 # Freestyle placement (Hold E/MMB for exact placement, legacy port)
@@ -157,6 +160,7 @@ func update_targeting(hit: Dictionary) -> void:
 	if is_freestyle:
 		current_voxel_pos = pos # Exact position
 		current_remove_voxel_pos = Vector3(floor(pos.x), floor(pos.y), floor(pos.z))
+		current_support_info.clear()
 		
 		# Apply surface align if enabled
 		if surface_align_enabled:
@@ -174,6 +178,7 @@ func update_targeting(hit: Dictionary) -> void:
 		voxel_y = int(floor(inside_pos.y))
 		voxel_z = int(floor(inside_pos.z))
 		current_remove_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
+		current_support_info.clear()
 		
 		# Place adjacent to the hit block/object
 		current_voxel_pos = current_remove_voxel_pos + grid_normal
@@ -201,6 +206,18 @@ func update_targeting(hit: Dictionary) -> void:
 		
 		current_voxel_pos = Vector3(voxel_x, voxel_y, voxel_z)
 		current_remove_voxel_pos = current_voxel_pos
+		current_support_info.clear()
+		if placement_mode == PlacementMode.AUTO or placement_mode == PlacementMode.FILL:
+			var support = _resolve_block_support(current_voxel_pos)
+			if support.is_empty() or not bool(support.get("valid", false)):
+				selection_box.visible = false
+				grid_visualizer.visible = false
+				has_target = false
+				return
+			current_support_info = support
+			current_voxel_pos.y = float(support.get("resolved_y", current_voxel_pos.y))
+			current_remove_voxel_pos = current_voxel_pos
+			current_precise_hit_y = current_voxel_pos.y
 		# Keep fractional Y from raycast for objects
 	
 	# Safety: Never allow placing inside an existing block
@@ -263,6 +280,42 @@ func place_block() -> bool:
 		return true
 	
 	return false
+
+func _resolve_block_support(target_pos: Vector3) -> Dictionary:
+	if not terrain_manager or not terrain_manager.has_method("get_terrain_height"):
+		return {
+			"valid": true,
+			"resolved_y": float(int(floor(target_pos.y)))
+		}
+
+	var footprint := Vector2i.ONE
+	var preferred_y = float(int(floor(target_pos.y)))
+	return FoundationSupport.resolve_footprint_support(
+		func(wx: float, wz: float) -> float:
+			return _get_terrain_height_at(wx, wz),
+		Vector2(floor(target_pos.x), floor(target_pos.z)),
+		footprint,
+		preferred_y,
+		_get_block_support_config()
+	)
+
+func _get_block_support_config() -> Dictionary:
+	var fill_mode := placement_mode == PlacementMode.FILL
+	return {
+		"sample_stride": 0.45,
+		"edge_inset": 0.18,
+		"max_samples_per_axis": 3,
+		"search_radius": 4 if fill_mode else 2,
+		"max_float_gap": 3.0 if fill_mode else 0.45,
+		"max_embed_depth": 0.9 if fill_mode else 0.65,
+		"max_height_range": 3.5 if fill_mode else 1.6,
+		"float_weight": 8.0,
+		"embed_weight": 3.0,
+		"float_peak_weight": 7.0,
+		"embed_peak_weight": 4.0,
+		"preferred_weight": 0.4,
+		"balance_weight": 0.9
+	}
 
 ## Remove block at raycast hit (physics-based, accurate for ramps)
 func remove_block(hit: Dictionary) -> bool:
