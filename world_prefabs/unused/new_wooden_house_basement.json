@@ -86,9 +86,15 @@
 	],
 	"placement": {
 		"grade_y": 3,
-		"auto_carve_volume": true,
+		"auto_carve_volume": false,
 		"seal_foundation": true,
-		"max_foundation_gap": 4.0
+		"max_foundation_gap": 4.0,
+		"excavation_volumes": [
+			{
+				"min": [1, 0, 1],
+				"max": [6, 3, 8]
+			}
+		]
 	},
 	"objects": [
 		[

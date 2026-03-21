@@ -184,7 +184,7 @@ func generate_world() -> Dictionary:
 		)
 		if footprint.x <= 0 or footprint.y <= 0:
 			var rot = int(bldg.get("rotation", 0))
-			footprint = PrefabGeometry.get_rotated_footprint(str(bldg.get("type", "small_house")), rot)
+			footprint = PrefabGeometry.get_rotated_surface_footprint(str(bldg.get("type", "small_house")), rot)
 		for fx in range(footprint.x):
 			for fz in range(footprint.y):
 				var fpx = px + fx
@@ -1126,7 +1126,23 @@ func _get_road_height_at(wx: float, wz: float) -> float:
 
 ## Get the footprint (width, depth) of a prefab by name. Reads JSON if available.
 func _get_prefab_footprint(prefab_name: String) -> Vector2i:
-	return PrefabGeometry.get_rotated_footprint(prefab_name, 0)
+	return PrefabGeometry.get_rotated_surface_footprint(prefab_name, 0)
+
+func _get_prefab_reservation_footprint(prefab_name: String) -> Vector2i:
+	return PrefabGeometry.get_rotated_reservation_footprint(prefab_name, 0)
+
+func _get_prefab_reservation_rect(prefab_name: String, rotation: int, surface_x: float, surface_z: float) -> Dictionary:
+	var surface_bounds := PrefabGeometry.get_rotated_surface_bounds(prefab_name, rotation)
+	var reservation_bounds := PrefabGeometry.get_rotated_reservation_bounds(prefab_name, rotation)
+	var surface_min: Vector2i = surface_bounds.get("min", Vector2i.ZERO)
+	var reservation_min: Vector2i = reservation_bounds.get("min", Vector2i.ZERO)
+	var reservation_fp: Vector2i = reservation_bounds.get("footprint", Vector2i.ONE)
+	return {
+		"x": surface_x + float(reservation_min.x - surface_min.x),
+		"z": surface_z + float(reservation_min.y - surface_min.y),
+		"w": float(reservation_fp.x),
+		"d": float(reservation_fp.y)
+	}
 
 ## Check if two axis-aligned rectangles overlap (with margin)
 func _rects_overlap(ax: float, az: float, aw: float, ad: float,
@@ -1331,7 +1347,7 @@ func _append_baked_excavation_modifications(terrain_modifications: Array, prefab
 				float(world_z) + 0.5
 			],
 			"radius": 0.6,
-			"value": 0.8,
+			"value": 10.0,
 			"shape": 2,
 			"layer": 0,
 			"y_min": world_y_min,
@@ -1342,7 +1358,7 @@ func _append_baked_excavation_modifications(terrain_modifications: Array, prefab
 func _append_baked_building(buildings: Array, terrain_modifications: Array, path_segments: Array, height_bytes: PackedByteArray, max_h: float, half: int,
 		road_segments: Array, prefab_name: String, bldg_x: float, bldg_y: float, bldg_z: float, footprint: Vector2i,
 		rot: int, road_target: Vector2, district: String, road_kind: String, support_info: Dictionary = {}) -> void:
-	var spawn_origin = PrefabGeometry.get_spawn_origin_for_occupied_min(
+	var spawn_origin = PrefabGeometry.get_spawn_origin_for_surface_min(
 		prefab_name,
 		Vector3(bldg_x, bldg_y, bldg_z),
 		rot
@@ -1387,7 +1403,7 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 		var rot = _rotation_for_frontage_side(side)
 		for prefab_name in preferred_prefabs:
 			bldg_stats.attempted += 1
-			var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, rot)
+			var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
 			var bldg_x = center.x - float(footprint.x) * 0.5
 			var bldg_z = center.y - float(footprint.y) * 0.5
 			match side:
@@ -1401,9 +1417,10 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 					bldg_z = center.y - offset - float(footprint.y)
 			bldg_x = floor(bldg_x)
 			bldg_z = floor(bldg_z)
+			var reservation_rect := _get_prefab_reservation_rect(prefab_name, rot, bldg_x, bldg_z)
 			var overlaps = false
 			for occ in occupied:
-				if _rects_overlap(bldg_x, bldg_z, float(footprint.x), float(footprint.y), occ.x, occ.z, occ.w, occ.d, 6.0):
+				if _rects_overlap(reservation_rect.x, reservation_rect.z, reservation_rect.w, reservation_rect.d, occ.x, occ.z, occ.w, occ.d, 6.0):
 					overlaps = true
 					break
 			if overlaps:
@@ -1412,7 +1429,7 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 			if support.is_empty():
 				continue
 			var bldg_y = float(support.resolved_y)
-			occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
+			occupied.append(reservation_rect)
 			bldg_stats.placed += 1
 			placed += 1
 			_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
@@ -1438,16 +1455,17 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 			if placed > 0 and used_prefabs.has(prefab_name) and preferred_prefabs.size() > 1:
 				continue
 			bldg_stats.attempted += 1
-			var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, rot)
+			var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
 			var fitted_positions = _fit_footprint_variants_in_parcel(parcel, footprint)
 			if fitted_positions.is_empty():
 				continue
 			for fitted in fitted_positions:
 				var bldg_x = fitted.x
 				var bldg_z = fitted.y
+				var reservation_rect := _get_prefab_reservation_rect(prefab_name, rot, bldg_x, bldg_z)
 				var overlaps = false
 				for occ in occupied:
-					if _rects_overlap(bldg_x, bldg_z, float(footprint.x), float(footprint.y), occ.x, occ.z, occ.w, occ.d, 6.0):
+					if _rects_overlap(reservation_rect.x, reservation_rect.z, reservation_rect.w, reservation_rect.d, occ.x, occ.z, occ.w, occ.d, 6.0):
 						overlaps = true
 						break
 				if overlaps:
@@ -1456,7 +1474,7 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 				if support.is_empty():
 					continue
 				var bldg_y = float(support.resolved_y)
-				occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
+				occupied.append(reservation_rect)
 				bldg_stats.placed += 1
 				placed += 1
 				used_parcels[parcel_idx] = true
@@ -1501,7 +1519,7 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 			continue
 		var rot = _rotation_for_frontage_side(str(parcel.get("frontage_side", "north")))
 		bldg_stats.attempted += 1
-		var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, rot)
+		var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
 		var fitted_positions = _fit_footprint_variants_in_parcel(parcel, footprint)
 		if fitted_positions.is_empty():
 			continue
@@ -1509,9 +1527,10 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 		for fitted in fitted_positions:
 			var bldg_x = fitted.x
 			var bldg_z = fitted.y
+			var reservation_rect := _get_prefab_reservation_rect(prefab_name, rot, bldg_x, bldg_z)
 			var overlaps = false
 			for occ in occupied:
-				if _rects_overlap(bldg_x, bldg_z, float(footprint.x), float(footprint.y), occ.x, occ.z, occ.w, occ.d, clearance_margin):
+				if _rects_overlap(reservation_rect.x, reservation_rect.z, reservation_rect.w, reservation_rect.d, occ.x, occ.z, occ.w, occ.d, clearance_margin):
 					overlaps = true
 					break
 			if overlaps:
@@ -1520,7 +1539,7 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 			if support.is_empty():
 				continue
 			var bldg_y = float(support.resolved_y)
-			occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
+			occupied.append(reservation_rect)
 			used_parcels[parcel_idx] = true
 			bldg_stats.placed += 1
 			_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
@@ -1546,7 +1565,7 @@ func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: D
 		var side = str(slot.side)
 		var rot = _rotation_for_frontage_side(side)
 		bldg_stats.attempted += 1
-		var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, rot)
+		var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
 		var bldg_x = center.x - float(footprint.x) * 0.5
 		var bldg_z = center.y - float(footprint.y) * 0.5
 		match side:
@@ -1561,9 +1580,10 @@ func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: D
 		bldg_x = floor(bldg_x)
 		bldg_z = floor(bldg_z)
 		var clearance_margin := _get_town_building_clearance_margin(footprint)
+		var reservation_rect := _get_prefab_reservation_rect(prefab_name, rot, bldg_x, bldg_z)
 		var overlaps = false
 		for occ in occupied:
-			if _rects_overlap(bldg_x, bldg_z, float(footprint.x), float(footprint.y), occ.x, occ.z, occ.w, occ.d, clearance_margin):
+			if _rects_overlap(reservation_rect.x, reservation_rect.z, reservation_rect.w, reservation_rect.d, occ.x, occ.z, occ.w, occ.d, clearance_margin):
 				overlaps = true
 				break
 		if overlaps:
@@ -1572,7 +1592,7 @@ func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: D
 		if support.is_empty():
 			continue
 		var bldg_y = float(support.resolved_y)
-		occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
+		occupied.append(reservation_rect)
 		bldg_stats.placed += 1
 		_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 			prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(slot.road_target),
@@ -1672,7 +1692,7 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				var footprint = Vector2i.ZERO
 				var fitted = Vector2(INF, INF)
 				for prefab_candidate in _get_prefab_candidates_for_parcel(catalog, district, rng):
-					var trial_footprint = PrefabGeometry.get_rotated_footprint(prefab_candidate, rot)
+					var trial_footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_candidate, rot)
 					var trial_fit = _fit_footprint_in_parcel(candidate, trial_footprint)
 					if trial_fit.x == INF:
 						continue
@@ -1688,10 +1708,11 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				if support.is_empty():
 					continue
 
+				var reservation_rect := _get_prefab_reservation_rect(prefab_name, rot, bldg_x, bldg_z)
 				var overlaps = false
 				var clearance_margin = max(3.0, max(float(footprint.x), float(footprint.y)) * 0.35)
 				for occ in occupied:
-					if _rects_overlap(bldg_x, bldg_z, float(footprint.x), float(footprint.y), occ.x, occ.z, occ.w, occ.d, clearance_margin):
+					if _rects_overlap(reservation_rect.x, reservation_rect.z, reservation_rect.w, reservation_rect.d, occ.x, occ.z, occ.w, occ.d, clearance_margin):
 						overlaps = true
 						break
 				if overlaps:
@@ -1700,7 +1721,7 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				var bldg_y = float(support.resolved_y)
 				var road_target: Vector2 = candidate.frontage_target
 
-				occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
+				occupied.append(reservation_rect)
 				bldg_stats.placed += 1
 				placed_in_town += 1
 				_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
@@ -1790,10 +1811,13 @@ func _build_prefab_catalog(available_prefabs: Array[String]) -> Dictionary:
 			print("[WorldMapGen] Skipping prefab '%s': %s" % [pname, "; ".join(validation.get("errors", []))])
 			continue
 		var fp = _get_prefab_footprint(pname)
+		var reservation_fp = _get_prefab_reservation_footprint(pname)
 		catalog[pname] = {
 			"name": pname,
 			"footprint": fp,
-			"area": fp.x * fp.y
+			"reservation_footprint": reservation_fp,
+			"area": reservation_fp.x * reservation_fp.y,
+			"surface_area": fp.x * fp.y
 		}
 	return catalog
 
@@ -2318,7 +2342,7 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 				continue
 
 			var prefab_name = available_prefabs[cell_rng.randi() % available_prefabs.size()]
-			var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, 0)
+			var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, 0)
 			var support = _resolve_town_building_support(sx, sz, footprint, road_segments, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats)
 			if support.is_empty():
 				wz += spacing
@@ -2334,7 +2358,7 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 				_rasterize_roads(path_seg, height_bytes, biome_bytes, road_bytes, max_h, half, access_path_width)
 			
 			var road_y = _get_road_height_at(sx, sz)
-			var spawn_origin = PrefabGeometry.get_spawn_origin_for_occupied_min(
+			var spawn_origin = PrefabGeometry.get_spawn_origin_for_surface_min(
 				prefab_name,
 				Vector3(sx, floor(terrain_y), sz),
 				0
@@ -2587,8 +2611,8 @@ func _generate_grid_buildings(height_bytes: PackedByteArray, water_bytes: Packed
 				var road_y = _get_road_height_at(road_cell_x, road_cell_z)
 				
 				var prefab_name = available_prefabs[rng.randi() % available_prefabs.size()]
-				var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, 0)
-				var spawn_origin = PrefabGeometry.get_spawn_origin_for_occupied_min(
+				var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, 0)
+				var spawn_origin = PrefabGeometry.get_spawn_origin_for_surface_min(
 					prefab_name,
 					Vector3(spawn_x, floor(terrain_y), spawn_z),
 					0

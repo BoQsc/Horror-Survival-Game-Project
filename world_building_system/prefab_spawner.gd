@@ -2,6 +2,7 @@ extends Node3D
 class_name PrefabSpawner
 
 const PrefabGeometry = preload("res://world_building_system/prefab_geometry.gd")
+const TERRAIN_DIG_AIR_DENSITY: float = 10.0
 
 ## Spawns prefab buildings near procedural roads
 ## Uses the existing building system so buildings are destructible/mutable
@@ -228,9 +229,10 @@ func _spawn_baked_buildings(coord: Vector3i):
 				if not prefabs.has(btype):
 					load_prefab_from_file(btype)
 				if prefabs.has(btype):
-					# World map mode is baked and flattened already, so do not carve terrain
-					# or shift the prefab downward here.
-					spawn_user_prefab(btype, spawn_pos, 0, rot, false, false, false)
+					# World map mode stays grade-correct, but underground prefabs still
+					# need an exact runtime clear to guarantee walkable interiors.
+					var baked_interior_carve := not PrefabGeometry.get_rotated_excavation_segments(btype, rot).is_empty()
+					spawn_user_prefab(btype, spawn_pos, 0, rot, false, false, baked_interior_carve)
 				else:
 					DebugManager.log_building("[BakedSpawn] WARN: prefab '%s' not found — skipping" % btype)
 			else:
@@ -631,7 +633,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if bool(placement_profile.get("auto_carve_volume", false)):
 		interior_carve = true
 	var rotated_bounds := PrefabGeometry.get_rotated_bounds(prefab_name, rotation)
-	var precise_carve_segments := PrefabGeometry.get_rotated_precise_carve_segments(prefab_name, rotation)
+	var precise_carve_segments := PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation)
 	var min_offset: Vector3i = rotated_bounds.get("min", Vector3i.ZERO)
 	var max_offset: Vector3i = rotated_bounds.get("max", Vector3i.ZERO)
 
@@ -844,7 +846,7 @@ func _carve_submerged_block_columns(blocks: Array, spawn_pos: Vector3, rotation:
 			float(key.y) + 0.5,
 			float(info.get("min_y", 0)),
 			float(info.get("max_y", 0)) + 1.0,
-			0.8,
+			TERRAIN_DIG_AIR_DENSITY,
 			0
 		)
 	return columns.size()
@@ -867,7 +869,7 @@ func _carve_prefab_volume_columns(spawn_pos: Vector3, min_offset: Vector3i, max_
 				float(world_z) + 0.5,
 				spawn_pos.y + float(y_start),
 				spawn_pos.y + float(y_end) + 1.0,
-				0.8,
+				TERRAIN_DIG_AIR_DENSITY,
 				0
 			)
 			carve_count += 1
@@ -887,7 +889,7 @@ func _carve_precise_segments_columns(spawn_pos: Vector3, carve_segments: Array) 
 			float(world_z) + 0.5,
 			spawn_pos.y + float(min_y),
 			spawn_pos.y + float(max_y) + 1.0,
-			0.8,
+			TERRAIN_DIG_AIR_DENSITY,
 			0
 		)
 		carve_count += 1

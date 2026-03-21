@@ -14,6 +14,10 @@ layout(set = 0, binding = 1, std430) restrict buffer MaterialBuffer {
     uint values[];
 } material_buffer;
 
+layout(set = 0, binding = 2, std430) restrict readonly buffer ExcavationMaskBuffer {
+    uint values[];
+} excavation_mask;
+
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position, .w is wide_shoulders
     float noise_freq;
@@ -369,6 +373,12 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
     return 0u;  // Grass (default)
 }
 
+bool is_excavated_density_point(uvec3 id) {
+    uint index = id.x + (id.y * 33u) + (id.z * 33u * 33u);
+    uint word = excavation_mask.values[index >> 5u];
+    return ((word >> (index & 31u)) & 1u) != 0u;
+}
+
 void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
     
@@ -392,7 +402,10 @@ void main() {
     }
     
     // Material depth is strictly based on the original terrain surface to prevent rectangular stone artifacts around roads
-    density_buffer.values[index] = get_density(pos);
+    float density = get_density(pos);
+    if (params.use_world_map > 0.5 && is_excavated_density_point(id)) {
+        density = 10.0;
+    }
+    density_buffer.values[index] = density;
     material_buffer.values[index] = get_material(pos, terrain_height);
 }
-

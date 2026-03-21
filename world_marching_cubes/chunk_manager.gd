@@ -10,6 +10,9 @@ const CHUNK_SIZE = 32
 # Overlap chunks by 1 unit to prevent gaps (seams)
 const CHUNK_STRIDE = CHUNK_SIZE - 1
 const DENSITY_GRID_SIZE = 33 # 0..32
+const EXCAVATION_MASK_POINT_COUNT = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE
+const EXCAVATION_MASK_UINT_COUNT = int(ceil(float(EXCAVATION_MASK_POINT_COUNT) / 32.0))
+const EXCAVATION_MASK_BYTE_COUNT = EXCAVATION_MASK_UINT_COUNT * 4
 
 # Y-layer limits for vertical chunk stacking
 const MIN_Y_LAYER = -20 # How deep you can dig (in chunk layers)
@@ -45,10 +48,13 @@ var _world_map_heightmap_buf: RID = RID()
 var _world_map_biome_buf: RID = RID()
 var _world_map_road_buf: RID = RID()
 var _world_map_water_buf: RID = RID()
+var _world_map_empty_excavation_buf: RID = RID()
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
 var _world_map_building_map: Image = null  # R8 building footprint map from buildings.png
+var _world_map_excavation_masks: Dictionary = {}
+var _world_map_excavation_buffers: Dictionary = {}
 var gpu_biome_map: PackedByteArray = PackedByteArray()  # GPU-generated biome map for minimap (uses same fbm() as shader)
 
 # GPU Threading (single thread for compute shaders)
@@ -639,8 +645,6 @@ func _get_all_modification_coords() -> Array:
 
 func _get_modifications_for_chunk(coord: Vector3i) -> Array:
 	var mods_for_chunk: Array = []
-	if _world_map_terrain_modifications.has(coord):
-		mods_for_chunk.append_array(_world_map_terrain_modifications[coord])
 	mutex.lock()
 	var runtime_mods = stored_modifications.get(coord, []).duplicate()
 	mutex.unlock()
@@ -650,6 +654,7 @@ func _get_modifications_for_chunk(coord: Vector3i) -> Array:
 
 func _cache_world_map_terrain_modifications(raw_mods: Array) -> void:
 	_world_map_terrain_modifications.clear()
+	_world_map_excavation_masks.clear()
 	for raw_mod in raw_mods:
 		var mod := _normalize_world_map_modification(raw_mod)
 		if mod.is_empty():
@@ -658,6 +663,7 @@ func _cache_world_map_terrain_modifications(raw_mods: Array) -> void:
 			if not _world_map_terrain_modifications.has(coord):
 				_world_map_terrain_modifications[coord] = []
 			_world_map_terrain_modifications[coord].append(mod)
+		_cache_world_map_excavation_mask_from_mod(mod)
 
 func _normalize_world_map_modification(raw_mod: Variant) -> Dictionary:
 	if not (raw_mod is Dictionary):
@@ -721,6 +727,93 @@ func _get_modification_covered_chunk_coords(mod: Dictionary) -> Array:
 				seen[coord] = true
 				coords.append(coord)
 	return coords
+
+func _cache_world_map_excavation_mask_from_mod(mod: Dictionary) -> void:
+	if int(mod.get("shape", -1)) != 2:
+		return
+	if float(mod.get("value", 0.0)) <= 0.0:
+		return
+
+	var brush_pos: Vector3 = mod.get("brush_pos", Vector3.ZERO)
+	var sample_x_min := int(ceil(brush_pos.x - 0.5))
+	var sample_x_max := int(floor(brush_pos.x + 0.5))
+	var sample_z_min := int(ceil(brush_pos.z - 0.5))
+	var sample_z_max := int(floor(brush_pos.z + 0.5))
+	var sample_y_min := int(ceil(float(mod.get("y_min", brush_pos.y))))
+	var sample_y_max := int(floor(float(mod.get("y_max", brush_pos.y))))
+
+	if sample_x_max < sample_x_min or sample_y_max < sample_y_min or sample_z_max < sample_z_min:
+		return
+
+	var chunk_xs := _get_density_sample_axis_chunks(sample_x_min, sample_x_max)
+	var chunk_ys := _get_density_sample_axis_chunks(sample_y_min, sample_y_max)
+	var chunk_zs := _get_density_sample_axis_chunks(sample_z_min, sample_z_max)
+	for chunk_x in chunk_xs:
+		var local_x_min := maxi(0, sample_x_min - chunk_x * CHUNK_STRIDE)
+		var local_x_max := mini(DENSITY_GRID_SIZE - 1, sample_x_max - chunk_x * CHUNK_STRIDE)
+		if local_x_max < local_x_min:
+			continue
+		for chunk_y in chunk_ys:
+			var local_y_min := maxi(0, sample_y_min - chunk_y * CHUNK_STRIDE)
+			var local_y_max := mini(DENSITY_GRID_SIZE - 1, sample_y_max - chunk_y * CHUNK_STRIDE)
+			if local_y_max < local_y_min:
+				continue
+			for chunk_z in chunk_zs:
+				var local_z_min := maxi(0, sample_z_min - chunk_z * CHUNK_STRIDE)
+				var local_z_max := mini(DENSITY_GRID_SIZE - 1, sample_z_max - chunk_z * CHUNK_STRIDE)
+				if local_z_max < local_z_min:
+					continue
+				var coord := Vector3i(chunk_x, chunk_y, chunk_z)
+				var mask: PackedByteArray = _world_map_excavation_masks.get(coord, PackedByteArray())
+				if mask.size() != EXCAVATION_MASK_BYTE_COUNT:
+					mask = _create_empty_excavation_mask_bytes()
+				_mark_excavation_mask_box(mask, local_x_min, local_x_max, local_y_min, local_y_max, local_z_min, local_z_max)
+				_world_map_excavation_masks[coord] = mask
+
+func _get_density_sample_axis_chunks(sample_min: int, sample_max: int) -> Array[int]:
+	var coords: Array[int] = []
+	var first_chunk := int(ceil(float(sample_min - (DENSITY_GRID_SIZE - 1)) / float(CHUNK_STRIDE)))
+	var last_chunk := int(floor(float(sample_max) / float(CHUNK_STRIDE)))
+	for chunk_idx in range(first_chunk, last_chunk + 1):
+		var local_min := sample_min - chunk_idx * CHUNK_STRIDE
+		var local_max := sample_max - chunk_idx * CHUNK_STRIDE
+		if local_max < 0 or local_min >= DENSITY_GRID_SIZE:
+			continue
+		coords.append(chunk_idx)
+	return coords
+
+func _create_empty_excavation_mask_bytes() -> PackedByteArray:
+	var mask := PackedByteArray()
+	mask.resize(EXCAVATION_MASK_BYTE_COUNT)
+	mask.fill(0)
+	return mask
+
+func _mark_excavation_mask_box(mask: PackedByteArray, min_x: int, max_x: int, min_y: int, max_y: int, min_z: int, max_z: int) -> void:
+	for local_z in range(min_z, max_z + 1):
+		for local_y in range(min_y, max_y + 1):
+			for local_x in range(min_x, max_x + 1):
+				var bit_index := local_x + (local_y * DENSITY_GRID_SIZE) + (local_z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+				var byte_index := bit_index / 8
+				mask[byte_index] = mask[byte_index] | (1 << (bit_index % 8))
+
+func _rebuild_world_map_excavation_buffers(rd: RenderingDevice) -> void:
+	_free_world_map_excavation_buffers(rd)
+	var empty_mask := _create_empty_excavation_mask_bytes()
+	_world_map_empty_excavation_buf = rd.storage_buffer_create(empty_mask.size(), empty_mask)
+	for coord in _world_map_excavation_masks:
+		var mask: PackedByteArray = _world_map_excavation_masks.get(coord, PackedByteArray())
+		if mask.size() != EXCAVATION_MASK_BYTE_COUNT:
+			continue
+		_world_map_excavation_buffers[coord] = rd.storage_buffer_create(mask.size(), mask)
+
+func _free_world_map_excavation_buffers(rd: RenderingDevice) -> void:
+	for buffer_rid in _world_map_excavation_buffers.values():
+		if buffer_rid.is_valid():
+			rd.free_rid(buffer_rid)
+	_world_map_excavation_buffers.clear()
+	if _world_map_empty_excavation_buf.is_valid():
+		rd.free_rid(_world_map_empty_excavation_buf)
+		_world_map_empty_excavation_buf = RID()
 
 func get_terrain_height(global_x: float, global_z: float) -> float:
 	# Find X,Z chunk coordinates
@@ -1471,6 +1564,7 @@ func _thread_function():
 	
 	_world_map_buildings = []
 	_world_map_terrain_modifications.clear()
+	_world_map_excavation_masks.clear()
 	if world_map_active and world_definition_path != "":
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 		var loaded = WorldMapGen.load_world(world_definition_path)
@@ -1510,6 +1604,7 @@ func _thread_function():
 			if loaded.has("terrain_modifications"):
 				_cache_world_map_terrain_modifications(loaded.terrain_modifications)
 				print("[ChunkManager] Loaded %d baked terrain modification chunks" % _world_map_terrain_modifications.size())
+				print("[ChunkManager] Prepared %d baked excavation chunk masks" % _world_map_excavation_masks.size())
 			
 			# Load building footprint map
 			if loaded.has("building_map"):
@@ -1527,7 +1622,9 @@ func _thread_function():
 		else:
 			push_error("[ChunkManager] World map at %s missing required PNGs" % world_definition_path)
 			world_map_active = false
-	
+
+	_rebuild_world_map_excavation_buffers(rd)
+
 	# Always create dummy buffers if not loaded (shader declares set 1 even when unused)
 	if not _world_map_heightmap_buf.is_valid():
 		var dummy = PackedByteArray()
@@ -1673,7 +1770,8 @@ func _thread_function():
 	if _world_map_biome_buf.is_valid(): rd.free_rid(_world_map_biome_buf)
 	if _world_map_road_buf.is_valid(): rd.free_rid(_world_map_road_buf)
 	if _world_map_water_buf.is_valid(): rd.free_rid(_world_map_water_buf)
-	
+	_free_world_map_excavation_buffers(rd)
+
 	rd.free()
 
 # Dispatch generation work WITHOUT syncing - returns in-flight data for later readback
@@ -1698,8 +1796,13 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	u_material_t.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_material_t.binding = 1
 	u_material_t.add_id(mat_buf_terrain)
-	
-	var set_gen_t = rd.uniform_set_create([u_density_t, u_material_t], sid_gen, 0)
+
+	var u_excavation_t = RDUniform.new()
+	u_excavation_t.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_excavation_t.binding = 2
+	u_excavation_t.add_id(_world_map_excavation_buffers.get(coord, _world_map_empty_excavation_buf))
+
+	var set_gen_t = rd.uniform_set_create([u_density_t, u_material_t, u_excavation_t], sid_gen, 0)
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_gen)
 	rd.compute_list_bind_uniform_set(list, set_gen_t, 0)
@@ -1739,7 +1842,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	rd.compute_list_end()
 	# NO sync here!
 	
-	# Apply baked world-map edits and runtime modifications (these need sync, but we batch them)
+	# Apply runtime terrain edits only.
+	# Baked world-map excavation is injected directly into gen_density.glsl via _world_map_excavation_buffers.
 	var mods_for_chunk = _get_modifications_for_chunk(coord)
 	
 	if mods_for_chunk.size() > 0:

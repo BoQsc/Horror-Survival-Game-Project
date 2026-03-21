@@ -60,6 +60,33 @@ static func get_rotated_bounds(prefab_name: String, rotation: int) -> Dictionary
 static func get_rotated_footprint(prefab_name: String, rotation: int) -> Vector2i:
 	return get_rotated_bounds(prefab_name, rotation).get("footprint", Vector2i.ONE)
 
+static func get_rotated_surface_bounds(prefab_name: String, rotation: int) -> Dictionary:
+	var placement := get_placement_profile(prefab_name)
+	var local_rect: Dictionary = placement.get("surface_footprint", {})
+	if local_rect.is_empty():
+		var full_bounds := get_rotated_bounds(prefab_name, rotation)
+		var full_min: Vector3i = full_bounds.get("min", Vector3i.ZERO)
+		var full_max: Vector3i = full_bounds.get("max", Vector3i.ZERO)
+		return {
+			"min": Vector2i(full_min.x, full_min.z),
+			"max": Vector2i(full_max.x, full_max.z),
+			"footprint": full_bounds.get("footprint", Vector2i.ONE)
+		}
+	return _rotate_local_rect_bounds(local_rect, rotation)
+
+static func get_rotated_surface_footprint(prefab_name: String, rotation: int) -> Vector2i:
+	return get_rotated_surface_bounds(prefab_name, rotation).get("footprint", Vector2i.ONE)
+
+static func get_rotated_reservation_bounds(prefab_name: String, rotation: int) -> Dictionary:
+	var placement := get_placement_profile(prefab_name)
+	var local_rect: Dictionary = placement.get("reservation_footprint", {})
+	if local_rect.is_empty():
+		return get_rotated_surface_bounds(prefab_name, rotation)
+	return _rotate_local_rect_bounds(local_rect, rotation)
+
+static func get_rotated_reservation_footprint(prefab_name: String, rotation: int) -> Vector2i:
+	return get_rotated_reservation_bounds(prefab_name, rotation).get("footprint", Vector2i.ONE)
+
 static func get_rotated_precise_carve_segments(prefab_name: String, rotation: int) -> Array:
 	var key := "%s:%d" % [prefab_name, rotation]
 	if _rotated_precise_carve_cache.has(key):
@@ -68,6 +95,7 @@ static func get_rotated_precise_carve_segments(prefab_name: String, rotation: in
 	var geometry := get_prefab_geometry(prefab_name)
 	var placement_profile: Dictionary = geometry.get("placement_profile", _default_placement_profile())
 	var solid_cells: Dictionary = geometry.get("solid_cells", {})
+	var stair_cells := _vector3i_array_from_variant(geometry.get("stair_cells", []))
 	var declared_size: Vector3i = geometry.get("declared_size", Vector3i.ONE)
 	var min_y: int = int(geometry.get("min_y", 0))
 	var grade_y: int = int(placement_profile.get("grade_y", min_y))
@@ -76,7 +104,11 @@ static func get_rotated_precise_carve_segments(prefab_name: String, rotation: in
 		_rotated_precise_carve_cache[key] = empty_segments
 		return empty_segments
 
-	var local_carve_cells := _get_enclosed_below_grade_empty_cells(solid_cells, declared_size, min_y, grade_y)
+	var enclosed_below_grade_cells := _get_enclosed_below_grade_empty_cells(solid_cells, declared_size, min_y, grade_y)
+	var required_carve_cell_set := _build_required_below_grade_excavation_cells(enclosed_below_grade_cells, stair_cells, min_y, grade_y)
+	var local_carve_cells: Array = []
+	for cell in required_carve_cell_set.keys():
+		local_carve_cells.append(cell)
 	var rotated_segments := _build_rotated_carve_segments(local_carve_cells, rotation)
 	_rotated_precise_carve_cache[key] = rotated_segments
 	return rotated_segments
@@ -114,6 +146,13 @@ static func get_spawn_origin_for_occupied_min(prefab_name: String, occupied_min:
 	var placement := get_placement_profile(prefab_name)
 	var grade_y := float(placement.get("grade_y", 0))
 	return occupied_min - Vector3(min_offset.x, grade_y, min_offset.z)
+
+static func get_spawn_origin_for_surface_min(prefab_name: String, surface_min: Vector3, rotation: int) -> Vector3:
+	var bounds := get_rotated_surface_bounds(prefab_name, rotation)
+	var min_offset: Vector2i = bounds.get("min", Vector2i.ZERO)
+	var placement := get_placement_profile(prefab_name)
+	var grade_y := float(placement.get("grade_y", 0))
+	return surface_min - Vector3(min_offset.x, grade_y, min_offset.y)
 
 static func get_primary_door_world_center(prefab_name: String, spawn_origin: Vector3, rotation: int) -> Variant:
 	var geometry := get_prefab_geometry(prefab_name)
@@ -272,6 +311,15 @@ static func _parse_declared_size(data: Dictionary) -> Vector3i:
 		int(size_arr[2]) if size_arr.size() > 2 else 1
 	)
 
+static func _vector3i_array_from_variant(value: Variant) -> Array[Vector3i]:
+	var result: Array[Vector3i] = []
+	if not (value is Array):
+		return result
+	for item in value:
+		if item is Vector3i:
+			result.append(item)
+	return result
+
 static func _parse_layer_info(layers: Array) -> Dictionary:
 	var offsets: Array = []
 	var solid_cells: Dictionary = {}
@@ -362,7 +410,9 @@ static func _default_placement_profile() -> Dictionary:
 		"seal_foundation": true,
 		"max_foundation_gap": 3.0,
 		"require_windows": true,
-		"excavation_volumes": []
+		"excavation_volumes": [],
+		"surface_footprint": {},
+		"reservation_footprint": {}
 	}
 
 static func _parse_placement_profile(data: Dictionary, offsets: Array, declared_size: Vector3i) -> Dictionary:
@@ -379,6 +429,7 @@ static func _parse_placement_profile(data: Dictionary, offsets: Array, declared_
 		for offset in offsets:
 			min_y = mini(min_y, offset.y)
 			max_y = maxi(max_y, offset.y)
+	var default_rect := _build_local_rect_from_offsets(offsets, declared_size)
 
 	var grade_y := int(placement.get("grade_y", profile.get("grade_y", 0)))
 	profile["grade_y"] = clampi(grade_y, min_y, maxi(min_y, max_y))
@@ -396,7 +447,66 @@ static func _parse_placement_profile(data: Dictionary, offsets: Array, declared_
 		min_y,
 		max_y
 	)
+	profile["surface_footprint"] = _parse_local_rect_2d(
+		placement.get("surface_footprint", {}),
+		default_rect,
+		declared_size
+	)
+	profile["reservation_footprint"] = _parse_local_rect_2d(
+		placement.get("reservation_footprint", {}),
+		default_rect,
+		declared_size
+	)
 	return profile
+
+static func _build_local_rect_from_offsets(offsets: Array, declared_size: Vector3i) -> Dictionary:
+	if offsets.is_empty():
+		var fallback_w := maxi(1, declared_size.x)
+		var fallback_d := maxi(1, declared_size.z)
+		return {
+			"min": Vector2i.ZERO,
+			"max": Vector2i(fallback_w - 1, fallback_d - 1),
+			"footprint": Vector2i(fallback_w, fallback_d)
+		}
+
+	var first_offset: Vector3i = offsets[0]
+	var min_x: int = first_offset.x
+	var max_x: int = first_offset.x
+	var min_z: int = first_offset.z
+	var max_z: int = first_offset.z
+	for offset in offsets:
+		min_x = mini(min_x, offset.x)
+		max_x = maxi(max_x, offset.x)
+		min_z = mini(min_z, offset.z)
+		max_z = maxi(max_z, offset.z)
+	return {
+		"min": Vector2i(min_x, min_z),
+		"max": Vector2i(max_x, max_z),
+		"footprint": Vector2i(max_x - min_x + 1, max_z - min_z + 1)
+	}
+
+static func _parse_local_rect_2d(raw_rect: Variant, fallback_rect: Dictionary, declared_size: Vector3i) -> Dictionary:
+	if not (raw_rect is Dictionary):
+		return fallback_rect
+	var rect_in: Dictionary = raw_rect
+	var min_arr: Array = rect_in.get("min", [])
+	var max_arr: Array = rect_in.get("max", [])
+	if min_arr.size() < 2 or max_arr.size() < 2:
+		return fallback_rect
+
+	var raw_min := Vector2i(int(min_arr[0]), int(min_arr[1]))
+	var raw_max := Vector2i(int(max_arr[0]), int(max_arr[1]))
+	var max_x_idx := maxi(0, declared_size.x - 1)
+	var max_z_idx := maxi(0, declared_size.z - 1)
+	var x0 := clampi(mini(raw_min.x, raw_max.x), 0, max_x_idx)
+	var z0 := clampi(mini(raw_min.y, raw_max.y), 0, max_z_idx)
+	var x1 := clampi(maxi(raw_min.x, raw_max.x), 0, max_x_idx)
+	var z1 := clampi(maxi(raw_min.y, raw_max.y), 0, max_z_idx)
+	return {
+		"min": Vector2i(x0, z0),
+		"max": Vector2i(x1, z1),
+		"footprint": Vector2i(x1 - x0 + 1, z1 - z0 + 1)
+	}
 
 static func _parse_local_volumes(raw_volumes: Array, declared_size: Vector3i, min_y: int, max_y: int) -> Array:
 	var result: Array = []
@@ -528,6 +638,86 @@ static func _build_rotated_segments_from_volumes(volumes: Array, rotation: int) 
 					local_cells.append(Vector3i(x, y, z))
 	return _build_rotated_carve_segments(local_cells, rotation)
 
+static func _build_local_cell_set_from_volumes(volumes: Array) -> Dictionary:
+	var result: Dictionary = {}
+	for volume in volumes:
+		var min_cell: Vector3i = volume.get("min", Vector3i.ZERO)
+		var max_cell: Vector3i = volume.get("max", Vector3i.ZERO)
+		for y in range(min_cell.y, max_cell.y + 1):
+			for z in range(min_cell.z, max_cell.z + 1):
+				for x in range(min_cell.x, max_cell.x + 1):
+					result[Vector3i(x, y, z)] = true
+	return result
+
+static func _build_required_below_grade_excavation_cells(enclosed_cells: Array, stair_cells: Array, min_y: int, grade_y: int) -> Dictionary:
+	var result: Dictionary = {}
+	for cell in enclosed_cells:
+		result[cell] = true
+	var below_grade_stairs: Array[Vector3i] = []
+	for cell in stair_cells:
+		if cell.y <= 0 or cell.y > grade_y:
+			continue
+		below_grade_stairs.append(cell)
+	for cell in _largest_stair_component(below_grade_stairs):
+		result[cell] = true
+	var min_y_by_column: Dictionary = {}
+	var max_y_by_column: Dictionary = {}
+	for cell_var in result.keys():
+		var cell: Vector3i = cell_var
+		var column := Vector2i(cell.x, cell.z)
+		if not min_y_by_column.has(column):
+			min_y_by_column[column] = cell.y
+			max_y_by_column[column] = cell.y
+			continue
+		min_y_by_column[column] = mini(int(min_y_by_column[column]), cell.y)
+		max_y_by_column[column] = maxi(int(max_y_by_column[column]), cell.y)
+	for column in min_y_by_column.keys():
+		var from_y := maxi(min_y, int(min_y_by_column[column]) - 1)
+		var to_y := int(max_y_by_column[column])
+		for y in range(from_y, to_y + 1):
+			result[Vector3i(column.x, y, column.y)] = true
+	return result
+
+static func _find_surface_breach_excavation_cells(excavated_cells: Dictionary, surface_rect: Dictionary, grade_y: int) -> Array[String]:
+	var result: Array[String] = []
+	var rect_min: Vector2i = surface_rect.get("min", Vector2i.ZERO)
+	var rect_max: Vector2i = surface_rect.get("max", Vector2i.ZERO)
+	for cell_var in excavated_cells.keys():
+		var cell: Vector3i = cell_var
+		if cell.y != grade_y:
+			continue
+		if cell.x >= rect_min.x and cell.x <= rect_max.x and cell.z >= rect_min.y and cell.z <= rect_max.y:
+			continue
+		if result.size() >= 6:
+			break
+		result.append(str(cell))
+	return result
+
+static func _rotate_local_rect_bounds(rect: Dictionary, rotation: int) -> Dictionary:
+	var min_corner: Vector2i = rect.get("min", Vector2i.ZERO)
+	var max_corner: Vector2i = rect.get("max", Vector2i.ZERO)
+	var corners := [
+		Vector3i(min_corner.x, 0, min_corner.y),
+		Vector3i(max_corner.x, 0, min_corner.y),
+		Vector3i(min_corner.x, 0, max_corner.y),
+		Vector3i(max_corner.x, 0, max_corner.y)
+	]
+	var rotated_min_x := 999999
+	var rotated_max_x := -999999
+	var rotated_min_z := 999999
+	var rotated_max_z := -999999
+	for corner in corners:
+		var rotated := _rotate_offset(corner, rotation)
+		rotated_min_x = mini(rotated_min_x, rotated.x)
+		rotated_max_x = maxi(rotated_max_x, rotated.x)
+		rotated_min_z = mini(rotated_min_z, rotated.z)
+		rotated_max_z = maxi(rotated_max_z, rotated.z)
+	return {
+		"min": Vector2i(rotated_min_x, rotated_min_z),
+		"max": Vector2i(rotated_max_x, rotated_max_z),
+		"footprint": Vector2i(rotated_max_x - rotated_min_x + 1, rotated_max_z - rotated_min_z + 1)
+	}
+
 static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objects: Array, placement_profile: Dictionary,
 		layer_info: Dictionary, declared_size: Vector3i) -> Dictionary:
 	var result := {
@@ -543,17 +733,19 @@ static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objec
 		return result
 
 	var solid_cells: Dictionary = layer_info.get("solid_cells", {})
-	var stair_cells: Array[Vector3i] = layer_info.get("stair_cells", [])
+	var stair_cells := _vector3i_array_from_variant(layer_info.get("stair_cells", []))
 	var actual_size: Vector3i = layer_info.get("actual_size", Vector3i.ZERO)
 	var row_widths: Array = layer_info.get("row_widths", [])
 	var rows_per_slice: Array = layer_info.get("rows_per_slice", [])
 	var min_x: int = offsets[0].x
+	var min_y: int = offsets[0].y
 	var max_y: int = offsets[0].y
 	var max_x: int = offsets[0].x
 	var min_z: int = offsets[0].z
 	var max_z: int = offsets[0].z
 	for offset in offsets:
 		min_x = mini(min_x, offset.x)
+		min_y = mini(min_y, offset.y)
 		max_y = maxi(max_y, offset.y)
 		max_x = maxi(max_x, offset.x)
 		min_z = mini(min_z, offset.z)
@@ -580,6 +772,35 @@ static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objec
 		for width_i in bad_row_widths:
 			width_parts.append(str(width_i))
 		result["errors"].append("declared size.x=%d but row widths include [%s]" % [declared_size.x, ", ".join(width_parts)])
+
+	var grade_y := int(placement_profile.get("grade_y", min_y))
+	var excavation_volumes: Array = placement_profile.get("excavation_volumes", [])
+	var enclosed_below_grade_cells := _get_enclosed_below_grade_empty_cells(solid_cells, declared_size, min_y, grade_y)
+	if grade_y > min_y:
+		var required_excavation_cells := _build_required_below_grade_excavation_cells(enclosed_below_grade_cells, stair_cells, min_y, grade_y)
+		if not required_excavation_cells.is_empty():
+			if excavation_volumes.is_empty():
+				if bool(placement_profile.get("auto_carve_volume", false)):
+					result["warnings"].append("below-grade structure relies on inferred excavation; add explicit excavation_volumes for trustworthy world-map placement")
+				else:
+					result["errors"].append("below-grade structure is missing excavation volumes")
+			else:
+				var excavated_cells := _build_local_cell_set_from_volumes(excavation_volumes)
+				var missing_cells: Array[String] = []
+				for cell in required_excavation_cells:
+					if excavated_cells.has(cell):
+						continue
+					if missing_cells.size() < 6:
+						missing_cells.append(str(cell))
+				if not missing_cells.is_empty():
+					result["errors"].append("excavation volumes miss below-grade interior/stair cells [%s]" % ", ".join(missing_cells))
+				var surface_breach_cells := _find_surface_breach_excavation_cells(
+					excavated_cells,
+					placement_profile.get("surface_footprint", {}),
+					grade_y
+				)
+				if not surface_breach_cells.is_empty():
+					result["errors"].append("excavation reaches grade outside surface footprint at [%s]" % ", ".join(surface_breach_cells))
 
 	for obj in objects:
 		var object_id := int(obj.get("object_id", -1))
@@ -635,6 +856,12 @@ static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objec
 		for err in stair_validation.get("errors", []):
 			result["errors"].append(err)
 		for warn in stair_validation.get("warnings", []):
+			result["warnings"].append(warn)
+	if not enclosed_below_grade_cells.is_empty():
+		var basement_access := _validate_below_grade_access(stair_cells, solid_cells, enclosed_below_grade_cells, grade_y)
+		for err in basement_access.get("errors", []):
+			result["errors"].append(err)
+		for warn in basement_access.get("warnings", []):
 			result["warnings"].append(warn)
 
 	var errors: Array = result["errors"]
@@ -823,6 +1050,59 @@ static func _stairs_have_landing(component: Array[Vector3i], solid_cells: Dictio
 		if solid_cells.has(landing) and not solid_cells.has(landing_above):
 			return true
 	return false
+
+static func _stairs_have_bottom_landing(component: Array[Vector3i], solid_cells: Dictionary, step: Vector2i) -> bool:
+	var min_y := component[0].y
+	for cell in component:
+		min_y = mini(min_y, cell.y)
+	for cell in component:
+		if cell.y != min_y:
+			continue
+		var landing := cell + Vector3i(-step.x, -1, -step.y)
+		var landing_above := landing + Vector3i(0, 1, 0)
+		if solid_cells.has(landing) and not solid_cells.has(landing_above):
+			return true
+	return false
+
+static func _validate_below_grade_access(stair_cells: Array[Vector3i], solid_cells: Dictionary, enclosed_cells: Array, grade_y: int) -> Dictionary:
+	var result := {
+		"errors": [],
+		"warnings": []
+	}
+	if enclosed_cells.is_empty():
+		return result
+
+	var internal_stairs: Array[Vector3i] = []
+	for cell in stair_cells:
+		if cell.y > 0:
+			internal_stairs.append(cell)
+	if internal_stairs.is_empty():
+		result["errors"].append("below-grade structure is missing stairs")
+		return result
+
+	var component := _largest_stair_component(internal_stairs)
+	if component.is_empty():
+		result["errors"].append("below-grade structure is missing a continuous stair run")
+		return result
+
+	var levels := _sorted_component_levels(component)
+	var required_min_y := grade_y
+	for cell in enclosed_cells:
+		required_min_y = mini(required_min_y, cell.y)
+	if levels.is_empty() or levels[0] > required_min_y:
+		result["errors"].append("stairs do not reach the underground level at y=%d" % required_min_y)
+		return result
+	if levels[levels.size() - 1] < grade_y:
+		result["errors"].append("stairs do not connect back to grade level y=%d" % grade_y)
+		return result
+
+	var step := _infer_stair_step(component)
+	if step == Vector2i.ZERO:
+		result["errors"].append("unable to determine basement stair direction")
+		return result
+	if not _stairs_have_bottom_landing(component, solid_cells, step):
+		result["errors"].append("stairs are missing a clear landing at the bottom")
+	return result
 
 static func _object_touches_exterior(occupied_cells: Array[Vector3i], solid_cells: Dictionary,
 		min_x: int, max_x: int, min_z: int, max_z: int) -> bool:
