@@ -1,5 +1,7 @@
 extends Node
 
+const PrefabGeometry = preload("res://world_building_system/prefab_geometry.gd")
+
 @export var terrain_manager: Node3D
 @export var building_manager: Node3D
 @export var vegetation_manager: Node3D
@@ -1850,17 +1852,8 @@ func _place_current_prefab():
 	
 	print("[PREFAB] Raycast hit at: %v" % hit.position)
 	
-	# Use floor for X/Z grid alignment, ceil for Y to place ON terrain (not into it)
-	var spawn_pos = Vector3(floor(hit.position.x), ceil(hit.position.y), floor(hit.position.z))
-	
-	# Road snap: override Y position to snap to road height
-	# Subtract 1 so the door (at Y=1 in prefab) is at road level, not the floor
-	# Add manual Y offset from scroll wheel
-	if prefab_snap_to_road:
-		var road_y = _get_road_height_at(spawn_pos.x, spawn_pos.z)
-		if road_y > 0:
-			spawn_pos.y = floor(road_y) - 1 + prefab_road_snap_y_offset
-			print("[PREFAB] Snapped to road height: Y = %.1f (offset: %d)" % [spawn_pos.y, prefab_road_snap_y_offset])
+	var submerge = 1 if prefab_carve_mode else 0
+	var spawn_pos = _get_prefab_spawn_world_pos(prefab_name, hit.position, submerge, true)
 	
 	print("[PREFAB] Spawn position: %v" % spawn_pos)
 	
@@ -1881,12 +1874,12 @@ func _place_current_prefab():
 			if carve_success:
 				print("[PREFAB] Carve complete. Waiting 10 seconds before fill+blocks...")
 				# Step 2: Wait 10 seconds, then fill terrain AND place blocks
-				_schedule_prefab_fill(prefab_name, spawn_pos, prefab_rotation)
+				var fill_spawn_pos = _get_prefab_spawn_world_pos(prefab_name, hit.position, 0, false)
+				_schedule_prefab_fill(prefab_name, fill_spawn_pos, prefab_rotation)
 			else:
 				print("[PREFAB] Carve failed for %s" % prefab_name)
 		else:
 			# Normal modes: Surface, Carve, or Fill
-			var submerge = 1 if prefab_carve_mode else 0
 			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, false, prefab_interior_carve)
 			if success:
 				print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, mode_str])
@@ -2013,18 +2006,8 @@ func _process_prefab_preview():
 				node.visible = false
 		return
 	
-	# Get base position - match the placement logic
-	# Surface mode: submerge=0 (on terrain), Carve mode: submerge=1 (buried)
-	var submerge = 1 if prefab_carve_mode else 0
-	var base_pos = Vector3(floor(hit.position.x), ceil(hit.position.y) - submerge, floor(hit.position.z))
-	
-	# Road snap: override Y position to snap to road height
-	# Subtract 1 so the door (at Y=1 in prefab) is at road level, not the floor
-	# Add manual Y offset from scroll wheel
-	if prefab_snap_to_road:
-		var road_y = _get_road_height_at(base_pos.x, base_pos.z)
-		if road_y > 0:
-			base_pos.y = floor(road_y) - 1 - submerge + prefab_road_snap_y_offset
+	var prefab_name = available_prefabs[current_prefab_index]
+	var base_pos = _get_prefab_spawn_origin(prefab_name, hit.position, false)
 	
 	# Position each preview block
 	for node in prefab_preview_nodes:
@@ -2032,6 +2015,20 @@ func _process_prefab_preview():
 			var offset = node.get_meta("offset", Vector3i.ZERO)
 			node.global_position = base_pos + Vector3(offset) + Vector3(0.5, 0.5, 0.5)
 			node.visible = true
+
+func _get_prefab_spawn_world_pos(prefab_name: String, hit_pos: Vector3, submerge: int, log_snap: bool = false) -> Vector3:
+	var spawn_origin = _get_prefab_spawn_origin(prefab_name, hit_pos, log_snap)
+	return spawn_origin + Vector3(0, submerge, 0)
+
+func _get_prefab_spawn_origin(prefab_name: String, hit_pos: Vector3, log_snap: bool = false) -> Vector3:
+	var anchor = Vector3(floor(hit_pos.x), ceil(hit_pos.y), floor(hit_pos.z))
+	if prefab_snap_to_road:
+		var road_y = _get_road_height_at(anchor.x, anchor.z)
+		if road_y > 0:
+			anchor.y = floor(road_y) - 1 + prefab_road_snap_y_offset
+			if log_snap:
+				print("[PREFAB] Snapped to road height: Y = %.1f (offset: %d)" % [anchor.y, prefab_road_snap_y_offset])
+	return PrefabGeometry.get_spawn_origin_for_occupied_min(prefab_name, anchor, prefab_rotation)
 
 ## ============== PROP PICKUP SYSTEM =============
 

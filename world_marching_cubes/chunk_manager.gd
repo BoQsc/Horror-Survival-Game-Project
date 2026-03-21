@@ -151,6 +151,7 @@ var terrain_grid = null
 # Persistent modification storage - survives chunk unloading
 # Format: coord (Vector2i) -> Array of { brush_pos: Vector3, radius: float, value: float, shape: int, layer: int }
 var stored_modifications: Dictionary = {}
+var _world_map_terrain_modifications: Dictionary = {}
 
 # Spawn zone tracking - positions waiting for terrain to load
 # Format: Array of { "position": Vector3, "radius": int, "pending_coords": Array[Vector3i] }
@@ -617,12 +618,109 @@ func get_material_at(global_pos: Vector3) -> int:
 	return -1
 
 
-# Check if any Y layer at this X,Z has stored modifications (player-built terrain)
+# Check if any Y layer at this X,Z has terrain modifications.
 func has_modifications_at_xz(x: int, z: int) -> bool:
-	for coord in stored_modifications:
+	for coord in _get_all_modification_coords():
 		if coord.x == x and coord.z == z:
 			return true
 	return false
+
+func _get_all_modification_coords() -> Array:
+	var coords: Array = []
+	var seen: Dictionary = {}
+	for coord in _world_map_terrain_modifications:
+		seen[coord] = true
+		coords.append(coord)
+	for coord in stored_modifications:
+		if seen.has(coord):
+			continue
+		coords.append(coord)
+	return coords
+
+func _get_modifications_for_chunk(coord: Vector3i) -> Array:
+	var mods_for_chunk: Array = []
+	if _world_map_terrain_modifications.has(coord):
+		mods_for_chunk.append_array(_world_map_terrain_modifications[coord])
+	mutex.lock()
+	var runtime_mods = stored_modifications.get(coord, []).duplicate()
+	mutex.unlock()
+	if not runtime_mods.is_empty():
+		mods_for_chunk.append_array(runtime_mods)
+	return mods_for_chunk
+
+func _cache_world_map_terrain_modifications(raw_mods: Array) -> void:
+	_world_map_terrain_modifications.clear()
+	for raw_mod in raw_mods:
+		var mod := _normalize_world_map_modification(raw_mod)
+		if mod.is_empty():
+			continue
+		for coord in _get_modification_covered_chunk_coords(mod):
+			if not _world_map_terrain_modifications.has(coord):
+				_world_map_terrain_modifications[coord] = []
+			_world_map_terrain_modifications[coord].append(mod)
+
+func _normalize_world_map_modification(raw_mod: Variant) -> Dictionary:
+	if not (raw_mod is Dictionary):
+		return {}
+	var mod_in: Dictionary = raw_mod
+	if not mod_in.has("brush_pos"):
+		return {}
+	var brush_pos := _read_mod_vector3(mod_in.get("brush_pos"))
+	var shape := int(mod_in.get("shape", 0))
+	var normalized := {
+		"brush_pos": brush_pos,
+		"radius": float(mod_in.get("radius", 0.6)),
+		"value": float(mod_in.get("value", 0.0)),
+		"shape": shape,
+		"layer": int(mod_in.get("layer", 0)),
+		"material_id": int(mod_in.get("material_id", -1))
+	}
+	if shape == 2:
+		var y_min := float(mod_in.get("y_min", brush_pos.y))
+		var y_max := float(mod_in.get("y_max", brush_pos.y))
+		if y_max <= y_min:
+			return {}
+		normalized["y_min"] = y_min
+		normalized["y_max"] = y_max
+	return normalized
+
+func _read_mod_vector3(value: Variant) -> Vector3:
+	if value is Vector3:
+		return value
+	if value is Array and value.size() >= 3:
+		return Vector3(float(value[0]), float(value[1]), float(value[2]))
+	return Vector3.ZERO
+
+func _get_modification_covered_chunk_coords(mod: Dictionary) -> Array:
+	var coords: Array = []
+	var seen: Dictionary = {}
+	var brush_pos: Vector3 = mod.get("brush_pos", Vector3.ZERO)
+	var shape := int(mod.get("shape", 0))
+	var radius := float(mod.get("radius", 0.0))
+	var min_x := brush_pos.x - radius
+	var max_x := brush_pos.x + radius
+	var min_y := brush_pos.y - radius
+	var max_y := brush_pos.y + radius
+	var min_z := brush_pos.z - radius
+	var max_z := brush_pos.z + radius
+	if shape == 2:
+		var margin := 1.0
+		min_x = brush_pos.x - margin
+		max_x = brush_pos.x + margin
+		min_y = float(mod.get("y_min", brush_pos.y))
+		max_y = float(mod.get("y_max", brush_pos.y))
+		min_z = brush_pos.z - margin
+		max_z = brush_pos.z + margin
+
+	for chunk_x in range(int(floor(min_x / CHUNK_STRIDE)), int(floor(max_x / CHUNK_STRIDE)) + 1):
+		for chunk_y in range(int(floor(min_y / CHUNK_STRIDE)), int(floor(max_y / CHUNK_STRIDE)) + 1):
+			for chunk_z in range(int(floor(min_z / CHUNK_STRIDE)), int(floor(max_z / CHUNK_STRIDE)) + 1):
+				var coord := Vector3i(chunk_x, chunk_y, chunk_z)
+				if seen.has(coord):
+					continue
+				seen[coord] = true
+				coords.append(coord)
+	return coords
 
 func get_terrain_height(global_x: float, global_z: float) -> float:
 	# Find X,Z chunk coordinates
@@ -849,6 +947,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 	var max_chunk_z = int(floor((z + margin) / CHUNK_STRIDE))
 	
 	var tasks_to_add = []
+	var chunks_to_generate = []
 	
 	for chunk_x in range(min_chunk_x, max_chunk_x + 1):
 		for chunk_y in range(min_chunk_y, max_chunk_y + 1):
@@ -890,6 +989,22 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 								"y_max": y_to,
 								"material_id": - 1
 							})
+				else:
+					active_chunks[coord] = null
+					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+					chunks_to_generate.append({
+						"type": "generate",
+						"coord": coord,
+						"pos": chunk_pos
+					})
+
+	if chunks_to_generate.size() > 0:
+		mutex.lock()
+		for gen_task in chunks_to_generate:
+			task_queue.push_front(gen_task)
+		mutex.unlock()
+		for i in range(chunks_to_generate.size()):
+			semaphore.post()
 	
 	if tasks_to_add.size() > 0:
 		modification_batch_id += 1
@@ -906,6 +1021,8 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 		for i in range(batch_count):
 			semaphore.post()
 		DebugManager.log_chunk("fill_column: queued %d tasks" % batch_count)
+	elif chunks_to_generate.size() > 0:
+		DebugManager.log_chunk("fill_column: queued %d chunk generates" % chunks_to_generate.size())
 	else:
 		DebugManager.log_chunk("fill_column: NO TASKS QUEUED - chunk not loaded or no valid buffer")
 
@@ -993,7 +1110,7 @@ func _update_chunks_native():
 		
 	# 4. Special Case: Stored Modifications (Force load if nearby)
 	if chunks_queued < chunks_per_frame_limit and not initial_load_phase:
-		for coord in stored_modifications:
+		for coord in _get_all_modification_coords():
 			if chunks_queued >= chunks_per_frame_limit: break
 			if active_chunks.has(coord): continue
 			
@@ -1216,7 +1333,7 @@ func _update_chunks_gdscript():
 		
 		# Also load chunks with stored modifications (player builds) within range
 		if not initial_load_phase:
-			for coord in stored_modifications:
+			for coord in _get_all_modification_coords():
 				if chunks_queued_this_frame >= chunks_per_frame_limit:
 					return
 				if active_chunks.has(coord):
@@ -1352,6 +1469,8 @@ func _thread_function():
 	
 	# === World Map Buffers (uploaded from editor PNGs) ===
 	
+	_world_map_buildings = []
+	_world_map_terrain_modifications.clear()
 	if world_map_active and world_definition_path != "":
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 		var loaded = WorldMapGen.load_world(world_definition_path)
@@ -1382,10 +1501,15 @@ func _thread_function():
 				while w_bytes.size() % 4 != 0: w_bytes.append(0)
 				_world_map_water_buf = rd.storage_buffer_create(w_bytes.size(), w_bytes)
 			
-			# Load baked buildings
+			# Load baked buildings and terrain edits
+			_world_map_buildings = []
+			_world_map_terrain_modifications.clear()
 			if loaded.has("buildings"):
 				_world_map_buildings = loaded.buildings
 				print("[ChunkManager] Loaded %d baked buildings" % _world_map_buildings.size())
+			if loaded.has("terrain_modifications"):
+				_cache_world_map_terrain_modifications(loaded.terrain_modifications)
+				print("[ChunkManager] Loaded %d baked terrain modification chunks" % _world_map_terrain_modifications.size())
 			
 			# Load building footprint map
 			if loaded.has("building_map"):
@@ -1615,10 +1739,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	rd.compute_list_end()
 	# NO sync here!
 	
-	# Apply stored modifications (these need sync, but we batch them)
-	mutex.lock()
-	var mods_for_chunk = stored_modifications.get(coord, []).duplicate()
-	mutex.unlock()
+	# Apply baked world-map edits and runtime modifications (these need sync, but we batch them)
+	var mods_for_chunk = _get_modifications_for_chunk(coord)
 	
 	if mods_for_chunk.size() > 0:
 		# Debug: show when mods are applied to underground chunks

@@ -135,6 +135,7 @@ func generate_world() -> Dictionary:
 	var towns: Array = []
 	var road_segments: Array = []  # [{from: Vector2, to: Vector2}]
 	var path_segments: Array = []
+	var terrain_modifications: Array = []
 	var bldg_stats = {
 		"attempted": 0, "placed": 0,
 		"rejected_chance": 0, "rejected_bounds": 0, "rejected_water": 0,
@@ -145,7 +146,7 @@ func generate_world() -> Dictionary:
 	if use_grid_roads:
 		# LEGACY GRID MODE
 		_generate_grid_roads(height_bytes, biome_bytes, road_bytes, max_h, half)
-		_generate_grid_buildings(height_bytes, water_bytes, biome_bytes, road_bytes, max_h, half, buildings, bldg_stats)
+		_generate_grid_buildings(height_bytes, water_bytes, biome_bytes, road_bytes, max_h, half, buildings, terrain_modifications, bldg_stats)
 	else:
 		# TOWN MODE
 		if progress_callback.is_valid():
@@ -159,7 +160,7 @@ func generate_world() -> Dictionary:
 		
 		if progress_callback.is_valid():
 			progress_callback.call(55.0, "Placing buildings in towns")
-		_generate_town_buildings(towns, road_segments, path_segments, height_bytes, water_bytes, road_bytes, max_h, half, buildings, bldg_stats)
+		_generate_town_buildings(towns, road_segments, path_segments, height_bytes, water_bytes, road_bytes, max_h, half, buildings, terrain_modifications, bldg_stats)
 		if not path_segments.is_empty():
 			_rasterize_paths(path_segments, height_bytes, biome_bytes, road_bytes, max_h, half)
 	
@@ -207,7 +208,8 @@ func generate_world() -> Dictionary:
 	return {
 		"heightmap": heightmap, "biomes": biome_map, "roads": road_map,
 		"water": water_map, "building_map": building_map,
-		"buildings": buildings, "building_stats": bldg_stats, "towns": towns
+		"buildings": buildings, "building_stats": bldg_stats, "towns": towns,
+		"terrain_modifications": terrain_modifications
 	}
 
 # ============================================================================
@@ -1313,7 +1315,31 @@ func _append_door_path_segment(path_segments: Array, frontage_target: Vector2, r
 	_append_path_segment(path_segments, landing_point, frontage_target, building_path_width, bldg_y, frontage_y)
 	_append_path_segment(path_segments, frontage_target, road_target, building_path_width, frontage_y, road_y)
 
-func _append_baked_building(buildings: Array, path_segments: Array, height_bytes: PackedByteArray, max_h: float, half: int,
+func _append_baked_excavation_modifications(terrain_modifications: Array, prefab_name: String, spawn_origin: Vector3, rotation: int) -> void:
+	var segments := PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation)
+	for segment in segments:
+		var world_y_min := spawn_origin.y + float(segment.get("min_y", 0))
+		var world_y_max := spawn_origin.y + float(segment.get("max_y", -1)) + 1.0
+		if world_y_max <= world_y_min:
+			continue
+		var world_x := int(floor(spawn_origin.x)) + int(segment.get("x", 0))
+		var world_z := int(floor(spawn_origin.z)) + int(segment.get("z", 0))
+		terrain_modifications.append({
+			"brush_pos": [
+				float(world_x) + 0.5,
+				(world_y_min + world_y_max) * 0.5,
+				float(world_z) + 0.5
+			],
+			"radius": 0.6,
+			"value": 0.8,
+			"shape": 2,
+			"layer": 0,
+			"y_min": world_y_min,
+			"y_max": world_y_max,
+			"material_id": -1
+		})
+
+func _append_baked_building(buildings: Array, terrain_modifications: Array, path_segments: Array, height_bytes: PackedByteArray, max_h: float, half: int,
 		road_segments: Array, prefab_name: String, bldg_x: float, bldg_y: float, bldg_z: float, footprint: Vector2i,
 		rot: int, road_target: Vector2, district: String, road_kind: String, support_info: Dictionary = {}) -> void:
 	var spawn_origin = PrefabGeometry.get_spawn_origin_for_occupied_min(
@@ -1326,6 +1352,7 @@ func _append_baked_building(buildings: Array, path_segments: Array, height_bytes
 	var road_y = floor(_get_road_height_at(road_point.x, road_point.y))
 	_flatten_building_pad(height_bytes, bldg_x, bldg_z, footprint, bldg_y, max_h, half, support_info)
 	_append_door_path_segment(path_segments, road_target, road_point, prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint, road_y, bldg_y, height_bytes, max_h, half)
+	_append_baked_excavation_modifications(terrain_modifications, prefab_name, spawn_origin, rot)
 	buildings.append({
 		"x": bldg_x, "y": bldg_y, "z": bldg_z,
 		"anchor_mode": "occupied_min",
@@ -1341,7 +1368,7 @@ func _append_baked_building(buildings: Array, path_segments: Array, height_bytes
 		"road_kind": road_kind
 	})
 
-func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferred_prefabs: Array, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int, buildings: Array, bldg_stats: Dictionary, occupied: Array, desired_count: int) -> int:
+func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferred_prefabs: Array, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array, desired_count: int) -> int:
 	var center = Vector2(float(town.x), float(town.z))
 	var plaza_half = float(layout.get("plaza_half", 14.0))
 	var main_width = float(layout.get("main_width", settlement_road_width + 2.0))
@@ -1388,7 +1415,7 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 			occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
 			bldg_stats.placed += 1
 			placed += 1
-			_append_baked_building(buildings, path_segments, height_bytes, max_h, half, road_segments,
+			_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 				prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(slot.road_target),
 				"core_landmark", "main", support)
 			break
@@ -1396,7 +1423,7 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 
 func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred_prefabs: Array, road_segments: Array,
 		path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int,
-		buildings: Array, bldg_stats: Dictionary, occupied: Array, used_prefabs: Dictionary, desired_count: int) -> int:
+		buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array, used_prefabs: Dictionary, desired_count: int) -> int:
 	var used_parcels: Dictionary = {}
 	var placed = 0
 	for parcel_info in parcel_candidates:
@@ -1434,7 +1461,7 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 				placed += 1
 				used_parcels[parcel_idx] = true
 				used_prefabs[prefab_name] = true
-				_append_baked_building(buildings, path_segments, height_bytes, max_h, half, road_segments,
+				_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 					prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(parcel.frontage_target),
 					"core_landmark", str(parcel.get("road_kind", "main")), support)
 				break
@@ -1442,9 +1469,160 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 				break
 	return placed
 
+func _get_town_required_prefabs(catalog: Dictionary) -> Array[String]:
+	var entries: Array = []
+	for prefab_name in catalog:
+		entries.append(catalog[prefab_name])
+	entries.sort_custom(func(a, b):
+		var area_a := int(a.get("area", 0))
+		var area_b := int(b.get("area", 0))
+		if area_a == area_b:
+			return str(a.get("name", "")) < str(b.get("name", ""))
+		return area_a > area_b
+	)
+	var required: Array[String] = []
+	for entry in entries:
+		required.append(str(entry.get("name", "")))
+	return required
+
+func _get_town_building_clearance_margin(footprint: Vector2i) -> float:
+	return max(3.0, max(float(footprint.x), float(footprint.y)) * 0.35)
+
+func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidates: Array, used_parcels: Dictionary,
+		road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray,
+		forest_noise: FastNoiseLite, max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary,
+		occupied: Array) -> bool:
+	for parcel_info in parcel_candidates:
+		var parcel_idx := int(parcel_info.get("idx", -1))
+		if used_parcels.has(parcel_idx):
+			continue
+		var parcel: Dictionary = parcel_info.get("parcel", {})
+		if parcel.is_empty():
+			continue
+		var rot = _rotation_for_frontage_side(str(parcel.get("frontage_side", "north")))
+		bldg_stats.attempted += 1
+		var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, rot)
+		var fitted_positions = _fit_footprint_variants_in_parcel(parcel, footprint)
+		if fitted_positions.is_empty():
+			continue
+		var clearance_margin := _get_town_building_clearance_margin(footprint)
+		for fitted in fitted_positions:
+			var bldg_x = fitted.x
+			var bldg_z = fitted.y
+			var overlaps = false
+			for occ in occupied:
+				if _rects_overlap(bldg_x, bldg_z, float(footprint.x), float(footprint.y), occ.x, occ.z, occ.w, occ.d, clearance_margin):
+					overlaps = true
+					break
+			if overlaps:
+				continue
+			var support = _resolve_town_building_support(bldg_x, bldg_z, footprint, road_segments, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats)
+			if support.is_empty():
+				continue
+			var bldg_y = float(support.resolved_y)
+			occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
+			used_parcels[parcel_idx] = true
+			bldg_stats.placed += 1
+			_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
+				prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(parcel.frontage_target),
+				str(parcel.get("district", "residential")), str(parcel.get("road_kind", "secondary")), support)
+			return true
+	return false
+
+func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: Dictionary, prefab_name: String,
+		road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray,
+		max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array) -> bool:
+	var center = Vector2(float(town.x), float(town.z))
+	var plaza_half = float(layout.get("plaza_half", 14.0))
+	var main_width = float(layout.get("main_width", settlement_road_width + 2.0))
+	var offset = max(plaza_half, _road_clear_half(main_width)) + 4.0
+	var slot_defs = [
+		{"side": "west", "road_target": Vector2(center.x + offset - 2.0, center.y)},
+		{"side": "east", "road_target": Vector2(center.x - offset + 2.0, center.y)},
+		{"side": "south", "road_target": Vector2(center.x, center.y + offset - 2.0)},
+		{"side": "north", "road_target": Vector2(center.x, center.y - offset + 2.0)}
+	]
+	for slot in slot_defs:
+		var side = str(slot.side)
+		var rot = _rotation_for_frontage_side(side)
+		bldg_stats.attempted += 1
+		var footprint = PrefabGeometry.get_rotated_footprint(prefab_name, rot)
+		var bldg_x = center.x - float(footprint.x) * 0.5
+		var bldg_z = center.y - float(footprint.y) * 0.5
+		match side:
+			"west":
+				bldg_x = center.x + offset
+			"east":
+				bldg_x = center.x - offset - float(footprint.x)
+			"south":
+				bldg_z = center.y + offset
+			"north":
+				bldg_z = center.y - offset - float(footprint.y)
+		bldg_x = floor(bldg_x)
+		bldg_z = floor(bldg_z)
+		var clearance_margin := _get_town_building_clearance_margin(footprint)
+		var overlaps = false
+		for occ in occupied:
+			if _rects_overlap(bldg_x, bldg_z, float(footprint.x), float(footprint.y), occ.x, occ.z, occ.w, occ.d, clearance_margin):
+				overlaps = true
+				break
+		if overlaps:
+			continue
+		var support = _resolve_town_building_support(bldg_x, bldg_z, footprint, road_segments, height_bytes, water_bytes, null, max_h, half, bldg_stats)
+		if support.is_empty():
+			continue
+		var bldg_y = float(support.resolved_y)
+		occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
+		bldg_stats.placed += 1
+		_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
+			prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(slot.road_target),
+			"core_landmark", "main", support)
+		return true
+	return false
+
+func _place_required_prefabs_for_town(town: Dictionary, layout: Dictionary, required_prefabs: Array[String], parcel_slots: Array,
+		road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray,
+		forest_noise: FastNoiseLite, max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary,
+		occupied: Array) -> Dictionary:
+	var parcel_candidates: Array = []
+	for i in range(parcel_slots.size()):
+		var parcel: Dictionary = parcel_slots[i]
+		var parcel_size: Vector2 = parcel.get("size", Vector2.ZERO)
+		parcel_candidates.append({
+			"idx": i,
+			"parcel": parcel,
+			"area": float(parcel_size.x * parcel_size.y),
+			"score": float(parcel.get("score", 0.0))
+		})
+	parcel_candidates.sort_custom(func(a, b):
+		var area_a := float(a.get("area", 0.0))
+		var area_b := float(b.get("area", 0.0))
+		if abs(area_a - area_b) > 0.01:
+			return area_a > area_b
+		return float(a.get("score", 0.0)) > float(b.get("score", 0.0))
+	)
+
+	var used_parcels: Dictionary = {}
+	var missing: Array[String] = []
+	var placed := 0
+	for prefab_name in required_prefabs:
+		if _try_place_required_prefab_in_parcels(prefab_name, parcel_candidates, used_parcels, road_segments, path_segments,
+			height_bytes, water_bytes, forest_noise, max_h, half, buildings, terrain_modifications, bldg_stats, occupied):
+			placed += 1
+			continue
+		if _try_place_required_prefab_in_forced_core_slots(town, layout, prefab_name, road_segments, path_segments,
+			height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied):
+			placed += 1
+			continue
+		missing.append(prefab_name)
+	return {
+		"placed": placed,
+		"missing": missing
+	}
+
 func _generate_town_buildings(towns: Array, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray,
 		water_bytes: PackedByteArray, road_bytes: PackedByteArray,
-		max_h: float, half: int, buildings: Array, bldg_stats: Dictionary) -> void:
+		max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary) -> void:
 	var forest_noise = FastNoiseLite.new()
 	forest_noise.noise_type = FastNoiseLite.TYPE_VALUE
 	forest_noise.seed = world_seed + 100
@@ -1455,17 +1633,32 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 		var layout = _get_town_layout(town)
 		var rng = RandomNumberGenerator.new()
 		rng.seed = hash("%d_%d" % [int(town.x), int(town.z)]) + 42
-		var target = town.building_count
+		var required_prefabs := _get_town_required_prefabs(catalog)
+		var target = maxi(int(town.building_count), required_prefabs.size())
 		var placed_in_town = 0
 		var occupied: Array = []
-		var landmark_count = _place_town_landmarks(town, layout, catalog, road_segments, path_segments, height_bytes, water_bytes, max_h, half, buildings, bldg_stats, occupied, rng, 2)
+		var parcel_slots = _generate_town_building_slots(town, layout, road_segments, rng)
+		var guarantee_result := _place_required_prefabs_for_town(town, layout, required_prefabs, parcel_slots,
+			road_segments, path_segments, height_bytes, water_bytes, forest_noise, max_h, half, buildings, terrain_modifications, bldg_stats, occupied)
+		placed_in_town += int(guarantee_result.get("placed", 0))
+		var missing_required: Array = guarantee_result.get("missing", [])
+		if not missing_required.is_empty():
+			print("[WorldMapGen] Town at (%.0f,%.0f): missing guaranteed prefabs [%s]" % [
+				town.x,
+				town.z,
+				", ".join(missing_required)
+			])
+		if placed_in_town >= target:
+			print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
+			continue
+
+		var landmark_count = _place_town_landmarks(town, layout, catalog, road_segments, path_segments, height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied, rng, 2)
 		if landmark_count > 0:
 			placed_in_town += landmark_count
 			if placed_in_town >= target:
 				print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
 				continue
 
-		var parcel_slots = _generate_town_building_slots(town, layout, road_segments, rng)
 		target = mini(target, maxi(placed_in_town + 6, placed_in_town + parcel_slots.size()))
 		if not parcel_slots.is_empty():
 			for candidate in parcel_slots:
@@ -1510,7 +1703,7 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				occupied.append({"x": bldg_x, "z": bldg_z, "w": float(footprint.x), "d": float(footprint.y)})
 				bldg_stats.placed += 1
 				placed_in_town += 1
-				_append_baked_building(buildings, path_segments, height_bytes, max_h, half, road_segments,
+				_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 					prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, road_target,
 					district, str(candidate.get("road_kind", "secondary")), support)
 
@@ -1520,7 +1713,7 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 
 		print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
 
-func _place_town_landmarks(town: Dictionary, layout: Dictionary, catalog: Dictionary, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int, buildings: Array, bldg_stats: Dictionary, occupied: Array, rng: RandomNumberGenerator, desired_count: int = 2) -> int:
+func _place_town_landmarks(town: Dictionary, layout: Dictionary, catalog: Dictionary, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array, rng: RandomNumberGenerator, desired_count: int = 2) -> int:
 	if catalog.is_empty() or desired_count <= 0:
 		return 0
 
@@ -1580,12 +1773,12 @@ func _place_town_landmarks(town: Dictionary, layout: Dictionary, catalog: Dictio
 
 	var used_prefabs: Dictionary = {}
 	var placed = _place_landmarks_from_parcel_candidates(core_candidates, preferred_prefabs, road_segments, path_segments,
-		height_bytes, water_bytes, max_h, half, buildings, bldg_stats, occupied, used_prefabs, desired_count)
+		height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied, used_prefabs, desired_count)
 	if placed < desired_count:
 		placed += _place_landmarks_from_parcel_candidates(parcel_candidates, preferred_prefabs, road_segments, path_segments,
-			height_bytes, water_bytes, max_h, half, buildings, bldg_stats, occupied, used_prefabs, desired_count - placed)
+			height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied, used_prefabs, desired_count - placed)
 	if placed < desired_count:
-		placed += _place_forced_core_landmarks(town, layout, preferred_prefabs, road_segments, path_segments, height_bytes, water_bytes, max_h, half, buildings, bldg_stats, occupied, desired_count - placed)
+		placed += _place_forced_core_landmarks(town, layout, preferred_prefabs, road_segments, path_segments, height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied, desired_count - placed)
 
 	return placed
 
@@ -2080,7 +2273,7 @@ func _closest_point_on_segment(point: Vector2, a: Vector2, b: Vector2) -> Vector
 func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 		height_bytes: PackedByteArray, water_bytes: PackedByteArray,
 		biome_bytes: PackedByteArray, road_bytes: PackedByteArray,
-		max_h: float, half: int, buildings: Array, bldg_stats: Dictionary) -> void:
+		max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary) -> void:
 	
 	var rng = RandomNumberGenerator.new()
 	rng.seed = world_seed + 700
@@ -2146,6 +2339,7 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 				Vector3(sx, floor(terrain_y), sz),
 				0
 			)
+			_append_baked_excavation_modifications(terrain_modifications, prefab_name, spawn_origin, 0)
 			bldg_stats.placed += 1
 			wilderness_count += 1
 			buildings.append({
@@ -2349,7 +2543,7 @@ func _generate_grid_roads(height_bytes: PackedByteArray, biome_bytes: PackedByte
 
 func _generate_grid_buildings(height_bytes: PackedByteArray, water_bytes: PackedByteArray,
 		biome_bytes: PackedByteArray, road_bytes: PackedByteArray,
-		max_h: float, half: int, buildings: Array, bldg_stats: Dictionary) -> void:
+		max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary) -> void:
 	if progress_callback.is_valid():
 		progress_callback.call(70.0, "Placing buildings (grid)")
 	
@@ -2399,6 +2593,7 @@ func _generate_grid_buildings(height_bytes: PackedByteArray, water_bytes: Packed
 					Vector3(spawn_x, floor(terrain_y), spawn_z),
 					0
 				)
+				_append_baked_excavation_modifications(terrain_modifications, prefab_name, spawn_origin, 0)
 				bldg_stats.placed += 1
 				buildings.append({
 					"x": spawn_x, "y": floor(terrain_y), "z": spawn_z,
@@ -2426,7 +2621,7 @@ func save_world(path: String, images: Dictionary) -> bool:
 				return false
 	
 	var meta = {
-		"version": 5, "map_size": MAP_SIZE,
+		"version": 6, "map_size": MAP_SIZE,
 		"noise_freq": noise_freq, "terrain_height": terrain_height,
 		"road_spacing": road_spacing, "road_width": road_width,
 		"world_seed": world_seed, "use_grid_roads": use_grid_roads,
@@ -2437,6 +2632,8 @@ func save_world(path: String, images: Dictionary) -> bool:
 		meta["buildings"] = images.buildings
 	if images.has("towns"):
 		meta["towns"] = images.towns
+	if images.has("terrain_modifications"):
+		meta["terrain_modifications"] = images.terrain_modifications
 	
 	var file = FileAccess.open(path.path_join("world_meta.json"), FileAccess.WRITE)
 	if file:
@@ -2500,5 +2697,7 @@ static func load_world(path: String) -> Dictionary:
 				result["buildings"] = meta.buildings
 			if meta.has("towns"):
 				result["towns"] = meta.towns
+			if meta.has("terrain_modifications"):
+				result["terrain_modifications"] = meta.terrain_modifications
 			f.close()
 	return result

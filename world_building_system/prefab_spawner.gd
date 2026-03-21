@@ -631,6 +631,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if bool(placement_profile.get("auto_carve_volume", false)):
 		interior_carve = true
 	var rotated_bounds := PrefabGeometry.get_rotated_bounds(prefab_name, rotation)
+	var precise_carve_segments := PrefabGeometry.get_rotated_precise_carve_segments(prefab_name, rotation)
 	var min_offset: Vector3i = rotated_bounds.get("min", Vector3i.ZERO)
 	var max_offset: Vector3i = rotated_bounds.get("max", Vector3i.ZERO)
 
@@ -664,7 +665,22 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	# This prevents terrain from poking through walls, floors, or windows.
 	if interior_carve:
 		var carve_count := 0
-		if _can_use_column_terrain_ops():
+		var used_precise_carve := false
+		if not precise_carve_segments.is_empty():
+			used_precise_carve = true
+			if _can_use_column_terrain_ops():
+				carve_count = _carve_precise_segments_columns(spawn_pos, precise_carve_segments)
+			elif terrain_manager and terrain_manager.has_method("modify_terrain"):
+				for segment in precise_carve_segments:
+					var world_x: float = spawn_pos.x + float(segment.get("x", 0)) + 0.5
+					var world_z: float = spawn_pos.z + float(segment.get("z", 0)) + 0.5
+					var min_y: int = int(segment.get("min_y", 0))
+					var max_y: int = int(segment.get("max_y", -1))
+					for cy in range(min_y, max_y + 1):
+						var carve_pos := Vector3(world_x, spawn_pos.y + float(cy) + 0.5, world_z)
+						terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)
+						carve_count += 1
+		elif _can_use_column_terrain_ops():
 			carve_count = _carve_prefab_volume_columns(spawn_pos, min_offset, max_offset, submerge_offset)
 		elif terrain_manager and terrain_manager.has_method("modify_terrain"):
 			# Carve every position inside the bounding box where terrain exists
@@ -682,7 +698,10 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 						var carve_pos = spawn_pos + Vector3(float(cx) + 0.5, float(cy) + 0.5, float(cz) + 0.5)
 						terrain_manager.modify_terrain(carve_pos, 0.6, 1.0, 1, 0)
 						carve_count += 1
-		DebugManager.log_building("[FullCarve] Carved %d columns for '%s' (box: %v to %v)" % [carve_count, prefab_name, min_offset, max_offset])
+		if used_precise_carve:
+			DebugManager.log_building("[PreciseCarve] Carved %d columns for '%s'" % [carve_count, prefab_name])
+		else:
+			DebugManager.log_building("[FullCarve] Carved %d columns for '%s' (box: %v to %v)" % [carve_count, prefab_name, min_offset, max_offset])
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:
@@ -852,6 +871,26 @@ func _carve_prefab_volume_columns(spawn_pos: Vector3, min_offset: Vector3i, max_
 				0
 			)
 			carve_count += 1
+	return carve_count
+
+func _carve_precise_segments_columns(spawn_pos: Vector3, carve_segments: Array) -> int:
+	var carve_count := 0
+	for segment in carve_segments:
+		var world_x: int = int(floor(spawn_pos.x)) + int(segment.get("x", 0))
+		var world_z: int = int(floor(spawn_pos.z)) + int(segment.get("z", 0))
+		var min_y := int(segment.get("min_y", 0))
+		var max_y := int(segment.get("max_y", -1))
+		if max_y < min_y:
+			continue
+		terrain_manager.fill_column(
+			float(world_x) + 0.5,
+			float(world_z) + 0.5,
+			spawn_pos.y + float(min_y),
+			spawn_pos.y + float(max_y) + 1.0,
+			0.8,
+			0
+		)
+		carve_count += 1
 	return carve_count
 
 func _should_seal_prefab_foundation(placement_profile: Dictionary) -> bool:

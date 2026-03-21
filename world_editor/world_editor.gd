@@ -169,7 +169,7 @@ func _on_load_pressed() -> void:
 		return
 	
 	current_images = {}
-	for key in ["heightmap", "biomes", "roads", "water", "buildings", "building_map"]:
+	for key in ["heightmap", "biomes", "roads", "water", "buildings", "building_map", "terrain_modifications"]:
 		if loaded.has(key):
 			current_images[key] = loaded[key]
 	
