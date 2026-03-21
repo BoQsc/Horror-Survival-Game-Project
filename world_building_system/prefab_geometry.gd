@@ -4,6 +4,7 @@ class_name PrefabGeometry
 const ObjectRegistry = preload("res://world_building_system/object_registry.gd")
 const RES_PREFAB_DIR := "res://world_prefabs/"
 const USER_PREFAB_DIR := "user://world_prefabs/"
+const EXCAVATION_SAFETY_PADDING: int = 1
 
 static var _geometry_cache: Dictionary = {}
 static var _rotated_bounds_cache: Dictionary = {}
@@ -123,7 +124,8 @@ static func get_rotated_excavation_segments(prefab_name: String, rotation: int) 
 	var excavation_volumes: Array = placement_profile.get("excavation_volumes", [])
 	var rotated_segments: Array = []
 	if not excavation_volumes.is_empty():
-		rotated_segments = _build_rotated_segments_from_volumes(excavation_volumes, rotation)
+		var excavated_cells := _build_local_cell_set_from_volumes(excavation_volumes)
+		rotated_segments = _build_rotated_carve_segments(excavated_cells.keys(), rotation)
 	else:
 		rotated_segments = get_rotated_precise_carve_segments(prefab_name, rotation)
 
@@ -649,6 +651,19 @@ static func _build_local_cell_set_from_volumes(volumes: Array) -> Dictionary:
 					result[Vector3i(x, y, z)] = true
 	return result
 
+static func _inflate_local_cell_set(cell_set: Dictionary, padding: int) -> Dictionary:
+	if padding <= 0 or cell_set.is_empty():
+		return cell_set.duplicate()
+
+	var result: Dictionary = {}
+	for cell_var in cell_set.keys():
+		var cell: Vector3i = cell_var
+		for dz in range(-padding, padding + 1):
+			for dy in range(-padding, padding + 1):
+				for dx in range(-padding, padding + 1):
+					result[cell + Vector3i(dx, dy, dz)] = true
+	return result
+
 static func _build_required_below_grade_excavation_cells(enclosed_cells: Array, stair_cells: Array, min_y: int, grade_y: int) -> Dictionary:
 	var result: Dictionary = {}
 	for cell in enclosed_cells:
@@ -785,7 +800,10 @@ static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objec
 				else:
 					result["errors"].append("below-grade structure is missing excavation volumes")
 			else:
-				var excavated_cells := _build_local_cell_set_from_volumes(excavation_volumes)
+				var excavated_cells := _inflate_local_cell_set(
+					_build_local_cell_set_from_volumes(excavation_volumes),
+					EXCAVATION_SAFETY_PADDING
+				)
 				var missing_cells: Array[String] = []
 				for cell in required_excavation_cells:
 					if excavated_cells.has(cell):

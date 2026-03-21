@@ -45,6 +45,7 @@ var building_support_max_float: float = 1.85
 var building_support_max_embed: float = 3.5
 var building_support_search_radius: int = 4
 var building_support_sample_stride: float = 1.0
+var underground_cover_min: float = 2.0
 
 # Progress callback
 var progress_callback: Callable = Callable()
@@ -140,7 +141,8 @@ func generate_world() -> Dictionary:
 		"attempted": 0, "placed": 0,
 		"rejected_chance": 0, "rejected_bounds": 0, "rejected_water": 0,
 		"rejected_slope": 0, "rejected_forest": 0, "rejected_height": 0,
-		"rejected_road": 0, "rejected_float": 0, "rejected_embed": 0
+		"rejected_road": 0, "rejected_float": 0, "rejected_embed": 0,
+		"rejected_cover": 0
 	}
 	
 	if use_grid_roads:
@@ -1363,10 +1365,11 @@ func _append_baked_building(buildings: Array, terrain_modifications: Array, path
 		Vector3(bldg_x, bldg_y, bldg_z),
 		rot
 	)
+	var protected_excavation_columns := _get_off_footprint_excavation_columns(prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint)
 	var connection = _find_best_road_connection(road_target, road_segments, road_kind)
 	var road_point: Vector2 = connection.get("point", road_target)
 	var road_y = floor(_get_road_height_at(road_point.x, road_point.y))
-	_flatten_building_pad(height_bytes, bldg_x, bldg_z, footprint, bldg_y, max_h, half, support_info)
+	_flatten_building_pad(height_bytes, bldg_x, bldg_z, footprint, bldg_y, max_h, half, support_info, protected_excavation_columns)
 	_append_door_path_segment(path_segments, road_target, road_point, prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint, road_y, bldg_y, height_bytes, max_h, half)
 	_append_baked_excavation_modifications(terrain_modifications, prefab_name, spawn_origin, rot)
 	buildings.append({
@@ -1429,6 +1432,9 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 			if support.is_empty():
 				continue
 			var bldg_y = float(support.resolved_y)
+			if not _has_sufficient_excavation_cover(prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, height_bytes, max_h, half):
+				bldg_stats.rejected_cover += 1
+				continue
 			occupied.append(reservation_rect)
 			bldg_stats.placed += 1
 			placed += 1
@@ -1474,6 +1480,9 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 				if support.is_empty():
 					continue
 				var bldg_y = float(support.resolved_y)
+				if not _has_sufficient_excavation_cover(prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, height_bytes, max_h, half):
+					bldg_stats.rejected_cover += 1
+					continue
 				occupied.append(reservation_rect)
 				bldg_stats.placed += 1
 				placed += 1
@@ -1539,6 +1548,9 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 			if support.is_empty():
 				continue
 			var bldg_y = float(support.resolved_y)
+			if not _has_sufficient_excavation_cover(prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, height_bytes, max_h, half):
+				bldg_stats.rejected_cover += 1
+				continue
 			occupied.append(reservation_rect)
 			used_parcels[parcel_idx] = true
 			bldg_stats.placed += 1
@@ -1592,6 +1604,9 @@ func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: D
 		if support.is_empty():
 			continue
 		var bldg_y = float(support.resolved_y)
+		if not _has_sufficient_excavation_cover(prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, height_bytes, max_h, half):
+			bldg_stats.rejected_cover += 1
+			continue
 		occupied.append(reservation_rect)
 		bldg_stats.placed += 1
 		_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
@@ -1707,6 +1722,10 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				var support = _resolve_town_building_support(bldg_x, bldg_z, footprint, road_segments, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats)
 				if support.is_empty():
 					continue
+				var bldg_y = float(support.resolved_y)
+				if not _has_sufficient_excavation_cover(prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, height_bytes, max_h, half):
+					bldg_stats.rejected_cover += 1
+					continue
 
 				var reservation_rect := _get_prefab_reservation_rect(prefab_name, rot, bldg_x, bldg_z)
 				var overlaps = false
@@ -1718,7 +1737,6 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				if overlaps:
 					continue
 
-				var bldg_y = float(support.resolved_y)
 				var road_target: Vector2 = candidate.frontage_target
 
 				occupied.append(reservation_rect)
@@ -2110,6 +2128,31 @@ func _resolve_town_building_support(bldg_x: float, bldg_z: float, footprint: Vec
 
 	return support
 
+func _has_sufficient_excavation_cover(prefab_name: String, bldg_x: float, bldg_y: float, bldg_z: float, footprint: Vector2i,
+		rotation: int, height_bytes: PackedByteArray, max_h: float, half: int) -> bool:
+	var segments := PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation)
+	if segments.is_empty():
+		return true
+	var spawn_origin := PrefabGeometry.get_spawn_origin_for_surface_min(
+		prefab_name,
+		Vector3(bldg_x, bldg_y, bldg_z),
+		rotation
+	)
+	var min_x := int(floor(bldg_x))
+	var min_z := int(floor(bldg_z))
+	var max_x := min_x + footprint.x - 1
+	var max_z := min_z + footprint.y - 1
+	for segment in segments:
+		var world_x := int(floor(spawn_origin.x)) + int(segment.get("x", 0))
+		var world_z := int(floor(spawn_origin.z)) + int(segment.get("z", 0))
+		if world_x >= min_x and world_x <= max_x and world_z >= min_z and world_z <= max_z:
+			continue
+		var excavation_top := spawn_origin.y + float(segment.get("max_y", -1)) + 1.0
+		var terrain_top := _sample_world_height(float(world_x), float(world_z), height_bytes, max_h, half)
+		if terrain_top < excavation_top + underground_cover_min:
+			return false
+	return true
+
 func _sample_building_pad_height(bldg_x: float, bldg_z: float, footprint: Vector2i, height_bytes: PackedByteArray, max_h: float, half: int) -> float:
 	var min_x = clampi(int(floor(bldg_x)) + half, 0, MAP_SIZE - 1)
 	var min_z = clampi(int(floor(bldg_z)) + half, 0, MAP_SIZE - 1)
@@ -2156,17 +2199,23 @@ func _sample_support_height(wx: float, wz: float, height_bytes: PackedByteArray,
 	var pz = clampi(int(floor(wz)) + half, 0, MAP_SIZE - 1)
 	return clampf(float(height_bytes[pz * MAP_SIZE + px]) / 255.0 * max_h, 1.0, 28.0)
 
-func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z: float, footprint: Vector2i, bldg_y: float, max_h: float, half: int, support_info: Dictionary = {}) -> void:
+func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z: float, footprint: Vector2i, bldg_y: float, max_h: float, half: int, support_info: Dictionary = {}, protected_columns: Dictionary = {}) -> void:
 	var flat_h_byte = _encode_height_byte(bldg_y, max_h)
 	var longest_side = max(float(footprint.x), float(footprint.y))
 	var support_range = float(support_info.get("height_range", 0.0))
 	var pad = max(6, int(ceil(longest_side * 0.5 + support_range * 1.25)))
+	var base_world_x := int(floor(bldg_x))
+	var base_world_z := int(floor(bldg_z))
 	var width = footprint.x + pad * 2
 	var depth = footprint.y + pad * 2
 	for fz in range(-pad, depth - pad + 1):
 		for fx in range(-pad, width - pad + 1):
 			var fpx = clampi(int(bldg_x + half) + fx, 0, MAP_SIZE - 1)
 			var fpz = clampi(int(bldg_z + half) + fz, 0, MAP_SIZE - 1)
+			var world_col := Vector2i(base_world_x + fx, base_world_z + fz)
+			var inside_surface := fx >= 0 and fx < footprint.x and fz >= 0 and fz < footprint.y
+			if not inside_surface and protected_columns.has(world_col):
+				continue
 			var h_idx = fpz * MAP_SIZE + fpx
 			var orig_h_byte = height_bytes[h_idx]
 			var dx = max(0.0, max(0.0 - fx, fx - float(footprint.x)))
@@ -2179,6 +2228,20 @@ func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z:
 				var blend_t = (dist - inner_flat) / max(0.001, float(pad) - inner_flat)
 				var smooth_t = blend_t * blend_t * (3.0 - 2.0 * blend_t)
 				height_bytes[h_idx] = int(lerp(float(flat_h_byte), float(orig_h_byte), smooth_t))
+
+func _get_off_footprint_excavation_columns(prefab_name: String, spawn_origin: Vector3, rotation: int, bldg_x: float, bldg_z: float, footprint: Vector2i) -> Dictionary:
+	var protected_columns: Dictionary = {}
+	var min_x := int(floor(bldg_x))
+	var min_z := int(floor(bldg_z))
+	var max_x := min_x + footprint.x - 1
+	var max_z := min_z + footprint.y - 1
+	for segment in PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation):
+		var world_x := int(floor(spawn_origin.x)) + int(segment.get("x", 0))
+		var world_z := int(floor(spawn_origin.z)) + int(segment.get("z", 0))
+		if world_x >= min_x and world_x <= max_x and world_z >= min_z and world_z <= max_z:
+			continue
+		protected_columns[Vector2i(world_x, world_z)] = true
+	return protected_columns
 
 func _front_center_for_rotation(bldg_x: float, bldg_z: float, footprint: Vector2i, rotation: int) -> Vector2:
 	match rotation:
@@ -2352,6 +2415,10 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 			var pz = int(sz + half)
 			var bidx = pz * MAP_SIZE + px
 			var terrain_y = float(support.get("resolved_y", clampf(float(height_bytes[bidx]) / 255.0 * max_h, 1.0, 28.0)))
+			if not _has_sufficient_excavation_cover(prefab_name, sx, terrain_y, sz, footprint, 0, height_bytes, max_h, half):
+				bldg_stats.rejected_cover += 1
+				wz += spacing
+				continue
 			var nearest_road_pt = _find_nearest_road_point(sx, sz, road_segments)
 			if nearest_road_pt != Vector2.ZERO:
 				var path_seg = [{"from": Vector2(sx, sz), "to": nearest_road_pt}]
