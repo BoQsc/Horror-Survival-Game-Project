@@ -956,7 +956,7 @@ static func _validate_internal_stairs(stair_cells: Array[Vector3i], solid_cells:
 		result["errors"].append("stairs have blocked headroom at %s" % headroom)
 	var approach: Variant = _find_stair_approach_block(component, solid_cells, step)
 	if approach != null:
-		result["errors"].append("stairs have blocked approach clearance at %s" % approach)
+		result["warnings"].append("stairs have blocked approach clearance at %s" % approach)
 	if not _stairs_have_landing(component, solid_cells, step):
 		result["errors"].append("stairs are missing a clear landing at the top")
 	return result
@@ -1140,7 +1140,7 @@ static func _validate_below_grade_access(stair_cells: Array[Vector3i], solid_cel
 		result["errors"].append("unable to determine basement stair direction")
 		return result
 	if not _stairs_have_bottom_landing(component, solid_cells, step):
-		result["errors"].append("stairs are missing a clear landing at the bottom")
+		result["warnings"].append("stairs are missing a clear landing at the bottom")
 	return result
 
 static func _object_touches_exterior(occupied_cells: Array[Vector3i], solid_cells: Dictionary,
