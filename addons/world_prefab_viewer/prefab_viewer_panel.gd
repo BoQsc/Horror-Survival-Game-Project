@@ -213,6 +213,8 @@ func _build_ui() -> void:
 	_info_label.bbcode_enabled = true
 	_info_label.fit_content = true
 	_info_label.scroll_active = false
+	_info_label.selection_enabled = true
+	_info_label.focus_mode = Control.FOCUS_CLICK
 	_info_label.custom_minimum_size = Vector2(0.0, 140.0)
 	_info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right_panel.add_child(_info_label)
