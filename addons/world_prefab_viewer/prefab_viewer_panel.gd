@@ -15,6 +15,9 @@ const SURFACE_OVERLAY_COLOR := Color(0.22, 0.78, 0.40, 0.18)
 const RESERVATION_OVERLAY_COLOR := Color(0.27, 0.53, 0.90, 0.12)
 const EXCAVATION_OVERLAY_COLOR := Color(0.85, 0.28, 0.28, 0.14)
 const SELECTION_OVERLAY_COLOR := Color(1.0, 0.92, 0.28, 0.22)
+const PREFAB_WATCH_INTERVAL := 0.5
+const CAMERA_FLY_SPEED := 8.0
+const CAMERA_FLY_FAST_MULTIPLIER := 2.5
 
 var _prefab_entries: Array = []
 var _current_prefab: Dictionary = {}
@@ -35,6 +38,17 @@ var _pending_camera_fit := true
 var _real_object_count := 0
 var _fallback_object_count := 0
 var _selected_cell: Dictionary = {}
+var _watched_prefab_mtime: int = -1
+var _watch_elapsed := 0.0
+var _fly_keys := {
+	KEY_W: false,
+	KEY_A: false,
+	KEY_S: false,
+	KEY_D: false,
+	KEY_Q: false,
+	KEY_E: false,
+	KEY_SHIFT: false
+}
 
 var _prefab_list: ItemList
 var _rotation_option: OptionButton
@@ -57,6 +71,7 @@ func _ready() -> void:
 	_build_ui()
 	_build_viewport()
 	_reload_prefabs()
+	set_process(true)
 
 
 func _exit_tree() -> void:
@@ -224,6 +239,7 @@ func _build_ui() -> void:
 	_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_viewport_container.custom_minimum_size = Vector2(320.0, 240.0)
 	_viewport_container.stretch = true
+	_viewport_container.focus_mode = Control.FOCUS_ALL
 	_viewport_container.mouse_filter = Control.MOUSE_FILTER_STOP
 	_viewport_container.gui_input.connect(_on_viewport_input)
 	right_panel.add_child(_viewport_container)
@@ -319,6 +335,7 @@ func _on_prefab_selected(index: int) -> void:
 	if previous_path != str(_current_prefab.get("path", "")):
 		_selected_cell = {}
 	_pending_camera_fit = (previous_path != str(_current_prefab.get("path", ""))) or not _camera_initialized
+	_watched_prefab_mtime = _get_prefab_modified_time(str(_current_prefab.get("path", "")))
 	_update_slice_controls()
 	_update_info()
 	_render_current_prefab()
@@ -326,6 +343,14 @@ func _on_prefab_selected(index: int) -> void:
 
 func _rerender_current_prefab(_arg = null) -> void:
 	_render_current_prefab()
+
+
+func _process(delta: float) -> void:
+	_watch_elapsed += delta
+	if _watch_elapsed >= PREFAB_WATCH_INTERVAL:
+		_watch_elapsed = 0.0
+		_watch_current_prefab_for_changes()
+	_update_fly_camera(delta)
 
 
 func _clear_preview() -> void:
@@ -833,6 +858,8 @@ func _on_viewport_input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
+		if mouse_event.pressed and _viewport_container:
+			_viewport_container.grab_focus()
 		match mouse_event.button_index:
 			MOUSE_BUTTON_LEFT:
 				if mouse_event.pressed:
@@ -852,13 +879,20 @@ func _on_viewport_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_WHEEL_DOWN:
 				if mouse_event.pressed:
 					_zoom_camera(1.14)
+	elif event is InputEventKey:
+		var key_event := event as InputEventKey
+		if key_event.echo:
+			return
+		var keycode := key_event.keycode
+		if _fly_keys.has(keycode):
+			_fly_keys[keycode] = key_event.pressed
 	elif event is InputEventMouseMotion:
 		var motion_event := event as InputEventMouseMotion
 		if _is_orbiting:
 			_camera_preset = "custom"
 			_camera_yaw -= motion_event.relative.x * 0.01
 			_camera_pitch = clamp(_camera_pitch + (motion_event.relative.y * 0.01), deg_to_rad(-80.0), deg_to_rad(80.0))
-			_apply_camera_transform()
+			_apply_camera_look_from_current_position()
 		elif _is_panning:
 			_pan_camera(motion_event.relative)
 
@@ -904,6 +938,43 @@ func _pan_camera(relative: Vector2) -> void:
 	_apply_camera_transform()
 
 
+func _update_fly_camera(delta: float) -> void:
+	if not _camera or not _viewport_container or not _viewport_container.has_focus():
+		return
+
+	var move := Vector3.ZERO
+	if _fly_keys.get(KEY_W, false):
+		move.z += 1.0
+	if _fly_keys.get(KEY_S, false):
+		move.z -= 1.0
+	if _fly_keys.get(KEY_A, false):
+		move.x -= 1.0
+	if _fly_keys.get(KEY_D, false):
+		move.x += 1.0
+	if _fly_keys.get(KEY_E, false):
+		move.y += 1.0
+	if _fly_keys.get(KEY_Q, false):
+		move.y -= 1.0
+	if move == Vector3.ZERO:
+		return
+
+	_camera_preset = "custom"
+	var speed := CAMERA_FLY_SPEED
+	if _fly_keys.get(KEY_SHIFT, false):
+		speed *= CAMERA_FLY_FAST_MULTIPLIER
+	var basis := _camera.global_transform.basis
+	var forward := -basis.z.normalized()
+	var right := basis.x.normalized()
+	var up := Vector3.UP
+	var world_move := (
+		right * move.x +
+		up * move.y +
+		forward * move.z
+	).normalized() * speed * delta
+	_camera_target += world_move
+	_apply_camera_transform()
+
+
 func _apply_camera_transform() -> void:
 	var offset := Vector3(
 		cos(_camera_pitch) * sin(_camera_yaw),
@@ -912,6 +983,72 @@ func _apply_camera_transform() -> void:
 	) * _camera_distance
 	_camera.position = _camera_target + offset
 	_camera.look_at(_camera_target, Vector3.UP)
+
+
+func _apply_camera_look_from_current_position() -> void:
+	if not _camera:
+		return
+	var camera_position := _camera.position
+	var forward := _get_camera_forward()
+	_camera_target = camera_position + (forward * _camera_distance)
+	_apply_camera_transform()
+
+
+func _get_camera_forward() -> Vector3:
+	return -Vector3(
+		cos(_camera_pitch) * sin(_camera_yaw),
+		sin(_camera_pitch),
+		cos(_camera_pitch) * cos(_camera_yaw)
+	).normalized()
+
+
+func _watch_current_prefab_for_changes() -> void:
+	if _current_prefab.is_empty():
+		return
+	var path := str(_current_prefab.get("path", ""))
+	if path.is_empty():
+		return
+	var modified_time := _get_prefab_modified_time(path)
+	if modified_time < 0:
+		return
+	if _watched_prefab_mtime < 0:
+		_watched_prefab_mtime = modified_time
+		return
+	if modified_time != _watched_prefab_mtime:
+		_watched_prefab_mtime = modified_time
+		_reload_current_prefab_from_disk()
+
+
+func _reload_current_prefab_from_disk() -> void:
+	if _current_prefab.is_empty():
+		return
+	var path := str(_current_prefab.get("path", ""))
+	if path.is_empty():
+		return
+	var selected_pos: Variant = _selected_cell.get("pos", null)
+	_current_prefab = ViewerData.load_prefab(path)
+	if selected_pos != null:
+		_selected_cell = _find_cell_by_local_pos(selected_pos)
+	else:
+		_selected_cell = {}
+	_update_slice_controls()
+	_update_info()
+	_render_current_prefab()
+
+
+func _find_cell_by_local_pos(local_pos: Variant) -> Dictionary:
+	if local_pos == null:
+		return {}
+	for cell in _current_prefab.get("cells", []):
+		if cell.get("pos", Vector3i.ZERO) == local_pos:
+			return cell
+	return {}
+
+
+func _get_prefab_modified_time(path: String) -> int:
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return -1
+	return int(FileAccess.get_modified_time(path))
 
 
 func _select_cell_at_screen_pos(screen_pos: Vector2) -> void:
@@ -1172,7 +1309,7 @@ func _update_info() -> void:
 		)
 	else:
 		lines.append("Selected block: none")
-	lines.append("Controls: LMB select, RMB orbit, Shift+RMB/MMB pan, Wheel zoom")
+	lines.append("Controls: LMB select, RMB look, Shift+RMB/MMB pan, Wheel zoom, WASD fly, Q/E vertical, Shift fast")
 
 	var surface_rect := ViewerData.get_surface_rect(_current_prefab)
 	if not surface_rect.is_empty():
