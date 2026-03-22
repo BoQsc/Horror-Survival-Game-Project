@@ -11,6 +11,12 @@ var _current_prefab: Dictionary = {}
 var _material_cache: Dictionary = {}
 var _runtime_mesher: RefCounted
 var _runtime_error := ""
+var _camera_target := Vector3.ZERO
+var _camera_distance := 12.0
+var _camera_yaw := PI / 4.0
+var _camera_pitch := deg_to_rad(30.0)
+var _is_orbiting := false
+var _is_panning := false
 
 var _prefab_list: ItemList
 var _rotation_option: OptionButton
@@ -59,6 +65,11 @@ func _build_ui() -> void:
 	refresh_button.text = "Refresh"
 	refresh_button.pressed.connect(_reload_prefabs)
 	toolbar.add_child(refresh_button)
+
+	var fit_button := Button.new()
+	fit_button.text = "Fit"
+	fit_button.pressed.connect(_rerender_current_prefab)
+	toolbar.add_child(fit_button)
 
 	var rotation_label := Label.new()
 	rotation_label.text = "Rotation"
@@ -132,6 +143,8 @@ func _build_ui() -> void:
 	_viewport_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_viewport_container.custom_minimum_size = Vector2(320.0, 240.0)
 	_viewport_container.stretch = true
+	_viewport_container.mouse_filter = Control.MOUSE_FILTER_STOP
+	_viewport_container.gui_input.connect(_on_viewport_input)
 	right_panel.add_child(_viewport_container)
 
 
@@ -448,14 +461,72 @@ func _frame_camera(bounds_min: Vector3, bounds_max: Vector3) -> void:
 		bounds_min = Vector3.ZERO
 		bounds_max = Vector3.ONE
 
-	var center := (bounds_min + bounds_max) * 0.5
+	_camera_target = (bounds_min + bounds_max) * 0.5
 	var extents := bounds_max - bounds_min
 	var radius := max(max(extents.x, extents.y), extents.z)
 	radius = max(radius, 4.0)
 
-	_camera.position = center + Vector3(radius * 1.35, radius * 0.95, radius * 1.35)
-	_camera.look_at(center, Vector3.UP)
+	_camera_distance = max(radius * 2.15, 3.0)
+	_camera_yaw = PI / 4.0
+	_camera_pitch = deg_to_rad(30.0)
+	_apply_camera_transform()
 	_camera.far = max(200.0, radius * 10.0)
+
+
+func _on_viewport_input(event: InputEvent) -> void:
+	if not _camera:
+		return
+
+	if event is InputEventMouseButton:
+		var mouse_event := event as InputEventMouseButton
+		match mouse_event.button_index:
+			MOUSE_BUTTON_RIGHT:
+				if mouse_event.pressed:
+					_is_orbiting = not mouse_event.shift_pressed
+					_is_panning = mouse_event.shift_pressed
+				else:
+					_is_orbiting = false
+					_is_panning = false
+			MOUSE_BUTTON_MIDDLE:
+				_is_panning = mouse_event.pressed
+			MOUSE_BUTTON_WHEEL_UP:
+				if mouse_event.pressed:
+					_zoom_camera(0.88)
+			MOUSE_BUTTON_WHEEL_DOWN:
+				if mouse_event.pressed:
+					_zoom_camera(1.14)
+	elif event is InputEventMouseMotion:
+		var motion_event := event as InputEventMouseMotion
+		if _is_orbiting:
+			_camera_yaw -= motion_event.relative.x * 0.01
+			_camera_pitch = clamp(_camera_pitch + (motion_event.relative.y * 0.01), deg_to_rad(-80.0), deg_to_rad(80.0))
+			_apply_camera_transform()
+		elif _is_panning:
+			_pan_camera(motion_event.relative)
+
+
+func _zoom_camera(multiplier: float) -> void:
+	_camera_distance = clamp(_camera_distance * multiplier, 1.5, 500.0)
+	_apply_camera_transform()
+
+
+func _pan_camera(relative: Vector2) -> void:
+	var pan_scale := max(_camera_distance * 0.0025, 0.01)
+	var basis := _camera.global_transform.basis
+	var right := basis.x.normalized()
+	var up := basis.y.normalized()
+	_camera_target += (-right * relative.x * pan_scale) + (up * relative.y * pan_scale)
+	_apply_camera_transform()
+
+
+func _apply_camera_transform() -> void:
+	var offset := Vector3(
+		cos(_camera_pitch) * sin(_camera_yaw),
+		sin(_camera_pitch),
+		cos(_camera_pitch) * cos(_camera_yaw)
+	) * _camera_distance
+	_camera.position = _camera_target + offset
+	_camera.look_at(_camera_target, Vector3.UP)
 
 
 func _render_runtime_blocks(rotation: int, bounds: Dictionary) -> bool:
@@ -567,6 +638,7 @@ func _update_info() -> void:
 	lines.append("grade_y: %d" % int(placement.get("grade_y", 0)))
 	lines.append("Excavation volumes: %d" % placement.get("excavation_volumes", []).size())
 	lines.append("Preview mesh: %s" % ("runtime" if _show_runtime_mesh_toggle and _show_runtime_mesh_toggle.button_pressed and _runtime_error.is_empty() else "simple"))
+	lines.append("Controls: RMB orbit, Shift+RMB/MMB pan, Wheel zoom")
 
 	var surface_rect := ViewerData.get_surface_rect(_current_prefab)
 	if not surface_rect.is_empty():
