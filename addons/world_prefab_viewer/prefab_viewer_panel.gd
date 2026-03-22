@@ -621,6 +621,7 @@ func _add_terrain_nodes(rotation: int) -> Dictionary:
 	var grade_y := int(placement.get("grade_y", 0))
 	var surface_rect := ViewerData.rotate_rect(ViewerData.get_surface_rect(_current_prefab), rotation)
 	var terrain_columns := _build_terrain_column_sets(rotation, grade_y)
+	var occupied_cells: Dictionary = terrain_columns.get("occupied", {})
 	var surface_columns: Dictionary = terrain_columns.get("surface", {})
 	var excavation_volumes: Array = []
 	var min_excavation_y := grade_y
@@ -645,7 +646,11 @@ func _add_terrain_nodes(rotation: int) -> Dictionary:
 			var run_start := INF
 			var top_solid_y := -INF
 			for y in range(terrain_floor_y, terrain_top_voxel_y + 1):
-				var solid := not _is_excavated_cell(Vector3i(x, y, z), excavation_volumes)
+				var cell_pos := Vector3i(x, y, z)
+				var solid := (
+					not _is_excavated_cell(cell_pos, excavation_volumes)
+					and not occupied_cells.has(_voxel_key(cell_pos))
+				)
 				if solid:
 					if run_start == INF:
 						run_start = y
@@ -689,23 +694,26 @@ func _expand_rect(rect: Dictionary, margin: int) -> Dictionary:
 
 
 func _build_terrain_column_sets(rotation: int, grade_y: int) -> Dictionary:
-	var buried := {}
+	var occupied := {}
 	var surface := {}
 	for cell in _current_prefab.get("cells", []):
 		var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
-		var key := _column_key(rotated_pos.x, rotated_pos.z)
 		if rotated_pos.y < grade_y:
-			buried[key] = true
+			occupied[_voxel_key(rotated_pos)] = true
 		else:
-			surface[key] = true
+			surface[_column_key(rotated_pos.x, rotated_pos.z)] = true
 	return {
-		"buried": buried,
+		"occupied": occupied,
 		"surface": surface
 	}
 
 
 func _column_key(x: int, z: int) -> String:
 	return "%d,%d" % [x, z]
+
+
+func _voxel_key(pos: Vector3i) -> String:
+	return "%d,%d,%d" % [pos.x, pos.y, pos.z]
 
 
 func _rect_contains(rect: Dictionary, pos: Vector2i) -> bool:
