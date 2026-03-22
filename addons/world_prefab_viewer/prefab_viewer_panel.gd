@@ -11,6 +11,9 @@ const TERRAIN_MARGIN := 3
 const SLICE_MODE_ALL := 0
 const SLICE_MODE_UP_TO := 1
 const SLICE_MODE_ONLY := 2
+const SURFACE_OVERLAY_COLOR := Color(0.22, 0.78, 0.40, 0.18)
+const RESERVATION_OVERLAY_COLOR := Color(0.27, 0.53, 0.90, 0.12)
+const EXCAVATION_OVERLAY_COLOR := Color(0.85, 0.28, 0.28, 0.14)
 
 var _prefab_entries: Array = []
 var _current_prefab: Dictionary = {}
@@ -166,6 +169,18 @@ func _build_ui() -> void:
 	var stretch := Control.new()
 	stretch.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toolbar.add_child(stretch)
+
+	var legend_bar := HBoxContainer.new()
+	legend_bar.add_theme_constant_override("separation", 14)
+	root.add_child(legend_bar)
+
+	var legend_label := Label.new()
+	legend_label.text = "Legend"
+	legend_bar.add_child(legend_label)
+
+	legend_bar.add_child(_build_legend_item(SURFACE_OVERLAY_COLOR, "Surface"))
+	legend_bar.add_child(_build_legend_item(RESERVATION_OVERLAY_COLOR, "Reservation"))
+	legend_bar.add_child(_build_legend_item(EXCAVATION_OVERLAY_COLOR, "Excavation"))
 
 	var split := HSplitContainer.new()
 	split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -688,17 +703,17 @@ func _add_overlay_nodes(rotation: int) -> Dictionary:
 
 	var surface_rect := ViewerData.rotate_rect(ViewerData.get_surface_rect(_current_prefab), rotation)
 	if not surface_rect.is_empty():
-		var surface_bounds := _add_rect_overlay(surface_rect, grade_y + 0.02, Color(0.22, 0.78, 0.40, 0.18))
+		var surface_bounds := _add_rect_overlay(surface_rect, grade_y + 0.02, SURFACE_OVERLAY_COLOR)
 		overlay_bounds = _merge_bounds(overlay_bounds, surface_bounds)
 
 	var reservation_rect := ViewerData.rotate_rect(ViewerData.get_reservation_rect(_current_prefab), rotation)
 	if not reservation_rect.is_empty():
-		var reservation_bounds := _add_rect_overlay(reservation_rect, grade_y + 0.07, Color(0.27, 0.53, 0.90, 0.12))
+		var reservation_bounds := _add_rect_overlay(reservation_rect, grade_y + 0.07, RESERVATION_OVERLAY_COLOR)
 		overlay_bounds = _merge_bounds(overlay_bounds, reservation_bounds)
 
 	for volume in placement.get("excavation_volumes", []):
 		var rotated_volume := ViewerData.rotate_volume(volume, rotation)
-		var volume_bounds := _add_volume_overlay(rotated_volume, Color(0.85, 0.28, 0.28, 0.14))
+		var volume_bounds := _add_volume_overlay(rotated_volume, EXCAVATION_OVERLAY_COLOR)
 		overlay_bounds = _merge_bounds(overlay_bounds, volume_bounds)
 
 	return overlay_bounds
@@ -861,6 +876,22 @@ func _apply_camera_transform() -> void:
 	) * _camera_distance
 	_camera.position = _camera_target + offset
 	_camera.look_at(_camera_target, Vector3.UP)
+
+
+func _build_legend_item(color: Color, text: String) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+
+	var swatch := ColorRect.new()
+	swatch.custom_minimum_size = Vector2(18.0, 12.0)
+	swatch.color = color
+	row.add_child(swatch)
+
+	var label := Label.new()
+	label.text = text
+	row.add_child(label)
+
+	return row
 
 
 func _rect_from_volumes(volumes: Array) -> Dictionary:
