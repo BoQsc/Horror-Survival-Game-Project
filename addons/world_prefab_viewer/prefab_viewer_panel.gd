@@ -5,6 +5,9 @@ const ViewerData = preload("res://addons/world_prefab_viewer/prefab_viewer_data.
 const ViewerMesher = preload("res://addons/world_prefab_viewer/prefab_viewer_mesher.gd")
 const OPTIONAL_WOOD_TEXTURE_PATH := "res://world_greedy_meshing/wood-block-texture.png"
 const RUNTIME_MATERIAL_CACHE_KEY := -999
+const SLICE_MODE_ALL := 0
+const SLICE_MODE_UP_TO := 1
+const SLICE_MODE_ONLY := 2
 
 var _prefab_entries: Array = []
 var _current_prefab: Dictionary = {}
@@ -17,9 +20,14 @@ var _camera_yaw := PI / 4.0
 var _camera_pitch := deg_to_rad(30.0)
 var _is_orbiting := false
 var _is_panning := false
+var _camera_preset := "iso"
+var _last_bounds_min := Vector3.ZERO
+var _last_bounds_max := Vector3.ONE
 
 var _prefab_list: ItemList
 var _rotation_option: OptionButton
+var _slice_mode_option: OptionButton
+var _slice_y_spin: SpinBox
 var _show_runtime_mesh_toggle: CheckBox
 var _show_objects_toggle: CheckBox
 var _show_overlays_toggle: CheckBox
@@ -68,8 +76,28 @@ func _build_ui() -> void:
 
 	var fit_button := Button.new()
 	fit_button.text = "Fit"
-	fit_button.pressed.connect(_rerender_current_prefab)
+	fit_button.pressed.connect(_fit_camera_to_last_bounds)
 	toolbar.add_child(fit_button)
+
+	var iso_button := Button.new()
+	iso_button.text = "Iso"
+	iso_button.pressed.connect(func() -> void: _set_camera_preset("iso"))
+	toolbar.add_child(iso_button)
+
+	var top_button := Button.new()
+	top_button.text = "Top"
+	top_button.pressed.connect(func() -> void: _set_camera_preset("top"))
+	toolbar.add_child(top_button)
+
+	var front_button := Button.new()
+	front_button.text = "Front"
+	front_button.pressed.connect(func() -> void: _set_camera_preset("front"))
+	toolbar.add_child(front_button)
+
+	var right_button := Button.new()
+	right_button.text = "Right"
+	right_button.pressed.connect(func() -> void: _set_camera_preset("right"))
+	toolbar.add_child(right_button)
 
 	var rotation_label := Label.new()
 	rotation_label.text = "Rotation"
@@ -82,6 +110,26 @@ func _build_ui() -> void:
 	_rotation_option.add_item("270 deg", 3)
 	_rotation_option.item_selected.connect(_rerender_current_prefab)
 	toolbar.add_child(_rotation_option)
+
+	var slice_label := Label.new()
+	slice_label.text = "Slice"
+	toolbar.add_child(slice_label)
+
+	_slice_mode_option = OptionButton.new()
+	_slice_mode_option.add_item("All", SLICE_MODE_ALL)
+	_slice_mode_option.add_item("Y <= ", SLICE_MODE_UP_TO)
+	_slice_mode_option.add_item("Only Y", SLICE_MODE_ONLY)
+	_slice_mode_option.item_selected.connect(_on_slice_mode_changed)
+	toolbar.add_child(_slice_mode_option)
+
+	_slice_y_spin = SpinBox.new()
+	_slice_y_spin.min_value = 0
+	_slice_y_spin.max_value = 0
+	_slice_y_spin.step = 1
+	_slice_y_spin.rounded = true
+	_slice_y_spin.custom_minimum_size = Vector2(70.0, 0.0)
+	_slice_y_spin.value_changed.connect(_rerender_current_prefab)
+	toolbar.add_child(_slice_y_spin)
 
 	_show_runtime_mesh_toggle = CheckBox.new()
 	_show_runtime_mesh_toggle.text = "Runtime Mesh"
@@ -234,6 +282,7 @@ func _on_prefab_selected(index: int) -> void:
 		return
 	var entry: Dictionary = _prefab_list.get_item_metadata(index)
 	_current_prefab = ViewerData.load_prefab(str(entry.get("path", "")))
+	_update_slice_controls()
 	_update_info()
 	_render_current_prefab()
 
@@ -269,6 +318,8 @@ func _render_current_prefab() -> void:
 
 	if not rendered_runtime:
 		for cell in _current_prefab.get("cells", []):
+			if not _should_render_cell(cell):
+				continue
 			var block_node := _create_block_node(cell, rotation)
 			_preview_root.add_child(block_node)
 			var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
@@ -276,6 +327,8 @@ func _render_current_prefab() -> void:
 
 	if _show_objects_toggle.button_pressed:
 		for obj in _current_prefab.get("objects", []):
+			if not _should_render_object(obj):
+				continue
 			var object_preview := _create_object_node(obj, rotation)
 			_preview_root.add_child(object_preview.get("node"))
 			_include_bounds(bounds, object_preview.get("min"), object_preview.get("max"))
@@ -461,14 +514,15 @@ func _frame_camera(bounds_min: Vector3, bounds_max: Vector3) -> void:
 		bounds_min = Vector3.ZERO
 		bounds_max = Vector3.ONE
 
+	_last_bounds_min = bounds_min
+	_last_bounds_max = bounds_max
 	_camera_target = (bounds_min + bounds_max) * 0.5
 	var extents := bounds_max - bounds_min
 	var radius := max(max(extents.x, extents.y), extents.z)
 	radius = max(radius, 4.0)
 
 	_camera_distance = max(radius * 2.15, 3.0)
-	_camera_yaw = PI / 4.0
-	_camera_pitch = deg_to_rad(30.0)
+	_apply_camera_preset_angles()
 	_apply_camera_transform()
 	_camera.far = max(200.0, radius * 10.0)
 
@@ -498,11 +552,38 @@ func _on_viewport_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion:
 		var motion_event := event as InputEventMouseMotion
 		if _is_orbiting:
+			_camera_preset = "custom"
 			_camera_yaw -= motion_event.relative.x * 0.01
 			_camera_pitch = clamp(_camera_pitch + (motion_event.relative.y * 0.01), deg_to_rad(-80.0), deg_to_rad(80.0))
 			_apply_camera_transform()
 		elif _is_panning:
 			_pan_camera(motion_event.relative)
+
+
+func _fit_camera_to_last_bounds() -> void:
+	_frame_camera(_last_bounds_min, _last_bounds_max)
+
+
+func _set_camera_preset(preset: String) -> void:
+	_camera_preset = preset
+	_apply_camera_preset_angles()
+	_apply_camera_transform()
+
+
+func _apply_camera_preset_angles() -> void:
+	match _camera_preset:
+		"top":
+			_camera_yaw = PI / 4.0
+			_camera_pitch = deg_to_rad(89.0)
+		"front":
+			_camera_yaw = PI
+			_camera_pitch = 0.0
+		"right":
+			_camera_yaw = PI / 2.0
+			_camera_pitch = 0.0
+		_:
+			_camera_yaw = PI / 4.0
+			_camera_pitch = deg_to_rad(30.0)
 
 
 func _zoom_camera(multiplier: float) -> void:
@@ -537,6 +618,8 @@ func _render_runtime_blocks(rotation: int, bounds: Dictionary) -> bool:
 	var chunk_map := {}
 	var cells: Array = _current_prefab.get("cells", [])
 	for cell in cells:
+		if not _should_render_cell(cell):
+			continue
 		var block_type := clampi(int(cell.get("type", 1)), 0, 255)
 		var meta := clampi(int(cell.get("meta", 0)), 0, 255)
 		var final_meta := ViewerData.rotate_directional_meta(block_type, meta, rotation)
@@ -638,6 +721,7 @@ func _update_info() -> void:
 	lines.append("grade_y: %d" % int(placement.get("grade_y", 0)))
 	lines.append("Excavation volumes: %d" % placement.get("excavation_volumes", []).size())
 	lines.append("Preview mesh: %s" % ("runtime" if _show_runtime_mesh_toggle and _show_runtime_mesh_toggle.button_pressed and _runtime_error.is_empty() else "simple"))
+	lines.append("Slice: %s" % _get_slice_description())
 	lines.append("Controls: RMB orbit, Shift+RMB/MMB pan, Wheel zoom")
 
 	var surface_rect := ViewerData.get_surface_rect(_current_prefab)
@@ -762,3 +846,56 @@ func _merge_bounds(existing: Dictionary, incoming: Dictionary) -> Dictionary:
 			max(existing.get("max").z, incoming.get("max").z)
 		)
 	}
+
+
+func _on_slice_mode_changed(_index: int) -> void:
+	if _slice_y_spin:
+		_slice_y_spin.editable = _slice_mode_option.get_selected_id() != SLICE_MODE_ALL
+	_render_current_prefab()
+
+
+func _update_slice_controls() -> void:
+	if not _slice_y_spin:
+		return
+	var actual_size: Vector3i = _current_prefab.get("actual_size", Vector3i.ONE)
+	_slice_y_spin.max_value = max(0, actual_size.y - 1)
+	if _slice_y_spin.value > _slice_y_spin.max_value:
+		_slice_y_spin.value = _slice_y_spin.max_value
+	_slice_y_spin.editable = _slice_mode_option.get_selected_id() != SLICE_MODE_ALL
+
+
+func _should_render_cell(cell: Dictionary) -> bool:
+	var pos: Vector3i = cell.get("pos", Vector3i.ZERO)
+	return _matches_slice_range(pos.y, pos.y)
+
+
+func _should_render_object(obj: Dictionary) -> bool:
+	var object_id := int(obj.get("object_id", 0))
+	var info := ViewerData.get_object_info(object_id)
+	var base_size: Vector3 = info.get("size", Vector3.ONE)
+	var min_y: int = int(floor(float(obj.get("y", 0.0))))
+	var max_y: int = min_y + maxi(1, int(ceil(base_size.y))) - 1
+	return _matches_slice_range(min_y, max_y)
+
+
+func _matches_slice_range(min_y: int, max_y: int) -> bool:
+	if not _slice_mode_option:
+		return true
+	var mode := _slice_mode_option.get_selected_id()
+	if mode == SLICE_MODE_ALL:
+		return true
+	var slice_y: int = int(round(_slice_y_spin.value)) if _slice_y_spin else 0
+	if mode == SLICE_MODE_UP_TO:
+		return min_y <= slice_y
+	return slice_y >= min_y and slice_y <= max_y
+
+
+func _get_slice_description() -> String:
+	if not _slice_mode_option:
+		return "All"
+	var mode := _slice_mode_option.get_selected_id()
+	if mode == SLICE_MODE_UP_TO:
+		return "Y <= %d" % int(round(_slice_y_spin.value))
+	if mode == SLICE_MODE_ONLY:
+		return "Only Y = %d" % int(round(_slice_y_spin.value))
+	return "All"
