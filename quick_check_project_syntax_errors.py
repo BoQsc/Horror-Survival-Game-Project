@@ -7,53 +7,58 @@ GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.w
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 TIMEOUT = 3  # Seconds to run
 
+
+def safe_print(text: str = "", end: str = "\n") -> None:
+    sys.stdout.write(text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8"))
+    sys.stdout.write(end)
+
+
 def main():
-    print(f"🚀 Running Godot for {TIMEOUT}s...")
-    print("-" * 50)
-    
+    safe_print(f"Running Godot for {TIMEOUT}s...")
+    safe_print("-" * 50)
+
     cmd = [
         GODOT_BIN,
-        "--path", PROJECT_PATH,
-        "--debug"
+        "--path",
+        PROJECT_PATH,
+        "--debug",
     ]
-    
+
     try:
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, # Merge stderr into stdout
+            stderr=subprocess.STDOUT,
             text=True,
-            encoding='utf-8',
-            errors='replace',
-            bufsize=1
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
         )
-        
+
         start_time = time.time()
-        
+
         while True:
-            # Check for timeout
             if time.time() - start_time > TIMEOUT:
-                print(f"\n🛑 Time limit reached ({TIMEOUT}s). Terminating...")
+                safe_print(f"\nTime limit reached ({TIMEOUT}s). Terminating...")
                 process.terminate()
                 break
-            
-            # Non-blocking read
+
             output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
+            if output == "" and process.poll() is not None:
                 break
-            
+
             if output:
-                # Print to console
-                sys.stdout.write(output)
+                safe_print(output, end="")
                 sys.stdout.flush()
-                
+
         try:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
             process.kill()
-            
+
     except Exception as e:
-        print(f"❌ Execution error: {e}")
+        safe_print(f"Execution error: {e}")
+
 
 if __name__ == "__main__":
     main()

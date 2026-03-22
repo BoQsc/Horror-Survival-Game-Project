@@ -2,14 +2,19 @@
 extends PanelContainer
 
 const ViewerData = preload("res://addons/world_prefab_viewer/prefab_viewer_data.gd")
+const ViewerMesher = preload("res://addons/world_prefab_viewer/prefab_viewer_mesher.gd")
 const OPTIONAL_WOOD_TEXTURE_PATH := "res://world_greedy_meshing/wood-block-texture.png"
+const RUNTIME_MATERIAL_CACHE_KEY := -999
 
 var _prefab_entries: Array = []
 var _current_prefab: Dictionary = {}
 var _material_cache: Dictionary = {}
+var _runtime_mesher: RefCounted
+var _runtime_error := ""
 
 var _prefab_list: ItemList
 var _rotation_option: OptionButton
+var _show_runtime_mesh_toggle: CheckBox
 var _show_objects_toggle: CheckBox
 var _show_overlays_toggle: CheckBox
 var _info_label: RichTextLabel
@@ -21,9 +26,16 @@ var _camera: Camera3D
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(0.0, 420.0)
+	_runtime_mesher = ViewerMesher.new()
 	_build_ui()
 	_build_viewport()
 	_reload_prefabs()
+
+
+func _exit_tree() -> void:
+	if _runtime_mesher and _runtime_mesher.has_method("dispose"):
+		_runtime_mesher.dispose()
+	_runtime_mesher = null
 
 
 func _build_ui() -> void:
@@ -59,6 +71,12 @@ func _build_ui() -> void:
 	_rotation_option.add_item("270 deg", 3)
 	_rotation_option.item_selected.connect(_rerender_current_prefab)
 	toolbar.add_child(_rotation_option)
+
+	_show_runtime_mesh_toggle = CheckBox.new()
+	_show_runtime_mesh_toggle.text = "Runtime Mesh"
+	_show_runtime_mesh_toggle.button_pressed = true
+	_show_runtime_mesh_toggle.toggled.connect(_rerender_current_prefab)
+	toolbar.add_child(_show_runtime_mesh_toggle)
 
 	_show_objects_toggle = CheckBox.new()
 	_show_objects_toggle.text = "Objects"
@@ -223,6 +241,7 @@ func _render_current_prefab() -> void:
 	if _current_prefab.is_empty():
 		return
 
+	_runtime_error = ""
 	var bounds := {
 		"min": Vector3(INF, INF, INF),
 		"max": Vector3(-INF, -INF, -INF)
@@ -231,11 +250,16 @@ func _render_current_prefab() -> void:
 
 	_add_axes(bounds)
 
-	for cell in _current_prefab.get("cells", []):
-		var block_node := _create_block_node(cell, rotation)
-		_preview_root.add_child(block_node)
-		var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
-		_include_bounds(bounds, Vector3(rotated_pos), Vector3(rotated_pos) + Vector3.ONE)
+	var rendered_runtime := false
+	if _show_runtime_mesh_toggle.button_pressed:
+		rendered_runtime = _render_runtime_blocks(rotation, bounds)
+
+	if not rendered_runtime:
+		for cell in _current_prefab.get("cells", []):
+			var block_node := _create_block_node(cell, rotation)
+			_preview_root.add_child(block_node)
+			var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
+			_include_bounds(bounds, Vector3(rotated_pos), Vector3(rotated_pos) + Vector3.ONE)
 
 	if _show_objects_toggle.button_pressed:
 		for obj in _current_prefab.get("objects", []):
@@ -249,6 +273,7 @@ func _render_current_prefab() -> void:
 			_include_bounds(bounds, overlay_bounds.get("min"), overlay_bounds.get("max"))
 
 	_frame_camera(bounds.get("min"), bounds.get("max"))
+	_update_info()
 
 
 func _add_axes(bounds: Dictionary) -> void:
@@ -433,6 +458,97 @@ func _frame_camera(bounds_min: Vector3, bounds_max: Vector3) -> void:
 	_camera.far = max(200.0, radius * 10.0)
 
 
+func _render_runtime_blocks(rotation: int, bounds: Dictionary) -> bool:
+	if not _runtime_mesher or not _runtime_mesher.is_available():
+		_runtime_error = _runtime_mesher.get_last_error() if _runtime_mesher else "Runtime preview mesher is unavailable."
+		return false
+
+	var chunk_map := {}
+	var cells: Array = _current_prefab.get("cells", [])
+	for cell in cells:
+		var block_type := clampi(int(cell.get("type", 1)), 0, 255)
+		var meta := clampi(int(cell.get("meta", 0)), 0, 255)
+		var final_meta := ViewerData.rotate_directional_meta(block_type, meta, rotation)
+		var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
+		var chunk_coord := _world_to_chunk(rotated_pos)
+		var local_pos := _world_to_chunk_local(rotated_pos)
+		var key := "%d,%d,%d" % [chunk_coord.x, chunk_coord.y, chunk_coord.z]
+
+		if not chunk_map.has(key):
+			var voxel_bytes := PackedByteArray()
+			voxel_bytes.resize(ViewerMesher.CHUNK_VOLUME)
+			voxel_bytes.fill(0)
+			var voxel_meta := PackedByteArray()
+			voxel_meta.resize(ViewerMesher.CHUNK_VOLUME)
+			voxel_meta.fill(0)
+			chunk_map[key] = {
+				"coord": chunk_coord,
+				"voxels": voxel_bytes,
+				"meta": voxel_meta
+			}
+
+		var chunk_data: Dictionary = chunk_map[key]
+		var voxel_bytes: PackedByteArray = chunk_data.get("voxels", PackedByteArray())
+		var voxel_meta: PackedByteArray = chunk_data.get("meta", PackedByteArray())
+		var index := _chunk_index(local_pos)
+		voxel_bytes.encode_u8(index, block_type)
+		voxel_meta.encode_u8(index, final_meta)
+		chunk_data["voxels"] = voxel_bytes
+		chunk_data["meta"] = voxel_meta
+		chunk_map[key] = chunk_data
+
+		_include_bounds(bounds, Vector3(rotated_pos), Vector3(rotated_pos) + Vector3.ONE)
+
+	var chunk_keys: Array = chunk_map.keys()
+	chunk_keys.sort()
+	var rendered_any := false
+	for key in chunk_keys:
+		var chunk_data: Dictionary = chunk_map[key]
+		var arrays: Array = _runtime_mesher.generate_arrays(
+			chunk_data.get("voxels", PackedByteArray()),
+			chunk_data.get("meta", PackedByteArray())
+		)
+		if arrays.is_empty():
+			continue
+
+		var mesh := ArrayMesh.new()
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.mesh = mesh
+		mesh_instance.material_override = _get_runtime_block_material()
+		mesh_instance.position = Vector3(chunk_data.get("coord", Vector3i.ZERO)) * float(ViewerMesher.CHUNK_SIZE)
+		_preview_root.add_child(mesh_instance)
+		rendered_any = true
+
+	if not rendered_any and not cells.is_empty():
+		_runtime_error = "Runtime mesher produced no chunk surfaces for this prefab."
+		return false
+
+	return true
+
+
+func _world_to_chunk(world_pos: Vector3i) -> Vector3i:
+	return Vector3i(
+		int(floor(float(world_pos.x) / float(ViewerMesher.CHUNK_SIZE))),
+		int(floor(float(world_pos.y) / float(ViewerMesher.CHUNK_SIZE))),
+		int(floor(float(world_pos.z) / float(ViewerMesher.CHUNK_SIZE)))
+	)
+
+
+func _world_to_chunk_local(world_pos: Vector3i) -> Vector3i:
+	var local := Vector3i(
+		posmod(world_pos.x, ViewerMesher.CHUNK_SIZE),
+		posmod(world_pos.y, ViewerMesher.CHUNK_SIZE),
+		posmod(world_pos.z, ViewerMesher.CHUNK_SIZE)
+	)
+	return local
+
+
+func _chunk_index(local_pos: Vector3i) -> int:
+	return local_pos.x + (local_pos.y * ViewerMesher.CHUNK_SIZE) + (local_pos.z * ViewerMesher.CHUNK_SIZE * ViewerMesher.CHUNK_SIZE)
+
+
 func _update_info() -> void:
 	if _current_prefab.is_empty():
 		_info_label.text = "[b]No prefab selected.[/b]"
@@ -450,6 +566,7 @@ func _update_info() -> void:
 	lines.append("Objects: %d" % int(stats.get("object_count", 0)))
 	lines.append("grade_y: %d" % int(placement.get("grade_y", 0)))
 	lines.append("Excavation volumes: %d" % placement.get("excavation_volumes", []).size())
+	lines.append("Preview mesh: %s" % ("runtime" if _show_runtime_mesh_toggle and _show_runtime_mesh_toggle.button_pressed and _runtime_error.is_empty() else "simple"))
 
 	var surface_rect := ViewerData.get_surface_rect(_current_prefab)
 	if not surface_rect.is_empty():
@@ -475,6 +592,11 @@ func _update_info() -> void:
 		lines.append("[color=#ffd48f][b]Warnings[/b][/color]")
 		for entry in warnings:
 			lines.append("- %s" % entry)
+
+	if not _runtime_error.is_empty():
+		lines.append("")
+		lines.append("[color=#ffd48f][b]Preview Fallback[/b][/color]")
+		lines.append("- %s" % _runtime_error)
 
 	_info_label.text = "\n".join(lines)
 
@@ -502,6 +624,23 @@ func _get_block_material(block_type: int) -> Material:
 			material.albedo_color = Color(0.90, 0.32, 0.78, 1.0)
 
 	_material_cache[block_type] = material
+	return material
+
+
+func _get_runtime_block_material() -> Material:
+	if _material_cache.has(RUNTIME_MATERIAL_CACHE_KEY):
+		return _material_cache[RUNTIME_MATERIAL_CACHE_KEY]
+
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(1.0, 1.0, 1.0, 1.0)
+	material.roughness = 1.0
+	if ResourceLoader.exists(OPTIONAL_WOOD_TEXTURE_PATH):
+		material.albedo_texture = load(OPTIONAL_WOOD_TEXTURE_PATH)
+		material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	else:
+		material.albedo_color = Color(0.69, 0.53, 0.34, 1.0)
+
+	_material_cache[RUNTIME_MATERIAL_CACHE_KEY] = material
 	return material
 
 

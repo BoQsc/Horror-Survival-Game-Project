@@ -11,10 +11,6 @@ SCRIPT_PATH = Path(PROJECT_PATH) / "_tmp_parse_check.gd"
 CHECKER_SCRIPT = """@tool
 extends SceneTree
 
-const ROOTS := [
-\t"res://"
-]
-
 func _init() -> void:
 \tprint("[ParseCheck] scanning project scripts...")
 \tvar files := _collect_files("res://")
@@ -61,8 +57,13 @@ func _collect_files_recursive(root: String, result: Array[String]) -> void:
 """
 
 
+def safe_print(text: str = "", end: str = "\n") -> None:
+    sys.stdout.write(text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(sys.stdout.encoding or "utf-8"))
+    sys.stdout.write(end)
+
+
 def main() -> int:
-    print("🚀 Running Godot parse scan for project resources...")
+    safe_print("Running Godot parse scan for project resources...")
     SCRIPT_PATH.write_text(CHECKER_SCRIPT, encoding="utf-8")
 
     cmd = [
@@ -84,12 +85,12 @@ def main() -> int:
             errors="replace",
         )
         output = (result.stdout or "") + "\n" + (result.stderr or "")
-        print(output, end="")
+        safe_print(output, end="")
         return result.returncode
     except subprocess.TimeoutExpired as e:
         output = (e.stdout if e.stdout else "") + "\n" + (e.stderr if e.stderr else "")
-        print(output, end="")
-        print(f"\n🛑 Time limit reached ({TIMEOUT}s).")
+        safe_print(output, end="")
+        safe_print(f"\nTime limit reached ({TIMEOUT}s).")
         return 124
     finally:
         try:
