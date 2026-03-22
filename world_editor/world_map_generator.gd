@@ -46,6 +46,7 @@ var building_support_max_embed: float = 3.5
 var building_support_search_radius: int = 4
 var building_support_sample_stride: float = 1.0
 var underground_cover_min: float = 2.0
+var underground_flatten_protection_margin: int = 1
 
 # Progress callback
 var progress_callback: Callable = Callable()
@@ -2230,7 +2231,7 @@ func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z:
 				height_bytes[h_idx] = int(lerp(float(flat_h_byte), float(orig_h_byte), smooth_t))
 
 func _get_off_footprint_excavation_columns(prefab_name: String, spawn_origin: Vector3, rotation: int, bldg_x: float, bldg_z: float, footprint: Vector2i) -> Dictionary:
-	var protected_columns: Dictionary = {}
+	var direct_columns: Dictionary = {}
 	var min_x := int(floor(bldg_x))
 	var min_z := int(floor(bldg_z))
 	var max_x := min_x + footprint.x - 1
@@ -2240,7 +2241,15 @@ func _get_off_footprint_excavation_columns(prefab_name: String, spawn_origin: Ve
 		var world_z := int(floor(spawn_origin.z)) + int(segment.get("z", 0))
 		if world_x >= min_x and world_x <= max_x and world_z >= min_z and world_z <= max_z:
 			continue
-		protected_columns[Vector2i(world_x, world_z)] = true
+		direct_columns[Vector2i(world_x, world_z)] = true
+	if direct_columns.is_empty():
+		return {}
+	var protected_columns: Dictionary = {}
+	for col_var in direct_columns.keys():
+		var col: Vector2i = col_var
+		for dz in range(-underground_flatten_protection_margin, underground_flatten_protection_margin + 1):
+			for dx in range(-underground_flatten_protection_margin, underground_flatten_protection_margin + 1):
+				protected_columns[col + Vector2i(dx, dz)] = true
 	return protected_columns
 
 func _front_center_for_rotation(bldg_x: float, bldg_z: float, footprint: Vector2i, rotation: int) -> Vector2:

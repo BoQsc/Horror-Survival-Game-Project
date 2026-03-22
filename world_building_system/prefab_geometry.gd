@@ -800,8 +800,9 @@ static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objec
 				else:
 					result["errors"].append("below-grade structure is missing excavation volumes")
 			else:
+				var exact_excavated_cells := _build_local_cell_set_from_volumes(excavation_volumes)
 				var excavated_cells := _inflate_local_cell_set(
-					_build_local_cell_set_from_volumes(excavation_volumes),
+					exact_excavated_cells,
 					EXCAVATION_SAFETY_PADDING
 				)
 				var missing_cells: Array[String] = []
@@ -813,7 +814,7 @@ static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objec
 				if not missing_cells.is_empty():
 					result["errors"].append("excavation volumes miss below-grade interior/stair cells [%s]" % ", ".join(missing_cells))
 				var surface_breach_cells := _find_surface_breach_excavation_cells(
-					excavated_cells,
+					exact_excavated_cells,
 					placement_profile.get("surface_footprint", {}),
 					grade_y
 				)
@@ -1058,29 +1059,49 @@ static func _find_stair_approach_block(component: Array[Vector3i], solid_cells: 
 
 static func _stairs_have_landing(component: Array[Vector3i], solid_cells: Dictionary, step: Vector2i) -> bool:
 	var max_y := component[0].y
+	var component_cells := _vector3i_array_to_set(component)
+	var lateral_left := Vector2i(-step.y, step.x)
+	var lateral_right := Vector2i(step.y, -step.x)
+	var landing_offsets := [step, lateral_left, lateral_right]
 	for cell in component:
 		max_y = maxi(max_y, cell.y)
 	for cell in component:
 		if cell.y != max_y:
 			continue
-		var landing := cell + Vector3i(step.x, 0, step.y)
-		var landing_above := landing + Vector3i(0, 1, 0)
-		if solid_cells.has(landing) and not solid_cells.has(landing_above):
-			return true
+		for offset in landing_offsets:
+			var landing := cell + Vector3i(offset.x, 0, offset.y)
+			if component_cells.has(landing):
+				continue
+			var landing_above := landing + Vector3i(0, 1, 0)
+			if solid_cells.has(landing) and not solid_cells.has(landing_above):
+				return true
 	return false
 
 static func _stairs_have_bottom_landing(component: Array[Vector3i], solid_cells: Dictionary, step: Vector2i) -> bool:
 	var min_y := component[0].y
+	var component_cells := _vector3i_array_to_set(component)
+	var lateral_left := Vector2i(-step.y, step.x)
+	var lateral_right := Vector2i(step.y, -step.x)
+	var landing_offsets := [Vector2i(-step.x, -step.y), lateral_left, lateral_right]
 	for cell in component:
 		min_y = mini(min_y, cell.y)
 	for cell in component:
 		if cell.y != min_y:
 			continue
-		var landing := cell + Vector3i(-step.x, -1, -step.y)
-		var landing_above := landing + Vector3i(0, 1, 0)
-		if solid_cells.has(landing) and not solid_cells.has(landing_above):
-			return true
+		for offset in landing_offsets:
+			var landing := cell + Vector3i(offset.x, -1, offset.y)
+			if component_cells.has(landing):
+				continue
+			var landing_above := landing + Vector3i(0, 1, 0)
+			if solid_cells.has(landing) and not solid_cells.has(landing_above):
+				return true
 	return false
+
+static func _vector3i_array_to_set(cells: Array[Vector3i]) -> Dictionary:
+	var result: Dictionary = {}
+	for cell in cells:
+		result[cell] = true
+	return result
 
 static func _validate_below_grade_access(stair_cells: Array[Vector3i], solid_cells: Dictionary, enclosed_cells: Array, grade_y: int) -> Dictionary:
 	var result := {
