@@ -14,6 +14,7 @@ const SLICE_MODE_ONLY := 2
 const SURFACE_OVERLAY_COLOR := Color(0.22, 0.78, 0.40, 0.18)
 const RESERVATION_OVERLAY_COLOR := Color(0.27, 0.53, 0.90, 0.12)
 const EXCAVATION_OVERLAY_COLOR := Color(0.85, 0.28, 0.28, 0.14)
+const SELECTION_OVERLAY_COLOR := Color(1.0, 0.92, 0.28, 0.22)
 
 var _prefab_entries: Array = []
 var _current_prefab: Dictionary = {}
@@ -33,6 +34,7 @@ var _camera_initialized := false
 var _pending_camera_fit := true
 var _real_object_count := 0
 var _fallback_object_count := 0
+var _selected_cell: Dictionary = {}
 
 var _prefab_list: ItemList
 var _rotation_option: OptionButton
@@ -312,6 +314,8 @@ func _on_prefab_selected(index: int) -> void:
 	var entry: Dictionary = _prefab_list.get_item_metadata(index)
 	var previous_path := str(_current_prefab.get("path", ""))
 	_current_prefab = ViewerData.load_prefab(str(entry.get("path", "")))
+	if previous_path != str(_current_prefab.get("path", "")):
+		_selected_cell = {}
 	_pending_camera_fit = (previous_path != str(_current_prefab.get("path", ""))) or not _camera_initialized
 	_update_slice_controls()
 	_update_info()
@@ -375,6 +379,10 @@ func _render_current_prefab() -> void:
 		var overlay_bounds := _add_overlay_nodes(rotation)
 		if overlay_bounds.has("min"):
 			_include_bounds(bounds, overlay_bounds.get("min"), overlay_bounds.get("max"))
+
+	var selection_bounds := _add_selection_overlay(rotation)
+	if selection_bounds.has("min"):
+		_include_bounds(bounds, selection_bounds.get("min"), selection_bounds.get("max"))
 
 	var bounds_min: Vector3 = bounds.get("min", Vector3.ZERO)
 	var bounds_max: Vector3 = bounds.get("max", Vector3.ONE)
@@ -775,6 +783,29 @@ func _add_volume_overlay(volume: Dictionary, color: Color) -> Dictionary:
 	}
 
 
+func _add_selection_overlay(rotation: int) -> Dictionary:
+	if _selected_cell.is_empty():
+		return {}
+	if not _should_render_cell(_selected_cell):
+		return {}
+
+	var rotated_pos: Vector3i = ViewerData.rotate_block_offset(_selected_cell.get("pos", Vector3i.ZERO), rotation)
+	var size := Vector3(1.04, 1.04, 1.04)
+	var center := Vector3(rotated_pos) + Vector3(0.5, 0.5, 0.5)
+	var mesh_instance := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	mesh_instance.mesh = box
+	mesh_instance.material_override = _make_solid_material(SELECTION_OVERLAY_COLOR, true, true)
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mesh_instance.position = center
+	_preview_root.add_child(mesh_instance)
+	return {
+		"min": center - (size * 0.5),
+		"max": center + (size * 0.5)
+	}
+
+
 func _frame_camera(bounds_min: Vector3, bounds_max: Vector3) -> void:
 	if bounds_min.x == INF or bounds_max.x == -INF:
 		bounds_min = Vector3.ZERO
@@ -801,6 +832,9 @@ func _on_viewport_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mouse_event := event as InputEventMouseButton
 		match mouse_event.button_index:
+			MOUSE_BUTTON_LEFT:
+				if mouse_event.pressed:
+					_select_cell_at_screen_pos(mouse_event.position)
 			MOUSE_BUTTON_RIGHT:
 				if mouse_event.pressed:
 					_is_orbiting = not mouse_event.shift_pressed
@@ -876,6 +910,81 @@ func _apply_camera_transform() -> void:
 	) * _camera_distance
 	_camera.position = _camera_target + offset
 	_camera.look_at(_camera_target, Vector3.UP)
+
+
+func _select_cell_at_screen_pos(screen_pos: Vector2) -> void:
+	if _current_prefab.is_empty() or not _camera or not _viewport_container or not _viewport:
+		return
+
+	var viewport_size := _viewport_container.size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+
+	var viewport_pos := Vector2(
+		screen_pos.x * (float(_viewport.size.x) / viewport_size.x),
+		screen_pos.y * (float(_viewport.size.y) / viewport_size.y)
+	)
+	var ray_origin := _camera.project_ray_origin(viewport_pos)
+	var ray_direction := _camera.project_ray_normal(viewport_pos).normalized()
+	var hit := _pick_cell(ray_origin, ray_direction)
+	_selected_cell = hit.get("cell", {})
+	_update_info()
+	_render_current_prefab()
+
+
+func _pick_cell(ray_origin: Vector3, ray_direction: Vector3) -> Dictionary:
+	var rotation := _rotation_option.get_selected_id()
+	var closest_t := INF
+	var hit_cell: Dictionary = {}
+	for cell in _current_prefab.get("cells", []):
+		if not _should_render_cell(cell):
+			continue
+		var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
+		var aabb := AABB(Vector3(rotated_pos), Vector3.ONE)
+		var hit_t := _intersect_ray_aabb(ray_origin, ray_direction, aabb)
+		if hit_t >= 0.0 and hit_t < closest_t:
+			closest_t = hit_t
+			hit_cell = cell
+
+	return {
+		"cell": hit_cell,
+		"distance": closest_t
+	}
+
+
+func _intersect_ray_aabb(ray_origin: Vector3, ray_direction: Vector3, aabb: AABB) -> float:
+	var t_min := -INF
+	var t_max := INF
+	var box_min := aabb.position
+	var box_max := aabb.position + aabb.size
+
+	for axis in range(3):
+		var origin_component := ray_origin[axis]
+		var direction_component := ray_direction[axis]
+		var min_component := box_min[axis]
+		var max_component := box_max[axis]
+
+		if absf(direction_component) < 0.000001:
+			if origin_component < min_component or origin_component > max_component:
+				return -1.0
+			continue
+
+		var inv_direction := 1.0 / direction_component
+		var t1 := (min_component - origin_component) * inv_direction
+		var t2 := (max_component - origin_component) * inv_direction
+		if t1 > t2:
+			var temp := t1
+			t1 = t2
+			t2 = temp
+
+		t_min = max(t_min, t1)
+		t_max = min(t_max, t2)
+		if t_min > t_max:
+			return -1.0
+
+	if t_max < 0.0:
+		return -1.0
+	return t_min if t_min >= 0.0 else t_max
 
 
 func _build_legend_item(color: Color, text: String) -> Control:
@@ -1048,7 +1157,20 @@ func _update_info() -> void:
 	lines.append("Terrain preview: %s" % ("on" if _show_terrain_toggle and _show_terrain_toggle.button_pressed else "off"))
 	lines.append("Object preview: %d real / %d fallback" % [_real_object_count, _fallback_object_count])
 	lines.append("Slice: %s" % _get_slice_description())
-	lines.append("Controls: RMB orbit, Shift+RMB/MMB pan, Wheel zoom")
+	if not _selected_cell.is_empty():
+		var selected_local: Vector3i = _selected_cell.get("pos", Vector3i.ZERO)
+		var selected_rotated: Vector3i = ViewerData.rotate_block_offset(selected_local, _rotation_option.get_selected_id())
+		lines.append(
+			"Selected block: local %s | preview %s | type %d | meta %d" % [
+				selected_local,
+				selected_rotated,
+				int(_selected_cell.get("type", 0)),
+				int(_selected_cell.get("meta", 0))
+			]
+		)
+	else:
+		lines.append("Selected block: none")
+	lines.append("Controls: LMB select, RMB orbit, Shift+RMB/MMB pan, Wheel zoom")
 
 	var surface_rect := ViewerData.get_surface_rect(_current_prefab)
 	if not surface_rect.is_empty():
