@@ -15,6 +15,9 @@ const SURFACE_OVERLAY_COLOR := Color(0.22, 0.78, 0.40, 0.18)
 const RESERVATION_OVERLAY_COLOR := Color(0.27, 0.53, 0.90, 0.12)
 const EXCAVATION_OVERLAY_COLOR := Color(0.85, 0.28, 0.28, 0.14)
 const SELECTION_OVERLAY_COLOR := Color(1.0, 0.92, 0.28, 0.22)
+const PRIMARY_SELECTION_OVERLAY_COLOR := Color(1.0, 0.68, 0.18, 0.28)
+const OBJECT_SELECTION_OVERLAY_COLOR := Color(0.28, 0.86, 1.0, 0.20)
+const PRIMARY_OBJECT_SELECTION_OVERLAY_COLOR := Color(0.16, 0.62, 1.0, 0.28)
 const PREFAB_WATCH_INTERVAL := 0.5
 const CAMERA_FLY_SPEED := 8.0
 const CAMERA_FLY_FAST_MULTIPLIER := 2.5
@@ -37,7 +40,10 @@ var _camera_initialized := false
 var _pending_camera_fit := true
 var _real_object_count := 0
 var _fallback_object_count := 0
-var _selected_cell: Dictionary = {}
+var _selected_cells: Dictionary = {}
+var _primary_selected_key := ""
+var _selected_objects: Dictionary = {}
+var _primary_selected_object_key := ""
 var _watched_prefab_mtime: int = -1
 var _watch_elapsed := 0.0
 var _fly_keys := {
@@ -106,6 +112,16 @@ func _build_ui() -> void:
 	fit_button.text = "Fit"
 	fit_button.pressed.connect(_fit_camera_to_last_bounds)
 	toolbar.add_child(fit_button)
+
+	var copy_selection_button := Button.new()
+	copy_selection_button.text = "Copy Selected"
+	copy_selection_button.pressed.connect(_copy_selected_positions)
+	toolbar.add_child(copy_selection_button)
+
+	var clear_selection_button := Button.new()
+	clear_selection_button.text = "Clear Sel"
+	clear_selection_button.pressed.connect(_clear_selection)
+	toolbar.add_child(clear_selection_button)
 
 	var iso_button := Button.new()
 	iso_button.text = "Iso"
@@ -333,7 +349,7 @@ func _on_prefab_selected(index: int) -> void:
 	var previous_path := str(_current_prefab.get("path", ""))
 	_current_prefab = ViewerData.load_prefab(str(entry.get("path", "")))
 	if previous_path != str(_current_prefab.get("path", "")):
-		_selected_cell = {}
+		_clear_selection_state()
 	_pending_camera_fit = (previous_path != str(_current_prefab.get("path", ""))) or not _camera_initialized
 	_watched_prefab_mtime = _get_prefab_modified_time(str(_current_prefab.get("path", "")))
 	_update_slice_controls()
@@ -407,7 +423,7 @@ func _render_current_prefab() -> void:
 		if overlay_bounds.has("min"):
 			_include_bounds(bounds, overlay_bounds.get("min"), overlay_bounds.get("max"))
 
-	var selection_bounds := _add_selection_overlay(rotation)
+	var selection_bounds := _add_selection_overlays(rotation)
 	if selection_bounds.has("min"):
 		_include_bounds(bounds, selection_bounds.get("min"), selection_bounds.get("max"))
 
@@ -485,6 +501,40 @@ func _create_stair_node(anchor: Vector3, meta: int, material: Material) -> Node3
 
 
 func _create_object_node(obj: Dictionary, prefab_rotation: int) -> Dictionary:
+	var preview := _get_object_preview_data(obj, prefab_rotation)
+	var info: Dictionary = preview.get("info", {})
+	var base_size: Vector3 = preview.get("base_size", Vector3.ONE)
+	var combined_rotation := int(preview.get("combined_rotation", 0))
+	var target_corner: Vector3 = preview.get("target_corner", Vector3.ZERO)
+	var center: Vector3 = preview.get("center", Vector3.ZERO)
+	var rendered_size: Vector3 = preview.get("rendered_size", Vector3.ONE)
+	var fractional_y := float(obj.get("fractional_y", 0.0))
+
+	var object_node := _create_runtime_object_preview(info, target_corner, base_size, combined_rotation, fractional_y)
+	if object_node:
+		_real_object_count += 1
+		return {
+			"node": object_node,
+			"min": preview.get("min", center - (rendered_size * 0.5)),
+			"max": preview.get("max", center + (rendered_size * 0.5))
+		}
+
+	_fallback_object_count += 1
+	var mesh_instance := MeshInstance3D.new()
+	var mesh := BoxMesh.new()
+	mesh.size = rendered_size
+	mesh_instance.mesh = mesh
+	mesh_instance.material_override = _make_solid_material(info.get("color", Color(0.75, 0.75, 0.75, 1.0)), true)
+	mesh_instance.position = center
+	mesh_instance.rotation_degrees.y = float(combined_rotation * 90)
+	return {
+		"node": mesh_instance,
+		"min": preview.get("min", center - (rendered_size * 0.5)),
+		"max": preview.get("max", center + (rendered_size * 0.5))
+	}
+
+
+func _get_object_preview_data(obj: Dictionary, prefab_rotation: int) -> Dictionary:
 	var object_id := int(obj.get("object_id", 0))
 	var info := ViewerData.get_object_info(object_id)
 	var base_size: Vector3 = info.get("size", Vector3.ONE)
@@ -501,26 +551,13 @@ func _create_object_node(obj: Dictionary, prefab_rotation: int) -> Dictionary:
 	var rotated_corner := ViewerData.rotate_vector_offset(local_corner, prefab_rotation)
 	var target_corner := rotated_corner + ViewerData.get_grid_correction(prefab_rotation)
 	var center := target_corner + Vector3(rendered_size.x * 0.5, base_size.y * 0.5 + float(obj.get("fractional_y", 0.0)), rendered_size.z * 0.5)
-
-	var object_node := _create_runtime_object_preview(info, target_corner, base_size, combined_rotation, float(obj.get("fractional_y", 0.0)))
-	if object_node:
-		_real_object_count += 1
-		return {
-			"node": object_node,
-			"min": center - (rendered_size * 0.5),
-			"max": center + (rendered_size * 0.5)
-		}
-
-	_fallback_object_count += 1
-	var mesh_instance := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = rendered_size
-	mesh_instance.mesh = mesh
-	mesh_instance.material_override = _make_solid_material(info.get("color", Color(0.75, 0.75, 0.75, 1.0)), true)
-	mesh_instance.position = center
-	mesh_instance.rotation_degrees.y = float(combined_rotation * 90)
 	return {
-		"node": mesh_instance,
+		"info": info,
+		"base_size": base_size,
+		"combined_rotation": combined_rotation,
+		"rendered_size": rendered_size,
+		"target_corner": target_corner,
+		"center": center,
 		"min": center - (rendered_size * 0.5),
 		"max": center + (rendered_size * 0.5)
 	}
@@ -810,27 +847,64 @@ func _add_volume_overlay(volume: Dictionary, color: Color) -> Dictionary:
 	}
 
 
-func _add_selection_overlay(rotation: int) -> Dictionary:
-	if _selected_cell.is_empty():
-		return {}
-	if not _should_render_cell(_selected_cell):
+func _add_selection_overlays(rotation: int) -> Dictionary:
+	if _selected_cells.is_empty() and _selected_objects.is_empty():
 		return {}
 
-	var rotated_pos: Vector3i = ViewerData.rotate_block_offset(_selected_cell.get("pos", Vector3i.ZERO), rotation)
-	var size := Vector3(1.04, 1.04, 1.04)
-	var center := Vector3(rotated_pos) + Vector3(0.5, 0.5, 0.5)
-	var mesh_instance := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	mesh_instance.mesh = box
-	mesh_instance.material_override = _make_solid_material(SELECTION_OVERLAY_COLOR, true, true)
-	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	mesh_instance.position = center
-	_preview_root.add_child(mesh_instance)
-	return {
-		"min": center - (size * 0.5),
-		"max": center + (size * 0.5)
-	}
+	var combined_bounds := {}
+	for key in _get_sorted_selected_keys():
+		var cell: Dictionary = _selected_cells.get(key, {})
+		if cell.is_empty() or not _should_render_cell(cell):
+			continue
+
+		var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
+		var is_primary: bool = key == _primary_selected_key
+		var size := Vector3(1.04, 1.04, 1.04)
+		var overlay_color := SELECTION_OVERLAY_COLOR
+		if is_primary:
+			size = Vector3(1.06, 1.06, 1.06)
+			overlay_color = PRIMARY_SELECTION_OVERLAY_COLOR
+		var center := Vector3(rotated_pos) + Vector3(0.5, 0.5, 0.5)
+		var mesh_instance := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = size
+		mesh_instance.mesh = box
+		mesh_instance.material_override = _make_solid_material(overlay_color, true, true)
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mesh_instance.position = center
+		_preview_root.add_child(mesh_instance)
+		combined_bounds = _merge_bounds(combined_bounds, {
+			"min": center - (size * 0.5),
+			"max": center + (size * 0.5)
+		})
+
+	for key in _get_sorted_selected_object_keys():
+		var obj: Dictionary = _selected_objects.get(key, {})
+		if obj.is_empty() or not _should_render_object(obj):
+			continue
+		var preview := _get_object_preview_data(obj, rotation)
+		var min_corner: Vector3 = preview.get("min", Vector3.ZERO)
+		var max_corner: Vector3 = preview.get("max", Vector3.ONE)
+		var center := (min_corner + max_corner) * 0.5
+		var size := (max_corner - min_corner) + Vector3.ONE * 0.08
+		var overlay_color := OBJECT_SELECTION_OVERLAY_COLOR
+		if key == _primary_selected_object_key:
+			size += Vector3.ONE * 0.04
+			overlay_color = PRIMARY_OBJECT_SELECTION_OVERLAY_COLOR
+		var mesh_instance := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = size
+		mesh_instance.mesh = box
+		mesh_instance.material_override = _make_solid_material(overlay_color, true, true)
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mesh_instance.position = center
+		_preview_root.add_child(mesh_instance)
+		combined_bounds = _merge_bounds(combined_bounds, {
+			"min": center - (size * 0.5),
+			"max": center + (size * 0.5)
+		})
+
+	return combined_bounds
 
 
 func _frame_camera(bounds_min: Vector3, bounds_max: Vector3) -> void:
@@ -863,7 +937,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 		match mouse_event.button_index:
 			MOUSE_BUTTON_LEFT:
 				if mouse_event.pressed:
-					_select_cell_at_screen_pos(mouse_event.position)
+					_select_cell_at_screen_pos(mouse_event.position, mouse_event.shift_pressed)
 			MOUSE_BUTTON_RIGHT:
 				if mouse_event.pressed:
 					_is_orbiting = not mouse_event.shift_pressed
@@ -1025,12 +1099,14 @@ func _reload_current_prefab_from_disk() -> void:
 	var path := str(_current_prefab.get("path", ""))
 	if path.is_empty():
 		return
-	var selected_pos: Variant = _selected_cell.get("pos", null)
+	var selected_positions := _get_selected_positions()
+	var selected_object_keys := _get_sorted_selected_object_keys()
+	var primary_pos: Variant = null
+	if _selected_cells.has(_primary_selected_key):
+		primary_pos = _selected_cells[_primary_selected_key].get("pos", null)
+	var primary_object_key := _primary_selected_object_key
 	_current_prefab = ViewerData.load_prefab(path)
-	if selected_pos != null:
-		_selected_cell = _find_cell_by_local_pos(selected_pos)
-	else:
-		_selected_cell = {}
+	_restore_selection(selected_positions, primary_pos, selected_object_keys, primary_object_key)
 	_update_slice_controls()
 	_update_info()
 	_render_current_prefab()
@@ -1051,7 +1127,7 @@ func _get_prefab_modified_time(path: String) -> int:
 	return int(FileAccess.get_modified_time(path))
 
 
-func _select_cell_at_screen_pos(screen_pos: Vector2) -> void:
+func _select_cell_at_screen_pos(screen_pos: Vector2, additive: bool) -> void:
 	if _current_prefab.is_empty() or not _camera or not _viewport_container or not _viewport:
 		return
 
@@ -1065,16 +1141,26 @@ func _select_cell_at_screen_pos(screen_pos: Vector2) -> void:
 	)
 	var ray_origin := _camera.project_ray_origin(viewport_pos)
 	var ray_direction := _camera.project_ray_normal(viewport_pos).normalized()
-	var hit := _pick_cell(ray_origin, ray_direction)
-	_selected_cell = hit.get("cell", {})
+	var hit := _pick_prefab_item(ray_origin, ray_direction)
+	var hit_type := str(hit.get("type", ""))
+	if hit_type.is_empty():
+		if not additive:
+			_clear_selection()
+		return
+	if hit_type == "object":
+		_update_object_selection(hit.get("object", {}), additive)
+	else:
+		_update_selection(hit.get("cell", {}), additive)
 	_update_info()
 	_render_current_prefab()
 
 
-func _pick_cell(ray_origin: Vector3, ray_direction: Vector3) -> Dictionary:
+func _pick_prefab_item(ray_origin: Vector3, ray_direction: Vector3) -> Dictionary:
 	var rotation := _rotation_option.get_selected_id()
 	var closest_t := INF
+	var hit_type := ""
 	var hit_cell: Dictionary = {}
+	var hit_object: Dictionary = {}
 	for cell in _current_prefab.get("cells", []):
 		if not _should_render_cell(cell):
 			continue
@@ -1083,12 +1169,183 @@ func _pick_cell(ray_origin: Vector3, ray_direction: Vector3) -> Dictionary:
 		var hit_t := _intersect_ray_aabb(ray_origin, ray_direction, aabb)
 		if hit_t >= 0.0 and hit_t < closest_t:
 			closest_t = hit_t
+			hit_type = "block"
 			hit_cell = cell
 
+	for obj in _current_prefab.get("objects", []):
+		if not _should_render_object(obj):
+			continue
+		var preview := _get_object_preview_data(obj, rotation)
+		var aabb := AABB(preview.get("min", Vector3.ZERO), preview.get("max", Vector3.ONE) - preview.get("min", Vector3.ZERO))
+		var hit_t := _intersect_ray_aabb(ray_origin, ray_direction, aabb)
+		if hit_t >= 0.0 and hit_t < closest_t:
+			closest_t = hit_t
+			hit_type = "object"
+			hit_object = obj
+
 	return {
+		"type": hit_type,
 		"cell": hit_cell,
+		"object": hit_object,
 		"distance": closest_t
 	}
+
+
+func _update_selection(cell: Dictionary, additive: bool) -> void:
+	if cell.is_empty():
+		return
+	var local_pos: Vector3i = cell.get("pos", Vector3i.ZERO)
+	var key := _cell_key_from_pos(local_pos)
+	if additive:
+		if _selected_cells.has(key):
+			_selected_cells.erase(key)
+			if _primary_selected_key == key:
+				_primary_selected_key = ""
+				var remaining_keys := _get_sorted_selected_keys()
+				if not remaining_keys.is_empty():
+					_primary_selected_key = remaining_keys[remaining_keys.size() - 1]
+		else:
+			_selected_cells[key] = cell
+			_primary_selected_key = key
+		return
+
+	_selected_cells = {key: cell}
+	_primary_selected_key = key
+	_selected_objects.clear()
+	_primary_selected_object_key = ""
+
+
+func _clear_selection() -> void:
+	_clear_selection_state()
+	_update_info()
+	_render_current_prefab()
+
+
+func _clear_selection_state() -> void:
+	_selected_cells.clear()
+	_primary_selected_key = ""
+	_selected_objects.clear()
+	_primary_selected_object_key = ""
+
+
+func _restore_selection(selected_positions: Array, primary_pos: Variant, selected_object_keys: Array, primary_object_key: String) -> void:
+	_clear_selection_state()
+	for local_pos in selected_positions:
+		var cell := _find_cell_by_local_pos(local_pos)
+		if not cell.is_empty():
+			var key := _cell_key_from_pos(local_pos)
+			_selected_cells[key] = cell
+	if primary_pos != null:
+		var primary_key := _cell_key_from_pos(primary_pos)
+		if _selected_cells.has(primary_key):
+			_primary_selected_key = primary_key
+	if _primary_selected_key.is_empty():
+		var keys := _get_sorted_selected_keys()
+		if not keys.is_empty():
+			_primary_selected_key = keys[0]
+	for object_key in selected_object_keys:
+		var obj := _find_object_by_key(object_key)
+		if not obj.is_empty():
+			_selected_objects[object_key] = obj
+	if not primary_object_key.is_empty() and _selected_objects.has(primary_object_key):
+		_primary_selected_object_key = primary_object_key
+	elif not _selected_objects.is_empty():
+		_primary_selected_object_key = _get_sorted_selected_object_keys()[0]
+
+
+func _get_selected_positions() -> Array:
+	var positions: Array = []
+	for key in _get_sorted_selected_keys():
+		var cell: Dictionary = _selected_cells.get(key, {})
+		if not cell.is_empty():
+			positions.append(cell.get("pos", Vector3i.ZERO))
+	return positions
+
+
+func _get_sorted_selected_keys() -> Array:
+	var keys: Array = _selected_cells.keys()
+	keys.sort()
+	return keys
+
+
+func _cell_key_from_pos(local_pos: Variant) -> String:
+	if local_pos == null:
+		return ""
+	var pos: Vector3i = local_pos
+	return "%d,%d,%d" % [pos.x, pos.y, pos.z]
+
+
+func _copy_selected_positions() -> void:
+	if _selected_cells.is_empty() and _selected_objects.is_empty():
+		return
+	var lines: Array[String] = []
+	for local_pos in _get_selected_positions():
+		lines.append("(%d, %d, %d)" % [local_pos.x, local_pos.y, local_pos.z])
+	if not _selected_objects.is_empty():
+		if not lines.is_empty():
+			lines.append("")
+		lines.append("Objects:")
+		for object_key in _get_sorted_selected_object_keys():
+			var obj: Dictionary = _selected_objects.get(object_key, {})
+			if obj.is_empty():
+				continue
+			lines.append(
+				"id=%d pos=(%s, %s, %s) rot=%d" % [
+					int(obj.get("object_id", 0)),
+					str(obj.get("x", 0.0)),
+					str(obj.get("y", 0.0)),
+					str(obj.get("z", 0.0)),
+					int(obj.get("rotation", 0))
+				]
+			)
+	DisplayServer.clipboard_set("\n".join(lines))
+
+
+func _update_object_selection(obj: Dictionary, additive: bool) -> void:
+	if obj.is_empty():
+		return
+	var key := _object_key(obj)
+	if additive:
+		if _selected_objects.has(key):
+			_selected_objects.erase(key)
+			if _primary_selected_object_key == key:
+				_primary_selected_object_key = ""
+				var remaining_keys := _get_sorted_selected_object_keys()
+				if not remaining_keys.is_empty():
+					_primary_selected_object_key = remaining_keys[remaining_keys.size() - 1]
+		else:
+			_selected_objects[key] = obj
+			_primary_selected_object_key = key
+		return
+
+	_selected_objects = {key: obj}
+	_primary_selected_object_key = key
+	_selected_cells.clear()
+	_primary_selected_key = ""
+
+
+func _get_sorted_selected_object_keys() -> Array:
+	var keys: Array = _selected_objects.keys()
+	keys.sort()
+	return keys
+
+
+func _object_key(obj: Dictionary) -> String:
+	return "%d|%s|%s|%s|%d|%s" % [
+		int(obj.get("object_id", 0)),
+		str(obj.get("x", 0.0)),
+		str(obj.get("y", 0.0)),
+		str(obj.get("z", 0.0)),
+		int(obj.get("rotation", 0)),
+		str(obj.get("fractional_y", 0.0))
+	]
+
+
+func _find_object_by_key(object_key: String) -> Dictionary:
+	for obj in _current_prefab.get("objects", []):
+		if _object_key(obj) == object_key:
+			return obj
+	return {}
 
 
 func _intersect_ray_aabb(ray_origin: Vector3, ray_direction: Vector3, aabb: AABB) -> float:
@@ -1296,20 +1553,47 @@ func _update_info() -> void:
 	lines.append("Terrain preview: %s" % ("on" if _show_terrain_toggle and _show_terrain_toggle.button_pressed else "off"))
 	lines.append("Object preview: %d real / %d fallback" % [_real_object_count, _fallback_object_count])
 	lines.append("Slice: %s" % _get_slice_description())
-	if not _selected_cell.is_empty():
-		var selected_local: Vector3i = _selected_cell.get("pos", Vector3i.ZERO)
-		var selected_rotated: Vector3i = ViewerData.rotate_block_offset(selected_local, _rotation_option.get_selected_id())
-		lines.append(
-			"Selected block: local %s | preview %s | type %d | meta %d" % [
-				selected_local,
-				selected_rotated,
-				int(_selected_cell.get("type", 0)),
-				int(_selected_cell.get("meta", 0))
-			]
-		)
+	if not _selected_cells.is_empty():
+		var primary_cell: Dictionary = _selected_cells.get(_primary_selected_key, {})
+		var selected_positions := _get_selected_positions()
+		lines.append("Selected blocks: %d" % selected_positions.size())
+		if not primary_cell.is_empty():
+			var selected_local: Vector3i = primary_cell.get("pos", Vector3i.ZERO)
+			var selected_rotated: Vector3i = ViewerData.rotate_block_offset(selected_local, _rotation_option.get_selected_id())
+			lines.append(
+				"Primary block: local %s | preview %s | type %d | meta %d" % [
+					selected_local,
+					selected_rotated,
+					int(primary_cell.get("type", 0)),
+					int(primary_cell.get("meta", 0))
+				]
+			)
+		lines.append("Selected local positions:")
+		for index in range(min(selected_positions.size(), 16)):
+			var local_pos: Vector3i = selected_positions[index]
+			lines.append("- (%d, %d, %d)" % [local_pos.x, local_pos.y, local_pos.z])
+		if selected_positions.size() > 16:
+			lines.append("- ... %d more" % (selected_positions.size() - 16))
 	else:
-		lines.append("Selected block: none")
-	lines.append("Controls: LMB select, RMB look, Shift+RMB/MMB pan, Wheel zoom, WASD fly, Q/E vertical, Shift fast")
+		lines.append("Selected blocks: none")
+	if not _selected_objects.is_empty():
+		lines.append("Selected objects: %d" % _selected_objects.size())
+		var primary_object: Dictionary = _selected_objects.get(_primary_selected_object_key, {})
+		if not primary_object.is_empty():
+			var object_info := ViewerData.get_object_info(int(primary_object.get("object_id", 0)))
+			lines.append(
+				"Primary object: %s | id %d | pos (%s, %s, %s) | rot %d" % [
+					str(object_info.get("name", "Object")),
+					int(primary_object.get("object_id", 0)),
+					str(primary_object.get("x", 0.0)),
+					str(primary_object.get("y", 0.0)),
+					str(primary_object.get("z", 0.0)),
+					int(primary_object.get("rotation", 0))
+				]
+			)
+	else:
+		lines.append("Selected objects: none")
+	lines.append("Controls: LMB select, Shift+LMB toggle, RMB look, Shift+RMB/MMB pan, Wheel zoom, WASD fly, Q/E vertical, Shift fast")
 
 	var surface_rect := ViewerData.get_surface_rect(_current_prefab)
 	if not surface_rect.is_empty():
