@@ -7,32 +7,38 @@ const OBJECT_INFO := {
 	1: {
 		"name": "Cardboard Box",
 		"size": Vector3(1.0, 1.0, 1.0),
-		"color": Color(0.71, 0.58, 0.40, 1.0)
+		"color": Color(0.71, 0.58, 0.40, 1.0),
+		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.tscn"
 	},
 	2: {
 		"name": "Long Crate",
 		"size": Vector3(2.0, 1.0, 1.0),
-		"color": Color(0.47, 0.30, 0.16, 1.0)
+		"color": Color(0.47, 0.30, 0.16, 1.0),
+		"scene": "res://models/objects/crate/1/simple_long_crate.tscn"
 	},
 	3: {
 		"name": "Wooden Table",
 		"size": Vector3(2.0, 1.0, 1.0),
-		"color": Color(0.58, 0.40, 0.23, 1.0)
+		"color": Color(0.58, 0.40, 0.23, 1.0),
+		"scene": "res://models/objects/table/1/psx_wooden_table.tscn"
 	},
 	4: {
 		"name": "Door",
 		"size": Vector3(1.0, 2.0, 1.0),
-		"color": Color(0.51, 0.67, 0.40, 1.0)
+		"color": Color(0.51, 0.67, 0.40, 1.0),
+		"scene": "res://models/objects/interactive_door/interactive_door.tscn"
 	},
 	5: {
 		"name": "Window",
 		"size": Vector3(1.0, 1.0, 1.0),
-		"color": Color(0.42, 0.72, 0.88, 1.0)
+		"color": Color(0.42, 0.72, 0.88, 1.0),
+		"scene": "res://models/objects/window/1/window.tscn"
 	},
 	6: {
 		"name": "Heavy Pistol",
 		"size": Vector3(1.0, 1.0, 1.0),
-		"color": Color(0.82, 0.79, 0.24, 1.0)
+		"color": Color(0.82, 0.79, 0.24, 1.0),
+		"scene": "res://models/pistol/heavy_pistol_physics.tscn"
 	}
 }
 

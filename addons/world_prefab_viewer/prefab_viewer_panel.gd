@@ -5,6 +5,9 @@ const ViewerData = preload("res://addons/world_prefab_viewer/prefab_viewer_data.
 const ViewerMesher = preload("res://addons/world_prefab_viewer/prefab_viewer_mesher.gd")
 const OPTIONAL_WOOD_TEXTURE_PATH := "res://world_greedy_meshing/wood-block-texture.png"
 const RUNTIME_MATERIAL_CACHE_KEY := -999
+const TERRAIN_DIRT_MATERIAL_CACHE_KEY := -1000
+const TERRAIN_GRASS_MATERIAL_CACHE_KEY := -1001
+const TERRAIN_MARGIN := 3
 const SLICE_MODE_ALL := 0
 const SLICE_MODE_UP_TO := 1
 const SLICE_MODE_ONLY := 2
@@ -23,11 +26,16 @@ var _is_panning := false
 var _camera_preset := "iso"
 var _last_bounds_min := Vector3.ZERO
 var _last_bounds_max := Vector3.ONE
+var _camera_initialized := false
+var _pending_camera_fit := true
+var _real_object_count := 0
+var _fallback_object_count := 0
 
 var _prefab_list: ItemList
 var _rotation_option: OptionButton
 var _slice_mode_option: OptionButton
 var _slice_y_spin: SpinBox
+var _show_terrain_toggle: CheckBox
 var _show_runtime_mesh_toggle: CheckBox
 var _show_objects_toggle: CheckBox
 var _show_overlays_toggle: CheckBox
@@ -130,6 +138,12 @@ func _build_ui() -> void:
 	_slice_y_spin.custom_minimum_size = Vector2(70.0, 0.0)
 	_slice_y_spin.value_changed.connect(_rerender_current_prefab)
 	toolbar.add_child(_slice_y_spin)
+
+	_show_terrain_toggle = CheckBox.new()
+	_show_terrain_toggle.text = "Terrain"
+	_show_terrain_toggle.button_pressed = true
+	_show_terrain_toggle.toggled.connect(_rerender_current_prefab)
+	toolbar.add_child(_show_terrain_toggle)
 
 	_show_runtime_mesh_toggle = CheckBox.new()
 	_show_runtime_mesh_toggle.text = "Runtime Mesh"
@@ -281,7 +295,9 @@ func _on_prefab_selected(index: int) -> void:
 	if index < 0 or index >= _prefab_entries.size():
 		return
 	var entry: Dictionary = _prefab_list.get_item_metadata(index)
+	var previous_path := str(_current_prefab.get("path", ""))
 	_current_prefab = ViewerData.load_prefab(str(entry.get("path", "")))
+	_pending_camera_fit = (previous_path != str(_current_prefab.get("path", ""))) or not _camera_initialized
 	_update_slice_controls()
 	_update_info()
 	_render_current_prefab()
@@ -304,11 +320,18 @@ func _render_current_prefab() -> void:
 		return
 
 	_runtime_error = ""
+	_real_object_count = 0
+	_fallback_object_count = 0
 	var bounds := {
 		"min": Vector3(INF, INF, INF),
 		"max": Vector3(-INF, -INF, -INF)
 	}
 	var rotation := _rotation_option.get_selected_id()
+
+	if _show_terrain_toggle.button_pressed:
+		var terrain_bounds := _add_terrain_nodes(rotation)
+		if terrain_bounds.has("min"):
+			_include_bounds(bounds, terrain_bounds.get("min"), terrain_bounds.get("max"))
 
 	_add_axes(bounds)
 
@@ -338,7 +361,18 @@ func _render_current_prefab() -> void:
 		if overlay_bounds.has("min"):
 			_include_bounds(bounds, overlay_bounds.get("min"), overlay_bounds.get("max"))
 
-	_frame_camera(bounds.get("min"), bounds.get("max"))
+	var bounds_min: Vector3 = bounds.get("min", Vector3.ZERO)
+	var bounds_max: Vector3 = bounds.get("max", Vector3.ONE)
+	if bounds_min.x == INF or bounds_max.x == -INF:
+		bounds_min = Vector3.ZERO
+		bounds_max = Vector3.ONE
+
+	_last_bounds_min = bounds_min
+	_last_bounds_max = bounds_max
+	if _pending_camera_fit or not _camera_initialized:
+		_frame_camera(bounds_min, bounds_max)
+		_pending_camera_fit = false
+		_camera_initialized = true
 	_update_info()
 
 
@@ -354,6 +388,7 @@ func _add_axis(size: Vector3, position: Vector3, color: Color, bounds: Dictionar
 	mesh.size = size
 	axis.mesh = mesh
 	axis.material_override = _make_solid_material(color, false)
+	axis.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	axis.position = position
 	_preview_root.add_child(axis)
 	_include_bounds(bounds, position - (size * 0.5), position + (size * 0.5))
@@ -417,6 +452,16 @@ func _create_object_node(obj: Dictionary, prefab_rotation: int) -> Dictionary:
 	var target_corner := rotated_corner + ViewerData.get_grid_correction(prefab_rotation)
 	var center := target_corner + Vector3(rendered_size.x * 0.5, base_size.y * 0.5 + float(obj.get("fractional_y", 0.0)), rendered_size.z * 0.5)
 
+	var object_node := _create_runtime_object_preview(info, target_corner, base_size, combined_rotation, float(obj.get("fractional_y", 0.0)))
+	if object_node:
+		_real_object_count += 1
+		return {
+			"node": object_node,
+			"min": center - (rendered_size * 0.5),
+			"max": center + (rendered_size * 0.5)
+		}
+
+	_fallback_object_count += 1
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
 	mesh.size = rendered_size
@@ -424,11 +469,215 @@ func _create_object_node(obj: Dictionary, prefab_rotation: int) -> Dictionary:
 	mesh_instance.material_override = _make_solid_material(info.get("color", Color(0.75, 0.75, 0.75, 1.0)), true)
 	mesh_instance.position = center
 	mesh_instance.rotation_degrees.y = float(combined_rotation * 90)
-
 	return {
 		"node": mesh_instance,
 		"min": center - (rendered_size * 0.5),
 		"max": center + (rendered_size * 0.5)
+	}
+
+
+func _create_runtime_object_preview(info: Dictionary, target_corner: Vector3, base_size: Vector3, combined_rotation: int, fractional_y: float) -> Node3D:
+	var scene_path := str(info.get("scene", ""))
+	if scene_path.is_empty():
+		return null
+	if not ResourceLoader.exists(scene_path):
+		return null
+
+	var packed := load(scene_path) as PackedScene
+	if not packed:
+		return null
+
+	var instance := packed.instantiate()
+	if not instance is Node3D:
+		if instance:
+			instance.free()
+		return null
+
+	var preview_root := Node3D.new()
+	preview_root.name = "ObjectPreview"
+	var object_root := instance as Node3D
+	_strip_preview_runtime_behavior(object_root)
+	preview_root.add_child(object_root)
+
+	var offset_x := base_size.x * 0.5
+	var offset_z := base_size.z * 0.5
+	if combined_rotation == 1 or combined_rotation == 3:
+		var temp := offset_x
+		offset_x = offset_z
+		offset_z = temp
+
+	preview_root.position = target_corner + Vector3(offset_x, fractional_y, offset_z)
+	preview_root.rotation_degrees.y = float(combined_rotation * 90)
+	return preview_root
+
+
+func _strip_preview_runtime_behavior(node: Node) -> void:
+	node.process_mode = Node.PROCESS_MODE_DISABLED
+	node.set_process(false)
+	node.set_physics_process(false)
+	node.set_process_input(false)
+	node.set_process_unhandled_input(false)
+	node.set_process_shortcut_input(false)
+	node.set_process_unhandled_key_input(false)
+	if node.get_script() != null:
+		node.set_script(null)
+	if node is CollisionObject3D:
+		var collision_object := node as CollisionObject3D
+		collision_object.collision_layer = 0
+		collision_object.collision_mask = 0
+	for child in node.get_children():
+		_strip_preview_runtime_behavior(child)
+
+
+func _add_terrain_nodes(rotation: int) -> Dictionary:
+	var placement: Dictionary = _current_prefab.get("placement", {})
+	var grade_y := int(placement.get("grade_y", 0))
+	var surface_rect := ViewerData.rotate_rect(ViewerData.get_surface_rect(_current_prefab), rotation)
+	var terrain_columns := _build_terrain_column_sets(rotation, grade_y)
+	var surface_columns: Dictionary = terrain_columns.get("surface", {})
+	var excavation_volumes: Array = []
+	var min_excavation_y := grade_y
+	for volume in placement.get("excavation_volumes", []):
+		var rotated_volume := ViewerData.rotate_volume(volume, rotation)
+		excavation_volumes.append(rotated_volume)
+		min_excavation_y = min(min_excavation_y, int(rotated_volume.get("min", Vector3i.ZERO).y))
+
+	var excavation_rect := _rect_from_volumes(excavation_volumes)
+	var terrain_rect := _expand_rect(_choose_terrain_rect(surface_rect, excavation_rect), TERRAIN_MARGIN)
+	if terrain_rect.is_empty():
+		return {}
+
+	var terrain_floor_y := min(0, min_excavation_y - 2)
+	var terrain_top_voxel_y := grade_y - 1
+	var terrain_bounds := {}
+	for x in range(terrain_rect.get("min", Vector2i.ZERO).x, terrain_rect.get("max", Vector2i.ZERO).x + 1):
+		for z in range(terrain_rect.get("min", Vector2i.ZERO).y, terrain_rect.get("max", Vector2i.ZERO).y + 1):
+			var column_pos := Vector2i(x, z)
+			var column_key := _column_key(column_pos.x, column_pos.y)
+
+			var run_start := INF
+			var top_solid_y := -INF
+			for y in range(terrain_floor_y, terrain_top_voxel_y + 1):
+				var solid := not _is_excavated_cell(Vector3i(x, y, z), excavation_volumes)
+				if solid:
+					if run_start == INF:
+						run_start = y
+					top_solid_y = y
+				elif run_start != INF:
+					if _matches_slice_range(int(run_start), y - 1):
+						var segment_bounds := _add_terrain_segment(x, int(run_start), y - 1, z)
+						terrain_bounds = _merge_bounds(terrain_bounds, segment_bounds)
+					run_start = INF
+			if run_start != INF and _matches_slice_range(int(run_start), terrain_top_voxel_y):
+				var last_segment_bounds := _add_terrain_segment(x, int(run_start), terrain_top_voxel_y, z)
+				terrain_bounds = _merge_bounds(terrain_bounds, last_segment_bounds)
+
+			if (
+				top_solid_y == terrain_top_voxel_y
+				and not surface_columns.has(column_key)
+				and _matches_slice_range(terrain_top_voxel_y, terrain_top_voxel_y)
+			):
+				var cap_bounds := _add_terrain_cap(x, grade_y, z)
+				terrain_bounds = _merge_bounds(terrain_bounds, cap_bounds)
+
+	return terrain_bounds
+
+
+func _choose_terrain_rect(surface_rect: Dictionary, excavation_rect: Dictionary) -> Dictionary:
+	return _merge_rects(surface_rect, excavation_rect)
+
+
+func _expand_rect(rect: Dictionary, margin: int) -> Dictionary:
+	if rect.is_empty():
+		return {}
+	var min_corner: Vector2i = rect.get("min", Vector2i.ZERO)
+	var max_corner: Vector2i = rect.get("max", Vector2i.ZERO)
+	var expanded_min := Vector2i(min_corner.x - margin, min_corner.y - margin)
+	var expanded_max := Vector2i(max_corner.x + margin, max_corner.y + margin)
+	return {
+		"min": expanded_min,
+		"max": expanded_max,
+		"footprint": Vector2i(expanded_max.x - expanded_min.x + 1, expanded_max.y - expanded_min.y + 1)
+	}
+
+
+func _build_terrain_column_sets(rotation: int, grade_y: int) -> Dictionary:
+	var buried := {}
+	var surface := {}
+	for cell in _current_prefab.get("cells", []):
+		var rotated_pos: Vector3i = ViewerData.rotate_block_offset(cell.get("pos", Vector3i.ZERO), rotation)
+		var key := _column_key(rotated_pos.x, rotated_pos.z)
+		if rotated_pos.y < grade_y:
+			buried[key] = true
+		else:
+			surface[key] = true
+	return {
+		"buried": buried,
+		"surface": surface
+	}
+
+
+func _column_key(x: int, z: int) -> String:
+	return "%d,%d" % [x, z]
+
+
+func _rect_contains(rect: Dictionary, pos: Vector2i) -> bool:
+	if rect.is_empty():
+		return false
+	var min_corner: Vector2i = rect.get("min", Vector2i.ZERO)
+	var max_corner: Vector2i = rect.get("max", Vector2i.ZERO)
+	return (
+		pos.x >= min_corner.x
+		and pos.x <= max_corner.x
+		and pos.y >= min_corner.y
+		and pos.y <= max_corner.y
+	)
+
+
+func _is_excavated_cell(pos: Vector3i, volumes: Array) -> bool:
+	for volume in volumes:
+		var min_corner: Vector3i = volume.get("min", Vector3i.ZERO)
+		var max_corner: Vector3i = volume.get("max", Vector3i.ZERO)
+		if (
+			pos.x >= min_corner.x and pos.x <= max_corner.x
+			and pos.y >= min_corner.y and pos.y <= max_corner.y
+			and pos.z >= min_corner.z and pos.z <= max_corner.z
+		):
+			return true
+	return false
+
+
+func _add_terrain_segment(x: int, y_min: int, y_max: int, z: int) -> Dictionary:
+	var size := Vector3(1.0, float(y_max - y_min + 1), 1.0)
+	var center := Vector3(float(x) + 0.5, (float(y_min + y_max) + 1.0) * 0.5, float(z) + 0.5)
+	var mesh_instance := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	mesh_instance.mesh = box
+	mesh_instance.material_override = _get_terrain_dirt_material()
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mesh_instance.position = center
+	_preview_root.add_child(mesh_instance)
+	return {
+		"min": center - (size * 0.5),
+		"max": center + (size * 0.5)
+	}
+
+
+func _add_terrain_cap(x: int, y: int, z: int) -> Dictionary:
+	var size := Vector3(1.0, 0.04, 1.0)
+	var center := Vector3(float(x) + 0.5, float(y) + (size.y * 0.5), float(z) + 0.5)
+	var mesh_instance := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = size
+	mesh_instance.mesh = box
+	mesh_instance.material_override = _get_terrain_grass_material()
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mesh_instance.position = center
+	_preview_root.add_child(mesh_instance)
+	return {
+		"min": center - (size * 0.5),
+		"max": center + (size * 0.5)
 	}
 
 
@@ -465,6 +714,7 @@ func _add_rect_overlay(rect: Dictionary, y_level: float, color: Color) -> Dictio
 	box.size = Vector3(float(footprint.x), 0.04, float(footprint.y))
 	mesh_instance.mesh = box
 	mesh_instance.material_override = _make_solid_material(color, true, true)
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mesh_instance.position = Vector3(
 		(float(min_corner.x + max_corner.x) + 1.0) * 0.5,
 		y_level,
@@ -500,6 +750,7 @@ func _add_volume_overlay(volume: Dictionary, color: Color) -> Dictionary:
 	box.size = size
 	mesh_instance.mesh = box
 	mesh_instance.material_override = _make_solid_material(color, true, true)
+	mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mesh_instance.position = center
 	_preview_root.add_child(mesh_instance)
 
@@ -514,6 +765,7 @@ func _frame_camera(bounds_min: Vector3, bounds_max: Vector3) -> void:
 		bounds_min = Vector3.ZERO
 		bounds_max = Vector3.ONE
 
+	_camera_initialized = true
 	_last_bounds_min = bounds_min
 	_last_bounds_max = bounds_max
 	_camera_target = (bounds_min + bounds_max) * 0.5
@@ -561,6 +813,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 
 
 func _fit_camera_to_last_bounds() -> void:
+	_pending_camera_fit = false
 	_frame_camera(_last_bounds_min, _last_bounds_max)
 
 
@@ -608,6 +861,46 @@ func _apply_camera_transform() -> void:
 	) * _camera_distance
 	_camera.position = _camera_target + offset
 	_camera.look_at(_camera_target, Vector3.UP)
+
+
+func _rect_from_volumes(volumes: Array) -> Dictionary:
+	if volumes.is_empty():
+		return {}
+
+	var min_corner := Vector2i(999999, 999999)
+	var max_corner := Vector2i(-999999, -999999)
+	for volume in volumes:
+		var local_min: Vector3i = volume.get("min", Vector3i.ZERO)
+		var local_max: Vector3i = volume.get("max", Vector3i.ZERO)
+		min_corner.x = min(min_corner.x, local_min.x)
+		min_corner.y = min(min_corner.y, local_min.z)
+		max_corner.x = max(max_corner.x, local_max.x)
+		max_corner.y = max(max_corner.y, local_max.z)
+
+	return {
+		"min": min_corner,
+		"max": max_corner,
+		"footprint": Vector2i(max_corner.x - min_corner.x + 1, max_corner.y - min_corner.y + 1)
+	}
+
+
+func _merge_rects(primary: Dictionary, secondary: Dictionary) -> Dictionary:
+	if primary.is_empty():
+		return secondary
+	if secondary.is_empty():
+		return primary
+
+	var min_primary: Vector2i = primary.get("min", Vector2i.ZERO)
+	var max_primary: Vector2i = primary.get("max", Vector2i.ZERO)
+	var min_secondary: Vector2i = secondary.get("min", Vector2i.ZERO)
+	var max_secondary: Vector2i = secondary.get("max", Vector2i.ZERO)
+	var min_corner := Vector2i(min(min_primary.x, min_secondary.x), min(min_primary.y, min_secondary.y))
+	var max_corner := Vector2i(max(max_primary.x, max_secondary.x), max(max_primary.y, max_secondary.y))
+	return {
+		"min": min_corner,
+		"max": max_corner,
+		"footprint": Vector2i(max_corner.x - min_corner.x + 1, max_corner.y - min_corner.y + 1)
+	}
 
 
 func _render_runtime_blocks(rotation: int, bounds: Dictionary) -> bool:
@@ -721,6 +1014,8 @@ func _update_info() -> void:
 	lines.append("grade_y: %d" % int(placement.get("grade_y", 0)))
 	lines.append("Excavation volumes: %d" % placement.get("excavation_volumes", []).size())
 	lines.append("Preview mesh: %s" % ("runtime" if _show_runtime_mesh_toggle and _show_runtime_mesh_toggle.button_pressed and _runtime_error.is_empty() else "simple"))
+	lines.append("Terrain preview: %s" % ("on" if _show_terrain_toggle and _show_terrain_toggle.button_pressed else "off"))
+	lines.append("Object preview: %d real / %d fallback" % [_real_object_count, _fallback_object_count])
 	lines.append("Slice: %s" % _get_slice_description())
 	lines.append("Controls: RMB orbit, Shift+RMB/MMB pan, Wheel zoom")
 
@@ -797,6 +1092,28 @@ func _get_runtime_block_material() -> Material:
 		material.albedo_color = Color(0.69, 0.53, 0.34, 1.0)
 
 	_material_cache[RUNTIME_MATERIAL_CACHE_KEY] = material
+	return material
+
+
+func _get_terrain_dirt_material() -> Material:
+	if _material_cache.has(TERRAIN_DIRT_MATERIAL_CACHE_KEY):
+		return _material_cache[TERRAIN_DIRT_MATERIAL_CACHE_KEY]
+
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(0.38, 0.32, 0.24, 1.0)
+	material.roughness = 1.0
+	_material_cache[TERRAIN_DIRT_MATERIAL_CACHE_KEY] = material
+	return material
+
+
+func _get_terrain_grass_material() -> Material:
+	if _material_cache.has(TERRAIN_GRASS_MATERIAL_CACHE_KEY):
+		return _material_cache[TERRAIN_GRASS_MATERIAL_CACHE_KEY]
+
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(0.32, 0.60, 0.25, 1.0)
+	material.roughness = 1.0
+	_material_cache[TERRAIN_GRASS_MATERIAL_CACHE_KEY] = material
 	return material
 
 
