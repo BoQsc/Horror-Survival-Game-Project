@@ -220,8 +220,9 @@ func _spawn_baked_buildings(coord: Vector3i):
 				spawn_pos = PrefabGeometry.get_spawn_origin_for_occupied_min(btype, Vector3(bx, by, bz), rot)
 
 			# --- Spawn path decision ---
-			# For JSON prefabs (loaded from res://world_prefabs/), use spawn_user_prefab with
-			# interior_carve=true to hollow out any terrain inside the building footprint.
+			# World-map terrain already includes baked excavation from the generator,
+			# so avoid replaying the same carve as runtime terrain edits when the
+			# prefab streams in near the player.
 			# The hardcoded "small_house" block array falls back to the old _spawn_prefab path.
 			var is_json_prefab = (btype != "small_house") or FileAccess.file_exists("res://world_prefabs/" + btype + ".json")
 			if is_json_prefab:
@@ -229,10 +230,7 @@ func _spawn_baked_buildings(coord: Vector3i):
 				if not prefabs.has(btype):
 					load_prefab_from_file(btype)
 				if prefabs.has(btype):
-					# World map mode stays grade-correct, but underground prefabs still
-					# need an exact runtime clear to guarantee walkable interiors.
-					var baked_interior_carve := not PrefabGeometry.get_rotated_excavation_segments(btype, rot).is_empty()
-					spawn_user_prefab(btype, spawn_pos, 0, rot, false, false, baked_interior_carve)
+					spawn_user_prefab(btype, spawn_pos, 0, rot, false, false, false)
 				else:
 					DebugManager.log_building("[BakedSpawn] WARN: prefab '%s' not found — skipping" % btype)
 			else:
