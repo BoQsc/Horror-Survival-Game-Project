@@ -13,11 +13,13 @@ const MAP_SIZE: int = 2048  # 1 pixel = 1 meter
 # CONSTRAINT: max decoded height = 2 * terrain_height must be < CHUNK_SIZE (32)
 var noise_freq: float = 0.1
 var terrain_height: float = 10.0
+var water_level: float = 13.0
 var road_spacing: float = 100.0  # Used for GRID mode fallback
 var road_width: float = 8.0
 var wide_shoulders: bool = false
 var world_seed: int = 12345
 var lake_threshold: float = 0.35
+var deep_lakes_enabled: bool = true
 var spawn_distance_from_road: float = 15.0
 var building_spawn_chance: float = 0.6
 
@@ -170,7 +172,7 @@ func generate_world() -> Dictionary:
 	# PASS: Lakes
 	if progress_callback.is_valid():
 		progress_callback.call(80.0, "Generating lakes")
-	_generate_lakes(water_bytes, road_bytes, height_bytes, half)
+	_generate_lakes(water_bytes, road_bytes, height_bytes, half, max_h)
 	
 	# PASS: Building footprint map
 	if progress_callback.is_valid():
@@ -2532,8 +2534,11 @@ func _validate_building_spot(sx: float, sz: float, height_bytes: PackedByteArray
 # ============================================================================
 
 func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
-		height_bytes: PackedByteArray, half: int) -> void:
+		height_bytes: PackedByteArray, half: int, max_h: float) -> void:
 	var water_road_buffer = road_width * 0.5 + 20.0
+	var lake_cutoff = lake_threshold - 0.05
+	var shore_submerge = 1.25
+	var basin_depth_max = clampf(terrain_height * 0.65, 2.5, 8.0)
 	for z in MAP_SIZE:
 		var wz = float(z - half)
 		var row_offset = z * MAP_SIZE
@@ -2566,8 +2571,19 @@ func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 				continue
 			
 			var lake_val = _lake_noise.get_noise_2d(wx, wz)
-			if lake_val > 0.3:
-				water_bytes[idx] = 255
+			if lake_val <= lake_cutoff:
+				continue
+
+			water_bytes[idx] = 255
+			if not deep_lakes_enabled:
+				continue
+
+			var depth_t = clampf((lake_val - lake_cutoff) / maxf(0.001, 1.0 - lake_cutoff), 0.0, 1.0)
+			depth_t = depth_t * depth_t * (3.0 - 2.0 * depth_t)
+			var current_h = float(height_bytes[idx]) / 255.0 * max_h
+			var target_h = water_level - shore_submerge - basin_depth_max * depth_t
+			if current_h > target_h:
+				height_bytes[idx] = _encode_height_byte(target_h, max_h)
 
 # ============================================================================
 # LEGACY GRID ROADS (fallback)
@@ -2721,10 +2737,12 @@ func save_world(path: String, images: Dictionary) -> bool:
 				return false
 	
 	var meta = {
-		"version": 6, "map_size": MAP_SIZE,
+		"version": 7, "map_size": MAP_SIZE,
 		"noise_freq": noise_freq, "terrain_height": terrain_height,
+		"water_level": water_level,
 		"road_spacing": road_spacing, "road_width": road_width,
 		"world_seed": world_seed, "use_grid_roads": use_grid_roads,
+		"deep_lakes_enabled": deep_lakes_enabled,
 		"building_placement_schema": "occupied_min_v1",
 		"created": Time.get_datetime_string_from_system()
 	}

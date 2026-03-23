@@ -258,9 +258,11 @@ func _ready():
 		var loaded = WorldMapGen.load_world(world_definition_path)
 		if loaded.has("metadata"):
 			var meta = loaded.metadata
+			var meta_terrain_height = float(meta.get("terrain_height", terrain_height))
 			world_map_size = float(meta.get("map_size", 2048))
 			world_map_half = world_map_size / 2.0
-			world_map_max_height = float(meta.get("terrain_height", 20.0)) * 2.5
+			world_map_max_height = meta_terrain_height * 2.5
+			water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
 		# Pass world map road image as road_mask for per-pixel road edge blending
 		# UV mapping: road_uv = world_pos.xz * scale + 0.5 = (world_pos.xz + half) / size
 		if loaded.has("roads"):
@@ -1614,9 +1616,11 @@ func _thread_function():
 			# Read metadata for map params
 			if loaded.has("metadata"):
 				var meta = loaded.metadata
+				var meta_terrain_height = float(meta.get("terrain_height", terrain_height))
 				world_map_size = float(meta.get("map_size", 2048))
 				world_map_half = world_map_size / 2.0
-				world_map_max_height = float(meta.get("terrain_height", 20.0)) * 2.5
+				world_map_max_height = meta_terrain_height * 2.5
+				water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
 			
 			DebugManager.log_chunk("World map loaded: %s (%dx%d, max_h=%.1f)" % [world_definition_path, int(world_map_size), int(world_map_size), world_map_max_height])
 		else:

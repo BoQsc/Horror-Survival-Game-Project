@@ -49,6 +49,7 @@ var is_painting: bool = false
 var building_stats_label: Label = null
 var legend_container: VBoxContainer = null
 var road_mode_toggle: CheckBox = null  # false=Town, true=Grid
+var deep_lakes_toggle: CheckBox = null
 
 func _ready() -> void:
 	seed_input.value = 12345
@@ -90,6 +91,19 @@ func _ready() -> void:
 			break
 	vbox.add_child(road_mode_row)
 	vbox.move_child(road_mode_row, idx)
+
+	var lake_mode_row = HBoxContainer.new()
+	var lake_mode_label = Label.new()
+	lake_mode_label.text = "Lake Basin"
+	lake_mode_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lake_mode_row.add_child(lake_mode_label)
+	deep_lakes_toggle = CheckBox.new()
+	deep_lakes_toggle.text = "Deep Carve"
+	deep_lakes_toggle.tooltip_text = "Off = water mask only, On = lower terrain into lake basins"
+	deep_lakes_toggle.button_pressed = true
+	lake_mode_row.add_child(deep_lakes_toggle)
+	vbox.add_child(lake_mode_row)
+	vbox.move_child(lake_mode_row, idx + 1)
 	
 	# Scan for existing worlds on startup
 	_refresh_world_list()
@@ -182,6 +196,8 @@ func _on_load_pressed() -> void:
 		road_spacing_input.value = float(meta.get("road_spacing", 100.0))
 		if road_mode_toggle:
 			road_mode_toggle.button_pressed = bool(meta.get("use_grid_roads", false))
+		if deep_lakes_toggle:
+			deep_lakes_toggle.button_pressed = bool(meta.get("deep_lakes_enabled", false))
 	
 	loaded_world_path = world_path
 	save_btn.disabled = false
@@ -208,9 +224,11 @@ func _on_generate_pressed() -> void:
 	generator = WorldMapGen.new()
 	generator.world_seed = int(seed_input.value)
 	generator.terrain_height = height_input.value
+	generator.water_level = generator.terrain_height + 3.0
 	generator.noise_freq = freq_input.value
 	generator.road_spacing = road_spacing_input.value
 	generator.use_grid_roads = road_mode_toggle.button_pressed if road_mode_toggle else false
+	generator.deep_lakes_enabled = deep_lakes_toggle.button_pressed if deep_lakes_toggle else true
 	generator.progress_callback = Callable(self, "_on_gen_progress")
 	
 	gen_thread = Thread.new()
@@ -338,10 +356,13 @@ func _on_save_pressed() -> void:
 	
 	if not generator:
 		generator = WorldMapGen.new()
-		generator.world_seed = int(seed_input.value)
-		generator.terrain_height = height_input.value
-		generator.noise_freq = freq_input.value
-		generator.road_spacing = road_spacing_input.value
+	generator.world_seed = int(seed_input.value)
+	generator.terrain_height = height_input.value
+	generator.water_level = generator.terrain_height + 3.0
+	generator.noise_freq = freq_input.value
+	generator.road_spacing = road_spacing_input.value
+	generator.use_grid_roads = road_mode_toggle.button_pressed if road_mode_toggle else false
+	generator.deep_lakes_enabled = deep_lakes_toggle.button_pressed if deep_lakes_toggle else true
 	
 	var success = generator.save_world(save_path, current_images)
 	if success:
