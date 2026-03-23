@@ -105,7 +105,9 @@ func apply_mesh(arrays: Array, shape: Shape3D = null):
 		push_warning("BuildingChunk.apply_mesh: mesh_instance is null (chunk not ready yet)")
 		return
 	
+	PerformanceMonitor.start_measure("Building Apply Mesh")
 	if arrays.size() > 0:
+		PerformanceMonitor.start_measure("Building Mesh Upload")
 		var mesh = ArrayMesh.new()
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		
@@ -116,14 +118,19 @@ func apply_mesh(arrays: Array, shape: Shape3D = null):
 		
 		mesh_instance.material_override = material
 		mesh_instance.mesh = mesh
+		PerformanceMonitor.end_measure("Building Mesh Upload", 0.5)
 		
 		# Generate Physics Shape (Main Thread, since we disabled threading it)
 		if collision_shape.shape:
 			collision_shape.shape = null
+		PerformanceMonitor.start_measure("Building Collision Shape")
 		collision_shape.shape = mesh.create_trimesh_shape()
+		PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
 	else:
 		mesh_instance.mesh = null
 		collision_shape.shape = null
+	
+	PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
 
 func _get_index(pos: Vector3i) -> int:
 	return pos.x + pos.y * SIZE + pos.z * SIZE * SIZE
@@ -187,7 +194,9 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 		scene_instance.set_meta("chunk", self)
 		
 		# Generate collision for the object (if it has meshes)
+		PerformanceMonitor.start_measure("Building Object Collision")
 		_generate_object_collision(scene_instance, local_anchor)
+		PerformanceMonitor.end_measure("Building Object Collision", 0.5)
 		
 		object_nodes[local_anchor] = scene_instance
 	
@@ -260,6 +269,7 @@ func get_object_at(local_pos: Vector3i):
 ## Restore visual instances for all stored objects (called after load)
 ## This spawns the scene instances for objects that were saved to the objects dictionary
 func restore_object_visuals():
+	PerformanceMonitor.start_measure("Building Restore Visuals")
 	for local_anchor in objects:
 		# Skip if visual already exists
 		if object_nodes.has(local_anchor) and is_instance_valid(object_nodes[local_anchor]):
@@ -308,8 +318,11 @@ func restore_object_visuals():
 		scene_instance.set_meta("chunk", self)
 		
 		# Generate collision
+		PerformanceMonitor.start_measure("Building Object Collision")
 		_generate_object_collision(scene_instance, local_anchor)
+		PerformanceMonitor.end_measure("Building Object Collision", 0.5)
 		
 		object_nodes[local_anchor] = scene_instance
 	
 	print("BuildingChunk: Restored %d object visuals" % object_nodes.size())
+	PerformanceMonitor.end_measure("Building Restore Visuals", 2.0)

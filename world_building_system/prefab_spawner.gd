@@ -190,6 +190,8 @@ func _spawn_baked_buildings(coord: Vector3i):
 	var chunk_x = coord.x * chunk_stride
 	var chunk_z = coord.z * chunk_stride
 
+	PerformanceMonitor.start_measure("Baked Building Spawn")
+
 	if building_manager and not building_manager.world_map_mode:
 		building_manager.world_map_mode = true
 
@@ -228,7 +230,9 @@ func _spawn_baked_buildings(coord: Vector3i):
 			if is_json_prefab:
 				# Ensure the prefab is loaded (may not be in dict yet if JSON was added after _ready)
 				if not prefabs.has(btype):
+					PerformanceMonitor.start_measure("Prefab Load: " + btype)
 					load_prefab_from_file(btype)
+					PerformanceMonitor.end_measure("Prefab Load: " + btype, 1.0)
 				if prefabs.has(btype):
 					spawn_user_prefab(btype, spawn_pos, 0, rot, false, false, false)
 				else:
@@ -236,6 +240,8 @@ func _spawn_baked_buildings(coord: Vector3i):
 			else:
 				# Hardcoded small_house block array (no JSON file)
 				_spawn_prefab(btype, spawn_pos)
+
+	PerformanceMonitor.end_measure("Baked Building Spawn", 5.0)
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 	if road_spacing <= 0:
@@ -619,9 +625,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	PerformanceMonitor.start_measure("Prefab: " + prefab_name)
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
+		PerformanceMonitor.start_measure("Prefab Load: " + prefab_name)
 		if not load_prefab_from_file(prefab_name):
+			PerformanceMonitor.end_measure("Prefab Load: " + prefab_name, 1.0)
 			PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 			return false
+		PerformanceMonitor.end_measure("Prefab Load: " + prefab_name, 1.0)
 	
 	# Use default submerge of 1 for carve mode (prefabs no longer store this value)
 	if carve_terrain:
@@ -644,9 +653,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
 	
 	var blocks = prefabs[prefab_name]
+	var carved_terrain := false
 	
 	# Carve terrain for submerged blocks (only in carve mode)
 	if carve_terrain:
+		PerformanceMonitor.start_measure("Prefab Carve")
+		carved_terrain = true
 		if _can_use_column_terrain_ops():
 			_carve_submerged_block_columns(blocks, spawn_pos, rotation, world_pos.y)
 		else:
@@ -664,6 +676,9 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	# Full-volume carve: clear ALL terrain within the building's bounding box
 	# This prevents terrain from poking through walls, floors, or windows.
 	if interior_carve:
+		if not carved_terrain:
+			PerformanceMonitor.start_measure("Prefab Carve")
+			carved_terrain = true
 		var carve_count := 0
 		var used_precise_carve := false
 		if not precise_carve_segments.is_empty():
@@ -702,6 +717,8 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			DebugManager.log_building("[PreciseCarve] Carved %d columns for '%s'" % [carve_count, prefab_name])
 		else:
 			DebugManager.log_building("[FullCarve] Carved %d columns for '%s' (box: %v to %v)" % [carve_count, prefab_name, min_offset, max_offset])
+	if carved_terrain:
+		PerformanceMonitor.end_measure("Prefab Carve", 5.0)
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:
@@ -711,6 +728,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		return true
 	
 	# Spawn blocks with rotation (BATCHED - no mesh rebuild per block)
+	PerformanceMonitor.start_measure("Prefab Blocks")
 	for block in blocks:
 		var offset = block.offset
 		var rotated_offset = _rotate_offset(offset, rotation)
@@ -727,11 +745,13 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	
 	# Flush all batched voxel changes at once (triggers single mesh rebuild per chunk)
 	building_manager.flush_dirty_chunks()
+	PerformanceMonitor.end_measure("Prefab Blocks", 5.0)
 	
 	# Spawn objects if any
 	if has_meta("prefab_objects"):
 		var objects_data = get_meta("prefab_objects")
 		if objects_data.has(prefab_name):
+			PerformanceMonitor.start_measure("Prefab Objects")
 			for obj in objects_data[prefab_name]:
 				var offset = obj.offset
 				# --- COMMON POSITIONING LOGIC ---
@@ -799,9 +819,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				elif obj.has("scene") and obj.scene != "":
 					var scene_rot_y = obj.get("rotation_y", 0) + (rotation * 90)
 					_spawn_scene_at(obj.scene, obj_pos, scene_rot_y)
+			PerformanceMonitor.end_measure("Prefab Objects", 5.0)
 
 	if not skip_blocks and _should_seal_prefab_foundation(placement_profile):
+		PerformanceMonitor.start_measure("Prefab Seal")
 		var sealed_columns := _seal_prefab_foundation(prefab_name, spawn_pos, placement_profile, min_offset, max_offset)
+		PerformanceMonitor.end_measure("Prefab Seal", 1.0)
 		if sealed_columns > 0:
 			DebugManager.log_building("[FoundationSeal] Sealed %d columns for '%s'" % [sealed_columns, prefab_name])
 	
@@ -946,10 +969,12 @@ func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
 	if not packed:
 		return
 	
+	PerformanceMonitor.start_measure("Prefab Scene Spawn")
 	var instance = packed.instantiate()
 	add_child(instance)
 	instance.global_position = pos
 	instance.rotation_degrees.y = rotation_y
+	PerformanceMonitor.end_measure("Prefab Scene Spawn", 0.5)
 
 ## Get list of available prefabs from both res://world_prefabs/ and user://world_prefabs/
 func get_available_prefabs() -> Array[String]:

@@ -254,6 +254,7 @@ func flush_dirty_chunks():
 	if _dirty_chunks.is_empty():
 		return
 	
+	PerformanceMonitor.start_measure("BatchFlush")
 	# Only rebuild chunks that are currently visible
 	var rebuilt = 0
 	for coord in _dirty_chunks:
@@ -261,6 +262,7 @@ func flush_dirty_chunks():
 			_dirty_chunks[coord].rebuild_mesh()
 			rebuilt += 1
 	
+	PerformanceMonitor.end_measure("BatchFlush", 0.5)
 	print("[BatchFlush] Flushed %d dirty chunks (%d rebuilt)" % [_dirty_chunks.size(), rebuilt])
 	_dirty_chunks.clear()
 
@@ -320,6 +322,8 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	var obj_def = ObjectRegistry.get_object(object_id)
 	if obj_def.is_empty():
 		return false
+
+	PerformanceMonitor.start_measure("Building Place Object")
 	
 	# Calculate anchor (integer grid position) and fractional position offset
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
@@ -362,6 +366,7 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 		scene_instance.set_meta("should_populate_loot", true)
 	
 	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
+	PerformanceMonitor.end_measure("Building Place Object", 1.0)
 	
 	return success
 
