@@ -1,0 +1,7 @@
+{
+  "door_count": 1,
+  "errors": [],
+  "valid_for_spawn": true,
+  "warnings": [],
+  "window_count": 8
+}
