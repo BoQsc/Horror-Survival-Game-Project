@@ -157,15 +157,16 @@ func generate_world() -> Dictionary:
 		if progress_callback.is_valid():
 			progress_callback.call(30.0, "Placing towns")
 		towns = _place_towns(height_bytes, water_bytes, max_h, half)
+		var catalog = _build_prefab_catalog(_get_available_prefabs())
 		
 		if progress_callback.is_valid():
 			progress_callback.call(40.0, "Building road network")
-		road_segments = _build_settlement_roads(towns)
+		road_segments = _build_settlement_roads(towns, catalog)
 		_rasterize_roads(road_segments, height_bytes, biome_bytes, road_bytes, max_h, half, road_width)
 		
 		if progress_callback.is_valid():
 			progress_callback.call(55.0, "Placing buildings in towns")
-		_generate_town_buildings(towns, road_segments, path_segments, height_bytes, water_bytes, road_bytes, max_h, half, buildings, terrain_modifications, bldg_stats)
+		_generate_town_buildings(towns, road_segments, path_segments, height_bytes, water_bytes, road_bytes, catalog, max_h, half, buildings, terrain_modifications, bldg_stats)
 		if not path_segments.is_empty():
 			_rasterize_paths(path_segments, height_bytes, biome_bytes, road_bytes, max_h, half)
 	
@@ -397,7 +398,7 @@ func rng_from_site(wx: float, wz: float) -> float:
 # MST ROAD NETWORK
 # ============================================================================
 
-func _build_mst_roads(towns: Array) -> Array:
+func _build_mst_roads(towns: Array, catalog: Dictionary) -> Array:
 	if towns.size() < 2:
 		return []
 	
@@ -424,8 +425,8 @@ func _build_mst_roads(towns: Array) -> Array:
 			parent[ri] = rj
 			var from_town: Dictionary = towns[edge.i]
 			var to_town: Dictionary = towns[edge.j]
-			var from_gate := _choose_gateway_for_target(from_town, Vector2(to_town.x, to_town.z))
-			var to_gate := _choose_gateway_for_target(to_town, Vector2(from_town.x, from_town.z))
+			var from_gate := _choose_gateway_for_target(from_town, Vector2(to_town.x, to_town.z), catalog)
+			var to_gate := _choose_gateway_for_target(to_town, Vector2(from_town.x, from_town.z), catalog)
 			result.append({
 				"from": from_gate.get("entry", Vector2(from_town.x, from_town.z)),
 				"to": to_gate.get("entry", Vector2(to_town.x, to_town.z)),
@@ -454,11 +455,11 @@ func _build_mst_roads(towns: Array) -> Array:
 	print("[WorldMapGen] MST roads: %d segments (%d towns, %d extra loops)" % [result.size(), towns.size(), added_extra])
 	return result
 
-func _build_settlement_roads(towns: Array) -> Array:
+func _build_settlement_roads(towns: Array, catalog: Dictionary) -> Array:
 	var roads: Array = []
-	roads.append_array(_build_mst_roads(towns))
+	roads.append_array(_build_mst_roads(towns, catalog))
 	for town in towns:
-		roads.append_array(_generate_town_internal_roads(town))
+		roads.append_array(_generate_town_internal_roads(town, catalog))
 	return roads
 
 func _uf_find(parent: Array, x: int) -> int:
@@ -467,7 +468,24 @@ func _uf_find(parent: Array, x: int) -> int:
 		x = parent[x]
 	return x
 
-func _get_town_layout(town: Dictionary) -> Dictionary:
+func _get_civic_parcel_requirements(catalog: Dictionary) -> Vector2:
+	var max_surface_footprint = Vector2i.ZERO
+	for prefab_name in catalog:
+		var surface_fp := PrefabGeometry.get_rotated_surface_footprint(prefab_name, 1)
+		var reservation_fp := PrefabGeometry.get_rotated_reservation_footprint(prefab_name, 1)
+		max_surface_footprint.x = maxi(max_surface_footprint.x, maxi(surface_fp.x, reservation_fp.x))
+		max_surface_footprint.y = maxi(max_surface_footprint.y, maxi(surface_fp.y, reservation_fp.y))
+	if max_surface_footprint == Vector2i.ZERO:
+		return Vector2.ZERO
+
+	var front_inset = _parcel_front_setback({"road_kind": "main"})
+	var side_inset = 1.0
+	return Vector2(
+		float(max_surface_footprint.x) + front_inset + side_inset,
+		float(max_surface_footprint.y) + side_inset + side_inset
+	)
+
+func _get_town_layout(town: Dictionary, catalog: Dictionary = {}) -> Dictionary:
 	if town.has("_layout"):
 		return town["_layout"]
 
@@ -484,6 +502,9 @@ func _get_town_layout(town: Dictionary) -> Dictionary:
 	var main_clear = _road_layout_half(main_width)
 	var secondary_clear = _road_layout_half(secondary_width)
 	var min_block_gap = 12.0
+	var civic_requirements = _get_civic_parcel_requirements(catalog)
+	var civic_width = max(18.0, max(radius * 0.30, civic_requirements.x))
+	var civic_depth = max(16.0, max(radius * 0.28, civic_requirements.y))
 
 	var x_corridors: Array = []
 	var z_corridors: Array = []
@@ -535,6 +556,8 @@ func _get_town_layout(town: Dictionary) -> Dictionary:
 		"ring_radius": ring_radius,
 		"main_width": main_width,
 		"secondary_width": secondary_width,
+		"civic_width": civic_width,
+		"civic_depth": civic_depth,
 		"x_corridors": x_corridors,
 		"z_corridors": z_corridors,
 		"gateways": gateway_data.get("gateways", []),
@@ -636,8 +659,8 @@ func _build_town_gateways(town: Dictionary, x_corridors: Array, z_corridors: Arr
 		"roads": []
 	}
 
-func _choose_gateway_for_target(town: Dictionary, target_pos: Vector2) -> Dictionary:
-	var layout = _get_town_layout(town)
+func _choose_gateway_for_target(town: Dictionary, target_pos: Vector2, catalog: Dictionary = {}) -> Dictionary:
+	var layout = _get_town_layout(town, catalog)
 	var gateways: Array = layout.get("gateways", [])
 	if gateways.is_empty():
 		return {"entry": Vector2(town.x, town.z), "side": "center", "kind": "main"}
@@ -991,8 +1014,8 @@ func _make_square_ring(center: Vector2, half_size: float) -> Array:
 # INTERNAL TOWN ROADS
 # ============================================================================
 
-func _generate_town_internal_roads(town: Dictionary) -> Array:
-	return _get_town_layout(town).get("roads", [])
+func _generate_town_internal_roads(town: Dictionary, catalog: Dictionary) -> Array:
+	return _get_town_layout(town, catalog).get("roads", [])
 
 # ============================================================================
 # ROAD RASTERIZATION
@@ -1171,9 +1194,11 @@ func _get_civic_core_parcels(town: Dictionary, layout: Dictionary) -> Array:
 	var plaza_half = float(layout.get("plaza_half", 14.0))
 	var main_width = float(layout.get("main_width", settlement_road_width + 2.0))
 	var road_clear = _road_layout_half(main_width)
-	var civic_width = clampf(radius * 0.30, 18.0, 28.0)
-	var civic_depth = clampf(radius * 0.28, 16.0, 22.0)
-	var offset = max(plaza_half, road_clear) + 3.5
+	# Civic parcels need enough room for the largest landmark prefab in the catalog.
+	var civic_width = float(layout.get("civic_width", clampf(radius * 0.50, 18.0, 32.0)))
+	var civic_depth = float(layout.get("civic_depth", clampf(radius * 0.32, 16.0, 24.0)))
+	var civic_buffer = max(civic_width, civic_depth) + ROAD_BLEND_MARGIN + settlement_lot_setback
+	var offset = max(plaza_half, road_clear) + max(3.5, civic_buffer)
 	var north_mid = cz - offset - civic_depth * 0.5
 	var south_mid = cz + offset + civic_depth * 0.5
 	var definitions = [
@@ -1237,35 +1262,39 @@ func _fit_footprint_variants_in_parcel(parcel: Dictionary, footprint: Vector2i) 
 	if side == "north" or side == "south":
 		var min_x = usable_min.x
 		var max_x = usable_max.x - float(footprint.x)
+		var front_min = usable_min.y + front_inset
+		var front_max = usable_max.y - front_inset - float(footprint.y)
+		var front_candidates: Array = [front_min]
+		if front_max - front_min >= 2.0:
+			front_candidates.append(floor(lerp(front_min, front_max, 0.5)))
+			front_candidates.append(front_max)
 		candidates = [0.0, 0.5, 1.0]
 		if max_x - min_x >= 10.0:
 			candidates = [0.0, 0.25, 0.5, 0.75, 1.0]
-		for t in candidates:
-			var x = floor(lerp(min_x, max_x, float(t)))
-			var z = usable_min.y + floor((usable_size.y - float(footprint.y)) * 0.5)
-			if side == "north":
-				z = usable_min.y + front_inset
-			else:
-				z = usable_max.y - front_inset - float(footprint.y)
-			var pos = Vector2(x, floor(z))
-			if not positions.has(pos):
-				positions.append(pos)
+		for z in front_candidates:
+			for t in candidates:
+				var x = floor(lerp(min_x, max_x, float(t)))
+				var pos = Vector2(x, floor(z))
+				if not positions.has(pos):
+					positions.append(pos)
 	else:
 		var min_z = usable_min.y
 		var max_z = usable_max.y - float(footprint.y)
+		var front_min = usable_min.x + front_inset
+		var front_max = usable_max.x - front_inset - float(footprint.x)
+		var front_candidates: Array = [front_min]
+		if front_max - front_min >= 2.0:
+			front_candidates.append(floor(lerp(front_min, front_max, 0.5)))
+			front_candidates.append(front_max)
 		candidates = [0.0, 0.5, 1.0]
 		if max_z - min_z >= 10.0:
 			candidates = [0.0, 0.25, 0.5, 0.75, 1.0]
-		for t in candidates:
-			var z = floor(lerp(min_z, max_z, float(t)))
-			var x = usable_min.x + floor((usable_size.x - float(footprint.x)) * 0.5)
-			if side == "west":
-				x = usable_min.x + front_inset
-			else:
-				x = usable_max.x - front_inset - float(footprint.x)
-			var pos = Vector2(floor(x), z)
-			if not positions.has(pos):
-				positions.append(pos)
+		for x in front_candidates:
+			for t in candidates:
+				var z = floor(lerp(min_z, max_z, float(t)))
+				var pos = Vector2(floor(x), z)
+				if not positions.has(pos):
+					positions.append(pos)
 	if not positions.has(base):
 		positions.push_front(base)
 	return positions
@@ -1659,16 +1688,15 @@ func _place_required_prefabs_for_town(town: Dictionary, layout: Dictionary, requ
 	}
 
 func _generate_town_buildings(towns: Array, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray,
-		water_bytes: PackedByteArray, road_bytes: PackedByteArray,
+		water_bytes: PackedByteArray, road_bytes: PackedByteArray, catalog: Dictionary,
 		max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary) -> void:
 	var forest_noise = FastNoiseLite.new()
 	forest_noise.noise_type = FastNoiseLite.TYPE_VALUE
 	forest_noise.seed = world_seed + 100
 	forest_noise.frequency = 0.02
-	var catalog = _build_prefab_catalog(_get_available_prefabs())
 	
 	for town in towns:
-		var layout = _get_town_layout(town)
+		var layout = _get_town_layout(town, catalog)
 		var rng = RandomNumberGenerator.new()
 		rng.seed = hash("%d_%d" % [int(town.x), int(town.z)]) + 42
 		var required_prefabs := _get_town_required_prefabs(catalog)

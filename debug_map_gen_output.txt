@@ -1,0 +1,13 @@
+PREFABS_IN_FOLDER:
+  - large_church_with_basement
+  - new_wooden_house_2floor
+  - new_wooden_house_2floor_secret_facility
+  - new_wooden_house_secret_facility
+  - small_house
+  - test_builder
+CATALOG_ENTRIES:
+  - large_church_with_basement Size: (18, 26)
+  - new_wooden_house_2floor_secret_facility Size: (8, 11)
+  - new_wooden_house_secret_facility Size: (6, 9)
+  - small_house Size: (3, 4)
+CHURCH_IN_CATALOG_SUCCESS
