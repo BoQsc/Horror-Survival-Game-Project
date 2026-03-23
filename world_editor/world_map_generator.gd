@@ -49,6 +49,20 @@ var building_support_search_radius: int = 4
 var building_support_sample_stride: float = 1.0
 var underground_cover_min: float = 2.0
 var underground_flatten_protection_margin: int = 1
+const PATH_SHOULDER_BASE: float = 0.65
+const PATH_SHOULDER_SLOPE_FACTOR: float = 0.35
+const PATH_SHOULDER_SLOPE_CAP: float = 0.6
+const PATH_SHOULDER_STEEP_LIMIT: float = 0.35
+const PATH_TERRAIN_BLEND_SLOPE_START: float = 0.06
+const PATH_TERRAIN_BLEND_SLOPE_FULL: float = 0.16
+const PATH_TERRAIN_BLEND_LENGTH_START: float = 10.0
+const PATH_TERRAIN_BLEND_LENGTH_FULL: float = 30.0
+const PATH_ROAD_LINK_MAX_LENGTH: float = 8.0
+const PATH_ROAD_LINK_MAX_RISE: float = 1.75
+const PATH_ROAD_LINK_MAX_SLOPE: float = 0.16
+const PATH_FRONTAGE_MAX_RISE: float = 1.5
+const PATH_FRONTAGE_MAX_SLOPE: float = 0.12
+const LAKE_ROAD_BLOCK_THRESHOLD: int = 240
 
 # Progress callback
 var progress_callback: Callable = Callable()
@@ -1097,7 +1111,15 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 		var dir = (to_v - from_v) / seg_len
 		var half_w_local = seg_width * 0.5
 		var rise = abs(to_y - from_y)
-		var flatten_local = seg_width * 2.5 + ROAD_BLEND_MARGIN + rise * 0.85
+		var slope = rise / max(seg_len, 1.0)
+		var slope_blend = clampf((slope - PATH_TERRAIN_BLEND_SLOPE_START) / max(0.001, PATH_TERRAIN_BLEND_SLOPE_FULL - PATH_TERRAIN_BLEND_SLOPE_START), 0.0, 1.0)
+		var length_blend = clampf((seg_len - PATH_TERRAIN_BLEND_LENGTH_START) / max(0.001, PATH_TERRAIN_BLEND_LENGTH_FULL - PATH_TERRAIN_BLEND_LENGTH_START), 0.0, 1.0)
+		var terrain_blend = max(slope_blend, length_blend)
+		var shoulder_width = PATH_SHOULDER_BASE + clampf(slope * PATH_SHOULDER_SLOPE_FACTOR, 0.0, PATH_SHOULDER_SLOPE_CAP)
+		# Steep links get a narrow core only so they do not carve broad terraces into the shoreline.
+		if slope > PATH_SHOULDER_STEEP_LIMIT or rise > 3.0:
+			shoulder_width = 0.0
+		var flatten_local = half_w_local + shoulder_width
 		var min_x = clampi(int(min(from_v.x, to_v.x) - flatten_local) + half, 0, MAP_SIZE - 1)
 		var max_x = clampi(int(max(from_v.x, to_v.x) + flatten_local) + half, 0, MAP_SIZE - 1)
 		var min_z = clampi(int(min(from_v.y, to_v.y) - flatten_local) + half, 0, MAP_SIZE - 1)
@@ -1115,9 +1137,10 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 					continue
 				var path_u = t / seg_len
 				var eased_u = path_u * path_u * (3.0 - 2.0 * path_u)
-				var path_y = lerp(from_y, to_y, eased_u)
 				var idx = pz * MAP_SIZE + px
 				var ridx = idx * 2
+				var terrain_h = float(height_bytes[idx]) / 255.0 * max_h
+				var path_y = lerp(lerp(from_y, to_y, eased_u), terrain_h, terrain_blend)
 				if dist < half_w_local:
 					var h_byte = _encode_height_byte(path_y, max_h)
 					var r_height_byte = int(clampf(path_y / 64.0, 0.0, 1.0) * 255.0)
@@ -1125,12 +1148,11 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 					road_bytes[ridx + 1] = max(road_bytes[ridx + 1], r_height_byte)
 					biome_bytes[idx] = MaterialID.ROAD
 					height_bytes[idx] = h_byte
-				else:
+				elif shoulder_width > 0.0:
 					var blend_t = clampf((dist - half_w_local) / max(0.001, flatten_local - half_w_local), 0.0, 1.0)
 					var smooth_t = blend_t * blend_t * (3.0 - 2.0 * blend_t)
 					smooth_t = smooth_t * smooth_t * (3.0 - 2.0 * smooth_t)
-					var orig_h = float(height_bytes[idx]) / 255.0 * max_h
-					var blended = lerp(path_y, orig_h, smooth_t)
+					var blended = lerp(path_y, terrain_h, smooth_t)
 					height_bytes[idx] = _encode_height_byte(blended, max_h)
 
 func _get_road_height_at(wx: float, wz: float) -> float:
@@ -1362,8 +1384,18 @@ func _append_door_path_segment(path_segments: Array, frontage_target: Vector2, r
 		landing_point = door_target + door_to_frontage.normalized() * landing_dist
 	var frontage_y = _sample_world_height(frontage_target.x, frontage_target.y, height_bytes, max_h, half)
 	_append_path_segment(path_segments, door_target, landing_point, building_path_width + 0.35, bldg_y, bldg_y)
-	_append_path_segment(path_segments, landing_point, frontage_target, building_path_width, bldg_y, frontage_y)
-	_append_path_segment(path_segments, frontage_target, road_target, building_path_width, frontage_y, road_y)
+	var frontage_link_length = landing_point.distance_to(frontage_target)
+	var frontage_link_rise = abs(frontage_y - bldg_y)
+	var frontage_link_slope = frontage_link_rise / max(frontage_link_length, 1.0)
+	# If the frontage climb is steep, skip the ramp rather than carving a long shelf.
+	if frontage_link_rise <= PATH_FRONTAGE_MAX_RISE and frontage_link_slope <= PATH_FRONTAGE_MAX_SLOPE:
+		_append_path_segment(path_segments, landing_point, frontage_target, building_path_width, bldg_y, frontage_y)
+	var road_link_length = frontage_target.distance_to(road_target)
+	var road_link_rise = abs(road_y - frontage_y)
+	var road_link_slope = road_link_rise / max(road_link_length, 1.0)
+	# Only draw the final road connector when it is short and gentle enough to avoid terrain shelves.
+	if road_link_length <= PATH_ROAD_LINK_MAX_LENGTH and road_link_rise <= PATH_ROAD_LINK_MAX_RISE and road_link_slope <= PATH_ROAD_LINK_MAX_SLOPE:
+		_append_path_segment(path_segments, frontage_target, road_target, building_path_width, frontage_y, road_y)
 
 func _append_baked_excavation_modifications(terrain_modifications: Array, prefab_name: String, spawn_origin: Vector3, rotation: int) -> void:
 	var segments := PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation)
@@ -2563,7 +2595,8 @@ func _validate_building_spot(sx: float, sz: float, height_bytes: PackedByteArray
 
 func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 		height_bytes: PackedByteArray, half: int, max_h: float) -> void:
-	var water_road_buffer = road_width * 0.5 + 20.0
+	# Keep the shore off the road shoulder, but do not leave a huge dry corridor.
+	var water_road_buffer = road_width * 0.5 + ROAD_BLEND_MARGIN
 	var lake_cutoff = lake_threshold - 0.05
 	var shore_submerge = 1.25
 	var basin_depth_max = clampf(terrain_height * 0.65, 2.5, 8.0)
@@ -2574,9 +2607,10 @@ func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 			var wx = float(x - half)
 			var idx = row_offset + x
 			
-			# Skip near roads (check road_bytes directly)
+			# Skip only true road cores. Access paths use a lower mask value and should not
+			# push the shoreline back by themselves.
 			var ridx = idx * 2
-			if road_bytes[ridx] > 128:
+			if road_bytes[ridx] >= LAKE_ROAD_BLOCK_THRESHOLD:
 				continue
 			# Also skip if there are road pixels nearby (simple check)
 			var near_road = false
@@ -2585,14 +2619,14 @@ func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 				var check_z = z
 				if check_x >= 0 and check_x < MAP_SIZE:
 					var check_ridx = (check_z * MAP_SIZE + check_x) * 2
-					if road_bytes[check_ridx] > 128:
+					if road_bytes[check_ridx] >= LAKE_ROAD_BLOCK_THRESHOLD:
 						near_road = true
 						break
 				check_x = x
 				check_z = z + dr
 				if check_z >= 0 and check_z < MAP_SIZE:
 					var check_ridx = (check_z * MAP_SIZE + check_x) * 2
-					if road_bytes[check_ridx] > 128:
+					if road_bytes[check_ridx] >= LAKE_ROAD_BLOCK_THRESHOLD:
 						near_road = true
 						break
 			if near_road:
