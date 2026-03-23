@@ -255,10 +255,7 @@ func log_water(message: String) -> void:
 
 func log_performance(message: String) -> void:
 	if _merged_log_performance:
-		if EngineDebugger.is_active():
-			EngineDebugger.send_message("perf_monitor:log", ["Performance", message])
-		else:
-			print(message)
+		_send_to_panel("Performance", message)
 
 
 ## Category flag accessors (for direct flag checks)

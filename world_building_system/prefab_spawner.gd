@@ -623,10 +623,21 @@ func _parse_compact_objects(compact: Array) -> Array:
 ## interior_carve: if true, carve terrain at block positions that intersect with terrain
 func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset: int = 1, rotation: int = 0, carve_terrain: bool = false, skip_blocks: bool = false, interior_carve: bool = false) -> bool:
 	PerformanceMonitor.start_measure("Prefab: " + prefab_name)
+	PerformanceMonitor.capture_scope_event("buildings", "spawn_requested", {
+		"prefab": prefab_name,
+		"world_pos": str(world_pos),
+		"rotation": rotation,
+		"carve_terrain": carve_terrain,
+		"skip_blocks": skip_blocks,
+		"interior_carve": interior_carve
+	})
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		PerformanceMonitor.start_measure("Prefab Load: " + prefab_name)
 		if not load_prefab_from_file(prefab_name):
+			PerformanceMonitor.capture_scope_event("buildings", "load_failed", {
+				"prefab": prefab_name
+			})
 			PerformanceMonitor.end_measure("Prefab Load: " + prefab_name, 1.0)
 			PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 			return false
@@ -651,8 +662,19 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	var veg_mgr = _get_vegetation_manager()
 	if veg_mgr and veg_mgr.has_method("clear_vegetation_in_area"):
 		veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
-	
+
 	var blocks = prefabs[prefab_name]
+	PerformanceMonitor.capture_scope_state("buildings", {
+		"prefab": prefab_name,
+		"world_pos": str(world_pos),
+		"spawn_pos": str(spawn_pos),
+		"rotation": rotation,
+		"submerge_offset": submerge_offset,
+		"carve_terrain": carve_terrain,
+		"skip_blocks": skip_blocks,
+		"interior_carve": interior_carve,
+		"block_count": blocks.size()
+	})
 	var carved_terrain := false
 	
 	# Carve terrain for submerged blocks (only in carve mode)
@@ -725,6 +747,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		var mode_str = "carve-only" if carve_terrain else "fill-only"
 		DebugManager.log_building("Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 		PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
+		PerformanceMonitor.capture_scope_event("buildings", "spawn_complete", {
+			"prefab": prefab_name,
+			"mode": mode_str,
+			"carved_terrain": carved_terrain,
+			"block_count": blocks.size()
+		})
 		return true
 	
 	# Spawn blocks with rotation (BATCHED - no mesh rebuild per block)
@@ -831,6 +859,11 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	var mode_str = "carve" if carve_terrain else "surface"
 	DebugManager.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 	PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
+	PerformanceMonitor.capture_scope_event("buildings", "spawn_complete", {
+		"prefab": prefab_name,
+		"carved_terrain": carved_terrain,
+		"block_count": blocks.size()
+	})
 	return true
 
 func _can_use_column_terrain_ops() -> bool:

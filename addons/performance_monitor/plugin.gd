@@ -25,6 +25,9 @@ func _enter_tree() -> void:
 
 func _exit_tree() -> void:
 	if debugger_plugin:
+		debugger_plugin.set_panel_enabled(false)
+
+	if debugger_plugin:
 		remove_debugger_plugin(debugger_plugin)
 		debugger_plugin = null
 	

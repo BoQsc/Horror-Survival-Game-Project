@@ -3,6 +3,8 @@ extends Control
 ## Performance Monitor Panel - Shows performance logs in a dedicated editor panel
 
 const MAX_LOG_ENTRIES = 500
+const TARGET_FPS := 60.0
+const FRAME_BUDGET_MS := 1000.0 / TARGET_FPS
 const SEVERITY_COLORS = {
 	"SPIKE": Color(1.0, 0.4, 0.3),       # Red-orange for spikes
 	"FRAME": Color(1.0, 0.6, 0.2),       # Orange for frame summaries
@@ -24,7 +26,7 @@ const SEVERITY_COLORS = {
 
 # Default thresholds for reference
 const DEFAULT_THRESHOLDS = {
-	"frame_time": 20.0,
+	"frame_time": FRAME_BUDGET_MS,
 	"chunk_gen": 3.0,
 	"vegetation": 2.0
 }

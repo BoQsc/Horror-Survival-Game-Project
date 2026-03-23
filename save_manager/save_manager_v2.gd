@@ -337,6 +337,30 @@ func _finalize_save(path: String):
 	print("[SAVE_NOTIFICATION] Game saved to: %s" % path)
 	save_completed.emit(true, path)
 
+
+func _capture_load_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
+	var entity_manager_loading := false
+	if entity_manager and "is_loading_save" in entity_manager:
+		entity_manager_loading = entity_manager.is_loading_save
+
+	PerformanceMonitor.capture_scope_state("save_load", {
+		"is_loading_game": is_loading_game,
+		"is_quickloading": is_quickloading,
+		"awaiting_terrain_ready": awaiting_terrain_ready,
+		"awaiting_vegetation_ready": awaiting_vegetation_ready,
+		"current_save_path": current_save_path,
+		"pending_player_data": pending_player_data.size(),
+		"pending_entity_data": pending_entity_data.size(),
+		"pending_vehicle_data": pending_vehicle_data.size(),
+		"pending_door_data": pending_door_data.size(),
+		"pending_container_data": pending_container_data.size(),
+		"load_timeout_active": is_instance_valid(load_safety_timer),
+		"entity_manager_loading": entity_manager_loading
+	})
+
+	if not event_label.is_empty():
+		PerformanceMonitor.capture_scope_event("save_load", event_label, details)
+
 ## Load game from specified path
 func load_game(path: String) -> bool:
 	# Guard against double-load (F8 pressed twice)
@@ -499,6 +523,10 @@ func load_game(path: String) -> bool:
 	awaiting_vegetation_ready = not save_data.get("vegetation", {}).is_empty() and vegetation_manager != null
 	
 	DebugManager.log_save("Awaiting: Terrain=%s Vegetation=%s" % [awaiting_terrain_ready, awaiting_vegetation_ready])
+	_capture_load_telemetry("load_started", {
+		"path": path,
+		"vegetation_data": not save_data.get("vegetation", {}).is_empty()
+	})
 	
 	# Show loading screen BEFORE triggering world gen (so it catches early signals)
 	_show_loading_screen()
@@ -540,6 +568,9 @@ func _on_load_timeout():
 		push_warning("SaveManager: LOAD TIMEOUT REACHED! Forcing unfreeze.")
 		awaiting_terrain_ready = false
 		awaiting_vegetation_ready = false
+		_capture_load_telemetry("timeout_forced", {
+			"seconds": 15.0
+		})
 		_check_world_readiness()
 
 ## Emit player_loaded signal (deferred to ensure all systems are ready)
@@ -555,6 +586,9 @@ func _on_spawn_zones_ready(_positions: Array):
 	
 	awaiting_terrain_ready = false
 	DebugManager.log_save("Terrain ready - checking if vegetation is also ready")
+	_capture_load_telemetry("terrain_ready", {
+		"ready_positions": _positions.size()
+	})
 	_check_world_readiness()
 
 ## Called when vegetation manager finishes its initial load batch
@@ -564,11 +598,16 @@ func _on_all_vegetation_ready():
 		
 	awaiting_vegetation_ready = false
 	DebugManager.log_save("Vegetation ready - checking if terrain is also ready")
+	_capture_load_telemetry("vegetation_ready")
 	_check_world_readiness()
 
 ## Finalize loading when all systems are ready
 func _check_world_readiness():
 	if awaiting_terrain_ready or awaiting_vegetation_ready:
+		_capture_load_telemetry("still_waiting", {
+			"terrain": awaiting_terrain_ready,
+			"vegetation": awaiting_vegetation_ready
+		})
 		DebugManager.log_save("Still waiting for: %s%s" % [
 			"Terrain " if awaiting_terrain_ready else "",
 			"Vegetation" if awaiting_vegetation_ready else ""
@@ -576,6 +615,7 @@ func _check_world_readiness():
 		return
 	
 	DebugManager.log_save("All world components ready - final unfreeze")
+	_capture_load_telemetry("world_ready")
 	
 	# Re-enable player physics now that ground is solid
 	if player:
@@ -604,18 +644,26 @@ func _check_world_readiness():
 	# Even if no entities are saved, we need to clean up procedural spawns
 	load_step.emit("Loading entities", 9, 10)
 	if entity_manager and entity_manager.has_method("load_save_data"):
+		PerformanceMonitor.start_measure("Load Finalize: Entities")
 		entity_manager.load_save_data(pending_entity_data)
+		PerformanceMonitor.end_measure("Load Finalize: Entities", 1.0)
 	
 	# Spawn queued vehicles now that terrain is ready
 	if not pending_vehicle_data.is_empty():
+		PerformanceMonitor.start_measure("Load Finalize: Vehicles")
 		_load_vehicle_data(pending_vehicle_data)
+		PerformanceMonitor.end_measure("Load Finalize: Vehicles", 1.0)
 	
 	# Load doors and containers NOW that buildings have had time to spawn
 	# (They were deferred from load_game because buildings need terrain first)
 	if not pending_door_data.is_empty():
+		PerformanceMonitor.start_measure("Load Finalize: Doors")
 		_load_door_data(pending_door_data)
+		PerformanceMonitor.end_measure("Load Finalize: Doors", 1.0)
 	if not pending_container_data.is_empty():
+		PerformanceMonitor.start_measure("Load Finalize: Containers")
 		_load_container_data(pending_container_data)
+		PerformanceMonitor.end_measure("Load Finalize: Containers", 1.0)
 	
 	# Clear pending data
 	pending_player_data = {}
@@ -640,6 +688,7 @@ func _check_world_readiness():
 	print("[LOAD_NOTIFICATION] Game loaded and world ready!")
 	load_completed.emit(true, current_save_path)
 	is_quickloading = false  # Clear the flag now that load is complete
+	_capture_load_telemetry("load_complete")
 
 ## Get list of available save files
 func get_save_files() -> Array[String]:
@@ -1200,6 +1249,7 @@ func _reset_load_flags():
 	# Restart autosave
 	if _autosave_timer and autosave_enabled:
 		_autosave_timer.start()
+	_capture_load_telemetry("reset_after_failure")
 	DebugManager.log_save("Load flags reset after failure - player unfrozen")
 
 # ============ UTILITY FUNCTIONS ============

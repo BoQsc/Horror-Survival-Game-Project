@@ -329,6 +329,17 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
 	var fractional_pos = global_pos - Vector3(anchor) # Full 3D offset from anchor
 	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
+	PerformanceMonitor.capture_scope_state("buildings", {
+		"phase": "place_object",
+		"object_id": object_id,
+		"rotation": rotation,
+		"global_pos": str(global_pos),
+		"anchor": str(anchor),
+		"ignore_collision": ignore_collision,
+		"is_procedural": is_procedural,
+		"scene_path": obj_def.scene,
+		"cell_count": cells.size()
+	})
 	
 	# Load and instantiate the scene (uses preloaded cache)
 	var scene_path = obj_def.scene

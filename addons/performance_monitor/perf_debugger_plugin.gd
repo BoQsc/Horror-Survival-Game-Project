@@ -34,6 +34,11 @@ func _setup_session(session_id: int) -> void:
 	_send_to_active_sessions("perf_monitor:enable_panel", [true])
 
 
+func set_panel_enabled(enabled: bool) -> void:
+	# Let the runtime stop sending panel messages when the addon is disabled.
+	_send_to_active_sessions("perf_monitor:enable_panel", [enabled])
+
+
 func _send_to_active_sessions(message: String, data: Array) -> void:
 	var sessions = get_sessions()
 	for s in sessions:

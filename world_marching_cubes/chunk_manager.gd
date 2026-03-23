@@ -152,6 +152,9 @@ var adaptive_frame_budget_ms: float = 1.0 # Dynamically adjusted (reduced for sm
 var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
 var terrain_grid = null
+var _last_update_loads: int = 0
+var _last_update_unloads: int = 0
+var _last_update_backend: String = ""
 
 
 # Persistent modification storage - survives chunk unloading
@@ -306,6 +309,54 @@ func get_viewer_position() -> Vector3:
 	return viewer.global_position
 
 
+func _get_task_queue_count() -> int:
+	mutex.lock()
+	var count := task_queue.size()
+	mutex.unlock()
+	return count
+
+
+func _get_cpu_task_queue_count() -> int:
+	cpu_mutex.lock()
+	var count := cpu_task_queue.size()
+	cpu_mutex.unlock()
+	return count
+
+
+func _capture_terrain_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
+	var viewer_pos := get_viewer_position()
+	var viewer_chunk := Vector3i(
+		int(floor(viewer_pos.x / CHUNK_STRIDE)),
+		int(floor(viewer_pos.y / CHUNK_STRIDE)),
+		int(floor(viewer_pos.z / CHUNK_STRIDE))
+	)
+
+	PerformanceMonitor.capture_scope_state("terrain", {
+		"phase": "initial_load" if initial_load_phase else "exploration",
+		"loading_paused": loading_paused,
+		"fps": current_fps,
+		"target_fps": target_fps,
+		"budget_ms": adaptive_frame_budget_ms,
+		"chunks_per_frame_limit": chunks_per_frame_limit,
+		"active_chunks": active_chunks.size(),
+		"pending_nodes": get_pending_nodes_count(),
+		"task_queue": _get_task_queue_count(),
+		"cpu_task_queue": _get_cpu_task_queue_count(),
+		"spawn_zones_pending": pending_spawn_zones.size(),
+		"modification_batches_pending": pending_batches.size(),
+		"chunks_loaded_initial": chunks_loaded_initial,
+		"initial_load_target_chunks": initial_load_target_chunks,
+		"last_update_loads": _last_update_loads,
+		"last_update_unloads": _last_update_unloads,
+		"backend": _last_update_backend,
+		"viewer_chunk": str(viewer_chunk),
+		"viewer_pos": str(viewer_pos)
+	})
+
+	if not event_label.is_empty():
+		PerformanceMonitor.capture_scope_event("terrain", event_label, details)
+
+
 func _process(delta):
 	if not viewer:
 		return
@@ -328,6 +379,7 @@ func _process(delta):
 	
 	# HOTFIX: Ensure all existing chunks have layer 512 (Layer 10) for pickups
 	if active_chunks.size() > 0 and not get_meta("collision_fixed", false):
+		PerformanceMonitor.start_measure("Chunk Hotfix: Collision Sync")
 		for coord in active_chunks:
 			var data = active_chunks[coord]
 			if data:
@@ -337,6 +389,9 @@ func _process(delta):
 					data.node_terrain.collision_layer = 1 | 512
 		set_meta("collision_fixed", true)
 		DebugManager.log_chunk("HOTFIX: Updated existing chunks to layer 1|512")
+		PerformanceMonitor.end_measure("Chunk Hotfix: Collision Sync", 1.0)
+
+	_capture_terrain_telemetry()
 
 var debug_chunk_bounds: bool = false
 
@@ -411,6 +466,7 @@ func update_collision_proximity():
 	if collision_update_counter < 30:
 		return
 	collision_update_counter = 0
+	PerformanceMonitor.start_measure("Chunk Collision Proximity")
 	
 	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
@@ -434,6 +490,7 @@ func update_collision_proximity():
 		# Enable/disable collision shape
 		if data.collision_shape_terrain:
 			data.collision_shape_terrain.disabled = not should_have_collision
+	PerformanceMonitor.end_measure("Chunk Collision Proximity", 0.5)
 
 # Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
 func process_pending_nodes():
@@ -1172,7 +1229,10 @@ func update_chunks():
 		_update_chunks_gdscript()
 
 func _update_chunks_native():
+	_last_update_backend = "native"
 	if loading_paused:
+		_last_update_loads = 0
+		_last_update_unloads = 0
 		return
 
 	var p_pos = viewer.global_position
@@ -1181,15 +1241,22 @@ func _update_chunks_native():
 	
 	# 1. Update Grid (C++)
 	# Returns { "load": [Vector3i], "unload": [Vector3i] }
+	PerformanceMonitor.start_measure("Chunk Grid Update")
 	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE)
+	PerformanceMonitor.end_measure("Chunk Grid Update", 0.5)
 	
 	# 2. Process Unloads
+	var unload_count := 0
+	PerformanceMonitor.start_measure("Chunk Unload")
 	for coord in result["unload"]:
+		unload_count += 1
 		_unload_chunk(coord)
 		terrain_grid.remove_chunk(coord)
+	PerformanceMonitor.end_measure("Chunk Unload", 0.5)
 		
 	# 3. Process Loads
 	var chunks_queued = 0
+	PerformanceMonitor.start_measure("Chunk Load Queue")
 	
 	for coord in result["load"]:
 		if chunks_queued >= chunks_per_frame_limit:
@@ -1202,9 +1269,11 @@ func _update_chunks_native():
 		_load_chunk(coord)
 		terrain_grid.add_chunk(coord)
 		chunks_queued += 1
+	PerformanceMonitor.end_measure("Chunk Load Queue", 0.5)
 		
 	# 4. Special Case: Stored Modifications (Force load if nearby)
 	if chunks_queued < chunks_per_frame_limit and not initial_load_phase:
+		PerformanceMonitor.start_measure("Chunk Load Mods")
 		for coord in _get_all_modification_coords():
 			if chunks_queued >= chunks_per_frame_limit: break
 			if active_chunks.has(coord): continue
@@ -1216,6 +1285,10 @@ func _update_chunks_native():
 				_load_chunk(coord)
 				terrain_grid.add_chunk(coord)
 				chunks_queued += 1
+		PerformanceMonitor.end_measure("Chunk Load Mods", 0.5)
+
+	_last_update_loads = chunks_queued
+	_last_update_unloads = unload_count
 
 func _load_chunk(coord: Vector3i):
 	active_chunks[coord] = null
@@ -1304,10 +1377,15 @@ func clear_all_chunks():
 	pending_spawn_zones.clear()
 	modification_batch_id = 0
 	pending_batches.clear()
+	_last_update_backend = "clear"
+	_last_update_loads = 0
+	_last_update_unloads = 0
+	_capture_terrain_telemetry("world_reset", {"cleared_chunks": coords.size()})
 	
 	DebugManager.log_chunk("ChunkManager: Atomic clear complete - background tasks stopped")
 
 func _update_chunks_gdscript():
+	_last_update_backend = "gdscript"
 	var p_pos = viewer.global_position
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE)) # Y uses CHUNK_STRIDE for 1-voxel overlap
@@ -1370,8 +1448,11 @@ func _update_chunks_gdscript():
 		# Notify systems that chunk has unloaded (for vegetation cleanup, etc.)
 		chunk_unloaded.emit(coord)
 
+	_last_update_unloads = chunks_to_remove.size()
+
 	# 2. Load new chunks (adaptive rate limiting based on FPS)
 	if loading_paused:
+		_last_update_loads = 0
 		return # Skip loading when FPS is too low
 	
 	var chunks_queued_this_frame = 0
@@ -1398,6 +1479,7 @@ func _update_chunks_gdscript():
 				
 				for y in y_to_load:
 					if chunks_queued_this_frame >= chunks_per_frame_limit:
+						_last_update_loads = chunks_queued_this_frame
 						return
 					
 					var coord = Vector3i(x, y, z)
@@ -1425,11 +1507,12 @@ func _update_chunks_gdscript():
 					semaphore.post()
 					
 					chunks_queued_this_frame += 1
-		
+
 		# Also load chunks with stored modifications (player builds) within range
 		if not initial_load_phase:
 			for coord in _get_all_modification_coords():
 				if chunks_queued_this_frame >= chunks_per_frame_limit:
+					_last_update_loads = chunks_queued_this_frame
 					return
 				if active_chunks.has(coord):
 					continue
@@ -1462,6 +1545,7 @@ func _update_chunks_gdscript():
 					if y < MIN_Y_LAYER or y > MAX_Y_LAYER:
 						continue
 					if chunks_queued_this_frame >= chunks_per_frame_limit:
+						_last_update_loads = chunks_queued_this_frame
 						return
 					
 					var coord = Vector3i(x, y, z)
@@ -1485,6 +1569,8 @@ func _update_chunks_gdscript():
 					semaphore.post()
 					
 					chunks_queued_this_frame += 1
+
+	_last_update_loads = chunks_queued_this_frame
 
 ## Interruptible delay - checks for high-priority tasks every 10ms
 ## Allows player interactions to interrupt chunk loading delays
@@ -2681,6 +2767,10 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 	
 	if pending_coords.is_empty():
 		# All chunks already loaded - emit immediately
+		_capture_terrain_telemetry("spawn_zone_ready_immediate", {
+			"position": str(position),
+			"radius": radius
+		})
 		call_deferred("emit_signal", "spawn_zones_ready", [position])
 	else:
 		# Track this spawn zone
@@ -2690,6 +2780,11 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 			"pending_coords": pending_coords
 		})
 		DebugManager.log_chunk("SpawnZone requested %d chunks at %s" % [pending_coords.size(), position])
+		_capture_terrain_telemetry("spawn_zone_requested", {
+			"position": str(position),
+			"radius": radius,
+			"pending_coords": pending_coords.size()
+		})
 
 ## Check if chunks around a position are ready (loaded with data)
 func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
@@ -2732,6 +2827,9 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 		if initial_load_phase:
 			initial_load_phase = false
 			DebugManager.log_chunk("Initial load phase COMPLETE - switching to exploration throttle")
+			_capture_terrain_telemetry("initial_load_complete", {
+				"ready_positions": ready_positions.size()
+			})
 			
 		DebugManager.log_chunk("SpawnZone %d zones ready" % ready_positions.size())
 		spawn_zones_ready.emit(ready_positions)
