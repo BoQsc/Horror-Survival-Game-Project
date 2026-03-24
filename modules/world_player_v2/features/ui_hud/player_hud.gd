@@ -144,6 +144,10 @@ func _ready() -> void:
 	if spawn_zombie_btn:
 		spawn_zombie_btn.pressed.connect(_on_spawn_zombie_pressed)
 	
+	var capture_prefab_btn = game_menu.find_child("CapturePrefabButton", true, false)
+	if capture_prefab_btn:
+		capture_prefab_btn.pressed.connect(_on_capture_prefab_pressed)
+	
  
 	
 	var radius_slider = game_menu.find_child("MiningRadiusSlider", true, false)
@@ -604,6 +608,23 @@ func _on_spawn_zombie_pressed() -> void:
 			push_error("PlayerHUD: Zombie scene not found!")
 	else:
 		push_error("PlayerHUD: Entity manager or spawn_entity_near_player not found!")
+
+func _on_capture_prefab_pressed() -> void:
+	print("PlayerHUD: Capture Prefab pressed")
+	# 1. Close menu
+	_on_game_menu_toggled(false)
+	if has_node("/root/PlayerSignals"):
+		PlayerSignals.game_menu_toggled.emit(false)
+	
+	# 2. Capture mouse
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	
+	# 3. Find PrefabCapture and start selection
+	var prefab_capture = get_tree().get_first_node_in_group("prefab_capture")
+	if prefab_capture and prefab_capture.has_method("_enter_selection_mode"):
+		prefab_capture._enter_selection_mode()
+	else:
+		print("PlayerHUD: PrefabCapture not found or missing method!")
 
 
 
