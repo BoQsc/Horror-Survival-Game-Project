@@ -88,11 +88,18 @@ func _thread_loop():
 		mutex.unlock()
 		
 		# Generate
-		var arrays = _generate_mesh(rd, shader, pipeline, voxel_bytes, voxel_meta, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer)
+		var result = _generate_mesh(rd, shader, pipeline, voxel_bytes, voxel_meta, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer)
 		
 		# Callback
 		if is_instance_valid(chunk):
-			chunk.call_deferred("apply_mesh", arrays)
+			var arrays = []
+			var shape = null
+			if result is Dictionary:
+				arrays = result.get("arrays", [])
+				shape = result.get("shape", null)
+			else:
+				arrays = result
+			chunk.call_deferred("apply_mesh", arrays, shape)
 	
 	# Cleanup persistent resources
 	rd.free_rid(vertex_buffer)
@@ -106,7 +113,7 @@ func _thread_loop():
 	rd.free_rid(shader)
 	rd.free()
 
-func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray, v_meta: PackedByteArray, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer) -> Array:
+func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: PackedByteArray, v_meta: PackedByteArray, vertex_buffer, normal_buffer, uv_buffer, index_buffer, counter_buffer, index_counter_buffer) -> Dictionary:
 	# DEBUG: Track GPU mesh generation calls
 	mesh_gen_count += 1
 	var cleanup_status = "CLEANUP ON" if ENABLE_GPU_CLEANUP else "CLEANUP OFF (LEAKING!)"
@@ -243,6 +250,7 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	var actual_index_count = index_counter_bytes.decode_u32(0)
 	
 	var arrays = []
+	var collision_shape = null
 	
 	if actual_vertex_count > 0 and actual_index_count > 0:
 		var vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, actual_vertex_count * 12)
@@ -257,6 +265,7 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 			if mesh:
 				for i in range(mesh.get_surface_count()):
 					arrays = mesh.surface_get_arrays(i)
+				collision_shape = builder.build_collision_shape(vertex_bytes.to_float32_array(), 3)
 		
 		# Fallback to GDScript if builder missing
 		if not mesh:
@@ -298,7 +307,10 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		if sampler_rid.is_valid():
 			rd.free_rid(sampler_rid)
 	
-	return arrays
+	return {
+		"arrays": arrays,
+		"shape": collision_shape
+	}
 
 func _exit_tree():
 	mutex.lock()

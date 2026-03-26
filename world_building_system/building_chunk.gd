@@ -22,6 +22,22 @@ var collision_shape: CollisionShape3D
 
 # Mesher Reference (injected by Manager)
 var mesher: Node # BuildingMesher
+var manager: Node # BuildingManager
+
+static var _object_collision_shape_cache: Dictionary = {}
+
+static func _get_cached_object_collision_shape(mesh: Mesh) -> Shape3D:
+	if not mesh:
+		return null
+
+	var cache_key := mesh.get_instance_id()
+	if _object_collision_shape_cache.has(cache_key):
+		return _object_collision_shape_cache[cache_key]
+
+	var shape := mesh.create_trimesh_shape()
+	if shape:
+		_object_collision_shape_cache[cache_key] = shape
+	return shape
 
 func _init(coord: Vector3i):
 	chunk_coord = coord
@@ -119,15 +135,22 @@ func apply_mesh(arrays: Array, shape: Shape3D = null):
 		mesh_instance.material_override = material
 		mesh_instance.mesh = mesh
 		PerformanceMonitor.end_measure("Building Mesh Upload", 0.5)
-		
-		# Generate Physics Shape (Main Thread, since we disabled threading it)
-		if collision_shape.shape:
-			collision_shape.shape = null
-		PerformanceMonitor.start_measure("Building Collision Shape")
-		collision_shape.shape = mesh.create_trimesh_shape()
-		PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
 	else:
 		mesh_instance.mesh = null
+		collision_shape.shape = null
+		PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
+		return
+
+	# Use native shape when available; otherwise fall back to main-thread trimesh generation.
+	if collision_shape.shape:
+		collision_shape.shape = null
+	if shape:
+		collision_shape.shape = shape
+	elif mesh_instance.mesh:
+		PerformanceMonitor.start_measure("Building Collision Shape")
+		collision_shape.shape = mesh_instance.mesh.create_trimesh_shape()
+		PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
+	else:
 		collision_shape.shape = null
 	
 	PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
@@ -152,7 +175,7 @@ func is_cell_available(local_pos: Vector3i) -> bool:
 
 ## Place an object at the anchor position (assumes cells already validated)
 ## fractional_pos is the 3D offset from the anchor block's origin (0,0,0)
-func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO) -> bool:
+func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO, defer_collision: bool = false) -> bool:
 	# Store object data (include fractional_pos for persistence)
 	objects[local_anchor] = {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
 	
@@ -193,15 +216,21 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 		scene_instance.set_meta("anchor", local_anchor)
 		scene_instance.set_meta("chunk", self)
 		
-		# Generate collision for the object (if it has meshes)
-		PerformanceMonitor.start_measure("Building Object Collision")
-		_generate_object_collision(scene_instance, local_anchor)
-		PerformanceMonitor.end_measure("Building Object Collision", 0.5)
+		# Generate collision now for manual placements; procedural spawns can defer to the manager budget.
+		if defer_collision and manager and manager.has_method("queue_object_collision"):
+			manager.queue_object_collision(self, scene_instance, local_anchor)
+		else:
+			_generate_object_collision_measured(scene_instance, local_anchor)
 		
 		object_nodes[local_anchor] = scene_instance
 	
 	is_empty = false
 	return true
+
+func _generate_object_collision_measured(obj: Node3D, anchor: Vector3i) -> void:
+	PerformanceMonitor.start_measure("Building Object Collision")
+	_generate_object_collision(obj, anchor)
+	PerformanceMonitor.end_measure("Building Object Collision", 0.5)
 
 ## Generate collision for an object by finding its meshes
 ## anchor is passed in since child nodes may not have the meta set
@@ -223,7 +252,7 @@ func _generate_object_collision(obj: Node3D, anchor: Vector3i):
 				static_body.set_meta("chunk", self)
 				
 				var collision = CollisionShape3D.new()
-				collision.shape = mesh_inst.mesh.create_trimesh_shape()
+				collision.shape = _get_cached_object_collision_shape(mesh_inst.mesh)
 				static_body.add_child(collision)
 				
 				# Match the mesh position
@@ -268,7 +297,7 @@ func get_object_at(local_pos: Vector3i):
 
 ## Restore visual instances for all stored objects (called after load)
 ## This spawns the scene instances for objects that were saved to the objects dictionary
-func restore_object_visuals():
+func restore_object_visuals(defer_collision: bool = true):
 	PerformanceMonitor.start_measure("Building Restore Visuals")
 	for local_anchor in objects:
 		# Skip if visual already exists
@@ -317,10 +346,11 @@ func restore_object_visuals():
 		scene_instance.set_meta("anchor", local_anchor)
 		scene_instance.set_meta("chunk", self)
 		
-		# Generate collision
-		PerformanceMonitor.start_measure("Building Object Collision")
-		_generate_object_collision(scene_instance, local_anchor)
-		PerformanceMonitor.end_measure("Building Object Collision", 0.5)
+		# Generate collision now for manual loads; deferred mode keeps load spikes down.
+		if defer_collision and manager and manager.has_method("queue_object_collision"):
+			manager.queue_object_collision(self, scene_instance, local_anchor)
+		else:
+			_generate_object_collision_measured(scene_instance, local_anchor)
 		
 		object_nodes[local_anchor] = scene_instance
 	

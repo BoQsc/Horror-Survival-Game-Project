@@ -1373,6 +1373,18 @@ func clear_all_chunks():
 	if terrain_grid and terrain_grid.has_method("clear"):
 		terrain_grid.clear()
 		DebugManager.log_chunk("ChunkManager: C++ TerrainGrid cleared")
+
+	var prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
+	if not prefab_spawner:
+		prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
+	if prefab_spawner and prefab_spawner.has_method("clear_pending_spawn_jobs"):
+		prefab_spawner.clear_pending_spawn_jobs()
+
+	var building_manager = get_tree().get_first_node_in_group("building_manager")
+	if not building_manager:
+		building_manager = get_tree().root.find_child("BuildingManager", true, false)
+	if building_manager and building_manager.has_method("clear_pending_object_collision_tasks"):
+		building_manager.clear_pending_object_collision_tasks()
 		
 	pending_spawn_zones.clear()
 	modification_batch_id = 0

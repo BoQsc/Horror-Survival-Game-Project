@@ -15,6 +15,9 @@ var visible_chunks: Dictionary = {} # Vector3i -> true
 var chunk_pool: Array[BuildingChunk] = []
 const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 
+@export_range(0.5, 20.0, 0.5) var object_collision_budget_ms: float = 2.0
+var _pending_object_collision_tasks: Array[Dictionary] = []
+
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
 
@@ -81,6 +84,7 @@ func _ready():
 func _process(_delta):
 	if viewer:
 		update_building_chunks()
+	_process_pending_object_collisions()
 
 ## Gets effective viewer position - returns vehicle position if player is driving
 func get_viewer_position() -> Vector3:
@@ -144,6 +148,70 @@ func _load_chunk_visual(coord: Vector3i):
 	
 	visible_chunks[coord] = true
 
+func queue_object_collision(chunk: BuildingChunk, obj: Node3D, anchor: Vector3i) -> void:
+	if not chunk or not obj:
+		return
+	if not is_instance_valid(chunk) or not is_instance_valid(obj):
+		return
+
+	_pending_object_collision_tasks.append({
+		"chunk": chunk,
+		"obj": obj,
+		"anchor": anchor
+	})
+
+	PerformanceMonitor.capture_scope_state("buildings", {
+		"phase": "object_collision_queue",
+		"pending_object_collision_jobs": _pending_object_collision_tasks.size()
+	})
+
+func mark_chunk_dirty(chunk_coord: Vector3i, chunk: BuildingChunk) -> void:
+	if not chunk or not is_instance_valid(chunk):
+		return
+	_dirty_chunks[chunk_coord] = chunk
+
+func _process_pending_object_collisions() -> void:
+	if _pending_object_collision_tasks.is_empty():
+		return
+
+	var start_time := Time.get_ticks_usec()
+	var processed := 0
+	var started_measure := false
+
+	while not _pending_object_collision_tasks.is_empty():
+		if processed > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
+			if elapsed_ms >= object_collision_budget_ms:
+				break
+
+		var task: Dictionary = _pending_object_collision_tasks.pop_back()
+		var chunk: BuildingChunk = task.get("chunk")
+		var obj: Node3D = task.get("obj")
+		var anchor: Vector3i = task.get("anchor", Vector3i.ZERO)
+
+		if not is_instance_valid(chunk) or not is_instance_valid(obj):
+			continue
+
+		if not started_measure:
+			PerformanceMonitor.start_measure("Building Object Collision")
+			started_measure = true
+
+		chunk._generate_object_collision(obj, anchor)
+		processed += 1
+
+	if started_measure:
+		PerformanceMonitor.end_measure("Building Object Collision", 0.5)
+
+	if processed > 0 or not _pending_object_collision_tasks.is_empty():
+		PerformanceMonitor.capture_scope_state("buildings", {
+			"phase": "object_collision_queue",
+			"pending_object_collision_jobs": _pending_object_collision_tasks.size(),
+			"processed_this_frame": processed
+		})
+
+func clear_pending_object_collision_tasks() -> void:
+	_pending_object_collision_tasks.clear()
+
 ## Get or create a chunk at the given coordinate. Uses pool for recycling.
 func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 	if chunks.has(chunk_coord):
@@ -158,6 +226,7 @@ func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 		chunk = BuildingChunk.new(chunk_coord) # Pool empty: create new
 	
 	chunk.mesher = mesher # Inject dependency
+	chunk.manager = self
 	chunks[chunk_coord] = chunk
 	
 	# Only add to tree if within render distance
@@ -246,7 +315,7 @@ func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0):
 	_update_building_map_pixel(global_pos, value > 0)
 	
 	# Always mark chunk as dirty - rebuild will check visibility
-	_dirty_chunks[chunk_coord] = chunk
+	mark_chunk_dirty(chunk_coord, chunk)
 
 ## Rebuild all chunks that were modified by batched operations
 ## Call this once after completing a batch of set_voxel_batched calls
@@ -376,7 +445,7 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	if is_procedural and scene_instance and scene_instance.has_method("populate_loot"):
 		scene_instance.set_meta("should_populate_loot", true)
 	
-	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos)
+	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos, is_procedural)
 	PerformanceMonitor.end_measure("Building Place Object", 1.0)
 	
 	return success
