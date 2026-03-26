@@ -33,7 +33,7 @@ const DEFAULT_THRESHOLDS = {
 # Current thresholds (configurable at runtime)
 var thresholds: Dictionary = DEFAULT_THRESHOLDS.duplicate()
 
-# Whether to send to debugger panel (auto-enabled when debugger active)
+# Whether to send to debugger panel. The editor plugin toggles this on/off.
 var use_debugger_panel: bool = false
 
 # Whether to also print to console when using debugger panel
