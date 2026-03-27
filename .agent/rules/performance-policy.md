@@ -7,6 +7,7 @@ trigger: always_on
 Use this project rule set whenever working on performance:
 
 - Preserve gameplay first.
+- Treat any breakable, openable, pick-upable, or scripted object as gameplay-critical until proven otherwise. Do not turn it into a visual-only proxy, batch record, or disabled collider without checking its scene/script behavior first.
 - Do not change render distance, collision distance, visibility, or interaction range as a performance shortcut without explicit approval.
 - Do not use prewarm as the primary solution. It is only a temporary mitigation if ever needed.
 - Do not hide stalls by adding async scheduling unless it also reduces total work.
@@ -26,5 +27,6 @@ Hard rules:
 
 - No random chunk loading.
 - No distance-based disabling of collisions or gameplay objects.
+- No replacing interactable objects with placeholder visuals unless the user explicitly approves that tradeoff.
 - No broad visual downgrades to mask a frame spike.
 - No speculative optimization without a baseline comparison.
