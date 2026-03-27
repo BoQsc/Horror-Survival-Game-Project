@@ -1111,15 +1111,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 		var dir = (to_v - from_v) / seg_len
 		var half_w_local = seg_width * 0.5
 		var rise = abs(to_y - from_y)
-		var slope = rise / max(seg_len, 1.0)
-		var slope_blend = clampf((slope - PATH_TERRAIN_BLEND_SLOPE_START) / max(0.001, PATH_TERRAIN_BLEND_SLOPE_FULL - PATH_TERRAIN_BLEND_SLOPE_START), 0.0, 1.0)
-		var length_blend = clampf((seg_len - PATH_TERRAIN_BLEND_LENGTH_START) / max(0.001, PATH_TERRAIN_BLEND_LENGTH_FULL - PATH_TERRAIN_BLEND_LENGTH_START), 0.0, 1.0)
-		var terrain_blend = max(slope_blend, length_blend)
-		var shoulder_width = PATH_SHOULDER_BASE + clampf(slope * PATH_SHOULDER_SLOPE_FACTOR, 0.0, PATH_SHOULDER_SLOPE_CAP)
-		# Steep links get a narrow core only so they do not carve broad terraces into the shoreline.
-		if slope > PATH_SHOULDER_STEEP_LIMIT or rise > 3.0:
-			shoulder_width = 0.0
-		var flatten_local = half_w_local + shoulder_width
+		var flatten_local = seg_width * 2.5 + ROAD_BLEND_MARGIN + rise * 0.85
 		var min_x = clampi(int(min(from_v.x, to_v.x) - flatten_local) + half, 0, MAP_SIZE - 1)
 		var max_x = clampi(int(max(from_v.x, to_v.x) + flatten_local) + half, 0, MAP_SIZE - 1)
 		var min_z = clampi(int(min(from_v.y, to_v.y) - flatten_local) + half, 0, MAP_SIZE - 1)
@@ -1139,8 +1131,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 				var eased_u = path_u * path_u * (3.0 - 2.0 * path_u)
 				var idx = pz * MAP_SIZE + px
 				var ridx = idx * 2
-				var terrain_h = float(height_bytes[idx]) / 255.0 * max_h
-				var path_y = lerp(lerp(from_y, to_y, eased_u), terrain_h, terrain_blend)
+				var path_y = lerp(from_y, to_y, eased_u)
 				if dist < half_w_local:
 					var h_byte = _encode_height_byte(path_y, max_h)
 					var r_height_byte = int(clampf(path_y / 64.0, 0.0, 1.0) * 255.0)
@@ -1148,11 +1139,12 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 					road_bytes[ridx + 1] = max(road_bytes[ridx + 1], r_height_byte)
 					biome_bytes[idx] = MaterialID.ROAD
 					height_bytes[idx] = h_byte
-				elif shoulder_width > 0.0:
+				else:
 					var blend_t = clampf((dist - half_w_local) / max(0.001, flatten_local - half_w_local), 0.0, 1.0)
 					var smooth_t = blend_t * blend_t * (3.0 - 2.0 * blend_t)
 					smooth_t = smooth_t * smooth_t * (3.0 - 2.0 * smooth_t)
-					var blended = lerp(path_y, terrain_h, smooth_t)
+					var orig_h = float(height_bytes[idx]) / 255.0 * max_h
+					var blended = lerp(path_y, orig_h, smooth_t)
 					height_bytes[idx] = _encode_height_byte(blended, max_h)
 
 func _get_road_height_at(wx: float, wz: float) -> float:
@@ -1366,7 +1358,7 @@ func _append_path_segment(path_segments: Array, from_v: Vector2, to_v: Vector2, 
 		"to_y": to_y
 	})
 
-func _append_door_path_segment(path_segments: Array, frontage_target: Vector2, road_target: Vector2, prefab_name: String,
+func _append_door_path_segment(path_segments: Array, frontage_target: Vector2, road_target: Vector2, road_is_vertical: bool, prefab_name: String,
 		spawn_origin: Vector3, rotation: int, bldg_x: float, bldg_z: float, footprint: Vector2i, road_y: float,
 		bldg_y: float, height_bytes: PackedByteArray, max_h: float, half: int) -> void:
 	var door_center_var = PrefabGeometry.get_primary_door_world_center(prefab_name, spawn_origin, rotation)
@@ -1387,15 +1379,18 @@ func _append_door_path_segment(path_segments: Array, frontage_target: Vector2, r
 	var frontage_link_length = landing_point.distance_to(frontage_target)
 	var frontage_link_rise = abs(frontage_y - bldg_y)
 	var frontage_link_slope = frontage_link_rise / max(frontage_link_length, 1.0)
-	# If the frontage climb is steep, skip the ramp rather than carving a long shelf.
-	if frontage_link_rise <= PATH_FRONTAGE_MAX_RISE and frontage_link_slope <= PATH_FRONTAGE_MAX_SLOPE:
-		_append_path_segment(path_segments, landing_point, frontage_target, building_path_width, bldg_y, frontage_y)
+	_append_path_segment(path_segments, landing_point, frontage_target, building_path_width, bldg_y, frontage_y)
 	var road_link_length = frontage_target.distance_to(road_target)
 	var road_link_rise = abs(road_y - frontage_y)
 	var road_link_slope = road_link_rise / max(road_link_length, 1.0)
-	# Only draw the final road connector when it is short and gentle enough to avoid terrain shelves.
-	if road_link_length <= PATH_ROAD_LINK_MAX_LENGTH and road_link_rise <= PATH_ROAD_LINK_MAX_RISE and road_link_slope <= PATH_ROAD_LINK_MAX_SLOPE:
-		_append_path_segment(path_segments, frontage_target, road_target, building_path_width, frontage_y, road_y)
+	var road_bend := frontage_target
+	if road_is_vertical:
+		road_bend = Vector2(road_target.x, frontage_target.y)
+	else:
+		road_bend = Vector2(frontage_target.x, road_target.y)
+	var connector_mid_y: float = lerp(frontage_y, road_y, 0.5)
+	_append_path_segment(path_segments, frontage_target, road_bend, building_path_width, frontage_y, connector_mid_y)
+	_append_path_segment(path_segments, road_bend, road_target, building_path_width, connector_mid_y, road_y)
 
 func _append_baked_excavation_modifications(terrain_modifications: Array, prefab_name: String, spawn_origin: Vector3, rotation: int) -> void:
 	var segments := PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation)
@@ -1432,9 +1427,10 @@ func _append_baked_building(buildings: Array, terrain_modifications: Array, path
 	var protected_excavation_columns := _get_off_footprint_excavation_columns(prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint)
 	var connection = _find_best_road_connection(road_target, road_segments, road_kind)
 	var road_point: Vector2 = connection.get("point", road_target)
+	var road_is_vertical: bool = bool(connection.get("is_vertical", false))
 	var road_y = floor(_get_road_height_at(road_point.x, road_point.y))
 	_flatten_building_pad(height_bytes, bldg_x, bldg_z, footprint, bldg_y, max_h, half, support_info, protected_excavation_columns)
-	_append_door_path_segment(path_segments, road_target, road_point, prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint, road_y, bldg_y, height_bytes, max_h, half)
+	_append_door_path_segment(path_segments, road_target, road_point, road_is_vertical, prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint, road_y, bldg_y, height_bytes, max_h, half)
 	_append_baked_excavation_modifications(terrain_modifications, prefab_name, spawn_origin, rot)
 	buildings.append({
 		"x": bldg_x, "y": bldg_y, "z": bldg_z,
@@ -2412,7 +2408,10 @@ func _find_best_road_connection(probe: Vector2, road_segments: Array, preferred_
 				"point": point,
 				"width": width,
 				"kind": kind,
-				"distance": dist
+				"distance": dist,
+				"from": from_v,
+				"to": to_v,
+				"is_vertical": absf(from_v.x - to_v.x) <= 0.001
 			}
 	return best
 
