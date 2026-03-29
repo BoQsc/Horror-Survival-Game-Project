@@ -10,36 +10,42 @@ const OBJECTS = {
 		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.tscn",
 		"size": Vector3i(1, 1, 1),
 		"material": "paper",
+		"movable": true,
 	},
 	2: {
 		"name": "Long Crate",
 		"scene": "res://models/objects/crate/1/simple_long_crate.tscn", 
 		"size": Vector3i(2, 1, 1),
 		"material": "wood",
+		"movable": true,
 	},
 	3: {
 		"name": "Wooden Table",
 		"scene": "res://models/objects/table/1/psx_wooden_table.tscn",
 		"size": Vector3i(2, 1, 1),
 		"material": "wood",
+		"movable": true,
 	},
 	4: {
 		"name": "Door",
 		"scene": "res://models/objects/interactive_door/interactive_door.tscn",
 		"size": Vector3i(1, 2, 1),
 		"material": "wood",
+		"movable": false,
 	},
 	5: {
 		"name": "Window",
 		"scene": "res://models/objects/window/1/window.tscn",
 		"size": Vector3i(1, 1, 1),
 		"material": "wood",
+		"movable": false,
 	},
 	6: {
 		"name": "Heavy Pistol",
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn",
 		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
 		"material": "metal",
+		"movable": true,
 	},
 }
 
@@ -193,6 +199,12 @@ static func _create_pistol_shell(world_map_mode: bool = false) -> RigidBody3D:
 ## Get object definition by ID
 static func get_object(id: int) -> Dictionary:
 	return OBJECTS.get(id, {})
+
+static func is_movable_object(id: int) -> bool:
+	var obj = get_object(id)
+	if obj.is_empty():
+		return false
+	return bool(obj.get("movable", false))
 
 ## Get all object IDs
 static func get_all_ids() -> Array:

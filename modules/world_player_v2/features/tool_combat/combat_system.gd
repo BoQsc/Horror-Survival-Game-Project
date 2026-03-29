@@ -53,6 +53,8 @@ var mode_manager: Node = null
 var held_prop_instance: Node = null
 var held_prop_id: int = -1
 var held_prop_rotation: int = 0
+var held_prop_original_collision_layer: int = -1
+var held_prop_original_collision_mask: int = -1
 
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
@@ -394,8 +396,15 @@ func _try_grab_prop() -> void:
 	
 	# Read object data before removing
 	var data = chunk.objects[anchor]
-	held_prop_id = data["object_id"]
+	held_prop_id = int(data.get("object_id", -1))
 	held_prop_rotation = data.get("rotation", 0)
+	# Only allow clearly movable props to be grabbed.
+	# Structural building pieces must stay in place so we do not remove floor/support collision.
+	if not ObjectRegistry.is_movable_object(held_prop_id):
+		DebugManager.log_player("PropGrab: %s is not movable" % target.name)
+		held_prop_id = -1
+		held_prop_rotation = 0
+		return
 	
 	# Remove from world
 	chunk.remove_object(anchor)
@@ -408,6 +417,8 @@ func _try_grab_prop() -> void:
 		
 		# Strip physics for holding
 		if held_prop_instance is RigidBody3D:
+			held_prop_original_collision_layer = held_prop_instance.collision_layer
+			held_prop_original_collision_mask = held_prop_instance.collision_mask
 			held_prop_instance.freeze = true
 			held_prop_instance.collision_layer = 0
 			held_prop_instance.collision_mask = 0
@@ -443,6 +454,8 @@ func _grab_dropped_prop(target: RigidBody3D) -> void:
 		held_prop_instance.set_meta("grabbed_item_data", target.get_meta("item_data"))
 	
 	# Freeze physics and disable collisions for holding (V1 sets layer/mask to 0)
+	held_prop_original_collision_layer = target.collision_layer
+	held_prop_original_collision_mask = target.collision_mask
 	target.freeze = true
 	target.collision_layer = 0
 	target.collision_mask = 0
@@ -470,14 +483,19 @@ func _drop_grabbed_prop() -> void:
 			# Re-enable collision shapes first!
 			_enable_preview_collisions(held_prop_instance)
 			held_prop_instance.freeze = false
-			held_prop_instance.collision_layer = 1  # Default layer (V1)
-			held_prop_instance.collision_mask = 1   # Default mask (V1)
+			held_prop_instance.collision_layer = held_prop_original_collision_layer if held_prop_original_collision_layer > 0 else 1
+			held_prop_instance.collision_mask = held_prop_original_collision_mask if held_prop_original_collision_mask > 0 else 1
+			# Dropped props should still settle on the common support layers used by
+			# containers and chunk-generated object geometry.
+			held_prop_instance.collision_mask |= 4 | 512
 			# Give a small drop velocity (V1)
 			held_prop_instance.linear_velocity = Vector3(0, -1, 0)
 			print("CombatSystem: Released dropped prop with physics")
 		held_prop_instance = null
 		held_prop_id = -1
 		held_prop_rotation = 0
+		held_prop_original_collision_layer = -1
+		held_prop_original_collision_mask = -1
 		return
 	
 	# For building objects, place via building_manager
@@ -495,6 +513,8 @@ func _drop_grabbed_prop() -> void:
 	held_prop_instance = null
 	held_prop_id = -1
 	held_prop_rotation = 0
+	held_prop_original_collision_layer = -1
+	held_prop_original_collision_mask = -1
 
 ## Find a prop that can be picked up (building_manager objects OR dropped physics props)
 func _get_pickup_target() -> Node:
