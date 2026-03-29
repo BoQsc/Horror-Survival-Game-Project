@@ -183,6 +183,9 @@ func _process_pending_spawn_jobs() -> void:
 	if building_manager and building_manager.world_map_mode:
 		effective_budget_ms = min(effective_budget_ms, 2.0)
 		if pending_spawn_jobs.size() > 1:
+			# `pop_back()` consumes the last entry, so we sort descending here.
+			# That keeps the highest-priority buildings closest to the front of
+			# the visible queue: doors/windows first, then crates/tables/pistols.
 			pending_spawn_jobs.sort_custom(Callable(self, "_sort_world_map_spawn_job_by_distance"))
 
 	while not pending_spawn_jobs.is_empty():
@@ -1052,13 +1055,14 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		})
 	
 	# Spawn objects if any
-	var object_mix_counts: Dictionary = {}
 	var prefab_object_count: int = 0
 	var direct_scene_count: int = 0
 	var object_spawn_elapsed_ms := 0.0
 	var seal_elapsed_ms := 0.0
 	var chunk_flush_elapsed_ms := 0.0
 	var slow_object_spawns: Array = []
+	var collect_object_telemetry := false
+	var object_mix_counts: Dictionary = {}
 	var defer_global_visual_batch_rebuild := bool(building_manager and building_manager.world_map_mode)
 	if not skip_object_spawns_for_test and has_meta("prefab_objects"):
 		var objects_data = get_meta("prefab_objects")
@@ -1066,7 +1070,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			var object_start_us := Time.get_ticks_usec()
 			PerformanceMonitor.start_measure("Prefab Objects")
 			var use_world_map_mode := bool(building_manager and building_manager.world_map_mode)
-			var collect_object_telemetry := not use_world_map_mode
+			collect_object_telemetry = not use_world_map_mode
 			var prefab_objects: Array = objects_data[prefab_name]
 			if use_world_map_mode and prefab_objects.size() > 1:
 				prefab_objects = prefab_objects.duplicate()
@@ -1432,7 +1436,7 @@ func _sort_world_map_prefab_object_spawn(a: Dictionary, b: Dictionary) -> bool:
 			var b_id := int(b.get("object_id", -1))
 			return a_id < b_id
 		return a_name < b_name
-	return a_priority < b_priority
+	return a_priority > b_priority
 
 func _get_world_map_prefab_object_priority(obj: Dictionary) -> int:
 	var object_id := int(obj.get("object_id", -1))

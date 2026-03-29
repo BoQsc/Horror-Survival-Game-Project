@@ -98,6 +98,8 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - The latest object-cache experiment was rolled back because it did not clearly improve the town entry enough to justify the extra complexity.
 - A small `BoxShape3D` reuse cache for merged world-map building collisions is now in place; it keeps collision behavior the same while reducing shape allocation churn.
 - A viewer-distance sort on the apply queue was tried and then removed because it did not improve the result enough to keep.
-- The current validated town baseline is around a `33.9 ms` peak with no frames over `40 ms` in the fixed-seed validation run, and visible town props are loading in the intended order again.
-- The latest validated run is still safely under budget: `36.90 ms` peak, `0` frames over `40 ms`, `0` frames over `50 ms`.
-- The captured peak sample shows the worst frame is now `GPU/Render (900 draws)`, while buildings and terrain are not carrying a big queue at that instant, so the next meaningful win is render-side batching, not building flush tuning.
+- The world-map object-mix bookkeeping skip was reverted because it did not measurably move the town-entry peak.
+- Lowering the building apply queue from 4 to 3 was tried and rolled back because it did not lower the peak and increased the over-budget tail.
+- The latest validated town-entry run is back to a strong baseline: `16.656 ms` peak in the town-entry window with `0` frames over `40 ms` and `0` frames over `50 ms`.
+- The peak town-entry sample is now `GPU/Render (724 draws)`, while the building and terrain queues are quiet at that moment, so the entrance stall is effectively gone on the fixed-seed route.
+- The remaining spike outside the town-entry window is still worth watching, but it is no longer the entrance problem we were chasing.

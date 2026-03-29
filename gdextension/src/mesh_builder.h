@@ -3,13 +3,16 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/array_mesh.hpp>
+#include <godot_cpp/classes/box_shape3d.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/image_texture3d.hpp>
 #include <godot_cpp/classes/concave_polygon_shape3d.hpp>
+#include <godot_cpp/classes/physics_server3d.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
@@ -21,6 +24,10 @@ class MeshBuilder : public RefCounted {
 
 protected:
     static void _bind_methods();
+
+private:
+    Ref<BoxShape3D> _get_cached_box_shape(const Vector3i& size);
+    std::unordered_map<std::string, Ref<BoxShape3D>> _box_shape_cache;
 
 public:
     MeshBuilder();
@@ -62,6 +69,9 @@ public:
 
 	// Builds merged world-map collision boxes from voxel occupancy.
 	Array build_collision_boxes_from_voxels(const PackedByteArray& voxel_bytes, int chunk_size);
+
+	// Applies merged world-map collision boxes to an existing body RID.
+	bool apply_world_map_collision_boxes(const RID& body_rid, const Array& collision_boxes);
 };
 
 }

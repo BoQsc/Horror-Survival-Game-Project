@@ -121,7 +121,7 @@ func _update_entity_proximity():
 	var start_index := _proximity_scan_cursor % total
 	var processed := 0
 	var to_despawn: Array[Node3D] = []
-	var invalid_entities: Array = []
+	var invalid_indices: Array[int] = []
 	var start_time := Time.get_ticks_usec()
 
 	while processed < total:
@@ -135,7 +135,7 @@ func _update_entity_proximity():
 		processed += 1
 
 		if not is_instance_valid(entity):
-			invalid_entities.append(entity)
+			invalid_indices.append(idx)
 			continue
 
 		var dist_sq = entity.global_position.distance_squared_to(player_pos)
@@ -152,8 +152,8 @@ func _update_entity_proximity():
 
 	_proximity_scan_cursor = (start_index + processed) % total
 
-	for entity in invalid_entities:
-		active_entities.erase(entity)
+	for i in range(invalid_indices.size() - 1, -1, -1):
+		active_entities.remove_at(invalid_indices[i])
 
 	# Despawn far entities
 	for entity in to_despawn:
@@ -281,7 +281,7 @@ func _check_dormant_respawns():
 						entity.current_health = data.health
 					DebugManager.log_entities("Respawned dormant entity at %s (terrain_y=%.1f)" % [respawn_pos, terrain_y])
 					completed.append(i)
-	
+
 	# Remove respawned entities from dormant list (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
 		dormant_entities.remove_at(completed[i])

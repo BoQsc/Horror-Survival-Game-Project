@@ -186,7 +186,7 @@ func _build_collision_boxes_from_voxels(voxel_bytes: PackedByteArray) -> Array:
 
 				boxes.append({
 					"origin": Vector3i(x, y, z),
-					"size": Vector3i(x_end - x + 1, y_end - y + 1, z_end - z + 1)
+							"size": Vector3i(x_end - x + 1, y_end - y + 1, z_end - z + 1)
 				})
 
 	return boxes

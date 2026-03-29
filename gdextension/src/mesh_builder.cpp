@@ -1,8 +1,11 @@
 ﻿#include "mesh_builder.h"
 #include <algorithm>
 #include <cmath>
+#include <godot_cpp/classes/box_shape3d.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/math.hpp>
+#include <godot_cpp/classes/physics_server3d.hpp>
+#include <string>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
@@ -10,6 +13,7 @@
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/rid.hpp>
 #include <unordered_map>
 #include <vector>
 
@@ -565,6 +569,21 @@ MeshBuilder::MeshBuilder() {
 }
 
 MeshBuilder::~MeshBuilder() {
+    _box_shape_cache.clear();
+}
+
+Ref<BoxShape3D> MeshBuilder::_get_cached_box_shape(const Vector3i& size) {
+    const std::string key = std::to_string(size.x) + "_" + std::to_string(size.y) + "_" + std::to_string(size.z);
+    auto found = _box_shape_cache.find(key);
+    if (found != _box_shape_cache.end()) {
+        return found->second;
+    }
+
+    Ref<BoxShape3D> box_shape;
+    box_shape.instantiate();
+    box_shape->set_size(Vector3(static_cast<double>(size.x), static_cast<double>(size.y), static_cast<double>(size.z)));
+    _box_shape_cache.emplace(key, box_shape);
+    return box_shape;
 }
 
 void MeshBuilder::_bind_methods() {
@@ -580,6 +599,7 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("build_building_mesh_from_voxels", "voxel_bytes", "voxel_meta", "use_box_collision", "chunk_size"), &MeshBuilder::build_building_mesh_from_voxels);
     ClassDB::bind_method(D_METHOD("pack_rotated_world_map_block_batches", "prefab_blocks", "rotation", "spawn_pos", "chunk_size"), &MeshBuilder::pack_rotated_world_map_block_batches);
     ClassDB::bind_method(D_METHOD("build_collision_boxes_from_voxels", "voxel_bytes", "chunk_size"), &MeshBuilder::build_collision_boxes_from_voxels);
+    ClassDB::bind_method(D_METHOD("apply_world_map_collision_boxes", "body_rid", "collision_boxes"), &MeshBuilder::apply_world_map_collision_boxes);
 }
 
 Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, int stride) {
@@ -1189,4 +1209,48 @@ Array MeshBuilder::build_collision_boxes_from_voxels(const PackedByteArray& voxe
     }
 
     return boxes;
+}
+
+bool MeshBuilder::apply_world_map_collision_boxes(const RID& body_rid, const Array& collision_boxes) {
+    if (!body_rid.is_valid()) {
+        return false;
+    }
+
+    PhysicsServer3D *physics_server = PhysicsServer3D::get_singleton();
+    if (!physics_server) {
+        return false;
+    }
+
+    const int shape_count = physics_server->body_get_shape_count(body_rid);
+    for (int shape_idx = shape_count - 1; shape_idx >= 0; --shape_idx) {
+        physics_server->body_remove_shape(body_rid, shape_idx);
+    }
+
+    if (collision_boxes.is_empty()) {
+        return true;
+    }
+
+    for (int i = 0; i < collision_boxes.size(); ++i) {
+        Variant box_variant = collision_boxes[i];
+        if (box_variant.get_type() != Variant::DICTIONARY) {
+            continue;
+        }
+
+        Dictionary box_data = box_variant;
+        Vector3i origin = box_data.get("origin", Vector3i());
+        Vector3i size = box_data.get("size", Vector3i(1, 1, 1));
+        if (size.x <= 0 || size.y <= 0 || size.z <= 0) {
+            continue;
+        }
+
+        Ref<BoxShape3D> box_shape = _get_cached_box_shape(size);
+        if (box_shape.is_null()) {
+            continue;
+        }
+
+        Transform3D box_transform(Basis(), Vector3(origin) + Vector3(size) * 0.5);
+        physics_server->body_add_shape(body_rid, box_shape->get_rid(), box_transform);
+    }
+
+    return true;
 }

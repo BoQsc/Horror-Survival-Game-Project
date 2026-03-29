@@ -15,7 +15,6 @@ var objects: Dictionary = {} # Vector3i (local anchor) -> { object_id: int, rota
 var occupied_by_object: Dictionary = {} # Vector3i (any local cell) -> Vector3i (anchor pos)
 var object_nodes: Dictionary = {} # Vector3i (local anchor) -> Node3D (visual instance)
 var object_collision_nodes: Dictionary = {} # Vector3i (local anchor) -> Node3D (simple collision holder)
-var collision_box_shapes: Array = []
 var simple_visual_instances: Dictionary = {} # Vector3i (local anchor) -> { object_id, rotation, fractional_pos }
 var simple_visual_batch_entries: Dictionary = {} # int object_id -> Array[{ anchor, transform }]
 var simple_visual_batch_nodes: Dictionary = {} # int object_id -> MultiMeshInstance3D
@@ -438,10 +437,13 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 		}
 		return
 	
-	PerformanceMonitor.start_measure("Building Apply Mesh")
 	var apply_start_us := Time.get_ticks_usec()
 	var use_source_mesh := source_mesh != null
 	var skip_mesh_render := bool(manager and "skip_building_chunk_mesh_render_for_test" in manager and manager.skip_building_chunk_mesh_render_for_test)
+	var is_world_map_mode := bool(manager and manager.world_map_mode)
+	var measure_building_apply := not is_world_map_mode
+	if measure_building_apply:
+		PerformanceMonitor.start_measure("Building Apply Mesh")
 	var mesh: ArrayMesh = mesh_instance.mesh as ArrayMesh
 	if use_source_mesh:
 		mesh = source_mesh
@@ -459,7 +461,8 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 
 	if arrays.size() > 0 or use_source_mesh:
 		var mesh_upload_start_us := Time.get_ticks_usec()
-		PerformanceMonitor.start_measure("Building Mesh Upload")
+		if measure_building_apply:
+			PerformanceMonitor.start_measure("Building Mesh Upload")
 		if skip_mesh_render:
 			mesh_instance.visible = false
 			mesh_instance.mesh = null
@@ -476,7 +479,8 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 				mesh_instance.material_override = shared_material
 			if mesh_instance.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
 				mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-		PerformanceMonitor.end_measure("Building Mesh Upload", 0.5)
+		if measure_building_apply:
+			PerformanceMonitor.end_measure("Building Mesh Upload", 0.5)
 		mesh_upload_elapsed_ms = float(Time.get_ticks_usec() - mesh_upload_start_us) / 1000.0
 	else:
 		if mesh_instance.mesh != mesh:
@@ -499,7 +503,8 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			"collision_mode": "none",
 			"total_elapsed_ms": float(Time.get_ticks_usec() - apply_start_us) / 1000.0
 		})
-		PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
+		if measure_building_apply:
+			PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
 		return
 
 	if _should_skip_chunk_collisions():
@@ -527,7 +532,8 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			"collision_mode": "skipped",
 			"total_elapsed_ms": float(Time.get_ticks_usec() - apply_start_us) / 1000.0
 		})
-		PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
+		if measure_building_apply:
+			PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
 		return
 
 	# World-map buildings use merged box colliders so the physics server handles fewer shapes.
@@ -535,10 +541,16 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 	if manager and manager.world_map_mode and collision_boxes.size() > 0:
 		collision_mode = "boxes"
 		var collision_start_us := Time.get_ticks_usec()
-		PerformanceMonitor.start_measure("Building Collision Shape")
-		_clear_static_body_shapes()
-		_apply_collision_boxes(collision_boxes)
-		PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
+		if measure_building_apply:
+			PerformanceMonitor.start_measure("Building Collision Shape")
+		var handled_native_boxes := false
+		if mesher and mesher.has_method("apply_world_map_collision_boxes") and static_body:
+			handled_native_boxes = mesher.apply_world_map_collision_boxes(static_body.get_rid(), collision_boxes)
+		if not handled_native_boxes:
+			_clear_static_body_shapes()
+			_apply_collision_boxes(collision_boxes)
+		if measure_building_apply:
+			PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
 		collision_boxes_elapsed_ms = float(Time.get_ticks_usec() - collision_start_us) / 1000.0
 	else:
 		# Use native shape when available; otherwise fall back to main-thread trimesh generation.
@@ -561,23 +573,26 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			collision_trimesh_elapsed_ms = float(Time.get_ticks_usec() - collision_start_us) / 1000.0
 	
 	mesh_dirty = false
-	PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", {
-		"chunk_coord": str(chunk_coord),
-		"arrays_count": arrays.size(),
-		"use_source_mesh": use_source_mesh,
-		"skip_mesh_render": skip_mesh_render,
-		"world_map_mode": bool(manager and manager.world_map_mode),
-		"collision_boxes_count": collision_boxes.size(),
-		"mesh_surface_count": mesh_instance.mesh.get_surface_count() if mesh_instance.mesh else 0,
-		"mesh_upload_elapsed_ms": mesh_upload_elapsed_ms,
-		"collision_clear_elapsed_ms": collision_clear_elapsed_ms,
-		"collision_boxes_elapsed_ms": collision_boxes_elapsed_ms,
-		"collision_primary_elapsed_ms": collision_primary_elapsed_ms,
-		"collision_trimesh_elapsed_ms": collision_trimesh_elapsed_ms,
-		"collision_mode": collision_mode,
-		"total_elapsed_ms": float(Time.get_ticks_usec() - apply_start_us) / 1000.0
-	})
-	PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
+	if not is_world_map_mode:
+		var mesh_apply_event := {
+			"chunk_coord": str(chunk_coord),
+			"arrays_count": arrays.size(),
+			"use_source_mesh": use_source_mesh,
+			"skip_mesh_render": skip_mesh_render,
+			"world_map_mode": is_world_map_mode,
+			"collision_boxes_count": collision_boxes.size(),
+			"mesh_surface_count": mesh_instance.mesh.get_surface_count() if mesh_instance.mesh else 0,
+			"mesh_upload_elapsed_ms": mesh_upload_elapsed_ms,
+			"collision_mode": collision_mode,
+			"total_elapsed_ms": float(Time.get_ticks_usec() - apply_start_us) / 1000.0
+		}
+		mesh_apply_event["collision_clear_elapsed_ms"] = collision_clear_elapsed_ms
+		mesh_apply_event["collision_boxes_elapsed_ms"] = collision_boxes_elapsed_ms
+		mesh_apply_event["collision_primary_elapsed_ms"] = collision_primary_elapsed_ms
+		mesh_apply_event["collision_trimesh_elapsed_ms"] = collision_trimesh_elapsed_ms
+		PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", mesh_apply_event)
+	if measure_building_apply:
+		PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
 
 func _apply_collision_boxes(collision_boxes: Array) -> void:
 	if not static_body:
@@ -597,7 +612,6 @@ func _apply_collision_boxes(collision_boxes: Array) -> void:
 			continue
 
 		var box_shape := _get_cached_box_shape(size)
-		collision_box_shapes.append(box_shape)
 		var box_transform := Transform3D(Basis.IDENTITY, Vector3(origin) + Vector3(size) * 0.5)
 		PhysicsServer3D.body_add_shape(body_rid, box_shape.get_rid(), box_transform)
 
@@ -621,8 +635,6 @@ func _clear_static_body_shapes() -> void:
 			var shape_count := PhysicsServer3D.body_get_shape_count(body_rid)
 			for shape_idx in range(shape_count - 1, -1, -1):
 				PhysicsServer3D.body_remove_shape(body_rid, shape_idx)
-	collision_box_shapes.clear()
-
 func _shape_is_usable(candidate: Shape3D) -> bool:
 	if candidate == null:
 		return false
