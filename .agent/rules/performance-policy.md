@@ -13,6 +13,7 @@ Use this project rule set whenever working on performance:
 - Do not use prewarm as the primary solution. It is only a temporary mitigation if ever needed.
 - Do not hide stalls by adding async scheduling unless it also reduces total work.
 - Profile first, then change only one thing at a time.
+- Prefer the simplest algorithm that meets the target. Do not add clever complexity unless the profiling result clearly proves it is needed.
 - Use fixed baselines for comparison, preferably the same world seed and the same town entry path.
 - Treat any visual or gameplay change as a risk that must be called out before keeping it.
 - Do not minimize, focus, or otherwise steal attention from other windows during automated tests. Background test runs must be non-intrusive.
