@@ -1267,7 +1267,7 @@ func _exit_tree():
 		DebugManager.log_chunk("ChunkManager: Waiting for GPU thread to finish...")
 		compute_thread.wait_to_finish()
 		DebugManager.log_chunk("ChunkManager: GPU thread finished")
-	
+
 	# 6. Wait for CPU workers to finish
 	for i in range(cpu_threads.size()):
 		var thread = cpu_threads[i]

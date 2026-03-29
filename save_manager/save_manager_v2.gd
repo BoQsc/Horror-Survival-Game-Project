@@ -205,6 +205,9 @@ func _input(event):
 
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		if OS.get_environment("TOWN_STALL_DISABLE_EXIT_AUTOSAVE") == "1":
+			get_tree().quit()
+			return
 		# Auto-save on exit
 		DebugManager.log_save("Auto-saving on exit (FORCED SYNCHRONOUS)...")
 		# Wait for any active threaded save to finish first to avoid file corruption

@@ -641,7 +641,7 @@ func is_cell_available(local_pos: Vector3i) -> bool:
 
 ## Place an object at the anchor position (assumes cells already validated)
 ## fractional_pos is the 3D offset from the anchor block's origin (0,0,0)
-func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO, defer_collision: bool = false, defer_global_visual_batch_rebuild: bool = false) -> bool:
+func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO, defer_collision: bool = false, defer_global_visual_batch_rebuild: bool = false, object_size: Vector3i = Vector3i.ZERO, has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> bool:
 	# Store object data (include fractional_pos for persistence)
 	objects[local_anchor] = {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
 	
@@ -659,7 +659,9 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 		# Center the object over its ORIGINAL footprint (unrotated size)
 		# The visual rotation is applied to the model, so we use original size for offset
 		# For rotations 1 and 3 (90°/270°), swap the offset components to match rotated footprint
-		var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
+		var original_size := object_size
+		if original_size == Vector3i.ZERO:
+			original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
 		var offset_x = float(original_size.x) / 2.0
 		var offset_z = float(original_size.z) / 2.0
 		
@@ -684,7 +686,7 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 		scene_instance.set_meta("anchor", local_anchor)
 		scene_instance.set_meta("chunk", self)
 		scene_instance.set_meta("object_id", object_id)
-		var has_authored_collision := ObjectRegistry.get_object_has_authored_collision(object_id)
+		var resolved_has_authored_collision := has_authored_collision if has_authored_collision_valid else ObjectRegistry.get_object_has_authored_collision(object_id)
 
 		if _should_batch_proxy_visual(object_id):
 			var proxy_cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
@@ -694,7 +696,7 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 		
 		# Objects that already ship with authored collision do not need the extra
 		# generic collision cooking pass.
-		if not has_authored_collision:
+		if not resolved_has_authored_collision:
 			# Generate collision now for manual placements; procedural spawns can defer to the manager budget.
 			if defer_collision and manager and manager.has_method("queue_object_collision"):
 				manager.queue_object_collision(self, scene_instance, local_anchor)

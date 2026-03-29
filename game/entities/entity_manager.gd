@@ -18,6 +18,7 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export var spawn_radius: float = 50.0 # Range around player where entities can spawn
 @export var freeze_radius: float = 60.0 # Distance at which entities freeze (physics disabled)
 @export var despawn_radius: float = 100.0 # Distance at which entities are removed
+@export_range(0.1, 5.0, 0.1) var proximity_update_budget_ms: float = 1.5
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
@@ -34,6 +35,7 @@ var active_entities: Array[Node3D] = []
 var frozen_entities: Dictionary = {} # entity -> { position: Vector3 }
 var dormant_entities: Array = [] # Stored entities: { position, scene_path, health, state }
 var entity_pool: Array[Node3D] = [] # Pooled inactive entities
+var _proximity_scan_cursor: int = 0
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
@@ -108,17 +110,36 @@ func _update_entity_proximity():
 	var freeze_dist_sq = freeze_radius * freeze_radius
 	var despawn_dist_sq = despawn_radius * despawn_radius
 	
+	if active_entities.is_empty():
+		return
+
+	var entities_snapshot: Array = active_entities.duplicate()
+	var total := entities_snapshot.size()
+	if total <= 0:
+		return
+
+	var start_index := _proximity_scan_cursor % total
+	var processed := 0
 	var to_despawn: Array[Node3D] = []
-	var invalid_entities: Array = [] # Track indices of invalid entities for cleanup
-	
-	for i in range(active_entities.size()):
-		var entity = active_entities[i]
+	var invalid_entities: Array[Node3D] = []
+	var start_time := Time.get_ticks_usec()
+
+	while processed < total:
+		if processed > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
+			if elapsed_ms >= proximity_update_budget_ms:
+				break
+
+		var idx := (start_index + processed) % total
+		var entity = entities_snapshot[idx]
+		processed += 1
+
 		if not is_instance_valid(entity):
-			invalid_entities.append(i)
+			invalid_entities.append(entity)
 			continue
-		
+
 		var dist_sq = entity.global_position.distance_squared_to(player_pos)
-		
+
 		if dist_sq > despawn_dist_sq:
 			# Beyond despawn radius - remove entity
 			to_despawn.append(entity)
@@ -128,11 +149,12 @@ func _update_entity_proximity():
 		elif not is_loading_save:
 			# In active zone - ensure physics enabled (ONLY if not loading)
 			_unfreeze_entity(entity)
-	
-	# Clean up invalid entities from tracking (reverse order to preserve indices)
-	for i in range(invalid_entities.size() - 1, -1, -1):
-		active_entities.remove_at(invalid_entities[i])
-	
+
+	_proximity_scan_cursor = (start_index + processed) % total
+
+	for entity in invalid_entities:
+		active_entities.erase(entity)
+
 	# Despawn far entities
 	for entity in to_despawn:
 		despawn_entity(entity)

@@ -189,7 +189,7 @@ func _threaded_generate_world() -> void:
 
 
 func _on_world_generated(images: Dictionary) -> void:
-	if generation_thread and generation_thread.is_alive():
+	if generation_thread:
 		generation_thread.wait_to_finish()
 	generation_thread = null
 

@@ -8,6 +8,7 @@ const EXCAVATION_SAFETY_PADDING: int = 1
 
 static var _geometry_cache: Dictionary = {}
 static var _rotated_bounds_cache: Dictionary = {}
+static var _rotated_objects_cache: Dictionary = {}
 static var _rotated_precise_carve_cache: Dictionary = {}
 static var _rotated_excavation_segments_cache: Dictionary = {}
 
@@ -131,6 +132,76 @@ static func get_rotated_excavation_segments(prefab_name: String, rotation: int) 
 
 	_rotated_excavation_segments_cache[key] = rotated_segments
 	return rotated_segments
+
+static func get_rotated_objects(prefab_name: String, rotation: int) -> Array:
+	var key := "%s:%d" % [prefab_name, rotation]
+	if _rotated_objects_cache.has(key):
+		return _rotated_objects_cache[key]
+
+	var geometry := get_prefab_geometry(prefab_name)
+	var objects: Array = geometry.get("objects", [])
+	var rotated_objects: Array = []
+	for obj in objects:
+		if typeof(obj) != TYPE_DICTIONARY:
+			continue
+
+		var object_id := int(obj.get("object_id", -1))
+		var scene_path := str(obj.get("scene", ""))
+		if object_id < 0 and scene_path == "":
+			continue
+
+		var vec_offset := Vector3(
+			float(obj.get("x", 0.0)),
+			float(obj.get("y", 0.0)),
+			float(obj.get("z", 0.0))
+		)
+		var rotated_corner := _rotate_vector3_offset(vec_offset, rotation)
+		var grid_correction := _get_grid_correction(rotation)
+
+		var obj_def := ObjectRegistry.get_object(object_id) if object_id >= 0 else {}
+		var obj_size := Vector3(1.0, 1.0, 1.0)
+		var object_size := Vector3i.ONE
+		var has_authored_collision := false
+		var object_name := scene_path
+		if not obj_def.is_empty():
+			object_name = str(obj_def.get("name", object_name))
+			object_size = obj_def.get("size", Vector3i.ONE)
+			obj_size = Vector3(float(object_size.x), float(object_size.y), float(object_size.z))
+			has_authored_collision = bool(obj_def.get("has_authored_collision", ObjectRegistry.get_object_has_authored_collision(object_id)))
+
+		var obj_local_rot := int(obj.get("rotation", 0))
+		var local_size := obj_size
+		if obj_local_rot == 1 or obj_local_rot == 3:
+			local_size = Vector3(obj_size.z, obj_size.y, obj_size.x)
+
+		var half_size := local_size * 0.5
+		var rotated_half_size := _rotate_vector3_offset(half_size, rotation)
+		rotated_half_size.y = 0.0
+
+		var combined_rot := (obj_local_rot + rotation) % 4
+		var cells := ObjectRegistry.get_occupied_cells(object_id, Vector3i.ZERO, combined_rot) if object_id >= 0 else []
+		var chunk_offset_x := obj_size.x * 0.5
+		var chunk_offset_z := obj_size.z * 0.5
+		if combined_rot == 1 or combined_rot == 3:
+			var temp := chunk_offset_x
+			chunk_offset_x = chunk_offset_z
+			chunk_offset_z = temp
+
+		var chunk_center_offset := Vector3(chunk_offset_x, 0.0, chunk_offset_z)
+		rotated_objects.append({
+			"object_id": object_id,
+			"object_name": object_name,
+			"scene": scene_path,
+			"size": object_size,
+			"has_authored_collision": has_authored_collision,
+			"offset": rotated_corner + grid_correction + rotated_half_size - chunk_center_offset,
+			"rotation": combined_rot,
+			"local_rotation": obj_local_rot,
+			"cells": cells
+		})
+
+	_rotated_objects_cache[key] = rotated_objects
+	return rotated_objects
 
 static func get_placement_profile(prefab_name: String) -> Dictionary:
 	return get_prefab_geometry(prefab_name).get("placement_profile", _default_placement_profile())

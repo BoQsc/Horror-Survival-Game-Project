@@ -724,29 +724,49 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 
 ## Place an object at the given global position (supports fractional Y for terrain surface)
 ## Set is_procedural=true when spawning from prefab system to trigger loot population
-func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false, is_procedural: bool = false, defer_global_visual_batch_rebuild: bool = false) -> bool:
+func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false, is_procedural: bool = false, defer_global_visual_batch_rebuild: bool = false, precomputed_cells: Array = [], object_size: Vector3i = Vector3i.ZERO, object_scene_path: String = "", has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> bool:
 	if not ignore_collision and not can_place_object(global_pos, object_id, rotation):
 		return false
 	
-	var obj_def = ObjectRegistry.get_object(object_id)
-	if obj_def.is_empty():
-		return false
+	var obj_def: Dictionary = {}
+	var track_object_telemetry := not (world_map_mode and is_procedural)
+	var needs_registry_lookup := object_scene_path.is_empty() or object_size == Vector3i.ZERO or not has_authored_collision_valid or track_object_telemetry
+	if needs_registry_lookup:
+		obj_def = ObjectRegistry.get_object(object_id)
+		if obj_def.is_empty():
+			return false
+		if object_scene_path.is_empty():
+			object_scene_path = str(obj_def.get("scene", ""))
+		if object_size == Vector3i.ZERO:
+			object_size = obj_def.get("size", Vector3i(1, 1, 1))
+		if not has_authored_collision_valid:
+			has_authored_collision = ObjectRegistry.get_object_has_authored_collision(object_id)
+			has_authored_collision_valid = true
 
-	PerformanceMonitor.start_measure("Building Place Object")
+	if track_object_telemetry:
+		PerformanceMonitor.start_measure("Building Place Object")
 	
 	# Calculate anchor (integer grid position) and fractional position offset
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
 	var fractional_pos = global_pos - Vector3(anchor) # Full 3D offset from anchor
-	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
-	PerformanceMonitor.capture_scope_state("buildings", {
-		"phase": "place_object",
-		"object_id": object_id,
-		"rotation": rotation,
-		"global_pos": str(global_pos),
-		"anchor": str(anchor),
-		"ignore_collision": ignore_collision,
-		"is_procedural": is_procedural,
-		"scene_path": obj_def.scene,
+	var cells: Array = []
+	if not precomputed_cells.is_empty():
+		cells.resize(precomputed_cells.size())
+		for i in range(precomputed_cells.size()):
+			var precomputed_cell: Vector3i = precomputed_cells[i]
+			cells[i] = precomputed_cell + anchor
+	else:
+		cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
+	if track_object_telemetry:
+		PerformanceMonitor.capture_scope_state("buildings", {
+			"phase": "place_object",
+			"object_id": object_id,
+			"rotation": rotation,
+			"global_pos": str(global_pos),
+			"anchor": str(anchor),
+			"ignore_collision": ignore_collision,
+			"is_procedural": is_procedural,
+		"scene_path": object_scene_path if not object_scene_path.is_empty() else str(obj_def.get("scene", "")),
 		"simple_visual_batch": bool(world_map_mode and ObjectRegistry.is_simple_visual_batch_object(object_id)),
 		"cell_count": cells.size()
 	})
@@ -778,7 +798,8 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 		var visual_data = ObjectRegistry.get_object_visual_data(object_id)
 		if not visual_data.is_empty():
 			var simple_success = chunk.place_simple_visual_object(local_anchor, object_id, rotation, local_cells, fractional_pos, visual_data, defer_global_visual_batch_rebuild)
-			PerformanceMonitor.end_measure("Building Place Object", 1.0)
+			if track_object_telemetry:
+				PerformanceMonitor.end_measure("Building Place Object", 1.0)
 			if simple_success:
 				return true
 
@@ -788,7 +809,7 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 
 	# Load and instantiate the scene (uses preloaded cache) if we did not build a shell
 	if scene_instance == null:
-		var scene_path = obj_def.scene
+		var scene_path = object_scene_path if not object_scene_path.is_empty() else str(obj_def.get("scene", ""))
 		var packed = ObjectRegistry.get_preloaded_scene(scene_path)
 		if packed:
 			scene_instance = packed.instantiate()
@@ -798,8 +819,9 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	if is_procedural and scene_instance and scene_instance.has_method("populate_loot"):
 		scene_instance.set_meta("should_populate_loot", true)
 	
-	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos, is_procedural, defer_global_visual_batch_rebuild)
-	PerformanceMonitor.end_measure("Building Place Object", 1.0)
+	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos, is_procedural, defer_global_visual_batch_rebuild, object_size, has_authored_collision, has_authored_collision_valid)
+	if track_object_telemetry:
+		PerformanceMonitor.end_measure("Building Place Object", 1.0)
 	
 	return success
 

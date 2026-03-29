@@ -318,9 +318,9 @@ func _thread_loop():
 		var mesh_build_elapsed_ms := 0.0
 		var collision_shape_elapsed_ms := 0.0
 		PerformanceMonitor.start_measure("Building Mesh Generate")
-		# World-map buildings use the native concave collider path so we preserve
-		# collision behavior without falling back to main-thread trimesh cooking.
-		var use_box_collision: bool = not (is_instance_valid(chunk) and chunk.manager != null and chunk.manager.world_map_mode)
+		# World-map buildings use merged box colliders so we keep solid collision
+		# while avoiding the more expensive shape cooking path during town entry.
+		var use_box_collision: bool = bool(is_instance_valid(chunk) and chunk.manager != null and chunk.manager.world_map_mode)
 		var collision_mode: String = "boxes" if use_box_collision else "shape"
 		var cached_result := _get_cached_building_mesh(voxel_bytes, voxel_meta, collision_mode)
 		if not cached_result.is_empty():
