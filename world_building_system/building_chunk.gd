@@ -32,6 +32,7 @@ var mesher: Node # BuildingMesher
 var manager: Node # BuildingManager
 
 static var _object_collision_shape_cache: Dictionary = {}
+static var _box_collision_shape_cache: Dictionary = {}
 static var _shared_wood_block_material: StandardMaterial3D = null
 const WOOD_BLOCK_TEXTURE: Texture2D = preload("res://world_greedy_meshing/wood-block-texture.png")
 const SIMPLE_OBJECT_COLLISION_IDS := {
@@ -51,6 +52,16 @@ static func _get_cached_object_collision_shape(mesh: Mesh) -> Shape3D:
 	if shape:
 		_object_collision_shape_cache[cache_key] = shape
 	return shape
+
+static func _get_cached_box_shape(size: Vector3i) -> BoxShape3D:
+	var cache_key := "%d_%d_%d" % [size.x, size.y, size.z]
+	if _box_collision_shape_cache.has(cache_key):
+		return _box_collision_shape_cache[cache_key]
+
+	var box_shape := BoxShape3D.new()
+	box_shape.size = Vector3(float(size.x), float(size.y), float(size.z))
+	_box_collision_shape_cache[cache_key] = box_shape
+	return box_shape
 
 func _init(coord: Vector3i):
 	chunk_coord = coord
@@ -458,13 +469,18 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 				mesh_instance.mesh = mesh
 			else:
 				mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-			mesh_instance.mesh = mesh
-			mesh_instance.material_override = _get_shared_wood_block_material()
-			mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			if mesh_instance.mesh != mesh:
+				mesh_instance.mesh = mesh
+			var shared_material := _get_shared_wood_block_material()
+			if mesh_instance.material_override != shared_material:
+				mesh_instance.material_override = shared_material
+			if mesh_instance.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
+				mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		PerformanceMonitor.end_measure("Building Mesh Upload", 0.5)
 		mesh_upload_elapsed_ms = float(Time.get_ticks_usec() - mesh_upload_start_us) / 1000.0
 	else:
-		mesh_instance.mesh = mesh
+		if mesh_instance.mesh != mesh:
+			mesh_instance.mesh = mesh
 		_clear_static_body_shapes()
 		mesh_dirty = false
 		PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", {
@@ -580,8 +596,7 @@ func _apply_collision_boxes(collision_boxes: Array) -> void:
 		if size.x <= 0 or size.y <= 0 or size.z <= 0:
 			continue
 
-		var box_shape := BoxShape3D.new()
-		box_shape.size = Vector3(float(size.x), float(size.y), float(size.z))
+		var box_shape := _get_cached_box_shape(size)
 		collision_box_shapes.append(box_shape)
 		var box_transform := Transform3D(Basis.IDENTITY, Vector3(origin) + Vector3(size) * 0.5)
 		PhysicsServer3D.body_add_shape(body_rid, box_shape.get_rid(), box_transform)

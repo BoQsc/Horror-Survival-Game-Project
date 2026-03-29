@@ -23,6 +23,11 @@ struct BlockBatchData {
     std::vector<uint8_t> metas;
 };
 
+struct CollisionBoxData {
+    Vector3i origin;
+    Vector3i size;
+};
+
 struct Vector3iHash {
     size_t operator()(const Vector3i &value) const noexcept {
         const size_t hx = std::hash<int>{}(value.x);
@@ -72,6 +77,56 @@ static void append_batch_dictionary(Array &batches, int index, const BlockBatchD
     batch_dict["metas"] = metas;
 
     batches[index] = batch_dict;
+}
+
+static void append_collision_box_dictionary(Array &boxes, int index, const CollisionBoxData &box) {
+    Dictionary box_dict;
+    box_dict["origin"] = box.origin;
+    box_dict["size"] = box.size;
+    boxes[index] = box_dict;
+}
+
+static bool try_merge_collision_boxes(const CollisionBoxData &a, const CollisionBoxData &b, CollisionBoxData &out) {
+    if (a.origin.y == b.origin.y && a.origin.z == b.origin.z && a.size.y == b.size.y && a.size.z == b.size.z) {
+        if (a.origin.x + a.size.x == b.origin.x) {
+            out.origin = a.origin;
+            out.size = Vector3i(a.size.x + b.size.x, a.size.y, a.size.z);
+            return true;
+        }
+        if (b.origin.x + b.size.x == a.origin.x) {
+            out.origin = b.origin;
+            out.size = Vector3i(a.size.x + b.size.x, a.size.y, a.size.z);
+            return true;
+        }
+    }
+
+    if (a.origin.x == b.origin.x && a.origin.z == b.origin.z && a.size.x == b.size.x && a.size.z == b.size.z) {
+        if (a.origin.y + a.size.y == b.origin.y) {
+            out.origin = a.origin;
+            out.size = Vector3i(a.size.x, a.size.y + b.size.y, a.size.z);
+            return true;
+        }
+        if (b.origin.y + b.size.y == a.origin.y) {
+            out.origin = b.origin;
+            out.size = Vector3i(a.size.x, a.size.y + b.size.y, a.size.z);
+            return true;
+        }
+    }
+
+    if (a.origin.x == b.origin.x && a.origin.y == b.origin.y && a.size.x == b.size.x && a.size.y == b.size.y) {
+        if (a.origin.z + a.size.z == b.origin.z) {
+            out.origin = a.origin;
+            out.size = Vector3i(a.size.x, a.size.y, a.size.z + b.size.z);
+            return true;
+        }
+        if (b.origin.z + b.size.z == a.origin.z) {
+            out.origin = b.origin;
+            out.size = Vector3i(a.size.x, a.size.y, a.size.z + b.size.z);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 Vector3i rotate_offset_90(const Vector3i &offset, int rotation) {
@@ -1039,6 +1094,8 @@ Array MeshBuilder::build_collision_boxes_from_voxels(const PackedByteArray& voxe
     PackedByteArray visited;
     visited.resize(volume);
     visited.fill(0);
+    std::vector<CollisionBoxData> box_list;
+    box_list.reserve(64);
 
     const uint8_t *voxels = voxel_bytes.ptr();
     uint8_t *visited_ptr = visited.ptrw();
@@ -1102,12 +1159,33 @@ Array MeshBuilder::build_collision_boxes_from_voxels(const PackedByteArray& voxe
                     }
                 }
 
-                Dictionary box;
-                box["origin"] = Vector3i(x, y, z);
-                box["size"] = Vector3i(x_end - x + 1, y_end - y + 1, z_end - z + 1);
-                boxes.append(box);
+                CollisionBoxData box;
+                box.origin = Vector3i(x, y, z);
+                box.size = Vector3i(x_end - x + 1, y_end - y + 1, z_end - z + 1);
+                box_list.push_back(box);
             }
         }
+    }
+
+    bool merged_any = true;
+    while (merged_any) {
+        merged_any = false;
+        for (size_t i = 0; i < box_list.size() && !merged_any; ++i) {
+            for (size_t j = i + 1; j < box_list.size(); ++j) {
+                CollisionBoxData merged_box;
+                if (try_merge_collision_boxes(box_list[i], box_list[j], merged_box)) {
+                    box_list[i] = merged_box;
+                    box_list.erase(box_list.begin() + static_cast<std::ptrdiff_t>(j));
+                    merged_any = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    boxes.resize(static_cast<int>(box_list.size()));
+    for (size_t i = 0; i < box_list.size(); ++i) {
+        append_collision_box_dictionary(boxes, static_cast<int>(i), box_list[i]);
     }
 
     return boxes;

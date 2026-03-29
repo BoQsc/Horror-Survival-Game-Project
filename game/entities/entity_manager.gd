@@ -121,7 +121,7 @@ func _update_entity_proximity():
 	var start_index := _proximity_scan_cursor % total
 	var processed := 0
 	var to_despawn: Array[Node3D] = []
-	var invalid_entities: Array[Node3D] = []
+	var invalid_entities: Array = []
 	var start_time := Time.get_ticks_usec()
 
 	while processed < total:

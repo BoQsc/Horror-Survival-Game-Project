@@ -212,6 +212,7 @@ func end_town_entry_capture(reason: String = "") -> void:
 func _append_town_entry_frame_sample(summary: Dictionary) -> void:
 	if not _town_entry_capture_active:
 		return
+	var scope_states: Dictionary = summary.get("scope_states", {})
 	var frame_sample := {
 		"frame": int(summary.get("frame", 0)),
 		"fps": float(summary.get("fps", 0.0)),
@@ -226,6 +227,10 @@ func _append_town_entry_frame_sample(summary: Dictionary) -> void:
 		"top_measure_bucket": str(summary.get("top_bucket", "Unknown")),
 		"top_measure_ms": float(summary.get("top_measure", {}).get("ms", 0.0)),
 		"top_measure_pct": float(summary.get("top_measure", {}).get("pct", 0.0)),
+		"buildings_state": scope_states.get("buildings", {}).duplicate(true),
+		"terrain_state": scope_states.get("terrain", {}).duplicate(true),
+		"prefab_state": scope_states.get("town", {}).get("prefab_spawner", {}).duplicate(true),
+		"vegetation_state": scope_states.get("vegetation", {}).duplicate(true),
 		"town_state": summary.get("town_state", {}).duplicate(true),
 		"town_test_state": summary.get("town_test_state", {}).duplicate(true)
 	}
@@ -677,6 +682,7 @@ func _build_spike_window(entries: Array, window_size: int) -> Dictionary:
 	var bucket_counts: Dictionary = {}
 	var first_entry: Dictionary = {}
 	var last_entry: Dictionary = {}
+	var peak_entry: Dictionary = {}
 	var latest_town_state: Dictionary = {}
 	var peak_total_ms: float = -1.0
 	var peak_frame: int = -1
@@ -714,6 +720,7 @@ func _build_spike_window(entries: Array, window_size: int) -> Dictionary:
 		if frame_total_ms > peak_total_ms:
 			peak_total_ms = frame_total_ms
 			peak_frame = int(entry.get("frame", 0))
+			peak_entry = entry
 			peak_top_bucket = str(entry.get("top_measure_bucket", "Unknown"))
 			peak_top_measure_name = str(entry.get("top_measure_name", "Unknown"))
 			peak_top_measure_ms = float(entry.get("top_measure_ms", 0.0))
@@ -798,6 +805,7 @@ func _build_spike_window(entries: Array, window_size: int) -> Dictionary:
 		"peak_top_measure_name": peak_top_measure_name,
 		"peak_top_measure_ms": peak_top_measure_ms,
 		"peak_top_measure_pct": peak_top_measure_pct,
+		"peak_entry_sample": peak_entry.duplicate(true) if not peak_entry.is_empty() else {},
 		"stable_top_bucket": str(dominant_bucket.get("bucket", "Unknown")),
 		"stable_top_bucket_count": int(dominant_bucket.get("count", 0)),
 		"top_bucket_counts": bucket_counts,

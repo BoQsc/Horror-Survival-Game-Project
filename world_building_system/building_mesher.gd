@@ -7,11 +7,15 @@ var semaphore: Semaphore
 var exit_thread: bool = false
 
 var queue: Array = [] # Array of BuildingChunk
+var pending_apply_queue: Array = []
+var pending_apply_queue_index: int = 0
 var compute_shader: RDShaderFile
 var native_builder: Object = null
 const BUILDING_MESH_CACHE_LIMIT: int = 96
 const BUILDING_CHUNK_SIZE: int = 16
 const BUILDING_CHUNK_VOLUME: int = BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
+const BUILDING_APPLY_BUDGET_PER_FRAME: int = 4
+const BUILDING_APPLY_BUDGET_MS_PER_FRAME: float = 4.0
 var _building_mesh_cache: Dictionary = {}
 var _building_mesh_cache_order: Array[String] = []
 
@@ -34,11 +38,40 @@ const ENABLE_GPU_CLEANUP: bool = true
 func _init():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
+	set_process(true)
 	
 	compute_shader = load("res://world_greedy_meshing/greedy_meshing.glsl")
 	
 	thread = Thread.new()
 	thread.start(_thread_loop)
+
+func _process(_delta: float) -> void:
+	var apply_items: Array = []
+	mutex.lock()
+	var start_us := Time.get_ticks_usec()
+	while pending_apply_queue_index < pending_apply_queue.size() and apply_items.size() < BUILDING_APPLY_BUDGET_PER_FRAME:
+		apply_items.append(pending_apply_queue[pending_apply_queue_index])
+		pending_apply_queue_index += 1
+		if float(Time.get_ticks_usec() - start_us) / 1000.0 >= BUILDING_APPLY_BUDGET_MS_PER_FRAME:
+			break
+	if pending_apply_queue_index >= pending_apply_queue.size():
+		pending_apply_queue.clear()
+		pending_apply_queue_index = 0
+	mutex.unlock()
+
+	for item_variant in apply_items:
+		if typeof(item_variant) != TYPE_DICTIONARY:
+			continue
+		var item: Dictionary = item_variant
+		var chunk = item.get("chunk", null)
+		if not is_instance_valid(chunk):
+			continue
+		chunk.apply_mesh(
+			item.get("arrays", []),
+			item.get("shape", null),
+			item.get("mesh", null),
+			item.get("collision_boxes", [])
+		)
 
 func _get_native_builder() -> Object:
 	if native_builder and is_instance_valid(native_builder):
@@ -358,7 +391,15 @@ func _thread_loop():
 
 		# Callback
 		if is_instance_valid(chunk):
-			chunk.call_deferred("apply_mesh", arrays, shape, mesh, collision_boxes)
+			mutex.lock()
+			pending_apply_queue.append({
+				"chunk": chunk,
+				"arrays": arrays,
+				"shape": shape,
+				"mesh": mesh,
+				"collision_boxes": collision_boxes
+			})
+			mutex.unlock()
 	
 	# Cleanup persistent resources
 	rd.free_rid(vertex_buffer)

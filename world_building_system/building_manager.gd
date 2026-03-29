@@ -328,10 +328,12 @@ func flush_global_visual_batches() -> void:
 		rebuilt += 1
 	PerformanceMonitor.end_measure("Building Visual Batch Flush", 0.5)
 	var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
+	var remaining := _dirty_global_visual_batch_object_ids.size()
 	PerformanceMonitor.capture_scope_state("buildings", {
 		"phase": "visual_batch_flush",
 		"dirty_count": dirty_ids.size(),
 		"rebuilt_count": rebuilt,
+		"remaining_dirty_count": remaining,
 		"elapsed_ms": elapsed_ms
 	})
 	PerformanceMonitor.capture_scope_event("buildings", "visual_batch_flush", {
