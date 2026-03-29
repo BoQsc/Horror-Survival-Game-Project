@@ -21,6 +21,7 @@ var entity_manager: Node = null
 var vehicle_manager: Node = null
 var building_generator: Node = null
 var player: Node = null
+var disable_buildings_for_test: bool = false
 
 # World Editor integration: set before scene change, consumed by chunk_manager on _ready
 var pending_world_definition_path: String = ""
@@ -293,14 +294,14 @@ func _gather_save_data() -> Dictionary:
 		"world_definition_path": _get_world_definition_path(),
 		"player": _get_player_data(),
 		"terrain_modifications": _get_terrain_data(),
-		"buildings": {} if world_map_mode else _get_building_data(),
+		"buildings": {} if world_map_mode or disable_buildings_for_test else _get_building_data(),
 		"vegetation": _get_vegetation_data(),
 		"roads": _get_road_data(),
-		"prefabs": {} if world_map_mode else _get_prefab_data(),
+		"prefabs": {} if world_map_mode or disable_buildings_for_test else _get_prefab_data(),
 		"entities": _get_entity_data(),
 		"doors": _get_door_data(),
 		"vehicles": _get_vehicle_data(),
-		"building_spawns": {} if world_map_mode else _get_building_spawn_data(),
+		"building_spawns": {} if world_map_mode or disable_buildings_for_test else _get_building_spawn_data(),
 		# V2 additions
 		"player_inventory": _get_inventory_data(),
 		"player_hotbar": _get_hotbar_data(),
@@ -757,7 +758,7 @@ func _get_terrain_data() -> Dictionary:
 	return result
 
 func _get_building_data() -> Dictionary:
-	if not building_manager:
+	if disable_buildings_for_test or not building_manager:
 		return {}
 	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
 		return {}
@@ -812,7 +813,7 @@ func _get_road_data() -> Dictionary:
 	return {}
 
 func _get_prefab_data() -> Dictionary:
-	if not prefab_spawner:
+	if disable_buildings_for_test or not prefab_spawner:
 		return {}
 	
 	if prefab_spawner.has_method("get_save_data"):
@@ -821,7 +822,7 @@ func _get_prefab_data() -> Dictionary:
 	return {}
 
 func _get_building_spawn_data() -> Dictionary:
-	if not building_generator:
+	if disable_buildings_for_test or not building_generator:
 		return {}
 	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
 		return {}
@@ -832,7 +833,7 @@ func _get_building_spawn_data() -> Dictionary:
 # ============ DATA LOADERS ============
 
 func _load_prefab_data(data: Dictionary):
-	if data.is_empty() or not prefab_spawner:
+	if disable_buildings_for_test or data.is_empty() or not prefab_spawner:
 		return
 	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
 		return
@@ -841,7 +842,7 @@ func _load_prefab_data(data: Dictionary):
 		prefab_spawner.load_save_data(data)
 
 func _load_building_spawn_data(data: Dictionary):
-	if data.is_empty() or not building_generator:
+	if disable_buildings_for_test or data.is_empty() or not building_generator:
 		return
 	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
 		return
@@ -922,7 +923,7 @@ func _load_terrain_data(data: Dictionary):
 	DebugManager.log_save("Terrain modifications loaded: %d chunks" % data.size())
 
 func _load_building_data(data: Dictionary):
-	if data.is_empty() or not building_manager:
+	if disable_buildings_for_test or data.is_empty() or not building_manager:
 		return
 	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
 		DebugManager.log_save("World map active - skipping runtime building chunk restore")

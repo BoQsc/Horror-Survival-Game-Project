@@ -1488,7 +1488,7 @@ func _check_durability_target() -> void:
 	var hit_normal = hit.get("normal", Vector3.UP)
 	
 	if durability_target is RID:
-		if target and target.get_rid() == durability_target:
+		if target and target.has_method("get_rid") and target.get_rid() == durability_target:
 			return
 	elif durability_target is Vector3i:
 		# Use SAME snapping logic as terrain/building damage (lines 611-613, 1114-1117)

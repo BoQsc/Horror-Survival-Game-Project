@@ -6,6 +6,9 @@ const SAVE_BASE := "user://worlds/"
 const TELEPORT_MIN_DISTANCE := 200.0
 const TELEPORT_HEIGHT_OFFSET := 8.0
 const HOLD_SECONDS := 40.0
+const REPEAT_ENTRY_FIRST_HOLD_SECONDS := 20.0
+const REPEAT_ENTRY_RETURN_HOLD_SECONDS := 5.0
+const REPEAT_ENTRY_SECOND_HOLD_SECONDS := 20.0
 const WORLD_READY_TIMEOUT_SECONDS := 300.0
 const AUTO_FLY_TIMEOUT_SECONDS := 840.0
 const AUTO_FLY_SPEED := 24.0
@@ -17,7 +20,11 @@ enum Phase {
 	WAIT_WORLD_READY,
 	TELEPORT,
 	FLY_TO_TOWN,
-	HOLD,
+	HOLD_FIRST,
+	FLY_BACK_TO_ORIGIN,
+	HOLD_RETURN,
+	FLY_TO_TOWN_SECOND,
+	HOLD_SECOND,
 	DONE,
 	FAILED
 }
@@ -34,9 +41,22 @@ var generated_seed: int = 0
 var selected_town: Dictionary = {}
 var hold_started_logged: bool = false
 var auto_teleport_enabled: bool = true
+var disable_buildings_enabled: bool = false
+var disable_building_objects_enabled: bool = false
+var disable_building_blocks_enabled: bool = false
+var disable_building_chunk_mesh_render_enabled: bool = false
+var disable_building_visual_batches_enabled: bool = false
+var disable_building_carve_enabled: bool = false
+var disable_building_object_collisions_enabled: bool = false
+var disable_building_chunk_flush_enabled: bool = false
+var disable_building_chunk_collisions_enabled: bool = false
+var disable_terrain_chunk_updates_enabled: bool = false
+var repeat_entry_enabled: bool = false
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
 var fly_target_altitude: float = 0.0
+var return_origin: Vector3 = Vector3.ZERO
+var current_hold_seconds: float = HOLD_SECONDS
 
 var game_root: Node3D = null
 var terrain_manager: Node = null
@@ -46,6 +66,7 @@ var mode_manager: Node = null
 var mode_editor: Node = null
 var movement_component: Node = null
 var loading_screen: Node = null
+var pending_quit: bool = false
 
 func _get_town_stall_seed() -> int:
 	var seed_text := OS.get_environment("TOWN_STALL_SEED")
@@ -63,14 +84,61 @@ func _emit_scope_event(scope: String, event_name: String, payload: Dictionary) -
 	if PerformanceMonitor and PerformanceMonitor.has_method("capture_scope_event"):
 		PerformanceMonitor.capture_scope_event(scope, event_name, payload)
 
+
+func _reset_town_measurement_window(reason: String) -> void:
+	if PerformanceMonitor and PerformanceMonitor.has_method("reset_measurement_window"):
+		PerformanceMonitor.reset_measurement_window(reason)
+	_emit_scope_state("town_stall_test", {
+		"phase": "measurement_reset",
+		"reason": reason,
+		"world_path": generated_world_path
+	})
+	_emit_scope_event("town_stall_test", "measurement_reset", {
+		"reason": reason,
+		"world_path": generated_world_path
+	})
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	auto_teleport_enabled = OS.get_environment("TOWN_STALL_AUTO_TELEPORT") != "0"
+	disable_buildings_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDINGS") == "1"
+	disable_building_objects_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_OBJECTS") == "1"
+	disable_building_blocks_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_BLOCKS") == "1"
+	disable_building_chunk_mesh_render_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_MESH_RENDER") == "1"
+	disable_building_visual_batches_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_VISUAL_BATCHES") == "1"
+	disable_building_carve_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CARVE") == "1"
+	disable_building_object_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_OBJECT_COLLISIONS") == "1"
+	disable_building_chunk_flush_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_FLUSH") == "1"
+	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
+	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
+	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable buildings: %s" % ("ON" if disable_buildings_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building objects: %s" % ("ON" if disable_building_objects_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building blocks: %s" % ("ON" if disable_building_blocks_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building chunk mesh render: %s" % ("ON" if disable_building_chunk_mesh_render_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building visual batches: %s" % ("ON" if disable_building_visual_batches_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building carve: %s" % ("ON" if disable_building_carve_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building object collisions: %s" % ("ON" if disable_building_object_collisions_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building chunk flush: %s" % ("ON" if disable_building_chunk_flush_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	_emit_scope_state("town_stall_test", {
 		"phase": "start",
-		"auto_teleport": auto_teleport_enabled
+		"auto_teleport": auto_teleport_enabled,
+		"disable_buildings": disable_buildings_enabled,
+		"disable_building_objects": disable_building_objects_enabled,
+		"disable_building_blocks": disable_building_blocks_enabled,
+		"disable_building_chunk_mesh_render": disable_building_chunk_mesh_render_enabled,
+		"disable_building_visual_batches": disable_building_visual_batches_enabled,
+		"disable_building_carve": disable_building_carve_enabled,
+		"disable_building_object_collisions": disable_building_object_collisions_enabled,
+		"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
+		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
+		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
+		"repeat_entry": repeat_entry_enabled
 	})
 	_begin_generation()
 
@@ -83,9 +151,9 @@ func _process(delta: float) -> void:
 			_poll_world_ready()
 		Phase.TELEPORT:
 			_teleport_into_town()
-		Phase.FLY_TO_TOWN:
+		Phase.FLY_TO_TOWN, Phase.FLY_BACK_TO_ORIGIN, Phase.FLY_TO_TOWN_SECOND:
 			_fly_to_town(delta)
-		Phase.HOLD:
+		Phase.HOLD_FIRST, Phase.HOLD_RETURN, Phase.HOLD_SECOND:
 			_hold_in_town(delta)
 		Phase.DONE, Phase.FAILED:
 			pass
@@ -186,6 +254,25 @@ func _start_game_scene() -> void:
 		return
 
 	save_manager.pending_world_definition_path = generated_world_path
+	if disable_buildings_enabled and ("disable_buildings_for_test" in save_manager):
+		save_manager.disable_buildings_for_test = true
+		_apply_buildings_toggle()
+	elif disable_building_objects_enabled:
+		_apply_building_objects_toggle()
+	elif disable_building_blocks_enabled:
+		_apply_building_blocks_toggle()
+	elif disable_building_chunk_mesh_render_enabled:
+		_apply_building_chunk_mesh_render_toggle()
+	elif disable_building_visual_batches_enabled:
+		_apply_building_visual_batches_toggle()
+	elif disable_building_carve_enabled:
+		_apply_building_carve_toggle()
+	elif disable_building_object_collisions_enabled:
+		_apply_building_object_collisions_toggle()
+	elif disable_building_chunk_flush_enabled:
+		_apply_building_chunk_flush_toggle()
+	elif disable_building_chunk_collisions_enabled:
+		_apply_building_chunk_collisions_toggle()
 	add_child(game_root)
 	phase = Phase.WAIT_WORLD_READY
 	phase_time = 0.0
@@ -195,6 +282,165 @@ func _start_game_scene() -> void:
 		"world_path": generated_world_path
 	})
 	print("[TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...")
+
+
+func _apply_buildings_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var building_manager := game_root.find_child("BuildingManager", true, false)
+	if building_manager:
+		building_manager.process_mode = Node.PROCESS_MODE_DISABLED
+		if building_manager.has_method("set_process"):
+			building_manager.set_process(false)
+		if building_manager.has_method("set_physics_process"):
+			building_manager.set_physics_process(false)
+
+	var prefab_spawner := game_root.find_child("PrefabSpawner", true, false)
+	if prefab_spawner:
+		if "enabled" in prefab_spawner:
+			prefab_spawner.enabled = false
+		prefab_spawner.process_mode = Node.PROCESS_MODE_DISABLED
+		if prefab_spawner.has_method("set_process"):
+			prefab_spawner.set_process(false)
+		if prefab_spawner.has_method("set_physics_process"):
+			prefab_spawner.set_physics_process(false)
+
+	var building_generator := game_root.find_child("BuildingGenerator", true, false)
+	if building_generator:
+		if "enabled" in building_generator:
+			building_generator.enabled = false
+		building_generator.process_mode = Node.PROCESS_MODE_DISABLED
+		if building_generator.has_method("set_process"):
+			building_generator.set_process(false)
+		if building_generator.has_method("set_physics_process"):
+			building_generator.set_physics_process(false)
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "buildings_disabled",
+		"disable_buildings": true
+	})
+	print("[TOWN_STALL_TEST] Buildings subsystem disabled for test isolation.")
+
+
+func _apply_building_objects_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var prefab_spawner := game_root.find_child("PrefabSpawner", true, false)
+	if prefab_spawner and "skip_object_spawns_for_test" in prefab_spawner:
+		prefab_spawner.skip_object_spawns_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_objects_disabled",
+		"disable_building_objects": true
+	})
+	print("[TOWN_STALL_TEST] Building objects disabled for test isolation.")
+
+
+func _apply_building_blocks_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var prefab_spawner := game_root.find_child("PrefabSpawner", true, false)
+	if prefab_spawner and "skip_block_placement_for_test" in prefab_spawner:
+		prefab_spawner.skip_block_placement_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_blocks_disabled",
+		"disable_building_blocks": true
+	})
+	print("[TOWN_STALL_TEST] Building blocks disabled for test isolation.")
+
+
+func _apply_building_chunk_mesh_render_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var building_manager := game_root.find_child("BuildingManager", true, false)
+	if building_manager and "skip_building_chunk_mesh_render_for_test" in building_manager:
+		building_manager.skip_building_chunk_mesh_render_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_chunk_mesh_render_disabled",
+		"disable_building_chunk_mesh_render": true
+	})
+	print("[TOWN_STALL_TEST] Building chunk mesh render disabled for test isolation.")
+
+
+func _apply_building_visual_batches_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var building_manager := game_root.find_child("BuildingManager", true, false)
+	if building_manager and "skip_building_visual_batches_for_test" in building_manager:
+		building_manager.skip_building_visual_batches_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_visual_batches_disabled",
+		"disable_building_visual_batches": true
+	})
+	print("[TOWN_STALL_TEST] Building visual batches disabled for test isolation.")
+
+
+func _apply_building_carve_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var prefab_spawner := game_root.find_child("PrefabSpawner", true, false)
+	if prefab_spawner and "skip_carving_for_test" in prefab_spawner:
+		prefab_spawner.skip_carving_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_carve_disabled",
+		"disable_building_carve": true
+	})
+	print("[TOWN_STALL_TEST] Building carve disabled for test isolation.")
+
+
+func _apply_building_object_collisions_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var building_manager := game_root.find_child("BuildingManager", true, false)
+	if building_manager and "skip_object_collisions_for_test" in building_manager:
+		building_manager.skip_object_collisions_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_object_collisions_disabled",
+		"disable_building_object_collisions": true
+	})
+	print("[TOWN_STALL_TEST] Building object collisions disabled for test isolation.")
+
+
+func _apply_building_chunk_flush_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var prefab_spawner := game_root.find_child("PrefabSpawner", true, false)
+	if prefab_spawner and "skip_chunk_flush_for_test" in prefab_spawner:
+		prefab_spawner.skip_chunk_flush_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_chunk_flush_disabled",
+		"disable_building_chunk_flush": true
+	})
+	print("[TOWN_STALL_TEST] Building chunk flush disabled for test isolation.")
+
+
+func _apply_building_chunk_collisions_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var building_manager := game_root.find_child("BuildingManager", true, false)
+	if building_manager and "skip_building_chunk_collisions_for_test" in building_manager:
+		building_manager.skip_building_chunk_collisions_for_test = true
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "building_chunk_collisions_disabled",
+		"disable_building_chunk_collisions": true
+	})
+	print("[TOWN_STALL_TEST] Building chunk collisions disabled for test isolation.")
 
 
 func _poll_world_ready() -> void:
@@ -244,6 +490,9 @@ func _teleport_into_town() -> void:
 		_fail("Game scene references vanished before teleport")
 		return
 
+	_reset_town_measurement_window("auto_teleport_entry")
+	_apply_terrain_chunk_updates_toggle()
+
 	var town_x: float = float(selected_town.get("x", 0.0))
 	var town_z: float = float(selected_town.get("z", 0.0))
 	var town_y: float = float(selected_town.get("terrain_y", 12.0))
@@ -274,14 +523,19 @@ func _teleport_into_town() -> void:
 	print("[TOWN_STALL_TEST] Teleported to town at (%.1f, %.1f, %.1f)" % [teleport_pos.x, teleport_pos.y, teleport_pos.z])
 	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % HOLD_SECONDS)
 
-	phase = Phase.HOLD
+	current_hold_seconds = HOLD_SECONDS
+	phase = Phase.HOLD_FIRST
 	phase_time = 0.0
+	hold_started_logged = false
 
 
 func _enter_fly_to_town() -> void:
 	if not is_instance_valid(game_root) or not is_instance_valid(player):
 		_fail("Game scene references vanished before fly-to-town setup")
 		return
+
+	_reset_town_measurement_window("auto_fly_entry")
+	_apply_terrain_chunk_updates_toggle()
 
 	mode_manager = player.get_node_or_null("Systems/ModeManager")
 	mode_editor = player.get_node_or_null("Modes/ModeEditor")
@@ -305,13 +559,22 @@ func _enter_fly_to_town() -> void:
 	if mode_manager.has_method("is_fly_active") and not bool(mode_manager.is_fly_active()):
 		mode_manager.toggle_fly_mode()
 
+	return_origin = player.global_position
 	var town_x: float = float(selected_town.get("x", 0.0))
 	var town_z: float = float(selected_town.get("z", 0.0))
 	var town_y: float = float(selected_town.get("terrain_y", 12.0))
-	fly_target = Vector3(town_x, town_y + TELEPORT_HEIGHT_OFFSET, town_z)
-	fly_target_altitude = maxf(player.global_position.y + AUTO_FLY_ASCEND_MARGIN, fly_target.y + AUTO_FLY_ASCEND_MARGIN)
-	fly_stage = 0
-
+	_begin_flight_to_target(
+		Vector3(town_x, town_y + TELEPORT_HEIGHT_OFFSET, town_z),
+		Phase.FLY_TO_TOWN,
+		"town center",
+		"fly_to_town",
+		{
+			"building_count": int(selected_town.get("building_count", 0)),
+			"town_radius": float(selected_town.get("radius", 0.0)),
+			"auto_teleport": false,
+			"auto_fly": true
+		}
+	)
 	print("[TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.")
 	print("[TOWN_STALL_TEST] Flying to town center: (%.1f, %.1f, %.1f) buildings=%d radius=%.1f" % [
 		town_x,
@@ -320,18 +583,77 @@ func _enter_fly_to_town() -> void:
 		int(selected_town.get("building_count", 0)),
 		float(selected_town.get("radius", 0.0))
 	])
+
+
+func _apply_terrain_chunk_updates_toggle() -> void:
+	if not disable_terrain_chunk_updates_enabled:
+		return
+
+	if not is_instance_valid(chunk_manager):
+		chunk_manager = get_tree().get_first_node_in_group("terrain_manager")
+	if chunk_manager and "skip_terrain_chunk_updates_for_test" in chunk_manager:
+		chunk_manager.skip_terrain_chunk_updates_for_test = true
+
 	_emit_scope_state("town_stall_test", {
-		"phase": "fly_to_town",
-		"world_path": generated_world_path,
-		"town_x": town_x,
-		"town_z": town_z,
-		"town_y": town_y,
-		"building_count": int(selected_town.get("building_count", 0)),
-		"auto_teleport": false,
-		"auto_fly": true
+		"phase": "terrain_chunk_updates_disabled",
+		"disable_terrain_chunk_updates": true
 	})
-	phase = Phase.FLY_TO_TOWN
+	print("[TOWN_STALL_TEST] Terrain chunk updates disabled for test isolation.")
+
+
+func _begin_flight_to_target(target: Vector3, next_phase: Phase, target_label: String, scope_phase: String, extra_state: Dictionary = {}) -> void:
+	fly_target = target
+	fly_target_altitude = maxf(player.global_position.y + AUTO_FLY_ASCEND_MARGIN, fly_target.y + AUTO_FLY_ASCEND_MARGIN)
+	fly_stage = 0
+
+	var state: Dictionary = {
+		"phase": scope_phase,
+		"world_path": generated_world_path,
+		"target_x": target.x,
+		"target_y": target.y,
+		"target_z": target.z,
+	}
+	for key in extra_state.keys():
+		state[key] = extra_state[key]
+	_emit_scope_state("town_stall_test", state)
+
+	if next_phase == Phase.FLY_TO_TOWN:
+		phase = Phase.FLY_TO_TOWN
+	elif next_phase == Phase.FLY_BACK_TO_ORIGIN:
+		phase = Phase.FLY_BACK_TO_ORIGIN
+	elif next_phase == Phase.FLY_TO_TOWN_SECOND:
+		phase = Phase.FLY_TO_TOWN_SECOND
+	else:
+		phase = next_phase
 	phase_time = 0.0
+
+	print("[TOWN_STALL_TEST] Flying to %s: (%.1f, %.1f, %.1f)" % [target_label, target.x, target.y, target.z])
+
+
+func _restore_player_control() -> void:
+	if is_instance_valid(player):
+		player.velocity = Vector3.ZERO
+
+	if is_instance_valid(mode_manager) and mode_manager.has_method("is_editor_mode") and bool(mode_manager.is_editor_mode()):
+		if mode_manager.has_method("toggle_editor_mode"):
+			mode_manager.toggle_editor_mode()
+
+	if movement_component:
+		if movement_component.has_method("set_physics_process"):
+			movement_component.set_physics_process(true)
+		if movement_component.has_method("set_process"):
+			movement_component.set_process(true)
+
+	if mode_editor:
+		if mode_editor.has_method("set_physics_process"):
+			mode_editor.set_physics_process(true)
+		if mode_editor.has_method("set_process"):
+			mode_editor.set_process(true)
+
+	_emit_scope_event("town_stall_test", "manual_control_restored", {
+		"world_path": generated_world_path,
+		"phase": str(phase)
+	})
 
 
 func _fly_to_town(_delta: float) -> void:
@@ -374,8 +696,21 @@ func _fly_to_town(_delta: float) -> void:
 	var descent_delta := fly_target.y - current_pos.y
 	if absf(descent_delta) <= 1.5:
 		player.velocity = Vector3.ZERO
-		print("[TOWN_STALL_TEST] Auto fly reached town center, starting hold")
-		phase = Phase.HOLD
+		print("[TOWN_STALL_TEST] Auto fly reached target, starting hold")
+		_restore_player_control()
+		match phase:
+			Phase.FLY_TO_TOWN:
+				current_hold_seconds = REPEAT_ENTRY_FIRST_HOLD_SECONDS if repeat_entry_enabled else HOLD_SECONDS
+				phase = Phase.HOLD_FIRST
+			Phase.FLY_BACK_TO_ORIGIN:
+				current_hold_seconds = REPEAT_ENTRY_RETURN_HOLD_SECONDS
+				phase = Phase.HOLD_RETURN
+			Phase.FLY_TO_TOWN_SECOND:
+				current_hold_seconds = REPEAT_ENTRY_SECOND_HOLD_SECONDS
+				phase = Phase.HOLD_SECOND
+			_:
+				current_hold_seconds = HOLD_SECONDS
+				phase = Phase.HOLD_FIRST
 		phase_time = 0.0
 		hold_started_logged = false
 		return
@@ -387,15 +722,71 @@ func _fly_to_town(_delta: float) -> void:
 func _hold_in_town(_delta: float) -> void:
 	if not hold_started_logged:
 		print("[TOWN_STALL_TEST] Hold started")
+		if PerformanceMonitor and PerformanceMonitor.has_method("end_town_entry_capture"):
+			PerformanceMonitor.end_town_entry_capture("hold_started")
+		_emit_scope_event("town_stall_test", "hold_started", {
+			"phase": str(phase),
+			"hold_seconds": current_hold_seconds
+		})
 		hold_started_logged = true
 
-	if phase_time >= HOLD_SECONDS:
+	if phase_time >= current_hold_seconds:
 		_emit_scope_event("town_stall_test", "hold_complete", {
-			"hold_seconds": HOLD_SECONDS
+			"hold_seconds": current_hold_seconds,
+			"phase": str(phase)
 		})
+
+		if phase == Phase.HOLD_FIRST and repeat_entry_enabled:
+			print("[TOWN_STALL_TEST] First hold complete, flying back out before re-entering town")
+			_begin_flight_to_target(
+				return_origin,
+				Phase.FLY_BACK_TO_ORIGIN,
+				"fly_back_to_origin",
+				"return origin",
+				{}
+			)
+			return
+
+		if phase == Phase.HOLD_RETURN and repeat_entry_enabled:
+			var town_x: float = float(selected_town.get("x", 0.0))
+			var town_z: float = float(selected_town.get("z", 0.0))
+			var town_y: float = float(selected_town.get("terrain_y", 12.0))
+			print("[TOWN_STALL_TEST] Return hold complete, flying back into town")
+			_reset_town_measurement_window("repeat_entry_second")
+			_begin_flight_to_target(
+				Vector3(town_x, town_y + TELEPORT_HEIGHT_OFFSET, town_z),
+				Phase.FLY_TO_TOWN_SECOND,
+				"fly_to_town_second",
+				"town center",
+				{
+					"building_count": int(selected_town.get("building_count", 0)),
+					"town_radius": float(selected_town.get("radius", 0.0))
+				}
+			)
+			return
+
 		print("[TOWN_STALL_TEST] Hold complete, quitting")
-		phase = Phase.DONE
-		get_tree().quit(0)
+		_begin_shutdown()
+
+
+func _begin_shutdown() -> void:
+	if pending_quit:
+		return
+	pending_quit = true
+	phase = Phase.DONE
+	_emit_scope_event("town_stall_test", "shutdown_requested", {
+		"world_path": generated_world_path,
+		"phase": str(phase)
+	})
+	if is_instance_valid(game_root):
+		game_root.queue_free()
+	call_deferred("_finalize_shutdown")
+
+
+func _finalize_shutdown() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	get_tree().quit(0)
 
 
 func _select_town(towns: Array) -> Dictionary:

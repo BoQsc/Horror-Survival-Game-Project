@@ -1,6 +1,7 @@
 extends RigidBody3D
 
 const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
+@export var world_map_mode: bool = false
 
 func _ready():
 	# Bump up significantly to ensure we clear any terrain noise
@@ -9,9 +10,21 @@ func _ready():
 	# Lay flat on its side
 	rotation_degrees.z = 90.0
 	rotation_degrees.x = 0.0 
+
+	if world_map_mode:
+		# World-map towns do not need the pistol to physically settle. Keep the
+		# pickup shell interactive, but stop the rigid body from waking/simulating.
+		_generate_precise_collision()
+		freeze = true
+		sleeping = true
+		can_sleep = false
+		continuous_cd = false
+		set_physics_process(false)
+		return
 	
-	# GENERATE ACCURATE COLLISION
-	# We delete the simple BoxShape and generate a Convex Hull from the actual visual mesh
+	# Keep authored collision shapes when present.
+	# The heavy pistol scene already has a box collider, so we only generate
+	# a convex hull when no collision shape exists at all.
 	_generate_precise_collision()
 	
 	# Physics Settings
@@ -57,10 +70,10 @@ func _physics_process(delta):
 		set_physics_process(false)
 
 func _generate_precise_collision():
-	# Remove any placeholder manual collision shapes first
+	# Keep authored collision shapes when they already exist.
 	for child in get_children():
 		if child is CollisionShape3D or child is CollisionPolygon3D:
-			child.queue_free()
+			return
 			
 	# Find meshes and generate convex hulls
 	var mesh_instances = []

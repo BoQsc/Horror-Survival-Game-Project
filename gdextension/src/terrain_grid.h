@@ -17,6 +17,15 @@ class TerrainGrid : public RefCounted {
 
 private:
     HashSet<Vector3i> active_chunks;
+    bool update_cache_valid = false;
+    Vector3i cached_center_chunk = Vector3i(0, 0, 0);
+    int cached_render_distance = -1;
+    bool cached_is_above_ground = false;
+    int cached_chunk_stride = -1;
+    Array cached_load_candidates;
+    Array cached_unload_candidates;
+    int cached_load_cursor = 0;
+    int cached_unload_cursor = 0;
 
 protected:
     static void _bind_methods();
@@ -36,7 +45,7 @@ public:
 
     // Main update function
     // is_above_ground: true = load only Y=0, false = load spherical volume
-    Dictionary update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride);
+    Dictionary update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride, int chunks_per_frame_limit);
 
     // Optimized height lookup for vegetation (Process entire chunk at once)
     // Returns PackedFloat32Array of heights. If not found, returns -1000.0.

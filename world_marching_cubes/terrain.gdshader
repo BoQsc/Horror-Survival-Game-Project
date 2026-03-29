@@ -38,7 +38,6 @@ uniform float surface_cliff_threshold = 10.0;
 
 // Per-chunk material system (world-space sampling)
 uniform sampler3D material_map : filter_nearest;  // 3D texture with material IDs
-uniform vec3 chunk_origin = vec3(0.0);  // Chunk world position for UV calculation
 uniform bool has_material_map = false;  // Whether this chunk has player-placed materials
 
 // Debug visualization

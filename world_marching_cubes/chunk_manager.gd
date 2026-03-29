@@ -118,6 +118,7 @@ var active_chunks: Dictionary = {}
 # Time-budgeted node creation - prevents stutters from multiple chunks completing at once
 var pending_nodes: Array[Dictionary] = [] # Queue of completed chunks waiting for node creation
 var pending_nodes_mutex: Mutex
+var pending_nodes_needs_sort: bool = false
 
 # Time-distributed finalization - spreads chunk appearances evenly over time
 var last_finalization_time_ms: int = 0
@@ -151,6 +152,7 @@ var fps_samples: Array[float] = []
 var adaptive_frame_budget_ms: float = 1.0 # Dynamically adjusted (reduced for smoother FPS)
 var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
+var skip_terrain_chunk_updates_for_test: bool = false
 var terrain_grid = null
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
@@ -334,6 +336,7 @@ func _capture_terrain_telemetry(event_label: String = "", details: Dictionary = 
 	PerformanceMonitor.capture_scope_state("terrain", {
 		"phase": "initial_load" if initial_load_phase else "exploration",
 		"loading_paused": loading_paused,
+		"skip_terrain_chunk_updates_for_test": skip_terrain_chunk_updates_for_test,
 		"fps": current_fps,
 		"target_fps": target_fps,
 		"budget_ms": adaptive_frame_budget_ms,
@@ -366,14 +369,54 @@ func _process(delta):
 	
 	# Adjust loading based on FPS
 	_adjust_adaptive_loading()
+
+	if skip_terrain_chunk_updates_for_test:
+		PerformanceMonitor.capture_scope_state("terrain", {
+			"phase": "terrain_updates_skipped",
+			"skip_terrain_chunk_updates_for_test": true,
+			"loading_paused": loading_paused,
+			"initial_load_phase": initial_load_phase,
+			"active_chunks": active_chunks.size(),
+			"pending_nodes": get_pending_nodes_count(),
+			"task_queue": _get_task_queue_count(),
+			"cpu_task_queue": _get_cpu_task_queue_count(),
+			"spawn_zones_pending": pending_spawn_zones.size(),
+			"modification_batches_pending": pending_batches.size()
+		})
+		return
 	
-	PerformanceMonitor.start_measure("Chunk Update")
-	update_chunks()
-	PerformanceMonitor.end_measure("Chunk Update", PerformanceMonitor.thresholds.get("chunk_gen", 3.0)) # Should be fast (< 2ms)
-	
-	PerformanceMonitor.start_measure("Node Finalization")
-	process_pending_nodes()
-	PerformanceMonitor.end_measure("Node Finalization", 2.0)
+	var defer_terrain_finalization := false
+	if not initial_load_phase:
+		var building_manager = get_tree().get_first_node_in_group("building_manager")
+		if not building_manager:
+			building_manager = get_tree().root.find_child("BuildingManager", true, false)
+		var prefab_spawner: Node = get_tree().get_first_node_in_group("prefab_spawner")
+		if not prefab_spawner:
+			prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
+		var prefab_spawn_backlog: bool = prefab_spawner and prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs()
+		var pending_visual_batches: bool = building_manager and building_manager.has_method("has_pending_visual_batch_work") and building_manager.has_pending_visual_batch_work()
+		if (building_manager and building_manager.has_method("has_pending_building_work") and building_manager.has_pending_building_work()) or pending_visual_batches or prefab_spawn_backlog:
+			defer_terrain_finalization = true
+			PerformanceMonitor.capture_scope_state("terrain", {
+				"phase": "terrain_waiting_on_buildings",
+				"loading_paused": loading_paused,
+				"initial_load_phase": initial_load_phase,
+				"active_chunks": active_chunks.size(),
+				"pending_nodes": get_pending_nodes_count(),
+				"task_queue": _get_task_queue_count(),
+				"cpu_task_queue": _get_cpu_task_queue_count(),
+				"spawn_zones_pending": pending_spawn_zones.size(),
+				"building_backlog": true,
+				"visual_batch_backlog": pending_visual_batches
+			})
+	if not defer_terrain_finalization:
+		PerformanceMonitor.start_measure("Chunk Update")
+		update_chunks()
+		PerformanceMonitor.end_measure("Chunk Update", PerformanceMonitor.thresholds.get("chunk_gen", 3.0)) # Should be fast (< 2ms)
+
+		PerformanceMonitor.start_measure("Node Finalization")
+		process_pending_nodes()
+		PerformanceMonitor.end_measure("Node Finalization", 2.0)
 	
 	update_collision_proximity() # Enable/disable collision based on player distance
 	
@@ -460,19 +503,27 @@ func _adjust_adaptive_loading():
 		chunks_per_frame_limit = 1
 
 var collision_update_counter: int = 0
+var _last_collision_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _last_collision_active_count: int = -1
 func update_collision_proximity():
 	# Only update every 30 frames to reduce overhead
 	collision_update_counter += 1
 	if collision_update_counter < 30:
 		return
 	collision_update_counter = 0
-	PerformanceMonitor.start_measure("Chunk Collision Proximity")
 	
 	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
 	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
+	var active_count := active_chunks.size()
+	if center_chunk == _last_collision_center_chunk and active_count == _last_collision_active_count:
+		return
+	_last_collision_center_chunk = center_chunk
+	_last_collision_active_count = active_count
+
+	PerformanceMonitor.start_measure("Chunk Collision Proximity")
 	
 	for coord in active_chunks:
 		var data = active_chunks[coord]
@@ -489,7 +540,9 @@ func update_collision_proximity():
 		
 		# Enable/disable collision shape
 		if data.collision_shape_terrain:
-			data.collision_shape_terrain.disabled = not should_have_collision
+			var desired_disabled: bool = not should_have_collision
+			if data.collision_shape_terrain.disabled != desired_disabled:
+				data.collision_shape_terrain.disabled = desired_disabled
 	PerformanceMonitor.end_measure("Chunk Collision Proximity", 0.5)
 
 # Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
@@ -517,10 +570,12 @@ func process_pending_nodes():
 		pending_nodes_mutex.unlock()
 		return
 	
-	# Sort by distance to player (closest first) for smooth outward loading
-	PerformanceMonitor.start_measure("Finalize: Sort")
-	_sort_pending_by_distance()
-	PerformanceMonitor.end_measure("Finalize: Sort", 0.1)
+	# Sort by distance to player (closest first) only when new items arrived.
+	if pending_nodes_needs_sort:
+		PerformanceMonitor.start_measure("Finalize: Sort")
+		_sort_pending_by_distance()
+		pending_nodes_needs_sort = false
+		PerformanceMonitor.end_measure("Finalize: Sort", 0.1)
 	
 	var item = pending_nodes.pop_front()
 	pending_nodes_mutex.unlock()
@@ -1192,6 +1247,7 @@ func _exit_tree():
 	if pending_nodes_mutex:
 		pending_nodes_mutex.lock()
 		pending_nodes.clear()
+		pending_nodes_needs_sort = false
 		pending_nodes_mutex.unlock()
 	
 	# 3. Signal threads to exit
@@ -1242,7 +1298,7 @@ func _update_chunks_native():
 	# 1. Update Grid (C++)
 	# Returns { "load": [Vector3i], "unload": [Vector3i] }
 	PerformanceMonitor.start_measure("Chunk Grid Update")
-	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE)
+	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE, chunks_per_frame_limit)
 	PerformanceMonitor.end_measure("Chunk Grid Update", 0.5)
 	
 	# 2. Process Unloads
@@ -1359,6 +1415,7 @@ func clear_all_chunks():
 	# 2. Clear finalization queue
 	pending_nodes_mutex.lock()
 	pending_nodes.clear()
+	pending_nodes_needs_sort = false
 	pending_nodes_mutex.unlock()
 	
 	# 3. Wipe all active chunks (frees Meshes, RIDs, and Collision)
@@ -1764,25 +1821,28 @@ func _thread_function():
 	u_wmap.add_id(_world_map_water_buf)
 	_world_map_water_set1 = rd.uniform_set_create([u_wmap], sid_gen_water, 1)
 	
-	# Create REUSABLE Buffers for meshing (9 floats per vertex: pos + normal + color)
-	# TERRAIN buffers
+	# Create a tiny buffer ring for meshing (9 floats per vertex: pos + normal + color)
+	# This lets a couple of chunks overlap without reusing the same GPU storage buffers
+	# before readback has completed.
+	const MAX_IN_FLIGHT = 1 # Safe baseline while detection is improved
 	var output_bytes_size = MAX_TRIANGLES * 3 * 9 * 4
-	var vertex_buffer_terrain = rd.storage_buffer_create(output_bytes_size)
-	var counter_data = PackedByteArray()
-	counter_data.resize(4)
-	counter_data.encode_u32(0, 0)
-	var counter_buffer_terrain = rd.storage_buffer_create(4, counter_data)
-	
-	# WATER buffers (separate to enable batch dispatching - reduces GPU syncs by 50%)
-	var vertex_buffer_water = rd.storage_buffer_create(output_bytes_size)
-	var counter_data_w = PackedByteArray()
-	counter_data_w.resize(4)
-	counter_data_w.encode_u32(0, 0)
-	var counter_buffer_water = rd.storage_buffer_create(4, counter_data_w)
+	var buffer_slots: Array[Dictionary] = []
+	for _slot in range(MAX_IN_FLIGHT):
+		var counter_data_t = PackedByteArray()
+		counter_data_t.resize(4)
+		counter_data_t.encode_u32(0, 0)
+		var counter_data_w = PackedByteArray()
+		counter_data_w.resize(4)
+		counter_data_w.encode_u32(0, 0)
+		buffer_slots.append({
+			"vertex_buffer_terrain": rd.storage_buffer_create(output_bytes_size),
+			"counter_buffer_terrain": rd.storage_buffer_create(4, counter_data_t),
+			"vertex_buffer_water": rd.storage_buffer_create(output_bytes_size),
+			"counter_buffer_water": rd.storage_buffer_create(4, counter_data_w)
+		})
 	
 	# In-flight chunks: dispatched but not yet read back
 	var in_flight: Array[Dictionary] = []
-	const MAX_IN_FLIGHT = 1 # Limit to prevent GPU overload
 	
 	while true:
 		# 1. Check for new tasks FIRST (prioritize modifications before completing in-flight work)
@@ -1799,7 +1859,9 @@ func _thread_function():
 			if in_flight.size() > 0:
 				rd.sync()
 				for flight_data in in_flight:
-					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
+					var slot_index := int(flight_data.get("buffer_slot", 0))
+					var slot: Dictionary = buffer_slots[slot_index]
+					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
 				in_flight.clear()
 			continue
 			
@@ -1812,20 +1874,25 @@ func _thread_function():
 			if in_flight.size() > 0:
 				rd.sync()
 				for fd in in_flight:
-					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
+					var slot_index := int(fd.get("buffer_slot", 0))
+					var slot: Dictionary = buffer_slots[slot_index]
+					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
 				in_flight.clear()
-			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain)
+			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"])
 		elif task.type == "generate":
 			# Complete any in-flight before starting new generation
 			if in_flight.size() > 0:
 				rd.sync()
 				for flight_data in in_flight:
-					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
+					var slot_index := int(flight_data.get("buffer_slot", 0))
+					var slot: Dictionary = buffer_slots[slot_index]
+					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
 				in_flight.clear()
 			
 			# Dispatch all GPU work, NO sync - will be completed next iteration
 			var flight_data = _dispatch_chunk_generation(rd, task, sid_gen, sid_gen_water, sid_mod, pipe_gen, pipe_gen_water, pipe_mod)
 			if flight_data:
+				flight_data["buffer_slot"] = in_flight.size()
 				in_flight.append(flight_data)
 				rd.submit() # Submit but don't sync - let GPU work while we process more
 				
@@ -1833,7 +1900,9 @@ func _thread_function():
 				if in_flight.size() >= MAX_IN_FLIGHT:
 					rd.sync()
 					for fd in in_flight:
-						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water)
+						var slot_index := int(fd.get("buffer_slot", 0))
+						var slot: Dictionary = buffer_slots[slot_index]
+						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
 					in_flight.clear()
 					
 					# Two-phase loading: fast initial load, then throttled exploration
@@ -1854,10 +1923,11 @@ func _thread_function():
 				rd.free_rid(task.rid)
 	
 	# Cleanup
-	rd.free_rid(vertex_buffer_terrain)
-	rd.free_rid(counter_buffer_terrain)
-	rd.free_rid(vertex_buffer_water)
-	rd.free_rid(counter_buffer_water)
+	for slot in buffer_slots:
+		rd.free_rid(slot["vertex_buffer_terrain"])
+		rd.free_rid(slot["counter_buffer_terrain"])
+		rd.free_rid(slot["vertex_buffer_water"])
+		rd.free_rid(slot["counter_buffer_water"])
 	rd.free_rid(pipe_gen)
 	rd.free_rid(pipe_gen_water)
 	rd.free_rid(pipe_mod)
@@ -2466,6 +2536,7 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"dens": dens_w,
 		"cpu_dens": cpu_dens_w
 	})
+	pending_nodes_needs_sort = true
 	
 	pending_nodes_mutex.unlock()
 
@@ -2559,19 +2630,22 @@ func _finalize_chunk_creation(item: Dictionary):
 		if dt > 8.0 and DebugManager.LOG_CHUNK: DebugManager.log_chunk("SPIKE Finalize Water: %.2f ms" % dt)
 
 ## Create per-chunk ShaderMaterial with 3D material texture
-func _create_chunk_material(chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
-	# Clone base material
+func _create_chunk_material(_chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
+	# The terrain shader currently derives world-space data from the node
+	# transform, so chunks that do not have per-voxel material overrides can
+	# safely share the base material. This avoids duplicating a unique
+	# ShaderMaterial for every loaded chunk and keeps batching/state churn lower.
+	if cpu_mat.is_empty():
+		return material_terrain as ShaderMaterial
+
 	var mat = material_terrain.duplicate() as ShaderMaterial
 	
-	# Set chunk origin for world-space to local-space conversion
-	mat.set_shader_parameter("chunk_origin", chunk_pos)
-	
-	# Create 3D texture from material data if available
-	if cpu_mat.size() > 0:
-		var tex3d = _create_material_texture_3d(cpu_mat)
-		if tex3d:
-			mat.set_shader_parameter("material_map", tex3d)
-			mat.set_shader_parameter("has_material_map", true)
+	# Create 3D texture from material data only when the chunk actually has
+	# player-placed material overrides.
+	var tex3d = _create_material_texture_3d(cpu_mat)
+	if tex3d:
+		mat.set_shader_parameter("material_map", tex3d)
+		mat.set_shader_parameter("has_material_map", true)
 	
 	return mat
 
@@ -2689,7 +2763,7 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	if mesh == null:
 		return {}
 		
-	var node: CollisionObject3D
+	var node: Node3D
 	
 	if is_water:
 		node = Area3D.new()
@@ -2697,6 +2771,9 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 		# Ensure it's monitorable so the player can detect it
 		node.monitorable = true
 		node.monitoring = false # Terrain chunks don't need to monitor others
+	elif defer_collision:
+		node = Node3D.new()
+		node.add_to_group("terrain")
 	else:
 		node = StaticBody3D.new()
 		node.collision_layer = 1 | 512 # Terrain layer + Special layer for pickups
@@ -2718,11 +2795,11 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 		
 	node.add_child(mesh_instance)
 	
-	var collision_shape = CollisionShape3D.new()
-	if shape:
-		collision_shape.shape = shape
-	
+	var collision_shape: CollisionShape3D = null
 	if not defer_collision:
+		collision_shape = CollisionShape3D.new()
+		if shape:
+			collision_shape.shape = shape
 		node.add_child(collision_shape)
 	
 	# Optimization: Add to tree LAST to perform single update
