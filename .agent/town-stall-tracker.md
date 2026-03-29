@@ -34,11 +34,12 @@ This is the working record for the town-entry stall and the path to a stable 60 
 
 ## Current Leading Hypothesis
 
-- The remaining hot path is now mostly render-side town complexity plus the last bits of building/object setup:
+- The remaining hot path is now mostly building/object setup plus the remaining render tail:
   - prefab spawn / object setup
   - render flush / draw-call pressure from the town scene
   - any remaining overlap between terrain finalization and visual batch rebuilds
 - Terrain finalization overlapping with building/visual-batch work is still a likely secondary cost, but it is no longer the main source of the huge stall.
+- The recent prefab object-placement caches helped a little, but not enough to call it solved; the next meaningful step is a batched object-placement path or moving that placement planner into native code.
 
 ## Current Helpful Levers
 
@@ -75,4 +76,4 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - Terrain finalization deferral while building work is pending helped.
 - Terrain finalization also now waits for pending prefab spawn backlog and pending visual-batch rebuilds.
 - Skipping redundant world-map prefab carving was the biggest recent win.
-- The work is now about shaving the remaining render tail and any remaining building/terrain overlap, not revisiting roads or vegetation.
+- The work is now about reducing object-placement churn and any remaining render tail, not revisiting roads or vegetation.
