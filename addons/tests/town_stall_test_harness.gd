@@ -14,6 +14,7 @@ const AUTO_FLY_TIMEOUT_SECONDS := 840.0
 const AUTO_FLY_SPEED := 24.0
 const AUTO_FLY_ASCEND_MARGIN := 40.0
 const AUTO_FLY_ARRIVAL_RADIUS := 12.0
+const AUTO_FLY_ENTRY_CAPTURE_BUFFER := 64.0
 
 enum Phase {
 	GENERATING,
@@ -40,6 +41,7 @@ var generated_world_path: String = ""
 var generated_seed: int = 0
 var selected_town: Dictionary = {}
 var hold_started_logged: bool = false
+var town_entry_capture_started: bool = false
 var auto_teleport_enabled: bool = true
 var disable_buildings_enabled: bool = false
 var disable_building_objects_enabled: bool = false
@@ -534,7 +536,6 @@ func _enter_fly_to_town() -> void:
 		_fail("Game scene references vanished before fly-to-town setup")
 		return
 
-	_reset_town_measurement_window("auto_fly_entry")
 	_apply_terrain_chunk_updates_toggle()
 
 	mode_manager = player.get_node_or_null("Systems/ModeManager")
@@ -575,6 +576,7 @@ func _enter_fly_to_town() -> void:
 			"auto_fly": true
 		}
 	)
+	town_entry_capture_started = false
 	print("[TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.")
 	print("[TOWN_STALL_TEST] Flying to town center: (%.1f, %.1f, %.1f) buildings=%d radius=%.1f" % [
 		town_x,
@@ -684,6 +686,18 @@ func _fly_to_town(_delta: float) -> void:
 		var horizontal_target := Vector3(fly_target.x, current_pos.y, fly_target.z)
 		var to_target := horizontal_target - current_pos
 		to_target.y = 0.0
+		if not town_entry_capture_started:
+			var capture_radius := float(selected_town.get("radius", 0.0)) + AUTO_FLY_ENTRY_CAPTURE_BUFFER
+			if capture_radius > 0.0 and to_target.length() <= capture_radius:
+				town_entry_capture_started = true
+				_reset_town_measurement_window("auto_fly_entry")
+				_emit_scope_event("town_stall_test", "town_entry_capture_started", {
+					"phase": str(phase),
+					"capture_radius": capture_radius,
+					"target_x": fly_target.x,
+					"target_y": fly_target.y,
+					"target_z": fly_target.z
+				})
 		if to_target.length() <= AUTO_FLY_ARRIVAL_RADIUS:
 			fly_stage = 2
 			return

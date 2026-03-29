@@ -168,8 +168,17 @@ func _queue_spawn_job(spawn_key: String, job: Dictionary) -> void:
 		return
 	job["spawn_key"] = spawn_key
 	spawned_positions[spawn_key] = true
-	pending_spawn_jobs.append(job)
+	if building_manager and building_manager.world_map_mode and not pending_spawn_jobs.is_empty():
+		_insert_world_map_spawn_job_sorted(job)
+	else:
+		pending_spawn_jobs.append(job)
 	pending_spawn_keys[spawn_key] = true
+
+func _insert_world_map_spawn_job_sorted(job: Dictionary) -> void:
+	var insert_index := pending_spawn_jobs.size()
+	while insert_index > 0 and _sort_world_map_spawn_job_by_distance(job, pending_spawn_jobs[insert_index - 1]):
+		insert_index -= 1
+	pending_spawn_jobs.insert(insert_index, job)
 
 func _process_pending_spawn_jobs() -> void:
 	if not building_manager:
@@ -181,12 +190,7 @@ func _process_pending_spawn_jobs() -> void:
 	var now_msec := Time.get_ticks_msec()
 	var effective_budget_ms := spawn_processing_budget_ms
 	if building_manager and building_manager.world_map_mode:
-		effective_budget_ms = min(effective_budget_ms, 2.0)
-		if pending_spawn_jobs.size() > 1:
-			# `pop_back()` consumes the last entry, so we sort descending here.
-			# That keeps the highest-priority buildings closest to the front of
-			# the visible queue: doors/windows first, then crates/tables/pistols.
-			pending_spawn_jobs.sort_custom(Callable(self, "_sort_world_map_spawn_job_by_distance"))
+		effective_budget_ms = min(effective_budget_ms, 3.0)
 
 	while not pending_spawn_jobs.is_empty():
 		if processed > 0:
@@ -743,7 +747,13 @@ func load_prefab_from_file(prefab_name: String) -> bool:
 	if data.has("objects") and data.objects.size() > 0:
 		if not has_meta("prefab_objects"):
 			set_meta("prefab_objects", {})
-		get_meta("prefab_objects")[prefab_name] = _parse_compact_objects(data.objects)
+		var parsed_objects := _parse_compact_objects(data.objects)
+		get_meta("prefab_objects")[prefab_name] = parsed_objects
+		if not has_meta("prefab_objects_sorted"):
+			set_meta("prefab_objects_sorted", {})
+		var sorted_objects := parsed_objects.duplicate()
+		sorted_objects.sort_custom(Callable(self, "_sort_world_map_prefab_object_spawn"))
+		get_meta("prefab_objects_sorted")[prefab_name] = sorted_objects
 
 	var validation := PrefabGeometry.get_prefab_validation(prefab_name)
 	if not bool(validation.get("valid_for_spawn", true)):
@@ -820,11 +830,33 @@ func _parse_compact_objects(compact: Array) -> Array:
 	var result: Array = []
 	for obj in compact:
 		if obj is Array and obj.size() >= 5:
+			var object_id := int(obj[0])
+			var object_def := ObjectRegistry.get_object(object_id) if object_id >= 0 else {}
+			var object_name := str(object_id)
+			var object_scene_path := ""
+			var object_size := Vector3i.ONE
+			var has_authored_collision := false
+			var has_authored_collision_valid := false
+			var precomputed_cells_by_rotation: Array = []
+			if not object_def.is_empty():
+				object_name = str(object_def.get("name", object_name))
+				object_scene_path = str(object_def.get("scene", ""))
+				object_size = object_def.get("size", Vector3i.ONE)
+				has_authored_collision = bool(object_def.get("has_authored_collision", ObjectRegistry.get_object_has_authored_collision(object_id)))
+				has_authored_collision_valid = true
+				for rotation_index in range(4):
+					precomputed_cells_by_rotation.append(ObjectRegistry.get_occupied_cells(object_id, Vector3i.ZERO, rotation_index))
 			result.append({
 				"offset": [obj[1], obj[2], obj[3]],
-				"object_id": obj[0],
+				"object_id": object_id,
 				"rotation": obj[4],
-				"fractional_y": obj[5] if obj.size() > 5 else 0.0
+				"fractional_y": obj[5] if obj.size() > 5 else 0.0,
+				"object_name": object_name,
+				"scene_path": object_scene_path,
+				"object_size": object_size,
+				"has_authored_collision": has_authored_collision,
+				"has_authored_collision_valid": has_authored_collision_valid,
+				"precomputed_cells_by_rotation": precomputed_cells_by_rotation
 			})
 	return result
 
@@ -845,16 +877,18 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		skip_blocks = true
 		interior_carve = false
 		clear_vegetation = false
+	var world_map_mode := bool(building_manager and building_manager.world_map_mode)
 	PerformanceMonitor.start_measure("Prefab: " + prefab_name)
-	PerformanceMonitor.capture_scope_event("buildings", "spawn_requested", {
-		"prefab": prefab_name,
-		"world_pos": str(world_pos),
-		"rotation": rotation,
-		"carve_terrain": carve_terrain,
-		"skip_carving_for_test": skip_carving_for_test,
-		"skip_blocks": skip_blocks,
-		"interior_carve": interior_carve
-	})
+	if not world_map_mode:
+		PerformanceMonitor.capture_scope_event("buildings", "spawn_requested", {
+			"prefab": prefab_name,
+			"world_pos": str(world_pos),
+			"rotation": rotation,
+			"carve_terrain": carve_terrain,
+			"skip_carving_for_test": skip_carving_for_test,
+			"skip_blocks": skip_blocks,
+			"interior_carve": interior_carve
+		})
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
 		PerformanceMonitor.start_measure("Prefab Load: " + prefab_name)
@@ -872,7 +906,6 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		submerge_offset = 1
 
 	var placement_profile := PrefabGeometry.get_placement_profile(prefab_name)
-	var world_map_mode := bool(building_manager and building_manager.world_map_mode)
 	if world_map_mode:
 		# Baked towns already had their lots prepared by the world generator.
 		# Skipping runtime carve avoids paying the same excavation cost again
@@ -1072,9 +1105,10 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			var use_world_map_mode := bool(building_manager and building_manager.world_map_mode)
 			collect_object_telemetry = not use_world_map_mode
 			var prefab_objects: Array = objects_data[prefab_name]
-			if use_world_map_mode and prefab_objects.size() > 1:
-				prefab_objects = prefab_objects.duplicate()
-				prefab_objects.sort_custom(Callable(self, "_sort_world_map_prefab_object_spawn"))
+			if use_world_map_mode and has_meta("prefab_objects_sorted"):
+				var sorted_objects_data = get_meta("prefab_objects_sorted")
+				if sorted_objects_data.has(prefab_name):
+					prefab_objects = sorted_objects_data[prefab_name]
 			for obj_index in range(object_start_index, prefab_objects.size()):
 				var obj: Dictionary = prefab_objects[obj_index]
 				var obj_start_us := Time.get_ticks_usec()
@@ -1144,9 +1178,8 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				# Use object_id if available, otherwise try to load scene directly
 				if obj.has("object_id"):
 					object_id = int(obj.object_id)
-					var object_def := ObjectRegistry.get_object(object_id)
-					object_name = str(object_def.get("name", "Object %d" % object_id))
-					object_scene_path = str(object_def.get("scene", ""))
+					object_name = str(obj.get("object_name", "Object %d" % object_id))
+					object_scene_path = str(obj.get("scene_path", ""))
 				elif obj.has("scene") and obj.scene != "":
 					object_scene_path = obj.scene
 					object_name = object_scene_path
@@ -1155,29 +1188,40 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				# Use object_id if available, otherwise try to load scene directly
 				var obj_elapsed_ms := 0.0
 				if object_id >= 0:
-					var object_mix_key := "object:%d" % object_id
-					var object_mix_entry: Dictionary = object_mix_counts.get(object_mix_key, {
-						"kind": "object_id",
-						"object_id": object_id,
-						"object_name": object_name,
-						"scene_path": object_scene_path,
-						"count": 0
-					})
-					object_mix_entry["count"] = int(object_mix_entry.get("count", 0)) + 1
-					object_mix_counts[object_mix_key] = object_mix_entry
-					if not building_manager.place_object(obj_pos, object_id, obj_rotation, true, true, defer_global_visual_batch_rebuild):
+					if collect_object_telemetry:
+						var object_mix_key := "object:%d" % object_id
+						var object_mix_entry: Dictionary = object_mix_counts.get(object_mix_key, {
+							"kind": "object_id",
+							"object_id": object_id,
+							"object_name": object_name,
+							"scene_path": object_scene_path,
+							"count": 0
+						})
+						object_mix_entry["count"] = int(object_mix_entry.get("count", 0)) + 1
+						object_mix_counts[object_mix_key] = object_mix_entry
+					var object_size: Vector3i = obj.get("object_size", Vector3i.ONE)
+					var has_authored_collision := bool(obj.get("has_authored_collision", false))
+					var has_authored_collision_valid := bool(obj.get("has_authored_collision_valid", false))
+					var precomputed_cells_by_rotation: Array = obj.get("precomputed_cells_by_rotation", [])
+					var precomputed_cells: Array = []
+					if obj_rotation >= 0 and obj_rotation < precomputed_cells_by_rotation.size():
+						var rotation_cells: Array = precomputed_cells_by_rotation[obj_rotation]
+						if rotation_cells is Array:
+							precomputed_cells = rotation_cells
+					if not building_manager.place_object(obj_pos, object_id, obj_rotation, true, true, defer_global_visual_batch_rebuild, precomputed_cells, object_size, object_scene_path, has_authored_collision, has_authored_collision_valid):
 						# print("DEBUG_MISSING_OBJ: Failed to place object_id %d at %v (Rotation %d)" % [obj.object_id, obj_pos, combined_rot])
 						pass
 				elif object_scene_path != "":
 					direct_scene_count += 1
-					var scene_mix_key := "scene:%s" % object_scene_path
-					var scene_mix_entry: Dictionary = object_mix_counts.get(scene_mix_key, {
-						"kind": "scene",
-						"scene_path": object_scene_path,
-						"count": 0
-					})
-					scene_mix_entry["count"] = int(scene_mix_entry.get("count", 0)) + 1
-					object_mix_counts[scene_mix_key] = scene_mix_entry
+					if collect_object_telemetry:
+						var scene_mix_key := "scene:%s" % object_scene_path
+						var scene_mix_entry: Dictionary = object_mix_counts.get(scene_mix_key, {
+							"kind": "scene",
+							"scene_path": object_scene_path,
+							"count": 0
+						})
+						scene_mix_entry["count"] = int(scene_mix_entry.get("count", 0)) + 1
+						object_mix_counts[scene_mix_key] = scene_mix_entry
 					_spawn_scene_at(object_scene_path, obj_pos, obj_rotation)
 				if collect_object_telemetry:
 					obj_elapsed_ms = float(Time.get_ticks_usec() - obj_start_us) / 1000.0
@@ -1225,13 +1269,13 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	var mode_str = "carve" if carve_terrain else "surface"
 	DebugManager.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
 	PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
-	PerformanceMonitor.capture_scope_event("buildings", "spawn_complete", {
+	var spawn_complete_event := {
 		"prefab": prefab_name,
 		"carved_terrain": carved_terrain,
 		"carve_elapsed_ms": carve_elapsed_ms,
 		"block_count": blocks.size(),
 		"object_count": prefab_object_count,
-		"unique_object_kinds": object_mix_counts.size(),
+		"unique_object_kinds": object_mix_counts.size() if collect_object_telemetry else 0,
 		"direct_scene_count": direct_scene_count,
 		"block_placement_elapsed_ms": block_placement_elapsed_ms,
 		"block_pack_elapsed_ms": block_pack_elapsed_ms,
@@ -1239,9 +1283,11 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		"object_spawn_elapsed_ms": object_spawn_elapsed_ms,
 		"seal_elapsed_ms": seal_elapsed_ms,
 		"chunk_flush_elapsed_ms": chunk_flush_elapsed_ms,
-		"slowest_object_spawns": _build_top_slow_object_spawns(slow_object_spawns, 5),
-		"top_object_mix": _build_top_object_mix_summary(object_mix_counts, 5)
-	})
+		"slowest_object_spawns": _build_top_slow_object_spawns(slow_object_spawns, 5) if collect_object_telemetry else [],
+		"top_object_mix": _build_top_object_mix_summary(object_mix_counts, 5) if collect_object_telemetry else []
+	}
+	if not world_map_mode:
+		PerformanceMonitor.capture_scope_event("buildings", "spawn_complete", spawn_complete_event)
 	return true
 
 func _can_use_column_terrain_ops() -> bool:

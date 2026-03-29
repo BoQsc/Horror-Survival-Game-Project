@@ -95,11 +95,24 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - Skipping redundant world-map prefab carving was the biggest recent win.
 - The work is now about reducing object-placement churn and any remaining render tail, not revisiting roads or vegetation.
 - Keep the town loading route simple: visible buildings first, no fake proxies, no extra gameplay-visible delays.
+- The world-map prefab object order is now pre-sorted at load time so the spawn loop no longer re-sorts the same list on every building.
+- The world-map prefab object metadata is now precomputed at load time so the spawn loop does not keep asking ObjectRegistry for the same size/collision data.
+- The world-map prefab object occupied cells are now precomputed at load time so the spawn loop can hand `place_object()` the exact cells it needs instead of rebuilding them per object.
+- The latest fixed-seed town run after the metadata move landed at `20.056666666667 ms` peak with `0` frames over `40 ms`; the remaining peak is now `Baked Building Spawn`.
+- The latest fixed-seed town run after the occupied-cell precompute stayed clean at `14.2857142857143 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`, so the entrance path remains in a safe state.
 - The latest object-cache experiment was rolled back because it did not clearly improve the town entry enough to justify the extra complexity.
 - A small `BoxShape3D` reuse cache for merged world-map building collisions is now in place; it keeps collision behavior the same while reducing shape allocation churn.
 - A viewer-distance sort on the apply queue was tried and then removed because it did not improve the result enough to keep.
 - The world-map object-mix bookkeeping skip was reverted because it did not measurably move the town-entry peak.
 - Lowering the building apply queue from 4 to 3 was tried and rolled back because it did not lower the peak and increased the over-budget tail.
-- The latest validated town-entry run is back to a strong baseline: `16.656 ms` peak in the town-entry window with `0` frames over `40 ms` and `0` frames over `50 ms`.
-- The peak town-entry sample is now `GPU/Render (724 draws)`, while the building and terrain queues are quiet at that moment, so the entrance stall is effectively gone on the fixed-seed route.
-- The remaining spike outside the town-entry window is still worth watching, but it is no longer the entrance problem we were chasing.
+- The town-entry capture is now anchored to the approach buffer around the town radius instead of the whole flight, which makes the measurement much closer to the actual entrance.
+- The latest validated approach-window run is `20.043 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`.
+- The peak sample is `GPU/Render (719 draws)`, while the building and terrain queues are quiet at that moment, so the entrance stall is effectively gone on the fixed-seed route.
+- The remaining later spike during extended hold is still worth watching, but it is no longer the entrance problem we were chasing.
+- The stable world-map spawn ordering fix remains in place, but the temporary sorted-object cache and aggressive flush-budget tweak were rolled back because they did not improve the town-entry result enough to keep.
+- The latest validated full-town approach-window run is back to a strong baseline: `24.697 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`.
+- The remaining peak frame is still `GPU/Render`, but it stays below the stall threshold on the fixed seed, so the entrance is currently in a safe state again.
+- The prefab-object sorted cache experiment did not earn its keep and was removed again after a follow-up run showed a worse peak (`107.653 ms`) on the same fixed route.
+- The useful takeaway from that dead-end is that queue ordering still matters, but extra caching around it did not provide a stable win.
+- After the cache rollback, the fixed-seed full-town approach-window run returned to a safer baseline: `28.57 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`.
+- The current remaining peak stays in `GPU/Render`, but it is below the stall threshold and no longer points at a regression in the spawn queue itself.
