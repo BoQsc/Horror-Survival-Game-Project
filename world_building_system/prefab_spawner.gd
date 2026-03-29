@@ -1205,7 +1205,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					var precomputed_cells_by_rotation: Array = obj.get("precomputed_cells_by_rotation", [])
 					var precomputed_cells: Array = []
 					if obj_rotation >= 0 and obj_rotation < precomputed_cells_by_rotation.size():
-						var rotation_cells: Array = precomputed_cells_by_rotation[obj_rotation]
+						var rotation_cells: Array = precomputed_cells_by_rotation[obj_rotation] as Array
 						if rotation_cells is Array:
 							precomputed_cells = rotation_cells
 					if not building_manager.place_object(obj_pos, object_id, obj_rotation, true, true, defer_global_visual_batch_rebuild, precomputed_cells, object_size, object_scene_path, has_authored_collision, has_authored_collision_valid):

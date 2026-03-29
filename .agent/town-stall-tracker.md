@@ -100,6 +100,7 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - The world-map prefab object occupied cells are now precomputed at load time so the spawn loop can hand `place_object()` the exact cells it needs instead of rebuilding them per object.
 - The latest fixed-seed town run after the metadata move landed at `20.056666666667 ms` peak with `0` frames over `40 ms`; the remaining peak is now `Baked Building Spawn`.
 - The latest fixed-seed town run after the occupied-cell precompute stayed clean at `14.2857142857143 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`, so the entrance path remains in a safe state.
+- The latest fixed-seed town run after the parser fix stayed clean at `15.0226666666589 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`, and the remaining peak sample is back to `Engine: Physics` rather than a spawn-loop regression.
 - The latest object-cache experiment was rolled back because it did not clearly improve the town entry enough to justify the extra complexity.
 - A small `BoxShape3D` reuse cache for merged world-map building collisions is now in place; it keeps collision behavior the same while reducing shape allocation churn.
 - A viewer-distance sort on the apply queue was tried and then removed because it did not improve the result enough to keep.
