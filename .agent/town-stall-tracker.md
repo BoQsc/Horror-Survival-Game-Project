@@ -1,14 +1,17 @@
 # Town Stall Tracker
 
-Last updated: 2026-03-28
+Last updated: 2026-03-29
 
 This is the working record for the town-entry stall and the path to a stable 60 FPS baseline.
 
 ## Goal
 
+- Reach a stable 60 FPS-feeling experience.
 - Keep gameplay, visuals, and interaction intact.
 - Eliminate the town-entry stall without breaking the sandbox.
-- Prefer real work reduction over mitigation.
+- Make building loading effectively unnoticeable to the player.
+- Prefer simple fixes that reduce real work over clever but cumbersome algorithms.
+- Use shader or GDExtension only when they clearly help and do not change gameplay.
 
 ## Locked Baselines
 
@@ -16,6 +19,7 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - Vegetation batching experiments are out of scope for the stall work.
 - Do not minimize/focus/steal attention from other windows during tests.
 - Do not change visuals or interaction for gameplay objects like windows, doors, crates, pistols, stones, or plants unless explicitly approved.
+- Do not assume a volumetric/gameplay prop is safe to batch visually just because the scene file looks simple; verify gameplay impact first.
 
 ## What We Have Proven
 
@@ -28,18 +32,27 @@ This is the working record for the town-entry stall and the path to a stable 60 
   - the large church spawn dropped from `73.605 ms` object time with `11.774 ms` carve time to `5.435 ms` object time with `0.0 ms` carve time
   - the town-entry peak dropped from `142.644 ms` to `60.554 ms`
   - frames over `50 ms` fell to `1`
+- Switching world-map buildings back to merged box colliders kept the town peak lower than the shape path without changing gameplay behavior.
 - Roads are not the current bottleneck.
 - Vegetation is not the current bottleneck.
 - The test harness and fixed-seed route are valid for comparison.
+- The world-map prefab object priority sort was reversed once by a `pop_back()` queue and caused delayed visible props; that was fixed so doors/windows come first again.
+- A per-prefab object-definition cache and a budgeted global visual-batch flush were tried and rolled back because they regressed the town run.
+- The peak-frame capture now stores the exact worst town sample in the snapshot so we can inspect the real spike instead of guessing from averages alone.
+- The entity proximity loop had a freed-object TypedArray bug and was fixed by making the invalid-entity scratch array untyped.
 
 ## Current Leading Hypothesis
 
+- The remaining hot path is now mostly building/object setup plus the remaining render tail:
 - The remaining hot path is now mostly building/object setup plus the remaining render tail:
   - prefab spawn / object setup
   - render flush / draw-call pressure from the town scene
   - any remaining overlap between terrain finalization and visual batch rebuilds
 - Terrain finalization overlapping with building/visual-batch work is still a likely secondary cost, but it is no longer the main source of the huge stall.
-- The recent prefab object-placement caches helped a little, but not enough to call it solved; the next meaningful step is a batched object-placement path or moving that placement planner into native code.
+- The best remaining wins should come from simplifying the building pipeline, not inventing complicated new systems.
+- The rotated prefab-object cache did not clearly pay for itself, so the simpler raw spawn path remains the baseline.
+- If the current GDScript path is still too costly, the next step is a straightforward native helper for the hot loop, not a broader gameplay rewrite.
+- The current validated town baseline is again in the low-30ms range with no frames over 40ms on the fixed-seed route.
 
 ## Current Helpful Levers
 
@@ -48,6 +61,9 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - Reduce prefab spawn cost for repeated town props.
 - Keep terrain finalization from competing with building, prefab, and visual-batch backlog.
 - Only keep changes that show a measurable improvement in the fixed-seed town test.
+- Prefer the simplest algorithm that meets the target, not the cleverest one.
+- Preserve the current stable visual/gameplay path unless a new change is measurably better.
+- Keep the world-map spawn queue readable and simple: nearest buildings first, visible props first, no delayed empty-town behavior.
 
 ## What Has Been Ruled Out
 
@@ -56,6 +72,7 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - Window-state tricks in the test runner.
 - Prewarm as the primary solution.
 - Broad visual downgrades or placeholder proxies for gameplay-critical objects.
+- Treating any volumetric gameplay prop as a safe static visual batch candidate without explicit verification.
 
 ## Current Working Areas
 
@@ -77,3 +94,10 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - Terrain finalization also now waits for pending prefab spawn backlog and pending visual-batch rebuilds.
 - Skipping redundant world-map prefab carving was the biggest recent win.
 - The work is now about reducing object-placement churn and any remaining render tail, not revisiting roads or vegetation.
+- Keep the town loading route simple: visible buildings first, no fake proxies, no extra gameplay-visible delays.
+- The latest object-cache experiment was rolled back because it did not clearly improve the town entry enough to justify the extra complexity.
+- A small `BoxShape3D` reuse cache for merged world-map building collisions is now in place; it keeps collision behavior the same while reducing shape allocation churn.
+- A viewer-distance sort on the apply queue was tried and then removed because it did not improve the result enough to keep.
+- The current validated town baseline is around a `33.9 ms` peak with no frames over `40 ms` in the fixed-seed validation run, and visible town props are loading in the intended order again.
+- The latest validated run is still safely under budget: `36.90 ms` peak, `0` frames over `40 ms`, `0` frames over `50 ms`.
+- The captured peak sample shows the worst frame is now `GPU/Render (900 draws)`, while buildings and terrain are not carrying a big queue at that instant, so the next meaningful win is render-side batching, not building flush tuning.
