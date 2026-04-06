@@ -819,6 +819,12 @@ func _is_town_entry_spike(entry: Dictionary) -> bool:
 		return false
 
 	var buildings_phase: String = str(entry.get("buildings_phase", ""))
+	var town_test_phase: String = str(entry.get("town_test_phase", ""))
+	var town_buildings_chunk_count := int(entry.get("town_buildings_chunk_count", 0))
+	if buildings_phase == "baked_queue" and town_buildings_chunk_count <= 0:
+		return false
+	if buildings_phase == "baked_queue" and town_test_phase == "measurement_reset":
+		return false
 	if buildings_phase.begins_with("town_entry"):
 		return true
 	if buildings_phase == "baked_queue" or buildings_phase == "place_object" or buildings_phase == "chunk_flush":
@@ -829,7 +835,6 @@ func _is_town_entry_spike(entry: Dictionary) -> bool:
 		return true
 	if int(entry.get("buildings_queued_in_chunk", 0)) > 0:
 		return true
-	var town_test_phase: String = str(entry.get("town_test_phase", ""))
 	if town_test_phase in ["fly_to_town", "town_teleported", "hold_first", "fly_back_to_origin", "hold_return", "fly_to_town_second", "hold_second"]:
 		return true
 	return false

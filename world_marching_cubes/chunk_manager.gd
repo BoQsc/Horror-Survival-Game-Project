@@ -577,7 +577,7 @@ func process_pending_nodes():
 		pending_nodes_needs_sort = false
 		PerformanceMonitor.end_measure("Finalize: Sort", 0.1)
 	
-	var item = pending_nodes.pop_front()
+	var item = pending_nodes.pop_back()
 	pending_nodes_mutex.unlock()
 	
 	_finalize_chunk_creation(item)
@@ -595,7 +595,7 @@ func _sort_pending_by_distance():
 	pending_nodes.sort_custom(func(a, b):
 		var dist_a = (a.coord - viewer_chunk).length_squared()
 		var dist_b = (b.coord - viewer_chunk).length_squared()
-		return dist_a < dist_b
+		return dist_a > dist_b
 	)
 
 

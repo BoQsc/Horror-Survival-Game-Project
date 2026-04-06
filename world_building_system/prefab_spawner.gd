@@ -216,7 +216,20 @@ func _process_pending_spawn_jobs() -> void:
 		var interior_carve := bool(job.get("interior_carve", false))
 		var clear_vegetation := bool(job.get("clear_vegetation", true))
 
-		spawn_user_prefab(prefab_name, world_pos, submerge_offset, rotation, carve_terrain, skip_blocks, interior_carve, clear_vegetation, false, false, int(job.get("object_start_index", 0)), bool(job.get("resume_objects_only", false)))
+		spawn_user_prefab(
+			prefab_name,
+			world_pos,
+			submerge_offset,
+			rotation,
+			carve_terrain,
+			skip_blocks,
+			interior_carve,
+			clear_vegetation,
+			false,
+			false,
+			int(job.get("object_start_index", 0)),
+			bool(job.get("resume_objects_only", false))
+		)
 		processed += 1
 		_last_spawn_job_msec = Time.get_ticks_msec()
 
@@ -831,21 +844,18 @@ func _parse_compact_objects(compact: Array) -> Array:
 	for obj in compact:
 		if obj is Array and obj.size() >= 5:
 			var object_id := int(obj[0])
-			var object_def := ObjectRegistry.get_object(object_id) if object_id >= 0 else {}
 			var object_name := str(object_id)
 			var object_scene_path := ""
 			var object_size := Vector3i.ONE
 			var has_authored_collision := false
 			var has_authored_collision_valid := false
-			var precomputed_cells_by_rotation: Array = []
+			var object_def := ObjectRegistry.get_object(object_id) if object_id >= 0 else {}
 			if not object_def.is_empty():
 				object_name = str(object_def.get("name", object_name))
 				object_scene_path = str(object_def.get("scene", ""))
 				object_size = object_def.get("size", Vector3i.ONE)
 				has_authored_collision = bool(object_def.get("has_authored_collision", ObjectRegistry.get_object_has_authored_collision(object_id)))
 				has_authored_collision_valid = true
-				for rotation_index in range(4):
-					precomputed_cells_by_rotation.append(ObjectRegistry.get_occupied_cells(object_id, Vector3i.ZERO, rotation_index))
 			result.append({
 				"offset": [obj[1], obj[2], obj[3]],
 				"object_id": object_id,
@@ -855,8 +865,7 @@ func _parse_compact_objects(compact: Array) -> Array:
 				"scene_path": object_scene_path,
 				"object_size": object_size,
 				"has_authored_collision": has_authored_collision,
-				"has_authored_collision_valid": has_authored_collision_valid,
-				"precomputed_cells_by_rotation": precomputed_cells_by_rotation
+				"has_authored_collision_valid": has_authored_collision_valid
 			})
 	return result
 
@@ -1202,12 +1211,9 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					var object_size: Vector3i = obj.get("object_size", Vector3i.ONE)
 					var has_authored_collision := bool(obj.get("has_authored_collision", false))
 					var has_authored_collision_valid := bool(obj.get("has_authored_collision_valid", false))
-					var precomputed_cells_by_rotation: Array = obj.get("precomputed_cells_by_rotation", [])
 					var precomputed_cells: Array = []
-					if obj_rotation >= 0 and obj_rotation < precomputed_cells_by_rotation.size():
-						var rotation_cells: Array = precomputed_cells_by_rotation[obj_rotation] as Array
-						if rotation_cells is Array:
-							precomputed_cells = rotation_cells
+					if object_id >= 0:
+						precomputed_cells = ObjectRegistry.get_occupied_cells(object_id, Vector3i.ZERO, obj_rotation)
 					if not building_manager.place_object(obj_pos, object_id, obj_rotation, true, true, defer_global_visual_batch_rebuild, precomputed_cells, object_size, object_scene_path, has_authored_collision, has_authored_collision_valid):
 						# print("DEBUG_MISSING_OBJ: Failed to place object_id %d at %v (Rotation %d)" % [obj.object_id, obj_pos, combined_rot])
 						pass

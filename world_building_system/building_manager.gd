@@ -602,6 +602,8 @@ func flush_dirty_chunks():
 	# Only rebuild a limited number of visible chunks per flush so we do not
 	# turn one town burst into a single giant rebuild spike.
 	var effective_budget := dirty_chunk_flush_budget
+	if world_map_mode:
+		effective_budget = mini(dirty_chunk_flush_budget, 2)
 	var rebuilt = 0
 	var processed = 0
 	var flush_coords: Array = _dirty_chunks.keys()
@@ -697,10 +699,12 @@ func get_voxel(global_pos: Vector3) -> int:
 	return chunks[chunk_coord].get_voxel(Vector3i(local_x, local_y, local_z))
 
 ## Check if an object can be placed at the given global position
-func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> bool:
+func can_place_object(global_pos: Vector3, object_id: int, rotation: int, precomputed_cells: Array = []) -> bool:
 	var anchor = Vector3i(floor(global_pos.x), floor(global_pos.y), floor(global_pos.z))
-	var cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
-	
+	var cells := _build_object_cells(anchor, object_id, rotation, precomputed_cells)
+	return _can_place_cells(cells, object_id)
+
+func _can_place_cells(cells: Array[Vector3i], object_id: int) -> bool:
 	for cell in cells:
 		# Calculate which chunk this specific cell belongs to
 		var chunk_coord = Vector3i(
@@ -724,12 +728,20 @@ func can_place_object(global_pos: Vector3, object_id: int, rotation: int) -> boo
 	
 	return true
 
+func _build_object_cells(anchor: Vector3i, object_id: int, rotation: int, precomputed_cells: Array = []) -> Array[Vector3i]:
+	if precomputed_cells.is_empty():
+		return ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
+
+	var cells: Array[Vector3i] = []
+	cells.resize(precomputed_cells.size())
+	for i in range(precomputed_cells.size()):
+		var precomputed_cell: Vector3i = precomputed_cells[i]
+		cells[i] = precomputed_cell + anchor
+	return cells
+
 ## Place an object at the given global position (supports fractional Y for terrain surface)
 ## Set is_procedural=true when spawning from prefab system to trigger loot population
 func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false, is_procedural: bool = false, defer_global_visual_batch_rebuild: bool = false, precomputed_cells: Array = [], object_size: Vector3i = Vector3i.ZERO, object_scene_path: String = "", has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> bool:
-	if not ignore_collision and not can_place_object(global_pos, object_id, rotation):
-		return false
-	
 	var obj_def: Dictionary = {}
 	var track_object_telemetry := not (world_map_mode and is_procedural)
 	var needs_registry_lookup := object_scene_path.is_empty() or object_size == Vector3i.ZERO or not has_authored_collision_valid or track_object_telemetry
@@ -751,14 +763,11 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	# Calculate anchor (integer grid position) and fractional position offset
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
 	var fractional_pos = global_pos - Vector3(anchor) # Full 3D offset from anchor
-	var cells: Array = []
-	if not precomputed_cells.is_empty():
-		cells.resize(precomputed_cells.size())
-		for i in range(precomputed_cells.size()):
-			var precomputed_cell: Vector3i = precomputed_cells[i]
-			cells[i] = precomputed_cell + anchor
-	else:
-		cells = ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
+	var cells: Array[Vector3i] = _build_object_cells(anchor, object_id, rotation, precomputed_cells)
+	if not ignore_collision and not _can_place_cells(cells, object_id):
+		if track_object_telemetry:
+			PerformanceMonitor.end_measure("Building Place Object", 1.0)
+		return false
 	if track_object_telemetry:
 		PerformanceMonitor.capture_scope_state("buildings", {
 			"phase": "place_object",

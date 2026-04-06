@@ -64,6 +64,7 @@ static var _preloaded_scenes: Dictionary = {}  # scene_path -> PackedScene
 static var _preload_done: bool = false
 static var _visual_data_cache: Dictionary = {} # scene_path -> { mesh, mesh_transform }
 static var _authored_collision_cache: Dictionary = {} # scene_path -> bool
+static var _occupied_cells_cache: Dictionary = {} # id:rotation -> Array[Vector3i]
 
 ## Preload all object scenes (call at game startup for faster spawning)
 static func preload_all_scenes() -> void:
@@ -225,14 +226,26 @@ static func get_rotated_size(id: int, rotation: int) -> Vector3i:
 
 ## Get all cells that would be occupied by this object at anchor position
 static func get_occupied_cells(id: int, anchor: Vector3i, rotation: int) -> Array[Vector3i]:
+	var cache_key := "%d:%d" % [id, rotation]
+	var local_cells: Array[Vector3i]
+	if _occupied_cells_cache.has(cache_key):
+		local_cells = _occupied_cells_cache[cache_key]
+	else:
+		local_cells = []
+		var size = get_rotated_size(id, rotation)
+		for x in range(size.x):
+			for y in range(size.y):
+				for z in range(size.z):
+					local_cells.append(Vector3i(x, y, z))
+		_occupied_cells_cache[cache_key] = local_cells
+
+	if anchor == Vector3i.ZERO:
+		return local_cells
+
 	var cells: Array[Vector3i] = []
-	var size = get_rotated_size(id, rotation)
-	
-	for x in range(size.x):
-		for y in range(size.y):
-			for z in range(size.z):
-				cells.append(anchor + Vector3i(x, y, z))
-	
+	cells.resize(local_cells.size())
+	for i in range(local_cells.size()):
+		cells[i] = local_cells[i] + anchor
 	return cells
 
 static func _find_first_mesh_instance(node: Node) -> MeshInstance3D:

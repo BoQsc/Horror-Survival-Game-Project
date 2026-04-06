@@ -959,13 +959,7 @@ static func _validate_prefab_geometry(prefab_name: String, offsets: Array, objec
 	return result
 
 static func _get_object_occupied_cells(object_id: int, anchor: Vector3i, rotation: int) -> Array[Vector3i]:
-	var size := ObjectRegistry.get_rotated_size(object_id, rotation)
-	var occupied_cells: Array[Vector3i] = []
-	for x in range(size.x):
-		for y in range(size.y):
-			for z in range(size.z):
-				occupied_cells.append(anchor + Vector3i(x, y, z))
-	return occupied_cells
+	return ObjectRegistry.get_occupied_cells(object_id, anchor, rotation)
 
 static func _door_has_floor_support(anchor: Vector3i, rotation: int, solid_cells: Dictionary) -> bool:
 	var support_cells: Array[Vector3i] = []
