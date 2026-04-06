@@ -1,6 +1,6 @@
 # Town Stall Tracker
 
-Last updated: 2026-03-29
+Last updated: 2026-03-30
 
 This is the working record for the town-entry stall and the path to a stable 60 FPS baseline.
 
@@ -26,6 +26,10 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - The town stall is real.
 - Building work is a major contributor.
 - Buildings-off reduces the entrance spike dramatically.
+- Splitting world-map prefab object spawning across frames was a real win:
+  - the town-entry peak is now down to about `35.725 ms` on the fixed-seed route
+  - frames over `40 ms` and `50 ms` are both `0` on the latest validated run
+  - the remaining peak sample is now `Engine: Physics` instead of a giant spawn burst
 - The worst recent peaks line up with large `new_wooden_house_2floor_secret_facility` spawns, not with chunk collisions alone.
 - Disabling building chunk collisions or building chunk mesh render did not materially remove the stall.
 - Skipping redundant runtime carving for baked world-map prefabs was a major win:
@@ -44,15 +48,19 @@ This is the working record for the town-entry stall and the path to a stable 60 
 ## Current Leading Hypothesis
 
 - The remaining hot path is now mostly building/object setup plus the remaining render tail:
-- The remaining hot path is now mostly building/object setup plus the remaining render tail:
   - prefab spawn / object setup
   - render flush / draw-call pressure from the town scene
   - any remaining overlap between terrain finalization and visual batch rebuilds
 - Terrain finalization overlapping with building/visual-batch work is still a likely secondary cost, but it is no longer the main source of the huge stall.
 - The best remaining wins should come from simplifying the building pipeline, not inventing complicated new systems.
 - The rotated prefab-object cache did not clearly pay for itself, so the simpler raw spawn path remains the baseline.
+- Occupied-cell calculation is now centralized in `ObjectRegistry`, so the spawner and validation paths share one cached implementation instead of maintaining a second per-prefab rotation-cell cache.
+- The shared occupied-cell cache warmup was tried and removed because it did not clearly improve the town-entry peak enough to keep.
+- The temporary per-prefab object metadata cache was tried and removed because it did not clearly improve the town-entry peak enough to keep.
+- World-map dirty-chunk flushing now caps itself to 2 chunks per flush so one burst cannot rebuild too many building chunks in the same frame.
+- The town-entry spike window now uses `town_buildings_chunk_count` to ignore the empty baked-queue background while still keeping real building batch-flush and object-collision spikes in view.
 - If the current GDScript path is still too costly, the next step is a straightforward native helper for the hot loop, not a broader gameplay rewrite.
-- The current validated town baseline is again in the low-30ms range with no frames over 40ms on the fixed-seed route.
+- The current validated town baseline is now about `35.725 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms` on the fixed-seed route after the spawn resume split landed.
 
 ## Current Helpful Levers
 
@@ -97,11 +105,11 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - Keep the town loading route simple: visible buildings first, no fake proxies, no extra gameplay-visible delays.
 - The world-map prefab object order is now pre-sorted at load time so the spawn loop no longer re-sorts the same list on every building.
 - The world-map prefab object metadata is now precomputed at load time so the spawn loop does not keep asking ObjectRegistry for the same size/collision data.
-- The world-map prefab object occupied cells are now precomputed at load time so the spawn loop can hand `place_object()` the exact cells it needs instead of rebuilding them per object.
-- The latest fixed-seed town run after the metadata move landed at `20.056666666667 ms` peak with `0` frames over `40 ms`; the remaining peak is now `Baked Building Spawn`.
-- The latest fixed-seed town run after the occupied-cell precompute stayed clean at `14.2857142857143 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`, so the entrance path remains in a safe state.
-- The latest fixed-seed town run after the parser fix stayed clean at `15.0226666666589 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`, and the remaining peak sample is back to `Engine: Physics` rather than a spawn-loop regression.
+- The world-map prefab object occupied cells used to be precomputed per prefab and per rotation, but that duplicated the same shape data in two places. The occupied-cell calculation is now centralized in `ObjectRegistry`, and the spawner asks for the cached cells directly when it needs them.
+- The latest fixed-seed town run after the object spawn resume split landed at `35.725 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`, and the remaining peak sample is now `Engine: Physics`.
 - The latest object-cache experiment was rolled back because it did not clearly improve the town entry enough to justify the extra complexity.
+- The occupied-cell cache is now centralized instead of duplicated in the spawner, which keeps the code simpler while preserving the same placement results.
+- The compact integer cache-key variant for occupied cells was tried and rolled back because it did not improve the town-entry peak enough to keep.
 - A small `BoxShape3D` reuse cache for merged world-map building collisions is now in place; it keeps collision behavior the same while reducing shape allocation churn.
 - A viewer-distance sort on the apply queue was tried and then removed because it did not improve the result enough to keep.
 - The world-map object-mix bookkeeping skip was reverted because it did not measurably move the town-entry peak.
@@ -111,8 +119,8 @@ This is the working record for the town-entry stall and the path to a stable 60 
 - The peak sample is `GPU/Render (719 draws)`, while the building and terrain queues are quiet at that moment, so the entrance stall is effectively gone on the fixed-seed route.
 - The remaining later spike during extended hold is still worth watching, but it is no longer the entrance problem we were chasing.
 - The stable world-map spawn ordering fix remains in place, but the temporary sorted-object cache and aggressive flush-budget tweak were rolled back because they did not improve the town-entry result enough to keep.
-- The latest validated full-town approach-window run is back to a strong baseline: `24.697 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`.
-- The remaining peak frame is still `GPU/Render`, but it stays below the stall threshold on the fixed seed, so the entrance is currently in a safe state again.
+- The latest validated full-town approach-window run is back to a strong baseline: `35.725 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`.
+- The remaining peak frame is now `Engine: Physics`, but it stays below the stall threshold on the fixed seed, so the entrance is currently in a safe state again.
 - The prefab-object sorted cache experiment did not earn its keep and was removed again after a follow-up run showed a worse peak (`107.653 ms`) on the same fixed route.
 - The useful takeaway from that dead-end is that queue ordering still matters, but extra caching around it did not provide a stable win.
 - After the cache rollback, the fixed-seed full-town approach-window run returned to a safer baseline: `28.57 ms` peak with `0` frames over `40 ms` and `0` frames over `50 ms`.

@@ -12,6 +12,8 @@ PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 MAIN_SCENE = "res://addons/tests/town_stall_test_harness.tscn"
 TIMEOUT = 900
 SNAPSHOT_DIR = Path(r"C:\Users\Windows10_new\AppData\Roaming\Godot\app_userdata\Horror Survival Game Project\debug\performance")
+LOG_DIR = SNAPSHOT_DIR.parent.parent / "logs"
+LOG_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-godot.log"
 
 
 def _safe_text(text: str) -> str:
@@ -88,9 +90,25 @@ def main() -> int:
     print(f"   Scene: {MAIN_SCENE}")
     print("-" * 50)
     run_start_mtime = time.time()
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if LOG_FILE.exists():
+        try:
+            LOG_FILE.unlink()
+        except OSError:
+            pass
+    legacy_log_path = LOG_DIR / "godot.log"
+    if legacy_log_path.exists():
+        try:
+            legacy_log_path.unlink()
+        except OSError:
+            pass
 
     cmd = [
         GODOT_BIN,
+        "--log-file",
+        str(LOG_FILE),
         "--path",
         PROJECT_PATH,
         MAIN_SCENE,

@@ -206,7 +206,7 @@ func _on_world_generated(images: Dictionary) -> void:
 		_fail("World generation completed without towns")
 		return
 
-	generated_world_path = SAVE_BASE + "town_stall_%d" % generated_seed
+	generated_world_path = SAVE_BASE + "town_stall_%d_%d" % [generated_seed, Time.get_ticks_msec()]
 	if not world_generator.save_world(generated_world_path, generated_images):
 		_fail("Failed to save generated world to %s" % generated_world_path)
 		return
