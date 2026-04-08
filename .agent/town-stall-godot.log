@@ -1,0 +1,116 @@
+Godot Engine v4.6.2.stable.steam.71f334935 - https://godotengine.org
+Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 with Max-Q Design
+
+[RendererFallback] Testing Vulkan compute compatibility...
+[RendererFallback] ✓ Marching Cubes pipeline created successfully
+[RendererFallback] ✓ Vulkan compute works
+[PerformanceMonitor] Writing performance logs to user://debug/performance
+[PerformanceMonitor] Running without debugger
+[AMBIENT_AUDIO] Playing: res://game/sound/environment/grasslands/calm-garden-ambience-29993.mp3
+[AMBIENT_AUDIO] Manager initialized
+[CollisionDebugger] Ready - Press F10 to toggle, hold Left Alt to inspect
+[TOOL_CONFIG] ToolConfig initialized (consolidated from 5 autoloads)
+[TOWN_STALL_TEST] Harness starting
+[TOWN_STALL_TEST] Auto teleport: OFF
+[TOWN_STALL_TEST] Disable buildings: OFF
+[TOWN_STALL_TEST] Disable building objects: OFF
+[TOWN_STALL_TEST] Disable building blocks: OFF
+[TOWN_STALL_TEST] Disable building chunk mesh render: OFF
+[TOWN_STALL_TEST] Disable building visual batches: OFF
+[TOWN_STALL_TEST] Disable building carve: OFF
+[TOWN_STALL_TEST] Disable building object collisions: OFF
+[TOWN_STALL_TEST] Disable building chunk flush: OFF
+[TOWN_STALL_TEST] Disable building chunk collisions: OFF
+[TOWN_STALL_TEST] Disable terrain chunk updates: OFF
+[TOWN_STALL_TEST] Repeat entry: OFF
+[TOWN_STALL_TEST] Generating world seed 12345...
+[WorldMapGen] Placed 10 towns (target: 10)
+[WorldMapGen] Skipping prefab 'new_wooden_house_2floor': missing prefab data
+[WorldMapGen] Skipping prefab 'test_builder': missing door object; missing window object; internal stairs do not rise to the next level; stairs do not connect back to grade level y=2
+[WorldMapGen] MST roads: 9 segments (10 towns, 0 extra loops)
+[WorldMapGen] Town at (-874,662): 16/38 buildings placed
+[WorldMapGen] Town at (-202,-874): 15/38 buildings placed
+[WorldMapGen] Town at (566,758): 13/38 buildings placed
+[WorldMapGen] Town at (-586,566): 16/38 buildings placed
+[WorldMapGen] Town at (374,-298): 16/38 buildings placed
+[WorldMapGen] Town at (-778,-586): 15/38 buildings placed
+[WorldMapGen] Town at (-298,-490): 17/38 buildings placed
+[WorldMapGen] Town at (470,-586): 16/38 buildings placed
+[WorldMapGen] Town at (854,-490): 17/38 buildings placed
+[WorldMapGen] Town at (182,-874): 16/38 buildings placed
+[WorldMapGen] Mode: TOWN | Buildings: 157 placed / 495 attempted | Towns: 10
+[WorldMapGen] Saved to: user://worlds/town_stall_12345_27701
+[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_27701
+[TOWN_STALL_TEST] Selected town: x=374.0 z=-298.0 buildings=72 radius=71.0
+[TOWN_STALL_TEST] Removed helper node: DebugTeleporter
+SHOVEL: Initialized, mode = PLACE, material = Grass
+ModeManager: Initialized in PLAY mode
+PlayerHUD: Pickaxe Durability -> OFF (Instant)
+[HUD_SETUP] Notification label created
+[HUD_SETUP] Connecting to SaveManager...
+[HUD_SETUP] Connected to save_completed signal
+[HUD_SETUP] Connected to load_completed signal
+[ChunkManager] World map path from SaveManager: user://worlds/town_stall_12345_27701
+[ChunkManager] World map mode: user://worlds/town_stall_12345_27701 (GPU fbm biomes, per-pixel road overlay)
+[ObjectRegistry] Preloading 6 object scenes...
+[ChunkManager] Loaded 157 baked buildings
+[ChunkManager] Loaded 248 baked terrain modification chunks
+[ChunkManager] Prepared 262 baked excavation chunk masks
+[ChunkManager] Loaded building_map (2048x2048)
+[ObjectRegistry] Preloaded 6 scenes in 1161ms
+[TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...
+[COMBAT_AUDIO] Tree hit sound loaded successfully
+[COMBAT_AUDIO] Tree fall sound loaded successfully
+[COMBAT_AUDIO] Wood multipart sound loaded successfully
+[COMBAT_AUDIO] Plant hit sound loaded successfully
+[COMBAT_AUDIO] Rock hit sound loaded successfully
+[COMBAT_AUDIO] Terrain hit sound loaded successfully
+[COMBAT_AUDIO] Terrain break sound loaded successfully
+[HUD_SETUP] Connecting to SaveManager...
+[Minimap] Built 2048x2048 live map (real-time updates enabled)
+[RoadManager] World map active, skipping road_mask initialization
+ItemUseRouter: Initialized
+  - Hotbar: OK
+  - ModeManager: OK
+  - CombatSystem: OK
+  - ModeBuild: OK
+  - ModeEditor: OK
+ModeBuild: Initialized
+TerrainAPI: Initialized (terrain_manager: OK)
+ModeEditor: Initialized
+[Player] Frozen until terrain renders
+[ChunkManager] ✓ MeshBuilder GDExtension LOADED - using fast C++ path
+BuildingAPI: Initialized (building_manager: OK)
+[Player] Unfrozen - terrain ready, can walk now
+[LoadingScreen] Terrain rendering started - player can move
+ModeManager: PLAY -> EDITOR
+ModeManager: EDITOR mode ON (submode: Terrain)
+ModeManager: Fly mode ON
+[TOWN_STALL_TEST] Flying to town center: (374.0, 23.0, -298.0)
+[TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.
+[TOWN_STALL_TEST] Flying to town center: (374.0, 15.0, -298.0) buildings=72 radius=71.0
+[TOWN_STALL_TEST] Auto fly reached target, starting hold
+ModeManager: EDITOR -> PLAY
+ModeManager: EDITOR mode OFF (submode: Terrain)
+[TOWN_STALL_TEST] Hold started
+ModeManager: PLAY -> EDITOR
+ModeManager: EDITOR mode ON (submode: Terrain)
+ModeManager: Fly mode ON
+ModeManager: EDITOR -> PLAY
+ModeManager: EDITOR mode OFF (submode: Terrain)
+ModeManager: PLAY -> EDITOR
+ModeManager: EDITOR mode ON (submode: Terrain)
+ModeManager: Fly mode ON
+[TOWN_STALL_TEST] Hold complete, quitting
+WARNING: 275 RIDs of type "StorageBuffer" were leaked.
+   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
+   GDScript backtrace (most recent call first):
+       [0] _thread_function (res://world_marching_cubes/chunk_manager.gd:1947)
+WARNING: A Thread object is being destroyed without its completion having been realized.
+Please call wait_to_finish() on it to ensure correct cleanup.
+   at: ~Thread (core/os/thread.cpp:102)
+WARNING: A Thread object is being destroyed without its completion having been realized.
+Please call wait_to_finish() on it to ensure correct cleanup.
+   at: ~Thread (core/os/thread.cpp:102)
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+   at: cleanup (core/object/object.cpp:2641)
