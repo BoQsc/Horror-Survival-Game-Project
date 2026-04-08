@@ -1265,6 +1265,13 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 				"prefab": prefab_name,
 				"reason": "hidden_only"
 			})
+		elif building_manager.world_map_mode and not pending_spawn_jobs.is_empty():
+			PerformanceMonitor.capture_scope_state("buildings", {
+				"phase": "chunk_flush_deferred",
+				"prefab": prefab_name,
+				"pending_spawn_jobs": pending_spawn_jobs.size(),
+				"pending_dirty_chunks": building_manager.has_method("has_dirty_chunks") and building_manager.has_dirty_chunks()
+			})
 		else:
 			var flush_start_us := Time.get_ticks_usec()
 			PerformanceMonitor.start_measure("Prefab Chunk Flush")
