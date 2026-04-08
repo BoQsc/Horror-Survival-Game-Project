@@ -2,6 +2,7 @@ extends RigidBody3D
 
 const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 @export var world_map_mode: bool = false
+var _sleep_timer: Timer = null
 
 func _ready():
 	# Bump up significantly to ensure we clear any terrain noise
@@ -47,9 +48,14 @@ func _ready():
 	
 	# Add a small random torque to ensure it doesn't land perfectly flat and stick
 	angular_velocity = Vector3(randf(), randf(), randf()) * 2.0
-	
+
 	# Enable sleep via timer as a backup
-	get_tree().create_timer(2.0).timeout.connect(func(): can_sleep = true)
+	_sleep_timer = Timer.new()
+	_sleep_timer.one_shot = true
+	_sleep_timer.wait_time = 2.0
+	_sleep_timer.timeout.connect(_on_sleep_timer_timeout)
+	add_child(_sleep_timer)
+	_sleep_timer.start()
 
 var life_time: float = 0.0
 @export var freeze_on_sleep: bool = true
@@ -68,6 +74,13 @@ func _physics_process(delta):
 	if freeze_on_sleep and sleeping:
 		freeze = true
 		set_physics_process(false)
+
+
+func _on_sleep_timer_timeout() -> void:
+	can_sleep = true
+	if _sleep_timer and is_instance_valid(_sleep_timer):
+		_sleep_timer.queue_free()
+	_sleep_timer = null
 
 func _generate_precise_collision():
 	# Keep authored collision shapes when they already exist.

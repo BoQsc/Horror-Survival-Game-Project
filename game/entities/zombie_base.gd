@@ -102,12 +102,7 @@ func _ready():
 	set_physics_process(false)
 	if anim_player:
 		anim_player.pause()
-	await get_tree().create_timer(0.3).timeout
-	set_physics_process(true)
-	if anim_player:
-		anim_player.play("Take 001")
-	
-	change_state("IDLE")
+	_start_timer(0.3, Callable(self, "_on_spawn_settle_timeout"))
 
 func _find_animation_player(node: Node):
 	if node is AnimationPlayer:
@@ -446,12 +441,40 @@ func die():
 		if anim_player and anim_player.has_animation("Take 001"):
 			anim_player.play("Take 001")
 			anim_player.seek(9.5, true)
-			
-			await get_tree().create_timer(0.9).timeout
-			anim_player.pause()
+			_start_timer(0.9, Callable(self, "_on_death_animation_timeout"))
 	
 	# Disappear after delay
-	await get_tree().create_timer(5.0).timeout
+	_start_timer(5.0, Callable(self, "_on_death_free_timeout"))
+
+
+func _start_timer(seconds: float, callback: Callable) -> void:
+	var timer := Timer.new()
+	timer.one_shot = true
+	timer.wait_time = seconds
+	timer.timeout.connect(callback.bind(timer))
+	add_child(timer)
+	timer.start()
+
+
+func _on_spawn_settle_timeout(timer: Timer) -> void:
+	if is_instance_valid(timer):
+		timer.queue_free()
+	set_physics_process(true)
+	if anim_player:
+		anim_player.play("Take 001")
+	change_state("IDLE")
+
+
+func _on_death_animation_timeout(timer: Timer) -> void:
+	if is_instance_valid(timer):
+		timer.queue_free()
+	if anim_player:
+		anim_player.pause()
+
+
+func _on_death_free_timeout(timer: Timer) -> void:
+	if is_instance_valid(timer):
+		timer.queue_free()
 	queue_free()
 
 func apply_hit_impulse(impulse: Vector3, position: Vector3):

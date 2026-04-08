@@ -54,7 +54,7 @@ static var is_quickloading: bool = false
 
 var awaiting_terrain_ready: bool = false
 var awaiting_vegetation_ready: bool = false
-var load_safety_timer: SceneTreeTimer = null # Safety timeout to prevent infinite hang
+var load_safety_timer: Timer = null # Safety timeout to prevent infinite hang
 
 # Autosave settings
 var autosave_enabled: bool = true
@@ -205,6 +205,9 @@ func _input(event):
 
 func _notification(what):
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		if is_instance_valid(load_safety_timer):
+			load_safety_timer.queue_free()
+			load_safety_timer = null
 		if OS.get_environment("TOWN_STALL_DISABLE_EXIT_AUTOSAVE") == "1":
 			get_tree().quit()
 			return
@@ -564,8 +567,14 @@ func _show_loading_screen():
 
 ## Safety timeout to prevent being stuck forever if signals are dropped
 func _start_load_safety_timeout(seconds: float):
-	load_safety_timer = get_tree().create_timer(seconds)
+	if is_instance_valid(load_safety_timer):
+		load_safety_timer.queue_free()
+	load_safety_timer = Timer.new()
+	load_safety_timer.one_shot = true
+	load_safety_timer.wait_time = seconds
+	add_child(load_safety_timer)
 	load_safety_timer.timeout.connect(_on_load_timeout)
+	load_safety_timer.start()
 
 func _on_load_timeout():
 	if is_loading_game:
@@ -576,6 +585,9 @@ func _on_load_timeout():
 			"seconds": 15.0
 		})
 		_check_world_readiness()
+	if is_instance_valid(load_safety_timer):
+		load_safety_timer.queue_free()
+	load_safety_timer = null
 
 ## Emit player_loaded signal (deferred to ensure all systems are ready)
 func _emit_player_loaded():

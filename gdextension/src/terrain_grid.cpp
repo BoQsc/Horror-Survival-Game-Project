@@ -15,7 +15,9 @@ void TerrainGrid::_bind_methods() {
 
 TerrainGrid::TerrainGrid() {}
 
-TerrainGrid::~TerrainGrid() {}
+TerrainGrid::~TerrainGrid() {
+    clear();
+}
 
 void TerrainGrid::add_chunk(Vector3i coord) {
     active_chunks.insert(coord);

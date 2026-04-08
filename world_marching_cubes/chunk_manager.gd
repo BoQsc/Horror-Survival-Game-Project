@@ -1300,6 +1300,16 @@ func _exit_tree():
 			DebugManager.log_chunk("ChunkManager: Waiting for CPU worker %d to finish..." % i)
 			thread.wait_to_finish()
 	cpu_threads.clear()
+
+	# Drop helper references and any leftover queued payloads now that workers are done.
+	if terrain_grid and terrain_grid.has_method("clear"):
+		terrain_grid.clear()
+	terrain_grid = null
+	task_queue.clear()
+	cpu_task_queue.clear()
+	pending_spawn_zones.clear()
+	pending_batches.clear()
+	active_chunks.clear()
 	
 	DebugManager.log_chunk("ChunkManager: Cleanup complete, all resources freed")
 

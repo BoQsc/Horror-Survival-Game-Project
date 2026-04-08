@@ -318,12 +318,26 @@ func _fade_in_driving_loop() -> void:
 			break
 		var t: float = float(i) / float(steps)
 		engine_idle_audio.volume_db = lerp(-40.0, target_volume, t)
-		await get_tree().create_timer(step_time).timeout
+		var step_timer := Timer.new()
+		step_timer.one_shot = true
+		step_timer.wait_time = step_time
+		add_child(step_timer)
+		step_timer.start()
+		await step_timer.timeout
+		if is_instance_valid(step_timer):
+			step_timer.queue_free()
 
 
 ## Stop startup sound after duration, keep driving loop going
 func _stop_startup_after_delay() -> void:
-	await get_tree().create_timer(ENGINE_STARTUP_DURATION).timeout
+	var startup_timer := Timer.new()
+	startup_timer.one_shot = true
+	startup_timer.wait_time = ENGINE_STARTUP_DURATION
+	add_child(startup_timer)
+	startup_timer.start()
+	await startup_timer.timeout
+	if is_instance_valid(startup_timer):
+		startup_timer.queue_free()
 	if engine_start_audio and is_player_controlled:
 		engine_start_audio.stop()
 		print("[Vehicle] Startup complete - driving loop continues")

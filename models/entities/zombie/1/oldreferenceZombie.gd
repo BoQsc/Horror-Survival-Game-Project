@@ -63,12 +63,7 @@ func _ready():
 
 	# Safety Start
 	set_physics_process(false)
-	await get_tree().create_timer(0.5).timeout
-	set_physics_process(true)
-	
-	wall_min_slide_angle = deg_to_rad(60)
-	
-	change_state("IDLE")
+	_start_timer(0.5, Callable(self, "_on_spawn_settle_timeout"))
 
 func start_chase():
 	print("Zombie start_chase() called!")
@@ -235,9 +230,37 @@ func die():
 		anim_player.seek(9.5, true) # Seek to death start
 		
 		# Play the death slice
-		await get_tree().create_timer(0.9).timeout
-		anim_player.pause() # Stop at the end frame
+		_start_timer(0.9, Callable(self, "_on_death_animation_timeout"))
 	
 	# Disappear after a delay
-	await get_tree().create_timer(3.0).timeout
+	_start_timer(3.0, Callable(self, "_on_death_free_timeout"))
+
+
+func _start_timer(seconds: float, callback: Callable) -> void:
+	var timer := Timer.new()
+	timer.one_shot = true
+	timer.wait_time = seconds
+	timer.timeout.connect(callback.bind(timer))
+	add_child(timer)
+	timer.start()
+
+
+func _on_spawn_settle_timeout(timer: Timer) -> void:
+	if is_instance_valid(timer):
+		timer.queue_free()
+	set_physics_process(true)
+	wall_min_slide_angle = deg_to_rad(60)
+	change_state("IDLE")
+
+
+func _on_death_animation_timeout(timer: Timer) -> void:
+	if is_instance_valid(timer):
+		timer.queue_free()
+	if anim_player:
+		anim_player.pause() # Stop at the end frame
+
+
+func _on_death_free_timeout(timer: Timer) -> void:
+	if is_instance_valid(timer):
+		timer.queue_free()
 	queue_free()
