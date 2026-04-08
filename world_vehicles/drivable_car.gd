@@ -17,6 +17,11 @@ const FLIP_THRESHOLD: float = 0.3       # Consider flipped when nearly on side
 # Boost
 const BOOST_MULTIPLIER: float = 1.5   # Acceleration boost when holding shift
 var is_boosting: bool = false
+var _engine_fade_timer: Timer = null
+var _engine_startup_timer: Timer = null
+var _engine_fade_step: int = 0
+const ENGINE_FADE_STEPS: int = 10
+const ENGINE_FADE_TIME: float = 0.2
 
 # Audio
 @onready var engine_start_audio: AudioStreamPlayer3D = $EngineStartAudio
@@ -285,6 +290,7 @@ const ENGINE_LOOP_END: float = 2.30    # Loop end point (avoid end artifact)
 
 ## Start engine sound - plays startup while driving loop runs on top
 func _start_engine_audio() -> void:
+	_stop_engine_timers()
 	# Play startup sound at full volume
 	if engine_start_audio:
 		engine_start_audio.volume_db = -3.0  # Full startup volume
@@ -308,39 +314,64 @@ func _start_engine_audio() -> void:
 
 ## Fade in driving loop over 0.2 seconds to avoid click
 func _fade_in_driving_loop() -> void:
-	var fade_time: float = 0.2
-	var steps: int = 10
-	var step_time: float = fade_time / steps
-	var target_volume: float = 10.0  # Match the LOUD idle volume
-	
-	for i in range(steps + 1):
-		if not is_player_controlled or not engine_idle_audio:
-			break
-		var t: float = float(i) / float(steps)
-		engine_idle_audio.volume_db = lerp(-40.0, target_volume, t)
-		var step_timer := Timer.new()
-		step_timer.one_shot = true
-		step_timer.wait_time = step_time
-		add_child(step_timer)
-		step_timer.start()
-		await step_timer.timeout
-		if is_instance_valid(step_timer):
-			step_timer.queue_free()
+	_engine_fade_step = 0
+	if _engine_fade_timer and is_instance_valid(_engine_fade_timer):
+		_engine_fade_timer.queue_free()
+	_engine_fade_timer = Timer.new()
+	_engine_fade_timer.one_shot = false
+	_engine_fade_timer.wait_time = ENGINE_FADE_TIME / float(ENGINE_FADE_STEPS)
+	add_child(_engine_fade_timer)
+	if not _engine_fade_timer.timeout.is_connected(_on_engine_fade_step_timeout):
+		_engine_fade_timer.timeout.connect(_on_engine_fade_step_timeout)
+	_apply_engine_fade_step()
+	_engine_fade_timer.start()
+
+
+func _apply_engine_fade_step() -> void:
+	if not engine_idle_audio:
+		return
+	var t: float = float(_engine_fade_step) / float(ENGINE_FADE_STEPS)
+	engine_idle_audio.volume_db = lerp(-40.0, 10.0, t)
+
+
+func _on_engine_fade_step_timeout() -> void:
+	if not is_player_controlled or not engine_idle_audio:
+		_stop_engine_timers()
+		return
+
+	_engine_fade_step += 1
+	_apply_engine_fade_step()
+	if _engine_fade_step >= ENGINE_FADE_STEPS:
+		_stop_engine_timers()
 
 
 ## Stop startup sound after duration, keep driving loop going
 func _stop_startup_after_delay() -> void:
-	var startup_timer := Timer.new()
-	startup_timer.one_shot = true
-	startup_timer.wait_time = ENGINE_STARTUP_DURATION
-	add_child(startup_timer)
-	startup_timer.start()
-	await startup_timer.timeout
-	if is_instance_valid(startup_timer):
-		startup_timer.queue_free()
+	if _engine_startup_timer and is_instance_valid(_engine_startup_timer):
+		_engine_startup_timer.queue_free()
+	_engine_startup_timer = Timer.new()
+	_engine_startup_timer.one_shot = true
+	_engine_startup_timer.wait_time = ENGINE_STARTUP_DURATION
+	add_child(_engine_startup_timer)
+	if not _engine_startup_timer.timeout.is_connected(_on_engine_startup_timeout):
+		_engine_startup_timer.timeout.connect(_on_engine_startup_timeout)
+	_engine_startup_timer.start()
+
+
+func _on_engine_startup_timeout() -> void:
 	if engine_start_audio and is_player_controlled:
 		engine_start_audio.stop()
 		print("[Vehicle] Startup complete - driving loop continues")
+	_stop_engine_timers()
+
+
+func _stop_engine_timers() -> void:
+	if _engine_fade_timer and is_instance_valid(_engine_fade_timer):
+		_engine_fade_timer.queue_free()
+	_engine_fade_timer = null
+	if _engine_startup_timer and is_instance_valid(_engine_startup_timer):
+		_engine_startup_timer.queue_free()
+	_engine_startup_timer = null
 
 
 ## Stop engine sound

@@ -83,6 +83,28 @@ var terrain_hit_audio_player: AudioStreamPlayer3D = null
 var terrain_break_audio_player: AudioStreamPlayer3D = null
 var hit_marker_player: AudioStreamPlayer = null
 
+func _schedule_one_shot_timer(wait_time: float, callback: Callable) -> void:
+	var timer := Timer.new()
+	timer.one_shot = true
+	timer.wait_time = wait_time
+	add_child(timer)
+	timer.timeout.connect(func():
+		if callback.is_valid():
+			callback.call()
+		if is_instance_valid(timer):
+			timer.queue_free()
+	)
+	timer.start()
+
+func _free_node_if_valid(node: Node) -> void:
+	if is_instance_valid(node):
+		node.queue_free()
+
+func _stop_and_free_audio_player(player_node: AudioStreamPlayer3D) -> void:
+	if is_instance_valid(player_node):
+		player_node.stop()
+		player_node.queue_free()
+
 func _ready() -> void:
 	# Try to find local signals node
 	signals = get_node_or_null("../signals")
@@ -689,7 +711,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		pending_axe_item = item.duplicate()  # Store for damage at hit moment
 		_emit_axe_fired()
 		# Delay damage to 0.30s (when axe visually connects)
-		get_tree().create_timer(0.30).timeout.connect(_on_axe_hit_moment)
+		_schedule_one_shot_timer(0.30, Callable(self, "_on_axe_hit_moment"))
 		return  # Exit - damage will happen after delay
 	
 	# Handle pickaxe/shovel - delay raycast AND damage to match animation (Option A: Raycast at Impact)
@@ -707,7 +729,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		print("PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)")
 		
 		# Delay BOTH raycast and damage to 0.30s (when pickaxe visually connects)
-		get_tree().create_timer(0.30).timeout.connect(_on_pickaxe_hit_moment)
+		_schedule_one_shot_timer(0.30, Callable(self, "_on_pickaxe_hit_moment"))
 		
 		# Pickaxe ready state will be reset by axe_ready signal (from first_person_pickaxe.gd)
 		return  # Exit - raycast and damage will happen after delay
@@ -1543,10 +1565,7 @@ func _spawn_pistol_hit_effect(pos: Vector3) -> void:
 	get_tree().root.add_child(mesh_instance)
 	mesh_instance.global_position = pos
 	
-	await get_tree().create_timer(2.0).timeout.connect(func(): 
-		if is_instance_valid(mesh_instance):
-			mesh_instance.queue_free()
-	)
+	_schedule_one_shot_timer(2.0, Callable(self, "_free_node_if_valid").bind(mesh_instance))
 
 ## Helper to play a specific range of an audio file using a temporary player
 func _play_audio_range(template_player: AudioStreamPlayer3D, range_data: Array) -> void:
@@ -1575,11 +1594,7 @@ func _play_audio_range(template_player: AudioStreamPlayer3D, range_data: Array) 
 	print("[COMBAT_AUDIO] Playing range: %.2f to %.2f (Dur: %.2f) [TempPlayer]" % [start_time, start_time + duration, duration])
 	
 	# Schedule self-destruction
-	get_tree().create_timer(duration).timeout.connect(func():
-		if is_instance_valid(temp_player):
-			temp_player.stop()
-			temp_player.queue_free()
-	)
+	_schedule_one_shot_timer(duration, Callable(self, "_stop_and_free_audio_player").bind(temp_player))
 # ============================================================================
 # RESOURCE COLLECTION
 # ============================================================================
@@ -1699,7 +1714,4 @@ func _spawn_hit_marker(position: Vector3, color: Color) -> void:
 	marker.global_position = position
 	
 	# Auto-delete after 3 seconds
-	get_tree().create_timer(3.0).timeout.connect(func(): 
-		if is_instance_valid(marker):
-			marker.queue_free()
-	)
+	_schedule_one_shot_timer(3.0, Callable(self, "_free_node_if_valid").bind(marker))
