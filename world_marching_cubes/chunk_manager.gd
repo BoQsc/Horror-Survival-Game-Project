@@ -1246,6 +1246,30 @@ func _exit_tree():
 	# 2. Clear pending nodes queue (prevents creating nodes after cleanup)
 	if pending_nodes_mutex:
 		pending_nodes_mutex.lock()
+		var cleanup_tasks: Array[Dictionary] = []
+		for item in pending_nodes:
+			if item is Dictionary:
+				if item.get("type", "") == "final_terrain":
+					var body_rid = item.get("body_rid", RID())
+					if body_rid.is_valid():
+						PhysicsServer3D.free_rid(body_rid)
+					var dens_rid = item.get("dens", RID())
+					if dens_rid.is_valid():
+						cleanup_tasks.append({"type": "free", "rid": dens_rid})
+					var mat_rid = item.get("mat_buf", RID())
+					if mat_rid.is_valid():
+						cleanup_tasks.append({"type": "free", "rid": mat_rid})
+				elif item.get("type", "") == "final_water":
+					var water_rid = item.get("dens", RID())
+					if water_rid.is_valid():
+						cleanup_tasks.append({"type": "free", "rid": water_rid})
+		if not cleanup_tasks.is_empty():
+			mutex.lock()
+			for t in cleanup_tasks:
+				task_queue.append(t)
+			mutex.unlock()
+			for _task in cleanup_tasks:
+				semaphore.post()
 		pending_nodes.clear()
 		pending_nodes_needs_sort = false
 		pending_nodes_mutex.unlock()
@@ -1263,17 +1287,19 @@ func _exit_tree():
 		cpu_semaphore.post()
 	
 	# 5. Wait for GPU thread to finish (processes remaining "free" tasks)
-	if compute_thread and compute_thread.is_alive():
+	if compute_thread:
 		DebugManager.log_chunk("ChunkManager: Waiting for GPU thread to finish...")
 		compute_thread.wait_to_finish()
 		DebugManager.log_chunk("ChunkManager: GPU thread finished")
+		compute_thread = null
 
 	# 6. Wait for CPU workers to finish
 	for i in range(cpu_threads.size()):
 		var thread = cpu_threads[i]
-		if thread and thread.is_alive():
+		if thread:
 			DebugManager.log_chunk("ChunkManager: Waiting for CPU worker %d to finish..." % i)
 			thread.wait_to_finish()
+	cpu_threads.clear()
 	
 	DebugManager.log_chunk("ChunkManager: Cleanup complete, all resources freed")
 
@@ -1388,6 +1414,9 @@ func _unload_chunk(coord: Vector3i):
 			tasks.append({"type": "free", "rid": data.density_buffer_terrain})
 		if data.density_buffer_water.is_valid():
 			tasks.append({"type": "free", "rid": data.density_buffer_water})
+		if data.material_buffer_terrain.is_valid():
+			tasks.append({"type": "free", "rid": data.material_buffer_terrain})
+			data.material_buffer_terrain = RID()
 			
 		mutex.lock()
 		for t in tasks: task_queue.append(t)
@@ -1505,6 +1534,9 @@ func _update_chunks_gdscript():
 				tasks.append({"type": "free", "rid": data.density_buffer_terrain})
 			if data.density_buffer_water.is_valid():
 				tasks.append({"type": "free", "rid": data.density_buffer_water})
+			if data.material_buffer_terrain.is_valid():
+				tasks.append({"type": "free", "rid": data.material_buffer_terrain})
+				data.material_buffer_terrain = RID()
 				
 			mutex.lock()
 			for t in tasks: task_queue.append(t)
@@ -1849,11 +1881,8 @@ func _thread_function():
 		semaphore.wait()
 		
 		mutex.lock()
-		if exit_thread:
-			mutex.unlock()
-			break
-			
 		if task_queue.is_empty():
+			var should_exit = exit_thread
 			mutex.unlock()
 			# Only complete in-flight when no tasks pending
 			if in_flight.size() > 0:
@@ -1863,6 +1892,8 @@ func _thread_function():
 					var slot: Dictionary = buffer_slots[slot_index]
 					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
 				in_flight.clear()
+			if should_exit:
+				break
 			continue
 			
 		var task = task_queue.pop_front()
@@ -2170,12 +2201,11 @@ func _cpu_thread_function():
 		var should_exit = exit_thread
 		mutex.unlock()
 		
-		if should_exit:
-			break
-		
 		cpu_mutex.lock()
 		if cpu_task_queue.is_empty():
 			cpu_mutex.unlock()
+			if should_exit:
+				break
 			continue
 		
 		var task = cpu_task_queue.pop_front()
