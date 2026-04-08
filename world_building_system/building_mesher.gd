@@ -49,7 +49,13 @@ func _process(_delta: float) -> void:
 	var apply_items: Array = []
 	mutex.lock()
 	var start_us := Time.get_ticks_usec()
-	while pending_apply_queue_index < pending_apply_queue.size() and apply_items.size() < BUILDING_APPLY_BUDGET_PER_FRAME:
+	var effective_apply_budget := BUILDING_APPLY_BUDGET_PER_FRAME
+	if pending_apply_queue_index < pending_apply_queue.size():
+		var next_chunk = pending_apply_queue[pending_apply_queue_index].get("chunk", null)
+		if is_instance_valid(next_chunk) and next_chunk.manager and next_chunk.manager.world_map_mode:
+			effective_apply_budget = mini(effective_apply_budget, 2)
+
+	while pending_apply_queue_index < pending_apply_queue.size() and apply_items.size() < effective_apply_budget:
 		apply_items.append(pending_apply_queue[pending_apply_queue_index])
 		pending_apply_queue_index += 1
 		if float(Time.get_ticks_usec() - start_us) / 1000.0 >= BUILDING_APPLY_BUDGET_MS_PER_FRAME:
