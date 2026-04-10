@@ -1,6 +1,8 @@
 Godot Engine v4.6.2.stable.steam.71f334935 - https://godotengine.org
 Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 with Max-Q Design
 
+[MeshBuilder] binding build_transvoxel_heightfield_mesh
+[MeshBuilder] bound build_transvoxel_heightfield_mesh
 [RendererFallback] Testing Vulkan compute compatibility...
 [RendererFallback] ✓ Marching Cubes pipeline created successfully
 [RendererFallback] ✓ Vulkan compute works
@@ -22,6 +24,8 @@ Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 wi
 [TOWN_STALL_TEST] Disable building chunk flush: OFF
 [TOWN_STALL_TEST] Disable building chunk collisions: OFF
 [TOWN_STALL_TEST] Disable terrain chunk updates: OFF
+[TOWN_STALL_TEST] Transvoxel preview: ON
+[TOWN_STALL_TEST] Hold seconds override: 5.0
 [TOWN_STALL_TEST] Repeat entry: OFF
 [TOWN_STALL_TEST] Generating world seed 12345...
 [WorldMapGen] Placed 10 towns (target: 10)
@@ -39,8 +43,8 @@ Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 wi
 [WorldMapGen] Town at (854,-490): 17/38 buildings placed
 [WorldMapGen] Town at (182,-874): 16/38 buildings placed
 [WorldMapGen] Mode: TOWN | Buildings: 157 placed / 495 attempted | Towns: 10
-[WorldMapGen] Saved to: user://worlds/town_stall_12345_27701
-[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_27701
+[WorldMapGen] Saved to: user://worlds/town_stall_12345_40105
+[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_40105
 [TOWN_STALL_TEST] Selected town: x=374.0 z=-298.0 buildings=72 radius=71.0
 [TOWN_STALL_TEST] Removed helper node: DebugTeleporter
 SHOVEL: Initialized, mode = PLACE, material = Grass
@@ -50,14 +54,11 @@ PlayerHUD: Pickaxe Durability -> OFF (Instant)
 [HUD_SETUP] Connecting to SaveManager...
 [HUD_SETUP] Connected to save_completed signal
 [HUD_SETUP] Connected to load_completed signal
-[ChunkManager] World map path from SaveManager: user://worlds/town_stall_12345_27701
-[ChunkManager] World map mode: user://worlds/town_stall_12345_27701 (GPU fbm biomes, per-pixel road overlay)
+[ChunkManager] World map path from SaveManager: user://worlds/town_stall_12345_40105
+[ChunkManager] World map mode: user://worlds/town_stall_12345_40105 (GPU fbm biomes, per-pixel road overlay)
 [ObjectRegistry] Preloading 6 object scenes...
+[ObjectRegistry] Preloaded 6 scenes in 665ms
 [ChunkManager] Loaded 157 baked buildings
-[ChunkManager] Loaded 248 baked terrain modification chunks
-[ChunkManager] Prepared 262 baked excavation chunk masks
-[ChunkManager] Loaded building_map (2048x2048)
-[ObjectRegistry] Preloaded 6 scenes in 1161ms
 [TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...
 [COMBAT_AUDIO] Tree hit sound loaded successfully
 [COMBAT_AUDIO] Tree fall sound loaded successfully
@@ -67,6 +68,9 @@ PlayerHUD: Pickaxe Durability -> OFF (Instant)
 [COMBAT_AUDIO] Terrain hit sound loaded successfully
 [COMBAT_AUDIO] Terrain break sound loaded successfully
 [HUD_SETUP] Connecting to SaveManager...
+[ChunkManager] Loaded 248 baked terrain modification chunks
+[ChunkManager] Prepared 262 baked excavation chunk masks
+[ChunkManager] Loaded building_map (2048x2048)
 [Minimap] Built 2048x2048 live map (real-time updates enabled)
 [RoadManager] World map active, skipping road_mask initialization
 ItemUseRouter: Initialized
@@ -79,38 +83,49 @@ ModeBuild: Initialized
 TerrainAPI: Initialized (terrain_manager: OK)
 ModeEditor: Initialized
 [Player] Frozen until terrain renders
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(0, 0) outer_chunks=64
+[TOWN_STALL_TEST] Transvoxel preview enabled on terrain manager
 [ChunkManager] ✓ MeshBuilder GDExtension LOADED - using fast C++ path
 BuildingAPI: Initialized (building_manager: OK)
 [Player] Unfrozen - terrain ready, can walk now
 [LoadingScreen] Terrain rendering started - player can move
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(-1, -1) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(0, -1) outer_chunks=64
 ModeManager: PLAY -> EDITOR
 ModeManager: EDITOR mode ON (submode: Terrain)
+ModeManager: Fly mode ON
+ModeManager: Fly mode OFF
 ModeManager: Fly mode ON
 [TOWN_STALL_TEST] Flying to town center: (374.0, 23.0, -298.0)
 [TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.
 [TOWN_STALL_TEST] Flying to town center: (374.0, 15.0, -298.0) buildings=72 radius=71.0
-[TOWN_STALL_TEST] Auto fly reached target, starting hold
 ModeManager: EDITOR -> PLAY
 ModeManager: EDITOR mode OFF (submode: Terrain)
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(1, -1) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(1, -2) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(2, -2) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(2, -3) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(3, -3) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(4, -3) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(4, -4) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(5, -4) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(5, -5) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(6, -5) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(6, -6) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(7, -6) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(7, -7) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(8, -7) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(8, -8) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(9, -8) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(10, -8) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(10, -9) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(11, -9) outer_chunks=64
+[ChunkManager] Transvoxel preview rebuilt: blocks=52 built=52 viewer_chunk=(11, -10) outer_chunks=64
+[TOWN_STALL_TEST] Auto fly reached target, starting hold
 [TOWN_STALL_TEST] Hold started
 ModeManager: PLAY -> EDITOR
 ModeManager: EDITOR mode ON (submode: Terrain)
 ModeManager: Fly mode ON
 ModeManager: EDITOR -> PLAY
 ModeManager: EDITOR mode OFF (submode: Terrain)
-ModeManager: PLAY -> EDITOR
-ModeManager: EDITOR mode ON (submode: Terrain)
-ModeManager: Fly mode ON
 [TOWN_STALL_TEST] Hold complete, quitting
-WARNING: 275 RIDs of type "StorageBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-   GDScript backtrace (most recent call first):
-       [0] _thread_function (res://world_marching_cubes/chunk_manager.gd:1947)
-WARNING: A Thread object is being destroyed without its completion having been realized.
-Please call wait_to_finish() on it to ensure correct cleanup.
-   at: ~Thread (core/os/thread.cpp:102)
-WARNING: A Thread object is being destroyed without its completion having been realized.
-Please call wait_to_finish() on it to ensure correct cleanup.
-   at: ~Thread (core/os/thread.cpp:102)
-WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
-   at: cleanup (core/object/object.cpp:2641)

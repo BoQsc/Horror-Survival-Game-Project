@@ -36,6 +36,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 @export var procedural_road_spacing: float = 100.0 # Distance between roads
 @export var procedural_road_width: float = 8.0 # Width of roads
 @export var debug_show_road_zones: bool = false # Debug: show road alignment (Yellow=correct, Red=spillover, Green=crack)
+@export var transvoxel_preview_enabled: bool = false # Debug: show live Transvoxel preview blocks
 
 ## World Map Editor Integration
 ## When set, the terrain reads height/biome/road data from PNGs instead of procedural noise
@@ -45,6 +46,9 @@ var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
 var world_map_max_height: float = 50.0  # terrain_height * 2.5
 var _world_map_heightmap_buf: RID = RID()
+var _world_map_heightmap_bytes: PackedByteArray = PackedByteArray()
+var _world_map_heightmap_width: int = 0
+var _world_map_heightmap_height: int = 0
 var _world_map_biome_buf: RID = RID()
 var _world_map_road_buf: RID = RID()
 var _world_map_water_buf: RID = RID()
@@ -56,6 +60,11 @@ var _world_map_building_map: Image = null  # R8 building footprint map from buil
 var _world_map_excavation_masks: Dictionary = {}
 var _world_map_excavation_buffers: Dictionary = {}
 var gpu_biome_map: PackedByteArray = PackedByteArray()  # GPU-generated biome map for minimap (uses same fbm() as shader)
+
+const TransvoxelLayoutClass := preload("res://world_marching_cubes/transvoxel_layout.gd")
+var _transvoxel_preview_root: Node3D = null
+var _transvoxel_preview_last_viewer_chunk: Vector2i = Vector2i(2147483647, 2147483647)
+var _transvoxel_preview_material: Material = null
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -434,6 +443,8 @@ func _process(delta):
 		DebugManager.log_chunk("HOTFIX: Updated existing chunks to layer 1|512")
 		PerformanceMonitor.end_measure("Chunk Hotfix: Collision Sync", 1.0)
 
+	_update_transvoxel_preview()
+
 	_capture_terrain_telemetry()
 
 var debug_chunk_bounds: bool = false
@@ -460,6 +471,134 @@ func set_debug_show_road_zones(enabled: bool) -> void:
 		if data and data.chunk_material:
 			data.chunk_material.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
 	material_terrain.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
+
+
+func set_transvoxel_preview_enabled(enabled: bool) -> void:
+	transvoxel_preview_enabled = enabled
+	DebugManager.log_chunk("Transvoxel preview: %s" % ("ON" if transvoxel_preview_enabled else "OFF"))
+	if not transvoxel_preview_enabled:
+		_set_exact_terrain_visibility(true)
+		_clear_transvoxel_preview()
+		_transvoxel_preview_material = null
+	else:
+		_set_exact_terrain_visibility(false)
+		_update_transvoxel_preview(true)
+
+
+func _make_transvoxel_preview_material() -> Material:
+	if _transvoxel_preview_material and is_instance_valid(_transvoxel_preview_material):
+		return _transvoxel_preview_material
+	if material_terrain and material_terrain is ShaderMaterial:
+		var preview_material := (material_terrain as ShaderMaterial).duplicate()
+		if preview_material:
+			preview_material.set_shader_parameter("transvoxel_preview_visualize", false)
+			_transvoxel_preview_material = preview_material
+			return preview_material
+	var preview_fallback := StandardMaterial3D.new()
+	preview_fallback.albedo_color = Color(0.75, 0.75, 0.75)
+	preview_fallback.roughness = 1.0
+	preview_fallback.metallic = 0.0
+	preview_fallback.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	preview_fallback.cull_mode = BaseMaterial3D.CULL_BACK
+	_transvoxel_preview_material = preview_fallback
+	return preview_fallback
+
+
+func _set_exact_terrain_visibility(visible: bool) -> void:
+	for coord in active_chunks:
+		var data = active_chunks[coord]
+		if data and data.node_terrain and is_instance_valid(data.node_terrain):
+			data.node_terrain.visible = visible
+
+
+func _ensure_transvoxel_preview_root() -> Node3D:
+	if _transvoxel_preview_root and is_instance_valid(_transvoxel_preview_root):
+		return _transvoxel_preview_root
+	_transvoxel_preview_root = Node3D.new()
+	_transvoxel_preview_root.name = "WorldMapTransvoxelLOD"
+	add_child(_transvoxel_preview_root)
+	return _transvoxel_preview_root
+
+
+func _clear_transvoxel_preview() -> void:
+	_transvoxel_preview_last_viewer_chunk = Vector2i(2147483647, 2147483647)
+	if _transvoxel_preview_root and is_instance_valid(_transvoxel_preview_root):
+		_transvoxel_preview_root.queue_free()
+	_transvoxel_preview_root = null
+
+
+func _update_transvoxel_preview(force_rebuild: bool = false) -> void:
+	if not transvoxel_preview_enabled or not world_map_active:
+		return
+	if _world_map_heightmap_bytes.is_empty() or _world_map_heightmap_width < 2 or _world_map_heightmap_height < 2:
+		return
+	if not viewer:
+		return
+
+	var viewer_pos := get_viewer_position()
+	var viewer_chunk := Vector2i(
+		int(floor(viewer_pos.x / CHUNK_STRIDE)),
+		int(floor(viewer_pos.z / CHUNK_STRIDE))
+	)
+	if not force_rebuild and viewer_chunk == _transvoxel_preview_last_viewer_chunk:
+		return
+	_transvoxel_preview_last_viewer_chunk = viewer_chunk
+	_rebuild_transvoxel_preview(viewer_chunk)
+
+
+func _rebuild_transvoxel_preview(viewer_chunk: Vector2i) -> void:
+	if not transvoxel_preview_enabled or not world_map_active:
+		return
+	if _world_map_heightmap_bytes.is_empty():
+		return
+	if not ClassDB.class_exists("MeshBuilder"):
+		push_warning("[ChunkManager] MeshBuilder is unavailable - cannot build Transvoxel preview")
+		return
+
+	var preview_root: Node3D = _ensure_transvoxel_preview_root()
+	for child in preview_root.get_children():
+		child.queue_free()
+
+	var layout_builder: Object = TransvoxelLayoutClass.new()
+	var inner_chunks: int = max(4, render_distance)
+	var outer_chunks: int = max(64, inner_chunks * 8)
+	var layout: Dictionary = layout_builder.build_layout(viewer_chunk, inner_chunks, outer_chunks, CHUNK_STRIDE, 4)
+	var blocks: Array = layout.get("blocks", [])
+
+	var builder: Object = ClassDB.instantiate("MeshBuilder")
+	if builder == null:
+		push_warning("[ChunkManager] Could not instantiate MeshBuilder for Transvoxel preview")
+		return
+
+	var preview_material: Material = _make_transvoxel_preview_material()
+	var built_blocks: int = 0
+
+	for block in blocks:
+		var mesh: ArrayMesh = builder.build_transvoxel_heightfield_mesh(
+			_world_map_heightmap_bytes,
+			_world_map_heightmap_width,
+			_world_map_heightmap_height,
+			world_map_size,
+			world_map_max_height,
+			Vector3(float(block.get("min_x", 0.0)), 0.0, float(block.get("min_z", 0.0))),
+			Vector3(float(block.get("block_size", 0.0)), world_map_max_height, float(block.get("block_size", 0.0))),
+			int(block.get("subdivisions", 4)),
+			int(block.get("transition_mask", 0))
+		)
+		if mesh == null:
+			continue
+
+		var mesh_instance := MeshInstance3D.new()
+		mesh_instance.name = "%s_%d_%d" % [String(block.get("block_kind", "block")), int(block.get("grid_x", 0)), int(block.get("grid_z", 0))]
+		mesh_instance.mesh = mesh
+		mesh_instance.material_override = preview_material
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		preview_root.add_child(mesh_instance)
+		built_blocks += 1
+
+	print("[ChunkManager] Transvoxel preview rebuilt: blocks=%d built=%d viewer_chunk=%s outer_chunks=%d" % [blocks.size(), built_blocks, str(viewer_chunk), outer_chunks])
+	if built_blocks == 0:
+		push_warning("[ChunkManager] Transvoxel preview produced no meshes for viewer_chunk=%s" % str(viewer_chunk))
 
 
 func _update_fps_tracking(delta: float):
@@ -1237,6 +1376,7 @@ func _exit_tree():
 	# CRITICAL: Clean up all GPU resources BEFORE terminating threads
 	# This fixes 682 resource leaks (StorageBuffers, Meshes, Collision, Materials)
 	DebugManager.log_chunk("ChunkManager: Starting cleanup of %d active chunks" % active_chunks.size())
+	_clear_transvoxel_preview()
 	
 	# 1. Unload all active chunks (frees meshes, collision, GPU buffers)
 	var coords_to_unload = active_chunks.keys()
@@ -1441,6 +1581,7 @@ func _unload_chunk(coord: Vector3i):
 ## Used during Save/Load to prevent "double rendering" and redundant processing
 func clear_all_chunks():
 	DebugManager.log_chunk("ChunkManager: ATOMIC CLEAR INITIATED")
+	_clear_transvoxel_preview()
 	
 	# 1. Clear background task queues immediately
 	mutex.lock()
@@ -1767,12 +1908,14 @@ func _thread_function():
 	if world_map_active and world_definition_path != "":
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 		var loaded = WorldMapGen.load_world(world_definition_path)
-		
 		if loaded.has("heightmap") and loaded.has("biomes") and loaded.has("roads"):
 			var hmap: Image = loaded.heightmap
+			_world_map_heightmap_bytes = hmap.get_data()
+			_world_map_heightmap_width = hmap.get_width()
+			_world_map_heightmap_height = hmap.get_height()
 			var bmap: Image = loaded.biomes
 			var rmap: Image = loaded.roads
-			
+
 			# Upload raw bytes as storage buffers
 			var h_bytes = hmap.get_data()
 			var b_bytes = bmap.get_data()
@@ -2612,6 +2755,8 @@ func _finalize_chunk_creation(item: Dictionary):
 			active_chunks[coord] = data
 			
 		data.node_terrain = result.node if not result.is_empty() else null
+		if transvoxel_preview_enabled and data.node_terrain and is_instance_valid(data.node_terrain):
+			data.node_terrain.visible = false
 		
 		# Link Visual Node to Physics Body (for Raycasts/Interaction)
 		var body_rid = item.get("body_rid", RID())

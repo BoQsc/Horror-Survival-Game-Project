@@ -134,7 +134,7 @@ func _ready() -> void:
 		var tm = get_tree().get_first_node_in_group("terrain_manager")
 		if tm and "debug_show_road_zones" in tm:
 			road_zones_toggle.button_pressed = tm.debug_show_road_zones
- 
+
 	# Connect spawning buttons
 	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
 	if spawn_entity_btn:

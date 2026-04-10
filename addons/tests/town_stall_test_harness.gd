@@ -53,6 +53,9 @@ var disable_building_object_collisions_enabled: bool = false
 var disable_building_chunk_flush_enabled: bool = false
 var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
+var transvoxel_preview_enabled: bool = false
+var transvoxel_preview_applied: bool = false
+var hold_seconds_override: float = -1.0
 var repeat_entry_enabled: bool = false
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
@@ -100,6 +103,12 @@ func _reset_town_measurement_window(reason: String) -> void:
 		"world_path": generated_world_path
 	})
 
+
+func _resolve_hold_seconds(base_seconds: float) -> float:
+	if hold_seconds_override > 0.0:
+		return hold_seconds_override
+	return base_seconds
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	auto_teleport_enabled = OS.get_environment("TOWN_STALL_AUTO_TELEPORT") != "0"
@@ -113,7 +122,11 @@ func _ready() -> void:
 	disable_building_chunk_flush_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_FLUSH") == "1"
 	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
+	transvoxel_preview_enabled = OS.get_environment("TOWN_STALL_ENABLE_TRANSVOXEL_PREVIEW") == "1"
 	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
+	var hold_seconds_text := OS.get_environment("TOWN_STALL_HOLD_SECONDS")
+	if hold_seconds_text.is_valid_float():
+		hold_seconds_override = max(0.0, float(hold_seconds_text))
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable buildings: %s" % ("ON" if disable_buildings_enabled else "OFF"))
@@ -126,6 +139,8 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable building chunk flush: %s" % ("ON" if disable_building_chunk_flush_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Transvoxel preview: %s" % ("ON" if transvoxel_preview_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Hold seconds override: %s" % (("%.1f" % hold_seconds_override) if hold_seconds_override > 0.0 else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	_emit_scope_state("town_stall_test", {
 		"phase": "start",
@@ -140,6 +155,8 @@ func _ready() -> void:
 		"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
 		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
 		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
+		"transvoxel_preview": transvoxel_preview_enabled,
+		"hold_seconds_override": hold_seconds_override,
 		"repeat_entry": repeat_entry_enabled
 	})
 	_begin_generation()
@@ -465,6 +482,11 @@ func _poll_world_ready() -> void:
 	if terrain_manager == null or chunk_manager == null or player == null:
 		return
 
+	if transvoxel_preview_enabled and not transvoxel_preview_applied and terrain_manager.has_method("set_transvoxel_preview_enabled"):
+		terrain_manager.set_transvoxel_preview_enabled(true)
+		transvoxel_preview_applied = true
+		print("[TOWN_STALL_TEST] Transvoxel preview enabled on terrain manager")
+
 	var terrain_ready := false
 	if terrain_manager.has_method("is_initial_load_complete"):
 		terrain_ready = terrain_manager.is_initial_load_complete()
@@ -523,9 +545,10 @@ func _teleport_into_town() -> void:
 	})
 
 	print("[TOWN_STALL_TEST] Teleported to town at (%.1f, %.1f, %.1f)" % [teleport_pos.x, teleport_pos.y, teleport_pos.z])
-	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % HOLD_SECONDS)
+	var hold_target_seconds := _resolve_hold_seconds(HOLD_SECONDS)
+	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % hold_target_seconds)
 
-	current_hold_seconds = HOLD_SECONDS
+	current_hold_seconds = hold_target_seconds
 	phase = Phase.HOLD_FIRST
 	phase_time = 0.0
 	hold_started_logged = false
@@ -714,16 +737,16 @@ func _fly_to_town(_delta: float) -> void:
 		_restore_player_control()
 		match phase:
 			Phase.FLY_TO_TOWN:
-				current_hold_seconds = REPEAT_ENTRY_FIRST_HOLD_SECONDS if repeat_entry_enabled else HOLD_SECONDS
+				current_hold_seconds = _resolve_hold_seconds(REPEAT_ENTRY_FIRST_HOLD_SECONDS if repeat_entry_enabled else HOLD_SECONDS)
 				phase = Phase.HOLD_FIRST
 			Phase.FLY_BACK_TO_ORIGIN:
-				current_hold_seconds = REPEAT_ENTRY_RETURN_HOLD_SECONDS
+				current_hold_seconds = _resolve_hold_seconds(REPEAT_ENTRY_RETURN_HOLD_SECONDS)
 				phase = Phase.HOLD_RETURN
 			Phase.FLY_TO_TOWN_SECOND:
-				current_hold_seconds = REPEAT_ENTRY_SECOND_HOLD_SECONDS
+				current_hold_seconds = _resolve_hold_seconds(REPEAT_ENTRY_SECOND_HOLD_SECONDS)
 				phase = Phase.HOLD_SECOND
 			_:
-				current_hold_seconds = HOLD_SECONDS
+				current_hold_seconds = _resolve_hold_seconds(HOLD_SECONDS)
 				phase = Phase.HOLD_FIRST
 		phase_time = 0.0
 		hold_started_logged = false

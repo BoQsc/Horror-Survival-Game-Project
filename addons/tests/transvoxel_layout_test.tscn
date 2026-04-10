@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://transvoxel_layout_test"]
+
+[ext_resource type="Script" path="res://addons/tests/transvoxel_layout_test_bot.gd" id="1"]
+
+[node name="TransvoxelLayoutTest" type="Node"]
+script = ExtResource("1")

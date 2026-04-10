@@ -1,5 +1,6 @@
 ﻿#include "mesh_builder.h"
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <godot_cpp/classes/box_shape3d.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -13,13 +14,338 @@
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
+#include <godot_cpp/variant/vector2.hpp>
+#include <godot_cpp/variant/vector2i.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <unordered_map>
 #include <vector>
 
+#include "transvoxel_tables.inc"
+
 using namespace godot;
 
 namespace {
+enum class TransvoxelSide : uint8_t {
+    LowX = 0,
+    HighX = 1,
+    LowY = 2,
+    HighY = 3,
+    LowZ = 4,
+    HighZ = 5
+};
+
+struct TransvoxelVec3i {
+    int x;
+    int y;
+    int z;
+};
+
+struct TransvoxelRotation {
+    TransvoxelSide side;
+    TransvoxelVec3i uvw_base;
+    TransvoxelVec3i u;
+    TransvoxelVec3i v;
+    TransvoxelVec3i w;
+    TransvoxelVec3i plus_x_as_uvw;
+    TransvoxelVec3i plus_y_as_uvw;
+    TransvoxelVec3i plus_z_as_uvw;
+};
+
+static const TransvoxelRotation TRANSVOXEL_ROTATIONS[6] = {
+    {TransvoxelSide::LowX,  {0, 0, 1}, {0, 0, -1}, {0, 1, 0}, {1, 0, 0}, {1, 0, 0}, {0, 0, 1}, {0, 1, 0}},
+    {TransvoxelSide::HighX, {1, 0, 0}, {0, 0,  1}, {0, 1, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0, 1, 0}},
+    {TransvoxelSide::LowY,  {0, 0, 1}, {1, 0,  0}, {0, 0, -1}, {0, 1, 0}, {0, 1, 0}, {1, 0, 0}, {0, 0, 1}},
+    {TransvoxelSide::HighY, {0, 1, 0}, {1, 0,  0}, {0, 0, 1}, {0, -1, 0}, {0, 0, 1}, {1, 0, 0}, {0, 0, -1}},
+    {TransvoxelSide::LowZ,  {0, 0, 0}, {1, 0,  0}, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}, {1, 0, 0}, {0, 1, 0}},
+    {TransvoxelSide::HighZ, {1, 0, 1}, {-1, 0, 0}, {0, 1, 0}, {0, 0, -1}, {1, 0, 1}, {-1, 0, 0}, {0, 1, 0}}
+};
+
+static inline const TransvoxelRotation &transvoxel_rotation(TransvoxelSide side) {
+    return TRANSVOXEL_ROTATIONS[static_cast<int>(side)];
+}
+
+static inline float sample_world_map_height_bilinear(
+    const PackedByteArray &heightmap_bytes,
+    int image_width,
+    int image_height,
+    float map_size,
+    float height_scale,
+    float wx,
+    float wz
+) {
+    if (heightmap_bytes.is_empty() || image_width <= 1 || image_height <= 1 || map_size <= 0.0f || height_scale <= 0.0f) {
+        return 0.0f;
+    }
+
+    const float half_size = map_size * 0.5f;
+    const float fx = std::clamp((wx + half_size) / map_size, 0.0f, 1.0f) * float(image_width - 1);
+    const float fz = std::clamp((wz + half_size) / map_size, 0.0f, 1.0f) * float(image_height - 1);
+    const int x0 = std::clamp(int(floorf(fx)), 0, image_width - 1);
+    const int z0 = std::clamp(int(floorf(fz)), 0, image_height - 1);
+    const int x1 = std::clamp(x0 + 1, 0, image_width - 1);
+    const int z1 = std::clamp(z0 + 1, 0, image_height - 1);
+    const float tx = fx - float(x0);
+    const float tz = fz - float(z0);
+
+    const int idx00 = z0 * image_width + x0;
+    const int idx10 = z0 * image_width + x1;
+    const int idx01 = z1 * image_width + x0;
+    const int idx11 = z1 * image_width + x1;
+    if (idx00 < 0 || idx11 >= heightmap_bytes.size()) {
+        return 0.0f;
+    }
+
+    const float h00 = float(heightmap_bytes[idx00]) / 255.0f * height_scale;
+    const float h10 = float(heightmap_bytes[idx10]) / 255.0f * height_scale;
+    const float h01 = float(heightmap_bytes[idx01]) / 255.0f * height_scale;
+    const float h11 = float(heightmap_bytes[idx11]) / 255.0f * height_scale;
+
+    const float h0 = Math::lerp(h00, h10, tx);
+    const float h1 = Math::lerp(h01, h11, tx);
+    return Math::lerp(h0, h1, tz);
+}
+
+struct TransvoxelSamplePoint {
+    Vector3 position;
+    float density = 0.0f;
+};
+
+struct TransvoxelMeshBuffers {
+    std::vector<Vector3> vertices;
+    std::vector<Vector3> normals;
+    std::vector<Vector2> uvs;
+    std::vector<int32_t> indices;
+
+    void reserve(size_t vertex_guess, size_t index_guess) {
+        vertices.reserve(vertex_guess);
+        normals.reserve(vertex_guess);
+        uvs.reserve(vertex_guess);
+        indices.reserve(index_guess);
+    }
+
+    int append_vertex(const Vector3 &position, const Vector2 &uv) {
+        const int index = static_cast<int>(vertices.size());
+        vertices.push_back(position);
+        normals.push_back(Vector3());
+        uvs.push_back(uv);
+        return index;
+    }
+
+    void add_triangle(int32_t a, int32_t b, int32_t c) {
+        indices.push_back(a);
+        indices.push_back(b);
+        indices.push_back(c);
+    }
+
+    void compute_normals() {
+        if (vertices.empty() || indices.empty()) {
+            normals.assign(vertices.size(), Vector3(0.0, 1.0, 0.0));
+            return;
+        }
+
+        normals.assign(vertices.size(), Vector3());
+        for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+            const int32_t ia = indices[i];
+            const int32_t ib = indices[i + 1];
+            const int32_t ic = indices[i + 2];
+            if (ia < 0 || ib < 0 || ic < 0 || ia >= static_cast<int32_t>(vertices.size()) || ib >= static_cast<int32_t>(vertices.size()) || ic >= static_cast<int32_t>(vertices.size())) {
+                continue;
+            }
+            const Vector3 &a = vertices[ia];
+            const Vector3 &b = vertices[ib];
+            const Vector3 &c = vertices[ic];
+            Vector3 normal = (b - a).cross(c - a);
+            if (normal.length_squared() <= 1.0e-12) {
+                continue;
+            }
+            normals[ia] += normal;
+            normals[ib] += normal;
+            normals[ic] += normal;
+        }
+
+        for (Vector3 &normal : normals) {
+            if (normal.length_squared() <= 1.0e-12) {
+                normal = Vector3(0.0, 1.0, 0.0);
+            } else {
+                normal = normal.normalized();
+            }
+        }
+    }
+};
+
+static const TransvoxelSamplePoint TRANSITION_HIGH_RES_FACE_CASE_CONTRIBUTIONS[9] = {
+    {Vector3(0, 0, 0), 0x01},
+    {Vector3(1, 0, 0), 0x02},
+    {Vector3(2, 0, 0), 0x04},
+    {Vector3(0, 1, 0), 0x80},
+    {Vector3(1, 1, 0), 0x100},
+    {Vector3(2, 1, 0), 0x08},
+    {Vector3(0, 2, 0), 0x40},
+    {Vector3(1, 2, 0), 0x20},
+    {Vector3(2, 2, 0), 0x10}
+};
+
+static const int REGULAR_CELL_VOXELS[8][3] = {
+    {0, 0, 0},
+    {1, 0, 0},
+    {0, 1, 0},
+    {1, 1, 0},
+    {0, 0, 1},
+    {1, 0, 1},
+    {0, 1, 1},
+    {1, 1, 1}
+};
+
+static const Vector3 TRANSITION_HIGH_RES_FACE_GRID_DELTA[9] = {
+    Vector3(0, 0, 0),
+    Vector3(1, 0, 0),
+    Vector3(2, 0, 0),
+    Vector3(0, 1, 0),
+    Vector3(1, 1, 0),
+    Vector3(2, 1, 0),
+    Vector3(0, 2, 0),
+    Vector3(1, 2, 0),
+    Vector3(2, 2, 0)
+};
+
+static const Vector2i TRANSITION_LOW_RES_FACE_GRID_DELTA[4] = {
+    Vector2i(0, 0),
+    Vector2i(1, 0),
+    Vector2i(0, 1),
+    Vector2i(1, 1)
+};
+
+static inline float interpolate_t(float a, float b, float threshold = 0.0f) {
+    const float denom = b - a;
+    if (std::fabs(denom) > 1.0e-6f) {
+        return std::clamp((threshold - a) / denom, 0.0f, 1.0f);
+    }
+    return 0.5f;
+}
+
+static inline Vector3 lerp_vector3(const Vector3 &a, const Vector3 &b, float t) {
+    return a + (b - a) * t;
+}
+
+static inline bool transvoxel_side_mask_enabled(int mask, TransvoxelSide side) {
+    return (mask & (1 << static_cast<int>(side))) != 0;
+}
+
+static inline float sample_transvoxel_density(
+    const PackedByteArray &heightmap_bytes,
+    int image_width,
+    int image_height,
+    float map_size,
+    float height_scale,
+    const Vector3 &position
+) {
+    const float terrain_height = sample_world_map_height_bilinear(
+        heightmap_bytes,
+        image_width,
+        image_height,
+        map_size,
+        height_scale,
+        position.x,
+        position.z
+    );
+    return terrain_height - position.y;
+}
+
+static inline Vector3 make_regular_voxel_position(
+    const Vector3 &block_base,
+    const Vector3 &block_size,
+    int subdivisions,
+    int x,
+    int y,
+    int z
+) {
+    const float inv = 1.0f / float(std::max(1, subdivisions));
+    return Vector3(
+        block_base.x + block_size.x * (float(x) * inv),
+        block_base.y + block_size.y * (float(y) * inv),
+        block_base.z + block_size.z * (float(z) * inv)
+    );
+}
+
+static inline Vector3 make_transition_regular_face_position(
+    const Vector3 &block_base,
+    const Vector3 &block_size,
+    int subdivisions,
+    const TransvoxelRotation &rotation,
+    int cell_u,
+    int cell_v,
+    int face_u,
+    int face_v
+) {
+    const float inv = 1.0f / float(std::max(1, subdivisions));
+    const float u = float(cell_u + face_u) * inv;
+    const float v = float(cell_v + face_v) * inv;
+    return Vector3(
+        block_base.x + block_size.x * float(rotation.uvw_base.x + rotation.u.x * u + rotation.v.x * v),
+        block_base.y + block_size.y * float(rotation.uvw_base.y + rotation.u.y * u + rotation.v.y * v),
+        block_base.z + block_size.z * float(rotation.uvw_base.z + rotation.u.z * u + rotation.v.z * v)
+    );
+}
+
+static inline Vector3 make_transition_high_res_face_position(
+    const Vector3 &block_base,
+    const Vector3 &block_size,
+    int subdivisions,
+    const TransvoxelRotation &rotation,
+    int cell_u,
+    int cell_v,
+    int delta_u,
+    int delta_v,
+    int delta_w
+) {
+    const float inv = 1.0f / float(std::max(1, subdivisions) * 2);
+    const float u = float(2 * cell_u + delta_u);
+    const float v = float(2 * cell_v + delta_v);
+    const float w = float(delta_w);
+    return Vector3(
+        block_base.x + block_size.x * float(rotation.uvw_base.x + rotation.u.x * u * inv + rotation.v.x * v * inv + rotation.w.x * w * inv),
+        block_base.y + block_size.y * float(rotation.uvw_base.y + rotation.u.y * u * inv + rotation.v.y * v * inv + rotation.w.y * w * inv),
+        block_base.z + block_size.z * float(rotation.uvw_base.z + rotation.u.z * u * inv + rotation.v.z * v * inv + rotation.w.z * w * inv)
+    );
+}
+
+static inline Vector3 make_transition_grid_point_position(
+    const Vector3 &block_base,
+    const Vector3 &block_size,
+    int subdivisions,
+    const TransvoxelRotation &rotation,
+    int cell_u,
+    int cell_v,
+    int grid_point_index
+) {
+    if (grid_point_index < 9) {
+        const Vector3 delta = TRANSITION_HIGH_RES_FACE_GRID_DELTA[grid_point_index];
+        return make_transition_high_res_face_position(
+            block_base,
+            block_size,
+            subdivisions,
+            rotation,
+            cell_u,
+            cell_v,
+            int(delta.x),
+            int(delta.y),
+            0
+        );
+    }
+
+    const Vector2i delta = TRANSITION_LOW_RES_FACE_GRID_DELTA[grid_point_index - 9];
+    return make_transition_regular_face_position(
+        block_base,
+        block_size,
+        subdivisions,
+        rotation,
+        cell_u,
+        cell_v,
+        delta.x,
+        delta.y
+    );
+}
+
 struct BlockBatchData {
     Vector3i coord;
     std::vector<int32_t> indices;
@@ -600,7 +926,12 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("pack_rotated_world_map_block_batches", "prefab_blocks", "rotation", "spawn_pos", "chunk_size"), &MeshBuilder::pack_rotated_world_map_block_batches);
     ClassDB::bind_method(D_METHOD("build_collision_boxes_from_voxels", "voxel_bytes", "chunk_size"), &MeshBuilder::build_collision_boxes_from_voxels);
     ClassDB::bind_method(D_METHOD("apply_world_map_collision_boxes", "body_rid", "collision_boxes"), &MeshBuilder::apply_world_map_collision_boxes);
-}
+    ClassDB::bind_method(D_METHOD("build_heightfield_mesh", "heights", "width", "depth", "cell_size", "skirt_depth"), &MeshBuilder::build_heightfield_mesh);
+    UtilityFunctions::print("[MeshBuilder] binding build_transvoxel_heightfield_mesh");
+    ClassDB::bind_method(D_METHOD("build_transvoxel_heightfield_mesh", "heightmap_bytes", "image_width", "image_height", "map_size", "height_scale", "block_base", "block_size", "subdivisions", "transition_sides_mask"), &MeshBuilder::build_transvoxel_heightfield_mesh);
+    UtilityFunctions::print("[MeshBuilder] bound build_transvoxel_heightfield_mesh");
+    ClassDB::bind_method(D_METHOD("merge_heightfield_meshes", "mesh_specs"), &MeshBuilder::merge_heightfield_meshes);
+  }
 
 Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, int stride) {
     if (data.size() == 0 || stride <= 0) {
@@ -1253,4 +1584,428 @@ bool MeshBuilder::apply_world_map_collision_boxes(const RID& body_rid, const Arr
     }
 
     return true;
+}
+
+Ref<ArrayMesh> MeshBuilder::build_heightfield_mesh(const PackedFloat32Array& heights, int width, int depth, float cell_size, float skirt_depth) {
+    Ref<ArrayMesh> mesh;
+
+    if (width < 2 || depth < 2 || cell_size <= 0.0f) {
+        return mesh;
+    }
+
+    const int expected = width * depth;
+    if (heights.size() < expected) {
+        return mesh;
+    }
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedVector2Array uvs;
+    PackedInt32Array indices;
+
+    vertices.resize(expected);
+    normals.resize(expected);
+    uvs.resize(expected);
+    indices.resize((width - 1) * (depth - 1) * 6);
+
+    const float *height_ptr = heights.ptr();
+    Vector3 *vertex_ptr = vertices.ptrw();
+    Vector3 *normal_ptr = normals.ptrw();
+    Vector2 *uv_ptr = uvs.ptrw();
+    int32_t *index_ptr = indices.ptrw();
+
+    auto sample_height = [&](int x, int z) -> float {
+        x = std::clamp(x, 0, width - 1);
+        z = std::clamp(z, 0, depth - 1);
+        return height_ptr[z * width + x];
+    };
+
+    auto compute_normal = [&](int x, int z) -> Vector3 {
+        const float left = sample_height(x - 1, z);
+        const float right = sample_height(x + 1, z);
+        const float down = sample_height(x, z - 1);
+        const float up = sample_height(x, z + 1);
+        Vector3 normal(left - right, 2.0f * cell_size, down - up);
+        return normal.normalized();
+    };
+
+    int v = 0;
+    for (int z = 0; z < depth; ++z) {
+        const float vz = static_cast<float>(z) * cell_size;
+        const float uv_z = depth > 1 ? static_cast<float>(z) / static_cast<float>(depth - 1) : 0.0f;
+        for (int x = 0; x < width; ++x) {
+            const float vx = static_cast<float>(x) * cell_size;
+            const float vy = height_ptr[z * width + x];
+            const float uv_x = width > 1 ? static_cast<float>(x) / static_cast<float>(width - 1) : 0.0f;
+
+            vertex_ptr[v] = Vector3(vx, vy, vz);
+            normal_ptr[v] = compute_normal(x, z);
+            uv_ptr[v] = Vector2(uv_x, uv_z);
+            ++v;
+        }
+    }
+
+    int i = 0;
+    for (int z = 0; z < depth - 1; ++z) {
+        for (int x = 0; x < width - 1; ++x) {
+            const int top_left = z * width + x;
+            const int top_right = top_left + 1;
+            const int bottom_left = (z + 1) * width + x;
+            const int bottom_right = bottom_left + 1;
+
+            index_ptr[i++] = top_left;
+            index_ptr[i++] = bottom_left;
+            index_ptr[i++] = top_right;
+
+            index_ptr[i++] = top_right;
+            index_ptr[i++] = bottom_left;
+            index_ptr[i++] = bottom_right;
+        }
+    }
+
+    auto append_skirt_quad = [&](int top_a, int top_b, float dir_x, float dir_z) {
+        const Vector3 top_a_pos = vertices[top_a];
+        const Vector3 top_b_pos = vertices[top_b];
+        const Vector3 bottom_a_pos = top_a_pos + Vector3(0.0, -skirt_depth, 0.0);
+        const Vector3 bottom_b_pos = top_b_pos + Vector3(0.0, -skirt_depth, 0.0);
+        const Vector3 skirt_normal = Vector3(dir_x, 0.0, dir_z).normalized();
+        const int base = static_cast<int>(vertices.size());
+
+        vertices.push_back(top_a_pos);
+        vertices.push_back(bottom_a_pos);
+        vertices.push_back(top_b_pos);
+        vertices.push_back(bottom_b_pos);
+
+        normals.push_back(skirt_normal);
+        normals.push_back(skirt_normal);
+        normals.push_back(skirt_normal);
+        normals.push_back(skirt_normal);
+
+        uvs.push_back(Vector2(0.0, 0.0));
+        uvs.push_back(Vector2(0.0, 1.0));
+        uvs.push_back(Vector2(1.0, 0.0));
+        uvs.push_back(Vector2(1.0, 1.0));
+
+        indices.push_back(base + 0);
+        indices.push_back(base + 1);
+        indices.push_back(base + 2);
+        indices.push_back(base + 2);
+        indices.push_back(base + 1);
+        indices.push_back(base + 3);
+    };
+
+    if (skirt_depth > 0.0f) {
+        for (int x = 0; x < width - 1; ++x) {
+            append_skirt_quad(x, x + 1, 0.0, -1.0);
+            const int south_row = (depth - 1) * width;
+            append_skirt_quad(south_row + x + 1, south_row + x, 0.0, 1.0);
+        }
+        for (int z = 0; z < depth - 1; ++z) {
+            append_skirt_quad(z * width, (z + 1) * width, -1.0, 0.0);
+            append_skirt_quad(z * width + (width - 1), (z + 1) * width + (width - 1), 1.0, 0.0);
+        }
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    return mesh;
+}
+
+Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
+    const PackedByteArray& heightmap_bytes,
+    int image_width,
+    int image_height,
+    float map_size,
+    float height_scale,
+    const Vector3& block_base,
+    const Vector3& block_size,
+    int subdivisions,
+    int transition_sides_mask
+) {
+    Ref<ArrayMesh> mesh;
+
+    if (heightmap_bytes.is_empty() || image_width < 2 || image_height < 2) {
+        return mesh;
+    }
+    if (map_size <= 0.0f || height_scale <= 0.0f) {
+        return mesh;
+    }
+    if (subdivisions < 1 || block_size.x <= 0.0f || block_size.y <= 0.0f || block_size.z <= 0.0f) {
+        return mesh;
+    }
+
+    TransvoxelMeshBuffers buffers;
+    const int estimated_cells = subdivisions * subdivisions * subdivisions;
+    const size_t estimated_vertices = size_t(std::max(1024, estimated_cells * 12));
+    const size_t estimated_indices = size_t(std::max(2048, estimated_cells * 18));
+    buffers.reserve(estimated_vertices, estimated_indices);
+
+    auto sample_density = [&](const Vector3& position) -> float {
+        return sample_transvoxel_density(
+            heightmap_bytes,
+            image_width,
+            image_height,
+            map_size,
+            height_scale,
+            position
+        );
+    };
+
+    auto append_regular_cell = [&](int cell_x, int cell_y, int cell_z) {
+        TransvoxelSamplePoint points[8];
+        for (int i = 0; i < 8; ++i) {
+            const int vx = cell_x + REGULAR_CELL_VOXELS[i][0];
+            const int vy = cell_y + REGULAR_CELL_VOXELS[i][1];
+            const int vz = cell_z + REGULAR_CELL_VOXELS[i][2];
+            points[i].position = make_regular_voxel_position(block_base, block_size, subdivisions, vx, vy, vz);
+            points[i].density = sample_density(points[i].position);
+        }
+
+        int case_number = 0;
+        for (int i = 0; i < 8; ++i) {
+            if (points[i].density > 0.0f) {
+                case_number |= (1 << i);
+            }
+        }
+
+        const unsigned char cell_class = regularCellClass[case_number];
+        const RegularCellData& triangulation_info = regularCellData[cell_class];
+        const unsigned short* vertices_data = regularVertexData[case_number];
+        const int vertex_count = triangulation_info.GetVertexCount();
+        int local_vertex_indices[12] = {};
+
+        for (int i = 0; i < vertex_count; ++i) {
+            const uint16_t packed = vertices_data[i];
+            const int voxel_a = (packed >> 4) & 0x0F;
+            const int voxel_b = packed & 0x0F;
+            const float t = interpolate_t(points[voxel_a].density, points[voxel_b].density, 0.0f);
+            const Vector3 position = lerp_vector3(points[voxel_a].position, points[voxel_b].position, t);
+            const Vector2 uv(
+                (position.x - block_base.x) / block_size.x,
+                (position.z - block_base.z) / block_size.z
+            );
+            local_vertex_indices[i] = buffers.append_vertex(position, uv);
+        }
+
+        const int triangle_count = triangulation_info.GetTriangleCount();
+        for (int t = 0; t < triangle_count; ++t) {
+            const int v1 = triangulation_info.vertexIndex[3 * t + 0];
+            const int v2 = triangulation_info.vertexIndex[3 * t + 1];
+            const int v3 = triangulation_info.vertexIndex[3 * t + 2];
+            buffers.add_triangle(
+                local_vertex_indices[v1],
+                local_vertex_indices[v3],
+                local_vertex_indices[v2]
+            );
+        }
+    };
+
+    auto append_transition_side = [&](TransvoxelSide side) {
+        if (!transvoxel_side_mask_enabled(transition_sides_mask, side)) {
+            return;
+        }
+
+        const TransvoxelRotation& rotation = transvoxel_rotation(side);
+        for (int cell_u = 0; cell_u < subdivisions; ++cell_u) {
+            for (int cell_v = 0; cell_v < subdivisions; ++cell_v) {
+                TransvoxelSamplePoint points[13];
+                for (int i = 0; i < 13; ++i) {
+                    const Vector3 position = make_transition_grid_point_position(
+                        block_base,
+                        block_size,
+                        subdivisions,
+                        rotation,
+                        cell_u,
+                        cell_v,
+                        i
+                    );
+                    points[i].position = position;
+                    points[i].density = sample_density(position);
+                }
+
+                int case_number = 0;
+                for (const auto& contribution : TRANSITION_HIGH_RES_FACE_CASE_CONTRIBUTIONS) {
+                    const int du = int(contribution.position.x);
+                    const int dv = int(contribution.position.y);
+                    const int idx = dv * 3 + du;
+                    if (points[idx].density > 0.0f) {
+                        case_number += int(contribution.density);
+                    }
+                }
+
+                const unsigned char raw_cell_class = transitionCellClass[case_number];
+                const unsigned char cell_class = raw_cell_class & 0x7F;
+                const bool invert_triangulation = (raw_cell_class & 0x80) != 0;
+                const TransitionCellData& triangulation_info = transitionCellData[cell_class];
+                const unsigned short* vertices_data = transitionVertexData[case_number];
+                const int vertex_count = triangulation_info.GetVertexCount();
+                int local_vertex_indices[12] = {};
+
+                for (int i = 0; i < vertex_count; ++i) {
+                    const uint16_t packed = vertices_data[i];
+                    const int grid_a = (packed >> 4) & 0x0F;
+                    const int grid_b = packed & 0x0F;
+                    const float t = interpolate_t(points[grid_a].density, points[grid_b].density, 0.0f);
+                    const Vector3 position = lerp_vector3(points[grid_a].position, points[grid_b].position, t);
+                    const Vector2 uv(
+                        (position.x - block_base.x) / block_size.x,
+                        (position.z - block_base.z) / block_size.z
+                    );
+                    local_vertex_indices[i] = buffers.append_vertex(position, uv);
+                }
+
+                const int triangle_count = triangulation_info.GetTriangleCount();
+                for (int t = 0; t < triangle_count; ++t) {
+                    const int v1 = triangulation_info.vertexIndex[3 * t + 0];
+                    const int v2 = triangulation_info.vertexIndex[3 * t + 1];
+                    const int v3 = triangulation_info.vertexIndex[3 * t + 2];
+                    if (invert_triangulation) {
+                        buffers.add_triangle(
+                            local_vertex_indices[v3],
+                            local_vertex_indices[v1],
+                            local_vertex_indices[v2]
+                        );
+                    } else {
+                        buffers.add_triangle(
+                            local_vertex_indices[v1],
+                            local_vertex_indices[v3],
+                            local_vertex_indices[v2]
+                        );
+                    }
+                }
+            }
+        }
+    };
+
+    for (int cell_x = 0; cell_x < subdivisions; ++cell_x) {
+        for (int cell_y = 0; cell_y < subdivisions; ++cell_y) {
+            for (int cell_z = 0; cell_z < subdivisions; ++cell_z) {
+                append_regular_cell(cell_x, cell_y, cell_z);
+            }
+        }
+    }
+
+    append_transition_side(TransvoxelSide::LowX);
+    append_transition_side(TransvoxelSide::HighX);
+    append_transition_side(TransvoxelSide::LowY);
+    append_transition_side(TransvoxelSide::HighY);
+    append_transition_side(TransvoxelSide::LowZ);
+    append_transition_side(TransvoxelSide::HighZ);
+
+    if (buffers.vertices.empty() || buffers.indices.empty()) {
+        return mesh;
+    }
+
+    buffers.compute_normals();
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedVector2Array uvs;
+    PackedInt32Array indices;
+    vertices.resize(buffers.vertices.size());
+    normals.resize(buffers.normals.size());
+    uvs.resize(buffers.uvs.size());
+    indices.resize(buffers.indices.size());
+
+    if (!buffers.vertices.empty()) {
+        std::copy(buffers.vertices.begin(), buffers.vertices.end(), vertices.ptrw());
+    }
+    if (!buffers.normals.empty()) {
+        std::copy(buffers.normals.begin(), buffers.normals.end(), normals.ptrw());
+    }
+    if (!buffers.uvs.empty()) {
+        std::copy(buffers.uvs.begin(), buffers.uvs.end(), uvs.ptrw());
+    }
+    if (!buffers.indices.empty()) {
+        std::copy(buffers.indices.begin(), buffers.indices.end(), indices.ptrw());
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    return mesh;
+}
+
+Ref<ArrayMesh> MeshBuilder::merge_heightfield_meshes(const Array& mesh_specs) {
+    Ref<ArrayMesh> merged_mesh;
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedVector2Array uvs;
+    PackedInt32Array indices;
+
+    for (int i = 0; i < mesh_specs.size(); ++i) {
+        Dictionary spec = mesh_specs[i];
+        Ref<ArrayMesh> mesh = spec.get("mesh", Ref<ArrayMesh>());
+        if (mesh.is_null() || mesh->get_surface_count() == 0) {
+            continue;
+        }
+
+        const Vector3 offset = spec.get("offset", Vector3());
+        Array arrays = mesh->surface_get_arrays(0);
+        if (arrays.is_empty()) {
+            continue;
+        }
+
+        PackedVector3Array mesh_vertices = arrays[Mesh::ARRAY_VERTEX];
+        PackedVector3Array mesh_normals = arrays[Mesh::ARRAY_NORMAL];
+        PackedVector2Array mesh_uvs = arrays[Mesh::ARRAY_TEX_UV];
+        PackedInt32Array mesh_indices = arrays[Mesh::ARRAY_INDEX];
+
+        if (mesh_vertices.is_empty() || mesh_indices.is_empty()) {
+            continue;
+        }
+
+        const int base = vertices.size();
+        for (int v = 0; v < mesh_vertices.size(); ++v) {
+            vertices.push_back(mesh_vertices[v] + offset);
+        }
+
+        if (mesh_normals.size() == mesh_vertices.size()) {
+            normals.append_array(mesh_normals);
+        } else {
+            for (int v = 0; v < mesh_vertices.size(); ++v) {
+                normals.push_back(Vector3(0.0, 1.0, 0.0));
+            }
+        }
+
+        if (mesh_uvs.size() == mesh_vertices.size()) {
+            uvs.append_array(mesh_uvs);
+        } else {
+            for (int v = 0; v < mesh_vertices.size(); ++v) {
+                uvs.push_back(Vector2());
+            }
+        }
+
+        for (int idx = 0; idx < mesh_indices.size(); ++idx) {
+            indices.push_back(mesh_indices[idx] + base);
+        }
+    }
+
+    if (vertices.is_empty() || indices.is_empty()) {
+        return merged_mesh;
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+
+    merged_mesh.instantiate();
+    merged_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    return merged_mesh;
 }

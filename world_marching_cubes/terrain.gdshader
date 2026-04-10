@@ -44,6 +44,9 @@ uniform bool has_material_map = false;  // Whether this chunk has player-placed 
 uniform bool debug_show_chunk_bounds = false;  // Toggle to show chunk boundary lines
 uniform bool debug_show_road_zones = false;   // Toggle to show road zone detection
 uniform bool use_world_map = false;           // Use exact material IDs instead of procedural noise
+uniform bool transvoxel_preview_visualize = false;  // Preview-only tint for Transvoxel inspection
+uniform vec3 transvoxel_preview_tint = vec3(0.20, 0.90, 0.85);
+uniform float transvoxel_preview_strength = 0.55;
 
 
 varying vec3 world_pos;
@@ -361,6 +364,10 @@ void fragment() {
 		ALBEDO = mix(base_color, col_snow, clamp(weather_snow, 0.0, 1.0));
 	} else {
 		ALBEDO = base_color;
+	}
+
+	if (transvoxel_preview_visualize) {
+		ALBEDO = mix(ALBEDO, transvoxel_preview_tint, clamp(transvoxel_preview_strength, 0.0, 1.0));
 	}
 	
 	// --- Debug: Road Zone Visualization ---

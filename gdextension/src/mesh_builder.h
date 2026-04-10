@@ -16,6 +16,8 @@
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
+#include <string>
+#include <unordered_map>
 
 namespace godot {
 
@@ -72,6 +74,30 @@ public:
 
 	// Applies merged world-map collision boxes to an existing body RID.
 	bool apply_world_map_collision_boxes(const RID& body_rid, const Array& collision_boxes);
+
+	// Builds a simple heightfield mesh from a regular height grid.
+	// Heights are expected to already be in world space.
+	Ref<ArrayMesh> build_heightfield_mesh(const PackedFloat32Array& heights, int width, int depth, float cell_size, float skirt_depth = 0.0f);
+
+	// Builds a Transvoxel-style block mesh directly from a baked world-map heightmap.
+	// This is the seam-safe path intended to replace the old heightfield far-ring prototype.
+	Ref<ArrayMesh> build_transvoxel_heightfield_mesh(
+		const PackedByteArray& heightmap_bytes,
+		int image_width,
+		int image_height,
+		float map_size,
+		float height_scale,
+		const Vector3& block_base,
+		const Vector3& block_size,
+		int subdivisions,
+		int transition_sides_mask
+	);
+
+	// Merges a list of one-surface heightfield meshes into a single mesh.
+	// Each entry is expected to be a Dictionary with keys:
+	//   mesh: ArrayMesh
+	//   offset: Vector3
+	Ref<ArrayMesh> merge_heightfield_meshes(const Array& mesh_specs);
 };
 
 }

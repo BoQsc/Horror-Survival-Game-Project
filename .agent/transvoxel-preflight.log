@@ -1,0 +1,35 @@
+Godot Engine v4.6.2.stable.steam.71f334935 - https://godotengine.org
+
+[MeshBuilder] binding build_transvoxel_heightfield_mesh
+[MeshBuilder] bound build_transvoxel_heightfield_mesh
+[RendererFallback] Testing Vulkan compute compatibility...
+ERROR: [RendererFallback] Failed to create RenderingDevice
+   at: push_error (core/variant/variant_utility.cpp:1024)
+   GDScript backtrace (most recent call first):
+       [0] _test_vulkan_compute (res://addons/renderer_fallback/renderer_fallback.gd:33)
+       [1] _enter_tree (res://addons/renderer_fallback/renderer_fallback.gd:13)
+[RendererFallback] ❌ Vulkan compute FAILED - switching to D3D12
+ERROR: ERROR: Vulkan compute failed - D3D12 required
+   at: push_error (core/variant/variant_utility.cpp:1024)
+   GDScript backtrace (most recent call first):
+       [0] _enter_tree (res://addons/renderer_fallback/renderer_fallback.gd:17)
+ERROR: Plugin should have configured this automatically
+   at: push_error (core/variant/variant_utility.cpp:1024)
+   GDScript backtrace (most recent call first):
+       [0] _enter_tree (res://addons/renderer_fallback/renderer_fallback.gd:18)
+[PerformanceMonitor] Writing performance logs to user://debug/performance
+[PerformanceMonitor] Running without debugger
+[AMBIENT_AUDIO] Playing: res://game/sound/environment/grasslands/calm-garden-ambience-29993.mp3
+[AMBIENT_AUDIO] Manager initialized
+[CollisionDebugger] Ready - Press F10 to toggle, hold Left Alt to inspect
+[TOOL_CONFIG] ToolConfig initialized (consolidated from 5 autoloads)
+[TRANSVOXEL_PREFLIGHT] Starting parser preflight
+[TRANSVOXEL_PREFLIGHT] OK: res://world_marching_cubes/chunk_manager.gd
+[TRANSVOXEL_PREFLIGHT] OK: res://modules/world_player_v2/features/ui_hud/player_hud.gd
+[TRANSVOXEL_PREFLIGHT] OK: res://world_marching_cubes/transvoxel_layout.gd
+[TRANSVOXEL_PREFLIGHT] OK: MeshBuilder instantiation
+[TRANSVOXEL_PREFLIGHT] Preflight passed
+WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
+   at: cleanup (core/object/object.cpp:2641)
+ERROR: 1 resources still in use at exit (run with --verbose for details).
+   at: clear (core/io/resource.cpp:810)
