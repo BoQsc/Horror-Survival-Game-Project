@@ -131,6 +131,43 @@ static inline Vector3 sample_world_map_height_normal(
     return normal.normalized();
 }
 
+static inline Vector3 apply_transvoxel_secondary_position(
+    const Vector3 &position,
+    const Vector3 &block_base,
+    const Vector3 &block_size,
+    int subdivisions,
+    int cell_x,
+    int cell_z,
+    int transition_sides_mask
+) {
+    if (subdivisions <= 0) {
+        return position;
+    }
+
+    Vector3 result = position;
+    const float block_max_x = block_base.x + block_size.x;
+    const float block_max_z = block_base.z + block_size.z;
+
+    const bool has_low_x = (transition_sides_mask & (1 << static_cast<int>(TransvoxelSide::LowX))) != 0;
+    const bool has_high_x = (transition_sides_mask & (1 << static_cast<int>(TransvoxelSide::HighX))) != 0;
+    const bool has_low_z = (transition_sides_mask & (1 << static_cast<int>(TransvoxelSide::LowZ))) != 0;
+    const bool has_high_z = (transition_sides_mask & (1 << static_cast<int>(TransvoxelSide::HighZ))) != 0;
+
+    if (has_low_x && cell_x == 0) {
+        result.x = block_base.x + (result.x - block_base.x) * 0.5f;
+    } else if (has_high_x && cell_x == subdivisions - 1) {
+        result.x = block_max_x - (block_max_x - result.x) * 0.5f;
+    }
+
+    if (has_low_z && cell_z == 0) {
+        result.z = block_base.z + (result.z - block_base.z) * 0.5f;
+    } else if (has_high_z && cell_z == subdivisions - 1) {
+        result.z = block_max_z - (block_max_z - result.z) * 0.5f;
+    }
+
+    return result;
+}
+
 struct TransvoxelSamplePoint {
     Vector3 position;
     float density = 0.0f;
@@ -151,10 +188,10 @@ struct TransvoxelMeshBuffers {
         indices.reserve(index_guess);
     }
 
-    int append_vertex(const Vector3 &position, const Vector2 &uv) {
+    int append_vertex(const Vector3 &position, const Vector3 &normal, const Vector2 &uv) {
         const int index = static_cast<int>(vertices.size());
         vertices.push_back(position);
-        normals.push_back(Vector3());
+        normals.push_back(normal);
         uvs.push_back(uv);
         colors.push_back(Color(0.0, 0.0, 0.0, 1.0));
         return index;
@@ -169,6 +206,17 @@ struct TransvoxelMeshBuffers {
     void compute_normals() {
         if (vertices.empty() || indices.empty()) {
             normals.assign(vertices.size(), Vector3(0.0, 1.0, 0.0));
+            return;
+        }
+
+        if (normals.size() == vertices.size() && !normals.empty()) {
+            for (Vector3 &normal : normals) {
+                if (normal.length_squared() <= 1.0e-12) {
+                    normal = Vector3(0.0, 1.0, 0.0);
+                } else {
+                    normal = normal.normalized();
+                }
+            }
             return;
         }
 
@@ -1853,7 +1901,16 @@ Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
                 (position.x - block_base.x) / block_size.x,
                 (position.z - block_base.z) / block_size.z
             );
-            local_vertex_indices[i] = buffers.append_vertex(position, uv);
+            const Vector3 normal = sample_world_map_height_normal(
+                heightmap_bytes,
+                image_width,
+                image_height,
+                map_size,
+                height_scale,
+                position.x,
+                position.z
+            );
+            local_vertex_indices[i] = buffers.append_vertex(position, normal, uv);
         }
 
         const int triangle_count = triangulation_info.GetTriangleCount();
@@ -1920,7 +1977,28 @@ Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
                         (position.x - block_base.x) / block_size.x,
                         (position.z - block_base.z) / block_size.z
                     );
-                    local_vertex_indices[i] = buffers.append_vertex(position, uv);
+                    const bool touches_half_res_face = grid_a >= 9 || grid_b >= 9;
+                    const Vector3 adjusted_position = touches_half_res_face
+                        ? apply_transvoxel_secondary_position(
+                            position,
+                            block_base,
+                            block_size,
+                            subdivisions,
+                            cell_u,
+                            cell_v,
+                            transition_sides_mask
+                        )
+                        : position;
+                    const Vector3 normal = sample_world_map_height_normal(
+                        heightmap_bytes,
+                        image_width,
+                        image_height,
+                        map_size,
+                        height_scale,
+                        adjusted_position.x,
+                        adjusted_position.z
+                    );
+                    local_vertex_indices[i] = buffers.append_vertex(adjusted_position, normal, uv);
                 }
 
                 const int triangle_count = triangulation_info.GetTriangleCount();
@@ -2012,6 +2090,7 @@ Ref<ArrayMesh> MeshBuilder::merge_heightfield_meshes(const Array& mesh_specs) {
     PackedVector3Array vertices;
     PackedVector3Array normals;
     PackedVector2Array uvs;
+    PackedColorArray colors;
     PackedInt32Array indices;
 
     for (int i = 0; i < mesh_specs.size(); ++i) {
@@ -2030,6 +2109,7 @@ Ref<ArrayMesh> MeshBuilder::merge_heightfield_meshes(const Array& mesh_specs) {
         PackedVector3Array mesh_vertices = arrays[Mesh::ARRAY_VERTEX];
         PackedVector3Array mesh_normals = arrays[Mesh::ARRAY_NORMAL];
         PackedVector2Array mesh_uvs = arrays[Mesh::ARRAY_TEX_UV];
+        PackedColorArray mesh_colors = arrays[Mesh::ARRAY_COLOR];
         PackedInt32Array mesh_indices = arrays[Mesh::ARRAY_INDEX];
 
         if (mesh_vertices.is_empty() || mesh_indices.is_empty()) {
@@ -2039,6 +2119,7 @@ Ref<ArrayMesh> MeshBuilder::merge_heightfield_meshes(const Array& mesh_specs) {
         const int base = vertices.size();
         for (int v = 0; v < mesh_vertices.size(); ++v) {
             vertices.push_back(mesh_vertices[v] + offset);
+            colors.push_back(v < mesh_colors.size() ? mesh_colors[v] : Color(0.0, 0.0, 0.0, 1.0));
         }
 
         if (mesh_normals.size() == mesh_vertices.size()) {
@@ -2071,6 +2152,7 @@ Ref<ArrayMesh> MeshBuilder::merge_heightfield_meshes(const Array& mesh_specs) {
     arrays[Mesh::ARRAY_VERTEX] = vertices;
     arrays[Mesh::ARRAY_NORMAL] = normals;
     arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_COLOR] = colors;
     arrays[Mesh::ARRAY_INDEX] = indices;
 
     merged_mesh.instantiate();

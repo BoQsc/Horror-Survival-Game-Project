@@ -71,7 +71,7 @@ func _setup_light() -> void:
 
 func _add_layout_blocks(builder: Object) -> void:
 	var layout_builder := LayoutScript.new()
-	var layout: Dictionary = layout_builder.build_layout(Vector2i(37, -22), 4, 16, 2, 4)
+	var layout: Dictionary = layout_builder.build_layout(Vector2i(37, -22), 4, 128, 2, 4)
 	var blocks: Array = layout.get("blocks", [])
 	var heightmap := _build_heightmap_corner(128, 128, 10, 28)
 

@@ -67,7 +67,7 @@ var _world_terrain_source = WorldTerrainSourceClass.new()
 var _transvoxel_preview_root: Node3D = null
 var _transvoxel_preview_last_layout_anchor: Vector2i = Vector2i(2147483647, 2147483647)
 var _transvoxel_preview_hide_distance: int = 0
-const TRANSVOXEL_PREVIEW_OVERLAP_CHUNKS: int = 3
+const TRANSVOXEL_PREVIEW_OVERLAP_CHUNKS: int = 12
 var _transvoxel_preview_material: Material = null
 
 # GPU Threading (single thread for compute shaders)
@@ -587,7 +587,7 @@ func _rebuild_transvoxel_preview(layout_anchor: Vector2i, viewer_chunk: Vector2i
 
 	var layout_builder: Object = TransvoxelLayoutClass.new()
 	var inner_chunks: int = max(8, render_distance + 3)
-	var outer_chunks: int = max(128, inner_chunks * 16)
+	var outer_chunks: int = max(512, inner_chunks * 40)
 	var layout: Dictionary = layout_builder.build_layout(layout_anchor, inner_chunks, outer_chunks, CHUNK_STRIDE, 8)
 	_transvoxel_preview_hide_distance = int(layout.get("hide_distance", max(1, inner_chunks))) + TRANSVOXEL_PREVIEW_OVERLAP_CHUNKS
 	var blocks: Array = layout.get("blocks", [])
@@ -600,6 +600,8 @@ func _rebuild_transvoxel_preview(layout_anchor: Vector2i, viewer_chunk: Vector2i
 	var preview_material: Material = _make_transvoxel_preview_material()
 	var built_blocks: int = 0
 	var built_collision_shapes: int = 0
+	var visual_mesh_specs: Array = []
+	var per_block_mesh_instances: Array = []
 	var next_preview_root := Node3D.new()
 	next_preview_root.name = "WorldMapTransvoxelLOD"
 
@@ -620,6 +622,11 @@ func _rebuild_transvoxel_preview(layout_anchor: Vector2i, viewer_chunk: Vector2i
 		if mesh == null:
 			continue
 
+		visual_mesh_specs.append({
+			"mesh": mesh,
+			"offset": Vector3.ZERO
+		})
+
 		var block_root := StaticBody3D.new()
 		block_root.name = "%s_%d_%d" % [String(block.get("block_kind", "block")), int(block.get("grid_x", 0)), int(block.get("grid_z", 0))]
 		block_root.position = Vector3.ZERO
@@ -633,6 +640,7 @@ func _rebuild_transvoxel_preview(layout_anchor: Vector2i, viewer_chunk: Vector2i
 		mesh_instance.material_override = preview_material
 		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		block_root.add_child(mesh_instance)
+		per_block_mesh_instances.append(mesh_instance)
 
 		var collision_shape := CollisionShape3D.new()
 		collision_shape.name = "CollisionShape"
@@ -649,6 +657,23 @@ func _rebuild_transvoxel_preview(layout_anchor: Vector2i, viewer_chunk: Vector2i
 		next_preview_root.queue_free()
 		push_warning("[ChunkManager] Transvoxel preview produced no meshes for layout_anchor=%s" % str(layout_anchor))
 		return false
+
+	var merged_visual_mesh: ArrayMesh = null
+	if builder.has_method("merge_heightfield_meshes") and not visual_mesh_specs.is_empty():
+		merged_visual_mesh = builder.merge_heightfield_meshes(visual_mesh_specs)
+	if merged_visual_mesh and merged_visual_mesh.get_surface_count() > 0:
+		for mesh_instance in per_block_mesh_instances:
+			if mesh_instance and is_instance_valid(mesh_instance):
+				mesh_instance.queue_free()
+		var merged_mesh_instance := MeshInstance3D.new()
+		merged_mesh_instance.name = "MergedMesh"
+		merged_mesh_instance.mesh = merged_visual_mesh
+		merged_mesh_instance.material_override = preview_material
+		merged_mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		next_preview_root.add_child(merged_mesh_instance)
+		print("[ChunkManager] Transvoxel preview merged visual mesh: surfaces=%d blocks=%d" % [merged_visual_mesh.get_surface_count(), built_blocks])
+	else:
+		push_warning("[ChunkManager] Transvoxel preview merge failed; keeping per-block visuals")
 
 	var old_preview_root: Node3D = _transvoxel_preview_root if _transvoxel_preview_root and is_instance_valid(_transvoxel_preview_root) else null
 	_transvoxel_preview_root = next_preview_root
