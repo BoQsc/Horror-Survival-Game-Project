@@ -39,3 +39,5 @@
 - Keep debug tint and player-facing toggles out of the core contract; they are inspection aids, not part of the feature.
 - Do not performance-tune a seam layout until the seam/collision gates are passing.
 - The restart guide lives in `.agents/transvoxel_rebuild_playbook.md` and should be kept in sync with the known-good snapshot commit.
+- The next gate is a seam-gap physics sweep that raycasts across the transition boundary and fails on open holes or missing collision coverage.
+- The seam-gap sweep now passes on the live layout, and the layout helper now mirrors transition masks onto the lower-LOD neighbor so both sides of the seam stay in the same proof contract.

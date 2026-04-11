@@ -23,6 +23,13 @@
 - The new visible proof step should show the block hierarchy, not just isolated seam pairs.
 - The visible layout smoke now uses the native Transvoxel meshes again, not fallback boxes.
 - Keep one shared world-terrain source for height, biome, road, water, and edits so marching cubes and Transvoxel read the same world state instead of duplicating it.
+- Add a seam-gap physics sweep gate before any more live-world tuning:
+  - raycast across the transition boundary at multiple seam points
+  - fail if any seam sample misses collision
+  - include the corner case so a hole cannot hide at the edge
+- Once the sweep passes, keep the layout contract symmetrical:
+  - mirror transition masks onto the lower-LOD neighbor too
+  - keep the live preview and the proof gate using the same seam convention
 
 ## Current branch
 - Branch: `codex/transvoxel-proof-first`

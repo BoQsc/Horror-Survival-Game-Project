@@ -14,9 +14,10 @@ Build a real Transvoxel far-terrain path without fake shell overlays.
 1. Native extractor compiles.
 2. Fixture meshes build for flat, slope, cliff, and corner cases.
 3. Seam pair test passes with zero mismatch.
-4. Live visual smoke shows the real far mesh.
-5. Collision parity is verified.
-6. Town benchmark stays within budget.
+4. Seam-gap physics sweep proves there are no open holes.
+5. Live visual smoke shows the real far mesh.
+6. Collision parity is verified.
+7. Town benchmark stays within budget.
 
 ## Current snapshot
 - Branch: `codex/transvoxel-proof-first`
@@ -34,3 +35,5 @@ Build a real Transvoxel far-terrain path without fake shell overlays.
 - Keep the far mesh on the same lighting/material rules as the terrain, otherwise it reads as fake even when the geometry is correct.
 - Building LOD is a separate system and should stay out of the terrain parity contract for now.
 - The restart playbook lives in `.agents/transvoxel_rebuild_playbook.md` and should be treated as the real recovery path if the branch has to be rebuilt.
+- The seam-gap physics sweep is the missing proof step for open holes/fall-through, and it must pass before the branch is treated as safe.
+- The seam-gap physics sweep now passes on the live layout, and the layout helper mirrors transition masks onto the lower-LOD neighbor so the seam convention stays symmetric.

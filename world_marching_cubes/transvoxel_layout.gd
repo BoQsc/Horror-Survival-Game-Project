@@ -96,6 +96,9 @@ func build_layout(viewer_chunk: Vector2i, inner_chunks: int, outer_chunks: int, 
 				var west_neighbor: Dictionary = blocks[west_neighbor_index]
 				if int(west_neighbor.get("lod_level", 0)) < int(block.get("lod_level", 0)):
 					mask |= int(FACE_MASKS["west"])
+					var west_neighbor_block: Dictionary = blocks[west_neighbor_index]
+					west_neighbor_block["transition_mask"] = int(west_neighbor_block.get("transition_mask", 0)) | int(FACE_MASKS["east"])
+					blocks[west_neighbor_index] = west_neighbor_block
 					break
 		for covered_z in range(span):
 			var east_neighbor_index = block_lookup.get("%d|%d" % [base_x + span, base_z + covered_z], -1)
@@ -103,6 +106,9 @@ func build_layout(viewer_chunk: Vector2i, inner_chunks: int, outer_chunks: int, 
 				var east_neighbor: Dictionary = blocks[east_neighbor_index]
 				if int(east_neighbor.get("lod_level", 0)) < int(block.get("lod_level", 0)):
 					mask |= int(FACE_MASKS["east"])
+					var east_neighbor_block: Dictionary = blocks[east_neighbor_index]
+					east_neighbor_block["transition_mask"] = int(east_neighbor_block.get("transition_mask", 0)) | int(FACE_MASKS["west"])
+					blocks[east_neighbor_index] = east_neighbor_block
 					break
 		for covered_x in range(span):
 			var south_neighbor_index = block_lookup.get("%d|%d" % [base_x + covered_x, base_z - 1], -1)
@@ -110,6 +116,9 @@ func build_layout(viewer_chunk: Vector2i, inner_chunks: int, outer_chunks: int, 
 				var south_neighbor: Dictionary = blocks[south_neighbor_index]
 				if int(south_neighbor.get("lod_level", 0)) < int(block.get("lod_level", 0)):
 					mask |= int(FACE_MASKS["south"])
+					var south_neighbor_block: Dictionary = blocks[south_neighbor_index]
+					south_neighbor_block["transition_mask"] = int(south_neighbor_block.get("transition_mask", 0)) | int(FACE_MASKS["north"])
+					blocks[south_neighbor_index] = south_neighbor_block
 					break
 		for covered_x in range(span):
 			var north_neighbor_index = block_lookup.get("%d|%d" % [base_x + covered_x, base_z + span], -1)
@@ -117,6 +126,9 @@ func build_layout(viewer_chunk: Vector2i, inner_chunks: int, outer_chunks: int, 
 				var north_neighbor: Dictionary = blocks[north_neighbor_index]
 				if int(north_neighbor.get("lod_level", 0)) < int(block.get("lod_level", 0)):
 					mask |= int(FACE_MASKS["north"])
+					var north_neighbor_block: Dictionary = blocks[north_neighbor_index]
+					north_neighbor_block["transition_mask"] = int(north_neighbor_block.get("transition_mask", 0)) | int(FACE_MASKS["south"])
+					blocks[north_neighbor_index] = north_neighbor_block
 					break
 
 		block["transition_mask"] = mask

@@ -722,8 +722,14 @@ func update_collision_proximity():
 		var dy = coord.y - center_chunk.y
 		var dz = coord.z - center_chunk.z
 		var dist_xz = sqrt(dx * dx + dz * dz)
+		# When Transvoxel preview is active, keep exact collision alive up to the
+		# preview hide distance so the visible near terrain and playable surface
+		# do not diverge. Otherwise use the normal near-collision range.
+		var effective_collision_distance: float = float(collision_distance)
+		if transvoxel_preview_enabled:
+			effective_collision_distance = max(effective_collision_distance, float(_transvoxel_preview_hide_distance))
 		# Enable collision if close horizontally AND within 2 Y layers
-		var should_have_collision = dist_xz <= collision_distance and abs(dy) <= 2
+		var should_have_collision = dist_xz <= effective_collision_distance and abs(dy) <= 2
 		
 		# Enable/disable collision shape
 		if data.collision_shape_terrain:
