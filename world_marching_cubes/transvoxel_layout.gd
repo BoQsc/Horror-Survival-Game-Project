@@ -124,7 +124,7 @@ func build_layout(viewer_chunk: Vector2i, inner_chunks: int, outer_chunks: int, 
 
 	return {
 		"anchor_chunk": anchor_chunk,
-		"hide_distance": max(1, inner_chunks - 1),
+		"hide_distance": max(1, inner_chunks * 2),
 		"blocks": blocks,
 		"coarse_block_world": coarse_block_world,
 		"fine_block_world": fine_block_world,

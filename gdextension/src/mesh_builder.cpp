@@ -105,6 +105,32 @@ static inline float sample_world_map_height_bilinear(
     return Math::lerp(h0, h1, tz);
 }
 
+static inline Vector3 sample_world_map_height_normal(
+    const PackedByteArray &heightmap_bytes,
+    int image_width,
+    int image_height,
+    float map_size,
+    float height_scale,
+    float wx,
+    float wz
+) {
+    if (heightmap_bytes.is_empty() || image_width <= 1 || image_height <= 1 || map_size <= 0.0f || height_scale <= 0.0f) {
+        return Vector3(0.0, 1.0, 0.0);
+    }
+
+    const float sample_step = std::max(1.0f, map_size / float(std::max(2, std::max(image_width, image_height))));
+    const float h_l = sample_world_map_height_bilinear(heightmap_bytes, image_width, image_height, map_size, height_scale, wx - sample_step, wz);
+    const float h_r = sample_world_map_height_bilinear(heightmap_bytes, image_width, image_height, map_size, height_scale, wx + sample_step, wz);
+    const float h_d = sample_world_map_height_bilinear(heightmap_bytes, image_width, image_height, map_size, height_scale, wx, wz - sample_step);
+    const float h_u = sample_world_map_height_bilinear(heightmap_bytes, image_width, image_height, map_size, height_scale, wx, wz + sample_step);
+
+    Vector3 normal(h_l - h_r, 2.0f * sample_step, h_d - h_u);
+    if (normal.length_squared() <= 1.0e-12) {
+        return Vector3(0.0, 1.0, 0.0);
+    }
+    return normal.normalized();
+}
+
 struct TransvoxelSamplePoint {
     Vector3 position;
     float density = 0.0f;
@@ -114,12 +140,14 @@ struct TransvoxelMeshBuffers {
     std::vector<Vector3> vertices;
     std::vector<Vector3> normals;
     std::vector<Vector2> uvs;
+    std::vector<Color> colors;
     std::vector<int32_t> indices;
 
     void reserve(size_t vertex_guess, size_t index_guess) {
         vertices.reserve(vertex_guess);
         normals.reserve(vertex_guess);
         uvs.reserve(vertex_guess);
+        colors.reserve(vertex_guess);
         indices.reserve(index_guess);
     }
 
@@ -128,6 +156,7 @@ struct TransvoxelMeshBuffers {
         vertices.push_back(position);
         normals.push_back(Vector3());
         uvs.push_back(uv);
+        colors.push_back(Color(0.0, 0.0, 0.0, 1.0));
         return index;
     }
 
@@ -1903,15 +1932,28 @@ Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
         return mesh;
     }
 
-    buffers.compute_normals();
+    for (size_t i = 0; i < buffers.vertices.size(); ++i) {
+        const Vector3 &position = buffers.vertices[i];
+        buffers.normals[i] = sample_world_map_height_normal(
+            heightmap_bytes,
+            image_width,
+            image_height,
+            map_size,
+            height_scale,
+            position.x,
+            position.z
+        );
+    }
 
     PackedVector3Array vertices;
     PackedVector3Array normals;
     PackedVector2Array uvs;
+    PackedColorArray colors;
     PackedInt32Array indices;
     vertices.resize(buffers.vertices.size());
     normals.resize(buffers.normals.size());
     uvs.resize(buffers.uvs.size());
+    colors.resize(buffers.colors.size());
     indices.resize(buffers.indices.size());
 
     if (!buffers.vertices.empty()) {
@@ -1923,6 +1965,9 @@ Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
     if (!buffers.uvs.empty()) {
         std::copy(buffers.uvs.begin(), buffers.uvs.end(), uvs.ptrw());
     }
+    if (!buffers.colors.empty()) {
+        std::copy(buffers.colors.begin(), buffers.colors.end(), colors.ptrw());
+    }
     if (!buffers.indices.empty()) {
         std::copy(buffers.indices.begin(), buffers.indices.end(), indices.ptrw());
     }
@@ -1932,6 +1977,7 @@ Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
     arrays[Mesh::ARRAY_VERTEX] = vertices;
     arrays[Mesh::ARRAY_NORMAL] = normals;
     arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_COLOR] = colors;
     arrays[Mesh::ARRAY_INDEX] = indices;
 
     mesh.instantiate();

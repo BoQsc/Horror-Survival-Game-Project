@@ -22,7 +22,8 @@
 - Prove the block layout before wiring live-world terrain placement.
 - The new visible proof step should show the block hierarchy, not just isolated seam pairs.
 - The visible layout smoke now uses the native Transvoxel meshes again, not fallback boxes.
+- Keep one shared world-terrain source for height, biome, road, water, and edits so marching cubes and Transvoxel read the same world state instead of duplicating it.
 
 ## Current branch
-- Branch: `codex/transvoxel-next`
+- Branch: `codex/transvoxel-proof-first`
 - Status: native Transvoxel mesher restored on top of the runtime base, fixture + seam tests passed, and block-layout proof is next.

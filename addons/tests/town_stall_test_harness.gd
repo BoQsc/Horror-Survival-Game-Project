@@ -55,6 +55,9 @@ var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
 var transvoxel_preview_enabled: bool = false
 var transvoxel_preview_applied: bool = false
+var transvoxel_preview_collision_expected: bool = false
+var transvoxel_preview_collision_verified: bool = false
+var transvoxel_preview_collision_wait_seconds: float = 0.0
 var hold_seconds_override: float = -1.0
 var repeat_entry_enabled: bool = false
 var fly_stage: int = 0
@@ -164,6 +167,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	phase_time += delta
+	_verify_transvoxel_preview_collision(delta)
 
 	match phase:
 		Phase.WAIT_WORLD_READY:
@@ -178,6 +182,29 @@ func _process(delta: float) -> void:
 			pass
 		_:
 			pass
+
+
+func _verify_transvoxel_preview_collision(delta: float) -> void:
+	if not transvoxel_preview_collision_expected or transvoxel_preview_collision_verified:
+		return
+	if not is_instance_valid(chunk_manager):
+		return
+	var preview_root := chunk_manager.get_node_or_null("WorldMapTransvoxelLOD")
+	if preview_root == null:
+		transvoxel_preview_collision_wait_seconds += delta
+		if transvoxel_preview_collision_wait_seconds > 15.0:
+			_fail("Timed out waiting for the Transvoxel preview root")
+		return
+	var collision_shapes := preview_root.find_children("", "CollisionShape3D", true, false)
+	var static_bodies := preview_root.find_children("", "StaticBody3D", true, false)
+	if collision_shapes.is_empty() or static_bodies.is_empty():
+		transvoxel_preview_collision_wait_seconds += delta
+		if transvoxel_preview_collision_wait_seconds > 15.0:
+			_fail("Transvoxel preview collision shapes were not built")
+		return
+
+	transvoxel_preview_collision_verified = true
+	print("[TOWN_STALL_TEST] Transvoxel preview collision verified: bodies=%d shapes=%d" % [static_bodies.size(), collision_shapes.size()])
 
 
 func _begin_generation() -> void:
@@ -485,6 +512,7 @@ func _poll_world_ready() -> void:
 	if transvoxel_preview_enabled and not transvoxel_preview_applied and terrain_manager.has_method("set_transvoxel_preview_enabled"):
 		terrain_manager.set_transvoxel_preview_enabled(true)
 		transvoxel_preview_applied = true
+		transvoxel_preview_collision_expected = true
 		print("[TOWN_STALL_TEST] Transvoxel preview enabled on terrain manager")
 
 	var terrain_ready := false

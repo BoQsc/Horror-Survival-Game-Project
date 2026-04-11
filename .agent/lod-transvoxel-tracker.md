@@ -1,7 +1,7 @@
 # Transvoxel Tracker
 
 ## Branch
-- `codex/transvoxel-next`
+- `codex/transvoxel-proof-first`
 
 ## Current Goal
 - Build a visually convincing, paper-faithful Transvoxel implementation in a test-first way.
@@ -26,3 +26,4 @@
 - The new block-layout test is the next gate before any more in-game integration.
 - A dedicated visible block-layout smoke scene now exists and should show the coarse/fine hierarchy in 3D before any live-world wiring is attempted.
 - The visible layout smoke now renders the real Transvoxel meshes again, so the block hierarchy can be inspected as actual terrain geometry instead of placeholder boxes.
+- A shared `WorldTerrainSource` now centralizes the loaded world-map height, biome, road, and water data so marching cubes and Transvoxel can consume the same terrain source instead of separate ad hoc caches.

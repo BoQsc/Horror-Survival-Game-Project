@@ -62,8 +62,11 @@ var _world_map_excavation_buffers: Dictionary = {}
 var gpu_biome_map: PackedByteArray = PackedByteArray()  # GPU-generated biome map for minimap (uses same fbm() as shader)
 
 const TransvoxelLayoutClass := preload("res://world_marching_cubes/transvoxel_layout.gd")
+const WorldTerrainSourceClass := preload("res://world_marching_cubes/world_terrain_source.gd")
+var _world_terrain_source = WorldTerrainSourceClass.new()
 var _transvoxel_preview_root: Node3D = null
 var _transvoxel_preview_last_viewer_chunk: Vector2i = Vector2i(2147483647, 2147483647)
+var _transvoxel_preview_hide_distance: int = 0
 var _transvoxel_preview_material: Material = null
 
 # GPU Threading (single thread for compute shaders)
@@ -261,8 +264,6 @@ func _ready():
 			print("[ChunkManager] World map path from SaveManager: %s" % world_definition_path)
 	
 	if world_definition_path != "":
-		world_map_active = true
-		world_map_max_height = terrain_height * 2.5
 		# Disable procedural road overlay in fragment shader — world map roads
 		# are controlled by the material buffer (depth-limited to 2 blocks)
 		material_terrain.set_shader_parameter("procedural_road_enabled", false)
@@ -270,22 +271,29 @@ func _ready():
 		# Read metadata for map params (biome blending now uses GPU fbm() directly, no texture needed)
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 		var loaded = WorldMapGen.load_world(world_definition_path)
-		if loaded.has("metadata"):
-			var meta = loaded.metadata
-			var meta_terrain_height = float(meta.get("terrain_height", terrain_height))
-			world_map_size = float(meta.get("map_size", 2048))
-			world_map_half = world_map_size / 2.0
-			world_map_max_height = meta_terrain_height * 2.5
-			water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
-		# Pass world map road image as road_mask for per-pixel road edge blending
-		# UV mapping: road_uv = world_pos.xz * scale + 0.5 = (world_pos.xz + half) / size
-		if loaded.has("roads"):
-			var rmap: Image = loaded.roads
-			var road_tex = ImageTexture.create_from_image(rmap)
-			material_terrain.set_shader_parameter("road_mask", road_tex)
-			material_terrain.set_shader_parameter("road_mask_offset", Vector2(0.0, 0.0))
-			material_terrain.set_shader_parameter("road_mask_scale", 1.0 / world_map_size)
-		print("[ChunkManager] World map mode: %s (GPU fbm biomes, per-pixel road overlay)" % world_definition_path)
+		if _world_terrain_source == null or not is_instance_valid(_world_terrain_source):
+			_world_terrain_source = WorldTerrainSourceClass.new()
+		if _world_terrain_source.apply_loaded_world_map(loaded, terrain_height, 2048.0, terrain_height + 3.0):
+			world_map_active = true
+			world_map_size = _world_terrain_source.world_map_size
+			world_map_half = _world_terrain_source.world_map_half
+			world_map_max_height = _world_terrain_source.world_map_max_height
+			water_level = _world_terrain_source.water_level
+			_world_map_heightmap_bytes = _world_terrain_source.heightmap_bytes
+			_world_map_heightmap_width = _world_terrain_source.heightmap_width
+			_world_map_heightmap_height = _world_terrain_source.heightmap_height
+			# Pass world map road image as road_mask for per-pixel road edge blending
+			# UV mapping: road_uv = world_pos.xz * scale + 0.5 = (world_pos.xz + half) / size
+			if loaded.has("roads"):
+				var rmap: Image = loaded.roads
+				var road_tex = ImageTexture.create_from_image(rmap)
+				material_terrain.set_shader_parameter("road_mask", road_tex)
+				material_terrain.set_shader_parameter("road_mask_offset", Vector2(0.0, 0.0))
+				material_terrain.set_shader_parameter("road_mask_scale", 1.0 / world_map_size)
+			print("[ChunkManager] World map mode: %s (shared terrain source for marching cubes + Transvoxel)" % world_definition_path)
+		else:
+			world_map_active = false
+			push_error("[ChunkManager] World map at %s missing required PNGs" % world_definition_path)
 	
 	# Start GPU thread
 	compute_thread = Thread.new()
@@ -478,10 +486,10 @@ func set_transvoxel_preview_enabled(enabled: bool) -> void:
 	DebugManager.log_chunk("Transvoxel preview: %s" % ("ON" if transvoxel_preview_enabled else "OFF"))
 	if not transvoxel_preview_enabled:
 		_set_exact_terrain_visibility(true)
+		_transvoxel_preview_hide_distance = 0
 		_clear_transvoxel_preview()
 		_transvoxel_preview_material = null
 	else:
-		_set_exact_terrain_visibility(false)
 		_update_transvoxel_preview(true)
 
 
@@ -511,6 +519,16 @@ func _set_exact_terrain_visibility(visible: bool) -> void:
 			data.node_terrain.visible = visible
 
 
+func _set_exact_terrain_visibility_for_transvoxel(viewer_chunk: Vector2i, hide_distance: int) -> void:
+	for coord in active_chunks:
+		var data = active_chunks[coord]
+		if data == null or not data.node_terrain or not is_instance_valid(data.node_terrain):
+			continue
+		var dist_x: int = abs(coord.x - viewer_chunk.x)
+		var dist_z: int = abs(coord.z - viewer_chunk.y)
+		data.node_terrain.visible = max(dist_x, dist_z) <= hide_distance
+
+
 func _ensure_transvoxel_preview_root() -> Node3D:
 	if _transvoxel_preview_root and is_instance_valid(_transvoxel_preview_root):
 		return _transvoxel_preview_root
@@ -530,7 +548,7 @@ func _clear_transvoxel_preview() -> void:
 func _update_transvoxel_preview(force_rebuild: bool = false) -> void:
 	if not transvoxel_preview_enabled or not world_map_active:
 		return
-	if _world_map_heightmap_bytes.is_empty() or _world_map_heightmap_width < 2 or _world_map_heightmap_height < 2:
+	if _world_terrain_source == null or not _world_terrain_source.has_world_data():
 		return
 	if not viewer:
 		return
@@ -541,6 +559,7 @@ func _update_transvoxel_preview(force_rebuild: bool = false) -> void:
 		int(floor(viewer_pos.z / CHUNK_STRIDE))
 	)
 	if not force_rebuild and viewer_chunk == _transvoxel_preview_last_viewer_chunk:
+		_set_exact_terrain_visibility_for_transvoxel(viewer_chunk, _transvoxel_preview_hide_distance)
 		return
 	_transvoxel_preview_last_viewer_chunk = viewer_chunk
 	_rebuild_transvoxel_preview(viewer_chunk)
@@ -549,7 +568,7 @@ func _update_transvoxel_preview(force_rebuild: bool = false) -> void:
 func _rebuild_transvoxel_preview(viewer_chunk: Vector2i) -> void:
 	if not transvoxel_preview_enabled or not world_map_active:
 		return
-	if _world_map_heightmap_bytes.is_empty():
+	if _world_terrain_source == null or not _world_terrain_source.has_world_data():
 		return
 	if not ClassDB.class_exists("MeshBuilder"):
 		push_warning("[ChunkManager] MeshBuilder is unavailable - cannot build Transvoxel preview")
@@ -560,9 +579,10 @@ func _rebuild_transvoxel_preview(viewer_chunk: Vector2i) -> void:
 		child.queue_free()
 
 	var layout_builder: Object = TransvoxelLayoutClass.new()
-	var inner_chunks: int = max(4, render_distance)
-	var outer_chunks: int = max(64, inner_chunks * 8)
-	var layout: Dictionary = layout_builder.build_layout(viewer_chunk, inner_chunks, outer_chunks, CHUNK_STRIDE, 4)
+	var inner_chunks: int = max(6, render_distance + 1)
+	var outer_chunks: int = max(128, inner_chunks * 16)
+	var layout: Dictionary = layout_builder.build_layout(viewer_chunk, inner_chunks, outer_chunks, CHUNK_STRIDE, 8)
+	_transvoxel_preview_hide_distance = int(layout.get("hide_distance", max(1, inner_chunks)))
 	var blocks: Array = layout.get("blocks", [])
 
 	var builder: Object = ClassDB.instantiate("MeshBuilder")
@@ -572,33 +592,56 @@ func _rebuild_transvoxel_preview(viewer_chunk: Vector2i) -> void:
 
 	var preview_material: Material = _make_transvoxel_preview_material()
 	var built_blocks: int = 0
+	var built_collision_shapes: int = 0
 
 	for block in blocks:
 		var mesh: ArrayMesh = builder.build_transvoxel_heightfield_mesh(
-			_world_map_heightmap_bytes,
-			_world_map_heightmap_width,
-			_world_map_heightmap_height,
-			world_map_size,
-			world_map_max_height,
+			_world_terrain_source.heightmap_bytes,
+			_world_terrain_source.heightmap_width,
+			_world_terrain_source.heightmap_height,
+			_world_terrain_source.world_map_size,
+			_world_terrain_source.world_map_max_height,
 			Vector3(float(block.get("min_x", 0.0)), 0.0, float(block.get("min_z", 0.0))),
-			Vector3(float(block.get("block_size", 0.0)), world_map_max_height, float(block.get("block_size", 0.0))),
+			Vector3(float(block.get("block_size", 0.0)), _world_terrain_source.world_map_max_height, float(block.get("block_size", 0.0))),
 			int(block.get("subdivisions", 4)),
 			int(block.get("transition_mask", 0))
 		)
 		if mesh == null:
 			continue
 
+		var block_root := StaticBody3D.new()
+		block_root.name = "%s_%d_%d" % [String(block.get("block_kind", "block")), int(block.get("grid_x", 0)), int(block.get("grid_z", 0))]
+		block_root.position = Vector3.ZERO
+		block_root.collision_layer = 1 | 512
+		block_root.collision_mask = 1
+		block_root.add_to_group("terrain")
+
 		var mesh_instance := MeshInstance3D.new()
-		mesh_instance.name = "%s_%d_%d" % [String(block.get("block_kind", "block")), int(block.get("grid_x", 0)), int(block.get("grid_z", 0))]
+		mesh_instance.name = "Mesh"
 		mesh_instance.mesh = mesh
 		mesh_instance.material_override = preview_material
 		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		preview_root.add_child(mesh_instance)
+		block_root.add_child(mesh_instance)
+
+		var collision_shape := CollisionShape3D.new()
+		collision_shape.name = "CollisionShape"
+		var collision_mesh_shape := mesh.create_trimesh_shape()
+		if collision_mesh_shape:
+			collision_shape.shape = collision_mesh_shape
+			block_root.add_child(collision_shape)
+			built_collision_shapes += 1
+
+		preview_root.add_child(block_root)
 		built_blocks += 1
 
+	_set_exact_terrain_visibility_for_transvoxel(viewer_chunk, _transvoxel_preview_hide_distance)
+
 	print("[ChunkManager] Transvoxel preview rebuilt: blocks=%d built=%d viewer_chunk=%s outer_chunks=%d" % [blocks.size(), built_blocks, str(viewer_chunk), outer_chunks])
+	print("[ChunkManager] Transvoxel preview collision shapes: %d" % built_collision_shapes)
 	if built_blocks == 0:
 		push_warning("[ChunkManager] Transvoxel preview produced no meshes for viewer_chunk=%s" % str(viewer_chunk))
+	elif built_collision_shapes == 0:
+		push_warning("[ChunkManager] Transvoxel preview produced meshes but no collision shapes for viewer_chunk=%s" % str(viewer_chunk))
 
 
 func _update_fps_tracking(delta: float):
@@ -1905,67 +1948,51 @@ func _thread_function():
 	_world_map_buildings = []
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
-	if world_map_active and world_definition_path != "":
-		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
-		var loaded = WorldMapGen.load_world(world_definition_path)
-		if loaded.has("heightmap") and loaded.has("biomes") and loaded.has("roads"):
-			var hmap: Image = loaded.heightmap
-			_world_map_heightmap_bytes = hmap.get_data()
-			_world_map_heightmap_width = hmap.get_width()
-			_world_map_heightmap_height = hmap.get_height()
-			var bmap: Image = loaded.biomes
-			var rmap: Image = loaded.roads
+	if world_map_active and world_definition_path != "" and _world_terrain_source and _world_terrain_source.has_world_data():
+		var h_bytes = _world_terrain_source.heightmap_bytes.duplicate()
+		var b_bytes = _world_terrain_source.biome_bytes.duplicate()
+		var r_bytes = _world_terrain_source.road_bytes.duplicate()
 
-			# Upload raw bytes as storage buffers
-			var h_bytes = hmap.get_data()
-			var b_bytes = bmap.get_data()
-			var r_bytes = rmap.get_data()
-			
-			# Pad to 4-byte alignment for uint packing
-			while h_bytes.size() % 4 != 0: h_bytes.append(0)
-			while b_bytes.size() % 4 != 0: b_bytes.append(0)
-			while r_bytes.size() % 4 != 0: r_bytes.append(0)
-			
-			_world_map_heightmap_buf = rd.storage_buffer_create(h_bytes.size(), h_bytes)
-			_world_map_biome_buf = rd.storage_buffer_create(b_bytes.size(), b_bytes)
-			_world_map_road_buf = rd.storage_buffer_create(r_bytes.size(), r_bytes)
-			
-			# Upload water map if available
-			if loaded.has("water"):
-				var wmap: Image = loaded.water
-				var w_bytes = wmap.get_data()
-				while w_bytes.size() % 4 != 0: w_bytes.append(0)
-				_world_map_water_buf = rd.storage_buffer_create(w_bytes.size(), w_bytes)
-			
-			# Load baked buildings and terrain edits
-			_world_map_buildings = []
-			_world_map_terrain_modifications.clear()
-			if loaded.has("buildings"):
-				_world_map_buildings = loaded.buildings
-				print("[ChunkManager] Loaded %d baked buildings" % _world_map_buildings.size())
-			if loaded.has("terrain_modifications"):
-				_cache_world_map_terrain_modifications(loaded.terrain_modifications)
-				print("[ChunkManager] Loaded %d baked terrain modification chunks" % _world_map_terrain_modifications.size())
-				print("[ChunkManager] Prepared %d baked excavation chunk masks" % _world_map_excavation_masks.size())
-			
-			# Load building footprint map
-			if loaded.has("building_map"):
-				_world_map_building_map = loaded.building_map
-				print("[ChunkManager] Loaded building_map (%dx%d)" % [_world_map_building_map.get_width(), _world_map_building_map.get_height()])
-			
-			# Read metadata for map params
-			if loaded.has("metadata"):
-				var meta = loaded.metadata
-				var meta_terrain_height = float(meta.get("terrain_height", terrain_height))
-				world_map_size = float(meta.get("map_size", 2048))
-				world_map_half = world_map_size / 2.0
-				world_map_max_height = meta_terrain_height * 2.5
-				water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
-			
-			DebugManager.log_chunk("World map loaded: %s (%dx%d, max_h=%.1f)" % [world_definition_path, int(world_map_size), int(world_map_size), world_map_max_height])
-		else:
-			push_error("[ChunkManager] World map at %s missing required PNGs" % world_definition_path)
-			world_map_active = false
+		# Pad to 4-byte alignment for uint packing
+		while h_bytes.size() % 4 != 0: h_bytes.append(0)
+		while b_bytes.size() % 4 != 0: b_bytes.append(0)
+		while r_bytes.size() % 4 != 0: r_bytes.append(0)
+
+		_world_map_heightmap_bytes = _world_terrain_source.heightmap_bytes
+		_world_map_heightmap_width = _world_terrain_source.heightmap_width
+		_world_map_heightmap_height = _world_terrain_source.heightmap_height
+		_world_map_heightmap_buf = rd.storage_buffer_create(h_bytes.size(), h_bytes)
+		_world_map_biome_buf = rd.storage_buffer_create(b_bytes.size(), b_bytes)
+		_world_map_road_buf = rd.storage_buffer_create(r_bytes.size(), r_bytes)
+
+		# Upload water map if available
+		if _world_terrain_source.water_bytes.size() > 0:
+			var w_bytes = _world_terrain_source.water_bytes.duplicate()
+			while w_bytes.size() % 4 != 0: w_bytes.append(0)
+			_world_map_water_buf = rd.storage_buffer_create(w_bytes.size(), w_bytes)
+
+		# Load baked buildings and terrain edits
+		_world_map_buildings = []
+		_world_map_terrain_modifications.clear()
+		if _world_terrain_source.buildings.size() > 0:
+			_world_map_buildings = _world_terrain_source.buildings
+			print("[ChunkManager] Loaded %d baked buildings" % _world_map_buildings.size())
+		if _world_terrain_source.terrain_modifications.size() > 0:
+			_cache_world_map_terrain_modifications(_world_terrain_source.terrain_modifications)
+			print("[ChunkManager] Loaded %d baked terrain modification chunks" % _world_map_terrain_modifications.size())
+			print("[ChunkManager] Prepared %d baked excavation chunk masks" % _world_map_excavation_masks.size())
+
+		# Load building footprint map
+		if _world_terrain_source.building_map != null:
+			_world_map_building_map = _world_terrain_source.building_map
+			print("[ChunkManager] Loaded building_map (%dx%d)" % [_world_map_building_map.get_width(), _world_map_building_map.get_height()])
+
+		DebugManager.log_chunk("World map loaded: %s (%dx%d, max_h=%.1f)" % [world_definition_path, int(world_map_size), int(world_map_size), world_map_max_height])
+	else:
+		push_error("[ChunkManager] World map at %s missing required PNGs" % world_definition_path)
+		world_map_active = false
+		if _world_terrain_source:
+			_world_terrain_source.reset()
 
 	_rebuild_world_map_excavation_buffers(rd)
 
