@@ -168,6 +168,15 @@ func _ready():
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
 
+func _get_chunk_stride() -> int:
+	if terrain_manager and terrain_manager.has_method("get_chunk_stride"):
+		var stride_value = terrain_manager.get_chunk_stride()
+		if typeof(stride_value) == TYPE_INT or typeof(stride_value) == TYPE_FLOAT:
+			var stride := int(stride_value)
+			if stride > 0:
+				return stride
+	return 31
+
 ## Initialize or re-initialize noise generators based on current terrain seed
 func initialize_noise():
 	# Derive seed from world seed for reproducibility
@@ -500,7 +509,7 @@ func _spawn_rock_collider(key, item):
 	active_rock_colliders[key] = collider
 
 func _process_pending_placements():
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	
 	# Process pending rock placements
 	var completed_rocks = []
@@ -540,7 +549,7 @@ func _cleanup_orphan_colliders():
 	if not terrain_manager:
 		return
 	
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var cleaned = 0
 	var visible_colliders = 0
 	var total_colliders = 0
@@ -588,7 +597,7 @@ func _update_proximity_colliders():
 	
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var chunk_check_dist = collider_distance + chunk_stride # Only check nearby chunks
 	
 	# Collect trees that need colliders (only from nearby chunks)
@@ -768,7 +777,7 @@ func _update_grass_proximity_colliders():
 	
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var chunk_check_dist = collider_distance + chunk_stride
 	
 	# Collect grass that needs colliders
@@ -899,7 +908,7 @@ func _update_rock_proximity_colliders():
 	
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var chunk_check_dist = collider_distance + chunk_stride
 	
 	var rocks_needing_colliders: Array[Dictionary] = []
@@ -960,7 +969,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	var tree_list = []
 	var valid_transforms = []
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
@@ -1121,7 +1130,7 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 	PerformanceMonitor.start_measure("Veg Clear Area")
 
 	var radius_sq = radius * radius
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var min_chunk_x = int(floor((center.x - radius) / chunk_stride))
 	var max_chunk_x = int(floor((center.x + radius) / chunk_stride))
 	var min_chunk_z = int(floor((center.z - radius) / chunk_stride))
@@ -1223,7 +1232,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	var grass_list = []
 	var valid_transforms = []
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
@@ -1422,7 +1431,7 @@ func _position_hash(pos: Vector3) -> String:
 
 func place_grass(world_pos: Vector3) -> bool:
 	# Find which chunk this position belongs to
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var coord = Vector2i(floor(world_pos.x / chunk_stride), floor(world_pos.z / chunk_stride))
 	
 	var random_scale = randf_range(0.8, 1.2)
@@ -1569,7 +1578,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	
 	var rock_list = []
 	var valid_transforms = []
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
@@ -1734,7 +1743,7 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 	return false
 
 func place_rock(world_pos: Vector3) -> bool:
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	var chunk_stride = _get_chunk_stride()
 	var coord = Vector2i(int(floor(world_pos.x / chunk_stride)), int(floor(world_pos.z / chunk_stride)))
 	
 	var random_scale = randf_range(0.6, 1.4)
@@ -2118,5 +2127,4 @@ func clear_all_data():
 		"rock_coords": rock_coords.size(),
 		"tree_coords": tree_coords.size()
 	})
-	
 	DebugManager.log_vegetation("VegetationManager: All data cleared for new session")

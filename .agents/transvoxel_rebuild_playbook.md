@@ -64,6 +64,9 @@ This is the compact restart guide for rebuilding Transvoxel on this project if t
   - block layout / hide distance / rebuild timing issue
 - Far terrain ignores dug-out terrain edits:
   - excavation masks are not wired into the Transvoxel density sampler
+- Normals look flat even on cliff fixtures:
+  - the fixture is too gentle or the normals path is still being overwritten
+- The normals fixture now passes, so if lighting regresses again the cause is likely material/shader parity rather than the geometry normals path.
 
 ## Recovery Order
 If we ever have to restart again:
@@ -75,7 +78,8 @@ If we ever have to restart again:
 6. Run the visual smoke scene.
 7. Verify collision bodies and collision shapes exist in the preview.
 8. Verify excavation parity on a carved-out fixture.
-9. Only then run the town benchmark.
+9. Verify normals on a real cliff fixture.
+10. Only then run the town benchmark.
 
 ## Do Not Repeat
 - Do not turn Transvoxel into a decorative overlay.

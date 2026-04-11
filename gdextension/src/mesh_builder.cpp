@@ -1965,18 +1965,7 @@ Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
         return mesh;
     }
 
-    for (size_t i = 0; i < buffers.vertices.size(); ++i) {
-        const Vector3 &position = buffers.vertices[i];
-        buffers.normals[i] = sample_world_map_height_normal(
-            heightmap_bytes,
-            image_width,
-            image_height,
-            map_size,
-            height_scale,
-            position.x,
-            position.z
-        );
-    }
+    buffers.compute_normals();
 
     PackedVector3Array vertices;
     PackedVector3Array normals;

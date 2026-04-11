@@ -39,5 +39,8 @@ Build a real Transvoxel far-terrain path without fake shell overlays.
 - The seam-gap physics sweep now passes on the live layout, and the layout helper mirrors transition masks onto the lower-LOD neighbor so the seam convention stays symmetric.
 - The seam-gap proof must include corners, not just faces, because corner holes can survive a face-only sweep.
 - The exact-terrain hide/show boundary must follow the snapped layout anchor, not the raw viewer chunk, or the handoff will pop even when the seam proof passes.
+- The cut line should also be checked against the current viewer chunk, because a pure layout-anchor cut can still lag behind the player and look like popping/gaps.
 - Preserve the preview handoff: build the replacement layout off-tree, swap it in only after it is complete, and keep a small overlap buffer so the exact-to-Transvoxel boundary does not visibly tear open.
 - Excavation masks are part of parity too; if the far mesh ignores dug-out chunks, it will still read as feature-loss even when the seam is watertight.
+- The normals gate needs a genuinely steep cliff fixture; a gentle gradient can hide a broken lighting path and produce a false failure or false pass.
+- The normals gate now passes on that steep cliff fixture, so lighting parity has a real fixture-backed baseline.

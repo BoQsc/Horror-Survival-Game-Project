@@ -51,3 +51,6 @@
 - The preview harness now verifies collision bodies/shapes exist in the far mesh, so the visible LOD cannot silently regress into a non-playable shell.
 - Keep preview swaps atomic: build off-tree, swap only after the replacement is ready, and keep a small overlap buffer so the handoff does not visibly open a seam.
 - Excavation parity now has a dedicated proof gate, and the Transvoxel sampler consumes the baked excavation masks so holes do not disappear in the far mesh.
+- The exact-terrain hide/show boundary must follow the current viewer chunk as well as the snapped layout anchor, otherwise the transition band reads as a moving pop line.
+- A normals proof gate is part of the contract now; use a real cliff fixture so we can catch a flat-normal regression before any gameplay run.
+- The normals proof gate now passes, so lighting parity has a concrete fixture-backed check instead of a guess.

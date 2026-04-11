@@ -67,7 +67,7 @@ var _world_terrain_source = WorldTerrainSourceClass.new()
 var _transvoxel_preview_root: Node3D = null
 var _transvoxel_preview_last_layout_anchor: Vector2i = Vector2i(2147483647, 2147483647)
 var _transvoxel_preview_hide_distance: int = 0
-const TRANSVOXEL_PREVIEW_OVERLAP_CHUNKS: int = 1
+const TRANSVOXEL_PREVIEW_OVERLAP_CHUNKS: int = 3
 var _transvoxel_preview_material: Material = null
 
 # GPU Threading (single thread for compute shaders)
@@ -329,6 +329,10 @@ func get_viewer_position() -> Vector3:
 	return viewer.global_position
 
 
+func get_chunk_stride() -> int:
+	return CHUNK_STRIDE
+
+
 func _get_task_queue_count() -> int:
 	mutex.lock()
 	var count := task_queue.size()
@@ -566,13 +570,13 @@ func _update_transvoxel_preview(force_rebuild: bool = false) -> void:
 		int(floor(float(viewer_chunk.y) / float(layout_snap))) * layout_snap
 	)
 	if not force_rebuild and layout_anchor == _transvoxel_preview_last_layout_anchor:
-		_set_exact_terrain_visibility_for_transvoxel(layout_anchor, _transvoxel_preview_hide_distance)
+		_set_exact_terrain_visibility_for_transvoxel(viewer_chunk, _transvoxel_preview_hide_distance)
 		return
-	if _rebuild_transvoxel_preview(layout_anchor):
+	if _rebuild_transvoxel_preview(layout_anchor, viewer_chunk):
 		_transvoxel_preview_last_layout_anchor = layout_anchor
 
 
-func _rebuild_transvoxel_preview(layout_anchor: Vector2i) -> bool:
+func _rebuild_transvoxel_preview(layout_anchor: Vector2i, viewer_chunk: Vector2i) -> bool:
 	if not transvoxel_preview_enabled or not world_map_active:
 		return false
 	if _world_terrain_source == null or not _world_terrain_source.has_world_data():
@@ -652,7 +656,7 @@ func _rebuild_transvoxel_preview(layout_anchor: Vector2i) -> bool:
 	if old_preview_root and is_instance_valid(old_preview_root):
 		old_preview_root.queue_free()
 
-	_set_exact_terrain_visibility_for_transvoxel(layout_anchor, _transvoxel_preview_hide_distance)
+	_set_exact_terrain_visibility_for_transvoxel(viewer_chunk, _transvoxel_preview_hide_distance)
 
 	print("[ChunkManager] Transvoxel preview rebuilt: blocks=%d built=%d layout_anchor=%s outer_chunks=%d" % [blocks.size(), built_blocks, str(layout_anchor), outer_chunks])
 	print("[ChunkManager] Transvoxel preview collision shapes: %d" % built_collision_shapes)

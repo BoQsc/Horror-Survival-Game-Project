@@ -46,3 +46,7 @@
 - The preview swap must be atomic: build the replacement layout off-tree, keep the old preview alive until the new one is ready, then swap it in and free the old root.
 - A small overlap buffer on the exact-terrain hide distance helps cover the handoff edge without reintroducing the old shell overlay behavior.
 - Excavation masks must be threaded into the Transvoxel density sampler too, or the far mesh will ignore the same dug-out holes that the live terrain already knows about.
+- The exact-to-Transvoxel handoff also needs a small safety overlap buffer; otherwise the player sees the seam pop open while the replacement layout finishes swapping in.
+- Exact-terrain visibility must follow the current viewer chunk, not just the snapped layout anchor, or the cut line lags behind the player and reads like popping/gaps.
+- The normals proof gate uses a real cliff fixture now; the earlier "cliff" sample was too gentle and produced a false flat-normal failure.
+- The normals proof gate now passes on the real cliff fixture, so the far mesh lighting path is no longer just assumed to be correct.

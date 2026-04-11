@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://addons/tests/transvoxel_normal_test_bot.gd" id="1"]
+
+[node name="TransvoxelNormalTest" type="Node"]
+script = ExtResource("1")
