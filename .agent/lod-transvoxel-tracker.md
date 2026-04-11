@@ -31,7 +31,9 @@
 ## Lessons Learned
 - Do not treat Transvoxel as a decorative overlay on top of marching cubes; it must own the far field and hide the exact terrain only by distance.
 - If the far terrain looks like blue stripes, the root cause is usually coverage, culling/winding, material parity, or collision parity, not the extractor alone.
+- The early "invisible" result was fixed by making the preview exclusive, using the real terrain material path, emitting a defined vertex color payload, and correcting the winding/cull behavior so the far mesh actually stayed visible to the player.
 - Keep one shared world-terrain source; duplicated world-map caches quickly drift and cause feature loss.
 - Collision must be proved alongside visibility or the far mesh reads as broken gameplay even when the geometry builds.
 - Keep debug tint and player-facing toggles out of the core contract; they are inspection aids, not part of the feature.
 - Do not performance-tune a seam layout until the seam/collision gates are passing.
+- The restart guide lives in `.agents/transvoxel_rebuild_playbook.md` and should be kept in sync with the known-good snapshot commit.

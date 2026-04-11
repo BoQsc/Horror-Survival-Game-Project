@@ -27,6 +27,8 @@ Build a real Transvoxel far-terrain path without fake shell overlays.
 ## Lessons Learned
 - The important failure mode is not “does it render,” but “does it stay coherent with the rest of the world.”
 - A Transvoxel far mesh that is visible but dim, stripe-like, or separable from the near terrain is still not done.
+- The early invisibility problem was solved by making the preview exclusive, using the real terrain material, emitting a defined vertex color payload, and fixing winding/cull behavior so the player could actually see the far mesh.
 - Never ship a branch where the preview hides the collision path or the collision path hides the preview path.
 - Keep the far mesh on the same lighting/material rules as the terrain, otherwise it reads as fake even when the geometry is correct.
 - Building LOD is a separate system and should stay out of the terrain parity contract for now.
+- The restart playbook lives in `.agents/transvoxel_rebuild_playbook.md` and should be treated as the real recovery path if the branch has to be rebuilt.

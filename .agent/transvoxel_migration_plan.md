@@ -35,3 +35,5 @@
 - Prove seam coverage and collision before declaring the far mesh usable.
 - Visual debug tint belongs only in inspection paths, not in the core feature contract.
 - If the far field still feels like separate stripes, treat that as a block-layout / parity issue before touching performance again.
+- The first visible Transvoxel result came from fixing the preview path itself: exclusive far mesh, real terrain material, explicit vertex color payload, and correct winding/culling.
+- The explicit restart playbook lives in `.agents/transvoxel_rebuild_playbook.md` and captures the known-good snapshot, failure signatures, and recovery order.
