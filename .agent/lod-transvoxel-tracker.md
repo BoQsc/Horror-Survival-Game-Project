@@ -27,3 +27,11 @@
 - A dedicated visible block-layout smoke scene now exists and should show the coarse/fine hierarchy in 3D before any live-world wiring is attempted.
 - The visible layout smoke now renders the real Transvoxel meshes again, so the block hierarchy can be inspected as actual terrain geometry instead of placeholder boxes.
 - A shared `WorldTerrainSource` now centralizes the loaded world-map height, biome, road, and water data so marching cubes and Transvoxel can consume the same terrain source instead of separate ad hoc caches.
+
+## Lessons Learned
+- Do not treat Transvoxel as a decorative overlay on top of marching cubes; it must own the far field and hide the exact terrain only by distance.
+- If the far terrain looks like blue stripes, the root cause is usually coverage, culling/winding, material parity, or collision parity, not the extractor alone.
+- Keep one shared world-terrain source; duplicated world-map caches quickly drift and cause feature loss.
+- Collision must be proved alongside visibility or the far mesh reads as broken gameplay even when the geometry builds.
+- Keep debug tint and player-facing toggles out of the core contract; they are inspection aids, not part of the feature.
+- Do not performance-tune a seam layout until the seam/collision gates are passing.

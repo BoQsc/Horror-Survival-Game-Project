@@ -27,3 +27,11 @@
 ## Current branch
 - Branch: `codex/transvoxel-proof-first`
 - Status: native Transvoxel mesher restored on top of the runtime base, fixture + seam tests passed, and block-layout proof is next.
+
+## Lessons Learned
+- Do not restart from a fake shell/stripe layout; that path repeatedly hid the real problem.
+- Keep the preview exclusive or it will read like marching cubes plus a dim overlay.
+- Use the same world data source for marching cubes and Transvoxel so biomes, roads, water, and edits stay coherent.
+- Prove seam coverage and collision before declaring the far mesh usable.
+- Visual debug tint belongs only in inspection paths, not in the core feature contract.
+- If the far field still feels like separate stripes, treat that as a block-layout / parity issue before touching performance again.

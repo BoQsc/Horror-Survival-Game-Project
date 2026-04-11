@@ -23,3 +23,10 @@ Build a real Transvoxel far-terrain path without fake shell overlays.
 - Shared terrain source exists.
 - Preview collision and seam checks are now part of the harness.
 - Main risk: feature parity and coherence, not just geometry.
+
+## Lessons Learned
+- The important failure mode is not “does it render,” but “does it stay coherent with the rest of the world.”
+- A Transvoxel far mesh that is visible but dim, stripe-like, or separable from the near terrain is still not done.
+- Never ship a branch where the preview hides the collision path or the collision path hides the preview path.
+- Keep the far mesh on the same lighting/material rules as the terrain, otherwise it reads as fake even when the geometry is correct.
+- Building LOD is a separate system and should stay out of the terrain parity contract for now.
