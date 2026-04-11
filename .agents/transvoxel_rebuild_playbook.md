@@ -62,6 +62,8 @@ This is the compact restart guide for rebuilding Transvoxel on this project if t
   - collision path missing or not aligned with the visible preview
 - Shapes pop in / seams open:
   - block layout / hide distance / rebuild timing issue
+- Far terrain ignores dug-out terrain edits:
+  - excavation masks are not wired into the Transvoxel density sampler
 
 ## Recovery Order
 If we ever have to restart again:
@@ -72,7 +74,8 @@ If we ever have to restart again:
 5. Run seam-pair coverage.
 6. Run the visual smoke scene.
 7. Verify collision bodies and collision shapes exist in the preview.
-8. Only then run the town benchmark.
+8. Verify excavation parity on a carved-out fixture.
+9. Only then run the town benchmark.
 
 ## Do Not Repeat
 - Do not turn Transvoxel into a decorative overlay.

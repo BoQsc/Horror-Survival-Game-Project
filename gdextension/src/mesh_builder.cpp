@@ -261,18 +261,47 @@ static inline bool transvoxel_side_mask_enabled(int mask, TransvoxelSide side) {
 }
 
 static inline float sample_transvoxel_density(
-    const PackedByteArray &heightmap_bytes,
-    int image_width,
-    int image_height,
-    float map_size,
-    float height_scale,
-    const Vector3 &position
-) {
-    const float terrain_height = sample_world_map_height_bilinear(
-        heightmap_bytes,
-        image_width,
-        image_height,
-        map_size,
+      const PackedByteArray &heightmap_bytes,
+      int image_width,
+      int image_height,
+      float map_size,
+      float height_scale,
+      const Vector3 &position,
+      const Dictionary &excavation_masks,
+      int chunk_stride
+  ) {
+      if (chunk_stride > 0 && !excavation_masks.is_empty()) {
+          const float stride = float(chunk_stride);
+          const int density_grid_size = chunk_stride + 1;
+          const int chunk_x = int(Math::floor(position.x / stride));
+          const int chunk_y = int(Math::floor(position.y / stride));
+          const int chunk_z = int(Math::floor(position.z / stride));
+          const Vector3i chunk_coord(chunk_x, chunk_y, chunk_z);
+          const Variant mask_variant = excavation_masks.get(chunk_coord, Variant());
+          if (mask_variant.get_type() == Variant::PACKED_BYTE_ARRAY) {
+              const PackedByteArray mask = mask_variant;
+              if (!mask.is_empty()) {
+                  const int local_x = int(Math::round(position.x - float(chunk_x * chunk_stride)));
+                  const int local_y = int(Math::round(position.y - float(chunk_y * chunk_stride)));
+                  const int local_z = int(Math::round(position.z - float(chunk_z * chunk_stride)));
+                  if (local_x >= 0 && local_x < density_grid_size && local_y >= 0 && local_y < density_grid_size && local_z >= 0 && local_z < density_grid_size) {
+                      const int bit_index = local_x + (local_y * density_grid_size) + (local_z * density_grid_size * density_grid_size);
+                      const int byte_index = bit_index >> 3;
+                      if (byte_index >= 0 && byte_index < mask.size()) {
+                          const uint8_t mask_byte = mask[byte_index];
+                          if (((mask_byte >> (bit_index & 7)) & 1u) != 0u) {
+                              return -10.0f;
+                          }
+                      }
+                  }
+              }
+          }
+      }
+      const float terrain_height = sample_world_map_height_bilinear(
+          heightmap_bytes,
+          image_width,
+          image_height,
+          map_size,
         height_scale,
         position.x,
         position.z
@@ -957,7 +986,7 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("apply_world_map_collision_boxes", "body_rid", "collision_boxes"), &MeshBuilder::apply_world_map_collision_boxes);
     ClassDB::bind_method(D_METHOD("build_heightfield_mesh", "heights", "width", "depth", "cell_size", "skirt_depth"), &MeshBuilder::build_heightfield_mesh);
     UtilityFunctions::print("[MeshBuilder] binding build_transvoxel_heightfield_mesh");
-    ClassDB::bind_method(D_METHOD("build_transvoxel_heightfield_mesh", "heightmap_bytes", "image_width", "image_height", "map_size", "height_scale", "block_base", "block_size", "subdivisions", "transition_sides_mask"), &MeshBuilder::build_transvoxel_heightfield_mesh);
+    ClassDB::bind_method(D_METHOD("build_transvoxel_heightfield_mesh", "heightmap_bytes", "image_width", "image_height", "map_size", "height_scale", "block_base", "block_size", "subdivisions", "transition_sides_mask", "excavation_masks", "chunk_stride"), &MeshBuilder::build_transvoxel_heightfield_mesh, DEFVAL(Dictionary()), DEFVAL(0));
     UtilityFunctions::print("[MeshBuilder] bound build_transvoxel_heightfield_mesh");
     ClassDB::bind_method(D_METHOD("merge_heightfield_meshes", "mesh_specs"), &MeshBuilder::merge_heightfield_meshes);
   }
@@ -1748,16 +1777,18 @@ Ref<ArrayMesh> MeshBuilder::build_heightfield_mesh(const PackedFloat32Array& hei
 }
 
 Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
-    const PackedByteArray& heightmap_bytes,
-    int image_width,
-    int image_height,
-    float map_size,
-    float height_scale,
-    const Vector3& block_base,
-    const Vector3& block_size,
-    int subdivisions,
-    int transition_sides_mask
-) {
+      const PackedByteArray& heightmap_bytes,
+      int image_width,
+      int image_height,
+      float map_size,
+      float height_scale,
+      const Vector3& block_base,
+      const Vector3& block_size,
+      int subdivisions,
+      int transition_sides_mask,
+      const Dictionary& excavation_masks,
+      int chunk_stride
+  ) {
     Ref<ArrayMesh> mesh;
 
     if (heightmap_bytes.is_empty() || image_width < 2 || image_height < 2) {
@@ -1776,16 +1807,18 @@ Ref<ArrayMesh> MeshBuilder::build_transvoxel_heightfield_mesh(
     const size_t estimated_indices = size_t(std::max(2048, estimated_cells * 18));
     buffers.reserve(estimated_vertices, estimated_indices);
 
-    auto sample_density = [&](const Vector3& position) -> float {
-        return sample_transvoxel_density(
-            heightmap_bytes,
-            image_width,
-            image_height,
-            map_size,
-            height_scale,
-            position
-        );
-    };
+      auto sample_density = [&](const Vector3& position) -> float {
+          return sample_transvoxel_density(
+              heightmap_bytes,
+              image_width,
+              image_height,
+              map_size,
+              height_scale,
+              position,
+              excavation_masks,
+              chunk_stride
+          );
+      };
 
     auto append_regular_cell = [&](int cell_x, int cell_y, int cell_z) {
         TransvoxelSamplePoint points[8];

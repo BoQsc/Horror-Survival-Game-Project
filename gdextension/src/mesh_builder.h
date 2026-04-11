@@ -90,7 +90,9 @@ public:
 		const Vector3& block_base,
 		const Vector3& block_size,
 		int subdivisions,
-		int transition_sides_mask
+		int transition_sides_mask,
+		const Dictionary& excavation_masks = Dictionary(),
+		int chunk_stride = 0
 	);
 
 	// Merges a list of one-surface heightfield meshes into a single mesh.

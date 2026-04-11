@@ -67,6 +67,7 @@ var _world_terrain_source = WorldTerrainSourceClass.new()
 var _transvoxel_preview_root: Node3D = null
 var _transvoxel_preview_last_layout_anchor: Vector2i = Vector2i(2147483647, 2147483647)
 var _transvoxel_preview_hide_distance: int = 0
+const TRANSVOXEL_PREVIEW_OVERLAP_CHUNKS: int = 1
 var _transvoxel_preview_material: Material = null
 
 # GPU Threading (single thread for compute shaders)
@@ -558,46 +559,45 @@ func _update_transvoxel_preview(force_rebuild: bool = false) -> void:
 		int(floor(viewer_pos.x / CHUNK_STRIDE)),
 		int(floor(viewer_pos.z / CHUNK_STRIDE))
 	)
-	var layout_snap: int = max(1, max(6, render_distance + 1))
+	var layout_inner_chunks: int = max(8, render_distance + 3)
+	var layout_snap: int = max(1, layout_inner_chunks * 2)
 	var layout_anchor := Vector2i(
 		int(floor(float(viewer_chunk.x) / float(layout_snap))) * layout_snap,
 		int(floor(float(viewer_chunk.y) / float(layout_snap))) * layout_snap
 	)
 	if not force_rebuild and layout_anchor == _transvoxel_preview_last_layout_anchor:
-		_set_exact_terrain_visibility_for_transvoxel(viewer_chunk, _transvoxel_preview_hide_distance)
+		_set_exact_terrain_visibility_for_transvoxel(layout_anchor, _transvoxel_preview_hide_distance)
 		return
-	_transvoxel_preview_last_layout_anchor = layout_anchor
-	_rebuild_transvoxel_preview(viewer_chunk)
+	if _rebuild_transvoxel_preview(layout_anchor):
+		_transvoxel_preview_last_layout_anchor = layout_anchor
 
 
-func _rebuild_transvoxel_preview(viewer_chunk: Vector2i) -> void:
+func _rebuild_transvoxel_preview(layout_anchor: Vector2i) -> bool:
 	if not transvoxel_preview_enabled or not world_map_active:
-		return
+		return false
 	if _world_terrain_source == null or not _world_terrain_source.has_world_data():
-		return
+		return false
 	if not ClassDB.class_exists("MeshBuilder"):
 		push_warning("[ChunkManager] MeshBuilder is unavailable - cannot build Transvoxel preview")
-		return
-
-	var preview_root: Node3D = _ensure_transvoxel_preview_root()
-	for child in preview_root.get_children():
-		child.queue_free()
+		return false
 
 	var layout_builder: Object = TransvoxelLayoutClass.new()
-	var inner_chunks: int = max(6, render_distance + 1)
+	var inner_chunks: int = max(8, render_distance + 3)
 	var outer_chunks: int = max(128, inner_chunks * 16)
-	var layout: Dictionary = layout_builder.build_layout(viewer_chunk, inner_chunks, outer_chunks, CHUNK_STRIDE, 8)
-	_transvoxel_preview_hide_distance = int(layout.get("hide_distance", max(1, inner_chunks)))
+	var layout: Dictionary = layout_builder.build_layout(layout_anchor, inner_chunks, outer_chunks, CHUNK_STRIDE, 8)
+	_transvoxel_preview_hide_distance = int(layout.get("hide_distance", max(1, inner_chunks))) + TRANSVOXEL_PREVIEW_OVERLAP_CHUNKS
 	var blocks: Array = layout.get("blocks", [])
 
 	var builder: Object = ClassDB.instantiate("MeshBuilder")
 	if builder == null:
 		push_warning("[ChunkManager] Could not instantiate MeshBuilder for Transvoxel preview")
-		return
+		return false
 
 	var preview_material: Material = _make_transvoxel_preview_material()
 	var built_blocks: int = 0
 	var built_collision_shapes: int = 0
+	var next_preview_root := Node3D.new()
+	next_preview_root.name = "WorldMapTransvoxelLOD"
 
 	for block in blocks:
 		var mesh: ArrayMesh = builder.build_transvoxel_heightfield_mesh(
@@ -609,7 +609,9 @@ func _rebuild_transvoxel_preview(viewer_chunk: Vector2i) -> void:
 			Vector3(float(block.get("min_x", 0.0)), 0.0, float(block.get("min_z", 0.0))),
 			Vector3(float(block.get("block_size", 0.0)), _world_terrain_source.world_map_max_height, float(block.get("block_size", 0.0))),
 			int(block.get("subdivisions", 4)),
-			int(block.get("transition_mask", 0))
+			int(block.get("transition_mask", 0)),
+			_world_map_excavation_masks,
+			CHUNK_STRIDE
 		)
 		if mesh == null:
 			continue
@@ -636,17 +638,28 @@ func _rebuild_transvoxel_preview(viewer_chunk: Vector2i) -> void:
 			block_root.add_child(collision_shape)
 			built_collision_shapes += 1
 
-		preview_root.add_child(block_root)
+		next_preview_root.add_child(block_root)
 		built_blocks += 1
 
-	_set_exact_terrain_visibility_for_transvoxel(viewer_chunk, _transvoxel_preview_hide_distance)
-
-	print("[ChunkManager] Transvoxel preview rebuilt: blocks=%d built=%d viewer_chunk=%s outer_chunks=%d" % [blocks.size(), built_blocks, str(viewer_chunk), outer_chunks])
-	print("[ChunkManager] Transvoxel preview collision shapes: %d" % built_collision_shapes)
 	if built_blocks == 0:
-		push_warning("[ChunkManager] Transvoxel preview produced no meshes for viewer_chunk=%s" % str(viewer_chunk))
-	elif built_collision_shapes == 0:
-		push_warning("[ChunkManager] Transvoxel preview produced meshes but no collision shapes for viewer_chunk=%s" % str(viewer_chunk))
+		next_preview_root.queue_free()
+		push_warning("[ChunkManager] Transvoxel preview produced no meshes for layout_anchor=%s" % str(layout_anchor))
+		return false
+
+	var old_preview_root: Node3D = _transvoxel_preview_root if _transvoxel_preview_root and is_instance_valid(_transvoxel_preview_root) else null
+	_transvoxel_preview_root = next_preview_root
+	add_child(next_preview_root)
+	if old_preview_root and is_instance_valid(old_preview_root):
+		old_preview_root.queue_free()
+
+	_set_exact_terrain_visibility_for_transvoxel(layout_anchor, _transvoxel_preview_hide_distance)
+
+	print("[ChunkManager] Transvoxel preview rebuilt: blocks=%d built=%d layout_anchor=%s outer_chunks=%d" % [blocks.size(), built_blocks, str(layout_anchor), outer_chunks])
+	print("[ChunkManager] Transvoxel preview collision shapes: %d" % built_collision_shapes)
+	if built_collision_shapes == 0:
+		push_warning("[ChunkManager] Transvoxel preview produced meshes but no collision shapes for layout_anchor=%s" % str(layout_anchor))
+
+	return true
 
 
 func _update_fps_tracking(delta: float):

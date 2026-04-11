@@ -87,6 +87,9 @@ func _run_layout_case(builder: Object, layout: Dictionary) -> bool:
 	if not _sweep_transition_faces(space_state, blocks):
 		root.queue_free()
 		return false
+	if not _sweep_transition_corners(space_state, blocks):
+		root.queue_free()
+		return false
 
 	root.queue_free()
 	await get_tree().physics_frame
@@ -133,6 +136,33 @@ func _sweep_transition_faces(space_state: PhysicsDirectSpaceState3D, blocks: Arr
 		if mask & int(FACE_MASKS["north"]) != 0:
 			if not _sweep_face_line(space_state, String(block.get("block_kind", "block")), "north", max_z, min_x, max_x, "x"):
 				return false
+	return true
+
+
+func _sweep_transition_corners(space_state: PhysicsDirectSpaceState3D, blocks: Array) -> bool:
+	var corner_points: Dictionary = {}
+	for block in blocks:
+		if int(block.get("transition_mask", 0)) == 0:
+			continue
+		var min_x := float(block.get("min_x", 0.0))
+		var max_x := float(block.get("max_x", 0.0))
+		var min_z := float(block.get("min_z", 0.0))
+		var max_z := float(block.get("max_z", 0.0))
+		corner_points["%s|%s" % [str(min_x), str(min_z)]] = Vector2(min_x, min_z)
+		corner_points["%s|%s" % [str(min_x), str(max_z)]] = Vector2(min_x, max_z)
+		corner_points["%s|%s" % [str(max_x), str(min_z)]] = Vector2(max_x, min_z)
+		corner_points["%s|%s" % [str(max_x), str(max_z)]] = Vector2(max_x, max_z)
+
+	for corner in corner_points.values():
+		var seam_x: float = float(corner.x)
+		var seam_z: float = float(corner.y)
+		for offset_x in RAY_OFFSETS:
+			for offset_z in RAY_OFFSETS:
+				var origin := Vector3(seam_x + float(offset_x), RAY_TOP, seam_z + float(offset_z))
+				var target := Vector3(seam_x + float(offset_x), RAY_BOTTOM, seam_z + float(offset_z))
+				if not _ray_hits(space_state, origin, target):
+					print("[TRANSVOXEL_SEAM_GAP] ERROR: Corner ray missed at x=%.2f z=%.2f" % [origin.x, origin.z])
+					return false
 	return true
 
 

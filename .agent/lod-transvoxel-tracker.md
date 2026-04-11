@@ -41,3 +41,8 @@
 - The restart guide lives in `.agents/transvoxel_rebuild_playbook.md` and should be kept in sync with the known-good snapshot commit.
 - The next gate is a seam-gap physics sweep that raycasts across the transition boundary and fails on open holes or missing collision coverage.
 - The seam-gap sweep now passes on the live layout, and the layout helper now mirrors transition masks onto the lower-LOD neighbor so both sides of the seam stay in the same proof contract.
+- The seam-gap sweep now also checks corner junctions, because face-only checks can miss a hole where four blocks meet.
+- Exact terrain visibility now follows the same snapped layout anchor as the preview rebuild, so the handoff does not chase raw viewer chunks and pop inside the same layout.
+- The preview swap must be atomic: build the replacement layout off-tree, keep the old preview alive until the new one is ready, then swap it in and free the old root.
+- A small overlap buffer on the exact-terrain hide distance helps cover the handoff edge without reintroducing the old shell overlay behavior.
+- Excavation masks must be threaded into the Transvoxel density sampler too, or the far mesh will ignore the same dug-out holes that the live terrain already knows about.

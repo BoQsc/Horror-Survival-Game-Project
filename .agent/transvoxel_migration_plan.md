@@ -30,6 +30,9 @@
 - Once the sweep passes, keep the layout contract symmetrical:
   - mirror transition masks onto the lower-LOD neighbor too
   - keep the live preview and the proof gate using the same seam convention
+- Extend the sweep to corner junctions as well as faces so a hole cannot hide where four blocks meet.
+- Keep exact-terrain visibility keyed to the same snapped layout anchor as the preview rebuild, not the raw viewer chunk, or the handoff will visibly pop inside one layout.
+- Thread the baked excavation masks into the Transvoxel density sampler so the far mesh preserves dug-out voids instead of filling them back in.
 
 ## Current branch
 - Branch: `codex/transvoxel-proof-first`
@@ -46,3 +49,5 @@
 - The explicit restart playbook lives in `.agents/transvoxel_rebuild_playbook.md` and captures the known-good snapshot, failure signatures, and recovery order.
 - Avoid rebuilding the preview on every viewer chunk step; use the snapped layout anchor as the rebuild key so the same block layout stays stable until the layout actually needs to change.
 - The preview harness now verifies collision bodies/shapes exist in the far mesh, so the visible LOD cannot silently regress into a non-playable shell.
+- Keep preview swaps atomic: build off-tree, swap only after the replacement is ready, and keep a small overlap buffer so the handoff does not visibly open a seam.
+- Excavation parity now has a dedicated proof gate, and the Transvoxel sampler consumes the baked excavation masks so holes do not disappear in the far mesh.
