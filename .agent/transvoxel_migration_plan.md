@@ -37,3 +37,5 @@
 - If the far field still feels like separate stripes, treat that as a block-layout / parity issue before touching performance again.
 - The first visible Transvoxel result came from fixing the preview path itself: exclusive far mesh, real terrain material, explicit vertex color payload, and correct winding/culling.
 - The explicit restart playbook lives in `.agents/transvoxel_rebuild_playbook.md` and captures the known-good snapshot, failure signatures, and recovery order.
+- Avoid rebuilding the preview on every viewer chunk step; use the snapped layout anchor as the rebuild key so the same block layout stays stable until the layout actually needs to change.
+- The preview harness now verifies collision bodies/shapes exist in the far mesh, so the visible LOD cannot silently regress into a non-playable shell.

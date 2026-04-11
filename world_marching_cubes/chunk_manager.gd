@@ -65,7 +65,7 @@ const TransvoxelLayoutClass := preload("res://world_marching_cubes/transvoxel_la
 const WorldTerrainSourceClass := preload("res://world_marching_cubes/world_terrain_source.gd")
 var _world_terrain_source = WorldTerrainSourceClass.new()
 var _transvoxel_preview_root: Node3D = null
-var _transvoxel_preview_last_viewer_chunk: Vector2i = Vector2i(2147483647, 2147483647)
+var _transvoxel_preview_last_layout_anchor: Vector2i = Vector2i(2147483647, 2147483647)
 var _transvoxel_preview_hide_distance: int = 0
 var _transvoxel_preview_material: Material = null
 
@@ -539,7 +539,7 @@ func _ensure_transvoxel_preview_root() -> Node3D:
 
 
 func _clear_transvoxel_preview() -> void:
-	_transvoxel_preview_last_viewer_chunk = Vector2i(2147483647, 2147483647)
+	_transvoxel_preview_last_layout_anchor = Vector2i(2147483647, 2147483647)
 	if _transvoxel_preview_root and is_instance_valid(_transvoxel_preview_root):
 		_transvoxel_preview_root.queue_free()
 	_transvoxel_preview_root = null
@@ -558,10 +558,15 @@ func _update_transvoxel_preview(force_rebuild: bool = false) -> void:
 		int(floor(viewer_pos.x / CHUNK_STRIDE)),
 		int(floor(viewer_pos.z / CHUNK_STRIDE))
 	)
-	if not force_rebuild and viewer_chunk == _transvoxel_preview_last_viewer_chunk:
+	var layout_snap: int = max(1, max(6, render_distance + 1))
+	var layout_anchor := Vector2i(
+		int(floor(float(viewer_chunk.x) / float(layout_snap))) * layout_snap,
+		int(floor(float(viewer_chunk.y) / float(layout_snap))) * layout_snap
+	)
+	if not force_rebuild and layout_anchor == _transvoxel_preview_last_layout_anchor:
 		_set_exact_terrain_visibility_for_transvoxel(viewer_chunk, _transvoxel_preview_hide_distance)
 		return
-	_transvoxel_preview_last_viewer_chunk = viewer_chunk
+	_transvoxel_preview_last_layout_anchor = layout_anchor
 	_rebuild_transvoxel_preview(viewer_chunk)
 
 
