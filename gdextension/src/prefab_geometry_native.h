@@ -1,0 +1,49 @@
+#ifndef PREFAB_GEOMETRY_NATIVE_H
+#define PREFAB_GEOMETRY_NATIVE_H
+
+#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/variant.hpp>
+#include <godot_cpp/variant/vector2i.hpp>
+#include <godot_cpp/variant/vector3.hpp>
+#include <godot_cpp/variant/vector3i.hpp>
+
+namespace godot {
+
+class PrefabGeometryNative : public RefCounted {
+	GDCLASS(PrefabGeometryNative, RefCounted)
+
+protected:
+	static void _bind_methods();
+
+public:
+	PrefabGeometryNative();
+	~PrefabGeometryNative();
+
+	Vector3i rotate_offset(const Vector3i &offset, int rotation) const;
+	Vector3 rotate_vector3_offset(const Vector3 &offset, int rotation) const;
+	Vector3 get_grid_correction(int rotation) const;
+
+	Dictionary build_rotated_bounds_from_offsets(const Array &offsets, int rotation) const;
+	Dictionary build_local_rect_from_offsets(const Array &offsets, const Vector3i &declared_size) const;
+	Dictionary rotate_local_rect_bounds(const Dictionary &rect, int rotation) const;
+
+	Dictionary parse_local_rect_2d(const Variant &raw_rect, const Dictionary &fallback_rect, const Vector3i &declared_size) const;
+	Array parse_local_volumes(const Array &raw_volumes, const Vector3i &declared_size, int min_y, int max_y) const;
+
+	Dictionary build_local_cell_set_from_volumes(const Array &volumes) const;
+	Dictionary inflate_local_cell_set(const Dictionary &cell_set, int padding) const;
+
+	Array build_rotated_carve_segments(const Array &local_cells, int rotation) const;
+	Array build_rotated_segments_from_volumes(const Array &volumes, int rotation) const;
+
+	Array get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const;
+	Dictionary build_required_below_grade_excavation_cells(const Array &enclosed_cells, const Array &stair_cells, int min_y, int grade_y) const;
+	Array find_surface_breach_excavation_cells(const Dictionary &excavated_cells, const Dictionary &surface_rect, int grade_y) const;
+};
+
+}
+
+#endif // PREFAB_GEOMETRY_NATIVE_H

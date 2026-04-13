@@ -11,6 +11,15 @@ static var _rotated_bounds_cache: Dictionary = {}
 static var _rotated_objects_cache: Dictionary = {}
 static var _rotated_precise_carve_cache: Dictionary = {}
 static var _rotated_excavation_segments_cache: Dictionary = {}
+static var _native_helper: Object = null
+
+static func _get_native_helper() -> Object:
+	if _native_helper and is_instance_valid(_native_helper):
+		return _native_helper
+	if not ClassDB.class_exists("PrefabGeometryNative"):
+		return null
+	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
+	return _native_helper
 
 static func get_prefab_geometry(prefab_name: String) -> Dictionary:
 	if _geometry_cache.has(prefab_name):
@@ -27,6 +36,11 @@ static func get_rotated_bounds(prefab_name: String, rotation: int) -> Dictionary
 
 	var geometry := get_prefab_geometry(prefab_name)
 	var offsets: Array = geometry.get("offsets", [])
+	var native := _get_native_helper()
+	if native and native.has_method("build_rotated_bounds_from_offsets"):
+		var native_bounds: Dictionary = native.build_rotated_bounds_from_offsets(offsets, rotation)
+		_rotated_bounds_cache[key] = native_bounds
+		return native_bounds
 	if offsets.is_empty():
 		var empty_bounds := {
 			"min": Vector3i.ZERO,
@@ -533,6 +547,9 @@ static func _parse_placement_profile(data: Dictionary, offsets: Array, declared_
 	return profile
 
 static func _build_local_rect_from_offsets(offsets: Array, declared_size: Vector3i) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("build_local_rect_from_offsets"):
+		return native.build_local_rect_from_offsets(offsets, declared_size)
 	if offsets.is_empty():
 		var fallback_w := maxi(1, declared_size.x)
 		var fallback_d := maxi(1, declared_size.z)
@@ -559,6 +576,9 @@ static func _build_local_rect_from_offsets(offsets: Array, declared_size: Vector
 	}
 
 static func _parse_local_rect_2d(raw_rect: Variant, fallback_rect: Dictionary, declared_size: Vector3i) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("parse_local_rect_2d"):
+		return native.parse_local_rect_2d(raw_rect, fallback_rect, declared_size)
 	if not (raw_rect is Dictionary):
 		return fallback_rect
 	var rect_in: Dictionary = raw_rect
@@ -582,6 +602,9 @@ static func _parse_local_rect_2d(raw_rect: Variant, fallback_rect: Dictionary, d
 	}
 
 static func _parse_local_volumes(raw_volumes: Array, declared_size: Vector3i, min_y: int, max_y: int) -> Array:
+	var native := _get_native_helper()
+	if native and native.has_method("parse_local_volumes"):
+		return native.parse_local_volumes(raw_volumes, declared_size, min_y, max_y)
 	var result: Array = []
 	if declared_size.x <= 0 or declared_size.y <= 0 or declared_size.z <= 0:
 		return result
@@ -613,6 +636,9 @@ static func _parse_local_volumes(raw_volumes: Array, declared_size: Vector3i, mi
 	return result
 
 static func _get_enclosed_below_grade_empty_cells(solid_cells: Dictionary, declared_size: Vector3i, min_y: int, grade_y: int) -> Array:
+	var native := _get_native_helper()
+	if native and native.has_method("get_enclosed_below_grade_empty_cells"):
+		return native.get_enclosed_below_grade_empty_cells(solid_cells, declared_size, min_y, grade_y)
 	var result: Array = []
 	if declared_size.x <= 0 or declared_size.z <= 0:
 		return result
@@ -661,6 +687,9 @@ static func _queue_exterior_empty_cell(cell_2d: Vector2i, y: int, declared_size:
 	queue.append(cell_2d)
 
 static func _build_rotated_carve_segments(local_cells: Array, rotation: int) -> Array:
+	var native := _get_native_helper()
+	if native and native.has_method("build_rotated_carve_segments"):
+		return native.build_rotated_carve_segments(local_cells, rotation)
 	var levels_by_column: Dictionary = {}
 	for cell in local_cells:
 		var rotated := _rotate_offset(cell, rotation)
@@ -701,6 +730,9 @@ static func _build_rotated_carve_segments(local_cells: Array, rotation: int) -> 
 	return result
 
 static func _build_rotated_segments_from_volumes(volumes: Array, rotation: int) -> Array:
+	var native := _get_native_helper()
+	if native and native.has_method("build_rotated_segments_from_volumes"):
+		return native.build_rotated_segments_from_volumes(volumes, rotation)
 	var local_cells: Array = []
 	for volume in volumes:
 		var min_cell: Vector3i = volume.get("min", Vector3i.ZERO)
@@ -712,6 +744,9 @@ static func _build_rotated_segments_from_volumes(volumes: Array, rotation: int) 
 	return _build_rotated_carve_segments(local_cells, rotation)
 
 static func _build_local_cell_set_from_volumes(volumes: Array) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("build_local_cell_set_from_volumes"):
+		return native.build_local_cell_set_from_volumes(volumes)
 	var result: Dictionary = {}
 	for volume in volumes:
 		var min_cell: Vector3i = volume.get("min", Vector3i.ZERO)
@@ -723,6 +758,9 @@ static func _build_local_cell_set_from_volumes(volumes: Array) -> Dictionary:
 	return result
 
 static func _inflate_local_cell_set(cell_set: Dictionary, padding: int) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("inflate_local_cell_set"):
+		return native.inflate_local_cell_set(cell_set, padding)
 	if padding <= 0 or cell_set.is_empty():
 		return cell_set.duplicate()
 
@@ -736,6 +774,9 @@ static func _inflate_local_cell_set(cell_set: Dictionary, padding: int) -> Dicti
 	return result
 
 static func _build_required_below_grade_excavation_cells(enclosed_cells: Array, stair_cells: Array, min_y: int, grade_y: int) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("build_required_below_grade_excavation_cells"):
+		return native.build_required_below_grade_excavation_cells(enclosed_cells, stair_cells, min_y, grade_y)
 	var result: Dictionary = {}
 	for cell in enclosed_cells:
 		result[cell] = true
@@ -765,6 +806,9 @@ static func _build_required_below_grade_excavation_cells(enclosed_cells: Array, 
 	return result
 
 static func _find_surface_breach_excavation_cells(excavated_cells: Dictionary, surface_rect: Dictionary, grade_y: int) -> Array[String]:
+	var native := _get_native_helper()
+	if native and native.has_method("find_surface_breach_excavation_cells"):
+		return native.find_surface_breach_excavation_cells(excavated_cells, surface_rect, grade_y)
 	var result: Array[String] = []
 	var rect_min: Vector2i = surface_rect.get("min", Vector2i.ZERO)
 	var rect_max: Vector2i = surface_rect.get("max", Vector2i.ZERO)
@@ -780,6 +824,9 @@ static func _find_surface_breach_excavation_cells(excavated_cells: Dictionary, s
 	return result
 
 static func _rotate_local_rect_bounds(rect: Dictionary, rotation: int) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("rotate_local_rect_bounds"):
+		return native.rotate_local_rect_bounds(rect, rotation)
 	var min_corner: Vector2i = rect.get("min", Vector2i.ZERO)
 	var max_corner: Vector2i = rect.get("max", Vector2i.ZERO)
 	var corners := [
@@ -1251,6 +1298,9 @@ static func _ray_reaches_exterior(cell: Vector3i, dir: Vector2i, solid_cells: Di
 	return true
 
 static func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
+	var native := _get_native_helper()
+	if native and native.has_method("rotate_offset"):
+		return native.rotate_offset(offset, rotation)
 	match rotation:
 		0:
 			return offset
@@ -1263,6 +1313,9 @@ static func _rotate_offset(offset: Vector3i, rotation: int) -> Vector3i:
 	return offset
 
 static func _rotate_vector3_offset(offset: Vector3, rotation: int) -> Vector3:
+	var native := _get_native_helper()
+	if native and native.has_method("rotate_vector3_offset"):
+		return native.rotate_vector3_offset(offset, rotation)
 	match rotation:
 		0:
 			return offset
@@ -1275,6 +1328,9 @@ static func _rotate_vector3_offset(offset: Vector3, rotation: int) -> Vector3:
 	return offset
 
 static func _get_grid_correction(rotation: int) -> Vector3:
+	var native := _get_native_helper()
+	if native and native.has_method("get_grid_correction"):
+		return native.get_grid_correction(rotation)
 	match rotation:
 		1:
 			return Vector3(1, 0, 0)

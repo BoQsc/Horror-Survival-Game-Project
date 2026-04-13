@@ -1,5 +1,6 @@
 #include "register_types.h"
 #include "mesh_builder.h"
+#include "prefab_geometry_native.h"
 #include "terrain_grid.h"
 
 #include <gdextension_interface.h>
@@ -14,6 +15,7 @@ void initialize_high_performance_module(ModuleInitializationLevel p_level) {
     }
 
     ClassDB::register_class<MeshBuilder>();
+    ClassDB::register_class<PrefabGeometryNative>();
     ClassDB::register_class<TerrainGrid>();
 }
 
