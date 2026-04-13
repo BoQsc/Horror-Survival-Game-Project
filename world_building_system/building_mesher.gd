@@ -170,6 +170,13 @@ func pack_rotated_world_map_block_batches(prefab_blocks: Array, rotation: int, s
 		return []
 	return builder.pack_rotated_world_map_block_batches(prefab_blocks, rotation, spawn_pos, chunk_size)
 
+func build_trimesh_collision_shape_from_faces(faces: PackedVector3Array) -> Shape3D:
+	var builder := _get_native_builder()
+	if not builder or not builder.has_method("build_trimesh_collision_shape_from_faces"):
+		push_error("[BuildingMesher] MeshBuilder.build_trimesh_collision_shape_from_faces() is required.")
+		return null
+	return builder.build_trimesh_collision_shape_from_faces(faces)
+
 func request_mesh_generation(chunk: BuildingChunk):
 	if not _native_backend_ready:
 		return

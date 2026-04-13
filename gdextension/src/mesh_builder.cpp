@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <godot_cpp/classes/box_shape3d.hpp>
+#include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/math.hpp>
 #include <godot_cpp/classes/physics_server3d.hpp>
@@ -592,6 +593,7 @@ void MeshBuilder::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_player_material_overrides", "data", "width", "height", "depth"), &MeshBuilder::has_player_material_overrides);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
     ClassDB::bind_method(D_METHOD("build_collision_shape_indexed", "vertex_bytes", "index_bytes", "vertex_count", "index_count"), &MeshBuilder::build_collision_shape_indexed);
+    ClassDB::bind_method(D_METHOD("build_trimesh_collision_shape_from_faces", "faces"), &MeshBuilder::build_trimesh_collision_shape_from_faces);
 
 	// Fast conversion methods and custom building mesher
     ClassDB::bind_method(D_METHOD("bytes_to_floats", "data"), &MeshBuilder::bytes_to_floats);
@@ -782,6 +784,18 @@ Ref<ConcavePolygonShape3D> MeshBuilder::build_collision_shape_indexed(const Pack
     shape.instantiate();
     shape->set_faces(faces);
 
+    return shape;
+}
+
+Ref<ConcavePolygonShape3D> MeshBuilder::build_trimesh_collision_shape_from_faces(const PackedVector3Array& faces) {
+    Ref<ConcavePolygonShape3D> shape;
+
+    if (faces.size() < 3 || (faces.size() % 3) != 0) {
+        return shape;
+    }
+
+    shape.instantiate();
+    shape->set_faces(faces);
     return shape;
 }
 

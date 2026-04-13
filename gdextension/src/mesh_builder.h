@@ -3,6 +3,7 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/array_mesh.hpp>
+#include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/box_shape3d.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/image_texture3d.hpp>
@@ -12,10 +13,13 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_vector3_array.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
+#include <string>
+#include <unordered_map>
 
 namespace godot {
 
@@ -49,6 +53,7 @@ public:
 	// Generates ConcavePolygonShape3D directly from the building mesh vertex + index buffers
 	Ref<ConcavePolygonShape3D> build_collision_shape(const PackedFloat32Array& data, int stride);
 	Ref<ConcavePolygonShape3D> build_collision_shape_indexed(const PackedByteArray& vertex_bytes, const PackedByteArray& index_bytes, int vertex_count, int index_count);
+	Ref<ConcavePolygonShape3D> build_trimesh_collision_shape_from_faces(const PackedVector3Array& faces);
 	
 	// Fast conversion from PackedByteArray to PackedFloat32Array
 	PackedFloat32Array bytes_to_floats(const PackedByteArray& data);

@@ -40,7 +40,7 @@ const SIMPLE_OBJECT_COLLISION_IDS := {
 	7: true, # Chair
 }
 
-static func _get_cached_object_collision_shape(mesh: Mesh) -> Shape3D:
+func _get_cached_object_collision_shape(mesh: Mesh) -> Shape3D:
 	if not mesh:
 		return null
 
@@ -48,10 +48,21 @@ static func _get_cached_object_collision_shape(mesh: Mesh) -> Shape3D:
 	if _object_collision_shape_cache.has(cache_key):
 		return _object_collision_shape_cache[cache_key]
 
-	var shape := mesh.create_trimesh_shape()
+	var shape := _build_native_trimesh_collision_shape(mesh)
 	if shape:
 		_object_collision_shape_cache[cache_key] = shape
 	return shape
+
+func _build_native_trimesh_collision_shape(mesh: Mesh) -> Shape3D:
+	if not mesh:
+		return null
+	if not is_instance_valid(mesher) or not mesher.has_method("build_trimesh_collision_shape_from_faces"):
+		push_error("BuildingChunk: MeshBuilder.build_trimesh_collision_shape_from_faces() is required.")
+		return null
+	var faces := mesh.get_faces()
+	if faces.is_empty():
+		return null
+	return mesher.build_trimesh_collision_shape_from_faces(faces)
 
 static func _get_cached_box_shape(size: Vector3i) -> BoxShape3D:
 	var cache_key := "%d_%d_%d" % [size.x, size.y, size.z]
@@ -554,7 +565,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
 		collision_boxes_elapsed_ms = float(Time.get_ticks_usec() - collision_start_us) / 1000.0
 	else:
-		# Use native shape when available; otherwise fall back to main-thread trimesh generation.
+		# Use native shape when available; otherwise build a native trimesh shape from the mesh resource.
 		var clear_start_us := Time.get_ticks_usec()
 		_clear_static_body_shapes()
 		collision_clear_elapsed_ms = float(Time.get_ticks_usec() - clear_start_us) / 1000.0
@@ -567,9 +578,9 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			collision_mode = "trimesh"
 			var collision_start_us := Time.get_ticks_usec()
 			PerformanceMonitor.start_measure("Building Collision Shape")
-			var fallback_shape := mesh_instance.mesh.create_trimesh_shape()
-			if _shape_is_usable(fallback_shape):
-				_apply_primary_collision_shape(fallback_shape)
+			var native_trimesh_shape := _build_native_trimesh_collision_shape(mesh_instance.mesh)
+			if _shape_is_usable(native_trimesh_shape):
+				_apply_primary_collision_shape(native_trimesh_shape)
 			PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
 			collision_trimesh_elapsed_ms = float(Time.get_ticks_usec() - collision_start_us) / 1000.0
 	
@@ -840,13 +851,17 @@ func _generate_object_collision(obj: Node3D, anchor: Vector3i):
 			var mesh_inst = child as MeshInstance3D
 			if mesh_inst.mesh:
 				# Create StaticBody3D with trimesh collision
+				var collision_shape := _get_cached_object_collision_shape(mesh_inst.mesh)
+				if not _shape_is_usable(collision_shape):
+					continue
+
 				var static_body = StaticBody3D.new()
 				static_body.add_to_group("placed_objects")
 				static_body.set_meta("anchor", anchor)
 				static_body.set_meta("chunk", self)
 				
 				var collision = CollisionShape3D.new()
-				collision.shape = _get_cached_object_collision_shape(mesh_inst.mesh)
+				collision.shape = collision_shape
 				static_body.add_child(collision)
 				
 				# Match the mesh position
