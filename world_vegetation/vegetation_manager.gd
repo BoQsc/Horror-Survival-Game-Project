@@ -1,6 +1,8 @@
 extends Node3D
 class_name VegetationManager
 
+const VegetationInstanceData = preload("res://world_vegetation/vegetation_instance_data.gd")
+
 
 signal tree_chopped(world_position: Vector3)
 signal grass_harvested(world_position: Vector3)
@@ -73,12 +75,12 @@ const MAX_ACTIVE_ROCK_COLLIDERS = 30
 var removed_grass: Dictionary = {} # "x_z" position hash -> true
 var removed_rocks: Dictionary = {} # "x_z" position hash -> true
 var chopped_trees: Dictionary = {} # "x_z" position hash -> true (for save/load persistence)
-var placed_grass: Array[Dictionary] = [] # { world_pos, scale, rotation }
-var placed_rocks: Array[Dictionary] = [] # { world_pos, scale, rotation }
+var placed_grass: Array = []
+var placed_rocks: Array = []
 
 # Pending placements - retry when chunk becomes valid
-var pending_rock_placements: Array[Dictionary] = []
-var pending_grass_placements: Array[Dictionary] = []
+var pending_rock_placements: Array = []
+var pending_grass_placements: Array = []
 
 # Incremental Collider Updates
 var pending_collider_adds: Array[Dictionary] = [] # {type, key, item}
@@ -998,7 +1000,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.mesh = tree_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 
-	var tree_list = []
+	var tree_list: Array = []
 	var valid_transforms = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var chunk_origin_x = coord.x * chunk_stride
@@ -1071,16 +1073,15 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			valid_transforms.append(t)
 
 			var tree_index = valid_transforms.size() - 1
-			tree_list.append({
-				"world_pos": world_pos,
-				"local_pos": local_pos,
-				"hit_pos": hit_pos, # Raw ground position (World)
-				"rotation_angle": rotation_angle,
-				"random_scale_factor": random_scale,
-				"index": tree_index,
-				"alive": true,
-				"scale": final_scale
-			})
+			tree_list.append(_make_vegetation_generated(
+				world_pos,
+				local_pos,
+				hit_pos,
+				rotation_angle,
+				random_scale,
+				tree_index,
+				final_scale
+			))
 
 
 	if valid_transforms.size() > 0:
@@ -1249,7 +1250,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.lod_bias = 100.0 # Prevent LOD from hiding mesh
 	mmi.visibility_range_end = 0.0 # 0 = infinite visibility
 
-	var grass_list = []
+	var grass_list: Array = []
 	var valid_transforms = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var chunk_origin_x = coord.x * chunk_stride
@@ -1327,16 +1328,15 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			valid_transforms.append(t)
 
 			var grass_index = valid_transforms.size() - 1
-			grass_list.append({
-				"world_pos": world_pos,
-				"local_pos": local_pos,
-				"hit_pos": hit_pos,
-				"rotation_angle": rotation_angle,
-				"index": grass_index,
-				"alive": true,
-				"scale": final_scale,
-				"placed_by_player": false
-			})
+			grass_list.append(_make_vegetation_generated(
+				world_pos,
+				local_pos,
+				hit_pos,
+				rotation_angle,
+				0.0,
+				grass_index,
+				final_scale
+			))
 
 	# Add player-placed grass for this chunk
 	for placed in placed_grass:
@@ -1353,16 +1353,16 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			valid_transforms.append(t)
 
 			var grass_index = valid_transforms.size() - 1
-			grass_list.append({
-				"world_pos": placed.world_pos,
-				"local_pos": local_pos,
-				"hit_pos": placed.world_pos,
-				"rotation_angle": placed.rotation,
-				"index": grass_index,
-				"alive": true,
-				"scale": placed.scale,
-				"placed_by_player": true
-			})
+			grass_list.append(_make_vegetation_generated(
+				placed.world_pos,
+				local_pos,
+				placed.world_pos,
+				placed.rotation,
+				0.0,
+				grass_index,
+				placed.scale,
+				true
+			))
 
 	if valid_transforms.size() > 0:
 		mmi.multimesh.instance_count = valid_transforms.size()
@@ -1468,6 +1468,37 @@ func _chunk_overlaps_radius(coord: Vector2i, center: Vector3, radius: float, chu
 	var max_dist = radius + (chunk_stride * 0.70710678) # half diagonal of a square chunk
 	return dx * dx + dz * dz <= max_dist * max_dist
 
+func _make_vegetation_generated(
+		world_pos: Vector3,
+		local_pos: Vector3,
+		hit_pos: Vector3,
+		rotation_angle: float,
+		random_scale_factor: float,
+		index: int,
+		scale: float,
+		placed_by_player: bool = false
+	):
+	var item = VegetationInstanceData.new()
+	item.world_pos = world_pos
+	item.local_pos = local_pos
+	item.hit_pos = hit_pos
+	item.rotation_angle = rotation_angle
+	item.random_scale_factor = random_scale_factor
+	item.index = index
+	item.alive = true
+	item.scale = scale
+	item.placed_by_player = placed_by_player
+	return item
+
+func _make_vegetation_placement(world_pos: Vector3, scale: float, rotation_angle: float):
+	var item = VegetationInstanceData.new()
+	item.world_pos = world_pos
+	item.scale = scale
+	item.rotation_angle = rotation_angle
+	item.alive = true
+	item.placed_by_player = true
+	return item
+
 func _pick_nearest_candidates(candidates: Array[Dictionary], max_count: int) -> Array[Dictionary]:
 	if candidates.is_empty() or max_count <= 0:
 		return []
@@ -1511,17 +1542,13 @@ func place_grass(world_pos: Vector3) -> bool:
 	var rotation_angle = randf() * TAU
 
 	# Always store for persistence first
-	placed_grass.append({
-		"world_pos": world_pos,
-		"scale": final_scale,
-		"rotation": rotation_angle
-	})
+	placed_grass.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 	# Store for persistence
 
 	# Check if we can place immediately
 	if not chunk_grass_data.has(coord):
 		# Chunk grass data not ready - queue for retry
-		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		pending_grass_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true # Stored for later
 
 	var data = chunk_grass_data[coord]
@@ -1529,7 +1556,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	# Validate chunk_node
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
 		# Chunk node not valid - queue for retry
-		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		pending_grass_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true # Stored for later
 
 	var chunk_node = data.chunk_node
@@ -1545,7 +1572,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	# Add to MultiMesh - need to expand instance count
 	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
 		# MultiMesh not valid - queue for retry
-		pending_grass_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		pending_grass_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true # Stored for later
 
 	var mmi = data.multimesh as MultiMeshInstance3D
@@ -1565,16 +1592,16 @@ func place_grass(world_pos: Vector3) -> bool:
 		# Add new instance
 		mmi.multimesh.set_instance_transform(old_count, t)
 
-		var grass_entry = {
-			"world_pos": world_pos + Vector3(0, grass_y_offset, 0),
-			"local_pos": local_pos,
-			"hit_pos": world_pos,
-			"rotation_angle": rotation_angle,
-			"index": old_count,
-			"alive": true,
-			"scale": final_scale,
-			"placed_by_player": true
-		}
+		var grass_entry = _make_vegetation_generated(
+			world_pos + Vector3(0, grass_y_offset, 0),
+			local_pos,
+			world_pos,
+			rotation_angle,
+			0.0,
+			old_count,
+			final_scale,
+			true
+		)
 		data.grass_list.append(grass_entry)
 
 		return true
@@ -1622,16 +1649,16 @@ func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle:
 		# Add new instance
 		mmi.multimesh.set_instance_transform(old_count, t)
 
-		var grass_entry = {
-			"world_pos": world_pos + Vector3(0, grass_y_offset, 0),
-			"local_pos": local_pos,
-			"hit_pos": world_pos,
-			"rotation_angle": rotation_angle,
-			"index": old_count,
-			"alive": true,
-			"scale": final_scale,
-			"placed_by_player": true
-		}
+		var grass_entry = _make_vegetation_generated(
+			world_pos + Vector3(0, grass_y_offset, 0),
+			local_pos,
+			world_pos,
+			rotation_angle,
+			0.0,
+			old_count,
+			final_scale,
+			true
+		)
 		data.grass_list.append(grass_entry)
 		return true
 
@@ -1648,7 +1675,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.mesh = rock_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 
-	var rock_list = []
+	var rock_list: Array = []
 	var valid_transforms = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var chunk_origin_x = coord.x * chunk_stride
@@ -1722,16 +1749,15 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			valid_transforms.append(t)
 
 			var rock_index = valid_transforms.size() - 1
-			rock_list.append({
-				"world_pos": world_pos,
-				"local_pos": local_pos,
-				"hit_pos": hit_pos,
-				"rotation_angle": rotation_angle,
-				"index": rock_index,
-				"alive": true,
-				"scale": final_scale,
-				"placed_by_player": false
-			})
+			rock_list.append(_make_vegetation_generated(
+				world_pos,
+				local_pos,
+				hit_pos,
+				rotation_angle,
+				0.0,
+				rock_index,
+				final_scale
+			))
 
 	# Add player-placed rocks for this chunk
 	for placed in placed_rocks:
@@ -1748,16 +1774,16 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			valid_transforms.append(t)
 
 			var rock_index = valid_transforms.size() - 1
-			rock_list.append({
-				"world_pos": placed.world_pos,
-				"local_pos": local_pos,
-				"hit_pos": placed.world_pos,
-				"rotation_angle": placed.rotation,
-				"index": rock_index,
-				"alive": true,
-				"scale": placed.scale,
-				"placed_by_player": true
-			})
+			rock_list.append(_make_vegetation_generated(
+				placed.world_pos,
+				local_pos,
+				placed.world_pos,
+				placed.rotation,
+				0.0,
+				rock_index,
+				placed.scale,
+				true
+			))
 
 	if valid_transforms.size() > 0:
 		mmi.multimesh.instance_count = valid_transforms.size()
@@ -1840,17 +1866,13 @@ func place_rock(world_pos: Vector3) -> bool:
 	var rotation_angle = randf() * TAU
 
 	# Always store for persistence first
-	placed_rocks.append({
-		"world_pos": world_pos,
-		"scale": final_scale,
-		"rotation": rotation_angle
-	})
+	placed_rocks.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 	# Store for persistence
 
 	# Check if we can place immediately
 	if not chunk_rock_data.has(coord):
 		# Chunk rock data not ready - queue for retry
-		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true
 
 	var data = chunk_rock_data[coord]
@@ -1858,13 +1880,13 @@ func place_rock(world_pos: Vector3) -> bool:
 	# Validate chunk_node
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
 		# Chunk node not valid - queue for retry
-		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true
 
 	# Validate multimesh
 	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
 		# MultiMesh not valid - queue for retry
-		pending_rock_placements.append({"world_pos": world_pos, "scale": final_scale, "rotation": rotation_angle})
+		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true
 
 	# Can place immediately
@@ -1914,16 +1936,16 @@ func _add_rock_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: 
 		# Add new instance
 		mmi.multimesh.set_instance_transform(old_count, t)
 
-		var rock_entry = {
-			"world_pos": world_pos + Vector3(0, rock_y_offset, 0),
-			"local_pos": local_pos,
-			"hit_pos": world_pos,
-			"rotation_angle": rotation_angle,
-			"index": old_count,
-			"alive": true,
-			"scale": final_scale,
-			"placed_by_player": true
-		}
+		var rock_entry = _make_vegetation_generated(
+			world_pos + Vector3(0, rock_y_offset, 0),
+			local_pos,
+			world_pos,
+			rotation_angle,
+			0.0,
+			old_count,
+			final_scale,
+			true
+		)
 		data.rock_list.append(rock_entry)
 		return true
 
@@ -2106,20 +2128,20 @@ func load_save_data(data: Dictionary):
 	if data.has("placed_grass"):
 		placed_grass.clear()
 		for g in data.placed_grass:
-			placed_grass.append({
-				"world_pos": Vector3(g.world_pos[0], g.world_pos[1], g.world_pos[2]),
-				"scale": g.get("scale", 1.0),
-				"rotation": g.get("rotation", 0.0)
-			})
+			placed_grass.append(_make_vegetation_placement(
+				Vector3(g.world_pos[0], g.world_pos[1], g.world_pos[2]),
+				g.get("scale", 1.0),
+				g.get("rotation", 0.0)
+			))
 
 	if data.has("placed_rocks"):
 		placed_rocks.clear()
 		for r in data.placed_rocks:
-			placed_rocks.append({
-				"world_pos": Vector3(r.world_pos[0], r.world_pos[1], r.world_pos[2]),
-				"scale": r.get("scale", 1.0),
-				"rotation": r.get("rotation", 0.0)
-			})
+			placed_rocks.append(_make_vegetation_placement(
+				Vector3(r.world_pos[0], r.world_pos[1], r.world_pos[2]),
+				r.get("scale", 1.0),
+				r.get("rotation", 0.0)
+			))
 
 	DebugManager.log_vegetation("Loaded %d chopped, %d removed grass, %d removed rocks" % [
 		chopped_trees.size(), removed_grass.size(), removed_rocks.size()
@@ -2178,8 +2200,8 @@ func _serialize_placed_list(list: Array) -> Array:
 	for item in list:
 		result.append({
 			"world_pos": [item.world_pos.x, item.world_pos.y, item.world_pos.z],
-			"scale": item.get("scale", 1.0),
-			"rotation": item.get("rotation", 0.0)
+			"scale": item.scale,
+			"rotation": item.rotation
 		})
 	return result
 
