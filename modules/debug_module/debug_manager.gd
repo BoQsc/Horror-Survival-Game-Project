@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## DebugManager - Autoload singleton that manages debug presets.
 ## Register as Autoload: Project Settings > Autoload > Add "DebugManager"
@@ -36,6 +37,9 @@ var _use_debugger_panel: bool = false
 
 
 func _ready() -> void:
+	if Engine.is_editor_hint():
+		return
+
 	# Load primary preset from config
 	if not current_preset:
 		var active_path = DebugPreset.get_active_preset_path()

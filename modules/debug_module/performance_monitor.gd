@@ -1,3 +1,4 @@
+@tool
 extends Node
 ## PerformanceMonitor - Tracks performance spikes and sends grouped frame summaries
 
@@ -70,6 +71,9 @@ var _town_entry_frame_history: Array[Dictionary] = []
 
 
 func _ready():
+	if Engine.is_editor_hint():
+		return
+
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_ensure_disk_logging_ready()
 

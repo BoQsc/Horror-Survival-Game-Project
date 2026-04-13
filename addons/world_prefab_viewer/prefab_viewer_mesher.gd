@@ -159,8 +159,8 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 		_cleanup_transient(texture_rid, meta_rid, sampler_rid, uniform_set)
 		return []
 
-	var float_data := builder.bytes_to_floats(v_bytes)
-	var meta_data := builder.bytes_to_floats(v_meta)
+	var float_data: PackedFloat32Array = builder.bytes_to_floats(v_bytes)
+	var meta_data: PackedFloat32Array = builder.bytes_to_floats(v_meta)
 
 	var fmt := RDTextureFormat.new()
 	fmt.width = CHUNK_SIZE
