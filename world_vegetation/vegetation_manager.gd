@@ -642,7 +642,6 @@ func _update_proximity_colliders():
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
-	var chunk_check_dist = collider_distance + chunk_stride # Only check nearby chunks
 
 	# Collect trees that need colliders (only from nearby chunks)
 	var trees_needing_colliders: Array[Dictionary] = []
@@ -656,6 +655,9 @@ func _update_proximity_colliders():
 			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
 
 			if not chunk_tree_data.has(coord):
+				continue
+
+			if not _chunk_overlaps_radius(coord, player_pos, collider_distance, chunk_stride):
 				continue
 
 			var data = chunk_tree_data[coord]
@@ -822,7 +824,6 @@ func _update_grass_proximity_colliders():
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
-	var chunk_check_dist = collider_distance + chunk_stride
 
 	# Collect grass that needs colliders
 	var grass_needing_colliders: Array[Dictionary] = []
@@ -838,12 +839,7 @@ func _update_grass_proximity_colliders():
 			if not chunk_grass_data.has(coord):
 				continue
 
-			# Extra Optimization: Check dist to chunk center to skip iterating thousands of grass blades
-			var chunk_center_x = (coord.x + 0.5) * chunk_stride
-			var chunk_center_z = (coord.y + 0.5) * chunk_stride
-			var center_dist = Vector2(player_pos.x, player_pos.z).distance_to(Vector2(chunk_center_x, chunk_center_z))
-			# Safe radius = Stride * 0.71 (approx 23m) + margin
-			if center_dist > collider_distance + 25.0:
+			if not _chunk_overlaps_radius(coord, player_pos, collider_distance, chunk_stride):
 				continue
 
 			var data = chunk_grass_data[coord]
@@ -953,7 +949,6 @@ func _update_rock_proximity_colliders():
 	var player_pos = player.global_position
 	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
-	var chunk_check_dist = collider_distance + chunk_stride
 
 	var rocks_needing_colliders: Array[Dictionary] = []
 
@@ -966,6 +961,9 @@ func _update_rock_proximity_colliders():
 			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
 
 			if not chunk_rock_data.has(coord):
+				continue
+
+			if not _chunk_overlaps_radius(coord, player_pos, collider_distance, chunk_stride):
 				continue
 
 			var data = chunk_rock_data[coord]
@@ -1022,15 +1020,8 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	# Use density lookup instead of physics raycasting (much faster)
 	var step = 4
 
-	var batch_heights = PackedFloat32Array()
+	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
 	var batch_idx = 0
-
-	# Try GDExtension batch lookup (Instant)
-	if terrain_manager.get("terrain_grid"):
-		if terrain_manager.active_chunks.has(Vector3i(coord.x, 0, coord.y)):
-			var c_data = terrain_manager.active_chunks[Vector3i(coord.x, 0, coord.y)]
-			if c_data and not c_data.cpu_density_terrain.is_empty():
-				batch_heights = terrain_manager.terrain_grid.get_chunk_height_map(c_data.cpu_density_terrain, chunk_stride, step)
 
 	for x in range(0, chunk_stride, step):
 		for z in range(0, chunk_stride, step):
@@ -1185,80 +1176,70 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 	var min_chunk_z = int(floor((center.z - radius) / chunk_stride))
 	var max_chunk_z = int(floor((center.z + radius) / chunk_stride))
 
-	# Clear trees
 	for chunk_x in range(min_chunk_x, max_chunk_x + 1):
 		for chunk_z in range(min_chunk_z, max_chunk_z + 1):
 			var coord := Vector2i(chunk_x, chunk_z)
-			if not chunk_tree_data.has(coord):
+			if not _chunk_overlaps_radius(coord, center, radius, chunk_stride):
 				continue
-			var data = chunk_tree_data[coord]
-			for tree in data.trees:
-				if not tree.alive:
-					continue
-				var dx = tree.world_pos.x - center.x
-				var dz = tree.world_pos.z - center.z
-				if dx * dx + dz * dz < radius_sq:
-					tree.alive = false
-					var mmi = data.multimesh as MultiMeshInstance3D
-					if mmi and mmi.multimesh:
-						var t = Transform3D()
-						t = t.scaled(Vector3.ZERO)
-						t.origin = tree.local_pos
-						mmi.multimesh.set_instance_transform(tree.index, t)
-					var key = _tree_key(coord, tree.index)
-					if active_colliders.has(key):
-						_return_collider_to_pool(active_colliders[key])
-						active_colliders.erase(key)
+			if chunk_tree_data.has(coord):
+				var tree_data = chunk_tree_data[coord]
+				for tree in tree_data.trees:
+					if not tree.alive:
+						continue
+					var dx = tree.world_pos.x - center.x
+					var dz = tree.world_pos.z - center.z
+					if dx * dx + dz * dz < radius_sq:
+						tree.alive = false
+						var mmi = tree_data.multimesh as MultiMeshInstance3D
+						if mmi and mmi.multimesh:
+							var t = Transform3D()
+							t = t.scaled(Vector3.ZERO)
+							t.origin = tree.local_pos
+							mmi.multimesh.set_instance_transform(tree.index, t)
+						var key = _tree_key(coord, tree.index)
+						if active_colliders.has(key):
+							_return_collider_to_pool(active_colliders[key])
+							active_colliders.erase(key)
 
-	# Clear grass
-	for chunk_x in range(min_chunk_x, max_chunk_x + 1):
-		for chunk_z in range(min_chunk_z, max_chunk_z + 1):
-			var coord := Vector2i(chunk_x, chunk_z)
-			if not chunk_grass_data.has(coord):
-				continue
-			var data = chunk_grass_data[coord]
-			for grass in data.grass_list:
-				if not grass.alive:
-					continue
-				var dx = grass.world_pos.x - center.x
-				var dz = grass.world_pos.z - center.z
-				if dx * dx + dz * dz < radius_sq:
-					grass.alive = false
-					var mmi = data.multimesh as MultiMeshInstance3D
-					if mmi and mmi.multimesh:
-						var t = Transform3D()
-						t = t.scaled(Vector3.ZERO)
-						t.origin = grass.local_pos
-						mmi.multimesh.set_instance_transform(grass.index, t)
-					var key = _grass_key(coord, grass.index)
-					if active_grass_colliders.has(key):
-						_return_grass_collider_to_pool(active_grass_colliders[key])
-						active_grass_colliders.erase(key)
+			if chunk_grass_data.has(coord):
+				var grass_data = chunk_grass_data[coord]
+				for grass in grass_data.grass_list:
+					if not grass.alive:
+						continue
+					var dx = grass.world_pos.x - center.x
+					var dz = grass.world_pos.z - center.z
+					if dx * dx + dz * dz < radius_sq:
+						grass.alive = false
+						var mmi = grass_data.multimesh as MultiMeshInstance3D
+						if mmi and mmi.multimesh:
+							var t = Transform3D()
+							t = t.scaled(Vector3.ZERO)
+							t.origin = grass.local_pos
+							mmi.multimesh.set_instance_transform(grass.index, t)
+						var key = _grass_key(coord, grass.index)
+						if active_grass_colliders.has(key):
+							_return_grass_collider_to_pool(active_grass_colliders[key])
+							active_grass_colliders.erase(key)
 
-	# Clear rocks
-	for chunk_x in range(min_chunk_x, max_chunk_x + 1):
-		for chunk_z in range(min_chunk_z, max_chunk_z + 1):
-			var coord := Vector2i(chunk_x, chunk_z)
-			if not chunk_rock_data.has(coord):
-				continue
-			var data = chunk_rock_data[coord]
-			for rock in data.rock_list:
-				if not rock.alive:
-					continue
-				var dx = rock.world_pos.x - center.x
-				var dz = rock.world_pos.z - center.z
-				if dx * dx + dz * dz < radius_sq:
-					rock.alive = false
-					var mmi = data.multimesh as MultiMeshInstance3D
-					if mmi and mmi.multimesh:
-						var t = Transform3D()
-						t = t.scaled(Vector3.ZERO)
-						t.origin = rock.local_pos
-						mmi.multimesh.set_instance_transform(rock.index, t)
-					var key = _rock_key(coord, rock.index)
-					if active_rock_colliders.has(key):
-						_return_rock_collider_to_pool(active_rock_colliders[key])
-						active_rock_colliders.erase(key)
+			if chunk_rock_data.has(coord):
+				var rock_data = chunk_rock_data[coord]
+				for rock in rock_data.rock_list:
+					if not rock.alive:
+						continue
+					var dx = rock.world_pos.x - center.x
+					var dz = rock.world_pos.z - center.z
+					if dx * dx + dz * dz < radius_sq:
+						rock.alive = false
+						var mmi = rock_data.multimesh as MultiMeshInstance3D
+						if mmi and mmi.multimesh:
+							var t = Transform3D()
+							t = t.scaled(Vector3.ZERO)
+							t.origin = rock.local_pos
+							mmi.multimesh.set_instance_transform(rock.index, t)
+						var key = _rock_key(coord, rock.index)
+						if active_rock_colliders.has(key):
+							_return_rock_collider_to_pool(active_rock_colliders[key])
+							active_rock_colliders.erase(key)
 
 	PerformanceMonitor.end_measure("Veg Clear Area", 2.0)
 
@@ -1286,23 +1267,13 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
 
-	var space_state = get_world_3d().direct_space_state
-
 	# Grass placement - mode determines density and distribution
 	# Optimized: step 2 reduces checks by 4x (256 vs 1024) - acceptable for grass
 	var step = 2
 	if dense_grass_mode: step = 1 # Use stride 1 for dense mode if requested
 
-	var batch_heights = PackedFloat32Array()
+	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
 	var batch_idx = 0
-
-	# Try GDExtension batch lookup (Instant)
-	if terrain_manager.get("terrain_grid"): # Check if property exists
-		if terrain_manager.active_chunks.has(Vector3i(coord.x, 0, coord.y)):
-			var c_data = terrain_manager.active_chunks[Vector3i(coord.x, 0, coord.y)]
-			if c_data and not c_data.cpu_density_terrain.is_empty():
-				# Call C++ method
-				batch_heights = terrain_manager.terrain_grid.get_chunk_height_map(c_data.cpu_density_terrain, chunk_stride, step)
 
 	for x in range(0, chunk_stride, step):
 		for z in range(0, chunk_stride, step):
@@ -1483,6 +1454,31 @@ func _position_hash(pos: Vector3) -> String:
 	var hash_z = int(floor(pos.z))
 	return "%d_%d" % [hash_x, hash_z]
 
+func _get_chunk_height_map(coord: Vector2i, chunk_stride: int, step: int) -> PackedFloat32Array:
+	if not terrain_manager:
+		return PackedFloat32Array()
+
+	if not terrain_manager.get("terrain_grid"):
+		return PackedFloat32Array()
+
+	var chunk_key = Vector3i(coord.x, 0, coord.y)
+	if not terrain_manager.active_chunks.has(chunk_key):
+		return PackedFloat32Array()
+
+	var c_data = terrain_manager.active_chunks[chunk_key]
+	if not c_data or c_data.cpu_density_terrain.is_empty():
+		return PackedFloat32Array()
+
+	return terrain_manager.terrain_grid.get_chunk_height_map(c_data.cpu_density_terrain, chunk_stride, step)
+
+func _chunk_overlaps_radius(coord: Vector2i, center: Vector3, radius: float, chunk_stride: int) -> bool:
+	var chunk_center_x = (coord.x + 0.5) * chunk_stride
+	var chunk_center_z = (coord.y + 0.5) * chunk_stride
+	var dx = center.x - chunk_center_x
+	var dz = center.z - chunk_center_z
+	var max_dist = radius + (chunk_stride * 0.70710678) # half diagonal of a square chunk
+	return dx * dx + dz * dz <= max_dist * max_dist
+
 func place_grass(world_pos: Vector3) -> bool:
 	# Find which chunk this position belongs to
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
@@ -1639,20 +1635,34 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 	# Use density lookup instead of physics raycasting (much faster)
 	# Sparse rocks - every 7 meters (less frequent than grass)
-	for x in range(0, chunk_stride, 7):
-		for z in range(0, chunk_stride, 7):
+	var step = 7
+	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
+	var batch_idx = 0
+
+	for x in range(0, chunk_stride, step):
+		for z in range(0, chunk_stride, step):
 			var gx = chunk_origin_x + x
 			var gz = chunk_origin_z + z
 
 			if _is_spawn_blocked_by_road(gx, gz):
+				if not batch_heights.is_empty():
+					batch_idx += 1
 				continue
 
 			var noise_val = rock_noise.get_noise_2d(gx, gz)
 			if noise_val < 0.35: # Slightly higher threshold than grass
+				if not batch_heights.is_empty():
+					batch_idx += 1
 				continue
 
 			# Use optimized chunk density lookup
-			var terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
+			var terrain_y = -1000.0
+			if not batch_heights.is_empty():
+				if batch_idx < batch_heights.size():
+					terrain_y = batch_heights[batch_idx]
+				batch_idx += 1
+			else:
+				terrain_y = terrain_manager.get_chunk_surface_height(Vector3i(coord.x, 0, coord.y), x, z)
 			if terrain_y < -100.0: # No terrain found
 				continue
 
