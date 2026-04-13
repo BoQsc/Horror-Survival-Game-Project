@@ -84,6 +84,9 @@ var pending_collider_removes: Array[Dictionary] = [] # {type, key}
 var keys_pending_add: Dictionary = {} # Duplicate check
 var keys_pending_remove: Dictionary = {} # Duplicate check
 const MAX_COLLIDER_UPDATES_PER_FRAME = 5
+var _collider_refresh_dirty: bool = true
+var _last_collider_update_chunk: Vector2i = Vector2i(2147483647, 2147483647)
+var _last_collider_update_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
@@ -115,7 +118,7 @@ func _capture_vegetation_telemetry(event_label: String = "", details: Dictionary
 		"is_initial_load_batch": is_initial_load_batch,
 		"initial_load_count": initial_load_count,
 		"pending_vegetation_regen": pending_vegetation_regen,
-		"collider_update_counter": collider_update_counter
+		"collider_refresh_dirty": _collider_refresh_dirty
 	})
 
 	if not event_label.is_empty():
@@ -279,6 +282,8 @@ func _on_chunk_unloaded(coord: Vector3i):
 				active_rock_colliders.erase(key)
 		chunk_rock_data.erase(surface_key)
 
+	_mark_collider_refresh_dirty()
+
 func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	if chunk_node == null:
 		return
@@ -310,6 +315,7 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 		"frames_waited": 0,
 		"stage": 0 # 0=Trees, 1=Grass, 2=Rocks
 	})
+	_mark_collider_refresh_dirty()
 
 func _cleanup_chunk_trees(coord: Vector2i):
 	if chunk_tree_data.has(coord):
@@ -325,6 +331,7 @@ func _cleanup_chunk_trees(coord: Vector2i):
 				_return_collider_to_pool(active_colliders[key])
 				active_colliders.erase(key)
 		chunk_tree_data.erase(coord)
+		_mark_collider_refresh_dirty()
 
 func _cleanup_chunk_grass(coord: Vector2i):
 	if chunk_grass_data.has(coord):
@@ -339,6 +346,7 @@ func _cleanup_chunk_grass(coord: Vector2i):
 				_return_grass_collider_to_pool(active_grass_colliders[key])
 				active_grass_colliders.erase(key)
 		chunk_grass_data.erase(coord)
+		_mark_collider_refresh_dirty()
 
 func _cleanup_chunk_rocks(coord: Vector2i):
 	if chunk_rock_data.has(coord):
@@ -353,6 +361,7 @@ func _cleanup_chunk_rocks(coord: Vector2i):
 				_return_rock_collider_to_pool(active_rock_colliders[key])
 				active_rock_colliders.erase(key)
 		chunk_rock_data.erase(coord)
+		_mark_collider_refresh_dirty()
 
 func _physics_process(_delta):
 	# Process only ONE pending chunk per physics frame (rate limited)
@@ -404,10 +413,24 @@ func _physics_process(_delta):
 			# Invalid chunk, remove
 			pending_chunks.pop_front()
 	
-	# ALWAYS update colliders, even while chunks are loading
-	collider_update_counter += 1
-	if collider_update_counter >= 15:
-		collider_update_counter = 0
+	# Refresh colliders when the player actually moves far enough or the
+	# loaded vegetation set changes, instead of doing a blind timer sweep.
+	var should_refresh_colliders := _collider_refresh_dirty or not pending_collider_adds.is_empty() or not pending_collider_removes.is_empty()
+	var current_player_pos := Vector3.ZERO
+	var current_player_chunk := _last_collider_update_chunk
+	if player and terrain_manager:
+		current_player_pos = player.global_position
+		var chunk_stride = terrain_manager.CHUNK_STRIDE
+		current_player_chunk = Vector2i(int(floor(current_player_pos.x / chunk_stride)), int(floor(current_player_pos.z / chunk_stride)))
+		if current_player_chunk != _last_collider_update_chunk:
+			should_refresh_colliders = true
+		elif current_player_pos.distance_to(_last_collider_update_pos) >= max(4.0, collider_distance * 0.25):
+			should_refresh_colliders = true
+
+	if should_refresh_colliders and player and terrain_manager:
+		_last_collider_update_chunk = current_player_chunk
+		_last_collider_update_pos = current_player_pos
+		_collider_refresh_dirty = false
 		PerformanceMonitor.start_measure("Veg Collider Update")
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
@@ -465,6 +488,13 @@ func _process_queued_collider_updates():
 		elif task.type == "rock":
 			if not active_rock_colliders.has(task.key):
 				_spawn_rock_collider(task.key, task.item)
+
+	if updates_done > 0:
+		_mark_collider_refresh_dirty()
+
+
+func _mark_collider_refresh_dirty() -> void:
+	_collider_refresh_dirty = true
 
 func _spawn_tree_collider(key, item):
 	var collider = _get_collider_from_pool()
@@ -576,8 +606,6 @@ func _cleanup_orphan_colliders():
 					if grandchild is CollisionShape3D:
 						grandchild.disabled = true
 				cleaned += 1
-
-var collider_update_counter: int = 0
 
 func _update_proximity_colliders():
 	if not player:
