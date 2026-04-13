@@ -1,0 +1,8 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" uid="uid://3u1jyqtrkwl4" path="res://models/objects/chair/1/cc0_-_chair_8.glb" id="1_chair"]
+
+[node name="Chair8" type="Node3D"]
+
+[node name="ChairModel" parent="." instance=ExtResource("1_chair")]
+transform = Transform3D(0.02428207, 0, 0, 0, 0.02428207, 0, 0, 0, 0.02428207, 0.0, 0.25754148, 0.00975714)

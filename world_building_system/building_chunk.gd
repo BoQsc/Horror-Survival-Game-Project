@@ -37,6 +37,7 @@ const WOOD_BLOCK_TEXTURE: Texture2D = preload("res://world_greedy_meshing/wood-b
 const SIMPLE_OBJECT_COLLISION_IDS := {
 	3: true, # Wooden Table
 	5: true, # Window
+	7: true, # Chair
 }
 
 static func _get_cached_object_collision_shape(mesh: Mesh) -> Shape3D:

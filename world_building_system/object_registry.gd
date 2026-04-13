@@ -47,6 +47,13 @@ const OBJECTS = {
 		"material": "metal",
 		"movable": true,
 	},
+	7: {
+		"name": "Chair",
+		"scene": "res://models/objects/chair/1/cc0_chair_8.tscn",
+		"size": Vector3i(1, 1, 1),
+		"material": "wood",
+		"movable": false,
+	},
 }
 
 const SIMPLE_VISUAL_BATCH_OBJECT_IDS := {

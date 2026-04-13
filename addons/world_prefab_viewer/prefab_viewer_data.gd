@@ -39,6 +39,12 @@ const OBJECT_INFO := {
 		"size": Vector3(1.0, 1.0, 1.0),
 		"color": Color(0.82, 0.79, 0.24, 1.0),
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn"
+	},
+	7: {
+		"name": "Chair",
+		"size": Vector3(1.0, 1.0, 1.0),
+		"color": Color(0.51, 0.34, 0.20, 1.0),
+		"scene": "res://models/objects/chair/1/cc0_chair_8.tscn"
 	}
 }
 
