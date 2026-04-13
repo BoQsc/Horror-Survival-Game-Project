@@ -39,8 +39,8 @@ Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 wi
 [WorldMapGen] Town at (854,-490): 17/38 buildings placed
 [WorldMapGen] Town at (182,-874): 16/38 buildings placed
 [WorldMapGen] Mode: TOWN | Buildings: 157 placed / 495 attempted | Towns: 10
-[WorldMapGen] Saved to: user://worlds/town_stall_12345_27701
-[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_27701
+[WorldMapGen] Saved to: user://worlds/town_stall_12345_28619
+[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_28619
 [TOWN_STALL_TEST] Selected town: x=374.0 z=-298.0 buildings=72 radius=71.0
 [TOWN_STALL_TEST] Removed helper node: DebugTeleporter
 SHOVEL: Initialized, mode = PLACE, material = Grass
@@ -50,14 +50,11 @@ PlayerHUD: Pickaxe Durability -> OFF (Instant)
 [HUD_SETUP] Connecting to SaveManager...
 [HUD_SETUP] Connected to save_completed signal
 [HUD_SETUP] Connected to load_completed signal
-[ChunkManager] World map path from SaveManager: user://worlds/town_stall_12345_27701
-[ChunkManager] World map mode: user://worlds/town_stall_12345_27701 (GPU fbm biomes, per-pixel road overlay)
-[ObjectRegistry] Preloading 6 object scenes...
+[ChunkManager] World map path from SaveManager: user://worlds/town_stall_12345_28619
+[ChunkManager] World map mode: user://worlds/town_stall_12345_28619 (GPU fbm biomes, per-pixel road overlay)
+[ObjectRegistry] Preloading 7 object scenes...
+[ObjectRegistry] Preloaded 7 scenes in 422ms
 [ChunkManager] Loaded 157 baked buildings
-[ChunkManager] Loaded 248 baked terrain modification chunks
-[ChunkManager] Prepared 262 baked excavation chunk masks
-[ChunkManager] Loaded building_map (2048x2048)
-[ObjectRegistry] Preloaded 6 scenes in 1161ms
 [TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...
 [COMBAT_AUDIO] Tree hit sound loaded successfully
 [COMBAT_AUDIO] Tree fall sound loaded successfully
@@ -67,6 +64,9 @@ PlayerHUD: Pickaxe Durability -> OFF (Instant)
 [COMBAT_AUDIO] Terrain hit sound loaded successfully
 [COMBAT_AUDIO] Terrain break sound loaded successfully
 [HUD_SETUP] Connecting to SaveManager...
+[ChunkManager] Loaded 248 baked terrain modification chunks
+[ChunkManager] Prepared 262 baked excavation chunk masks
+[ChunkManager] Loaded building_map (2048x2048)
 [Minimap] Built 2048x2048 live map (real-time updates enabled)
 [RoadManager] World map active, skipping road_mask initialization
 ItemUseRouter: Initialized
@@ -83,34 +83,183 @@ ModeEditor: Initialized
 BuildingAPI: Initialized (building_manager: OK)
 [Player] Unfrozen - terrain ready, can walk now
 [LoadingScreen] Terrain rendering started - player can move
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
+PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
+PICKAXE_HIT_DEBUG: MISS at impact time - no target in crosshair
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
+PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
+PICKAXE_HIT_DEBUG: HIT at impact time | Target: @Node3D@147 | Position: (0.0, 14.06865, -3.300016)
+DURABILITY_DEBUG: HUD received hit | Target: Terrain | HP: 0.0% | Key: v3i:-1,14,-4
+HUD: _on_item_added received: Grass x1
+HUD: Added label to container: ItemNotificationContainer:<VBoxContainer#126433102152>
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)
 ModeManager: PLAY -> EDITOR
 ModeManager: EDITOR mode ON (submode: Terrain)
 ModeManager: Fly mode ON
 [TOWN_STALL_TEST] Flying to town center: (374.0, 23.0, -298.0)
 [TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.
 [TOWN_STALL_TEST] Flying to town center: (374.0, 15.0, -298.0) buildings=72 radius=71.0
+ItemUseRouter: LMB pressed, item=Terrain
+ItemUseRouter: LMB pressed, item=Terrain
 [TOWN_STALL_TEST] Auto fly reached target, starting hold
 ModeManager: EDITOR -> PLAY
 ModeManager: EDITOR mode OFF (submode: Terrain)
 [TOWN_STALL_TEST] Hold started
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
+PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
+PICKAXE_HIT_DEBUG: MISS at impact time - no target in crosshair
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)
 ModeManager: PLAY -> EDITOR
 ModeManager: EDITOR mode ON (submode: Terrain)
 ModeManager: Fly mode ON
 ModeManager: EDITOR -> PLAY
 ModeManager: EDITOR mode OFF (submode: Terrain)
-ModeManager: PLAY -> EDITOR
-ModeManager: EDITOR mode ON (submode: Terrain)
-ModeManager: Fly mode ON
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
+PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
+PICKAXE_HIT_DEBUG: HIT at impact time | Target: @StaticBody3D@6614 | Position: (305.6223, 15.49119, -359.5787)
+DURABILITY_DEBUG: HUD received hit | Target: @StaticBody3D@6614 | HP: 0.0% | Key: rid:95232309854843
+[COMBAT_AUDIO] Playing range: 6.40 to 8.04 (Dur: 1.64) [TempPlayer]
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
+PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
+PICKAXE_HIT_DEBUG: HIT at impact time | Target: @StaticBody3D@6566 | Position: (302.5201, 15.49119, -357.6048)
+DURABILITY_DEBUG: HUD received hit | Target: @StaticBody3D@6566 | HP: 0.0% | Key: rid:95129230639715
+[COMBAT_AUDIO] Playing range: 6.40 to 8.04 (Dur: 1.64) [TempPlayer]
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
+PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
+PICKAXE_HIT_DEBUG: HIT at impact time | Target: @StaticBody3D@6610 | Position: (305.5709, 15.49119, -358.5195)
+DURABILITY_DEBUG: HUD received hit | Target: @StaticBody3D@6610 | HP: 0.0% | Key: rid:95223719920249
+[COMBAT_AUDIO] Playing range: 6.40 to 8.04 (Dur: 1.64) [TempPlayer]
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)
+ItemUseRouter: LMB pressed, item=Stone Pickaxe
+PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
+PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
+PICKAXE_HIT_DEBUG: HIT at impact time | Target: @StaticBody3D@6558 | Position: (302.5691, 15.49119, -359.5987)
+DURABILITY_DEBUG: HUD received hit | Target: @StaticBody3D@6558 | HP: 0.0% | Key: rid:95103460835935
+[COMBAT_AUDIO] Playing range: 6.40 to 8.04 (Dur: 1.64) [TempPlayer]
 [TOWN_STALL_TEST] Hold complete, quitting
-WARNING: 275 RIDs of type "StorageBuffer" were leaked.
+ERROR: 10 RID allocations of type 'P11JoltShape3D' were leaked at exit.
+ERROR: 83 RID allocations of type 'P10JoltBody3D' were leaked at exit.
+ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceSurfaceDataCacheE
+   at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
+ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceForwardClusteredE
+   at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
+ERROR: 9 shaders of type SceneForwardClusteredShaderRD were never freed
+   at: ~ShaderRD (servers/rendering/renderer_rd/shader_rd.cpp:1056)
+ERROR: 3 RID allocations of type 'N10RendererRD11MeshStorage8SkeletonE' were leaked at exit.
+ERROR: 42 RID allocations of type 'N10RendererRD11MeshStorage4MeshE' were leaked at exit.
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+ERROR: 14 RID allocations of type 'N10RendererRD15MaterialStorage8MaterialE' were leaked at exit.
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
+   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+ERROR: 9 RID allocations of type 'N10RendererRD15MaterialStorage6ShaderE' were leaked at exit.
+ERROR: 31 RID allocations of type 'N10RendererRD14TextureStorage7TextureE' were leaked at exit.
+ERROR: 106 RID allocations of type 'N17RendererSceneCull8InstanceE' were leaked at exit.
+WARNING: 3 RIDs of type "StorageBuffer" were leaked.
    at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-   GDScript backtrace (most recent call first):
-       [0] _thread_function (res://world_marching_cubes/chunk_manager.gd:1947)
-WARNING: A Thread object is being destroyed without its completion having been realized.
-Please call wait_to_finish() on it to ensure correct cleanup.
-   at: ~Thread (core/os/thread.cpp:102)
-WARNING: A Thread object is being destroyed without its completion having been realized.
-Please call wait_to_finish() on it to ensure correct cleanup.
-   at: ~Thread (core/os/thread.cpp:102)
+WARNING: 14 RIDs of type "UniformBuffer" were leaked.
+   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
+WARNING: 80 RIDs of type "IndexArray" were leaked.
+   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
+WARNING: 80 RIDs of type "IndexBuffer" were leaked.
+   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
+WARNING: 33 RIDs of type "VertexArray" were leaked.
+   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
+WARNING: 72 RIDs of type "VertexBuffer" were leaked.
+   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
+WARNING: 52 RIDs of type "Texture" were leaked.
+   at: finalize (servers/rendering/rendering_device.cpp:7505)
 WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
    at: cleanup (core/object/object.cpp:2641)
+ERROR: 97 resources still in use at exit (run with --verbose for details).
+   at: clear (core/io/resource.cpp:810)

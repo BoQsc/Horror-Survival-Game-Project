@@ -1,8 +1,22 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://dbtxg13jks4de"]
 
 [ext_resource type="PackedScene" uid="uid://3u1jyqtrkwl4" path="res://models/objects/chair/1/cc0_-_chair_8.glb" id="1_chair"]
 
-[node name="Chair8" type="Node3D"]
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ibc7o"]
+transparency = 1
+albedo_color = Color(0.2, 0.5, 1, 0.3)
 
-[node name="ChairModel" parent="." instance=ExtResource("1_chair")]
-transform = Transform3D(0.02428207, 0, 0, 0, 0.02428207, 0, 0, 0, 0.02428207, 0.0, 0.25754148, 0.00975714)
+[sub_resource type="BoxMesh" id="BoxMesh_oorc6"]
+
+[node name="Chair8" type="Node3D" unique_id=19385569]
+
+[node name="ChairModel" parent="." unique_id=1736004710 instance=ExtResource("1_chair")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.555, 0.01)
+
+[node name="PlacementGuides" type="Node3D" parent="." unique_id=1248575081]
+visible = false
+
+[node name="Block00" type="MeshInstance3D" parent="PlacementGuides" unique_id=2124188456]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+material_override = SubResource("StandardMaterial3D_ibc7o")
+mesh = SubResource("BoxMesh_oorc6")
