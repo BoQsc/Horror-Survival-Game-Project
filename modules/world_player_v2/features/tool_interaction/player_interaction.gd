@@ -402,6 +402,14 @@ func _exit_vehicle() -> void:
 		PlayerSignals.interaction_performed.emit(null, "exit_vehicle")
 
 
+func get_map_focus_target() -> Node3D:
+	if is_in_vehicle and is_instance_valid(current_vehicle):
+		return current_vehicle
+	if is_instance_valid(player) and player is Node3D:
+		return player
+	return null
+
+
 ## Remove collision exception after multiple physics frames to ensure safe separation
 func _remove_vehicle_collision_exception_deferred(vehicle: Node3D) -> void:
 	# Wait for 3 physics frames to ensure complete separation

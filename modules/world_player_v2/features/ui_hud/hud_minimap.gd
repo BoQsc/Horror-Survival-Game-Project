@@ -18,7 +18,10 @@ var _minimap_atlas: AtlasTexture # GPU region for minimap UI
 var _fullmap_atlas: AtlasTexture # GPU region for full map UI
 var _terrain_manager: Node = null
 var _building_manager: Node = null
+var _vehicle_manager: Node = null
 var _player: Node = null
+var _player_interaction: Node = null
+var _focus_target_override: Node3D = null
 
 # Full map overlay
 var _fullmap_panel: Panel = null
@@ -35,6 +38,7 @@ const FULLMAP_ZOOM_STEP: float = 0.5
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	visible = false  # Hidden until world map is active
+	process_mode = Node.PROCESS_MODE_ALWAYS  # Keep updating while the player tree is disabled in a vehicle
 	add_to_group("hud_minimap")
 	
 	# Create border panel
@@ -93,7 +97,12 @@ func _ready() -> void:
 func _deferred_init() -> void:
 	_terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	_building_manager = get_tree().get_first_node_in_group("building_manager")
+	_vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
 	_player = get_tree().get_first_node_in_group("player")
+	if _player:
+		_player_interaction = _player.get_node_or_null("Components/Interaction")
+	_connect_vehicle_signals()
+	_connect_player_signals()
 	
 	if _terrain_manager and "world_map_active" in _terrain_manager and _terrain_manager.world_map_active:
 		_build_minimap_image()
@@ -105,6 +114,76 @@ func _deferred_init() -> void:
 		# Connect to terrain modification signal for real-time map updates
 		if _terrain_manager.has_signal("chunk_modified"):
 			_terrain_manager.chunk_modified.connect(_on_terrain_modified)
+
+
+func _connect_vehicle_signals() -> void:
+	if not _vehicle_manager or not is_instance_valid(_vehicle_manager):
+		_vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+	if not _vehicle_manager:
+		return
+	if _vehicle_manager.has_signal("player_entered_vehicle") and not _vehicle_manager.player_entered_vehicle.is_connected(_on_player_entered_vehicle):
+		_vehicle_manager.player_entered_vehicle.connect(_on_player_entered_vehicle)
+	if _vehicle_manager.has_signal("player_exited_vehicle") and not _vehicle_manager.player_exited_vehicle.is_connected(_on_player_exited_vehicle):
+		_vehicle_manager.player_exited_vehicle.connect(_on_player_exited_vehicle)
+
+
+func _connect_player_signals() -> void:
+	if not has_node("/root/PlayerSignals"):
+		return
+	if not PlayerSignals.interaction_performed.is_connected(_on_player_interaction_performed):
+		PlayerSignals.interaction_performed.connect(_on_player_interaction_performed)
+
+
+func _refresh_player_context() -> void:
+	if not is_instance_valid(_player):
+		_player = get_tree().get_first_node_in_group("player")
+	if _player and not is_instance_valid(_player_interaction):
+		_player_interaction = _player.get_node_or_null("Components/Interaction")
+	if not is_instance_valid(_vehicle_manager):
+		_vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+
+
+func _get_fallback_focus_target() -> Node3D:
+	if _player_interaction and _player_interaction.has_method("get_map_focus_target"):
+		var interaction_focus = _player_interaction.call("get_map_focus_target")
+		if interaction_focus is Node3D and is_instance_valid(interaction_focus):
+			return interaction_focus
+	if _terrain_manager:
+		var active_viewer = _terrain_manager.get("viewer")
+		if active_viewer is Node3D and is_instance_valid(active_viewer):
+			return active_viewer
+	if _vehicle_manager:
+		var active_vehicle = _vehicle_manager.get("current_player_vehicle")
+		if active_vehicle is Node3D and is_instance_valid(active_vehicle):
+			return active_vehicle
+	if is_instance_valid(_player):
+		return _player
+	return null
+
+
+func _get_focus_target() -> Node3D:
+	if is_instance_valid(_focus_target_override):
+		return _focus_target_override
+	return _get_fallback_focus_target()
+
+
+func _on_player_entered_vehicle(vehicle: Node3D) -> void:
+	_focus_target_override = vehicle
+
+
+func _on_player_exited_vehicle(_vehicle: Node3D) -> void:
+	call_deferred("_sync_focus_after_vehicle_exit")
+
+
+func _sync_focus_after_vehicle_exit() -> void:
+	_focus_target_override = null
+
+
+func _on_player_interaction_performed(target: Node, action: String) -> void:
+	if action == "enter_vehicle" and target is Node3D:
+		_focus_target_override = target
+	elif action == "exit_vehicle":
+		call_deferred("_sync_focus_after_vehicle_exit")
 
 func _create_fullmap_overlay() -> void:
 	# Dark background panel
@@ -341,8 +420,17 @@ func _process(_delta: float) -> void:
 	if _minimap_dirty and _minimap_image and _minimap_texture:
 		_minimap_texture.update(_minimap_image)
 		_minimap_dirty = false
+
+	_refresh_player_context()
+	if not _vehicle_manager or not is_instance_valid(_vehicle_manager):
+		_connect_vehicle_signals()
+	_connect_player_signals()
+
+	if not _minimap_image:
+		return
 	
-	if not _minimap_image or not _player:
+	var focus_target := _get_focus_target()
+	if not focus_target:
 		return
 	
 	if not _terrain_manager or not "world_map_active" in _terrain_manager:
@@ -359,7 +447,7 @@ func _process(_delta: float) -> void:
 	
 	visible = true
 	
-	var player_pos = _player.global_position
+	var player_pos = focus_target.global_position
 	var map_half = _terrain_manager.world_map_half
 	var map_size = _terrain_manager.world_map_size
 	
@@ -367,8 +455,9 @@ func _process(_delta: float) -> void:
 	var px = player_pos.x + map_half
 	var pz = player_pos.z + map_half
 	
-	# Player facing direction
-	var forward = -_player.global_transform.basis.z
+	# Player/vehicle facing direction.
+	# VehicleBody3D uses MODEL_FRONT (+Z); on-foot actors typically follow camera-style (-Z).
+	var forward = _get_focus_forward_vector(focus_target)
 	var angle = atan2(forward.x, -forward.z)
 	
 	# Update full map overlay if open
@@ -419,3 +508,9 @@ func _process(_delta: float) -> void:
 	
 	# Update coordinate label
 	_coord_label.text = "%d, %d" % [int(player_pos.x), int(player_pos.z)]
+
+
+func _get_focus_forward_vector(target: Node3D) -> Vector3:
+	if target is VehicleBody3D:
+		return target.global_transform.basis.z
+	return -target.global_transform.basis.z
