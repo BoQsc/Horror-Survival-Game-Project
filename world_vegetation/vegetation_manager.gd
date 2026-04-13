@@ -39,6 +39,7 @@ var grass_mesh: Mesh
 var grass_base_transform: Transform3D = Transform3D()
 var rock_mesh: Mesh
 var rock_base_transform: Transform3D = Transform3D()
+static var _loaded_model_cache: Dictionary = {}
 var forest_noise: FastNoiseLite
 var grass_noise: FastNoiseLite
 var rock_noise: FastNoiseLite
@@ -1860,28 +1861,35 @@ func _add_rock_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: 
 	return false
 
 func load_tree_mesh_from_glb(path: String) -> Dictionary:
+	if _loaded_model_cache.has(path):
+		return _loaded_model_cache[path]
+
 	var scene = load(path)
 	if scene == null:
 		push_error("Could not load GLB: " + path)
 		return {"mesh": null, "transform": Transform3D()}
 	
 	var instance = scene.instantiate()
-	# Need to add to tree temporarily to get global_transform
-	add_child(instance)
-	var result = find_mesh_and_transform_in_node(instance)
-	instance.queue_free()
+	var result = find_mesh_and_transform_in_node(instance, Transform3D.IDENTITY)
+	if instance:
+		instance.free()
 	
 	if result.mesh:
+		_loaded_model_cache[path] = result
 		DebugManager.log_vegetation("Loaded tree mesh from: %s" % path)
 	
 	return result
 
-func find_mesh_and_transform_in_node(node: Node) -> Dictionary:
+func find_mesh_and_transform_in_node(node: Node, parent_transform: Transform3D = Transform3D.IDENTITY) -> Dictionary:
+	var current_transform := parent_transform
+	if node is Node3D:
+		current_transform = parent_transform * (node as Node3D).transform
+
 	if node is MeshInstance3D:
-		return {"mesh": node.mesh, "transform": node.global_transform}
+		return {"mesh": node.mesh, "transform": current_transform}
 	
 	for child in node.get_children():
-		var result = find_mesh_and_transform_in_node(child)
+		var result = find_mesh_and_transform_in_node(child, current_transform)
 		if result.mesh:
 			return result
 	
