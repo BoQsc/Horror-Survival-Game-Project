@@ -83,6 +83,10 @@ func _ensure_device() -> bool:
 	_attempted_init = true
 	_last_error = ""
 
+	if not ClassDB.class_exists("MeshBuilder"):
+		_last_error = "Missing MeshBuilder GDExtension."
+		return false
+
 	if not ResourceLoader.exists(SHADER_PATH):
 		_last_error = "Missing greedy meshing shader: %s" % SHADER_PATH
 		return false
@@ -149,25 +153,14 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 	var sampler_rid := RID()
 	var uniform_set := RID()
 
-	var builder = null
-	if ClassDB.class_exists("MeshBuilder"):
-		builder = ClassDB.instantiate("MeshBuilder")
+	var builder = ClassDB.instantiate("MeshBuilder")
+	if not builder:
+		_last_error = "Missing MeshBuilder GDExtension."
+		_cleanup_transient(texture_rid, meta_rid, sampler_rid, uniform_set)
+		return []
 
-	var float_data := PackedFloat32Array()
-	if builder:
-		float_data = builder.bytes_to_floats(v_bytes)
-	else:
-		float_data.resize(v_bytes.size())
-		for i in range(v_bytes.size()):
-			float_data[i] = float(v_bytes[i])
-
-	var meta_data := PackedFloat32Array()
-	if builder:
-		meta_data = builder.bytes_to_floats(v_meta)
-	else:
-		meta_data.resize(v_meta.size())
-		for i in range(v_meta.size()):
-			meta_data[i] = float(v_meta[i])
+	var float_data := builder.bytes_to_floats(v_bytes)
+	var meta_data := builder.bytes_to_floats(v_meta)
 
 	var fmt := RDTextureFormat.new()
 	fmt.width = CHUNK_SIZE
@@ -275,53 +268,17 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 		var uv_bytes := _rd.buffer_get_data(_uv_buffer, 0, actual_vertex_count * 8)
 		var index_bytes := _rd.buffer_get_data(_index_buffer, 0, actual_index_count * 4)
 
-		var mesh: ArrayMesh = null
-		if builder:
-			mesh = builder.build_building_mesh(
-				vertex_bytes,
-				normal_bytes,
-				uv_bytes,
-				index_bytes,
-				actual_vertex_count,
-				actual_index_count
-			)
-			if mesh:
-				for surface_index in range(mesh.get_surface_count()):
-					arrays = mesh.surface_get_arrays(surface_index)
-
-		if not mesh:
-			var vertices_floats := vertex_bytes.to_float32_array()
-			var normals_floats := normal_bytes.to_float32_array()
-			var uvs_floats := uv_bytes.to_float32_array()
-
-			var vertices := PackedVector3Array()
-			var normals := PackedVector3Array()
-			var uvs := PackedVector2Array()
-			vertices.resize(actual_vertex_count)
-			normals.resize(actual_vertex_count)
-			uvs.resize(actual_vertex_count)
-
-			for i in range(actual_vertex_count):
-				vertices[i] = Vector3(
-					vertices_floats[i * 3],
-					vertices_floats[i * 3 + 1],
-					vertices_floats[i * 3 + 2]
-				)
-				normals[i] = Vector3(
-					normals_floats[i * 3],
-					normals_floats[i * 3 + 1],
-					normals_floats[i * 3 + 2]
-				)
-				uvs[i] = Vector2(
-					uvs_floats[i * 2],
-					uvs_floats[i * 2 + 1]
-				)
-
-			arrays.resize(ArrayMesh.ARRAY_MAX)
-			arrays[ArrayMesh.ARRAY_VERTEX] = vertices
-			arrays[ArrayMesh.ARRAY_NORMAL] = normals
-			arrays[ArrayMesh.ARRAY_TEX_UV] = uvs
-			arrays[ArrayMesh.ARRAY_INDEX] = index_bytes.to_int32_array()
+		var mesh: ArrayMesh = builder.build_building_mesh(
+			vertex_bytes,
+			normal_bytes,
+			uv_bytes,
+			index_bytes,
+			actual_vertex_count,
+			actual_index_count
+		)
+		if mesh:
+			for surface_index in range(mesh.get_surface_count()):
+				arrays = mesh.surface_get_arrays(surface_index)
 
 	_cleanup_transient(texture_rid, meta_rid, sampler_rid, uniform_set)
 	return arrays

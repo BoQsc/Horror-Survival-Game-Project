@@ -11,6 +11,7 @@ var pending_apply_queue: Array = []
 var pending_apply_queue_index: int = 0
 var compute_shader: RDShaderFile
 var native_builder: Object = null
+var _native_backend_ready: bool = false
 const BUILDING_MESH_CACHE_LIMIT: int = 96
 const BUILDING_CHUNK_SIZE: int = 16
 const BUILDING_CHUNK_VOLUME: int = BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
@@ -45,11 +46,16 @@ func _init():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
 	set_process(true)
+
+	if not ClassDB.class_exists("MeshBuilder"):
+		push_error("[BuildingMesher] MeshBuilder GDExtension is required.")
+		return
 	
 	compute_shader = load("res://world_greedy_meshing/greedy_meshing.glsl")
 	
 	thread = Thread.new()
 	thread.start(_thread_loop)
+	_native_backend_ready = true
 
 func _process(_delta: float) -> void:
 	var apply_items: Array = []
@@ -88,8 +94,12 @@ func _process(_delta: float) -> void:
 func _get_native_builder() -> Object:
 	if native_builder and is_instance_valid(native_builder):
 		return native_builder
-	if ClassDB.class_exists("MeshBuilder"):
-		native_builder = ClassDB.instantiate("MeshBuilder")
+	if not ClassDB.class_exists("MeshBuilder"):
+		push_error("[BuildingMesher] MeshBuilder GDExtension is required.")
+		return null
+	native_builder = ClassDB.instantiate("MeshBuilder")
+	if not native_builder:
+		push_error("[BuildingMesher] Failed to instantiate MeshBuilder GDExtension.")
 	return native_builder
 
 func _make_building_mesh_cache_key(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String) -> String:
@@ -146,167 +156,23 @@ func _store_cached_building_mesh(voxel_bytes: PackedByteArray, voxel_meta: Packe
 	}
 	_building_mesh_cache_order.append(cache_key)
 
-func _build_collision_boxes_from_voxels(voxel_bytes: PackedByteArray) -> Array:
-	var boxes: Array = []
-	if voxel_bytes.size() < BUILDING_CHUNK_VOLUME:
-		return boxes
-
-	var visited := PackedByteArray()
-	visited.resize(BUILDING_CHUNK_VOLUME)
-	visited.fill(0)
-
-	for y in range(BUILDING_CHUNK_SIZE):
-		for z in range(BUILDING_CHUNK_SIZE):
-			for x in range(BUILDING_CHUNK_SIZE):
-				var idx := x + y * BUILDING_CHUNK_SIZE + z * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
-				if visited.decode_u8(idx) != 0:
-					continue
-				if voxel_bytes.decode_u8(idx) == 0:
-					continue
-
-				var x_end := x
-				while x_end + 1 < BUILDING_CHUNK_SIZE:
-					var next_idx := (x_end + 1) + y * BUILDING_CHUNK_SIZE + z * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
-					if visited.decode_u8(next_idx) != 0 or voxel_bytes.decode_u8(next_idx) == 0:
-						break
-					x_end += 1
-
-				var z_end := z
-				while z_end + 1 < BUILDING_CHUNK_SIZE:
-					var can_expand_z := true
-					for xi in range(x, x_end + 1):
-						var row_idx := xi + y * BUILDING_CHUNK_SIZE + (z_end + 1) * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
-						if visited.decode_u8(row_idx) != 0 or voxel_bytes.decode_u8(row_idx) == 0:
-							can_expand_z = false
-							break
-					if not can_expand_z:
-						break
-					z_end += 1
-
-				var y_end := y
-				while y_end + 1 < BUILDING_CHUNK_SIZE:
-					var can_expand_y := true
-					for zz in range(z, z_end + 1):
-						for xi in range(x, x_end + 1):
-							var layer_idx := xi + (y_end + 1) * BUILDING_CHUNK_SIZE + zz * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
-							if visited.decode_u8(layer_idx) != 0 or voxel_bytes.decode_u8(layer_idx) == 0:
-								can_expand_y = false
-								break
-						if not can_expand_y:
-							break
-					if not can_expand_y:
-						break
-					y_end += 1
-
-				for yy in range(y, y_end + 1):
-					for zz in range(z, z_end + 1):
-						for xx in range(x, x_end + 1):
-							visited.encode_u8(xx + yy * BUILDING_CHUNK_SIZE + zz * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE, 1)
-
-				boxes.append({
-					"origin": Vector3i(x, y, z),
-							"size": Vector3i(x_end - x + 1, y_end - y + 1, z_end - z + 1)
-				})
-
-	return boxes
-
 func pack_world_map_block_batches(rotated_blocks: Array, spawn_pos: Vector3, chunk_size: int) -> Array:
 	var builder := _get_native_builder()
-	if builder and builder.has_method("pack_world_map_block_batches"):
-		return builder.pack_world_map_block_batches(rotated_blocks, spawn_pos, chunk_size)
-	return _pack_world_map_block_batches_fallback(rotated_blocks, spawn_pos, chunk_size)
+	if not builder or not builder.has_method("pack_world_map_block_batches"):
+		push_error("[BuildingMesher] MeshBuilder.pack_world_map_block_batches() is required.")
+		return []
+	return builder.pack_world_map_block_batches(rotated_blocks, spawn_pos, chunk_size)
 
 func pack_rotated_world_map_block_batches(prefab_blocks: Array, rotation: int, spawn_pos: Vector3, chunk_size: int) -> Array:
 	var builder := _get_native_builder()
-	if builder and builder.has_method("pack_rotated_world_map_block_batches"):
-		return builder.pack_rotated_world_map_block_batches(prefab_blocks, rotation, spawn_pos, chunk_size)
-	return _pack_rotated_world_map_block_batches_from_prefab_fallback(prefab_blocks, rotation, spawn_pos, chunk_size)
-
-func _pack_world_map_block_batches_fallback(rotated_blocks: Array, spawn_pos: Vector3, chunk_size: int) -> Array:
-	var batches_by_coord: Dictionary = {}
-	if rotated_blocks.is_empty() or chunk_size <= 0:
+	if not builder or not builder.has_method("pack_rotated_world_map_block_batches"):
+		push_error("[BuildingMesher] MeshBuilder.pack_rotated_world_map_block_batches() is required.")
 		return []
-
-	for block_data_variant in rotated_blocks:
-		if typeof(block_data_variant) != TYPE_DICTIONARY:
-			continue
-		var block_data: Dictionary = block_data_variant
-		var rotated_offset: Vector3i = block_data.get("offset", Vector3i.ZERO)
-		var block_global_pos: Vector3 = spawn_pos + Vector3(rotated_offset)
-		var global_x: int = int(floor(block_global_pos.x))
-		var global_y: int = int(floor(block_global_pos.y))
-		var global_z: int = int(floor(block_global_pos.z))
-		var chunk_coord := Vector3i(
-			int(floor(block_global_pos.x / float(chunk_size))),
-			int(floor(block_global_pos.y / float(chunk_size))),
-			int(floor(block_global_pos.z / float(chunk_size)))
-		)
-		var local_x: int = global_x % chunk_size
-		var local_y: int = global_y % chunk_size
-		var local_z: int = global_z % chunk_size
-		if local_x < 0:
-			local_x += chunk_size
-		if local_y < 0:
-			local_y += chunk_size
-		if local_z < 0:
-			local_z += chunk_size
-		var local_index: int = local_x + local_y * chunk_size + local_z * chunk_size * chunk_size
-		var batch: Dictionary = batches_by_coord.get(chunk_coord, {})
-		if batch.is_empty():
-			batch = {
-				"coord": chunk_coord,
-				"indices": PackedInt32Array(),
-				"types": PackedByteArray(),
-				"metas": PackedByteArray()
-			}
-		var indices: PackedInt32Array = batch.get("indices", PackedInt32Array())
-		var types: PackedByteArray = batch.get("types", PackedByteArray())
-		var metas: PackedByteArray = batch.get("metas", PackedByteArray())
-		indices.append(local_index)
-		types.append(int(block_data.get("type", 0)))
-		metas.append(int(block_data.get("meta", 0)))
-		batch["coord"] = chunk_coord
-		batch["indices"] = indices
-		batch["types"] = types
-		batch["metas"] = metas
-		batches_by_coord[chunk_coord] = batch
-
-	var batches: Array = []
-	for chunk_coord_variant in batches_by_coord.keys():
-		batches.append(batches_by_coord[chunk_coord_variant])
-	return batches
-
-func _pack_rotated_world_map_block_batches_from_prefab_fallback(prefab_blocks: Array, rotation: int, spawn_pos: Vector3, chunk_size: int) -> Array:
-	var rotated_blocks: Array = []
-	if prefab_blocks.is_empty() or chunk_size <= 0:
-		return []
-
-	for block_data_variant in prefab_blocks:
-		if typeof(block_data_variant) != TYPE_DICTIONARY:
-			continue
-		var block_data: Dictionary = block_data_variant
-		var offset: Vector3i = block_data.get("offset", Vector3i.ZERO)
-		var rotated_offset: Vector3i = offset
-		match rotation & 3:
-			1:
-				rotated_offset = Vector3i(-offset.z, offset.y, offset.x)
-			2:
-				rotated_offset = Vector3i(-offset.x, offset.y, -offset.z)
-			3:
-				rotated_offset = Vector3i(offset.z, offset.y, -offset.x)
-		var block_type: int = int(block_data.get("type", 0))
-		var block_meta: int = int(block_data.get("meta", 0))
-		if block_type == 4 or (block_type == 2 and block_meta >= 1 and block_meta <= 3):
-			block_meta = (block_meta + rotation) % 4
-		rotated_blocks.append({
-			"offset": rotated_offset,
-			"type": block_type,
-			"meta": block_meta
-		})
-
-	return _pack_world_map_block_batches_fallback(rotated_blocks, spawn_pos, chunk_size)
+	return builder.pack_rotated_world_map_block_batches(prefab_blocks, rotation, spawn_pos, chunk_size)
 
 func request_mesh_generation(chunk: BuildingChunk):
+	if not _native_backend_ready:
+		return
 	mutex.lock()
 	if not queue.has(chunk):
 		queue.append(chunk)
@@ -454,6 +320,16 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 	rd.buffer_update(index_counter_buffer, 0, 4, zero_data)
 	
 	var builder = _get_native_builder()
+	if not builder:
+		return {
+			"arrays": [],
+			"shape": null,
+			"mesh": null,
+			"collision_boxes": [],
+			"dispatch_elapsed_ms": 0.0,
+			"mesh_build_elapsed_ms": 0.0,
+			"collision_shape_elapsed_ms": 0.0
+		}
 	var arrays: Array = []
 	var shape: Shape3D = null
 	var mesh: ArrayMesh = null
@@ -484,22 +360,10 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 			}
 		
 	# Convert Data to Floats
-	var float_data = PackedFloat32Array()
-	if builder:
-		float_data = builder.bytes_to_floats(v_bytes)
-	else:
-		float_data.resize(v_bytes.size())
-		for i in range(v_bytes.size()):
-			float_data[i] = float(v_bytes[i])
+	var float_data = builder.bytes_to_floats(v_bytes)
 		
 	# Convert Meta to Floats
-	var meta_data = PackedFloat32Array()
-	if builder:
-		meta_data = builder.bytes_to_floats(v_meta)
-	else:
-		meta_data.resize(v_meta.size())
-		for i in range(v_meta.size()):
-			meta_data[i] = float(v_meta[i])
+	var meta_data = builder.bytes_to_floats(v_meta)
 	
 	# Texture 0: IDs
 	var fmt = RDTextureFormat.new()
@@ -607,47 +471,15 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		
 		# Convert
 		var build_start_us := Time.get_ticks_usec()
-		if builder:
-			mesh = builder.build_building_mesh(vertex_bytes, normal_bytes, uv_bytes, index_bytes, actual_vertex_count, actual_index_count)
+		mesh = builder.build_building_mesh(vertex_bytes, normal_bytes, uv_bytes, index_bytes, actual_vertex_count, actual_index_count)
 		mesh_build_elapsed_ms = float(Time.get_ticks_usec() - build_start_us) / 1000.0
 		if mesh and not use_box_collision:
 			var collision_start_us := Time.get_ticks_usec()
 			shape = builder.build_collision_shape_indexed(vertex_bytes, index_bytes, actual_vertex_count, actual_index_count)
 			collision_shape_elapsed_ms = float(Time.get_ticks_usec() - collision_start_us) / 1000.0
-		
-		# Fallback to GDScript if builder missing
-		if not mesh:
-			var vertices = []
-			var vertices_floats = vertex_bytes.to_float32_array()
-			vertices.resize(actual_vertex_count)
-			for i in range(actual_vertex_count):
-				vertices[i] = Vector3(vertices_floats[i * 3], vertices_floats[i * 3 + 1], vertices_floats[i * 3 + 2])
-				
-			var normals = []
-			var normals_floats = normal_bytes.to_float32_array()
-			normals.resize(actual_vertex_count)
-			for i in range(actual_vertex_count):
-				normals[i] = Vector3(normals_floats[i * 3], normals_floats[i * 3 + 1], normals_floats[i * 3 + 2])
 
-			var uvs = []
-			var uvs_floats = uv_bytes.to_float32_array()
-			uvs.resize(actual_vertex_count)
-			for i in range(actual_vertex_count):
-				uvs[i] = Vector2(uvs_floats[i * 2], uvs_floats[i * 2 + 1])
-				
-			var indices = index_bytes.to_int32_array()
-
-			arrays.resize(ArrayMesh.ARRAY_MAX)
-			arrays[ArrayMesh.ARRAY_VERTEX] = PackedVector3Array(vertices)
-			arrays[ArrayMesh.ARRAY_NORMAL] = PackedVector3Array(normals)
-			arrays[ArrayMesh.ARRAY_TEX_UV] = PackedVector2Array(uvs)
-			arrays[ArrayMesh.ARRAY_INDEX] = indices
-		
 		if use_box_collision:
-			if builder and builder.has_method("build_collision_boxes_from_voxels"):
-				collision_boxes = builder.build_collision_boxes_from_voxels(v_bytes, BUILDING_CHUNK_SIZE)
-			else:
-				collision_boxes = _build_collision_boxes_from_voxels(v_bytes)
+			collision_boxes = builder.build_collision_boxes_from_voxels(v_bytes, BUILDING_CHUNK_SIZE)
 
 		# Cleanup GPU resources - controlled by ENABLE_GPU_CLEANUP toggle
 		# ORDER MATTERS: Free uniform_set FIRST (it holds references to textures/sampler)

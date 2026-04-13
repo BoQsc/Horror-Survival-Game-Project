@@ -155,6 +155,7 @@ var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
 var skip_terrain_chunk_updates_for_test: bool = false
 var terrain_grid = null
+var _native_backends_ready: bool = false
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_update_backend: String = ""
@@ -186,16 +187,21 @@ func _ready():
 	else:
 		push_warning("Viewer NOT found! Terrain generation will not start.")
 
-	# Check for GDExtension
-	if ClassDB.class_exists("MeshBuilder"):
-		DebugManager.log_chunk("GDExtension MeshBuilder active")
-	else:
-		push_warning("[GDExtension] MeshBuilder NOT found. Using slow GDScript fallback.")
+	# Native backends are required.
+	if not ClassDB.class_exists("MeshBuilder"):
+		push_error("[ChunkManager] MeshBuilder GDExtension is required.")
+		return
+	DebugManager.log_chunk("GDExtension MeshBuilder active")
 
-	# Check for TerrainGrid
-	if ClassDB.class_exists("TerrainGrid"):
-		terrain_grid = ClassDB.instantiate("TerrainGrid")
-		DebugManager.log_chunk("GDExtension TerrainGrid active")
+	if not ClassDB.class_exists("TerrainGrid"):
+		push_error("[ChunkManager] TerrainGrid GDExtension is required.")
+		return
+	terrain_grid = ClassDB.instantiate("TerrainGrid")
+	if not terrain_grid:
+		push_error("[ChunkManager] Failed to instantiate TerrainGrid GDExtension.")
+		return
+	DebugManager.log_chunk("GDExtension TerrainGrid active")
+	_native_backends_ready = true
 
 
 	# Load shaders (Data only, safe on Main Thread)
@@ -1344,6 +1350,7 @@ func _exit_tree():
 	if terrain_grid and terrain_grid.has_method("clear"):
 		terrain_grid.clear()
 	terrain_grid = null
+	_native_backends_ready = false
 	task_queue.clear()
 	cpu_task_queue.clear()
 	pending_spawn_zones.clear()
@@ -1354,10 +1361,9 @@ func _exit_tree():
 
 
 func update_chunks():
-	if terrain_grid:
-		_update_chunks_native()
-	else:
-		_update_chunks_gdscript()
+	if not _native_backends_ready or not terrain_grid or not is_instance_valid(terrain_grid):
+		return
+	_update_chunks_native()
 
 func _update_chunks_native():
 	_last_update_backend = "native"
@@ -1531,8 +1537,8 @@ func clear_all_chunks():
 
 	DebugManager.log_chunk("ChunkManager: Atomic clear complete - background tasks stopped")
 
-func _update_chunks_gdscript():
-	_last_update_backend = "gdscript"
+func _update_chunks_legacy():
+	_last_update_backend = "legacy"
 	var p_pos = viewer.global_position
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE)) # Y uses CHUNK_STRIDE for 1-voxel overlap
@@ -2260,34 +2266,25 @@ func _cpu_thread_function():
 		var task = cpu_task_queue.pop_front()
 		cpu_mutex.unlock()
 
-		# Initialize builder once per task if available
-		var builder = null
-		if ClassDB.class_exists("MeshBuilder"):
-			builder = ClassDB.instantiate("MeshBuilder")
+		# Initialize the native mesh helper once per task.
+		var builder = ClassDB.instantiate("MeshBuilder")
+		if not builder:
+			push_error("[ChunkManager] MeshBuilder GDExtension is required for CPU meshing.")
+			break
 
 		# Build terrain mesh and collision (CPU intensive)
 		var mesh_terrain = null
 		var shape_terrain = null
 		if task.vert_floats_terrain.size() > 0:
-			mesh_terrain = build_mesh(task.vert_floats_terrain, material_terrain)
-
-			# Use optimized GDExtension for collision if available
-			if builder:
-				shape_terrain = builder.build_collision_shape(task.vert_floats_terrain, 9)
-			elif mesh_terrain:
-				shape_terrain = mesh_terrain.create_trimesh_shape()
+			mesh_terrain = build_mesh(task.vert_floats_terrain, material_terrain, builder)
+			shape_terrain = builder.build_collision_shape(task.vert_floats_terrain, 9)
 
 		# Build water mesh and collision (CPU intensive)
 		var mesh_water = null
 		var shape_water = null
 		if task.vert_floats_water.size() > 0:
-			mesh_water = build_mesh(task.vert_floats_water, material_water)
-
-			# Use optimized GDExtension for collision if available
-			if builder:
-				shape_water = builder.build_collision_shape(task.vert_floats_water, 9)
-			elif mesh_water:
-				shape_water = mesh_water.create_trimesh_shape()
+			mesh_water = build_mesh(task.vert_floats_water, material_water, builder)
+			shape_water = builder.build_collision_shape(task.vert_floats_water, 9)
 
 		# Package results
 		var result_t = {"mesh": mesh_terrain, "shape": shape_terrain}
@@ -2310,7 +2307,7 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 	if material_buffer.is_valid():
 		u_material.add_id(material_buffer)
 	else:
-		u_material.add_id(density_buffer) # Fallback
+		u_material.add_id(density_buffer) # Placeholder when material data is unavailable.
 
 	var set_mod = rd.uniform_set_create([u_density, u_material], sid_mod, 0)
 	var list = rd.compute_list_begin()
@@ -2366,7 +2363,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	if material_buffer.is_valid():
 		u_material.add_id(material_buffer)
 	else:
-		u_material.add_id(density_buffer) # Fallback
+		u_material.add_id(density_buffer) # Placeholder when material data is unavailable.
 
 	var set_mod = rd.uniform_set_create([u_density, u_material], sid_mod, 0)
 	var list = rd.compute_list_begin()
@@ -2428,14 +2425,29 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 
 var _meshbuilder_logged: bool = false
 
-func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayMesh:
+func build_mesh(data: PackedFloat32Array, material_instance: Material, builder_override: Object = null) -> ArrayMesh:
 	if data.size() == 0:
 		return null
 
 	var vertex_count = data.size() / 9 # 9 floats per vertex: pos(3) + normal(3) + color(3)
 
-	# Try using GDExtension "MeshBuilder" for extreme speed (10-50x faster)
-	if ClassDB.class_exists("MeshBuilder"):
+	var native_builder = builder_override
+	if not native_builder:
+		native_builder = ClassDB.instantiate("MeshBuilder")
+		if not native_builder:
+			push_error("[ChunkManager] MeshBuilder GDExtension is required for mesh building.")
+			return null
+
+	var native_mesh = native_builder.build_mesh_native(data, 9)
+	if native_mesh:
+		native_mesh.surface_set_material(0, material_instance)
+		return native_mesh
+
+	push_error("[ChunkManager] MeshBuilder.build_mesh_native() failed.")
+	return null
+
+	# Legacy native-path block kept unreachable for reference.
+	if false:
 		if not _meshbuilder_logged:
 			_meshbuilder_logged = true
 			print("[ChunkManager] ✓ MeshBuilder GDExtension LOADED - using fast C++ path")
@@ -2446,7 +2458,7 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material) -> ArrayM
 			mesh.surface_set_material(0, material_instance)
 			return mesh
 
-	# Fallback (slow GDScript path)
+	# Legacy ArrayMesh assembly block.
 	# Pre-allocate arrays
 	var vertices = PackedVector3Array()
 	var normals = PackedVector3Array()
@@ -2503,7 +2515,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 	if material_buffer.is_valid():
 		u_mat.add_id(material_buffer)
 	else:
-		# Fallback: use density buffer as placeholder (won't look right but won't crash)
+		# Placeholder when material data is unavailable.
 		u_mat.add_id(density_buffer)
 
 	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat], sid_mesh, 0)
@@ -2531,14 +2543,18 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 
 	var mesh = null
 	var shape = null
+	var builder = ClassDB.instantiate("MeshBuilder")
+	if not builder:
+		push_error("[ChunkManager] MeshBuilder GDExtension is required for mesh generation.")
+		return {"mesh": null, "shape": null}
 
 	if tri_count > 0:
 		var total_floats = tri_count * 3 * 9 # 9 floats per vertex
 		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		var vert_floats = vert_bytes.to_float32_array()
-		mesh = build_mesh(vert_floats, material_instance)
+		mesh = build_mesh(vert_floats, material_instance, builder)
 		if mesh:
-			shape = mesh.create_trimesh_shape()
+			shape = builder.build_collision_shape(vert_floats, 9)
 
 	if set_mesh.is_valid(): rd.free_rid(set_mesh)
 
@@ -2579,7 +2595,7 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		# Note: We need to keep the Shape3D resource alive or the RID might become invalid if ref count hits 0?
 		# Actually, Shape3D resource holds the RID. As long as we hold 'result_t.shape', it's fine.
 		# But wait, we can't share Shape3D RID usage easily if we want to be safe?
-		# Actually, 'mesh.create_trimesh_shape()' creates a new ConcavePolygonShape3D.
+		# ConcavePolygonShape3D keeps the mesh-backed collision data alive through the shared Shape3D resource.
 
 		PhysicsServer3D.body_add_shape(body_rid, shape_rid)
 
@@ -2735,33 +2751,12 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 	if cpu_mat.size() < DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4:
 		return null
 
-	# Create array of 2D slices (33 images of 33x33)
-	var images: Array[Image] = []
+	var builder = ClassDB.instantiate("MeshBuilder")
+	if not builder:
+		push_error("[ChunkManager] MeshBuilder GDExtension is required for material texture creation.")
+		return null
 
-	# Check if MeshBuilder is available for fast texture generation
-	if ClassDB.class_exists("MeshBuilder"):
-		var builder = ClassDB.instantiate("MeshBuilder")
-		# Returns ImageTexture3D directly from raw bytes, skipping 35k GDScript calls and binding overheads
-		var tex3d = builder.create_material_texture(cpu_mat, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE)
-		return tex3d
-
-	# Slow Fallback
-	push_warning("GDScript texture fallback used - stutter expected")
-	for z in range(DENSITY_GRID_SIZE):
-		var img = Image.create(DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, Image.FORMAT_R8)
-		for y in range(DENSITY_GRID_SIZE):
-			for x in range(DENSITY_GRID_SIZE):
-				var index = x + (y * DENSITY_GRID_SIZE) + (z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
-				var byte_offset = index * 4 # uint is 4 bytes
-				var mat_id = cpu_mat[byte_offset] if byte_offset < cpu_mat.size() else 0
-				img.set_pixel(x, y, Color(float(mat_id) / 255.0, 0, 0))
-		images.append(img)
-
-	# Create 3D texture from image slices
-	var tex3d = ImageTexture3D.new()
-	tex3d.create(Image.FORMAT_R8, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, false, images)
-
-	return tex3d
+	return builder.create_material_texture(cpu_mat, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE)
 
 func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array(), cpu_mat: PackedByteArray = PackedByteArray(), start_mod_version: int = 0):
 	# For non-batched updates, do stale check here
