@@ -673,13 +673,9 @@ func _update_proximity_colliders():
 						"dist_sq": tree_dist_sq
 					})
 
-	# Sort by distance (closest first)
-	trees_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
-
 	# Limit to MAX_ACTIVE_COLLIDERS
 	var wanted_keys: Dictionary = {}
-	for i in range(min(trees_needing_colliders.size(), MAX_ACTIVE_COLLIDERS)):
-		var item = trees_needing_colliders[i]
+	for item in _pick_nearest_candidates(trees_needing_colliders, MAX_ACTIVE_COLLIDERS):
 		var key = _tree_key(item.coord, item.tree.index)
 		wanted_keys[key] = item
 
@@ -855,13 +851,9 @@ func _update_grass_proximity_colliders():
 						"dist_sq": grass_dist_sq
 					})
 
-	# Sort by distance (closest first)
-	grass_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
-
 	# Limit to MAX_ACTIVE_GRASS_COLLIDERS
 	var wanted_keys: Dictionary = {}
-	for i in range(min(grass_needing_colliders.size(), MAX_ACTIVE_GRASS_COLLIDERS)):
-		var item = grass_needing_colliders[i]
+	for item in _pick_nearest_candidates(grass_needing_colliders, MAX_ACTIVE_GRASS_COLLIDERS):
 		var key = _grass_key(item.coord, item.grass.index)
 		wanted_keys[key] = item
 
@@ -979,11 +971,8 @@ func _update_rock_proximity_colliders():
 						"dist_sq": rock_dist_sq
 					})
 
-	rocks_needing_colliders.sort_custom(func(a, b): return a.dist_sq < b.dist_sq)
-
 	var wanted_keys: Dictionary = {}
-	for i in range(min(rocks_needing_colliders.size(), MAX_ACTIVE_ROCK_COLLIDERS)):
-		var item = rocks_needing_colliders[i]
+	for item in _pick_nearest_candidates(rocks_needing_colliders, MAX_ACTIVE_ROCK_COLLIDERS):
 		var key = _rock_key(item.coord, item.rock.index)
 		wanted_keys[key] = item
 
@@ -1478,6 +1467,39 @@ func _chunk_overlaps_radius(coord: Vector2i, center: Vector3, radius: float, chu
 	var dz = center.z - chunk_center_z
 	var max_dist = radius + (chunk_stride * 0.70710678) # half diagonal of a square chunk
 	return dx * dx + dz * dz <= max_dist * max_dist
+
+func _pick_nearest_candidates(candidates: Array[Dictionary], max_count: int) -> Array[Dictionary]:
+	if candidates.is_empty() or max_count <= 0:
+		return []
+
+	var selected: Array[Dictionary] = []
+	for item in candidates:
+		if selected.size() < max_count:
+			var inserted := false
+			for i in range(selected.size()):
+				if item.dist_sq < selected[i].dist_sq:
+					selected.insert(i, item)
+					inserted = true
+					break
+			if not inserted:
+				selected.append(item)
+			continue
+
+		if item.dist_sq >= selected[selected.size() - 1].dist_sq:
+			continue
+
+		var inserted = false
+		for i in range(selected.size()):
+			if item.dist_sq < selected[i].dist_sq:
+				selected.insert(i, item)
+				inserted = true
+				break
+		if not inserted:
+			selected.append(item)
+		if selected.size() > max_count:
+			selected.resize(max_count)
+
+	return selected
 
 func place_grass(world_pos: Vector3) -> bool:
 	# Find which chunk this position belongs to
