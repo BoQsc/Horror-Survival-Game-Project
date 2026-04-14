@@ -14,7 +14,7 @@ def build_church():
             b.fill_box(x, 1, z, 2, 4, 2, "[1]")
             
     # 2. MAIN FLOOR (Y=6) is solid above the basement, except where stairs come up
-    b.fill_box(1, 5, 1, 16, 1, 24, "[8]") # Floor of church (grade_y=5)
+    b.fill_box(1, 5, 1, 16, 1, 24, "[1]") # Floor of church (grade_y=5)
     # The actual walls of the church at Y=6 and up
     b.fill_box(2, 6, 2, 14, 8, 22, "[1]") # Solid block for church exterior
     b.carve_box(3, 6, 3, 12, 7, 20)       # Hollow interior for church (Y=6 to 12)
