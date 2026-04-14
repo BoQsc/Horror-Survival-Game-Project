@@ -2,7 +2,7 @@ shader_type spatial;
 render_mode cull_back, depth_draw_opaque;
 
 uniform sampler2D atlas_texture : source_color, filter_nearest, repeat_enable;
-uniform sampler2D church_floor_texture : source_color, filter_nearest;
+uniform sampler2D church_floor_texture : source_color, filter_nearest, repeat_enable;
 
 const vec2 ATLAS_CELL_SIZE = vec2(1.0 / 3.0, 1.0 / 2.0);
 
@@ -30,12 +30,12 @@ void vertex() {
 
 void fragment() {
 	vec3 n = normalize(world_normal);
+	vec2 repeated_uv = fract(UV);
 	vec4 texel;
-	if (floor_mask > 0.5) {
-		texel = texture(church_floor_texture, UV);
+	if (floor_mask > 0.5 && n.y > 0.5) {
+		texel = texture(church_floor_texture, repeated_uv);
 	} else {
 		vec2 cell_origin = _atlas_cell_origin(n);
-		vec2 repeated_uv = fract(UV);
 		vec2 atlas_uv = cell_origin + repeated_uv * ATLAS_CELL_SIZE;
 		texel = texture(atlas_texture, atlas_uv);
 	}

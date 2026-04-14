@@ -1090,8 +1090,10 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
 
     add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
     add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
-    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, true);
-    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, true);
+    // Church floor blocks should tile one texture per block instead of stretching
+    // a single texture across an entire greedy quad.
+    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
+    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
 
     for (int z = 0; z < chunk_size; ++z) {
         for (int y = 0; y < chunk_size; ++y) {

@@ -155,8 +155,12 @@ static func _get_church_floor_texture() -> Texture2D:
 		var img := Image.load_from_file(tex.resource_path)
 		if img:
 			var img_tex := ImageTexture.create_from_image(img)
+			if img_tex and "repeat" in img_tex:
+				img_tex.repeat = true
 			_shared_church_floor_texture = img_tex
 			return _shared_church_floor_texture
+	if tex and "repeat" in tex:
+		tex.repeat = true
 	_shared_church_floor_texture = tex
 	return _shared_church_floor_texture
 
