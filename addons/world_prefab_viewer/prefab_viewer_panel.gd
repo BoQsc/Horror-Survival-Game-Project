@@ -3,10 +3,6 @@ extends PanelContainer
 
 const ViewerData = preload("res://addons/world_prefab_viewer/prefab_viewer_data.gd")
 const ViewerMesher = preload("res://addons/world_prefab_viewer/prefab_viewer_mesher.gd")
-const OPTIONAL_WOOD_TEXTURE_PATH := "res://world_greedy_meshing/wood-block-texture.png"
-const OPTIONAL_CHURCH_FLOOR_TEXTURE_PATH := "res://models/objects/church_floor/church_floor_texture.png"
-const WOOD_BLOCK_ATLAS_SHADER := preload("res://world_building_system/wood_block_atlas.gdshader")
-const RUNTIME_MATERIAL_CACHE_KEY := -999
 const TERRAIN_DIRT_MATERIAL_CACHE_KEY := -1000
 const TERRAIN_GRASS_MATERIAL_CACHE_KEY := -1001
 const TERRAIN_MARGIN := 3
@@ -1509,7 +1505,7 @@ func _render_runtime_blocks(rotation: int, bounds: Dictionary) -> bool:
 
 		var mesh_instance := MeshInstance3D.new()
 		mesh_instance.mesh = mesh
-		mesh_instance.material_override = _get_runtime_block_material()
+		mesh_instance.material_override = BuildingVisuals.get_shared_building_material()
 		mesh_instance.position = Vector3(chunk_data.get("coord", Vector3i.ZERO)) * float(ViewerMesher.CHUNK_SIZE)
 		_preview_root.add_child(mesh_instance)
 		rendered_any = true
@@ -1643,26 +1639,8 @@ func _get_block_material(block_type: int) -> Material:
 		return _material_cache[block_type]
 
 	match block_type:
-		1:
-			var wood_material := _get_runtime_block_material()
-			_material_cache[block_type] = wood_material
-			return wood_material
-		2:
-			var material := StandardMaterial3D.new()
-			material.roughness = 1.0
-			material.albedo_color = Color(0.58, 0.61, 0.64, 1.0)
-			_material_cache[block_type] = material
-			return material
-		3:
-			var material := StandardMaterial3D.new()
-			material.roughness = 1.0
-			material.albedo_color = Color(0.86, 0.62, 0.27, 1.0)
-			_material_cache[block_type] = material
-			return material
-		4:
-			var material := StandardMaterial3D.new()
-			material.roughness = 1.0
-			material.albedo_color = Color(0.93, 0.78, 0.33, 1.0)
+		1, 2, 3, 4, 5, 8:
+			var material := BuildingVisuals.get_shared_building_material()
 			_material_cache[block_type] = material
 			return material
 		_:
@@ -1671,45 +1649,6 @@ func _get_block_material(block_type: int) -> Material:
 			material.albedo_color = Color(0.90, 0.32, 0.78, 1.0)
 			_material_cache[block_type] = material
 			return material
-
-
-func _get_runtime_block_material() -> Material:
-	if _material_cache.has(RUNTIME_MATERIAL_CACHE_KEY):
-		return _material_cache[RUNTIME_MATERIAL_CACHE_KEY]
-
-	var material: Material
-	if ResourceLoader.exists(OPTIONAL_WOOD_TEXTURE_PATH):
-		var shader_material := ShaderMaterial.new()
-		shader_material.shader = WOOD_BLOCK_ATLAS_SHADER
-		shader_material.set_shader_parameter("atlas_texture", _get_repeating_texture(load(OPTIONAL_WOOD_TEXTURE_PATH)))
-		if ResourceLoader.exists(OPTIONAL_CHURCH_FLOOR_TEXTURE_PATH):
-			shader_material.set_shader_parameter("church_floor_texture", _get_repeating_texture(load(OPTIONAL_CHURCH_FLOOR_TEXTURE_PATH)))
-		material = shader_material
-	else:
-		var fallback_material := StandardMaterial3D.new()
-		fallback_material.albedo_color = Color(0.69, 0.53, 0.34, 1.0)
-		fallback_material.roughness = 1.0
-		material = fallback_material
-
-	_material_cache[RUNTIME_MATERIAL_CACHE_KEY] = material
-	return material
-
-func _get_repeating_texture(texture: Texture2D) -> Texture2D:
-	if not texture:
-		return texture
-	var tex: Texture2D = texture
-	if tex.resource_path != "":
-		var img := Image.load_from_file(tex.resource_path)
-		if img:
-			var img_tex := ImageTexture.create_from_image(img)
-			if img_tex and "repeat" in img_tex:
-				img_tex.repeat = true
-			return img_tex
-	if tex and "repeat" in tex:
-		tex.repeat = true
-	return tex
-
-
 
 func _get_terrain_dirt_material() -> Material:
 	if _material_cache.has(TERRAIN_DIRT_MATERIAL_CACHE_KEY):

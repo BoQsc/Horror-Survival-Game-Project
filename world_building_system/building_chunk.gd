@@ -32,12 +32,6 @@ var manager: Node # BuildingManager
 
 static var _object_collision_shape_cache: Dictionary = {}
 static var _box_collision_shape_cache: Dictionary = {}
-static var _shared_wood_block_material: Material = null
-static var _shared_wood_block_texture: Texture2D = null
-static var _shared_church_floor_texture: Texture2D = null
-const WOOD_BLOCK_TEXTURE: Texture2D = preload("res://world_greedy_meshing/wood-block-texture.png")
-const CHURCH_FLOOR_TEXTURE: Texture2D = preload("res://models/objects/church_floor/church_floor_texture.png")
-const WOOD_BLOCK_ATLAS_SHADER: Shader = preload("res://world_building_system/wood_block_atlas.gdshader")
 const SIMPLE_OBJECT_COLLISION_IDS := {
 	3: true, # Wooden Table
 	5: true, # Window
@@ -117,52 +111,8 @@ func reset(new_coord: Vector3i):
 	simple_visual_batch_entries.clear()
 	simple_visual_batch_nodes.clear()
 ## Shared building material reused by all building chunks.
-static func _get_shared_wood_block_material() -> Material:
-	if _shared_wood_block_material:
-		return _shared_wood_block_material
-
-	var material := ShaderMaterial.new()
-	material.shader = WOOD_BLOCK_ATLAS_SHADER
-	material.set_shader_parameter("atlas_texture", _get_repeating_wood_texture())
-	material.set_shader_parameter("church_floor_texture", _get_church_floor_texture())
-	_shared_wood_block_material = material
-	return _shared_wood_block_material
-
-static func _get_repeating_wood_texture() -> Texture2D:
-	if _shared_wood_block_texture:
-		return _shared_wood_block_texture
-	if not WOOD_BLOCK_TEXTURE:
-		return null
-	var tex: Texture2D = WOOD_BLOCK_TEXTURE
-	if tex.resource_path != "":
-		var img := Image.load_from_file(tex.resource_path)
-		if img:
-			var img_tex := ImageTexture.create_from_image(img)
-			if img_tex and "repeat" in img_tex:
-				img_tex.repeat = true
-			_shared_wood_block_texture = img_tex
-			return _shared_wood_block_texture
-	_shared_wood_block_texture = tex
-	return _shared_wood_block_texture
-
-static func _get_church_floor_texture() -> Texture2D:
-	if _shared_church_floor_texture:
-		return _shared_church_floor_texture
-	if not CHURCH_FLOOR_TEXTURE:
-		return null
-	var tex: Texture2D = CHURCH_FLOOR_TEXTURE
-	if tex.resource_path != "":
-		var img := Image.load_from_file(tex.resource_path)
-		if img:
-			var img_tex := ImageTexture.create_from_image(img)
-			if img_tex and "repeat" in img_tex:
-				img_tex.repeat = true
-			_shared_church_floor_texture = img_tex
-			return _shared_church_floor_texture
-	if tex and "repeat" in tex:
-		tex.repeat = true
-	_shared_church_floor_texture = tex
-	return _shared_church_floor_texture
+static func _get_shared_building_material() -> Material:
+	return BuildingVisuals.get_shared_building_material()
 
 func _ready():
 	# Add to group for detection by player punch system
@@ -526,7 +476,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 				mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 			if mesh_instance.mesh != mesh:
 				mesh_instance.mesh = mesh
-			var shared_material := _get_shared_wood_block_material()
+			var shared_material := _get_shared_building_material()
 			if mesh_instance.material_override != shared_material:
 				mesh_instance.material_override = shared_material
 			if mesh_instance.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_ON:

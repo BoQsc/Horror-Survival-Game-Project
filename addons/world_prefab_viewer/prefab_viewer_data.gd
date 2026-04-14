@@ -2,51 +2,7 @@ extends RefCounted
 
 const RES_PREFAB_DIR := "res://world_prefabs/"
 const USER_PREFAB_DIR := "user://world_prefabs/"
-
-const OBJECT_INFO := {
-	1: {
-		"name": "Cardboard Box",
-		"size": Vector3(1.0, 1.0, 1.0),
-		"color": Color(0.71, 0.58, 0.40, 1.0),
-		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.tscn"
-	},
-	2: {
-		"name": "Long Crate",
-		"size": Vector3(2.0, 1.0, 1.0),
-		"color": Color(0.47, 0.30, 0.16, 1.0),
-		"scene": "res://models/objects/crate/1/simple_long_crate.tscn"
-	},
-	3: {
-		"name": "Wooden Table",
-		"size": Vector3(2.0, 1.0, 1.0),
-		"color": Color(0.58, 0.40, 0.23, 1.0),
-		"scene": "res://models/objects/table/1/psx_wooden_table.tscn"
-	},
-	4: {
-		"name": "Door",
-		"size": Vector3(1.0, 2.0, 1.0),
-		"color": Color(0.51, 0.67, 0.40, 1.0),
-		"scene": "res://models/objects/interactive_door/interactive_door.tscn"
-	},
-	5: {
-		"name": "Window",
-		"size": Vector3(1.0, 1.0, 1.0),
-		"color": Color(0.42, 0.72, 0.88, 1.0),
-		"scene": "res://models/objects/window/1/window.tscn"
-	},
-	6: {
-		"name": "Heavy Pistol",
-		"size": Vector3(1.0, 1.0, 1.0),
-		"color": Color(0.82, 0.79, 0.24, 1.0),
-		"scene": "res://models/pistol/heavy_pistol_physics.tscn"
-	},
-	7: {
-		"name": "Chair",
-		"size": Vector3(1.0, 1.0, 1.0),
-		"color": Color(0.51, 0.34, 0.20, 1.0),
-		"scene": "res://models/objects/chair/1/cc0_chair_8.tscn"
-	}
-}
+const ObjectRegistry = preload("res://world_building_system/object_registry.gd")
 
 
 static func list_prefabs() -> Array:
@@ -88,13 +44,41 @@ static func load_prefab(path: String) -> Dictionary:
 
 
 static func get_object_info(object_id: int) -> Dictionary:
-	if OBJECT_INFO.has(object_id):
-		return OBJECT_INFO[object_id]
+	var obj := ObjectRegistry.get_object(object_id)
+	if not obj.is_empty():
+		var size_vec: Vector3i = obj.get("size", Vector3i.ONE)
+		return {
+			"name": str(obj.get("name", "Object %d" % object_id)),
+			"size": Vector3(float(size_vec.x), float(size_vec.y), float(size_vec.z)),
+			"color": _get_fallback_color(str(obj.get("material", "")), object_id),
+			"scene": str(obj.get("scene", ""))
+		}
 	return {
 		"name": "Object %d" % object_id,
 		"size": Vector3.ONE,
 		"color": Color(0.88, 0.36, 0.78, 1.0)
 	}
+
+
+static func _get_fallback_color(material: String, object_id: int) -> Color:
+	match material:
+		"paper":
+			return Color(0.71, 0.58, 0.40, 1.0)
+		"wood":
+			if object_id == 2:
+				return Color(0.47, 0.30, 0.16, 1.0)
+			if object_id == 3:
+				return Color(0.58, 0.40, 0.23, 1.0)
+			if object_id == 4:
+				return Color(0.51, 0.67, 0.40, 1.0)
+			if object_id == 5:
+				return Color(0.42, 0.72, 0.88, 1.0)
+			if object_id == 7:
+				return Color(0.51, 0.34, 0.20, 1.0)
+			return Color(0.58, 0.40, 0.23, 1.0)
+		"metal":
+			return Color(0.82, 0.79, 0.24, 1.0)
+	return Color(0.88, 0.36, 0.78, 1.0)
 
 
 static func rotate_block_offset(offset: Vector3i, rotation: int) -> Vector3i:
