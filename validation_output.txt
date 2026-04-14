@@ -1,7 +1,13 @@
 {
-  "door_count": 1,
-  "errors": [],
-  "valid_for_spawn": true,
-  "warnings": [],
-  "window_count": 8
+  "door_count": 2,
+  "errors": [
+    "declared size.z=26 but slice rows are [5:28]",
+    "stairs have blocked headroom at (13, 5, 24)",
+    "stairs do not connect back to grade level y=5"
+  ],
+  "valid_for_spawn": false,
+  "warnings": [
+    "below-grade structure relies on inferred excavation; add explicit excavation_volumes for trustworthy world-map placement"
+  ],
+  "window_count": 48
 }
