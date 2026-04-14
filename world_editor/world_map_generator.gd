@@ -1578,7 +1578,8 @@ func _get_town_building_clearance_margin(footprint: Vector2i) -> float:
 func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidates: Array, used_parcels: Dictionary,
 		road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray,
 		forest_noise: FastNoiseLite, max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary,
-		occupied: Array) -> bool:
+		occupied: Array) -> Dictionary:
+	var failure_reasons: Array[String] = []
 	for parcel_info in parcel_candidates:
 		var parcel_idx := int(parcel_info.get("idx", -1))
 		if used_parcels.has(parcel_idx):
@@ -1591,6 +1592,8 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 		var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
 		var fitted_positions = _fit_footprint_variants_in_parcel(parcel, footprint)
 		if fitted_positions.is_empty():
+			if not failure_reasons.has("no parcel fit"):
+				failure_reasons.append("no parcel fit")
 			continue
 		var clearance_margin := _get_town_building_clearance_margin(footprint)
 		for fitted in fitted_positions:
@@ -1603,13 +1606,19 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 					overlaps = true
 					break
 			if overlaps:
+				if not failure_reasons.has("parcel overlaps existing buildings"):
+					failure_reasons.append("parcel overlaps existing buildings")
 				continue
 			var support = _resolve_town_building_support(bldg_x, bldg_z, footprint, road_segments, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats)
 			if support.is_empty():
+				if not failure_reasons.has("no terrain support"):
+					failure_reasons.append("no terrain support")
 				continue
 			var bldg_y = float(support.resolved_y)
 			if not _has_sufficient_excavation_cover(prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, height_bytes, max_h, half):
 				bldg_stats.rejected_cover += 1
+				if not failure_reasons.has("insufficient excavation cover"):
+					failure_reasons.append("insufficient excavation cover")
 				continue
 			occupied.append(reservation_rect)
 			used_parcels[parcel_idx] = true
@@ -1617,16 +1626,20 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 			_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 				prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(parcel.frontage_target),
 				str(parcel.get("district", "residential")), str(parcel.get("road_kind", "secondary")), support)
-			return true
-	return false
+			return {"placed": true, "reason": ""}
+	return {
+		"placed": false,
+		"reason": "no parcel fit" if failure_reasons.is_empty() else "; ".join(failure_reasons)
+	}
 
 func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: Dictionary, prefab_name: String,
 		road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray,
-		max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array) -> bool:
+		max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array) -> Dictionary:
 	var center = Vector2(float(town.x), float(town.z))
 	var plaza_half = float(layout.get("plaza_half", 14.0))
 	var main_width = float(layout.get("main_width", settlement_road_width + 2.0))
 	var offset = max(plaza_half, _road_clear_half(main_width)) + 4.0
+	var failure_reasons: Array[String] = []
 	var slot_defs = [
 		{"side": "west", "road_target": Vector2(center.x + offset - 2.0, center.y)},
 		{"side": "east", "road_target": Vector2(center.x - offset + 2.0, center.y)},
@@ -1659,21 +1672,30 @@ func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: D
 				overlaps = true
 				break
 		if overlaps:
+			if not failure_reasons.has("core slots overlap existing buildings"):
+				failure_reasons.append("core slots overlap existing buildings")
 			continue
 		var support = _resolve_town_building_support(bldg_x, bldg_z, footprint, road_segments, height_bytes, water_bytes, null, max_h, half, bldg_stats)
 		if support.is_empty():
+			if not failure_reasons.has("no terrain support"):
+				failure_reasons.append("no terrain support")
 			continue
 		var bldg_y = float(support.resolved_y)
 		if not _has_sufficient_excavation_cover(prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, height_bytes, max_h, half):
 			bldg_stats.rejected_cover += 1
+			if not failure_reasons.has("insufficient excavation cover"):
+				failure_reasons.append("insufficient excavation cover")
 			continue
 		occupied.append(reservation_rect)
 		bldg_stats.placed += 1
 		_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 			prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(slot.road_target),
 			"core_landmark", "main", support)
-		return true
-	return false
+		return {"placed": true, "reason": ""}
+	return {
+		"placed": false,
+		"reason": "no core slot fit" if failure_reasons.is_empty() else "; ".join(failure_reasons)
+	}
 
 func _place_required_prefabs_for_town(town: Dictionary, layout: Dictionary, required_prefabs: Array[String], parcel_slots: Array,
 		road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray,
@@ -1699,20 +1721,32 @@ func _place_required_prefabs_for_town(town: Dictionary, layout: Dictionary, requ
 
 	var used_parcels: Dictionary = {}
 	var missing: Array[String] = []
+	var missing_reasons: Dictionary = {}
 	var placed := 0
 	for prefab_name in required_prefabs:
-		if _try_place_required_prefab_in_parcels(prefab_name, parcel_candidates, used_parcels, road_segments, path_segments,
-			height_bytes, water_bytes, forest_noise, max_h, half, buildings, terrain_modifications, bldg_stats, occupied):
+		var parcel_result := _try_place_required_prefab_in_parcels(prefab_name, parcel_candidates, used_parcels, road_segments, path_segments,
+			height_bytes, water_bytes, forest_noise, max_h, half, buildings, terrain_modifications, bldg_stats, occupied)
+		if bool(parcel_result.get("placed", false)):
 			placed += 1
 			continue
-		if _try_place_required_prefab_in_forced_core_slots(town, layout, prefab_name, road_segments, path_segments,
-			height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied):
+		var core_result := _try_place_required_prefab_in_forced_core_slots(town, layout, prefab_name, road_segments, path_segments,
+			height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied)
+		if bool(core_result.get("placed", false)):
 			placed += 1
 			continue
 		missing.append(prefab_name)
+		var reason_parts: Array[String] = []
+		var parcel_reason := str(parcel_result.get("reason", ""))
+		var core_reason := str(core_result.get("reason", ""))
+		if not parcel_reason.is_empty():
+			reason_parts.append("parcels: %s" % parcel_reason)
+		if not core_reason.is_empty():
+			reason_parts.append("core: %s" % core_reason)
+		missing_reasons[prefab_name] = "no placement reason recorded" if reason_parts.is_empty() else "; ".join(reason_parts)
 	return {
 		"placed": placed,
-		"missing": missing
+		"missing": missing,
+		"missing_reasons": missing_reasons
 	}
 
 func _generate_town_buildings(towns: Array, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray,
@@ -1736,11 +1770,16 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 			road_segments, path_segments, height_bytes, water_bytes, forest_noise, max_h, half, buildings, terrain_modifications, bldg_stats, occupied)
 		placed_in_town += int(guarantee_result.get("placed", 0))
 		var missing_required: Array = guarantee_result.get("missing", [])
+		var missing_reasons: Dictionary = guarantee_result.get("missing_reasons", {})
 		if not missing_required.is_empty():
+			var missing_details: Array[String] = []
+			for prefab_name in missing_required:
+				var reason := str(missing_reasons.get(prefab_name, "no placement reason recorded"))
+				missing_details.append("%s (%s)" % [prefab_name, reason])
 			print("[WorldMapGen] Town at (%.0f,%.0f): missing guaranteed prefabs [%s]" % [
 				town.x,
 				town.z,
-				", ".join(missing_required)
+				", ".join(missing_details)
 			])
 		if placed_in_town >= target:
 			print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
