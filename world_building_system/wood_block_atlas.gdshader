@@ -31,12 +31,13 @@ void vertex() {
 void fragment() {
 	vec3 n = normalize(world_normal);
 	vec2 repeated_uv = fract(UV);
+	vec2 mirrored_uv = vec2(1.0 - repeated_uv.x, repeated_uv.y);
 	vec4 texel;
 	if (floor_mask > 0.5) {
 		// Church floor uses its own 6-face atlas, so pick the same face cell
 		// layout as the main block atlas instead of sampling the whole image.
 		vec2 cell_origin = _atlas_cell_origin(n);
-		vec2 atlas_uv = cell_origin + repeated_uv * ATLAS_CELL_SIZE;
+		vec2 atlas_uv = cell_origin + mirrored_uv * ATLAS_CELL_SIZE;
 		texel = texture(church_floor_texture, atlas_uv);
 	} else {
 		vec2 cell_origin = _atlas_cell_origin(n);
