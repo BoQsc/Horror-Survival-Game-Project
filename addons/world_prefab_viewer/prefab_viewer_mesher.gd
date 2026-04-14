@@ -17,12 +17,15 @@ var _index_buffer: RID
 var _counter_buffer: RID
 var _index_counter_buffer: RID
 var _shader_file: RDShaderFile
+var _native_builder: Object = null
 var _available := false
 var _attempted_init := false
 var _last_error := ""
 
 
 func is_available() -> bool:
+	if _get_native_builder() != null:
+		return true
 	return _ensure_device()
 
 
@@ -34,6 +37,12 @@ func generate_arrays(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray) 
 	if voxel_bytes.size() != CHUNK_VOLUME or voxel_meta.size() != CHUNK_VOLUME:
 		_last_error = "Preview mesher expected 16x16x16 chunk byte arrays."
 		return []
+
+	# Use the native building mesh first so the shared shader keeps the same
+	# vertex-color material mask as gameplay.
+	var native_arrays := _generate_native_arrays(voxel_bytes, voxel_meta)
+	if not native_arrays.is_empty():
+		return native_arrays
 
 	if not _ensure_device():
 		return []
@@ -70,8 +79,37 @@ func dispose() -> void:
 	_index_buffer = RID()
 	_counter_buffer = RID()
 	_index_counter_buffer = RID()
+	_native_builder = null
 	_available = false
 	_attempted_init = false
+
+
+func _get_native_builder() -> Object:
+	if _native_builder and is_instance_valid(_native_builder):
+		return _native_builder
+	if not ClassDB.class_exists("MeshBuilder"):
+		return null
+	_native_builder = ClassDB.instantiate("MeshBuilder")
+	return _native_builder
+
+
+func _generate_native_arrays(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray) -> Array:
+	var builder := _get_native_builder()
+	if not builder or not builder.has_method("build_building_mesh_from_voxels"):
+		return []
+
+	var native_result = builder.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, false, CHUNK_SIZE)
+	if native_result is not Dictionary:
+		return []
+
+	var mesh: ArrayMesh = native_result.get("mesh", null)
+	if not mesh:
+		return []
+
+	var arrays: Array = []
+	for surface_index in range(mesh.get_surface_count()):
+		arrays = mesh.surface_get_arrays(surface_index)
+	return arrays
 
 
 func _ensure_device() -> bool:

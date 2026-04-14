@@ -32,6 +32,7 @@ var manager: Node # BuildingManager
 
 static var _object_collision_shape_cache: Dictionary = {}
 static var _box_collision_shape_cache: Dictionary = {}
+const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
 const SIMPLE_OBJECT_COLLISION_IDS := {
 	3: true, # Wooden Table
 	5: true, # Window

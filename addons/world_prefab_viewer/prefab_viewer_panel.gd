@@ -3,6 +3,7 @@ extends PanelContainer
 
 const ViewerData = preload("res://addons/world_prefab_viewer/prefab_viewer_data.gd")
 const ViewerMesher = preload("res://addons/world_prefab_viewer/prefab_viewer_mesher.gd")
+const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
 const TERRAIN_DIRT_MATERIAL_CACHE_KEY := -1000
 const TERRAIN_GRASS_MATERIAL_CACHE_KEY := -1001
 const TERRAIN_MARGIN := 3
@@ -1639,8 +1640,40 @@ func _get_block_material(block_type: int) -> Material:
 		return _material_cache[block_type]
 
 	match block_type:
-		1, 2, 3, 4, 5, 8:
-			var material := BuildingVisuals.get_shared_building_material()
+		1:
+			var material := StandardMaterial3D.new()
+			material.roughness = 1.0
+			material.albedo_color = Color(0.69, 0.53, 0.34, 1.0)
+			_material_cache[block_type] = material
+			return material
+		2:
+			var material := StandardMaterial3D.new()
+			material.roughness = 1.0
+			material.albedo_color = Color(0.58, 0.61, 0.64, 1.0)
+			_material_cache[block_type] = material
+			return material
+		3:
+			var material := StandardMaterial3D.new()
+			material.roughness = 1.0
+			material.albedo_color = Color(0.86, 0.62, 0.27, 1.0)
+			_material_cache[block_type] = material
+			return material
+		4:
+			var material := StandardMaterial3D.new()
+			material.roughness = 1.0
+			material.albedo_color = Color(0.93, 0.78, 0.33, 1.0)
+			_material_cache[block_type] = material
+			return material
+		5:
+			var material := StandardMaterial3D.new()
+			material.roughness = 1.0
+			material.albedo_color = Color(0.80, 0.71, 0.37, 1.0)
+			_material_cache[block_type] = material
+			return material
+		8:
+			var material := StandardMaterial3D.new()
+			material.roughness = 1.0
+			material.albedo_color = Color(0.62, 0.55, 0.39, 1.0)
 			_material_cache[block_type] = material
 			return material
 		_:
