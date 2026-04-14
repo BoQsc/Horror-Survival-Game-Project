@@ -219,10 +219,17 @@ struct BuildingMeshBuffers {
         normals.push_back(normal);
         normals.push_back(normal);
 
-        uvs.push_back(Vector2(0.0, 0.0));
-        uvs.push_back(Vector2(0.0, v_len));
-        uvs.push_back(Vector2(u_len, v_len));
-        uvs.push_back(Vector2(u_len, 0.0));
+        // World-projected UVs keep merged building faces tiled across the
+        // entire quad. Atlas selection is handled in the material shader.
+        const Vector3 u_dir = u_axis.normalized();
+        const Vector3 v_dir = v_axis.normalized();
+        const float u0 = origin.dot(u_dir);
+        const float v0 = origin.dot(v_dir);
+
+        uvs.push_back(Vector2(u0, v0));
+        uvs.push_back(Vector2(u0, v0 + v_len));
+        uvs.push_back(Vector2(u0 + u_len, v0 + v_len));
+        uvs.push_back(Vector2(u0 + u_len, v0));
 
         indices.push_back(base_index + 0);
         indices.push_back(base_index + 1);
@@ -472,98 +479,243 @@ static void add_stairs_2step_cpu(BuildingMeshBuffers &buffers, const Vector3 &po
     buffers.add_quad(p_r2, u_r2, v_r2, 0.5, 1.0, r_right);
 }
 
-static void add_greedy_block_faces_cpu(BuildingMeshBuffers &buffers, const PackedByteArray &voxels, int size_x, int size_y, int size_z, int x, int y, int z) {
-    const uint8_t type = 1u;
-    Vector3 pos = Vector3(x, y, z);
+static void add_greedy_horizontal_faces_cpu(BuildingMeshBuffers &buffers, const PackedByteArray &voxels, int size_x, int size_y, int size_z) {
+    if (size_x <= 0 || size_y <= 0 || size_z <= 0) {
+        return;
+    }
 
-    auto emit_face_run_z = [&](const Vector3 &origin, const Vector3 &u_axis, const Vector3 &v_axis, const Vector3 &normal, float u_len) {
-        buffers.add_quad(origin, u_axis, v_axis, u_len, 1.0f, normal);
+    // Horizontal faces cover merged floor surfaces, so keep UVs in world units
+    // and let the material repeat naturally across the quad span.
+    const float horizontal_uv_scale = 1.0f;
+    std::vector<uint8_t> mask;
+    mask.resize(size_x * size_z);
+
+    auto emit_faces = [&](bool upward) {
+        const Vector3 normal = upward ? Vector3(0, 1, 0) : Vector3(0, -1, 0);
+        const Vector3 u_axis = Vector3(1, 0, 0);
+        const Vector3 v_axis = upward ? Vector3(0, 0, -1) : Vector3(0, 0, 1);
+
+        for (int y = 0; y < size_y; ++y) {
+            std::fill(mask.begin(), mask.end(), uint8_t(0));
+
+            for (int z = 0; z < size_z; ++z) {
+                for (int x = 0; x < size_x; ++x) {
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != 1u) {
+                        continue;
+                    }
+
+                    const int neighbor_y = upward ? (y + 1) : (y - 1);
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, neighbor_y, z) != 1u) {
+                        mask[x + z * size_x] = 1u;
+                    }
+                }
+            }
+
+            for (int z = 0; z < size_z; ++z) {
+                for (int x = 0; x < size_x; ++x) {
+                    const int start_index = x + z * size_x;
+                    if (!mask[start_index]) {
+                        continue;
+                    }
+
+                    int width = 1;
+                    while (x + width < size_x && mask[start_index + width]) {
+                        ++width;
+                    }
+
+                    int height = 1;
+                    bool can_extend = true;
+                    while (z + height < size_z && can_extend) {
+                        for (int dx = 0; dx < width; ++dx) {
+                            if (!mask[(x + dx) + (z + height) * size_x]) {
+                                can_extend = false;
+                                break;
+                            }
+                        }
+                        if (can_extend) {
+                            ++height;
+                        }
+                    }
+
+                    for (int dz = 0; dz < height; ++dz) {
+                        for (int dx = 0; dx < width; ++dx) {
+                            mask[(x + dx) + (z + dz) * size_x] = 0u;
+                        }
+                    }
+
+                    const Vector3 origin = upward
+                        ? Vector3(x, y + 1, z + height)
+                        : Vector3(x, y, z);
+                    buffers.add_quad(
+                        origin,
+                        u_axis,
+                        v_axis,
+                        float(width) * horizontal_uv_scale,
+                        float(height) * horizontal_uv_scale,
+                        normal
+                    );
+                }
+            }
+        }
     };
 
-    if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z, 1, 0, 0, type)) {
-        if (!has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z - 1, 1, 0, 0, type)) {
-            float len = 1.0f;
-            for (int k = 1; k < size_z - z; k++) {
-                if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z + k, 1, 0, 0, type)) {
-                    len += 1.0f;
-                } else {
-                    break;
-                }
-            }
-            emit_face_run_z(pos + Vector3(1, 1, 0), Vector3(0, 0, 1), Vector3(0, -1, 0), Vector3(1, 0, 0), len);
-        }
-    }
-
-    if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z, -1, 0, 0, type)) {
-        if (!has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z - 1, -1, 0, 0, type)) {
-            float len = 1.0f;
-            for (int k = 1; k < size_z - z; k++) {
-                if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z + k, -1, 0, 0, type)) {
-                    len += 1.0f;
-                } else {
-                    break;
-                }
-            }
-            emit_face_run_z(pos, Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3(-1, 0, 0), len);
-        }
-    }
-
-    if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z, 0, 1, 0, type)) {
-        if (!has_face_type_3d(voxels, size_x, size_y, size_z, x - 1, y, z, 0, 1, 0, type)) {
-            float len = 1.0f;
-            for (int k = 1; k < size_x - x; k++) {
-                if (has_face_type_3d(voxels, size_x, size_y, size_z, x + k, y, z, 0, 1, 0, type)) {
-                    len += 1.0f;
-                } else {
-                    break;
-                }
-            }
-            emit_face_run_z(pos + Vector3(0, 1, 1), Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0), len);
-        }
-    }
-
-    if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z, 0, -1, 0, type)) {
-        if (!has_face_type_3d(voxels, size_x, size_y, size_z, x - 1, y, z, 0, -1, 0, type)) {
-            float len = 1.0f;
-            for (int k = 1; k < size_x - x; k++) {
-                if (has_face_type_3d(voxels, size_x, size_y, size_z, x + k, y, z, 0, -1, 0, type)) {
-                    len += 1.0f;
-                } else {
-                    break;
-                }
-            }
-            emit_face_run_z(pos, Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(0, -1, 0), len);
-        }
-    }
-
-    if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z, 0, 0, 1, type)) {
-        if (!has_face_type_3d(voxels, size_x, size_y, size_z, x - 1, y, z, 0, 0, 1, type)) {
-            float len = 1.0f;
-            for (int k = 1; k < size_x - x; k++) {
-                if (has_face_type_3d(voxels, size_x, size_y, size_z, x + k, y, z, 0, 0, 1, type)) {
-                    len += 1.0f;
-                } else {
-                    break;
-                }
-            }
-            emit_face_run_z(pos + Vector3(0, 0, 1), Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1), len);
-        }
-    }
-
-    if (has_face_type_3d(voxels, size_x, size_y, size_z, x, y, z, 0, 0, -1, type)) {
-        if (!has_face_type_3d(voxels, size_x, size_y, size_z, x - 1, y, z, 0, 0, -1, type)) {
-            float len = 1.0f;
-            for (int k = 1; k < size_x - x; k++) {
-                if (has_face_type_3d(voxels, size_x, size_y, size_z, x + k, y, z, 0, 0, -1, type)) {
-                    len += 1.0f;
-                } else {
-                    break;
-                }
-            }
-            emit_face_run_z(pos + Vector3(0, 1, 0), Vector3(1, 0, 0), Vector3(0, -1, 0), Vector3(0, 0, -1), len);
-        }
-    }
+    emit_faces(true);
+    emit_faces(false);
 }
+
+static void add_greedy_vertical_faces_cpu(BuildingMeshBuffers &buffers, const PackedByteArray &voxels, int size_x, int size_y, int size_z) {
+    if (size_x <= 0 || size_y <= 0 || size_z <= 0) {
+        return;
+    }
+
+    auto emit_x_faces = [&](bool positive_x) {
+        const Vector3 normal = positive_x ? Vector3(1, 0, 0) : Vector3(-1, 0, 0);
+        const Vector3 u_axis = Vector3(0, 0, 1);
+        const Vector3 v_axis = positive_x ? Vector3(0, -1, 0) : Vector3(0, 1, 0);
+        std::vector<uint8_t> mask;
+        mask.resize(size_y * size_z);
+
+        for (int x = 0; x < size_x; ++x) {
+            std::fill(mask.begin(), mask.end(), uint8_t(0));
+
+            for (int y = 0; y < size_y; ++y) {
+                for (int z = 0; z < size_z; ++z) {
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != 1u) {
+                        continue;
+                    }
+
+                    const int neighbor_x = positive_x ? (x + 1) : (x - 1);
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, neighbor_x, y, z) != 1u) {
+                        mask[z + y * size_z] = 1u;
+                    }
+                }
+            }
+
+            for (int y = 0; y < size_y; ++y) {
+                for (int z = 0; z < size_z; ++z) {
+                    const int start_index = z + y * size_z;
+                    if (!mask[start_index]) {
+                        continue;
+                    }
+
+                    int width = 1;
+                    while (z + width < size_z && mask[start_index + width]) {
+                        ++width;
+                    }
+
+                    int height = 1;
+                    bool can_extend = true;
+                    while (y + height < size_y && can_extend) {
+                        for (int dz = 0; dz < width; ++dz) {
+                            if (!mask[(z + dz) + (y + height) * size_z]) {
+                                can_extend = false;
+                                break;
+                            }
+                        }
+                        if (can_extend) {
+                            ++height;
+                        }
+                    }
+
+                    for (int dy = 0; dy < height; ++dy) {
+                        for (int dz = 0; dz < width; ++dz) {
+                            mask[(z + dz) + (y + dy) * size_z] = 0u;
+                        }
+                    }
+
+                    const Vector3 origin = positive_x
+                        ? Vector3(x + 1, y + height, z)
+                        : Vector3(x, y, z);
+                    buffers.add_quad(
+                        origin,
+                        u_axis,
+                        v_axis,
+                        float(width),
+                        float(height),
+                        normal
+                    );
+                }
+            }
+        }
+    };
+
+    auto emit_z_faces = [&](bool positive_z) {
+        const Vector3 normal = positive_z ? Vector3(0, 0, 1) : Vector3(0, 0, -1);
+        const Vector3 u_axis = Vector3(1, 0, 0);
+        const Vector3 v_axis = positive_z ? Vector3(0, 1, 0) : Vector3(0, -1, 0);
+        std::vector<uint8_t> mask;
+        mask.resize(size_x * size_y);
+
+        for (int z = 0; z < size_z; ++z) {
+            std::fill(mask.begin(), mask.end(), uint8_t(0));
+
+            for (int y = 0; y < size_y; ++y) {
+                for (int x = 0; x < size_x; ++x) {
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != 1u) {
+                        continue;
+                    }
+
+                    const int neighbor_z = positive_z ? (z + 1) : (z - 1);
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, neighbor_z) != 1u) {
+                        mask[x + y * size_x] = 1u;
+                    }
+                }
+            }
+
+            for (int y = 0; y < size_y; ++y) {
+                for (int x = 0; x < size_x; ++x) {
+                    const int start_index = x + y * size_x;
+                    if (!mask[start_index]) {
+                        continue;
+                    }
+
+                    int width = 1;
+                    while (x + width < size_x && mask[start_index + width]) {
+                        ++width;
+                    }
+
+                    int height = 1;
+                    bool can_extend = true;
+                    while (y + height < size_y && can_extend) {
+                        for (int dx = 0; dx < width; ++dx) {
+                            if (!mask[(x + dx) + (y + height) * size_x]) {
+                                can_extend = false;
+                                break;
+                            }
+                        }
+                        if (can_extend) {
+                            ++height;
+                        }
+                    }
+
+                    for (int dy = 0; dy < height; ++dy) {
+                        for (int dx = 0; dx < width; ++dx) {
+                            mask[(x + dx) + (y + dy) * size_x] = 0u;
+                        }
+                    }
+
+                    const Vector3 origin = positive_z
+                        ? Vector3(x, y, z + 1)
+                        : Vector3(x, y + height, z);
+                    buffers.add_quad(
+                        origin,
+                        u_axis,
+                        v_axis,
+                        float(width),
+                        float(height),
+                        normal
+                    );
+                }
+            }
+        }
+    };
+
+    emit_x_faces(true);
+    emit_x_faces(false);
+    emit_z_faces(true);
+    emit_z_faces(false);
+}
+
 }
 
 MeshBuilder::MeshBuilder() {
@@ -888,6 +1040,9 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
     BuildingMeshBuffers buffers;
     buffers.reserve_for_voxels(voxel_count);
 
+    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size);
+    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size);
+
     for (int z = 0; z < chunk_size; ++z) {
         for (int y = 0; y < chunk_size; ++y) {
             for (int x = 0; x < chunk_size; ++x) {
@@ -921,11 +1076,9 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
                     continue;
                 }
 
-                if (type != 1u) {
+                if (type == 1u) {
                     continue;
                 }
-
-                add_greedy_block_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, x, y, z);
             }
         }
     }

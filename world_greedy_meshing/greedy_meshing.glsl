@@ -105,11 +105,18 @@ void add_quad(vec3 origin, vec3 u_axis, vec3 v_axis, float u_len, float v_len, v
         normals[v_ptr + i*3 + 2] = normal.z;
     }
     
-    vec2 uv0 = vec2(0.0, 0.0);
-    vec2 uv1 = vec2(u_len, 0.0);
-    vec2 uv2 = vec2(u_len, v_len);
-    vec2 uv3 = vec2(0.0, v_len);
-    
+    // World-projected UVs keep merged building faces tiled across the full
+    // quad span. Atlas selection is handled in the material shader.
+    vec3 u_dir = normalize(u_axis);
+    vec3 v_dir = normalize(v_axis);
+    float u0 = dot(origin, u_dir);
+    float v0 = dot(origin, v_dir);
+
+    vec2 uv0 = vec2(u0, v0);
+    vec2 uv1 = vec2(u0 + u_len, v0);
+    vec2 uv2 = vec2(u0 + u_len, v0 + v_len);
+    vec2 uv3 = vec2(u0, v0 + v_len);
+
     uvs[v_idx + 0] = uv0;
     uvs[v_idx + 1] = uv3;
     uvs[v_idx + 2] = uv2;

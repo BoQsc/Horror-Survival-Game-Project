@@ -13,6 +13,7 @@ var compute_shader: RDShaderFile
 var native_builder: Object = null
 var _native_backend_ready: bool = false
 const BUILDING_MESH_CACHE_LIMIT: int = 96
+const BUILDING_MESH_CACHE_VERSION: int = 2
 const BUILDING_CHUNK_SIZE: int = 16
 const BUILDING_CHUNK_VOLUME: int = BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
 const BUILDING_APPLY_BUDGET_PER_FRAME: int = 4
@@ -103,7 +104,8 @@ func _get_native_builder() -> Object:
 	return native_builder
 
 func _make_building_mesh_cache_key(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String) -> String:
-	return "%s:%d:%d:%d:%d" % [
+	return "%d:%s:%d:%d:%d:%d" % [
+		BUILDING_MESH_CACHE_VERSION,
 		collision_mode,
 		hash(voxel_bytes),
 		hash(voxel_meta),

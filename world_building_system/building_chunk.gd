@@ -32,8 +32,10 @@ var manager: Node # BuildingManager
 
 static var _object_collision_shape_cache: Dictionary = {}
 static var _box_collision_shape_cache: Dictionary = {}
-static var _shared_wood_block_material: StandardMaterial3D = null
+static var _shared_wood_block_material: Material = null
+static var _shared_wood_block_texture: Texture2D = null
 const WOOD_BLOCK_TEXTURE: Texture2D = preload("res://world_greedy_meshing/wood-block-texture.png")
+const WOOD_BLOCK_ATLAS_SHADER: Shader = preload("res://world_building_system/wood_block_atlas.gdshader")
 const SIMPLE_OBJECT_COLLISION_IDS := {
 	3: true, # Wooden Table
 	5: true, # Window
@@ -113,16 +115,32 @@ func reset(new_coord: Vector3i):
 	simple_visual_batch_entries.clear()
 	simple_visual_batch_nodes.clear()
 ## Shared wood-block material reused by all building chunks.
-static func _get_shared_wood_block_material() -> StandardMaterial3D:
+static func _get_shared_wood_block_material() -> Material:
 	if _shared_wood_block_material:
 		return _shared_wood_block_material
 
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1.0, 1.0, 1.0)
-	material.albedo_texture = WOOD_BLOCK_TEXTURE
-	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var material := ShaderMaterial.new()
+	material.shader = WOOD_BLOCK_ATLAS_SHADER
+	material.set_shader_parameter("atlas_texture", _get_repeating_wood_texture())
 	_shared_wood_block_material = material
 	return _shared_wood_block_material
+
+static func _get_repeating_wood_texture() -> Texture2D:
+	if _shared_wood_block_texture:
+		return _shared_wood_block_texture
+	if not WOOD_BLOCK_TEXTURE:
+		return null
+	var tex: Texture2D = WOOD_BLOCK_TEXTURE
+	if tex.resource_path != "":
+		var img := Image.load_from_file(tex.resource_path)
+		if img:
+			var img_tex := ImageTexture.create_from_image(img)
+			if img_tex and "repeat" in img_tex:
+				img_tex.repeat = true
+			_shared_wood_block_texture = img_tex
+			return _shared_wood_block_texture
+	_shared_wood_block_texture = tex
+	return _shared_wood_block_texture
 
 func _ready():
 	# Add to group for detection by player punch system
@@ -605,6 +623,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 		PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", mesh_apply_event)
 	if measure_building_apply:
 		PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
+
 
 func _apply_collision_boxes(collision_boxes: Array) -> void:
 	if not static_body:
