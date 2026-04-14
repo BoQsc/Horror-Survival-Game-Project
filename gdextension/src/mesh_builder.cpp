@@ -151,6 +151,7 @@ struct BuildingMeshBuffers {
     std::vector<Vector3> vertices;
     std::vector<Vector3> normals;
     std::vector<Vector2> uvs;
+    std::vector<Color> colors;
     std::vector<int32_t> indices;
 
     void reserve_for_voxels(int voxel_count) {
@@ -158,14 +159,16 @@ struct BuildingMeshBuffers {
         vertices.reserve(reserve_count);
         normals.reserve(reserve_count);
         uvs.reserve(reserve_count);
+        colors.reserve(reserve_count);
         indices.reserve(reserve_count);
     }
 
-    int append_vertex(const Vector3 &vertex, const Vector3 &normal, const Vector2 &uv) {
+    int append_vertex(const Vector3 &vertex, const Vector3 &normal, const Vector2 &uv, const Color &color = Color(0.0, 0.0, 0.0, 1.0)) {
         const int base_index = static_cast<int>(vertices.size());
         vertices.push_back(vertex);
         normals.push_back(normal);
         uvs.push_back(uv);
+        colors.push_back(color);
         return base_index;
     }
 
@@ -178,7 +181,8 @@ struct BuildingMeshBuffers {
         const Vector3 &n2,
         const Vector2 &uv0,
         const Vector2 &uv1,
-        const Vector2 &uv2
+        const Vector2 &uv2,
+        const Color &color = Color(0.0, 0.0, 0.0, 1.0)
     ) {
         const int base_index = static_cast<int>(vertices.size());
         vertices.push_back(p0);
@@ -190,6 +194,9 @@ struct BuildingMeshBuffers {
         uvs.push_back(uv0);
         uvs.push_back(uv2);
         uvs.push_back(uv1);
+        colors.push_back(color);
+        colors.push_back(color);
+        colors.push_back(color);
         indices.push_back(base_index + 0);
         indices.push_back(base_index + 1);
         indices.push_back(base_index + 2);
@@ -201,7 +208,9 @@ struct BuildingMeshBuffers {
         const Vector3 &v_axis,
         float u_len,
         float v_len,
-        const Vector3 &normal
+        const Vector3 &normal,
+        const Color &color = Color(0.0, 0.0, 0.0, 1.0),
+        bool normalized_uvs = false
     ) {
         const int base_index = static_cast<int>(vertices.size());
         const Vector3 p0 = origin;
@@ -218,18 +227,29 @@ struct BuildingMeshBuffers {
         normals.push_back(normal);
         normals.push_back(normal);
         normals.push_back(normal);
+        colors.push_back(color);
+        colors.push_back(color);
+        colors.push_back(color);
+        colors.push_back(color);
 
-        // World-projected UVs keep merged building faces tiled across the
-        // entire quad. Atlas selection is handled in the material shader.
-        const Vector3 u_dir = u_axis.normalized();
-        const Vector3 v_dir = v_axis.normalized();
-        const float u0 = origin.dot(u_dir);
-        const float v0 = origin.dot(v_dir);
+        if (normalized_uvs) {
+            uvs.push_back(Vector2(0.0, 0.0));
+            uvs.push_back(Vector2(0.0, 1.0));
+            uvs.push_back(Vector2(1.0, 1.0));
+            uvs.push_back(Vector2(1.0, 0.0));
+        } else {
+            // World-projected UVs keep merged building faces tiled across the
+            // entire quad. Atlas selection is handled in the material shader.
+            const Vector3 u_dir = u_axis.normalized();
+            const Vector3 v_dir = v_axis.normalized();
+            const float u0 = origin.dot(u_dir);
+            const float v0 = origin.dot(v_dir);
 
-        uvs.push_back(Vector2(u0, v0));
-        uvs.push_back(Vector2(u0, v0 + v_len));
-        uvs.push_back(Vector2(u0 + u_len, v0 + v_len));
-        uvs.push_back(Vector2(u0 + u_len, v0));
+            uvs.push_back(Vector2(u0, v0));
+            uvs.push_back(Vector2(u0, v0 + v_len));
+            uvs.push_back(Vector2(u0 + u_len, v0 + v_len));
+            uvs.push_back(Vector2(u0 + u_len, v0));
+        }
 
         indices.push_back(base_index + 0);
         indices.push_back(base_index + 1);
@@ -272,6 +292,10 @@ static inline uint8_t get_voxel_3d(const PackedByteArray &voxels, int size_x, in
         return 0u;
     }
     return voxels[index];
+}
+
+static inline bool is_greedy_cube_voxel(uint8_t type) {
+    return type == 1u || type == 8u;
 }
 
 static inline bool has_face_type_3d(const PackedByteArray &voxels, int size_x, int size_y, int size_z, int x, int y, int z, int nx, int ny, int nz, uint8_t type) {
@@ -479,14 +503,20 @@ static void add_stairs_2step_cpu(BuildingMeshBuffers &buffers, const Vector3 &po
     buffers.add_quad(p_r2, u_r2, v_r2, 0.5, 1.0, r_right);
 }
 
-static void add_greedy_horizontal_faces_cpu(BuildingMeshBuffers &buffers, const PackedByteArray &voxels, int size_x, int size_y, int size_z) {
+static void add_greedy_horizontal_faces_cpu(
+    BuildingMeshBuffers &buffers,
+    const PackedByteArray &voxels,
+    int size_x,
+    int size_y,
+    int size_z,
+    uint8_t target_type,
+    const Color &color,
+    bool normalized_uvs
+) {
     if (size_x <= 0 || size_y <= 0 || size_z <= 0) {
         return;
     }
 
-    // Horizontal faces cover merged floor surfaces, so keep UVs in world units
-    // and let the material repeat naturally across the quad span.
-    const float horizontal_uv_scale = 1.0f;
     std::vector<uint8_t> mask;
     mask.resize(size_x * size_z);
 
@@ -500,12 +530,12 @@ static void add_greedy_horizontal_faces_cpu(BuildingMeshBuffers &buffers, const 
 
             for (int z = 0; z < size_z; ++z) {
                 for (int x = 0; x < size_x; ++x) {
-                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != 1u) {
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != target_type) {
                         continue;
                     }
 
                     const int neighbor_y = upward ? (y + 1) : (y - 1);
-                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, neighbor_y, z) != 1u) {
+                    if (!is_greedy_cube_voxel(get_voxel_3d(voxels, size_x, size_y, size_z, x, neighbor_y, z))) {
                         mask[x + z * size_x] = 1u;
                     }
                 }
@@ -550,9 +580,11 @@ static void add_greedy_horizontal_faces_cpu(BuildingMeshBuffers &buffers, const 
                         origin,
                         u_axis,
                         v_axis,
-                        float(width) * horizontal_uv_scale,
-                        float(height) * horizontal_uv_scale,
-                        normal
+                        float(width),
+                        float(height),
+                        normal,
+                        color,
+                        normalized_uvs
                     );
                 }
             }
@@ -563,7 +595,16 @@ static void add_greedy_horizontal_faces_cpu(BuildingMeshBuffers &buffers, const 
     emit_faces(false);
 }
 
-static void add_greedy_vertical_faces_cpu(BuildingMeshBuffers &buffers, const PackedByteArray &voxels, int size_x, int size_y, int size_z) {
+static void add_greedy_vertical_faces_cpu(
+    BuildingMeshBuffers &buffers,
+    const PackedByteArray &voxels,
+    int size_x,
+    int size_y,
+    int size_z,
+    uint8_t target_type,
+    const Color &color,
+    bool normalized_uvs
+) {
     if (size_x <= 0 || size_y <= 0 || size_z <= 0) {
         return;
     }
@@ -580,12 +621,12 @@ static void add_greedy_vertical_faces_cpu(BuildingMeshBuffers &buffers, const Pa
 
             for (int y = 0; y < size_y; ++y) {
                 for (int z = 0; z < size_z; ++z) {
-                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != 1u) {
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != target_type) {
                         continue;
                     }
 
                     const int neighbor_x = positive_x ? (x + 1) : (x - 1);
-                    if (get_voxel_3d(voxels, size_x, size_y, size_z, neighbor_x, y, z) != 1u) {
+                    if (!is_greedy_cube_voxel(get_voxel_3d(voxels, size_x, size_y, size_z, neighbor_x, y, z))) {
                         mask[z + y * size_z] = 1u;
                     }
                 }
@@ -632,7 +673,9 @@ static void add_greedy_vertical_faces_cpu(BuildingMeshBuffers &buffers, const Pa
                         v_axis,
                         float(width),
                         float(height),
-                        normal
+                        normal,
+                        color,
+                        normalized_uvs
                     );
                 }
             }
@@ -651,12 +694,12 @@ static void add_greedy_vertical_faces_cpu(BuildingMeshBuffers &buffers, const Pa
 
             for (int y = 0; y < size_y; ++y) {
                 for (int x = 0; x < size_x; ++x) {
-                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != 1u) {
+                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, z) != target_type) {
                         continue;
                     }
 
                     const int neighbor_z = positive_z ? (z + 1) : (z - 1);
-                    if (get_voxel_3d(voxels, size_x, size_y, size_z, x, y, neighbor_z) != 1u) {
+                    if (!is_greedy_cube_voxel(get_voxel_3d(voxels, size_x, size_y, size_z, x, y, neighbor_z))) {
                         mask[x + y * size_x] = 1u;
                     }
                 }
@@ -703,7 +746,9 @@ static void add_greedy_vertical_faces_cpu(BuildingMeshBuffers &buffers, const Pa
                         v_axis,
                         float(width),
                         float(height),
-                        normal
+                        normal,
+                        color,
+                        normalized_uvs
                     );
                 }
             }
@@ -1040,8 +1085,13 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
     BuildingMeshBuffers buffers;
     buffers.reserve_for_voxels(voxel_count);
 
-    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size);
-    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size);
+    const Color wood_color = Color(0.0, 0.0, 0.0, 1.0);
+    const Color church_floor_color = Color(1.0, 0.0, 0.0, 1.0);
+
+    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
+    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
+    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, true);
+    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, true);
 
     for (int z = 0; z < chunk_size; ++z) {
         for (int y = 0; y < chunk_size; ++y) {
@@ -1079,6 +1129,10 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
                 if (type == 1u) {
                     continue;
                 }
+
+                if (type == 8u) {
+                    continue;
+                }
             }
         }
     }
@@ -1107,12 +1161,18 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
         if (!buffers.uvs.empty()) {
             std::copy(buffers.uvs.begin(), buffers.uvs.end(), uvs.ptrw());
         }
+        PackedColorArray colors;
+        colors.resize(buffers.colors.size());
+        if (!buffers.colors.empty()) {
+            std::copy(buffers.colors.begin(), buffers.colors.end(), colors.ptrw());
+        }
         if (!buffers.indices.empty()) {
             std::copy(buffers.indices.begin(), buffers.indices.end(), indices.ptrw());
         }
 
         arrays[Mesh::ARRAY_VERTEX] = vertices;
         arrays[Mesh::ARRAY_NORMAL] = normals;
+        arrays[Mesh::ARRAY_COLOR] = colors;
         arrays[Mesh::ARRAY_TEX_UV] = uvs;
         arrays[Mesh::ARRAY_INDEX] = indices;
 

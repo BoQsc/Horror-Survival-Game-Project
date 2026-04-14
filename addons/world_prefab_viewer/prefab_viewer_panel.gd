@@ -4,6 +4,7 @@ extends PanelContainer
 const ViewerData = preload("res://addons/world_prefab_viewer/prefab_viewer_data.gd")
 const ViewerMesher = preload("res://addons/world_prefab_viewer/prefab_viewer_mesher.gd")
 const OPTIONAL_WOOD_TEXTURE_PATH := "res://world_greedy_meshing/wood-block-texture.png"
+const OPTIONAL_CHURCH_FLOOR_TEXTURE_PATH := "res://models/objects/church_floor/church_floor_texture.png"
 const WOOD_BLOCK_ATLAS_SHADER := preload("res://world_building_system/wood_block_atlas.gdshader")
 const RUNTIME_MATERIAL_CACHE_KEY := -999
 const TERRAIN_DIRT_MATERIAL_CACHE_KEY := -1000
@@ -1681,6 +1682,8 @@ func _get_runtime_block_material() -> Material:
 		var shader_material := ShaderMaterial.new()
 		shader_material.shader = WOOD_BLOCK_ATLAS_SHADER
 		shader_material.set_shader_parameter("atlas_texture", _get_repeating_texture(load(OPTIONAL_WOOD_TEXTURE_PATH)))
+		if ResourceLoader.exists(OPTIONAL_CHURCH_FLOOR_TEXTURE_PATH):
+			shader_material.set_shader_parameter("church_floor_texture", _get_repeating_texture(load(OPTIONAL_CHURCH_FLOOR_TEXTURE_PATH)))
 		material = shader_material
 	else:
 		var fallback_material := StandardMaterial3D.new()
