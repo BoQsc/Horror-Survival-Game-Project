@@ -99,6 +99,13 @@ func _add_block_entries() -> void:
 		"block_id": 8,
 		"stack_size": 64
 	}, 3, "Block")
+	_add_entry("Slab", {
+		"id": "creative_block_slab",
+		"name": "Slab",
+		"category": ItemDefs.ItemCategory.BLOCK,
+		"block_id": 9,
+		"stack_size": 64
+	}, 3, "Block")
 
 func _add_object_entries() -> void:
 	var object_ids: Array = ObjectRegistry.get_all_ids()

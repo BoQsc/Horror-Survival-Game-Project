@@ -13,7 +13,7 @@ var compute_shader: RDShaderFile
 var native_builder: Object = null
 var _native_backend_ready: bool = false
 const BUILDING_MESH_CACHE_LIMIT: int = 96
-const BUILDING_MESH_CACHE_VERSION: int = 2
+const BUILDING_MESH_CACHE_VERSION: int = 4
 const BUILDING_CHUNK_SIZE: int = 16
 const BUILDING_CHUNK_VOLUME: int = BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
 const BUILDING_APPLY_BUDGET_PER_FRAME: int = 4
@@ -22,10 +22,11 @@ var _building_mesh_cache: Dictionary = {}
 var _building_mesh_cache_order: Array[String] = []
 
 # Building voxel IDs (see `modules/world_player_v2/api/building_api.gd` and legacy notes).
-# These blocks are not full cubes (stairs/ramp-style). Treating them as solid voxels when
-# generating merged collision boxes can turn stairs into full-height walls.
+# These blocks are not full cubes (stairs/ramp/slab-style). Treating them as solid voxels when
+# generating merged collision boxes can turn them into full-height walls.
 const STAIR_BLOCK_ID: int = 4
 const STAIR_2STEP_BLOCK_ID: int = 5
+const SLAB_BLOCK_ID: int = 9
 
 # DEBUG: Track GPU mesh generation
 static var mesh_gen_count: int = 0
@@ -131,10 +132,10 @@ func _get_cached_building_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedB
 	_building_mesh_cache_order.append(cache_key)
 	return cached_entry
 
-func _voxels_have_stair_blocks(voxel_bytes: PackedByteArray) -> bool:
+func _voxels_need_detailed_collision(voxel_bytes: PackedByteArray) -> bool:
 	# Cheap O(n) scan (n=4096). This runs only when generating world-map building meshes.
 	for v in voxel_bytes:
-		if v == STAIR_BLOCK_ID or v == STAIR_2STEP_BLOCK_ID:
+		if v == STAIR_BLOCK_ID or v == STAIR_2STEP_BLOCK_ID or v == SLAB_BLOCK_ID:
 			return true
 	return false
 
@@ -250,7 +251,7 @@ func _thread_loop():
 		# solid voxels in merged boxes can make stairs behave like walls. For any chunk
 		# containing stair blocks, fall back to the detailed collision shape path.
 		var is_world_map_mode: bool = bool(is_instance_valid(chunk) and chunk.manager != null and chunk.manager.world_map_mode)
-		var use_box_collision: bool = is_world_map_mode and not _voxels_have_stair_blocks(voxel_bytes)
+		var use_box_collision: bool = is_world_map_mode and not _voxels_need_detailed_collision(voxel_bytes)
 		var collision_mode: String = "boxes" if use_box_collision else "shape"
 		var cached_result := _get_cached_building_mesh(voxel_bytes, voxel_meta, collision_mode)
 		if not cached_result.is_empty():

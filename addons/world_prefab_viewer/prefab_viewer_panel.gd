@@ -468,6 +468,8 @@ func _create_block_node(cell: Dictionary, rotation: int) -> Node3D:
 
 	if block_type == 4:
 		return _create_stair_node(anchor, final_meta, _get_block_material(block_type))
+	if block_type == 9:
+		return _create_slab_node(anchor, _get_block_material(block_type))
 
 	var mesh_instance := MeshInstance3D.new()
 	var mesh := BoxMesh.new()
@@ -495,6 +497,21 @@ func _create_stair_node(anchor: Vector3, meta: int, material: Material) -> Node3
 			(-0.5 + (1.0 / 6.0)) + (float(i) / 3.0)
 		)
 		root.add_child(step)
+
+	return root
+
+
+func _create_slab_node(anchor: Vector3, material: Material) -> Node3D:
+	var root := Node3D.new()
+	root.position = anchor + Vector3(0.5, 0.0, 0.5)
+
+	var slab := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(1.0, 0.5, 1.0)
+	slab.mesh = box
+	slab.material_override = material
+	slab.position = Vector3(0.0, 0.25, 0.0)
+	root.add_child(slab)
 
 	return root
 
@@ -1674,6 +1691,12 @@ func _get_block_material(block_type: int) -> Material:
 			var material := StandardMaterial3D.new()
 			material.roughness = 1.0
 			material.albedo_color = Color(0.62, 0.55, 0.39, 1.0)
+			_material_cache[block_type] = material
+			return material
+		9:
+			var material := StandardMaterial3D.new()
+			material.roughness = 1.0
+			material.albedo_color = Color(0.69, 0.53, 0.34, 1.0)
 			_material_cache[block_type] = material
 			return material
 		_:

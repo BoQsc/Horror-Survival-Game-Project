@@ -503,6 +503,19 @@ static void add_stairs_2step_cpu(BuildingMeshBuffers &buffers, const Vector3 &po
     buffers.add_quad(p_r2, u_r2, v_r2, 0.5, 1.0, r_right);
 }
 
+static void add_slab_cpu(BuildingMeshBuffers &buffers, const Vector3 &pos, const Color &color) {
+    const float slab_height = 0.5f;
+    const Vector3 bottom_origin = pos;
+    const Vector3 top_origin = pos + Vector3(0.0, slab_height, 1.0);
+
+    buffers.add_quad(top_origin, Vector3(1, 0, 0), Vector3(0, 0, -1), 1.0, 1.0, Vector3(0, 1, 0), color);
+    buffers.add_quad(bottom_origin, Vector3(1, 0, 0), Vector3(0, 0, 1), 1.0, 1.0, Vector3(0, -1, 0), color);
+    buffers.add_quad(bottom_origin + Vector3(1.0, 0.0, 1.0), Vector3(0, 0, -1), Vector3(0, 1, 0), 1.0, slab_height, Vector3(1, 0, 0), color);
+    buffers.add_quad(bottom_origin, Vector3(0, 0, 1), Vector3(0, 1, 0), 1.0, slab_height, Vector3(-1, 0, 0), color);
+    buffers.add_quad(bottom_origin + Vector3(1.0, 0.0, 0.0), Vector3(-1, 0, 0), Vector3(0, 1, 0), 1.0, slab_height, Vector3(0, 0, -1), color);
+    buffers.add_quad(bottom_origin + Vector3(0.0, 0.0, 1.0), Vector3(1, 0, 0), Vector3(0, 1, 0), 1.0, slab_height, Vector3(0, 0, 1), color);
+}
+
 static void add_greedy_horizontal_faces_cpu(
     BuildingMeshBuffers &buffers,
     const PackedByteArray &voxels,
@@ -1125,6 +1138,11 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
                 if (type == 5u) {
                     const uint32_t meta = voxel_meta[idx];
                     add_stairs_2step_cpu(buffers, pos, meta);
+                    continue;
+                }
+
+                if (type == 9u) {
+                    add_slab_cpu(buffers, pos, wood_color);
                     continue;
                 }
 
