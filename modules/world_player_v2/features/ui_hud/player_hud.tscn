@@ -2,6 +2,7 @@
 
 [ext_resource type="Script" uid="uid://dflhel6eekhjm" path="res://modules/world_player_v2/features/ui_hud/player_hud.gd" id="1_hud"]
 [ext_resource type="PackedScene" uid="uid://d1rcybdixu8hn" path="res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_panel.tscn" id="2_inv"]
+[ext_resource type="PackedScene" path="res://modules/world_player_v2/features/ui_hud/creative_catalog_panel.tscn" id="3_catalog"]
 [ext_resource type="PackedScene" uid="uid://bhkrqy3764208" path="res://modules/world_player_v2/features/data_containers/ui/container_panel.tscn" id="4_container"]
 
 [node name="PlayerHUD" type="CanvasLayer" unique_id=482305022]
@@ -292,7 +293,7 @@ layout_mode = 0
 offset_left = 20.0
 offset_top = 20.0
 offset_right = 220.0
-offset_bottom = 170.0
+offset_bottom = 220.0
 theme_override_constants/separation = 10
 
 [node name="ExitButton" type="Button" parent="GameMenu/ActionButtons" unique_id=186084057]
@@ -313,6 +314,12 @@ layout_mode = 2
 size_flags_horizontal = 3
 text = "QuickLoad (F8)"
 
+[node name="CreativeCatalogButton" type="Button" parent="GameMenu/ActionButtons"]
+custom_minimum_size = Vector2(200, 40)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Creative Catalog"
+
 
 
 
@@ -321,3 +328,5 @@ text = "QuickLoad (F8)"
 [node name="InventoryPanel" parent="." unique_id=212941941 instance=ExtResource("2_inv")]
 
 [node name="ContainerPanel" parent="." unique_id=1450455450 instance=ExtResource("4_container")]
+
+[node name="CreativeCatalogPanel" parent="." instance=ExtResource("3_catalog")]

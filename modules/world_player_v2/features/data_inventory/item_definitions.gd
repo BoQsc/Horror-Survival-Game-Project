@@ -138,6 +138,8 @@ static func get_category_name(category: ItemCategory) -> String:
 		ItemCategory.BLOCK: return "Block"
 		ItemCategory.OBJECT: return "Object"
 		ItemCategory.PROP: return "Prop"
+		ItemCategory.SHOVEL: return "Shovel"
+		ItemCategory.VEHICLE: return "Vehicle"
 	return "Unknown"
 
 ## Check if category triggers BUILD mode (category-only check)

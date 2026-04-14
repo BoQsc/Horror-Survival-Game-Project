@@ -14,6 +14,8 @@ class_name PlayerHUDV2
 @onready var stamina_bar: ProgressBar = $StatusBars/StaminaBar
 @onready var compass: Label = $Compass
 @onready var game_menu: Control = $GameMenu
+@onready var creative_catalog_button: Button = $GameMenu/ActionButtons/CreativeCatalogButton
+@onready var creative_catalog_panel: CreativeCatalogPanelV2 = $CreativeCatalogPanel
 @onready var selected_item_label: Label = $SelectedItemLabel
 @onready var target_material_label: Label = $TargetMaterial
 
@@ -21,6 +23,7 @@ var underwater_overlay: ColorRect = null
 var hotbar_slots: Array = []
 var hotbar_ref: Node = null
 var inventory_ref: Node = null
+var mode_manager_ref: Node = null
 
 # V2 path
 const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
@@ -170,6 +173,9 @@ func _ready() -> void:
 	if quickload_btn:
 		quickload_btn.pressed.connect(_on_quickload_pressed)
 
+	if creative_catalog_button:
+		creative_catalog_button.pressed.connect(_on_creative_catalog_pressed)
+
 	# Deferred connection to SaveManager to avoid race conditions during scene load
 	call_deferred("_connect_to_save_manager")
 
@@ -181,6 +187,7 @@ func _ready() -> void:
 		target_material_label.visible = false  # Hidden until debug preset enables it
 	
 	_setup_visual_overlays()
+	_update_editor_catalog_visibility()
 
 var item_notification_container: VBoxContainer = null
 
@@ -292,6 +299,7 @@ func _process(_delta: float) -> void:
 	_update_status_bars()
 	_update_build_mode_info()
 	_update_durability_visibility()
+	_update_editor_catalog_visibility()
 	
 	# Update notification timer
 	if notification_timer > 0:
@@ -478,6 +486,7 @@ func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 			mode_label.modulate = Color.YELLOW
 	
 	_update_hotbar_display()
+	_update_editor_catalog_visibility()
 
 func _on_item_changed(slot: int, item: Dictionary) -> void:
 	# Allow updates in both player and editor modes
@@ -521,6 +530,9 @@ func _on_inventory_toggled(_is_open: bool) -> void:
 
 func _on_game_menu_toggled(is_open: bool) -> void:
 	game_menu.visible = is_open
+	if not is_open:
+		_close_creative_catalog_panel()
+	_update_editor_catalog_visibility()
 
 func _on_exit_pressed() -> void:
 	get_tree().quit()
@@ -699,6 +711,7 @@ func _update_build_mode_info() -> void:
 
 func _on_editor_submode_changed(_submode: int, _submode_name: String) -> void:
 	_update_hotbar_display()
+	_update_editor_catalog_visibility()
 
 func _update_hotbar_display() -> void:
 	# Use same display logic for both player and editor modes
@@ -856,3 +869,32 @@ func _on_load_completed(success: bool, _path: String) -> void:
 		notification_label.visible = true
 		notification_timer = 2.0  # Show for 2 seconds
 		print("[LOAD_NOTIFICATION] Game loaded!")
+
+func _on_creative_catalog_pressed() -> void:
+	if not _is_editor_mode_active() or not game_menu.visible:
+		return
+	
+	if creative_catalog_panel:
+		creative_catalog_panel.toggle_catalog()
+
+func _close_creative_catalog_panel() -> void:
+	if creative_catalog_panel and creative_catalog_panel.visible:
+		creative_catalog_panel.close_catalog()
+
+func _update_editor_catalog_visibility() -> void:
+	var should_show := game_menu.visible and _is_editor_mode_active()
+	
+	if creative_catalog_button:
+		creative_catalog_button.visible = should_show
+		creative_catalog_button.disabled = not should_show
+	
+	if not should_show:
+		_close_creative_catalog_panel()
+
+func _is_editor_mode_active() -> bool:
+	if not mode_manager_ref or not is_instance_valid(mode_manager_ref):
+		var player_node = get_tree().get_first_node_in_group("player")
+		if player_node:
+			mode_manager_ref = player_node.get_node_or_null("Systems/ModeManager")
+	
+	return mode_manager_ref != null and mode_manager_ref.has_method("is_editor_mode") and mode_manager_ref.is_editor_mode()

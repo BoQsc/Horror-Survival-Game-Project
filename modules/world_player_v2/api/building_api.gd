@@ -11,7 +11,7 @@ var terrain_manager: Node = null
 var player: Node = null
 
 # Block State
-var current_block_id: int = 1 # 1=Cube, 2=Ramp, 3=Sphere, 4=Stairs
+var current_block_id: int = 1 # 1=Cube, 2=Ramp, 3=Sphere, 4=Stairs, 5=Stairs (2-Step), 8=Church Floor
 var current_rotation: int = 0 # 0-3 (0°, 90°, 180°, 270°)
 
 # Object State (ported from legacy)
@@ -104,13 +104,27 @@ func _create_grid_visualizer() -> void:
 
 ## Set current block type (1-5)
 func set_block_id(id: int) -> void:
-	current_block_id = clampi(id, 1, 5)
+	if id == 8:
+		current_block_id = 8
+	else:
+		current_block_id = clampi(id, 1, 5)
 	print("BuildingAPI: Block -> %s" % get_block_name())
 
 ## Get current block name
 func get_block_name() -> String:
-	if current_block_id >= 1 and current_block_id <= 5:
-		return BLOCK_NAMES[current_block_id]
+	match current_block_id:
+		1:
+			return "Cube"
+		2:
+			return "Ramp"
+		3:
+			return "Sphere"
+		4:
+			return "Stairs"
+		5:
+			return "Stairs (2-Step)"
+		8:
+			return "Church Floor"
 	return "Unknown"
 
 ## Rotate current block

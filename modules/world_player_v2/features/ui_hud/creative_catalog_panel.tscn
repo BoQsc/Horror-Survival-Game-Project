@@ -1,0 +1,76 @@
+[gd_scene format=3 uid="uid://b8c5lwlnkf5tx"]
+
+[ext_resource type="Script" path="res://modules/world_player_v2/features/ui_hud/creative_catalog_panel.gd" id="1_catalog"]
+
+[node name="CreativeCatalogPanel" type="PanelContainer"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -360.0
+offset_top = -220.0
+offset_right = 360.0
+offset_bottom = 220.0
+grow_horizontal = 2
+grow_vertical = 2
+visible = false
+script = ExtResource("1_catalog")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Header" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="VBox/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "CREATIVE CATALOG"
+horizontal_alignment = 1
+
+[node name="CloseButton" type="Button" parent="VBox/Header"]
+custom_minimum_size = Vector2(90, 34)
+layout_mode = 2
+text = "Close"
+
+[node name="FilterBar" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SearchBox" type="LineEdit" parent="VBox/FilterBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Search items..."
+clear_button_enabled = true
+
+[node name="CategoryFilter" type="OptionButton" parent="VBox/FilterBar"]
+custom_minimum_size = Vector2(150, 0)
+layout_mode = 2
+
+[node name="Hint" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Search blocks, objects, materials, and usable items. Click one to add it to your inventory."
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="ScrollContainer" type="ScrollContainer" parent="VBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+custom_minimum_size = Vector2(0, 260)
+
+[node name="ItemGrid" type="GridContainer" parent="VBox/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+columns = 3
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+
+[node name="StatusLabel" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Editor mode only."
+horizontal_alignment = 1
+autowrap_mode = 2
