@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dyu50k58g0qrd"
-path="res://.godot/imported/church_floor_texture_sample.png-809fb945e33f9f65b4b6f2c9c7c914a6.ctex"
+uid="uid://luqimuq0kcd8"
+path="res://.godot/imported/church_floor_texture - Copy.png-3ee5b28480183de4e0823949bd78cc9d.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://models/objects/church_floor/church_floor_texture_sample.png"
-dest_files=["res://.godot/imported/church_floor_texture_sample.png-809fb945e33f9f65b4b6f2c9c7c914a6.ctex"]
+source_file="res://models/objects/church_floor/outdated/church_floor_texture - Copy.png"
+dest_files=["res://.godot/imported/church_floor_texture - Copy.png-3ee5b28480183de4e0823949bd78cc9d.ctex"]
 
 [params]
 
