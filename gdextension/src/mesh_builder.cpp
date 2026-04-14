@@ -1090,8 +1090,8 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
 
     add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
     add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
-    // Church floor blocks should tile one texture per block instead of stretching
-    // a single texture across an entire greedy quad.
+    // Church floor blocks use their own 6-face atlas, so keep world-projected UVs
+    // and let the shader pick the correct atlas cell per face on merged quads.
     add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
     add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
 
