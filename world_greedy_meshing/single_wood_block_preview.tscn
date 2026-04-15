@@ -1,6 +1,9 @@
-[gd_scene format=3]
+[gd_scene format=3 uid="uid://mxnqihtu6qvq"]
 
-[ext_resource type="Script" path="res://world_greedy_meshing/single_wood_block_preview.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://b4bctrdswh8bw" path="res://world_greedy_meshing/single_wood_block_preview.gd" id="1_script"]
+[ext_resource type="Shader" uid="uid://dmfa2dwl4iffo" path="res://world_building_system/wood_block_atlas.gdshader" id="2_o41wv"]
+[ext_resource type="Texture2D" uid="uid://ci5t8ucwrfllx" path="res://world_greedy_meshing/wood-block-texture.png" id="3_ufck7"]
+[ext_resource type="Texture2D" uid="uid://ckmnpelel6uop" path="res://models/objects/church_floor/church_floor_texture.png" id="4_mschi"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.57, 0.68, 0.84, 1)
@@ -15,25 +18,31 @@ background_mode = 2
 sky = SubResource("Sky_1")
 ambient_light_energy = 1.2
 
-[sub_resource type="BoxMesh" id="BoxMesh_1"]
-size = Vector3(1, 1, 1)
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_4xvwk"]
+render_priority = 0
+shader = ExtResource("2_o41wv")
+shader_parameter/atlas_texture = ExtResource("3_ufck7")
+shader_parameter/church_floor_texture = ExtResource("4_mschi")
 
-[node name="SingleWoodBlockPreview" type="Node3D"]
+[sub_resource type="BoxMesh" id="BoxMesh_1"]
+
+[node name="SingleWoodBlockPreview" type="Node3D" unique_id=1775650218]
 script = ExtResource("1_script")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=152412543]
 environment = SubResource("Environment_1")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=401171209]
 transform = Transform3D(-0.8660254, -0.43301278, 0.25, 0, 0.49999997, 0.86602545, -0.50000006, 0.75, -0.43301266, 0, 0, 0)
-shadow_enabled = true
 light_energy = 1.4
+shadow_enabled = true
 
-[node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.6, 1.7, 3.4)
-fov = 45.0
+[node name="Camera3D" type="Camera3D" parent="." unique_id=887686125]
+transform = Transform3D(0.79435784, -0.22422768, 0.5645508, 0, 0.92937803, 0.36912936, -0.6074501, -0.2932208, 0.7382587, 2.6, 1.7, 3.4)
 current = true
+fov = 45.0
 
-[node name="Block" type="MeshInstance3D" parent="."]
-rotation_degrees = Vector3(18, 35, 0)
+[node name="Block" type="MeshInstance3D" parent="." unique_id=345681542]
+transform = Transform3D(0.81915206, 0.17724487, 0.5455036, 0, 0.95105654, -0.309017, -0.57357645, 0.25313193, 0.77905995, 0, 0, 0)
+material_override = SubResource("ShaderMaterial_4xvwk")
 mesh = SubResource("BoxMesh_1")
