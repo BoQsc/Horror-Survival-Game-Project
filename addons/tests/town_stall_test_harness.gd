@@ -53,6 +53,7 @@ var disable_building_object_collisions_enabled: bool = false
 var disable_building_chunk_flush_enabled: bool = false
 var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
+var disable_entities_enabled: bool = false
 var repeat_entry_enabled: bool = false
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
@@ -113,6 +114,7 @@ func _ready() -> void:
 	disable_building_chunk_flush_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_FLUSH") == "1"
 	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
+	disable_entities_enabled = OS.get_environment("TOWN_STALL_DISABLE_ENTITIES") == "1"
 	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
@@ -126,6 +128,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable building chunk flush: %s" % ("ON" if disable_building_chunk_flush_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	_emit_scope_state("town_stall_test", {
 		"phase": "start",
@@ -140,6 +143,7 @@ func _ready() -> void:
 		"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
 		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
 		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
+		"disable_entities": disable_entities_enabled,
 		"repeat_entry": repeat_entry_enabled
 	})
 	_begin_generation()
@@ -275,6 +279,8 @@ func _start_game_scene() -> void:
 		_apply_building_chunk_flush_toggle()
 	elif disable_building_chunk_collisions_enabled:
 		_apply_building_chunk_collisions_toggle()
+	if disable_entities_enabled:
+		_apply_entities_toggle()
 	add_child(game_root)
 	phase = Phase.WAIT_WORLD_READY
 	phase_time = 0.0
@@ -443,6 +449,29 @@ func _apply_building_chunk_collisions_toggle() -> void:
 		"disable_building_chunk_collisions": true
 	})
 	print("[TOWN_STALL_TEST] Building chunk collisions disabled for test isolation.")
+
+
+func _apply_entities_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var entity_manager := game_root.find_child("EntityManager", true, false)
+	if entity_manager:
+		if "procedural_spawning_enabled" in entity_manager:
+			entity_manager.procedural_spawning_enabled = false
+		if "max_entities" in entity_manager:
+			entity_manager.max_entities = 0
+		entity_manager.process_mode = Node.PROCESS_MODE_DISABLED
+		if entity_manager.has_method("set_process"):
+			entity_manager.set_process(false)
+		if entity_manager.has_method("set_physics_process"):
+			entity_manager.set_physics_process(false)
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "entities_disabled",
+		"disable_entities": true
+	})
+	print("[TOWN_STALL_TEST] Entities disabled for test isolation.")
 
 
 func _poll_world_ready() -> void:
