@@ -265,41 +265,8 @@ struct BuildingMeshBuffers {
 
 };
 
-static const Vector2 BUILDING_ATLAS_CELL_SIZE = Vector2(1.0f / 3.0f, 1.0f / 2.0f);
-
 static inline uint8_t get_voxel_3d(const PackedByteArray &voxels, int size_x, int size_y, int size_z, int x, int y, int z);
 static inline bool is_greedy_cube_voxel(uint8_t type);
-
-static Vector2 get_building_atlas_cell_origin(const Vector3 &normal) {
-    const Vector3 abs_normal = Vector3(Math::abs(normal.x), Math::abs(normal.y), Math::abs(normal.z));
-
-    if (abs_normal.z >= abs_normal.x && abs_normal.z >= abs_normal.y) {
-        return normal.z > 0.0f ? Vector2(0.0f, 0.0f) : Vector2(2.0f * BUILDING_ATLAS_CELL_SIZE.x, 0.0f);
-    }
-
-    if (abs_normal.x >= abs_normal.y) {
-        return normal.x > 0.0f ? Vector2(BUILDING_ATLAS_CELL_SIZE.x, 0.0f) : Vector2(0.0f, BUILDING_ATLAS_CELL_SIZE.y);
-    }
-
-    return normal.y > 0.0f ? Vector2(BUILDING_ATLAS_CELL_SIZE.x, BUILDING_ATLAS_CELL_SIZE.y) : Vector2(2.0f * BUILDING_ATLAS_CELL_SIZE.x, BUILDING_ATLAS_CELL_SIZE.y);
-}
-
-static void remap_building_atlas_uvs(BuildingMeshBuffers &buffers, bool mirror_x) {
-    const size_t uv_count = std::min(buffers.uvs.size(), buffers.normals.size());
-    for (size_t i = 0; i < uv_count; ++i) {
-        Vector2 repeated_uv(
-            buffers.uvs[i].x - Math::floor(buffers.uvs[i].x),
-            buffers.uvs[i].y - Math::floor(buffers.uvs[i].y)
-        );
-        if (mirror_x) {
-            repeated_uv.x = 1.0f - repeated_uv.x;
-        }
-        buffers.uvs[i] = get_building_atlas_cell_origin(buffers.normals[i]) + Vector2(
-            repeated_uv.x * BUILDING_ATLAS_CELL_SIZE.x,
-            repeated_uv.y * BUILDING_ATLAS_CELL_SIZE.y
-        );
-    }
-}
 
 static bool append_building_surface(const Ref<ArrayMesh> &mesh, const BuildingMeshBuffers &buffers) {
     if (mesh.is_null() || buffers.is_empty()) {
@@ -1209,8 +1176,6 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
     add_greedy_vertical_faces_cpu(wood_buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
     add_greedy_horizontal_faces_cpu(church_floor_buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
     add_greedy_vertical_faces_cpu(church_floor_buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
-    remap_building_atlas_uvs(church_floor_buffers, true);
-
     for (int z = 0; z < chunk_size; ++z) {
         for (int y = 0; y < chunk_size; ++y) {
             for (int x = 0; x < chunk_size; ++x) {

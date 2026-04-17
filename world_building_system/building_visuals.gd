@@ -9,7 +9,6 @@ const CHURCH_FLOOR_TEXTURE: Texture2D = preload("res://models/objects/church_flo
 const WOOD_BLOCK_ATLAS_SHADER: Shader = preload("res://world_building_system/wood_block_atlas.gdshader")
 
 static var _shared_wood_block_material: StandardMaterial3D = null
-static var _shared_church_floor_material: StandardMaterial3D = null
 static var _shared_building_material: Material = null
 
 static func use_legacy_building_shader_override_for_test() -> bool:
@@ -26,16 +25,8 @@ static func get_shared_wood_block_material() -> StandardMaterial3D:
 	_shared_wood_block_material = material
 	return _shared_wood_block_material
 
-static func get_shared_church_floor_material() -> StandardMaterial3D:
-	if _shared_church_floor_material:
-		return _shared_church_floor_material
-
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(1.0, 1.0, 1.0)
-	material.albedo_texture = CHURCH_FLOOR_TEXTURE
-	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	_shared_church_floor_material = material
-	return _shared_church_floor_material
+static func get_shared_church_floor_material() -> Material:
+	return get_shared_building_material()
 
 static func apply_runtime_surface_materials(mesh_instance: MeshInstance3D, voxel_bytes: PackedByteArray) -> void:
 	if not mesh_instance:
