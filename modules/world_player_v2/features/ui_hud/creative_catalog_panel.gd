@@ -11,6 +11,7 @@ class_name CreativeCatalogPanelV2
 
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 const ObjectRegistry = preload("res://world_building_system/object_registry.gd")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 var inventory_ref: Node = null
 var catalog_entries: Array = []
@@ -42,6 +43,7 @@ func close_catalog() -> void:
 		return
 	visible = false
 	_set_status("Closed.")
+	UIInputGuard.release_viewport_focus(get_viewport())
 
 func toggle_catalog() -> void:
 	if visible:

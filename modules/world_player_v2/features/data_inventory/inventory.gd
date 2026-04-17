@@ -11,6 +11,7 @@ var slots: Array = []
 
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # Audio
 const INVENTORY_OPEN_SOUND = preload("res://game/sound/ui/inventory/1/open-bag-96178.mp3")
@@ -36,7 +37,10 @@ func _ready() -> void:
 	
 	DebugManager.log_player("Inventory: Initialized with %d slots (max stack: %d)" % [INVENTORY_SIZE, MAX_STACK_SIZE])
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_I:
 			toggle_inventory()

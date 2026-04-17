@@ -6,6 +6,7 @@ class_name FirstPersonPistolV2
 const PISTOL_SOUND = preload("res://game/sound/pistol-shot-233473.mp3")
 const RELOAD_SOUND = preload("res://game/sound/mag-reload-81594.mp3")
 const PISTOL_SCENE_PATH = "res://models/pistol/heavy_pistol_animated.glb"
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 @export var sway_amount: float = 0.002
 @export var sway_smoothing: float = 10.0
@@ -102,6 +103,9 @@ func _find_anim_player(node: Node) -> AnimationPlayer:
 	return null
 
 func _input(event: InputEvent) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	if event is InputEventMouseMotion:
 		mouse_input = event.relative
 	
@@ -112,6 +116,10 @@ func _input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	if not pistol_mesh or not pistol_mesh.visible:
+		return
+
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		mouse_input = Vector2.ZERO
 		return
 	
 	is_aiming = Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED

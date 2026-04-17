@@ -18,6 +18,7 @@ var _editor_initialized: bool = false  # Only initialize editor slots once
 
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 func _ready() -> void:
 	_load_dev_starter_kit()
@@ -88,6 +89,9 @@ func _load_dev_starter_kit() -> void:
 		slots.append(_create_empty_stack())
 
 func _input(event: InputEvent) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	# Number keys 1-0 for slots
 	if event is InputEventKey and event.pressed and not event.echo:
 		var new_slot = -1
@@ -461,4 +465,3 @@ func _fix_item_types(item: Dictionary) -> void:
 	for key in int_keys:
 		if item.has(key) and item[key] is float:
 			item[key] = int(item[key])
-

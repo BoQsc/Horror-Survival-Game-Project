@@ -14,6 +14,7 @@ var hotbar: Node = null
 
 # Preload item definitions (v2 path)
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # EDITOR submodes
 enum EditorSubmode {TERRAIN, WATER, ROAD, PREFAB}
@@ -36,7 +37,10 @@ func _ready() -> void:
 func _on_editor_submode_changed(submode: int, _name: String) -> void:
 	editor_submode = submode as EditorSubmode
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	if event is InputEventKey and event.pressed and not event.echo:
 		# Backtick toggles EDITOR mode
 		if event.keycode == KEY_QUOTELEFT:

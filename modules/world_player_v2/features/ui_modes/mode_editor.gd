@@ -5,6 +5,7 @@ class_name ModeEditorV2
 
 # V2 path
 const TerrainAPIScript = preload("res://modules/world_player_v2/api/terrain_api.gd")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # References
 var player: Node = null
@@ -73,6 +74,11 @@ func _ready() -> void:
 	print("ModeEditor: Initialized")
 
 func _process(_delta: float) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		if terrain_api:
+			terrain_api.hide_visuals()
+		return
+
 	# Update selection box when in editor terrain/water mode
 	if mode_manager and mode_manager.is_editor_mode() and terrain_api:
 		var submode = mode_manager.editor_submode
@@ -88,11 +94,17 @@ func _process(_delta: float) -> void:
 			terrain_api.hide_visuals()
 
 func _physics_process(delta: float) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	if mode_manager and mode_manager.is_fly_active():
 		_process_fly_movement(delta)
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
 	if not mode_manager or not mode_manager.is_editor_mode():
+		return
+	
+	if UIInputGuard.is_gameplay_input_blocked(self):
 		return
 	
 	if event is InputEventKey and event.pressed and not event.echo:

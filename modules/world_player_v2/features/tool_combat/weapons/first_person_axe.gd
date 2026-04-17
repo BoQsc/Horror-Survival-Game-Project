@@ -9,6 +9,7 @@ const SWAY_SMOOTHING: float = 10.0
 const BOB_FREQ: float = 10.0
 const BOB_AMP: float = 0.01
 const ATTACK_SOUND_PATH: String = "res://game/sound/player-weapon-tool-swing/item-swing-sfx-2-409076.mp3"
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 @export var axe_scale: Vector3 = Vector3(0.6, 0.6, 0.6)
 @export var axe_position: Vector3 = Vector3(0.215, -0.785, -0.015)
@@ -95,6 +96,10 @@ func _find_anim_player(node: Node) -> AnimationPlayer:
 func _process(delta: float) -> void:
 	if not axe_mesh or not axe_mesh.visible:
 		return
+
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		mouse_input = Vector2.ZERO
+		return
 	
 	if cooldown > 0:
 		cooldown -= delta
@@ -106,6 +111,9 @@ func _process(delta: float) -> void:
 	_update_sway_and_bob(delta)
 
 func _input(event: InputEvent) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	if event is InputEventMouseMotion:
 		mouse_input = event.relative
 

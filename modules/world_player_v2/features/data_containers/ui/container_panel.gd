@@ -13,6 +13,7 @@ signal closed()
 
 # Reuse inventory slot scene
 const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 var container_slots: Array = []
 var inventory_slots: Array = []
@@ -43,7 +44,10 @@ func _ready() -> void:
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.inventory_toggled.connect(_on_inventory_toggled)
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	if visible and event is InputEventKey and event.pressed:
 		if event.keycode == KEY_ESCAPE or event.keycode == KEY_E:
 			close_container()

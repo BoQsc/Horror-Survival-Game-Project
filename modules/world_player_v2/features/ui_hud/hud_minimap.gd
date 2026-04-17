@@ -6,6 +6,7 @@ class_name HUDMinimap
 const MINIMAP_SIZE: int = 180  # Pixels on screen
 const MINIMAP_RADIUS: int = 120  # World units shown around player
 const FULLMAP_SIZE: int = 600  # Full map overlay size on screen
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
@@ -272,8 +273,10 @@ func _update_fullmap_hint() -> void:
 	else:
 		_fullmap_hint.text = "Zoom: %.0fx • Scroll to zoom • M / Esc to close" % _fullmap_zoom
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
+		return
+	if UIInputGuard.is_gameplay_input_blocked(self):
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_M:

@@ -13,6 +13,7 @@ var combat_system: Node = null  # Replaces mode_play
 var mode_build: Node = null
 var mode_editor: Node = null
 var terrain_interaction: Node = null
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # Hold-to-attack state
 var is_primary_held: bool = false
@@ -47,6 +48,11 @@ func _process(_delta: float) -> void:
 	# The attack cooldown in mode handlers ensures proper timing
 	if not hotbar or not player:
 		return
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		is_primary_held = false
+		is_secondary_held = false
+		primary_triggered_this_frame = false
+		return
 	
 	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
 		is_primary_held = false
@@ -65,6 +71,11 @@ func _process(_delta: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	if not hotbar or not player:
+		return
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		is_primary_held = false
+		is_secondary_held = false
+		primary_triggered_this_frame = false
 		return
 	
 	# Only process mouse clicks when captured

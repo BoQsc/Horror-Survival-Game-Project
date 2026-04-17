@@ -28,6 +28,7 @@ var mode_manager_ref: Node = null
 
 # V2 path
 const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 var durability_memory: Dictionary = {}
 var last_hit_target_key: String = ""
@@ -44,6 +45,11 @@ var notification_timer: float = 0.0
 var show_terrain_info: bool = false
 
 func _ready() -> void:
+	add_to_group("player_hud")
+	var input_lock := _get_local_input_lock()
+	if input_lock:
+		input_lock.clear()
+
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.mode_changed.connect(_on_mode_changed)
 		PlayerSignals.item_changed.connect(_on_item_changed)
@@ -191,6 +197,7 @@ func _ready() -> void:
 	
 	_setup_visual_overlays()
 	_update_editor_catalog_visibility()
+	_sync_local_input_lock()
 
 var item_notification_container: VBoxContainer = null
 
@@ -535,7 +542,9 @@ func _on_game_menu_toggled(is_open: bool) -> void:
 	game_menu.visible = is_open
 	if not is_open:
 		_close_creative_catalog_panel()
+	_release_ui_focus()
 	_update_editor_catalog_visibility()
+	_sync_local_input_lock()
 
 func _on_exit_pressed() -> void:
 	get_tree().quit()
@@ -886,6 +895,7 @@ func _close_creative_catalog_panel() -> void:
 
 func _on_creative_catalog_visibility_changed() -> void:
 	_update_editor_catalog_visibility()
+	_sync_local_input_lock()
 
 func _update_editor_catalog_visibility() -> void:
 	var should_show := game_menu.visible and _is_editor_mode_active()
@@ -901,10 +911,28 @@ func _update_editor_catalog_visibility() -> void:
 	if not should_show:
 		_close_creative_catalog_panel()
 
+func _sync_local_input_lock() -> void:
+	var input_lock := _get_local_input_lock()
+	if not input_lock:
+		return
+
+	input_lock.set_game_menu_open(is_game_menu_open())
+	if creative_catalog_panel:
+		input_lock.set_creative_catalog_open(creative_catalog_panel.visible)
+
+func _get_local_input_lock() -> Node:
+	return get_node_or_null("/root/LocalInputLock")
+
 func _is_editor_mode_active() -> bool:
 	if not mode_manager_ref or not is_instance_valid(mode_manager_ref):
 		var player_node = get_tree().get_first_node_in_group("player")
 		if player_node:
 			mode_manager_ref = player_node.get_node_or_null("Systems/ModeManager")
-	
+
 	return mode_manager_ref != null and mode_manager_ref.has_method("is_editor_mode") and mode_manager_ref.is_editor_mode()
+
+func is_game_menu_open() -> bool:
+	return game_menu != null and game_menu.visible
+
+func _release_ui_focus() -> void:
+	UIInputGuard.release_viewport_focus(get_viewport())

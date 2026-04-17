@@ -25,6 +25,7 @@ var has_target: bool = false
 const RAYCAST_DISTANCE: float = 10.0
 const BRUSH_SIZE: float = 0.5  # Radius for Box shape to capture single voxel
 const BRUSH_SHAPE: int = 1  # 1 = Box shape in modify_density.glsl
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # Colors
 const COLOR_DIG = Color(0.8, 0.2, 0.2, 0.5)   # Red for dig mode
@@ -147,10 +148,18 @@ func _process(_delta: float) -> void:
 			selection_box.visible = false
 		return
 	
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		if selection_box:
+			selection_box.visible = false
+		return
+	
 	_update_targeting()
 
 func _input(event: InputEvent) -> void:
 	if not is_active:
+		return
+	
+	if UIInputGuard.is_gameplay_input_blocked(self):
 		return
 	
 	if event is InputEventKey and event.pressed and not event.echo:

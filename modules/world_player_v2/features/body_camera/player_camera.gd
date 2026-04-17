@@ -19,6 +19,7 @@ var is_camera_underwater: bool = false
 var mouse_look_enabled: bool = true
 var underwater_audio: AudioStreamPlayer = null
 var splash_audio: AudioStreamPlayer = null
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # Underwater Fog Settings
 @export_group("Underwater Fog")
@@ -140,29 +141,46 @@ func _emit_camera_underwater_toggled(is_underwater: bool) -> void:
 		PlayerSignals.camera_underwater_toggled.emit(is_underwater)
 
 func _input(event: InputEvent) -> void:
-	# Toggle menu with Escape
-	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		# First, check if inventory is open - close it instead of opening menu
-		var inventory = _get_inventory()
-		if inventory and inventory.is_open:
-			inventory.close_inventory()
-			return
-		
-		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-			# Open menu, release mouse
-			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-			_emit_game_menu_toggled(true)
-		else:
-			# Close menu, capture mouse
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-			_emit_game_menu_toggled(false)
-	
+	if _handle_escape_input(event):
+		return
+
 	# Handle mouse look
 	if not player or not camera:
 		return
 	
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+	
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED and mouse_look_enabled:
 		handle_mouse_look(event.relative)
+
+func _handle_escape_input(event: InputEvent) -> bool:
+	if not (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE):
+		return false
+
+	# First, close inventory if it is open.
+	var inventory = _get_inventory()
+	if inventory and inventory.is_open:
+		inventory.close_inventory()
+		get_viewport().set_input_as_handled()
+		return true
+
+	# Then close the modal game menu / catalog in one press.
+	if _is_game_menu_active() or Input.get_mouse_mode() == Input.MOUSE_MODE_VISIBLE:
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		_emit_game_menu_toggled(false)
+		get_viewport().set_input_as_handled()
+		return true
+
+	# Otherwise open the menu.
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_emit_game_menu_toggled(true)
+	get_viewport().set_input_as_handled()
+	return true
+
+func _is_game_menu_active() -> bool:
+	var hud := get_tree().get_first_node_in_group("player_hud")
+	return hud != null and hud.has_method("is_game_menu_open") and hud.is_game_menu_open()
 
 func _emit_game_menu_toggled(is_open: bool) -> void:
 	# Backward compat - game_menu_toggled is in HUD signals

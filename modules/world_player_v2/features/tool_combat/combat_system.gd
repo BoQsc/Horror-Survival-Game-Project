@@ -58,6 +58,7 @@ var held_prop_original_collision_mask: int = -1
 
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # Sound effects
 const TREE_HIT_SOUND_PATH: String = "res://game/sound/player-hitting-tree-wood/giant-axe-strike-hitting-solid-wood-3-450247.mp3"
@@ -345,6 +346,9 @@ func _input(event: InputEvent) -> void:
 	# Also try to find mode_manager if not set
 	if not mode_manager and player:
 		mode_manager = player.get_node_or_null("Systems/ModeManager")
+
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
 	
 	# T key for prop grab/drop
 	if event is InputEventKey and event.keycode == KEY_T:

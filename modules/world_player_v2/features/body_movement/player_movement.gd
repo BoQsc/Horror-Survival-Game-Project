@@ -15,6 +15,7 @@ const JUMP_VELOCITY: float = 4.5
 # Footstep sound settings - matched to original project
 const FOOTSTEP_INTERVAL: float = 0.5  # Time between footsteps walking
 const FOOTSTEP_INTERVAL_SPRINT: float = 0.3  # Faster footsteps when sprinting
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 var footstep_timer: float = 0.0
 var footstep_sounds: Array[AudioStream] = []
 var footstep_player: AudioStreamPlayer3D = null
@@ -76,10 +77,14 @@ func _physics_process(delta: float) -> void:
 	if not player:
 		PerformanceMonitor.end_measure("Player Movement", 1.0)
 		return
-	
-	# Skip movement if container UI is open
+
+	var gameplay_blocked := UIInputGuard.is_gameplay_input_blocked(self)
 	var container_panel = get_tree().get_first_node_in_group("container_panel")
 	if container_panel and container_panel.visible:
+		gameplay_blocked = true
+
+	if gameplay_blocked:
+		_update_blocked_physics(delta)
 		PerformanceMonitor.end_measure("Player Movement", 1.0)
 		return
 	
@@ -115,6 +120,26 @@ func _physics_process(delta: float) -> void:
 	is_stair_stepping = false
 	
 	PerformanceMonitor.end_measure("Player Movement", 1.0)
+
+func _update_blocked_physics(delta: float) -> void:
+	# Keep passive physics alive so menu input does not freeze the player in midair.
+	# We intentionally stop player-driven horizontal control, but gravity and
+	# landing still continue so the local client stays in sync with the world.
+	_update_water_state()
+
+	if is_swimming:
+		player.velocity = player.velocity.move_toward(Vector3.ZERO, 2.0 * delta)
+	else:
+		player.velocity.x = 0.0
+		player.velocity.z = 0.0
+		if not player.is_on_floor():
+			player.velocity.y -= gravity * delta
+		elif player.velocity.y < 0.0:
+			player.velocity.y = 0.0
+
+	player.move_and_slide()
+	check_landing()
+	is_stair_stepping = false
 
 func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 	if player.velocity.y > JUMP_VELOCITY * 0.5:

@@ -24,6 +24,7 @@ var anim_player: AnimationPlayer = null
 var punch_sfx: AudioStreamPlayer3D = null
 var hotbar: Node = null
 var mode_manager: Node = null
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 var arms_origin: Vector3 = Vector3.ZERO
 var mouse_input: Vector2 = Vector2.ZERO
@@ -112,6 +113,9 @@ func _setup_punch_sfx() -> void:
 		add_child(punch_sfx)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	if event is InputEventMouseMotion:
 		mouse_input = event.relative
 
@@ -125,6 +129,10 @@ func _process(delta: float) -> void:
 	
 	if not arms_mesh.visible:
 		return
+
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		mouse_input = Vector2.ZERO
+		return
 	
 	if punch_cooldown > 0:
 		punch_cooldown -= delta
@@ -133,7 +141,7 @@ func _process(delta: float) -> void:
 		place_cooldown -= delta
 	
 	_update_sway_and_bob(delta)
-	
+
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 			# Only punch in PLAY mode AND with fists (category 0)

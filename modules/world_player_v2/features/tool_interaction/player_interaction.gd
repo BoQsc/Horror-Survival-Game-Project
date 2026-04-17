@@ -29,6 +29,7 @@ var radial_menu_open: bool = false
 # V2 local path for ItemDefinitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 const RadialMenuScript = preload("res://modules/world_player_v2/features/tool_interaction/radial_menu.gd")
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 func _ready() -> void:
 	player = get_parent().get_parent()
@@ -71,6 +72,11 @@ func _setup_radial_menu() -> void:
 func _process(delta: float) -> void:
 	if radial_menu_open:
 		return  # Don't update targets while radial menu is open
+
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		is_holding_e = false
+		hold_time = 0.0
+		return
 	
 	# Sync player position to vehicle while inside (so zombies track correctly)
 	if is_in_vehicle and current_vehicle and player:
@@ -93,12 +99,15 @@ func _process(delta: float) -> void:
 			is_holding_e = false
 			hold_time = 0.0
 
-func _input(event: InputEvent) -> void:
+func _unhandled_input(event: InputEvent) -> void:
 	# Handle radial menu exit
 	if radial_menu_open:
 		if event is InputEventKey and event.keycode == KEY_E and not event.pressed:
 			radial_menu.hide_menu(true)  # Emit selection
 			radial_menu_open = false
+		return
+
+	if UIInputGuard.is_gameplay_input_blocked(self):
 		return
 	
 	if is_in_vehicle:

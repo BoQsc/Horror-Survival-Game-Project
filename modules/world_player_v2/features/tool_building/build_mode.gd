@@ -7,6 +7,7 @@ class_name ModeBuildV2
 const BuildingAPIScript = preload("res://modules/world_player_v2/api/building_api.gd")
 const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 const ItemCategory = ItemDefinitions.ItemCategory
+const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # References
 var player: Node = null
@@ -43,6 +44,12 @@ func _ready() -> void:
 	print("ModeBuild: Initialized")
 
 func _process(_delta: float) -> void:
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		if building_api:
+			building_api.hide_visuals()
+			building_api.destroy_preview()
+		return
+
 	# Check if we should show building visuals
 	# Either in BUILD mode, or in EDITOR mode with a building item selected
 	var should_show_visuals = false
@@ -95,6 +102,9 @@ func _process(_delta: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	# Handle input in BUILD mode, or in EDITOR mode with building item
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		return
+
 	var should_handle_input = false
 	if mode_manager:
 		if mode_manager.is_build_mode():
