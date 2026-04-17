@@ -28,7 +28,6 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 
 # Entity scene to spawn (can be overridden per entity type)
 @export var default_entity_scene: PackedScene
-
 var player: Node3D
 var viewer: Node3D  # What to track for spawning (player or vehicle)
 var active_entities: Array[Node3D] = []
@@ -171,6 +170,8 @@ func _freeze_entity(entity: Node3D):
 	
 	# Disable physics processing
 	entity.set_physics_process(false)
+	if entity.has_method("on_frozen"):
+		entity.on_frozen()
 	
 	# Zero velocity if CharacterBody3D
 	if entity is CharacterBody3D:
@@ -192,12 +193,12 @@ func _unfreeze_entity(entity: Node3D):
 	var pos = entity.global_position
 	
 	# Check if within collision range (where terrain collision is enabled)
-	var dist_to_player = Vector2(pos.x, pos.z).distance_to(Vector2(player.global_position.x, player.global_position.z))
+	var dist_to_player_sq = _planar_distance_squared(pos, player.global_position)
 	var collision_range = 93.0 # 3 chunks * 31 stride
 	if terrain_manager and "collision_distance" in terrain_manager:
 		collision_range = terrain_manager.collision_distance * 31.0
 	
-	if dist_to_player > collision_range:
+	if dist_to_player_sq > collision_range * collision_range:
 		# Outside collision range - stay frozen to prevent falling through
 		return
 	
@@ -218,6 +219,8 @@ func _unfreeze_entity(entity: Node3D):
 	# Collision verified! Re-enable physics
 	entity.set_physics_process(true)
 	frozen_entities.erase(entity)
+	if entity.has_method("on_unfrozen"):
+		entity.on_unfrozen()
 	
 	# Restart animation by re-triggering current state (fixes stuck pose after freeze)
 	if entity.has_method("change_state") and "current_state" in entity:
@@ -241,10 +244,10 @@ func _check_dormant_respawns():
 		var pos = data.position
 		
 		# Check distance to player
-		var dist = Vector2(pos.x, pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
+		var dist_sq = _planar_distance_squared(pos, player_pos)
 		
 		# Must be within spawn radius
-		if dist > spawn_radius:
+		if dist_sq > spawn_radius * spawn_radius:
 			continue # Still too far
 		
 		# Must be within collision range (where collision is actually enabled)
@@ -252,7 +255,7 @@ func _check_dormant_respawns():
 		if terrain_manager and "collision_distance" in terrain_manager:
 			collision_range = terrain_manager.collision_distance * 31.0
 		
-		if dist > collision_range:
+		if dist_sq > collision_range * collision_range:
 			continue # Collision disabled at this location, wait
 		
 		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
@@ -404,7 +407,7 @@ func _process_spawn_queue():
 		# Collision is only enabled within collision_distance chunks (~93 units for distance=3)
 		# Spawning outside this range = zombie falls through disabled collision
 		var player_pos = viewer.global_position
-		var dist_to_player = Vector2(pos.x, pos.z).distance_to(Vector2(player_pos.x, player_pos.z))
+		var dist_to_player_sq = _planar_distance_squared(pos, player_pos)
 		
 		# Get collision distance from terrain manager (default ~93 units = 3 chunks * 31)
 		var collision_range = 93.0 # 3 chunks * 31 stride
@@ -412,14 +415,14 @@ func _process_spawn_queue():
 			collision_range = terrain_manager.collision_distance * 31.0
 		
 		# Only spawn if within collision range (where collision is actually enabled)
-		if dist_to_player > collision_range:
+		if dist_to_player_sq > collision_range * collision_range:
 			# Too far from player - collision disabled there, wait until player gets closer
 			continue
 		
 		# Also check despawn radius for non-procedural spawns
 		var is_procedural = spawn_data.get("procedural", false)
 		if not is_procedural:
-			if dist_to_player > despawn_radius:
+			if dist_to_player_sq > despawn_radius * despawn_radius:
 				completed.append(i)
 				continue
 		
@@ -780,3 +783,9 @@ func _get_biome_at(world_x: float, world_z: float) -> int:
 func clear_spawned_chunks():
 	spawned_chunks.clear()
 	DebugManager.log_entities("Cleared spawned chunks tracking")
+
+
+func _planar_distance_squared(a: Vector3, b: Vector3) -> float:
+	var dx := a.x - b.x
+	var dz := a.z - b.z
+	return dx * dx + dz * dz

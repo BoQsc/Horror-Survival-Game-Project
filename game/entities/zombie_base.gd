@@ -34,6 +34,9 @@ var hit_audio_player: AudioStreamPlayer3D = null
 
 # --- Player reference ---
 var player: Node3D = null
+var _detection_radius_sq: float = 0.0
+var _attack_range_sq: float = 0.0
+var _lose_interest_range_sq: float = 0.0
 
 signal zombie_died(zombie: ZombieBase)
 signal zombie_attacked(target: Node3D)
@@ -84,7 +87,6 @@ func _ready():
 	wall_detector.name = "WallDetector"
 	add_child(wall_detector)
 	wall_detector.position = Vector3(0, 1.0, 0.6)
-	wall_detector.enabled = true
 	wall_detector.target_position = Vector3(0, 0, 1.0)
 	
 	# Collision settings (low safe_margin to minimize floating gap)
@@ -96,6 +98,8 @@ func _ready():
 	# Speed adjustments requested by user:
 	move_speed = 1.5
 	chase_speed_multiplier = 2.4
+	_refresh_range_cache()
+	_sync_runtime_components()
 	
 	# Safety start - wait for physics to settle
 	# Pause animation during this time to prevent drift
@@ -129,7 +133,7 @@ func _physics_process(delta):
 	else:
 		velocity.y = -0.1
 		# Step-up logic - hop when hitting walls while moving
-		if is_on_wall() and velocity.length() > 0.5:
+		if is_on_wall() and velocity.length_squared() > 0.25:
 			velocity.y = 4.0
 	
 	# Animation time-slice looping
@@ -235,8 +239,7 @@ func _process_idle(delta):
 	
 	# Check for player
 	if player and _can_see_player():
-		var dist = global_position.distance_to(player.global_position)
-		if dist < detection_radius:
+		if _distance_squared_to_player() < _detection_radius_sq:
 			change_state("CHASE")
 
 func _process_walk(delta):
@@ -253,8 +256,7 @@ func _process_walk(delta):
 	
 	# Check for player
 	if player and _can_see_player():
-		var dist = global_position.distance_to(player.global_position)
-		if dist < detection_radius:
+		if _distance_squared_to_player() < _detection_radius_sq:
 			change_state("CHASE")
 
 func _process_chase(delta):
@@ -262,16 +264,16 @@ func _process_chase(delta):
 		change_state("IDLE")
 		return
 	
-	var dist = global_position.distance_to(player.global_position)
+	var dist_sq := _distance_squared_to_player()
 	
-	if dist > lose_interest_range:
+	if dist_sq > _lose_interest_range_sq:
 		change_state("IDLE")
-	elif dist < attack_range:
+	elif dist_sq < _attack_range_sq:
 		change_state("ATTACK")
 	else:
 		# Face player (only if not at same position)
 		var look_pos = Vector3(player.global_position.x, global_position.y, player.global_position.z)
-		if global_position.distance_to(look_pos) > 0.01:
+		if _horizontal_distance_squared_to(look_pos) > 0.0001:
 			look_at(look_pos, Vector3.UP)
 		
 		# Move toward player at increased speed
@@ -290,14 +292,14 @@ func _process_attack(delta):
 		change_state("IDLE")
 		return
 	
-	var dist = global_position.distance_to(player.global_position)
+	var dist_sq := _distance_squared_to_player()
 	
-	if dist > attack_range + 1.0:
+	if dist_sq > (attack_range + 1.0) * (attack_range + 1.0):
 		change_state("CHASE")
 	else:
 		# Face player (only if not at same position)
 		var look_pos = Vector3(player.global_position.x, global_position.y, player.global_position.z)
-		if global_position.distance_to(look_pos) > 0.01:
+		if _horizontal_distance_squared_to(look_pos) > 0.0001:
 			look_at(look_pos, Vector3.UP)
 		velocity.x = 0
 		velocity.z = 0
@@ -352,16 +354,7 @@ func change_state(new_state: String):
 	if current_state == new_state:
 		return
 	
-	var old_state = current_state
 	current_state = new_state
-	
-	# Handle sound
-	if new_state == "CHASE":
-		if chase_audio_player and not chase_audio_player.playing:
-			chase_audio_player.play()
-	else:
-		if chase_audio_player and chase_audio_player.playing:
-			chase_audio_player.stop()
 	
 	# Handle animation seek
 	if anim_player:
@@ -384,6 +377,7 @@ func change_state(new_state: String):
 			wander_timer = randf_range(2.0, 4.0)
 		"WALK":
 			wander_timer = randf_range(3.0, 6.0)
+	_sync_runtime_components()
 
 ## Force zombie to start chasing (called externally)
 func start_chase():
@@ -492,9 +486,56 @@ func on_spawn(manager: Node3D):
 	super.on_spawn(manager)
 	current_health = max_health
 	change_state("IDLE")
+	_sync_runtime_components()
 
 ## Override EntityBase on_despawn  
 func on_despawn():
 	super.on_despawn()
 	if chase_audio_player and chase_audio_player.playing:
 		chase_audio_player.stop()
+
+
+func on_frozen() -> void:
+	if wall_detector:
+		wall_detector.enabled = false
+	if anim_player and anim_player.is_playing():
+		anim_player.pause()
+	if chase_audio_player and chase_audio_player.playing:
+		chase_audio_player.stop()
+
+
+func on_unfrozen() -> void:
+	if current_state == "DEAD":
+		return
+	if anim_player and not anim_player.is_playing():
+		anim_player.play("Take 001")
+	_sync_runtime_components()
+
+
+func _refresh_range_cache() -> void:
+	_detection_radius_sq = detection_radius * detection_radius
+	_attack_range_sq = attack_range * attack_range
+	_lose_interest_range_sq = lose_interest_range * lose_interest_range
+
+
+func _sync_runtime_components() -> void:
+	if wall_detector:
+		wall_detector.enabled = current_state == "WALK" and is_physics_processing() and current_state != "DEAD"
+	if chase_audio_player:
+		if current_state == "CHASE" and is_physics_processing():
+			if not chase_audio_player.playing:
+				chase_audio_player.play()
+		elif chase_audio_player.playing:
+			chase_audio_player.stop()
+
+
+func _distance_squared_to_player() -> float:
+	if not player:
+		return INF
+	return global_position.distance_squared_to(player.global_position)
+
+
+func _horizontal_distance_squared_to(target: Vector3) -> float:
+	var dx := global_position.x - target.x
+	var dz := global_position.z - target.z
+	return dx * dx + dz * dz

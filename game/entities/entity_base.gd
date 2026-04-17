@@ -100,6 +100,14 @@ func on_despawn():
 	is_active = false
 	clear_target()
 
+
+func on_frozen() -> void:
+	pass
+
+
+func on_unfrozen() -> void:
+	pass
+
 ## Wander behavior - pick random nearby positions
 func _process_wander(delta: float):
 	wander_timer -= delta
