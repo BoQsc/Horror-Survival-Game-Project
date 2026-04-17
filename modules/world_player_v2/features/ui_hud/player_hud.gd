@@ -14,6 +14,7 @@ class_name PlayerHUDV2
 @onready var stamina_bar: ProgressBar = $StatusBars/StaminaBar
 @onready var compass: Label = $Compass
 @onready var game_menu: Control = $GameMenu
+@onready var game_menu_settings: Control = $GameMenu/CenterContainer
 @onready var creative_catalog_button: Button = $GameMenu/ActionButtons/CreativeCatalogButton
 @onready var creative_catalog_panel: CreativeCatalogPanelV2 = $CreativeCatalogPanel
 @onready var selected_item_label: Label = $SelectedItemLabel
@@ -175,6 +176,8 @@ func _ready() -> void:
 
 	if creative_catalog_button:
 		creative_catalog_button.pressed.connect(_on_creative_catalog_pressed)
+	if creative_catalog_panel:
+		creative_catalog_panel.visibility_changed.connect(_on_creative_catalog_visibility_changed)
 
 	# Deferred connection to SaveManager to avoid race conditions during scene load
 	call_deferred("_connect_to_save_manager")
@@ -881,12 +884,19 @@ func _close_creative_catalog_panel() -> void:
 	if creative_catalog_panel and creative_catalog_panel.visible:
 		creative_catalog_panel.close_catalog()
 
+func _on_creative_catalog_visibility_changed() -> void:
+	_update_editor_catalog_visibility()
+
 func _update_editor_catalog_visibility() -> void:
 	var should_show := game_menu.visible and _is_editor_mode_active()
+	var catalog_open := creative_catalog_panel != null and creative_catalog_panel.visible
 	
 	if creative_catalog_button:
 		creative_catalog_button.visible = should_show
 		creative_catalog_button.disabled = not should_show
+	
+	if game_menu_settings:
+		game_menu_settings.visible = should_show and not catalog_open
 	
 	if not should_show:
 		_close_creative_catalog_panel()
