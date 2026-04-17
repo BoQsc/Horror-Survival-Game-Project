@@ -44,6 +44,7 @@ This tracker is for the broader goal of making town entry feel immediate and kee
 - Keep the current load-time caching path as the baseline.
 - Only touch the remaining town work if profiling proves there is a measurable win.
 - If we go further, prefer a tiny native helper for the last hot CPU loop over another layer of custom caching.
+- A forward-looking shortlist of next-pass options now lives in `.agent/town-60fps-next-options.md`.
 
 ## What We Should Not Change
 
