@@ -16,8 +16,9 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export var terrain_manager: Node3D # Reference to ChunkManager for terrain interaction
 @export var max_entities: int = 50 # Maximum number of active entities
 @export var spawn_radius: float = 50.0 # Range around player where entities can spawn
-@export var freeze_radius: float = 60.0 # Distance at which entities freeze (physics disabled)
+@export var freeze_radius: float = 60.0 # Fallback freeze distance when terrain collision range is unavailable
 @export var despawn_radius: float = 100.0 # Distance at which entities are removed
+@export_range(0.0, 31.0, 0.5) var freeze_collision_margin: float = 8.0 # Keep entities active until near the collision-ready edge
 @export_range(0.1, 5.0, 0.1) var proximity_update_budget_ms: float = 1.5
 @export_range(1, 256, 1) var pending_spawn_checks_per_frame: int = 32
 @export_range(1, 256, 1) var dormant_respawn_checks_per_frame: int = 32
@@ -144,6 +145,8 @@ func _capture_entity_telemetry() -> void:
 	payload["pending_spawns"] = pending_spawns.size()
 	payload["spawned_chunks"] = spawned_chunks.size()
 	payload["loading_save"] = is_loading_save
+	payload["collision_range"] = _get_collision_range()
+	payload["effective_freeze_radius"] = _get_effective_freeze_radius()
 	payload["state_idle"] = state_idle
 	payload["state_walk"] = state_walk
 	payload["state_chase"] = state_chase
@@ -214,7 +217,7 @@ func _physics_process(_delta):
 ## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():
 	var player_pos = viewer.global_position if viewer else player.global_position
-	var freeze_dist_sq = freeze_radius * freeze_radius
+	var freeze_dist_sq = _get_effective_freeze_radius_squared()
 	var despawn_dist_sq = despawn_radius * despawn_radius
 	
 	if active_entities.is_empty():
@@ -246,7 +249,7 @@ func _update_entity_proximity():
 			invalid_indices.append(idx)
 			continue
 
-		var dist_sq = entity.global_position.distance_squared_to(player_pos)
+		var dist_sq = _planar_distance_squared(entity.global_position, player_pos)
 
 		if dist_sq > despawn_dist_sq:
 			# Beyond despawn radius - remove entity
@@ -941,6 +944,22 @@ func _get_collision_range() -> float:
 func _get_collision_range_squared() -> float:
 	var collision_range := _get_collision_range()
 	return collision_range * collision_range
+
+
+func _get_effective_freeze_radius() -> float:
+	var effective_radius := freeze_radius
+	var collision_radius := _get_collision_range()
+	if collision_radius > 0.0:
+		effective_radius = collision_radius - freeze_collision_margin
+		if effective_radius <= 0.0:
+			effective_radius = collision_radius
+
+	return minf(effective_radius, despawn_radius - 1.0)
+
+
+func _get_effective_freeze_radius_squared() -> float:
+	var effective_radius := _get_effective_freeze_radius()
+	return effective_radius * effective_radius
 
 
 func _is_terrain_collision_ready(position: Vector3) -> bool:
