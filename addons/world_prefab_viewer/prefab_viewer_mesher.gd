@@ -33,21 +33,26 @@ func get_last_error() -> String:
 	return _last_error
 
 
-func generate_arrays(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray) -> Array:
+func generate_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray) -> ArrayMesh:
 	if voxel_bytes.size() != CHUNK_VOLUME or voxel_meta.size() != CHUNK_VOLUME:
 		_last_error = "Preview mesher expected 16x16x16 chunk byte arrays."
-		return []
+		return null
 
-	# Use the native building mesh first so the shared shader keeps the same
-	# vertex-color material mask as gameplay.
-	var native_arrays := _generate_native_arrays(voxel_bytes, voxel_meta)
-	if not native_arrays.is_empty():
-		return native_arrays
+	var native_mesh := _generate_native_mesh(voxel_bytes, voxel_meta)
+	if native_mesh:
+		return native_mesh
 
 	if not _ensure_device():
-		return []
+		return null
 
 	return _generate_mesh(voxel_bytes, voxel_meta)
+
+
+func generate_arrays(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray) -> Array:
+	var mesh := generate_mesh(voxel_bytes, voxel_meta)
+	if not mesh or mesh.get_surface_count() <= 0:
+		return []
+	return mesh.surface_get_arrays(0)
 
 
 func dispose() -> void:
@@ -93,23 +98,17 @@ func _get_native_builder() -> Object:
 	return _native_builder
 
 
-func _generate_native_arrays(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray) -> Array:
+func _generate_native_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray) -> ArrayMesh:
 	var builder := _get_native_builder()
 	if not builder or not builder.has_method("build_building_mesh_from_voxels"):
-		return []
+		return null
 
 	var native_result = builder.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, false, CHUNK_SIZE)
 	if native_result is not Dictionary:
-		return []
+		return null
 
 	var mesh: ArrayMesh = native_result.get("mesh", null)
-	if not mesh:
-		return []
-
-	var arrays: Array = []
-	for surface_index in range(mesh.get_surface_count()):
-		arrays = mesh.surface_get_arrays(surface_index)
-	return arrays
+	return mesh
 
 
 func _ensure_device() -> bool:
@@ -179,7 +178,7 @@ func _ensure_device() -> bool:
 	return true
 
 
-func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
+func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> ArrayMesh:
 	var zero_data := PackedByteArray()
 	zero_data.resize(4)
 	zero_data.encode_u32(0, 0)
@@ -195,7 +194,7 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 	if not builder:
 		_last_error = "Missing MeshBuilder GDExtension."
 		_cleanup_transient(texture_rid, meta_rid, sampler_rid, uniform_set)
-		return []
+		return null
 
 	var float_data: PackedFloat32Array = builder.bytes_to_floats(v_bytes)
 	var meta_data: PackedFloat32Array = builder.bytes_to_floats(v_meta)
@@ -217,7 +216,7 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 	if not texture_rid.is_valid() or not meta_rid.is_valid():
 		_last_error = "Failed to create preview voxel textures."
 		_cleanup_transient(texture_rid, meta_rid, sampler_rid, uniform_set)
-		return []
+		return null
 
 	var sampler_state := RDSamplerState.new()
 	sampler_state.min_filter = RenderingDevice.SAMPLER_FILTER_NEAREST
@@ -280,7 +279,7 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 	if not uniform_set.is_valid():
 		_last_error = "Failed to create preview meshing uniform set."
 		_cleanup_transient(texture_rid, meta_rid, sampler_rid, uniform_set)
-		return []
+		return null
 
 	var compute_list := _rd.compute_list_begin()
 	_rd.compute_list_bind_compute_pipeline(compute_list, _pipeline)
@@ -299,14 +298,14 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 	var index_counter_bytes := _rd.buffer_get_data(_index_counter_buffer)
 	var actual_index_count := index_counter_bytes.decode_u32(0)
 
-	var arrays: Array = []
+	var mesh: ArrayMesh = null
 	if actual_vertex_count > 0 and actual_index_count > 0:
 		var vertex_bytes := _rd.buffer_get_data(_vertex_buffer, 0, actual_vertex_count * 12)
 		var normal_bytes := _rd.buffer_get_data(_normal_buffer, 0, actual_vertex_count * 12)
 		var uv_bytes := _rd.buffer_get_data(_uv_buffer, 0, actual_vertex_count * 8)
 		var index_bytes := _rd.buffer_get_data(_index_buffer, 0, actual_index_count * 4)
 
-		var mesh: ArrayMesh = builder.build_building_mesh(
+		mesh = builder.build_building_mesh(
 			vertex_bytes,
 			normal_bytes,
 			uv_bytes,
@@ -314,12 +313,9 @@ func _generate_mesh(v_bytes: PackedByteArray, v_meta: PackedByteArray) -> Array:
 			actual_vertex_count,
 			actual_index_count
 		)
-		if mesh:
-			for surface_index in range(mesh.get_surface_count()):
-				arrays = mesh.surface_get_arrays(surface_index)
 
 	_cleanup_transient(texture_rid, meta_rid, sampler_rid, uniform_set)
-	return arrays
+	return mesh
 
 
 func _cleanup_transient(texture_rid: RID, meta_rid: RID, sampler_rid: RID, uniform_set: RID) -> void:

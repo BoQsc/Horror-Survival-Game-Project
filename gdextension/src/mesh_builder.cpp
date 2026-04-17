@@ -163,6 +163,10 @@ struct BuildingMeshBuffers {
         indices.reserve(reserve_count);
     }
 
+    bool is_empty() const {
+        return vertices.empty() || indices.empty();
+    }
+
     int append_vertex(const Vector3 &vertex, const Vector3 &normal, const Vector2 &uv, const Color &color = Color(0.0, 0.0, 0.0, 1.0)) {
         const int base_index = static_cast<int>(vertices.size());
         vertices.push_back(vertex);
@@ -258,7 +262,105 @@ struct BuildingMeshBuffers {
         indices.push_back(base_index + 2);
         indices.push_back(base_index + 3);
     }
+
 };
+
+static const Vector2 BUILDING_ATLAS_CELL_SIZE = Vector2(1.0f / 3.0f, 1.0f / 2.0f);
+
+static inline uint8_t get_voxel_3d(const PackedByteArray &voxels, int size_x, int size_y, int size_z, int x, int y, int z);
+static inline bool is_greedy_cube_voxel(uint8_t type);
+
+static Vector2 get_building_atlas_cell_origin(const Vector3 &normal) {
+    const Vector3 abs_normal = Vector3(Math::abs(normal.x), Math::abs(normal.y), Math::abs(normal.z));
+
+    if (abs_normal.z >= abs_normal.x && abs_normal.z >= abs_normal.y) {
+        return normal.z > 0.0f ? Vector2(0.0f, 0.0f) : Vector2(2.0f * BUILDING_ATLAS_CELL_SIZE.x, 0.0f);
+    }
+
+    if (abs_normal.x >= abs_normal.y) {
+        return normal.x > 0.0f ? Vector2(BUILDING_ATLAS_CELL_SIZE.x, 0.0f) : Vector2(0.0f, BUILDING_ATLAS_CELL_SIZE.y);
+    }
+
+    return normal.y > 0.0f ? Vector2(BUILDING_ATLAS_CELL_SIZE.x, BUILDING_ATLAS_CELL_SIZE.y) : Vector2(2.0f * BUILDING_ATLAS_CELL_SIZE.x, BUILDING_ATLAS_CELL_SIZE.y);
+}
+
+static void remap_building_atlas_uvs(BuildingMeshBuffers &buffers, bool mirror_x) {
+    const size_t uv_count = std::min(buffers.uvs.size(), buffers.normals.size());
+    for (size_t i = 0; i < uv_count; ++i) {
+        Vector2 repeated_uv(
+            buffers.uvs[i].x - Math::floor(buffers.uvs[i].x),
+            buffers.uvs[i].y - Math::floor(buffers.uvs[i].y)
+        );
+        if (mirror_x) {
+            repeated_uv.x = 1.0f - repeated_uv.x;
+        }
+        buffers.uvs[i] = get_building_atlas_cell_origin(buffers.normals[i]) + Vector2(
+            repeated_uv.x * BUILDING_ATLAS_CELL_SIZE.x,
+            repeated_uv.y * BUILDING_ATLAS_CELL_SIZE.y
+        );
+    }
+}
+
+static bool append_building_surface(const Ref<ArrayMesh> &mesh, const BuildingMeshBuffers &buffers) {
+    if (mesh.is_null() || buffers.is_empty()) {
+        return false;
+    }
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedVector2Array uvs;
+    PackedColorArray colors;
+    PackedInt32Array indices;
+
+    vertices.resize(buffers.vertices.size());
+    normals.resize(buffers.normals.size());
+    uvs.resize(buffers.uvs.size());
+    colors.resize(buffers.colors.size());
+    indices.resize(buffers.indices.size());
+
+    if (!buffers.vertices.empty()) {
+        std::copy(buffers.vertices.begin(), buffers.vertices.end(), vertices.ptrw());
+    }
+    if (!buffers.normals.empty()) {
+        std::copy(buffers.normals.begin(), buffers.normals.end(), normals.ptrw());
+    }
+    if (!buffers.uvs.empty()) {
+        std::copy(buffers.uvs.begin(), buffers.uvs.end(), uvs.ptrw());
+    }
+    if (!buffers.colors.empty()) {
+        std::copy(buffers.colors.begin(), buffers.colors.end(), colors.ptrw());
+    }
+    if (!buffers.indices.empty()) {
+        std::copy(buffers.indices.begin(), buffers.indices.end(), indices.ptrw());
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_COLOR] = colors;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    return true;
+}
+
+static int append_collision_faces(PackedVector3Array &faces, int face_offset, const BuildingMeshBuffers &buffers) {
+    if (buffers.is_empty()) {
+        return face_offset;
+    }
+
+    Vector3 *faces_ptr = faces.ptrw();
+    for (size_t i = 0; i < buffers.indices.size(); ++i) {
+        const int32_t vertex_index = buffers.indices[i];
+        if (vertex_index < 0 || vertex_index >= static_cast<int32_t>(buffers.vertices.size())) {
+            return -1;
+        }
+        faces_ptr[face_offset + static_cast<int>(i)] = buffers.vertices[vertex_index];
+    }
+    return face_offset + static_cast<int>(buffers.indices.size());
+}
 
 static inline Vector3 rotate_vector_90(const Vector3 &v, uint32_t r) {
     float nx = v.x;
@@ -1095,18 +1197,19 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
         return result;
     }
 
-    BuildingMeshBuffers buffers;
-    buffers.reserve_for_voxels(voxel_count);
+    BuildingMeshBuffers wood_buffers;
+    BuildingMeshBuffers church_floor_buffers;
+    wood_buffers.reserve_for_voxels(voxel_count);
+    church_floor_buffers.reserve_for_voxels(std::max(256, voxel_count / 8));
 
     const Color wood_color = Color(0.0, 0.0, 0.0, 1.0);
     const Color church_floor_color = Color(1.0, 0.0, 0.0, 1.0);
 
-    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
-    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
-    // Church floor blocks use their own 6-face atlas, so keep world-projected UVs
-    // and let the shader pick the correct atlas cell per face on merged quads.
-    add_greedy_horizontal_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
-    add_greedy_vertical_faces_cpu(buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
+    add_greedy_horizontal_faces_cpu(wood_buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
+    add_greedy_vertical_faces_cpu(wood_buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 1u, wood_color, false);
+    add_greedy_horizontal_faces_cpu(church_floor_buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
+    add_greedy_vertical_faces_cpu(church_floor_buffers, voxel_bytes, chunk_size, chunk_size, chunk_size, 8u, church_floor_color, false);
+    remap_building_atlas_uvs(church_floor_buffers, true);
 
     for (int z = 0; z < chunk_size; ++z) {
         for (int y = 0; y < chunk_size; ++y) {
@@ -1120,29 +1223,29 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
                 const Vector3 pos = Vector3(x, y, z);
                 if (type == 2u) {
                     const uint32_t meta = voxel_meta[idx];
-                    add_ramp_cpu(buffers, pos, meta);
+                    add_ramp_cpu(wood_buffers, pos, meta);
                     continue;
                 }
 
                 if (type == 3u) {
-                    add_sphere_cpu(buffers, pos);
+                    add_sphere_cpu(wood_buffers, pos);
                     continue;
                 }
 
                 if (type == 4u) {
                     const uint32_t meta = voxel_meta[idx];
-                    add_stairs_cpu(buffers, pos, meta);
+                    add_stairs_cpu(wood_buffers, pos, meta);
                     continue;
                 }
 
                 if (type == 5u) {
                     const uint32_t meta = voxel_meta[idx];
-                    add_stairs_2step_cpu(buffers, pos, meta);
+                    add_stairs_2step_cpu(wood_buffers, pos, meta);
                     continue;
                 }
 
                 if (type == 9u) {
-                    add_slab_cpu(buffers, pos, wood_color);
+                    add_slab_cpu(wood_buffers, pos, wood_color);
                     continue;
                 }
 
@@ -1157,60 +1260,26 @@ Dictionary MeshBuilder::build_building_mesh_from_voxels(const PackedByteArray& v
         }
     }
 
-    Array arrays;
-    arrays.resize(Mesh::ARRAY_MAX);
-
     Ref<ArrayMesh> mesh;
-    if (!buffers.vertices.empty()) {
-        PackedVector3Array vertices;
-        PackedVector3Array normals;
-        PackedVector2Array uvs;
-        PackedInt32Array indices;
-
-        vertices.resize(buffers.vertices.size());
-        normals.resize(buffers.normals.size());
-        uvs.resize(buffers.uvs.size());
-        indices.resize(buffers.indices.size());
-
-        if (!buffers.vertices.empty()) {
-            std::copy(buffers.vertices.begin(), buffers.vertices.end(), vertices.ptrw());
-        }
-        if (!buffers.normals.empty()) {
-            std::copy(buffers.normals.begin(), buffers.normals.end(), normals.ptrw());
-        }
-        if (!buffers.uvs.empty()) {
-            std::copy(buffers.uvs.begin(), buffers.uvs.end(), uvs.ptrw());
-        }
-        PackedColorArray colors;
-        colors.resize(buffers.colors.size());
-        if (!buffers.colors.empty()) {
-            std::copy(buffers.colors.begin(), buffers.colors.end(), colors.ptrw());
-        }
-        if (!buffers.indices.empty()) {
-            std::copy(buffers.indices.begin(), buffers.indices.end(), indices.ptrw());
-        }
-
-        arrays[Mesh::ARRAY_VERTEX] = vertices;
-        arrays[Mesh::ARRAY_NORMAL] = normals;
-        arrays[Mesh::ARRAY_COLOR] = colors;
-        arrays[Mesh::ARRAY_TEX_UV] = uvs;
-        arrays[Mesh::ARRAY_INDEX] = indices;
-
+    if (!wood_buffers.is_empty() || !church_floor_buffers.is_empty()) {
         mesh.instantiate();
-        mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+        append_building_surface(mesh, wood_buffers);
+        append_building_surface(mesh, church_floor_buffers);
     }
 
     Ref<ConcavePolygonShape3D> collision_shape;
-    if (!use_box_collision && mesh.is_valid() && buffers.indices.size() > 0 && buffers.vertices.size() > 0) {
+    const int total_collision_indices = static_cast<int>(wood_buffers.indices.size() + church_floor_buffers.indices.size());
+    if (!use_box_collision && mesh.is_valid() && total_collision_indices > 0) {
         PackedVector3Array faces;
-        faces.resize(buffers.indices.size());
-        Vector3 *faces_ptr = faces.ptrw();
-        for (size_t i = 0; i < buffers.indices.size(); ++i) {
-            const int32_t vertex_index = buffers.indices[i];
-            if (vertex_index < 0 || vertex_index >= static_cast<int32_t>(buffers.vertices.size())) {
-                return result;
-            }
-            faces_ptr[i] = buffers.vertices[vertex_index];
+        faces.resize(total_collision_indices);
+        int face_offset = 0;
+        face_offset = append_collision_faces(faces, face_offset, wood_buffers);
+        if (face_offset < 0) {
+            return result;
+        }
+        face_offset = append_collision_faces(faces, face_offset, church_floor_buffers);
+        if (face_offset < 0) {
+            return result;
         }
         collision_shape.instantiate();
         collision_shape->set_faces(faces);

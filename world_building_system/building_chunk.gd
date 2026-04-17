@@ -111,10 +111,6 @@ func reset(new_coord: Vector3i):
 	simple_visual_instances.clear()
 	simple_visual_batch_entries.clear()
 	simple_visual_batch_nodes.clear()
-## Shared building material reused by all building chunks.
-static func _get_shared_building_material() -> Material:
-	return BuildingVisuals.get_shared_building_material()
-
 func _ready():
 	# Add to group for detection by player punch system
 	add_to_group("building_chunks")
@@ -123,10 +119,7 @@ func _ready():
 	static_body = StaticBody3D.new()
 	# The StaticBody3D needs the group so physics raycasts can identify what they hit
 	static_body.add_to_group("building_chunks")
-	
-	# Layer 1 = Default (Player/Physics)
-	# Layer 10 (512) = Terrain Special (for PickupItem detection)
-	static_body.collision_layer = 1 + 512 
+	static_body.collision_layer = 1 + 512
 	add_child(static_body)
 	
 	mesh_instance = MeshInstance3D.new()
@@ -477,9 +470,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 				mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 			if mesh_instance.mesh != mesh:
 				mesh_instance.mesh = mesh
-			var shared_material := _get_shared_building_material()
-			if mesh_instance.material_override != shared_material:
-				mesh_instance.material_override = shared_material
+			BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes)
 			if mesh_instance.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
 				mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		if measure_building_apply:
@@ -596,7 +587,6 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 		PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", mesh_apply_event)
 	if measure_building_apply:
 		PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
-
 
 func _apply_collision_boxes(collision_boxes: Array) -> void:
 	if not static_body:

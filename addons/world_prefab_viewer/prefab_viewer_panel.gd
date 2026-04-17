@@ -1511,19 +1511,16 @@ func _render_runtime_blocks(rotation: int, bounds: Dictionary) -> bool:
 	var rendered_any := false
 	for key in chunk_keys:
 		var chunk_data: Dictionary = chunk_map[key]
-		var arrays: Array = _runtime_mesher.generate_arrays(
+		var mesh: ArrayMesh = _runtime_mesher.generate_mesh(
 			chunk_data.get("voxels", PackedByteArray()),
 			chunk_data.get("meta", PackedByteArray())
 		)
-		if arrays.is_empty():
+		if not mesh or mesh.get_surface_count() <= 0:
 			continue
-
-		var mesh := ArrayMesh.new()
-		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 		var mesh_instance := MeshInstance3D.new()
 		mesh_instance.mesh = mesh
-		mesh_instance.material_override = BuildingVisuals.get_shared_building_material()
+		BuildingVisuals.apply_runtime_surface_materials(mesh_instance, chunk_data.get("voxels", PackedByteArray()))
 		mesh_instance.position = Vector3(chunk_data.get("coord", Vector3i.ZERO)) * float(ViewerMesher.CHUNK_SIZE)
 		_preview_root.add_child(mesh_instance)
 		rendered_any = true
