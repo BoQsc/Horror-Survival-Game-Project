@@ -2964,6 +2964,23 @@ func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
 					return false
 	return true
 
+
+func is_collision_ready_at(position: Vector3) -> bool:
+	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
+	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
+	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
+
+	for dy in range(-1, 2):
+		var coord = Vector3i(chunk_x, chunk_y + dy, chunk_z)
+		if not active_chunks.has(coord):
+			continue
+
+		var data = active_chunks[coord]
+		if data != null and data.body_rid_terrain.is_valid():
+			return true
+
+	return false
+
 ## Called when a chunk completes generation - checks if any spawn zones are now ready
 func _check_spawn_zone_readiness(completed_coord: Vector3i):
 	if pending_spawn_zones.is_empty():

@@ -19,6 +19,8 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export var freeze_radius: float = 60.0 # Distance at which entities freeze (physics disabled)
 @export var despawn_radius: float = 100.0 # Distance at which entities are removed
 @export_range(0.1, 5.0, 0.1) var proximity_update_budget_ms: float = 1.5
+@export_range(1, 256, 1) var pending_spawn_checks_per_frame: int = 32
+@export_range(1, 256, 1) var dormant_respawn_checks_per_frame: int = 32
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
@@ -35,6 +37,8 @@ var frozen_entities: Dictionary = {} # entity -> { position: Vector3 }
 var dormant_entities: Array = [] # Stored entities: { position, scene_path, health, state }
 var entity_pool: Array[Node3D] = [] # Pooled inactive entities
 var _proximity_scan_cursor: int = 0
+var _pending_spawn_scan_cursor: int = 0
+var _dormant_scan_cursor: int = 0
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
@@ -44,6 +48,7 @@ var spawned_chunks: Dictionary = {} # Vector2i -> true (tracks which chunks alre
 var zombie_scene: PackedScene = null # Cached zombie scene
 var biome_noise: FastNoiseLite = null # For biome detection (must match GPU)
 var is_loading_save: bool = false # Flag to disable procedural spawning during save load
+var _frame_entity_stats: Dictionary = {}
 
 # Biome-based spawn rules: biome_id -> { "zombie_chance": float }
 # Biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
@@ -53,6 +58,105 @@ var spawn_rules = {
 	4: {"zombie_chance": 0.9}, # Gravel - high danger ruins
 	5: {"zombie_chance": 0.5}, # Snow - cold hostile
 }
+
+
+func _reset_frame_entity_stats() -> void:
+	_frame_entity_stats = {
+		"proximity_processed": 0,
+		"proximity_invalid": 0,
+		"proximity_despawned": 0,
+		"unfreeze_attempts": 0,
+		"unfreeze_raycasts": 0,
+		"terrain_ready_checks": 0,
+		"terrain_ready_misses": 0,
+		"dormant_candidates": 0,
+		"dormant_raycasts": 0,
+		"dormant_respawns": 0,
+		"spawn_queue_candidates": 0,
+		"spawn_queue_raycasts": 0,
+		"spawn_queue_spawns": 0
+	}
+
+
+func _bump_frame_entity_stat(key: String, amount: int = 1) -> void:
+	_frame_entity_stats[key] = int(_frame_entity_stats.get(key, 0)) + amount
+
+
+func _capture_entity_telemetry() -> void:
+	if not PerformanceMonitor or not PerformanceMonitor.has_method("capture_scope_state"):
+		return
+
+	var payload := _frame_entity_stats.duplicate(true)
+	var active_physics_entities := 0
+	var state_idle := 0
+	var state_walk := 0
+	var state_chase := 0
+	var state_attack := 0
+	var state_hit := 0
+	var state_dead := 0
+	var unfrozen_entities := 0
+	var unfrozen_state_idle := 0
+	var unfrozen_state_walk := 0
+	var unfrozen_state_chase := 0
+	var unfrozen_state_attack := 0
+	var unfrozen_state_hit := 0
+	var unfrozen_state_dead := 0
+	for entity in active_entities:
+		if not is_instance_valid(entity):
+			continue
+		var entity_is_frozen := frozen_entities.has(entity)
+		if entity.is_physics_processing():
+			active_physics_entities += 1
+		if not entity_is_frozen:
+			unfrozen_entities += 1
+		if "current_state" in entity:
+			var state_name := String(entity.current_state)
+			match state_name:
+				"IDLE":
+					state_idle += 1
+					if not entity_is_frozen:
+						unfrozen_state_idle += 1
+				"WALK":
+					state_walk += 1
+					if not entity_is_frozen:
+						unfrozen_state_walk += 1
+				"CHASE":
+					state_chase += 1
+					if not entity_is_frozen:
+						unfrozen_state_chase += 1
+				"ATTACK":
+					state_attack += 1
+					if not entity_is_frozen:
+						unfrozen_state_attack += 1
+				"HIT":
+					state_hit += 1
+					if not entity_is_frozen:
+						unfrozen_state_hit += 1
+				"DEAD":
+					state_dead += 1
+					if not entity_is_frozen:
+						unfrozen_state_dead += 1
+	payload["active_entities"] = active_entities.size()
+	payload["active_physics_entities"] = active_physics_entities
+	payload["frozen_entities"] = frozen_entities.size()
+	payload["unfrozen_entities"] = unfrozen_entities
+	payload["dormant_entities"] = dormant_entities.size()
+	payload["pending_spawns"] = pending_spawns.size()
+	payload["spawned_chunks"] = spawned_chunks.size()
+	payload["loading_save"] = is_loading_save
+	payload["state_idle"] = state_idle
+	payload["state_walk"] = state_walk
+	payload["state_chase"] = state_chase
+	payload["state_attack"] = state_attack
+	payload["state_hit"] = state_hit
+	payload["state_dead"] = state_dead
+	payload["unfrozen_state_idle"] = unfrozen_state_idle
+	payload["unfrozen_state_walk"] = unfrozen_state_walk
+	payload["unfrozen_state_chase"] = unfrozen_state_chase
+	payload["unfrozen_state_attack"] = unfrozen_state_attack
+	payload["unfrozen_state_hit"] = unfrozen_state_hit
+	payload["unfrozen_state_dead"] = unfrozen_state_dead
+	PerformanceMonitor.capture_scope_state("entities", payload)
 
 func _ready():
 	# Register in group for lookup by other systems
@@ -88,6 +192,8 @@ func _physics_process(_delta):
 	# Use viewer for position tracking (player or vehicle)
 	if not viewer or not is_instance_valid(viewer):
 		viewer = player
+
+	_reset_frame_entity_stats()
 	
 	PerformanceMonitor.start_measure("Entity Proximity")
 	_update_entity_proximity()
@@ -103,6 +209,8 @@ func _physics_process(_delta):
 		_process_spawn_queue()
 		PerformanceMonitor.end_measure("Entity Spawn Queue", 3.0)
 
+	_capture_entity_telemetry()
+
 ## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():
 	var player_pos = viewer.global_position if viewer else player.global_position
@@ -112,8 +220,7 @@ func _update_entity_proximity():
 	if active_entities.is_empty():
 		return
 
-	var entities_snapshot: Array = active_entities.duplicate()
-	var total := entities_snapshot.size()
+	var total := active_entities.size()
 	if total <= 0:
 		return
 
@@ -122,6 +229,8 @@ func _update_entity_proximity():
 	var to_despawn: Array[Node3D] = []
 	var invalid_indices: Array[int] = []
 	var start_time := Time.get_ticks_usec()
+	var collision_range_sq := _get_collision_range_squared()
+	var space_state = get_world_3d().direct_space_state if not frozen_entities.is_empty() else null
 
 	while processed < total:
 		if processed > 0:
@@ -130,7 +239,7 @@ func _update_entity_proximity():
 				break
 
 		var idx := (start_index + processed) % total
-		var entity = entities_snapshot[idx]
+		var entity = active_entities[idx]
 		processed += 1
 
 		if not is_instance_valid(entity):
@@ -147,9 +256,12 @@ func _update_entity_proximity():
 			_freeze_entity(entity)
 		elif not is_loading_save:
 			# In active zone - ensure physics enabled (ONLY if not loading)
-			_unfreeze_entity(entity)
+			_unfreeze_entity(entity, collision_range_sq, space_state)
 
 	_proximity_scan_cursor = (start_index + processed) % total
+	_bump_frame_entity_stat("proximity_processed", processed)
+	_bump_frame_entity_stat("proximity_invalid", invalid_indices.size())
+	_bump_frame_entity_stat("proximity_despawned", to_despawn.size())
 
 	for i in range(invalid_indices.size() - 1, -1, -1):
 		active_entities.remove_at(invalid_indices[i])
@@ -180,7 +292,7 @@ func _freeze_entity(entity: Node3D):
 	DebugManager.log_entities("Frozen entity at distance")
 
 ## Unfreeze an entity - re-enable physics
-func _unfreeze_entity(entity: Node3D):
+func _unfreeze_entity(entity: Node3D, collision_range_sq: float, space_state):
 	if is_loading_save:
 		return # Block unfreezing while world is still loading
 		
@@ -191,25 +303,25 @@ func _unfreeze_entity(entity: Node3D):
 		return # No player reference
 	
 	var pos = entity.global_position
+	_bump_frame_entity_stat("unfreeze_attempts")
 	
 	# Check if within collision range (where terrain collision is enabled)
 	var dist_to_player_sq = _planar_distance_squared(pos, player.global_position)
-	var collision_range = 93.0 # 3 chunks * 31 stride
-	if terrain_manager and "collision_distance" in terrain_manager:
-		collision_range = terrain_manager.collision_distance * 31.0
-	
-	if dist_to_player_sq > collision_range * collision_range:
+	if dist_to_player_sq > collision_range_sq:
 		# Outside collision range - stay frozen to prevent falling through
+		return
+
+	if not _is_terrain_collision_ready(pos):
 		return
 	
 	# Use RAYCAST to verify terrain collision is actually active (not just mesh loaded)
-	var space_state = get_world_3d().direct_space_state
 	var ray_from = Vector3(pos.x, pos.y + 10.0, pos.z) # Start above entity
 	var ray_to = Vector3(pos.x, pos.y - 50.0, pos.z) # Cast down
 	
 	var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 	query.collision_mask = 1 # Only terrain layer
 	query.exclude = [entity] # Don't hit self
+	_bump_frame_entity_stat("unfreeze_raycasts")
 	var result = space_state.intersect_ray(query)
 	
 	if result.is_empty():
@@ -238,10 +350,19 @@ func _check_dormant_respawns():
 	
 	var player_pos = viewer.global_position
 	var completed: Array[int] = []
+	var collision_range_sq := _get_collision_range_squared()
+	var space_state = get_world_3d().direct_space_state
+	var total := dormant_entities.size()
+	var checks := mini(dormant_respawn_checks_per_frame, total)
+	var start_index := _dormant_scan_cursor % total
+	var processed := 0
 	
-	for i in range(dormant_entities.size()):
+	while processed < checks:
+		var i := (start_index + processed) % total
 		var data = dormant_entities[i]
 		var pos = data.position
+		_bump_frame_entity_stat("dormant_candidates")
+		processed += 1
 		
 		# Check distance to player
 		var dist_sq = _planar_distance_squared(pos, player_pos)
@@ -251,20 +372,19 @@ func _check_dormant_respawns():
 			continue # Still too far
 		
 		# Must be within collision range (where collision is actually enabled)
-		var collision_range = 93.0 # 3 chunks * 31 stride
-		if terrain_manager and "collision_distance" in terrain_manager:
-			collision_range = terrain_manager.collision_distance * 31.0
-		
-		if dist_sq > collision_range * collision_range:
+		if dist_sq > collision_range_sq:
 			continue # Collision disabled at this location, wait
+
+		if not _is_terrain_collision_ready(pos):
+			continue
 		
 		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
-		var space_state = get_world_3d().direct_space_state
 		var ray_from = Vector3(pos.x, 200.0, pos.z)
 		var ray_to = Vector3(pos.x, -50.0, pos.z)
 		
 		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 		query.collision_mask = 1 # Only terrain layer
+		_bump_frame_entity_stat("dormant_raycasts")
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
@@ -284,6 +404,10 @@ func _check_dormant_respawns():
 						entity.current_health = data.health
 					DebugManager.log_entities("Respawned dormant entity at %s (terrain_y=%.1f)" % [respawn_pos, terrain_y])
 					completed.append(i)
+					_bump_frame_entity_stat("dormant_respawns")
+
+	_dormant_scan_cursor = (start_index + processed) % max(1, dormant_entities.size())
+	completed.sort()
 
 	# Remove respawned entities from dormant list (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
@@ -398,24 +522,28 @@ func _process_spawn_queue():
 	
 	var completed: Array[int] = []
 	var current_time = Time.get_ticks_msec() / 1000.0
+	var player_pos = viewer.global_position
+	var collision_range_sq := _get_collision_range_squared()
+	var space_state = get_world_3d().direct_space_state
+	var total := pending_spawns.size()
+	var checks := mini(pending_spawn_checks_per_frame, total)
+	var start_index := _pending_spawn_scan_cursor % total
+	var processed := 0
 	
-	for i in range(pending_spawns.size()):
+	while processed < checks:
+		var i := (start_index + processed) % total
 		var spawn_data = pending_spawns[i]
 		var pos = spawn_data.position
+		_bump_frame_entity_stat("spawn_queue_candidates")
+		processed += 1
 		
 		# Check if spawn point is within collision range of player
 		# Collision is only enabled within collision_distance chunks (~93 units for distance=3)
 		# Spawning outside this range = zombie falls through disabled collision
-		var player_pos = viewer.global_position
 		var dist_to_player_sq = _planar_distance_squared(pos, player_pos)
 		
-		# Get collision distance from terrain manager (default ~93 units = 3 chunks * 31)
-		var collision_range = 93.0 # 3 chunks * 31 stride
-		if terrain_manager and "collision_distance" in terrain_manager:
-			collision_range = terrain_manager.collision_distance * 31.0
-		
 		# Only spawn if within collision range (where collision is actually enabled)
-		if dist_to_player_sq > collision_range * collision_range:
+		if dist_to_player_sq > collision_range_sq:
 			# Too far from player - collision disabled there, wait until player gets closer
 			continue
 		
@@ -425,14 +553,22 @@ func _process_spawn_queue():
 			if dist_to_player_sq > despawn_radius * despawn_radius:
 				completed.append(i)
 				continue
+
+		if not _is_terrain_collision_ready(pos):
+			if not spawn_data.has("wait_start"):
+				spawn_data["wait_start"] = current_time
+			elif current_time - spawn_data.wait_start > 10.0:
+				DebugManager.log_entities("Spawn timeout at (%.0f, %.0f) - terrain chunks never became ready" % [pos.x, pos.z])
+				completed.append(i)
+			continue
 		
 		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
-		var space_state = get_world_3d().direct_space_state
 		var ray_from = Vector3(pos.x, 200.0, pos.z) # Start high above terrain
 		var ray_to = Vector3(pos.x, -50.0, pos.z) # End below expected terrain
 		
 		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 		query.collision_mask = 1 # Only terrain layer
+		_bump_frame_entity_stat("spawn_queue_raycasts")
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
@@ -460,11 +596,15 @@ func _process_spawn_queue():
 			var entity = spawn_entity(spawn_pos, spawn_data.scene)
 			if entity:
 				DebugManager.log_entities("Spawned entity at %s (terrain_y=%.1f)" % [spawn_pos, terrain_y])
+				_bump_frame_entity_stat("spawn_queue_spawns")
 			completed.append(i)
 		else:
 			# Hit something that's not terrain - keep waiting for actual terrain
 			DebugManager.log_entities("Hit non-terrain collider '%s', waiting for terrain..." % collider_name)
 			# Don't mark as completed - keep trying
+
+	_pending_spawn_scan_cursor = (start_index + processed) % max(1, pending_spawns.size())
+	completed.sort()
 	
 	# Remove processed spawns (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
@@ -557,10 +697,12 @@ func clear_all_entities():
 	# CRITICAL FIX: Clear any pending procedural spawns queued during scene load
 	# These were queued BEFORE is_loading_save was set, so they would duplicate!
 	pending_spawns.clear()
+	_pending_spawn_scan_cursor = 0
 	
 	# CRITICAL FIX: Clear dormant entities - these get populated by despawn_all()
 	# and would be respawned by _check_dormant_respawns(), duplicating saved zombies!
 	dormant_entities.clear()
+	_dormant_scan_cursor = 0
 	
 	# NUCLEAR OPTION: Kill ALL zombies by group, not just those in active_entities
 	# This catches any zombies that spawned via pending_spawns or other paths
@@ -783,6 +925,45 @@ func _get_biome_at(world_x: float, world_z: float) -> int:
 func clear_spawned_chunks():
 	spawned_chunks.clear()
 	DebugManager.log_entities("Cleared spawned chunks tracking")
+
+
+func is_entity_frozen(entity: Node3D) -> bool:
+	return frozen_entities.has(entity)
+
+
+func _get_collision_range() -> float:
+	var collision_range = 93.0 # 3 chunks * 31 stride
+	if terrain_manager and "collision_distance" in terrain_manager:
+		collision_range = terrain_manager.collision_distance * 31.0
+	return collision_range
+
+
+func _get_collision_range_squared() -> float:
+	var collision_range := _get_collision_range()
+	return collision_range * collision_range
+
+
+func _is_terrain_collision_ready(position: Vector3) -> bool:
+	if (not terrain_manager or not is_instance_valid(terrain_manager)):
+		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+
+	if not terrain_manager:
+		return true
+
+	_bump_frame_entity_stat("terrain_ready_checks")
+
+	if terrain_manager.has_method("is_collision_ready_at"):
+		if not terrain_manager.is_collision_ready_at(position):
+			_bump_frame_entity_stat("terrain_ready_misses")
+			return false
+		return true
+
+	if terrain_manager.has_method("are_chunks_ready_around"):
+		if not terrain_manager.are_chunks_ready_around(position, 0):
+			_bump_frame_entity_stat("terrain_ready_misses")
+			return false
+
+	return true
 
 
 func _planar_distance_squared(a: Vector3, b: Vector3) -> float:

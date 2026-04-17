@@ -232,6 +232,7 @@ func _append_town_entry_frame_sample(summary: Dictionary) -> void:
 		"top_measure_ms": float(summary.get("top_measure", {}).get("ms", 0.0)),
 		"top_measure_pct": float(summary.get("top_measure", {}).get("pct", 0.0)),
 		"buildings_state": scope_states.get("buildings", {}).duplicate(true),
+		"entities_state": scope_states.get("entities", {}).duplicate(true),
 		"terrain_state": scope_states.get("terrain", {}).duplicate(true),
 		"prefab_state": scope_states.get("town", {}).get("prefab_spawner", {}).duplicate(true),
 		"vegetation_state": scope_states.get("vegetation", {}).duplicate(true),
@@ -688,6 +689,7 @@ func _build_spike_window(entries: Array, window_size: int) -> Dictionary:
 	var last_entry: Dictionary = {}
 	var peak_entry: Dictionary = {}
 	var latest_town_state: Dictionary = {}
+	var latest_entities_state: Dictionary = {}
 	var peak_total_ms: float = -1.0
 	var peak_frame: int = -1
 	var peak_top_bucket: String = "Unknown"
@@ -772,6 +774,7 @@ func _build_spike_window(entries: Array, window_size: int) -> Dictionary:
 		latest_town_state = last_entry.get("town_state", {})
 		if latest_town_state.is_empty():
 			latest_town_state = last_entry.get("town_test_state", {})
+		latest_entities_state = last_entry.get("entities_state", {})
 		latest_vs_window = {
 			"total_ms": float(last_entry.get("total_ms", 0.0)) - avg_total_ms,
 			"draw_calls": float(last_entry.get("draw_calls", 0)) - avg_draw_calls,
@@ -814,7 +817,8 @@ func _build_spike_window(entries: Array, window_size: int) -> Dictionary:
 		"stable_top_bucket_count": int(dominant_bucket.get("count", 0)),
 		"top_bucket_counts": bucket_counts,
 		"baseline_comparison": latest_vs_window,
-		"latest_town_state": latest_town_state
+		"latest_town_state": latest_town_state,
+		"latest_entities_state": latest_entities_state
 	}
 
 

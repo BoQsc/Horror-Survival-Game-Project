@@ -10,7 +10,7 @@ from typing import Optional
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 MAIN_SCENE = "res://addons/tests/town_stall_test_harness.tscn"
-TIMEOUT = 900
+DEFAULT_TIMEOUT = 900
 SNAPSHOT_DIR = Path(r"C:\Users\Windows10_new\AppData\Roaming\Godot\app_userdata\Horror Survival Game Project\debug\performance")
 LOG_DIR = SNAPSHOT_DIR.parent.parent / "logs"
 LOG_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-godot.log"
@@ -29,6 +29,19 @@ def _latest_snapshot(since_mtime: float = 0.0) -> Optional[Path]:
         return None
 
     return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _positive_float_from_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+
+    return value if value > 0.0 else default
 
 
 def _print_snapshot_summary(snapshot_path: Path) -> None:
@@ -130,6 +143,10 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES"] = os.environ.get("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES", "0")
     env["TOWN_STALL_DISABLE_ENTITIES"] = os.environ.get("TOWN_STALL_DISABLE_ENTITIES", "0")
     env["TOWN_STALL_DISABLE_EXIT_AUTOSAVE"] = os.environ.get("TOWN_STALL_DISABLE_EXIT_AUTOSAVE", "1")
+    env["TOWN_STALL_HOLD_SECONDS"] = os.environ.get("TOWN_STALL_HOLD_SECONDS", "")
+
+    configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
+    timeout = max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0))
 
     try:
         proc = subprocess.Popen(
@@ -143,15 +160,15 @@ def main() -> int:
         )
         returncode = proc.returncode
         try:
-            stdout, stderr = proc.communicate(timeout=TIMEOUT)
+            stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            print(f"WARNING: Timeout after {TIMEOUT}s (bot may still be running)")
+            print(f"WARNING: Timeout after {timeout}s (bot may still be running)")
             proc.kill()
             stdout, stderr = proc.communicate()
             returncode = proc.returncode
         output = (stdout or "") + "\n" + (stderr or "")
     except subprocess.TimeoutExpired as exc:
-        print(f"WARNING: Timeout after {TIMEOUT}s (bot may still be running)")
+        print(f"WARNING: Timeout after {timeout}s (bot may still be running)")
         output = (exc.stdout if exc.stdout else "") + "\n" + (exc.stderr if exc.stderr else "")
         returncode = None
     except Exception as exc:

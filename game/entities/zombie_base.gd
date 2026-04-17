@@ -21,6 +21,7 @@ var chase_anim_variant: int = 0 # 0 = Run, 1 = Calm Walk Alerted
 @export var lose_interest_range: float = 50.0
 @export var attack_cooldown: float = 1.0
 @export var attack_damage: int = 1
+@export_range(0.01, 0.5, 0.01) var idle_sleep_interval: float = 0.08
 
 # --- References ---
 var anim_player: AnimationPlayer = null
@@ -37,12 +38,15 @@ var player: Node3D = null
 var _detection_radius_sq: float = 0.0
 var _attack_range_sq: float = 0.0
 var _lose_interest_range_sq: float = 0.0
+var _test_disable_runtime: bool = false
+var _simulation_sleep_accumulator: float = 0.0
 
 signal zombie_died(zombie: ZombieBase)
 signal zombie_attacked(target: Node3D)
 
 func _ready():
 	super._ready()
+	_test_disable_runtime = OS.get_environment("TOWN_STALL_DISABLE_ZOMBIE_RUNTIME") == "1"
 	
 	# Disable EntityBase wander - we handle movement ourselves
 	wander_enabled = false
@@ -122,10 +126,37 @@ func _physics_process(delta):
 	if current_state == "DEAD":
 		PerformanceMonitor.end_measure("Zombie AI", 0.5)
 		return
+
+	if _test_disable_runtime:
+		velocity = Vector3.ZERO
+		if wall_detector:
+			wall_detector.enabled = false
+		if anim_player and anim_player.is_playing():
+			anim_player.pause()
+		if chase_audio_player and chase_audio_player.playing:
+			chase_audio_player.stop()
+		PerformanceMonitor.end_measure("Zombie AI", 0.5)
+		return
 	
 	# Find player if needed
 	if not player or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
+
+	var player_dist_sq := _distance_squared_to_player()
+	var simulation_interval := _get_simulation_interval(player_dist_sq)
+	if simulation_interval > 0.0:
+		_simulation_sleep_accumulator += delta
+		if _simulation_sleep_accumulator < simulation_interval:
+			velocity = Vector3.ZERO
+			PerformanceMonitor.end_measure("Zombie AI", 0.5)
+			return
+		delta = _simulation_sleep_accumulator
+		_simulation_sleep_accumulator = 0.0
+	else:
+		_simulation_sleep_accumulator = 0.0
+
+	if current_state == "WALK" and wall_detector and not wall_detector.enabled:
+		wall_detector.enabled = true
 	
 	# Apply gravity (from EntityBase pattern)
 	if not is_on_floor():
@@ -355,6 +386,7 @@ func change_state(new_state: String):
 		return
 	
 	current_state = new_state
+	_simulation_sleep_accumulator = 0.0
 	
 	# Handle animation seek
 	if anim_player:
@@ -453,6 +485,15 @@ func _start_timer(seconds: float, callback: Callable) -> void:
 func _on_spawn_settle_timeout(timer: Timer) -> void:
 	if is_instance_valid(timer):
 		timer.queue_free()
+
+	# Keep freshly spawned zombies fully frozen until EntityManager verifies nearby
+	# terrain collision and explicitly unfreezes them.
+	if entity_manager and entity_manager.has_method("is_entity_frozen") and entity_manager.is_entity_frozen(self):
+		set_physics_process(false)
+		if anim_player:
+			anim_player.pause()
+		return
+
 	set_physics_process(true)
 	if anim_player:
 		anim_player.play("Take 001")
@@ -496,6 +537,7 @@ func on_despawn():
 
 
 func on_frozen() -> void:
+	_simulation_sleep_accumulator = 0.0
 	if wall_detector:
 		wall_detector.enabled = false
 	if anim_player and anim_player.is_playing():
@@ -507,6 +549,7 @@ func on_frozen() -> void:
 func on_unfrozen() -> void:
 	if current_state == "DEAD":
 		return
+	_simulation_sleep_accumulator = 0.0
 	if anim_player and not anim_player.is_playing():
 		anim_player.play("Take 001")
 	_sync_runtime_components()
@@ -539,3 +582,15 @@ func _horizontal_distance_squared_to(target: Vector3) -> float:
 	var dx := global_position.x - target.x
 	var dz := global_position.z - target.z
 	return dx * dx + dz * dz
+
+
+func _get_simulation_interval(player_dist_sq: float) -> float:
+	if not is_on_floor():
+		return 0.0
+
+	if current_state == "IDLE":
+		if player_dist_sq <= _detection_radius_sq:
+			return 0.0
+		return idle_sleep_interval
+
+	return 0.0

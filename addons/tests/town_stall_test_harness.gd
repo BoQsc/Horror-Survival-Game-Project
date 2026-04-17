@@ -55,6 +55,7 @@ var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
 var disable_entities_enabled: bool = false
 var repeat_entry_enabled: bool = false
+var configured_hold_seconds: float = HOLD_SECONDS
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
 var fly_target_altitude: float = 0.0
@@ -76,6 +77,21 @@ func _get_town_stall_seed() -> int:
 	if seed_text.is_valid_int():
 		return int(seed_text)
 	return 12345
+
+
+func _get_positive_env_float(env_name: String, default_value: float) -> float:
+	var raw_value := OS.get_environment(env_name).strip_edges()
+	if raw_value.is_empty():
+		return default_value
+
+	if not raw_value.is_valid_float():
+		return default_value
+
+	var parsed_value := float(raw_value)
+	if parsed_value <= 0.0:
+		return default_value
+
+	return parsed_value
 
 
 func _emit_scope_state(scope: String, payload: Dictionary) -> void:
@@ -116,6 +132,7 @@ func _ready() -> void:
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
 	disable_entities_enabled = OS.get_environment("TOWN_STALL_DISABLE_ENTITIES") == "1"
 	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
+	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable buildings: %s" % ("ON" if disable_buildings_enabled else "OFF"))
@@ -130,6 +147,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
 	_emit_scope_state("town_stall_test", {
 		"phase": "start",
 		"auto_teleport": auto_teleport_enabled,
@@ -144,7 +162,8 @@ func _ready() -> void:
 		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
 		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
 		"disable_entities": disable_entities_enabled,
-		"repeat_entry": repeat_entry_enabled
+		"repeat_entry": repeat_entry_enabled,
+		"hold_seconds": configured_hold_seconds
 	})
 	_begin_generation()
 
@@ -552,9 +571,9 @@ func _teleport_into_town() -> void:
 	})
 
 	print("[TOWN_STALL_TEST] Teleported to town at (%.1f, %.1f, %.1f)" % [teleport_pos.x, teleport_pos.y, teleport_pos.z])
-	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % HOLD_SECONDS)
+	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % configured_hold_seconds)
 
-	current_hold_seconds = HOLD_SECONDS
+	current_hold_seconds = configured_hold_seconds
 	phase = Phase.HOLD_FIRST
 	phase_time = 0.0
 	hold_started_logged = false
@@ -743,7 +762,7 @@ func _fly_to_town(_delta: float) -> void:
 		_restore_player_control()
 		match phase:
 			Phase.FLY_TO_TOWN:
-				current_hold_seconds = REPEAT_ENTRY_FIRST_HOLD_SECONDS if repeat_entry_enabled else HOLD_SECONDS
+				current_hold_seconds = REPEAT_ENTRY_FIRST_HOLD_SECONDS if repeat_entry_enabled else configured_hold_seconds
 				phase = Phase.HOLD_FIRST
 			Phase.FLY_BACK_TO_ORIGIN:
 				current_hold_seconds = REPEAT_ENTRY_RETURN_HOLD_SECONDS
@@ -752,7 +771,7 @@ func _fly_to_town(_delta: float) -> void:
 				current_hold_seconds = REPEAT_ENTRY_SECOND_HOLD_SECONDS
 				phase = Phase.HOLD_SECOND
 			_:
-				current_hold_seconds = HOLD_SECONDS
+				current_hold_seconds = configured_hold_seconds
 				phase = Phase.HOLD_FIRST
 		phase_time = 0.0
 		hold_started_logged = false
