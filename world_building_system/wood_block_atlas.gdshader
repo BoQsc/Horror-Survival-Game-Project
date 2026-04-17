@@ -1,8 +1,8 @@
 shader_type spatial;
 render_mode cull_back, depth_draw_opaque;
 
-uniform sampler2D atlas_texture : source_color, filter_nearest, repeat_enable;
-uniform sampler2D church_floor_texture : source_color, filter_nearest, repeat_enable;
+uniform sampler2D atlas_texture : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D church_floor_texture : source_color, filter_linear_mipmap, repeat_enable;
 
 const vec2 ATLAS_CELL_SIZE = vec2(1.0 / 3.0, 1.0 / 2.0);
 

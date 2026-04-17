@@ -95,11 +95,12 @@ func _setup_uv_debug_material() -> void:
 
 			image.set_pixel(x, y, color)
 
+	image.generate_mipmaps()
 	var texture := ImageTexture.create_from_image(image)
 	_uv_debug_material = StandardMaterial3D.new()
 	_uv_debug_material.albedo_color = Color.WHITE
 	_uv_debug_material.albedo_texture = texture
-	_uv_debug_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	_uv_debug_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_uv_debug_material.texture_repeat = true
 	_uv_debug_material.set_flag(BaseMaterial3D.FLAG_USE_TEXTURE_REPEAT, true)
 

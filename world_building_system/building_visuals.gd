@@ -21,7 +21,7 @@ static func get_shared_wood_block_material() -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = Color(1.0, 1.0, 1.0)
 	material.albedo_texture = WOOD_BLOCK_TEXTURE
-	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_shared_wood_block_material = material
 	return _shared_wood_block_material
 

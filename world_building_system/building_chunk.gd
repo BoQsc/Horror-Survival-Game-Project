@@ -443,17 +443,30 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 	var mesh: ArrayMesh = mesh_instance.mesh as ArrayMesh
 	if use_source_mesh:
 		mesh = source_mesh
-	if mesh == null:
-		mesh = ArrayMesh.new()
-	elif not use_source_mesh:
-		mesh.clear_surfaces()
 
 	var mesh_upload_elapsed_ms := 0.0
+	var mesh_clear_elapsed_ms := 0.0
+	var mesh_assign_elapsed_ms := 0.0
+	var mesh_surface_add_elapsed_ms := 0.0
+	var mesh_material_elapsed_ms := 0.0
+	var mesh_shadow_elapsed_ms := 0.0
 	var collision_clear_elapsed_ms := 0.0
 	var collision_boxes_elapsed_ms := 0.0
 	var collision_primary_elapsed_ms := 0.0
 	var collision_trimesh_elapsed_ms := 0.0
 	var collision_mode := "none"
+	# Split the upload path so we can tell which step hitches during town entry.
+
+	if mesh == null:
+		mesh = ArrayMesh.new()
+	elif not use_source_mesh:
+		var clear_mesh_start_us := Time.get_ticks_usec()
+		if measure_building_apply:
+			PerformanceMonitor.start_measure("Building Mesh Clear")
+		mesh.clear_surfaces()
+		if measure_building_apply:
+			PerformanceMonitor.end_measure("Building Mesh Clear", 0.5)
+		mesh_clear_elapsed_ms = float(Time.get_ticks_usec() - clear_mesh_start_us) / 1000.0
 
 	if arrays.size() > 0 or use_source_mesh:
 		var mesh_upload_start_us := Time.get_ticks_usec()
@@ -465,20 +478,40 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 		else:
 			mesh_instance.visible = true
 			if use_source_mesh:
+				var mesh_assign_start_us := Time.get_ticks_usec()
 				mesh_instance.mesh = mesh
+				mesh_assign_elapsed_ms = float(Time.get_ticks_usec() - mesh_assign_start_us) / 1000.0
 			else:
+				var surface_add_start_us := Time.get_ticks_usec()
+				if measure_building_apply:
+					PerformanceMonitor.start_measure("Building Mesh Add Surface")
 				mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-			if mesh_instance.mesh != mesh:
-				mesh_instance.mesh = mesh
+				if measure_building_apply:
+					PerformanceMonitor.end_measure("Building Mesh Add Surface", 0.5)
+				mesh_surface_add_elapsed_ms = float(Time.get_ticks_usec() - surface_add_start_us) / 1000.0
+				var mesh_assign_start_us := Time.get_ticks_usec()
+				if mesh_instance.mesh != mesh:
+					mesh_instance.mesh = mesh
+				mesh_assign_elapsed_ms = float(Time.get_ticks_usec() - mesh_assign_start_us) / 1000.0
+			var material_apply_start_us := Time.get_ticks_usec()
+			if measure_building_apply:
+				PerformanceMonitor.start_measure("Building Mesh Material")
 			BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes)
+			if measure_building_apply:
+				PerformanceMonitor.end_measure("Building Mesh Material", 0.5)
+			mesh_material_elapsed_ms = float(Time.get_ticks_usec() - material_apply_start_us) / 1000.0
+			var shadow_set_start_us := Time.get_ticks_usec()
 			if mesh_instance.cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_ON:
 				mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			mesh_shadow_elapsed_ms = float(Time.get_ticks_usec() - shadow_set_start_us) / 1000.0
 		if measure_building_apply:
 			PerformanceMonitor.end_measure("Building Mesh Upload", 0.5)
 		mesh_upload_elapsed_ms = float(Time.get_ticks_usec() - mesh_upload_start_us) / 1000.0
 	else:
 		if mesh_instance.mesh != mesh:
+			var mesh_assign_start_us := Time.get_ticks_usec()
 			mesh_instance.mesh = mesh
+			mesh_assign_elapsed_ms = float(Time.get_ticks_usec() - mesh_assign_start_us) / 1000.0
 		_clear_static_body_shapes()
 		mesh_dirty = false
 		PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", {
@@ -489,6 +522,11 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			"world_map_mode": bool(manager and manager.world_map_mode),
 			"collision_boxes_count": collision_boxes.size(),
 			"mesh_surface_count": mesh.get_surface_count() if mesh else 0,
+			"mesh_clear_elapsed_ms": mesh_clear_elapsed_ms,
+			"mesh_assign_elapsed_ms": mesh_assign_elapsed_ms,
+			"mesh_surface_add_elapsed_ms": mesh_surface_add_elapsed_ms,
+			"mesh_material_elapsed_ms": mesh_material_elapsed_ms,
+			"mesh_shadow_elapsed_ms": mesh_shadow_elapsed_ms,
 			"mesh_upload_elapsed_ms": 0.0,
 			"collision_clear_elapsed_ms": 0.0,
 			"collision_boxes_elapsed_ms": 0.0,
@@ -503,7 +541,11 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 
 	if _should_skip_chunk_collisions():
 		var clear_start_us := Time.get_ticks_usec()
+		if measure_building_apply:
+			PerformanceMonitor.start_measure("Building Collision Clear")
 		_clear_static_body_shapes()
+		if measure_building_apply:
+			PerformanceMonitor.end_measure("Building Collision Clear", 0.5)
 		collision_clear_elapsed_ms = float(Time.get_ticks_usec() - clear_start_us) / 1000.0
 		mesh_dirty = false
 		PerformanceMonitor.capture_scope_event("buildings", "chunk_collision_skipped", {
@@ -518,6 +560,11 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			"world_map_mode": bool(manager and manager.world_map_mode),
 			"collision_boxes_count": collision_boxes.size(),
 			"mesh_surface_count": mesh_instance.mesh.get_surface_count() if mesh_instance.mesh else 0,
+			"mesh_clear_elapsed_ms": mesh_clear_elapsed_ms,
+			"mesh_assign_elapsed_ms": mesh_assign_elapsed_ms,
+			"mesh_surface_add_elapsed_ms": mesh_surface_add_elapsed_ms,
+			"mesh_material_elapsed_ms": mesh_material_elapsed_ms,
+			"mesh_shadow_elapsed_ms": mesh_shadow_elapsed_ms,
 			"mesh_upload_elapsed_ms": mesh_upload_elapsed_ms,
 			"collision_clear_elapsed_ms": collision_clear_elapsed_ms,
 			"collision_boxes_elapsed_ms": 0.0,
@@ -536,7 +583,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 		collision_mode = "boxes"
 		var collision_start_us := Time.get_ticks_usec()
 		if measure_building_apply:
-			PerformanceMonitor.start_measure("Building Collision Shape")
+			PerformanceMonitor.start_measure("Building Collision Boxes")
 		var handled_native_boxes := false
 		if mesher and mesher.has_method("apply_world_map_collision_boxes") and static_body:
 			handled_native_boxes = mesher.apply_world_map_collision_boxes(static_body.get_rid(), collision_boxes)
@@ -544,12 +591,16 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			_clear_static_body_shapes()
 			_apply_collision_boxes(collision_boxes)
 		if measure_building_apply:
-			PerformanceMonitor.end_measure("Building Collision Shape", 0.5)
+			PerformanceMonitor.end_measure("Building Collision Boxes", 0.5)
 		collision_boxes_elapsed_ms = float(Time.get_ticks_usec() - collision_start_us) / 1000.0
 	else:
 		# Use native shape when available; otherwise build a native trimesh shape from the mesh resource.
 		var clear_start_us := Time.get_ticks_usec()
+		if measure_building_apply:
+			PerformanceMonitor.start_measure("Building Collision Clear")
 		_clear_static_body_shapes()
+		if measure_building_apply:
+			PerformanceMonitor.end_measure("Building Collision Clear", 0.5)
 		collision_clear_elapsed_ms = float(Time.get_ticks_usec() - clear_start_us) / 1000.0
 		if _shape_is_usable(shape):
 			collision_mode = "native_shape"
@@ -567,24 +618,28 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 			collision_trimesh_elapsed_ms = float(Time.get_ticks_usec() - collision_start_us) / 1000.0
 	
 	mesh_dirty = false
-	if not is_world_map_mode:
-		var mesh_apply_event := {
-			"chunk_coord": str(chunk_coord),
-			"arrays_count": arrays.size(),
-			"use_source_mesh": use_source_mesh,
-			"skip_mesh_render": skip_mesh_render,
-			"world_map_mode": is_world_map_mode,
-			"collision_boxes_count": collision_boxes.size(),
-			"mesh_surface_count": mesh_instance.mesh.get_surface_count() if mesh_instance.mesh else 0,
-			"mesh_upload_elapsed_ms": mesh_upload_elapsed_ms,
-			"collision_mode": collision_mode,
-			"total_elapsed_ms": float(Time.get_ticks_usec() - apply_start_us) / 1000.0
-		}
-		mesh_apply_event["collision_clear_elapsed_ms"] = collision_clear_elapsed_ms
-		mesh_apply_event["collision_boxes_elapsed_ms"] = collision_boxes_elapsed_ms
-		mesh_apply_event["collision_primary_elapsed_ms"] = collision_primary_elapsed_ms
-		mesh_apply_event["collision_trimesh_elapsed_ms"] = collision_trimesh_elapsed_ms
-		PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", mesh_apply_event)
+	var mesh_apply_event := {
+		"chunk_coord": str(chunk_coord),
+		"arrays_count": arrays.size(),
+		"use_source_mesh": use_source_mesh,
+		"skip_mesh_render": skip_mesh_render,
+		"world_map_mode": is_world_map_mode,
+		"collision_boxes_count": collision_boxes.size(),
+		"mesh_surface_count": mesh_instance.mesh.get_surface_count() if mesh_instance.mesh else 0,
+		"mesh_clear_elapsed_ms": mesh_clear_elapsed_ms,
+		"mesh_assign_elapsed_ms": mesh_assign_elapsed_ms,
+		"mesh_surface_add_elapsed_ms": mesh_surface_add_elapsed_ms,
+		"mesh_material_elapsed_ms": mesh_material_elapsed_ms,
+		"mesh_shadow_elapsed_ms": mesh_shadow_elapsed_ms,
+		"mesh_upload_elapsed_ms": mesh_upload_elapsed_ms,
+		"collision_mode": collision_mode,
+		"total_elapsed_ms": float(Time.get_ticks_usec() - apply_start_us) / 1000.0
+	}
+	mesh_apply_event["collision_clear_elapsed_ms"] = collision_clear_elapsed_ms
+	mesh_apply_event["collision_boxes_elapsed_ms"] = collision_boxes_elapsed_ms
+	mesh_apply_event["collision_primary_elapsed_ms"] = collision_primary_elapsed_ms
+	mesh_apply_event["collision_trimesh_elapsed_ms"] = collision_trimesh_elapsed_ms
+	PerformanceMonitor.capture_scope_event("buildings", "mesh_apply_complete", mesh_apply_event)
 	if measure_building_apply:
 		PerformanceMonitor.end_measure("Building Apply Mesh", 1.0)
 
