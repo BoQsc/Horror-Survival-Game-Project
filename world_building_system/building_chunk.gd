@@ -73,6 +73,13 @@ static func _get_cached_box_shape(size: Vector3i) -> BoxShape3D:
 	_box_collision_shape_cache[cache_key] = box_shape
 	return box_shape
 
+func _get_world_visual_batch_anchor(local_anchor: Vector3i, source_chunk_coord: Vector3i) -> Vector3i:
+	return Vector3i(
+		source_chunk_coord.x * SIZE + local_anchor.x,
+		source_chunk_coord.y * SIZE + local_anchor.y,
+		source_chunk_coord.z * SIZE + local_anchor.z
+	)
+
 func _init(coord: Vector3i):
 	chunk_coord = coord
 	# Resize and init with 0 (Air)
@@ -83,6 +90,7 @@ func _init(coord: Vector3i):
 
 ## Reset chunk for pool reuse - clears data without reallocating arrays
 func reset(new_coord: Vector3i):
+	var previous_chunk_coord := chunk_coord
 	chunk_coord = new_coord
 	voxel_bytes.fill(0) # Clear all voxels to air
 	voxel_meta.fill(0) # Clear all metadata
@@ -99,7 +107,7 @@ func reset(new_coord: Vector3i):
 			collision_node.queue_free()
 	if manager and manager.world_map_mode and manager.has_method("remove_global_visual_batch"):
 		for anchor in simple_visual_instances:
-			manager.remove_global_visual_batch(anchor)
+			manager.remove_global_visual_batch(_get_world_visual_batch_anchor(anchor, previous_chunk_coord))
 	for batch_node in simple_visual_batch_nodes.values():
 		if batch_node and is_instance_valid(batch_node):
 			batch_node.queue_free()
@@ -315,7 +323,7 @@ func _remove_simple_visual_batch_instance(local_anchor: Vector3i) -> bool:
 	var object_id := int(instance_data.get("object_id", -1))
 	simple_visual_instances.erase(local_anchor)
 	if manager and manager.world_map_mode and manager.has_method("remove_global_visual_batch"):
-		manager.remove_global_visual_batch(local_anchor)
+		manager.remove_global_visual_batch(_get_world_visual_batch_anchor(local_anchor, chunk_coord))
 		return true
 
 	if not simple_visual_batch_entries.has(object_id):
@@ -370,7 +378,8 @@ func place_simple_visual_object(local_anchor: Vector3i, object_id: int, rotation
 	if manager and manager.world_map_mode and manager.has_method("register_global_visual_batch"):
 		var chunk_origin := Transform3D(Basis.IDENTITY, Vector3(chunk_coord) * float(SIZE))
 		var world_transform := chunk_origin * final_transform
-		if manager.register_global_visual_batch(local_anchor, object_id, world_transform, mesh, defer_global_visual_batch_rebuild):
+		var world_anchor := _get_world_visual_batch_anchor(local_anchor, chunk_coord)
+		if manager.register_global_visual_batch(world_anchor, object_id, world_transform, mesh, defer_global_visual_batch_rebuild):
 			is_empty = false
 			return true
 	_append_simple_visual_batch_instance(object_id, local_anchor, final_transform, mesh)
@@ -412,7 +421,8 @@ func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation:
 	if manager and manager.world_map_mode and manager.has_method("register_global_visual_batch"):
 		var chunk_origin := Transform3D(Basis.IDENTITY, Vector3(chunk_coord) * float(SIZE))
 		var world_transform := chunk_origin * final_transform
-		if manager.register_global_visual_batch(local_anchor, object_id, world_transform, mesh, defer_global_visual_batch_rebuild):
+		var world_anchor := _get_world_visual_batch_anchor(local_anchor, chunk_coord)
+		if manager.register_global_visual_batch(world_anchor, object_id, world_transform, mesh, defer_global_visual_batch_rebuild):
 			is_empty = false
 			return true
 	_append_simple_visual_batch_instance(object_id, local_anchor, final_transform, mesh)
@@ -437,6 +447,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 	var use_source_mesh := source_mesh != null
 	var skip_mesh_render := bool(manager and "skip_building_chunk_mesh_render_for_test" in manager and manager.skip_building_chunk_mesh_render_for_test)
 	var is_world_map_mode := bool(manager and manager.world_map_mode)
+	var use_legacy_material_override := BuildingVisuals.use_legacy_building_shader_override_for_test()
 	var measure_building_apply := not is_world_map_mode
 	if measure_building_apply:
 		PerformanceMonitor.start_measure("Building Apply Mesh")
@@ -481,6 +492,19 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 				var mesh_assign_start_us := Time.get_ticks_usec()
 				mesh_instance.mesh = mesh
 				mesh_assign_elapsed_ms = float(Time.get_ticks_usec() - mesh_assign_start_us) / 1000.0
+				if use_legacy_material_override:
+					var material_apply_start_us := Time.get_ticks_usec()
+					if measure_building_apply:
+						PerformanceMonitor.start_measure("Building Mesh Material")
+					BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes)
+					if measure_building_apply:
+						PerformanceMonitor.end_measure("Building Mesh Material", 0.5)
+					mesh_material_elapsed_ms = float(Time.get_ticks_usec() - material_apply_start_us) / 1000.0
+				else:
+					mesh_instance.material_override = null
+					var surface_count := mesh.get_surface_count() if mesh else 0
+					for surface_index in range(surface_count):
+						mesh_instance.set_surface_override_material(surface_index, null)
 			else:
 				var surface_add_start_us := Time.get_ticks_usec()
 				if measure_building_apply:

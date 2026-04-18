@@ -1,6 +1,8 @@
 extends Node
 class_name BuildingMesher
 
+const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
+
 var thread: Thread
 var mutex: Mutex
 var semaphore: Semaphore
@@ -142,6 +144,8 @@ func _voxels_need_detailed_collision(voxel_bytes: PackedByteArray) -> bool:
 func _store_cached_building_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String, mesh: ArrayMesh, shape: Shape3D, collision_boxes: Array) -> void:
 	if not mesh:
 		return
+
+	BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes)
 
 	var cache_key := _make_building_mesh_cache_key(voxel_bytes, voxel_meta, collision_mode)
 	if _building_mesh_cache.has(cache_key):
