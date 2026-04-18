@@ -27,11 +27,14 @@ func _init() -> void:
 		var f = FileAccess.open(path, FileAccess.READ)
 		var text = f.get_as_text()
 		var p = JSON.parse_string(text)
-		if p and p.has("buildings"):
-			var b = p.buildings
+		if p is Dictionary and p.has("buildings"):
+			var b = p["buildings"]
+			print("Buildings in JSON: %d" % b.size())
 			for i in range(min(10, b.size())):
-				var item = b[i]
+				print(b[i])
 		else:
+			print("No buildings key found in %s" % path)
 	else:
+		print("Missing world meta file: %s" % path)
 		
 	quit()

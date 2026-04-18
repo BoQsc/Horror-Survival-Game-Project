@@ -51,6 +51,8 @@ func _ready():
 		# Trigger first build
 		_trigger_update()
 	else:
+		push_error("Failed to load compute shader: res://world_greedy_meshing/greedy_meshing.glsl")
+		return
 
 func _unhandled_input(event):
 	if event is InputEventMouseButton and event.pressed:

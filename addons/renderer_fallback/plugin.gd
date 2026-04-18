@@ -12,10 +12,12 @@ func _enter_tree():
 	
 	# Test Vulkan compute
 	if _test_vulkan_compute():
+		return
 	else:
 		_set_d3d12()
 
 func _exit_tree():
+	pass
 
 func _test_vulkan_compute() -> bool:
 	"""Test if Vulkan compute works with marching cubes shader"""

@@ -33,8 +33,10 @@ func _init() -> void:
 	if FileAccess.file_exists(meta_path):
 		var f = FileAccess.open(meta_path, FileAccess.READ)
 		var j = JSON.parse_string(f.get_as_text())
-		if j and j.has("buildings"):
+		if j is Dictionary and j.has("buildings"):
+			print("Buildings in meta JSON: %d" % j["buildings"].size())
 		else:
+			print("No buildings key found in %s" % meta_path)
 	
 	var fp = path + "/building_map.png"
 	if FileAccess.file_exists(fp):
@@ -54,6 +56,8 @@ func _init() -> void:
 		for i in buf.size():
 			if buf[i] > 128:
 				w_count += 1
+		print("White pixels in building map: %d" % w_count)
 	else:
+		print("Missing building map image: %s" % fp)
 	
 	quit()

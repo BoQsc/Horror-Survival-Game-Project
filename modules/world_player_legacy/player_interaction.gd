@@ -1070,7 +1070,7 @@ func handle_object_input(event):
 								return
 
 		if success:
-		else:
+			return
 
 	elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed: # Remove object
 		var hit = raycast(10.0, false)
@@ -1084,12 +1084,13 @@ func handle_object_input(event):
 					if anchor != null and chunk != null:
 						var success = chunk.remove_object(anchor)
 						if success:
-						return
+							return
 			
 				# Fallback: try position-based removal
 			var remove_pos = hit.position - hit.normal * 0.01
 			var success = building_manager.remove_object_at(remove_pos)
 			if success:
+				return
 
 ## Handle CONSTRUCT mode input - unified block (1-4), object (5-9), and vegetation (0) placement
 func handle_construct_input(event):
@@ -1129,7 +1130,7 @@ func _handle_construct_object_input(event):
 		)
 		var success = building_manager.place_object(placement_pos, object_id, construct_rotation)
 		if success:
-		else:
+			return
 	
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove object
 		var hit = raycast(10.0, false)
@@ -1141,11 +1142,12 @@ func _handle_construct_object_input(event):
 					if anchor != null and chunk != null:
 						var success = chunk.remove_object(anchor)
 						if success:
-						return
+							return
 			
 			var remove_pos = hit.position - hit.normal * 0.01
 			var success = building_manager.remove_object_at(remove_pos)
 			if success:
+				return
 
 ## Handle vegetation placement in CONSTRUCT mode (Rock/Grass)
 func _handle_construct_vegetation_input(event):
@@ -1839,13 +1841,14 @@ func _place_current_prefab():
 				# Step 2: Wait 10 seconds, then fill terrain AND place blocks
 				var fill_spawn_pos = _get_prefab_spawn_world_pos(prefab_name, hit.position, 0, false)
 				_schedule_prefab_fill(prefab_name, fill_spawn_pos, prefab_rotation)
-			else:
 		else:
 			# Normal modes: Surface, Carve, or Fill
 			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, false, prefab_interior_carve)
 			if success:
-			else:
+				return
 	else:
+		push_warning("[PlayerInteraction] PrefabSpawner is unavailable; cannot place prefab.")
+		return
 
 ## Calculate road height at a given X, Z position by finding nearest road and sampling terrain
 func _get_road_height_at(x: float, z: float) -> float:
@@ -1878,8 +1881,9 @@ func _schedule_prefab_fill(prefab_name: String, spawn_pos: Vector3, rotation: in
 			# This fills terrain AND places blocks at the surface level
 			var fill_success = spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, false, false)
 			if fill_success:
-			else:
+				return
 		else:
+			push_warning("[PlayerInteraction] PrefabSpawner is unavailable during delayed fill.")
 	)
 
 func _update_prefab_preview():
@@ -1979,6 +1983,7 @@ func _get_prefab_spawn_origin(prefab_name: String, hit_pos: Vector3, log_snap: b
 		if road_y > 0:
 			anchor.y = floor(road_y) - 1 + prefab_road_snap_y_offset
 			if log_snap:
+				print_debug("[PlayerInteraction] Prefab road snap: %s -> %s" % [prefab_name, anchor])
 	return PrefabGeometry.get_spawn_origin_for_occupied_min(prefab_name, anchor, prefab_rotation)
 
 ## ============== PROP PICKUP SYSTEM =============
