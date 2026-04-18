@@ -249,7 +249,6 @@ func _thread_loop():
 		var mesh_dispatch_elapsed_ms := 0.0
 		var mesh_build_elapsed_ms := 0.0
 		var collision_shape_elapsed_ms := 0.0
-		PerformanceMonitor.start_measure("Building Mesh Generate")
 		# World-map buildings prefer merged box colliders to avoid expensive shape cooking
 		# during town entry. However, stair blocks are not full cubes; treating them as
 		# solid voxels in merged boxes can make stairs behave like walls. For any chunk
@@ -278,18 +277,6 @@ func _thread_loop():
 				arrays = result
 			if mesh:
 				_store_cached_building_mesh(voxel_bytes, voxel_meta, collision_mode, mesh, shape, collision_boxes)
-		PerformanceMonitor.end_measure("Building Mesh Generate", 5.0)
-		PerformanceMonitor.capture_scope_event("buildings", "mesh_generate_complete", {
-			"chunk_coord": str(chunk.chunk_coord),
-			"cached_hit": cached_hit,
-			"collision_mode": collision_mode,
-			"dispatch_elapsed_ms": mesh_dispatch_elapsed_ms,
-			"mesh_build_elapsed_ms": mesh_build_elapsed_ms,
-			"collision_shape_elapsed_ms": collision_shape_elapsed_ms,
-			"voxel_bytes": voxel_bytes.size(),
-			"voxel_meta_bytes": voxel_meta.size(),
-			"elapsed_ms": float(Time.get_ticks_usec() - mesh_generate_start_us) / 1000.0
-		})
 
 		# Callback
 		if is_instance_valid(chunk):

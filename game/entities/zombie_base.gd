@@ -123,9 +123,7 @@ func _find_animation_player(node: Node):
 		_find_animation_player(child)
 
 func _physics_process(delta):
-	PerformanceMonitor.start_measure("Zombie AI")
 	if current_state == "DEAD":
-		PerformanceMonitor.end_measure("Zombie AI", 0.5)
 		return
 
 	if _test_disable_runtime:
@@ -136,7 +134,6 @@ func _physics_process(delta):
 			anim_player.pause()
 		if chase_audio_player and chase_audio_player.playing:
 			chase_audio_player.stop()
-		PerformanceMonitor.end_measure("Zombie AI", 0.5)
 		return
 	
 	# Find player if needed
@@ -149,7 +146,6 @@ func _physics_process(delta):
 		_simulation_sleep_accumulator += delta
 		if _simulation_sleep_accumulator < simulation_interval:
 			velocity = Vector3.ZERO
-			PerformanceMonitor.end_measure("Zombie AI", 0.5)
 			return
 		delta = _simulation_sleep_accumulator
 		_simulation_sleep_accumulator = 0.0
@@ -192,7 +188,6 @@ func _physics_process(delta):
 		velocity = Vector3.ZERO
 		# Don't teleport to Y=50 - that causes sky falling
 		# EntityManager will respawn us at correct height
-	PerformanceMonitor.end_measure("Zombie AI", 0.5)
 
 func _process(_delta):
 	if not is_active or current_state == "DEAD" or _test_disable_runtime:

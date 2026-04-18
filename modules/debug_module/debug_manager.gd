@@ -31,11 +31,6 @@ var _merged_show_terrain_marker := false
 var _merged_show_road_zones := false
 var _merged_show_chunk_bounds := false
 
-# Thread-safe cached flag for performance panel routing
-# This is updated from main thread and read from any thread
-var _use_debugger_panel: bool = false
-
-
 func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
@@ -203,21 +198,10 @@ func should_show_vegetation_collisions() -> bool:
 # BACKWARD-COMPATIBLE LOGGING API (replaces DebugSettings)
 # ============================================================================
 
-## Helper to send logs to the Performance panel via EngineDebugger
-## Thread-safe: uses cached _use_debugger_panel flag
+## Helper to send logs to the debug console.
 func _send_to_panel(category: String, message: String) -> void:
 	var full_message = "[%s] %s" % [category, message]
-	
-	if _use_debugger_panel and EngineDebugger.is_active():
-		EngineDebugger.send_message("perf_monitor:log", [category, full_message])
-	else:
-		# Fallback to console
-		print(full_message)
-
-
-## Called by PerformanceMonitor when plugin connects/disconnects
-func set_debugger_panel_enabled(enabled: bool) -> void:
-	_use_debugger_panel = enabled
+	print(full_message)
 
 
 ## Direct logging methods matching DebugSettings API

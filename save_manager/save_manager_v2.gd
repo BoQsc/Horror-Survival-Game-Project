@@ -346,27 +346,7 @@ func _finalize_save(path: String):
 
 
 func _capture_load_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
-	var entity_manager_loading := false
-	if entity_manager and "is_loading_save" in entity_manager:
-		entity_manager_loading = entity_manager.is_loading_save
-
-	PerformanceMonitor.capture_scope_state("save_load", {
-		"is_loading_game": is_loading_game,
-		"is_quickloading": is_quickloading,
-		"awaiting_terrain_ready": awaiting_terrain_ready,
-		"awaiting_vegetation_ready": awaiting_vegetation_ready,
-		"current_save_path": current_save_path,
-		"pending_player_data": pending_player_data.size(),
-		"pending_entity_data": pending_entity_data.size(),
-		"pending_vehicle_data": pending_vehicle_data.size(),
-		"pending_door_data": pending_door_data.size(),
-		"pending_container_data": pending_container_data.size(),
-		"load_timeout_active": is_instance_valid(load_safety_timer),
-		"entity_manager_loading": entity_manager_loading
-	})
-
-	if not event_label.is_empty():
-		PerformanceMonitor.capture_scope_event("save_load", event_label, details)
+	return
 
 ## Load game from specified path
 func load_game(path: String) -> bool:
@@ -660,26 +640,18 @@ func _check_world_readiness():
 	# Even if no entities are saved, we need to clean up procedural spawns
 	load_step.emit("Loading entities", 9, 10)
 	if entity_manager and entity_manager.has_method("load_save_data"):
-		PerformanceMonitor.start_measure("Load Finalize: Entities")
 		entity_manager.load_save_data(pending_entity_data)
-		PerformanceMonitor.end_measure("Load Finalize: Entities", 1.0)
 	
 	# Spawn queued vehicles now that terrain is ready
 	if not pending_vehicle_data.is_empty():
-		PerformanceMonitor.start_measure("Load Finalize: Vehicles")
 		_load_vehicle_data(pending_vehicle_data)
-		PerformanceMonitor.end_measure("Load Finalize: Vehicles", 1.0)
 	
 	# Load doors and containers NOW that buildings have had time to spawn
 	# (They were deferred from load_game because buildings need terrain first)
 	if not pending_door_data.is_empty():
-		PerformanceMonitor.start_measure("Load Finalize: Doors")
 		_load_door_data(pending_door_data)
-		PerformanceMonitor.end_measure("Load Finalize: Doors", 1.0)
 	if not pending_container_data.is_empty():
-		PerformanceMonitor.start_measure("Load Finalize: Containers")
 		_load_container_data(pending_container_data)
-		PerformanceMonitor.end_measure("Load Finalize: Containers", 1.0)
 	
 	# Clear pending data
 	pending_player_data = {}
@@ -704,7 +676,6 @@ func _check_world_readiness():
 	print("[LOAD_NOTIFICATION] Game loaded and world ready!")
 	load_completed.emit(true, current_save_path)
 	is_quickloading = false  # Clear the flag now that load is complete
-	_capture_load_telemetry("load_complete")
 
 ## Get list of available save files
 func get_save_files() -> Array[String]:

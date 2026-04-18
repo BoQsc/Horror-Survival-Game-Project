@@ -49,8 +49,6 @@ var spawned_chunks: Dictionary = {} # Vector2i -> true (tracks which chunks alre
 var zombie_scene: PackedScene = null # Cached zombie scene
 var biome_noise: FastNoiseLite = null # For biome detection (must match GPU)
 var is_loading_save: bool = false # Flag to disable procedural spawning during save load
-var _frame_entity_stats: Dictionary = {}
-
 # Biome-based spawn rules: biome_id -> { "zombie_chance": float }
 # Biome IDs: 0=Grass, 3=Sand, 4=Gravel, 5=Snow
 var spawn_rules = {
@@ -62,104 +60,15 @@ var spawn_rules = {
 
 
 func _reset_frame_entity_stats() -> void:
-	_frame_entity_stats = {
-		"proximity_processed": 0,
-		"proximity_invalid": 0,
-		"proximity_despawned": 0,
-		"unfreeze_attempts": 0,
-		"unfreeze_raycasts": 0,
-		"terrain_ready_checks": 0,
-		"terrain_ready_misses": 0,
-		"dormant_candidates": 0,
-		"dormant_raycasts": 0,
-		"dormant_respawns": 0,
-		"spawn_queue_candidates": 0,
-		"spawn_queue_raycasts": 0,
-		"spawn_queue_spawns": 0
-	}
+	return
 
 
 func _bump_frame_entity_stat(key: String, amount: int = 1) -> void:
-	_frame_entity_stats[key] = int(_frame_entity_stats.get(key, 0)) + amount
+	return
 
 
 func _capture_entity_telemetry() -> void:
-	if not PerformanceMonitor or not PerformanceMonitor.has_method("capture_scope_state"):
-		return
-
-	var payload := _frame_entity_stats.duplicate(true)
-	var active_physics_entities := 0
-	var state_idle := 0
-	var state_walk := 0
-	var state_chase := 0
-	var state_attack := 0
-	var state_hit := 0
-	var state_dead := 0
-	var unfrozen_entities := 0
-	var unfrozen_state_idle := 0
-	var unfrozen_state_walk := 0
-	var unfrozen_state_chase := 0
-	var unfrozen_state_attack := 0
-	var unfrozen_state_hit := 0
-	var unfrozen_state_dead := 0
-	for entity in active_entities:
-		if not is_instance_valid(entity):
-			continue
-		var entity_is_frozen := frozen_entities.has(entity)
-		if entity.is_physics_processing():
-			active_physics_entities += 1
-		if not entity_is_frozen:
-			unfrozen_entities += 1
-		if "current_state" in entity:
-			var state_name := String(entity.current_state)
-			match state_name:
-				"IDLE":
-					state_idle += 1
-					if not entity_is_frozen:
-						unfrozen_state_idle += 1
-				"WALK":
-					state_walk += 1
-					if not entity_is_frozen:
-						unfrozen_state_walk += 1
-				"CHASE":
-					state_chase += 1
-					if not entity_is_frozen:
-						unfrozen_state_chase += 1
-				"ATTACK":
-					state_attack += 1
-					if not entity_is_frozen:
-						unfrozen_state_attack += 1
-				"HIT":
-					state_hit += 1
-					if not entity_is_frozen:
-						unfrozen_state_hit += 1
-				"DEAD":
-					state_dead += 1
-					if not entity_is_frozen:
-						unfrozen_state_dead += 1
-	payload["active_entities"] = active_entities.size()
-	payload["active_physics_entities"] = active_physics_entities
-	payload["frozen_entities"] = frozen_entities.size()
-	payload["unfrozen_entities"] = unfrozen_entities
-	payload["dormant_entities"] = dormant_entities.size()
-	payload["pending_spawns"] = pending_spawns.size()
-	payload["spawned_chunks"] = spawned_chunks.size()
-	payload["loading_save"] = is_loading_save
-	payload["collision_range"] = _get_collision_range()
-	payload["effective_freeze_radius"] = _get_effective_freeze_radius()
-	payload["state_idle"] = state_idle
-	payload["state_walk"] = state_walk
-	payload["state_chase"] = state_chase
-	payload["state_attack"] = state_attack
-	payload["state_hit"] = state_hit
-	payload["state_dead"] = state_dead
-	payload["unfrozen_state_idle"] = unfrozen_state_idle
-	payload["unfrozen_state_walk"] = unfrozen_state_walk
-	payload["unfrozen_state_chase"] = unfrozen_state_chase
-	payload["unfrozen_state_attack"] = unfrozen_state_attack
-	payload["unfrozen_state_hit"] = unfrozen_state_hit
-	payload["unfrozen_state_dead"] = unfrozen_state_dead
-	PerformanceMonitor.capture_scope_state("entities", payload)
+	return
 
 func _ready():
 	# Register in group for lookup by other systems
@@ -196,23 +105,12 @@ func _physics_process(_delta):
 	if not viewer or not is_instance_valid(viewer):
 		viewer = player
 
-	_reset_frame_entity_stats()
-	
-	PerformanceMonitor.start_measure("Entity Proximity")
 	_update_entity_proximity()
-	PerformanceMonitor.end_measure("Entity Proximity", 2.0)
-	
-	PerformanceMonitor.start_measure("Entity Dormant Check")
 	_check_dormant_respawns()
-	PerformanceMonitor.end_measure("Entity Dormant Check", 2.0)
 	
 	# Process spawn queue - spawns when terrain is ready
 	if not pending_spawns.is_empty():
-		PerformanceMonitor.start_measure("Entity Spawn Queue")
 		_process_spawn_queue()
-		PerformanceMonitor.end_measure("Entity Spawn Queue", 3.0)
-
-	_capture_entity_telemetry()
 
 ## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():

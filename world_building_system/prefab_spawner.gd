@@ -188,7 +188,6 @@ func _process_pending_spawn_jobs() -> void:
 
 	var start_time := Time.get_ticks_usec()
 	var processed := 0
-	var started_measure := false
 	var now_msec := Time.get_ticks_msec()
 	var effective_budget_ms := spawn_processing_budget_ms
 	if building_manager and building_manager.world_map_mode:
@@ -204,10 +203,6 @@ func _process_pending_spawn_jobs() -> void:
 		var spawn_key := str(job.get("spawn_key", ""))
 		if spawn_key != "":
 			pending_spawn_keys.erase(spawn_key)
-
-		if not started_measure:
-			PerformanceMonitor.start_measure("Baked Building Spawn")
-			started_measure = true
 
 		var prefab_name := str(job.get("prefab_name", ""))
 		var world_pos: Vector3 = job.get("world_pos", Vector3.ZERO)
@@ -235,29 +230,14 @@ func _process_pending_spawn_jobs() -> void:
 		processed += 1
 		_last_spawn_job_msec = Time.get_ticks_msec()
 
-	if started_measure:
-		PerformanceMonitor.end_measure("Baked Building Spawn", 5.0)
-
 	if building_manager and building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
 		# Defer the world-map visual batch rebuild until the prefab burst has
 		# drained so we do not rebuild the same repeated prop meshes once per
 		# spawn tick during town entry.
 		if pending_spawn_jobs.is_empty():
-			PerformanceMonitor.start_measure("Baked Building Visual Batch Flush")
 			building_manager.flush_global_visual_batches()
-			PerformanceMonitor.end_measure("Baked Building Visual Batch Flush", 5.0)
-		else:
-			PerformanceMonitor.capture_scope_state("buildings", {
-				"phase": "visual_batch_flush_deferred",
-				"pending_spawn_jobs": pending_spawn_jobs.size(),
-				"pending_visual_batch_rebuilds": building_manager.has_method("has_pending_visual_batch_work") and building_manager.has_pending_visual_batch_work()
-			})
 
 	if skip_chunk_flush_for_test:
-		PerformanceMonitor.capture_scope_event("buildings", "spawn_chunk_flush_skipped", {
-			"reason": "test_toggle",
-			"pending_spawn_jobs": pending_spawn_jobs.size()
-		})
 		return
 
 	if building_manager.has_method("has_dirty_chunks") and building_manager.has_dirty_chunks():
@@ -265,9 +245,7 @@ func _process_pending_spawn_jobs() -> void:
 		var idle_since_last_spawn := now_msec - _last_spawn_job_msec
 		var has_visible_dirty_chunks: bool = building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks()
 		if has_visible_dirty_chunks and pending_spawn_jobs.is_empty() and (processed > 0 or _last_spawn_job_msec > 0) and idle_since_last_spawn >= int(chunk_flush_interval_ms):
-			PerformanceMonitor.start_measure("Baked Building Flush")
 			building_manager.flush_dirty_chunks()
-			PerformanceMonitor.end_measure("Baked Building Flush", 5.0)
 
 func _get_rotated_block_batches(prefab_name: String, rotation: int) -> Array:
 	var cache_key := "%s:%d" % [prefab_name, rotation]
@@ -455,13 +433,7 @@ func _spawn_baked_buildings(coord: Vector3i):
 				"interior_carve": false,
 				"clear_vegetation": false
 			})
-			queued_count += 1
-
-	PerformanceMonitor.capture_scope_state("buildings", {
-		"phase": "baked_queue",
-		"pending_spawn_jobs": pending_spawn_jobs.size(),
-		"queued_in_chunk": queued_count
-	})
+	queued_count += 1
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 	if road_spacing <= 0:
@@ -637,11 +609,6 @@ func _spawn_prefab(prefab_name: String, world_pos: Vector3):
 	# Flush all batched voxel changes at once (triggers single mesh rebuild per chunk)
 	if not building_manager.has_method("has_dirty_visible_chunks") or building_manager.has_dirty_visible_chunks():
 		building_manager.flush_dirty_chunks()
-	else:
-		PerformanceMonitor.capture_scope_event("buildings", "chunk_flush_skipped", {
-			"prefab": prefab_name,
-			"reason": "hidden_only"
-		})
 	
 	# Spawn interactive door for small_house prefab
 	if prefab_name == "small_house":
@@ -889,28 +856,10 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		interior_carve = false
 		clear_vegetation = false
 	var world_map_mode := bool(building_manager and building_manager.world_map_mode)
-	PerformanceMonitor.start_measure("Prefab: " + prefab_name)
-	if not world_map_mode:
-		PerformanceMonitor.capture_scope_event("buildings", "spawn_requested", {
-			"prefab": prefab_name,
-			"world_pos": str(world_pos),
-			"rotation": rotation,
-			"carve_terrain": carve_terrain,
-			"skip_carving_for_test": skip_carving_for_test,
-			"skip_blocks": skip_blocks,
-			"interior_carve": interior_carve
-		})
 	# Try to load if not already loaded
 	if not prefabs.has(prefab_name):
-		PerformanceMonitor.start_measure("Prefab Load: " + prefab_name)
 		if not load_prefab_from_file(prefab_name):
-			PerformanceMonitor.capture_scope_event("buildings", "load_failed", {
-				"prefab": prefab_name
-			})
-			PerformanceMonitor.end_measure("Prefab Load: " + prefab_name, 1.0)
-			PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
 			return false
-		PerformanceMonitor.end_measure("Prefab Load: " + prefab_name, 1.0)
 	
 	# Use default submerge of 1 for carve mode (prefabs no longer store this value)
 	if carve_terrain:
@@ -940,25 +889,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			veg_mgr.clear_vegetation_in_area(spawn_pos, 10.0)
 
 	var blocks = prefabs[prefab_name]
-	PerformanceMonitor.capture_scope_state("buildings", {
-		"prefab": prefab_name,
-		"world_pos": str(world_pos),
-		"spawn_pos": str(spawn_pos),
-		"rotation": rotation,
-		"submerge_offset": submerge_offset,
-		"carve_terrain": carve_terrain,
-		"skip_blocks": skip_blocks,
-		"interior_carve": interior_carve,
-		"block_count": blocks.size(),
-		"chunk_batch_mode": bool(building_manager and building_manager.world_map_mode)
-	})
 	var carved_terrain := false
 	var carve_elapsed_ms := 0.0
 	
 	# Carve terrain for submerged blocks (only in carve mode)
 	if carve_terrain:
 		var carve_start_us := Time.get_ticks_usec()
-		PerformanceMonitor.start_measure("Prefab Carve")
 		carved_terrain = true
 		if _can_use_column_terrain_ops():
 			_carve_submerged_block_columns(blocks, spawn_pos, rotation, world_pos.y)
@@ -979,7 +915,6 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	if interior_carve:
 		var interior_carve_start_us := Time.get_ticks_usec()
 		if not carved_terrain:
-			PerformanceMonitor.start_measure("Prefab Carve")
 			carved_terrain = true
 		var carve_count := 0
 		var used_precise_carve := false
@@ -1020,21 +955,11 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		else:
 			DebugManager.log_building("[FullCarve] Carved %d columns for '%s' (box: %v to %v)" % [carve_count, prefab_name, min_offset, max_offset])
 		carve_elapsed_ms += float(Time.get_ticks_usec() - interior_carve_start_us) / 1000.0
-	if carved_terrain:
-		PerformanceMonitor.end_measure("Prefab Carve", 5.0)
 	
 	# Skip block/object spawning if requested (used for carve-only step in Carve+Fill mode)
 	if skip_blocks:
 		var mode_str = "carve-only" if carve_terrain else "fill-only"
 		DebugManager.log_building("Terrain-only operation '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
-		PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
-		PerformanceMonitor.capture_scope_event("buildings", "spawn_complete", {
-			"prefab": prefab_name,
-			"mode": mode_str,
-			"carved_terrain": carved_terrain,
-			"carve_elapsed_ms": carve_elapsed_ms,
-			"block_count": blocks.size()
-		})
 		return true
 	
 	# Spawn blocks with rotation.
@@ -1045,11 +970,9 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 	var block_apply_elapsed_ms := 0.0
 	if not skip_block_placement_for_test:
 		var block_start_us := Time.get_ticks_usec()
-		PerformanceMonitor.start_measure("Prefab Block Placement")
 		if building_manager and building_manager.world_map_mode:
 			var chunk_batches: Array = []
 			var mesher = building_manager.mesher if building_manager else null
-			PerformanceMonitor.start_measure("Prefab Block Pack")
 			if mesher and mesher.has_method("pack_rotated_world_map_block_batches"):
 				chunk_batches = mesher.pack_rotated_world_map_block_batches(blocks, rotation, spawn_pos, BUILDING_CHUNK_SIZE)
 			elif mesher and mesher.has_method("pack_world_map_block_batches"):
@@ -1058,11 +981,9 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			else:
 				var rotated_blocks_fallback: Array = _get_rotated_block_batches(prefab_name, rotation)
 				chunk_batches = _pack_world_map_block_batches_from_rotated_blocks(rotated_blocks_fallback, spawn_pos, BUILDING_CHUNK_SIZE)
-			PerformanceMonitor.end_measure("Prefab Block Pack", 5.0)
 			block_pack_elapsed_ms = float(Time.get_ticks_usec() - block_start_us) / 1000.0
 
 			var block_apply_start_us := Time.get_ticks_usec()
-			PerformanceMonitor.start_measure("Prefab Block Apply")
 			for batch_variant in chunk_batches:
 				var batch: Dictionary = batch_variant
 				var chunk_coord_variant: Variant = batch.get("coord", Vector3i.ZERO)
@@ -1074,7 +995,6 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					batch.get("metas", PackedByteArray())
 				)
 				building_manager.mark_chunk_dirty(chunk_coord, chunk)
-			PerformanceMonitor.end_measure("Prefab Block Apply", 5.0)
 			block_apply_elapsed_ms = float(Time.get_ticks_usec() - block_apply_start_us) / 1000.0
 		else:
 			for block in blocks:
@@ -1090,13 +1010,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 
 				var pos: Vector3 = spawn_pos + Vector3(rotated_offset)
 				building_manager.set_voxel_batched(pos, block_type, block_meta)
-			PerformanceMonitor.end_measure("Prefab Block Placement", 5.0)
 			block_placement_elapsed_ms = float(Time.get_ticks_usec() - block_start_us) / 1000.0
-	else:
-		PerformanceMonitor.capture_scope_event("buildings", "spawn_block_placement_skipped", {
-			"prefab": prefab_name,
-			"reason": "test_toggle"
-		})
 	
 	# Spawn objects if any
 	var prefab_object_count: int = 0
@@ -1112,7 +1026,6 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		var objects_data = get_meta("prefab_objects")
 		if objects_data.has(prefab_name):
 			var object_start_us := Time.get_ticks_usec()
-			PerformanceMonitor.start_measure("Prefab Objects")
 			var use_world_map_mode := bool(building_manager and building_manager.world_map_mode)
 			collect_object_telemetry = not use_world_map_mode
 			var prefab_objects: Array = objects_data[prefab_name]
@@ -1217,8 +1130,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 					if object_id >= 0:
 						precomputed_cells = ObjectRegistry.get_occupied_cells(object_id, Vector3i.ZERO, obj_rotation)
 					if not building_manager.place_object(obj_pos, object_id, obj_rotation, true, true, defer_global_visual_batch_rebuild, precomputed_cells, object_size, object_scene_path, has_authored_collision, has_authored_collision_valid):
-						# print("DEBUG_MISSING_OBJ: Failed to place object_id %d at %v (Rotation %d)" % [obj.object_id, obj_pos, combined_rot])
-						pass
+						continue
 				elif object_scene_path != "":
 					direct_scene_count += 1
 					if collect_object_telemetry:
@@ -1242,67 +1154,30 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 							"rotation": obj_rotation,
 							"world_pos": str(obj_pos)
 						})
-			PerformanceMonitor.end_measure("Prefab Objects", 5.0)
 			if flush_visual_batches and defer_global_visual_batch_rebuild and building_manager and building_manager.has_method("flush_global_visual_batches"):
 				building_manager.flush_global_visual_batches()
 			object_spawn_elapsed_ms = float(Time.get_ticks_usec() - object_start_us) / 1000.0
 
 	if not skip_blocks and not skip_block_placement_for_test and _should_seal_prefab_foundation(placement_profile):
 		var seal_start_us := Time.get_ticks_usec()
-		PerformanceMonitor.start_measure("Prefab Seal")
 		var sealed_columns := _seal_prefab_foundation(prefab_name, spawn_pos, placement_profile, min_offset, max_offset)
-		PerformanceMonitor.end_measure("Prefab Seal", 1.0)
 		seal_elapsed_ms = float(Time.get_ticks_usec() - seal_start_us) / 1000.0
 		if sealed_columns > 0:
 			DebugManager.log_building("[FoundationSeal] Sealed %d columns for '%s'" % [sealed_columns, prefab_name])
 
-	if flush_chunks and building_manager:
-		if skip_chunk_flush_for_test:
-			PerformanceMonitor.capture_scope_event("buildings", "chunk_flush_skipped", {
-				"prefab": prefab_name,
-				"reason": "test_toggle"
-			})
-		elif building_manager.has_method("has_dirty_visible_chunks") and not building_manager.has_dirty_visible_chunks():
-			PerformanceMonitor.capture_scope_event("buildings", "chunk_flush_skipped", {
-				"prefab": prefab_name,
-				"reason": "hidden_only"
-			})
-		elif building_manager.world_map_mode and not pending_spawn_jobs.is_empty():
-			PerformanceMonitor.capture_scope_state("buildings", {
-				"phase": "chunk_flush_deferred",
-				"prefab": prefab_name,
-				"pending_spawn_jobs": pending_spawn_jobs.size(),
-				"pending_dirty_chunks": building_manager.has_method("has_dirty_chunks") and building_manager.has_dirty_chunks()
-			})
-		else:
-			var flush_start_us := Time.get_ticks_usec()
-			PerformanceMonitor.start_measure("Prefab Chunk Flush")
-			building_manager.flush_dirty_chunks()
-			PerformanceMonitor.end_measure("Prefab Chunk Flush", 5.0)
-			chunk_flush_elapsed_ms = float(Time.get_ticks_usec() - flush_start_us) / 1000.0
+	if (
+		flush_chunks
+		and building_manager
+		and not skip_chunk_flush_for_test
+		and (not building_manager.has_method("has_dirty_visible_chunks") or building_manager.has_dirty_visible_chunks())
+		and not (building_manager.world_map_mode and not pending_spawn_jobs.is_empty())
+	):
+		var flush_start_us := Time.get_ticks_usec()
+		building_manager.flush_dirty_chunks()
+		chunk_flush_elapsed_ms = float(Time.get_ticks_usec() - flush_start_us) / 1000.0
 	
 	var mode_str = "carve" if carve_terrain else "surface"
 	DebugManager.log_building("Spawned user prefab '%s' at %v (submerge: %d, mode: %s)" % [prefab_name, spawn_pos, submerge_offset, mode_str])
-	PerformanceMonitor.end_measure("Prefab: " + prefab_name, 10.0)
-	var spawn_complete_event := {
-		"prefab": prefab_name,
-		"carved_terrain": carved_terrain,
-		"carve_elapsed_ms": carve_elapsed_ms,
-		"block_count": blocks.size(),
-		"object_count": prefab_object_count,
-		"unique_object_kinds": object_mix_counts.size() if collect_object_telemetry else 0,
-		"direct_scene_count": direct_scene_count,
-		"block_placement_elapsed_ms": block_placement_elapsed_ms,
-		"block_pack_elapsed_ms": block_pack_elapsed_ms,
-		"block_apply_elapsed_ms": block_apply_elapsed_ms,
-		"object_spawn_elapsed_ms": object_spawn_elapsed_ms,
-		"seal_elapsed_ms": seal_elapsed_ms,
-		"chunk_flush_elapsed_ms": chunk_flush_elapsed_ms,
-		"slowest_object_spawns": _build_top_slow_object_spawns(slow_object_spawns, 5) if collect_object_telemetry else [],
-		"top_object_mix": _build_top_object_mix_summary(object_mix_counts, 5) if collect_object_telemetry else []
-	}
-	if not world_map_mode:
-		PerformanceMonitor.capture_scope_event("buildings", "spawn_complete", spawn_complete_event)
 	return true
 
 func _can_use_column_terrain_ops() -> bool:
@@ -1441,12 +1316,10 @@ func _spawn_scene_at(scene_path: String, pos: Vector3, rotation_y: float):
 	if not packed:
 		return
 	
-	PerformanceMonitor.start_measure("Prefab Scene Spawn")
 	var instance = packed.instantiate()
 	add_child(instance)
 	instance.global_position = pos
 	instance.rotation_degrees.y = rotation_y
-	PerformanceMonitor.end_measure("Prefab Scene Spawn", 0.5)
 
 func _build_top_object_mix_summary(object_mix_counts: Dictionary, limit: int = 5) -> Array:
 	var entries: Array = []

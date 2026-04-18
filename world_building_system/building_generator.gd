@@ -97,10 +97,8 @@ func _process_spawn_queue() -> void:
 	if spawn_queue.is_empty():
 		return
 	
-	PerformanceMonitor.start_measure("Building Spawn")
 	var item = spawn_queue.pop_front()
 	_spawn_building(item.position, item.rotation, item.prefab_name)
-	PerformanceMonitor.end_measure("Building Spawn", 5.0)
 
 ## Called when a chunk finishes generating
 func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D) -> void:

@@ -337,38 +337,7 @@ func _get_cpu_task_queue_count() -> int:
 
 
 func _capture_terrain_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
-	var viewer_pos := get_viewer_position()
-	var viewer_chunk := Vector3i(
-		int(floor(viewer_pos.x / CHUNK_STRIDE)),
-		int(floor(viewer_pos.y / CHUNK_STRIDE)),
-		int(floor(viewer_pos.z / CHUNK_STRIDE))
-	)
-
-	PerformanceMonitor.capture_scope_state("terrain", {
-		"phase": "initial_load" if initial_load_phase else "exploration",
-		"loading_paused": loading_paused,
-		"skip_terrain_chunk_updates_for_test": skip_terrain_chunk_updates_for_test,
-		"fps": current_fps,
-		"target_fps": target_fps,
-		"budget_ms": adaptive_frame_budget_ms,
-		"chunks_per_frame_limit": chunks_per_frame_limit,
-		"active_chunks": active_chunks.size(),
-		"pending_nodes": get_pending_nodes_count(),
-		"task_queue": _get_task_queue_count(),
-		"cpu_task_queue": _get_cpu_task_queue_count(),
-		"spawn_zones_pending": pending_spawn_zones.size(),
-		"modification_batches_pending": pending_batches.size(),
-		"chunks_loaded_initial": chunks_loaded_initial,
-		"initial_load_target_chunks": initial_load_target_chunks,
-		"last_update_loads": _last_update_loads,
-		"last_update_unloads": _last_update_unloads,
-		"backend": _last_update_backend,
-		"viewer_chunk": str(viewer_chunk),
-		"viewer_pos": str(viewer_pos)
-	})
-
-	if not event_label.is_empty():
-		PerformanceMonitor.capture_scope_event("terrain", event_label, details)
+	return
 
 
 func _process(delta):
@@ -383,39 +352,15 @@ func _process(delta):
 	_adjust_adaptive_loading()
 
 	if skip_terrain_chunk_updates_for_test:
-		PerformanceMonitor.capture_scope_state("terrain", {
-			"phase": "terrain_updates_skipped",
-			"skip_terrain_chunk_updates_for_test": true,
-			"loading_paused": loading_paused,
-			"initial_load_phase": initial_load_phase,
-			"active_chunks": active_chunks.size(),
-			"pending_nodes": get_pending_nodes_count(),
-			"task_queue": _get_task_queue_count(),
-			"cpu_task_queue": _get_cpu_task_queue_count(),
-			"spawn_zones_pending": pending_spawn_zones.size(),
-			"modification_batches_pending": pending_batches.size()
-		})
 		return
 
 	var defer_terrain_finalization := false
 	if not initial_load_phase:
-		var frame_budget_ms := float(PerformanceMonitor.thresholds.get("frame_time", 1000.0 / 60.0))
+		var frame_budget_ms := 1000.0 / 60.0
 		if _last_frame_ms > frame_budget_ms:
 			_hot_frame_backoff_remaining_frames = maxi(_hot_frame_backoff_remaining_frames, terrain_hot_frame_backoff_frames)
 		if _hot_frame_backoff_remaining_frames > 0:
 			defer_terrain_finalization = true
-			PerformanceMonitor.capture_scope_state("terrain", {
-				"phase": "terrain_hot_frame_backoff",
-				"loading_paused": loading_paused,
-				"initial_load_phase": initial_load_phase,
-				"last_frame_ms": _last_frame_ms,
-				"backoff_frames_remaining": _hot_frame_backoff_remaining_frames,
-				"active_chunks": active_chunks.size(),
-				"pending_nodes": get_pending_nodes_count(),
-				"task_queue": _get_task_queue_count(),
-				"cpu_task_queue": _get_cpu_task_queue_count(),
-				"spawn_zones_pending": pending_spawn_zones.size()
-			})
 			_hot_frame_backoff_remaining_frames -= 1
 
 		var building_manager = get_tree().get_first_node_in_group("building_manager")
@@ -428,32 +373,15 @@ func _process(delta):
 		var pending_visual_batches: bool = building_manager and building_manager.has_method("has_pending_visual_batch_work") and building_manager.has_pending_visual_batch_work()
 		if (building_manager and building_manager.has_method("has_pending_building_work") and building_manager.has_pending_building_work()) or pending_visual_batches or prefab_spawn_backlog:
 			defer_terrain_finalization = true
-			PerformanceMonitor.capture_scope_state("terrain", {
-				"phase": "terrain_waiting_on_buildings",
-				"loading_paused": loading_paused,
-				"initial_load_phase": initial_load_phase,
-				"active_chunks": active_chunks.size(),
-				"pending_nodes": get_pending_nodes_count(),
-				"task_queue": _get_task_queue_count(),
-				"cpu_task_queue": _get_cpu_task_queue_count(),
-				"spawn_zones_pending": pending_spawn_zones.size(),
-				"building_backlog": true,
-				"visual_batch_backlog": pending_visual_batches
-			})
 	if not defer_terrain_finalization:
-		PerformanceMonitor.start_measure("Chunk Update")
 		update_chunks()
-		PerformanceMonitor.end_measure("Chunk Update", PerformanceMonitor.thresholds.get("chunk_gen", 3.0)) # Should be fast (< 2ms)
 
-		PerformanceMonitor.start_measure("Node Finalization")
 		process_pending_nodes()
-		PerformanceMonitor.end_measure("Node Finalization", 2.0)
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 
 	# HOTFIX: Ensure all existing chunks have layer 512 (Layer 10) for pickups
 	if active_chunks.size() > 0 and not get_meta("collision_fixed", false):
-		PerformanceMonitor.start_measure("Chunk Hotfix: Collision Sync")
 		for coord in active_chunks:
 			var data = active_chunks[coord]
 			if data:
@@ -463,9 +391,6 @@ func _process(delta):
 					data.node_terrain.collision_layer = 1 | 512
 		set_meta("collision_fixed", true)
 		DebugManager.log_chunk("HOTFIX: Updated existing chunks to layer 1|512")
-		PerformanceMonitor.end_measure("Chunk Hotfix: Collision Sync", 1.0)
-
-	_capture_terrain_telemetry()
 
 var debug_chunk_bounds: bool = false
 
@@ -554,8 +479,6 @@ func update_collision_proximity():
 	_last_collision_center_chunk = center_chunk
 	_last_collision_active_count = active_count
 
-	PerformanceMonitor.start_measure("Chunk Collision Proximity")
-
 	for coord in active_chunks:
 		var data = active_chunks[coord]
 		if data == null:
@@ -574,7 +497,6 @@ func update_collision_proximity():
 			var desired_disabled: bool = not should_have_collision
 			if data.collision_shape_terrain.disabled != desired_disabled:
 				data.collision_shape_terrain.disabled = desired_disabled
-	PerformanceMonitor.end_measure("Chunk Collision Proximity", 0.5)
 
 # Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
 func process_pending_nodes():
@@ -603,10 +525,8 @@ func process_pending_nodes():
 
 	# Sort by distance to player (closest first) only when new items arrived.
 	if pending_nodes_needs_sort:
-		PerformanceMonitor.start_measure("Finalize: Sort")
 		_sort_pending_by_distance()
 		pending_nodes_needs_sort = false
-		PerformanceMonitor.end_measure("Finalize: Sort", 0.1)
 
 	var item = pending_nodes.pop_back()
 	pending_nodes_mutex.unlock()
@@ -1401,23 +1321,17 @@ func _update_chunks_native():
 
 	# 1. Update Grid (C++)
 	# Returns { "load": [Vector3i], "unload": [Vector3i] }
-	PerformanceMonitor.start_measure("Chunk Grid Update")
 	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE, chunks_per_frame_limit)
-	PerformanceMonitor.end_measure("Chunk Grid Update", 0.5)
 
 	# 2. Process Unloads
 	var unload_count := 0
-	PerformanceMonitor.start_measure("Chunk Unload")
 	for coord in result["unload"]:
 		unload_count += 1
 		_unload_chunk(coord)
 		terrain_grid.remove_chunk(coord)
-	PerformanceMonitor.end_measure("Chunk Unload", 0.5)
 
 	# 3. Process Loads
 	var chunks_queued = 0
-	PerformanceMonitor.start_measure("Chunk Load Queue")
-
 	for coord in result["load"]:
 		if chunks_queued >= chunks_per_frame_limit:
 			break
@@ -1429,11 +1343,9 @@ func _update_chunks_native():
 		_load_chunk(coord)
 		terrain_grid.add_chunk(coord)
 		chunks_queued += 1
-	PerformanceMonitor.end_measure("Chunk Load Queue", 0.5)
 
 	# 4. Special Case: Stored Modifications (Force load if nearby)
 	if chunks_queued < chunks_per_frame_limit and not initial_load_phase:
-		PerformanceMonitor.start_measure("Chunk Load Mods")
 		for coord in _get_all_modification_coords():
 			if chunks_queued >= chunks_per_frame_limit: break
 			if active_chunks.has(coord): continue
@@ -1445,7 +1357,6 @@ func _update_chunks_native():
 				_load_chunk(coord)
 				terrain_grid.add_chunk(coord)
 				chunks_queued += 1
-		PerformanceMonitor.end_measure("Chunk Load Mods", 0.5)
 
 	_last_update_loads = chunks_queued
 	_last_update_unloads = unload_count
@@ -2672,18 +2583,13 @@ func _finalize_chunk_creation(item: Dictionary):
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 
 		# Create Material
-		PerformanceMonitor.start_measure("Finalize: Mat")
 		var chunk_material = _create_chunk_material(chunk_pos, item.get("cpu_mat", PackedByteArray()))
-		PerformanceMonitor.end_measure("Finalize: Mat", 0.1)
 
 		# Create Node (VISUALS ONLY)
-		PerformanceMonitor.start_measure("Finalize: Node")
 		# Pass defer_collision=true to prevent create_chunk_node from creating a StaticBody3D/CollisionShape3D
 		var result = create_chunk_node(item.result.mesh, null, chunk_pos, false, chunk_material, true)
-		PerformanceMonitor.end_measure("Finalize: Node", 0.1)
 
 		# Update Data
-		PerformanceMonitor.start_measure("Finalize: Data")
 		var data = active_chunks[coord]
 		if data == null:
 			data = ChunkData.new()
@@ -2711,13 +2617,9 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
 
-		PerformanceMonitor.end_measure("Finalize: Data", 0.1)
-
 		# Spawn Zones
-		PerformanceMonitor.start_measure("Finalize: Spawn")
 		call_deferred("emit_signal", "chunk_generated", coord, data.node_terrain)
 		_check_spawn_zone_readiness(coord)
-		PerformanceMonitor.end_measure("Finalize: Spawn", 0.1)
 
 		var dt = (Time.get_ticks_usec() - start) / 1000.0
 		if dt > 8.0 and DebugManager.LOG_CHUNK: DebugManager.log_chunk("SPIKE Finalize Terrain: %.2f ms" % dt)

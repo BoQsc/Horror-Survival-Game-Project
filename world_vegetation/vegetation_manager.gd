@@ -107,28 +107,6 @@ func get_pending_chunks_count() -> int:
 	return pending_chunks.size()
 
 
-func _capture_vegetation_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
-	PerformanceMonitor.capture_scope_state("vegetation", {
-		"pending_chunks": pending_chunks.size(),
-		"pending_collider_adds": pending_collider_adds.size(),
-		"pending_collider_removes": pending_collider_removes.size(),
-		"pending_rock_placements": pending_rock_placements.size(),
-		"pending_grass_placements": pending_grass_placements.size(),
-		"chunk_tree_data": chunk_tree_data.size(),
-		"chunk_grass_data": chunk_grass_data.size(),
-		"chunk_rock_data": chunk_rock_data.size(),
-		"active_colliders": active_colliders.size(),
-		"active_grass_colliders": active_grass_colliders.size(),
-		"active_rock_colliders": active_rock_colliders.size(),
-		"is_initial_load_batch": is_initial_load_batch,
-		"initial_load_count": initial_load_count,
-		"pending_vegetation_regen": pending_vegetation_regen,
-		"collider_refresh_dirty": _collider_refresh_dirty
-	})
-
-	if not event_label.is_empty():
-		PerformanceMonitor.capture_scope_event("vegetation", event_label, details)
-
 func _ready():
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
@@ -382,23 +360,17 @@ func _physics_process(_delta):
 		elif is_instance_valid(item.chunk_node):
 			# Stage 0: Trees
 			if item.stage == 0:
-				PerformanceMonitor.start_measure("Veg Spawn: Trees")
 				_place_vegetation_for_chunk(item.coord, item.chunk_node)
-				PerformanceMonitor.end_measure("Veg Spawn: Trees", 2.0)
 				item.stage = 1
 
 			# Stage 1: Grass
 			elif item.stage == 1:
-				PerformanceMonitor.start_measure("Veg Spawn: Grass")
 				_place_grass_for_chunk(item.coord, item.chunk_node)
-				PerformanceMonitor.end_measure("Veg Spawn: Grass", 2.0)
 				item.stage = 2
 
 			# Stage 2: Rocks
 			elif item.stage == 2:
-				PerformanceMonitor.start_measure("Veg Spawn: Rocks")
 				_place_rocks_for_chunk(item.coord, item.chunk_node)
-				PerformanceMonitor.end_measure("Veg Spawn: Rocks", 2.0)
 
 				# All stages done
 				pending_chunks.pop_front()
@@ -410,9 +382,6 @@ func _physics_process(_delta):
 						is_initial_load_batch = false
 						initial_load_count = 0
 						all_vegetation_ready.emit()
-						_capture_vegetation_telemetry("initial_batch_complete", {
-							"source": "physics_process"
-						})
 						DebugManager.log_vegetation("Initial load batch finished - signaling all_vegetation_ready")
 				DebugManager.log_vegetation("Initial load vegetation batch complete - signaling readiness")
 		else:
@@ -437,20 +406,16 @@ func _physics_process(_delta):
 		_last_collider_update_chunk = current_player_chunk
 		_last_collider_update_pos = current_player_pos
 		_collider_refresh_dirty = false
-		PerformanceMonitor.start_measure("Veg Collider Update")
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
 		_cleanup_orphan_colliders()
-		PerformanceMonitor.end_measure("Veg Collider Update", 2.0)
 
 	# Always process incremental updates (Add/Remove actual nodes)
 	_process_queued_collider_updates()
 
 	# Process pending placements (retry when chunk becomes valid)
 	_process_pending_placements()
-
-	_capture_vegetation_telemetry()
 
 func _process_queued_collider_updates():
 	var updates_done = 0
@@ -1157,7 +1122,6 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 	if not terrain_manager:
 		return
 
-	PerformanceMonitor.start_measure("Veg Clear Area")
 
 	var radius_sq = radius * radius
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
@@ -1231,7 +1195,6 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 							_return_rock_collider_to_pool(active_rock_colliders[key])
 							active_rock_colliders.erase(key)
 
-	PerformanceMonitor.end_measure("Veg Clear Area", 2.0)
 
 # ========== GRASS SPAWNING AND HARVESTING ==========
 
@@ -2150,11 +2113,6 @@ func load_save_data(data: Dictionary):
 	# DEFERRED: Set flag to regenerate vegetation when terrain is fully ready
 	# This is triggered by spawn_zones_ready signal (after terrain modifications applied)
 	pending_vegetation_regen = true
-	_capture_vegetation_telemetry("regen_pending", {
-		"chopped_trees": chopped_trees.size(),
-		"removed_grass": removed_grass.size(),
-		"removed_rocks": removed_rocks.size()
-	})
 	DebugManager.log_vegetation("Vegetation regeneration pending - waiting for spawn_zones_ready")
 
 ## Called when terrain confirms spawn zones are ready (after modifications applied)
@@ -2163,18 +2121,11 @@ func _on_spawn_zones_ready(_positions: Array) -> void:
 		pending_vegetation_regen = false
 		is_initial_load_batch = true
 		initial_load_count = pending_chunks.size()
-		_capture_vegetation_telemetry("regen_armed", {
-			"pending_chunks": initial_load_count,
-			"source": "spawn_zones_ready"
-		})
 
 		# If queue is empty, signal ready now
 		if initial_load_count <= 0:
 			all_vegetation_ready.emit()
 			is_initial_load_batch = false
-			_capture_vegetation_telemetry("initial_batch_complete", {
-				"source": "spawn_zones_ready"
-			})
 			DebugManager.log_vegetation("No vegetation chunks pending - signaling ready")
 		else:
 			DebugManager.log_vegetation("Initial load batch set to %d chunks (based on current queue)" % initial_load_count)
@@ -2240,10 +2191,5 @@ func clear_all_data():
 	pending_vegetation_regen = false
 	is_initial_load_batch = false
 	initial_load_count = 0
-	_capture_vegetation_telemetry("cleared", {
-		"grass_coords": grass_coords.size(),
-		"rock_coords": rock_coords.size(),
-		"tree_coords": tree_coords.size()
-	})
 
 	DebugManager.log_vegetation("VegetationManager: All data cleared for new session")

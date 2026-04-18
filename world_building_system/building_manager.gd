@@ -173,11 +173,6 @@ func queue_object_collision(chunk: BuildingChunk, obj: Node3D, anchor: Vector3i)
 		"anchor": anchor
 	})
 
-	PerformanceMonitor.capture_scope_state("buildings", {
-		"phase": "object_collision_queue",
-		"pending_object_collision_jobs": _pending_object_collision_tasks.size()
-	})
-
 func mark_chunk_dirty(chunk_coord: Vector3i, chunk: BuildingChunk) -> void:
 	if not chunk or not is_instance_valid(chunk):
 		return
@@ -189,16 +184,10 @@ func _process_pending_object_collisions() -> void:
 		return
 	if skip_object_collisions_for_test:
 		_pending_object_collision_tasks.clear()
-		PerformanceMonitor.capture_scope_state("buildings", {
-			"phase": "object_collision_skipped",
-			"pending_object_collision_jobs": 0,
-			"skip_object_collisions_for_test": true
-		})
 		return
 
-	var start_time := Time.get_ticks_usec()
 	var processed := 0
-	var started_measure := false
+	var start_time := Time.get_ticks_usec()
 
 	while not _pending_object_collision_tasks.is_empty():
 		if processed > 0:
@@ -214,22 +203,8 @@ func _process_pending_object_collisions() -> void:
 		if not is_instance_valid(chunk) or not is_instance_valid(obj):
 			continue
 
-		if not started_measure:
-			PerformanceMonitor.start_measure("Building Object Collision")
-			started_measure = true
-
 		chunk._generate_object_collision(obj, anchor)
 		processed += 1
-
-	if started_measure:
-		PerformanceMonitor.end_measure("Building Object Collision", 0.5)
-
-	if processed > 0 or not _pending_object_collision_tasks.is_empty():
-		PerformanceMonitor.capture_scope_state("buildings", {
-			"phase": "object_collision_queue",
-			"pending_object_collision_jobs": _pending_object_collision_tasks.size(),
-			"processed_this_frame": processed
-		})
 
 func clear_pending_object_collision_tasks() -> void:
 	_pending_object_collision_tasks.clear()
@@ -307,7 +282,6 @@ func flush_global_visual_batches() -> void:
 		return
 
 	var start_time := Time.get_ticks_usec()
-	PerformanceMonitor.start_measure("Building Visual Batch Flush")
 	var dirty_ids: Array = _dirty_global_visual_batch_object_ids.keys()
 	_dirty_global_visual_batch_object_ids.clear()
 	var rebuilt := 0
@@ -326,22 +300,6 @@ func flush_global_visual_batches() -> void:
 			mesh = visual_data.get("mesh")
 		_rebuild_global_visual_batch(object_id, mesh)
 		rebuilt += 1
-	PerformanceMonitor.end_measure("Building Visual Batch Flush", 0.5)
-	var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
-	var remaining := _dirty_global_visual_batch_object_ids.size()
-	PerformanceMonitor.capture_scope_state("buildings", {
-		"phase": "visual_batch_flush",
-		"dirty_count": dirty_ids.size(),
-		"rebuilt_count": rebuilt,
-		"remaining_dirty_count": remaining,
-		"elapsed_ms": elapsed_ms
-	})
-	PerformanceMonitor.capture_scope_event("buildings", "visual_batch_flush", {
-		"dirty_count": dirty_ids.size(),
-		"rebuilt_count": rebuilt,
-		"elapsed_ms": elapsed_ms
-	})
-
 func has_dirty_global_visual_batches() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
 
@@ -598,7 +556,6 @@ func flush_dirty_chunks():
 		return
 
 	var start_time := Time.get_ticks_usec()
-	PerformanceMonitor.start_measure("BatchFlush")
 	# Only rebuild a limited number of visible chunks per flush so we do not
 	# turn one town burst into a single giant rebuild spike.
 	var effective_budget := dirty_chunk_flush_budget
@@ -637,27 +594,6 @@ func flush_dirty_chunks():
 		if processed >= effective_budget:
 			break
 
-	PerformanceMonitor.end_measure("BatchFlush", 0.5)
-	var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
-	PerformanceMonitor.capture_scope_state("buildings", {
-		"phase": "batch_flush",
-		"dirty_count": flush_coords.size(),
-		"dirty_visible_count": visible_coords.size(),
-		"dirty_hidden_count": hidden_coords.size(),
-		"rebuilt_count": rebuilt,
-		"remaining_dirty_count": _dirty_chunks.size(),
-		"flush_budget": effective_budget,
-		"elapsed_ms": elapsed_ms
-	})
-	PerformanceMonitor.capture_scope_event("buildings", "batch_flush", {
-		"dirty_count": flush_coords.size(),
-		"dirty_visible_count": visible_coords.size(),
-		"dirty_hidden_count": hidden_coords.size(),
-		"rebuilt_count": rebuilt,
-		"remaining_dirty_count": _dirty_chunks.size(),
-		"flush_budget": effective_budget,
-		"elapsed_ms": elapsed_ms
-	})
 	if DebugManager.LOG_BUILDING:
 		DebugManager.log_building("[BatchFlush] Flushed %d dirty chunks (%d rebuilt, %d remaining)" % [flush_coords.size(), rebuilt, _dirty_chunks.size()])
 
@@ -743,8 +679,7 @@ func _build_object_cells(anchor: Vector3i, object_id: int, rotation: int, precom
 ## Set is_procedural=true when spawning from prefab system to trigger loot population
 func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false, is_procedural: bool = false, defer_global_visual_batch_rebuild: bool = false, precomputed_cells: Array = [], object_size: Vector3i = Vector3i.ZERO, object_scene_path: String = "", has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> bool:
 	var obj_def: Dictionary = {}
-	var track_object_telemetry := not (world_map_mode and is_procedural)
-	var needs_registry_lookup := object_scene_path.is_empty() or object_size == Vector3i.ZERO or not has_authored_collision_valid or track_object_telemetry
+	var needs_registry_lookup := object_scene_path.is_empty() or object_size == Vector3i.ZERO or not has_authored_collision_valid
 	if needs_registry_lookup:
 		obj_def = ObjectRegistry.get_object(object_id)
 		if obj_def.is_empty():
@@ -757,30 +692,12 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 			has_authored_collision = ObjectRegistry.get_object_has_authored_collision(object_id)
 			has_authored_collision_valid = true
 
-	if track_object_telemetry:
-		PerformanceMonitor.start_measure("Building Place Object")
-	
 	# Calculate anchor (integer grid position) and fractional position offset
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
 	var fractional_pos = global_pos - Vector3(anchor) # Full 3D offset from anchor
 	var cells: Array[Vector3i] = _build_object_cells(anchor, object_id, rotation, precomputed_cells)
 	if not ignore_collision and not _can_place_cells(cells, object_id):
-		if track_object_telemetry:
-			PerformanceMonitor.end_measure("Building Place Object", 1.0)
 		return false
-	if track_object_telemetry:
-		PerformanceMonitor.capture_scope_state("buildings", {
-			"phase": "place_object",
-			"object_id": object_id,
-			"rotation": rotation,
-			"global_pos": str(global_pos),
-			"anchor": str(anchor),
-			"ignore_collision": ignore_collision,
-			"is_procedural": is_procedural,
-		"scene_path": object_scene_path if not object_scene_path.is_empty() else str(obj_def.get("scene", "")),
-		"simple_visual_batch": bool(world_map_mode and ObjectRegistry.is_simple_visual_batch_object(object_id)),
-		"cell_count": cells.size()
-	})
 	
 	# Place in the chunk containing the anchor
 	var chunk_coord = Vector3i(
@@ -809,8 +726,6 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 		var visual_data = ObjectRegistry.get_object_visual_data(object_id)
 		if not visual_data.is_empty():
 			var simple_success = chunk.place_simple_visual_object(local_anchor, object_id, rotation, local_cells, fractional_pos, visual_data, defer_global_visual_batch_rebuild)
-			if track_object_telemetry:
-				PerformanceMonitor.end_measure("Building Place Object", 1.0)
 			if simple_success:
 				return true
 
@@ -831,9 +746,6 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 		scene_instance.set_meta("should_populate_loot", true)
 	
 	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos, is_procedural, defer_global_visual_batch_rebuild, object_size, has_authored_collision, has_authored_collision_valid)
-	if track_object_telemetry:
-		PerformanceMonitor.end_measure("Building Place Object", 1.0)
-	
 	return success
 
 ## Remove an object at the given global position

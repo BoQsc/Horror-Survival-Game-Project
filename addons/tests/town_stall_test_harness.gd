@@ -15,6 +15,9 @@ const AUTO_FLY_SPEED := 24.0
 const AUTO_FLY_ASCEND_MARGIN := 40.0
 const AUTO_FLY_ARRIVAL_RADIUS := 12.0
 const AUTO_FLY_ENTRY_CAPTURE_BUFFER := 64.0
+const FRAME_BUDGET_MS := 1000.0 / 60.0
+const TOWN_ENTRY_WINDOW_RECENT_LIMIT := 10
+const PERFORMANCE_SNAPSHOT_DIR := "user://debug/performance"
 
 enum Phase {
 	GENERATING,
@@ -42,6 +45,13 @@ var generated_seed: int = 0
 var selected_town: Dictionary = {}
 var hold_started_logged: bool = false
 var town_entry_capture_started: bool = false
+var _town_entry_samples: Array[Dictionary] = []
+var _town_entry_snapshot_stamp: String = ""
+var _town_entry_capture_reason: String = ""
+var _scope_states: Dictionary = {}
+var _recent_scope_events: Array[Dictionary] = []
+var _town_entry_latest_town_state: Dictionary = {}
+var _town_entry_latest_entities_state: Dictionary = {}
 var auto_teleport_enabled: bool = true
 var disable_buildings_enabled: bool = false
 var disable_building_objects_enabled: bool = false
@@ -79,6 +89,26 @@ func _get_town_stall_seed() -> int:
 	return 12345
 
 
+func _get_dominant_bucket(bucket_counts: Dictionary) -> Dictionary:
+	var dominant_bucket := "Unknown"
+	var dominant_count := 0
+	for bucket_variant in bucket_counts.keys():
+		var bucket := str(bucket_variant)
+		var count := int(bucket_counts.get(bucket_variant, 0))
+		if count > dominant_count:
+			dominant_bucket = bucket
+			dominant_count = count
+	return {
+		"bucket": dominant_bucket,
+		"count": dominant_count
+	}
+
+
+func _make_timestamp_slug() -> String:
+	var timestamp := Time.get_datetime_string_from_system(true, true)
+	return timestamp.replace(":", "-").replace(" ", "_").replace("/", "-")
+
+
 func _get_positive_env_float(env_name: String, default_value: float) -> float:
 	var raw_value := OS.get_environment(env_name).strip_edges()
 	if raw_value.is_empty():
@@ -95,18 +125,47 @@ func _get_positive_env_float(env_name: String, default_value: float) -> float:
 
 
 func _emit_scope_state(scope: String, payload: Dictionary) -> void:
-	if PerformanceMonitor and PerformanceMonitor.has_method("capture_scope_state"):
-		PerformanceMonitor.capture_scope_state(scope, payload)
+	if scope.is_empty():
+		return
+
+	var state := payload.duplicate(true)
+	var frame_number := _get_current_frame_number()
+	state["frame"] = frame_number
+	state["timestamp"] = Time.get_ticks_msec()
+	_scope_states[scope] = state
+	if scope == "town" or scope == "town_stall_test":
+		_town_entry_latest_town_state = state.duplicate(true)
+	elif scope == "entities":
+		_town_entry_latest_entities_state = state.duplicate(true)
 
 
 func _emit_scope_event(scope: String, event_name: String, payload: Dictionary) -> void:
-	if PerformanceMonitor and PerformanceMonitor.has_method("capture_scope_event"):
-		PerformanceMonitor.capture_scope_event(scope, event_name, payload)
+	if scope.is_empty() or event_name.is_empty():
+		return
+
+	var event := {
+		"scope": scope,
+		"label": event_name,
+		"frame": _get_current_frame_number(),
+		"timestamp": Time.get_ticks_msec()
+	}
+	if not payload.is_empty():
+		event["details"] = payload.duplicate(true)
+
+	_recent_scope_events.append(event)
+	if _recent_scope_events.size() > 64:
+		_recent_scope_events.pop_front()
 
 
 func _reset_town_measurement_window(reason: String) -> void:
-	if PerformanceMonitor and PerformanceMonitor.has_method("reset_measurement_window"):
-		PerformanceMonitor.reset_measurement_window(reason)
+	_town_entry_samples.clear()
+	_scope_states.clear()
+	_recent_scope_events.clear()
+	_town_entry_snapshot_stamp = ""
+	_town_entry_capture_reason = reason
+	town_entry_capture_started = true
+	_town_entry_latest_town_state.clear()
+	_town_entry_latest_entities_state.clear()
 	_emit_scope_state("town_stall_test", {
 		"phase": "measurement_reset",
 		"reason": reason,
@@ -116,6 +175,321 @@ func _reset_town_measurement_window(reason: String) -> void:
 		"reason": reason,
 		"world_path": generated_world_path
 	})
+
+
+func _get_current_frame_number() -> int:
+	if Engine.has_method("get_process_frames"):
+		return int(Engine.get_process_frames())
+	return _town_entry_samples.size() + 1
+
+
+func _capture_native_town_entry_sample() -> void:
+	if not town_entry_capture_started or pending_quit:
+		return
+
+	var sample := _build_native_town_entry_sample()
+	if sample.is_empty():
+		return
+
+	_town_entry_samples.append(sample)
+
+
+func _build_native_town_entry_sample() -> Dictionary:
+	var frame_number := _get_current_frame_number()
+	var fps := float(Performance.get_monitor(Performance.TIME_FPS))
+	var total_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	var physics_ms := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+	var navigation_ms := Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0
+	var draw_calls := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
+	var objects := int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))
+	var vram_mb := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / (1024.0 * 1024.0)
+	var other_ms := maxf(0.0, total_ms - physics_ms - navigation_ms)
+	var top_measure := _resolve_native_top_measure(total_ms, physics_ms, navigation_ms, other_ms, draw_calls)
+
+	return {
+		"frame": frame_number,
+		"fps": fps,
+		"total_ms": total_ms,
+		"draw_calls": draw_calls,
+		"objects": objects,
+		"physics_ms": physics_ms,
+		"navigation_ms": navigation_ms,
+		"vram_mb": vram_mb,
+		"other_ms": other_ms,
+		"top_measure_name": str(top_measure.get("name", "Unknown")),
+		"top_measure_bucket": str(top_measure.get("bucket", "Unknown")),
+		"top_measure_ms": float(top_measure.get("ms", 0.0)),
+		"top_measure_pct": float(top_measure.get("pct", 0.0))
+	}
+
+
+func _resolve_native_top_measure(total_ms: float, physics_ms: float, navigation_ms: float, other_ms: float, draw_calls: int) -> Dictionary:
+	var top_name := "Unmeasured"
+	var top_bucket := "Unmeasured"
+	var top_ms := other_ms
+
+	if physics_ms >= navigation_ms and physics_ms >= other_ms:
+		top_name = "Engine: Physics"
+		top_bucket = top_name
+		top_ms = physics_ms
+	elif navigation_ms >= physics_ms and navigation_ms >= other_ms:
+		top_name = "Engine: Navigation"
+		top_bucket = top_name
+		top_ms = navigation_ms
+	elif draw_calls > 0:
+		top_name = "GPU/Render (%d draws)" % draw_calls
+		top_bucket = "GPU/Render"
+
+	return {
+		"name": top_name,
+		"bucket": top_bucket,
+		"ms": top_ms,
+		"pct": top_ms / total_ms * 100.0 if total_ms > 0.0 else 0.0
+	}
+
+
+func _build_empty_native_town_entry_window() -> Dictionary:
+	return {
+		"sample_count": 0,
+		"start_frame": -1,
+		"end_frame": -1,
+		"avg_fps": 0.0,
+		"avg_draw_calls": 0.0,
+		"avg_objects": 0.0,
+		"avg_total_ms": 0.0,
+		"avg_physics_ms": 0.0,
+		"avg_navigation_ms": 0.0,
+		"avg_vram_mb": 0.0,
+		"avg_other_ms": 0.0,
+		"max_total_ms": 0.0,
+		"max_total_frame": -1,
+		"frames_over_budget": 0,
+		"frames_over_40ms": 0,
+		"frames_over_50ms": 0,
+		"stall_over_budget_ms": 0.0,
+		"stall_over_40ms_ms": 0.0,
+		"stall_over_50ms_ms": 0.0,
+		"longest_over_budget_streak": 0,
+		"longest_over_40ms_streak": 0,
+		"longest_over_50ms_streak": 0,
+		"peak_top_bucket": "Unknown",
+		"peak_top_measure_name": "Unknown",
+		"peak_top_measure_ms": 0.0,
+		"peak_top_measure_pct": 0.0,
+		"peak_entry_sample": {},
+		"stable_top_bucket": "Unknown",
+		"stable_top_bucket_count": 0,
+		"top_bucket_counts": {},
+		"baseline_comparison": {},
+		"latest_town_state": {},
+		"latest_entities_state": {}
+	}
+
+
+func _build_native_town_entry_window(samples: Array[Dictionary], window_size: int) -> Dictionary:
+	if samples.is_empty() or window_size <= 0:
+		return _build_empty_native_town_entry_window()
+
+	var sample_count := mini(window_size, samples.size())
+	if sample_count <= 0:
+		return _build_empty_native_town_entry_window()
+
+	var start_index := samples.size() - sample_count
+	var total_fps := 0.0
+	var total_draw_calls := 0.0
+	var total_objects := 0.0
+	var total_ms := 0.0
+	var total_physics_ms := 0.0
+	var total_navigation_ms := 0.0
+	var total_vram_mb := 0.0
+	var total_other_ms := 0.0
+	var bucket_counts: Dictionary = {}
+	var first_entry: Dictionary = {}
+	var last_entry: Dictionary = {}
+	var peak_entry: Dictionary = {}
+	var peak_total_ms := -1.0
+	var peak_frame := -1
+	var peak_top_bucket := "Unknown"
+	var peak_top_measure_name := "Unknown"
+	var peak_top_measure_ms := 0.0
+	var peak_top_measure_pct := 0.0
+	var frames_over_budget := 0
+	var frames_over_40ms := 0
+	var frames_over_50ms := 0
+	var total_over_budget_ms := 0.0
+	var total_over_40ms_ms := 0.0
+	var total_over_50ms_ms := 0.0
+	var current_over_budget_streak := 0
+	var current_over_40ms_streak := 0
+	var current_over_50ms_streak := 0
+	var longest_over_budget_streak := 0
+	var longest_over_40ms_streak := 0
+	var longest_over_50ms_streak := 0
+
+	for index in range(start_index, samples.size()):
+		var entry: Dictionary = samples[index]
+		if index == start_index:
+			first_entry = entry
+		last_entry = entry
+		total_fps += float(entry.get("fps", 0.0))
+		total_draw_calls += float(entry.get("draw_calls", 0))
+		total_objects += float(entry.get("objects", 0))
+		total_ms += float(entry.get("total_ms", 0.0))
+		total_physics_ms += float(entry.get("physics_ms", 0.0))
+		total_navigation_ms += float(entry.get("navigation_ms", 0.0))
+		total_vram_mb += float(entry.get("vram_mb", 0.0))
+		total_other_ms += float(entry.get("other_ms", 0.0))
+
+		var frame_total_ms := float(entry.get("total_ms", 0.0))
+		if frame_total_ms > peak_total_ms:
+			peak_total_ms = frame_total_ms
+			peak_frame = int(entry.get("frame", 0))
+			peak_entry = entry
+			peak_top_bucket = str(entry.get("top_measure_bucket", "Unknown"))
+			peak_top_measure_name = str(entry.get("top_measure_name", "Unknown"))
+			peak_top_measure_ms = float(entry.get("top_measure_ms", 0.0))
+			peak_top_measure_pct = float(entry.get("top_measure_pct", 0.0))
+
+		if frame_total_ms >= FRAME_BUDGET_MS:
+			frames_over_budget += 1
+			total_over_budget_ms += frame_total_ms - FRAME_BUDGET_MS
+			current_over_budget_streak += 1
+		else:
+			longest_over_budget_streak = maxi(longest_over_budget_streak, current_over_budget_streak)
+			current_over_budget_streak = 0
+		if frame_total_ms >= 40.0:
+			frames_over_40ms += 1
+			total_over_40ms_ms += frame_total_ms - 40.0
+			current_over_40ms_streak += 1
+		else:
+			longest_over_40ms_streak = maxi(longest_over_40ms_streak, current_over_40ms_streak)
+			current_over_40ms_streak = 0
+		if frame_total_ms >= 50.0:
+			frames_over_50ms += 1
+			total_over_50ms_ms += frame_total_ms - 50.0
+			current_over_50ms_streak += 1
+		else:
+			longest_over_50ms_streak = maxi(longest_over_50ms_streak, current_over_50ms_streak)
+			current_over_50ms_streak = 0
+
+		var bucket := str(entry.get("top_measure_bucket", "Unknown"))
+		bucket_counts[bucket] = int(bucket_counts.get(bucket, 0)) + 1
+
+	longest_over_budget_streak = maxi(longest_over_budget_streak, current_over_budget_streak)
+	longest_over_40ms_streak = maxi(longest_over_40ms_streak, current_over_40ms_streak)
+	longest_over_50ms_streak = maxi(longest_over_50ms_streak, current_over_50ms_streak)
+
+	var dominant_bucket := _get_dominant_bucket(bucket_counts)
+	var avg_total_ms := total_ms / sample_count
+	var avg_draw_calls := total_draw_calls / sample_count
+	var avg_objects := total_objects / sample_count
+	var avg_physics_ms := total_physics_ms / sample_count
+	var avg_navigation_ms := total_navigation_ms / sample_count
+	var avg_vram_mb := total_vram_mb / sample_count
+	var avg_other_ms := total_other_ms / sample_count
+	var latest_vs_window: Dictionary = {}
+	if not last_entry.is_empty():
+		latest_vs_window = {
+			"total_ms": float(last_entry.get("total_ms", 0.0)) - avg_total_ms,
+			"draw_calls": float(last_entry.get("draw_calls", 0)) - avg_draw_calls,
+			"objects": float(last_entry.get("objects", 0)) - avg_objects,
+			"physics_ms": float(last_entry.get("physics_ms", 0.0)) - avg_physics_ms,
+			"navigation_ms": float(last_entry.get("navigation_ms", 0.0)) - avg_navigation_ms,
+			"vram_mb": float(last_entry.get("vram_mb", 0.0)) - avg_vram_mb,
+			"other_ms": float(last_entry.get("other_ms", 0.0)) - avg_other_ms
+		}
+
+	return {
+		"sample_count": sample_count,
+		"start_frame": int(first_entry.get("frame", -1)),
+		"end_frame": int(last_entry.get("frame", -1)),
+		"avg_fps": total_fps / sample_count,
+		"avg_draw_calls": avg_draw_calls,
+		"avg_objects": avg_objects,
+		"avg_total_ms": avg_total_ms,
+		"avg_physics_ms": avg_physics_ms,
+		"avg_navigation_ms": avg_navigation_ms,
+		"avg_vram_mb": avg_vram_mb,
+		"avg_other_ms": avg_other_ms,
+		"max_total_ms": peak_total_ms if peak_total_ms >= 0.0 else 0.0,
+		"max_total_frame": peak_frame,
+		"frames_over_budget": frames_over_budget,
+		"frames_over_40ms": frames_over_40ms,
+		"frames_over_50ms": frames_over_50ms,
+		"stall_over_budget_ms": total_over_budget_ms,
+		"stall_over_40ms_ms": total_over_40ms_ms,
+		"stall_over_50ms_ms": total_over_50ms_ms,
+		"longest_over_budget_streak": longest_over_budget_streak,
+		"longest_over_40ms_streak": longest_over_40ms_streak,
+		"longest_over_50ms_streak": longest_over_50ms_streak,
+		"peak_top_bucket": peak_top_bucket,
+		"peak_top_measure_name": peak_top_measure_name,
+		"peak_top_measure_ms": peak_top_measure_ms,
+		"peak_top_measure_pct": peak_top_measure_pct,
+		"peak_entry_sample": peak_entry.duplicate(true) if not peak_entry.is_empty() else {},
+		"stable_top_bucket": str(dominant_bucket.get("bucket", "Unknown")),
+		"stable_top_bucket_count": int(dominant_bucket.get("count", 0)),
+		"top_bucket_counts": bucket_counts,
+		"baseline_comparison": latest_vs_window,
+		"latest_town_state": _town_entry_latest_town_state.duplicate(true),
+		"latest_entities_state": _town_entry_latest_entities_state.duplicate(true)
+	}
+
+
+func _write_native_town_entry_snapshot() -> void:
+	if _town_entry_snapshot_stamp.is_empty():
+		_town_entry_snapshot_stamp = _make_timestamp_slug()
+
+	if not DirAccess.dir_exists_absolute(PERFORMANCE_SNAPSHOT_DIR):
+		var dir_error := DirAccess.make_dir_recursive_absolute(PERFORMANCE_SNAPSHOT_DIR)
+		if dir_error != OK:
+			push_warning("[TownStallTest] Failed to create snapshot directory: %s (err %d)" % [PERFORMANCE_SNAPSHOT_DIR, dir_error])
+			return
+
+	var town_window := _build_native_town_entry_window(_town_entry_samples, _town_entry_samples.size())
+	var recent_window := _build_native_town_entry_window(_town_entry_samples, TOWN_ENTRY_WINDOW_RECENT_LIMIT)
+	var stable_bucket := str(town_window.get("stable_top_bucket", "Unknown"))
+	var stable_bucket_count := int(town_window.get("stable_top_bucket_count", 0))
+	if stable_bucket.is_empty() or stable_bucket == "Unknown":
+		stable_bucket = str(recent_window.get("stable_top_bucket", "Unknown"))
+		stable_bucket_count = int(recent_window.get("stable_top_bucket_count", 0))
+
+	var snapshot := {
+		"average_fps": town_window.get("avg_fps", 0.0),
+		"avg_draw_calls": town_window.get("avg_draw_calls", 0.0),
+		"avg_vram_mb": town_window.get("avg_vram_mb", 0.0),
+		"avg_physics_ms": town_window.get("avg_physics_ms", 0.0),
+		"avg_navigation_ms": town_window.get("avg_navigation_ms", 0.0),
+		"max_frame_ms": town_window.get("max_total_ms", 0.0),
+		"spike_count": int(town_window.get("frames_over_budget", 0)),
+		"session_started_at": _town_entry_snapshot_stamp,
+		"stable_top_bucket": stable_bucket,
+		"stable_top_bucket_count": stable_bucket_count,
+		"top_bucket_counts": town_window.get("top_bucket_counts", {}),
+		"recent_spike_window": recent_window,
+		"town_entry_window": town_window,
+		"latest_town_state": town_window.get("latest_town_state", {}),
+		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {}))
+	}
+
+	if not _scope_states.is_empty():
+		snapshot["scope_states"] = _scope_states.duplicate(true)
+	if not _recent_scope_events.is_empty():
+		snapshot["recent_scope_events"] = _recent_scope_events.duplicate(true)
+
+	_atomic_write_text_file("%s/snapshot_menu_%s.json" % [PERFORMANCE_SNAPSHOT_DIR, _town_entry_snapshot_stamp], JSON.stringify(snapshot, "\t"))
+
+
+func _atomic_write_text_file(path: String, content: String) -> bool:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		push_warning("[TownStallTest] Failed to open snapshot file for writing: %s" % path)
+		return false
+
+	file.store_string(content)
+	file.close()
+
+	return true
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
@@ -170,6 +544,8 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	phase_time += delta
+	if town_entry_capture_started and phase != Phase.DONE and phase != Phase.FAILED and not pending_quit:
+		_capture_native_town_entry_sample()
 
 	match phase:
 		Phase.WAIT_WORLD_READY:
@@ -784,8 +1160,6 @@ func _fly_to_town(_delta: float) -> void:
 func _hold_in_town(_delta: float) -> void:
 	if not hold_started_logged:
 		print("[TOWN_STALL_TEST] Hold started")
-		if PerformanceMonitor and PerformanceMonitor.has_method("end_town_entry_capture"):
-			PerformanceMonitor.end_town_entry_capture("hold_started")
 		_emit_scope_event("town_stall_test", "hold_started", {
 			"phase": str(phase),
 			"hold_seconds": current_hold_seconds
@@ -840,6 +1214,8 @@ func _begin_shutdown() -> void:
 		"world_path": generated_world_path,
 		"phase": str(phase)
 	})
+	_write_native_town_entry_snapshot()
+	town_entry_capture_started = false
 	if is_instance_valid(game_root):
 		game_root.queue_free()
 	call_deferred("_finalize_shutdown")
@@ -896,4 +1272,5 @@ func _fail(message: String) -> void:
 	_emit_scope_event("town_stall_test", "failed", {
 		"message": message
 	})
+	_write_native_town_entry_snapshot()
 	get_tree().quit(1)

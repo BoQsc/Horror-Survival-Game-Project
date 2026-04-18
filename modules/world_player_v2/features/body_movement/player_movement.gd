@@ -73,9 +73,7 @@ func _setup_footstep_sounds() -> void:
 	DebugManager.log_player("PlayerMovement: Loaded %d footstep sounds" % footstep_sounds.size())
 
 func _physics_process(delta: float) -> void:
-	PerformanceMonitor.start_measure("Player Movement")
 	if not player:
-		PerformanceMonitor.end_measure("Player Movement", 1.0)
 		return
 
 	var gameplay_blocked := UIInputGuard.is_gameplay_input_blocked(self)
@@ -85,7 +83,6 @@ func _physics_process(delta: float) -> void:
 
 	if gameplay_blocked:
 		_update_blocked_physics(delta)
-		PerformanceMonitor.end_measure("Player Movement", 1.0)
 		return
 	
 	_update_water_state()
@@ -119,7 +116,6 @@ func _physics_process(delta: float) -> void:
 	# Reset stair stepping flag for the next frame
 	is_stair_stepping = false
 	
-	PerformanceMonitor.end_measure("Player Movement", 1.0)
 
 func _update_blocked_physics(delta: float) -> void:
 	# Keep passive physics alive so menu input does not freeze the player in midair.
