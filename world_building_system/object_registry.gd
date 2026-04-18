@@ -8,6 +8,7 @@ const OBJECTS = {
 	1: {
 		"name": "Cardboard Box",
 		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.tscn",
+		"visual_mesh_root": "BoxModel",
 		"size": Vector3i(1, 1, 1),
 		"material": "paper",
 		"movable": true,
@@ -15,6 +16,7 @@ const OBJECTS = {
 	2: {
 		"name": "Long Crate",
 		"scene": "res://models/objects/crate/1/simple_long_crate.tscn", 
+		"visual_mesh_root": "CrateModel",
 		"size": Vector3i(2, 1, 1),
 		"material": "wood",
 		"movable": true,
@@ -22,6 +24,7 @@ const OBJECTS = {
 	3: {
 		"name": "Wooden Table",
 		"scene": "res://models/objects/table/1/psx_wooden_table.tscn",
+		"visual_mesh_root": "TableModel",
 		"size": Vector3i(2, 1, 1),
 		"material": "wood",
 		"movable": true,
@@ -29,6 +32,7 @@ const OBJECTS = {
 	4: {
 		"name": "Door",
 		"scene": "res://models/objects/interactive_door/interactive_door.tscn",
+		"visual_mesh_root": "DoorModel",
 		"size": Vector3i(1, 2, 1),
 		"material": "wood",
 		"movable": false,
@@ -36,6 +40,7 @@ const OBJECTS = {
 	5: {
 		"name": "Window",
 		"scene": "res://models/objects/window/1/window.tscn",
+		"visual_mesh_root": "WindowModel",
 		"size": Vector3i(1, 1, 1),
 		"material": "wood",
 		"movable": false,
@@ -43,6 +48,7 @@ const OBJECTS = {
 	6: {
 		"name": "Heavy Pistol",
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn",
+		"visual_mesh_root": "Visuals",
 		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
 		"material": "metal",
 		"movable": true,
@@ -50,6 +56,7 @@ const OBJECTS = {
 	7: {
 		"name": "Chair",
 		"scene": "res://models/objects/chair/1/cc0_chair_8.tscn",
+		"visual_mesh_root": "ChairModel",
 		"size": Vector3i(1, 1, 1),
 		"material": "wood",
 		"movable": false,
@@ -59,9 +66,9 @@ const OBJECTS = {
 const SIMPLE_VISUAL_BATCH_OBJECT_IDS := {
 }
 
-# Proxy batching is disabled so authored meshes stay visible in normal play.
-# Keep this empty unless we intentionally want to hide the original render mesh
-# for a specific object again.
+# Proxy batching is disabled for now because the active batch path can hide
+# authored meshes in some scenes. Keep the explicit render-root metadata so we
+# can revisit batching later without redoing the scene inspection work.
 const PROXY_VISUAL_BATCH_OBJECT_IDS := {
 }
 
@@ -89,7 +96,7 @@ static func preload_all_scenes() -> void:
 		if scene_path != "" and not _preloaded_scenes.has(scene_path):
 			if ResourceLoader.exists(scene_path):
 				_preloaded_scenes[scene_path] = load(scene_path)
-		if is_simple_visual_batch_object(int(id)):
+		if is_simple_visual_batch_object(int(id)) or is_proxy_visual_batch_object(int(id)):
 			get_object_visual_data(int(id))
 		get_object_has_authored_collision(int(id))
 	
@@ -122,7 +129,17 @@ static func get_object_visual_data(object_id: int) -> Dictionary:
 	if not packed:
 		return {}
 	var instance = packed.instantiate()
-	var mesh_inst = _find_first_mesh_instance(instance)
+	var preferred_root_name := str(obj.get("visual_mesh_root", ""))
+	var mesh_inst = _find_render_mesh_instance(instance, preferred_root_name)
+	if preferred_root_name != "" and not mesh_inst:
+		push_warning("[ObjectRegistry] No visible render mesh found for object %d (%s) under '%s'" % [
+			object_id,
+			str(obj.get("name", "Unknown")),
+			preferred_root_name
+		])
+		if instance:
+			instance.free()
+		return {}
 	if not mesh_inst or not mesh_inst.mesh:
 		if instance:
 			instance.free()
@@ -163,6 +180,18 @@ static func is_simple_visual_batch_object(object_id: int) -> bool:
 
 static func is_proxy_visual_batch_object(object_id: int) -> bool:
 	return PROXY_VISUAL_BATCH_OBJECT_IDS.has(object_id)
+
+static func _find_render_mesh_instance(root: Node, preferred_root_name: String = "") -> MeshInstance3D:
+	if not root:
+		return null
+
+	if preferred_root_name != "":
+		var preferred_root := root.find_child(preferred_root_name, true, false)
+		if not preferred_root:
+			return null
+		return _find_first_visible_mesh_instance(preferred_root)
+
+	return _find_first_visible_mesh_instance(root)
 
 static func create_proxy_gameplay_shell(object_id: int, world_map_mode: bool = false) -> Node3D:
 	match object_id:
@@ -256,14 +285,21 @@ static func get_occupied_cells(id: int, anchor: Vector3i, rotation: int) -> Arra
 		cells[i] = local_cells[i] + anchor
 	return cells
 
-static func _find_first_mesh_instance(node: Node) -> MeshInstance3D:
+static func _find_first_visible_mesh_instance(node: Node, ancestors_visible: bool = true) -> MeshInstance3D:
+	if not node or not ancestors_visible:
+		return null
+
+	var node_visible := ancestors_visible
+	if node is Node3D:
+		node_visible = node_visible and bool((node as Node3D).visible)
+
+	if node is MeshInstance3D and node_visible:
+		return node
+
 	for child in node.get_children():
-		if child is MeshInstance3D:
-			return child
-		if child is Node:
-			var nested := _find_first_mesh_instance(child)
-			if nested:
-				return nested
+		var nested := _find_first_visible_mesh_instance(child, node_visible)
+		if nested:
+			return nested
 	return null
 
 static func _get_scene_relative_transform(node: Node3D) -> Transform3D:
