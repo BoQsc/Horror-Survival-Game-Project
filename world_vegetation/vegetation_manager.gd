@@ -107,6 +107,33 @@ func get_pending_chunks_count() -> int:
 	return pending_chunks.size()
 
 
+func get_telemetry_snapshot() -> Dictionary:
+	return {
+		"pending_chunks": pending_chunks.size(),
+		"tree_chunk_count": chunk_tree_data.size(),
+		"grass_chunk_count": chunk_grass_data.size(),
+		"rock_chunk_count": chunk_rock_data.size(),
+		"active_tree_colliders": active_colliders.size(),
+		"active_grass_colliders": active_grass_colliders.size(),
+		"active_rock_colliders": active_rock_colliders.size(),
+		"tree_collider_pool_size": collider_pool.size(),
+		"grass_collider_pool_size": grass_collider_pool.size(),
+		"rock_collider_pool_size": rock_collider_pool.size(),
+		"pending_collider_adds": pending_collider_adds.size(),
+		"pending_collider_removes": pending_collider_removes.size(),
+		"removed_grass_count": removed_grass.size(),
+		"removed_rocks_count": removed_rocks.size(),
+		"chopped_trees_count": chopped_trees.size(),
+		"placed_grass_count": placed_grass.size(),
+		"placed_rocks_count": placed_rocks.size(),
+		"collider_refresh_dirty": _collider_refresh_dirty,
+		"dense_grass_mode": dense_grass_mode,
+		"initial_load_count": initial_load_count,
+		"is_initial_load_batch": is_initial_load_batch,
+		"terrain_supports_road_query": _terrain_supports_road_query
+	}
+
+
 func _ready():
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
@@ -2170,4 +2197,3 @@ func clear_all_data():
 	pending_vegetation_regen = false
 	is_initial_load_batch = false
 	initial_load_count = 0
-

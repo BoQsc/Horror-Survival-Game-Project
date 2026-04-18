@@ -175,11 +175,14 @@ static func _build_axis_positions(span: float, stride: float, edge_inset: float,
 
 static func _dedupe_points(points: Array, epsilon: float) -> Array:
 	var result: Array = []
+	var epsilon_sq := epsilon * epsilon
 	for point in points:
 		var p: Vector2 = point
 		var duplicate := false
 		for existing in result:
-			if p.distance_to(existing) <= epsilon:
+			var dx = p.x - existing.x
+			var dy = p.y - existing.y
+			if dx * dx + dy * dy <= epsilon_sq:
 				duplicate = true
 				break
 		if not duplicate:

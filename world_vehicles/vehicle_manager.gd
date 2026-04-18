@@ -17,6 +17,14 @@ func _ready() -> void:
 	add_to_group("vehicle_manager")
 
 
+func get_telemetry_snapshot() -> Dictionary:
+	return {
+		"vehicle_count": vehicles.size(),
+		"current_player_vehicle_active": is_instance_valid(current_player_vehicle),
+		"player_present": is_instance_valid(player)
+	}
+
+
 func spawn_vehicle(pos: Vector3) -> Node3D:
 	var v = vehicle_scene.instantiate()
 	# Calculate spawn position with random offset

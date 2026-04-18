@@ -436,14 +436,228 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	}
 
 
+func _get_node_telemetry(node: Node) -> Dictionary:
+	if not is_instance_valid(node):
+		return {}
+	if not node.has_method("get_telemetry_snapshot"):
+		return {}
+
+	var telemetry: Variant = node.call("get_telemetry_snapshot")
+	if typeof(telemetry) != TYPE_DICTIONARY:
+		return {}
+	return telemetry
+
+
+func _find_manager_node(group_name: String, fallback_name: String) -> Node:
+	var node := get_tree().get_first_node_in_group(group_name)
+	if is_instance_valid(node):
+		return node
+
+	if is_instance_valid(game_root):
+		var fallback := game_root.find_child(fallback_name, true, false)
+		if is_instance_valid(fallback):
+			return fallback
+
+	return null
+
+
+func _collect_system_telemetry() -> Dictionary:
+	var telemetry: Dictionary = {}
+
+	var terrain_manager_node := _find_manager_node("terrain_manager", "TerrainManager")
+	if terrain_manager_node:
+		telemetry["terrain_manager"] = _get_node_telemetry(terrain_manager_node)
+
+	var building_manager_node := _find_manager_node("building_manager", "BuildingManager")
+	if building_manager_node:
+		telemetry["building_manager"] = _get_node_telemetry(building_manager_node)
+
+	var vegetation_manager_node := _find_manager_node("vegetation_manager", "VegetationManager")
+	if vegetation_manager_node:
+		telemetry["vegetation_manager"] = _get_node_telemetry(vegetation_manager_node)
+
+	var prefab_spawner_node := _find_manager_node("prefab_spawner", "PrefabSpawner")
+	if prefab_spawner_node:
+		telemetry["prefab_spawner"] = _get_node_telemetry(prefab_spawner_node)
+
+	var entity_manager_node := _find_manager_node("entity_manager", "EntityManager")
+	if entity_manager_node:
+		telemetry["entity_manager"] = _get_node_telemetry(entity_manager_node)
+
+	var vehicle_manager_node := _find_manager_node("vehicle_manager", "VehicleManager")
+	if vehicle_manager_node:
+		telemetry["vehicle_manager"] = _get_node_telemetry(vehicle_manager_node)
+
+	return telemetry
+
+
+func _build_pressure_entry(name: String, pressure_score: float, summary: String) -> Dictionary:
+	return {
+		"name": name,
+		"pressure_score": pressure_score,
+		"summary": summary
+	}
+
+
+func _sort_pressure_entry_desc(a: Dictionary, b: Dictionary) -> bool:
+	var a_score := float(a.get("pressure_score", 0.0))
+	var b_score := float(b.get("pressure_score", 0.0))
+	if a_score == b_score:
+		return str(a.get("name", "")) < str(b.get("name", ""))
+	return a_score > b_score
+
+
+func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: Dictionary) -> Array[Dictionary]:
+	var rankings: Array[Dictionary] = []
+
+	var building: Dictionary = system_telemetry.get("building_manager", {})
+	if not building.is_empty():
+		var building_score := float(building.get("total_object_nodes", 0)) * 6.0 \
+			+ float(building.get("total_global_visual_instances", 0)) * 1.0 \
+			+ float(building.get("total_visual_batches", 0)) * 12.0 \
+			+ float(building.get("total_object_collision_nodes", 0)) * 0.5 \
+			+ float(building.get("total_collision_box_nodes", 0)) * 0.25 \
+			+ float(building.get("pending_visual_batch_rebuilds", 0)) * 10.0 \
+			+ float(building.get("pending_object_collision_jobs", 0)) * 4.0 \
+			+ float(building.get("dirty_visible_chunk_count", 0)) * 8.0
+		rankings.append(_build_pressure_entry(
+			"BuildingManager",
+			building_score,
+			"objects=%d object_nodes=%d visual_batches=%d global_instances=%d dirty_visible=%d" % [
+				int(building.get("total_objects", 0)),
+				int(building.get("total_object_nodes", 0)),
+				int(building.get("total_visual_batches", 0)),
+				int(building.get("total_global_visual_instances", 0)),
+				int(building.get("dirty_visible_chunk_count", 0))
+			]
+		))
+
+	var terrain: Dictionary = system_telemetry.get("terrain_manager", {})
+	if not terrain.is_empty():
+		var terrain_score := float(terrain.get("rendered_terrain_chunk_count", 0)) * 6.0 \
+			+ float(terrain.get("rendered_water_chunk_count", 0)) * 3.0 \
+			+ float(terrain.get("active_chunk_count", 0)) * 2.0 \
+			+ float(terrain.get("pending_chunk_count", 0)) * 8.0 \
+			+ float(terrain.get("pending_node_count", 0)) * 5.0 \
+			+ float(terrain.get("pending_batch_count", 0)) * 3.0 \
+			+ float(terrain.get("task_queue_count", 0)) * 2.0 \
+			+ float(terrain.get("cpu_task_queue_count", 0)) * 2.0 \
+			+ float(terrain.get("pending_spawn_zone_count", 0)) * 6.0 \
+			+ float(terrain.get("loaded_dirty_chunk_count", 0)) * 4.0
+		rankings.append(_build_pressure_entry(
+			"TerrainManager",
+			terrain_score,
+			"active_chunks=%d loaded=%d pending=%d rendered=%d/%d dirty=%d" % [
+				int(terrain.get("active_chunk_count", 0)),
+				int(terrain.get("loaded_chunk_count", 0)),
+				int(terrain.get("pending_chunk_count", 0)),
+				int(terrain.get("rendered_terrain_chunk_count", 0)),
+				int(terrain.get("rendered_water_chunk_count", 0)),
+				int(terrain.get("loaded_dirty_chunk_count", 0))
+			]
+		))
+
+	var vegetation: Dictionary = system_telemetry.get("vegetation_manager", {})
+	if not vegetation.is_empty():
+		var vegetation_score := float(vegetation.get("tree_chunk_count", 0)) * 4.0 \
+			+ float(vegetation.get("grass_chunk_count", 0)) * 3.0 \
+			+ float(vegetation.get("rock_chunk_count", 0)) * 2.0 \
+			+ float(vegetation.get("active_tree_colliders", 0)) * 3.0 \
+			+ float(vegetation.get("active_grass_colliders", 0)) * 2.0 \
+			+ float(vegetation.get("active_rock_colliders", 0)) * 2.0 \
+			+ float(vegetation.get("pending_chunks", 0)) * 4.0 \
+			+ float(vegetation.get("pending_collider_adds", 0)) * 1.0 \
+			+ float(vegetation.get("pending_collider_removes", 0)) * 1.0
+		rankings.append(_build_pressure_entry(
+			"VegetationManager",
+			vegetation_score,
+			"trees=%d grass=%d rocks=%d colliders=%d/%d/%d pending=%d" % [
+				int(vegetation.get("tree_chunk_count", 0)),
+				int(vegetation.get("grass_chunk_count", 0)),
+				int(vegetation.get("rock_chunk_count", 0)),
+				int(vegetation.get("active_tree_colliders", 0)),
+				int(vegetation.get("active_grass_colliders", 0)),
+				int(vegetation.get("active_rock_colliders", 0)),
+				int(vegetation.get("pending_chunks", 0))
+			]
+		))
+
+	var prefab_spawner: Dictionary = system_telemetry.get("prefab_spawner", {})
+	if not prefab_spawner.is_empty():
+		var prefab_score := float(prefab_spawner.get("pending_spawn_jobs", 0)) * 10.0 \
+			+ float(prefab_spawner.get("pending_spawn_keys", 0)) * 3.0 \
+			+ float(prefab_spawner.get("spawned_doors", 0)) * 0.5 \
+			+ float(prefab_spawner.get("rotated_block_batches_cache_size", 0)) * 0.1
+		rankings.append(_build_pressure_entry(
+			"PrefabSpawner",
+			prefab_score,
+			"pending_jobs=%d pending_keys=%d spawned=%d doors=%d" % [
+				int(prefab_spawner.get("pending_spawn_jobs", 0)),
+				int(prefab_spawner.get("pending_spawn_keys", 0)),
+				int(prefab_spawner.get("spawned_positions", 0)),
+				int(prefab_spawner.get("spawned_doors", 0))
+			]
+		))
+
+	var entities: Dictionary = system_telemetry.get("entity_manager", {})
+	if not entities.is_empty():
+		var entity_score := float(entities.get("active_entities", 0)) * 6.0 \
+			+ float(entities.get("frozen_entities", 0)) * 2.0 \
+			+ float(entities.get("dormant_entities", 0)) * 1.0 \
+			+ float(entities.get("pending_spawns", 0)) * 8.0 \
+			+ float(entities.get("spawned_chunks", 0)) * 0.25 \
+			+ float(entities.get("entity_pool_size", 0)) * 0.25
+		rankings.append(_build_pressure_entry(
+			"EntityManager",
+			entity_score,
+			"active=%d frozen=%d dormant=%d pending=%d spawned_chunks=%d" % [
+				int(entities.get("active_entities", 0)),
+				int(entities.get("frozen_entities", 0)),
+				int(entities.get("dormant_entities", 0)),
+				int(entities.get("pending_spawns", 0)),
+				int(entities.get("spawned_chunks", 0))
+			]
+		))
+
+	var vehicles: Dictionary = system_telemetry.get("vehicle_manager", {})
+	if not vehicles.is_empty():
+		var vehicle_score := float(vehicles.get("vehicle_count", 0)) * 2.0
+		if bool(vehicles.get("current_player_vehicle_active", false)):
+			vehicle_score += 5.0
+		rankings.append(_build_pressure_entry(
+			"VehicleManager",
+			vehicle_score,
+			"vehicles=%d current_player_vehicle=%s" % [
+				int(vehicles.get("vehicle_count", 0)),
+				"true" if bool(vehicles.get("current_player_vehicle_active", false)) else "false"
+			]
+		))
+
+	rankings.sort_custom(Callable(self, "_sort_pressure_entry_desc"))
+	return rankings
+
+
 func _write_native_town_entry_snapshot() -> void:
 	if _town_entry_snapshot_stamp.is_empty():
 		_town_entry_snapshot_stamp = _make_timestamp_slug()
 
-	if not DirAccess.dir_exists_absolute(PERFORMANCE_SNAPSHOT_DIR):
-		var dir_error := DirAccess.make_dir_recursive_absolute(PERFORMANCE_SNAPSHOT_DIR)
-		if dir_error != OK:
-			push_warning("[TownStallTest] Failed to create snapshot directory: %s (err %d)" % [PERFORMANCE_SNAPSHOT_DIR, dir_error])
+	var snapshot_dir := PERFORMANCE_SNAPSHOT_DIR if PERFORMANCE_SNAPSHOT_DIR.ends_with("/") else PERFORMANCE_SNAPSHOT_DIR + "/"
+	if not DirAccess.dir_exists_absolute(snapshot_dir):
+		var user_root := DirAccess.open("user://")
+		if not user_root:
+			push_warning("[TownStallTest] Failed to open user:// root for snapshot directory")
+			return
+		var debug_err := user_root.make_dir("debug")
+		if debug_err != OK and debug_err != ERR_ALREADY_EXISTS:
+			push_warning("[TownStallTest] Failed to create snapshot base user://debug (err %d)" % debug_err)
+			return
+		var debug_dir := DirAccess.open("user://debug")
+		if not debug_dir:
+			push_warning("[TownStallTest] Failed to open user://debug for snapshot directory")
+			return
+		var perf_err := debug_dir.make_dir("performance")
+		if perf_err != OK and perf_err != ERR_ALREADY_EXISTS:
+			push_warning("[TownStallTest] Failed to create snapshot directory: %s (err %d)" % [PERFORMANCE_SNAPSHOT_DIR, perf_err])
 			return
 
 	var town_window := _build_native_town_entry_window(_town_entry_samples, _town_entry_samples.size())
@@ -453,6 +667,9 @@ func _write_native_town_entry_snapshot() -> void:
 	if stable_bucket.is_empty() or stable_bucket == "Unknown":
 		stable_bucket = str(recent_window.get("stable_top_bucket", "Unknown"))
 		stable_bucket_count = int(recent_window.get("stable_top_bucket_count", 0))
+
+	var system_telemetry := _collect_system_telemetry()
+	var system_pressure_ranking := _build_system_pressure_ranking(system_telemetry, town_window)
 
 	var snapshot := {
 		"average_fps": town_window.get("avg_fps", 0.0),
@@ -469,7 +686,9 @@ func _write_native_town_entry_snapshot() -> void:
 		"recent_spike_window": recent_window,
 		"town_entry_window": town_window,
 		"latest_town_state": town_window.get("latest_town_state", {}),
-		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {}))
+		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {})),
+		"system_telemetry": system_telemetry,
+		"system_pressure_ranking": system_pressure_ranking
 	}
 
 	if not _scope_states.is_empty():
@@ -477,7 +696,7 @@ func _write_native_town_entry_snapshot() -> void:
 	if not _recent_scope_events.is_empty():
 		snapshot["recent_scope_events"] = _recent_scope_events.duplicate(true)
 
-	_atomic_write_text_file("%s/snapshot_menu_%s.json" % [PERFORMANCE_SNAPSHOT_DIR, _town_entry_snapshot_stamp], JSON.stringify(snapshot, "\t"))
+	_atomic_write_text_file("%ssnapshot_menu_%s.json" % [snapshot_dir, _town_entry_snapshot_stamp], JSON.stringify(snapshot, "\t"))
 
 
 func _atomic_write_text_file(path: String, content: String) -> bool:

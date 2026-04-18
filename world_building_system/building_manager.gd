@@ -7,6 +7,8 @@ var mesher: BuildingMesher
 # Render distance management
 @export var viewer: Node3D
 @export var render_distance: int = 8 # Increased for better visibility
+var _last_building_viewer_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _cached_vehicle_manager: Node = null
 
 # Track which chunks are currently visible (have nodes in scene tree)
 var visible_chunks: Dictionary = {} # Vector3i -> true
@@ -94,7 +96,15 @@ func _ready():
 
 func _process(_delta):
 	if viewer:
-		update_building_chunks()
+		var p_pos = get_viewer_position()
+		var center_chunk = Vector3i(
+			floor(p_pos.x / CHUNK_SIZE),
+			floor(p_pos.y / CHUNK_SIZE),
+			floor(p_pos.z / CHUNK_SIZE)
+		)
+		if center_chunk != _last_building_viewer_chunk:
+			_last_building_viewer_chunk = center_chunk
+			update_building_chunks(center_chunk)
 	_process_pending_object_collisions()
 
 ## Gets effective viewer position - returns vehicle position if player is driving
@@ -103,24 +113,37 @@ func get_viewer_position() -> Vector3:
 		return Vector3.ZERO
 	
 	# Check if player is in a vehicle
-	var vm = get_tree().get_first_node_in_group("vehicle_manager")
+	var vm = _get_vehicle_manager()
 	if vm and "current_player_vehicle" in vm and vm.current_player_vehicle:
 		return vm.current_player_vehicle.global_position
 	
 	return viewer.global_position
 
-func update_building_chunks():
-	var p_pos = get_viewer_position()
-	var p_chunk_x = floor(p_pos.x / CHUNK_SIZE)
-	var p_chunk_y = floor(p_pos.y / CHUNK_SIZE)
-	var p_chunk_z = floor(p_pos.z / CHUNK_SIZE)
-	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
+func _get_vehicle_manager() -> Node:
+	if _cached_vehicle_manager and is_instance_valid(_cached_vehicle_manager):
+		return _cached_vehicle_manager
+
+	_cached_vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+	return _cached_vehicle_manager
+
+func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)):
+	if center_chunk.x == 2147483647:
+		var p_pos = get_viewer_position()
+		center_chunk = Vector3i(
+			floor(p_pos.x / CHUNK_SIZE),
+			floor(p_pos.y / CHUNK_SIZE),
+			floor(p_pos.z / CHUNK_SIZE)
+		)
+	var render_distance_sq := render_distance * render_distance
 	
 	# 1. Unload chunks that are too far (remove from scene tree, keep data)
 	var chunks_to_unload = []
 	for coord in visible_chunks:
-		var dist = Vector3(coord).distance_to(Vector3(center_chunk))
-		if dist > render_distance + 2:
+		var dx = coord.x - center_chunk.x
+		var dy = coord.y - center_chunk.y
+		var dz = coord.z - center_chunk.z
+		var dist_sq = dx * dx + dy * dy + dz * dz
+		if dist_sq > (render_distance + 2) * (render_distance + 2):
 			chunks_to_unload.append(coord)
 	
 	for coord in chunks_to_unload:
@@ -131,8 +154,11 @@ func update_building_chunks():
 		if visible_chunks.has(coord):
 			continue # Already visible
 		
-		var dist = Vector3(coord).distance_to(Vector3(center_chunk))
-		if dist <= render_distance:
+		var dx = coord.x - center_chunk.x
+		var dy = coord.y - center_chunk.y
+		var dz = coord.z - center_chunk.z
+		var dist_sq = dx * dx + dy * dy + dz * dz
+		if dist_sq <= render_distance_sq:
 			_load_chunk_visual(coord)
 
 func _unload_chunk_visual(coord: Vector3i):
@@ -396,21 +422,21 @@ func get_telemetry_snapshot() -> Dictionary:
 	var total_dirty_visible_chunks := 0
 	var total_dirty_hidden_chunks := 0
 
-	for chunk_variant in chunks.values():
-		var chunk: BuildingChunk = chunk_variant
+	for chunk_coord_variant in chunks:
+		var chunk: BuildingChunk = chunks[chunk_coord_variant]
 		if not chunk or not is_instance_valid(chunk):
 			continue
 
 		total_objects += chunk.objects.size()
 		total_object_nodes += chunk.object_nodes.size()
 		total_object_collision_nodes += chunk.object_collision_nodes.size()
-		total_collision_box_shapes += chunk.collision_box_shapes.size()
+		total_collision_box_shapes += 1 if chunk.collision_shape else 0
 		total_simple_visual_instances += chunk.simple_visual_instances.size()
 		total_visual_batches += chunk.simple_visual_batch_nodes.size()
 		total_occupied_cells += chunk.occupied_by_object.size()
-		if chunk.is_mesh_dirty():
+		if _dirty_chunks.has(chunk_coord_variant):
 			total_mesh_dirty_chunks += 1
-			if visible_chunks.has(chunk.chunk_coord):
+			if visible_chunks.has(chunk_coord_variant):
 				total_dirty_visible_chunks += 1
 			else:
 				total_dirty_hidden_chunks += 1
@@ -465,9 +491,12 @@ func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 	if viewer:
 		var p_pos = viewer.global_position
 		var p_chunk = Vector3i(floor(p_pos.x / CHUNK_SIZE), floor(p_pos.y / CHUNK_SIZE), floor(p_pos.z / CHUNK_SIZE))
-		var dist = Vector3(chunk_coord).distance_to(Vector3(p_chunk))
+		var dx = chunk_coord.x - p_chunk.x
+		var dy = chunk_coord.y - p_chunk.y
+		var dz = chunk_coord.z - p_chunk.z
+		var dist_sq = dx * dx + dy * dy + dz * dz
 		
-		if dist <= render_distance:
+		if dist_sq <= render_distance * render_distance:
 			add_child(chunk)
 			chunk.position = Vector3(chunk_coord) * CHUNK_SIZE
 			visible_chunks[chunk_coord] = true

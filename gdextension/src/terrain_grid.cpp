@@ -71,6 +71,7 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
         cached_render_distance = render_distance;
         cached_is_above_ground = is_above_ground;
         cached_chunk_stride = chunk_stride;
+        double unload_distance_sq = (double)(render_distance + 2) * (double)(render_distance + 2);
 
         // 1. Calculate Unloads
         // We iterate active_chunks (HashSet iteration is fast)
@@ -78,12 +79,12 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
             double dx = (double)(coord.x - center_x);
             double dy = (double)(coord.y - center_y);
             double dz = (double)(coord.z - center_z);
-            double dist_xz = Math::sqrt(dx * dx + dz * dz);
+            double dist_xz_sq = dx * dx + dz * dz;
 
             bool should_unload = false;
             bool is_terrain_layer = (coord.y >= -20 && coord.y <= 1);
 
-            if (dist_xz > render_distance + 2) {
+            if (dist_xz_sq > unload_distance_sq) {
                 should_unload = true;
             } else if (!is_terrain_layer && Math::abs(dy) > 3) {
                 should_unload = true;
@@ -108,10 +109,11 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
         }
 
         int r = render_distance;
+        int r_sq = r * r;
         for (int x = center_x - r; x <= center_x + r; ++x) {
             for (int z = center_z - r; z <= center_z + r; ++z) {
                 double dist_sq = (double)((x - center_x) * (x - center_x) + (z - center_z) * (z - center_z));
-                if (dist_sq > r * r) {
+                if (dist_sq > r_sq) {
                     continue;
                 }
 

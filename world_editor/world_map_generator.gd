@@ -2811,13 +2811,25 @@ func _generate_grid_buildings(height_bytes: PackedByteArray, water_bytes: Packed
 # ============================================================================
 
 func save_world(path: String, images: Dictionary) -> bool:
-	DirAccess.make_dir_recursive_absolute(path)
+	var save_dir := path if path.ends_with("/") else path + "/"
+	var absolute_path := ProjectSettings.globalize_path(save_dir)
+	var mkdir_err := DirAccess.make_dir_recursive_absolute(absolute_path)
+	if mkdir_err != OK:
+		push_error("[WorldMapGen] Failed to create save directory %s (err %d)" % [absolute_path, mkdir_err])
+		return false
 	for key in images:
 		if images[key] is Image:
-			var err = (images[key] as Image).save_png(path.path_join(key + ".png"))
-			if err != OK:
-				push_error("[WorldMapGen] Failed to save %s" % key)
+			var png_bytes: PackedByteArray = (images[key] as Image).save_png_to_buffer()
+			if png_bytes.is_empty():
+				push_error("[WorldMapGen] Failed to encode %s" % key)
 				return false
+			var png_path := save_dir.path_join(key + ".png")
+			var png_file = FileAccess.open(png_path, FileAccess.WRITE)
+			if not png_file:
+				push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [png_path, FileAccess.get_open_error()])
+				return false
+			png_file.store_buffer(png_bytes)
+			png_file.close()
 	
 	var meta = {
 		"version": 7, "map_size": MAP_SIZE,
@@ -2836,10 +2848,14 @@ func save_world(path: String, images: Dictionary) -> bool:
 	if images.has("terrain_modifications"):
 		meta["terrain_modifications"] = images.terrain_modifications
 	
-	var file = FileAccess.open(path.path_join("world_meta.json"), FileAccess.WRITE)
+	var meta_path := save_dir.path_join("world_meta.json")
+	var file = FileAccess.open(meta_path, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(meta, "\t"))
 		file.close()
+	else:
+		push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [meta_path, FileAccess.get_open_error()])
+		return false
 	return true
 
 func _get_available_prefabs() -> Array[String]:

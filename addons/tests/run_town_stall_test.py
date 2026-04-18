@@ -73,6 +73,15 @@ def _print_snapshot_summary(snapshot_path: Path) -> None:
     print(f"Town stall over budget ms: {town_window.get('stall_over_budget_ms', '?')}")
     print(f"Town longest over-budget streak: {town_window.get('longest_over_budget_streak', '?')}")
     print(f"Recent window stable bucket: {recent_window.get('stable_top_bucket', 'Unknown')} ({recent_window.get('stable_top_bucket_count', 0)})")
+    system_pressure_ranking = data.get("system_pressure_ranking", [])
+    if system_pressure_ranking:
+        print("System pressure ranking:")
+        for index, entry in enumerate(system_pressure_ranking[:5], start=1):
+            print(
+                f"  {index}. {entry.get('name', 'Unknown')} "
+                f"score={float(entry.get('pressure_score', 0.0)):.1f} "
+                f"{entry.get('summary', '')}"
+            )
     print("=" * 50)
 
 

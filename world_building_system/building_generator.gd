@@ -210,9 +210,11 @@ func _add_spots_along_road(spots: Array, chunk_pos: Vector3, chunk_size: int, ro
 
 ## Check if position is far enough from existing buildings
 func _is_valid_spacing(pos: Vector3) -> bool:
+	var min_spacing_sq := min_building_spacing * min_building_spacing
 	for existing in global_building_positions:
-		var dist = Vector2(pos.x, pos.z).distance_to(Vector2(existing.x, existing.z))
-		if dist < min_building_spacing:
+		var dx = pos.x - existing.x
+		var dz = pos.z - existing.z
+		if dx * dx + dz * dz < min_spacing_sq:
 			return false
 	return true
 
@@ -225,8 +227,9 @@ func _is_near_intersection(pos: Vector3) -> bool:
 	var nearest_x = round(pos.x / road_spacing) * road_spacing
 	var nearest_z = round(pos.z / road_spacing) * road_spacing
 	
-	var dist_to_intersection = Vector2(pos.x, pos.z).distance_to(Vector2(nearest_x, nearest_z))
-	return dist_to_intersection < intersection_avoid_radius
+	var dx = pos.x - nearest_x
+	var dz = pos.z - nearest_z
+	return dx * dx + dz * dz < intersection_avoid_radius * intersection_avoid_radius
 
 ## Check if position is over water
 ## Balanced check - catches water without being too aggressive

@@ -74,7 +74,8 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	var scale_factor = MASK_SCALE * MASK_SIZE  # pixels per meter
 	
 	# Paint line from start to end - dense steps for full coverage
-	var length = start.distance_to(end)
+	var length_sq = start.distance_squared_to(end)
+	var length = sqrt(length_sq)
 	var steps = int(length * 2) + 1  # Every 0.5 meters for dense coverage
 	
 	# Width in pixels - scale_factor converts meters to pixels
@@ -163,18 +164,19 @@ func is_on_road(world_pos: Vector3) -> bool:
 	for segment in road_segments.values():
 		var points = segment.points
 		var width = segment.width
+		var width_sq = (width * 0.5) * (width * 0.5)
 		
 		for i in range(points.size() - 1):
 			var p1 = points[i]
 			var p2 = points[i + 1]
 			
-			var dist = _point_to_segment_distance(world_pos, p1, p2)
-			if dist < width / 2.0:
+			var dist_sq = _point_to_segment_distance_sq(world_pos, p1, p2)
+			if dist_sq < width_sq:
 				return true
 	
 	return false
 
-func _point_to_segment_distance(point: Vector3, seg_start: Vector3, seg_end: Vector3) -> float:
+func _point_to_segment_distance_sq(point: Vector3, seg_start: Vector3, seg_end: Vector3) -> float:
 	var p = Vector2(point.x, point.z)
 	var a = Vector2(seg_start.x, seg_start.z)
 	var b = Vector2(seg_end.x, seg_end.z)
@@ -183,12 +185,12 @@ func _point_to_segment_distance(point: Vector3, seg_start: Vector3, seg_end: Vec
 	var ap = p - a
 	
 	if ab.length_squared() < 0.001:
-		return p.distance_to(a)
+		return p.distance_squared_to(a)
 	
 	var t = clamp(ap.dot(ab) / ab.dot(ab), 0.0, 1.0)
 	var closest = a + ab * t
 	
-	return p.distance_to(closest)
+	return p.distance_squared_to(closest)
 
 ## Clear all roads
 func clear_all_roads():

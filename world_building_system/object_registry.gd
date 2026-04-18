@@ -59,6 +59,9 @@ const OBJECTS = {
 const SIMPLE_VISUAL_BATCH_OBJECT_IDS := {
 }
 
+# Proxy batching is disabled so authored meshes stay visible in normal play.
+# Keep this empty unless we intentionally want to hide the original render mesh
+# for a specific object again.
 const PROXY_VISUAL_BATCH_OBJECT_IDS := {
 }
 

@@ -645,7 +645,7 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 				_generate_object_collision_measured(scene_instance, local_anchor)
 
 		object_nodes[local_anchor] = scene_instance
-	
+
 	is_empty = false
 	return true
 
@@ -884,5 +884,4 @@ func restore_object_visuals(defer_collision: bool = true):
 				_generate_object_collision_measured(scene_instance, local_anchor)
 
 		object_nodes[local_anchor] = scene_instance
-
 

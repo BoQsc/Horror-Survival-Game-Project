@@ -87,6 +87,10 @@ var shader_mesh_spirv: RDShaderSPIRV
 
 var material_terrain: Material
 var material_water: Material
+var _material_texture_builder: Object = null
+var _cached_vehicle_manager: Node = null
+var _cached_building_manager: Node = null
+var _cached_prefab_spawner: Node = null
 
 class ChunkData:
 	var node_terrain: Node3D
@@ -298,6 +302,69 @@ func _ready():
 	initial_load_target_chunks = int(PI * render_distance * render_distance)
 
 
+func get_telemetry_snapshot() -> Dictionary:
+	var loaded_chunk_count := 0
+	var pending_chunk_count := 0
+	var rendered_terrain_chunk_count := 0
+	var rendered_water_chunk_count := 0
+	var collision_chunk_count := 0
+	var dirty_loaded_chunk_count := 0
+	var active_render_chunk_count := 0
+
+	for coord_variant in active_chunks:
+		var data_variant: Variant = active_chunks[coord_variant]
+		if data_variant == null:
+			pending_chunk_count += 1
+			continue
+
+		loaded_chunk_count += 1
+		var data: ChunkData = data_variant
+		if data.node_terrain:
+			rendered_terrain_chunk_count += 1
+		if data.node_water:
+			rendered_water_chunk_count += 1
+		if data.body_rid_terrain.is_valid():
+			collision_chunk_count += 1
+		if data.node_terrain or data.node_water:
+			active_render_chunk_count += 1
+
+	return {
+		"active_chunk_count": active_chunks.size(),
+		"loaded_chunk_count": loaded_chunk_count,
+		"pending_chunk_count": pending_chunk_count,
+		"rendered_terrain_chunk_count": rendered_terrain_chunk_count,
+		"rendered_water_chunk_count": rendered_water_chunk_count,
+		"collision_chunk_count": collision_chunk_count,
+		"loaded_dirty_chunk_count": dirty_loaded_chunk_count,
+		"active_render_chunk_count": active_render_chunk_count,
+		"pending_node_count": pending_nodes.size(),
+		"pending_node_sort_needed": pending_nodes_needs_sort,
+		"pending_batch_count": pending_batches.size(),
+		"task_queue_count": task_queue.size(),
+		"cpu_task_queue_count": cpu_task_queue.size(),
+		"pending_spawn_zone_count": pending_spawn_zones.size(),
+		"stored_modification_count": stored_modifications.size(),
+		"world_map_active": world_map_active,
+		"render_distance": render_distance,
+		"collision_distance": collision_distance,
+		"initial_load_phase": initial_load_phase,
+		"initial_load_target_chunks": initial_load_target_chunks,
+		"chunks_loaded_initial": chunks_loaded_initial,
+		"loading_paused": loading_paused,
+		"current_fps": current_fps,
+		"adaptive_frame_budget_ms": adaptive_frame_budget_ms,
+		"chunks_per_frame_limit": chunks_per_frame_limit,
+		"last_update_loads": _last_update_loads,
+		"last_update_unloads": _last_update_unloads,
+		"last_update_backend": _last_update_backend,
+		"hot_frame_backoff_remaining_frames": _hot_frame_backoff_remaining_frames,
+		"world_map_building_count": _world_map_buildings.size(),
+		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
+		"world_map_excavation_buffer_count": _world_map_excavation_buffers.size(),
+		"native_backends_ready": _native_backends_ready
+	}
+
+
 ## Gets the effective viewer position for chunk loading.
 ## Returns vehicle position when player is driving a vehicle,
 ## otherwise returns the player's position.
@@ -306,12 +373,37 @@ func get_viewer_position() -> Vector3:
 		return Vector3.ZERO
 
 	# Check if player is in a vehicle
-	var vm = get_tree().get_first_node_in_group("vehicle_manager")
+	var vm = _get_vehicle_manager()
 	if vm and "current_player_vehicle" in vm and vm.current_player_vehicle:
 		return vm.current_player_vehicle.global_position
 
 	# Default: player's position
 	return viewer.global_position
+
+func _get_vehicle_manager() -> Node:
+	if _cached_vehicle_manager and is_instance_valid(_cached_vehicle_manager):
+		return _cached_vehicle_manager
+
+	_cached_vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+	return _cached_vehicle_manager
+
+func _get_building_manager() -> Node:
+	if _cached_building_manager and is_instance_valid(_cached_building_manager):
+		return _cached_building_manager
+
+	_cached_building_manager = get_tree().get_first_node_in_group("building_manager")
+	if not _cached_building_manager:
+		_cached_building_manager = get_tree().root.find_child("BuildingManager", true, false)
+	return _cached_building_manager
+
+func _get_prefab_spawner() -> Node:
+	if _cached_prefab_spawner and is_instance_valid(_cached_prefab_spawner):
+		return _cached_prefab_spawner
+
+	_cached_prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
+	if not _cached_prefab_spawner:
+		_cached_prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
+	return _cached_prefab_spawner
 
 
 func _get_task_queue_count() -> int:
@@ -355,12 +447,8 @@ func _process(delta):
 			defer_terrain_finalization = true
 			_hot_frame_backoff_remaining_frames -= 1
 
-		var building_manager = get_tree().get_first_node_in_group("building_manager")
-		if not building_manager:
-			building_manager = get_tree().root.find_child("BuildingManager", true, false)
-		var prefab_spawner: Node = get_tree().get_first_node_in_group("prefab_spawner")
-		if not prefab_spawner:
-			prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
+		var building_manager = _get_building_manager()
+		var prefab_spawner: Node = _get_prefab_spawner()
 		var prefab_spawn_backlog: bool = prefab_spawner and prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs()
 		var pending_visual_batches: bool = building_manager and building_manager.has_method("has_pending_visual_batch_work") and building_manager.has_pending_visual_batch_work()
 		if (building_manager and building_manager.has_method("has_pending_building_work") and building_manager.has_pending_building_work()) or pending_visual_batches or prefab_spawn_backlog:
@@ -467,6 +555,7 @@ func update_collision_proximity():
 		return
 	_last_collision_center_chunk = center_chunk
 	_last_collision_active_count = active_count
+	var collision_distance_sq := collision_distance * collision_distance
 
 	for coord in active_chunks:
 		var data = active_chunks[coord]
@@ -477,9 +566,9 @@ func update_collision_proximity():
 		var dx = coord.x - center_chunk.x
 		var dy = coord.y - center_chunk.y
 		var dz = coord.z - center_chunk.z
-		var dist_xz = sqrt(dx * dx + dz * dz)
+		var dist_xz_sq = dx * dx + dz * dz
 		# Enable collision if close horizontally AND within 2 Y layers
-		var should_have_collision = dist_xz <= collision_distance and abs(dy) <= 2
+		var should_have_collision = dist_xz_sq <= collision_distance_sq and abs(dy) <= 2
 
 		# Enable/disable collision shape
 		if data.collision_shape_terrain:
@@ -1287,8 +1376,11 @@ func _update_chunks_native():
 		return
 
 	var p_pos = viewer.global_position
+	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
+	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
 	var is_above_ground = p_chunk_y >= 0
+	var render_distance_sq = render_distance * render_distance
 
 	# 1. Update Grid (C++)
 	# Returns { "load": [Vector3i], "unload": [Vector3i] }
@@ -1321,10 +1413,9 @@ func _update_chunks_native():
 			if chunks_queued >= chunks_per_frame_limit: break
 			if active_chunks.has(coord): continue
 
-			var chunk_origin = Vector3(coord.x * CHUNK_STRIDE, 0, coord.z * CHUNK_STRIDE)
-			var dist_xz = Vector2(chunk_origin.x, chunk_origin.z).distance_to(Vector2(p_pos.x, p_pos.z))
-
-			if dist_xz <= (render_distance * CHUNK_STRIDE):
+			var dx = coord.x - p_chunk_x
+			var dz = coord.z - p_chunk_z
+			if dx * dx + dz * dz <= render_distance_sq:
 				_load_chunk(coord)
 				terrain_grid.add_chunk(coord)
 				chunks_queued += 1
@@ -1417,15 +1508,11 @@ func clear_all_chunks():
 	if terrain_grid and terrain_grid.has_method("clear"):
 		terrain_grid.clear()
 
-	var prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
-	if not prefab_spawner:
-		prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
+	var prefab_spawner = _get_prefab_spawner()
 	if prefab_spawner and prefab_spawner.has_method("clear_pending_spawn_jobs"):
 		prefab_spawner.clear_pending_spawn_jobs()
 
-	var building_manager = get_tree().get_first_node_in_group("building_manager")
-	if not building_manager:
-		building_manager = get_tree().root.find_child("BuildingManager", true, false)
+	var building_manager = _get_building_manager()
 	if building_manager and building_manager.has_method("clear_pending_object_collision_tasks"):
 		building_manager.clear_pending_object_collision_tasks()
 
@@ -1445,6 +1532,7 @@ func _update_chunks_legacy():
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE)) # Y uses CHUNK_STRIDE for 1-voxel overlap
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
 	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
+	var render_distance_sq = render_distance * render_distance
 
 	# 1. Unload far chunks (3D distance check)
 	var chunks_to_remove = []
@@ -1457,10 +1545,10 @@ func _update_chunks_legacy():
 		var dx = coord.x - center_chunk.x
 		var dy = coord.y - center_chunk.y
 		var dz = coord.z - center_chunk.z
-		var dist_xz = sqrt(dx * dx + dz * dz)
+		var dist_xz_sq = dx * dx + dz * dz
 
 		# Unload if too far horizontally
-		if dist_xz > render_distance + 2:
+		if dist_xz_sq > (render_distance + 2) * (render_distance + 2):
 			chunks_to_remove.append(coord)
 		# For non-terrain layers, also unload if too far vertically
 		elif not is_terrain_layer and abs(dy) > 3:
@@ -1528,8 +1616,9 @@ func _update_chunks_legacy():
 		var y_to_load: Array[int] = [0]
 		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
-				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
-				if dist_xz > render_distance:
+				var dx = x - center_chunk.x
+				var dz = z - center_chunk.z
+				if dx * dx + dz * dz > render_distance_sq:
 					continue
 
 				for y in y_to_load:
@@ -1571,8 +1660,9 @@ func _update_chunks_legacy():
 					continue
 
 				# Check if chunk is within horizontal render distance
-				var dist_xz = Vector2(coord.x, coord.z).distance_to(Vector2(center_chunk.x, center_chunk.z))
-				if dist_xz > render_distance:
+				var dx = coord.x - center_chunk.x
+				var dz = coord.z - center_chunk.z
+				if dx * dx + dz * dz > render_distance_sq:
 					continue
 
 				active_chunks[coord] = null
@@ -1590,8 +1680,9 @@ func _update_chunks_legacy():
 
 		for x in range(center_chunk.x - render_distance, center_chunk.x + render_distance + 1):
 			for z in range(center_chunk.z - render_distance, center_chunk.z + render_distance + 1):
-				var dist_xz = Vector2(x, z).distance_to(Vector2(center_chunk.x, center_chunk.z))
-				if dist_xz > render_distance:
+				var dx = x - center_chunk.x
+				var dz = z - center_chunk.z
+				if dx * dx + dz * dz > render_distance_sq:
 					continue
 
 				for y in y_layers:
@@ -1819,6 +1910,11 @@ func _thread_function():
 			"counter_buffer_water": rd.storage_buffer_create(4, counter_data_w)
 		})
 
+	var modify_mesh_builder = ClassDB.instantiate("MeshBuilder")
+	if not modify_mesh_builder:
+		push_error("[ChunkManager] MeshBuilder GDExtension is required for modification meshing.")
+		return
+
 	# In-flight chunks: dispatched but not yet read back
 	var in_flight: Array[Dictionary] = []
 
@@ -1855,7 +1951,7 @@ func _thread_function():
 					var slot: Dictionary = buffer_slots[slot_index]
 					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
 				in_flight.clear()
-			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"])
+			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"], modify_mesh_builder)
 		elif task.type == "generate":
 			# Complete any in-flight before starting new generation
 			if in_flight.size() > 0:
@@ -2139,6 +2235,11 @@ func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, m
 
 # CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
 func _cpu_thread_function():
+	var builder = ClassDB.instantiate("MeshBuilder")
+	if not builder:
+		push_error("[ChunkManager] MeshBuilder GDExtension is required for CPU meshing.")
+		return
+
 	while true:
 		cpu_semaphore.wait()
 
@@ -2155,12 +2256,6 @@ func _cpu_thread_function():
 
 		var task = cpu_task_queue.pop_front()
 		cpu_mutex.unlock()
-
-		# Initialize the native mesh helper once per task.
-		var builder = ClassDB.instantiate("MeshBuilder")
-		if not builder:
-			push_error("[ChunkManager] MeshBuilder GDExtension is required for CPU meshing.")
-			break
 
 		# Build terrain mesh and collision (CPU intensive)
 		var mesh_terrain = null
@@ -2232,7 +2327,7 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
-func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer):
+func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer, builder_override: Object = null):
 	var density_buffer = task.rid
 	var material_buffer = task.get("material_rid", RID()) # Material buffer from chunk
 	var chunk_pos = task.pos
@@ -2294,7 +2389,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
 	var material = material_terrain if layer == 0 else material_water
-	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material, vertex_buffer, counter_buffer)
+	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material, vertex_buffer, counter_buffer, builder_override)
 
 	var cpu_density_floats = PackedFloat32Array()
 	# Read back density for this layer
@@ -2375,7 +2470,7 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material, builder_o
 
 	return mesh
 
-func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer):
+func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer, builder_override: Object = null):
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
 	zero_data.resize(4)
@@ -2431,7 +2526,9 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 
 	var mesh = null
 	var shape = null
-	var builder = ClassDB.instantiate("MeshBuilder")
+	var builder = builder_override
+	if not builder:
+		builder = ClassDB.instantiate("MeshBuilder")
 	if not builder:
 		push_error("[ChunkManager] MeshBuilder GDExtension is required for mesh generation.")
 		return {"mesh": null, "shape": null}
@@ -2606,7 +2703,7 @@ func _create_chunk_material(_chunk_pos: Vector3, cpu_mat: PackedByteArray) -> Sh
 	# transform, so chunks that do not have per-voxel material overrides can
 	# safely share the base material. This avoids duplicating a unique
 	# ShaderMaterial for every loaded chunk and keeps batching/state churn lower.
-	if cpu_mat.is_empty():
+	if cpu_mat.is_empty() or not _chunk_has_player_material_overrides(cpu_mat):
 		return material_terrain as ShaderMaterial
 
 	var mat = material_terrain.duplicate() as ShaderMaterial
@@ -2627,12 +2724,29 @@ func _create_material_texture_3d(cpu_mat: PackedByteArray) -> ImageTexture3D:
 	if cpu_mat.size() < DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4:
 		return null
 
-	var builder = ClassDB.instantiate("MeshBuilder")
+	var builder = _get_material_texture_builder()
 	if not builder:
 		push_error("[ChunkManager] MeshBuilder GDExtension is required for material texture creation.")
 		return null
 
 	return builder.create_material_texture(cpu_mat, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE)
+
+func _get_material_texture_builder() -> Object:
+	if _material_texture_builder:
+		return _material_texture_builder
+
+	_material_texture_builder = ClassDB.instantiate("MeshBuilder")
+	return _material_texture_builder
+
+func _chunk_has_player_material_overrides(cpu_mat: PackedByteArray) -> bool:
+	if cpu_mat.is_empty():
+		return false
+
+	var builder = _get_material_texture_builder()
+	if not builder:
+		return false
+
+	return builder.has_player_material_overrides(cpu_mat, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE, DENSITY_GRID_SIZE)
 
 func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batch_id: int = -1, batch_count: int = 1, cpu_dens: PackedFloat32Array = PackedFloat32Array(), cpu_mat: PackedByteArray = PackedByteArray(), start_mod_version: int = 0):
 	# For non-batched updates, do stale check here

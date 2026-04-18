@@ -70,6 +70,28 @@ func _bump_frame_entity_stat(key: String, amount: int = 1) -> void:
 func _capture_entity_telemetry() -> void:
 	return
 
+
+func get_telemetry_snapshot() -> Dictionary:
+	return {
+		"active_entities": active_entities.size(),
+		"frozen_entities": frozen_entities.size(),
+		"dormant_entities": dormant_entities.size(),
+		"entity_pool_size": entity_pool.size(),
+		"pending_spawns": pending_spawns.size(),
+		"spawned_chunks": spawned_chunks.size(),
+		"max_entities": max_entities,
+		"spawn_radius": spawn_radius,
+		"freeze_radius": freeze_radius,
+		"despawn_radius": despawn_radius,
+		"procedural_spawning_enabled": procedural_spawning_enabled,
+		"is_loading_save": is_loading_save,
+		"pending_spawn_checks_per_frame": pending_spawn_checks_per_frame,
+		"dormant_respawn_checks_per_frame": dormant_respawn_checks_per_frame,
+		"proximity_update_budget_ms": proximity_update_budget_ms,
+		"viewer_present": is_instance_valid(viewer),
+		"player_present": is_instance_valid(player)
+	}
+
 func _ready():
 	# Register in group for lookup by other systems
 	add_to_group("entity_manager")
