@@ -97,6 +97,8 @@ var prefabs = {
 var forest_noise: FastNoiseLite
 
 func _ready():
+	add_to_group("prefab_spawner")
+
 	# Find managers if not assigned
 	if not terrain_manager:
 		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")

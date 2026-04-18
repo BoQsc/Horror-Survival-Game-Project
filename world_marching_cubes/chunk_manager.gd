@@ -153,6 +153,9 @@ var fps_samples: Array[float] = []
 var adaptive_frame_budget_ms: float = 1.0 # Dynamically adjusted (reduced for smoother FPS)
 var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
+@export_range(0, 5, 1) var terrain_hot_frame_backoff_frames: int = 2
+var _last_frame_ms: float = 0.0
+var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
 var terrain_grid = null
 var _native_backends_ready: bool = false
@@ -374,6 +377,7 @@ func _process(delta):
 
 	# Track FPS
 	_update_fps_tracking(delta)
+	_last_frame_ms = delta * 1000.0
 
 	# Adjust loading based on FPS
 	_adjust_adaptive_loading()
@@ -395,6 +399,25 @@ func _process(delta):
 
 	var defer_terrain_finalization := false
 	if not initial_load_phase:
+		var frame_budget_ms := float(PerformanceMonitor.thresholds.get("frame_time", 1000.0 / 60.0))
+		if _last_frame_ms > frame_budget_ms:
+			_hot_frame_backoff_remaining_frames = maxi(_hot_frame_backoff_remaining_frames, terrain_hot_frame_backoff_frames)
+		if _hot_frame_backoff_remaining_frames > 0:
+			defer_terrain_finalization = true
+			PerformanceMonitor.capture_scope_state("terrain", {
+				"phase": "terrain_hot_frame_backoff",
+				"loading_paused": loading_paused,
+				"initial_load_phase": initial_load_phase,
+				"last_frame_ms": _last_frame_ms,
+				"backoff_frames_remaining": _hot_frame_backoff_remaining_frames,
+				"active_chunks": active_chunks.size(),
+				"pending_nodes": get_pending_nodes_count(),
+				"task_queue": _get_task_queue_count(),
+				"cpu_task_queue": _get_cpu_task_queue_count(),
+				"spawn_zones_pending": pending_spawn_zones.size()
+			})
+			_hot_frame_backoff_remaining_frames -= 1
+
 		var building_manager = get_tree().get_first_node_in_group("building_manager")
 		if not building_manager:
 			building_manager = get_tree().root.find_child("BuildingManager", true, false)
