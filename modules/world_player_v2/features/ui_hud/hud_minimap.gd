@@ -381,7 +381,6 @@ func _build_minimap_image() -> void:
 		_fullmap_texture.texture = _fullmap_atlas
 	_fullmap_atlas.atlas = _minimap_texture
 	
-	print("[Minimap] Built %dx%d live map (real-time updates enabled)" % [w, h])
 
 ## Mark the minimap as needing a GPU texture re-upload (called by building_manager or internally)
 func mark_dirty() -> void:

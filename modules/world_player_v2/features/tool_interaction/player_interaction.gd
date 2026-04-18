@@ -454,22 +454,20 @@ func _on_radial_option_selected(option: String) -> void:
 			if target and target.is_in_group("vehicle"):
 				_pickup_vehicle(target)
 		"Cancel":
-			print("[PlayerInteraction] Radial menu cancelled")
+			pass
 
 ## Handle radial menu cancel
 func _on_radial_menu_cancelled() -> void:
 	radial_menu_open = false
-	print("[PlayerInteraction] Radial menu cancelled")
 
 ## Pick up a vehicle (despawn and return Car Keys)
 func _pickup_vehicle(vehicle: Node3D) -> void:
 	if not vehicle_manager or not vehicle_manager.has_method("pickup_vehicle"):
-		print("[PlayerInteraction] No vehicle_manager or pickup_vehicle method")
 		return
 	
 	var success = vehicle_manager.pickup_vehicle(vehicle)
 	if success:
-		print("[PlayerInteraction] Vehicle picked up")
+		pass
 		# Optionally add Car Keys back to inventory
 		# var car_keys = ItemDefs.get_car_keys_definition()
 		# if hotbar and hotbar.has_method("add_item"):

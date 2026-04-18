@@ -124,7 +124,6 @@ func _ready():
 		grass_mesh = grass_result.mesh
 		grass_base_transform = grass_result.transform
 		grass_base_transform.origin = Vector3.ZERO
-		DebugManager.log_vegetation("Loaded grass model from GLB")
 	else:
 		push_warning("Failed to load grass model, using basic mesh")
 		grass_mesh = create_basic_grass_mesh()
@@ -135,7 +134,6 @@ func _ready():
 		rock_mesh = rock_result.mesh
 		rock_base_transform = rock_result.transform
 		rock_base_transform.origin = Vector3.ZERO
-		DebugManager.log_vegetation("Loaded rock model from GLB")
 	else:
 		push_warning("Failed to load rock model, using basic mesh")
 		rock_mesh = create_basic_rock_mesh()
@@ -172,7 +170,6 @@ func initialize_noise():
 	rock_noise.frequency = 0.06
 	rock_noise.seed = base_seed + 2
 
-	DebugManager.log_vegetation("Vegetation noise initialized with seed: %d" % base_seed)
 
 # Called when terrain is modified (player edits) - reparent vegetation, don't regenerate
 func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
@@ -222,8 +219,6 @@ func _on_chunk_unloaded(coord: Vector3i):
 		return
 
 	var surface_key = Vector2i(coord.x, coord.z)
-	if DebugManager.LOG_VEGETATION:
-		DebugManager.log_vegetation("Chunk unloaded: %s" % coord)
 
 	# Clean up trees (including MultiMesh and colliders)
 	if chunk_tree_data.has(surface_key):
@@ -382,8 +377,6 @@ func _physics_process(_delta):
 						is_initial_load_batch = false
 						initial_load_count = 0
 						all_vegetation_ready.emit()
-						DebugManager.log_vegetation("Initial load batch finished - signaling all_vegetation_ready")
-				DebugManager.log_vegetation("Initial load vegetation batch complete - signaling readiness")
 		else:
 			# Invalid chunk, remove
 			pending_chunks.pop_front()
@@ -1065,7 +1058,6 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	for tree in tree_list:
 		var persist_key = _position_hash(tree.world_pos)
 		if chopped_trees.has(persist_key):
-			print("DEBUG_VEG_PERSIST: Tree FILTERED at pos=%s key=%s (found in chopped_trees)" % [tree.world_pos, persist_key])
 			tree.alive = false
 			# Hide in MultiMesh
 			var t = Transform3D()
@@ -1095,7 +1087,6 @@ func chop_tree_by_collider(collider: Node) -> bool:
 			# Add to chopped_trees for persistence across chunk unloads
 			var persist_key = _position_hash(tree.world_pos)
 			chopped_trees[persist_key] = true
-			print("DEBUG_VEG_PERSIST: Tree CHOPPED - stored key=%s pos=%s (total_chopped=%d)" % [persist_key, tree.world_pos, chopped_trees.size()])
 
 			# Hide in MultiMesh
 			var mmi = data.multimesh as MultiMeshInstance3D
@@ -1265,7 +1256,6 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			# Skip if this grass was previously removed
 			var pos_hash = _position_hash(hit_pos)
 			if removed_grass.has(pos_hash):
-				print("DEBUG_VEG_PERSIST: Grass FILTERED at pos=%s hash=%s (found in removed_grass)" % [hit_pos, pos_hash])
 				continue
 
 			# Skip if underwater
@@ -1376,7 +1366,6 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 			# Store removal for persistence (using position hash)
 			var pos_hash = _position_hash(grass.world_pos)
 			removed_grass[pos_hash] = true
-			print("DEBUG_VEG_PERSIST: Grass HARVESTED - stored hash=%s pos=%s (total_removed=%d)" % [pos_hash, grass.world_pos, removed_grass.size()])
 
 			# Hide in MultiMesh (only if valid)
 			if data.has("multimesh") and is_instance_valid(data.multimesh):
@@ -1683,7 +1672,6 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			# Skip if this rock was previously removed
 			var pos_hash = _position_hash(hit_pos)
 			if removed_rocks.has(pos_hash):
-				print("DEBUG_VEG_PERSIST: Rock FILTERED at pos=%s hash=%s (found in removed_rocks)" % [hit_pos, pos_hash])
 				continue
 
 			# Skip if underwater
@@ -1753,8 +1741,6 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		for i in range(valid_transforms.size()):
 			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
 
-	if DebugManager.LOG_VEGETATION and valid_transforms.size() > 0:
-		DebugManager.log_vegetation("Placed %d rocks in chunk %s" % [valid_transforms.size(), coord])
 
 	# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
 	chunk_node.add_child(mmi)
@@ -1799,7 +1785,6 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 			# Store removal for persistence
 			var pos_hash = _position_hash(rock.world_pos)
 			removed_rocks[pos_hash] = true
-			print("DEBUG_VEG_PERSIST: Rock HARVESTED - stored hash=%s pos=%s (total_removed=%d)" % [pos_hash, rock.world_pos, removed_rocks.size()])
 
 			# Hide in MultiMesh (only if valid)
 			if data.has("multimesh") and is_instance_valid(data.multimesh):
@@ -1930,7 +1915,6 @@ func load_tree_mesh_from_glb(path: String) -> Dictionary:
 
 	if result.mesh:
 		_loaded_model_cache[path] = result
-		DebugManager.log_vegetation("Loaded tree mesh from: %s" % path)
 
 	return result
 
@@ -2106,14 +2090,10 @@ func load_save_data(data: Dictionary):
 				r.get("rotation", 0.0)
 			))
 
-	DebugManager.log_vegetation("Loaded %d chopped, %d removed grass, %d removed rocks" % [
-		chopped_trees.size(), removed_grass.size(), removed_rocks.size()
-	])
 
 	# DEFERRED: Set flag to regenerate vegetation when terrain is fully ready
 	# This is triggered by spawn_zones_ready signal (after terrain modifications applied)
 	pending_vegetation_regen = true
-	DebugManager.log_vegetation("Vegetation regeneration pending - waiting for spawn_zones_ready")
 
 ## Called when terrain confirms spawn zones are ready (after modifications applied)
 func _on_spawn_zones_ready(_positions: Array) -> void:
@@ -2126,9 +2106,8 @@ func _on_spawn_zones_ready(_positions: Array) -> void:
 		if initial_load_count <= 0:
 			all_vegetation_ready.emit()
 			is_initial_load_batch = false
-			DebugManager.log_vegetation("No vegetation chunks pending - signaling ready")
 		else:
-			DebugManager.log_vegetation("Initial load batch set to %d chunks (based on current queue)" % initial_load_count)
+			pass
 
 func _apply_chopped_trees():
 	# Mark trees as dead based on chopped_trees dictionary
@@ -2192,4 +2171,3 @@ func clear_all_data():
 	is_initial_load_batch = false
 	initial_load_count = 0
 
-	DebugManager.log_vegetation("VegetationManager: All data cleared for new session")

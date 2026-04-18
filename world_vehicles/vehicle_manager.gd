@@ -30,25 +30,21 @@ func spawn_vehicle(pos: Vector3) -> Node3D:
 	v.global_position = spawn_pos
 	vehicles.append(v)
 	vehicle_spawned.emit(v)
-	print("[VehicleManager] spawn_vehicle: Created at %s, total: %d" % [spawn_pos, vehicles.size()])
 	return v
 
 
 ## Pick up vehicle - despawns vehicle and optionally returns Car Keys to player
 func pickup_vehicle(vehicle: Node3D) -> bool:
 	if not vehicle in vehicles:
-		print("[VehicleManager] pickup_vehicle: Vehicle not tracked")
 		return false
 	
 	# Don't allow pickup if player is in this vehicle
 	if current_player_vehicle == vehicle:
-		print("[VehicleManager] pickup_vehicle: Player is in vehicle, exit first")
 		return false
 	
 	# Despawn the vehicle
 	vehicles.erase(vehicle)
 	vehicle.queue_free()
-	print("[VehicleManager] Vehicle picked up (Total remaining: %d)" % vehicles.size())
 	return true
 
 
@@ -97,4 +93,3 @@ func load_save_data(data: Dictionary) -> void:
 		v.rotation = saved_rot
 		vehicles.append(v)
 	
-	print("[VehicleManager] Loaded %d vehicles (exact positions)" % vehicles.size())

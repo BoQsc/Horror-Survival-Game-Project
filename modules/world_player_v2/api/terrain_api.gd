@@ -35,7 +35,6 @@ func _ready() -> void:
 	_create_selection_box()
 	_create_grid_visualizer()
 	
-	print("TerrainAPI: Initialized (terrain_manager: %s)" % ("OK" if terrain_manager else "MISSING"))
 
 ## Initialize with player reference
 func initialize(player_node: Node) -> void:
@@ -73,13 +72,11 @@ func _create_grid_visualizer() -> void:
 ## Toggle blocky mode
 func toggle_blocky_mode() -> void:
 	blocky_mode = not blocky_mode
-	print("TerrainAPI: Blocky mode = %s" % blocky_mode)
 
 ## Cycle brush size
 func cycle_brush_size() -> void:
 	brush_index = (brush_index + 1) % brush_sizes.size()
 	brush_size = brush_sizes[brush_index]
-	print("TerrainAPI: Brush size = %.1f" % brush_size)
 
 ## Get current mode string for UI
 func get_mode_string() -> String:
@@ -172,7 +169,6 @@ func dig(hit: Dictionary, layer: int = LAYER_TERRAIN) -> bool:
 			terrain_manager.modify_terrain(target_pos, 0.6, 0.5, 1, layer) # Fallback
 			
 		terrain_modified.emit(target_pos, layer)
-		print("TerrainAPI: Dig (blocky) at %s" % target_pos)
 	else:
 		# Smooth: dig sphere
 		var behavior = null
@@ -188,7 +184,6 @@ func dig(hit: Dictionary, layer: int = LAYER_TERRAIN) -> bool:
 			terrain_manager.modify_terrain(hit.position, brush_size, 1.0, 0, layer) # Fallback
 			
 		terrain_modified.emit(hit.position, layer)
-		print("TerrainAPI: Dig (smooth) at %s" % hit.position)
 	
 	return true
 
@@ -218,7 +213,6 @@ func raise(hit: Dictionary, layer: int = LAYER_TERRAIN) -> bool:
 			terrain_manager.modify_terrain(target_pos, 0.6, -0.5, 1, layer) # Fallback
 			
 		terrain_modified.emit(target_pos, layer)
-		print("TerrainAPI: Raise (blocky) at %s" % target_pos)
 	else:
 		# Smooth: raise sphere
 		var behavior = null
@@ -237,7 +231,6 @@ func raise(hit: Dictionary, layer: int = LAYER_TERRAIN) -> bool:
 			terrain_manager.modify_terrain(hit.position, brush_size, -1.0, 0, layer) # Fallback
 			
 		terrain_modified.emit(hit.position, layer)
-		print("TerrainAPI: Raise (smooth) at %s" % hit.position)
 	
 	return true
 

@@ -78,7 +78,6 @@ static func preload_all_scenes() -> void:
 	if _preload_done:
 		return
 	
-	print("[ObjectRegistry] Preloading %d object scenes..." % OBJECTS.size())
 	var start_time = Time.get_ticks_msec()
 	
 	for id in OBJECTS:
@@ -92,7 +91,6 @@ static func preload_all_scenes() -> void:
 		get_object_has_authored_collision(int(id))
 	
 	var elapsed = Time.get_ticks_msec() - start_time
-	print("[ObjectRegistry] Preloaded %d scenes in %dms" % [_preloaded_scenes.size(), elapsed])
 	_preload_done = true
 
 ## Get a preloaded scene (returns null if not preloaded)

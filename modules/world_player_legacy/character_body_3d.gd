@@ -14,12 +14,10 @@ var terrain_manager: Node = null
 
 func _ready():
 	terrain_manager = get_node_or_null("../TerrainManager")
-	print("FLY MODE: Press F to toggle fly mode")
 
 func _input(event):
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F:
 		is_flying = !is_flying
-		print("Fly mode: ", "ON" if is_flying else "OFF")
 
 func _physics_process(delta: float) -> void:
 	if is_flying:

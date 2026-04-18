@@ -55,7 +55,6 @@ func _ready() -> void:
 		# Disable movement feature's physics processing
 		if movement_feature:
 			movement_feature.set_physics_process(false)
-		print("[Player] Frozen until terrain renders")
 		
 		# Wait for LoadingScreen terrain stage to complete
 		var loading_screen = get_tree().root.find_child("LoadingScreen", true, false)
@@ -65,7 +64,6 @@ func _ready() -> void:
 			# Re-enable movement when terrain is ready
 			if movement_feature:
 				movement_feature.set_physics_process(true)
-			print("[Player] Unfrozen - terrain ready, can walk now")
 		else:
 			# No loading screen or signal, unfreeze immediately
 			if movement_feature:
@@ -81,17 +79,7 @@ func _ready() -> void:
 	_log_initialization()
 
 func _log_initialization() -> void:
-	DebugManager.log_player("WorldPlayerV2: Initialized")
-	DebugManager.log_player("  Features:")
-	DebugManager.log_player("    - Movement: %s" % ("OK" if movement_feature else "MISSING"))
-	DebugManager.log_player("    - Camera: %s" % ("OK" if camera_feature else "MISSING"))
-	DebugManager.log_player("    - Stats: %s" % ("OK" if stats_feature else "MISSING"))
-	DebugManager.log_player("    - Combat: %s" % ("OK" if combat_feature else "MISSING"))
-	DebugManager.log_player("    - Terrain: %s" % ("OK" if terrain_feature else "MISSING"))
-	DebugManager.log_player("  Managers:")
-	DebugManager.log_player("    - TerrainManager: %s" % ("OK" if terrain_manager else "NOT FOUND"))
-	DebugManager.log_player("    - BuildingManager: %s" % ("OK" if building_manager else "NOT FOUND"))
-	DebugManager.log_player("    - VegetationManager: %s" % ("OK" if vegetation_manager else "NOT FOUND"))
+	pass
 
 # ============================================================================
 # PUBLIC API (delegated to features)

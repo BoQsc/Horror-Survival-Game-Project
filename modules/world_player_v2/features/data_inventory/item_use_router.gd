@@ -36,12 +36,6 @@ func _ready() -> void:
 	
 	await get_tree().process_frame
 	
-	print("ItemUseRouter: Initialized")
-	print("  - Hotbar: %s" % ("OK" if hotbar else "MISSING"))
-	print("  - ModeManager: %s" % ("OK" if mode_manager else "MISSING"))
-	print("  - CombatSystem: %s" % ("OK" if combat_system else "MISSING"))
-	print("  - ModeBuild: %s" % ("OK" if mode_build else "MISSING"))
-	print("  - ModeEditor: %s" % ("OK" if mode_editor else "MISSING"))
 
 func _process(_delta: float) -> void:
 	# Hold-to-attack: continuously trigger actions while mouse is held
@@ -89,7 +83,6 @@ func _input(event: InputEvent) -> void:
 			if event.pressed:
 				primary_triggered_this_frame = true # Prevent double-trigger from _process
 				var item = hotbar.get_selected_item()
-				print("ItemUseRouter: LMB pressed, item=%s" % item.get("name", "none"))
 				route_primary_action(item)
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			is_secondary_held = event.pressed
@@ -145,7 +138,6 @@ func route_secondary_action(item: Dictionary) -> void:
 	
 	# VEHICLE (car keys) - works in all modes
 	if category == 8:  # ItemCategory.VEHICLE
-		print("[ItemUseRouter] Car Keys detected, spawning vehicle...")
 		_spawn_vehicle(item)
 		return
 	
@@ -173,18 +165,15 @@ func route_secondary_action(item: Dictionary) -> void:
 func _spawn_vehicle(item: Dictionary) -> void:
 	var vehicle_scene_path = item.get("vehicle_scene", "")
 	if vehicle_scene_path == "":
-		print("ItemUseRouter: No vehicle_scene in item %s" % item.get("name", "unknown"))
 		return
 	
 	# Find vehicle manager
 	var vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
 	if not vehicle_manager:
-		print("ItemUseRouter: No vehicle_manager found")
 		return
 	
 	# Check if vehicle manager has method
 	if not vehicle_manager.has_method("spawn_vehicle"):
-		print("ItemUseRouter: vehicle_manager has no spawn_vehicle method")
 		return
 	
 	# Spawn in front of player
@@ -193,4 +182,3 @@ func _spawn_vehicle(item: Dictionary) -> void:
 		var v = vehicle_manager.spawn_vehicle(spawn_pos)
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.vehicle_spawned.emit()
-		print("[ItemUseRouter] Spawned vehicle from Car Keys at %s" % v.global_position)

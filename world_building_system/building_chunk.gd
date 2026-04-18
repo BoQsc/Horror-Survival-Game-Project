@@ -743,7 +743,6 @@ func _generate_object_collision(obj: Node3D, anchor: Vector3i):
 		return
 	# Skip collision generation for interactable objects (they manage their own)
 	if obj.is_in_group("interactable"):
-		DebugManager.log_building("BuildingChunk: Skipping collision for interactable object")
 		return
 	# Find all MeshInstance3D children and create collision shapes
 	for child in obj.get_children():
@@ -830,7 +829,6 @@ func restore_object_visuals(defer_collision: bool = true):
 		# Load and instantiate the scene
 		var obj_def = ObjectRegistry.get_object(object_id)
 		if obj_def.is_empty():
-			print("BuildingChunk: restore_object_visuals - Unknown object_id: ", object_id)
 			continue
 		
 		var scene_path = obj_def.get("scene", "")
@@ -843,7 +841,6 @@ func restore_object_visuals(defer_collision: bool = true):
 		if scene_instance == null:
 			var packed = ObjectRegistry.get_preloaded_scene(scene_path)
 			if not packed:
-				print("BuildingChunk: restore_object_visuals - Failed to load scene: ", scene_path)
 				continue
 			scene_instance = packed.instantiate()
 		
@@ -888,5 +885,4 @@ func restore_object_visuals(defer_collision: bool = true):
 
 		object_nodes[local_anchor] = scene_instance
 
-	print("BuildingChunk: Restored %d object visuals" % (object_nodes.size() + simple_visual_instances.size()))
 

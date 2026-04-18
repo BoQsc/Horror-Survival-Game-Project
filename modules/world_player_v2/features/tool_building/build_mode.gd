@@ -41,7 +41,6 @@ func _ready() -> void:
 	add_child(building_api)
 	building_api.initialize(player)
 	
-	print("ModeBuild: Initialized")
 
 func _process(_delta: float) -> void:
 	if UIInputGuard.is_gameplay_input_blocked(self):
@@ -75,7 +74,7 @@ func _process(_delta: float) -> void:
 		var was_freestyle = building_api.is_freestyle
 		building_api.is_freestyle = Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE)
 		if was_freestyle != building_api.is_freestyle:
-			print("ModeBuild: Freestyle %s (MMB)" % ("ON" if building_api.is_freestyle else "OFF"))
+			pass
 		
 		# Category-aware visuals: preview for OBJECT, selection box for BLOCK
 		var item_data = _get_current_item_data()
@@ -131,7 +130,6 @@ func _input(event: InputEvent) -> void:
 			KEY_R:
 				# Rotate placement
 				current_rotation = (current_rotation + 1) % 4
-				print("ModeBuild: Rotation -> %d (%.0f°)" % [current_rotation, current_rotation * 90.0])
 			KEY_G:
 				# Toggle grid visibility 
 				# In OBJECT mode: toggle object_show_grid
@@ -139,10 +137,8 @@ func _input(event: InputEvent) -> void:
 				var item_data = _get_current_item_data()
 				if item_data and item_data.get("category") == ItemCategory.OBJECT:
 					building_api.object_show_grid = not building_api.object_show_grid
-					print("ModeBuild: Object grid -> %s" % ("ON" if building_api.object_show_grid else "OFF"))
 				else:
 					grid_snap_props = not grid_snap_props
-					print("ModeBuild: Grid snap -> %s" % ("ON" if grid_snap_props else "OFF"))
 			KEY_V:
 				# Cycle placement mode
 				if building_api:
@@ -151,17 +147,14 @@ func _input(event: InputEvent) -> void:
 				# Toggle surface align (legacy port)
 				if building_api:
 					building_api.surface_align_enabled = not building_api.surface_align_enabled
-					print("ModeBuild: Surface align -> %s" % ("ON" if building_api.surface_align_enabled else "OFF"))
 	
 	# X+Scroll to rotate (changed from Ctrl to allow crouch+scroll)
 	if event is InputEventMouseButton and event.pressed:
 		if Input.is_key_pressed(KEY_X):
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 				current_rotation = (current_rotation + 1) % 4
-				print("ModeBuild: Rotation -> %d" % current_rotation)
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				current_rotation = (current_rotation - 1 + 4) % 4
-				print("ModeBuild: Rotation -> %d" % current_rotation)
 		elif event.alt_pressed:
 			# Alt+Scroll: adjust Y offset
 			if building_api:
@@ -185,7 +178,6 @@ func handle_primary(item: Dictionary) -> void:
 ## Handle secondary action (right click) in BUILD mode - Place
 func handle_secondary(item: Dictionary) -> void:
 	var category = item.get("category", 0)
-	print("ModeBuild: handle_secondary category=%d item=%s" % [category, item.get("name", "?")])
 	
 	match category:
 		4: # BLOCK
@@ -204,17 +196,14 @@ func _get_current_item_data() -> Dictionary:
 ## Remove block at target
 func _do_block_remove() -> void:
 	if not player or not building_manager:
-		print("ModeBuild: Remove failed - no player or building_manager")
 		return
 	
 	var hit = player.raycast(10.0) if player.has_method("raycast") else {}
 	if hit.is_empty():
-		print("ModeBuild: Remove failed - no raycast hit")
 		return
 	
 	var target = hit.get("collider")
 	if not target:
-		print("ModeBuild: Remove failed - no collider")
 		return
 	
 	# Walk up the node tree to check if this belongs to BuildingManager
@@ -240,12 +229,10 @@ func _do_block_remove() -> void:
 		
 		if building_manager.has_method("set_voxel"):
 			building_manager.set_voxel(voxel_pos, 0)
-			print("ModeBuild: Removed block at %s" % voxel_pos)
 	else:
 		# Not a building block
 		var p1 = target.get_parent() if target else null
 		var p2 = p1.get_parent() if p1 else null
-		print("ModeBuild: Not a building block. Parents: %s -> %s" % [p1, p2])
 
 ## Place block at target - uses building_api's calculated position to match visual
 func _do_block_place(item: Dictionary) -> void:
@@ -269,7 +256,6 @@ func _do_block_place(item: Dictionary) -> void:
 		var voxel_pos = building_api.current_voxel_pos
 		if building_manager.has_method("set_voxel"):
 			building_manager.set_voxel(voxel_pos, block_id, current_rotation)
-			print("ModeBuild: Placed %s at %s (rot: %d, direct)" % [item.get("name", "block"), voxel_pos, current_rotation])
 		return
 	
 	# Fallback: old calculation if building_api not available
@@ -283,7 +269,6 @@ func _do_block_place(item: Dictionary) -> void:
 	
 	if building_manager.has_method("set_voxel"):
 		building_manager.set_voxel(fb_voxel_pos, fb_block_id, current_rotation)
-		print("ModeBuild: Placed %s at %s (rot: %d, fallback)" % [item.get("name", "block"), fb_voxel_pos, current_rotation])
 		_consume_held_item()
 
 ## Remove object at target
@@ -303,7 +288,6 @@ func _do_object_remove() -> void:
 			var chunk = target.get_meta("chunk")
 			if chunk and chunk.has_method("remove_object"):
 				chunk.remove_object(anchor)
-				print("ModeBuild: Removed object at %s" % anchor)
 				return
 	
 	# Fallback: position-based removal
@@ -311,12 +295,11 @@ func _do_object_remove() -> void:
 		var position = hit.get("position", Vector3.ZERO) - hit.get("normal", Vector3.ZERO) * 0.1
 		var success = building_manager.remove_object_at(position)
 		if success:
-			print("ModeBuild: Removed object at %s" % position)
+			pass
 
 ## Place object at target - uses building_api with fractional Y (legacy port)
 func _do_object_place(item: Dictionary) -> void:
 	if not player or not building_api:
-		print("ModeBuild: Object place failed - no player or building_api")
 		return
 	
 	var object_id = item.get("object_id", 1)
@@ -329,10 +312,9 @@ func _do_object_place(item: Dictionary) -> void:
 	if building_api.has_target:
 		var success = building_api.place_object(object_id, current_rotation)
 		if success:
-			print("ModeBuild: Placed %s (rot: %d)" % [item.get("name", "object"), current_rotation])
 			_consume_held_item()
 		else:
-			print("ModeBuild: Cannot place object - cells occupied")
+			pass
 
 ## Remove prop (same as object for now)
 func _do_prop_remove() -> void:
@@ -351,10 +333,7 @@ func _do_prop_place(item: Dictionary) -> void:
 		if building_manager.has_method("place_object"):
 			var success = building_manager.place_object(grid_pos, object_id, current_rotation)
 			if success:
-				print("ModeBuild: Placed prop %s at %s (grid snap)" % [item.get("name", "prop"), grid_pos])
 				_consume_held_item()
-			else:
-				print("ModeBuild: Cannot place prop - cells occupied")
 		return
 	
 	# Free placement: use raw raycast position
@@ -366,10 +345,9 @@ func _do_prop_place(item: Dictionary) -> void:
 	if building_manager.has_method("place_object"):
 		var success = building_manager.place_object(free_pos, object_id, current_rotation)
 		if success:
-			print("ModeBuild: Placed prop %s at %s (free)" % [item.get("name", "prop"), free_pos])
 			_consume_held_item()
 		else:
-			print("ModeBuild: Cannot place prop - cells occupied")
+			pass
 
 ## Get current rotation
 func get_rotation() -> int:

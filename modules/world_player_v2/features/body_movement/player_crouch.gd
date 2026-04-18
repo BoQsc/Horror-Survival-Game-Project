@@ -32,7 +32,6 @@ func _ready() -> void:
 	collision_shape = player.get_node_or_null("CollisionShape3D")
 	camera = player.get_node_or_null("Camera3D")
 	
-	DebugManager.log_player("PlayerCrouchFeature: Initialized")
 
 
 ## Call this from player_movement._handle_walking()
@@ -66,4 +65,3 @@ func get_speed() -> float:
 ## Set crouch state (for save restoration)
 func set_crouch_state(crouch: bool) -> void:
 	is_crouching = crouch
-	DebugManager.log_player("PlayerCrouch: State restored to %s" % crouch)

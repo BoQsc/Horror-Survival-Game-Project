@@ -131,7 +131,6 @@ func _ready() -> void:
 		PlayerSignals.axe_ready.connect(_on_axe_ready)
 		PlayerSignals.item_changed.connect(_on_item_changed)
 	
-	DebugManager.log_player("CombatSystemFeature: Initialized")
 
 func _on_item_changed(_slot: int, _item: Dictionary) -> void:
 	# Cancel any pending hits from delayed attacks when weapons change
@@ -166,10 +165,6 @@ func _setup_audio() -> void:
 			tree_hit_audio_player.stream = stream
 			tree_hit_audio_player.max_distance = 20.0
 			player.add_child(tree_hit_audio_player)
-			print("[COMBAT_AUDIO] Tree hit sound loaded successfully")
-	else:
-		print("[COMBAT_AUDIO] Tree hit sound not found: %s" % TREE_HIT_SOUND_PATH)
-	
 	# Load tree fall sound
 	if ResourceLoader.exists(TREE_FALL_SOUND_PATH):
 		var fall_stream = load(TREE_FALL_SOUND_PATH)
@@ -179,7 +174,6 @@ func _setup_audio() -> void:
 			tree_fall_audio_player.stream = fall_stream
 			tree_fall_audio_player.max_distance = 30.0
 			player.add_child(tree_fall_audio_player)
-			print("[COMBAT_AUDIO] Tree fall sound loaded successfully")
 	
 	# Load wood block hit sound (multipart file)
 	if ResourceLoader.exists(WOOD_BLOCK_HIT_SOUND_PATH):
@@ -190,7 +184,6 @@ func _setup_audio() -> void:
 			wood_block_hit_audio_player.stream = block_stream
 			wood_block_hit_audio_player.max_distance = 25.0
 			player.add_child(wood_block_hit_audio_player)
-			print("[COMBAT_AUDIO] Wood multipart sound loaded successfully")
 			
 	# Load plant hit sound
 	if ResourceLoader.exists(PLANT_HIT_SOUND_PATH):
@@ -201,7 +194,6 @@ func _setup_audio() -> void:
 			plant_hit_audio_player.stream = plant_stream
 			plant_hit_audio_player.max_distance = 15.0
 			player.add_child(plant_hit_audio_player)
-			print("[COMBAT_AUDIO] Plant hit sound loaded successfully")
 
 	# Load rock hit sound
 	if ResourceLoader.exists(ROCK_HIT_SOUND_PATH):
@@ -213,7 +205,6 @@ func _setup_audio() -> void:
 			rock_hit_audio_player.max_distance = 20.0
 			player.add_child(rock_hit_audio_player)
 
-			print("[COMBAT_AUDIO] Rock hit sound loaded successfully")
 
 	# Load terrain hit sound
 	if ResourceLoader.exists(TERRAIN_HIT_SOUND_PATH):
@@ -224,7 +215,6 @@ func _setup_audio() -> void:
 			terrain_hit_audio_player.stream = terrain_stream
 			terrain_hit_audio_player.max_distance = 20.0
 			player.add_child(terrain_hit_audio_player)
-			print("[COMBAT_AUDIO] Terrain hit sound loaded successfully")
 
 	# Setup hit marker (2D)
 	hit_marker_player = AudioStreamPlayer.new()
@@ -243,7 +233,6 @@ func _setup_audio() -> void:
 			terrain_break_audio_player.stream = break_stream
 			terrain_break_audio_player.max_distance = 25.0
 			player.add_child(terrain_break_audio_player)
-			print("[COMBAT_AUDIO] Terrain break sound loaded successfully")
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
@@ -273,7 +262,6 @@ func handle_primary(item: Dictionary) -> void:
 	
 	# V1: If grabbing a prop, don't do other actions
 	if is_grabbing_prop():
-		DebugManager.log_player("CombatSystem: Grabbing prop, ignoring primary action")
 		return
 	
 	# V1: Attack cooldown check
@@ -357,12 +345,10 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			# T pressed down - grab prop
 			if not is_grabbing_prop():
-				print("CombatSystem: T pressed - attempting grab")
 				_try_grab_prop()
 		else:
 			# T released - drop prop
 			if is_grabbing_prop():
-				print("CombatSystem: T released - dropping")
 				_drop_grabbed_prop()
 ## Update held prop position (follows camera) - V1 port with smooth lerp
 func _update_held_prop(delta: float) -> void:
@@ -390,7 +376,7 @@ func _update_held_prop(delta: float) -> void:
 	
 	# V1 debug every 60 frames
 	if Engine.get_process_frames() % 60 == 0:
-		print("PropHold: Prop at %s (visible: %s)" % [held_prop_instance.global_position, held_prop_instance.visible])
+		pass
 
 ## Try to grab a prop (building_manager object OR dropped physics prop) - V1 EXACT
 func _try_grab_prop() -> void:
@@ -398,7 +384,6 @@ func _try_grab_prop() -> void:
 	if not target:
 		return
 	
-	DebugManager.log_player("PropGrab: Trying to grab %s" % target.name)
 	
 	# Check if this is a dropped physics prop (has item_data OR is interactable RigidBody3D)
 	# V1: Routes ALL RigidBody3D through _grab_dropped_prop for proper collision handling
@@ -408,14 +393,12 @@ func _try_grab_prop() -> void:
 	
 	# Otherwise, try building_manager object path
 	if not target.has_meta("anchor") or not target.has_meta("chunk"):
-		DebugManager.log_player("PropGrab: Target has no anchor/chunk metadata")
 		return
 	
 	var anchor = target.get_meta("anchor")
 	var chunk = target.get_meta("chunk")
 	
 	if not chunk or not chunk.objects.has(anchor):
-		DebugManager.log_player("PropPickup: No object data at anchor")
 		return
 	
 	# Read object data before removing
@@ -425,7 +408,6 @@ func _try_grab_prop() -> void:
 	# Only allow clearly movable props to be grabbed.
 	# Structural building pieces must stay in place so we do not remove floor/support collision.
 	if not ObjectRegistry.is_movable_object(held_prop_id):
-		DebugManager.log_player("PropGrab: %s is not movable" % target.name)
 		held_prop_id = -1
 		held_prop_rotation = 0
 		return
@@ -462,9 +444,8 @@ func _try_grab_prop() -> void:
 			cam = get_viewport().get_camera_3d()
 		if cam:
 			held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
-			DebugManager.log_player("PropPickup: Picked up prop ID %d at %s" % [held_prop_id, held_prop_instance.global_position])
 		else:
-			DebugManager.log_player("PropPickup: WARNING - No camera, prop may be mispositioned")
+			pass
 
 ## Grab a dropped physics prop (RigidBody3D with item_data meta) - V1 port
 func _grab_dropped_prop(target: RigidBody3D) -> void:
@@ -489,16 +470,14 @@ func _grab_dropped_prop(target: RigidBody3D) -> void:
 	var cam = get_viewport().get_camera_3d()
 	if cam:
 		held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
-		print("CombatSystem: Grabbed dropped prop %s" % target.name)
 	else:
-		print("CombatSystem: WARNING - No camera for initial prop position")
+		pass
 
 ## Drop the grabbed prop - V1 port with collision layer restore
 func _drop_grabbed_prop() -> void:
 	if not held_prop_instance:
 		return
 	
-	print("CombatSystem: Dropping prop (held_prop_id=%d)" % held_prop_id)
 	
 	# Check if this was a grabbed dropped prop (not a building_manager object)
 	if held_prop_id == -1:
@@ -514,7 +493,6 @@ func _drop_grabbed_prop() -> void:
 			held_prop_instance.collision_mask |= 4 | 512
 			# Give a small drop velocity (V1)
 			held_prop_instance.linear_velocity = Vector3(0, -1, 0)
-			print("CombatSystem: Released dropped prop with physics")
 		held_prop_instance = null
 		held_prop_id = -1
 		held_prop_rotation = 0
@@ -527,9 +505,6 @@ func _drop_grabbed_prop() -> void:
 	
 	if building_manager and building_manager.has_method("place_object"):
 		building_manager.place_object(drop_pos, held_prop_id, held_prop_rotation)
-		print("CombatSystem: Placed building object via building_manager")
-	else:
-		print("CombatSystem: No building_manager - placement failed")
 	
 	# Cleanup held prop
 	if held_prop_instance:
@@ -544,7 +519,6 @@ func _drop_grabbed_prop() -> void:
 func _get_pickup_target() -> Node:
 	var cam = get_viewport().get_camera_3d()
 	if not cam:
-		print("CombatSystem: _get_pickup_target - no camera")
 		return null
 	
 	var origin = cam.global_position
@@ -557,11 +531,9 @@ func _get_pickup_target() -> Node:
 		var col = hit.collider
 		# Check for building_manager placed objects
 		if col.is_in_group("placed_objects") and col.has_meta("anchor"):
-			print("CombatSystem: Direct hit on placed object %s" % col.name)
 			return col
 		# Check for dropped physics props (RigidBody3D with item_data or interactable)
 		if col is RigidBody3D and (col.has_meta("item_data") or col.is_in_group("interactable")):
-			print("CombatSystem: Direct hit on dropped prop %s" % col.name)
 			return col
 	
 	# Option B: Sphere assist for forgiveness
@@ -596,10 +568,6 @@ func _get_pickup_target() -> Node:
 				best_dist = d
 				best_target = col
 	
-	if best_target:
-		print("CombatSystem: Assisted hit on %s" % best_target.name)
-	else:
-		print("CombatSystem: No pickup target found")
 	return best_target
 
 func _disable_preview_collisions(node: Node) -> void:
@@ -666,7 +634,6 @@ func do_punch(item: Dictionary) -> void:
 	
 	var hit = _raycast(5.0, true, true)
 	if hit.is_empty():
-		DebugManager.log_player("CombatSystem: Punch - miss")
 		return
 	
 	var damage = item.get("damage", 1)
@@ -719,7 +686,6 @@ func do_tool_attack(item: Dictionary) -> void:
 	# Handle pickaxe/shovel - delay raycast AND damage to match animation (Option A: Raycast at Impact)
 	if "pickaxe" in item_id or "shovel" in item_id:
 		if not pickaxe_ready:
-			print("PICKAXE_HIT_DEBUG: Attack ignored - not ready (still in cooldown)")
 			return
 		pickaxe_ready = false
 		_emit_axe_fired()  # Trigger visual animation (pickaxe reuses axe signal)
@@ -728,7 +694,6 @@ func do_tool_attack(item: Dictionary) -> void:
 		pending_pickaxe_hit = {
 			"item": item.duplicate()
 		}
-		print("PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)")
 		
 		# Delay BOTH raycast and damage to 0.30s (when pickaxe visually connects)
 		_schedule_one_shot_timer(0.30, Callable(self, "_on_pickaxe_hit_moment"))
@@ -802,7 +767,6 @@ func do_tool_attack(item: Dictionary) -> void:
 		if behavior and ("pickaxe" in item_id or "shovel" in item_id) and has_node("/root/ToolConfig"):
 			var config = get_node("/root/ToolConfig")
 			behavior.radius = max(config.pickaxe_mining_radius, 0.5)
-			# Debug: print("Pickaxe radius override: %.2f" % behavior.radius)
 		
 		# Now apply the behavior (handling durability logic here in CombatSystem)
 		var hit_normal = hit.get("normal", Vector3.UP)
@@ -873,7 +837,6 @@ func _do_axe_damage(item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
-		print("AXE_DAMAGE_DEBUG: No hit on animation complete")
 		return
 	
 	var damage = item.get("damage", 1)
@@ -881,7 +844,6 @@ func _do_axe_damage(item: Dictionary) -> void:
 	var target = hit.get("collider")
 	var position = hit.get("position", Vector3.ZERO)
 	
-	print("AXE_DAMAGE_DEBUG: Hit %s at %s" % [target.name if target else "nothing", position])
 	
 	# Priority 1: Generic Damageable
 	var damageable = _find_damageable(target)
@@ -948,7 +910,6 @@ func _do_axe_damage(item: Dictionary) -> void:
 			var current_hp = TERRAIN_HP - terrain_damage[block_pos]
 			durability_target = block_pos
 			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
-			print("AXE_DAMAGE_DEBUG: Pickaxe hit %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
 			
 			if terrain_hit_audio_player:
 				terrain_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
@@ -980,23 +941,19 @@ func _do_axe_damage(item: Dictionary) -> void:
 
 ## Pickaxe damage - called 0.30s after swing starts (Option A: Raycast at Impact)
 func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
-	print("PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW")
 	
 	if not player or not terrain_manager:
-		print("PICKAXE_HIT_DEBUG: ABORTED - player=%s terrain_manager=%s" % [player != null, terrain_manager != null])
 		return
 	
 	var item = pending_data.get("item", {})
 	
 	if item.is_empty():
-		print("PICKAXE_HIT_DEBUG: ABORTED - item data is empty")
 		return
 	
 	# OPTION A: Perform raycast NOW at impact time (what you're aiming at when pickaxe connects)
 	var hit = _raycast(3.5, true, true)
 	
 	if hit.is_empty():
-		print("PICKAXE_HIT_DEBUG: MISS at impact time - no target in crosshair")
 		return
 	
 	var item_id = item.get("id", "")
@@ -1005,7 +962,6 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	var position = hit.get("position", Vector3.ZERO)
 	var hit_normal = hit.get("normal", Vector3.UP)
 	
-	print("PICKAXE_HIT_DEBUG: HIT at impact time | Target: %s | Position: %s" % [target.name if target else "null", position])
 	
 	# Visual debug: Spawn marker at hit position (if enabled)
 	if has_node("/root/ToolConfig") and get_node("/root/ToolConfig").hit_marker_enabled:
@@ -1078,7 +1034,6 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 			var current_hp = TERRAIN_HP - terrain_damage[block_pos]
 			durability_target = block_pos
 			_emit_durability_hit(max(0, current_hp), TERRAIN_HP, "Terrain", block_pos)
-			print("PICKAXE_DEBUG: Hit %s (%d/%d HP)" % [block_pos, current_hp, TERRAIN_HP])
 			
 			if terrain_hit_audio_player:
 				terrain_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
@@ -1436,7 +1391,6 @@ func _try_damage_building_block(target: Node, item: Dictionary, position: Vector
 		var rand_idx = randi() % 3 + 1
 		_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["hit_%d" % rand_idx])
 	
-	print("DURABILITY_DEBUG: Building block hit at %s | Damage: %d | HP: %d/%d" % [block_pos, blk_dmg, current_hp, BLOCK_HP])
 	_emit_durability_hit(current_hp, BLOCK_HP, "Block", durability_target)
 	
 	if block_damage[block_pos] >= BLOCK_HP:
@@ -1593,7 +1547,6 @@ func _play_audio_range(template_player: AudioStreamPlayer3D, range_data: Array) 
 		temp_player.global_position = template_player.global_position
 	
 	temp_player.play(start_time)
-	print("[COMBAT_AUDIO] Playing range: %.2f to %.2f (Dur: %.2f) [TempPlayer]" % [start_time, start_time + duration, duration])
 	
 	# Schedule self-destruction
 	_schedule_one_shot_timer(duration, Callable(self, "_stop_and_free_audio_player").bind(temp_player))
@@ -1609,7 +1562,6 @@ func _collect_terrain_resource(mat_id: int) -> void:
 	# Try to add to hotbar first
 	if hotbar and hotbar.has_method("add_item"):
 		if hotbar.add_item(resource_item):
-			DebugManager.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
 			return
 	
 	# Fall back to inventory if hotbar is full
@@ -1617,18 +1569,16 @@ func _collect_terrain_resource(mat_id: int) -> void:
 	if inventory and inventory.has_method("add_item"):
 		var leftover = inventory.add_item(resource_item, 1)
 		if leftover == 0:
-			DebugManager.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
+			pass
 
 func _collect_vegetation_resource(veg_type: String) -> void:
 	var resource_item = ItemDefs.get_vegetation_resource(veg_type)
 	if resource_item.is_empty():
-		DebugManager.log_player("CombatSystem: No resource for vegetation type '%s'" % veg_type)
 		return
 	
 	# Try to add to hotbar first (for quick access)
 	if hotbar and hotbar.has_method("add_item"):
 		if hotbar.add_item(resource_item):
-			DebugManager.log_player("CombatSystem: Collected 1x %s to hotbar" % resource_item.get("name", "Resource"))
 			return
 	
 	# Fall back to inventory if hotbar is full
@@ -1636,11 +1586,11 @@ func _collect_vegetation_resource(veg_type: String) -> void:
 	if inventory and inventory.has_method("add_item"):
 		var leftover = inventory.add_item(resource_item, 1)
 		if leftover == 0:
-			DebugManager.log_player("CombatSystem: Collected 1x %s to inventory" % resource_item.get("name", "Resource"))
+			pass
 		else:
-			DebugManager.log_player("CombatSystem: Inventory full, dropped %s" % resource_item.get("name", "Resource"))
+			pass
 	else:
-		DebugManager.log_player("CombatSystem: No inventory system found")
+		pass
 
 func _collect_building_resource(voxel_id: int) -> void:
 	var resource_item = ItemDefs.get_item_for_block(voxel_id)
@@ -1650,7 +1600,6 @@ func _collect_building_resource(voxel_id: int) -> void:
 	# Try to add to hotbar first
 	if hotbar and hotbar.has_method("add_item"):
 		if hotbar.add_item(resource_item):
-			DebugManager.log_player("CombatSystem: Collected 1x building resource to hotbar")
 			return
 	
 	# Fall back to inventory if hotbar is full

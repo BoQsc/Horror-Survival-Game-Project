@@ -8,18 +8,15 @@ var containers: Dictionary = {}
 
 func _ready() -> void:
 	add_to_group("container_registry")
-	DebugManager.log_save("ContainerRegistry: Initialized")
 
 ## Register a container instance with UUID
 func register_container(container: Node, uuid: String) -> void:
 	containers[uuid] = container
-	DebugManager.log_save("ContainerRegistry: Registered container %s" % uuid)
 
 ## Unregister a container
 func unregister_container(uuid: String) -> void:
 	if containers.has(uuid):
 		containers.erase(uuid)
-		DebugManager.log_save("ContainerRegistry: Unregistered container %s" % uuid)
 
 ## Get container by UUID
 func get_container(uuid: String) -> Node:
@@ -36,7 +33,6 @@ func get_save_data() -> Dictionary:
 			data["uuid"] = uuid  # Include UUID in serialized data
 			containers_data.append(data)
 	
-	DebugManager.log_save("ContainerRegistry: Saving %d containers" % containers_data.size())
 	return {
 		"containers": containers_data
 	}
@@ -64,5 +60,4 @@ func load_save_data(data: Dictionary) -> void:
 			push_warning("ContainerRegistry: Container not found for UUID %s" % uuid)
 			missing += 1
 	
-	DebugManager.log_save("Containers loaded: %d matched, %d missing" % [matched, missing])
 

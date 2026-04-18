@@ -239,7 +239,6 @@ func _flip_vehicle_upright() -> void:
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
 	
-	print("[Vehicle] Flipped upright!")
 
 
 ## Interaction prompt for "Press E to..." system
@@ -280,7 +279,6 @@ func set_camera_active(active: bool) -> void:
 	var cam = get_node_or_null("FollowCamera/Pivot/SpringArm3D/Camera3D")
 	if cam and cam is Camera3D:
 		cam.current = active
-		print("[Vehicle] Camera active: %s" % active)
 
 
 # === ENGINE AUDIO ===
@@ -306,7 +304,6 @@ func _start_engine_audio() -> void:
 		engine_idle_audio.volume_db = -40.0  # Start silent
 		engine_idle_audio.play()
 		_fade_in_driving_loop()
-		print("[Vehicle] Engine started - startup + driving loop layered")
 	
 	# Stop startup after 5 seconds (driving loop continues)
 	_stop_startup_after_delay()
@@ -361,7 +358,6 @@ func _stop_startup_after_delay() -> void:
 func _on_engine_startup_timeout() -> void:
 	if engine_start_audio and is_player_controlled:
 		engine_start_audio.stop()
-		print("[Vehicle] Startup complete - driving loop continues")
 	_stop_engine_timers()
 
 
@@ -380,7 +376,6 @@ func _stop_engine_audio() -> void:
 		engine_start_audio.stop()
 	if engine_idle_audio:
 		engine_idle_audio.stop()
-	print("[Vehicle] Engine stopped")
 
 
 ## Update engine pitch based on vehicle speed

@@ -71,7 +71,6 @@ func _ready() -> void:
 	add_child(terrain_api)
 	terrain_api.initialize(player)
 	
-	print("ModeEditor: Initialized")
 
 func _process(_delta: float) -> void:
 	if UIInputGuard.is_gameplay_input_blocked(self):
@@ -113,28 +112,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			KEY_G:
 				blocky_mode = not blocky_mode
-				print("ModeEditor: Blocky mode -> %s" % ("ON" if blocky_mode else "OFF"))
 			KEY_R:
 				if submode == 3: # PREFAB
 					prefab_rotation = (prefab_rotation + 1) % 4
-					print("ModeEditor: Prefab rotation -> %d°" % (prefab_rotation * 90))
 			KEY_BRACKETLEFT:
 				if submode == 3 and available_prefabs.size() > 0:
 					current_prefab_index = (current_prefab_index - 1 + available_prefabs.size()) % available_prefabs.size()
-					print("ModeEditor: Prefab -> %s" % _get_current_prefab_name())
 			KEY_BRACKETRIGHT:
 				if submode == 3 and available_prefabs.size() > 0:
 					current_prefab_index = (current_prefab_index + 1) % available_prefabs.size()
-					print("ModeEditor: Prefab -> %s" % _get_current_prefab_name())
 	
 	if event is InputEventMouseButton and event.pressed:
 		if event.shift_pressed:
 			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 				brush_size = min(brush_size + 0.5, 20.0)
-				print("ModeEditor: Brush size -> %.1f" % brush_size)
 			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 				brush_size = max(brush_size - 0.5, 0.5)
-				print("ModeEditor: Brush size -> %.1f" % brush_size)
 
 func handle_primary(item: Dictionary) -> void:
 	if not mode_manager:

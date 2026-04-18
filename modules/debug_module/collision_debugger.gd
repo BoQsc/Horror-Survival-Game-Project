@@ -25,7 +25,6 @@ func _ready():
 	add_child(canvas)
 	canvas.add_child(label)
 	
-	print("[CollisionDebugger] Ready - Press F10 to toggle, hold Left Alt to inspect")
 
 
 func _unhandled_input(_event):

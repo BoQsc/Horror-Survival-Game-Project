@@ -55,7 +55,6 @@ func _ready() -> void:
 	# Defer footstep setup to ensure player is in scene tree
 	call_deferred("_setup_footstep_sounds")
 	
-	DebugManager.log_player("PlayerMovementFeature: Initialized")
 
 func _setup_footstep_sounds() -> void:
 	# Preload the footstep sounds
@@ -70,7 +69,6 @@ func _setup_footstep_sounds() -> void:
 	footstep_player.name = "FootstepPlayer"
 	player.add_child(footstep_player)
 	
-	DebugManager.log_player("PlayerMovement: Loaded %d footstep sounds" % footstep_sounds.size())
 
 func _physics_process(delta: float) -> void:
 	if not player:
@@ -212,7 +210,6 @@ func _handle_stair_stepping(delta: float, pre_move_pos: Vector3) -> void:
 		var floor_collider = down_result.get_collider()
 		if not floor_collider or not (floor_collider is Node) or (not floor_collider.is_in_group("building_chunks") and not floor_collider.is_in_group("placed_objects")):
 			# We are trying to step onto natural terrain or something else. Do not engage stair script.
-			# DebugManager.log_player("StairStep Ignored: Collider is %s, Groups: %s" % [floor_collider.name if floor_collider is Node else floor_collider, floor_collider.get_groups() if floor_collider is Node else "None"])
 			return
 			
 		var step_y = down_result.get_travel().y

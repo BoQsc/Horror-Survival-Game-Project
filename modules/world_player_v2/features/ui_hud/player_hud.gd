@@ -230,7 +230,6 @@ func _setup_visual_overlays() -> void:
 		# Ensure it grows inward from the right
 		notification_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 		add_child(notification_label)
-		print("[HUD_SETUP] Notification label created")
 
 	# Create item notification container
 	if not item_notification_container:
@@ -260,7 +259,6 @@ func _setup_visual_overlays() -> void:
 	_connect_to_save_manager()
 
 func _connect_to_save_manager() -> void:
-	print("[HUD_SETUP] Connecting to SaveManager...")
 	var save_mgr = get_tree().get_first_node_in_group("save_manager")
 	if not save_mgr:
 		# Standardized to SaveManager matching project.godot
@@ -270,18 +268,9 @@ func _connect_to_save_manager() -> void:
 	if save_mgr:
 		if save_mgr.has_signal("save_completed") and not save_mgr.save_completed.is_connected(_on_save_completed):
 			save_mgr.save_completed.connect(_on_save_completed)
-			print("[HUD_SETUP] Connected to save_completed signal")
 		if save_mgr.has_signal("load_completed") and not save_mgr.load_completed.is_connected(_on_load_completed):
 			save_mgr.load_completed.connect(_on_load_completed)
-			print("[HUD_SETUP] Connected to load_completed signal")
-		# Check if already connected but name in log was missing
-		if not save_mgr.save_completed.is_connected(_on_save_completed):
-			print("[HUD_SETUP] WARNING: Failed to connect to signals even with SaveManager ref")
-	else:
-		print("[HUD_SETUP] WARNING: SaveManager not found in scene tree yet (will be handled by group signals if registered later)")
-
 func _on_item_added(item_data: Dictionary, amount: int) -> void:
-	print("HUD: _on_item_added received: %s x%d" % [item_data.get("name", "Unknown"), amount])
 	if amount <= 0 or not item_notification_container:
 		return
 		
@@ -296,7 +285,6 @@ func _on_item_added(item_data: Dictionary, amount: int) -> void:
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	
 	item_notification_container.add_child(label)
-	print("HUD: Added label to container: ", item_notification_container)
 	
 	var tween = create_tween()
 	# Wait 2 seconds, then fade out over 1 second, then remove
@@ -556,32 +544,26 @@ func _on_collision_debugger_toggled(is_enabled: bool) -> void:
 func _on_pickaxe_dig_mode_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").pickaxe_dig_enabled = is_enabled
-		print("PlayerHUD: Block Pickaxe Mode -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_pickaxe_durability_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").pickaxe_durability_enabled = is_enabled
-		print("PlayerHUD: Pickaxe Durability -> %s" % ("ON (5 hits)" if is_enabled else "OFF (Instant)"))
 
 
 func _on_target_visualizer_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").target_visualizer_enabled = is_enabled
-		print("PlayerHUD: Target Visualizer -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_hit_marker_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").hit_marker_enabled = is_enabled
-		print("PlayerHUD: Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_pistol_hit_marker_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").pistol_hit_marker_enabled = is_enabled
-		print("PlayerHUD: Pistol Hit Markers -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_terrain_info_toggled(is_enabled: bool) -> void:
 	show_terrain_info = is_enabled
-	print("PlayerHUD: Terrain Info -> %s" % ("ON" if is_enabled else "OFF"))
 	
 	# Force update visibility immediately
 	if target_material_label:
@@ -600,7 +582,6 @@ func _on_chunk_bounds_toggled(is_enabled: bool) -> void:
 		# Manual update if needed (matching chunk_manager.gd logic)
 		if tm.has_method("update_debug_visuals"):
 			tm.update_debug_visuals()
-		print("PlayerHUD: Chunk Bounds -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_road_zones_toggled(is_enabled: bool) -> void:
 	var tm = get_tree().get_first_node_in_group("terrain_manager")
@@ -609,14 +590,13 @@ func _on_road_zones_toggled(is_enabled: bool) -> void:
 	elif tm and "debug_show_road_zones" in tm:
 		# Fallback if method not present yet
 		tm.debug_show_road_zones = is_enabled
-		print("PlayerHUD: Road Zones -> %s" % ("ON" if is_enabled else "OFF"))
 
 func _on_spawn_entity_pressed() -> void:
 	var em = get_tree().get_first_node_in_group("entity_manager")
 	if em and em.has_method("spawn_entity_near_player"):
 		var entity = em.spawn_entity_near_player()
 		if entity:
-			print("PlayerHUD: Spawned test entity at %s" % entity.global_position)
+			pass
 	else:
 		push_error("PlayerHUD: Entity manager or spawn_entity_near_player not found!")
 
@@ -627,14 +607,13 @@ func _on_spawn_zombie_pressed() -> void:
 		if zombie_scene:
 			var zombie = em.spawn_entity_near_player(zombie_scene)
 			if zombie:
-				print("PlayerHUD: Spawned ZOMBIE at %s" % zombie.global_position)
+				pass
 		else:
 			push_error("PlayerHUD: Zombie scene not found!")
 	else:
 		push_error("PlayerHUD: Entity manager or spawn_entity_near_player not found!")
 
 func _on_capture_prefab_pressed() -> void:
-	print("PlayerHUD: Capture Prefab pressed")
 	# 1. Close menu
 	_on_game_menu_toggled(false)
 	if has_node("/root/PlayerSignals"):
@@ -648,28 +627,22 @@ func _on_capture_prefab_pressed() -> void:
 	if prefab_capture and prefab_capture.has_method("_enter_selection_mode"):
 		prefab_capture._enter_selection_mode()
 	else:
-		print("PlayerHUD: PrefabCapture not found or missing method!")
-
-
-
+		pass
 func _on_mining_radius_changed(value: float, label: Label) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").pickaxe_mining_radius = value
 	if label:
 		label.text = "Mining Radius: %.2f" % value
-	print("PlayerHUD: Mining Radius -> %.2f" % value)
 
 func _on_quicksave_pressed() -> void:
 	if has_node("/root/SaveManager"):
 		get_node("/root/SaveManager").quick_save()
-		print("PlayerHUD: QuickSave triggered (F5)")
 	else:
 		push_error("PlayerHUD: SaveManager not found!")
 
 func _on_quickload_pressed() -> void:
 	if has_node("/root/SaveManager"):
 		get_node("/root/SaveManager").quick_load()
-		print("PlayerHUD: QuickLoad triggered (F8)")
 	else:
 		push_error("PlayerHUD: SaveManager not found!")
 
@@ -761,7 +734,6 @@ func _on_durability_hit(current_hp: int, max_hp: int, _target_name: String, targ
 	}
 	last_hit_target_key = key
 	
-	print("DURABILITY_DEBUG: HUD received hit | Target: %s | HP: %.1f%% | Key: %s" % [_target_name, hp_percent, key])
 	durability_bar.value = hp_percent
 	durability_bar.visible = true
 
@@ -829,7 +801,6 @@ func _update_durability_visibility() -> void:
 			durability_bar.visible = true
 			return
 	
-	print("DURABILITY_DEBUG: HUD hiding bar - no match found (looking at different block)")
 	durability_bar.visible = false
 
 func _is_child_of(node: Node, potential_parent: Node) -> bool:
@@ -873,14 +844,12 @@ func _on_save_completed(success: bool, _path: String) -> void:
 		notification_label.text = "GAME SAVED"
 		notification_label.visible = true
 		notification_timer = 2.0  # Show for 2 seconds
-		print("[SAVE_NOTIFICATION] Game saved!")
 
 func _on_load_completed(success: bool, _path: String) -> void:
 	if success and notification_label:
 		notification_label.text = "GAME LOADED"
 		notification_label.visible = true
 		notification_timer = 2.0  # Show for 2 seconds
-		print("[LOAD_NOTIFICATION] Game loaded!")
 
 func _on_creative_catalog_pressed() -> void:
 	if not _is_editor_mode_active() or not game_menu.visible:

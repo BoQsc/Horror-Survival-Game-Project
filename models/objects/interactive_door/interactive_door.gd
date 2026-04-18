@@ -209,7 +209,6 @@ func get_interaction_prompt() -> String:
 
 func take_damage(amount: int) -> void:
 	current_hp = max(0, current_hp - amount)
-	print("[Door] Took %d damage (%d/%d HP)" % [amount, current_hp, max_hp])
 	
 	var hp_percent = float(current_hp) / float(max_hp)
 	for i in range(DAMAGE_THRESHOLDS.size()):
@@ -223,7 +222,6 @@ func take_damage(amount: int) -> void:
 		_on_destroyed()
 
 func _on_destroyed() -> void:
-	print("[Door] Destroyed!")
 	PlayerSignals.durability_cleared.emit()
 	
 	if has_meta("anchor") and has_meta("chunk"):

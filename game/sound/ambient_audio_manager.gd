@@ -36,13 +36,11 @@ func _ready() -> void:
 	
 	# Auto-start grasslands ambient
 	play_ambient(TRACK_GRASSLANDS)
-	print("[AMBIENT_AUDIO] Manager initialized")
 
 
 ## Play an ambient track with optional fade-in
 func play_ambient(track_path: String, fade_in: bool = true) -> void:
 	if track_path == _current_track and _is_playing:
-		print("[AMBIENT_AUDIO] Track already playing: ", track_path)
 		return
 	
 	var stream = load(track_path)
@@ -59,7 +57,6 @@ func play_ambient(track_path: String, fade_in: bool = true) -> void:
 		_start_fresh(stream, fade_in)
 	
 	_is_playing = true
-	print("[AMBIENT_AUDIO] Playing: ", track_path)
 
 
 ## Stop ambient audio with optional fade-out
@@ -78,7 +75,6 @@ func stop_ambient(fade_out: bool = true) -> void:
 		_active_player.stop()
 		_is_playing = false
 	
-	print("[AMBIENT_AUDIO] Stopping ambient")
 
 
 ## Set master volume for ambient audio (in dB)
@@ -86,7 +82,6 @@ func set_volume(volume_db: float) -> void:
 	_master_volume_db = volume_db
 	if _is_playing:
 		_active_player.volume_db = _master_volume_db
-	print("[AMBIENT_AUDIO] Volume set to: ", volume_db, " dB")
 
 
 ## Get current volume (in dB)

@@ -185,16 +185,13 @@ func _ready():
 		if not viewer:
 			viewer = get_node_or_null("../CharacterBody3D")
 
-	if viewer:
-		DebugManager.log_chunk("Viewer found: %s" % viewer.name)
-	else:
+	if not viewer:
 		push_warning("Viewer NOT found! Terrain generation will not start.")
 
 	# Native backends are required.
 	if not ClassDB.class_exists("MeshBuilder"):
 		push_error("[ChunkManager] MeshBuilder GDExtension is required.")
 		return
-	DebugManager.log_chunk("GDExtension MeshBuilder active")
 
 	if not ClassDB.class_exists("TerrainGrid"):
 		push_error("[ChunkManager] TerrainGrid GDExtension is required.")
@@ -203,7 +200,6 @@ func _ready():
 	if not terrain_grid:
 		push_error("[ChunkManager] Failed to instantiate TerrainGrid GDExtension.")
 		return
-	DebugManager.log_chunk("GDExtension TerrainGrid active")
 	_native_backends_ready = true
 
 
@@ -259,7 +255,6 @@ func _ready():
 		if sm and "pending_world_definition_path" in sm and sm.pending_world_definition_path != "":
 			world_definition_path = sm.pending_world_definition_path
 			sm.pending_world_definition_path = ""  # Consume it
-			print("[ChunkManager] World map path from SaveManager: %s" % world_definition_path)
 
 	if world_definition_path != "":
 		world_map_active = true
@@ -287,7 +282,6 @@ func _ready():
 			material_terrain.set_shader_parameter("road_mask", road_tex)
 			material_terrain.set_shader_parameter("road_mask_offset", Vector2(0.0, 0.0))
 			material_terrain.set_shader_parameter("road_mask_scale", 1.0 / world_map_size)
-		print("[ChunkManager] World map mode: %s (GPU fbm biomes, per-pixel road overlay)" % world_definition_path)
 
 	# Start GPU thread
 	compute_thread = Thread.new()
@@ -298,12 +292,10 @@ func _ready():
 		var thread = Thread.new()
 		thread.start(_cpu_thread_function)
 		cpu_threads.append(thread)
-	DebugManager.log_chunk("Started %d CPU workers" % _cpu_worker_count)
 
 	# Calculate initial load target (all chunks within render distance)
 	# For ground-level players, we only load Y=0, same chunk count as before
 	initial_load_target_chunks = int(PI * render_distance * render_distance)
-	DebugManager.log_chunk("Two-phase loading: target=%d chunks, initial=%dms, explore=%dms" % [initial_load_target_chunks, initial_load_delay_ms, exploration_delay_ms])
 
 
 ## Gets the effective viewer position for chunk loading.
@@ -390,7 +382,6 @@ func _process(delta):
 				if data.node_terrain is StaticBody3D:
 					data.node_terrain.collision_layer = 1 | 512
 		set_meta("collision_fixed", true)
-		DebugManager.log_chunk("HOTFIX: Updated existing chunks to layer 1|512")
 
 var debug_chunk_bounds: bool = false
 
@@ -399,7 +390,6 @@ func _unhandled_input(_event):
 
 func set_debug_chunk_bounds(enabled: bool) -> void:
 	debug_chunk_bounds = enabled
-	DebugManager.log_chunk("Chunk bounds visualization: %s" % ("ON" if debug_chunk_bounds else "OFF"))
 	# Update all chunk materials
 	for coord in active_chunks:
 		var data = active_chunks[coord]
@@ -409,7 +399,6 @@ func set_debug_chunk_bounds(enabled: bool) -> void:
 
 func set_debug_show_road_zones(enabled: bool) -> void:
 	debug_show_road_zones = enabled
-	DebugManager.log_chunk("Road zones visualization: %s" % ("ON" if debug_show_road_zones else "OFF"))
 	# Update all chunk materials
 	for coord in active_chunks:
 		var data = active_chunks[coord]
@@ -560,12 +549,10 @@ func get_terrain_density(global_pos: Vector3) -> float:
 	var coord = Vector3i(chunk_x, chunk_y, chunk_z)
 
 	if not active_chunks.has(coord):
-		print("[DENSITY_DEBUG] Chunk %s not loaded for pos %s" % [coord, global_pos])
 		return 1.0 # Air (chunk not loaded)
 
 	var data = active_chunks[coord]
 	if data == null or data.cpu_density_terrain.is_empty():
-		print("[DENSITY_DEBUG] Chunk %s has no density data" % coord)
 		return 1.0
 
 	# Find local position within chunk
@@ -578,17 +565,14 @@ func get_terrain_density(global_pos: Vector3) -> float:
 	var iz = int(round(local_pos.z))
 
 	if ix < 0 or ix >= DENSITY_GRID_SIZE or iy < 0 or iy >= DENSITY_GRID_SIZE or iz < 0 or iz >= DENSITY_GRID_SIZE:
-		print("[DENSITY_DEBUG] Local pos (%d,%d,%d) out of bounds for %s" % [ix, iy, iz, global_pos])
 		return 1.0 # Out of bounds
 
 	var index = ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
 
 	if index >= 0 and index < data.cpu_density_terrain.size():
 		var density = data.cpu_density_terrain[index]
-		print("[DENSITY_DEBUG] Read density=%.3f at global=%s chunk=%s local=(%d,%d,%d) index=%d" % [density, global_pos, coord, ix, iy, iz, index])
 		return density
 
-	print("[DENSITY_DEBUG] Index %d out of range (size=%d)" % [index, data.cpu_density_terrain.size()])
 	return 1.0
 
 func get_water_density(global_pos: Vector3) -> float:
@@ -1083,7 +1067,6 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 								"material_id": material_id,
 								"start_mod_version": start_mod_version  # For stale detection
 							}
-							DebugManager.log_chunk("modify_terrain TASK: coord=%s mat_id=%d mat_buf_valid=%s" % [coord, material_id, data.material_buffer_terrain.is_valid()])
 							tasks_to_add.append(task)
 				else:
 					# Chunk not loaded - trigger immediate generation
@@ -1091,7 +1074,6 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					if not active_chunks.has(coord): # Not already queued
 						active_chunks[coord] = null # Mark as pending
 						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-						if DebugManager.LOG_CHUNK: DebugManager.log_chunk("modify_terrain triggering Y=%d at (%d, %d)" % [coord.y, coord.x, coord.z])
 						chunks_to_generate.append({
 							"type": "generate",
 							"coord": coord,
@@ -1127,7 +1109,6 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 ## Fill a 1x1 vertical column of terrain from y_from to y_to
 ## Uses Column shape (type=2) for precise vertical fills
 func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, layer: int = 0):
-	DebugManager.log_chunk("fill_column: x=%.2f z=%.2f y=[%.2f to %.2f] val=%.2f" % [x, z, y_from, y_to, value])
 	# Calculate center position (mid-point of column)
 	var pos = Vector3(x, (y_from + y_to) / 2.0, z)
 
@@ -1215,16 +1196,10 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 
 		for i in range(batch_count):
 			semaphore.post()
-		DebugManager.log_chunk("fill_column: queued %d tasks" % batch_count)
-	elif chunks_to_generate.size() > 0:
-		DebugManager.log_chunk("fill_column: queued %d chunk generates" % chunks_to_generate.size())
-	else:
-		DebugManager.log_chunk("fill_column: NO TASKS QUEUED - chunk not loaded or no valid buffer")
 
 func _exit_tree():
 	# CRITICAL: Clean up all GPU resources BEFORE terminating threads
 	# This fixes 682 resource leaks (StorageBuffers, Meshes, Collision, Materials)
-	DebugManager.log_chunk("ChunkManager: Starting cleanup of %d active chunks" % active_chunks.size())
 
 	# 1. Unload all active chunks (frees meshes, collision, GPU buffers)
 	var coords_to_unload = active_chunks.keys()
@@ -1276,16 +1251,13 @@ func _exit_tree():
 
 	# 5. Wait for GPU thread to finish (processes remaining "free" tasks)
 	if compute_thread:
-		DebugManager.log_chunk("ChunkManager: Waiting for GPU thread to finish...")
 		compute_thread.wait_to_finish()
-		DebugManager.log_chunk("ChunkManager: GPU thread finished")
 		compute_thread = null
 
 	# 6. Wait for CPU workers to finish
 	for i in range(cpu_threads.size()):
 		var thread = cpu_threads[i]
 		if thread:
-			DebugManager.log_chunk("ChunkManager: Waiting for CPU worker %d to finish..." % i)
 			thread.wait_to_finish()
 	cpu_threads.clear()
 
@@ -1300,7 +1272,6 @@ func _exit_tree():
 	pending_batches.clear()
 	active_chunks.clear()
 
-	DebugManager.log_chunk("ChunkManager: Cleanup complete, all resources freed")
 
 
 func update_chunks():
@@ -1419,7 +1390,6 @@ func _unload_chunk(coord: Vector3i):
 ## Atomic world reset: cancels all background work and clears active chunks
 ## Used during Save/Load to prevent "double rendering" and redundant processing
 func clear_all_chunks():
-	DebugManager.log_chunk("ChunkManager: ATOMIC CLEAR INITIATED")
 
 	# 1. Clear background task queues immediately
 	mutex.lock()
@@ -1439,7 +1409,6 @@ func clear_all_chunks():
 	# 3. Wipe all active chunks (frees Meshes, RIDs, and Collision)
 	# Working on a copy of keys because _unload_chunk modifies the dictionary
 	var coords = active_chunks.keys()
-	DebugManager.log_chunk("ChunkManager: Unloading %d active chunks..." % coords.size())
 	for coord in coords:
 		_unload_chunk(coord)
 
@@ -1447,7 +1416,6 @@ func clear_all_chunks():
 	active_chunks.clear()
 	if terrain_grid and terrain_grid.has_method("clear"):
 		terrain_grid.clear()
-		DebugManager.log_chunk("ChunkManager: C++ TerrainGrid cleared")
 
 	var prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
 	if not prefab_spawner:
@@ -1469,7 +1437,6 @@ func clear_all_chunks():
 	_last_update_unloads = 0
 	_capture_terrain_telemetry("world_reset", {"cleared_chunks": coords.size()})
 
-	DebugManager.log_chunk("ChunkManager: Atomic clear complete - background tasks stopped")
 
 func _update_chunks_legacy():
 	_last_update_backend = "legacy"
@@ -1553,8 +1520,6 @@ func _update_chunks_legacy():
 	var is_above_ground = center_chunk.y >= 0
 
 	# Debug loading state (gated)
-	if DebugManager.LOG_CHUNK and initial_load_phase and chunks_loaded_initial == 0:
-		DebugManager.log_chunk("Loading center=%s chunks_per_frame=%d" % [center_chunk, chunks_per_frame_limit])
 
 	if is_above_ground:
 		# Only load Y=0 layer for performance
@@ -1580,8 +1545,6 @@ func _update_chunks_legacy():
 					active_chunks[coord] = null
 
 					# Debug: track when underground chunks are queued
-					if DebugManager.LOG_CHUNK and y < 0:
-						DebugManager.log_chunk("Queuing underground Y=%d at (%d, %d)" % [y, x, z])
 
 					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
 
@@ -1736,7 +1699,6 @@ func _thread_function():
 
 		rd.free_rid(biome_buf_rid)
 		rd.free_rid(sid_biome)
-		DebugManager.log_chunk("GPU biome map generated (%dx%d) using shader fbm()" % [map_size_i, map_size_i])
 
 	# === World Map Buffers (uploaded from editor PNGs) ===
 
@@ -1778,16 +1740,12 @@ func _thread_function():
 			_world_map_terrain_modifications.clear()
 			if loaded.has("buildings"):
 				_world_map_buildings = loaded.buildings
-				print("[ChunkManager] Loaded %d baked buildings" % _world_map_buildings.size())
 			if loaded.has("terrain_modifications"):
 				_cache_world_map_terrain_modifications(loaded.terrain_modifications)
-				print("[ChunkManager] Loaded %d baked terrain modification chunks" % _world_map_terrain_modifications.size())
-				print("[ChunkManager] Prepared %d baked excavation chunk masks" % _world_map_excavation_masks.size())
 
 			# Load building footprint map
 			if loaded.has("building_map"):
 				_world_map_building_map = loaded.building_map
-				print("[ChunkManager] Loaded building_map (%dx%d)" % [_world_map_building_map.get_width(), _world_map_building_map.get_height()])
 
 			# Read metadata for map params
 			if loaded.has("metadata"):
@@ -1798,7 +1756,6 @@ func _thread_function():
 				world_map_max_height = meta_terrain_height * 2.5
 				water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
 
-			DebugManager.log_chunk("World map loaded: %s (%dx%d, max_h=%.1f)" % [world_definition_path, int(world_map_size), int(world_map_size), world_map_max_height])
 		else:
 			push_error("[ChunkManager] World map at %s missing required PNGs" % world_definition_path)
 			world_map_active = false
@@ -1930,7 +1887,6 @@ func _thread_function():
 						chunks_loaded_initial += 1
 						if chunks_loaded_initial >= initial_load_target_chunks:
 							initial_load_phase = false
-							DebugManager.log_chunk("Initial load complete! Exploration mode delay=%dms" % exploration_delay_ms)
 						# During initial load: minimal or no delay for fast loading
 						if initial_load_delay_ms > 0:
 							_interruptible_delay(initial_load_delay_ms)
@@ -2282,7 +2238,6 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	var chunk_pos = task.pos
 	var layer = task.get("layer", 0)
 	var material_id = task.get("material_id", -1)
-	DebugManager.log_chunk("process_modify: coord=%s layer=%d value=%.2f mat_id=%d mat_buf_valid=%s dens_buf_valid=%s" % [task.coord, layer, task.value, material_id, material_buffer.is_valid(), density_buffer.is_valid()])
 
 
 	var u_density = RDUniform.new()
@@ -2384,7 +2339,6 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material, builder_o
 	if false:
 		if not _meshbuilder_logged:
 			_meshbuilder_logged = true
-			print("[ChunkManager] ✓ MeshBuilder GDExtension LOADED - using fast C++ path")
 		var builder = ClassDB.instantiate("MeshBuilder")
 		# 9 stride = pos(3) + norm(3) + col(3)
 		var mesh = builder.build_mesh_native(data, 9)
@@ -2612,7 +2566,6 @@ func _finalize_chunk_creation(item: Dictionary):
 
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
-		DebugManager.log_chunk("finalize_chunk: coord=%s mat_buf_valid=%s has_mat_buf_key=%s" % [coord, data.material_buffer_terrain.is_valid(), item.has("mat_buf")])
 		data.cpu_density_terrain = item.cpu_dens
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
@@ -2622,7 +2575,6 @@ func _finalize_chunk_creation(item: Dictionary):
 		_check_spawn_zone_readiness(coord)
 
 		var dt = (Time.get_ticks_usec() - start) / 1000.0
-		if dt > 8.0 and DebugManager.LOG_CHUNK: DebugManager.log_chunk("SPIKE Finalize Terrain: %.2f ms" % dt)
 
 	# REMOVED: final_collision block - handled in worker thread now!
 
@@ -2647,7 +2599,6 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.cpu_density_water = item.cpu_dens
 
 		var dt = (Time.get_ticks_usec() - start) / 1000.0
-		if dt > 8.0 and DebugManager.LOG_CHUNK: DebugManager.log_chunk("SPIKE Finalize Water: %.2f ms" % dt)
 
 ## Create per-chunk ShaderMaterial with 3D material texture
 func _create_chunk_material(_chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
@@ -2690,7 +2641,6 @@ func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batc
 		if active_chunks.has(coord):
 			var chunk_data = active_chunks[coord]
 			if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
-				DebugManager.log_chunk("STALE: Skipping non-batched update for %s (v%d < v%d)" % [coord, start_mod_version, chunk_data.mod_version])
 				return
 		_apply_chunk_update(coord, result, layer, cpu_dens, cpu_mat, start_mod_version)
 		return
@@ -2707,7 +2657,6 @@ func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batc
 	if active_chunks.has(coord):
 		var chunk_data = active_chunks[coord]
 		if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
-			DebugManager.log_chunk("STALE: Skipping batched update for %s (v%d < v%d)" % [coord, start_mod_version, chunk_data.mod_version])
 			is_stale = true
 
 	if not is_stale and active_chunks.has(coord):
@@ -2725,7 +2674,6 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 
 	# STALE CHECK: Secondary check at application time (for batched updates)
 	if data != null and start_mod_version > 0 and start_mod_version < data.mod_version:
-		DebugManager.log_chunk("STALE APPLY: Skipping update for %s (v%d < v%d)" % [coord, start_mod_version, data.mod_version])
 		return
 
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
@@ -2751,7 +2699,6 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water
-		DebugManager.log_chunk("Applying water update to %s, has_mesh=%s" % [coord, result.mesh != null])
 		if data.node_water: data.node_water.queue_free()
 		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true)
 		data.node_water = result_node.node if not result_node.is_empty() else null
@@ -2823,7 +2770,6 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 	# But request_spawn_zone also checks Y-1, 0, +1 layers (3 layers).
 	initial_load_target_chunks = (radius * 2 + 1) * (radius * 2 + 1) * 3
 	chunks_loaded_initial = 0
-	DebugManager.log_chunk("SpawnZone reset loading phase: target=%d" % initial_load_target_chunks)
 
 	var pending_coords: Array[Vector3i] = []
 
@@ -2867,7 +2813,6 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 			"radius": radius,
 			"pending_coords": pending_coords
 		})
-		DebugManager.log_chunk("SpawnZone requested %d chunks at %s" % [pending_coords.size(), position])
 		_capture_terrain_telemetry("spawn_zone_requested", {
 			"position": str(position),
 			"radius": radius,
@@ -2931,12 +2876,10 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 		# TERMINATE INITIAL LOAD PHASE: Switch to slower/throttled exploration mode
 		if initial_load_phase:
 			initial_load_phase = false
-			DebugManager.log_chunk("Initial load phase COMPLETE - switching to exploration throttle")
 			_capture_terrain_telemetry("initial_load_complete", {
 				"ready_positions": ready_positions.size()
 			})
 
-		DebugManager.log_chunk("SpawnZone %d zones ready" % ready_positions.size())
 		spawn_zones_ready.emit(ready_positions)
 
 ## Request multiple spawn zones at once (for batch loading player + entities)

@@ -63,14 +63,13 @@ func _ready():
 	
 	# Setup animation if found
 	if anim_player:
-		DebugManager.log_entities("Zombie: Found AnimationPlayer with animations: %s" % [anim_player.get_animation_list()])
 		if anim_player.has_animation("Take 001"):
 			anim_player.play("Take 001")
 			anim_player.get_animation("Take 001").loop_mode = Animation.LOOP_NONE
 		# Animation timing is visual-only, so keep it off the physics step.
 		anim_player.callback_mode_process = AnimationPlayer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
 	else:
-		DebugManager.log_entities("Zombie: No AnimationPlayer found - will work without animations")
+		pass
 	
 	# Setup chase sound
 	chase_audio_player = AudioStreamPlayer3D.new()
@@ -346,7 +345,6 @@ func _do_attack():
 	if not player:
 		return
 	
-	DebugManager.log_entities("Zombie attacked player!")
 	zombie_attacked.emit(player)
 	
 	if player.has_method("take_damage"):
@@ -423,7 +421,6 @@ func take_damage(amount: int, source: String = "generic"):
 		return
 	
 	current_health -= amount
-	DebugManager.log_entities("Zombie took %d damage! HP: %d/%d" % [amount, current_health, max_health])
 	
 	if hit_audio_player and source != "pistol":
 		hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
@@ -448,7 +445,6 @@ func take_damage(amount: int, source: String = "generic"):
 
 func die():
 	change_state("DEAD")
-	DebugManager.log_entities("Zombie died!")
 	zombie_died.emit(self)
 	velocity = Vector3.ZERO
 	

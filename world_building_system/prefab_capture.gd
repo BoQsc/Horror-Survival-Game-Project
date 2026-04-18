@@ -120,19 +120,16 @@ func _input(event):
 
 func _enter_selection_mode():
 	state = State.SELECTING_CORNER_A
-	print("[PrefabCapture] Selection mode: Click to set CORNER A (Green)")
 
 func _cancel_selection():
 	state = State.IDLE
 	marker_a.visible = false
 	marker_b.visible = false
 	selection_box.visible = false
-	print("[PrefabCapture] Selection cancelled")
 
 func _handle_click():
 	var hit = _raycast()
 	if not hit:
-		print("[PrefabCapture] No valid target - click on terrain or building")
 		return
 	
 	if state == State.SELECTING_CORNER_A:
@@ -140,13 +137,11 @@ func _handle_click():
 		marker_a.global_position = corner_a + Vector3(0.5, 0.5, 0.5)
 		marker_a.visible = true
 		state = State.SELECTING_CORNER_B
-		print("[PrefabCapture] Corner A set at %s. Click to set CORNER B (Red)" % corner_a)
 	
 	elif state == State.SELECTING_CORNER_B:
 		corner_b = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))
 		marker_b.global_position = corner_b + Vector3(0.5, 0.5, 0.5)
 		marker_b.visible = true
-		print("[PrefabCapture] Corner B set at %s" % corner_b)
 		
 		# Capture the prefab
 		_capture_region()
@@ -215,7 +210,6 @@ func _objects_to_compact(objects: Array) -> Array:
 
 func _capture_region():
 	if not building_manager:
-		print("[PrefabCapture] ERROR: No building manager!")
 		_cancel_selection()
 		return
 	
@@ -231,7 +225,6 @@ func _capture_region():
 		max(corner_a.z, corner_b.z)
 	)
 	
-	print("[PrefabCapture] Scanning region from %s to %s" % [min_corner, max_corner])
 	
 	# Calculate size
 	var size = Vector3i(
@@ -266,11 +259,9 @@ func _capture_region():
 	var raw_objects = _scan_objects_in_region(min_corner, max_corner, origin)
 	
 	if block_count == 0 and raw_objects.size() == 0:
-		print("[PrefabCapture] No blocks or objects found in selection!")
 		_cancel_selection()
 		return
 	
-	print("[PrefabCapture] Found %d blocks and %d objects" % [block_count, raw_objects.size()])
 	
 	# Convert to layer strings
 	var layers = _grid_to_layers(grid, size)
@@ -296,11 +287,9 @@ func _capture_region():
 	if file:
 		file.store_string(JSON.stringify(prefab_data, "\t"))
 		file.close()
-		print("[PrefabCapture] Saved prefab to: %s" % path)
-		print("[PrefabCapture] Prefab contains %d blocks in bracket notation" % block_count)
 		prefab_captured.emit(prefab_name, path)
 	else:
-		print("[PrefabCapture] ERROR: Failed to save prefab!")
+		pass
 	
 	_cancel_selection()
 
@@ -410,7 +399,6 @@ func get_available_prefabs() -> Array[String]:
 func load_prefab(prefab_name: String) -> Dictionary:
 	var path = PREFAB_DIR + prefab_name + ".json"
 	if not FileAccess.file_exists(path):
-		print("[PrefabCapture] Prefab not found: %s" % path)
 		return {}
 	
 	var file = FileAccess.open(path, FileAccess.READ)
@@ -422,7 +410,6 @@ func load_prefab(prefab_name: String) -> Dictionary:
 	
 	var json = JSON.new()
 	if json.parse(json_string) != OK:
-		print("[PrefabCapture] Failed to parse prefab: %s" % prefab_name)
 		return {}
 	
 	return json.get_data()

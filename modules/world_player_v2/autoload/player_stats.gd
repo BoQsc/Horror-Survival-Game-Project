@@ -15,7 +15,7 @@ var stamina_regen_rate: float = 10.0 # Per second
 var is_dead: bool = false
 
 func _ready() -> void:
-	DebugManager.log_player("PlayerStats: Autoload initialized")
+	pass
 
 func take_damage(amount: int, source: Node = null) -> void:
 	if is_dead:
@@ -23,7 +23,6 @@ func take_damage(amount: int, source: Node = null) -> void:
 	
 	health -= amount
 	health = max(0, health)
-	DebugManager.log_player("PlayerStats: Took %d damage. Health: %d/%d" % [amount, health, max_health])
 	
 	PlayerSignals.damage_received.emit(amount, source)
 	
@@ -36,18 +35,15 @@ func heal(amount: int) -> void:
 	
 	health += amount
 	health = min(health, max_health)
-	DebugManager.log_player("PlayerStats: Healed %d. Health: %d/%d" % [amount, health, max_health])
 
 func die() -> void:
 	is_dead = true
-	DebugManager.log_player("PlayerStats: Player died!")
 	PlayerSignals.player_died.emit()
 
 func reset() -> void:
 	health = max_health
 	stamina = max_stamina
 	is_dead = false
-	DebugManager.log_player("PlayerStats: Reset to full")
 
 func use_stamina(amount: float) -> bool:
 	if stamina >= amount:
@@ -87,4 +83,3 @@ func load_save_data(data: Dictionary) -> void:
 	if data.has("is_dead"):
 		is_dead = data.is_dead
 	
-	DebugManager.log_player("PlayerStats: Loaded (HP: %d/%d, Stamina: %.1f/%.1f)" % [health, max_health, stamina, max_stamina])

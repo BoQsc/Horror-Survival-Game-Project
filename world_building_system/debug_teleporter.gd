@@ -23,11 +23,6 @@ func _ready():
 	if _prefab_spawner:
 		if _prefab_spawner.has_signal("prefab_spawned"):
 			_prefab_spawner.prefab_spawned.connect(_on_prefab_spawned)
-			print("[DebugTeleporter] Connected to PrefabSpawner")
-		else:
-			print("[DebugTeleporter] PrefabSpawner found but no signal 'prefab_spawned'")
-	else:
-		print("[DebugTeleporter] PrefabSpawner not found")
 
 func _on_prefab_spawned(prefab_name: String, pos: Vector3):
 	if _has_teleported or not enabled:
@@ -39,4 +34,3 @@ func _on_prefab_spawned(prefab_name: String, pos: Vector3):
 		_player.global_position = pos + Vector3(0, 5, 10)
 		# Face the house
 		_player.look_at(pos, Vector3.UP)
-		print("[DebugTeleporter] Teleported player to %s at %v" % [prefab_name, pos])

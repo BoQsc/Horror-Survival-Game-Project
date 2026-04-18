@@ -109,7 +109,6 @@ func _init_noise() -> void:
 
 func generate_world() -> Dictionary:
 	if terrain_height > 15.0:
-		print("[WorldMapGen] WARNING: terrain_height %.1f exceeds safe max 15.0, clamping" % terrain_height)
 		terrain_height = 15.0
 	_init_noise()
 	var half = MAP_SIZE / 2
@@ -212,9 +211,6 @@ func generate_world() -> Dictionary:
 				if fpx >= 0 and fpx < MAP_SIZE and fpz >= 0 and fpz < MAP_SIZE:
 					building_bytes[fpz * MAP_SIZE + fpx] = 255
 	
-	print("[WorldMapGen] Mode: %s | Buildings: %d placed / %d attempted | Towns: %d" % [
-		"GRID" if use_grid_roads else "TOWN", bldg_stats.placed, bldg_stats.attempted, towns.size()
-	])
 	
 	var heightmap = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, height_bytes)
 	var biome_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, biome_bytes)
@@ -301,7 +297,6 @@ func _place_towns(height_bytes: PackedByteArray, water_bytes: PackedByteArray, m
 			"score": score
 		})
 	
-	print("[WorldMapGen] Placed %d towns (target: %d)" % [towns.size(), target_count])
 	return towns
 
 func _score_settlement_site(wx: float, wz: float, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int) -> float:
@@ -466,7 +461,6 @@ func _build_mst_roads(towns: Array, catalog: Dictionary) -> Array:
 			})
 			added_extra += 1
 	
-	print("[WorldMapGen] MST roads: %d segments (%d towns, %d extra loops)" % [result.size(), towns.size(), added_extra])
 	return result
 
 func _build_settlement_roads(towns: Array, catalog: Dictionary) -> Array:
@@ -1776,20 +1770,13 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 			for prefab_name in missing_required:
 				var reason := str(missing_reasons.get(prefab_name, "no placement reason recorded"))
 				missing_details.append("%s (%s)" % [prefab_name, reason])
-			print("[WorldMapGen] Town at (%.0f,%.0f): missing guaranteed prefabs [%s]" % [
-				town.x,
-				town.z,
-				", ".join(missing_details)
-			])
 		if placed_in_town >= target:
-			print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
 			continue
 
 		var landmark_count = _place_town_landmarks(town, layout, catalog, road_segments, path_segments, height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied, rng, 2)
 		if landmark_count > 0:
 			placed_in_town += landmark_count
 			if placed_in_town >= target:
-				print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
 				continue
 
 		target = mini(target, maxi(placed_in_town + 6, placed_in_town + parcel_slots.size()))
@@ -1845,10 +1832,8 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 					district, str(candidate.get("road_kind", "secondary")), support)
 
 			if placed_in_town >= target:
-				print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
 				continue
 
-		print("[WorldMapGen] Town at (%.0f,%.0f): %d/%d buildings placed" % [town.x, town.z, placed_in_town, target])
 
 func _place_town_landmarks(town: Dictionary, layout: Dictionary, catalog: Dictionary, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array, rng: RandomNumberGenerator, desired_count: int = 2) -> int:
 	if catalog.is_empty() or desired_count <= 0:
@@ -1924,7 +1909,6 @@ func _build_prefab_catalog(available_prefabs: Array[String]) -> Dictionary:
 	for pname in available_prefabs:
 		var validation := PrefabGeometry.get_prefab_validation(pname)
 		if not bool(validation.get("valid_for_spawn", true)):
-			print("[WorldMapGen] Skipping prefab '%s': %s" % [pname, "; ".join(validation.get("errors", []))])
 			continue
 		var fp = _get_prefab_footprint(pname)
 		var reservation_fp = _get_prefab_reservation_footprint(pname)
@@ -2558,7 +2542,6 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 			wz += spacing
 		wx += spacing
 	
-	print("[WorldMapGen] Wilderness buildings: %d placed" % wilderness_count)
 
 func _find_nearest_road_point(wx: float, wz: float, road_segments: Array) -> Vector2:
 	var point = Vector2(wx, wz)
@@ -2857,7 +2840,6 @@ func save_world(path: String, images: Dictionary) -> bool:
 	if file:
 		file.store_string(JSON.stringify(meta, "\t"))
 		file.close()
-	print("[WorldMapGen] Saved to: %s" % path)
 	return true
 
 func _get_available_prefabs() -> Array[String]:

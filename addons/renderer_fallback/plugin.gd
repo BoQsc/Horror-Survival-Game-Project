@@ -2,30 +2,20 @@
 extends EditorPlugin
 
 func _enter_tree():
-	print("[RendererFallback Plugin] ======== PLUGIN LOADING ========")
 	
 	# Check current renderer setting (Windows-specific)
 	var driver_windows = ProjectSettings.get_setting("rendering/rendering_device/driver.windows", "")
-	print("[RendererFallback Plugin] driver.windows setting: '%s'" % driver_windows)
 	
 	# If already set to D3D12, we're done
 	if driver_windows == "d3d12":
-		print("[RendererFallback Plugin] Already configured for D3D12 ✓")
-		print("[RendererFallback Plugin] ========================================")
 		return
 	
 	# Test Vulkan compute
-	print("[RendererFallback Plugin] Testing Vulkan compute...")
 	if _test_vulkan_compute():
-		print("[RendererFallback Plugin] Vulkan compute works ✓")
-		print("[RendererFallback Plugin] ========================================")
 	else:
-		print("[RendererFallback Plugin] Vulkan compute FAILED - configuring D3D12")
 		_set_d3d12()
-		print("[RendererFallback Plugin] ========================================")
 
 func _exit_tree():
-	print("[RendererFallback Plugin] Unloaded")
 
 func _test_vulkan_compute() -> bool:
 	"""Test if Vulkan compute works with marching cubes shader"""
@@ -48,14 +38,12 @@ func _test_vulkan_compute() -> bool:
 	# Try to compile
 	var shader = rd.shader_create_from_spirv(shader_file.get_spirv())
 	if not shader.is_valid():
-		print("[RendererFallback Plugin] Shader compilation failed")
 		rd.free()
 		return false
 	
 	# Try to create pipeline
 	var pipeline = rd.compute_pipeline_create(shader)
 	if not pipeline.is_valid():
-		print("[RendererFallback Plugin] Pipeline creation failed (Error -13)")
 		if shader.is_valid():
 			rd.free_rid(shader)
 		rd.free()
@@ -85,7 +73,6 @@ func _set_d3d12():
 	
 	# Check if setting already exists
 	if setting_line in content:
-		print("[RendererFallback Plugin] Setting already in project.godot")
 		return
 	
 	# Find [rendering] section and add setting after it
@@ -136,8 +123,6 @@ func _set_d3d12():
 	file.store_string("\n".join(new_lines))
 	file.close()
 	
-	print("[RendererFallback Plugin] ✓ Added driver.windows=d3d12 to project.godot")
-	print("[RendererFallback Plugin] ✓ Please RESTART Godot for changes to take effect")
 	
 	# Show dialog
 	call_deferred("_show_restart_dialog")

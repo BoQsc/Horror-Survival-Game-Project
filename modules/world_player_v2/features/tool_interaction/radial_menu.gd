@@ -141,7 +141,6 @@ func show_menu(opts: Array[String], target: Node = null) -> void:
 	center_label.size = Vector2(100, 20)
 	
 	queue_redraw()
-	print("[RadialMenu] Opened with options: %s" % str(options))
 
 
 ## Hide menu and emit result
@@ -155,10 +154,8 @@ func hide_menu(emit_selection: bool = true) -> void:
 	if emit_selection:
 		if selected_index >= 0 and selected_index < options.size():
 			var selected = options[selected_index]
-			print("[RadialMenu] Selected: %s" % selected)
 			option_selected.emit(selected)
 		else:
-			print("[RadialMenu] Cancelled")
 			menu_cancelled.emit()
 	
 	# Clear state

@@ -27,7 +27,6 @@ func _ready():
 	compute_shader = load("res://world_greedy_meshing/greedy_meshing.glsl")
 	
 	if compute_shader:
-		print("Compute shader loaded successfully!")
 		
 		# Setup Physics/Visuals
 		static_body = StaticBody3D.new()
@@ -52,7 +51,6 @@ func _ready():
 		# Trigger first build
 		_trigger_update()
 	else:
-		print("Failed to load compute shader!")
 
 func _unhandled_input(event):
 	if event is InputEventMouseButton and event.pressed:

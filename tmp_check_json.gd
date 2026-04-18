@@ -5,7 +5,6 @@ func _init() -> void:
 	var base_dir = "user://worlds/"
 	var dir = DirAccess.open(base_dir)
 	if not dir:
-		print("No user://worlds/ dir")
 		quit()
 		return
 		
@@ -19,12 +18,10 @@ func _init() -> void:
 	dir.list_dir_end()
 	
 	if latest_world == "":
-		print("No worlds found")
 		quit()
 		return
 		
 	var path = base_dir + latest_world + "/world_meta.json"
-	print("Checking: ", path)
 	
 	if FileAccess.file_exists(path):
 		var f = FileAccess.open(path, FileAccess.READ)
@@ -32,13 +29,9 @@ func _init() -> void:
 		var p = JSON.parse_string(text)
 		if p and p.has("buildings"):
 			var b = p.buildings
-			print("Buildings size: ", b.size())
 			for i in range(min(10, b.size())):
 				var item = b[i]
-				print("Bldg: x=", item.get("x"), " y=", item.get("y"), " z=", item.get("z"), " type=", item.get("type"))
 		else:
-			print("NO BUILDINGS")
 	else:
-		print("NO FILE")
 		
 	quit()

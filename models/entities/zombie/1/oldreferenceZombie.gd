@@ -66,7 +66,6 @@ func _ready():
 	_start_timer(0.5, Callable(self, "_on_spawn_settle_timeout"))
 
 func start_chase():
-	print("Zombie start_chase() called!")
 	if current_state != "DEAD":
 		change_state("CHASE")
 
@@ -199,7 +198,6 @@ func pick_random_direction():
 
 func attack(player):
 	# Simple attack
-	print("Zombie Attacked Player!")
 	if player.has_method("take_damage"):
 		player.take_damage(1)
 
@@ -208,7 +206,6 @@ func take_damage(amount: int):
 	if current_state == "DEAD": return
 	
 	current_health -= amount
-	print("Zombie took damage! HP: ", current_health)
 	
 	# Flash red effect (optional visual feedback)
 	# spawn_blood_effect() 
@@ -219,7 +216,6 @@ func take_damage(amount: int):
 func die():
 	# Set state to DEAD through the state machine to stop sounds/animations properly
 	change_state("DEAD") 
-	print("Zombie Died!")
 	velocity = Vector3.ZERO
 	
 	# Disable collision

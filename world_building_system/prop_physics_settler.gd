@@ -93,7 +93,6 @@ func _generate_precise_collision():
 	_find_meshes_recursive(self, mesh_instances)
 	
 	if mesh_instances.is_empty():
-		print("PropPhysicsSettler: No meshes found to generate collision!")
 		return
 		
 	for mesh_inst in mesh_instances:
@@ -114,7 +113,6 @@ func _generate_precise_collision():
 		col_node.transform = self.global_transform.affine_inverse() * mesh_inst.global_transform
 		
 		add_child(col_node)
-		# print("Generated precise collision for: ", mesh_inst.name)
 
 func _find_meshes_recursive(node: Node, result: Array):
 	if node is MeshInstance3D:

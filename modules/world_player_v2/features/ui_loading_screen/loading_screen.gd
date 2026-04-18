@@ -45,7 +45,6 @@ func _connect_to_save_manager() -> void:
 func _on_save_manager_load_completed(_success: bool, _path: String) -> void:
 	# Force fade out when SaveManager says it's done
 	if is_loading:
-		DebugManager.log_save("LoadingScreen: Force fade out from SaveManager load_completed")
 		_start_fade_out()
 
 func _on_load_step(step_name: String, step_index: int, total_steps: int) -> void:
@@ -100,7 +99,6 @@ func _start_loading_sequence() -> void:
 				if progress > 0 and not has_emitted_terrain_ready:
 					terrain_ready.emit()
 					has_emitted_terrain_ready = true
-					print("[LoadingScreen] Terrain rendering started - player can move")
 				
 				var pending = 0
 				if terrain_manager.has_method("get_pending_nodes_count"):

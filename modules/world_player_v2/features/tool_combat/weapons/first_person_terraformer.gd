@@ -47,7 +47,6 @@ func _ready() -> void:
 	var mat_name = "Grass"
 	if brush_registry and material_index < brush_registry.STANDARD_MATERIALS.size():
 		mat_name = brush_registry.STANDARD_MATERIALS[material_index].name
-	print("SHOVEL: Initialized, mode = %s, material = %s" % [_get_mode_name(), mat_name])
 
 func _find_terrain_manager() -> void:
 	terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
@@ -167,7 +166,6 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_P:
 			dig_mode = not dig_mode
 			_update_cursor_color()
-			print("SHOVEL: Mode = %s" % _get_mode_name())
 			# Emit mode change for HUD
 			if has_node("/root/PlayerSignals") and PlayerSignals.has_signal("terraformer_mode_changed"):
 				PlayerSignals.terraformer_mode_changed.emit(_get_mode_name())
@@ -191,7 +189,6 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 		var mat_name = "Grass"
 		if brush_registry:
 			mat_name = brush_registry.STANDARD_MATERIALS[material_index].name
-		print("SHOVEL: Equipped - P to toggle mode, CTRL+1-7 for material. Mode=%s Material=%s" % [_get_mode_name(), mat_name])
 		# Emit current state for HUD
 		if has_node("/root/PlayerSignals"):
 			if PlayerSignals.has_signal("terraformer_material_changed"):
@@ -218,7 +215,6 @@ func _set_material(index: int) -> void:
 	if brush_registry:
 		var mat = brush_registry.STANDARD_MATERIALS[material_index]
 		mat_name = mat.name
-		print("SHOVEL: Material = %s (id=%d)" % [mat.name, mat.id])
 	
 	# Emit signal for HUD update
 	if has_node("/root/PlayerSignals") and PlayerSignals.has_signal("terraformer_material_changed"):
@@ -294,7 +290,6 @@ func _do_dig(target: Vector3) -> void:
 		# Fallback: Positive density = Air (+10.0 for instant removal)
 		terrain_manager.modify_terrain(target, BRUSH_SIZE, 10.0, BRUSH_SHAPE, 0, -1)
 	
-	print("SHOVEL: DIG at %s" % target)
 
 ## Perform place at voxel-centered position
 func _do_place(target: Vector3) -> void:
@@ -321,7 +316,6 @@ func _do_place(target: Vector3) -> void:
 	var mat_name = "Grass"
 	if brush_registry:
 		mat_name = brush_registry.STANDARD_MATERIALS[material_index].name
-	print("SHOVEL: PLACE at %s (material=%s)" % [target, mat_name])
 
 # ============================================================================
 # RAYCAST

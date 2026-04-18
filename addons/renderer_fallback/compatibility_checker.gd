@@ -8,7 +8,6 @@ extends Control
 func _ready():
 	# FIRST: Check if D3D12 is already configured - skip ALL checks if so
 	if _using_d3d12():
-		print("[CompatibilityChecker] D3D12 already configured - loading game directly")
 		_load_game()
 		return
 	
@@ -21,7 +20,6 @@ func _ready():
 			break
 	
 	if running_from_editor:
-		print("[CompatibilityChecker] Running from editor - skipping runtime check")
 		_load_game()
 		return
 	
@@ -68,20 +66,17 @@ func _test_vulkan_compute() -> bool:
 	# Try to create shader and pipeline
 	var shader = rd.shader_create_from_spirv(shader_file.get_spirv())
 	if not shader.is_valid():
-		print("[CompatibilityChecker] ❌ Marching Cubes shader compilation FAILED")
 		rd.free()
 		return false
 	
 	var pipeline = rd.compute_pipeline_create(shader)
 	if not pipeline.is_valid():
-		print("[CompatibilityChecker] ❌ Marching Cubes pipeline creation FAILED (Error -13)")
 		if shader.is_valid():
 			rd.free_rid(shader)
 		rd.free()
 		return false
 	
 	# Success - cleanup
-	print("[CompatibilityChecker] ✓ Marching Cubes pipeline created successfully")
 	if pipeline.is_valid():
 		rd.free_rid(pipeline)
 	if shader.is_valid():
@@ -92,7 +87,6 @@ func _test_vulkan_compute() -> bool:
 
 func _restart_with_d3d12():
 	"""Restart game with D3D12 renderer"""
-	print("[CompatibilityChecker] Restarting with --rendering-driver d3d12...")
 	
 	# Check if running from Godot editor by looking for --path in command line args
 	var running_from_editor = false

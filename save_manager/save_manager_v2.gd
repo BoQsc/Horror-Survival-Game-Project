@@ -93,13 +93,10 @@ func _setup_autosave():
 	
 	if autosave_enabled:
 		_autosave_timer.start()
-		DebugManager.log_save("Autosave enabled: %d seconds" % autosave_interval_seconds)
 
 func _on_autosave_timeout():
 	if is_loading_game or _is_saving:
-		DebugManager.log_save("Autosave skipped (loading=%s, saving=%s)" % [is_loading_game, _is_saving])
 		return
-	DebugManager.log_save("Autosave triggered...")
 	save_game(SAVE_DIR + "autosave.json")
 
 func _find_managers():
@@ -142,11 +139,6 @@ func _find_managers():
 	# Player
 	player = get_tree().get_first_node_in_group("player")
 	
-	DebugManager.log_save("Managers: CM=%s BM=%s VM=%s RM=%s PF=%s EM=%s VEH=%s P=%s" % [
-		chunk_manager != null, building_manager != null, vegetation_manager != null,
-		road_manager != null, prefab_spawner != null, entity_manager != null,
-		vehicle_manager != null, player != null
-	])
 	
 	# Connect to chunk_manager's spawn_zones_ready signal
 	if chunk_manager and chunk_manager.has_signal("spawn_zones_ready"):
@@ -185,21 +177,15 @@ func _find_managers():
 	# Get container registry
 	container_registry = get_node_or_null("/root/ContainerRegistry")
 	
-	DebugManager.log_save("V2 Systems: INV=%s HB=%s STATS=%s MODE=%s CROUCH=%s CONT=%s" % [
-		player_inventory != null, player_hotbar != null, player_stats != null,
-		mode_manager != null, crouch_component != null, container_registry != null
-	])
 
 func _input(event):
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_F5:
 			if is_loading_game:
-				DebugManager.log_save("F5 ignored - load in progress")
 				return
 			quick_save()
 		elif event.keycode == KEY_F8:
 			if is_loading_game:
-				DebugManager.log_save("F8 ignored - load already in progress")
 				return
 			quick_load()
 
@@ -212,7 +198,6 @@ func _notification(what):
 			get_tree().quit()
 			return
 		# Auto-save on exit
-		DebugManager.log_save("Auto-saving on exit (FORCED SYNCHRONOUS)...")
 		# Wait for any active threaded save to finish first to avoid file corruption
 		for thread in _save_threads:
 			if thread.is_alive():
@@ -256,7 +241,6 @@ func save_game(path: String) -> bool:
 		push_warning("SaveManager: Save already in progress, skipping...")
 		return false
 	
-	DebugManager.log_save("Saving to: %s (Threaded)" % path)
 	_is_saving = true
 	
 	var save_data = _gather_save_data()
@@ -287,7 +271,6 @@ func _save_game_internal(path: String) -> bool:
 		var dir = DirAccess.open(SAVE_DIR)
 		if dir:
 			dir.rename(tmp_path, path)
-		DebugManager.log_save("Synchronous save complete: %s" % path)
 		return true
 	return false
 
@@ -337,11 +320,9 @@ func _threaded_save(path: String, data: Dictionary):
 	if dir:
 		dir.rename(tmp_path, path)
 	
-	DebugManager.log_save("Threaded save complete!")
 	call_deferred("_finalize_save", path)
 
 func _finalize_save(path: String):
-	print("[SAVE_NOTIFICATION] Game saved to: %s" % path)
 	save_completed.emit(true, path)
 
 
@@ -352,13 +333,11 @@ func _capture_load_telemetry(event_label: String = "", details: Dictionary = {})
 func load_game(path: String) -> bool:
 	# Guard against double-load (F8 pressed twice)
 	if is_loading_game:
-		DebugManager.log_save("Load rejected - already loading")
 		return false
 	
 	_find_managers() # Ensure we have latest references
 	# CRITICAL: Set flag BEFORE anything else to prevent procedural spawning during reload
 	is_quickloading = true
-	DebugManager.log_save("Loading from: %s" % path)
 	current_save_path = path
 	
 	# Stop autosave timer during load to prevent saving partial state
@@ -368,14 +347,12 @@ func load_game(path: String) -> bool:
 	# CRITICAL: Strict input freeze during load
 	if player_camera and "mouse_look_enabled" in player_camera:
 		player_camera.mouse_look_enabled = false
-		DebugManager.log_save("Player camera mouse look LOCKED for load sequence")
 	
 	# CRITICAL: Immediate Cleanup of entities to prevent ghosts during load
 	if entity_manager:
 		entity_manager.is_loading_save = true
 		if entity_manager.has_method("clear_all_entities"):
 			entity_manager.clear_all_entities()
-		DebugManager.log_save("Immediate entity cleanup triggered")
 	
 	# Open file
 	if not FileAccess.file_exists(path):
@@ -428,7 +405,7 @@ func load_game(path: String) -> bool:
 	
 	# V1 saves now use the same V2 pipeline (missing V2 keys default to empty)
 	if version == 1:
-		DebugManager.log_save("Detected v1 save - upgrading to V2 pipeline")
+		pass
 
 	# Establish world-map mode before any building-related loaders run.
 	# This prevents procedural or runtime building layers from restoring at all.
@@ -454,7 +431,6 @@ func load_game(path: String) -> bool:
 		if player_terrain:
 			player_terrain.set_physics_process(false)
 			player_terrain.set_process(false)
-		DebugManager.log_save("Player and sub-components frozen EARLY for position restoration")
 	
 	# Set loading flag - entities will be deferred until terrain is ready
 	load_step.emit("Loading prefabs", 1, 10)
@@ -467,7 +443,6 @@ func load_game(path: String) -> bool:
 		entity_manager.is_loading_save = true
 		if "pending_spawns" in entity_manager:
 			entity_manager.pending_spawns.clear()
-		DebugManager.log_save("Blocked procedural spawning before terrain reload")
 	
 	# V2: Initialize all data-driven managers FIRST
 	# This ensures they have their "chopped trees", "inventory", etc. before chunks generate
@@ -509,7 +484,6 @@ func load_game(path: String) -> bool:
 	# Only wait for vegetation if there is data to process
 	awaiting_vegetation_ready = not save_data.get("vegetation", {}).is_empty() and vegetation_manager != null
 	
-	DebugManager.log_save("Awaiting: Terrain=%s Vegetation=%s" % [awaiting_terrain_ready, awaiting_vegetation_ready])
 	_capture_load_telemetry("load_started", {
 		"path": path,
 		"vegetation_data": not save_data.get("vegetation", {}).is_empty()
@@ -525,7 +499,6 @@ func load_game(path: String) -> bool:
 	
 	# V2 FIX: DON'T emit load_completed or print "Game loaded" here!
 	# We are still waiting for terrain and vegetation.
-	DebugManager.log_save("Load initiated - awaiting world generation...")
 	
 	# Start safety timeout (15s to accommodate large worlds)
 	_start_load_safety_timeout(15.0)
@@ -543,7 +516,6 @@ func _show_loading_screen():
 		var screen_scene = load(screen_path)
 		var screen_instance = screen_scene.instantiate()
 		get_tree().root.add_child(screen_instance)
-		DebugManager.log_save("Loading screen spawned")
 
 ## Safety timeout to prevent being stuck forever if signals are dropped
 func _start_load_safety_timeout(seconds: float):
@@ -573,7 +545,6 @@ func _on_load_timeout():
 func _emit_player_loaded():
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.player_loaded.emit()
-		DebugManager.log_save("Player loaded signal emitted - systems should reconnect")
 
 ## Called when terrain chunks around spawn positions are ready
 func _on_spawn_zones_ready(_positions: Array):
@@ -581,7 +552,6 @@ func _on_spawn_zones_ready(_positions: Array):
 		return
 	
 	awaiting_terrain_ready = false
-	DebugManager.log_save("Terrain ready - checking if vegetation is also ready")
 	_capture_load_telemetry("terrain_ready", {
 		"ready_positions": _positions.size()
 	})
@@ -593,7 +563,6 @@ func _on_all_vegetation_ready():
 		return
 		
 	awaiting_vegetation_ready = false
-	DebugManager.log_save("Vegetation ready - checking if terrain is also ready")
 	_capture_load_telemetry("vegetation_ready")
 	_check_world_readiness()
 
@@ -604,13 +573,8 @@ func _check_world_readiness():
 			"terrain": awaiting_terrain_ready,
 			"vegetation": awaiting_vegetation_ready
 		})
-		DebugManager.log_save("Still waiting for: %s%s" % [
-			"Terrain " if awaiting_terrain_ready else "",
-			"Vegetation" if awaiting_vegetation_ready else ""
-		])
 		return
 	
-	DebugManager.log_save("All world components ready - final unfreeze")
 	_capture_load_telemetry("world_ready")
 	
 	# Re-enable player physics now that ground is solid
@@ -626,7 +590,6 @@ func _check_world_readiness():
 		
 		# FORCE mouse capture to ensure the player has control immediately
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-		DebugManager.log_save("Forced mouse capture on unfreeze")
 		
 		if player_combat:
 			player_combat.set_physics_process(true)
@@ -634,7 +597,6 @@ func _check_world_readiness():
 		if player_terrain:
 			player_terrain.set_physics_process(true)
 			player_terrain.set_process(true)
-		DebugManager.log_save("Player and sub-components re-enabled")
 	
 	# CRITICAL FIX: Always call load_save_data to clear existing zombies
 	# Even if no entities are saved, we need to clean up procedural spawns
@@ -672,8 +634,6 @@ func _check_world_readiness():
 	
 	# FINAL NOTIFICATION: Now that everything is unfrozen and ready
 	load_step.emit("Complete", 10, 10)
-	DebugManager.log_save("Load process fully complete!")
-	print("[LOAD_NOTIFICATION] Game loaded and world ready!")
 	load_completed.emit(true, current_save_path)
 	is_quickloading = false  # Clear the flag now that load is complete
 
@@ -740,7 +700,6 @@ func _get_terrain_data() -> Dictionary:
 			})
 		result[key] = mods
 	
-	DebugManager.log_save("Saved %d terrain chunks" % result.size())
 	return result
 
 func _get_building_data() -> Dictionary:
@@ -849,7 +808,6 @@ func _load_player_data(data: Dictionary):
 	if data.has("position"):
 		player_pos = _array_to_vec3(data.position)
 		player.global_position = player_pos
-		DebugManager.log_save("Player position restored IMMEDIATELY: %s" % player_pos)
 		
 	if data.has("rotation"):
 		player.rotation = _array_to_vec3(data.rotation)
@@ -869,7 +827,6 @@ func _load_player_data(data: Dictionary):
 	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
 		chunk_manager.request_spawn_zone(player_pos, 2)
 	
-	DebugManager.log_save("Player data loaded - position restored, physics pending world load")
 
 func _load_terrain_data(data: Dictionary):
 	if not chunk_manager:
@@ -906,13 +863,11 @@ func _load_terrain_data(data: Dictionary):
 			})
 		chunk_manager.stored_modifications[coord] = mods
 	
-	DebugManager.log_save("Terrain modifications loaded: %d chunks" % data.size())
 
 func _load_building_data(data: Dictionary):
 	if disable_buildings_for_test or data.is_empty() or not building_manager:
 		return
 	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
-		DebugManager.log_save("World map active - skipping runtime building chunk restore")
 		return
 	
 	if not "chunks" in building_manager:
@@ -963,7 +918,7 @@ func _load_building_data(data: Dictionary):
 				for cell in cells:
 					chunk.occupied_by_object[cell] = anchor
 		elif chunk_data.has("objects") and not has_voxels:
-			DebugManager.log_save("Skipped %d orphan objects in empty building chunk %s" % [chunk_data.objects.size(), key])
+			pass
 		
 		if has_voxels:
 			chunk.is_empty = false
@@ -973,16 +928,13 @@ func _load_building_data(data: Dictionary):
 		else:
 			chunk.is_empty = true
 	
-	DebugManager.log_save("Buildings loaded: %d chunks" % data.size())
 
 func _load_world_seed(seed_val: int):
 	if chunk_manager and "world_seed" in chunk_manager:
 		chunk_manager.world_seed = seed_val
-		DebugManager.log_save("World seed restored to ChunkManager: %d" % seed_val)
 	
 	if vegetation_manager and vegetation_manager.has_method("initialize_noise"):
 		vegetation_manager.initialize_noise()
-		DebugManager.log_save("VegetationManager noise re-initialized with new seed")
 
 func _get_world_definition_path() -> String:
 	if chunk_manager and "world_definition_path" in chunk_manager:
@@ -996,10 +948,8 @@ func _load_world_definition_path(path: String):
 			chunk_manager.world_map_active = true
 			if "terrain_height" in chunk_manager:
 				chunk_manager.world_map_max_height = chunk_manager.terrain_height * 2.5
-			DebugManager.log_save("World map path restored: %s" % path)
 		else:
 			chunk_manager.world_map_active = false
-			DebugManager.log_save("No world map path — using procedural terrain")
 
 func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:
@@ -1092,7 +1042,6 @@ func _load_door_data(data: Dictionary):
 						node.close_door()
 					break
 	
-	DebugManager.log_save("Doors loaded: %d" % data.doors.size())
 
 # ============ V2: NEW PLAYER SYSTEM DATA ============
 
@@ -1201,9 +1150,6 @@ func _load_game_settings_data(data: Dictionary):
 		_setup_autosave() # Re-apply interval
 	
 	# Restore time/weather once those systems exist
-	DebugManager.log_save("Game settings loaded (Time: %s, Weather: %s)" % [
-		data.get("time_of_day", "?"), data.get("weather", "?")
-	])
 
 ## Reset all load-related flags on failure (prevents permanent state corruption)
 func _reset_load_flags():
@@ -1237,7 +1183,6 @@ func _reset_load_flags():
 	if _autosave_timer and autosave_enabled:
 		_autosave_timer.start()
 	_capture_load_telemetry("reset_after_failure")
-	DebugManager.log_save("Load flags reset after failure - player unfrozen")
 
 # ============ UTILITY FUNCTIONS ============
 

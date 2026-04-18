@@ -5,19 +5,14 @@ extends Node
 func _enter_tree():
 	# Check if we're already using D3D12
 	if _using_d3d12():
-		print("[RendererFallback] Running with D3D12 ✓")
 		return
 	
 	# Test if Vulkan compute works
-	print("[RendererFallback] Testing Vulkan compute compatibility...")
 	if not _test_vulkan_compute():
-		print("[RendererFallback] ❌ Vulkan compute FAILED - switching to D3D12")
 		# TEMPORARILY DISABLED - keep logs connected
 		#_restart_with_d3d12()
 		push_error("ERROR: Vulkan compute failed - D3D12 required")
 		push_error("Plugin should have configured this automatically")
-	else:
-		print("[RendererFallback] ✓ Vulkan compute works")
 
 func _using_d3d12() -> bool:
 	"""Check if already running with D3D12"""
@@ -41,20 +36,17 @@ func _test_vulkan_compute() -> bool:
 	# Try to create shader and pipeline
 	var shader = rd.shader_create_from_spirv(shader_file.get_spirv())
 	if not shader.is_valid():
-		print("[RendererFallback] ❌ Marching Cubes shader compilation FAILED")
 		rd.free()
 		return false
 	
 	var pipeline = rd.compute_pipeline_create(shader)
 	if not pipeline.is_valid():
-		print("[RendererFallback] ❌ Marching Cubes pipeline creation FAILED (Error -13)")
 		if shader.is_valid():
 			rd.free_rid(shader)
 		rd.free()
 		return false
 	
 	# Success - cleanup
-	print("[RendererFallback] ✓ Marching Cubes pipeline created successfully")
 	if pipeline.is_valid():
 		rd.free_rid(pipeline)
 	if shader.is_valid():
@@ -65,7 +57,6 @@ func _test_vulkan_compute() -> bool:
 
 func _restart_with_d3d12():
 	"""Restart game with D3D12 renderer"""
-	print("[RendererFallback] Restarting with --rendering-driver d3d12...")
 	
 	# Check if running from Godot editor by looking for --path in command line args
 	var running_from_editor = false

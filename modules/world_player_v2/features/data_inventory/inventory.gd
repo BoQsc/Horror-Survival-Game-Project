@@ -35,7 +35,6 @@ func _ready() -> void:
 	inventory_audio.volume_db = -5.0
 	add_child(inventory_audio)
 	
-	DebugManager.log_player("Inventory: Initialized with %d slots (max stack: %d)" % [INVENTORY_SIZE, MAX_STACK_SIZE])
 
 func _unhandled_input(event: InputEvent) -> void:
 	if UIInputGuard.is_gameplay_input_blocked(self):
@@ -52,7 +51,6 @@ func _unhandled_input(event: InputEvent) -> void:
 ## Toggle inventory open/closed
 func toggle_inventory() -> void:
 	is_open = !is_open
-	DebugManager.log_player("Inventory: %s" % ("Opened" if is_open else "Closed"))
 	
 	# Play sound (different pitch for open vs close)
 	if inventory_audio:
@@ -78,7 +76,6 @@ func close_inventory() -> void:
 			inventory_audio.pitch_scale = 0.75
 			inventory_audio.play()
 		is_open = false
-		DebugManager.log_player("Inventory: Closed")
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 		PlayerSignals.inventory_toggled.emit(false)
 
@@ -114,7 +111,6 @@ func add_item(item: Dictionary, count: int = 1) -> int:
 		var added_count = count - remaining
 		PlayerSignals.inventory_changed.emit()
 		PlayerSignals.item_added.emit(item, added_count)
-		DebugManager.log_player("Inventory: Added %d x %s (%d leftover)" % [added_count, item.get("name", "item"), remaining])
 	
 	return remaining
 
@@ -138,7 +134,6 @@ func remove_item(item_id: String, count: int = 1) -> int:
 	
 	if remaining < count:
 		PlayerSignals.inventory_changed.emit()
-		DebugManager.log_player("Inventory: Removed %d x %s" % [count - remaining, item_id])
 	
 	return count - remaining # Return how many were actually removed
 
@@ -225,4 +220,3 @@ func load_save_data(data: Dictionary) -> void:
 	is_open = false
 	
 	PlayerSignals.inventory_changed.emit()
-	DebugManager.log_player("Inventory: Loaded save data")

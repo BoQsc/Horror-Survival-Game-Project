@@ -57,7 +57,6 @@ func _ready() -> void:
 			target_orbit_yaw = orbit_yaw
 			last_car_yaw = orbit_yaw
 	
-	print("[VehicleCam] Ready - controlling FollowCamera node, target: %s" % follow_target)
 
 
 func _input(event: InputEvent) -> void:

@@ -42,7 +42,6 @@ func get_save_data() -> Dictionary:
 
 func load_save_data(data: Dictionary) -> void:
 	if regenerate_buildings_on_load:
-		DebugManager.log_building("Regenerate mode enabled - skipping saved state")
 		return # Debug: regenerate fresh instead of loading
 	
 	spawned_buildings.clear()
@@ -60,13 +59,11 @@ func load_save_data(data: Dictionary) -> void:
 				var pos = Vector3(pos_arr[0], pos_arr[1], pos_arr[2])
 				spawned_buildings[coord].append(pos)
 				global_building_positions.append(pos)
-		DebugManager.log_building("Loaded %d chunks with building spawn data" % spawned_buildings.size())
 
 func _ready():
 	# Connect to terrain manager signals
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
-		DebugManager.log_building("BuildingGenerator connected to chunk_generated signal")
 		
 		# Get road spacing from terrain manager
 		if "procedural_road_spacing" in terrain_manager:
@@ -76,12 +73,9 @@ func _ready():
 	else:
 		push_warning("[BuildingGenerator] Could not connect to terrain_manager!")
 	
-	if prefab_spawner:
-		DebugManager.log_building("BuildingGenerator found PrefabSpawner")
-	else:
+	if not prefab_spawner:
 		push_warning("[BuildingGenerator] PrefabSpawner not found!")
 	
-	DebugManager.log_building("BuildingGenerator ready, enabled=%s, density=%.2f, interval=%.1fs" % [enabled, building_density, spawn_interval])
 
 func _process(delta):
 	if not enabled or spawn_queue.is_empty():
@@ -151,12 +145,12 @@ func _queue_buildings_for_chunk(chunk_coord: Vector3i, chunk_world_pos: Vector3)
 			"prefab_name": prefab_name,
 			"chunk_coord": chunk_coord
 		})
-		
+			
 		# Track position immediately to prevent overlaps
 		global_building_positions.append(spot.position)
 	
 	if spawn_queue.size() > 0:
-		DebugManager.log_building("Queued %d spots for chunk %v (total queue: %d)" % [spots.size(), chunk_coord, spawn_queue.size()])
+		pass
 
 ## Find spots adjacent to roads within this chunk
 func _find_road_adjacent_spots(chunk_pos: Vector3, chunk_size: int) -> Array:
@@ -332,7 +326,6 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	
 	# Double-check water at spawn time (chunk may have loaded since queueing)
 	if _is_over_water(ground_anchor):
-		DebugManager.log_building("Skipped %s at %v - over water" % [prefab_name, spawn_pos])
 		return false
 	
 	# Spawn with synchronized height (no flattening required)
@@ -340,7 +333,6 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 	
 	if success:
 		building_spawned.emit(spawn_pos, prefab_name)
-		DebugManager.log_building("Spawned %s at %v" % [prefab_name, spawn_pos])
 	
 	return success
 

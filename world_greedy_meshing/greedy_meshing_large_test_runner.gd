@@ -11,7 +11,6 @@ func _ready():
 	building_manager = load("res://world_building_system/building_manager.gd").new()
 	add_child(building_manager)
 	
-	print("Generating LARGE test world...")
 	generate_world()
 
 func generate_world():
@@ -40,8 +39,6 @@ func generate_world():
 								building_manager.set_voxel(Vector3(gx, gy, gz), 1.0)
 	
 	var end_time = Time.get_ticks_msec()
-	print("World Generation request took: ", end_time - start_time, "ms")
-	print("Meshing happens asynchronously...")
 
 func _unhandled_input(event):
 	if event is InputEventMouseButton and event.pressed:

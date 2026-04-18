@@ -233,4 +233,3 @@ func _update_visibility(item: Dictionary) -> void:
 		pickaxe_mesh.visible = should_show
 		if should_show:
 			_try_play_idle()
-			DebugManager.log_player("FirstPersonPickaxe: Showing pickaxe for item %s" % item_id)

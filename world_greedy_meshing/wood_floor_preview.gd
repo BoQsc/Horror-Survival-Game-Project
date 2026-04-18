@@ -128,7 +128,6 @@ func _reload_building_extension_if_possible() -> void:
 	if status != GDExtensionManager.LOAD_STATUS_OK:
 		push_warning("Could not reload GDExtension '%s' (status %d)." % [extension_path, status])
 	else:
-		print("Reloaded GDExtension: %s" % extension_path)
 		if is_instance_valid(_status_label):
 			_status_label.text = "Reloaded native extension...\nBuilding exact UV preview..."
 
@@ -201,11 +200,6 @@ func _update_preview_diagnostics() -> void:
 			var uv_summary := _get_uv_summary(floor_mesh)
 			if not uv_summary.is_empty():
 				if not _diagnostics_logged:
-					print("WoodFloorPreview UV summary: min=%s max=%s count=%d" % [
-						uv_summary.get("min", Vector2.ZERO),
-						uv_summary.get("max", Vector2.ZERO),
-						int(uv_summary.get("count", 0))
-					])
 					_diagnostics_logged = true
 				_status_label.text = "Exact floor UV test\nUV min: %s\nUV max: %s\nUV count: %d\nDebug texture: %s" % [
 					uv_summary.get("min", Vector2.ZERO),

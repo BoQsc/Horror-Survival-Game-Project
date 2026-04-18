@@ -8,7 +8,6 @@ func _ready():
 	add_child(building_manager)
 	
 	# Create an initial chunk at (0,0,0) with a solid sphere
-	print("Generating initial test data...")
 	var size = 16
 	var center = Vector3(size/2.0, size/2.0, size/2.0)
 	var radius = 6.0

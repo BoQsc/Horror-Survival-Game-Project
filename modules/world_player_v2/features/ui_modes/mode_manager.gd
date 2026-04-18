@@ -32,7 +32,6 @@ func _ready() -> void:
 		PlayerSignals.item_changed.connect(_on_item_changed)
 		PlayerSignals.editor_submode_changed.connect(_on_editor_submode_changed)
 	
-	print("ModeManager: Initialized in %s mode" % get_mode_name())
 
 func _on_editor_submode_changed(submode: int, _name: String) -> void:
 	editor_submode = submode as EditorSubmode
@@ -75,7 +74,6 @@ func set_mode(new_mode: Mode) -> void:
 	var old_mode = current_mode
 	current_mode = new_mode
 	
-	print("ModeManager: %s -> %s" % [get_mode_name_for(old_mode), get_mode_name_for(new_mode)])
 	
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.mode_changed.emit(get_mode_name_for(old_mode), get_mode_name_for(new_mode))
@@ -91,10 +89,6 @@ func toggle_editor_mode() -> void:
 		previous_mode = current_mode
 		set_mode(Mode.EDITOR)
 	
-	print("ModeManager: EDITOR mode %s (submode: %s)" % [
-		"ON" if current_mode == Mode.EDITOR else "OFF",
-		get_submode_name()
-	])
 
 func get_save_data() -> Dictionary:
 	return {
@@ -120,7 +114,6 @@ func toggle_fly_mode() -> void:
 		return
 	
 	is_flying = !is_flying
-	print("ModeManager: Fly mode %s" % ("ON" if is_flying else "OFF"))
 
 ## Get current mode name
 func get_mode_name() -> String:

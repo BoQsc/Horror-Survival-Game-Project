@@ -67,7 +67,6 @@ func _ready() -> void:
 	_create_selection_box()
 	_create_grid_visualizer()
 	
-	print("BuildingAPI: Initialized (building_manager: %s)" % ("OK" if building_manager else "MISSING"))
 
 ## Initialize with player reference
 func initialize(player_node: Node) -> void:
@@ -108,7 +107,6 @@ func set_block_id(id: int) -> void:
 		current_block_id = id
 	else:
 		current_block_id = clampi(id, 1, 5)
-	print("BuildingAPI: Block -> %s" % get_block_name())
 
 ## Get current block name
 func get_block_name() -> String:
@@ -132,18 +130,15 @@ func get_block_name() -> String:
 ## Rotate current block
 func rotate_block(direction: int = 1) -> void:
 	current_rotation = (current_rotation + direction + 4) % 4
-	print("BuildingAPI: Rotation -> %d° (%d)" % [current_rotation * 90, current_rotation])
 
 ## Cycle placement mode
 func cycle_placement_mode() -> void:
 	placement_mode = ((placement_mode + 1) % 4) as PlacementMode
 	var mode_names = ["SNAP", "EMBED", "AUTO", "FILL"]
-	print("BuildingAPI: Placement mode -> %s" % mode_names[placement_mode])
 
 ## Adjust Y offset
 func adjust_y_offset(delta: int) -> void:
 	placement_y_offset += delta
-	print("BuildingAPI: Y offset -> %d" % placement_y_offset)
 
 ## Update targeting from raycast hit
 func update_targeting(hit: Dictionary) -> void:
@@ -254,7 +249,6 @@ func place_block() -> bool:
 		return false
 	
 	# FILL mode: Fill terrain gap before placing block
-	print("BuildingAPI.place_block: mode=%d (FILL=%d), tm=%s" % [placement_mode, PlacementMode.FILL, "OK" if terrain_manager else "NULL"])
 	if placement_mode == PlacementMode.FILL and terrain_manager:
 		var terrain_y = _get_terrain_height_at(
 			current_voxel_pos.x + 0.5,
@@ -262,12 +256,10 @@ func place_block() -> bool:
 		)
 		var block_bottom = float(int(current_voxel_pos.y))
 		var gap = block_bottom - terrain_y
-		print("BuildingAPI.place_block FILL: terrain_y=%.2f block_bottom=%.2f gap=%.2f" % [terrain_y, block_bottom, gap])
 		
 		# If there's a gap (block above terrain), fill it
 		if gap > 0.1:
 			# Use fill_column for precise vertical fill from terrain to block
-			print("BuildingAPI: terrain_manager=%s has_method=%s" % [terrain_manager.name if terrain_manager else "NULL", terrain_manager.has_method("fill_column") if terrain_manager else false])
 			if terrain_manager.has_method("fill_column"):
 				terrain_manager.fill_column(
 					current_voxel_pos.x + 0.5, # X center
@@ -285,14 +277,12 @@ func place_block() -> bool:
 				"block_bottom": block_bottom,
 				"fill_amount": gap
 			}
-			print("BuildingAPI: Column fill from %.2f to %.2f at %s" % [terrain_y, block_bottom, current_voxel_pos])
 	
 	if building_manager.has_method("set_voxel"):
 		building_manager.set_voxel(current_voxel_pos, current_block_id, current_rotation)
 		block_placed.emit(current_voxel_pos, current_block_id, current_rotation)
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.block_placed.emit()
-		print("BuildingAPI: Placed %s at %s (rot: %d)" % [get_block_name(), current_voxel_pos, current_rotation])
 		return true
 	
 	return false
@@ -348,7 +338,6 @@ func remove_block(hit: Dictionary) -> bool:
 	if building_manager.has_method("set_voxel"):
 		building_manager.set_voxel(voxel_pos, 0.0)
 		block_removed.emit(voxel_pos)
-		print("BuildingAPI: Removed block at %s" % voxel_pos)
 		
 		# FILL mode undo: Restore original terrain by digging filled area
 		var pos_key = str(voxel_pos)
@@ -369,7 +358,6 @@ func remove_block(hit: Dictionary) -> bool:
 						0.8, # Positive = dig
 						0 # Terrain layer
 					)
-				print("BuildingAPI: Undid column fill at %s (from %.2f to %.2f)" % [voxel_pos, terrain_y, block_bottom])
 			
 			fill_info.erase(pos_key)
 		
@@ -457,7 +445,6 @@ func hide_visuals() -> void:
 ## Supports: freestyle placement, surface align, retry logic
 func place_object(object_id: int, rotation: int) -> bool:
 	if not building_manager:
-		print("BuildingAPI: No building_manager")
 		return false
 	
 	# Build position: grid X/Z, fractional Y
@@ -478,13 +465,11 @@ func place_object(object_id: int, rotation: int) -> bool:
 			floor(current_voxel_pos.z)
 		)
 	
-	print("BuildingAPI: place_object freestyle=%s pos=%s voxel=%s preciseY=%s" % [is_freestyle, final_pos, current_voxel_pos, current_precise_hit_y])
 	
 	# Try placement
 	if building_manager.has_method("place_object"):
 		var success = building_manager.place_object(final_pos, object_id, rotation)
 		if success:
-			print("BuildingAPI: Placed object %d at %s" % [object_id, final_pos])
 			object_placed.emit(final_pos, object_id, rotation)
 			if has_node("/root/PlayerSignals"):
 				PlayerSignals.object_placed.emit()
@@ -496,7 +481,6 @@ func place_object(object_id: int, rotation: int) -> bool:
 			if success:
 				return true
 	
-	print("BuildingAPI: Cannot place object - cells occupied")
 	return false
 
 ## Get object size from ObjectRegistry
@@ -553,7 +537,6 @@ func _retry_object_placement(target_pos: Vector3, object_id: int, rotation: int)
 					# Found free cell - try placement there
 					var anchor_world = Vector3(chunk_key) * chunk_size + Vector3(try_anchor)
 					if building_manager.place_object(anchor_world, object_id, rotation):
-						print("BuildingAPI: Freestyle retry succeeded at %s" % try_anchor)
 						return true
 	
 	return false
@@ -607,7 +590,6 @@ func apply_surface_align(center: Vector3, object_id: int, rotation: int) -> floa
 ## Toggle freestyle mode
 func set_freestyle(enabled: bool) -> void:
 	is_freestyle = enabled
-	print("BuildingAPI: Freestyle %s" % ("ON" if enabled else "OFF"))
 
 # ============== OBJECT PREVIEW SYSTEM ==============
 # Ported from legacy player_interaction.gd lines 1494-1666

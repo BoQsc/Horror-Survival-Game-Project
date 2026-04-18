@@ -109,7 +109,6 @@ func _ready() -> void:
 	_refresh_world_list()
 	_create_building_stats_label()
 	_create_map_legend()
-	print("[WorldEditor] Ready — found %d existing worlds" % world_list.item_count)
 
 # ============================================================================
 # WORLD LIST — scan + load existing worlds
@@ -158,7 +157,6 @@ func _on_preset_selected(index: int) -> void:
 		var preset = TERRAIN_PRESETS[index]
 		height_input.value = preset.height
 		freq_input.value = preset.freq
-		print("[WorldEditor] Preset '%s': height=%.1f, freq=%.3f" % [preset.name, preset.height, preset.freq])
 
 func _on_exit_pressed() -> void:
 	get_tree().quit()
@@ -205,7 +203,6 @@ func _on_load_pressed() -> void:
 	
 	_update_preview()
 	progress_label.text = "Loaded: %s (%d images)" % [world_name, current_images.size()]
-	print("[WorldEditor] Loaded world: %s" % world_path)
 
 # ============================================================================
 # GENERATE
@@ -266,7 +263,6 @@ func _on_generation_complete(images: Dictionary) -> void:
 	# Auto-save after generation
 	_on_save_pressed()
 	progress_label.text = "Generated & saved — %d×%d" % [WorldMapGen.MAP_SIZE, WorldMapGen.MAP_SIZE]
-	print("[WorldEditor] Generation complete — auto-saved")
 
 # ============================================================================
 # PREVIEW — colorized composite of heightmap + biomes + roads
@@ -389,7 +385,6 @@ func _on_play_pressed() -> void:
 	var sm = get_node_or_null("/root/SaveManager")
 	if sm and "pending_world_definition_path" in sm:
 		sm.pending_world_definition_path = world_path
-		print("[WorldEditor] Play → world_path set on SaveManager: %s" % world_path)
 	else:
 		push_error("[WorldEditor] SaveManager not found! Cannot transition to game.")
 		progress_label.text = "ERROR: SaveManager autoload missing"

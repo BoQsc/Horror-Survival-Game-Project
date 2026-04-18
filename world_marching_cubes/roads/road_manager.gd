@@ -54,7 +54,6 @@ func _init_road_shader():
 	if terrain_manager and "material_terrain" in terrain_manager:
 		# Don't overwrite world map road settings if they were already set by ChunkManager
 		if "world_map_active" in terrain_manager and terrain_manager.world_map_active:
-			print("[RoadManager] World map active, skipping road_mask initialization")
 			return
 			
 		var mat = terrain_manager.material_terrain
@@ -108,7 +107,6 @@ func _paint_road_on_mask(start: Vector3, end: Vector3, width: float):
 	# Debug output only when explicitly enabled
 	if road_debug_enabled:
 		road_mask_image.save_png("user://road_mask_debug.png")
-		print("ROAD_DEBUG: Painted segment, pixel_radius=%d" % pixel_radius)
 
 ## Start building a new road/trail
 func start_road(is_trail: bool = false):
@@ -247,4 +245,3 @@ func load_save_data(data: Dictionary) -> void:
 					max_id = seg.id
 			next_segment_id = max_id + 1
 	
-	print("[RoadManager] Loaded %d road segments" % road_segments.size())

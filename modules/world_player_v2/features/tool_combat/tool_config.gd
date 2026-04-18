@@ -49,7 +49,6 @@ var _hit_marker: MeshInstance3D = null
 
 func _ready() -> void:
 	_create_visualizer()
-	print("[TOOL_CONFIG] ToolConfig initialized (consolidated from 5 autoloads)")
 
 func _create_visualizer() -> void:
 	# Create target box (shows grid-snapped block)

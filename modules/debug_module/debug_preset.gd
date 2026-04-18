@@ -21,19 +21,6 @@ const ACTIVE_PRESET_CONFIG = "user://debug_active_preset.cfg"
 		if Engine.is_editor_hint() and resource_path != "" and was_along != value:
 			_on_along_changed(value)
 
-# === CONSOLE LOGGING ===
-@export_group("Console Logging")
-@export var log_chunk := false
-@export var log_vegetation := false
-@export var log_entities := false
-@export var log_building := false
-@export var log_save := false
-@export var log_vehicles := false
-@export var log_player := false
-@export var log_roads := false
-@export var log_water := false
-@export var log_performance := false
-
 # === VISUAL DEBUG ===
 @export_group("Visual Debug")
 @export var debug_draw_enabled := false
@@ -41,10 +28,6 @@ const ACTIVE_PRESET_CONFIG = "user://debug_active_preset.cfg"
 @export var show_terrain_target_marker := false
 @export var show_road_zones := false
 @export var show_chunk_bounds := false
-
-# === FEATURE TAGS ===
-@export_group("Feature Tags")
-@export var active_tags: Array[String] = []
 
 func _on_active_changed(active: bool) -> void:
 	if active:
@@ -56,14 +39,12 @@ func _on_active_changed(active: bool) -> void:
 		config.load(ACTIVE_PRESET_CONFIG)  # Load existing to preserve addons
 		config.set_value("debug", "active_preset", resource_path)
 		config.save(ACTIVE_PRESET_CONFIG)
-		print("[DebugPreset] Set active: %s (%s)" % [preset_name, resource_path])
 	else:
 		# Clear active preset
 		var config = ConfigFile.new()
 		config.load(ACTIVE_PRESET_CONFIG)
 		config.set_value("debug", "active_preset", "")
 		config.save(ACTIVE_PRESET_CONFIG)
-		print("[DebugPreset] Deactivated: ", preset_name)
 
 
 func _on_along_changed(active: bool) -> void:
@@ -75,10 +56,8 @@ func _on_along_changed(active: bool) -> void:
 	if active:
 		if resource_path not in addons:
 			addons.append(resource_path)
-		print("[DebugPreset] Added addon: %s" % preset_name)
 	else:
 		addons.erase(resource_path)
-		print("[DebugPreset] Removed addon: %s" % preset_name)
 	
 	config.set_value("debug", "addon_presets", addons)
 	config.save(ACTIVE_PRESET_CONFIG)

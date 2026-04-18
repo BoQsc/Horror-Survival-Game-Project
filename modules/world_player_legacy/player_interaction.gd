@@ -278,7 +278,6 @@ func _unhandled_input(event):
 				if not interaction_target and not held_prop_instance:
 					is_freestyle_placement = true
 					freestyle_rotation_offset = 0.0
-					print("Freestyle Placement: ON")
 			elif not event.pressed:
 				is_freestyle_placement = false
 				# print("Freestyle Placement: OFF") # Reduce spam
@@ -319,7 +318,6 @@ func _unhandled_input(event):
 		elif event.keycode == KEY_Z:
 			if current_mode == Mode.OBJECT:
 				smart_surface_align = not smart_surface_align
-				print("Smart Surface Align: %s" % ("ON" if smart_surface_align else "OFF"))
 				update_ui()
 		elif event.keycode == KEY_1:
 			if current_mode == Mode.CONSTRUCT:
@@ -423,7 +421,6 @@ func _unhandled_input(event):
 				# Cycle through: AUTO -> SNAP -> EMBED -> AUTO
 				placement_mode = (placement_mode + 1) % 3 as PlacementMode
 				var mode_names = ["SNAP (Surface)", "EMBED", "AUTO (Hybrid)"]
-				print("[Placement] Mode: %s" % mode_names[placement_mode])
 				update_ui()
 		elif event.keycode == KEY_R:
 			# R key: rotate in OBJECT, BUILDING, CONSTRUCT, or PREFAB mode
@@ -469,19 +466,16 @@ func _unhandled_input(event):
 					prefab_carve_fill_mode = false
 					# _show_help_message("Prefab Mode: SURFACE")
 				var mode_str = _get_prefab_mode_str()
-				print("[PREFAB] Placement mode: %s" % mode_str)
 				update_ui()
 		elif event.keycode == KEY_T:
 			# T key: toggle road snap in PREFAB mode
 			if current_mode == Mode.PREFAB:
 				prefab_snap_to_road = not prefab_snap_to_road
-				print("[PREFAB] Road snap: %s" % ("ON" if prefab_snap_to_road else "OFF"))
 				update_ui()
 		elif event.keycode == KEY_I:
 			# I key: toggle interior carve in PREFAB mode
 			if current_mode == Mode.PREFAB:
 				prefab_interior_carve = not prefab_interior_carve
-				print("[PREFAB] Interior carve: %s" % ("ON" if prefab_interior_carve else "OFF"))
 				update_ui()
 
 
@@ -501,7 +495,6 @@ func _unhandled_input(event):
 					elif current_mode == Mode.PREFAB and prefab_snap_to_road:
 						# Ctrl+Scroll Up in PREFAB road snap: raise Y
 						prefab_road_snap_y_offset += 1
-						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
 					else:
 						current_rotation = (current_rotation + 1) % 4
 					update_ui()
@@ -517,7 +510,6 @@ func _unhandled_input(event):
 					elif current_mode == Mode.PREFAB and prefab_snap_to_road:
 						# Ctrl+Scroll Down in PREFAB road snap: lower Y
 						prefab_road_snap_y_offset -= 1
-						print("[PREFAB] Road snap Y offset: %d" % prefab_road_snap_y_offset)
 					else:
 						current_rotation = (current_rotation - 1 + 4) % 4
 					update_ui()
@@ -526,10 +518,8 @@ func _unhandled_input(event):
 				if current_mode == Mode.BUILDING or current_mode == Mode.OBJECT or current_mode == Mode.CONSTRUCT:
 					if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 						placement_y_offset += 1
-						print("Placement Y offset: %d" % placement_y_offset)
 					elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 						placement_y_offset -= 1
-						print("Placement Y offset: %d" % placement_y_offset)
 			elif Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
 				if current_mode == Mode.PLAYING:
 					handle_playing_input(event)
@@ -1077,14 +1067,10 @@ func handle_object_input(event):
 								# Use internal place method
 								chunk.place_object(try_anchor, current_object_id, final_rotation, cells, instance, new_fractional)
 								
-								print("Freestyle Placement: Redirected anchor to ", try_anchor)
-								print("Placed object %d at %s" % [current_object_id, final_pos])
 								return
 
 		if success:
-			print("Placed object %d at %s" % [current_object_id, final_pos])
 		else:
-			print("Cannot place object - cells not available")
 
 	elif event.button_index == MOUSE_BUTTON_LEFT and event.pressed: # Remove object
 		var hit = raycast(10.0, false)
@@ -1098,14 +1084,12 @@ func handle_object_input(event):
 					if anchor != null and chunk != null:
 						var success = chunk.remove_object(anchor)
 						if success:
-							print("Removed object at anchor %s" % anchor)
 						return
 			
 				# Fallback: try position-based removal
 			var remove_pos = hit.position - hit.normal * 0.01
 			var success = building_manager.remove_object_at(remove_pos)
 			if success:
-				print("Removed object at %s" % remove_pos)
 
 ## Handle CONSTRUCT mode input - unified block (1-4), object (5-9), and vegetation (0) placement
 func handle_construct_input(event):
@@ -1145,9 +1129,7 @@ func _handle_construct_object_input(event):
 		)
 		var success = building_manager.place_object(placement_pos, object_id, construct_rotation)
 		if success:
-			print("Placed object %d at %s" % [object_id, placement_pos])
 		else:
-			print("Cannot place object - cells not available")
 	
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Remove object
 		var hit = raycast(10.0, false)
@@ -1159,13 +1141,11 @@ func _handle_construct_object_input(event):
 					if anchor != null and chunk != null:
 						var success = chunk.remove_object(anchor)
 						if success:
-							print("Removed object at anchor %s" % anchor)
 						return
 			
 			var remove_pos = hit.position - hit.normal * 0.01
 			var success = building_manager.remove_object_at(remove_pos)
 			if success:
-				print("Removed object at %s" % remove_pos)
 
 ## Handle vegetation placement in CONSTRUCT mode (Rock/Grass)
 func _handle_construct_vegetation_input(event):
@@ -1174,10 +1154,8 @@ func _handle_construct_vegetation_input(event):
 		if hit and vegetation_manager:
 			if construct_vegetation_type == 0:
 				vegetation_manager.place_rock(hit.position)
-				print("Placed rock at %s" % hit.position)
 			else:
 				vegetation_manager.place_grass(hit.position)
-				print("Placed grass at %s" % hit.position)
 	
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Harvest vegetation
 		var hit = raycast(100.0, true)  # Include areas for vegetation detection
@@ -1450,7 +1428,6 @@ func _normalize_road_segment(start: Vector3, end: Vector3):
 	var start_y = start.y
 	var end_y = end.y
 	
-	print("Road Type 3: Start Y=%.1f -> End Y=%.1f" % [start_y, end_y])
 	
 	# Fewer steps = faster, larger brush compensates
 	var length_2d = Vector2(start.x, start.z).distance_to(Vector2(end.x, end.z))
@@ -1727,7 +1704,6 @@ func _enter_vehicle(vehicle: Node3D) -> void:
 	if not vehicle or not vehicle.has_method("enter_vehicle"):
 		return
 	
-	print("[Vehicle] Entering vehicle")
 	is_in_vehicle = true
 	current_vehicle = vehicle
 	
@@ -1753,7 +1729,6 @@ func _enter_vehicle(vehicle: Node3D) -> void:
 	# Switch terrain generation to follow the vehicle
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = vehicle
-		print("[Interaction] Switched terrain viewer to Vehicle")
 	
 	# Show exit prompt
 	_show_interaction_prompt()
@@ -1764,7 +1739,6 @@ func _exit_vehicle() -> void:
 	if not current_vehicle or not current_vehicle.has_method("exit_vehicle"):
 		return
 	
-	print("[Vehicle] Exiting vehicle")
 	
 	# Get exit position from vehicle
 	var exit_pos = current_vehicle.global_position + Vector3(0, 1, 0)
@@ -1797,7 +1771,6 @@ func _exit_vehicle() -> void:
 	# Switch terrain generation back to player
 	if terrain_manager and "viewer" in terrain_manager:
 		terrain_manager.viewer = player
-		print("[Interaction] Switched terrain viewer to Player")
 	
 	# Track in vehicle manager
 	if vehicle_manager:
@@ -1824,12 +1797,10 @@ func _load_available_prefabs():
 		available_prefabs = prefab_spawner.get_available_prefabs()
 		current_prefab_index = 0
 		prefab_rotation = 0
-		print("[PREFAB] Loaded %d prefabs" % available_prefabs.size())
 		if available_prefabs.size() > 0:
 			_update_prefab_preview()
 	else:
 		available_prefabs = []
-		print("[PREFAB] No PrefabSpawner found or no prefabs available")
 
 func handle_prefab_input(event):
 	if event.button_index == MOUSE_BUTTON_RIGHT:
@@ -1838,29 +1809,23 @@ func handle_prefab_input(event):
 
 func _place_current_prefab():
 	if available_prefabs.size() == 0 or current_prefab_index >= available_prefabs.size():
-		print("[PREFAB] No prefab selected")
 		return
 	
 	var prefab_name = available_prefabs[current_prefab_index]
-	print("[PREFAB] Attempting to place: %s" % prefab_name)
 	
 	# Get spawn position from raycast
 	var hit = raycast(50.0, false)
 	if not hit:
-		print("[PREFAB] No valid placement position - raycast returned nothing")
 		return
 	
-	print("[PREFAB] Raycast hit at: %v" % hit.position)
 	
 	var submerge = 1 if prefab_carve_mode else 0
 	var spawn_pos = _get_prefab_spawn_world_pos(prefab_name, hit.position, submerge, true)
 	
-	print("[PREFAB] Spawn position: %v" % spawn_pos)
 	
 	# Ensure prefab_spawner reference
 	if not prefab_spawner:
 		prefab_spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
-		print("[PREFAB] Found PrefabSpawner: %s" % (prefab_spawner != null))
 	
 	# Spawn via PrefabSpawner
 	if prefab_spawner and prefab_spawner.has_method("spawn_user_prefab"):
@@ -1868,25 +1833,19 @@ func _place_current_prefab():
 		
 		if prefab_carve_fill_mode:
 			# Carve+Fill mode: First carve (no blocks), wait 10 seconds, then fill+place blocks
-			print("[PREFAB] Carve+Fill mode: Carving terrain (no blocks yet)...")
 			# Step 1: Carve terrain only - skip_blocks=true means no blocks placed
 			var carve_success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, 1, prefab_rotation, true, true)
 			if carve_success:
-				print("[PREFAB] Carve complete. Waiting 10 seconds before fill+blocks...")
 				# Step 2: Wait 10 seconds, then fill terrain AND place blocks
 				var fill_spawn_pos = _get_prefab_spawn_world_pos(prefab_name, hit.position, 0, false)
 				_schedule_prefab_fill(prefab_name, fill_spawn_pos, prefab_rotation)
 			else:
-				print("[PREFAB] Carve failed for %s" % prefab_name)
 		else:
 			# Normal modes: Surface, Carve, or Fill
 			var success = prefab_spawner.spawn_user_prefab(prefab_name, spawn_pos, submerge, prefab_rotation, prefab_carve_mode, false, prefab_interior_carve)
 			if success:
-				print("[PREFAB] Placed %s at %v (rot: %d, mode: %s)" % [prefab_name, spawn_pos, prefab_rotation * 90, mode_str])
 			else:
-				print("[PREFAB] Failed to place %s" % prefab_name)
 	else:
-		print("[PREFAB] ERROR: PrefabSpawner not found or missing spawn_user_prefab method")
 
 ## Calculate road height at a given X, Z position by finding nearest road and sampling terrain
 func _get_road_height_at(x: float, z: float) -> float:
@@ -1904,30 +1863,23 @@ func _get_road_height_at(x: float, z: float) -> float:
 
 ## Schedule the fill step for Carve+Fill mode with a 10-second delay
 func _schedule_prefab_fill(prefab_name: String, spawn_pos: Vector3, rotation: int):
-	print("[PREFAB] Scheduling fill in 10 seconds for %s at %v" % [prefab_name, spawn_pos])
 	# Capture spawner reference now (before timer fires)
 	var spawner = prefab_spawner
 	if not spawner:
 		spawner = get_node_or_null("/root/MainGame/PrefabSpawner")
 	
 	if not spawner:
-		print("[PREFAB] ERROR: No PrefabSpawner found for scheduled fill!")
 		return
 	
 	var timer = get_tree().create_timer(10.0)
 	timer.timeout.connect(func():
-		print("[PREFAB] Timer fired! Executing fill step...")
 		if spawner and spawner.has_method("spawn_user_prefab"):
-			print("[PREFAB] Carve+Fill mode: Now filling terrain and placing blocks...")
 			# Call with submerge=0 (same as standalone Fill mode), foundation_fill=true
 			# This fills terrain AND places blocks at the surface level
 			var fill_success = spawner.spawn_user_prefab(prefab_name, spawn_pos, 0, rotation, false, false, false)
 			if fill_success:
-				print("[PREFAB] Fill+blocks complete for %s at %v" % [prefab_name, spawn_pos])
 			else:
-				print("[PREFAB] Fill failed for %s" % prefab_name)
 		else:
-			print("[PREFAB] ERROR: Spawner invalid in timer callback!")
 	)
 
 func _update_prefab_preview():
@@ -2027,7 +1979,6 @@ func _get_prefab_spawn_origin(prefab_name: String, hit_pos: Vector3, log_snap: b
 		if road_y > 0:
 			anchor.y = floor(road_y) - 1 + prefab_road_snap_y_offset
 			if log_snap:
-				print("[PREFAB] Snapped to road height: Y = %.1f (offset: %d)" % [anchor.y, prefab_road_snap_y_offset])
 	return PrefabGeometry.get_spawn_origin_for_occupied_min(prefab_name, anchor, prefab_rotation)
 
 ## ============== PROP PICKUP SYSTEM =============
@@ -2084,7 +2035,6 @@ func _get_pickup_target() -> Node:
 	
 	if hit and hit.collider:
 		if hit.collider.is_in_group("placed_objects") and hit.collider.has_meta("anchor"):
-			print("Pickup: Direct Hit on %s" % hit.collider.name)
 			_draw_debug_sphere(hit.collider.global_position, 0.2, Color.GREEN)
 			return hit.collider
 			
@@ -2114,7 +2064,6 @@ func _get_pickup_target() -> Node:
 				best_target = col
 	
 	if best_target:
-		print("Pickup: Assisted Hit on %s" % best_target.name)
 		_draw_debug_sphere(best_target.global_position, 0.3, Color.CYAN)
 		return best_target
 			
@@ -2124,7 +2073,6 @@ func _try_pickup_prop():
 	var target = _get_pickup_target()
 	
 	if target:
-		print("Pickup Found: ", target.name)
 		var anchor = target.get_meta("anchor")
 		var chunk = target.get_meta("chunk")
 	
@@ -2159,12 +2107,10 @@ func _try_pickup_prop():
 				var cam = get_viewport().get_camera_3d()
 				held_prop_instance.global_position = cam.global_position - cam.global_transform.basis.z * 2.0
 				
-				print("Picked up Prop ID %d" % held_prop_id)
 
 func _drop_held_prop():
 	if not held_prop_instance: return
 	
-	print("Release detected. Dropping prop.")
 	
 	# Drop exactly where held (User control)
 	var drop_pos = held_prop_instance.global_position
@@ -2222,7 +2168,6 @@ func _drop_held_prop():
 							instance.rotation_degrees.y = held_prop_rotation * 90
 							chunk.place_object(try_anchor, held_prop_id, held_prop_rotation, cells, instance, new_fractional)
 							
-							print("Dropped Prop (Staked to %s)" % try_anchor)
 							# Break inner/outer loops
 							success = true
 							break
@@ -2234,4 +2179,3 @@ func _drop_held_prop():
 		held_prop_instance.queue_free()
 	held_prop_instance = null
 	held_prop_id = -1
-	print("Prop Release Complete")

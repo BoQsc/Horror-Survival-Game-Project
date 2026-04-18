@@ -594,8 +594,6 @@ func flush_dirty_chunks():
 		if processed >= effective_budget:
 			break
 
-	if DebugManager.LOG_BUILDING:
-		DebugManager.log_building("[BatchFlush] Flushed %d dirty chunks (%d rebuilt, %d remaining)" % [flush_coords.size(), rebuilt, _dirty_chunks.size()])
 
 func has_dirty_chunks() -> bool:
 	return not _dirty_chunks.is_empty()
@@ -658,7 +656,6 @@ func _can_place_cells(cells: Array[Vector3i], object_id: int) -> bool:
 		if chunks.has(chunk_coord):
 			var chunk = chunks[chunk_coord]
 			if not chunk.is_cell_available(local):
-				DebugManager.log_building("DEBUG_MISSING_OBJ: Cell collision at global %v (Chunk %v Local %v) for Object %d" % [cell, chunk_coord, local, object_id])
 				return false
 		# If chunk doesn't exist, cell is available (empty terrain)
 	
