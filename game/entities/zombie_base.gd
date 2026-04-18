@@ -67,7 +67,8 @@ func _ready():
 		if anim_player.has_animation("Take 001"):
 			anim_player.play("Take 001")
 			anim_player.get_animation("Take 001").loop_mode = Animation.LOOP_NONE
-		anim_player.callback_mode_process = AnimationPlayer.ANIMATION_CALLBACK_MODE_PROCESS_PHYSICS
+		# Animation timing is visual-only, so keep it off the physics step.
+		anim_player.callback_mode_process = AnimationPlayer.ANIMATION_CALLBACK_MODE_PROCESS_IDLE
 	else:
 		DebugManager.log_entities("Zombie: No AnimationPlayer found - will work without animations")
 	
@@ -166,10 +167,7 @@ func _physics_process(delta):
 		# Step-up logic - hop when hitting walls while moving
 		if is_on_wall() and velocity.length_squared() > 0.25:
 			velocity.y = 4.0
-	
-	# Animation time-slice looping
-	_update_animation()
-	
+
 	# State machine
 	match current_state:
 		"IDLE":
@@ -195,6 +193,14 @@ func _physics_process(delta):
 		# Don't teleport to Y=50 - that causes sky falling
 		# EntityManager will respawn us at correct height
 	PerformanceMonitor.end_measure("Zombie AI", 0.5)
+
+func _process(_delta):
+	if not is_active or current_state == "DEAD" or _test_disable_runtime:
+		return
+	if not is_physics_processing():
+		return
+	# Keep animation correction on the idle frame so physics can stay focused on movement.
+	_update_animation()
 
 func _update_animation():
 	if not anim_player:
