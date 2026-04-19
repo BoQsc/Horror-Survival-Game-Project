@@ -810,9 +810,12 @@ func has_modifications_at_xz(x: int, z: int) -> bool:
 func is_road_at_position(global_x: float, global_z: float, road_clearance: float = 0.0) -> bool:
 	if world_map_active:
 		return _is_world_map_road_at_position(global_x, global_z)
-	if procedural_roads_enabled:
+	if are_procedural_roads_enabled():
 		return _is_procedural_road_at_position(global_x, global_z, road_clearance)
 	return false
+
+func are_procedural_roads_enabled() -> bool:
+	return procedural_roads_enabled and procedural_road_spacing > 0.0 and not world_map_active
 
 func _is_procedural_road_at_position(global_x: float, global_z: float, road_clearance: float) -> bool:
 	if procedural_road_spacing <= 0.0:
@@ -824,6 +827,74 @@ func _is_procedural_road_at_position(global_x: float, global_z: float, road_clea
 	var dist_z := minf(local_z, procedural_road_spacing - local_z)
 	var road_half_width := procedural_road_width * 0.5 + road_clearance
 	return minf(dist_x, dist_z) <= road_half_width
+
+func _procedural_road_hash(p: Vector3) -> float:
+	var h = Vector3(
+		p.x - floor(p.x),
+		p.y - floor(p.y),
+		p.z - floor(p.z)
+	)
+	h *= 17.0
+	var value = h.x * h.y * h.z * (h.x + h.y + h.z)
+	return value - floor(value)
+
+func _procedural_road_noise(p: Vector3) -> float:
+	var i = Vector3(floor(p.x), floor(p.y), floor(p.z))
+	var f = Vector3(p.x - i.x, p.y - i.y, p.z - i.z)
+
+	var f_interp = Vector3(
+		f.x * f.x * (3.0 - 2.0 * f.x),
+		f.y * f.y * (3.0 - 2.0 * f.y),
+		f.z * f.z * (3.0 - 2.0 * f.z)
+	)
+
+	var h000 = _procedural_road_hash(i + Vector3(0, 0, 0))
+	var h100 = _procedural_road_hash(i + Vector3(1, 0, 0))
+	var h010 = _procedural_road_hash(i + Vector3(0, 1, 0))
+	var h110 = _procedural_road_hash(i + Vector3(1, 1, 0))
+	var h001 = _procedural_road_hash(i + Vector3(0, 0, 1))
+	var h101 = _procedural_road_hash(i + Vector3(1, 0, 1))
+	var h011 = _procedural_road_hash(i + Vector3(0, 1, 1))
+	var h111 = _procedural_road_hash(i + Vector3(1, 1, 1))
+
+	return lerp(
+		lerp(lerp(h000, h100, f_interp.x), lerp(h010, h110, f_interp.x), f_interp.y),
+		lerp(lerp(h001, h101, f_interp.x), lerp(h011, h111, f_interp.x), f_interp.y),
+		f_interp.z
+	)
+
+func get_procedural_road_height(global_x: float, global_z: float) -> float:
+	if not are_procedural_roads_enabled():
+		return 0.0
+
+	var cell_x = floor(global_x / procedural_road_spacing)
+	var cell_z = floor(global_z / procedural_road_spacing)
+
+	var local_x = fposmod(global_x, procedural_road_spacing)
+	var local_z = fposmod(global_z, procedural_road_spacing)
+
+	var h1 = _procedural_road_noise(Vector3(cell_x * procedural_road_spacing, 0.0, cell_z * procedural_road_spacing) * 0.008) * 3.0 + 12.0
+	var h2 = _procedural_road_noise(Vector3((cell_x + 1.0) * procedural_road_spacing, 0.0, cell_z * procedural_road_spacing) * 0.008) * 3.0 + 12.0
+	var h3 = _procedural_road_noise(Vector3(cell_x * procedural_road_spacing, 0.0, (cell_z + 1.0) * procedural_road_spacing) * 0.008) * 3.0 + 12.0
+	var h4 = _procedural_road_noise(Vector3((cell_x + 1.0) * procedural_road_spacing, 0.0, (cell_z + 1.0) * procedural_road_spacing) * 0.008) * 3.0 + 12.0
+
+	var tx = local_x / procedural_road_spacing
+	var tz = local_z / procedural_road_spacing
+	var interp_h = lerp(lerp(h1, h2, tx), lerp(h3, h4, tx), tz)
+
+	var base_level = floor(interp_h)
+	var frac = interp_h - base_level
+	var flat_size = 0.45
+
+	if frac < flat_size:
+		return base_level
+	elif frac > 1.0 - flat_size:
+		return base_level + 1.0
+
+	var ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size)
+	# smoothstep ramp_t = t * t * (3.0 - 2.0 * t)
+	ramp_t = ramp_t * ramp_t * (3.0 - 2.0 * ramp_t)
+	return base_level + ramp_t
 
 func _is_world_map_road_at_position(global_x: float, global_z: float) -> bool:
 	if _world_map_road_image == null:

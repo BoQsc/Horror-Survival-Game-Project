@@ -175,68 +175,8 @@ float fbm3d(vec3 p) {
 }
 
 // === Procedural Road Network ===
-// Returns distance to nearest road and the road's target height
-float get_road_info(vec2 pos, float spacing, out float road_height) {
-    if (spacing <= 0.0) {
-        road_height = 0.0;
-        return 1000.0;  // No roads
-    }
-    
-    // Grid-based road network with some variation
-    float cell_x = floor(pos.x / spacing);
-    float cell_z = floor(pos.y / spacing);
-    
-    // Position within cell
-    float local_x = mod(pos.x, spacing);
-    float local_z = mod(pos.y, spacing);
-    
-    // Road runs along cell edges (X and Z axes)
-    float dist_to_x_road = min(local_x, spacing - local_x);  // Distance to vertical road
-    float dist_to_z_road = min(local_z, spacing - local_z);  // Distance to horizontal road
-    
-    float min_dist = min(dist_to_x_road, dist_to_z_road);
-    
-    // Calculate road height - follows terrain with GENTLE variation
-    // Lower frequency (0.008) = slower height changes over distance
-    // Smaller amplitude (3.0) = max 3 Y-levels difference = fewer steps
-    float h1 = noise(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
-    float h2 = noise(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
-    float h3 = noise(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
-    float h4 = noise(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
-    
-    // Bilinear interpolation for base height
-    float tx = local_x / spacing;
-    float tz = local_z / spacing;
-    float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
-    
-    // === STEPPED ROAD WITH SMOOTH RAMPS ===
-    // Creates: FLAT zones at integer Y (for block placement)
-    //          RAMP zones between integers (for smooth driving)
-    
-    float base_level = floor(interpolated_height);
-    float frac = interpolated_height - base_level;  // 0.0 to 1.0
-    
-    // Define how much of each level is FLAT (grid-aligned)
-    // flat_size = 0.45 means 45% flat at bottom, 45% flat at top, only 10% ramp
-    float flat_size = 0.45;
-    
-    if (frac < flat_size) {
-        // FLAT ZONE at lower integer level
-        road_height = base_level;
-    } else if (frac > 1.0 - flat_size) {
-        // FLAT ZONE at upper integer level
-        road_height = base_level + 1.0;
-    } else {
-        // RAMP ZONE - smooth S-curve transition between integers
-        // Normalize the ramp portion to 0-1
-        float ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size);
-        // Apply smoothstep for S-curve (no sudden slope changes)
-        ramp_t = smoothstep(0.0, 1.0, ramp_t);
-        road_height = base_level + ramp_t;
-    }
-    
-    return min_dist;
-}
+#define ROAD_NOISE noise
+#include "res://world_marching_cubes/procedural_road_common.glslinc"
 
 void get_procedural_surface(vec3 world_pos, out float terrain_height, out float road_dist, out float road_height) {
     float base_height = params.terrain_height;

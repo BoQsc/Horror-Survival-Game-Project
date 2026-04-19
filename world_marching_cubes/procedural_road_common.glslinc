@@ -1,0 +1,42 @@
+// Expects ROAD_NOISE(vec3) to be defined by the including shader.
+// This keeps the road distance + stepped height math consistent across
+// density generation and terrain shading.
+float get_road_info(vec2 pos, float spacing, out float road_height) {
+	if (spacing <= 0.0) {
+		road_height = 0.0;
+		return 1000.0;
+	}
+
+	float cell_x = floor(pos.x / spacing);
+	float cell_z = floor(pos.y / spacing);
+
+	float local_x = mod(pos.x, spacing);
+	float local_z = mod(pos.y, spacing);
+
+	float dist_to_x_road = min(local_x, spacing - local_x);
+	float dist_to_z_road = min(local_z, spacing - local_z);
+
+	float h1 = ROAD_NOISE(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
+	float h2 = ROAD_NOISE(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
+	float h3 = ROAD_NOISE(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
+	float h4 = ROAD_NOISE(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
+
+	float tx = local_x / spacing;
+	float tz = local_z / spacing;
+	float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
+
+	float base_level = floor(interpolated_height);
+	float frac = interpolated_height - base_level;
+	float flat_size = 0.45;
+
+	if (frac < flat_size) {
+		road_height = base_level;
+	} else if (frac > 1.0 - flat_size) {
+		road_height = base_level + 1.0;
+	} else {
+		float ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size);
+		road_height = base_level + smoothstep(0.0, 1.0, ramp_t);
+	}
+
+	return min(dist_to_x_road, dist_to_z_road);
+}

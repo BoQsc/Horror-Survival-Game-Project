@@ -434,6 +434,8 @@ func _spawn_baked_buildings(coord: Vector3i):
 	queued_count += 1
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
+	if terrain_manager and terrain_manager.has_method("are_procedural_roads_enabled") and not terrain_manager.are_procedural_roads_enabled():
+		return
 	if road_spacing <= 0:
 		return
 	
@@ -473,7 +475,9 @@ func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 				continue
 			
 			# Use procedural road height for exact road alignment
-			var terrain_y = floor(get_procedural_road_height(spawn_x, spawn_z))
+			var terrain_y := 12.0
+			if terrain_manager and terrain_manager.has_method("get_procedural_road_height"):
+				terrain_y = floor(terrain_manager.get_procedural_road_height(spawn_x, spawn_z))
 			if terrain_y <= 0:
 				terrain_y = 12.0 # Fallback
 			
@@ -495,84 +499,6 @@ func _get_terrain_height(x: float, z: float) -> float:
 	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
 		return terrain_manager.get_terrain_height(x, z)
 	return -1.0
-
-# === PROCEDURAL ROAD SYNC (Matching gen_density.glsl) ===
-
-func _fract(x: float) -> float:
-	return x - floor(x)
-
-func _procedural_hash(p: Vector3) -> float:
-	var h = Vector3(
-		_fract(p.x * 0.3183099 + 0.1),
-		_fract(p.y * 0.3183099 + 0.1),
-		_fract(p.z * 0.3183099 + 0.1)
-	)
-	h *= 17.0
-	return _fract(h.x * h.y * h.z * (h.x + h.y + h.z))
-
-func _procedural_noise(p: Vector3) -> float:
-	var i = Vector3(floor(p.x), floor(p.y), floor(p.z))
-	var f = Vector3(_fract(p.x), _fract(p.y), _fract(p.z))
-	
-	# Hermite interpolation f = f*f*(3-2*f)
-	var f_interp = Vector3(
-		f.x * f.x * (3.0 - 2.0 * f.x),
-		f.y * f.y * (3.0 - 2.0 * f.y),
-		f.z * f.z * (3.0 - 2.0 * f.z)
-	)
-	
-	var h000 = _procedural_hash(i + Vector3(0,0,0))
-	var h100 = _procedural_hash(i + Vector3(1,0,0))
-	var h010 = _procedural_hash(i + Vector3(0,1,0))
-	var h110 = _procedural_hash(i + Vector3(1,1,0))
-	var h001 = _procedural_hash(i + Vector3(0,0,1))
-	var h101 = _procedural_hash(i + Vector3(1,0,1))
-	var h011 = _procedural_hash(i + Vector3(0,1,1))
-	var h111 = _procedural_hash(i + Vector3(1,1,1))
-	
-	return lerp(
-		lerp(lerp(h000, h100, f_interp.x), lerp(h010, h110, f_interp.x), f_interp.y),
-		lerp(lerp(h001, h101, f_interp.x), lerp(h011, h111, f_interp.x), f_interp.y),
-		f_interp.z
-	)
-
-## Returns the exact procedural road height at a given world X,Z
-func get_procedural_road_height(x: float, z: float) -> float:
-	if road_spacing <= 0:
-		return 0.0
-	
-	var cell_x = floor(x / road_spacing)
-	var cell_z = floor(z / road_spacing)
-	
-	var local_x = fmod(x, road_spacing)
-	if local_x < 0: local_x += road_spacing
-	var local_z = fmod(z, road_spacing)
-	if local_z < 0: local_z += road_spacing
-	
-	# Match shader noise scale 0.008 and amplitude 3.0 + 12.0 base
-	var h1 = _procedural_noise(Vector3(cell_x * road_spacing, 0.0, cell_z * road_spacing) * 0.008) * 3.0 + 12.0
-	var h2 = _procedural_noise(Vector3((cell_x + 1.0) * road_spacing, 0.0, cell_z * road_spacing) * 0.008) * 3.0 + 12.0
-	var h3 = _procedural_noise(Vector3(cell_x * road_spacing, 0.0, (cell_z + 1.0) * road_spacing) * 0.008) * 3.0 + 12.0
-	var h4 = _procedural_noise(Vector3((cell_x + 1.0) * road_spacing, 0.0, (cell_z + 1.0) * road_spacing) * 0.008) * 3.0 + 12.0
-	
-	var tx = local_x / road_spacing
-	var tz = local_z / road_spacing
-	var interp_h = lerp(lerp(h1, h2, tx), lerp(h3, h4, tx), tz)
-	
-	# Stepped road logic (matching shader)
-	var base_level = floor(interp_h)
-	var frac = interp_h - base_level
-	var flat_size = 0.45
-	
-	if frac < flat_size:
-		return base_level
-	elif frac > 1.0 - flat_size:
-		return base_level + 1.0
-	else:
-		var ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size)
-		# smoothstep ramp_t = t * t * (3.0 - 2.0 * t)
-		ramp_t = ramp_t * ramp_t * (3.0 - 2.0 * ramp_t)
-		return base_level + ramp_t
 
 
 var vegetation_manager: Node3D # Cached reference

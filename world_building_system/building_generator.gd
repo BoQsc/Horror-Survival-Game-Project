@@ -156,6 +156,8 @@ func _queue_buildings_for_chunk(chunk_coord: Vector3i, chunk_world_pos: Vector3)
 func _find_road_adjacent_spots(chunk_pos: Vector3, chunk_size: int) -> Array:
 	var spots = []
 	
+	if terrain_manager and terrain_manager.has_method("are_procedural_roads_enabled") and not terrain_manager.are_procedural_roads_enabled():
+		return spots
 	if road_spacing <= 0:
 		return spots
 	
@@ -220,6 +222,8 @@ func _is_valid_spacing(pos: Vector3) -> bool:
 
 ## Check if position is near a road intersection (where X and Z roads cross)
 func _is_near_intersection(pos: Vector3) -> bool:
+	if terrain_manager and terrain_manager.has_method("are_procedural_roads_enabled") and not terrain_manager.are_procedural_roads_enabled():
+		return false
 	if road_spacing <= 0:
 		return false
 	
@@ -323,7 +327,13 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 		return false
 	
 	# Get road height at this position
-	var road_y = floor(_get_road_height(pos.x, pos.z))
+	var road_y := 12.0
+	if terrain_manager and terrain_manager.has_method("get_procedural_road_height"):
+		road_y = floor(terrain_manager.get_procedural_road_height(pos.x, pos.z))
+	elif terrain_manager and terrain_manager.has_method("get_terrain_height"):
+		var terrain_y = terrain_manager.get_terrain_height(pos.x, pos.z)
+		if terrain_y > 0:
+			road_y = floor(terrain_y)
 	var ground_anchor = Vector3(floor(pos.x), road_y, floor(pos.z))
 	var spawn_pos = PrefabGeometry.get_spawn_origin_for_occupied_min(prefab_name, ground_anchor, rotation)
 	
@@ -338,19 +348,6 @@ func _spawn_building(pos: Vector3, rotation: int, prefab_name: String) -> bool:
 		building_spawned.emit(spawn_pos, prefab_name)
 	
 	return success
-
-## Get road height at position
-func _get_road_height(x: float, z: float) -> float:
-	if prefab_spawner and prefab_spawner.has_method("get_procedural_road_height"):
-		return prefab_spawner.get_procedural_road_height(x, z)
-	
-	# Fallback if PrefabSpawner not available
-	if terrain_manager and terrain_manager.has_method("get_terrain_height"):
-		var h = terrain_manager.get_terrain_height(x, z)
-		if h > 0:
-			return h
-	
-	return 12.0
 
 ## Clear buildings when chunk unloads
 func clear_buildings_for_chunk(chunk_coord: Vector3i) -> void:

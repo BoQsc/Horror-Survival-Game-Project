@@ -87,18 +87,6 @@ float fbm(vec2 p) {
 	return f;
 }
 
-// Procedural road distance (same math as gen_density.glsl)
-float get_procedural_road_dist(vec2 pos) {
-	if (!procedural_road_enabled || procedural_road_spacing <= 0.0) {
-		return 1000.0;
-	}
-	float local_x = mod(pos.x, procedural_road_spacing);
-	float local_z = mod(pos.y, procedural_road_spacing);
-	float dist_to_x_road = min(local_x, procedural_road_spacing - local_x);
-	float dist_to_z_road = min(local_z, procedural_road_spacing - local_z);
-	return min(dist_to_x_road, dist_to_z_road);
-}
-
 // 3D hash for road height calculation
 float hash3d(vec3 p) {
 	p = fract(p * 0.3183099 + 0.1);
@@ -129,39 +117,44 @@ float fbm3d(vec3 p) {
 	return f;
 }
 
-// Get road height at a given XZ position (matches gen_density.glsl logic)
-float get_road_height(vec2 pos) {
-	float spacing = procedural_road_spacing;
+float get_road_info(vec2 pos, float spacing, out float road_height) {
+	if (spacing <= 0.0) {
+		road_height = 0.0;
+		return 1000.0;
+	}
+
 	float cell_x = floor(pos.x / spacing);
 	float cell_z = floor(pos.y / spacing);
+
 	float local_x = mod(pos.x, spacing);
 	float local_z = mod(pos.y, spacing);
-	
-	// Corner heights with noise
+
+	float dist_to_x_road = min(local_x, spacing - local_x);
+	float dist_to_z_road = min(local_z, spacing - local_z);
+
 	float h1 = noise3d(vec3(cell_x * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
 	float h2 = noise3d(vec3((cell_x + 1.0) * spacing, 0.0, cell_z * spacing) * 0.008) * 3.0 + 12.0;
 	float h3 = noise3d(vec3(cell_x * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
 	float h4 = noise3d(vec3((cell_x + 1.0) * spacing, 0.0, (cell_z + 1.0) * spacing) * 0.008) * 3.0 + 12.0;
-	
-	// Bilinear interpolation
+
 	float tx = local_x / spacing;
 	float tz = local_z / spacing;
-	float interpolated = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
-	
-	// Stepped road with flat zones
-	float base_level = floor(interpolated);
-	float frac_part = interpolated - base_level;
+	float interpolated_height = mix(mix(h1, h2, tx), mix(h3, h4, tx), tz);
+
+	float base_level = floor(interpolated_height);
+	float frac = interpolated_height - base_level;
 	float flat_size = 0.45;
-	
-	if (frac_part < flat_size) {
-		return base_level;
-	} else if (frac_part > 1.0 - flat_size) {
-		return base_level + 1.0;
+
+	if (frac < flat_size) {
+		road_height = base_level;
+	} else if (frac > 1.0 - flat_size) {
+		road_height = base_level + 1.0;
 	} else {
-		float ramp_t = (frac_part - flat_size) / (1.0 - 2.0 * flat_size);
-		ramp_t = smoothstep(0.0, 1.0, ramp_t);
-		return base_level + ramp_t;
+		float ramp_t = (frac - flat_size) / (1.0 - 2.0 * flat_size);
+		road_height = base_level + smoothstep(0.0, 1.0, ramp_t);
 	}
+
+	return min(dist_to_x_road, dist_to_z_road);
 }
 
 varying vec3 local_vertex;  // Mesh vertex in local chunk space (0-32)
@@ -219,12 +212,13 @@ vec3 get_procedural_color(vec3 w_pos, vec3 col_grass, vec3 col_stone, vec3 col_s
 	// the ground is stone, but the road overlays asphalt on top of the stone.
 	// This naturally fixes the problem without infinite cylinder mask hacks.
 	if (procedural_road_enabled) {
-		float r_dist = get_procedural_road_dist(w_pos.xz);
-		float r_height = get_road_height(w_pos.xz);
+		float r_height = 0.0;
+		float r_dist = get_road_info(w_pos.xz, procedural_road_spacing, r_height);
 		float r_height_diff = abs(w_pos.y - r_height);
 		
 		// Smoothstep edges of the road
-		float r_mix = 1.0 - smoothstep(max(0.0, procedural_road_width * 0.5 - 1.0), procedural_road_width * 0.5 + road_edge_blend_width, r_dist);
+		float edge_width = road_edge_blend_enabled ? road_edge_blend_width : 0.0;
+		float r_mix = 1.0 - smoothstep(max(0.0, procedural_road_width * 0.5 - 1.0), procedural_road_width * 0.5 + edge_width, r_dist);
 		float r_h_mix = 1.0 - smoothstep(1.5, 3.0, r_height_diff);
 		float is_road = r_mix * r_h_mix;
 		final_col = mix(final_col, col_road, is_road);
@@ -366,7 +360,11 @@ void fragment() {
 	// --- Debug: Road Zone Visualization ---
 	// Red = voxel says road, Green = procedural says road, Yellow = both agree
 	if (debug_show_road_zones) {
-		float road_dist_debug = get_procedural_road_dist(world_pos.xz);
+		float road_dist_debug = 1000.0;
+		if (procedural_road_enabled) {
+			float road_height_debug = 0.0;
+			road_dist_debug = get_road_info(world_pos.xz, procedural_road_spacing, road_height_debug);
+		}
 		bool in_procedural_road = (road_dist_debug < procedural_road_width);
 		bool voxel_is_road = (mat_id_A == 6 || mat_id_B == 6);
 		
