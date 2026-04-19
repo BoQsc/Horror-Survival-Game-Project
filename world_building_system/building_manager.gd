@@ -33,6 +33,7 @@ var _dirty_global_visual_batch_object_ids: Dictionary = {} # int object_id -> tr
 
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
+var _dirty_visible_chunk_count: int = 0
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -166,6 +167,9 @@ func _unload_chunk_visual(coord: Vector3i):
 		return
 	
 	var chunk = chunks[coord]
+	var was_visible := visible_chunks.has(coord)
+	if was_visible and _dirty_chunks.has(coord):
+		_dirty_visible_chunk_count = maxi(0, _dirty_visible_chunk_count - 1)
 	if chunk.is_inside_tree():
 		remove_child(chunk)
 	
@@ -176,6 +180,7 @@ func _load_chunk_visual(coord: Vector3i):
 		return
 	
 	var chunk = chunks[coord]
+	var was_visible := visible_chunks.has(coord)
 	if not chunk.is_inside_tree():
 		add_child(chunk)
 		chunk.position = Vector3(coord) * CHUNK_SIZE
@@ -184,6 +189,8 @@ func _load_chunk_visual(coord: Vector3i):
 			chunk.rebuild_mesh()
 	
 	visible_chunks[coord] = true
+	if not was_visible and _dirty_chunks.has(coord):
+		_dirty_visible_chunk_count += 1
 
 func queue_object_collision(chunk: BuildingChunk, obj: Node3D, anchor: Vector3i) -> void:
 	if not chunk or not obj:
@@ -202,8 +209,11 @@ func queue_object_collision(chunk: BuildingChunk, obj: Node3D, anchor: Vector3i)
 func mark_chunk_dirty(chunk_coord: Vector3i, chunk: BuildingChunk) -> void:
 	if not chunk or not is_instance_valid(chunk):
 		return
+	var was_dirty := _dirty_chunks.has(chunk_coord)
 	chunk.mark_mesh_dirty()
 	_dirty_chunks[chunk_coord] = chunk
+	if not was_dirty and visible_chunks.has(chunk_coord):
+		_dirty_visible_chunk_count += 1
 
 func _process_pending_object_collisions() -> void:
 	if _pending_object_collision_tasks.is_empty():
@@ -418,9 +428,9 @@ func get_telemetry_snapshot() -> Dictionary:
 	var total_simple_visual_instances := 0
 	var total_visual_batches := 0
 	var total_occupied_cells := 0
-	var total_mesh_dirty_chunks := 0
-	var total_dirty_visible_chunks := 0
-	var total_dirty_hidden_chunks := 0
+	var total_mesh_dirty_chunks := _dirty_chunks.size()
+	var total_dirty_visible_chunks := _dirty_visible_chunk_count
+	var total_dirty_hidden_chunks := maxi(0, total_mesh_dirty_chunks - total_dirty_visible_chunks)
 
 	for chunk_coord_variant in chunks:
 		var chunk: BuildingChunk = chunks[chunk_coord_variant]
@@ -434,12 +444,6 @@ func get_telemetry_snapshot() -> Dictionary:
 		total_simple_visual_instances += chunk.simple_visual_instances.size()
 		total_visual_batches += chunk.simple_visual_batch_nodes.size()
 		total_occupied_cells += chunk.occupied_by_object.size()
-		if _dirty_chunks.has(chunk_coord_variant):
-			total_mesh_dirty_chunks += 1
-			if visible_chunks.has(chunk_coord_variant):
-				total_dirty_visible_chunks += 1
-			else:
-				total_dirty_hidden_chunks += 1
 
 	return {
 		"phase": "object_collision_queue" if not _pending_object_collision_tasks.is_empty() else "idle",
@@ -515,6 +519,9 @@ func release_chunk(chunk_coord: Vector3i):
 		return
 	
 	var chunk = chunks[chunk_coord]
+	if _dirty_chunks.has(chunk_coord) and visible_chunks.has(chunk_coord):
+		_dirty_visible_chunk_count = maxi(0, _dirty_visible_chunk_count - 1)
+		_dirty_chunks.erase(chunk_coord)
 	chunks.erase(chunk_coord)
 	visible_chunks.erase(chunk_coord)
 	
@@ -614,11 +621,15 @@ func flush_dirty_chunks():
 				continue
 			var chunk: BuildingChunk = _dirty_chunks[coord]
 			if not chunk or not is_instance_valid(chunk):
+				if visible_chunks.has(coord):
+					_dirty_visible_chunk_count = maxi(0, _dirty_visible_chunk_count - 1)
 				_dirty_chunks.erase(coord)
 				continue
 			chunk.rebuild_mesh()
 			rebuilt += 1
 			processed += 1
+			if visible_chunks.has(coord):
+				_dirty_visible_chunk_count = maxi(0, _dirty_visible_chunk_count - 1)
 			_dirty_chunks.erase(coord)
 		if processed >= effective_budget:
 			break
@@ -628,15 +639,12 @@ func has_dirty_chunks() -> bool:
 	return not _dirty_chunks.is_empty()
 
 func has_dirty_visible_chunks() -> bool:
-	for coord in _dirty_chunks.keys():
-		if visible_chunks.has(coord):
-			return true
-	return false
+	return _dirty_visible_chunk_count > 0
 
 func has_pending_building_work() -> bool:
 	# Only gameplay-critical building work should block terrain finalization.
 	# Render-only visual batch rebuilds can lag behind without affecting play.
-	return has_dirty_visible_chunks() \
+	return _dirty_visible_chunk_count > 0 \
 		or not _pending_object_collision_tasks.is_empty()
 
 func has_pending_visual_batch_work() -> bool:

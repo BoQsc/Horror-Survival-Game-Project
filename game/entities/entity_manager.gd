@@ -22,6 +22,8 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(0.1, 5.0, 0.1) var proximity_update_budget_ms: float = 1.5
 @export_range(1, 256, 1) var pending_spawn_checks_per_frame: int = 32
 @export_range(1, 256, 1) var dormant_respawn_checks_per_frame: int = 32
+@export_range(0.1, 5.0, 0.1) var spawn_queue_budget_ms: float = 1.0
+@export_range(0.1, 5.0, 0.1) var dormant_respawn_budget_ms: float = 1.0
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
@@ -276,8 +278,14 @@ func _check_dormant_respawns():
 	var checks := mini(dormant_respawn_checks_per_frame, total)
 	var start_index := _dormant_scan_cursor % total
 	var processed := 0
+	var start_time := Time.get_ticks_usec()
 	
 	while processed < checks:
+		if processed > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
+			if elapsed_ms >= dormant_respawn_budget_ms:
+				break
+
 		var i := (start_index + processed) % total
 		var data = dormant_entities[i]
 		var pos = data.position
@@ -447,8 +455,14 @@ func _process_spawn_queue():
 	var checks := mini(pending_spawn_checks_per_frame, total)
 	var start_index := _pending_spawn_scan_cursor % total
 	var processed := 0
+	var start_time := Time.get_ticks_usec()
 	
 	while processed < checks:
+		if processed > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
+			if elapsed_ms >= spawn_queue_budget_ms:
+				break
+
 		var i := (start_index + processed) % total
 		var spawn_data = pending_spawns[i]
 		var pos = spawn_data.position

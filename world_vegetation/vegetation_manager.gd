@@ -43,6 +43,7 @@ var grass_base_transform: Transform3D = Transform3D()
 var rock_mesh: Mesh
 var rock_base_transform: Transform3D = Transform3D()
 static var _loaded_model_cache: Dictionary = {}
+var _native_helper: Object = null
 var forest_noise: FastNoiseLite
 var grass_noise: FastNoiseLite
 var rock_noise: FastNoiseLite
@@ -132,6 +133,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"is_initial_load_batch": is_initial_load_batch,
 		"terrain_supports_road_query": _terrain_supports_road_query
 	}
+
+
+func _get_native_helper() -> Object:
+	if _native_helper and is_instance_valid(_native_helper):
+		return _native_helper
+	if not ClassDB.class_exists("PrefabGeometryNative"):
+		return null
+	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
+	return _native_helper
 
 
 func _ready():
@@ -417,9 +427,11 @@ func _physics_process(_delta):
 		current_player_pos = player.global_position
 		var chunk_stride = terrain_manager.CHUNK_STRIDE
 		current_player_chunk = Vector2i(int(floor(current_player_pos.x / chunk_stride)), int(floor(current_player_pos.z / chunk_stride)))
+		var collider_refresh_distance: float = max(4.0, collider_distance * 0.25)
+		var collider_refresh_distance_sq: float = collider_refresh_distance * collider_refresh_distance
 		if current_player_chunk != _last_collider_update_chunk:
 			should_refresh_colliders = true
-		elif current_player_pos.distance_to(_last_collider_update_pos) >= max(4.0, collider_distance * 0.25):
+		elif current_player_pos.distance_squared_to(_last_collider_update_pos) >= collider_refresh_distance_sq:
 			should_refresh_colliders = true
 
 	if should_refresh_colliders and player and terrain_manager:
@@ -1481,6 +1493,16 @@ func _make_vegetation_placement(world_pos: Vector3, scale: float, rotation_angle
 func _pick_nearest_candidates(candidates: Array[Dictionary], max_count: int) -> Array[Dictionary]:
 	if candidates.is_empty() or max_count <= 0:
 		return []
+
+	var native := _get_native_helper()
+	if native and native.has_method("pick_nearest_candidates"):
+		var native_selected: Array = native.pick_nearest_candidates(candidates, max_count)
+		if not native_selected.is_empty():
+			var typed_selected: Array[Dictionary] = []
+			typed_selected.assign(native_selected)
+			return typed_selected
+		if candidates.is_empty():
+			return []
 
 	var selected: Array[Dictionary] = []
 	for item in candidates:

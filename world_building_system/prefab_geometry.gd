@@ -21,16 +21,37 @@ static func _get_native_helper() -> Object:
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
 
+static func clear_cache() -> void:
+	_geometry_cache.clear()
+	_rotated_bounds_cache.clear()
+	_rotated_objects_cache.clear()
+	_rotated_precise_carve_cache.clear()
+	_rotated_excavation_segments_cache.clear()
+
+static func _resolve_prefab_json_path(prefab_name: String) -> String:
+	for dir_path in [RES_PREFAB_DIR, USER_PREFAB_DIR]:
+		var path: String = dir_path + prefab_name + ".json"
+		if FileAccess.file_exists(path):
+			return path
+	return ""
+
+static func _get_prefab_cache_key(prefab_name: String) -> String:
+	var path := _resolve_prefab_json_path(prefab_name)
+	if path == "":
+		return "%s|missing" % prefab_name
+	return "%s|%s|%d" % [prefab_name, path, FileAccess.get_modified_time(path)]
+
 static func get_prefab_geometry(prefab_name: String) -> Dictionary:
-	if _geometry_cache.has(prefab_name):
-		return _geometry_cache[prefab_name]
+	var cache_key := _get_prefab_cache_key(prefab_name)
+	if _geometry_cache.has(cache_key):
+		return _geometry_cache[cache_key]
 
 	var geometry := _build_prefab_geometry(prefab_name)
-	_geometry_cache[prefab_name] = geometry
+	_geometry_cache[cache_key] = geometry
 	return geometry
 
 static func get_rotated_bounds(prefab_name: String, rotation: int) -> Dictionary:
-	var key := "%s:%d" % [prefab_name, rotation]
+	var key := "%s:%d" % [_get_prefab_cache_key(prefab_name), rotation]
 	if _rotated_bounds_cache.has(key):
 		return _rotated_bounds_cache[key]
 
@@ -104,7 +125,7 @@ static func get_rotated_reservation_footprint(prefab_name: String, rotation: int
 	return get_rotated_reservation_bounds(prefab_name, rotation).get("footprint", Vector2i.ONE)
 
 static func get_rotated_precise_carve_segments(prefab_name: String, rotation: int) -> Array:
-	var key := "%s:%d" % [prefab_name, rotation]
+	var key := "%s:%d" % [_get_prefab_cache_key(prefab_name), rotation]
 	if _rotated_precise_carve_cache.has(key):
 		return _rotated_precise_carve_cache[key]
 
@@ -130,7 +151,7 @@ static func get_rotated_precise_carve_segments(prefab_name: String, rotation: in
 	return rotated_segments
 
 static func get_rotated_excavation_segments(prefab_name: String, rotation: int) -> Array:
-	var key := "%s:%d" % [prefab_name, rotation]
+	var key := "%s:%d" % [_get_prefab_cache_key(prefab_name), rotation]
 	if _rotated_excavation_segments_cache.has(key):
 		return _rotated_excavation_segments_cache[key]
 
@@ -148,7 +169,7 @@ static func get_rotated_excavation_segments(prefab_name: String, rotation: int) 
 	return rotated_segments
 
 static func get_rotated_objects(prefab_name: String, rotation: int) -> Array:
-	var key := "%s:%d" % [prefab_name, rotation]
+	var key := "%s:%d" % [_get_prefab_cache_key(prefab_name), rotation]
 	if _rotated_objects_cache.has(key):
 		return _rotated_objects_cache[key]
 

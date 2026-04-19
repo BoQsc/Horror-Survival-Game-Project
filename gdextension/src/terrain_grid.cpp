@@ -7,7 +7,9 @@ namespace godot {
 void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_chunk", "coord"), &TerrainGrid::add_chunk);
     ClassDB::bind_method(D_METHOD("remove_chunk", "coord"), &TerrainGrid::remove_chunk);
+    ClassDB::bind_method(D_METHOD("set_chunk_collision_ready", "coord", "ready"), &TerrainGrid::set_chunk_collision_ready);
     ClassDB::bind_method(D_METHOD("has_chunk", "coord"), &TerrainGrid::has_chunk);
+    ClassDB::bind_method(D_METHOD("is_collision_ready_at", "position", "chunk_stride"), &TerrainGrid::is_collision_ready_at);
     ClassDB::bind_method(D_METHOD("clear"), &TerrainGrid::clear);
     ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "chunks_per_frame_limit"), &TerrainGrid::update);
     ClassDB::bind_method(D_METHOD("get_chunk_height_map", "density", "size", "step"), &TerrainGrid::get_chunk_height_map);
@@ -21,18 +23,48 @@ TerrainGrid::~TerrainGrid() {
 
 void TerrainGrid::add_chunk(Vector3i coord) {
     active_chunks.insert(coord);
+    collision_ready_chunks.erase(coord);
 }
 
 void TerrainGrid::remove_chunk(Vector3i coord) {
     active_chunks.erase(coord);
+    collision_ready_chunks.erase(coord);
+}
+
+void TerrainGrid::set_chunk_collision_ready(Vector3i coord, bool ready) {
+    if (ready) {
+        collision_ready_chunks.insert(coord);
+    } else {
+        collision_ready_chunks.erase(coord);
+    }
 }
 
 bool TerrainGrid::has_chunk(Vector3i coord) {
     return active_chunks.has(coord);
 }
 
+bool TerrainGrid::is_collision_ready_at(Vector3 position, int chunk_stride) {
+    if (chunk_stride <= 0) {
+        return false;
+    }
+
+    const int chunk_x = static_cast<int>(Math::floor(position.x / chunk_stride));
+    const int chunk_y = static_cast<int>(Math::floor(position.y / chunk_stride));
+    const int chunk_z = static_cast<int>(Math::floor(position.z / chunk_stride));
+
+    for (int dy = -1; dy <= 1; ++dy) {
+        const Vector3i coord(chunk_x, chunk_y + dy, chunk_z);
+        if (collision_ready_chunks.has(coord)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void TerrainGrid::clear() {
     active_chunks.clear();
+    collision_ready_chunks.clear();
     update_cache_valid = false;
     cached_load_candidates.clear();
     cached_unload_candidates.clear();

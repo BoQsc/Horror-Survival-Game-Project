@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <unordered_map>
 #include <unordered_set>
@@ -51,6 +52,11 @@ struct ColumnBounds {
 	int min_y = 0;
 	int max_y = 0;
 	bool initialized = false;
+};
+
+struct NearestCandidate {
+	double dist_sq = 0.0;
+	Dictionary data;
 };
 
 static int normalize_rotation(int rotation) {
@@ -232,6 +238,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rotate_local_rect_bounds", "rect", "rotation"), &PrefabGeometryNative::rotate_local_rect_bounds);
 	ClassDB::bind_method(D_METHOD("parse_local_rect_2d", "raw_rect", "fallback_rect", "declared_size"), &PrefabGeometryNative::parse_local_rect_2d);
 	ClassDB::bind_method(D_METHOD("parse_local_volumes", "raw_volumes", "declared_size", "min_y", "max_y"), &PrefabGeometryNative::parse_local_volumes);
+	ClassDB::bind_method(D_METHOD("pick_nearest_candidates", "candidates", "max_count"), &PrefabGeometryNative::pick_nearest_candidates);
 }
 
 Vector3i PrefabGeometryNative::rotate_offset(const Vector3i &offset, int rotation) const {
@@ -534,6 +541,58 @@ Array PrefabGeometryNative::build_rotated_carve_segments(const Array &local_cell
 Array PrefabGeometryNative::build_rotated_segments_from_volumes(const Array &volumes, int rotation) const {
 	Dictionary cell_set = build_local_cell_set_from_volumes(volumes);
 	return build_rotated_carve_segments(cell_set.keys(), rotation);
+}
+
+Array PrefabGeometryNative::pick_nearest_candidates(const Array &candidates, int max_count) const {
+	Array result;
+	if (candidates.is_empty() || max_count <= 0) {
+		return result;
+	}
+
+	const auto heap_comp = [](const NearestCandidate &a, const NearestCandidate &b) {
+		return a.dist_sq < b.dist_sq;
+	};
+
+	std::vector<NearestCandidate> heap;
+	heap.reserve(std::min<int>(candidates.size(), max_count));
+
+	for (int i = 0; i < candidates.size(); ++i) {
+		if (candidates[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+
+		Dictionary candidate = candidates[i];
+		const Variant dist_variant = candidate.get("dist_sq", 0.0);
+		const double dist_sq = static_cast<double>(dist_variant);
+		NearestCandidate entry;
+		entry.dist_sq = dist_sq;
+		entry.data = candidate;
+
+		if (static_cast<int>(heap.size()) < max_count) {
+			heap.push_back(std::move(entry));
+			std::push_heap(heap.begin(), heap.end(), heap_comp);
+			continue;
+		}
+
+		if (!heap.empty() && dist_sq >= heap.front().dist_sq) {
+			continue;
+		}
+
+		std::pop_heap(heap.begin(), heap.end(), heap_comp);
+		heap.back() = std::move(entry);
+		std::push_heap(heap.begin(), heap.end(), heap_comp);
+	}
+
+	std::sort(heap.begin(), heap.end(), [](const NearestCandidate &a, const NearestCandidate &b) {
+		return a.dist_sq < b.dist_sq;
+	});
+
+	result.resize(static_cast<int>(heap.size()));
+	for (int i = 0; i < static_cast<int>(heap.size()); ++i) {
+		result[i] = heap[i].data;
+	}
+
+	return result;
 }
 
 Array PrefabGeometryNative::get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const {

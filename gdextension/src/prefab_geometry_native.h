@@ -36,11 +36,12 @@ public:
 	Dictionary build_local_cell_set_from_volumes(const Array &volumes) const;
 	Dictionary inflate_local_cell_set(const Dictionary &cell_set, int padding) const;
 
-	Array build_rotated_carve_segments(const Array &local_cells, int rotation) const;
-	Array build_rotated_segments_from_volumes(const Array &volumes, int rotation) const;
+    Array build_rotated_carve_segments(const Array &local_cells, int rotation) const;
+    Array build_rotated_segments_from_volumes(const Array &volumes, int rotation) const;
+    Array pick_nearest_candidates(const Array &candidates, int max_count) const;
 
-	Array get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const;
-	Dictionary build_required_below_grade_excavation_cells(const Array &enclosed_cells, const Array &stair_cells, int min_y, int grade_y) const;
+    Array get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const;
+    Dictionary build_required_below_grade_excavation_cells(const Array &enclosed_cells, const Array &stair_cells, int min_y, int grade_y) const;
 	Array find_surface_breach_excavation_cells(const Dictionary &excavated_cells, const Dictionary &surface_rect, int grade_y) const;
 };
 

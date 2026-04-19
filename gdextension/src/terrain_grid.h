@@ -17,6 +17,7 @@ class TerrainGrid : public RefCounted {
 
 private:
     HashSet<Vector3i> active_chunks;
+    HashSet<Vector3i> collision_ready_chunks;
     bool update_cache_valid = false;
     Vector3i cached_center_chunk = Vector3i(0, 0, 0);
     int cached_render_distance = -1;
@@ -38,8 +39,12 @@ public:
     void add_chunk(Vector3i coord);
     // Manually remove a chunk (e.g. after unload)
     void remove_chunk(Vector3i coord);
+    // Mark whether the chunk's collision body has been created and is ready for raycasts.
+    void set_chunk_collision_ready(Vector3i coord, bool ready);
     // Check if chunk is tracked
     bool has_chunk(Vector3i coord);
+    // Check whether terrain collision is ready around a position.
+    bool is_collision_ready_at(Vector3 position, int chunk_stride);
     // Clear all tracking
     void clear();
 

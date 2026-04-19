@@ -154,6 +154,7 @@ var target_fps: float = 75.0
 var min_acceptable_fps: float = 45.0
 var current_fps: float = 60.0
 var fps_samples: Array[float] = []
+var fps_sample_sum: float = 0.0
 var adaptive_frame_budget_ms: float = 1.0 # Dynamically adjusted (reduced for smoother FPS)
 var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
@@ -267,6 +268,7 @@ func _ready():
 		# are controlled by the material buffer (depth-limited to 2 blocks)
 		material_terrain.set_shader_parameter("procedural_road_enabled", false)
 		material_terrain.set_shader_parameter("use_world_map", true)
+		PrefabGeometry.clear_cache()
 		# Read metadata for map params (biome blending now uses GPU fbm() directly, no texture needed)
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 		var loaded = WorldMapGen.load_world(world_definition_path)
@@ -497,17 +499,11 @@ func set_debug_show_road_zones(enabled: bool) -> void:
 
 func _update_fps_tracking(delta: float):
 	var instant_fps = 1.0 / delta if delta > 0 else 60.0
+	if fps_samples.size() >= 30:
+		fps_sample_sum -= fps_samples.pop_front()
 	fps_samples.append(instant_fps)
-
-	# Keep last 30 samples (0.5 seconds at 60fps)
-	while fps_samples.size() > 30:
-		fps_samples.pop_front()
-
-	# Calculate average FPS
-	var total = 0.0
-	for fps in fps_samples:
-		total += fps
-	current_fps = total / fps_samples.size()
+	fps_sample_sum += instant_fps
+	current_fps = fps_sample_sum / fps_samples.size()
 
 func _adjust_adaptive_loading():
 	# BOOSTED LOADING: During initial load (like save load), bypass FPS throttling
@@ -1453,6 +1449,8 @@ func _unload_chunk(coord: Vector3i):
 
 	var data = active_chunks[coord]
 	if data:
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, false)
 		if data.node_terrain: data.node_terrain.queue_free()
 		if data.node_water: data.node_water.queue_free()
 
@@ -1797,6 +1795,7 @@ func _thread_function():
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
 	if world_map_active and world_definition_path != "":
+		PrefabGeometry.clear_cache()
 		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
 		var loaded = WorldMapGen.load_world(world_definition_path)
 
@@ -2655,6 +2654,8 @@ func _finalize_chunk_creation(item: Dictionary):
 			# So that when raycast hits the RID, we can find the Node.
 			PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
 			data.body_rid_terrain = body_rid
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, data.node_terrain != null)
 
 		# CRITICAL: Keep Shape3D resource alive!
 		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
@@ -2794,6 +2795,8 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 
 	if layer == 0: # Terrain
 		# CRITICAL: Free the PhysicsServer body RID first (contains stale collision)
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, false)
 		if data.body_rid_terrain.is_valid():
 			PhysicsServer3D.free_rid(data.body_rid_terrain)
 			data.body_rid_terrain = RID() # Clear to prevent double-free
@@ -2810,6 +2813,8 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			data.cpu_density_terrain = cpu_dens
 		if not cpu_mat.is_empty():
 			data.cpu_material_terrain = cpu_mat
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, data.node_terrain != null)
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water
@@ -2950,6 +2955,9 @@ func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
 
 
 func is_collision_ready_at(position: Vector3) -> bool:
+	if terrain_grid and terrain_grid.has_method("is_collision_ready_at"):
+		return terrain_grid.is_collision_ready_at(position, CHUNK_STRIDE)
+
 	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
 	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
 	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
