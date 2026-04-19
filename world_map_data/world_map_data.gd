@@ -80,15 +80,17 @@ static func _load_world_uncached(path: String) -> Dictionary:
 		var file := FileAccess.open(meta_path, FileAccess.READ)
 		if file:
 			var json := JSON.new()
-			json.parse(file.get_as_text())
-			var metadata = json.get_data()
-			result["metadata"] = metadata
-			if metadata.has("buildings"):
-				result["buildings"] = metadata.buildings
-			if metadata.has("towns"):
-				result["towns"] = metadata.towns
-			if metadata.has("terrain_modifications"):
-				result["terrain_modifications"] = metadata.terrain_modifications
+			var parse_error := json.parse(file.get_as_text())
+			if parse_error == OK:
+				var metadata = json.get_data()
+				if metadata is Dictionary:
+					result["metadata"] = metadata
+					if metadata.has("buildings"):
+						result["buildings"] = metadata.buildings
+					if metadata.has("towns"):
+						result["towns"] = metadata.towns
+					if metadata.has("terrain_modifications"):
+						result["terrain_modifications"] = metadata.terrain_modifications
 			file.close()
 	return result
 

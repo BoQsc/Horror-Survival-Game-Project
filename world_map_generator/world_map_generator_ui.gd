@@ -388,7 +388,7 @@ func _on_play_pressed() -> void:
 	if sm and "pending_world_definition_path" in sm:
 		sm.pending_world_definition_path = world_path
 	else:
-		push_error("[WorldEditor] SaveManager not found! Cannot transition to game.")
+		push_error("[WorldMapGeneratorUI] SaveManager not found! Cannot transition to game.")
 		progress_label.text = "ERROR: SaveManager autoload missing"
 		return
 	
