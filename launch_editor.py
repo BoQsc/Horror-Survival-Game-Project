@@ -5,7 +5,7 @@ import sys
 # Configuration from environment
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_SCENE = "world_editor/world_editor.tscn"
+DEFAULT_SCENE = "world_map_generator/world_map_generator_ui.tscn"
 
 def launch(scene_path=DEFAULT_SCENE, mode="play"):
     """

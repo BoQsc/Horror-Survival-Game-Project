@@ -701,10 +701,11 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	const double y_offset = double(config.get("y_offset", 0.0));
 	const bool record_random_scale_factor = bool(config.get("record_random_scale_factor", true));
 
-	FastNoiseLite noise;
-	noise.set_noise_type(FastNoiseLite::TYPE_SIMPLEX);
-	noise.set_seed(noise_seed);
-	noise.set_frequency(static_cast<float>(noise_frequency));
+	Ref<FastNoiseLite> noise;
+	noise.instantiate();
+	noise->set_noise_type(FastNoiseLite::TYPE_SIMPLEX);
+	noise->set_seed(noise_seed);
+	noise->set_frequency(static_cast<float>(noise_frequency));
 
 	int sample_index = 0;
 	for (int x = 0; x < chunk_stride; x += step) {
@@ -730,7 +731,7 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 			}
 
 			if (use_noise) {
-				const double noise_value = noise.get_noise_2d(global_x, global_z);
+				const double noise_value = noise->get_noise_2d(global_x, global_z);
 				if (noise_value < noise_threshold) {
 					continue;
 				}
