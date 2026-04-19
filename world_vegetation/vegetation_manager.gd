@@ -1,7 +1,6 @@
 extends Node3D
 class_name VegetationManager
 
-var VegetationInstanceData = preload("res://world_vegetation/vegetation_instance_data.gd")
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 
 
@@ -147,7 +146,6 @@ func _get_native_helper() -> Object:
 
 func _exit_tree() -> void:
 	clear_all_data(true)
-	VegetationInstanceData = null
 	_native_helper = null
 
 
@@ -216,8 +214,6 @@ func _pack_multimesh_buffer_from_instances(instances: Array) -> PackedFloat32Arr
 
 
 func _get_vegetation_instance_transform(item) -> Transform3D:
-	if item is VegetationInstanceData:
-		return item.transform
 	if typeof(item) == TYPE_TRANSFORM3D:
 		return item
 	if item is Dictionary:
@@ -582,7 +578,7 @@ func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 
 func _free_vegetation_instance_entries(entries: Array) -> void:
 	for entry in entries:
-		if is_instance_valid(entry):
+		if entry is Object and is_instance_valid(entry):
 			entry.free()
 
 func _physics_process(_delta):
@@ -1776,27 +1772,34 @@ func _make_vegetation_generated(
 		placed_by_player: bool = false,
 		transform: Transform3D = Transform3D.IDENTITY
 	):
-	var item = VegetationInstanceData.new()
-	item.world_pos = world_pos
-	item.local_pos = local_pos
-	item.hit_pos = hit_pos
-	item.rotation_angle = rotation_angle
-	item.random_scale_factor = random_scale_factor
-	item.index = index
-	item.alive = true
-	item.scale = scale
-	item.placed_by_player = placed_by_player
-	item.transform = transform
-	return item
+	return {
+		"world_pos": world_pos,
+		"local_pos": local_pos,
+		"hit_pos": hit_pos,
+		"rotation_angle": rotation_angle,
+		"rotation": rotation_angle,
+		"random_scale_factor": random_scale_factor,
+		"index": index,
+		"alive": true,
+		"scale": scale,
+		"placed_by_player": placed_by_player,
+		"transform": transform
+	}
 
 func _make_vegetation_placement(world_pos: Vector3, scale: float, rotation_angle: float):
-	var item = VegetationInstanceData.new()
-	item.world_pos = world_pos
-	item.scale = scale
-	item.rotation_angle = rotation_angle
-	item.alive = true
-	item.placed_by_player = true
-	return item
+	return {
+		"world_pos": world_pos,
+		"local_pos": Vector3.ZERO,
+		"hit_pos": Vector3.ZERO,
+		"rotation_angle": rotation_angle,
+		"rotation": rotation_angle,
+		"random_scale_factor": 1.0,
+		"index": -1,
+		"alive": true,
+		"scale": scale,
+		"placed_by_player": true,
+		"transform": Transform3D.IDENTITY
+	}
 
 func _pick_nearest_candidates(candidates: Array[Dictionary], max_count: int) -> Array[Dictionary]:
 	if candidates.is_empty() or max_count <= 0:
