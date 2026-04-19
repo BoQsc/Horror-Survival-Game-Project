@@ -13,6 +13,7 @@ const DENSITY_GRID_SIZE = 33 # 0..32
 const EXCAVATION_MASK_POINT_COUNT = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE
 const EXCAVATION_MASK_UINT_COUNT = int(ceil(float(EXCAVATION_MASK_POINT_COUNT) / 32.0))
 const EXCAVATION_MASK_BYTE_COUNT = EXCAVATION_MASK_UINT_COUNT * 4
+const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 
 # Y-layer limits for vertical chunk stacking
 const MIN_Y_LAYER = -20 # How deep you can dig (in chunk layers)
@@ -40,6 +41,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 ## World Map Editor Integration
 ## When set, the terrain reads height/biome/road data from PNGs instead of procedural noise
 @export var world_definition_path: String = ""
+@export var world_map_data_cache_enabled: bool = true # Toggle cached world-map loads
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -256,14 +258,17 @@ func _ready():
 
 	# Activate world map if a definition path is set (directly or via SaveManager autoload)
 	if world_definition_path == "":
-		# Check if SaveManager has a pending path from the World Editor
+		# Check if SaveManager has a pending path from the World Map Generator
 		var sm = Engine.get_singleton("SaveManager") if Engine.has_singleton("SaveManager") else null
 		if not sm:
 			sm = get_node_or_null("/root/SaveManager")
 		if sm and "pending_world_definition_path" in sm and sm.pending_world_definition_path != "":
 			world_definition_path = sm.pending_world_definition_path
 			sm.pending_world_definition_path = ""  # Consume it
+		if sm and "pending_world_map_data_cache_enabled" in sm:
+			world_map_data_cache_enabled = sm.pending_world_map_data_cache_enabled
 
+	WorldMapData.set_cache_enabled(world_map_data_cache_enabled)
 	if world_definition_path != "":
 		world_map_active = true
 		world_map_max_height = terrain_height * 2.5
@@ -273,8 +278,7 @@ func _ready():
 		material_terrain.set_shader_parameter("use_world_map", true)
 		PrefabGeometry.clear_cache()
 		# Read metadata for map params (biome blending now uses GPU fbm() directly, no texture needed)
-		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
-		var loaded = WorldMapGen.load_world(world_definition_path)
+		var loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled)
 		if loaded.has("metadata"):
 			var meta = loaded.metadata
 			var meta_terrain_height = float(meta.get("terrain_height", terrain_height))
@@ -1892,8 +1896,7 @@ func _thread_function():
 	_world_map_excavation_masks.clear()
 	if world_map_active and world_definition_path != "":
 		PrefabGeometry.clear_cache()
-		var WorldMapGen = load("res://world_editor/world_map_generator.gd")
-		var loaded = WorldMapGen.load_world(world_definition_path)
+		var loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled)
 
 		if loaded.has("heightmap") and loaded.has("biomes") and loaded.has("roads"):
 			var hmap: Image = loaded.heightmap

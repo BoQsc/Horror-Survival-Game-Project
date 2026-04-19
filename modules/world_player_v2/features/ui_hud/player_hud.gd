@@ -29,6 +29,7 @@ var mode_manager_ref: Node = null
 # V2 path
 const InventorySlotScene = preload("res://modules/world_player_v2/features/data_inventory/ui_inventory/inventory_slot.tscn")
 const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
+const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 
 var durability_memory: Dictionary = {}
 var last_hit_target_key: String = ""
@@ -144,6 +145,12 @@ func _ready() -> void:
 		var tm = get_tree().get_first_node_in_group("terrain_manager")
 		if tm and "debug_show_road_zones" in tm:
 			road_zones_toggle.button_pressed = tm.debug_show_road_zones
+
+	# Connect world map data cache toggle
+	var world_map_cache_toggle = game_menu.find_child("WorldMapDataCacheToggle", true, false)
+	if world_map_cache_toggle:
+		world_map_cache_toggle.toggled.connect(_on_world_map_data_cache_toggled)
+		_sync_world_map_data_cache_toggle()
  
 	# Connect spawning buttons
 	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
@@ -591,6 +598,12 @@ func _on_road_zones_toggled(is_enabled: bool) -> void:
 		# Fallback if method not present yet
 		tm.debug_show_road_zones = is_enabled
 
+func _on_world_map_data_cache_toggled(is_enabled: bool) -> void:
+	WorldMapData.set_cache_enabled(is_enabled)
+	var tm = get_tree().get_first_node_in_group("terrain_manager")
+	if tm and "world_map_data_cache_enabled" in tm:
+		tm.world_map_data_cache_enabled = is_enabled
+
 func _on_spawn_entity_pressed() -> void:
 	var em = get_tree().get_first_node_in_group("entity_manager")
 	if em and em.has_method("spawn_entity_near_player"):
@@ -850,6 +863,27 @@ func _on_load_completed(success: bool, _path: String) -> void:
 		notification_label.text = "GAME LOADED"
 		notification_label.visible = true
 		notification_timer = 2.0  # Show for 2 seconds
+	_sync_world_map_data_cache_toggle()
+
+func _sync_world_map_data_cache_toggle() -> void:
+	var world_map_cache_toggle = game_menu.find_child("WorldMapDataCacheToggle", true, false)
+	if not world_map_cache_toggle:
+		return
+
+	var enabled := WorldMapData.cache_enabled
+	var save_mgr = get_tree().get_first_node_in_group("save_manager")
+	if not save_mgr and has_node("/root/SaveManager"):
+		save_mgr = get_node("/root/SaveManager")
+
+	if save_mgr and save_mgr.has_method("get_world_map_data_cache_enabled"):
+		enabled = save_mgr.get_world_map_data_cache_enabled()
+	else:
+		var tm = get_tree().get_first_node_in_group("terrain_manager")
+		if tm and "world_map_data_cache_enabled" in tm:
+			enabled = tm.world_map_data_cache_enabled
+
+	if world_map_cache_toggle.button_pressed != enabled:
+		world_map_cache_toggle.set_pressed_no_signal(enabled)
 
 func _on_creative_catalog_pressed() -> void:
 	if not _is_editor_mode_active() or not game_menu.visible:

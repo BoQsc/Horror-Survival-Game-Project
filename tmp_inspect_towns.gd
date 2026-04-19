@@ -1,7 +1,7 @@
 extends Object
 
 func _init() -> void:
-	var gen = load("res://world_editor/world_map_generator.gd").new()
+var gen = load("res://world_map_generator/world_map_generator.gd").new()
 	gen.world_seed = 12345
 	gen.use_grid_roads = false
 	gen.town_count_min = 10

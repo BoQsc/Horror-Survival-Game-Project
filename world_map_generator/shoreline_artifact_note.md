@@ -8,7 +8,7 @@ We saw a broad shoreline strip / shelf appear near towns by water in the world e
 
 ## What caused it
 
-The lake generation pass in `world_editor/world_map_generator.gd` was treating access paths the same as full roads.
+The lake generation pass in `world_map_generator/world_map_generator.gd` was treating access paths the same as full roads.
 
 Relevant details:
 
@@ -29,9 +29,9 @@ This keeps the fix generic and avoids hardcoding anything for the church prefab.
 
 ## Relevant code locations
 
-- `world_editor/world_map_generator.gd` `_rasterize_paths()`
-- `world_editor/world_map_generator.gd` `_generate_lakes()`
-- `world_editor/world_map_generator.gd` `LAKE_ROAD_BLOCK_THRESHOLD`
+- `world_map_generator/world_map_generator.gd` `_rasterize_paths()`
+- `world_map_generator/world_map_generator.gd` `_generate_lakes()`
+- `world_map_generator/world_map_generator.gd` `LAKE_ROAD_BLOCK_THRESHOLD`
 
 ## If this comes back
 

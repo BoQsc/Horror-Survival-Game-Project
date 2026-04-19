@@ -1,7 +1,7 @@
 extends SceneTree
 
 func _init():
-	var WorldMapGen = load("res://world_editor/world_map_generator.gd").new()
+var WorldMapGen = load("res://world_map_generator/world_map_generator.gd").new()
 	var prefabs = WorldMapGen._get_available_prefabs()
 	var output = "PREFABS_IN_FOLDER:\n"
 	for p in prefabs:

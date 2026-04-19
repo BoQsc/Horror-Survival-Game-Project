@@ -1,9 +1,9 @@
-# World Editor
+# World Map Generator
 
-2D world map editor for generating, painting, and saving 2048×2048 world definitions.
+2D world map generator/editor for generating, painting, and saving 2048×2048 world definitions.
 
 ## Files
-- `world_editor.tscn` / `world_editor.gd` — Editor UI scene
+- `world_map_generator/world_map_generator_ui.tscn` / `world_map_generator/world_map_generator_ui.gd` — `WorldMapGeneratorUI` scene
 - `world_map_generator.gd` — Terrain/biome/road PNG generation
 
 ## Performance Note
@@ -68,7 +68,7 @@ Generator defaults **must match** `chunk_manager.gd` procedural defaults for com
 
 ## Terrain Presets
 
-The world editor offers terrain style presets that auto-fill `terrain_height` and `noise_freq`:
+The world map generator offers terrain style presets that auto-fill `terrain_height` and `noise_freq`:
 
 | Preset | `terrain_height` | `noise_freq` | Character |
 |---|---|---|---|
@@ -123,7 +123,7 @@ Tracks building block positions on the world map and minimap as colored pixels.
 ### Data Flow
 
 1. **Generation** (`world_map_generator.gd` Pass 4) — Stamps 10×10 footprints for each baked building onto `building_map` (R8 Image). Saved as `buildings.png` alongside other map layers.
-2. **World Editor** (`world_editor.gd`) — Renders building pixels as bright red-orange (220, 80, 40) in the preview overlay.
+2. **World Map Generator UI** (`world_map_generator/world_map_generator_ui.gd`) — Renders building pixels as bright red-orange (220, 80, 40) in the preview overlay.
 3. **Game Load** (`chunk_manager.gd`) — Loads `buildings.png` into `_world_map_building_map`, passes to `building_manager` via `prefab_spawner`.
 4. **Minimap** (`hud_minimap.gd`) — Bakes building data from PNG into the base map image once at startup. Zero per-frame overhead.
 5. **Runtime Updates** (`building_manager.gd`) — `set_voxel_batched()` calls `_update_building_map_pixel()` which writes one pixel to both `building_map` and `minimap_image`. Tracks ALL building types (prefabs + player builds).
@@ -140,7 +140,7 @@ Tracks building block positions on the world map and minimap as colored pixels.
 |---|---|
 | `building_manager.gd` | Owns `building_map` Image, updates pixels on block place/remove, writes to `minimap_image` |
 | `world_map_generator.gd` | Stamps footprints in Pass 4, saves `buildings.png` |
-| `world_editor.gd` | Renders building overlay in editor preview |
+| `world_map_generator/world_map_generator_ui.gd` | Renders building overlay in generator preview |
 | `hud_minimap.gd` | Bakes building data at startup, receives pixel updates via `minimap_image` reference |
 | `chunk_manager.gd` | Loads `buildings.png` from world data |
 | `prefab_spawner.gd` | Relays `building_map` from chunk_manager to building_manager |

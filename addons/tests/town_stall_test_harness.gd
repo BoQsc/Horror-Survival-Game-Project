@@ -1,6 +1,6 @@
 extends Node
 
-const WorldMapGenScript := preload("res://world_editor/world_map_generator.gd")
+const WorldMapGenScript := preload("res://world_map_generator/world_map_generator.gd")
 const GameScene: PackedScene = preload("res://modules/world_module/world_test_world_player_v2.tscn")
 const SAVE_BASE := "user://worlds/"
 const TELEPORT_MIN_DISTANCE := 200.0

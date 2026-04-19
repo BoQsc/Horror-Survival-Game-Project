@@ -1,9 +1,10 @@
 extends Control
-class_name WorldEditorUI
-## World Editor - Generate, preview, paint, and save world definitions
+class_name WorldMapGeneratorUI
+## World Map Generator UI - Generate, preview, paint, and save world definitions
 ## Acts as the "New Game" flow: generate → tweak → save → play
 
-const WorldMapGen = preload("res://world_editor/world_map_generator.gd")
+const WorldMapGen = preload("res://world_map_generator/world_map_generator.gd")
+const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const SAVE_BASE = "user://worlds/"
 
 # UI References
@@ -175,7 +176,7 @@ func _on_load_pressed() -> void:
 	
 	progress_label.text = "Loading %s..." % world_name
 	
-	var loaded = WorldMapGen.load_world(world_path)
+	var loaded = WorldMapData.load_world(world_path)
 	if loaded.is_empty():
 		progress_label.text = "Failed to load %s" % world_name
 		return
@@ -362,6 +363,7 @@ func _on_save_pressed() -> void:
 	
 	var success = generator.save_world(save_path, current_images)
 	if success:
+		WorldMapData.invalidate_world(save_path)
 		progress_label.text = "Saved: %s" % world_name
 		_refresh_world_list()  # Update list to show new world
 	else:

@@ -1,8 +1,8 @@
 [gd_scene format=3 uid="uid://btl80i4k7jant"]
 
-[ext_resource type="Script" uid="uid://823d20xci4ba" path="res://world_editor/world_editor.gd" id="1_script"]
+[ext_resource type="Script" path="res://world_map_generator/world_map_generator_ui.gd" id="1_script"]
 
-[node name="WorldEditor" type="Control" unique_id=628635437]
+[node name="WorldMapGeneratorUI" type="Control" unique_id=628635437]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -32,7 +32,7 @@ theme_override_constants/separation = 12
 [node name="Title" type="Label" parent="TopBar" unique_id=1322593610]
 layout_mode = 2
 theme_override_font_sizes/font_size = 20
-text = "  World Editor"
+text = "  World Map Generator"
 
 [node name="GenerateBtn" type="Button" parent="TopBar" unique_id=2054319802]
 layout_mode = 2

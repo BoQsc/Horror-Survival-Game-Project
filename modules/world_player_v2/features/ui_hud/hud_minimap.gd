@@ -7,6 +7,7 @@ const MINIMAP_SIZE: int = 180  # Pixels on screen
 const MINIMAP_RADIUS: int = 120  # World units shown around player
 const FULLMAP_SIZE: int = 600  # Full map overlay size on screen
 const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
+const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 
 var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
@@ -309,8 +310,7 @@ func _build_minimap_image() -> void:
 	if path == "":
 		return
 	
-	var WorldMapGen = load("res://world_editor/world_map_generator.gd")
-	var loaded = WorldMapGen.load_world(path)
+	var loaded = WorldMapData.load_world(path)
 	
 	if not loaded.has("heightmap"):
 		return

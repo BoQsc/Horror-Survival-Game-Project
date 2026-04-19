@@ -2,6 +2,8 @@ extends Node
 ## SaveManager - Handles saving and loading game state
 ## Autoload singleton for centralized save/load operations
 
+const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+
 signal save_completed(success: bool, path: String)
 signal load_completed(success: bool, path: String)
 signal load_step(step_name: String, step_index: int, total_steps: int)
@@ -23,8 +25,9 @@ var building_generator: Node = null
 var player: Node = null
 var disable_buildings_for_test: bool = false
 
-# World Editor integration: set before scene change, consumed by chunk_manager on _ready
+# World Map Generator integration: set before scene change, consumed by chunk_manager on _ready
 var pending_world_definition_path: String = ""
+var pending_world_map_data_cache_enabled: bool = true
 
 # V2: New player system references
 var player_inventory: Node = null
@@ -176,6 +179,8 @@ func _find_managers():
 	
 	# Get container registry
 	container_registry = get_node_or_null("/root/ContainerRegistry")
+
+	_apply_world_map_data_cache_enabled(pending_world_map_data_cache_enabled)
 	
 
 func _input(event):
@@ -1133,6 +1138,7 @@ func _get_game_settings_data() -> Dictionary:
 	var settings = {
 		"autosave_enabled": autosave_enabled,
 		"autosave_interval": autosave_interval_seconds,
+		"world_map_data_cache_enabled": _get_world_map_data_cache_enabled(),
 		"time_of_day": 0.5, # Placeholder for TimeManager
 		"weather": "clear", # Placeholder for WeatherManager
 		"difficulty": "normal"
@@ -1148,8 +1154,27 @@ func _load_game_settings_data(data: Dictionary):
 	if data.has("autosave_interval"):
 		autosave_interval_seconds = data.autosave_interval
 		_setup_autosave() # Re-apply interval
+	if data.has("world_map_data_cache_enabled"):
+		_apply_world_map_data_cache_enabled(bool(data.world_map_data_cache_enabled))
 	
 	# Restore time/weather once those systems exist
+
+func set_world_map_data_cache_enabled(enabled: bool) -> void:
+	_apply_world_map_data_cache_enabled(enabled)
+
+func get_world_map_data_cache_enabled() -> bool:
+	return _get_world_map_data_cache_enabled()
+
+func _apply_world_map_data_cache_enabled(enabled: bool) -> void:
+	pending_world_map_data_cache_enabled = enabled
+	WorldMapData.set_cache_enabled(enabled)
+	if chunk_manager and "world_map_data_cache_enabled" in chunk_manager:
+		chunk_manager.world_map_data_cache_enabled = enabled
+
+func _get_world_map_data_cache_enabled() -> bool:
+	if chunk_manager and "world_map_data_cache_enabled" in chunk_manager:
+		return chunk_manager.world_map_data_cache_enabled
+	return pending_world_map_data_cache_enabled
 
 ## Reset all load-related flags on failure (prevents permanent state corruption)
 func _reset_load_flags():
