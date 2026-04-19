@@ -100,4 +100,24 @@ func load_save_data(data: Dictionary) -> void:
 		v.global_position = saved_pos
 		v.rotation = saved_rot
 		vehicles.append(v)
+
+
+func clear_for_shutdown() -> void:
+	for vehicle in vehicles:
+		if is_instance_valid(vehicle):
+			vehicle.queue_free()
+	vehicles.clear()
+	current_player_vehicle = null
+
+
+func clear_immediate_for_shutdown() -> void:
+	for vehicle in vehicles:
+		if is_instance_valid(vehicle):
+			vehicle.free()
+	vehicles.clear()
+	current_player_vehicle = null
+
+
+func _exit_tree() -> void:
+	clear_immediate_for_shutdown()
 	

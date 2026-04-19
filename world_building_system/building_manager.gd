@@ -313,6 +313,42 @@ func clear_global_visual_batches() -> void:
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 
+
+func clear_for_shutdown() -> void:
+	clear_pending_object_collision_tasks()
+	clear_global_visual_batches()
+	for chunk in chunk_pool:
+		if chunk and is_instance_valid(chunk):
+			chunk.queue_free()
+	chunk_pool.clear()
+	chunks.clear()
+	visible_chunks.clear()
+	_dirty_chunks.clear()
+	_cached_vehicle_manager = null
+
+
+func clear_immediate_for_shutdown() -> void:
+	clear_pending_object_collision_tasks()
+	for node in _global_visual_batch_nodes.values():
+		if node and is_instance_valid(node):
+			node.free()
+	for chunk in chunk_pool:
+		if chunk and is_instance_valid(chunk):
+			chunk.free()
+	chunk_pool.clear()
+	chunks.clear()
+	visible_chunks.clear()
+	_dirty_chunks.clear()
+	_global_visual_batch_instances.clear()
+	_global_visual_batch_entries.clear()
+	_global_visual_batch_nodes.clear()
+	_dirty_global_visual_batch_object_ids.clear()
+	_cached_vehicle_manager = null
+
+
+func _exit_tree() -> void:
+	clear_immediate_for_shutdown()
+
 func flush_global_visual_batches() -> void:
 	if _dirty_global_visual_batch_object_ids.is_empty():
 		return

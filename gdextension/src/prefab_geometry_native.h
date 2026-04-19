@@ -5,12 +5,15 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/vector2i.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
 
 namespace godot {
+
+class Object;
 
 class PrefabGeometryNative : public RefCounted {
 	GDCLASS(PrefabGeometryNative, RefCounted)
@@ -36,9 +39,12 @@ public:
 	Dictionary build_local_cell_set_from_volumes(const Array &volumes) const;
 	Dictionary inflate_local_cell_set(const Dictionary &cell_set, int padding) const;
 
-    Array build_rotated_carve_segments(const Array &local_cells, int rotation) const;
+	Array build_rotated_carve_segments(const Array &local_cells, int rotation) const;
     Array build_rotated_segments_from_volumes(const Array &volumes, int rotation) const;
     Array pick_nearest_candidates(const Array &candidates, int max_count) const;
+
+	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
+	PackedFloat32Array pack_multimesh_buffer_from_instances(const Array &instances) const;
 
     Array get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const;
     Dictionary build_required_below_grade_excavation_cells(const Array &enclosed_cells, const Array &stair_cells, int min_y, int grade_y) const;

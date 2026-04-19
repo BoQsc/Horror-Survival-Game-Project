@@ -1436,8 +1436,77 @@ func _begin_shutdown() -> void:
 	_write_native_town_entry_snapshot()
 	town_entry_capture_started = false
 	if is_instance_valid(game_root):
+		game_root.process_mode = Node.PROCESS_MODE_DISABLED
+	_cleanup_managers_before_quit()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(game_root):
 		game_root.queue_free()
 	call_deferred("_finalize_shutdown")
+
+
+func _cleanup_managers_before_quit() -> void:
+	var terrain_manager := _find_manager_node("terrain_manager", "TerrainManager")
+	if terrain_manager:
+		_disable_node_for_shutdown(terrain_manager)
+		if terrain_manager.has_method("clear_all_chunks"):
+			terrain_manager.clear_all_chunks()
+
+	var building_manager := _find_manager_node("building_manager", "BuildingManager")
+	if building_manager:
+		_disable_node_for_shutdown(building_manager)
+		if building_manager.has_method("clear_immediate_for_shutdown"):
+			building_manager.clear_immediate_for_shutdown()
+		elif building_manager.has_method("clear_for_shutdown"):
+			building_manager.clear_for_shutdown()
+		else:
+			if building_manager.has_method("clear_pending_object_collision_tasks"):
+				building_manager.clear_pending_object_collision_tasks()
+			if building_manager.has_method("clear_global_visual_batches"):
+				building_manager.clear_global_visual_batches()
+
+	var vegetation_manager := _find_manager_node("vegetation_manager", "VegetationManager")
+	if vegetation_manager and vegetation_manager.has_method("clear_all_data"):
+		_disable_node_for_shutdown(vegetation_manager)
+		vegetation_manager.clear_all_data(true)
+
+	var entity_manager := _find_manager_node("entity_manager", "EntityManager")
+	if entity_manager:
+		_disable_node_for_shutdown(entity_manager)
+		if entity_manager.has_method("clear_all_entities"):
+			entity_manager.clear_all_entities()
+		if entity_manager.has_method("clear_spawned_chunks"):
+			entity_manager.clear_spawned_chunks()
+
+	var vehicle_manager := _find_manager_node("vehicle_manager", "VehicleManager")
+	if vehicle_manager:
+		_disable_node_for_shutdown(vehicle_manager)
+		if vehicle_manager.has_method("clear_immediate_for_shutdown"):
+			vehicle_manager.clear_immediate_for_shutdown()
+		elif vehicle_manager.has_method("clear_for_shutdown"):
+			vehicle_manager.clear_for_shutdown()
+		elif vehicle_manager.has_method("load_save_data"):
+			vehicle_manager.load_save_data({})
+
+	var prefab_spawner := _find_manager_node("prefab_spawner", "PrefabSpawner")
+	if prefab_spawner:
+		_disable_node_for_shutdown(prefab_spawner)
+		if prefab_spawner.has_method("clear_pending_spawn_jobs"):
+			prefab_spawner.clear_pending_spawn_jobs()
+
+	if ClassDB.class_exists("PrefabGeometry"):
+		PrefabGeometry.clear_cache()
+
+
+func _disable_node_for_shutdown(node: Node) -> void:
+	if not is_instance_valid(node):
+		return
+	node.process_mode = Node.PROCESS_MODE_DISABLED
+	if node.has_method("set_process"):
+		node.set_process(false)
+	if node.has_method("set_physics_process"):
+		node.set_physics_process(false)
 
 
 func _finalize_shutdown() -> void:

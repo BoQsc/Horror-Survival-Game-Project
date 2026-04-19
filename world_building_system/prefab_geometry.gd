@@ -27,6 +27,7 @@ static func clear_cache() -> void:
 	_rotated_objects_cache.clear()
 	_rotated_precise_carve_cache.clear()
 	_rotated_excavation_segments_cache.clear()
+	_native_helper = null
 
 static func _resolve_prefab_json_path(prefab_name: String) -> String:
 	for dir_path in [RES_PREFAB_DIR, USER_PREFAB_DIR]:

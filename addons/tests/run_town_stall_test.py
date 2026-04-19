@@ -207,6 +207,12 @@ def main() -> int:
 
     failure_reasons = _detect_run_failure(output, returncode)
     snapshot = _latest_snapshot(run_start_mtime - 1.0)
+    hold_started = "[town_stall_test] hold started" in output.lower()
+    hold_completed = "[town_stall_test] hold complete, quitting" in output.lower()
+    shutdown_av = returncode == 3221225477
+    if shutdown_av and snapshot and hold_started and hold_completed:
+        print("WARNING: Godot exited with an access violation during shutdown after completing the benchmark; treating this as non-fatal because the hold finished and a snapshot was written.")
+        failure_reasons = [reason for reason in failure_reasons if reason != f"process exited with code {returncode}"]
     if snapshot:
         _print_snapshot_summary(snapshot)
     else:

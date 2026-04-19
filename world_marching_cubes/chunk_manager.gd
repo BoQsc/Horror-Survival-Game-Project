@@ -1356,6 +1356,7 @@ func _exit_tree():
 	pending_spawn_zones.clear()
 	pending_batches.clear()
 	active_chunks.clear()
+	PrefabGeometry.clear_cache()
 
 
 

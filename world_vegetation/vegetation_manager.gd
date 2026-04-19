@@ -1,7 +1,8 @@
 extends Node3D
 class_name VegetationManager
 
-const VegetationInstanceData = preload("res://world_vegetation/vegetation_instance_data.gd")
+var VegetationInstanceData = preload("res://world_vegetation/vegetation_instance_data.gd")
+const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 
 
 signal tree_chopped(world_position: Vector3)
@@ -142,6 +143,181 @@ func _get_native_helper() -> Object:
 		return null
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
+
+
+func _exit_tree() -> void:
+	clear_all_data(true)
+	VegetationInstanceData = null
+	_native_helper = null
+
+
+func _make_hidden_transform(local_pos: Vector3) -> Transform3D:
+	var t := Transform3D.IDENTITY
+	t = t.scaled(Vector3.ZERO)
+	t.origin = local_pos
+	return t
+
+
+func _build_vegetation_transform(
+		base_transform: Transform3D,
+		rotation_fix: Vector3,
+		rotation_angle: float,
+		scale: float,
+		local_pos: Vector3
+) -> Transform3D:
+	var t := base_transform
+	t.basis = t.basis * Basis.from_euler(rotation_fix)
+	t = t.rotated(Vector3.UP, rotation_angle)
+	t = t.scaled(Vector3(scale, scale, scale))
+	t.origin = local_pos
+	return t
+
+
+func _vegetation_custom_aabb(chunk_stride: int) -> AABB:
+	return AABB(
+		Vector3(-16.0, -32.0, -16.0),
+		Vector3(chunk_stride + 32.0, 128.0, chunk_stride + 32.0)
+	)
+
+
+func _pack_multimesh_buffer_from_instances(instances: Array) -> PackedFloat32Array:
+	var native := _get_native_helper()
+	if native and native.has_method("pack_multimesh_buffer_from_instances"):
+		var transforms: Array = []
+		transforms.resize(instances.size())
+		var write_index := 0
+		for item in instances:
+			transforms[write_index] = _get_vegetation_instance_transform(item)
+			write_index += 1
+
+		var native_buffer: PackedFloat32Array = native.pack_multimesh_buffer_from_instances(transforms)
+		return native_buffer
+
+	var buffer := PackedFloat32Array()
+	buffer.resize(instances.size() * MULTIMESH_FLOATS_PER_INSTANCE_3D)
+	var write_index := 0
+	for item in instances:
+		var transform := _get_vegetation_instance_transform(item)
+
+		buffer[write_index + 0] = transform.basis.x.x
+		buffer[write_index + 1] = transform.basis.y.x
+		buffer[write_index + 2] = transform.basis.z.x
+		buffer[write_index + 3] = transform.origin.x
+		buffer[write_index + 4] = transform.basis.x.y
+		buffer[write_index + 5] = transform.basis.y.y
+		buffer[write_index + 6] = transform.basis.z.y
+		buffer[write_index + 7] = transform.origin.y
+		buffer[write_index + 8] = transform.basis.x.z
+		buffer[write_index + 9] = transform.basis.y.z
+		buffer[write_index + 10] = transform.basis.z.z
+		buffer[write_index + 11] = transform.origin.z
+		write_index += MULTIMESH_FLOATS_PER_INSTANCE_3D
+	return buffer
+
+
+func _get_vegetation_instance_transform(item) -> Transform3D:
+	if item is VegetationInstanceData:
+		return item.transform
+	if typeof(item) == TYPE_TRANSFORM3D:
+		return item
+	if item is Dictionary:
+		var transform_variant = item.get("transform", Transform3D.IDENTITY)
+		if typeof(transform_variant) == TYPE_TRANSFORM3D:
+			return transform_variant
+	return Transform3D.IDENTITY
+
+
+func _sync_multimesh_from_instances(mmi: MultiMeshInstance3D, instances: Array, chunk_stride: int) -> void:
+	if not mmi or not mmi.multimesh:
+		return
+
+	mmi.multimesh.instance_count = instances.size()
+	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(instances)
+	mmi.multimesh.custom_aabb = _vegetation_custom_aabb(chunk_stride)
+
+
+func _append_native_generated_instances(target: Array, records: Array) -> void:
+	for record_variant in records:
+		var record: Dictionary = record_variant
+		var item = _make_vegetation_generated(
+			record.get("world_pos", Vector3.ZERO),
+			record.get("local_pos", Vector3.ZERO),
+			record.get("hit_pos", Vector3.ZERO),
+			float(record.get("rotation_angle", 0.0)),
+			float(record.get("random_scale_factor", 1.0)),
+			int(record.get("index", target.size())),
+			float(record.get("scale", 1.0)),
+			bool(record.get("placed_by_player", false)),
+			record.get("transform", Transform3D.IDENTITY)
+		)
+		item.alive = bool(record.get("alive", true))
+		target.append(item)
+
+
+func _build_vegetation_native_config(
+		chunk_stride: int,
+		step: int,
+		chunk_origin_x: int,
+		chunk_origin_z: int,
+		chunk_world_pos: Vector3,
+		base_transform: Transform3D,
+		rotation_fix: Vector3,
+		road_clearance: float,
+		procedural_roads_enabled: bool,
+		procedural_road_spacing: float,
+		procedural_road_width: float,
+		world_map_active: bool,
+		water_level: float,
+		noise_seed: int,
+		noise_frequency: float,
+		noise_threshold: float,
+		scale_min: float,
+		scale_max: float,
+		scale_multiplier: float,
+		y_offset: float,
+		use_noise: bool,
+		use_water_density: bool,
+		record_random_scale_factor: bool
+) -> Dictionary:
+	return {
+		"chunk_stride": chunk_stride,
+		"step": step,
+		"chunk_origin_x": chunk_origin_x,
+		"chunk_origin_z": chunk_origin_z,
+		"chunk_world_pos": chunk_world_pos,
+		"base_transform": base_transform,
+		"rotation_fix": rotation_fix,
+		"road_clearance": road_clearance,
+		"procedural_roads_enabled": procedural_roads_enabled,
+		"procedural_road_spacing": procedural_road_spacing,
+		"procedural_road_width": procedural_road_width,
+		"world_map_active": world_map_active,
+		"water_level": water_level,
+		"noise_seed": noise_seed,
+		"noise_frequency": noise_frequency,
+		"noise_threshold": noise_threshold,
+		"scale_min": scale_min,
+		"scale_max": scale_max,
+		"scale_multiplier": scale_multiplier,
+		"y_offset": y_offset,
+		"use_noise": use_noise,
+		"use_water_density": use_water_density,
+		"record_random_scale_factor": record_random_scale_factor
+	}
+
+
+func _build_native_vegetation_instances(
+		batch_heights: PackedFloat32Array,
+		config: Dictionary
+) -> Array:
+	var native := _get_native_helper()
+	if not native or not native.has_method("build_vegetation_instances"):
+		return []
+	if batch_heights.is_empty():
+		return []
+
+	var native_records: Array = native.build_vegetation_instances(config, batch_heights)
+	return native_records
 
 
 func _ready():
@@ -333,51 +509,81 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	})
 	_mark_collider_refresh_dirty()
 
-func _cleanup_chunk_trees(coord: Vector2i):
+func _cleanup_chunk_trees(coord: Vector2i, immediate_free: bool = false):
 	if chunk_tree_data.has(coord):
 		var data = chunk_tree_data[coord]
 		# FIX: Properly free the MultiMeshInstance3D to prevent "ghost" trees
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
+			if immediate_free:
+				data.multimesh.free()
+			else:
+				data.multimesh.queue_free()
 
 		# Return colliders to pool
 		for tree in data.trees:
 			var key = _tree_key(coord, tree.index)
 			if active_colliders.has(key):
-				_return_collider_to_pool(active_colliders[key])
+				if immediate_free:
+					active_colliders[key].free()
+				else:
+					_return_collider_to_pool(active_colliders[key])
 				active_colliders.erase(key)
+		if immediate_free:
+			_free_vegetation_instance_entries(data.trees)
 		chunk_tree_data.erase(coord)
 		_mark_collider_refresh_dirty()
 
-func _cleanup_chunk_grass(coord: Vector2i):
+func _cleanup_chunk_grass(coord: Vector2i, immediate_free: bool = false):
 	if chunk_grass_data.has(coord):
 		var data = chunk_grass_data[coord]
 		# FIX: Properly free the MultiMeshInstance3D
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
+			if immediate_free:
+				data.multimesh.free()
+			else:
+				data.multimesh.queue_free()
 
 		for grass in data.grass_list:
 			var key = _grass_key(coord, grass.index)
 			if active_grass_colliders.has(key):
-				_return_grass_collider_to_pool(active_grass_colliders[key])
+				if immediate_free:
+					active_grass_colliders[key].free()
+				else:
+					_return_grass_collider_to_pool(active_grass_colliders[key])
 				active_grass_colliders.erase(key)
+		if immediate_free:
+			_free_vegetation_instance_entries(data.grass_list)
 		chunk_grass_data.erase(coord)
 		_mark_collider_refresh_dirty()
 
-func _cleanup_chunk_rocks(coord: Vector2i):
+func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 	if chunk_rock_data.has(coord):
 		var data = chunk_rock_data[coord]
 		# FIX: Properly free the MultiMeshInstance3D
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
+			if immediate_free:
+				data.multimesh.free()
+			else:
+				data.multimesh.queue_free()
 
 		for rock in data.rock_list:
 			var key = _rock_key(coord, rock.index)
 			if active_rock_colliders.has(key):
-				_return_rock_collider_to_pool(active_rock_colliders[key])
+				if immediate_free:
+					active_rock_colliders[key].free()
+				else:
+					_return_rock_collider_to_pool(active_rock_colliders[key])
 				active_rock_colliders.erase(key)
+		if immediate_free:
+			_free_vegetation_instance_entries(data.rock_list)
 		chunk_rock_data.erase(coord)
 		_mark_collider_refresh_dirty()
+
+
+func _free_vegetation_instance_entries(entries: Array) -> void:
+	for entry in entries:
+		if is_instance_valid(entry):
+			entry.free()
 
 func _physics_process(_delta):
 	# Process only ONE pending chunk per physics frame (rate limited)
@@ -996,9 +1202,10 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh = MultiMesh.new()
 	mmi.multimesh.mesh = tree_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	mmi.multimesh.use_colors = false
+	mmi.multimesh.use_custom_data = false
 
 	var tree_list: Array = []
-	var valid_transforms = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
@@ -1009,6 +1216,55 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var step = 4
 
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
+	var native := _get_native_helper()
+	if native and native.has_method("build_vegetation_instances") and not batch_heights.is_empty() and not terrain_manager.world_map_active:
+		var native_config := _build_vegetation_native_config(
+			chunk_stride,
+			step,
+			chunk_origin_x,
+			chunk_origin_z,
+			chunk_world_pos,
+			tree_base_transform,
+			tree_rotation_fix,
+			road_clearance,
+			terrain_manager.procedural_roads_enabled,
+			terrain_manager.procedural_road_spacing,
+			terrain_manager.procedural_road_width,
+			terrain_manager.world_map_active,
+			terrain_manager.water_level,
+			int(forest_noise.seed),
+			float(forest_noise.frequency),
+			0.4,
+			0.8,
+			1.2,
+			tree_scale,
+			tree_y_offset,
+			true,
+			false,
+			true
+		)
+		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
+		_append_native_generated_instances(tree_list, native_records)
+
+		if tree_list.size() > 0:
+			chunk_node.add_child(mmi)
+
+		chunk_tree_data[coord] = {
+			"multimesh": mmi,
+			"trees": tree_list,
+			"chunk_node": chunk_node
+		}
+
+		for tree in tree_list:
+			var persist_key = _position_hash(tree.world_pos)
+			if chopped_trees.has(persist_key):
+				tree.alive = false
+				tree.transform = _make_hidden_transform(tree.local_pos)
+
+		if tree_list.size() > 0:
+			_sync_multimesh_from_instances(mmi, tree_list, chunk_stride)
+		return
+
 	var batch_idx = 0
 
 	for x in range(0, chunk_stride, step):
@@ -1057,34 +1313,20 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			var final_scale = tree_scale * random_scale
 			var rotation_angle = randf() * TAU
 
-			# Start with GLB's base transform (includes orientation fix)
-			var t = tree_base_transform
-			# Apply manual rotation fix
-			t.basis = t.basis * Basis.from_euler(tree_rotation_fix)
-			# Apply random Y rotation
-			t = t.rotated(Vector3.UP, rotation_angle)
-			# Apply scaling
-			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
-			t.origin = local_pos
-
-			valid_transforms.append(t)
-
-			var tree_index = valid_transforms.size() - 1
+			var t = _build_vegetation_transform(tree_base_transform, tree_rotation_fix, rotation_angle, final_scale, local_pos)
 			tree_list.append(_make_vegetation_generated(
 				world_pos,
 				local_pos,
 				hit_pos,
 				rotation_angle,
 				random_scale,
-				tree_index,
-				final_scale
+				tree_list.size(),
+				final_scale,
+				false,
+				t
 			))
 
-
-	if valid_transforms.size() > 0:
-		mmi.multimesh.instance_count = valid_transforms.size()
-		for i in range(valid_transforms.size()):
-			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
+	if tree_list.size() > 0:
 		chunk_node.add_child(mmi)
 
 	chunk_tree_data[coord] = {
@@ -1098,11 +1340,10 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		var persist_key = _position_hash(tree.world_pos)
 		if chopped_trees.has(persist_key):
 			tree.alive = false
-			# Hide in MultiMesh
-			var t = Transform3D()
-			t = t.scaled(Vector3.ZERO)
-			t.origin = tree.local_pos
-			mmi.multimesh.set_instance_transform(tree.index, t)
+			tree.transform = _make_hidden_transform(tree.local_pos)
+
+	if tree_list.size() > 0:
+		_sync_multimesh_from_instances(mmi, tree_list, chunk_stride)
 
 func chop_tree_by_collider(collider: Node) -> bool:
 	# Check if collider is still valid (not freed)
@@ -1130,10 +1371,8 @@ func chop_tree_by_collider(collider: Node) -> bool:
 			# Hide in MultiMesh
 			var mmi = data.multimesh as MultiMeshInstance3D
 			if mmi and mmi.multimesh:
-				var t = Transform3D()
-				t = t.scaled(Vector3.ZERO)
-				t.origin = tree.local_pos
-				mmi.multimesh.set_instance_transform(tree.index, t)
+				tree.transform = _make_hidden_transform(tree.local_pos)
+				_sync_multimesh_from_instances(mmi, data.trees, terrain_manager.CHUNK_STRIDE)
 
 			# Remove collider
 			var key = _tree_key(coord, tree_index)
@@ -1167,6 +1406,7 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 				continue
 			if chunk_tree_data.has(coord):
 				var tree_data = chunk_tree_data[coord]
+				var tree_dirty := false
 				for tree in tree_data.trees:
 					if not tree.alive:
 						continue
@@ -1174,19 +1414,19 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 					var dz = tree.world_pos.z - center.z
 					if dx * dx + dz * dz < radius_sq:
 						tree.alive = false
-						var mmi = tree_data.multimesh as MultiMeshInstance3D
-						if mmi and mmi.multimesh:
-							var t = Transform3D()
-							t = t.scaled(Vector3.ZERO)
-							t.origin = tree.local_pos
-							mmi.multimesh.set_instance_transform(tree.index, t)
+						tree.transform = _make_hidden_transform(tree.local_pos)
+						tree_dirty = true
 						var key = _tree_key(coord, tree.index)
 						if active_colliders.has(key):
 							_return_collider_to_pool(active_colliders[key])
 							active_colliders.erase(key)
+				var mmi = tree_data.multimesh as MultiMeshInstance3D
+				if tree_dirty and mmi and mmi.multimesh:
+					_sync_multimesh_from_instances(mmi, tree_data.trees, chunk_stride)
 
 			if chunk_grass_data.has(coord):
 				var grass_data = chunk_grass_data[coord]
+				var grass_dirty := false
 				for grass in grass_data.grass_list:
 					if not grass.alive:
 						continue
@@ -1194,19 +1434,19 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 					var dz = grass.world_pos.z - center.z
 					if dx * dx + dz * dz < radius_sq:
 						grass.alive = false
-						var mmi = grass_data.multimesh as MultiMeshInstance3D
-						if mmi and mmi.multimesh:
-							var t = Transform3D()
-							t = t.scaled(Vector3.ZERO)
-							t.origin = grass.local_pos
-							mmi.multimesh.set_instance_transform(grass.index, t)
+						grass.transform = _make_hidden_transform(grass.local_pos)
+						grass_dirty = true
 						var key = _grass_key(coord, grass.index)
 						if active_grass_colliders.has(key):
 							_return_grass_collider_to_pool(active_grass_colliders[key])
 							active_grass_colliders.erase(key)
+				var mmi = grass_data.multimesh as MultiMeshInstance3D
+				if grass_dirty and mmi and mmi.multimesh:
+					_sync_multimesh_from_instances(mmi, grass_data.grass_list, chunk_stride)
 
 			if chunk_rock_data.has(coord):
 				var rock_data = chunk_rock_data[coord]
+				var rock_dirty := false
 				for rock in rock_data.rock_list:
 					if not rock.alive:
 						continue
@@ -1214,16 +1454,15 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 					var dz = rock.world_pos.z - center.z
 					if dx * dx + dz * dz < radius_sq:
 						rock.alive = false
-						var mmi = rock_data.multimesh as MultiMeshInstance3D
-						if mmi and mmi.multimesh:
-							var t = Transform3D()
-							t = t.scaled(Vector3.ZERO)
-							t.origin = rock.local_pos
-							mmi.multimesh.set_instance_transform(rock.index, t)
+						rock.transform = _make_hidden_transform(rock.local_pos)
+						rock_dirty = true
 						var key = _rock_key(coord, rock.index)
 						if active_rock_colliders.has(key):
 							_return_rock_collider_to_pool(active_rock_colliders[key])
 							active_rock_colliders.erase(key)
+				var mmi = rock_data.multimesh as MultiMeshInstance3D
+				if rock_dirty and mmi and mmi.multimesh:
+					_sync_multimesh_from_instances(mmi, rock_data.rock_list, chunk_stride)
 
 
 # ========== GRASS SPAWNING AND HARVESTING ==========
@@ -1236,6 +1475,8 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh = MultiMesh.new()
 	mmi.multimesh.mesh = grass_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	mmi.multimesh.use_colors = false
+	mmi.multimesh.use_custom_data = false
 
 	# Fix distance visibility issues
 	mmi.extra_cull_margin = 1000.0 # Very large margin
@@ -1256,6 +1497,73 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	if dense_grass_mode: step = 1 # Use stride 1 for dense mode if requested
 
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
+	var native := _get_native_helper()
+	if native and native.has_method("build_vegetation_instances") and not batch_heights.is_empty() and not terrain_manager.world_map_active:
+		var native_config := _build_vegetation_native_config(
+			chunk_stride,
+			step,
+			chunk_origin_x,
+			chunk_origin_z,
+			chunk_world_pos,
+			grass_base_transform,
+			Vector3.ZERO,
+			road_clearance,
+			terrain_manager.procedural_roads_enabled,
+			terrain_manager.procedural_road_spacing,
+			terrain_manager.procedural_road_width,
+			terrain_manager.world_map_active,
+			terrain_manager.water_level,
+			int(grass_noise.seed),
+			float(grass_noise.frequency),
+			0.3,
+			0.8,
+			1.2,
+			grass_scale,
+			grass_y_offset,
+			not dense_grass_mode,
+			true,
+			false
+		)
+		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
+		_append_native_generated_instances(grass_list, native_records)
+
+		# Add player-placed grass for this chunk
+		for placed in placed_grass:
+			var placed_coord = Vector2i(int(floor(placed.world_pos.x / chunk_stride)), int(floor(placed.world_pos.z / chunk_stride)))
+			if placed_coord == coord:
+				var local_pos = placed.world_pos - chunk_world_pos
+				local_pos.y += grass_y_offset
+
+				var t = grass_base_transform
+				t = t.rotated(Vector3.UP, placed.rotation)
+				t = t.scaled(Vector3(placed.scale, placed.scale, placed.scale))
+				t.origin = local_pos
+
+				var grass_index = grass_list.size()
+				grass_list.append(_make_vegetation_generated(
+					placed.world_pos,
+					local_pos,
+					placed.world_pos,
+					placed.rotation,
+					0.0,
+					grass_index,
+					placed.scale,
+					true,
+					t
+				))
+
+		_sync_multimesh_from_instances(mmi, grass_list, chunk_stride)
+
+		# ALWAYS add to chunk and store data, even if empty (so player can place grass here)
+		chunk_node.add_child(mmi)
+
+		chunk_grass_data[coord] = {
+			"multimesh": mmi,
+			"grass_list": grass_list,
+			"chunk_node": chunk_node
+		}
+		return
+
 	var batch_idx = 0
 
 	for x in range(0, chunk_stride, step):
@@ -1327,7 +1635,9 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				rotation_angle,
 				0.0,
 				grass_index,
-				final_scale
+				final_scale,
+				false,
+				t
 			))
 
 	# Add player-placed grass for this chunk
@@ -1353,13 +1663,11 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				0.0,
 				grass_index,
 				placed.scale,
-				true
+				true,
+				t
 			))
 
-	if valid_transforms.size() > 0:
-		mmi.multimesh.instance_count = valid_transforms.size()
-		for i in range(valid_transforms.size()):
-			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
+	_sync_multimesh_from_instances(mmi, grass_list, chunk_stride)
 
 	# ALWAYS add to chunk and store data, even if empty (so player can place grass here)
 	chunk_node.add_child(mmi)
@@ -1410,10 +1718,8 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 			if data.has("multimesh") and is_instance_valid(data.multimesh):
 				var mmi = data.multimesh as MultiMeshInstance3D
 				if mmi and mmi.multimesh:
-					var t = Transform3D()
-					t = t.scaled(Vector3.ZERO)
-					t.origin = grass.local_pos
-					mmi.multimesh.set_instance_transform(grass.index, t)
+					grass.transform = _make_hidden_transform(grass.local_pos)
+					_sync_multimesh_from_instances(mmi, data.grass_list, terrain_manager.CHUNK_STRIDE)
 
 			# Remove collider
 			var key = _grass_key(coord, grass_index)
@@ -1467,7 +1773,8 @@ func _make_vegetation_generated(
 		random_scale_factor: float,
 		index: int,
 		scale: float,
-		placed_by_player: bool = false
+		placed_by_player: bool = false,
+		transform: Transform3D = Transform3D.IDENTITY
 	):
 	var item = VegetationInstanceData.new()
 	item.world_pos = world_pos
@@ -1479,6 +1786,7 @@ func _make_vegetation_generated(
 	item.alive = true
 	item.scale = scale
 	item.placed_by_player = placed_by_player
+	item.transform = transform
 	return item
 
 func _make_vegetation_placement(world_pos: Vector3, scale: float, rotation_angle: float):
@@ -1578,34 +1886,19 @@ func place_grass(world_pos: Vector3) -> bool:
 
 	var mmi = data.multimesh as MultiMeshInstance3D
 	if mmi and mmi.multimesh:
-		var old_count = mmi.multimesh.instance_count
-
-		# IMPORTANT: Save existing transforms before resizing (Godot resets them)
-		var old_transforms = []
-		for i in range(old_count):
-			old_transforms.append(mmi.multimesh.get_instance_transform(i))
-
-		# Resize and restore
-		mmi.multimesh.instance_count = old_count + 1
-		for i in range(old_count):
-			mmi.multimesh.set_instance_transform(i, old_transforms[i])
-
-		# Add new instance
-		mmi.multimesh.set_instance_transform(old_count, t)
-
 		var grass_entry = _make_vegetation_generated(
 			world_pos + Vector3(0, grass_y_offset, 0),
 			local_pos,
 			world_pos,
 			rotation_angle,
 			0.0,
-			old_count,
+			data.grass_list.size(),
 			final_scale,
-			true
+			true,
+			t
 		)
 		data.grass_list.append(grass_entry)
-
-		return true
+		_sync_multimesh_from_instances(mmi, data.grass_list, chunk_stride)
 		return true
 
 	return true # Already stored for persistence
@@ -1635,32 +1928,19 @@ func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle:
 
 	var mmi = data.multimesh as MultiMeshInstance3D
 	if mmi and mmi.multimesh:
-		var old_count = mmi.multimesh.instance_count
-
-		# Save existing transforms before resizing (Godot resets them)
-		var old_transforms = []
-		for i in range(old_count):
-			old_transforms.append(mmi.multimesh.get_instance_transform(i))
-
-		# Resize and restore
-		mmi.multimesh.instance_count = old_count + 1
-		for i in range(old_count):
-			mmi.multimesh.set_instance_transform(i, old_transforms[i])
-
-		# Add new instance
-		mmi.multimesh.set_instance_transform(old_count, t)
-
 		var grass_entry = _make_vegetation_generated(
 			world_pos + Vector3(0, grass_y_offset, 0),
 			local_pos,
 			world_pos,
 			rotation_angle,
 			0.0,
-			old_count,
+			data.grass_list.size(),
 			final_scale,
-			true
+			true,
+			t
 		)
 		data.grass_list.append(grass_entry)
+		_sync_multimesh_from_instances(mmi, data.grass_list, terrain_manager.CHUNK_STRIDE)
 		return true
 
 	return false
@@ -1675,6 +1955,8 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh = MultiMesh.new()
 	mmi.multimesh.mesh = rock_mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	mmi.multimesh.use_colors = false
+	mmi.multimesh.use_custom_data = false
 
 	var rock_list: Array = []
 	var valid_transforms = []
@@ -1687,6 +1969,73 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	# Sparse rocks - every 7 meters (less frequent than grass)
 	var step = 7
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
+	var native := _get_native_helper()
+	if native and native.has_method("build_vegetation_instances") and not batch_heights.is_empty() and not terrain_manager.world_map_active:
+		var native_config := _build_vegetation_native_config(
+			chunk_stride,
+			step,
+			chunk_origin_x,
+			chunk_origin_z,
+			chunk_world_pos,
+			rock_base_transform,
+			Vector3.ZERO,
+			road_clearance,
+			terrain_manager.procedural_roads_enabled,
+			terrain_manager.procedural_road_spacing,
+			terrain_manager.procedural_road_width,
+			terrain_manager.world_map_active,
+			terrain_manager.water_level,
+			int(rock_noise.seed),
+			float(rock_noise.frequency),
+			0.35,
+			0.6,
+			1.4,
+			rock_scale,
+			rock_y_offset,
+			true,
+			true,
+			false
+		)
+		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
+		_append_native_generated_instances(rock_list, native_records)
+
+		# Add player-placed rocks for this chunk
+		for placed in placed_rocks:
+			var placed_coord = Vector2i(int(floor(placed.world_pos.x / chunk_stride)), int(floor(placed.world_pos.z / chunk_stride)))
+			if placed_coord == coord:
+				var local_pos = placed.world_pos - chunk_world_pos
+				local_pos.y += rock_y_offset
+
+				var t = rock_base_transform
+				t = t.rotated(Vector3.UP, placed.rotation)
+				t = t.scaled(Vector3(placed.scale, placed.scale, placed.scale))
+				t.origin = local_pos
+
+				var rock_index = rock_list.size()
+				rock_list.append(_make_vegetation_generated(
+					placed.world_pos,
+					local_pos,
+					placed.world_pos,
+					placed.rotation,
+					0.0,
+					rock_index,
+					placed.scale,
+					true,
+					t
+				))
+
+		_sync_multimesh_from_instances(mmi, rock_list, chunk_stride)
+
+		# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
+		chunk_node.add_child(mmi)
+
+		chunk_rock_data[coord] = {
+			"multimesh": mmi,
+			"rock_list": rock_list,
+			"chunk_node": chunk_node
+		}
+		return
+
 	var batch_idx = 0
 
 	for x in range(0, chunk_stride, step):
@@ -1756,7 +2105,9 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				rotation_angle,
 				0.0,
 				rock_index,
-				final_scale
+				final_scale,
+				false,
+				t
 			))
 
 	# Add player-placed rocks for this chunk
@@ -1782,13 +2133,11 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				0.0,
 				rock_index,
 				placed.scale,
-				true
+				true,
+				t
 			))
 
-	if valid_transforms.size() > 0:
-		mmi.multimesh.instance_count = valid_transforms.size()
-		for i in range(valid_transforms.size()):
-			mmi.multimesh.set_instance_transform(i, valid_transforms[i])
+	_sync_multimesh_from_instances(mmi, rock_list, chunk_stride)
 
 
 	# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
@@ -1839,10 +2188,8 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 			if data.has("multimesh") and is_instance_valid(data.multimesh):
 				var mmi = data.multimesh as MultiMeshInstance3D
 				if mmi and mmi.multimesh:
-					var t = Transform3D()
-					t = t.scaled(Vector3.ZERO)
-					t.origin = rock.local_pos
-					mmi.multimesh.set_instance_transform(rock.index, t)
+					rock.transform = _make_hidden_transform(rock.local_pos)
+					_sync_multimesh_from_instances(mmi, data.rock_list, terrain_manager.CHUNK_STRIDE)
 
 			var key = _rock_key(coord, rock_index)
 			if active_rock_colliders.has(key):
@@ -1918,32 +2265,19 @@ func _add_rock_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: 
 
 	var mmi = data.multimesh as MultiMeshInstance3D
 	if mmi and mmi.multimesh:
-		var old_count = mmi.multimesh.instance_count
-
-		# Save existing transforms before resizing (Godot resets them)
-		var old_transforms = []
-		for i in range(old_count):
-			old_transforms.append(mmi.multimesh.get_instance_transform(i))
-
-		# Resize and restore
-		mmi.multimesh.instance_count = old_count + 1
-		for i in range(old_count):
-			mmi.multimesh.set_instance_transform(i, old_transforms[i])
-
-		# Add new instance
-		mmi.multimesh.set_instance_transform(old_count, t)
-
 		var rock_entry = _make_vegetation_generated(
 			world_pos + Vector3(0, rock_y_offset, 0),
 			local_pos,
 			world_pos,
 			rotation_angle,
 			0.0,
-			old_count,
+			data.rock_list.size(),
 			final_scale,
-			true
+			true,
+			t
 		)
 		data.rock_list.append(rock_entry)
+		_sync_multimesh_from_instances(mmi, data.rock_list, terrain_manager.CHUNK_STRIDE)
 		return true
 
 	return false
@@ -2163,16 +2497,16 @@ func _apply_chopped_trees():
 	for coord in chunk_tree_data:
 		var data = chunk_tree_data[coord]
 		var mmi = data.multimesh as MultiMeshInstance3D
+		var chunk_dirty := false
 		for tree in data.trees:
 			var key = _position_hash(tree.world_pos)
 			if chopped_trees.has(key) and tree.alive:
 				tree.alive = false
-				# Hide in MultiMesh
-				if mmi and mmi.multimesh:
-					var t = Transform3D()
-					t = t.scaled(Vector3.ZERO)
-					t.origin = tree.local_pos
-					mmi.multimesh.set_instance_transform(tree.index, t)
+				tree.transform = _make_hidden_transform(tree.local_pos)
+				chunk_dirty = true
+
+		if chunk_dirty and mmi and mmi.multimesh:
+			_sync_multimesh_from_instances(mmi, data.trees, terrain_manager.CHUNK_STRIDE)
 
 func _serialize_placed_list(list: Array) -> Array:
 	var result = []
@@ -2185,7 +2519,7 @@ func _serialize_placed_list(list: Array) -> Array:
 	return result
 
 ## Clear all internal vegetation data for a fresh start (e.g. before loading a save)
-func clear_all_data():
+func clear_all_data(immediate_free: bool = false):
 	# Stop all pending work
 	pending_chunks.clear()
 	pending_grass_placements.clear()
@@ -2198,15 +2532,33 @@ func clear_all_data():
 	# Clear active visual data
 	var grass_coords = chunk_grass_data.keys().duplicate()
 	for coord in grass_coords:
-		_cleanup_chunk_grass(coord)
+		_cleanup_chunk_grass(coord, immediate_free)
 
 	var rock_coords = chunk_rock_data.keys().duplicate()
 	for coord in rock_coords:
-		_cleanup_chunk_rocks(coord)
+		_cleanup_chunk_rocks(coord, immediate_free)
 
 	var tree_coords = chunk_tree_data.keys().duplicate()
 	for coord in tree_coords:
-		_cleanup_chunk_trees(coord)
+		_cleanup_chunk_trees(coord, immediate_free)
+
+	if immediate_free:
+		for collider in collider_pool:
+			if is_instance_valid(collider):
+				collider.free()
+		collider_pool.clear()
+		for collider in grass_collider_pool:
+			if is_instance_valid(collider):
+				collider.free()
+		grass_collider_pool.clear()
+		for collider in rock_collider_pool:
+			if is_instance_valid(collider):
+				collider.free()
+		rock_collider_pool.clear()
+
+		active_colliders.clear()
+		active_grass_colliders.clear()
+		active_rock_colliders.clear()
 
 	# Clear persistent tracking
 	removed_grass.clear()

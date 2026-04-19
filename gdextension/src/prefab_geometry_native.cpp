@@ -10,6 +10,13 @@
 #include <utility>
 #include <vector>
 
+#include <godot_cpp/classes/fast_noise_lite.hpp>
+#include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/variant/basis.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/transform3d.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
+
 namespace godot {
 
 namespace {
@@ -223,6 +230,69 @@ static void queue_exterior_empty_cell(const Vector2i &cell_2d, int y, const Vect
 	queue.push_back(cell_2d);
 }
 
+static Transform3D build_vegetation_transform(const Transform3D &base_transform, const Vector3 &rotation_fix, double rotation_angle, double scale, const Vector3 &local_pos) {
+	Transform3D transform = base_transform;
+	transform.basis = transform.basis * Basis::from_euler(rotation_fix);
+	transform = transform.rotated(Vector3(0.0, 1.0, 0.0), rotation_angle);
+	transform = transform.scaled(Vector3(scale, scale, scale));
+	transform.origin = local_pos;
+	return transform;
+}
+
+static void pack_transform_to_buffer(const Transform3D &transform, float *write_ptr) {
+	const Vector3 basis_x = transform.basis.get_column(0);
+	const Vector3 basis_y = transform.basis.get_column(1);
+	const Vector3 basis_z = transform.basis.get_column(2);
+
+	write_ptr[0] = basis_x.x;
+	write_ptr[1] = basis_y.x;
+	write_ptr[2] = basis_z.x;
+	write_ptr[3] = transform.origin.x;
+	write_ptr[4] = basis_x.y;
+	write_ptr[5] = basis_y.y;
+	write_ptr[6] = basis_z.y;
+	write_ptr[7] = transform.origin.y;
+	write_ptr[8] = basis_x.z;
+	write_ptr[9] = basis_y.z;
+	write_ptr[10] = basis_z.z;
+	write_ptr[11] = transform.origin.z;
+}
+
+static bool is_procedural_road_blocked(double global_x, double global_z, double road_spacing, double road_width, double road_clearance) {
+	if (road_spacing <= 0.0) {
+		return false;
+	}
+
+	double local_x = std::fmod(global_x, road_spacing);
+	if (local_x < 0.0) {
+		local_x += road_spacing;
+	}
+	double local_z = std::fmod(global_z, road_spacing);
+	if (local_z < 0.0) {
+		local_z += road_spacing;
+	}
+
+	const double dist_x = std::min(local_x, road_spacing - local_x);
+	const double dist_z = std::min(local_z, road_spacing - local_z);
+	const double road_half_width = road_width * 0.5 + road_clearance;
+	return std::min(dist_x, dist_z) <= road_half_width;
+}
+
+static bool extract_transform_from_variant(const Variant &value, Transform3D &out) {
+	switch (value.get_type()) {
+		case Variant::TRANSFORM3D:
+			out = value;
+			return true;
+		case Variant::DICTIONARY: {
+			Dictionary dict = value;
+			out = dict.get("transform", Transform3D());
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+
 } // namespace
 
 PrefabGeometryNative::PrefabGeometryNative() {}
@@ -239,6 +309,8 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("parse_local_rect_2d", "raw_rect", "fallback_rect", "declared_size"), &PrefabGeometryNative::parse_local_rect_2d);
 	ClassDB::bind_method(D_METHOD("parse_local_volumes", "raw_volumes", "declared_size", "min_y", "max_y"), &PrefabGeometryNative::parse_local_volumes);
 	ClassDB::bind_method(D_METHOD("pick_nearest_candidates", "candidates", "max_count"), &PrefabGeometryNative::pick_nearest_candidates);
+	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
+	ClassDB::bind_method(D_METHOD("pack_multimesh_buffer_from_instances", "instances"), &PrefabGeometryNative::pack_multimesh_buffer_from_instances);
 }
 
 Vector3i PrefabGeometryNative::rotate_offset(const Vector3i &offset, int rotation) const {
@@ -593,6 +665,142 @@ Array PrefabGeometryNative::pick_nearest_candidates(const Array &candidates, int
 	}
 
 	return result;
+}
+
+Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const {
+	Array instances;
+	if (height_map.is_empty()) {
+		return instances;
+	}
+
+	const int chunk_stride = int(config.get("chunk_stride", 0));
+	const int step = std::max(1, int(config.get("step", 1)));
+	if (chunk_stride <= 0) {
+		return instances;
+	}
+
+	const int chunk_origin_x = int(config.get("chunk_origin_x", 0));
+	const int chunk_origin_z = int(config.get("chunk_origin_z", 0));
+	const Vector3 chunk_world_pos = config.get("chunk_world_pos", Vector3());
+	const Transform3D base_transform = config.get("base_transform", Transform3D());
+	const Vector3 rotation_fix = config.get("rotation_fix", Vector3());
+	const double road_clearance = double(config.get("road_clearance", 0.0));
+	const bool procedural_roads_enabled = bool(config.get("procedural_roads_enabled", false));
+	const double procedural_road_spacing = double(config.get("procedural_road_spacing", 100.0));
+	const double procedural_road_width = double(config.get("procedural_road_width", 8.0));
+	const bool world_map_active = bool(config.get("world_map_active", false));
+	const int noise_seed = int(config.get("noise_seed", 0));
+	const double noise_frequency = double(config.get("noise_frequency", 0.0));
+	const double noise_threshold = double(config.get("noise_threshold", 0.0));
+	const bool use_noise = bool(config.get("use_noise", true));
+	const bool use_water_density = bool(config.get("use_water_density", false));
+	const double water_level = double(config.get("water_level", 13.0));
+	const double scale_min = std::min(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
+	const double scale_max = std::max(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
+	const double scale_multiplier = double(config.get("scale_multiplier", 1.0));
+	const double y_offset = double(config.get("y_offset", 0.0));
+	const bool record_random_scale_factor = bool(config.get("record_random_scale_factor", true));
+
+	FastNoiseLite noise;
+	noise.set_noise_type(FastNoiseLite::TYPE_SIMPLEX);
+	noise.set_seed(noise_seed);
+	noise.set_frequency(static_cast<float>(noise_frequency));
+
+	int sample_index = 0;
+	for (int x = 0; x < chunk_stride; x += step) {
+		for (int z = 0; z < chunk_stride; z += step) {
+			if (sample_index >= height_map.size()) {
+				break;
+			}
+
+			const int current_sample = sample_index++;
+			const float terrain_y = height_map[current_sample];
+			if (terrain_y < -100.0f) {
+				continue;
+			}
+
+			const double global_x = double(chunk_origin_x + x);
+			const double global_z = double(chunk_origin_z + z);
+			bool road_is_blocked = false;
+			if (!world_map_active && procedural_roads_enabled) {
+				road_is_blocked = is_procedural_road_blocked(global_x, global_z, procedural_road_spacing, procedural_road_width, road_clearance);
+			}
+			if (road_is_blocked) {
+				continue;
+			}
+
+			if (use_noise) {
+				const double noise_value = noise.get_noise_2d(global_x, global_z);
+				if (noise_value < noise_threshold) {
+					continue;
+				}
+			}
+
+			bool water_is_blocked = false;
+			if (use_water_density) {
+				water_is_blocked = double(terrain_y) + 1.0 < water_level;
+			} else {
+				water_is_blocked = double(terrain_y) + 1.0 < water_level;
+			}
+			if (water_is_blocked) {
+				continue;
+			}
+
+			const Vector3 hit_pos(global_x, terrain_y, global_z);
+			Vector3 local_pos = hit_pos - chunk_world_pos;
+			local_pos.y += y_offset;
+
+			Vector3 world_pos = hit_pos;
+			world_pos.y += y_offset;
+
+			const double random_scale = UtilityFunctions::randf_range(scale_min, scale_max);
+			const double final_scale = scale_multiplier * random_scale;
+			const double rotation_angle = UtilityFunctions::randf() * 6.28318530717958647692;
+			const Transform3D transform = build_vegetation_transform(base_transform, rotation_fix, rotation_angle, final_scale, local_pos);
+
+			Dictionary record;
+			record["world_pos"] = world_pos;
+			record["local_pos"] = local_pos;
+			record["hit_pos"] = hit_pos;
+			record["rotation_angle"] = rotation_angle;
+			record["random_scale_factor"] = record_random_scale_factor ? random_scale : 0.0;
+			record["index"] = instances.size();
+			record["alive"] = true;
+			record["scale"] = final_scale;
+			record["placed_by_player"] = false;
+			record["transform"] = transform;
+			instances.append(record);
+		}
+
+		if (sample_index >= height_map.size()) {
+			break;
+		}
+	}
+
+	return instances;
+}
+
+PackedFloat32Array PrefabGeometryNative::pack_multimesh_buffer_from_instances(const Array &instances) const {
+	PackedFloat32Array buffer;
+	if (instances.is_empty()) {
+		return buffer;
+	}
+
+	buffer.resize(instances.size() * 12);
+	float *write_ptr = buffer.ptrw();
+	int write_offset = 0;
+
+	for (int i = 0; i < instances.size(); ++i) {
+		Transform3D transform;
+		if (!extract_transform_from_variant(instances[i], transform)) {
+			transform = Transform3D();
+		}
+
+		pack_transform_to_buffer(transform, write_ptr + write_offset);
+		write_offset += 12;
+	}
+
+	return buffer;
 }
 
 Array PrefabGeometryNative::get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const {
