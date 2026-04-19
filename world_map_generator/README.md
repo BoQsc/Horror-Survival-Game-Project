@@ -3,6 +3,7 @@
 2D world map generator/editor for generating, painting, and saving 2048×2048 world definitions.
 
 ## Files
+- [../WORLD_MAP_CACHING_ROADMAP.md](../WORLD_MAP_CACHING_ROADMAP.md) - single reference for the world map caching and data work
 - `world_map_generator/world_map_generator_ui.tscn` / `world_map_generator/world_map_generator_ui.gd` — `WorldMapGeneratorUI` scene
 - `world_map_generator.gd` — Terrain/biome/road PNG generation
 
