@@ -1,15 +1,6 @@
 Godot Engine v4.6.2.stable.steam.71f334935 - https://godotengine.org
 Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 with Max-Q Design
 
-[RendererFallback] Testing Vulkan compute compatibility...
-[RendererFallback] ✓ Marching Cubes pipeline created successfully
-[RendererFallback] ✓ Vulkan compute works
-[PerformanceMonitor] Writing performance logs to user://debug/performance
-[PerformanceMonitor] Running without debugger
-[AMBIENT_AUDIO] Playing: res://game/sound/environment/grasslands/calm-garden-ambience-29993.mp3
-[AMBIENT_AUDIO] Manager initialized
-[CollisionDebugger] Ready - Press F10 to toggle, hold Left Alt to inspect
-[TOOL_CONFIG] ToolConfig initialized (consolidated from 5 autoloads)
 [TOWN_STALL_TEST] Harness starting
 [TOWN_STALL_TEST] Auto teleport: OFF
 [TOWN_STALL_TEST] Disable buildings: OFF
@@ -26,100 +17,29 @@ Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 wi
 [TOWN_STALL_TEST] Repeat entry: OFF
 [TOWN_STALL_TEST] Hold seconds: 40.0
 [TOWN_STALL_TEST] Generating world seed 12345...
-[WorldMapGen] Placed 10 towns (target: 10)
-[WorldMapGen] Skipping prefab 'new_wooden_house_2floor': missing prefab data
-[WorldMapGen] Skipping prefab 'test_builder': missing door object; missing window object; internal stairs do not rise to the next level; stairs do not connect back to grade level y=2
-[WorldMapGen] MST roads: 9 segments (10 towns, 0 extra loops)
-[WorldMapGen] Town at (-874,662): 16/38 buildings placed
-[WorldMapGen] Town at (-202,-874): 15/38 buildings placed
-[WorldMapGen] Town at (566,758): 13/38 buildings placed
-[WorldMapGen] Town at (-586,566): 16/38 buildings placed
-[WorldMapGen] Town at (374,-298): 16/38 buildings placed
-[WorldMapGen] Town at (-778,-586): 15/38 buildings placed
-[WorldMapGen] Town at (-298,-490): 17/38 buildings placed
-[WorldMapGen] Town at (470,-586): 16/38 buildings placed
-[WorldMapGen] Town at (854,-490): 17/38 buildings placed
-[WorldMapGen] Town at (182,-874): 16/38 buildings placed
-[WorldMapGen] Mode: TOWN | Buildings: 157 placed / 495 attempted | Towns: 10
-[WorldMapGen] Saved to: user://worlds/town_stall_12345_22845
-[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_22845
+[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_36089
 [TOWN_STALL_TEST] Selected town: x=374.0 z=-298.0 buildings=72 radius=71.0
 [TOWN_STALL_TEST] Removed helper node: DebugTeleporter
-SHOVEL: Initialized, mode = PLACE, material = Grass
-ModeManager: Initialized in PLAY mode
-PlayerHUD: Pickaxe Durability -> OFF (Instant)
-[HUD_SETUP] Notification label created
-[HUD_SETUP] Connecting to SaveManager...
-[HUD_SETUP] Connected to save_completed signal
-[HUD_SETUP] Connected to load_completed signal
-[ChunkManager] World map path from SaveManager: user://worlds/town_stall_12345_22845
-[ChunkManager] World map mode: user://worlds/town_stall_12345_22845 (GPU fbm biomes, per-pixel road overlay)
-[ObjectRegistry] Preloading 7 object scenes...
-[ObjectRegistry] Preloaded 7 scenes in 416ms
-[ChunkManager] Loaded 157 baked buildings
 [TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...
-[COMBAT_AUDIO] Tree hit sound loaded successfully
-[COMBAT_AUDIO] Tree fall sound loaded successfully
-[COMBAT_AUDIO] Wood multipart sound loaded successfully
-[COMBAT_AUDIO] Plant hit sound loaded successfully
-[COMBAT_AUDIO] Rock hit sound loaded successfully
-[COMBAT_AUDIO] Terrain hit sound loaded successfully
-[COMBAT_AUDIO] Terrain break sound loaded successfully
-[HUD_SETUP] Connecting to SaveManager...
-[ChunkManager] Loaded 248 baked terrain modification chunks
-[ChunkManager] Prepared 262 baked excavation chunk masks
-[ChunkManager] Loaded building_map (2048x2048)
-[Minimap] Built 2048x2048 live map (real-time updates enabled)
-[RoadManager] World map active, skipping road_mask initialization
-ItemUseRouter: Initialized
-  - Hotbar: OK
-  - ModeManager: OK
-  - CombatSystem: OK
-  - ModeBuild: OK
-  - ModeEditor: OK
-ModeBuild: Initialized
-TerrainAPI: Initialized (terrain_manager: OK)
-ModeEditor: Initialized
-[Player] Frozen until terrain renders
-BuildingAPI: Initialized (building_manager: OK)
-[Player] Unfrozen - terrain ready, can walk now
-[LoadingScreen] Terrain rendering started - player can move
-ItemUseRouter: LMB pressed, item=Stone Pickaxe
-PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
-PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
-PICKAXE_HIT_DEBUG: HIT at impact time | Target: @Node3D@181 | Position: (0.0, 14.06865, -3.300016)
-DURABILITY_DEBUG: HUD received hit | Target: Terrain | HP: 0.0% | Key: v3i:0,14,-4
-HUD: _on_item_added received: Grass x1
-HUD: Added label to container: ItemNotificationContainer:<VBoxContainer#135526353402>
-ItemUseRouter: LMB pressed, item=Stone Pickaxe
-PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
-ModeManager: PLAY -> EDITOR
-ModeManager: EDITOR mode ON (submode: Terrain)
-ModeManager: Fly mode ON
 [TOWN_STALL_TEST] Flying to town center: (374.0, 23.0, -298.0)
 [TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.
 [TOWN_STALL_TEST] Flying to town center: (374.0, 15.0, -298.0) buildings=72 radius=71.0
 [TOWN_STALL_TEST] Auto fly reached target, starting hold
-ModeManager: EDITOR -> PLAY
-ModeManager: EDITOR mode OFF (submode: Terrain)
 [TOWN_STALL_TEST] Hold started
-ItemUseRouter: LMB pressed, item=Stone Pickaxe
-PICKAXE_HIT_DEBUG: Swing started - raycast will happen at impact (0.30s)
-PICKAXE_HIT_DEBUG: _do_pickaxe_damage_delayed CALLED - performing raycast NOW
-PICKAXE_HIT_DEBUG: HIT at impact time | Target: @CharacterBody3D@3535 | Position: (362.3143, 13.2878, -298.9498)
-[TOWN_STALL_TEST] Hold complete, quitting
+WARNING: 38 RIDs of type "StorageBuffer" were leaked.
+   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
+   GDScript backtrace (most recent call first):
+       [0] _thread_function (res://world_marching_cubes/chunk_manager.gd:2018)
 ERROR: 10 RID allocations of type 'P11JoltShape3D' were leaked at exit.
-ERROR: 83 RID allocations of type 'P10JoltBody3D' were leaked at exit.
+ERROR: 78 RID allocations of type 'P10JoltBody3D' were leaked at exit.
 ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceSurfaceDataCacheE
    at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
 ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceForwardClusteredE
    at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
 ERROR: 9 shaders of type SceneForwardClusteredShaderRD were never freed
    at: ~ShaderRD (servers/rendering/renderer_rd/shader_rd.cpp:1056)
-ERROR: 3 RID allocations of type 'N10RendererRD11MeshStorage8SkeletonE' were leaked at exit.
-ERROR: 42 RID allocations of type 'N10RendererRD11MeshStorage4MeshE' were leaked at exit.
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
+ERROR: 2 RID allocations of type 'N10RendererRD11MeshStorage8SkeletonE' were leaked at exit.
+ERROR: 41 RID allocations of type 'N10RendererRD11MeshStorage4MeshE' were leaked at exit.
 WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
    at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
 WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
@@ -205,22 +125,22 @@ WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted 
    at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
 ERROR: 9 RID allocations of type 'N10RendererRD15MaterialStorage6ShaderE' were leaked at exit.
 ERROR: 31 RID allocations of type 'N10RendererRD14TextureStorage7TextureE' were leaked at exit.
-ERROR: 106 RID allocations of type 'N17RendererSceneCull8InstanceE' were leaked at exit.
-WARNING: 3 RIDs of type "StorageBuffer" were leaked.
+ERROR: 98 RID allocations of type 'N17RendererSceneCull8InstanceE' were leaked at exit.
+WARNING: 2 RIDs of type "StorageBuffer" were leaked.
    at: _free_rids (servers/rendering/rendering_device.cpp:7295)
 WARNING: 14 RIDs of type "UniformBuffer" were leaked.
    at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 80 RIDs of type "IndexArray" were leaked.
+WARNING: 79 RIDs of type "IndexArray" were leaked.
    at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 80 RIDs of type "IndexBuffer" were leaked.
+WARNING: 79 RIDs of type "IndexBuffer" were leaked.
    at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 41 RIDs of type "VertexArray" were leaked.
+WARNING: 27 RIDs of type "VertexArray" were leaked.
    at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 72 RIDs of type "VertexBuffer" were leaked.
+WARNING: 70 RIDs of type "VertexBuffer" were leaked.
    at: _free_rids (servers/rendering/rendering_device.cpp:7295)
 WARNING: 52 RIDs of type "Texture" were leaked.
    at: finalize (servers/rendering/rendering_device.cpp:7505)
 WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
    at: cleanup (core/object/object.cpp:2641)
-ERROR: 97 resources still in use at exit (run with --verbose for details).
+ERROR: 98 resources still in use at exit (run with --verbose for details).
    at: clear (core/io/resource.cpp:810)

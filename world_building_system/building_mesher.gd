@@ -15,7 +15,7 @@ var compute_shader: RDShaderFile
 var native_builder: Object = null
 var _native_backend_ready: bool = false
 const BUILDING_MESH_CACHE_LIMIT: int = 96
-const BUILDING_MESH_CACHE_VERSION: int = 6
+const BUILDING_MESH_CACHE_VERSION: int = 7
 const BUILDING_CHUNK_SIZE: int = 16
 const BUILDING_CHUNK_VOLUME: int = BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
 const BUILDING_APPLY_BUDGET_PER_FRAME: int = 4
