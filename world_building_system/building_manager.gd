@@ -34,6 +34,10 @@ var _dirty_global_visual_batch_object_ids: Dictionary = {} # int object_id -> tr
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
 var _dirty_visible_chunk_count: int = 0
+var _last_flush_dirty_chunks_ms: float = 0.0
+var _last_flush_dirty_chunks_count: int = 0
+var _last_flush_global_visual_batches_ms: float = 0.0
+var _last_flush_global_visual_batches_count: int = 0
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -372,6 +376,8 @@ func flush_global_visual_batches() -> void:
 			mesh = visual_data.get("mesh")
 		_rebuild_global_visual_batch(object_id, mesh)
 		rebuilt += 1
+	_last_flush_global_visual_batches_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
+	_last_flush_global_visual_batches_count = rebuilt
 func has_dirty_global_visual_batches() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
 
@@ -507,7 +513,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_occupied_cells": total_occupied_cells,
 		"mesh_dirty_chunks": total_mesh_dirty_chunks,
 		"dirty_visible_chunk_count": total_dirty_visible_chunks,
-		"dirty_hidden_chunk_count": total_dirty_hidden_chunks
+		"dirty_hidden_chunk_count": total_dirty_hidden_chunks,
+		"last_flush_dirty_chunks_ms": _last_flush_dirty_chunks_ms,
+		"last_flush_dirty_chunks_count": _last_flush_dirty_chunks_count,
+		"last_flush_global_visual_batches_ms": _last_flush_global_visual_batches_ms,
+		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count
 	}
 
 ## Get or create a chunk at the given coordinate. Uses pool for recycling.
@@ -669,6 +679,8 @@ func flush_dirty_chunks():
 			_dirty_chunks.erase(coord)
 		if processed >= effective_budget:
 			break
+	_last_flush_dirty_chunks_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
+	_last_flush_dirty_chunks_count = rebuilt
 
 
 func has_dirty_chunks() -> bool:

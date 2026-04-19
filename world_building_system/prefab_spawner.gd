@@ -36,6 +36,8 @@ var pending_spawn_jobs: Array[Dictionary] = []
 var pending_spawn_keys: Dictionary = {}
 var rotated_block_batches_cache: Dictionary = {}
 var _last_spawn_job_msec: int = 0
+var _last_spawn_processing_ms: float = 0.0
+var _last_spawn_jobs_processed: int = 0
 
 # Track spawned doors for distance-based cleanup
 var spawned_doors: Dictionary = {} # "x_z" -> door instance
@@ -137,6 +139,8 @@ func clear_pending_spawn_jobs() -> void:
 	pending_spawn_jobs.clear()
 	pending_spawn_keys.clear()
 	_last_spawn_job_msec = 0
+	_last_spawn_processing_ms = 0.0
+	_last_spawn_jobs_processed = 0
 
 
 func has_pending_spawn_jobs() -> bool:
@@ -151,6 +155,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"spawn_distance_from_road": spawn_distance_from_road,
 		"spawn_interval": spawn_interval,
 		"spawn_processing_budget_ms": spawn_processing_budget_ms,
+		"last_spawn_processing_ms": _last_spawn_processing_ms,
+		"last_spawn_jobs_processed": _last_spawn_jobs_processed,
 		"spawned_positions": spawned_positions.size(),
 		"pending_spawn_jobs": pending_spawn_jobs.size(),
 		"pending_spawn_keys": pending_spawn_keys.size(),
@@ -182,6 +188,8 @@ func _insert_world_map_spawn_job_sorted(job: Dictionary) -> void:
 
 func _process_pending_spawn_jobs() -> void:
 	if not building_manager:
+		_last_spawn_processing_ms = 0.0
+		_last_spawn_jobs_processed = 0
 		return
 
 	var start_time := Time.get_ticks_usec()
@@ -235,6 +243,8 @@ func _process_pending_spawn_jobs() -> void:
 		if pending_spawn_jobs.is_empty():
 			building_manager.flush_global_visual_batches()
 
+	_last_spawn_processing_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
+	_last_spawn_jobs_processed = processed
 	if skip_chunk_flush_for_test:
 		return
 
@@ -244,6 +254,8 @@ func _process_pending_spawn_jobs() -> void:
 		var has_visible_dirty_chunks: bool = building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks()
 		if has_visible_dirty_chunks and pending_spawn_jobs.is_empty() and (processed > 0 or _last_spawn_job_msec > 0) and idle_since_last_spawn >= int(chunk_flush_interval_ms):
 			building_manager.flush_dirty_chunks()
+	_last_spawn_processing_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
+	_last_spawn_jobs_processed = processed
 
 func _get_rotated_block_batches(prefab_name: String, rotation: int) -> Array:
 	var cache_key := "%s:%d" % [prefab_name, rotation]

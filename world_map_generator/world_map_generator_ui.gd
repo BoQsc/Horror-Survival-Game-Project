@@ -29,6 +29,10 @@ var current_images: Dictionary = {}
 var preview_texture: ImageTexture = null
 var is_generating: bool = false
 var gen_thread: Thread = null
+var last_generation_profile: Dictionary = {}
+var last_save_profile: Dictionary = {}
+var last_preview_ms: float = 0.0
+var last_save_ms: float = 0.0
 
 # Terrain presets: [terrain_height, noise_freq]
 const TERRAIN_PRESETS = {
@@ -249,6 +253,12 @@ func _on_generation_complete(images: Dictionary) -> void:
 	gen_thread = null
 	
 	current_images = images
+	if images.has("generation_profile") and images.generation_profile is Dictionary:
+		last_generation_profile = images.generation_profile.duplicate(true)
+	elif generator:
+		last_generation_profile = generator.last_generation_profile.duplicate(true)
+	else:
+		last_generation_profile = {}
 	is_generating = false
 	generate_btn.disabled = false
 	progress_bar.visible = false
@@ -272,6 +282,7 @@ func _on_generation_complete(images: Dictionary) -> void:
 func _update_preview() -> void:
 	if not current_images.has("heightmap") or not current_images.has("biomes"):
 		return
+	var preview_start_us := Time.get_ticks_usec()
 	
 	var hmap: Image = current_images.heightmap
 	var bmap: Image = current_images.biomes
@@ -336,6 +347,7 @@ func _update_preview() -> void:
 	else:
 		preview_texture = ImageTexture.create_from_image(preview)
 	canvas.texture = preview_texture
+	last_preview_ms = float(Time.get_ticks_usec() - preview_start_us) / 1000.0
 
 # ============================================================================
 # SAVE
@@ -361,12 +373,16 @@ func _on_save_pressed() -> void:
 	generator.use_grid_roads = road_mode_toggle.button_pressed if road_mode_toggle else false
 	generator.deep_lakes_enabled = deep_lakes_toggle.button_pressed if deep_lakes_toggle else true
 	
+	var save_start_us := Time.get_ticks_usec()
 	var success = generator.save_world(save_path, current_images)
+	last_save_ms = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 	if success:
+		last_save_profile = generator.last_save_profile.duplicate(true)
 		WorldMapData.invalidate_world(save_path)
 		progress_label.text = "Saved: %s" % world_name
 		_refresh_world_list()  # Update list to show new world
 	else:
+		last_save_profile = generator.last_save_profile.duplicate(true)
 		progress_label.text = "Save FAILED!"
 
 # ============================================================================
@@ -395,6 +411,16 @@ func _on_play_pressed() -> void:
 	# Transition to the game scene
 	progress_label.text = "Launching game..."
 	get_tree().change_scene_to_file.call_deferred("res://modules/world_module/world_test_world_player_v2.tscn")
+
+func get_telemetry_snapshot() -> Dictionary:
+	return {
+		"is_generating": is_generating,
+		"current_image_count": current_images.size(),
+		"last_preview_ms": last_preview_ms,
+		"last_save_ms": last_save_ms,
+		"last_generation_profile": last_generation_profile.duplicate(true),
+		"last_save_profile": last_save_profile.duplicate(true)
+	}
 
 # ============================================================================
 # PAINT TOOLS

@@ -92,6 +92,10 @@ const MAX_COLLIDER_UPDATES_PER_FRAME = 5
 var _collider_refresh_dirty: bool = true
 var _last_collider_update_chunk: Vector2i = Vector2i(2147483647, 2147483647)
 var _last_collider_update_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _last_pending_chunk_process_ms: float = 0.0
+var _last_collider_refresh_ms: float = 0.0
+var _last_queued_collider_update_ms: float = 0.0
+var _last_pending_placements_ms: float = 0.0
 var _terrain_supports_road_query: bool = false
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
@@ -131,6 +135,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"dense_grass_mode": dense_grass_mode,
 		"initial_load_count": initial_load_count,
 		"is_initial_load_batch": is_initial_load_batch,
+		"last_pending_chunk_process_ms": _last_pending_chunk_process_ms,
+		"last_collider_refresh_ms": _last_collider_refresh_ms,
+		"last_queued_collider_update_ms": _last_queued_collider_update_ms,
+		"last_pending_placements_ms": _last_pending_placements_ms,
 		"terrain_supports_road_query": _terrain_supports_road_query
 	}
 
@@ -582,6 +590,7 @@ func _free_vegetation_instance_entries(entries: Array) -> void:
 			entry.free()
 
 func _physics_process(_delta):
+	var pending_chunk_start_us := Time.get_ticks_usec()
 	# Process only ONE pending chunk per physics frame (rate limited)
 	if not pending_chunks.is_empty():
 		var item = pending_chunks[0]
@@ -619,9 +628,11 @@ func _physics_process(_delta):
 		else:
 			# Invalid chunk, remove
 			pending_chunks.pop_front()
+	_last_pending_chunk_process_ms = float(Time.get_ticks_usec() - pending_chunk_start_us) / 1000.0
 
 	# Refresh colliders when the player actually moves far enough or the
 	# loaded vegetation set changes, instead of doing a blind timer sweep.
+	var collider_refresh_start_us := Time.get_ticks_usec()
 	var should_refresh_colliders := _collider_refresh_dirty or not pending_collider_adds.is_empty() or not pending_collider_removes.is_empty()
 	var current_player_pos := Vector3.ZERO
 	var current_player_chunk := _last_collider_update_chunk
@@ -644,12 +655,17 @@ func _physics_process(_delta):
 		_update_grass_proximity_colliders()
 		_update_rock_proximity_colliders()
 		_cleanup_orphan_colliders()
+	_last_collider_refresh_ms = float(Time.get_ticks_usec() - collider_refresh_start_us) / 1000.0
 
 	# Always process incremental updates (Add/Remove actual nodes)
+	var queued_collider_updates_start_us := Time.get_ticks_usec()
 	_process_queued_collider_updates()
+	_last_queued_collider_update_ms = float(Time.get_ticks_usec() - queued_collider_updates_start_us) / 1000.0
 
 	# Process pending placements (retry when chunk becomes valid)
+	var pending_placements_start_us := Time.get_ticks_usec()
 	_process_pending_placements()
+	_last_pending_placements_ms = float(Time.get_ticks_usec() - pending_placements_start_us) / 1000.0
 
 func _process_queued_collider_updates():
 	var updates_done = 0

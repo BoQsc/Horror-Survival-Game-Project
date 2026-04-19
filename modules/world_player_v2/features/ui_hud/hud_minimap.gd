@@ -33,6 +33,10 @@ var _fullmap_coord: Label = null
 var _fullmap_hint: Label = null
 var _fullmap_open: bool = false
 var _fullmap_zoom: float = 1.0  # 1.0 = full map, higher = zoomed in
+var _last_minimap_build_ms: float = 0.0
+var _last_minimap_upload_ms: float = 0.0
+var _last_minimap_terrain_modified_ms: float = 0.0
+var _last_minimap_load_profile: Dictionary = {}
 const FULLMAP_ZOOM_MIN: float = 1.0
 const FULLMAP_ZOOM_MAX: float = 8.0
 const FULLMAP_ZOOM_STEP: float = 0.5
@@ -301,6 +305,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 func _build_minimap_image() -> void:
+	var build_start_us := Time.get_ticks_usec()
+	_last_minimap_build_ms = 0.0
+	_last_minimap_load_profile = {}
 	# Build FROZEN map once (terrain + roads + water + buildings from PNG).
 	# Never modified at runtime — generator is the single source of truth.
 	if not _terrain_manager or not "world_definition_path" in _terrain_manager:
@@ -310,7 +317,9 @@ func _build_minimap_image() -> void:
 	if path == "":
 		return
 	
-	var loaded = WorldMapData.load_world(path)
+	var load_profile: Dictionary = {}
+	var loaded = WorldMapData.load_world(path, true, false, load_profile)
+	_last_minimap_load_profile = load_profile.duplicate(true)
 	
 	if not loaded.has("heightmap"):
 		return
@@ -380,6 +389,7 @@ func _build_minimap_image() -> void:
 		_fullmap_atlas = AtlasTexture.new()
 		_fullmap_texture.texture = _fullmap_atlas
 	_fullmap_atlas.atlas = _minimap_texture
+	_last_minimap_build_ms = float(Time.get_ticks_usec() - build_start_us) / 1000.0
 	
 
 ## Mark the minimap as needing a GPU texture re-upload (called by building_manager or internally)
@@ -388,7 +398,9 @@ func mark_dirty() -> void:
 
 ## Called when terrain is modified (dig/build) — update the affected pixel on the minimap
 func _on_terrain_modified(coord: Vector3i, _chunk_node: Node3D) -> void:
+	var modify_start_us := Time.get_ticks_usec()
 	if not _minimap_image or not _terrain_manager:
+		_last_minimap_terrain_modified_ms = 0.0
 		return
 	var map_half = _terrain_manager.world_map_half
 	var map_size = _terrain_manager.world_map_size
@@ -416,12 +428,15 @@ func _on_terrain_modified(coord: Vector3i, _chunk_node: Node3D) -> void:
 			var b = clampf(60.0 * shade / 255.0, 0.0, 1.0)
 			_minimap_image.set_pixel(px, pz, Color(r, g, b, 1.0))
 	_minimap_dirty = true
+	_last_minimap_terrain_modified_ms = float(Time.get_ticks_usec() - modify_start_us) / 1000.0
 
 func _process(_delta: float) -> void:
 	# Batch texture re-upload if any pixels were modified this frame
 	if _minimap_dirty and _minimap_image and _minimap_texture:
+		var upload_start_us := Time.get_ticks_usec()
 		_minimap_texture.update(_minimap_image)
 		_minimap_dirty = false
+		_last_minimap_upload_ms = float(Time.get_ticks_usec() - upload_start_us) / 1000.0
 
 	_refresh_player_context()
 	if not _vehicle_manager or not is_instance_valid(_vehicle_manager):
@@ -510,6 +525,18 @@ func _process(_delta: float) -> void:
 	
 	# Update coordinate label
 	_coord_label.text = "%d, %d" % [int(player_pos.x), int(player_pos.z)]
+
+
+func get_telemetry_snapshot() -> Dictionary:
+	return {
+		"minimap_ready": _minimap_image != null,
+		"fullmap_open": _fullmap_open,
+		"fullmap_zoom": _fullmap_zoom,
+		"last_minimap_build_ms": _last_minimap_build_ms,
+		"last_minimap_upload_ms": _last_minimap_upload_ms,
+		"last_minimap_terrain_modified_ms": _last_minimap_terrain_modified_ms,
+		"last_minimap_load_profile": _last_minimap_load_profile.duplicate(true)
+	}
 
 
 func _get_focus_forward_vector(target: Node3D) -> Vector3:

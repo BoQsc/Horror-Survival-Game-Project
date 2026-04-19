@@ -172,6 +172,16 @@ var _native_backends_ready: bool = false
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_update_backend: String = ""
+var _last_update_duration_ms: float = 0.0
+var _last_pending_node_process_ms: float = 0.0
+var _last_finalize_terrain_ms: float = 0.0
+var _last_finalize_water_ms: float = 0.0
+var _last_chunk_update_ms: float = 0.0
+var _last_modify_terrain_ms: float = 0.0
+var _last_world_map_entry_ms: float = 0.0
+var _last_world_map_load_profile: Dictionary = {}
+var _startup_world_map_data: Dictionary = {}
+var _startup_world_map_load_profile: Dictionary = {}
 
 
 # Persistent modification storage - survives chunk unloading
@@ -278,7 +288,10 @@ func _ready():
 		material_terrain.set_shader_parameter("use_world_map", true)
 		PrefabGeometry.clear_cache()
 		# Read metadata for map params (biome blending now uses GPU fbm() directly, no texture needed)
-		var loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled)
+		var startup_world_map_load_profile: Dictionary = {}
+		var loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled, false, startup_world_map_load_profile)
+		_startup_world_map_data = loaded
+		_startup_world_map_load_profile = startup_world_map_load_profile.duplicate(true)
 		if loaded.has("metadata"):
 			var meta = loaded.metadata
 			var meta_terrain_height = float(meta.get("terrain_height", terrain_height))
@@ -366,6 +379,14 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_update_loads": _last_update_loads,
 		"last_update_unloads": _last_update_unloads,
 		"last_update_backend": _last_update_backend,
+		"last_update_duration_ms": _last_update_duration_ms,
+		"last_pending_node_process_ms": _last_pending_node_process_ms,
+		"last_finalize_terrain_ms": _last_finalize_terrain_ms,
+		"last_finalize_water_ms": _last_finalize_water_ms,
+		"last_chunk_update_ms": _last_chunk_update_ms,
+		"last_modify_terrain_ms": _last_modify_terrain_ms,
+		"last_world_map_entry_ms": _last_world_map_entry_ms,
+		"world_map_load_profile": _last_world_map_load_profile.duplicate(true),
 		"hot_frame_backoff_remaining_frames": _hot_frame_backoff_remaining_frames,
 		"world_map_building_count": _world_map_buildings.size(),
 		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
@@ -626,6 +647,7 @@ func process_pending_nodes():
 	# Skip entirely if loading is paused due to low FPS
 	if loading_paused:
 		return
+	var process_start_us := Time.get_ticks_usec()
 
 	# Time-distributed: Only finalize if enough time has passed since last chunk
 	# This spreads chunk appearances evenly over time instead of bursts
@@ -653,6 +675,7 @@ func process_pending_nodes():
 
 	_finalize_chunk_creation(item)
 	last_finalization_time_ms = current_time
+	_last_pending_node_process_ms = float(Time.get_ticks_usec() - process_start_us) / 1000.0
 
 # Sort pending nodes by distance to player (closest first)
 func _sort_pending_by_distance():
@@ -1205,8 +1228,10 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 	# RATE LIMITING: Skip if called too quickly (prevents 60 GPU ops/sec when holding mouse)
 	var now_ms = Time.get_ticks_msec()
 	if now_ms - _last_modify_time_ms < MODIFY_COOLDOWN_MS:
+		_last_modify_terrain_ms = 0.0
 		return  # Skip this call, too soon after last one
 	_last_modify_time_ms = now_ms
+	var modify_start_us := Time.get_ticks_usec()
 	# Calculate bounds of the modification sphere/box
 	# Add extra margin (1.0) to account for material radius extension and shader sampling
 	var extra_margin = 1.0 if material_id >= 0 else 0.0
@@ -1307,6 +1332,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 
 		for i in range(batch_count):
 			semaphore.post()
+	
+	_last_modify_terrain_ms = float(Time.get_ticks_usec() - modify_start_us) / 1000.0
 
 ## Fill a 1x1 vertical column of terrain from y_from to y_to
 ## Uses Column shape (type=2) for precise vertical fills
@@ -1483,10 +1510,12 @@ func update_chunks():
 	_update_chunks_native()
 
 func _update_chunks_native():
+	var update_start_us := Time.get_ticks_usec()
 	_last_update_backend = "native"
 	if loading_paused:
 		_last_update_loads = 0
 		_last_update_unloads = 0
+		_last_update_duration_ms = 0.0
 		return
 
 	var p_pos = viewer.global_position
@@ -1536,6 +1565,7 @@ func _update_chunks_native():
 
 	_last_update_loads = chunks_queued
 	_last_update_unloads = unload_count
+	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func _load_chunk(coord: Vector3i):
 	active_chunks[coord] = null
@@ -1633,6 +1663,7 @@ func clear_all_chunks():
 
 
 func _update_chunks_legacy():
+	var update_start_us := Time.get_ticks_usec()
 	_last_update_backend = "legacy"
 	var p_pos = viewer.global_position
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
@@ -1698,6 +1729,7 @@ func _update_chunks_legacy():
 	# 2. Load new chunks (adaptive rate limiting based on FPS)
 	if loading_paused:
 		_last_update_loads = 0
+		_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 		return # Skip loading when FPS is too low
 
 	var chunks_queued_this_frame = 0
@@ -1724,6 +1756,7 @@ func _update_chunks_legacy():
 				for y in y_to_load:
 					if chunks_queued_this_frame >= chunks_per_frame_limit:
 						_last_update_loads = chunks_queued_this_frame
+						_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 						return
 
 					var coord = Vector3i(x, y, z)
@@ -1755,6 +1788,7 @@ func _update_chunks_legacy():
 			for coord in _get_all_modification_coords():
 				if chunks_queued_this_frame >= chunks_per_frame_limit:
 					_last_update_loads = chunks_queued_this_frame
+					_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 					return
 				if active_chunks.has(coord):
 					continue
@@ -1790,6 +1824,7 @@ func _update_chunks_legacy():
 						continue
 					if chunks_queued_this_frame >= chunks_per_frame_limit:
 						_last_update_loads = chunks_queued_this_frame
+						_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 						return
 
 					var coord = Vector3i(x, y, z)
@@ -1815,6 +1850,7 @@ func _update_chunks_legacy():
 					chunks_queued_this_frame += 1
 
 	_last_update_loads = chunks_queued_this_frame
+	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 ## Interruptible delay - checks for high-priority tasks every 10ms
 ## Allows player interactions to interrupt chunk loading delays
@@ -1894,9 +1930,19 @@ func _thread_function():
 	_world_map_buildings = []
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
+	var world_map_setup_start_us := 0
 	if world_map_active and world_definition_path != "":
+		world_map_setup_start_us = Time.get_ticks_usec()
 		PrefabGeometry.clear_cache()
-		var loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled)
+		var loaded: Dictionary = {}
+		if not _startup_world_map_data.is_empty():
+			loaded = _startup_world_map_data
+			_startup_world_map_data = {}
+			_last_world_map_load_profile = _startup_world_map_load_profile.duplicate(true)
+		else:
+			var world_map_load_profile: Dictionary = {}
+			loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled, false, world_map_load_profile)
+			_last_world_map_load_profile = world_map_load_profile.duplicate(true)
 
 		if loaded.has("heightmap") and loaded.has("biomes") and loaded.has("roads"):
 			var hmap: Image = loaded.heightmap
@@ -1948,6 +1994,13 @@ func _thread_function():
 		else:
 			push_error("[ChunkManager] World map at %s missing required PNGs" % world_definition_path)
 			world_map_active = false
+	else:
+		_last_world_map_load_profile = {}
+
+	if world_map_setup_start_us != 0:
+		_last_world_map_entry_ms = float(Time.get_ticks_usec() - world_map_setup_start_us) / 1000.0
+	else:
+		_last_world_map_entry_ms = 0.0
 
 	_rebuild_world_map_excavation_buffers(rd)
 
@@ -2767,7 +2820,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		call_deferred("emit_signal", "chunk_generated", coord, data.node_terrain)
 		_check_spawn_zone_readiness(coord)
 
-		var dt = (Time.get_ticks_usec() - start) / 1000.0
+		_last_finalize_terrain_ms = float(Time.get_ticks_usec() - start) / 1000.0
 
 	# REMOVED: final_collision block - handled in worker thread now!
 
@@ -2791,7 +2844,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.density_buffer_water = item.dens
 		data.cpu_density_water = item.cpu_dens
 
-		var dt = (Time.get_ticks_usec() - start) / 1000.0
+		_last_finalize_water_ms = float(Time.get_ticks_usec() - start) / 1000.0
 
 ## Create per-chunk ShaderMaterial with 3D material texture
 func _create_chunk_material(_chunk_pos: Vector3, cpu_mat: PackedByteArray) -> ShaderMaterial:
@@ -2886,6 +2939,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 	if data != null and start_mod_version > 0 and start_mod_version < data.mod_version:
 		return
 
+	var update_start_us := Time.get_ticks_usec()
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 
 	if layer == 0: # Terrain
@@ -2918,6 +2972,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		data.node_water = result_node.node if not result_node.is_empty() else null
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
+	_last_chunk_update_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false, custom_material: Material = null, defer_collision: bool = false) -> Dictionary:
 	if mesh == null:

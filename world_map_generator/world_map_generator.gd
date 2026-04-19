@@ -7,6 +7,7 @@ class_name WorldMapGenerator
 
 const PrefabGeometry = preload("res://world_building_system/prefab_geometry.gd")
 const FoundationSupport = preload("res://world_building_system/foundation_support.gd")
+const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 
 const MAP_SIZE: int = 2048  # 1 pixel = 1 meter
 
@@ -66,6 +67,8 @@ const LAKE_ROAD_BLOCK_THRESHOLD: int = 240
 
 # Progress callback
 var progress_callback: Callable = Callable()
+var last_generation_profile: Dictionary = {}
+var last_save_profile: Dictionary = {}
 
 # Noise instances
 var _height_noise: FastNoiseLite
@@ -108,6 +111,22 @@ func _init_noise() -> void:
 # ============================================================================
 
 func generate_world() -> Dictionary:
+	var generation_start_us := Time.get_ticks_usec()
+	var generation_profile := {
+		"world_seed": world_seed,
+		"map_size": MAP_SIZE,
+		"layout_mode": "grid" if use_grid_roads else "town",
+		"height_biome_ms": 0.0,
+		"layout_ms": 0.0,
+		"lakes_ms": 0.0,
+		"finalize_ms": 0.0,
+		"total_ms": 0.0,
+		"town_count": 0,
+		"road_segment_count": 0,
+		"building_count": 0,
+		"path_segment_count": 0,
+		"terrain_modification_count": 0,
+	}
 	if terrain_height > 15.0:
 		terrain_height = 15.0
 	_init_noise()
@@ -124,8 +143,9 @@ func generate_world() -> Dictionary:
 	water_bytes.resize(total)
 	
 	var max_h = terrain_height * 2.5
-	
+
 	# PASS 1: Height + Biome
+	var height_biome_start_us := Time.get_ticks_usec()
 	if progress_callback.is_valid():
 		progress_callback.call(0.0, "Generating height + biomes")
 	
@@ -146,7 +166,8 @@ func generate_world() -> Dictionary:
 			elif bv > 0.6: biome = MaterialID.SNOW
 			elif bv > 0.2: biome = MaterialID.GRAVEL
 			biome_bytes[idx] = biome
-	
+	generation_profile["height_biome_ms"] = float(Time.get_ticks_usec() - height_biome_start_us) / 1000.0
+
 	# Branch: TOWN mode or GRID mode
 	var buildings: Array = []
 	var towns: Array = []
@@ -161,6 +182,7 @@ func generate_world() -> Dictionary:
 		"rejected_cover": 0
 	}
 	
+	var layout_start_us := Time.get_ticks_usec()
 	if use_grid_roads:
 		# LEGACY GRID MODE
 		_generate_grid_roads(height_bytes, biome_bytes, road_bytes, max_h, half)
@@ -182,13 +204,22 @@ func generate_world() -> Dictionary:
 		_generate_town_buildings(towns, road_segments, path_segments, height_bytes, water_bytes, road_bytes, catalog, max_h, half, buildings, terrain_modifications, bldg_stats)
 		if not path_segments.is_empty():
 			_rasterize_paths(path_segments, height_bytes, biome_bytes, road_bytes, max_h, half)
+	generation_profile["layout_ms"] = float(Time.get_ticks_usec() - layout_start_us) / 1000.0
+	generation_profile["town_count"] = towns.size()
+	generation_profile["road_segment_count"] = road_segments.size()
+	generation_profile["building_count"] = buildings.size()
+	generation_profile["path_segment_count"] = path_segments.size()
+	generation_profile["terrain_modification_count"] = terrain_modifications.size()
 	
 	# PASS: Lakes
+	var lakes_start_us := Time.get_ticks_usec()
 	if progress_callback.is_valid():
 		progress_callback.call(80.0, "Generating lakes")
 	_generate_lakes(water_bytes, road_bytes, height_bytes, half, max_h)
+	generation_profile["lakes_ms"] = float(Time.get_ticks_usec() - lakes_start_us) / 1000.0
 	
 	# PASS: Building footprint map
+	var finalize_start_us := Time.get_ticks_usec()
 	if progress_callback.is_valid():
 		progress_callback.call(95.0, "Finalizing")
 	var building_bytes = PackedByteArray()
@@ -217,16 +248,21 @@ func generate_world() -> Dictionary:
 	var road_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_RG8, road_bytes)
 	var water_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, water_bytes)
 	var building_map = Image.create_from_data(MAP_SIZE, MAP_SIZE, false, Image.FORMAT_R8, building_bytes)
+	generation_profile["finalize_ms"] = float(Time.get_ticks_usec() - finalize_start_us) / 1000.0
 	
 	if progress_callback.is_valid():
 		progress_callback.call(100.0, "Complete")
+	generation_profile["total_ms"] = float(Time.get_ticks_usec() - generation_start_us) / 1000.0
+	last_generation_profile = generation_profile.duplicate(true)
 	
-	return {
+	var result := {
 		"heightmap": heightmap, "biomes": biome_map, "roads": road_map,
 		"water": water_map, "building_map": building_map,
 		"buildings": buildings, "building_stats": bldg_stats, "towns": towns,
-		"terrain_modifications": terrain_modifications
+		"terrain_modifications": terrain_modifications,
+		"generation_profile": generation_profile.duplicate(true)
 	}
+	return result
 
 # ============================================================================
 # TOWN PLACEMENT (Poisson disk)
@@ -2811,35 +2847,79 @@ func _generate_grid_buildings(height_bytes: PackedByteArray, water_bytes: Packed
 # ============================================================================
 
 func save_world(path: String, images: Dictionary) -> bool:
+	var save_start_us := Time.get_ticks_usec()
+	var save_profile := {
+		"world_path": path,
+		"baked_layer_count": 0,
+		"png_write_ms": 0.0,
+		"meta_write_ms": 0.0,
+		"total_ms": 0.0,
+		"success": false
+	}
 	var save_dir := path if path.ends_with("/") else path + "/"
 	var absolute_path := ProjectSettings.globalize_path(save_dir)
 	var mkdir_err := DirAccess.make_dir_recursive_absolute(absolute_path)
 	if mkdir_err != OK:
 		push_error("[WorldMapGen] Failed to create save directory %s (err %d)" % [absolute_path, mkdir_err])
+		save_profile["error"] = "mkdir_failed"
+		save_profile["error_code"] = mkdir_err
+		save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+		last_save_profile = save_profile.duplicate(true)
 		return false
-	for key in images:
-		if images[key] is Image:
-			var png_bytes: PackedByteArray = (images[key] as Image).save_png_to_buffer()
-			if png_bytes.is_empty():
-				push_error("[WorldMapGen] Failed to encode %s" % key)
-				return false
-			var png_path := save_dir.path_join(key + ".png")
-			var png_file = FileAccess.open(png_path, FileAccess.WRITE)
-			if not png_file:
-				push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [png_path, FileAccess.get_open_error()])
-				return false
-			png_file.store_buffer(png_bytes)
-			png_file.close()
+	var baked_image_names := WorldMapData.get_baked_image_names()
+	for key in baked_image_names:
+		if not images.has(key):
+			push_error("[WorldMapGen] Missing required baked image layer %s" % key)
+			save_profile["error"] = "missing_layer"
+			save_profile["missing_layer"] = key
+			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+			last_save_profile = save_profile.duplicate(true)
+			return false
+		if not (images[key] is Image):
+			push_error("[WorldMapGen] Baked layer %s is not an Image" % key)
+			save_profile["error"] = "invalid_layer_type"
+			save_profile["invalid_layer"] = key
+			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+			last_save_profile = save_profile.duplicate(true)
+			return false
+		var layer_start_us := Time.get_ticks_usec()
+		var png_bytes: PackedByteArray = (images[key] as Image).save_png_to_buffer()
+		if png_bytes.is_empty():
+			push_error("[WorldMapGen] Failed to encode %s" % key)
+			save_profile["error"] = "encode_failed"
+			save_profile["failed_layer"] = key
+			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+			last_save_profile = save_profile.duplicate(true)
+			return false
+		var png_path := save_dir.path_join(key + ".png")
+		var png_file = FileAccess.open(png_path, FileAccess.WRITE)
+		if not png_file:
+			push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [png_path, FileAccess.get_open_error()])
+			save_profile["error"] = "open_failed"
+			save_profile["failed_layer"] = key
+			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+			last_save_profile = save_profile.duplicate(true)
+			return false
+		png_file.store_buffer(png_bytes)
+		png_file.close()
+		save_profile["png_write_ms"] = float(save_profile.get("png_write_ms", 0.0)) + float(Time.get_ticks_usec() - layer_start_us) / 1000.0
+		save_profile["baked_layer_count"] = int(save_profile.get("baked_layer_count", 0)) + 1
 	
+	var schema_version := WorldMapData.get_world_meta_schema_version()
 	var meta = {
-		"version": 7, "map_size": MAP_SIZE,
-		"noise_freq": noise_freq, "terrain_height": terrain_height,
+		WorldMapData.get_world_meta_schema_version_key(): schema_version,
+		WorldMapData.get_world_meta_version_key(): schema_version,
+		"map_size": MAP_SIZE,
+		"noise_freq": noise_freq,
+		"terrain_height": terrain_height,
 		"water_level": water_level,
-		"road_spacing": road_spacing, "road_width": road_width,
-		"world_seed": world_seed, "use_grid_roads": use_grid_roads,
+		"road_spacing": road_spacing,
+		"road_width": road_width,
+		"world_seed": world_seed,
+		"use_grid_roads": use_grid_roads,
 		"deep_lakes_enabled": deep_lakes_enabled,
-		"building_placement_schema": "occupied_min_v1",
-		"created": Time.get_datetime_string_from_system()
+		WorldMapData.get_world_meta_building_placement_schema_key(): WorldMapData.get_world_meta_default_building_placement_schema(),
+		"created": Time.get_datetime_string_from_system(),
 	}
 	if images.has("buildings"):
 		meta["buildings"] = images.buildings
@@ -2849,14 +2929,36 @@ func save_world(path: String, images: Dictionary) -> bool:
 		meta["terrain_modifications"] = images.terrain_modifications
 	
 	var meta_path := save_dir.path_join("world_meta.json")
+	var meta_start_us := Time.get_ticks_usec()
 	var file = FileAccess.open(meta_path, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(meta, "\t"))
 		file.close()
 	else:
 		push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [meta_path, FileAccess.get_open_error()])
+		save_profile["error"] = "meta_open_failed"
+		save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+		last_save_profile = save_profile.duplicate(true)
 		return false
+	save_profile["meta_write_ms"] = float(Time.get_ticks_usec() - meta_start_us) / 1000.0
+	save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+	save_profile["success"] = true
+	last_save_profile = save_profile.duplicate(true)
 	return true
+
+func get_telemetry_snapshot() -> Dictionary:
+	return {
+		"world_seed": world_seed,
+		"noise_freq": noise_freq,
+		"terrain_height": terrain_height,
+		"water_level": water_level,
+		"road_spacing": road_spacing,
+		"road_width": road_width,
+		"use_grid_roads": use_grid_roads,
+		"deep_lakes_enabled": deep_lakes_enabled,
+		"last_generation_profile": last_generation_profile.duplicate(true),
+		"last_save_profile": last_save_profile.duplicate(true)
+	}
 
 func _get_available_prefabs() -> Array[String]:
 	var prefabs: Array[String] = []
@@ -2884,36 +2986,4 @@ func _get_available_prefabs() -> Array[String]:
 	return prefabs
 
 static func load_world(path: String) -> Dictionary:
-	var result = {}
-	var expected_formats = {
-		"heightmap": Image.FORMAT_R8,
-		"biomes": Image.FORMAT_R8,
-		"roads": Image.FORMAT_RG8,
-		"water": Image.FORMAT_R8,
-		"building_map": Image.FORMAT_R8
-	}
-	for img_name in ["heightmap", "biomes", "roads", "water", "building_map"]:
-		var fp = path.path_join(img_name + ".png")
-		if not FileAccess.file_exists(fp) and img_name == "water":
-			fp = path.path_join("structures.png")
-		if FileAccess.file_exists(fp):
-			var img = Image.load_from_file(fp)
-			if img:
-				if img.get_format() != expected_formats[img_name]:
-					img.convert(expected_formats[img_name])
-				result[img_name] = img
-	var mp = path.path_join("world_meta.json")
-	if FileAccess.file_exists(mp):
-		var f = FileAccess.open(mp, FileAccess.READ)
-		if f:
-			var j = JSON.new(); j.parse(f.get_as_text())
-			var meta = j.get_data()
-			result["metadata"] = meta
-			if meta.has("buildings"):
-				result["buildings"] = meta.buildings
-			if meta.has("towns"):
-				result["towns"] = meta.towns
-			if meta.has("terrain_modifications"):
-				result["terrain_modifications"] = meta.terrain_modifications
-			f.close()
-	return result
+	return WorldMapData.load_world(path)
