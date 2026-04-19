@@ -14,6 +14,14 @@ Runtime should load baked world data once, keep it in memory, and reuse it for t
 - The cache toggle is optional, enabled by default, and persisted through `SaveManager`.
 - Saving invalidates the cached world entry so edited data does not stay stale.
 
+## Bake Timing
+
+- Baking happens on the editor side, in `world_map_generator`, when the user generates or saves a world definition.
+- The bake produces the PNG layers and `world_meta.json` that runtime reads later.
+- Pressing Play from the generator reuses the baked files; it does not rebake the world during runtime startup.
+- If the user changes the map in the generator and saves again, only the saved bake on disk is replaced.
+- Runtime then loads the baked result into memory and only updates dirty runtime pieces after that.
+
 ## Runtime Behavior
 
 - Runtime does not re-run the full world map generator for every frame or every edit.
@@ -40,6 +48,7 @@ Runtime should load baked world data once, keep it in memory, and reuse it for t
 - Keep the cache toggle optional, but default it to enabled.
 - Prefer shared in-memory world data for runtime consumers when they are read-only.
 - Never rebake the entire world at runtime just because something changed; only rebuild dirty chunks, spawned objects, or other affected runtime data.
+- Treat bake-time generation and runtime dirty-updates as separate phases.
 - Preserve backward compatibility for old world saves and baked map files until the migration window is intentionally closed.
 - Do not move to C++ or shader work until profiling shows the GDScript path is actually the bottleneck.
 - Keep unrelated `PlayerSignals` / `ContainerSignals` cleanup out of this feature track unless it blocks validation.
