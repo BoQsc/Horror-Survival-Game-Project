@@ -72,7 +72,10 @@ var cpu_task_queue: Array[Dictionary] = []
 var cpu_mutex: Mutex
 var cpu_semaphore: Semaphore
 
-# Task Queue (GPU tasks)
+# Task queues (GPU tasks)
+# Priority work stays separate so modifications and spawn requests do not
+# shift large arrays behind background chunk generation.
+var priority_task_queue: Array[Dictionary] = []
 var task_queue: Array[Dictionary] = []
 
 # Batching for synchronized updates
@@ -342,7 +345,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"pending_node_count": pending_nodes.size(),
 		"pending_node_sort_needed": pending_nodes_needs_sort,
 		"pending_batch_count": pending_batches.size(),
-		"task_queue_count": task_queue.size(),
+		"task_queue_count": _get_task_queue_count(),
 		"cpu_task_queue_count": cpu_task_queue.size(),
 		"pending_spawn_zone_count": pending_spawn_zones.size(),
 		"stored_modification_count": stored_modifications.size(),
@@ -410,7 +413,7 @@ func _get_prefab_spawner() -> Node:
 
 func _get_task_queue_count() -> int:
 	mutex.lock()
-	var count := task_queue.size()
+	var count := task_queue.size() + priority_task_queue.size()
 	mutex.unlock()
 	return count
 
@@ -420,6 +423,45 @@ func _get_cpu_task_queue_count() -> int:
 	var count := cpu_task_queue.size()
 	cpu_mutex.unlock()
 	return count
+
+
+func _has_pending_gpu_tasks() -> bool:
+	mutex.lock()
+	var has_tasks := not priority_task_queue.is_empty() or not task_queue.is_empty()
+	mutex.unlock()
+	return has_tasks
+
+
+func _pop_next_gpu_task() -> Dictionary:
+	mutex.lock()
+	var task: Dictionary = {}
+	if not priority_task_queue.is_empty():
+		task = priority_task_queue.pop_back()
+	elif not task_queue.is_empty():
+		task = task_queue.pop_back()
+	mutex.unlock()
+	return task
+
+
+func _clear_gpu_task_queues() -> void:
+	mutex.lock()
+	priority_task_queue.clear()
+	task_queue.clear()
+	mutex.unlock()
+
+
+func _remove_pending_generate_tasks_for_coord(coord: Vector3i) -> void:
+	_remove_pending_generate_tasks_from_queue(priority_task_queue, coord)
+	_remove_pending_generate_tasks_from_queue(task_queue, coord)
+
+
+func _remove_pending_generate_tasks_from_queue(queue: Array[Dictionary], coord: Vector3i) -> void:
+	var i := queue.size() - 1
+	while i >= 0:
+		var t: Dictionary = queue[i]
+		if t.type == "generate" and t.coord == coord:
+			queue.remove_at(i)
+		i -= 1
 
 
 func _capture_terrain_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
@@ -1169,7 +1211,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 	if chunks_to_generate.size() > 0:
 		mutex.lock()
 		for gen_task in chunks_to_generate:
-			task_queue.push_front(gen_task)
+			priority_task_queue.append(gen_task)
 		mutex.unlock()
 		for i in range(chunks_to_generate.size()):
 			semaphore.post()
@@ -1179,13 +1221,13 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 		var batch_count = tasks_to_add.size()
 
 		mutex.lock()
-		# PRIORITY: Insert modifications at FRONT of queue (not back)
-		# This ensures player interactions are instant, not queued behind chunk generation
+		# Priority work stays on a separate queue so we can use simple append/pop
+		# stacks without shifting large arrays.
 		for i in range(tasks_to_add.size() - 1, -1, -1): # Reverse order to maintain sequence
 			var t = tasks_to_add[i]
 			t["batch_id"] = modification_batch_id
 			t["batch_count"] = batch_count
-			task_queue.push_front(t) # Push to front, not append to back
+			priority_task_queue.append(t)
 		mutex.unlock()
 
 		for i in range(batch_count):
@@ -1262,7 +1304,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 	if chunks_to_generate.size() > 0:
 		mutex.lock()
 		for gen_task in chunks_to_generate:
-			task_queue.push_front(gen_task)
+			priority_task_queue.append(gen_task)
 		mutex.unlock()
 		for i in range(chunks_to_generate.size()):
 			semaphore.post()
@@ -1276,7 +1318,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 			var t = tasks_to_add[i]
 			t["batch_id"] = modification_batch_id
 			t["batch_count"] = batch_count
-			task_queue.push_front(t)
+			priority_task_queue.append(t)
 		mutex.unlock()
 
 		for i in range(batch_count):
@@ -1351,7 +1393,7 @@ func _exit_tree():
 		terrain_grid.clear()
 	terrain_grid = null
 	_native_backends_ready = false
-	task_queue.clear()
+	_clear_gpu_task_queues()
 	cpu_task_queue.clear()
 	pending_spawn_zones.clear()
 	pending_batches.clear()
@@ -1439,14 +1481,7 @@ func _unload_chunk(coord: Vector3i):
 	if not active_chunks.has(coord):
 		return
 
-	mutex.lock()
-	var i = task_queue.size() - 1
-	while i >= 0:
-		var t = task_queue[i]
-		if t.type == "generate" and t.coord == coord:
-			task_queue.remove_at(i)
-		i -= 1
-	mutex.unlock()
+	_remove_pending_generate_tasks_for_coord(coord)
 
 	var data = active_chunks[coord]
 	if data:
@@ -1482,9 +1517,7 @@ func _unload_chunk(coord: Vector3i):
 func clear_all_chunks():
 
 	# 1. Clear background task queues immediately
-	mutex.lock()
-	task_queue.clear()
-	mutex.unlock()
+	_clear_gpu_task_queues()
 
 	cpu_mutex.lock()
 	cpu_task_queue.clear()
@@ -1554,14 +1587,7 @@ func _update_chunks_legacy():
 			chunks_to_remove.append(coord)
 
 	for coord in chunks_to_remove:
-		mutex.lock()
-		var i = task_queue.size() - 1
-		while i >= 0:
-			var t = task_queue[i]
-			if t.type == "generate" and t.coord == coord:
-				task_queue.remove_at(i)
-			i -= 1
-		mutex.unlock()
+		_remove_pending_generate_tasks_for_coord(coord)
 
 		var data = active_chunks[coord]
 		if data:
@@ -1720,12 +1746,10 @@ func _update_chunks_legacy():
 func _interruptible_delay(total_ms: int):
 	var elapsed = 0
 	while elapsed < total_ms:
-		# Check if there's any task waiting (player interaction pushed to front)
-		mutex.lock()
-		var has_priority_task = not task_queue.is_empty()
-		mutex.unlock()
+		# Check if any GPU terrain work is waiting; priority tasks should interrupt.
+		var has_pending_gpu_task = _has_pending_gpu_tasks()
 
-		if has_priority_task:
+		if has_pending_gpu_task:
 			return # Stop delaying, process immediately
 
 		# Sleep in small chunks
@@ -1922,10 +1946,9 @@ func _thread_function():
 		# 1. Check for new tasks FIRST (prioritize modifications before completing in-flight work)
 		semaphore.wait()
 
-		mutex.lock()
-		if task_queue.is_empty():
+		var task = _pop_next_gpu_task()
+		if task.is_empty():
 			var should_exit = exit_thread
-			mutex.unlock()
 			# Only complete in-flight when no tasks pending
 			if in_flight.size() > 0:
 				rd.sync()
@@ -1937,9 +1960,6 @@ func _thread_function():
 			if should_exit:
 				break
 			continue
-
-		var task = task_queue.pop_front()
-		mutex.unlock()
 
 		# 2. Handle task types
 		if task.type == "modify":
@@ -2254,7 +2274,7 @@ func _cpu_thread_function():
 				break
 			continue
 
-		var task = cpu_task_queue.pop_front()
+		var task = cpu_task_queue.pop_back()
 		cpu_mutex.unlock()
 
 		# Build terrain mesh and collision (CPU intensive)
@@ -2913,10 +2933,9 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 						"pos": chunk_pos
 					}
 					mutex.lock()
-					task_queue.push_front(task) # Priority: push to front
+					priority_task_queue.append(task)
 					mutex.unlock()
 					semaphore.post()
-
 				pending_coords.append(coord)
 
 	if pending_coords.is_empty():

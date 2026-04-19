@@ -238,11 +238,21 @@ float get_road_info(vec2 pos, float spacing, out float road_height) {
     return min_dist;
 }
 
-float get_density(vec3 pos) {
+void get_procedural_surface(vec3 world_pos, out float terrain_height, out float road_dist, out float road_height) {
+    float base_height = params.terrain_height;
+    float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;
+    terrain_height = base_height + hill_height;
+    road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
+}
+
+float get_density(vec3 pos, out float terrain_height, out float road_dist, out float road_height) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     
     // === WORLD MAP MODE: read height from PNG buffer ===
     if (params.use_world_map > 0.5) {
+        terrain_height = 28.0;
+        road_dist = 1000.0;
+        road_height = 0.0;
         // --- Boundary wall: solid wall at map edges ---
         float edge_margin = 4.0;  // Wall thickness in voxels
         float dist_to_edge_x = min(world_pos.x + params.map_half, params.map_half - world_pos.x);
@@ -265,20 +275,18 @@ float get_density(vec3 pos) {
         float map_height = sample_world_height(world_pos.xz);
         // Clamp height to fit within Y=0 chunk (0-32 voxels).
         map_height = clamp(map_height, 1.0, 28.0);
+        terrain_height = map_height;
+        road_dist = 1000.0;
+        road_height = 0.0;
         return world_pos.y - map_height;
     }
     
     // === PROCEDURAL MODE: compute from noise ===
-    // Base terrain
-    float base_height = params.terrain_height;
-    float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height; 
-    float terrain_height = base_height + hill_height;
+    // Base terrain and road profile are shared with material generation.
+    get_procedural_surface(world_pos, terrain_height, road_dist, road_height);
     float density = world_pos.y - terrain_height;
     
     // Procedural roads - expanded flattened area to accommodate buildings alongside roads
-    float road_height;
-    float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
-    
     // Check if wide shoulders toggle is active (> 0.5)
     bool use_wide_shoulders = params.chunk_offset.w > 0.5;
     
@@ -309,7 +317,7 @@ float get_density(vec3 pos) {
 // 6 = Road (asphalt)
 // 100+ = Player-placed materials
 
-uint get_material(vec3 pos, float terrain_height_at_pos) {
+uint get_material(vec3 pos, float terrain_height_at_pos, float road_dist, float road_height) {
     vec3 world_pos = pos + params.chunk_offset.xyz;
     float depth = terrain_height_at_pos - world_pos.y;
     
@@ -338,8 +346,6 @@ uint get_material(vec3 pos, float terrain_height_at_pos) {
     
     // === PROCEDURAL MODE ===
     // 1. ROADS - on the road surface (height tolerance for voxel grid, tight horizontal bounds)
-    float road_height;
-    float road_dist = get_road_info(world_pos.xz, params.road_spacing, road_height);
     // Tight horizontal bounds (0.5x), relaxed height (2.0) to fill cracks without spillover
     float height_diff = abs(world_pos.y - road_height);
     if (road_dist < params.road_width * 0.5 && height_diff < 2.0) {
@@ -389,23 +395,17 @@ void main() {
 
     uint index = id.x + (id.y * 33) + (id.z * 33 * 33);
     vec3 pos = vec3(id);
-    vec3 world_pos = pos + params.chunk_offset.xyz;
     
-    // Calculate terrain height for material determination
+    // Calculate the shared terrain surface once and feed both density/material generation.
     float terrain_height;
-    if (params.use_world_map > 0.5) {
-        terrain_height = clamp(sample_world_height(world_pos.xz), 1.0, 28.0);
-    } else {
-        float base_height = params.terrain_height;
-        float hill_height = noise(vec3(world_pos.x, 0.0, world_pos.z) * params.noise_freq) * params.terrain_height;
-        terrain_height = base_height + hill_height;
-    }
+    float road_dist;
+    float road_height;
     
     // Material depth is strictly based on the original terrain surface to prevent rectangular stone artifacts around roads
-    float density = get_density(pos);
+    float density = get_density(pos, terrain_height, road_dist, road_height);
     if (params.use_world_map > 0.5 && is_excavated_density_point(id)) {
         density = 10.0;
     }
     density_buffer.values[index] = density;
-    material_buffer.values[index] = get_material(pos, terrain_height);
+    material_buffer.values[index] = get_material(pos, terrain_height, road_dist, road_height);
 }
