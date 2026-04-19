@@ -124,6 +124,21 @@ func _get_positive_env_float(env_name: String, default_value: float) -> float:
 	return parsed_value
 
 
+func _get_positive_env_int(env_name: String, default_value: int) -> int:
+	var raw_value := OS.get_environment(env_name).strip_edges()
+	if raw_value.is_empty():
+		return default_value
+
+	if not raw_value.is_valid_int():
+		return default_value
+
+	var parsed_value := int(raw_value)
+	if parsed_value <= 0:
+		return default_value
+
+	return parsed_value
+
+
 func _emit_scope_state(scope: String, payload: Dictionary) -> void:
 	if scope.is_empty():
 		return
@@ -860,6 +875,17 @@ func _start_game_scene() -> void:
 	if game_root == null:
 		_fail("Failed to instance game scene")
 		return
+
+	var render_distance_override := _get_positive_env_int("TOWN_STALL_RENDER_DISTANCE", -1)
+	if render_distance_override > 0:
+		var terrain_manager_override := game_root.find_child("TerrainManager", true, false)
+		if terrain_manager_override and "render_distance" in terrain_manager_override:
+			terrain_manager_override.render_distance = render_distance_override
+			print("[TOWN_STALL_TEST] Terrain render distance override: %d" % render_distance_override)
+		var building_manager_override := game_root.find_child("BuildingManager", true, false)
+		if building_manager_override and "render_distance" in building_manager_override:
+			building_manager_override.render_distance = render_distance_override
+			print("[TOWN_STALL_TEST] Building render distance override: %d" % render_distance_override)
 
 	# Strip out the old test-only helpers so the harness owns the flow.
 	for node_name in ["DebugTeleporter", "MovementBot"]:

@@ -476,8 +476,10 @@ func _clear_gpu_task_queues() -> void:
 
 
 func _remove_pending_generate_tasks_for_coord(coord: Vector3i) -> void:
+	mutex.lock()
 	_remove_pending_generate_tasks_from_queue(priority_task_queue, coord)
 	_remove_pending_generate_tasks_from_queue(task_queue, coord)
+	mutex.unlock()
 
 
 func _remove_pending_generate_tasks_from_queue(queue: Array[Dictionary], coord: Vector3i) -> void:
