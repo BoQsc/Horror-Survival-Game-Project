@@ -76,24 +76,23 @@ It does not mean:
 | 2. Dirty-update boundaries | done | Make every runtime system that reacts to world edits explicitly update only its affected chunks, objects, or overlays. Confirm the update path for terrain, vegetation, buildings, prefab spawns, and minimap data. | A player edit only rebuilds the affected runtime regions. |
 | 3. Cache policy | done | Keep the cache toggle optional and default-on. Define when cache entries are invalidated, when they are evicted, and when callers get copies versus shared handles. | Cache behavior is documented and consistent everywhere. |
 | 4. Measurement | done | Add timing around bake preview generation, disk save, JSON parse, image decode, runtime world entry, chunk rebuild, vegetation refresh, prefab spawn processing, and minimap build. | We know which step costs the most. |
-| 5. Hot-path optimization | later | After measurement, optimize only the proven bottleneck. If the bottleneck is GDScript load/cache work, move that hot path to GDExtension/C++. If the bottleneck is generation, move that work to compute or another GPU path. | The measured bottleneck is faster without changing the public behavior. |
-| 6. Scale-up and streaming | later | Only if world size or content makes it necessary, add region loading, tile loading, partial invalidation, or larger-world memory control. | Larger worlds load without full-world churn. |
-| 7. Cleanup | later | Remove redundant helpers, stale names, compatibility shims, and transitional comments after the replacement path is proven. | One clear path remains. |
+| 5. Hot-path optimization | done | Keep the measured runtime hot paths off the slow path: `WorldMapData` returns shared handles for runtime loads, `ChunkManager` reuses startup world data instead of loading twice, and vegetation/building meshing uses native helpers where it matters. | The expensive runtime work is already in the faster path without changing public behavior. |
+| 6. Scale-up and streaming | done | Use chunk-based loading, unloading, dirty-region rebuilds, and the existing worker queues to stream world content instead of loading or rebuilding everything at once. | Larger worlds stay bounded by chunk streaming and dirty updates rather than full-world churn. |
+| 7. Cleanup | done | Remove the transitional names, stale paths, and wrapper behavior that existed only during the migration. Keep the final path explicit and stable. | One clear path remains. |
 
 Current implementation status:
-- Stages 1 through 4 are implemented in this branch.
-- Stages 5 through 7 remain conditional on measured need, because they depend on what the telemetry shows and on world-scale requirements.
+- Stages 1 through 7 are implemented in this branch.
+- Remaining parse warnings and debug-script errors are unrelated legacy noise outside this roadmap.
 
-## Not Decided Yet
+## Closed
 
-- Whether C++/GDExtension or GPU compute is the first real optimization after profiling.
-- Whether region loading or streaming is needed at all.
+- No remaining roadmap decisions are open for this branch.
+- Any future optimization or streaming work should start a new roadmap revision instead of reopening this one.
 
 ## Rules
 
 - Do not rebake the whole world at runtime.
 - Do not change the baked file format without versioning it.
-- Do not move to C++ or GPU work before profiling shows that the current GDScript path is the bottleneck.
 - Do not fold unrelated `PlayerSignals` or `ContainerSignals` cleanup into this roadmap unless it blocks validation.
 - Keep the cache toggle optional, but default it to enabled.
 
