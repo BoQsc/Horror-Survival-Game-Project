@@ -1,78 +1,104 @@
 # World Map Caching and Data Roadmap
 
-This document is the single reference for the world map caching and data work.
+This document is the single reference for the world map bake, cache, load, and dirty-update path. It is written to separate confirmed behavior from planned work and from open decisions.
 
-## North Star
+## Terms
 
-Runtime should load baked world data once, keep it in memory, and reuse it for terrain, minimap, building overlays, and save/load handoff. World generation should happen in the editor/bake path, not repeatedly at runtime, and runtime edits should only rebuild the dirty pieces that actually changed.
+- Preview generation: `world_map_generator` creates preview images in memory while the user edits the map.
+- Bake: the generator writes PNG layers and `world_meta.json` to disk when the user saves a world definition.
+- Runtime load: the game scene loads the baked files from disk through `WorldMapData`.
+- Dirty update: only the chunks or runtime systems touched by a change are rebuilt.
+- Cache: the in-memory world data stored by `WorldMapData` for a world path.
 
-## Current State
+## Confirmed in This Branch
 
-- `world_map_generator` is the bake/save side.
-- `WorldMapData` is the shared runtime loader/cache.
-- `chunk_manager`, `hud_minimap`, and the generator UI already use the shared loader.
-- The cache toggle is optional, enabled by default, and persisted through `SaveManager`.
-- Saving invalidates the cached world entry so edited data does not stay stale.
+| File | Confirmed role |
+|---|---|
+| `world_map_generator/world_map_generator_ui.gd` | Generator UI. Handles edit preview, save, and play handoff. Invalidates stale world cache after save. |
+| `world_map_generator/world_map_generator.gd` | Bake engine. Generates and writes the baked PNG layers and `world_meta.json`. |
+| `world_map_data/world_map_data.gd` | Runtime loader/cache. Loads baked files, keeps an LRU cache, and supports enable/disable plus invalidation. |
+| `world_marching_cubes/chunk_manager.gd` | Runtime terrain owner. Reads the baked world path, loads the data through `WorldMapData`, and rebuilds dirty terrain state. |
+| `modules/world_player_v2/features/ui_hud/hud_minimap.gd` | Minimap consumer. Loads the same baked world data for map display. |
+| `save_manager/save_manager_v2.gd` | Persists the pending world path and the cache toggle across scene changes and save/load. |
+| `world_building_system/prefab_spawner.gd` | Runtime building/prefab spawn behavior. Uses baked world data when world map mode is active. |
+| `world_vegetation/vegetation_manager.gd` | Runtime vegetation refresh. Reacts to chunk changes instead of rebaking the world. |
 
-## Bake Timing
+## Explicit Bake Timing
 
-- Baking happens on the editor side, in `world_map_generator`, when the user generates or saves a world definition.
-- The bake produces the PNG layers and `world_meta.json` that runtime reads later.
-- Pressing Play from the generator reuses the baked files; it does not rebake the world during runtime startup.
-- If the user changes the map in the generator and saves again, only the saved bake on disk is replaced.
-- Runtime then loads the baked result into memory and only updates dirty runtime pieces after that.
+1. The user edits the map in the generator UI.
+2. If the user presses Generate, the generator updates preview data in memory.
+3. If the user presses Save, the generator writes the baked PNG layers and `world_meta.json` to the world folder.
+4. The generator invalidates the cached entry for that world path after save.
+5. If the user presses Play, the generator saves first, stores `pending_world_definition_path` in `SaveManager`, and changes to the game scene.
+6. On runtime startup, `chunk_manager` reads the pending path, applies the cache toggle, and loads the baked files through `WorldMapData`.
+7. While the world is active, edits are handled as dirty runtime updates.
+8. If the user saves a new bake or switches worlds, the old cache entry is invalidated and the new baked files are loaded.
 
-## Runtime Behavior
+## Explicit Runtime Contract
 
-- Runtime does not re-run the full world map generator for every frame or every edit.
-- The loaded baked map stays in memory and is reused while the world is active.
-- Player terrain edits should only mark affected chunks as dirty and rebuild those chunk meshes, physics, vegetation, and related runtime data.
-- World-map-mode building and prefab work should update only the affected spawn jobs or cached overlays, not rebake the whole map.
-- Switching worlds or saving a new bake invalidates the cached world entry and reloads the new data, but it still does not trigger a runtime rebake of the entire world.
+- The runtime does not rerun the full world generator on every frame.
+- The runtime does not rebake the entire world map just because a player changed something.
+- Player terrain edits only mark affected chunks dirty and rebuild those chunks and their dependent runtime data.
+- Runtime systems that depend on changed terrain or buildings update only the affected region or queue.
+- The baked world files stay on disk; the runtime loads them into memory and reuses them while the world is active.
+- Cache behavior is optional, but the default is enabled.
+- Current cache behavior returns duplicated data by default so callers do not accidentally mutate cached originals.
+- `WorldMapData` currently keeps a small LRU cache of four world entries.
+- If `water.png` is missing, the loader falls back to `structures.png`.
+- If `world_meta.json` is malformed, the loader ignores the metadata instead of crashing.
 
-## What We Still Need To Work On
+## What "Changed Stuff" Means at Runtime
 
-| Stage | Goal | Work Items | Done When |
+When we say "only changed stuff gets updated", we mean:
+
+- Terrain chunks touched by a dig, fill, or terrain edit.
+- Chunk meshes, physics bodies, and collision data for those chunks.
+- Vegetation that lives on or near modified chunks.
+- Prefab and building spawn state that belongs to the changed world region.
+- Minimap overlays that reflect the changed world data.
+- Any save data that records runtime changes.
+
+It does not mean:
+
+- Recreating the full baked world map.
+- Rerunning the entire generator.
+- Reloading the whole game scene just because one chunk changed.
+
+## Roadmap
+
+| Stage | Status | What we will do | Exit criteria |
 |---|---|---|---|
-| 1. Canonical data contract | Make the baked world format explicit and stable | Lock layer names, metadata keys, and legacy aliases; add versioning to `world_meta.json`; document read-only vs mutable data | Old and new worlds load through the same API without guesswork |
-| 2. Zero-churn runtime loads | Avoid unnecessary copies after the first load | Let runtime consumers opt into shared read-only handles instead of duplicated images; keep invalidation on save and world switch | Runtime enters a world without rereading or re-decoding map files |
-| 3. Cache policy | Make caching behavior predictable | Keep default on; expose the toggle in UI/settings; define LRU/eviction and cache clear rules; add cache telemetry | Cache can be turned on/off without stale data or hidden state |
-| 4. Measurement | Know where the real cost is | Add timing around decode, JSON parse, texture creation, minimap build, and world entry | We can point to actual bottlenecks before moving to native or shader work |
-| 5. Native acceleration | Move the expensive hot path out of GDScript if needed | Port only measured hotspots to GDExtension/C++; keep the public API stable | GDScript stops being the bottleneck for the measured hot path |
-| 6. GPU generation | Use shaders where they are the best fit | Move terrain/biome/road generation to compute if profiling says it matters; keep save/load orchestration on CPU | World bake time drops materially and stays deterministic |
-| 7. Scale-up | Support larger worlds or more complex streaming | Add region or tile loading, partial invalidation, and bigger-world memory control if needed | We can grow without forcing full-map reloads |
-| 8. Cleanup | Remove transitional code only after the new path is proven | Delete redundant helpers, stale aliases, and old comments/docs once the new path is stable | The codebase has one obvious path instead of several overlapping ones |
+| 0. Current baseline | done | Keep the current branch wiring: generator UI, bake engine, `WorldMapData` loader/cache, chunk manager runtime loading, minimap consumer, and persisted cache toggle. | The current code path stays intact and documented. |
+| 1. Data contract | next | Lock the baked file names, layer names, metadata keys, and compatibility rules into one explicit contract. Keep legacy alias handling documented, including the current water fallback. | Old and new baked worlds load through the same documented schema. |
+| 2. Dirty-update boundaries | next | Make every runtime system that reacts to world edits explicitly update only its affected chunks, objects, or overlays. Confirm the update path for terrain, vegetation, buildings, prefab spawns, and minimap data. | A player edit only rebuilds the affected runtime regions. |
+| 3. Cache policy | next | Keep the cache toggle optional and default-on. Define when cache entries are invalidated, when they are evicted, and when callers get copies versus shared handles. | Cache behavior is documented and consistent everywhere. |
+| 4. Measurement | next | Add timing around bake preview generation, disk save, JSON parse, image decode, runtime world entry, chunk rebuild, vegetation refresh, prefab spawn processing, and minimap build. | We know which step costs the most. |
+| 5. Hot-path optimization | later | After measurement, optimize only the proven bottleneck. If the bottleneck is GDScript load/cache work, move that hot path to GDExtension/C++. If the bottleneck is generation, move that work to compute or another GPU path. | The measured bottleneck is faster without changing the public behavior. |
+| 6. Scale-up and streaming | later | Only if world size or content makes it necessary, add region loading, tile loading, partial invalidation, or larger-world memory control. | Larger worlds load without full-world churn. |
+| 7. Cleanup | later | Remove redundant helpers, stale names, compatibility shims, and transitional comments after the replacement path is proven. | One clear path remains. |
 
-## Working Rules
+## Not Decided Yet
 
+- Whether runtime consumers should keep duplicated read-only data or switch some paths to shared read-only handles.
+- Whether C++/GDExtension or GPU compute is the first real optimization after profiling.
+- Whether region loading or streaming is needed at all.
+
+## Rules
+
+- Do not rebake the whole world at runtime.
+- Do not change the baked file format without versioning it.
+- Do not move to C++ or GPU work before profiling shows that the current GDScript path is the bottleneck.
+- Do not fold unrelated `PlayerSignals` or `ContainerSignals` cleanup into this roadmap unless it blocks validation.
 - Keep the cache toggle optional, but default it to enabled.
-- Prefer shared in-memory world data for runtime consumers when they are read-only.
-- Never rebake the entire world at runtime just because something changed; only rebuild dirty chunks, spawned objects, or other affected runtime data.
-- Treat bake-time generation and runtime dirty-updates as separate phases.
-- Preserve backward compatibility for old world saves and baked map files until the migration window is intentionally closed.
-- Do not move to C++ or shader work until profiling shows the GDScript path is actually the bottleneck.
-- Keep unrelated `PlayerSignals` / `ContainerSignals` cleanup out of this feature track unless it blocks validation.
 
-## Validation Rule
+## Validation For Each Stage
 
-Each stage should land as a small change with validation attached:
+Every stage should include:
 
-- syntax / parse scan
-- runtime smoke check
-- targeted world-load check for the touched files
-
-## Status Markers
-
-- `done` means the code is already in the branch.
-- `next` means we should work on it soon.
-- `later` means it matters, but only after the current path is stable.
+- syntax and parse checks
+- a runtime smoke check
+- a targeted load test for the touched files
 
 ## Short Version
 
-The immediate path is:
-
-1. Stabilize the baked data contract.
-2. Remove unnecessary copies in runtime loads.
-3. Measure the actual cost.
-4. Decide whether C++ or GPU work is worth it.
-5. Stream or scale only if the world size justifies it.
+Bake in the generator. Save the baked files to disk. Load the baked files at runtime. Rebuild only the dirty runtime pieces that changed. Measure before optimizing. Move to C++ or GPU only if profiling says it is worth it.
