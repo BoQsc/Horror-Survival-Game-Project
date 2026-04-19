@@ -4,7 +4,7 @@ This document is the single reference for the world map caching and data work.
 
 ## North Star
 
-Runtime should load baked world data once, keep it in memory, and reuse it for terrain, minimap, building overlays, and save/load handoff. World generation should happen in the editor/bake path, not repeatedly at runtime.
+Runtime should load baked world data once, keep it in memory, and reuse it for terrain, minimap, building overlays, and save/load handoff. World generation should happen in the editor/bake path, not repeatedly at runtime, and runtime edits should only rebuild the dirty pieces that actually changed.
 
 ## Current State
 
@@ -13,6 +13,14 @@ Runtime should load baked world data once, keep it in memory, and reuse it for t
 - `chunk_manager`, `hud_minimap`, and the generator UI already use the shared loader.
 - The cache toggle is optional, enabled by default, and persisted through `SaveManager`.
 - Saving invalidates the cached world entry so edited data does not stay stale.
+
+## Runtime Behavior
+
+- Runtime does not re-run the full world map generator for every frame or every edit.
+- The loaded baked map stays in memory and is reused while the world is active.
+- Player terrain edits should only mark affected chunks as dirty and rebuild those chunk meshes, physics, vegetation, and related runtime data.
+- World-map-mode building and prefab work should update only the affected spawn jobs or cached overlays, not rebake the whole map.
+- Switching worlds or saving a new bake invalidates the cached world entry and reloads the new data, but it still does not trigger a runtime rebake of the entire world.
 
 ## What We Still Need To Work On
 
@@ -31,6 +39,7 @@ Runtime should load baked world data once, keep it in memory, and reuse it for t
 
 - Keep the cache toggle optional, but default it to enabled.
 - Prefer shared in-memory world data for runtime consumers when they are read-only.
+- Never rebake the entire world at runtime just because something changed; only rebuild dirty chunks, spawned objects, or other affected runtime data.
 - Preserve backward compatibility for old world saves and baked map files until the migration window is intentionally closed.
 - Do not move to C++ or shader work until profiling shows the GDScript path is actually the bottleneck.
 - Keep unrelated `PlayerSignals` / `ContainerSignals` cleanup out of this feature track unless it blocks validation.
