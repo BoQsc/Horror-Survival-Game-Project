@@ -29,6 +29,7 @@ var disable_buildings_for_test: bool = false
 var pending_world_definition_path: String = ""
 var pending_world_map_data_cache_enabled: bool = true
 var pending_world_building_bake_enabled: bool = true
+var pending_world_building_bake_preload_enabled: bool = false
 var _pending_world_building_bake_load: bool = false
 
 # V2: New player system references
@@ -966,7 +967,10 @@ func _load_world_definition_path(path: String):
 			chunk_manager.world_map_active = false
 	if building_manager:
 		if path != "" and _get_world_building_bake_enabled() and building_manager.has_method("load_baked_buildings_from_manifest"):
-			var loaded_bake: bool = building_manager.load_baked_buildings_from_manifest(path)
+			var eager_load_buildings := _get_world_building_bake_preload_enabled()
+			if eager_load_buildings:
+				_show_loading_screen()
+			var loaded_bake: bool = building_manager.load_baked_buildings_from_manifest(path, true, eager_load_buildings)
 			if not loaded_bake and building_manager.has_method("clear_all_building_chunks"):
 				building_manager.clear_all_building_chunks()
 			_pending_world_building_bake_load = false
@@ -1161,6 +1165,7 @@ func _get_game_settings_data() -> Dictionary:
 		"autosave_enabled": autosave_enabled,
 		"autosave_interval": autosave_interval_seconds,
 		"world_map_data_cache_enabled": _get_world_map_data_cache_enabled(),
+		"world_building_bake_preload_enabled": _get_world_building_bake_preload_enabled(),
 		"time_of_day": 0.5, # Placeholder for TimeManager
 		"weather": "clear", # Placeholder for WeatherManager
 		"difficulty": "normal"
@@ -1178,6 +1183,8 @@ func _load_game_settings_data(data: Dictionary):
 		_setup_autosave() # Re-apply interval
 	if data.has("world_map_data_cache_enabled"):
 		_apply_world_map_data_cache_enabled(bool(data.world_map_data_cache_enabled))
+	if data.has("world_building_bake_preload_enabled"):
+		_apply_world_building_bake_preload_enabled(bool(data.world_building_bake_preload_enabled))
 	
 	# Restore time/weather once those systems exist
 
@@ -1192,6 +1199,12 @@ func set_world_building_bake_enabled(enabled: bool) -> void:
 
 func get_world_building_bake_enabled() -> bool:
 	return _get_world_building_bake_enabled()
+
+func set_world_building_bake_preload_enabled(enabled: bool) -> void:
+	_apply_world_building_bake_preload_enabled(enabled)
+
+func get_world_building_bake_preload_enabled() -> bool:
+	return _get_world_building_bake_preload_enabled()
 
 func _apply_world_map_data_cache_enabled(enabled: bool) -> void:
 	pending_world_map_data_cache_enabled = enabled
@@ -1209,6 +1222,12 @@ func _apply_world_building_bake_enabled(enabled: bool) -> void:
 
 func _get_world_building_bake_enabled() -> bool:
 	return pending_world_building_bake_enabled
+
+func _apply_world_building_bake_preload_enabled(enabled: bool) -> void:
+	pending_world_building_bake_preload_enabled = enabled
+
+func _get_world_building_bake_preload_enabled() -> bool:
+	return pending_world_building_bake_preload_enabled
 
 func _maybe_load_pending_world_building_bake() -> void:
 	if not _pending_world_building_bake_load:

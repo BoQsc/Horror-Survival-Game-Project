@@ -56,6 +56,7 @@ var building_stats_label: Label = null
 var legend_container: VBoxContainer = null
 var road_mode_toggle: CheckBox = null  # false=Town, true=Grid
 var deep_lakes_toggle: CheckBox = null
+var preload_buildings_toggle: CheckBox = null
 
 func _ready() -> void:
 	seed_input.value = 12345
@@ -110,6 +111,25 @@ func _ready() -> void:
 	lake_mode_row.add_child(deep_lakes_toggle)
 	vbox.add_child(lake_mode_row)
 	vbox.move_child(lake_mode_row, idx + 1)
+
+	var preload_row = HBoxContainer.new()
+	var preload_label = Label.new()
+	preload_label.text = "Building Load"
+	preload_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	preload_row.add_child(preload_label)
+	preload_buildings_toggle = CheckBox.new()
+	preload_buildings_toggle.text = "Preload on Play"
+	preload_buildings_toggle.tooltip_text = "On = load baked building snapshots before gameplay begins using the loading screen"
+	preload_buildings_toggle.button_pressed = false
+	preload_row.add_child(preload_buildings_toggle)
+	vbox.add_child(preload_row)
+	vbox.move_child(preload_row, idx + 2)
+
+	var save_mgr = get_tree().get_first_node_in_group("save_manager")
+	if not save_mgr and has_node("/root/SaveManager"):
+		save_mgr = get_node("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_world_building_bake_preload_enabled"):
+		preload_buildings_toggle.button_pressed = save_mgr.get_world_building_bake_preload_enabled()
 	
 	# Scan for existing worlds on startup
 	_refresh_world_list()
@@ -382,6 +402,11 @@ func _on_save_pressed() -> bool:
 		progress_label.text = "Baking building snapshots..."
 		var bake_success := await _bake_world_buildings(save_path)
 		WorldMapData.invalidate_world(save_path)
+		var save_mgr = get_tree().get_first_node_in_group("save_manager")
+		if not save_mgr and has_node("/root/SaveManager"):
+			save_mgr = get_node("/root/SaveManager")
+		if save_mgr and save_mgr.has_method("set_world_building_bake_preload_enabled"):
+			save_mgr.set_world_building_bake_preload_enabled(preload_buildings_toggle.button_pressed if preload_buildings_toggle else false)
 		progress_label.text = "Saved: %s" % world_name if bake_success else "Saved (bake failed): %s" % world_name
 		_refresh_world_list()  # Update list to show new world
 		return bake_success
@@ -435,6 +460,12 @@ func _on_play_pressed() -> void:
 	if not saved_ok:
 		progress_label.text = "ERROR: Save or bake failed"
 		return
+
+	var save_mgr = get_tree().get_first_node_in_group("save_manager")
+	if not save_mgr and has_node("/root/SaveManager"):
+		save_mgr = get_node("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("set_world_building_bake_preload_enabled"):
+		save_mgr.set_world_building_bake_preload_enabled(preload_buildings_toggle.button_pressed if preload_buildings_toggle else false)
 	
 	# Set the path on SaveManager autoload (persists across scene changes)
 	var sm = get_node_or_null("/root/SaveManager")

@@ -552,6 +552,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"baked_buildings_world_path": baked_buildings_world_path,
 		"cached_baked_snapshot_count": baked_building_snapshot_cache.size(),
 		"loaded_baked_chunk_count": baked_building_loaded_chunk_keys.size(),
+		"baked_buildings_fully_loaded": is_baked_buildings_fully_loaded(),
 		"baked_building_load_profile": {
 			"mode": _last_baked_building_load_mode,
 			"load_ms": _last_baked_building_load_ms,
@@ -742,6 +743,13 @@ func has_pending_visual_batch_work() -> bool:
 func has_baked_buildings_loaded() -> bool:
 	return baked_buildings_loaded
 
+func is_baked_buildings_fully_loaded() -> bool:
+	if not baked_buildings_loaded:
+		return false
+	if baked_building_manifest_index.is_empty():
+		return false
+	return baked_building_loaded_chunk_keys.size() >= baked_building_manifest_index.size()
+
 func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool = true, eager_load_chunks: bool = false) -> bool:
 	var manifest_path := world_path.path_join("baked_buildings/manifest.json")
 	if not FileAccess.file_exists(manifest_path):
@@ -821,7 +829,7 @@ func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool
 
 	_last_baked_building_load_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 	_last_baked_building_load_chunks = baked_building_loaded_chunk_keys.size() if eager_load_chunks else loaded_chunk_count
-	_last_baked_building_load_mode = "manifest_loaded" if baked_buildings_loaded else "manifest_empty"
+	_last_baked_building_load_mode = "manifest_loaded_eager" if eager_load_chunks and baked_buildings_loaded else ("manifest_loaded" if baked_buildings_loaded else "manifest_empty")
 	if eager_load_chunks and baked_buildings_loaded and has_pending_visual_batch_work():
 		flush_global_visual_batches()
 	return baked_buildings_loaded

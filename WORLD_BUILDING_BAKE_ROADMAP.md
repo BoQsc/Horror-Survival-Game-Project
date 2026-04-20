@@ -15,12 +15,14 @@ Dirty chunks should be rebaked locally, not force nearby chunks to rebuild.
 ## Confirmed Implementation
 
 - `world_map_generator/world_map_generator_ui.gd` bakes building snapshots after world save.
+- `world_map_generator/world_map_generator_ui.gd` also exposes a preload-on-play toggle for new worlds.
 - `addons/tests/town_stall_test_harness.gd` bakes the same way for automated proof runs.
 - `world_building_system/building_bake_service.gd` creates the bake tree and writes the manifest plus `chunk_*.tres` snapshots.
 - `world_building_system/building_manager.gd` loads baked building manifests, lazily loads chunk snapshots, and tracks dirty chunks.
 - `world_building_system/building_chunk.gd` stores the loaded snapshot state and restores mesh, collision, and object state from a snapshot.
 - `world_building_system/prefab_spawner.gd` uses baked chunks in world-map mode and only falls back if a baked chunk is missing.
 - `save_manager/save_manager_v2.gd` persists the building-bake toggle and exports dirty baked chunks on world save.
+- `save_manager/save_manager_v2.gd` also supports an optional preload mode that eagerly loads baked building chunks behind the loading screen at game start.
 - `world_building_system/building_mesher.gd` still handles runtime meshing for fallback and dirty rebuilds, but it is no longer the roadmap goal.
 
 ## Exact Runtime Flow
@@ -28,11 +30,12 @@ Dirty chunks should be rebaked locally, not force nearby chunks to rebuild.
 1. The generator or the town-stall harness saves the world definition.
 2. The same flow bakes building snapshots into `baked_buildings/manifest.json` and `chunk_*.tres` files.
 3. `SaveManager` loads the baked building manifest when a world path is set.
-4. `BuildingManager` keeps the manifest in memory and loads a chunk snapshot only when that chunk is actually needed.
-5. `PrefabSpawner` spawns from the baked chunk if the snapshot exists.
-6. If the snapshot is missing, the code falls back to the runtime building path for that chunk.
-7. Dirty building changes update the runtime chunk view immediately through the normal dirty-chunk flush path.
-8. Dirty baked artifacts on disk are updated through save-time dirty export.
+4. If preload mode is enabled from the generator UI, HUD, or save settings, `SaveManager` shows the loading screen earlier and asks `BuildingManager` to eagerly load the baked building snapshots before gameplay begins.
+5. Otherwise `BuildingManager` keeps the manifest in memory and loads a chunk snapshot only when that chunk is actually needed.
+6. `PrefabSpawner` spawns from the baked chunk if the snapshot exists.
+7. If the snapshot is missing, the code falls back to the runtime building path for that chunk.
+8. Dirty building changes update the runtime chunk view immediately through the normal dirty-chunk flush path.
+9. Dirty baked artifacts on disk are updated through save-time dirty export.
 
 ## Terms
 
@@ -71,6 +74,10 @@ The repeat-entry benchmark showed a measurable improvement from the baked path:
   - `town_entry_window.avg_draw_calls = 1790.0420912716`
   - `town_entry_window.avg_objects = 2692.37483385024`
   - `building_manager.baked_building_load_profile = { mode = "none", load_ms = 0.0, loaded_chunks = 0, manifest_chunks = 0 }`
+- Preload on Play: `snapshot_menu_2026-04-20_09-36-43.json`
+  - `building_manager.baked_building_load_profile = { mode = "manifest_loaded_eager", load_ms = 4866.172, loaded_chunks = 758, manifest_chunks = 758 }`
+  - `building_manager.baked_buildings_fully_loaded = true`
+  - `building_manager.loaded_baked_chunk_count = 758`
 
 That is the building-bake gain this roadmap was after.
 

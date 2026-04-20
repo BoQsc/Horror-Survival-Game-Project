@@ -489,11 +489,14 @@ func _ensure_baked_buildings_loaded() -> bool:
 	var save_manager := get_node_or_null("/root/SaveManager")
 	if save_manager and "pending_world_building_bake_enabled" in save_manager and not bool(save_manager.pending_world_building_bake_enabled):
 		return false
+	var eager_load_buildings := false
+	if save_manager and save_manager.has_method("get_world_building_bake_preload_enabled"):
+		eager_load_buildings = save_manager.get_world_building_bake_preload_enabled()
 	var world_path := str(terrain_manager.world_definition_path) if "world_definition_path" in terrain_manager else ""
 	if world_path.is_empty():
 		return false
 	if building_manager.has_method("load_baked_buildings_from_manifest"):
-		return building_manager.load_baked_buildings_from_manifest(world_path)
+		return building_manager.load_baked_buildings_from_manifest(world_path, true, eager_load_buildings)
 	return false
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
