@@ -2,6 +2,8 @@ extends Node
 
 const WorldMapGenScript := preload("res://world_map_generator/world_map_generator.gd")
 const GameScene: PackedScene = preload("res://modules/world_module/world_test_world_player_v2.tscn")
+const BuildingBakeService := preload("res://world_building_system/building_bake_service.gd")
+const WorldMapData := preload("res://world_map_data/world_map_data.gd")
 const SAVE_BASE := "user://worlds/"
 const TELEPORT_MIN_DISTANCE := 200.0
 const TELEPORT_HEIGHT_OFFSET := 8.0
@@ -64,6 +66,7 @@ var disable_building_chunk_flush_enabled: bool = false
 var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
 var disable_entities_enabled: bool = false
+var disable_building_bake_enabled: bool = false
 var repeat_entry_enabled: bool = false
 var configured_hold_seconds: float = HOLD_SECONDS
 var fly_stage: int = 0
@@ -739,6 +742,7 @@ func _ready() -> void:
 	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
 	disable_entities_enabled = OS.get_environment("TOWN_STALL_DISABLE_ENTITIES") == "1"
+	disable_building_bake_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_BAKE") == "1"
 	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	print("[TOWN_STALL_TEST] Harness starting")
@@ -754,6 +758,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable building bake: %s" % ("ON" if disable_building_bake_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
 	_emit_scope_state("town_stall_test", {
@@ -766,12 +771,13 @@ func _ready() -> void:
 		"disable_building_visual_batches": disable_building_visual_batches_enabled,
 		"disable_building_carve": disable_building_carve_enabled,
 		"disable_building_object_collisions": disable_building_object_collisions_enabled,
-		"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
-		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
-		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
-		"disable_entities": disable_entities_enabled,
-		"repeat_entry": repeat_entry_enabled,
-		"hold_seconds": configured_hold_seconds
+	"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
+	"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
+	"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
+	"disable_entities": disable_entities_enabled,
+	"disable_building_bake": disable_building_bake_enabled,
+	"repeat_entry": repeat_entry_enabled,
+	"hold_seconds": configured_hold_seconds
 	})
 	_begin_generation()
 
@@ -844,6 +850,25 @@ func _on_world_generated(images: Dictionary) -> void:
 		_fail("Failed to save generated world to %s" % generated_world_path)
 		return
 
+	if not disable_building_bake_enabled:
+		var bake_service := BuildingBakeService.new()
+		var buildings: Array = generated_images.get("buildings", [])
+		var bake_success := await bake_service.bake_world_buildings(
+			self,
+			generated_world_path,
+			buildings,
+			generated_images.get("building_map", null),
+			int(generated_seed),
+			float(world_generator.road_spacing),
+			float(world_generator.terrain_height),
+			float(world_generator.water_level),
+			float(world_generator.road_width)
+		)
+		if not bake_success:
+			_fail("Failed to bake buildings to %s" % generated_world_path)
+			return
+		WorldMapData.invalidate_world(generated_world_path)
+
 	selected_town = _select_town(generated_towns)
 	if selected_town.is_empty():
 		_fail("No suitable town found in generated world")
@@ -903,7 +928,9 @@ func _start_game_scene() -> void:
 	if disable_buildings_enabled and ("disable_buildings_for_test" in save_manager):
 		save_manager.disable_buildings_for_test = true
 		_apply_buildings_toggle()
-	elif disable_building_objects_enabled:
+	if disable_building_bake_enabled and save_manager and save_manager.has_method("set_world_building_bake_enabled"):
+		save_manager.set_world_building_bake_enabled(false)
+	if disable_building_objects_enabled:
 		_apply_building_objects_toggle()
 	elif disable_building_blocks_enabled:
 		_apply_building_blocks_toggle()

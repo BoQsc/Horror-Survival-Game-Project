@@ -28,6 +28,8 @@ var disable_buildings_for_test: bool = false
 # World Map Generator integration: set before scene change, consumed by chunk_manager on _ready
 var pending_world_definition_path: String = ""
 var pending_world_map_data_cache_enabled: bool = true
+var pending_world_building_bake_enabled: bool = true
+var _pending_world_building_bake_load: bool = false
 
 # V2: New player system references
 var player_inventory: Node = null
@@ -180,6 +182,7 @@ func _find_managers():
 	# Get container registry
 	container_registry = get_node_or_null("/root/ContainerRegistry")
 
+	_apply_world_building_bake_enabled(OS.get_environment("TOWN_STALL_DISABLE_BUILDING_BAKE") != "1")
 	_apply_world_map_data_cache_enabled(pending_world_map_data_cache_enabled)
 	
 
@@ -223,6 +226,8 @@ func _process(_delta):
 	# Only clear _is_saving when ALL threads are done
 	if _save_threads.is_empty():
 		_is_saving = false
+	if _pending_world_building_bake_load:
+		_maybe_load_pending_world_building_bake()
 
 ## Quick save to default slot
 func quick_save():
@@ -247,6 +252,10 @@ func save_game(path: String) -> bool:
 		return false
 	
 	_is_saving = true
+	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
+		var world_path := _get_world_definition_path()
+		if world_path != "" and building_manager and building_manager.has_method("export_dirty_baked_buildings"):
+			building_manager.export_dirty_baked_buildings(world_path)
 	
 	var save_data = _gather_save_data()
 	
@@ -288,7 +297,7 @@ func _gather_save_data() -> Dictionary:
 		"world_definition_path": _get_world_definition_path(),
 		"player": _get_player_data(),
 		"terrain_modifications": _get_terrain_data(),
-		"buildings": {} if world_map_mode or disable_buildings_for_test else _get_building_data(),
+		"buildings": {} if disable_buildings_for_test else _get_building_data(),
 		"vegetation": _get_vegetation_data(),
 		"roads": _get_road_data(),
 		"prefabs": {} if world_map_mode or disable_buildings_for_test else _get_prefab_data(),
@@ -711,6 +720,8 @@ func _get_building_data() -> Dictionary:
 	if disable_buildings_for_test or not building_manager:
 		return {}
 	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
+		if building_manager.has_method("get_dirty_building_data"):
+			return building_manager.get_dirty_building_data()
 		return {}
 	
 	if not "chunks" in building_manager:
@@ -872,8 +883,6 @@ func _load_terrain_data(data: Dictionary):
 func _load_building_data(data: Dictionary):
 	if disable_buildings_for_test or data.is_empty() or not building_manager:
 		return
-	if chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active:
-		return
 	
 	if not "chunks" in building_manager:
 		return
@@ -955,6 +964,19 @@ func _load_world_definition_path(path: String):
 				chunk_manager.world_map_max_height = chunk_manager.terrain_height * 2.5
 		else:
 			chunk_manager.world_map_active = false
+	if building_manager:
+		if path != "" and _get_world_building_bake_enabled() and building_manager.has_method("load_baked_buildings_from_manifest"):
+			var loaded_bake: bool = building_manager.load_baked_buildings_from_manifest(path)
+			if not loaded_bake and building_manager.has_method("clear_all_building_chunks"):
+				building_manager.clear_all_building_chunks()
+			_pending_world_building_bake_load = false
+		elif building_manager.has_method("clear_all_building_chunks"):
+			building_manager.clear_all_building_chunks()
+			_pending_world_building_bake_load = false
+	elif path != "" and _get_world_building_bake_enabled():
+		_pending_world_building_bake_load = true
+	else:
+		_pending_world_building_bake_load = false
 
 func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:
@@ -1165,6 +1187,12 @@ func set_world_map_data_cache_enabled(enabled: bool) -> void:
 func get_world_map_data_cache_enabled() -> bool:
 	return _get_world_map_data_cache_enabled()
 
+func set_world_building_bake_enabled(enabled: bool) -> void:
+	_apply_world_building_bake_enabled(enabled)
+
+func get_world_building_bake_enabled() -> bool:
+	return _get_world_building_bake_enabled()
+
 func _apply_world_map_data_cache_enabled(enabled: bool) -> void:
 	pending_world_map_data_cache_enabled = enabled
 	WorldMapData.set_cache_enabled(enabled)
@@ -1175,6 +1203,24 @@ func _get_world_map_data_cache_enabled() -> bool:
 	if chunk_manager and "world_map_data_cache_enabled" in chunk_manager:
 		return chunk_manager.world_map_data_cache_enabled
 	return pending_world_map_data_cache_enabled
+
+func _apply_world_building_bake_enabled(enabled: bool) -> void:
+	pending_world_building_bake_enabled = enabled
+
+func _get_world_building_bake_enabled() -> bool:
+	return pending_world_building_bake_enabled
+
+func _maybe_load_pending_world_building_bake() -> void:
+	if not _pending_world_building_bake_load:
+		return
+	if pending_world_definition_path.is_empty():
+		_pending_world_building_bake_load = false
+		return
+	if not building_manager or not is_instance_valid(building_manager):
+		_find_managers()
+		if not building_manager or not is_instance_valid(building_manager):
+			return
+	_load_world_definition_path(pending_world_definition_path)
 
 ## Reset all load-related flags on failure (prevents permanent state corruption)
 func _reset_load_flags():

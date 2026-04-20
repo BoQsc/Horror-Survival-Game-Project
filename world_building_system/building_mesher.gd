@@ -95,6 +95,19 @@ func _process(_delta: float) -> void:
 			item.get("collision_boxes", [])
 		)
 
+func has_pending_work() -> bool:
+	mutex.lock()
+	var pending := not queue.is_empty() or pending_apply_queue_index < pending_apply_queue.size()
+	mutex.unlock()
+	return pending
+
+func clear_pending_work() -> void:
+	mutex.lock()
+	queue.clear()
+	pending_apply_queue.clear()
+	pending_apply_queue_index = 0
+	mutex.unlock()
+
 func _get_native_builder() -> Object:
 	if native_builder and is_instance_valid(native_builder):
 		return native_builder

@@ -25,6 +25,9 @@ var mesh_instance: MeshInstance3D
 var static_body: StaticBody3D
 var collision_shape: CollisionShape3D
 var _pending_mesh_apply: Dictionary = {}
+var _applied_collision_boxes: Array = []
+var baked_snapshot_loaded: bool = false
+var baked_snapshot_chunk_coord: Vector3i = Vector3i(-2147483648, -2147483648, -2147483648)
 
 # Mesher Reference (injected by Manager)
 var mesher: Node # BuildingMesher
@@ -33,6 +36,7 @@ var manager: Node # BuildingManager
 static var _object_collision_shape_cache: Dictionary = {}
 static var _box_collision_shape_cache: Dictionary = {}
 const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
+const BuildingBakeSnapshot = preload("res://world_building_system/building_bake_snapshot.gd")
 const SIMPLE_OBJECT_COLLISION_IDS := {
 	3: true, # Wooden Table
 	5: true, # Window
@@ -96,29 +100,9 @@ func reset(new_coord: Vector3i):
 	voxel_meta.fill(0) # Clear all metadata
 	is_empty = true
 	mesh_dirty = true
-	# Clear object data
-	for anchor in object_nodes:
-		var node = object_nodes[anchor]
-		if node and is_instance_valid(node):
-			node.queue_free()
-	for anchor in object_collision_nodes:
-		var collision_node = object_collision_nodes[anchor]
-		if collision_node and is_instance_valid(collision_node):
-			collision_node.queue_free()
-	if manager and manager.world_map_mode and manager.has_method("remove_global_visual_batch"):
-		for anchor in simple_visual_instances:
-			manager.remove_global_visual_batch(_get_world_visual_batch_anchor(anchor, previous_chunk_coord))
-	for batch_node in simple_visual_batch_nodes.values():
-		if batch_node and is_instance_valid(batch_node):
-			batch_node.queue_free()
-	objects.clear()
-	occupied_by_object.clear()
-	object_nodes.clear()
-	object_collision_nodes.clear()
-	_clear_static_body_shapes()
-	simple_visual_instances.clear()
-	simple_visual_batch_entries.clear()
-	simple_visual_batch_nodes.clear()
+	baked_snapshot_loaded = false
+	baked_snapshot_chunk_coord = Vector3i(-2147483648, -2147483648, -2147483648)
+	_clear_object_runtime_state(previous_chunk_coord)
 func _ready():
 	# Add to group for detection by player punch system
 	add_to_group("building_chunks")
@@ -145,6 +129,8 @@ func _ready():
 			pending.get("source_mesh", null),
 			pending.get("collision_boxes", [])
 		)
+	if not objects.is_empty():
+		call_deferred("restore_object_visuals")
 
 func get_voxel(local_pos: Vector3i) -> int:
 	if local_pos.x < 0 or local_pos.y < 0 or local_pos.z < 0: return 0
@@ -448,6 +434,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 	var is_world_map_mode := bool(manager and manager.world_map_mode)
 	var use_legacy_material_override := BuildingVisuals.use_legacy_building_shader_override_for_test()
 	var mesh: ArrayMesh = mesh_instance.mesh as ArrayMesh
+	_applied_collision_boxes = collision_boxes.duplicate(true)
 	if use_source_mesh:
 		mesh = source_mesh
 
@@ -484,6 +471,7 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 
 	if _should_skip_chunk_collisions():
 		_clear_static_body_shapes()
+		_applied_collision_boxes.clear()
 		mesh_dirty = false
 		return
 
@@ -508,6 +496,111 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 
 	mesh_dirty = false
 	return
+
+func capture_bake_snapshot() -> BuildingBakeSnapshot:
+	var snapshot := BuildingBakeSnapshot.new()
+	snapshot.chunk_coord = chunk_coord
+	snapshot.is_empty = is_empty
+	snapshot.voxel_bytes = voxel_bytes.duplicate()
+	snapshot.voxel_meta = voxel_meta.duplicate()
+	snapshot.objects_data = _serialize_objects_for_bake()
+	snapshot.mesh = mesh_instance.mesh if mesh_instance else null
+	snapshot.collision_shape = collision_shape.shape if collision_shape else null
+	snapshot.collision_boxes = _applied_collision_boxes.duplicate(true)
+	return snapshot
+
+func apply_bake_snapshot(snapshot: Resource) -> void:
+	if snapshot == null or not snapshot is BuildingBakeSnapshot:
+		return
+
+	var bake_snapshot := snapshot as BuildingBakeSnapshot
+	voxel_bytes = bake_snapshot.voxel_bytes.duplicate()
+	voxel_meta = bake_snapshot.voxel_meta.duplicate()
+	is_empty = bool(bake_snapshot.is_empty)
+	mesh_dirty = false
+	baked_snapshot_loaded = true
+	baked_snapshot_chunk_coord = bake_snapshot.chunk_coord
+	_clear_object_runtime_state(chunk_coord)
+	_load_objects_from_bake(bake_snapshot.objects_data)
+	apply_mesh([], bake_snapshot.collision_shape, bake_snapshot.mesh, bake_snapshot.collision_boxes)
+	if is_inside_tree():
+		restore_object_visuals(true)
+
+func _serialize_objects_for_bake() -> Array:
+	var serialized: Array = []
+	for local_anchor in objects:
+		var obj_data: Dictionary = objects[local_anchor]
+		var fractional_pos: Vector3 = obj_data.get("fractional_pos", Vector3.ZERO)
+		if obj_data.has("fractional_y") and not obj_data.has("fractional_pos"):
+			fractional_pos = Vector3(0.0, float(obj_data.get("fractional_y", 0.0)), 0.0)
+		serialized.append({
+			"anchor": [local_anchor.x, local_anchor.y, local_anchor.z],
+			"object_id": int(obj_data.get("object_id", -1)),
+			"rotation": int(obj_data.get("rotation", 0)),
+			"fractional_pos": [fractional_pos.x, fractional_pos.y, fractional_pos.z]
+		})
+	return serialized
+
+func _load_objects_from_bake(objects_data: Array) -> void:
+	objects.clear()
+	occupied_by_object.clear()
+	object_nodes.clear()
+	object_collision_nodes.clear()
+	simple_visual_instances.clear()
+	simple_visual_batch_entries.clear()
+	simple_visual_batch_nodes.clear()
+	for entry_variant in objects_data:
+		if typeof(entry_variant) != TYPE_DICTIONARY:
+			continue
+		var entry: Dictionary = entry_variant
+		var anchor_arr: Array = entry.get("anchor", [])
+		if anchor_arr.size() < 3:
+			continue
+		var local_anchor := Vector3i(int(anchor_arr[0]), int(anchor_arr[1]), int(anchor_arr[2]))
+		var object_id := int(entry.get("object_id", -1))
+		if object_id < 0:
+			continue
+		var rotation := int(entry.get("rotation", 0))
+		var fractional_arr: Array = entry.get("fractional_pos", [0.0, 0.0, 0.0])
+		var fractional_pos := Vector3(
+			float(fractional_arr[0]) if fractional_arr.size() > 0 else 0.0,
+			float(fractional_arr[1]) if fractional_arr.size() > 1 else 0.0,
+			float(fractional_arr[2]) if fractional_arr.size() > 2 else 0.0
+		)
+		objects[local_anchor] = {
+			"object_id": object_id,
+			"rotation": rotation,
+			"fractional_pos": fractional_pos
+		}
+		var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
+		for cell in cells:
+			occupied_by_object[cell] = local_anchor
+
+func _clear_object_runtime_state(previous_chunk_coord: Vector3i) -> void:
+	for anchor in object_nodes:
+		var node = object_nodes[anchor]
+		if node and is_instance_valid(node):
+			node.queue_free()
+	for anchor in object_collision_nodes:
+		var collision_node = object_collision_nodes[anchor]
+		if collision_node and is_instance_valid(collision_node):
+			collision_node.queue_free()
+	if manager and manager.world_map_mode and manager.has_method("remove_global_visual_batch"):
+		for anchor in simple_visual_instances:
+			manager.remove_global_visual_batch(_get_world_visual_batch_anchor(anchor, previous_chunk_coord))
+	for batch_node in simple_visual_batch_nodes.values():
+		if batch_node and is_instance_valid(batch_node):
+			batch_node.queue_free()
+	objects.clear()
+	occupied_by_object.clear()
+	object_nodes.clear()
+	object_collision_nodes.clear()
+	_clear_static_body_shapes()
+	simple_visual_instances.clear()
+	simple_visual_batch_entries.clear()
+	simple_visual_batch_nodes.clear()
+	_applied_collision_boxes.clear()
+
 func _apply_collision_boxes(collision_boxes: Array) -> void:
 	if not static_body:
 		return
@@ -549,6 +642,7 @@ func _clear_static_body_shapes() -> void:
 			var shape_count := PhysicsServer3D.body_get_shape_count(body_rid)
 			for shape_idx in range(shape_count - 1, -1, -1):
 				PhysicsServer3D.body_remove_shape(body_rid, shape_idx)
+	_applied_collision_boxes.clear()
 func _shape_is_usable(candidate: Shape3D) -> bool:
 	if candidate == null:
 		return false
@@ -884,4 +978,3 @@ func restore_object_visuals(defer_collision: bool = true):
 				_generate_object_collision_measured(scene_instance, local_anchor)
 
 		object_nodes[local_anchor] = scene_instance
-

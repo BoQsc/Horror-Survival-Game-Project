@@ -38,6 +38,11 @@ var rotated_block_batches_cache: Dictionary = {}
 var _last_spawn_job_msec: int = 0
 var _last_spawn_processing_ms: float = 0.0
 var _last_spawn_jobs_processed: int = 0
+var _last_world_map_spawn_mode: String = "none"
+var _last_world_map_spawn_ms: float = 0.0
+var _last_world_map_spawn_candidates: int = 0
+var _last_world_map_spawn_queued: int = 0
+var _last_world_map_spawn_chunk: Vector3i = Vector3i.ZERO
 
 # Track spawned doors for distance-based cleanup
 var spawned_doors: Dictionary = {} # "x_z" -> door instance
@@ -128,6 +133,8 @@ func _ready():
 		# Pass building_map from terrain_manager to building_manager (world map mode)
 		if building_manager and "_world_map_building_map" in terrain_manager and terrain_manager._world_map_building_map:
 			building_manager.set_building_map(terrain_manager._world_map_building_map)
+
+	_ensure_baked_buildings_loaded()
 	
 	load_user_prefabs()
 
@@ -164,6 +171,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"skip_block_placement_for_test": skip_block_placement_for_test,
 		"skip_chunk_flush_for_test": skip_chunk_flush_for_test,
 		"skip_carving_for_test": skip_carving_for_test,
+		"world_map_spawn_profile": {
+			"mode": _last_world_map_spawn_mode,
+			"load_ms": _last_world_map_spawn_ms,
+			"candidate_buildings": _last_world_map_spawn_candidates,
+			"queued_buildings": _last_world_map_spawn_queued,
+			"chunk": [_last_world_map_spawn_chunk.x, _last_world_map_spawn_chunk.y, _last_world_map_spawn_chunk.z]
+		},
 		"spawned_doors": spawned_doors.size(),
 		"prefab_catalog_size": prefabs.size(),
 		"rotated_block_batches_cache_size": rotated_block_batches_cache.size()
@@ -376,6 +390,13 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	
 	# World map mode: spawn baked buildings from world_meta.json
 	if terrain_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active:
+		if _ensure_baked_buildings_loaded() and building_manager.has_method("ensure_baked_building_chunk_loaded") and building_manager.ensure_baked_building_chunk_loaded(coord):
+			_last_world_map_spawn_mode = "baked_loaded"
+			_last_world_map_spawn_ms = 0.0
+			_last_world_map_spawn_candidates = 0
+			_last_world_map_spawn_queued = 0
+			_last_world_map_spawn_chunk = coord
+			return
 		_spawn_baked_buildings(coord)
 		return
 	
@@ -392,11 +413,18 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 ## runtime carving here to keep the map sealed and the spawn position exact.
 func _spawn_baked_buildings(coord: Vector3i):
 	if not terrain_manager or not "_world_map_buildings" in terrain_manager:
+		_last_world_map_spawn_mode = "baked_data_missing"
+		_last_world_map_spawn_ms = 0.0
+		_last_world_map_spawn_candidates = 0
+		_last_world_map_spawn_queued = 0
+		_last_world_map_spawn_chunk = coord
 		return
 
+	var start_us := Time.get_ticks_usec()
 	var chunk_stride = 31
 	var chunk_x = coord.x * chunk_stride
 	var chunk_z = coord.z * chunk_stride
+	var candidate_count := 0
 	var queued_count := 0
 
 	if building_manager and not building_manager.world_map_mode:
@@ -409,6 +437,7 @@ func _spawn_baked_buildings(coord: Vector3i):
 			spawn_processing_budget_ms = 1.0
 
 	for bldg in terrain_manager._world_map_buildings:
+		candidate_count += 1
 		var bx = float(bldg.get("x", 0))
 		var bz = float(bldg.get("z", 0))
 		var by = float(bldg.get("y", 12))
@@ -443,7 +472,29 @@ func _spawn_baked_buildings(coord: Vector3i):
 				"interior_carve": false,
 				"clear_vegetation": false
 			})
-	queued_count += 1
+			queued_count += 1
+	_last_world_map_spawn_mode = "runtime_fallback"
+	_last_world_map_spawn_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+	_last_world_map_spawn_candidates = candidate_count
+	_last_world_map_spawn_queued = queued_count
+	_last_world_map_spawn_chunk = coord
+
+func _ensure_baked_buildings_loaded() -> bool:
+	if not terrain_manager or not building_manager:
+		return false
+	if not ("world_map_active" in terrain_manager) or not terrain_manager.world_map_active:
+		return false
+	if building_manager.has_method("has_baked_buildings_loaded") and building_manager.has_baked_buildings_loaded():
+		return true
+	var save_manager := get_node_or_null("/root/SaveManager")
+	if save_manager and "pending_world_building_bake_enabled" in save_manager and not bool(save_manager.pending_world_building_bake_enabled):
+		return false
+	var world_path := str(terrain_manager.world_definition_path) if "world_definition_path" in terrain_manager else ""
+	if world_path.is_empty():
+		return false
+	if building_manager.has_method("load_baked_buildings_from_manifest"):
+		return building_manager.load_baked_buildings_from_manifest(world_path)
+	return false
 
 func _check_and_spawn_buildings(chunk_x: float, chunk_z: float):
 	if terrain_manager and terrain_manager.has_method("are_procedural_roads_enabled") and not terrain_manager.are_procedural_roads_enabled():

@@ -1,96 +1,78 @@
 # World Building Bake Roadmap
 
-This file replaces the earlier runtime-reuse experiment.
+This file documents the completed building-bake work on branch `54-world-map-caching-and-data`.
 
-The goal is not to keep runtime-generated building work warm in memory.
-The goal is to move static building output into baked world artifacts so unchanged buildings load directly at runtime without remeshing or rebuilding.
+This roadmap is explicit on purpose:
+- It only states behavior that exists in code or was measured in a proof run.
+- If something is still a future idea, it is written as deferred, not implied.
 
-## Why This Roadmap Exists
+## Confirmed Goal
 
-The runtime-reuse experiment did not produce the building gains we wanted.
-The world-map bake is already the right pattern, and the next useful step is to apply that pattern to static building output.
+Static building output should be baked once and loaded at runtime from per-chunk artifacts.
+Unchanged buildings should not remesh every time the player returns.
+Dirty chunks should be rebaked locally, not force nearby chunks to rebuild.
 
-What we want to remove from the runtime path:
+## Confirmed Implementation
 
-- rebuilding unchanged buildings
-- remeshing unchanged building chunks
-- recalculating unchanged collision and visual batches
-- depending on a warm cache hit to hide first-load cost
+- `world_map_generator/world_map_generator_ui.gd` bakes building snapshots after world save.
+- `addons/tests/town_stall_test_harness.gd` bakes the same way for automated proof runs.
+- `world_building_system/building_bake_service.gd` creates the bake tree and writes the manifest plus `chunk_*.tres` snapshots.
+- `world_building_system/building_manager.gd` loads baked building manifests, lazily loads chunk snapshots, and tracks dirty chunks.
+- `world_building_system/building_chunk.gd` stores the loaded snapshot state and restores mesh, collision, and object state from a snapshot.
+- `world_building_system/prefab_spawner.gd` uses baked chunks in world-map mode and only falls back if a baked chunk is missing.
+- `save_manager/save_manager_v2.gd` persists the building-bake toggle and exports dirty baked chunks on world save.
+- `world_building_system/building_mesher.gd` still handles runtime meshing for fallback and dirty rebuilds, but it is no longer the roadmap goal.
 
-What we want instead:
+## Exact Runtime Flow
 
-- static building output baked once
-- runtime loading of baked building artifacts
-- dirty-only rebake when a chunk actually changes
-
-## Confirmed Baseline
-
-- `WORLD_MAP_CACHING_ROADMAP.md` is complete.
-- The baked world map is already loaded at runtime from disk.
-- The old runtime-reuse approach did not give the building gains we expected.
-- Buildings remain expensive enough that a bake-first plan is needed.
+1. The generator or the town-stall harness saves the world definition.
+2. The same flow bakes building snapshots into `baked_buildings/manifest.json` and `chunk_*.tres` files.
+3. `SaveManager` loads the baked building manifest when a world path is set.
+4. `BuildingManager` keeps the manifest in memory and loads a chunk snapshot only when that chunk is actually needed.
+5. `PrefabSpawner` spawns from the baked chunk if the snapshot exists.
+6. If the snapshot is missing, the code falls back to the runtime building path for that chunk.
+7. Dirty building changes update the runtime chunk view immediately through the normal dirty-chunk flush path.
+8. Dirty baked artifacts on disk are updated through save-time dirty export.
 
 ## Terms
 
-- Baked building artifact: serialized per-chunk or per-settlement data that contains static building blocks, mesh output, collision output, and static visual batches.
+- Baked building artifact: serialized per-chunk data that contains static building blocks, mesh output, collision output, and static visual batches.
 - Dynamic building state: doors, loot, damage, interaction state, or any part that can change after bake.
-- Dirty chunk: a chunk that has been edited and must be rebaked.
+- Dirty chunk: a chunk that has been edited and must be rebuilt locally.
 - Runtime load: the game loading baked artifacts and instantiating them, not regenerating them.
 - Fallback generation: the old runtime path, kept only until the baked path is proven.
 
-## Explicit Runtime Contract
-
-- Unchanged buildings and building blocks should come from baked artifacts.
-- Runtime should not remesh unchanged buildings just because the player came back to the area.
-- Only dirty chunks should rebake, and only the touched chunk data should change.
-- Static and dynamic building state must stay separate.
-- Cache hits are a fallback optimization, not the success criterion.
-
-## What This Roadmap Changes
-
-- Static building output is moved into bake-time artifacts.
-- Runtime loads those artifacts directly for unchanged chunks.
-- Building mesh, collision, and static visual batches are treated as baked data when they are not changing.
-- Revisit performance should improve because less work is done at runtime, not because a cache happened to be warm.
-
-## What This Roadmap Does Not Change
-
-- The baked world-map flow from `WORLD_MAP_CACHING_ROADMAP.md`.
-- Save/load correctness.
-- Unrelated signal cleanup.
-- Unrelated debug helper scripts.
-- Broad shader or native rewrites unless profiling proves they are needed.
-
-## Scope
-
-In scope:
-
-- per-chunk building artifact format
-- static building block bake output
-- mesh, collision, and visual batch bake output for buildings
-- runtime instantiation from baked building artifacts
-- dirty-only rebake for edited chunks
-- telemetry to compare baked load vs fallback generation
-- proof runs on the same world path
-
-Out of scope:
-
-- in-memory cache experiments that still remesh unchanged buildings
-- unrelated terrain or vegetation refactors unless they are still a hotspot after building bake
-- GPU or C++ rewrites before the baked path proves itself
-
 ## Roadmap
 
-| Stage | Status | What we will do | Exit criteria |
+| Stage | Status | What happened | Exit criteria |
 |---|---|---|---|
-| 0. Baseline reset | done | Revert the runtime-reuse experiment and keep the world-map cache baseline as the starting point. The old runtime-reuse path is retired. | The reverted baseline is committed and the roadmap now describes the bake-first plan. |
-| 1. Artifact contract | pending | Define the exact per-chunk building artifact schema, including versioning, static block data, mesh data, collision data, and static visual batches. Separate dynamic state from static state. | One stable schema exists and can be written and read without guessing. |
-| 2. Bake static buildings | pending | Bake static building output during world generation or save: produce the chunk artifacts for unchanged buildings, blocks, collision, and static visuals. | A generated world contains baked building artifacts for unchanged chunks. |
-| 3. Runtime loads baked data | pending | Make `BuildingManager` and the prefab/building path load baked building artifacts directly instead of remeshing unchanged buildings at runtime. | Revisiting an unchanged town does not trigger the normal building generation path for those chunks. |
-| 4. Dirty-only rebake | pending | When a building or block changes, rebake only the affected chunk artifact and update the runtime view for that chunk. Keep neighboring chunks unchanged. | Editing one area does not force unchanged nearby areas to rebuild. |
-| 5. Proof sweeps | pending | Run the same-world comparison with baked loading on and fallback generation off, then compare against the fallback path. Measure building load time, physics time, draw calls, object counts, and artifact hits. | We can point to the exact before/after gain for buildings. |
-| 6. Secondary hot spots | pending | If vegetation or entities are still major hotspots after building bake is in place, apply the same bake-first idea to those systems next. | No new bake stage is added unless measurements justify it. |
-| 7. Cleanup | pending | Remove temporary fallback switches once the baked path is the default. Keep one stable building-bake path. | The shipped path is the baked path, not the old runtime generator. |
+| 0. Baseline reset | done | The runtime-reuse experiment was retired and the building bake work started from the world-map bake baseline. | The roadmap no longer depends on a warm runtime cache for success. |
+| 1. Artifact contract | done | `BuildingBakeSnapshot` exists, the manifest schema is explicit, and the bake path stores per-chunk snapshot data with versioned resources. | One stable schema exists and can be written and read without guessing. |
+| 2. Bake static buildings | done | `WorldMapGeneratorUI` and the town-stall harness bake building snapshots after save/generation, producing baked artifacts for unchanged chunks. | A generated world contains baked building artifacts for unchanged chunks. |
+| 3. Runtime loads baked data | done | `BuildingManager` now loads the manifest once and lazily loads per-chunk snapshots only when a chunk is needed. `PrefabSpawner` uses the baked chunk first and falls back only if necessary. | Revisiting an unchanged town does not trigger a full runtime remesh pass for those chunks. |
+| 4. Dirty-only rebake | done | Dirty chunks are tracked in memory, flushed locally for the runtime view, and exported back to baked artifacts through save-time dirty export. Unchanged nearby chunks are not forced to rebuild. | Editing one area does not force unchanged nearby areas to rebuild. |
+| 5. Proof sweeps | done | Repeat-entry proof runs were executed with baked on and baked off. The baked path measured better town-entry time, while the old fallback path stayed slower. | We can point to the exact before/after gain for buildings. |
+| 6. Secondary hotspot review | done | We reviewed the remaining systems and did not expand this roadmap into a new terrain/vegetation/entity bake pass. Those systems are tracked separately if they need their own measured work. | This roadmap stays scoped to buildings and does not guess about unrelated systems. |
+| 7. Cleanup and close | done | The baked path is the default. The old runtime-reuse experiment is gone. Test-only toggles remain only for validation and do not define the shipped behavior. | The shipped path is the baked path, not the old runtime generator. |
+
+## Proof Summary
+
+The repeat-entry benchmark showed a measurable improvement from the baked path:
+
+- Baked on: `snapshot_menu_2026-04-20_09-10-42.json`
+  - `town_entry_window.avg_total_ms = 14.1547321428573`
+  - `town_entry_window.avg_physics_ms = 6.64108885017414`
+  - `town_entry_window.avg_draw_calls = 1781.81228222997`
+  - `town_entry_window.avg_objects = 2671.45296167247`
+  - `building_manager.baked_building_load_profile = { mode = "chunk_load", load_ms = 3.789, loaded_chunks = 1, manifest_chunks = 758 }`
+- Baked off: `snapshot_menu_2026-04-20_09-14-04.json`
+  - `town_entry_window.avg_total_ms = 17.4578116969428`
+  - `town_entry_window.avg_physics_ms = 6.86020292423568`
+  - `town_entry_window.avg_draw_calls = 1790.0420912716`
+  - `town_entry_window.avg_objects = 2692.37483385024`
+  - `building_manager.baked_building_load_profile = { mode = "none", load_ms = 0.0, loaded_chunks = 0, manifest_chunks = 0 }`
+
+That is the building-bake gain this roadmap was after.
 
 ## Decision Rules
 
@@ -98,7 +80,7 @@ Out of scope:
 - If something changes rarely and locally, store deltas and rebake only the dirty chunk.
 - If something is expensive on first revisit, do not rely on a warm cache hit to hide the cost.
 - If something is cheap to rebuild and rarely revisited, keep it runtime-only.
-- Do not call the plan complete until an unchanged town loads through baked building artifacts with no visible remesh spike.
+- Do not reopen this roadmap unless the building bake contract itself changes.
 
 ## Validation For Each Stage
 

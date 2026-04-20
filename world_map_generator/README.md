@@ -4,7 +4,7 @@
 
 ## Files
 - [../WORLD_MAP_CACHING_ROADMAP.md](../WORLD_MAP_CACHING_ROADMAP.md) - single reference for the finished world map caching and data work
-- [../WORLD_RUNTIME_REUSE_ROADMAP.md](../WORLD_RUNTIME_REUSE_ROADMAP.md) - follow-up roadmap for runtime reuse of buildings, vegetation, entities, and terrain chunks
+- [../WORLD_BUILDING_BAKE_ROADMAP.md](../WORLD_BUILDING_BAKE_ROADMAP.md) - follow-up roadmap for baking static building output and loading it directly at runtime
 - `world_map_generator/world_map_generator_ui.tscn` / `world_map_generator/world_map_generator_ui.gd` — `WorldMapGeneratorUI` scene
 - `world_map_generator.gd` — Terrain/biome/road PNG generation
 

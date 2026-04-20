@@ -5,6 +5,7 @@ class_name WorldMapGeneratorUI
 
 const WorldMapGen = preload("res://world_map_generator/world_map_generator.gd")
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+const BuildingBakeService = preload("res://world_building_system/building_bake_service.gd")
 const SAVE_BASE = "user://worlds/"
 
 # UI References
@@ -353,9 +354,9 @@ func _update_preview() -> void:
 # SAVE
 # ============================================================================
 
-func _on_save_pressed() -> void:
+func _on_save_pressed() -> bool:
 	if current_images.is_empty():
-		return
+		return false
 	
 	var world_name = world_name_input.text.strip_edges()
 	if world_name.is_empty():
@@ -378,12 +379,45 @@ func _on_save_pressed() -> void:
 	last_save_ms = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 	if success:
 		last_save_profile = generator.last_save_profile.duplicate(true)
+		progress_label.text = "Baking building snapshots..."
+		var bake_success := await _bake_world_buildings(save_path)
 		WorldMapData.invalidate_world(save_path)
-		progress_label.text = "Saved: %s" % world_name
+		progress_label.text = "Saved: %s" % world_name if bake_success else "Saved (bake failed): %s" % world_name
 		_refresh_world_list()  # Update list to show new world
+		return bake_success
 	else:
 		last_save_profile = generator.last_save_profile.duplicate(true)
 		progress_label.text = "Save FAILED!"
+		return false
+
+func _bake_world_buildings(save_path: String) -> bool:
+	if current_images.is_empty() or not current_images.has("buildings"):
+		return true
+
+	var buildings: Array = current_images.get("buildings", [])
+	if buildings.is_empty():
+		return true
+
+	var bake_service := BuildingBakeService.new()
+	var terrain_height := generator.terrain_height if generator else 10.0
+	var water_level := generator.water_level if generator else 13.0
+	var road_width := generator.road_width if generator else 8.0
+	var success := await bake_service.bake_world_buildings(
+		self,
+		save_path,
+		buildings,
+		current_images.get("building_map", null),
+		int(seed_input.value),
+		float(road_spacing_input.value),
+		float(terrain_height),
+		float(water_level),
+		float(road_width)
+	)
+
+	if success:
+		WorldMapData.invalidate_world(save_path)
+
+	return success
 
 # ============================================================================
 # PLAY — transition to game with this world loaded
@@ -397,7 +431,10 @@ func _on_play_pressed() -> void:
 	var world_path = SAVE_BASE + world_name
 	
 	# Save first to ensure PNGs are on disk
-	_on_save_pressed()
+	var saved_ok := await _on_save_pressed()
+	if not saved_ok:
+		progress_label.text = "ERROR: Save or bake failed"
+		return
 	
 	# Set the path on SaveManager autoload (persists across scene changes)
 	var sm = get_node_or_null("/root/SaveManager")

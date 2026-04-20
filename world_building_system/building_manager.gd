@@ -1,5 +1,7 @@
 extends Node3D
 
+const BuildingBakeSnapshot = preload("res://world_building_system/building_bake_snapshot.gd")
+
 # Maps Vector3i (Chunk Coord) -> BuildingChunk (data always persisted)
 var chunks: Dictionary = {}
 var mesher: BuildingMesher
@@ -38,6 +40,16 @@ var _last_flush_dirty_chunks_ms: float = 0.0
 var _last_flush_dirty_chunks_count: int = 0
 var _last_flush_global_visual_batches_ms: float = 0.0
 var _last_flush_global_visual_batches_count: int = 0
+var baked_buildings_loaded: bool = false
+var baked_buildings_world_path: String = ""
+var baked_building_manifest: Dictionary = {}
+var baked_building_manifest_index: Dictionary = {}
+var baked_building_snapshot_cache: Dictionary = {}
+var baked_building_loaded_chunk_keys: Dictionary = {}
+var _last_baked_building_load_ms: float = 0.0
+var _last_baked_building_load_chunks: int = 0
+var _last_baked_building_manifest_chunks: int = 0
+var _last_baked_building_load_mode: String = "none"
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -350,6 +362,24 @@ func clear_immediate_for_shutdown() -> void:
 	_cached_vehicle_manager = null
 
 
+func clear_all_building_chunks() -> void:
+	if mesher and mesher.has_method("clear_pending_work"):
+		mesher.clear_pending_work()
+	clear_immediate_for_shutdown()
+	baked_buildings_loaded = false
+	baked_buildings_world_path = ""
+	baked_building_manifest.clear()
+	baked_building_manifest_index.clear()
+	baked_building_snapshot_cache.clear()
+	baked_building_loaded_chunk_keys.clear()
+	_last_baked_building_load_ms = 0.0
+	_last_baked_building_load_chunks = 0
+	_last_baked_building_manifest_chunks = 0
+	_last_baked_building_load_mode = "none"
+	_dirty_visible_chunk_count = 0
+	_last_building_viewer_chunk = Vector3i(2147483647, 2147483647, 2147483647)
+
+
 func _exit_tree() -> void:
 	clear_immediate_for_shutdown()
 
@@ -517,7 +547,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_flush_dirty_chunks_ms": _last_flush_dirty_chunks_ms,
 		"last_flush_dirty_chunks_count": _last_flush_dirty_chunks_count,
 		"last_flush_global_visual_batches_ms": _last_flush_global_visual_batches_ms,
-		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count
+		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count,
+		"baked_buildings_loaded": baked_buildings_loaded,
+		"baked_buildings_world_path": baked_buildings_world_path,
+		"cached_baked_snapshot_count": baked_building_snapshot_cache.size(),
+		"loaded_baked_chunk_count": baked_building_loaded_chunk_keys.size(),
+		"baked_building_load_profile": {
+			"mode": _last_baked_building_load_mode,
+			"load_ms": _last_baked_building_load_ms,
+			"loaded_chunks": _last_baked_building_load_chunks,
+			"manifest_chunks": _last_baked_building_manifest_chunks
+		}
 	}
 
 ## Get or create a chunk at the given coordinate. Uses pool for recycling.
@@ -693,10 +733,280 @@ func has_pending_building_work() -> bool:
 	# Only gameplay-critical building work should block terrain finalization.
 	# Render-only visual batch rebuilds can lag behind without affecting play.
 	return _dirty_visible_chunk_count > 0 \
-		or not _pending_object_collision_tasks.is_empty()
+		or not _pending_object_collision_tasks.is_empty() \
+		or (mesher and mesher.has_method("has_pending_work") and mesher.has_pending_work())
 
 func has_pending_visual_batch_work() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
+
+func has_baked_buildings_loaded() -> bool:
+	return baked_buildings_loaded
+
+func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool = true, eager_load_chunks: bool = false) -> bool:
+	var manifest_path := world_path.path_join("baked_buildings/manifest.json")
+	if not FileAccess.file_exists(manifest_path):
+		_last_baked_building_load_mode = "missing_manifest"
+		_last_baked_building_load_ms = 0.0
+		_last_baked_building_load_chunks = 0
+		_last_baked_building_manifest_chunks = 0
+		return false
+
+	var file := FileAccess.open(manifest_path, FileAccess.READ)
+	if not file:
+		_last_baked_building_load_mode = "manifest_open_failed"
+		_last_baked_building_load_ms = 0.0
+		_last_baked_building_load_chunks = 0
+		_last_baked_building_manifest_chunks = 0
+		return false
+
+	var json := JSON.new()
+	if json.parse(file.get_as_text()) != OK:
+		file.close()
+		_last_baked_building_load_mode = "manifest_parse_failed"
+		_last_baked_building_load_ms = 0.0
+		_last_baked_building_load_chunks = 0
+		_last_baked_building_manifest_chunks = 0
+		return false
+	file.close()
+
+	var manifest_variant = json.get_data()
+	if not manifest_variant is Dictionary:
+		_last_baked_building_load_mode = "manifest_invalid"
+		_last_baked_building_load_ms = 0.0
+		_last_baked_building_load_chunks = 0
+		_last_baked_building_manifest_chunks = 0
+		return false
+
+	var manifest: Dictionary = manifest_variant
+	var start_us := Time.get_ticks_usec()
+	if clear_existing:
+		clear_all_building_chunks()
+	else:
+		clear_pending_object_collision_tasks()
+		clear_global_visual_batches()
+		_dirty_chunks.clear()
+		_dirty_visible_chunk_count = 0
+
+	baked_building_manifest = manifest.duplicate(true)
+	baked_buildings_world_path = world_path
+	baked_building_manifest_index.clear()
+	baked_building_snapshot_cache.clear()
+	baked_building_loaded_chunk_keys.clear()
+
+	var chunk_entries: Array = manifest.get("chunks", [])
+	_last_baked_building_manifest_chunks = chunk_entries.size()
+	for entry_variant in chunk_entries:
+		if typeof(entry_variant) != TYPE_DICTIONARY:
+			continue
+		var entry: Dictionary = entry_variant
+		var coord_arr: Array = entry.get("coord", [])
+		if coord_arr.size() < 3:
+			continue
+		var chunk_coord := Vector3i(int(coord_arr[0]), int(coord_arr[1]), int(coord_arr[2]))
+		baked_building_manifest_index[_coord_key(chunk_coord)] = entry
+	baked_buildings_loaded = not baked_building_manifest_index.is_empty()
+
+	var loaded_chunk_count := 0
+	if eager_load_chunks:
+		for entry_variant in chunk_entries:
+			if typeof(entry_variant) != TYPE_DICTIONARY:
+				continue
+			var entry: Dictionary = entry_variant
+			var coord_arr: Array = entry.get("coord", [])
+			if coord_arr.size() < 3:
+				continue
+			var chunk_coord := Vector3i(int(coord_arr[0]), int(coord_arr[1]), int(coord_arr[2]))
+			if ensure_baked_building_chunk_loaded(chunk_coord):
+				loaded_chunk_count += 1
+
+	_last_baked_building_load_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+	_last_baked_building_load_chunks = baked_building_loaded_chunk_keys.size() if eager_load_chunks else loaded_chunk_count
+	_last_baked_building_load_mode = "manifest_loaded" if baked_buildings_loaded else "manifest_empty"
+	if eager_load_chunks and baked_buildings_loaded and has_pending_visual_batch_work():
+		flush_global_visual_batches()
+	return baked_buildings_loaded
+
+func ensure_baked_building_chunk_loaded(chunk_coord: Vector3i) -> bool:
+	if not baked_buildings_loaded:
+		return false
+
+	var coord_key := _coord_key(chunk_coord)
+	var entry: Dictionary = baked_building_manifest_index.get(coord_key, {})
+	if entry.is_empty():
+		return false
+
+	var chunk: BuildingChunk = chunks.get(chunk_coord, null)
+	if chunk and chunk.baked_snapshot_loaded and chunk.baked_snapshot_chunk_coord == chunk_coord:
+		baked_building_loaded_chunk_keys[coord_key] = true
+		_last_baked_building_load_chunks = max(_last_baked_building_load_chunks, baked_building_loaded_chunk_keys.size())
+		return true
+
+	var file_name := str(entry.get("file", ""))
+	if file_name.is_empty():
+		return false
+
+	var snapshot: Resource = baked_building_snapshot_cache.get(coord_key, null)
+	if snapshot == null:
+		var snapshot_path := baked_buildings_world_path.path_join("baked_buildings").path_join(file_name)
+		if not FileAccess.file_exists(snapshot_path):
+			return false
+		snapshot = ResourceLoader.load(snapshot_path, "", ResourceLoader.CACHE_MODE_REPLACE)
+		if snapshot == null or not snapshot is BuildingBakeSnapshot:
+			return false
+		baked_building_snapshot_cache[coord_key] = snapshot
+
+	if not chunk:
+		chunk = get_chunk(chunk_coord)
+	if not chunk:
+		return false
+	chunk.apply_bake_snapshot(snapshot)
+	baked_building_loaded_chunk_keys[coord_key] = true
+	_last_baked_building_load_chunks = max(_last_baked_building_load_chunks, baked_building_loaded_chunk_keys.size())
+	_last_baked_building_load_mode = "chunk_load"
+	return true
+
+func save_baked_buildings_to_dir(world_path: String) -> Dictionary:
+	return _export_baked_buildings(world_path, false)
+
+func export_dirty_baked_buildings(world_path: String) -> Dictionary:
+	if _dirty_chunks.is_empty():
+		return {}
+	return _export_baked_buildings(world_path, true)
+
+func get_dirty_building_data() -> Dictionary:
+	if _dirty_chunks.is_empty():
+		return {}
+	var result: Dictionary = {}
+	for coord_variant in _dirty_chunks:
+		var coord: Vector3i = coord_variant
+		if not chunks.has(coord):
+			continue
+		var chunk: BuildingChunk = chunks[coord]
+		if chunk == null or chunk.is_empty:
+			continue
+		result[_coord_key(coord)] = _serialize_chunk_save_data(chunk)
+	return result
+
+func _coord_key(coord: Vector3i) -> String:
+	return "%d,%d,%d" % [coord.x, coord.y, coord.z]
+
+func _serialize_chunk_save_data(chunk: BuildingChunk) -> Dictionary:
+	var voxels_b64 := Marshalls.raw_to_base64(chunk.voxel_bytes)
+	var meta_b64 := Marshalls.raw_to_base64(chunk.voxel_meta)
+	var objects_data: Array = []
+	for anchor in chunk.objects:
+		var obj = chunk.objects[anchor]
+		var fractional_pos: Vector3 = obj.get("fractional_pos", Vector3.ZERO)
+		objects_data.append({
+			"anchor": [anchor.x, anchor.y, anchor.z],
+			"object_id": int(obj.object_id),
+			"rotation": int(obj.rotation),
+			"fractional_y": float(obj.get("fractional_y", fractional_pos.y)),
+			"fractional_pos": [fractional_pos.x, fractional_pos.y, fractional_pos.z]
+		})
+
+	return {
+		"voxels": voxels_b64,
+		"meta": meta_b64,
+		"objects": objects_data
+	}
+
+func _load_baked_building_manifest(world_path: String) -> Dictionary:
+	var manifest_path := world_path.path_join("baked_buildings/manifest.json")
+	if not FileAccess.file_exists(manifest_path):
+		return {}
+	var file := FileAccess.open(manifest_path, FileAccess.READ)
+	if not file:
+		return {}
+	var json := JSON.new()
+	if json.parse(file.get_as_text()) != OK:
+		file.close()
+		return {}
+	file.close()
+	var data = json.get_data()
+	if data is Dictionary:
+		return data
+	return {}
+
+func _export_baked_buildings(world_path: String, only_dirty: bool) -> Dictionary:
+	var bake_dir := world_path.path_join("baked_buildings")
+	var bake_dir_abs := ProjectSettings.globalize_path(bake_dir)
+	var mkdir_err := DirAccess.make_dir_recursive_absolute(bake_dir_abs)
+	if mkdir_err != OK:
+		push_error("[BuildingManager] Failed to create baked building directory %s (err %d)" % [bake_dir_abs, mkdir_err])
+		return {}
+
+	var existing_manifest := _load_baked_building_manifest(world_path)
+	var entries_by_key: Dictionary = {}
+	if existing_manifest.has("chunks"):
+		for entry_variant in existing_manifest.get("chunks", []):
+			if typeof(entry_variant) != TYPE_DICTIONARY:
+				continue
+			var entry: Dictionary = entry_variant
+			var coord_arr: Array = entry.get("coord", [])
+			if coord_arr.size() < 3:
+				continue
+			var key := _coord_key(Vector3i(int(coord_arr[0]), int(coord_arr[1]), int(coord_arr[2])))
+			entries_by_key[key] = entry
+
+	var coord_source: Array = _dirty_chunks.keys() if only_dirty else chunks.keys()
+	var exported_chunk_count := 0
+	for coord_variant in coord_source:
+		var coord: Vector3i = coord_variant
+		if not chunks.has(coord):
+			continue
+		var chunk: BuildingChunk = chunks[coord]
+		var coord_key := _coord_key(coord)
+		if chunk == null or chunk.is_empty:
+			entries_by_key.erase(coord_key)
+			continue
+		var snapshot := chunk.capture_bake_snapshot()
+		if snapshot == null:
+			continue
+		var file_name := "chunk_%d_%d_%d.tres" % [coord.x, coord.y, coord.z]
+		var file_path := bake_dir.path_join(file_name)
+		var save_err := ResourceSaver.save(snapshot, file_path)
+		if save_err != OK:
+			push_error("[BuildingManager] Failed to save baked chunk %s (err %d)" % [file_path, save_err])
+			continue
+		entries_by_key[coord_key] = {
+			"coord": [coord.x, coord.y, coord.z],
+			"file": file_name
+		}
+		exported_chunk_count += 1
+
+	var manifest := {
+		"schema_version": 1,
+		"world_definition_path": world_path,
+		"chunk_count": entries_by_key.size(),
+		"exported_chunk_count": exported_chunk_count,
+		"updated": Time.get_datetime_string_from_system(),
+		"chunks": []
+	}
+	for key in entries_by_key:
+		manifest["chunks"].append(entries_by_key[key])
+	manifest["chunks"].sort_custom(func(a, b):
+		var ac: Array = a.get("coord", [0, 0, 0])
+		var bc: Array = b.get("coord", [0, 0, 0])
+		if ac[0] == bc[0]:
+			if ac[1] == bc[1]:
+				return ac[2] < bc[2]
+			return ac[1] < bc[1]
+		return ac[0] < bc[0]
+	)
+
+	var manifest_path := bake_dir.path_join("manifest.json")
+	var file := FileAccess.open(manifest_path, FileAccess.WRITE)
+	if not file:
+		push_error("[BuildingManager] Failed to open baked manifest for writing: %s" % manifest_path)
+		return manifest
+	file.store_string(JSON.stringify(manifest, "\t"))
+	file.close()
+
+	baked_buildings_world_path = world_path
+	baked_building_manifest = manifest.duplicate(true)
+	baked_buildings_loaded = true
+	return manifest
 
 func get_voxel(global_pos: Vector3) -> int:
 	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
