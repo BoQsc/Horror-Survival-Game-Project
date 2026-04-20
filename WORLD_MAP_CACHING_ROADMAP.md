@@ -88,6 +88,7 @@ Current implementation status:
 
 - No remaining roadmap decisions are open for this branch.
 - Any future optimization or streaming work should start a new roadmap revision instead of reopening this one.
+- Follow-up runtime reuse work lives in [WORLD_RUNTIME_REUSE_ROADMAP.md](WORLD_RUNTIME_REUSE_ROADMAP.md).
 
 ## Rules
 
