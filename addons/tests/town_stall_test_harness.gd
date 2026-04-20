@@ -934,8 +934,8 @@ func _start_game_scene() -> void:
 		_apply_buildings_toggle()
 	if disable_building_bake_enabled and save_manager and save_manager.has_method("set_world_building_bake_enabled"):
 		save_manager.set_world_building_bake_enabled(false)
-	if preload_buildings_enabled and save_manager and save_manager.has_method("set_world_building_bake_preload_enabled"):
-		save_manager.set_world_building_bake_preload_enabled(true)
+	if save_manager and save_manager.has_method("set_world_building_bake_preload_enabled"):
+		save_manager.set_world_building_bake_preload_enabled(preload_buildings_enabled)
 	if disable_building_objects_enabled:
 		_apply_building_objects_toggle()
 	elif disable_building_blocks_enabled:
