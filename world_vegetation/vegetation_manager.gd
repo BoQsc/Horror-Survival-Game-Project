@@ -325,6 +325,8 @@ func _build_native_vegetation_instances(
 
 
 func _ready():
+	add_to_group("vegetation_manager")
+
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
 	if glb_result.mesh:
@@ -369,6 +371,16 @@ func _ready():
 
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
+
+
+func clear_cached_chunk_data(coord: Vector3i) -> void:
+	if coord.y != 0:
+		return
+
+	var surface_key = Vector2i(coord.x, coord.z)
+	_cleanup_chunk_trees(surface_key, true)
+	_cleanup_chunk_grass(surface_key, true)
+	_cleanup_chunk_rocks(surface_key, true)
 
 ## Initialize or re-initialize noise generators based on current terrain seed
 func initialize_noise():
@@ -437,46 +449,32 @@ func _on_chunk_unloaded(coord: Vector3i):
 
 	var surface_key = Vector2i(coord.x, coord.z)
 
-	# Clean up trees (including MultiMesh and colliders)
+	# Runtime reuse: keep generated vegetation resident and only retire the
+	# active colliders. The terrain chunk itself may be cached and reattached
+	# later, so the MultiMeshInstance3D subtree should stay alive.
 	if chunk_tree_data.has(surface_key):
-		var data = chunk_tree_data[surface_key]
-		var tree_count = data.trees.size() if data.has("trees") else 0
-		var colliders_removed = 0
-		# Free MultiMesh
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
-		# Return colliders to pool
-		for tree in data.trees:
+		var tree_data = chunk_tree_data[surface_key]
+		for tree in tree_data.trees:
 			var key = _tree_key(surface_key, tree.index)
 			if active_colliders.has(key):
 				_return_collider_to_pool(active_colliders[key])
 				active_colliders.erase(key)
-				colliders_removed += 1
-		chunk_tree_data.erase(surface_key)
 
-	# Clean up grass
 	if chunk_grass_data.has(surface_key):
-		var data = chunk_grass_data[surface_key]
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
-		for grass in data.grass_list:
+		var grass_data = chunk_grass_data[surface_key]
+		for grass in grass_data.grass_list:
 			var key = _grass_key(surface_key, grass.index)
 			if active_grass_colliders.has(key):
 				_return_grass_collider_to_pool(active_grass_colliders[key])
 				active_grass_colliders.erase(key)
-		chunk_grass_data.erase(surface_key)
 
-	# Clean up rocks
 	if chunk_rock_data.has(surface_key):
-		var data = chunk_rock_data[surface_key]
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
-		for rock in data.rock_list:
+		var rock_data = chunk_rock_data[surface_key]
+		for rock in rock_data.rock_list:
 			var key = _rock_key(surface_key, rock.index)
 			if active_rock_colliders.has(key):
 				_return_rock_collider_to_pool(active_rock_colliders[key])
 				active_rock_colliders.erase(key)
-		chunk_rock_data.erase(surface_key)
 
 	_mark_collider_refresh_dirty()
 
@@ -498,12 +496,46 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	# Extract surface key (X,Z) - vegetation only exists on surface
 	var surface_key = Vector2i(coord.x, coord.z)
 
+	# Reuse already-generated vegetation when the terrain chunk comes back
+	# from the runtime cache. This keeps the MultiMesh subtree and per-chunk
+	# placement data resident instead of rebuilding it.
+	var reused_cached_vegetation := false
 	if chunk_tree_data.has(surface_key):
-		_cleanup_chunk_trees(surface_key)
+		var tree_data = chunk_tree_data[surface_key]
+		tree_data.chunk_node = chunk_node
+		if tree_data.has("multimesh") and is_instance_valid(tree_data.multimesh):
+			var tree_mmi = tree_data.multimesh as MultiMeshInstance3D
+			if tree_mmi and tree_mmi.get_parent() != chunk_node:
+				if tree_mmi.get_parent():
+					tree_mmi.get_parent().remove_child(tree_mmi)
+				chunk_node.add_child(tree_mmi)
+		reused_cached_vegetation = true
+
 	if chunk_grass_data.has(surface_key):
-		_cleanup_chunk_grass(surface_key)
+		var grass_data = chunk_grass_data[surface_key]
+		grass_data.chunk_node = chunk_node
+		if grass_data.has("multimesh") and is_instance_valid(grass_data.multimesh):
+			var grass_mmi = grass_data.multimesh as MultiMeshInstance3D
+			if grass_mmi and grass_mmi.get_parent() != chunk_node:
+				if grass_mmi.get_parent():
+					grass_mmi.get_parent().remove_child(grass_mmi)
+				chunk_node.add_child(grass_mmi)
+		reused_cached_vegetation = true
+
 	if chunk_rock_data.has(surface_key):
-		_cleanup_chunk_rocks(surface_key)
+		var rock_data = chunk_rock_data[surface_key]
+		rock_data.chunk_node = chunk_node
+		if rock_data.has("multimesh") and is_instance_valid(rock_data.multimesh):
+			var rock_mmi = rock_data.multimesh as MultiMeshInstance3D
+			if rock_mmi and rock_mmi.get_parent() != chunk_node:
+				if rock_mmi.get_parent():
+					rock_mmi.get_parent().remove_child(rock_mmi)
+				chunk_node.add_child(rock_mmi)
+		reused_cached_vegetation = true
+
+	if reused_cached_vegetation:
+		_mark_collider_refresh_dirty()
+		return
 
 	pending_chunks.append({
 		"coord": surface_key, # Use surface_key for vegetation

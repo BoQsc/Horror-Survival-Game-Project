@@ -42,6 +42,8 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 ## When set, the terrain reads height/biome/road data from PNGs instead of procedural noise
 @export var world_definition_path: String = ""
 @export var world_map_data_cache_enabled: bool = true # Toggle cached world-map loads
+@export var terrain_runtime_cache_enabled: bool = true # Keep finished terrain chunks resident for revisits
+@export_range(0, 2048, 1) var terrain_runtime_cache_limit: int = 256 # 0 disables the cache
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -95,6 +97,7 @@ var material_water: Material
 var _material_texture_builder: Object = null
 var _cached_vehicle_manager: Node = null
 var _cached_building_manager: Node = null
+var _cached_vegetation_manager: Node = null
 var _cached_prefab_spawner: Node = null
 
 class ChunkData:
@@ -121,6 +124,10 @@ class ChunkData:
 	var mod_version: int = 0
 
 var active_chunks: Dictionary = {}
+var _terrain_runtime_cache: Dictionary = {} # Vector3i -> { data, mod_count }
+var _terrain_runtime_cache_order: Array[Vector3i] = []
+var _terrain_runtime_cache_hits: int = 0
+var _terrain_runtime_cache_misses: int = 0
 
 # Collision distance - only enable collision within this range (cheaper than render_distance)
 @export var collision_distance: int = 3 # Chunks within this get collision
@@ -324,6 +331,194 @@ func _ready():
 	initial_load_target_chunks = int(PI * render_distance * render_distance)
 
 
+func _get_stored_modification_count(coord: Vector3i) -> int:
+	mutex.lock()
+	var count := 0
+	if stored_modifications.has(coord):
+		count = stored_modifications[coord].size()
+	mutex.unlock()
+	return count
+
+
+func _is_cached_terrain_entry_valid(coord: Vector3i, entry: Dictionary) -> bool:
+	if entry.is_empty():
+		return false
+
+	var data: ChunkData = entry.get("data", null)
+	if data == null:
+		return false
+	if not is_instance_valid(data.node_terrain):
+		return false
+
+	var current_mod_count := _get_stored_modification_count(coord)
+	var cached_mod_count := int(entry.get("mod_count", -1))
+	if current_mod_count != cached_mod_count:
+		return false
+
+	return true
+
+
+func _free_chunk_data(coord: Vector3i, data: ChunkData) -> void:
+	if data == null:
+		return
+
+	_notify_chunk_permanently_destroyed(coord)
+
+	if data.node_terrain and is_instance_valid(data.node_terrain):
+		if data.node_terrain.get_parent():
+			data.node_terrain.get_parent().remove_child(data.node_terrain)
+		data.node_terrain.queue_free()
+	if data.node_water and is_instance_valid(data.node_water):
+		if data.node_water.get_parent():
+			data.node_water.get_parent().remove_child(data.node_water)
+		data.node_water.queue_free()
+
+	if data.body_rid_terrain.is_valid():
+		PhysicsServer3D.free_rid(data.body_rid_terrain)
+		data.body_rid_terrain = RID()
+
+	var tasks: Array = []
+	if data.density_buffer_terrain.is_valid():
+		tasks.append({"type": "free", "rid": data.density_buffer_terrain})
+		data.density_buffer_terrain = RID()
+	if data.density_buffer_water.is_valid():
+		tasks.append({"type": "free", "rid": data.density_buffer_water})
+		data.density_buffer_water = RID()
+	if data.material_buffer_terrain.is_valid():
+		tasks.append({"type": "free", "rid": data.material_buffer_terrain})
+		data.material_buffer_terrain = RID()
+
+	if not tasks.is_empty():
+		mutex.lock()
+		for t in tasks:
+			task_queue.append(t)
+		mutex.unlock()
+		for _t in tasks:
+			semaphore.post()
+
+
+func _detach_chunk_data_for_cache(coord: Vector3i, data: ChunkData) -> void:
+	if data == null:
+		return
+
+	if data.node_terrain and is_instance_valid(data.node_terrain) and data.node_terrain.get_parent() == self:
+		remove_child(data.node_terrain)
+	if data.node_water and is_instance_valid(data.node_water) and data.node_water.get_parent() == self:
+		remove_child(data.node_water)
+
+	if data.body_rid_terrain.is_valid():
+		PhysicsServer3D.body_set_space(data.body_rid_terrain, RID())
+		PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
+		PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
+
+	if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+		terrain_grid.set_chunk_collision_ready(coord, false)
+
+
+func _store_cached_terrain_chunk(coord: Vector3i, data: ChunkData) -> void:
+	if data == null:
+		return
+	if terrain_runtime_cache_limit <= 0:
+		return
+
+	if _terrain_runtime_cache.has(coord):
+		_terrain_runtime_cache_order.erase(coord)
+
+	_terrain_runtime_cache[coord] = {
+		"data": data,
+		"mod_count": _get_stored_modification_count(coord)
+	}
+	_terrain_runtime_cache_order.append(coord)
+
+	while terrain_runtime_cache_limit > 0 and _terrain_runtime_cache_order.size() > terrain_runtime_cache_limit:
+		var evict_coord: Vector3i = _terrain_runtime_cache_order.pop_front()
+		_evict_cached_terrain_chunk(evict_coord)
+
+
+func _evict_cached_terrain_chunk(coord: Vector3i) -> void:
+	if not _terrain_runtime_cache.has(coord):
+		return
+
+	var entry: Dictionary = _terrain_runtime_cache[coord]
+	_terrain_runtime_cache.erase(coord)
+	_terrain_runtime_cache_order.erase(coord)
+
+	var data: ChunkData = entry.get("data", null)
+	_free_chunk_data(coord, data)
+
+
+func clear_terrain_runtime_cache() -> void:
+	var coords: Array = _terrain_runtime_cache.keys()
+	for coord_variant in coords:
+		_evict_cached_terrain_chunk(coord_variant)
+	_terrain_runtime_cache.clear()
+	_terrain_runtime_cache_order.clear()
+
+
+func invalidate_terrain_runtime_cache(coord: Vector3i) -> void:
+	_evict_cached_terrain_chunk(coord)
+
+
+func _restore_cached_terrain_chunk(coord: Vector3i) -> bool:
+	if not terrain_runtime_cache_enabled or terrain_runtime_cache_limit <= 0:
+		return false
+	if not _terrain_runtime_cache.has(coord):
+		_terrain_runtime_cache_misses += 1
+		return false
+
+	var entry: Dictionary = _terrain_runtime_cache[coord]
+	if not _is_cached_terrain_entry_valid(coord, entry):
+		_evict_cached_terrain_chunk(coord)
+		_terrain_runtime_cache_misses += 1
+		return false
+
+	var data: ChunkData = entry.get("data", null)
+	if data == null:
+		_evict_cached_terrain_chunk(coord)
+		_terrain_runtime_cache_misses += 1
+		return false
+
+	_terrain_runtime_cache.erase(coord)
+	_terrain_runtime_cache_order.erase(coord)
+
+	active_chunks[coord] = data
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+
+	if data.node_terrain and is_instance_valid(data.node_terrain):
+		if data.node_terrain.get_parent() != self:
+			if data.node_terrain.get_parent():
+				data.node_terrain.get_parent().remove_child(data.node_terrain)
+			add_child(data.node_terrain)
+		data.node_terrain.position = chunk_pos
+
+	if data.node_water and is_instance_valid(data.node_water):
+		if data.node_water.get_parent() != self:
+			if data.node_water.get_parent():
+				data.node_water.get_parent().remove_child(data.node_water)
+			add_child(data.node_water)
+		data.node_water.position = chunk_pos
+
+	if data.body_rid_terrain.is_valid():
+		PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 1 | 512)
+		PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 1)
+		PhysicsServer3D.body_set_space(data.body_rid_terrain, get_world_3d().space)
+		PhysicsServer3D.body_set_state(
+			data.body_rid_terrain,
+			PhysicsServer3D.BODY_STATE_TRANSFORM,
+			Transform3D(Basis(), chunk_pos)
+		)
+		if data.node_terrain and is_instance_valid(data.node_terrain):
+			PhysicsServer3D.body_attach_object_instance_id(data.body_rid_terrain, data.node_terrain.get_instance_id())
+
+	if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+		terrain_grid.set_chunk_collision_ready(coord, data.node_terrain != null)
+
+	call_deferred("emit_signal", "chunk_generated", coord, data.node_terrain)
+	_check_spawn_zone_readiness(coord)
+	_terrain_runtime_cache_hits += 1
+	return true
+
+
 func get_telemetry_snapshot() -> Dictionary:
 	var loaded_chunk_count := 0
 	var pending_chunk_count := 0
@@ -366,6 +561,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"cpu_task_queue_count": cpu_task_queue.size(),
 		"pending_spawn_zone_count": pending_spawn_zones.size(),
 		"stored_modification_count": stored_modifications.size(),
+		"terrain_runtime_cache_enabled": terrain_runtime_cache_enabled,
+		"terrain_runtime_cache_limit": terrain_runtime_cache_limit,
+		"terrain_runtime_cache_size": _terrain_runtime_cache.size(),
+		"terrain_runtime_cache_hits": _terrain_runtime_cache_hits,
+		"terrain_runtime_cache_misses": _terrain_runtime_cache_misses,
 		"world_map_active": world_map_active,
 		"render_distance": render_distance,
 		"collision_distance": collision_distance,
@@ -426,6 +626,15 @@ func _get_building_manager() -> Node:
 		_cached_building_manager = get_tree().root.find_child("BuildingManager", true, false)
 	return _cached_building_manager
 
+func _get_vegetation_manager() -> Node:
+	if _cached_vegetation_manager and is_instance_valid(_cached_vegetation_manager):
+		return _cached_vegetation_manager
+
+	_cached_vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	if not _cached_vegetation_manager:
+		_cached_vegetation_manager = get_tree().root.find_child("VegetationManager", true, false)
+	return _cached_vegetation_manager
+
 func _get_prefab_spawner() -> Node:
 	if _cached_prefab_spawner and is_instance_valid(_cached_prefab_spawner):
 		return _cached_prefab_spawner
@@ -434,6 +643,12 @@ func _get_prefab_spawner() -> Node:
 	if not _cached_prefab_spawner:
 		_cached_prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
 	return _cached_prefab_spawner
+
+
+func _notify_chunk_permanently_destroyed(coord: Vector3i) -> void:
+	var vegetation_manager = _get_vegetation_manager()
+	if vegetation_manager and vegetation_manager.has_method("clear_cached_chunk_data"):
+		vegetation_manager.clear_cached_chunk_data(coord)
 
 
 func _get_task_queue_count() -> int:
@@ -1301,6 +1516,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					# Chunk not loaded - trigger immediate generation
 					# This handles digging into underground layers (Y=-1, etc.)
 					if not active_chunks.has(coord): # Not already queued
+						invalidate_terrain_runtime_cache(coord)
 						active_chunks[coord] = null # Mark as pending
 						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 						chunks_to_generate.append({
@@ -1397,6 +1613,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 								"material_id": - 1
 							})
 				else:
+					invalidate_terrain_runtime_cache(coord)
 					active_chunks[coord] = null
 					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 					chunks_to_generate.append({
@@ -1467,6 +1684,8 @@ func _exit_tree():
 		pending_nodes.clear()
 		pending_nodes_needs_sort = false
 		pending_nodes_mutex.unlock()
+
+	clear_terrain_runtime_cache()
 
 	# 3. Signal threads to exit
 	mutex.lock()
@@ -1570,6 +1789,9 @@ func _update_chunks_native():
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func _load_chunk(coord: Vector3i):
+	if _restore_cached_terrain_chunk(coord):
+		return
+
 	active_chunks[coord] = null
 
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
@@ -1592,29 +1814,11 @@ func _unload_chunk(coord: Vector3i):
 
 	var data = active_chunks[coord]
 	if data:
-		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
-			terrain_grid.set_chunk_collision_ready(coord, false)
-		if data.node_terrain: data.node_terrain.queue_free()
-		if data.node_water: data.node_water.queue_free()
-
-		# Free Physics Body RID (Immediate, Main Thread/Thread Safe)
-		if data.body_rid_terrain.is_valid():
-			PhysicsServer3D.free_rid(data.body_rid_terrain)
-
-		var tasks = []
-		if data.density_buffer_terrain.is_valid():
-			tasks.append({"type": "free", "rid": data.density_buffer_terrain})
-		if data.density_buffer_water.is_valid():
-			tasks.append({"type": "free", "rid": data.density_buffer_water})
-		if data.material_buffer_terrain.is_valid():
-			tasks.append({"type": "free", "rid": data.material_buffer_terrain})
-			data.material_buffer_terrain = RID()
-
-		mutex.lock()
-		for t in tasks: task_queue.append(t)
-		mutex.unlock()
-
-		for t in tasks: semaphore.post()
+		if terrain_runtime_cache_enabled and terrain_runtime_cache_limit > 0:
+			_detach_chunk_data_for_cache(coord, data)
+			_store_cached_terrain_chunk(coord, data)
+		else:
+			_free_chunk_data(coord, data)
 
 	active_chunks.erase(coord)
 	chunk_unloaded.emit(coord)
