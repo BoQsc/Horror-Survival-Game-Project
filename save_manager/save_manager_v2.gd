@@ -297,6 +297,7 @@ func _gather_save_data() -> Dictionary:
 		"doors": _get_door_data(),
 		"vehicles": _get_vehicle_data(),
 		"building_spawns": {} if world_map_mode or disable_buildings_for_test else _get_building_spawn_data(),
+		"world_map_baked_building_edits": _get_world_map_baked_building_edits_data(),
 		# V2 additions
 		"player_inventory": _get_inventory_data(),
 		"player_hotbar": _get_hotbar_data(),
@@ -468,6 +469,7 @@ func load_game(path: String) -> bool:
 	_load_player_stats_data(save_data.get("player_stats", {}))
 	_load_player_state_data(save_data.get("player_state", {}))
 	_load_game_settings_data(save_data.get("game_settings", {}))
+	_load_world_map_baked_building_edits_data(save_data.get("world_map_baked_building_edits", {}))
 	load_step.emit("Loading containers & vehicles", 5, 10)
 	
 	# Store door/container/vehicle data as pending - loaded in _check_world_readiness
@@ -781,6 +783,15 @@ func _get_building_spawn_data() -> Dictionary:
 		return building_generator.get_save_data()
 	return {}
 
+
+func _get_world_map_baked_building_edits_data() -> Dictionary:
+	var world_map_mode = chunk_manager and "world_map_active" in chunk_manager and chunk_manager.world_map_active
+	if disable_buildings_for_test or not building_manager or not world_map_mode:
+		return {}
+	if building_manager.has_method("get_world_map_baked_building_edits_save_data"):
+		return building_manager.get_world_map_baked_building_edits_save_data()
+	return {}
+
 # ============ DATA LOADERS ============
 
 func _load_prefab_data(data: Dictionary):
@@ -799,6 +810,13 @@ func _load_building_spawn_data(data: Dictionary):
 		return
 	if building_generator.has_method("load_save_data"):
 		building_generator.load_save_data(data)
+
+
+func _load_world_map_baked_building_edits_data(data: Dictionary):
+	if data.is_empty() or not building_manager:
+		return
+	if building_manager.has_method("load_world_map_baked_building_edits_save_data"):
+		building_manager.load_world_map_baked_building_edits_save_data(data)
 
 func _load_player_data(data: Dictionary):
 	if data.is_empty() or not player:
@@ -949,6 +967,8 @@ func _get_world_definition_path() -> String:
 
 func _load_world_definition_path(path: String):
 	if chunk_manager and "world_definition_path" in chunk_manager:
+		if building_manager and building_manager.has_method("clear_world_map_baked_building_visuals"):
+			building_manager.clear_world_map_baked_building_visuals()
 		chunk_manager.world_definition_path = path
 		if path != "":
 			chunk_manager.world_map_active = true
@@ -1190,7 +1210,7 @@ func _apply_world_map_instant_baked_buildings_enabled(enabled: bool) -> void:
 	pending_world_map_instant_baked_buildings_enabled = enabled
 	if prefab_spawner and "instant_baked_buildings_enabled" in prefab_spawner:
 		prefab_spawner.instant_baked_buildings_enabled = enabled
-		if enabled and "terrain_manager" in prefab_spawner:
+		if enabled and not is_quickloading and not is_loading_game and "terrain_manager" in prefab_spawner:
 			var spawner_terrain_manager = prefab_spawner.terrain_manager
 			if spawner_terrain_manager and "world_map_active" in spawner_terrain_manager and spawner_terrain_manager.world_map_active:
 				if prefab_spawner.has_method("_ensure_world_map_baked_building_payloads"):

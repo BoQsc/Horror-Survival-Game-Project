@@ -2,6 +2,7 @@ extends Node
 
 const WorldMapGenScript := preload("res://world_map_generator/world_map_generator.gd")
 const GameScene: PackedScene = preload("res://modules/world_module/world_test_world_player_v2.tscn")
+const BuildingAPIScript := preload("res://modules/world_player_v2/api/building_api.gd")
 const SAVE_BASE := "user://worlds/"
 const TELEPORT_MIN_DISTANCE := 200.0
 const TELEPORT_HEIGHT_OFFSET := 8.0
@@ -64,6 +65,13 @@ var disable_building_chunk_flush_enabled: bool = false
 var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
 var instant_baked_buildings_enabled: bool = true
+var baked_building_persistence_smoke_enabled: bool = false
+var baked_building_persistence_smoke_started: bool = false
+var baked_building_persistence_smoke_running: bool = false
+var baked_building_persistence_smoke_timeout_seconds: float = 60.0
+var baked_building_persistence_smoke_load_completed: bool = false
+var baked_building_persistence_smoke_load_success: bool = false
+var baked_building_persistence_smoke_load_path: String = ""
 var disable_entities_enabled: bool = false
 var repeat_entry_enabled: bool = false
 var configured_hold_seconds: float = HOLD_SECONDS
@@ -788,6 +796,8 @@ func _ready() -> void:
 	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
 	instant_baked_buildings_enabled = OS.get_environment("TOWN_STALL_INSTANT_BAKED_BUILDINGS") != "0"
+	baked_building_persistence_smoke_enabled = OS.get_environment("TOWN_STALL_BAKED_BUILDING_PERSISTENCE_SMOKE") == "1"
+	baked_building_persistence_smoke_timeout_seconds = _get_positive_env_float("TOWN_STALL_BAKED_BUILDING_PERSISTENCE_TIMEOUT", 60.0)
 	disable_entities_enabled = OS.get_environment("TOWN_STALL_DISABLE_ENTITIES") == "1"
 	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
@@ -804,6 +814,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Instant baked buildings: %s" % ("ON" if instant_baked_buildings_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Baked building persistence smoke: %s" % ("ON" if baked_building_persistence_smoke_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
@@ -821,6 +832,7 @@ func _ready() -> void:
 		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
 		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
 		"instant_baked_buildings": instant_baked_buildings_enabled,
+		"baked_building_persistence_smoke": baked_building_persistence_smoke_enabled,
 		"disable_entities": disable_entities_enabled,
 		"repeat_entry": repeat_entry_enabled,
 		"hold_seconds": configured_hold_seconds
@@ -1252,6 +1264,7 @@ func _teleport_into_town() -> void:
 	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % configured_hold_seconds)
 
 	current_hold_seconds = configured_hold_seconds
+	_apply_baked_building_smoke_hold_extension()
 	phase = Phase.HOLD_FIRST
 	phase_time = 0.0
 	hold_started_logged = false
@@ -1451,6 +1464,7 @@ func _fly_to_town(_delta: float) -> void:
 			_:
 				current_hold_seconds = configured_hold_seconds
 				phase = Phase.HOLD_FIRST
+		_apply_baked_building_smoke_hold_extension()
 		phase_time = 0.0
 		hold_started_logged = false
 		return
@@ -1467,6 +1481,17 @@ func _hold_in_town(_delta: float) -> void:
 			"hold_seconds": current_hold_seconds
 		})
 		hold_started_logged = true
+
+	if baked_building_persistence_smoke_enabled:
+		if not baked_building_persistence_smoke_started:
+			baked_building_persistence_smoke_started = true
+			baked_building_persistence_smoke_running = true
+			_emit_scope_event("town_stall_test", "baked_building_persistence_smoke_start", {
+				"hold_seconds": current_hold_seconds
+			})
+			print("[TOWN_STALL_TEST] Starting baked-building persistence smoke test")
+			call_deferred("_run_baked_building_persistence_smoke_test")
+		return
 
 	if phase_time >= current_hold_seconds:
 		_emit_scope_event("town_stall_test", "hold_complete", {
@@ -1596,6 +1621,261 @@ func _finalize_shutdown() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	get_tree().quit(0)
+
+
+func _apply_baked_building_smoke_hold_extension() -> void:
+	if not baked_building_persistence_smoke_enabled:
+		return
+	current_hold_seconds = maxf(current_hold_seconds, baked_building_persistence_smoke_timeout_seconds * 3.0)
+
+
+func _on_baked_building_persistence_load_completed(success: bool, path: String) -> void:
+	if not baked_building_persistence_smoke_running:
+		return
+	if path != baked_building_persistence_smoke_load_path:
+		return
+	baked_building_persistence_smoke_load_completed = true
+	baked_building_persistence_smoke_load_success = success
+
+
+func _run_baked_building_persistence_smoke_test() -> void:
+	if pending_quit or phase == Phase.DONE or phase == Phase.FAILED:
+		return
+	if not baked_building_persistence_smoke_enabled:
+		return
+
+	var save_manager := get_node_or_null("/root/SaveManager")
+	if not save_manager:
+		_fail("SaveManager autoload missing for baked-building smoke test")
+		return
+
+	var smoke_timeout_ms := int(baked_building_persistence_smoke_timeout_seconds * 1000.0)
+	var smoke_start_ms := Time.get_ticks_msec()
+	var smoke_target := _find_baked_building_smoke_target()
+	while smoke_target.is_empty():
+		if Time.get_ticks_msec() - smoke_start_ms > smoke_timeout_ms:
+			_fail("Timed out waiting for a loaded baked building target")
+			return
+		await get_tree().process_frame
+		if pending_quit or phase == Phase.DONE or phase == Phase.FAILED:
+			return
+		smoke_target = _find_baked_building_smoke_target()
+
+	baked_building_persistence_smoke_running = true
+	var building_key := str(smoke_target.get("building_key", ""))
+	var voxel_pos_variant: Variant = smoke_target.get("voxel_pos", Vector3.ZERO)
+	var voxel_pos: Vector3 = voxel_pos_variant if typeof(voxel_pos_variant) == TYPE_VECTOR3 else Vector3.ZERO
+	var static_body_variant: Variant = smoke_target.get("static_body", null)
+	var static_body := static_body_variant if static_body_variant is StaticBody3D else null
+	if building_key.is_empty() or static_body == null:
+		_fail("Failed to resolve a baked building target for persistence smoke test")
+		return
+
+	print("[TOWN_STALL_TEST] Smoke target building=%s voxel=%s" % [building_key, voxel_pos])
+	_emit_scope_event("town_stall_test", "baked_building_persistence_smoke_target", {
+		"building_key": building_key,
+		"voxel_x": voxel_pos.x,
+		"voxel_y": voxel_pos.y,
+		"voxel_z": voxel_pos.z
+	})
+
+	var building_api = BuildingAPIScript.new()
+	building_api.building_manager = building_manager
+	building_api.terrain_manager = terrain_manager
+	building_api.player = player
+
+	var hit := {
+		"position": voxel_pos + Vector3(0.5, 0.5, 0.5),
+		"normal": Vector3.UP,
+		"collider": static_body
+	}
+	var removed := false
+	if building_api.has_method("remove_block"):
+		removed = bool(building_api.remove_block(hit))
+	if not removed:
+		_fail("Baked-building smoke test could not remove the target block")
+		return
+
+	await get_tree().process_frame
+	var removed_voxel := 0
+	if is_instance_valid(building_manager) and building_manager.has_method("get_voxel"):
+		removed_voxel = int(building_manager.get_voxel(voxel_pos))
+	if removed_voxel != 0:
+		_fail("Baked-building smoke test removed the block visually but the voxel still reads as solid")
+		return
+
+	if save_manager.has_method("_find_managers"):
+		save_manager._find_managers()
+
+	var save_data_variant: Variant = {}
+	if save_manager.has_method("_gather_save_data"):
+		save_data_variant = save_manager._gather_save_data()
+	if typeof(save_data_variant) != TYPE_DICTIONARY:
+		_fail("SaveManager did not return a dictionary while gathering save data")
+		return
+
+	var save_data: Dictionary = save_data_variant
+	var baked_edits_variant: Variant = save_data.get("world_map_baked_building_edits", {})
+	if typeof(baked_edits_variant) != TYPE_DICTIONARY:
+		_fail("SaveManager did not include baked building edit data in the save payload")
+		return
+	var baked_edits: Dictionary = baked_edits_variant
+	var baked_buildings_variant: Variant = baked_edits.get("buildings", {})
+	if typeof(baked_buildings_variant) != TYPE_DICTIONARY:
+		_fail("SaveManager included baked edit data, but it was missing the buildings map")
+		return
+	var baked_buildings: Dictionary = baked_buildings_variant
+	var building_edits_variant: Variant = baked_buildings.get(building_key, {})
+	if typeof(building_edits_variant) != TYPE_DICTIONARY or (building_edits_variant as Dictionary).is_empty():
+		_fail("SaveManager gathered save data, but the mined baked building edit was missing")
+		return
+
+	var smoke_dir := "user://debug/tests"
+	var smoke_dir_abs := ProjectSettings.globalize_path(smoke_dir)
+	if not DirAccess.dir_exists_absolute(smoke_dir_abs):
+		DirAccess.make_dir_recursive_absolute(smoke_dir_abs)
+	var save_path := "%s/baked_building_persistence_smoke_%d.json" % [smoke_dir, Time.get_ticks_msec()]
+
+	print("[TOWN_STALL_TEST] Saving smoke test state to %s" % save_path)
+	_emit_scope_event("town_stall_test", "baked_building_persistence_smoke_save", {
+		"save_path": save_path,
+		"building_key": building_key
+	})
+
+	if not save_manager.has_method("_save_game_internal"):
+		_fail("SaveManager missing synchronous save helper for smoke test")
+		return
+	if not bool(save_manager._save_game_internal(save_path)):
+		_fail("Smoke test save failed")
+		return
+
+	baked_building_persistence_smoke_load_completed = false
+	baked_building_persistence_smoke_load_success = false
+	baked_building_persistence_smoke_load_path = save_path
+	if not save_manager.load_completed.is_connected(_on_baked_building_persistence_load_completed):
+		save_manager.load_completed.connect(_on_baked_building_persistence_load_completed)
+
+	print("[TOWN_STALL_TEST] Reloading smoke save from %s" % save_path)
+	_emit_scope_event("town_stall_test", "baked_building_persistence_smoke_load", {
+		"save_path": save_path,
+		"building_key": building_key
+	})
+	if not save_manager.load_game(save_path):
+		_fail("Smoke test load did not start")
+		return
+
+	smoke_start_ms = Time.get_ticks_msec()
+	while not baked_building_persistence_smoke_load_completed:
+		if Time.get_ticks_msec() - smoke_start_ms > smoke_timeout_ms:
+			_fail("Timed out waiting for baked-building smoke load to complete")
+			return
+		await get_tree().process_frame
+		if pending_quit or phase == Phase.DONE or phase == Phase.FAILED:
+			return
+
+	if not baked_building_persistence_smoke_load_success:
+		_fail("Smoke test load completed but reported failure")
+		return
+
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	building_manager = _find_manager_node("building_manager", "BuildingManager")
+	if not is_instance_valid(building_manager):
+		_fail("BuildingManager vanished before verifying smoke load result")
+		return
+
+	var loaded_voxel := 0
+	if building_manager.has_method("get_voxel"):
+		loaded_voxel = int(building_manager.get_voxel(voxel_pos))
+	if loaded_voxel != 0:
+		_fail("Baked-building smoke test failed: the mined block came back after reload")
+		return
+
+	var cleanup_path := ProjectSettings.globalize_path(save_path)
+	if FileAccess.file_exists(save_path):
+		DirAccess.remove_absolute(cleanup_path)
+
+	print("[TOWN_STALL_TEST] Baked building persistence smoke test PASSED")
+	_emit_scope_event("town_stall_test", "baked_building_persistence_smoke_passed", {
+		"save_path": save_path,
+		"building_key": building_key,
+		"voxel_x": voxel_pos.x,
+		"voxel_y": voxel_pos.y,
+		"voxel_z": voxel_pos.z
+	})
+	print("[TOWN_STALL_TEST] Hold complete, quitting")
+	_emit_scope_event("town_stall_test", "hold_complete", {
+		"hold_seconds": phase_time,
+		"phase": str(phase),
+		"smoke_test": true
+	})
+	_begin_shutdown()
+
+
+func _find_baked_building_smoke_target() -> Dictionary:
+	if not is_instance_valid(building_manager):
+		building_manager = _find_manager_node("building_manager", "BuildingManager")
+	if not is_instance_valid(building_manager):
+		return {}
+
+	var payloads_variant: Variant = building_manager.get("_world_map_baked_building_visual_payloads_by_key")
+	if typeof(payloads_variant) != TYPE_DICTIONARY:
+		return {}
+	var payloads: Dictionary = payloads_variant
+	if payloads.is_empty():
+		return {}
+
+	var visual_nodes_variant: Variant = building_manager.get("_world_map_baked_building_visual_nodes")
+	var visual_nodes: Dictionary = visual_nodes_variant if typeof(visual_nodes_variant) == TYPE_DICTIONARY else {}
+
+	for building_key_variant in payloads.keys():
+		var building_key := str(building_key_variant)
+		if building_key.is_empty():
+			continue
+
+		var payload_variant: Variant = payloads.get(building_key, {})
+		if typeof(payload_variant) != TYPE_DICTIONARY:
+			continue
+		var payload: Dictionary = payload_variant
+		var voxel_bytes: PackedByteArray = payload.get("voxel_bytes", PackedByteArray())
+		var voxel_size := int(payload.get("voxel_size", 0))
+		var voxel_origin_variant: Variant = payload.get("voxel_origin", Vector3.ZERO)
+		var voxel_origin: Vector3 = voxel_origin_variant if typeof(voxel_origin_variant) == TYPE_VECTOR3 else Vector3.ZERO
+		if voxel_bytes.is_empty() or voxel_size <= 0:
+			continue
+
+		var root_variant: Variant = visual_nodes.get(building_key, null)
+		var root := root_variant if root_variant is Node3D else null
+		if root == null or not is_instance_valid(root):
+			continue
+		var static_body := root.get_node_or_null("StaticBody") as StaticBody3D
+		if static_body == null or not is_instance_valid(static_body):
+			continue
+
+		for voxel_index in range(voxel_bytes.size()):
+			if int(voxel_bytes[voxel_index]) <= 0:
+				continue
+			var local_x := voxel_index % voxel_size
+			var local_y := int(voxel_index / voxel_size) % voxel_size
+			var local_z := int(voxel_index / (voxel_size * voxel_size))
+			var voxel_pos := Vector3(
+				floor(voxel_origin.x) + float(local_x),
+				floor(voxel_origin.y) + float(local_y),
+				floor(voxel_origin.z) + float(local_z)
+			)
+			if not building_manager.has_method("get_voxel"):
+				continue
+			if int(building_manager.get_voxel(voxel_pos)) <= 0:
+				continue
+
+			return {
+				"building_key": building_key,
+				"voxel_pos": voxel_pos,
+				"static_body": static_body
+			}
+
+	return {}
 
 
 func _select_town(towns: Array) -> Dictionary:

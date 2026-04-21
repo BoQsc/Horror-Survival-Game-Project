@@ -35,6 +35,7 @@ var _world_map_baked_building_visual_nodes: Dictionary = {} # String building_ke
 var _world_map_baked_building_visual_payloads_by_key: Dictionary = {} # String building_key -> Dictionary visual payload
 var _world_map_baked_building_keys_by_chunk: Dictionary = {} # Vector3i chunk_coord -> Array[String]
 var _world_map_baked_building_chunk_coords_by_key: Dictionary = {} # String building_key -> Array[Vector3i]
+var _world_map_baked_building_edits_by_key: Dictionary = {} # String building_key -> Dictionary[voxel_key] = { value, meta }
 
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
@@ -346,8 +347,13 @@ func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 	_world_map_baked_building_visual_payloads_by_key.clear()
 	_world_map_baked_building_keys_by_chunk.clear()
 	_world_map_baked_building_chunk_coords_by_key.clear()
+	clear_world_map_baked_building_edits()
 	_last_apply_world_map_baked_building_visual_ms = 0.0
 	_last_apply_world_map_baked_building_visual_count = 0
+
+
+func clear_world_map_baked_building_edits() -> void:
+	_world_map_baked_building_edits_by_key.clear()
 
 
 func _register_world_map_baked_building_chunk_coords(building_key: String, chunk_coords: Array) -> void:
@@ -458,6 +464,149 @@ func _update_world_map_baked_building_visual_for_voxel(building_key: String, vox
 	visual_payload["collision_boxes"] = mesh_result.get("collision_boxes", [])
 	_world_map_baked_building_visual_payloads_by_key[building_key] = visual_payload
 	return _apply_world_map_baked_building_visual(building_key, visual_payload)
+
+
+func _get_world_map_baked_building_edit_key(voxel_pos: Vector3) -> String:
+	return "%d,%d,%d" % [int(floor(voxel_pos.x)), int(floor(voxel_pos.y)), int(floor(voxel_pos.z))]
+
+
+func _record_world_map_baked_building_edit(building_key: String, voxel_pos: Vector3, value: int, meta: int) -> void:
+	if building_key.is_empty():
+		return
+
+	var edit_key := _get_world_map_baked_building_edit_key(voxel_pos)
+	if edit_key.is_empty():
+		return
+
+	var building_edits_variant: Variant = _world_map_baked_building_edits_by_key.get(building_key, {})
+	var building_edits: Dictionary = building_edits_variant if typeof(building_edits_variant) == TYPE_DICTIONARY else {}
+	building_edits[edit_key] = {
+		"value": mini(maxi(int(value), 0), 255),
+		"meta": mini(maxi(int(meta), 0), 255)
+	}
+	_world_map_baked_building_edits_by_key[building_key] = building_edits
+
+
+func _apply_world_map_baked_building_saved_edits(building_key: String) -> int:
+	if building_key.is_empty():
+		return 0
+
+	var edits_variant: Variant = _world_map_baked_building_edits_by_key.get(building_key, {})
+	if typeof(edits_variant) != TYPE_DICTIONARY:
+		return 0
+
+	var edits: Dictionary = edits_variant
+	if edits.is_empty():
+		return 0
+
+	var applied := 0
+	var edit_keys: Array = edits.keys()
+	for edit_key_variant in edit_keys:
+		var edit_key := str(edit_key_variant)
+		if edit_key.is_empty():
+			continue
+
+		var parts := edit_key.split(",")
+		if parts.size() != 3:
+			continue
+
+		var edit_variant: Variant = edits.get(edit_key, {})
+		if typeof(edit_variant) != TYPE_DICTIONARY:
+			continue
+		var edit: Dictionary = edit_variant
+		var voxel_pos := Vector3(float(parts[0]), float(parts[1]), float(parts[2]))
+		set_voxel(voxel_pos, int(edit.get("value", 0)), int(edit.get("meta", 0)), building_key)
+		applied += 1
+
+	return applied
+
+
+func get_world_map_baked_building_edits_save_data() -> Dictionary:
+	if not world_map_mode or _world_map_baked_building_edits_by_key.is_empty():
+		return {}
+
+	var buildings: Dictionary = {}
+	for building_key_variant in _world_map_baked_building_edits_by_key.keys():
+		var building_key := str(building_key_variant)
+		if building_key.is_empty():
+			continue
+
+		var edits_variant: Variant = _world_map_baked_building_edits_by_key.get(building_key, {})
+		if typeof(edits_variant) != TYPE_DICTIONARY:
+			continue
+		var edits: Dictionary = edits_variant
+		if edits.is_empty():
+			continue
+		buildings[building_key] = edits.duplicate(true)
+
+	if buildings.is_empty():
+		return {}
+
+	return {
+		"version": 1,
+		"buildings": buildings
+	}
+
+
+func load_world_map_baked_building_edits_save_data(data: Dictionary) -> void:
+	clear_world_map_baked_building_edits()
+	if data.is_empty():
+		return
+
+	var buildings_variant: Variant = data.get("buildings", data)
+	if typeof(buildings_variant) != TYPE_DICTIONARY:
+		return
+
+	var buildings: Dictionary = buildings_variant
+	for building_key_variant in buildings.keys():
+		var building_key := str(building_key_variant)
+		if building_key.is_empty():
+			continue
+
+		var building_entry_variant: Variant = buildings.get(building_key, {})
+		var building_edits_variant: Variant = building_entry_variant
+		if typeof(building_entry_variant) == TYPE_DICTIONARY:
+			var building_entry: Dictionary = building_entry_variant
+			if building_entry.has("edits"):
+				building_edits_variant = building_entry.get("edits", {})
+
+		if typeof(building_edits_variant) != TYPE_DICTIONARY:
+			continue
+
+		var building_edits: Dictionary = building_edits_variant
+		if building_edits.is_empty():
+			continue
+
+		var normalized_edits: Dictionary = {}
+		for edit_key_variant in building_edits.keys():
+			var edit_key := str(edit_key_variant)
+			if edit_key.is_empty():
+				continue
+
+			var parts := edit_key.split(",")
+			if parts.size() != 3:
+				continue
+
+			var edit_variant: Variant = building_edits.get(edit_key, {})
+			if typeof(edit_variant) != TYPE_DICTIONARY:
+				continue
+			var edit: Dictionary = edit_variant
+			normalized_edits[edit_key] = {
+				"value": mini(maxi(int(edit.get("value", 0)), 0), 255),
+				"meta": mini(maxi(int(edit.get("meta", 0)), 0), 255)
+			}
+
+		if not normalized_edits.is_empty():
+			_world_map_baked_building_edits_by_key[building_key] = normalized_edits
+
+
+func _get_world_map_baked_building_edit_count() -> int:
+	var total := 0
+	for edits_variant in _world_map_baked_building_edits_by_key.values():
+		if typeof(edits_variant) != TYPE_DICTIONARY:
+			continue
+		total += (edits_variant as Dictionary).size()
+	return total
 
 
 func clear_for_shutdown() -> void:
@@ -592,6 +741,9 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 			else:
 				mark_chunk_dirty(chunk_coord, chunk)
 		applied_chunks += 1
+
+	if not building_key.is_empty():
+		_apply_world_map_baked_building_saved_edits(building_key)
 
 	if flush_now and has_dirty_chunks():
 		flush_dirty_chunks(force_flush)
@@ -860,6 +1012,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_apply_world_map_baked_building_chunk_count": _last_apply_world_map_baked_building_chunk_count,
 		"last_apply_world_map_baked_building_object_count": _last_apply_world_map_baked_building_object_count,
 		"last_apply_world_map_baked_building_prebuilt_chunk_count": _last_apply_world_map_baked_building_prebuilt_chunk_count,
+		"world_map_baked_building_edit_keys": _world_map_baked_building_edits_by_key.size(),
+		"world_map_baked_building_edit_count": _get_world_map_baked_building_edit_count(),
 		"total_world_map_baked_building_visual_nodes": _world_map_baked_building_visual_nodes.size()
 	}
 
@@ -951,7 +1105,9 @@ func set_voxel(global_pos: Vector3, value: int, meta: int = 0, baked_building_ke
 			var building_key := str(building_key_variant)
 			if building_key.is_empty():
 				continue
-			if _update_world_map_baked_building_visual_for_voxel(building_key, global_pos, value, meta):
+			var updated_world_map_baked_building := _update_world_map_baked_building_visual_for_voxel(building_key, global_pos, value, meta)
+			_record_world_map_baked_building_edit(building_key, global_pos, value, meta)
+			if updated_world_map_baked_building:
 				handled_world_map_baked_building = true
 
 	# Trigger rebuild for this chunk if it's visible and we did not update a baked whole-building visual instead.
@@ -988,7 +1144,9 @@ func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0, baked_bui
 			var building_key := str(building_key_variant)
 			if building_key.is_empty():
 				continue
-			if _update_world_map_baked_building_visual_for_voxel(building_key, global_pos, value, meta):
+			var updated_world_map_baked_building := _update_world_map_baked_building_visual_for_voxel(building_key, global_pos, value, meta)
+			_record_world_map_baked_building_edit(building_key, global_pos, value, meta)
+			if updated_world_map_baked_building:
 				handled_world_map_baked_building = true
 
 	# Always mark chunk as dirty unless the baked whole-building visual was updated in place.
