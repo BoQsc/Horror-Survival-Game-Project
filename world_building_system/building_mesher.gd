@@ -177,6 +177,13 @@ func pack_rotated_world_map_block_batches(prefab_blocks: Array, rotation: int, s
 		return []
 	return builder.pack_rotated_world_map_block_batches(prefab_blocks, rotation, spawn_pos, chunk_size)
 
+func build_world_map_baked_building_payload(prefab_blocks: Array, rotation: int, spawn_pos: Vector3, chunk_size: int, chunk_stride: int) -> Dictionary:
+	var builder := _get_native_builder()
+	if not builder or not builder.has_method("build_world_map_baked_building_payload"):
+		push_error("[BuildingMesher] MeshBuilder.build_world_map_baked_building_payload() is required.")
+		return {}
+	return builder.build_world_map_baked_building_payload(prefab_blocks, rotation, spawn_pos, chunk_size, chunk_stride)
+
 func voxels_need_detailed_collision(voxel_bytes: PackedByteArray) -> bool:
 	return _voxels_need_detailed_collision(voxel_bytes)
 

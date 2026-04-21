@@ -44,6 +44,305 @@ def _positive_float_from_env(name: str, default: float) -> float:
     return value if value > 0.0 else default
 
 
+def _positive_int_from_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+
+    return value if value > 0 else default
+
+
+def _run_powershell_json(command: str, timeout_seconds: int = 20) -> Optional[dict]:
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+        )
+    except Exception:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    payload = (result.stdout or "").strip()
+    if not payload:
+        return None
+
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _collect_machine_state() -> dict:
+    command = r"""
+$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1 Name,CurrentClockSpeed,MaxClockSpeed,LoadPercentage
+$perf = Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name='_Total'" | Select-Object -First 1 Name,PercentProcessorPerformance,PercentofMaximumFrequency,PercentProcessorUtility,ProcessorFrequency
+$thermal = Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue | Select-Object -First 1 InstanceName,CurrentTemperature
+[ordered]@{
+  cpu = $cpu
+  perf = $perf
+  thermal = $thermal
+} | ConvertTo-Json -Compress -Depth 4
+""".strip()
+
+    payload = _run_powershell_json(command)
+    if not payload:
+        return {
+            "available": False,
+            "warmup_state": "unknown",
+            "warmup_note": "Machine state probe unavailable.",
+            "thermal_state": "unavailable",
+        }
+
+    cpu = payload.get("cpu", {}) if isinstance(payload.get("cpu", {}), dict) else {}
+    perf = payload.get("perf", {}) if isinstance(payload.get("perf", {}), dict) else {}
+    thermal = payload.get("thermal", {}) if isinstance(payload.get("thermal", {}), dict) else {}
+
+    cpu_name = str(cpu.get("Name", "Unknown"))
+    current_clock_mhz = int(cpu.get("CurrentClockSpeed", 0) or 0)
+    max_clock_mhz = int(cpu.get("MaxClockSpeed", 0) or 0)
+    load_percentage = int(cpu.get("LoadPercentage", 0) or 0)
+
+    percent_processor_performance = int(perf.get("PercentProcessorPerformance", 0) or 0)
+    percent_max_frequency = int(perf.get("PercentofMaximumFrequency", 0) or 0)
+    percent_processor_utility = int(perf.get("PercentProcessorUtility", 0) or 0)
+    processor_frequency_mhz = int(perf.get("ProcessorFrequency", 0) or 0)
+
+    estimated_effective_clock_mhz = 0
+    if processor_frequency_mhz > 0 and percent_processor_performance > 0:
+        estimated_effective_clock_mhz = int(round(processor_frequency_mhz * (percent_processor_performance / 100.0)))
+    elif current_clock_mhz > 0:
+        estimated_effective_clock_mhz = current_clock_mhz
+
+    thermal_c = None
+    thermal_state = "unavailable"
+    current_temperature = thermal.get("CurrentTemperature", None)
+    if isinstance(current_temperature, (int, float)) and current_temperature > 0:
+        thermal_c = round(float(current_temperature) / 10.0 - 273.15, 1)
+        thermal_state = "available"
+
+    if percent_processor_performance >= 120:
+        warmup_state = "boosted"
+        warmup_note = f"CPU is boosted at {percent_processor_performance}% of nominal (~{estimated_effective_clock_mhz} MHz effective)."
+    elif percent_processor_performance >= 105:
+        warmup_state = "warm"
+        warmup_note = f"CPU is warm at {percent_processor_performance}% of nominal (~{estimated_effective_clock_mhz} MHz effective)."
+    elif load_percentage >= 70:
+        warmup_state = "loaded"
+        warmup_note = f"CPU is under load ({load_percentage}% load) and may still climb into boost."
+    else:
+        warmup_state = "baseline"
+        warmup_note = f"CPU appears near baseline at {percent_processor_performance}% of nominal."
+
+    machine_state = {
+        "available": True,
+        "cpu_name": cpu_name,
+        "current_clock_mhz": current_clock_mhz,
+        "max_clock_mhz": max_clock_mhz,
+        "load_percentage": load_percentage,
+        "processor_frequency_mhz": processor_frequency_mhz,
+        "percent_processor_performance": percent_processor_performance,
+        "percent_max_frequency": percent_max_frequency,
+        "percent_processor_utility": percent_processor_utility,
+        "estimated_effective_clock_mhz": estimated_effective_clock_mhz,
+        "thermal_state": thermal_state,
+        "thermal_c": thermal_c,
+        "warmup_state": warmup_state,
+        "warmup_note": warmup_note,
+    }
+    return machine_state
+
+
+def _machine_state_brief_summary(machine_state: dict) -> str:
+    if not machine_state:
+        return "unavailable"
+
+    cpu_name = str(machine_state.get("cpu_name", "Unknown"))
+    current_clock_mhz = int(machine_state.get("current_clock_mhz", 0))
+    percent_processor_performance = int(machine_state.get("percent_processor_performance", 0))
+    load_percentage = int(machine_state.get("load_percentage", 0))
+    warmup_state = str(machine_state.get("warmup_state", "unknown"))
+    return (
+        f"{cpu_name} current={current_clock_mhz} MHz "
+        f"perf={percent_processor_performance}% load={load_percentage}% "
+        f"state={warmup_state}"
+    )
+
+
+def _machine_state_is_baseline(
+    machine_state: dict,
+    max_percent_processor_performance: int,
+    max_load_percentage: int,
+) -> bool:
+    if not machine_state:
+        return False
+
+    percent_processor_performance = int(machine_state.get("percent_processor_performance", 0) or 0)
+    load_percentage = int(machine_state.get("load_percentage", 0) or 0)
+    current_clock_mhz = int(machine_state.get("current_clock_mhz", 0) or 0)
+    max_clock_mhz = int(machine_state.get("max_clock_mhz", 0) or 0)
+
+    if percent_processor_performance > max_percent_processor_performance:
+        return False
+    if load_percentage > max_load_percentage:
+        return False
+    if max_clock_mhz > 0 and current_clock_mhz >= max_clock_mhz:
+        return False
+
+    return True
+
+
+def _wait_for_machine_baseline(
+    required_consecutive_samples: int,
+    sample_interval_seconds: float,
+    max_wait_seconds: float,
+    max_percent_processor_performance: int,
+    max_load_percentage: int,
+) -> dict:
+    start_time = time.time()
+    consecutive_ready = 0
+    sample_count = 0
+    last_state: dict = {}
+
+    print(
+        "Machine warmup gate: waiting for "
+        f"{required_consecutive_samples} consecutive samples with "
+        f"performance <= {max_percent_processor_performance}%, "
+        f"load <= {max_load_percentage}%, and current clock below max"
+    )
+
+    while True:
+        last_state = _collect_machine_state()
+        sample_count += 1
+
+        if _machine_state_is_baseline(last_state, max_percent_processor_performance, max_load_percentage):
+            consecutive_ready += 1
+            print(
+                f"  warmup sample {sample_count}: ready "
+                f"({consecutive_ready}/{required_consecutive_samples}) - "
+                f"{_machine_state_brief_summary(last_state)}"
+            )
+            if consecutive_ready >= required_consecutive_samples:
+                elapsed = time.time() - start_time
+                warmup_gate = {
+                    "status": "settled",
+                    "settled": True,
+                    "samples": sample_count,
+                    "required_consecutive_samples": required_consecutive_samples,
+                    "wait_seconds": round(elapsed, 1),
+                    "sample_interval_seconds": sample_interval_seconds,
+                    "max_wait_seconds": max_wait_seconds,
+                    "max_percent_processor_performance": max_percent_processor_performance,
+                    "max_load_percentage": max_load_percentage,
+                    "require_current_clock_below_max": True,
+                }
+                last_state["warmup_gate"] = warmup_gate
+                last_state["warmup_state"] = "settled"
+                last_state["warmup_note"] = (
+                    f"Machine held at baseline for {required_consecutive_samples} consecutive samples "
+                    f"before benchmark start ({round(elapsed, 1)}s, {sample_count} samples)."
+                )
+                return last_state
+        else:
+            consecutive_ready = 0
+            print(
+                f"  warmup sample {sample_count}: not ready - "
+                f"{_machine_state_brief_summary(last_state)}"
+            )
+
+        elapsed = time.time() - start_time
+        if elapsed >= max_wait_seconds:
+            warmup_gate = {
+                "status": "timeout",
+                "settled": False,
+                "samples": sample_count,
+                "required_consecutive_samples": required_consecutive_samples,
+                "wait_seconds": round(elapsed, 1),
+                "sample_interval_seconds": sample_interval_seconds,
+                "max_wait_seconds": max_wait_seconds,
+                "max_percent_processor_performance": max_percent_processor_performance,
+                "max_load_percentage": max_load_percentage,
+                "require_current_clock_below_max": True,
+            }
+            last_state["warmup_gate"] = warmup_gate
+            last_state["warmup_state"] = "timeout"
+            last_state["warmup_note"] = (
+                f"Machine warmup gate timed out after {round(elapsed, 1)}s and {sample_count} samples; "
+                "continuing with the last observed state."
+            )
+            print(last_state["warmup_note"])
+            return last_state
+
+        sleep_seconds = min(sample_interval_seconds, max_wait_seconds - elapsed)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+
+def _print_machine_state_summary(machine_state: dict) -> None:
+    if not machine_state:
+        print("Machine state: unavailable")
+        return
+
+    cpu_name = machine_state.get("cpu_name", "Unknown")
+    current_clock_mhz = int(machine_state.get("current_clock_mhz", 0))
+    max_clock_mhz = int(machine_state.get("max_clock_mhz", 0))
+    processor_frequency_mhz = int(machine_state.get("processor_frequency_mhz", 0))
+    percent_processor_performance = int(machine_state.get("percent_processor_performance", 0))
+    percent_max_frequency = int(machine_state.get("percent_max_frequency", 0))
+    percent_processor_utility = int(machine_state.get("percent_processor_utility", 0))
+    estimated_effective_clock_mhz = int(machine_state.get("estimated_effective_clock_mhz", 0))
+    load_percentage = int(machine_state.get("load_percentage", 0))
+    thermal_state = str(machine_state.get("thermal_state", "unavailable"))
+    thermal_c = machine_state.get("thermal_c", None)
+    warmup_state = str(machine_state.get("warmup_state", "unknown"))
+    warmup_note = str(machine_state.get("warmup_note", ""))
+    warmup_gate = machine_state.get("warmup_gate", {})
+    warmup_gate_note = ""
+    if isinstance(warmup_gate, dict) and warmup_gate:
+        warmup_gate_note = " | gate=%s samples=%d wait=%.1fs" % (
+            str(warmup_gate.get("status", "unknown")),
+            int(warmup_gate.get("samples", 0)),
+            float(warmup_gate.get("wait_seconds", 0.0)),
+        )
+
+    print("Machine state:")
+    print(f"  CPU: {cpu_name}")
+    print(
+        f"  Clock: current {current_clock_mhz} MHz | max {max_clock_mhz} MHz | "
+        f"processor freq {processor_frequency_mhz} MHz"
+    )
+    print(
+        f"  Perf: {percent_processor_performance}% of nominal | "
+        f"{percent_max_frequency}% max frequency | utility {percent_processor_utility}% | "
+        f"~{estimated_effective_clock_mhz} MHz effective"
+    )
+    print(f"  Load: {load_percentage}%")
+    if thermal_c is None:
+        print(f"  Thermal: {thermal_state}")
+    else:
+        print(f"  Thermal: {thermal_state} ({thermal_c} C)")
+    print(f"  Warmup: {warmup_state} - {warmup_note}{warmup_gate_note}")
+
+
 def _print_snapshot_summary(snapshot_path: Path) -> None:
     try:
         data = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -73,6 +372,12 @@ def _print_snapshot_summary(snapshot_path: Path) -> None:
     print(f"Town stall over budget ms: {town_window.get('stall_over_budget_ms', '?')}")
     print(f"Town longest over-budget streak: {town_window.get('longest_over_budget_streak', '?')}")
     print(f"Recent window stable bucket: {recent_window.get('stable_top_bucket', 'Unknown')} ({recent_window.get('stable_top_bucket_count', 0)})")
+    machine_state = data.get("machine_state", {})
+    if isinstance(machine_state, dict) and machine_state:
+        _print_machine_state_summary(machine_state)
+        warmup_note = str(data.get("warmup_note", machine_state.get("warmup_note", "")))
+        if warmup_note:
+            print(f"Warmup note: {warmup_note}")
     system_pressure_ranking = data.get("system_pressure_ranking", [])
     if system_pressure_ranking:
         print("System pressure ranking:")
@@ -153,9 +458,33 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_ENTITIES"] = os.environ.get("TOWN_STALL_DISABLE_ENTITIES", "0")
     env["TOWN_STALL_DISABLE_EXIT_AUTOSAVE"] = os.environ.get("TOWN_STALL_DISABLE_EXIT_AUTOSAVE", "1")
     env["TOWN_STALL_HOLD_SECONDS"] = os.environ.get("TOWN_STALL_HOLD_SECONDS", "")
+    machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "0") == "1"
+    machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
+    machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)
+    machine_warmup_max_wait_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_MAX_WAIT_SECONDS", 180.0)
+    machine_warmup_max_percent_processor_performance = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_MAX_PERCENT_PROCESSOR_PERFORMANCE", 100)
+    machine_warmup_max_load_percentage = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_MAX_LOAD_PERCENT", 80)
+
+    if machine_warmup_disabled:
+        machine_state = _collect_machine_state()
+        machine_state["warmup_state"] = "disabled"
+        machine_state["warmup_note"] = "Machine warmup gate disabled via env."
+    else:
+        machine_state = _wait_for_machine_baseline(
+            machine_warmup_required_consecutive_samples,
+            machine_warmup_sample_interval_seconds,
+            machine_warmup_max_wait_seconds,
+            machine_warmup_max_percent_processor_performance,
+            machine_warmup_max_load_percentage,
+        )
+
+    env["TOWN_STALL_MACHINE_STATE_JSON"] = json.dumps(machine_state)
 
     configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
     timeout = max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0))
+
+    print("\nMachine state probe:")
+    _print_machine_state_summary(machine_state)
 
     try:
         proc = subprocess.Popen(

@@ -72,6 +72,13 @@ public:
 	// Packs raw prefab blocks into per-chunk voxel batches while applying rotation natively.
 	Array pack_rotated_world_map_block_batches(const Array& prefab_blocks, int rotation, const Vector3& spawn_pos, int chunk_size);
 
+	// Builds the full baked-building payload in one native pass.
+	// Returns chunk payload, voxel payload, trigger terrain coords, and block counts.
+	Dictionary build_world_map_baked_building_payload(const Array& prefab_blocks, int rotation, const Vector3& spawn_pos, int chunk_size, int chunk_stride);
+
+	// Computes terrain chunk trigger coordinates for a baked building footprint.
+	Array get_world_map_baked_building_trigger_coords(const Vector3i& min_coord, const Vector3i& max_coord, int chunk_stride);
+
 	// Builds merged world-map collision boxes from voxel occupancy.
 	Array build_collision_boxes_from_voxels(const PackedByteArray& voxel_bytes, int chunk_size);
 

@@ -53,7 +53,13 @@ struct Vector3iEqual {
 
 using BlockBatchMap = std::unordered_map<Vector3i, BlockBatchData, Vector3iHash, Vector3iEqual>;
 
+static Dictionary make_batch_dictionary(const BlockBatchData &batch);
+
 static void append_batch_dictionary(Array &batches, int index, const BlockBatchData &batch) {
+    batches[index] = make_batch_dictionary(batch);
+}
+
+static Dictionary make_batch_dictionary(const BlockBatchData &batch) {
     Dictionary batch_dict;
     batch_dict["coord"] = batch.coord;
 
@@ -81,7 +87,7 @@ static void append_batch_dictionary(Array &batches, int index, const BlockBatchD
     }
     batch_dict["metas"] = metas;
 
-    batches[index] = batch_dict;
+    return batch_dict;
 }
 
 static void append_collision_box_dictionary(Array &boxes, int index, const CollisionBoxData &box) {
@@ -879,6 +885,8 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("build_building_mesh", "vertex_bytes", "normal_bytes", "uv_bytes", "index_bytes", "vertex_count", "index_count"), &MeshBuilder::build_building_mesh);
     ClassDB::bind_method(D_METHOD("build_building_mesh_from_voxels", "voxel_bytes", "voxel_meta", "use_box_collision", "chunk_size"), &MeshBuilder::build_building_mesh_from_voxels);
     ClassDB::bind_method(D_METHOD("pack_rotated_world_map_block_batches", "prefab_blocks", "rotation", "spawn_pos", "chunk_size"), &MeshBuilder::pack_rotated_world_map_block_batches);
+    ClassDB::bind_method(D_METHOD("build_world_map_baked_building_payload", "prefab_blocks", "rotation", "spawn_pos", "chunk_size", "chunk_stride"), &MeshBuilder::build_world_map_baked_building_payload);
+    ClassDB::bind_method(D_METHOD("get_world_map_baked_building_trigger_coords", "min_coord", "max_coord", "chunk_stride"), &MeshBuilder::get_world_map_baked_building_trigger_coords);
     ClassDB::bind_method(D_METHOD("build_collision_boxes_from_voxels", "voxel_bytes", "chunk_size"), &MeshBuilder::build_collision_boxes_from_voxels);
     ClassDB::bind_method(D_METHOD("apply_world_map_collision_boxes", "body_rid", "collision_boxes"), &MeshBuilder::apply_world_map_collision_boxes);
 }
@@ -1379,6 +1387,160 @@ Array MeshBuilder::pack_rotated_world_map_block_batches(const Array& prefab_bloc
     }
 
     return batches;
+}
+
+Array MeshBuilder::get_world_map_baked_building_trigger_coords(const Vector3i& min_coord, const Vector3i& max_coord, int chunk_stride) {
+    Array trigger_coords;
+    if (chunk_stride <= 0 || min_coord.x > max_coord.x || min_coord.z > max_coord.z) {
+        return trigger_coords;
+    }
+
+    const int min_chunk_x = static_cast<int>(Math::floor(static_cast<double>(min_coord.x) / static_cast<double>(chunk_stride)));
+    const int max_chunk_x = static_cast<int>(Math::floor(static_cast<double>(max_coord.x) / static_cast<double>(chunk_stride)));
+    const int min_chunk_z = static_cast<int>(Math::floor(static_cast<double>(min_coord.z) / static_cast<double>(chunk_stride)));
+    const int max_chunk_z = static_cast<int>(Math::floor(static_cast<double>(max_coord.z) / static_cast<double>(chunk_stride)));
+
+    for (int chunk_x = min_chunk_x; chunk_x <= max_chunk_x; ++chunk_x) {
+        for (int chunk_z = min_chunk_z; chunk_z <= max_chunk_z; ++chunk_z) {
+            trigger_coords.append(Vector3i(chunk_x, 0, chunk_z));
+        }
+    }
+
+    return trigger_coords;
+}
+
+Dictionary MeshBuilder::build_world_map_baked_building_payload(const Array& prefab_blocks, int rotation, const Vector3& spawn_pos, int chunk_size, int chunk_stride) {
+    Dictionary result;
+    if (prefab_blocks.is_empty() || chunk_size <= 0) {
+        return result;
+    }
+
+    rotation = ((rotation % 4) + 4) % 4;
+
+    BlockBatchMap batches_by_coord;
+    batches_by_coord.reserve(prefab_blocks.size());
+
+    std::vector<Vector3i> block_positions;
+    std::vector<uint8_t> block_types;
+    std::vector<uint8_t> block_metas;
+    block_positions.reserve(prefab_blocks.size());
+    block_types.reserve(prefab_blocks.size());
+    block_metas.reserve(prefab_blocks.size());
+
+    int min_x = std::numeric_limits<int>::max();
+    int min_y = std::numeric_limits<int>::max();
+    int min_z = std::numeric_limits<int>::max();
+    int max_x = std::numeric_limits<int>::min();
+    int max_y = std::numeric_limits<int>::min();
+    int max_z = std::numeric_limits<int>::min();
+    bool has_any = false;
+
+    for (int i = 0; i < prefab_blocks.size(); ++i) {
+        Variant block_variant = prefab_blocks[i];
+        if (block_variant.get_type() != Variant::DICTIONARY) {
+            continue;
+        }
+
+        Dictionary block = block_variant;
+        Vector3i offset = block.get("offset", Vector3i());
+        Vector3i rotated_offset = rotate_offset_90(offset, rotation);
+        int block_type = block.get("type", 0);
+        int block_meta = block.get("meta", 0);
+
+        if (block_type == 4 || (block_type == 2 && block_meta >= 1 && block_meta <= 3)) {
+            block_meta = (block_meta + rotation) % 4;
+        }
+
+        Vector3 block_global_pos = spawn_pos + Vector3(rotated_offset);
+        const int global_x = static_cast<int>(Math::floor(block_global_pos.x));
+        const int global_y = static_cast<int>(Math::floor(block_global_pos.y));
+        const int global_z = static_cast<int>(Math::floor(block_global_pos.z));
+        const Vector3i block_pos(global_x, global_y, global_z);
+
+        block_positions.push_back(block_pos);
+        block_types.push_back(static_cast<uint8_t>(block_type));
+        block_metas.push_back(static_cast<uint8_t>(block_meta));
+
+        min_x = std::min(min_x, global_x);
+        min_y = std::min(min_y, global_y);
+        min_z = std::min(min_z, global_z);
+        max_x = std::max(max_x, global_x);
+        max_y = std::max(max_y, global_y);
+        max_z = std::max(max_z, global_z);
+        has_any = true;
+
+        const Vector3i chunk_coord(
+            static_cast<int>(Math::floor(block_global_pos.x / static_cast<double>(chunk_size))),
+            static_cast<int>(Math::floor(block_global_pos.y / static_cast<double>(chunk_size))),
+            static_cast<int>(Math::floor(block_global_pos.z / static_cast<double>(chunk_size)))
+        );
+
+        int local_x = global_x % chunk_size;
+        int local_y = global_y % chunk_size;
+        int local_z = global_z % chunk_size;
+        if (local_x < 0) local_x += chunk_size;
+        if (local_y < 0) local_y += chunk_size;
+        if (local_z < 0) local_z += chunk_size;
+
+        const int local_index = local_x + local_y * chunk_size + local_z * chunk_size * chunk_size;
+        BlockBatchData &batch = batches_by_coord[chunk_coord];
+        batch.coord = chunk_coord;
+        batch.indices.push_back(local_index);
+        batch.types.push_back(static_cast<uint8_t>(block_type));
+        batch.metas.push_back(static_cast<uint8_t>(block_meta));
+    }
+
+    if (!has_any) {
+        return result;
+    }
+
+    Dictionary chunk_payload;
+    for (const auto &entry : batches_by_coord) {
+        chunk_payload[entry.first] = make_batch_dictionary(entry.second);
+    }
+    result["chunk_payload"] = chunk_payload;
+
+    const int edge_size = std::max(std::max(max_x - min_x + 1, max_y - min_y + 1), max_z - min_z + 1);
+    if (edge_size <= 0) {
+        result["trigger_coords"] = get_world_map_baked_building_trigger_coords(Vector3i(min_x, min_y, min_z), Vector3i(max_x, max_y, max_z), chunk_stride);
+        result["block_count"] = static_cast<int>(block_positions.size());
+        return result;
+    }
+
+    const int voxel_count = edge_size * edge_size * edge_size;
+    PackedByteArray voxel_bytes;
+    voxel_bytes.resize(voxel_count);
+    voxel_bytes.fill(0);
+    PackedByteArray voxel_meta;
+    voxel_meta.resize(voxel_count);
+    voxel_meta.fill(0);
+
+    for (size_t i = 0; i < block_positions.size(); ++i) {
+        const Vector3i &block_pos = block_positions[i];
+        const int local_x = block_pos.x - min_x;
+        const int local_y = block_pos.y - min_y;
+        const int local_z = block_pos.z - min_z;
+        if (local_x < 0 || local_y < 0 || local_z < 0 || local_x >= edge_size || local_y >= edge_size || local_z >= edge_size) {
+            continue;
+        }
+
+        const int local_index = local_x + local_y * edge_size + local_z * edge_size * edge_size;
+        voxel_bytes.encode_u8(local_index, block_types[i]);
+        voxel_meta.encode_u8(local_index, block_metas[i]);
+    }
+
+    Dictionary voxel_payload;
+    voxel_payload["voxel_bytes"] = voxel_bytes;
+    voxel_payload["voxel_meta"] = voxel_meta;
+    voxel_payload["voxel_origin"] = Vector3(static_cast<double>(min_x), static_cast<double>(min_y), static_cast<double>(min_z));
+    voxel_payload["voxel_size"] = edge_size;
+    voxel_payload["min_coord"] = Vector3i(min_x, min_y, min_z);
+    voxel_payload["max_coord"] = Vector3i(max_x, max_y, max_z);
+    result["voxel_payload"] = voxel_payload;
+    result["trigger_coords"] = get_world_map_baked_building_trigger_coords(Vector3i(min_x, min_y, min_z), Vector3i(max_x, max_y, max_z), chunk_stride);
+    result["block_count"] = static_cast<int>(block_positions.size());
+
+    return result;
 }
 
 Array MeshBuilder::build_collision_boxes_from_voxels(const PackedByteArray& voxel_bytes, int chunk_size) {

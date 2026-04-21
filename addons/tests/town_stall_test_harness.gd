@@ -49,6 +49,7 @@ var town_entry_capture_started: bool = false
 var _town_entry_samples: Array[Dictionary] = []
 var _town_entry_snapshot_stamp: String = ""
 var _town_entry_capture_reason: String = ""
+var _machine_state: Dictionary = {}
 var _scope_states: Dictionary = {}
 var _recent_scope_events: Array[Dictionary] = []
 var _town_entry_latest_town_state: Dictionary = {}
@@ -118,6 +119,49 @@ func _get_dominant_bucket(bucket_counts: Dictionary) -> Dictionary:
 func _make_timestamp_slug() -> String:
 	var timestamp := Time.get_datetime_string_from_system(true, true)
 	return timestamp.replace(":", "-").replace(" ", "_").replace("/", "-")
+
+
+func _parse_machine_state_env() -> Dictionary:
+	var raw_state := OS.get_environment("TOWN_STALL_MACHINE_STATE_JSON").strip_edges()
+	if raw_state.is_empty():
+		return {}
+
+	var parsed_state: Variant = JSON.parse_string(raw_state)
+	if typeof(parsed_state) != TYPE_DICTIONARY:
+		return {}
+
+	return parsed_state
+
+
+func _format_machine_state_summary(machine_state: Dictionary) -> String:
+	if machine_state.is_empty():
+		return "unavailable"
+
+	var cpu_name := str(machine_state.get("cpu_name", "Unknown"))
+	var current_clock_mhz := int(machine_state.get("current_clock_mhz", 0))
+	var max_clock_mhz := int(machine_state.get("max_clock_mhz", 0))
+	var processor_frequency_mhz := int(machine_state.get("processor_frequency_mhz", 0))
+	var percent_processor_performance := int(machine_state.get("percent_processor_performance", 0))
+	var percent_max_frequency := int(machine_state.get("percent_max_frequency", 0))
+	var load_percentage := int(machine_state.get("load_percentage", 0))
+	var estimated_effective_clock_mhz := int(machine_state.get("estimated_effective_clock_mhz", 0))
+	var thermal_state := str(machine_state.get("thermal_state", "unavailable"))
+	var thermal_c_variant: Variant = machine_state.get("thermal_c", null)
+	var thermal_text := thermal_state
+	if thermal_c_variant != null:
+		thermal_text = "%s (%.1f C)" % [thermal_state, float(thermal_c_variant)]
+
+	return "%s | current=%d MHz max=%d MHz freq=%d MHz perf=%d%% max=%d%% load=%d%% eff~%d MHz thermal=%s" % [
+		cpu_name,
+		current_clock_mhz,
+		max_clock_mhz,
+		processor_frequency_mhz,
+		percent_processor_performance,
+		percent_max_frequency,
+		load_percentage,
+		estimated_effective_clock_mhz,
+		thermal_text
+	]
 
 
 func _get_positive_env_float(env_name: String, default_value: float) -> float:
@@ -759,6 +803,8 @@ func _write_native_town_entry_snapshot() -> void:
 		"town_entry_window": town_window,
 		"latest_town_state": town_window.get("latest_town_state", {}),
 		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {})),
+		"machine_state": _machine_state.duplicate(true) if not _machine_state.is_empty() else {},
+		"warmup_note": str(_machine_state.get("warmup_note", "")),
 		"system_telemetry": system_telemetry,
 		"system_pressure_ranking": system_pressure_ranking
 	}
@@ -818,6 +864,12 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
+	_machine_state = _parse_machine_state_env()
+	if not _machine_state.is_empty():
+		print("[TOWN_STALL_TEST] Machine state: %s" % _format_machine_state_summary(_machine_state))
+		var warmup_note := str(_machine_state.get("warmup_note", ""))
+		if not warmup_note.is_empty():
+			print("[TOWN_STALL_TEST] Warmup note: %s" % warmup_note)
 	_emit_scope_state("town_stall_test", {
 		"phase": "start",
 		"auto_teleport": auto_teleport_enabled,
@@ -835,7 +887,9 @@ func _ready() -> void:
 		"baked_building_persistence_smoke": baked_building_persistence_smoke_enabled,
 		"disable_entities": disable_entities_enabled,
 		"repeat_entry": repeat_entry_enabled,
-		"hold_seconds": configured_hold_seconds
+		"hold_seconds": configured_hold_seconds,
+		"machine_state_available": not _machine_state.is_empty(),
+		"warmup_note": str(_machine_state.get("warmup_note", ""))
 	})
 	_begin_generation()
 

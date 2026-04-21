@@ -346,6 +346,7 @@ func _ensure_world_map_baked_building_payloads() -> void:
 
 	var mesher: Node = building_manager.mesher if building_manager and "mesher" in building_manager else null
 	var can_build_visuals := mesher and mesher.has_method("build_building_mesh_from_voxels") and mesher.has_method("voxels_need_detailed_collision")
+	var can_build_native_payload := mesher and mesher.has_method("build_world_map_baked_building_payload")
 	var chunk_stride := 31
 	var built_visual_count := 0
 
@@ -375,23 +376,35 @@ func _ensure_world_map_baked_building_payloads() -> void:
 		)
 		var building_key := _get_world_map_baked_building_key(building_index, bldg, spawn_pos, rotation)
 
-		var chunk_payload: Dictionary = {}
-
 		var prefab_blocks: Array = prefabs.get(prefab_name, [])
-		var chunk_batches: Array = []
-		if mesher and mesher.has_method("pack_rotated_world_map_block_batches"):
-			chunk_batches = mesher.pack_rotated_world_map_block_batches(prefab_blocks, rotation, spawn_pos, BUILDING_CHUNK_SIZE)
-		else:
-			var rotated_blocks: Array = _get_rotated_block_batches(prefab_name, rotation)
-			chunk_batches = _pack_world_map_block_batches_from_rotated_blocks(rotated_blocks, spawn_pos, BUILDING_CHUNK_SIZE)
+		var chunk_payload: Dictionary = {}
+		var building_voxel_payload: Dictionary = {}
+		var trigger_terrain_coords: Array = []
+		var used_native_payload := false
+		if can_build_native_payload:
+			var bake_payload: Dictionary = mesher.build_world_map_baked_building_payload(prefab_blocks, rotation, spawn_pos, BUILDING_CHUNK_SIZE, chunk_stride)
+			if not bake_payload.is_empty():
+				chunk_payload = bake_payload.get("chunk_payload", {})
+				building_voxel_payload = bake_payload.get("voxel_payload", {})
+				trigger_terrain_coords = bake_payload.get("trigger_coords", [])
+				_world_map_baked_building_block_count += int(bake_payload.get("block_count", 0))
+				used_native_payload = true
 
-		for batch_variant in chunk_batches:
-			if typeof(batch_variant) != TYPE_DICTIONARY:
-				continue
-			_merge_world_map_baked_chunk_batch(chunk_payload, batch_variant)
-			var batch: Dictionary = batch_variant
-			var merged_indices: PackedInt32Array = batch.get("indices", PackedInt32Array())
-			_world_map_baked_building_block_count += merged_indices.size()
+		if not used_native_payload:
+			var chunk_batches: Array = []
+			if mesher and mesher.has_method("pack_rotated_world_map_block_batches"):
+				chunk_batches = mesher.pack_rotated_world_map_block_batches(prefab_blocks, rotation, spawn_pos, BUILDING_CHUNK_SIZE)
+			else:
+				var rotated_blocks: Array = _get_rotated_block_batches(prefab_name, rotation)
+				chunk_batches = _pack_world_map_block_batches_from_rotated_blocks(rotated_blocks, spawn_pos, BUILDING_CHUNK_SIZE)
+
+			for batch_variant in chunk_batches:
+				if typeof(batch_variant) != TYPE_DICTIONARY:
+					continue
+				_merge_world_map_baked_chunk_batch(chunk_payload, batch_variant)
+				var batch: Dictionary = batch_variant
+				var merged_indices: PackedInt32Array = batch.get("indices", PackedInt32Array())
+				_world_map_baked_building_block_count += merged_indices.size()
 
 		var rotated_objects: Array = PrefabGeometry.get_rotated_objects(prefab_name, rotation)
 		var object_spawns: Array = []
@@ -403,8 +416,9 @@ func _ensure_world_map_baked_building_payloads() -> void:
 			object_spawns.sort_custom(Callable(self, "_sort_world_map_prefab_object_spawn"))
 			_world_map_baked_building_object_count += rotated_objects.size()
 
-		var rotated_blocks_for_visual: Array = _get_rotated_block_batches(prefab_name, rotation)
-		var building_voxel_payload := _build_world_map_baked_building_voxel_payload(rotated_blocks_for_visual, spawn_pos)
+		if not used_native_payload:
+			var rotated_blocks_for_visual: Array = _get_rotated_block_batches(prefab_name, rotation)
+			building_voxel_payload = _build_world_map_baked_building_voxel_payload(rotated_blocks_for_visual, spawn_pos)
 		var visual_payload: Dictionary = {}
 		if not building_voxel_payload.is_empty() and can_build_visuals:
 			var voxel_bytes: PackedByteArray = building_voxel_payload.get("voxel_bytes", PackedByteArray())
@@ -431,8 +445,7 @@ func _ensure_world_map_baked_building_payloads() -> void:
 		if chunk_payload.is_empty() and object_spawns.is_empty() and visual_payload.is_empty():
 			continue
 
-		var trigger_terrain_coords: Array = []
-		if not building_voxel_payload.is_empty():
+		if trigger_terrain_coords.is_empty() and not building_voxel_payload.is_empty():
 			trigger_terrain_coords = _get_world_map_baked_building_trigger_coords(
 				building_voxel_payload.get("min_coord", Vector3i.ZERO),
 				building_voxel_payload.get("max_coord", Vector3i.ZERO),
