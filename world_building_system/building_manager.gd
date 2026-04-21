@@ -9,8 +9,12 @@ var mesher: BuildingMesher
 # Render distance management
 @export var viewer: Node3D
 @export var render_distance: int = 8 # Increased for better visibility
+@export_range(0.0, 128.0, 1.0) var proxy_shell_activation_distance: float = 0.0 # Tight gameplay shell radius, synced from render_distance
+@export_range(0.0, 128.0, 1.0) var lazy_object_activation_distance: float = 0.0 # Slightly wider radius for non-batched object scenes
+@export_range(0.0, 1.0, 0.05) var proxy_shell_refresh_interval: float = 0.1
 var _last_building_viewer_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _cached_vehicle_manager: Node = null
+var _proxy_shell_refresh_elapsed: float = 0.0
 
 # Track which chunks are currently visible (have nodes in scene tree)
 var visible_chunks: Dictionary = {} # Vector3i -> true
@@ -50,6 +54,8 @@ var _last_baked_building_load_ms: float = 0.0
 var _last_baked_building_load_chunks: int = 0
 var _last_baked_building_manifest_chunks: int = 0
 var _last_baked_building_load_mode: String = "none"
+var eager_baked_building_residency: bool = false
+var _prefab_geometry_native_helper: Object = null
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -110,8 +116,13 @@ func _ready():
 	# Find player if not assigned
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
+	sync_proxy_shell_activation_distance_from_render_distance()
 
 func _process(_delta):
+	sync_proxy_shell_activation_distance_from_render_distance()
+	var center_chunk_changed := false
+	if not viewer:
+		viewer = get_tree().get_first_node_in_group("player")
 	if viewer:
 		var p_pos = get_viewer_position()
 		var center_chunk = Vector3i(
@@ -120,8 +131,15 @@ func _process(_delta):
 			floor(p_pos.z / CHUNK_SIZE)
 		)
 		if center_chunk != _last_building_viewer_chunk:
+			center_chunk_changed = true
 			_last_building_viewer_chunk = center_chunk
 			update_building_chunks(center_chunk)
+		if world_map_mode and eager_baked_building_residency and proxy_shell_activation_distance > 0.0:
+			_proxy_shell_refresh_elapsed += _delta
+			if center_chunk_changed or _proxy_shell_refresh_elapsed >= proxy_shell_refresh_interval:
+				_refresh_proxy_visual_shells(p_pos)
+				_promote_visible_simple_visual_batches()
+				_proxy_shell_refresh_elapsed = 0.0
 	_process_pending_object_collisions()
 
 ## Gets effective viewer position - returns vehicle position if player is driving
@@ -151,16 +169,12 @@ func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 214748
 			floor(p_pos.y / CHUNK_SIZE),
 			floor(p_pos.z / CHUNK_SIZE)
 		)
-	var render_distance_sq := render_distance * render_distance
+	var viewer_position := get_viewer_position()
 	
 	# 1. Unload chunks that are too far (remove from scene tree, keep data)
 	var chunks_to_unload = []
 	for coord in visible_chunks:
-		var dx = coord.x - center_chunk.x
-		var dy = coord.y - center_chunk.y
-		var dz = coord.z - center_chunk.z
-		var dist_sq = dx * dx + dy * dy + dz * dz
-		if dist_sq > (render_distance + 2) * (render_distance + 2):
+		if not _is_chunk_within_render_distance(coord, viewer_position, render_distance + 1):
 			chunks_to_unload.append(coord)
 	
 	for coord in chunks_to_unload:
@@ -170,12 +184,8 @@ func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 214748
 	for coord in chunks:
 		if visible_chunks.has(coord):
 			continue # Already visible
-		
-		var dx = coord.x - center_chunk.x
-		var dy = coord.y - center_chunk.y
-		var dz = coord.z - center_chunk.z
-		var dist_sq = dx * dx + dy * dy + dz * dz
-		if dist_sq <= render_distance_sq:
+
+		if _is_chunk_within_render_distance(coord, viewer_position, render_distance):
 			_load_chunk_visual(coord)
 
 func _unload_chunk_visual(coord: Vector3i):
@@ -191,6 +201,20 @@ func _unload_chunk_visual(coord: Vector3i):
 	
 	visible_chunks.erase(coord)
 
+func _is_chunk_within_render_distance(chunk_coord: Vector3i, viewer_position: Vector3, distance_chunks: int) -> bool:
+	if distance_chunks < 0:
+		return false
+	var threshold := float(distance_chunks * CHUNK_SIZE)
+	var threshold_sq := threshold * threshold
+	var chunk_min := Vector3(chunk_coord) * float(CHUNK_SIZE)
+	var chunk_max := chunk_min + Vector3.ONE * float(CHUNK_SIZE)
+	var nearest := Vector3(
+		clamp(viewer_position.x, chunk_min.x, chunk_max.x),
+		clamp(viewer_position.y, chunk_min.y, chunk_max.y),
+		clamp(viewer_position.z, chunk_min.z, chunk_max.z)
+	)
+	return viewer_position.distance_squared_to(nearest) <= threshold_sq
+
 func _load_chunk_visual(coord: Vector3i):
 	if not chunks.has(coord):
 		return
@@ -203,10 +227,69 @@ func _load_chunk_visual(coord: Vector3i):
 		# Rebuild mesh if chunk has data
 		if not chunk.is_empty and chunk.is_mesh_dirty():
 			chunk.rebuild_mesh()
-	
+		if chunk.has_method("activate_runtime_visuals"):
+			chunk.activate_runtime_visuals(false)
+		elif chunk.has_method("restore_object_visuals"):
+			chunk.restore_object_visuals(false)
+
 	visible_chunks[coord] = true
+
 	if not was_visible and _dirty_chunks.has(coord):
 		_dirty_visible_chunk_count += 1
+
+func set_eager_baked_building_residency(enabled: bool) -> void:
+	eager_baked_building_residency = enabled
+
+func is_eager_baked_building_residency_enabled() -> bool:
+	return eager_baked_building_residency
+
+func is_baked_world_map_visual_mode_enabled() -> bool:
+	return world_map_mode
+
+func get_proxy_shell_activation_distance() -> float:
+	return proxy_shell_activation_distance
+
+func get_lazy_object_activation_distance() -> float:
+	return lazy_object_activation_distance
+
+func sync_proxy_shell_activation_distance_from_render_distance() -> void:
+	if render_distance <= 0:
+		proxy_shell_activation_distance = 0.0
+		lazy_object_activation_distance = 0.0
+		return
+	# Keep interaction shells much tighter than chunk visuals so far buildings
+	# stay cheap while only nearby props keep live scene nodes.
+	var shell_chunk_radius := maxi(1, mini(render_distance, 2))
+	var lazy_chunk_radius := maxi(1, mini(render_distance, 3))
+	proxy_shell_activation_distance = float(shell_chunk_radius * CHUNK_SIZE)
+	lazy_object_activation_distance = float(lazy_chunk_radius * CHUNK_SIZE)
+
+func _refresh_proxy_visual_shells(viewer_position: Vector3) -> void:
+	if not world_map_mode or not eager_baked_building_residency:
+		return
+	if proxy_shell_activation_distance <= 0.0:
+		return
+
+	for chunk_coord_variant in visible_chunks:
+		var chunk_coord: Vector3i = chunk_coord_variant
+		var chunk: BuildingChunk = chunks.get(chunk_coord, null)
+		if not chunk or not is_instance_valid(chunk):
+			continue
+		if not chunk.has_method("requires_runtime_visual_refresh") or not chunk.requires_runtime_visual_refresh():
+			continue
+		chunk.refresh_proxy_visual_shells(viewer_position, proxy_shell_activation_distance, lazy_object_activation_distance)
+		chunk.refresh_lazy_object_visuals(viewer_position, lazy_object_activation_distance)
+
+func _promote_visible_simple_visual_batches() -> void:
+	if not eager_baked_building_residency:
+		return
+	for chunk_coord_variant in visible_chunks:
+		var chunk_coord: Vector3i = chunk_coord_variant
+		var chunk: BuildingChunk = chunks.get(chunk_coord, null)
+		if not chunk or not is_instance_valid(chunk):
+			continue
+		if "simple_visual_batch_entries" in chunk and not chunk.simple_visual_batch_entries.is_empty() and chunk.has_method("promote_simple_visual_batches_to_global"):
+			chunk.promote_simple_visual_batches_to_global()
 
 func queue_object_collision(chunk: BuildingChunk, obj: Node3D, anchor: Vector3i) -> void:
 	if not chunk or not obj:
@@ -255,7 +338,7 @@ func _process_pending_object_collisions() -> void:
 		if not is_instance_valid(chunk) or not is_instance_valid(obj):
 			continue
 
-		chunk._generate_object_collision(obj, anchor)
+		chunk._generate_object_collision_measured(obj, anchor)
 		processed += 1
 
 func clear_pending_object_collision_tasks() -> void:
@@ -263,6 +346,17 @@ func clear_pending_object_collision_tasks() -> void:
 
 func register_global_visual_batch(anchor: Vector3i, object_id: int, transform: Transform3D, mesh: Mesh, defer_rebuild: bool = false) -> bool:
 	if skip_building_visual_batches_for_test or object_id < 0 or not mesh:
+		return false
+	var chunk_coord := Vector3i(
+		floor(float(anchor.x) / CHUNK_SIZE),
+		floor(float(anchor.y) / CHUNK_SIZE),
+		floor(float(anchor.z) / CHUNK_SIZE)
+	)
+	var chunk_node: BuildingChunk = chunks.get(chunk_coord, null)
+	if not visible_chunks.has(chunk_coord) and (not chunk_node or not chunk_node.is_inside_tree()):
+		# Keep the batch system local to chunks that are currently visible.
+		# This preserves render-distance culling while still letting us batch
+		# visible structures instead of instancing every object node directly.
 		return false
 
 	_global_visual_batch_instances[anchor] = {
@@ -341,6 +435,7 @@ func clear_for_shutdown() -> void:
 	visible_chunks.clear()
 	_dirty_chunks.clear()
 	_cached_vehicle_manager = null
+	eager_baked_building_residency = false
 
 
 func clear_immediate_for_shutdown() -> void:
@@ -360,12 +455,15 @@ func clear_immediate_for_shutdown() -> void:
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 	_cached_vehicle_manager = null
+	eager_baked_building_residency = false
 
 
 func clear_all_building_chunks() -> void:
 	if mesher and mesher.has_method("clear_pending_work"):
 		mesher.clear_pending_work()
 	clear_immediate_for_shutdown()
+	eager_baked_building_residency = false
+	world_map_mode = false
 	baked_buildings_loaded = false
 	baked_buildings_world_path = ""
 	baked_building_manifest.clear()
@@ -487,6 +585,13 @@ func _rebuild_global_visual_batch(object_id: int, mesh: Mesh = null) -> void:
 		multimesh.mesh = mesh
 
 	multimesh.instance_count = entries.size()
+	var geometry_helper := get_prefab_geometry_native_helper()
+	if geometry_helper and geometry_helper.has_method("pack_multimesh_buffer_from_instances"):
+		var buffer: PackedFloat32Array = geometry_helper.pack_multimesh_buffer_from_instances(entries)
+		if not buffer.is_empty():
+			multimesh.set_buffer(buffer)
+			return
+
 	for i in range(entries.size()):
 		var entry: Dictionary = entries[i]
 		var transform: Transform3D = entry.get("transform", Transform3D.IDENTITY)
@@ -497,12 +602,34 @@ func get_telemetry_snapshot() -> Dictionary:
 	var total_object_nodes := 0
 	var total_object_collision_nodes := 0
 	var total_collision_box_shapes := 0
+	var total_runtime_chunk_collision_shapes := 0
 	var total_simple_visual_instances := 0
 	var total_visual_batches := 0
+	var total_proxy_shell_nodes := 0
+	var total_cardboard_box_proxy_shell_nodes := 0
+	var total_long_crate_proxy_shell_nodes := 0
+	var total_door_proxy_shell_nodes := 0
+	var total_pistol_proxy_shell_nodes := 0
 	var total_occupied_cells := 0
 	var total_mesh_dirty_chunks := _dirty_chunks.size()
 	var total_dirty_visible_chunks := _dirty_visible_chunk_count
 	var total_dirty_hidden_chunks := maxi(0, total_mesh_dirty_chunks - total_dirty_visible_chunks)
+	var viewer_chunk_coord := Vector3i.ZERO
+	var viewer_chunk_collision_shapes := 0
+	var viewer_chunk_objects := 0
+	var viewer_chunk_visual_batches := 0
+	if viewer and is_instance_valid(viewer) and has_method("get_viewer_position"):
+		viewer_chunk_coord = Vector3i(
+			floor(float(get_viewer_position().x) / float(CHUNK_SIZE)),
+			floor(float(get_viewer_position().y) / float(CHUNK_SIZE)),
+			floor(float(get_viewer_position().z) / float(CHUNK_SIZE))
+		)
+		var viewer_chunk: BuildingChunk = chunks.get(viewer_chunk_coord, null)
+		if viewer_chunk and is_instance_valid(viewer_chunk):
+			viewer_chunk_objects = viewer_chunk.objects.size()
+			viewer_chunk_visual_batches = viewer_chunk.simple_visual_batch_nodes.size()
+			if viewer_chunk.has_method("get_runtime_collision_shape_count"):
+				viewer_chunk_collision_shapes = int(viewer_chunk.get_runtime_collision_shape_count())
 
 	for chunk_coord_variant in chunks:
 		var chunk: BuildingChunk = chunks[chunk_coord_variant]
@@ -513,9 +640,26 @@ func get_telemetry_snapshot() -> Dictionary:
 		total_object_nodes += chunk.object_nodes.size()
 		total_object_collision_nodes += chunk.object_collision_nodes.size()
 		total_collision_box_shapes += 1 if chunk.collision_shape else 0
+		if chunk.has_method("get_runtime_collision_shape_count"):
+			total_runtime_chunk_collision_shapes += int(chunk.get_runtime_collision_shape_count())
 		total_simple_visual_instances += chunk.simple_visual_instances.size()
 		total_visual_batches += chunk.simple_visual_batch_nodes.size()
 		total_occupied_cells += chunk.occupied_by_object.size()
+		for object_anchor_variant in chunk.object_nodes:
+			var object_node: Node3D = chunk.object_nodes[object_anchor_variant]
+			if not object_node or not is_instance_valid(object_node):
+				continue
+			var object_id := int(object_node.get_meta("object_id", -1))
+			if ObjectRegistry.is_proxy_visual_batch_object(object_id):
+				total_proxy_shell_nodes += 1
+				if object_id == 1:
+					total_cardboard_box_proxy_shell_nodes += 1
+				elif object_id == 2:
+					total_long_crate_proxy_shell_nodes += 1
+				elif object_id == 4:
+					total_door_proxy_shell_nodes += 1
+				elif object_id == 6:
+					total_pistol_proxy_shell_nodes += 1
 
 	return {
 		"phase": "object_collision_queue" if not _pending_object_collision_tasks.is_empty() else "idle",
@@ -535,12 +679,24 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_object_nodes": total_object_nodes,
 		"total_object_collision_nodes": total_object_collision_nodes,
 		"total_collision_box_nodes": total_collision_box_shapes,
+		"total_runtime_chunk_collision_shapes": total_runtime_chunk_collision_shapes,
 		"total_simple_visual_instances": total_simple_visual_instances,
 		"total_visual_batches": total_visual_batches,
+		"total_proxy_shell_nodes": total_proxy_shell_nodes,
+		"proxy_shell_census": {
+			"cardboard_boxes": total_cardboard_box_proxy_shell_nodes,
+			"long_crates": total_long_crate_proxy_shell_nodes,
+			"doors": total_door_proxy_shell_nodes,
+			"pistols": total_pistol_proxy_shell_nodes,
+		},
 		"total_global_visual_batches": _global_visual_batch_nodes.size(),
 		"total_global_visual_instances": _global_visual_batch_instances.size(),
 		"pending_visual_batch_rebuilds": _dirty_global_visual_batch_object_ids.size(),
 		"total_occupied_cells": total_occupied_cells,
+		"viewer_chunk_coord": viewer_chunk_coord,
+		"viewer_chunk_collision_shapes": viewer_chunk_collision_shapes,
+		"viewer_chunk_objects": viewer_chunk_objects,
+		"viewer_chunk_visual_batches": viewer_chunk_visual_batches,
 		"mesh_dirty_chunks": total_mesh_dirty_chunks,
 		"dirty_visible_chunk_count": total_dirty_visible_chunks,
 		"dirty_hidden_chunk_count": total_dirty_hidden_chunks,
@@ -549,10 +705,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_flush_global_visual_batches_ms": _last_flush_global_visual_batches_ms,
 		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count,
 		"baked_buildings_loaded": baked_buildings_loaded,
+		"eager_baked_building_residency": eager_baked_building_residency,
 		"baked_buildings_world_path": baked_buildings_world_path,
 		"cached_baked_snapshot_count": baked_building_snapshot_cache.size(),
 		"loaded_baked_chunk_count": baked_building_loaded_chunk_keys.size(),
 		"baked_buildings_fully_loaded": is_baked_buildings_fully_loaded(),
+		"has_pending_building_work": has_pending_building_work(),
+		"has_pending_visual_batch_work": has_pending_visual_batch_work(),
 		"baked_building_load_profile": {
 			"mode": _last_baked_building_load_mode,
 			"load_ms": _last_baked_building_load_ms,
@@ -578,25 +737,16 @@ func get_chunk(chunk_coord: Vector3i) -> BuildingChunk:
 	chunk.manager = self
 	chunks[chunk_coord] = chunk
 	
-	# Only add to tree if within render distance
+	# Preload keeps chunk data ready in memory; render distance still controls
+	# what enters the scene tree and becomes visible.
+	var should_be_visible := false
 	if viewer:
-		var p_pos = viewer.global_position
-		var p_chunk = Vector3i(floor(p_pos.x / CHUNK_SIZE), floor(p_pos.y / CHUNK_SIZE), floor(p_pos.z / CHUNK_SIZE))
-		var dx = chunk_coord.x - p_chunk.x
-		var dy = chunk_coord.y - p_chunk.y
-		var dz = chunk_coord.z - p_chunk.z
-		var dist_sq = dx * dx + dy * dy + dz * dz
-		
-		if dist_sq <= render_distance * render_distance:
+		should_be_visible = _is_chunk_within_render_distance(chunk_coord, viewer.global_position, render_distance)
+	if should_be_visible:
+		if not chunk.is_inside_tree():
 			add_child(chunk)
-			chunk.position = Vector3(chunk_coord) * CHUNK_SIZE
-			visible_chunks[chunk_coord] = true
-		# else: chunk exists but is not in tree yet
-	else:
-		# No viewer yet, add normally
-		add_child(chunk)
 		chunk.position = Vector3(chunk_coord) * CHUNK_SIZE
-		visible_chunks[chunk_coord] = true
+	# else: chunk exists but is not in tree yet
 	
 	return chunk
 
@@ -682,7 +832,9 @@ func flush_dirty_chunks():
 	# Only rebuild a limited number of visible chunks per flush so we do not
 	# turn one town burst into a single giant rebuild spike.
 	var effective_budget := dirty_chunk_flush_budget
-	if world_map_mode:
+	if eager_baked_building_residency:
+		effective_budget = maxi(1, _dirty_chunks.size())
+	elif world_map_mode:
 		effective_budget = mini(dirty_chunk_flush_budget, 2)
 	var rebuilt = 0
 	var processed = 0
@@ -697,7 +849,7 @@ func flush_dirty_chunks():
 			hidden_coords.append(coord)
 
 	var coord_lists: Array = [visible_coords]
-	if not world_map_mode:
+	if not world_map_mode or eager_baked_building_residency:
 		coord_lists.append(hidden_coords)
 
 	for coord_list in coord_lists:
@@ -739,6 +891,13 @@ func has_pending_building_work() -> bool:
 
 func has_pending_visual_batch_work() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
+
+func get_prefab_geometry_native_helper() -> Object:
+	if _prefab_geometry_native_helper and is_instance_valid(_prefab_geometry_native_helper):
+		return _prefab_geometry_native_helper
+	if ClassDB.class_exists("PrefabGeometryNative"):
+		_prefab_geometry_native_helper = ClassDB.instantiate("PrefabGeometryNative")
+	return _prefab_geometry_native_helper
 
 func has_baked_buildings_loaded() -> bool:
 	return baked_buildings_loaded
@@ -795,6 +954,9 @@ func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool
 		_dirty_chunks.clear()
 		_dirty_visible_chunk_count = 0
 
+	world_map_mode = true
+	set_eager_baked_building_residency(false)
+
 	baked_building_manifest = manifest.duplicate(true)
 	baked_buildings_world_path = world_path
 	baked_building_manifest_index.clear()
@@ -813,6 +975,7 @@ func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool
 		var chunk_coord := Vector3i(int(coord_arr[0]), int(coord_arr[1]), int(coord_arr[2]))
 		baked_building_manifest_index[_coord_key(chunk_coord)] = entry
 	baked_buildings_loaded = not baked_building_manifest_index.is_empty()
+	eager_baked_building_residency = false
 
 	var loaded_chunk_count := 0
 	if eager_load_chunks:
@@ -829,7 +992,7 @@ func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool
 
 	_last_baked_building_load_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 	_last_baked_building_load_chunks = baked_building_loaded_chunk_keys.size() if eager_load_chunks else loaded_chunk_count
-	_last_baked_building_load_mode = "manifest_loaded_eager" if eager_load_chunks and baked_buildings_loaded else ("manifest_loaded" if baked_buildings_loaded else "manifest_empty")
+	_last_baked_building_load_mode = "manifest_loaded_eager_resident" if eager_load_chunks and baked_buildings_loaded else ("manifest_loaded" if baked_buildings_loaded else "manifest_empty")
 	if eager_load_chunks and baked_buildings_loaded and has_pending_visual_batch_work():
 		flush_global_visual_batches()
 	return baked_buildings_loaded
@@ -1122,7 +1285,7 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	
 	var chunk = get_chunk(chunk_coord)
 
-	if world_map_mode and ObjectRegistry.is_simple_visual_batch_object(object_id):
+	if is_baked_world_map_visual_mode_enabled() and ObjectRegistry.is_simple_visual_batch_object(object_id):
 		var visual_data = ObjectRegistry.get_object_visual_data(object_id)
 		if not visual_data.is_empty():
 			var simple_success = chunk.place_simple_visual_object(local_anchor, object_id, rotation, local_cells, fractional_pos, visual_data, defer_global_visual_batch_rebuild)
@@ -1130,10 +1293,11 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 				return true
 
 	var scene_instance: Node3D = null
-	if world_map_mode and ObjectRegistry.is_proxy_visual_batch_object(object_id):
-		scene_instance = ObjectRegistry.create_proxy_gameplay_shell(object_id, world_map_mode)
+	if is_baked_world_map_visual_mode_enabled() and ObjectRegistry.is_proxy_visual_batch_object(object_id):
+		scene_instance = ObjectRegistry.create_proxy_gameplay_shell(object_id, is_baked_world_map_visual_mode_enabled())
 
-	# Load and instantiate the scene (uses preloaded cache) if we did not build a shell
+	# Load and instantiate the real scene when we do not have a lightweight
+	# world-map proxy shell for this object.
 	if scene_instance == null:
 		var scene_path = object_scene_path if not object_scene_path.is_empty() else str(obj_def.get("scene", ""))
 		var packed = ObjectRegistry.get_preloaded_scene(scene_path)

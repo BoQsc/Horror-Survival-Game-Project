@@ -29,7 +29,8 @@ var disable_buildings_for_test: bool = false
 var pending_world_definition_path: String = ""
 var pending_world_map_data_cache_enabled: bool = true
 var pending_world_building_bake_enabled: bool = true
-var pending_world_building_bake_preload_enabled: bool = false
+var pending_world_building_bake_preload_enabled: bool = true
+var pending_world_building_render_follows_terrain_enabled: bool = true
 var _pending_world_building_bake_load: bool = false
 
 # V2: New player system references
@@ -60,6 +61,8 @@ static var is_quickloading: bool = false
 
 var awaiting_terrain_ready: bool = false
 var awaiting_vegetation_ready: bool = false
+var awaiting_buildings_ready: bool = false
+var _building_wait_telemetry_logged: bool = false
 var load_safety_timer: Timer = null # Safety timeout to prevent infinite hang
 
 # Autosave settings
@@ -113,6 +116,7 @@ func _find_managers():
 	building_manager = get_tree().get_first_node_in_group("building_manager")
 	if not building_manager:
 		building_manager = get_node_or_null("/root/MainGame/BuildingManager")
+	_sync_world_building_render_distance_policy()
 	
 	# Vegetation
 	vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
@@ -229,6 +233,8 @@ func _process(_delta):
 		_is_saving = false
 	if _pending_world_building_bake_load:
 		_maybe_load_pending_world_building_bake()
+	if awaiting_buildings_ready:
+		_check_building_readiness()
 
 ## Quick save to default slot
 func quick_save():
@@ -422,6 +428,11 @@ func load_game(path: String) -> bool:
 	if version == 1:
 		pass
 
+	# Prime load-critical settings before any world/building loaders run.
+	# The baked building preload flag must be live before we decide whether to
+	# eager-load the manifest or fall back to a lazy world-map path.
+	_prime_world_load_settings(save_data.get("game_settings", {}))
+
 	# Establish world-map mode before any building-related loaders run.
 	# This prevents procedural or runtime building layers from restoring at all.
 	_load_world_definition_path(save_data.get("world_definition_path", ""))
@@ -548,6 +559,8 @@ func _on_load_timeout():
 		push_warning("SaveManager: LOAD TIMEOUT REACHED! Forcing unfreeze.")
 		awaiting_terrain_ready = false
 		awaiting_vegetation_ready = false
+		awaiting_buildings_ready = false
+		_building_wait_telemetry_logged = false
 		_capture_load_telemetry("timeout_forced", {
 			"seconds": 15.0
 		})
@@ -583,10 +596,11 @@ func _on_all_vegetation_ready():
 
 ## Finalize loading when all systems are ready
 func _check_world_readiness():
-	if awaiting_terrain_ready or awaiting_vegetation_ready:
+	if awaiting_terrain_ready or awaiting_vegetation_ready or awaiting_buildings_ready:
 		_capture_load_telemetry("still_waiting", {
 			"terrain": awaiting_terrain_ready,
-			"vegetation": awaiting_vegetation_ready
+			"vegetation": awaiting_vegetation_ready,
+			"buildings": awaiting_buildings_ready
 		})
 		return
 	
@@ -651,6 +665,46 @@ func _check_world_readiness():
 	load_step.emit("Complete", 10, 10)
 	load_completed.emit(true, current_save_path)
 	is_quickloading = false  # Clear the flag now that load is complete
+
+func _check_building_readiness() -> void:
+	if not is_loading_game or not awaiting_buildings_ready:
+		return
+	if not building_manager or not is_instance_valid(building_manager):
+		return
+
+	var baked_fully_loaded := true
+	if building_manager.has_method("is_baked_buildings_fully_loaded"):
+		baked_fully_loaded = building_manager.is_baked_buildings_fully_loaded()
+
+	var has_pending_work := false
+	if prefab_spawner and prefab_spawner.has_method("has_world_map_baked_buildings_primed") and not prefab_spawner.has_world_map_baked_buildings_primed():
+		has_pending_work = true
+	if building_manager.has_method("has_pending_building_work"):
+		has_pending_work = building_manager.has_pending_building_work()
+	if building_manager.has_method("has_pending_visual_batch_work"):
+		has_pending_work = has_pending_work or building_manager.has_pending_visual_batch_work()
+	if prefab_spawner and prefab_spawner.has_method("has_pending_spawn_jobs"):
+		has_pending_work = has_pending_work or prefab_spawner.has_pending_spawn_jobs()
+	if _has_pending_building_generator_work():
+		has_pending_work = true
+
+	if not baked_fully_loaded or has_pending_work:
+		if not _building_wait_telemetry_logged:
+			var pending_spawn_jobs := 0
+			if prefab_spawner and "pending_spawn_jobs" in prefab_spawner:
+				pending_spawn_jobs = prefab_spawner.pending_spawn_jobs.size()
+			_capture_load_telemetry("buildings_waiting", {
+				"baked_fully_loaded": baked_fully_loaded,
+				"pending_building_work": has_pending_work,
+				"pending_spawn_jobs": pending_spawn_jobs
+			})
+			_building_wait_telemetry_logged = true
+		return
+
+	awaiting_buildings_ready = false
+	_building_wait_telemetry_logged = false
+	_capture_load_telemetry("buildings_ready")
+	_check_world_readiness()
 
 ## Get list of available save files
 func get_save_files() -> Array[String]:
@@ -836,6 +890,19 @@ func _load_player_data(data: Dictionary):
 			camera.rotation.x = data.camera_pitch
 	if data.has("is_flying") and "is_flying" in player:
 		player.is_flying = data.is_flying
+
+	# Keep the building pipeline anchored to the restored player position so
+	# eager baked chunks prime the correct area immediately.
+	if building_manager and is_instance_valid(building_manager):
+		if "viewer" in building_manager:
+			building_manager.viewer = player
+		if building_manager.has_method("sync_proxy_shell_activation_distance_from_render_distance"):
+			building_manager.sync_proxy_shell_activation_distance_from_render_distance()
+		if building_manager.has_method("update_building_chunks"):
+			building_manager.update_building_chunks()
+	if prefab_spawner and is_instance_valid(prefab_spawner):
+		if "viewer" in prefab_spawner:
+			prefab_spawner.viewer = player
 	
 	# Reset velocity
 	player.velocity = Vector3.ZERO
@@ -957,6 +1024,8 @@ func _get_world_definition_path() -> String:
 	return ""
 
 func _load_world_definition_path(path: String):
+	if prefab_spawner and prefab_spawner.has_method("reset_spawn_state"):
+		prefab_spawner.reset_spawn_state(true)
 	if chunk_manager and "world_definition_path" in chunk_manager:
 		chunk_manager.world_definition_path = path
 		if path != "":
@@ -973,14 +1042,32 @@ func _load_world_definition_path(path: String):
 			var loaded_bake: bool = building_manager.load_baked_buildings_from_manifest(path, true, eager_load_buildings)
 			if not loaded_bake and building_manager.has_method("clear_all_building_chunks"):
 				building_manager.clear_all_building_chunks()
+			awaiting_buildings_ready = false
+			_building_wait_telemetry_logged = false
+			if loaded_bake:
+				var building_pending_work := false
+				if building_manager.has_method("has_pending_building_work"):
+					building_pending_work = building_manager.has_pending_building_work()
+				if building_manager.has_method("has_pending_visual_batch_work"):
+					building_pending_work = building_pending_work or building_manager.has_pending_visual_batch_work()
+				if _has_pending_building_generator_work():
+					building_pending_work = true
+				awaiting_buildings_ready = building_pending_work
+			_sync_world_building_render_distance_policy()
 			_pending_world_building_bake_load = false
 		elif building_manager.has_method("clear_all_building_chunks"):
 			building_manager.clear_all_building_chunks()
+			awaiting_buildings_ready = false
+			_building_wait_telemetry_logged = false
 			_pending_world_building_bake_load = false
 	elif path != "" and _get_world_building_bake_enabled():
 		_pending_world_building_bake_load = true
+		awaiting_buildings_ready = false
+		_building_wait_telemetry_logged = false
 	else:
 		_pending_world_building_bake_load = false
+		awaiting_buildings_ready = false
+		_building_wait_telemetry_logged = false
 
 func _load_vegetation_data(data: Dictionary):
 	if data.is_empty() or not vegetation_manager:
@@ -991,6 +1078,13 @@ func _load_vegetation_data(data: Dictionary):
 		vegetation_manager.load_save_data(data)
 	else:
 		push_warning("SaveManager: vegetation_manager has no load_save_data method")
+
+func _has_pending_building_generator_work() -> bool:
+	var building_generator := get_tree().root.find_child("BuildingGenerator", true, false)
+	if not building_generator:
+		return false
+	var spawn_queue: Variant = building_generator.get("spawn_queue")
+	return spawn_queue is Array and not spawn_queue.is_empty()
 
 func _load_road_data(data: Dictionary):
 	if data.is_empty() or not road_manager:
@@ -1166,11 +1260,23 @@ func _get_game_settings_data() -> Dictionary:
 		"autosave_interval": autosave_interval_seconds,
 		"world_map_data_cache_enabled": _get_world_map_data_cache_enabled(),
 		"world_building_bake_preload_enabled": _get_world_building_bake_preload_enabled(),
+		"world_building_render_follows_terrain_enabled": _get_world_building_render_follows_terrain_enabled(),
 		"time_of_day": 0.5, # Placeholder for TimeManager
 		"weather": "clear", # Placeholder for WeatherManager
 		"difficulty": "normal"
 	}
 	return settings
+
+func _prime_world_load_settings(data: Dictionary) -> void:
+	if data.is_empty():
+		return
+
+	if data.has("world_map_data_cache_enabled"):
+		_apply_world_map_data_cache_enabled(bool(data.world_map_data_cache_enabled))
+	if data.has("world_building_bake_preload_enabled"):
+		pending_world_building_bake_preload_enabled = bool(data.world_building_bake_preload_enabled)
+	if data.has("world_building_render_follows_terrain_enabled"):
+		pending_world_building_render_follows_terrain_enabled = bool(data.world_building_render_follows_terrain_enabled)
 
 func _load_game_settings_data(data: Dictionary):
 	if data.is_empty():
@@ -1185,6 +1291,8 @@ func _load_game_settings_data(data: Dictionary):
 		_apply_world_map_data_cache_enabled(bool(data.world_map_data_cache_enabled))
 	if data.has("world_building_bake_preload_enabled"):
 		_apply_world_building_bake_preload_enabled(bool(data.world_building_bake_preload_enabled))
+	if data.has("world_building_render_follows_terrain_enabled"):
+		_apply_world_building_render_follows_terrain_enabled(bool(data.world_building_render_follows_terrain_enabled))
 	
 	# Restore time/weather once those systems exist
 
@@ -1206,6 +1314,15 @@ func set_world_building_bake_preload_enabled(enabled: bool) -> void:
 func get_world_building_bake_preload_enabled() -> bool:
 	return _get_world_building_bake_preload_enabled()
 
+func set_world_building_render_follows_terrain_enabled(enabled: bool) -> void:
+	_apply_world_building_render_follows_terrain_enabled(enabled)
+
+func get_world_building_render_follows_terrain_enabled() -> bool:
+	return _get_world_building_render_follows_terrain_enabled()
+
+func sync_world_building_render_distance_policy() -> void:
+	_sync_world_building_render_distance_policy()
+
 func _apply_world_map_data_cache_enabled(enabled: bool) -> void:
 	pending_world_map_data_cache_enabled = enabled
 	WorldMapData.set_cache_enabled(enabled)
@@ -1225,9 +1342,35 @@ func _get_world_building_bake_enabled() -> bool:
 
 func _apply_world_building_bake_preload_enabled(enabled: bool) -> void:
 	pending_world_building_bake_preload_enabled = enabled
+	if building_manager and is_instance_valid(building_manager) and building_manager.has_method("set_eager_baked_building_residency"):
+		building_manager.set_eager_baked_building_residency(false)
+		if building_manager.has_method("update_building_chunks"):
+			building_manager.update_building_chunks()
 
 func _get_world_building_bake_preload_enabled() -> bool:
 	return pending_world_building_bake_preload_enabled
+
+func _apply_world_building_render_follows_terrain_enabled(enabled: bool) -> void:
+	pending_world_building_render_follows_terrain_enabled = enabled
+	_sync_world_building_render_distance_policy()
+
+func _get_world_building_render_follows_terrain_enabled() -> bool:
+	return pending_world_building_render_follows_terrain_enabled
+
+func _sync_world_building_render_distance_policy() -> void:
+	if not pending_world_building_render_follows_terrain_enabled:
+		return
+	if not chunk_manager or not is_instance_valid(chunk_manager):
+		return
+	if not building_manager or not is_instance_valid(building_manager):
+		return
+	if not ("render_distance" in chunk_manager) or not ("render_distance" in building_manager):
+		return
+	building_manager.render_distance = int(chunk_manager.render_distance)
+	if building_manager.has_method("sync_proxy_shell_activation_distance_from_render_distance"):
+		building_manager.sync_proxy_shell_activation_distance_from_render_distance()
+	if building_manager.has_method("update_building_chunks"):
+		building_manager.update_building_chunks()
 
 func _maybe_load_pending_world_building_bake() -> void:
 	if not _pending_world_building_bake_load:
@@ -1247,6 +1390,8 @@ func _reset_load_flags():
 	is_loading_game = false
 	awaiting_terrain_ready = false
 	awaiting_vegetation_ready = false
+	awaiting_buildings_ready = false
+	_building_wait_telemetry_logged = false
 	pending_entity_data = {}
 	pending_vehicle_data = {}
 	pending_door_data = {}

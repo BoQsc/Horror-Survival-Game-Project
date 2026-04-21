@@ -18,11 +18,15 @@ var object_collision_nodes: Dictionary = {} # Vector3i (local anchor) -> Node3D 
 var simple_visual_instances: Dictionary = {} # Vector3i (local anchor) -> { object_id, rotation, fractional_pos }
 var simple_visual_batch_entries: Dictionary = {} # int object_id -> Array[{ anchor, transform }]
 var simple_visual_batch_nodes: Dictionary = {} # int object_id -> MultiMeshInstance3D
+var _has_deferred_runtime_visuals: bool = false
+var _runtime_nodes_ready: bool = false
+var _runtime_visuals_activated: bool = false
 var mesh_dirty: bool = true
 
 # Visuals
 var mesh_instance: MeshInstance3D
 var static_body: StaticBody3D
+var prop_collision_body: StaticBody3D
 var collision_shape: CollisionShape3D
 var _pending_mesh_apply: Dictionary = {}
 var _applied_collision_boxes: Array = []
@@ -37,11 +41,7 @@ static var _object_collision_shape_cache: Dictionary = {}
 static var _box_collision_shape_cache: Dictionary = {}
 const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
 const BuildingBakeSnapshot = preload("res://world_building_system/building_bake_snapshot.gd")
-const SIMPLE_OBJECT_COLLISION_IDS := {
-	3: true, # Wooden Table
-	5: true, # Window
-	7: true, # Chair
-}
+const SIMPLE_OBJECT_COLLISION_IDS := {}
 
 func _get_cached_object_collision_shape(mesh: Mesh) -> Shape3D:
 	if not mesh:
@@ -102,23 +102,40 @@ func reset(new_coord: Vector3i):
 	mesh_dirty = true
 	baked_snapshot_loaded = false
 	baked_snapshot_chunk_coord = Vector3i(-2147483648, -2147483648, -2147483648)
+	_pending_mesh_apply.clear()
+	_runtime_visuals_activated = false
 	_clear_object_runtime_state(previous_chunk_coord)
-func _ready():
-	# Add to group for detection by player punch system
-	add_to_group("building_chunks")
 
-	# Setup Node Structure
+func _ensure_runtime_nodes() -> void:
+	if static_body and is_instance_valid(static_body) and prop_collision_body and is_instance_valid(prop_collision_body) and mesh_instance and is_instance_valid(mesh_instance) and collision_shape and is_instance_valid(collision_shape):
+		_runtime_nodes_ready = true
+		if not _pending_mesh_apply.is_empty():
+			var pending := _pending_mesh_apply
+			_pending_mesh_apply = {}
+			apply_mesh(
+				pending.get("arrays", []),
+				pending.get("shape", null),
+				pending.get("source_mesh", null),
+				pending.get("collision_boxes", [])
+			)
+		return
+
 	static_body = StaticBody3D.new()
-	# The StaticBody3D needs the group so physics raycasts can identify what they hit
-	static_body.add_to_group("building_chunks")
 	static_body.collision_layer = 1 + 512
 	add_child(static_body)
-	
+
 	mesh_instance = MeshInstance3D.new()
 	static_body.add_child(mesh_instance)
-	
+
 	collision_shape = CollisionShape3D.new()
 	static_body.add_child(collision_shape)
+
+	prop_collision_body = StaticBody3D.new()
+	prop_collision_body.name = "PropCollisionBody"
+	prop_collision_body.collision_layer = static_body.collision_layer
+	prop_collision_body.collision_mask = static_body.collision_mask
+	add_child(prop_collision_body)
+	_runtime_nodes_ready = true
 
 	if not _pending_mesh_apply.is_empty():
 		var pending := _pending_mesh_apply
@@ -129,8 +146,19 @@ func _ready():
 			pending.get("source_mesh", null),
 			pending.get("collision_boxes", [])
 		)
-	if not objects.is_empty():
-		call_deferred("restore_object_visuals")
+
+func activate_runtime_visuals(defer_collision: bool = true) -> void:
+	if _runtime_visuals_activated:
+		return
+	_runtime_visuals_activated = true
+	_ensure_runtime_nodes()
+	if baked_snapshot_loaded or not objects.is_empty() or not simple_visual_instances.is_empty() or not _pending_mesh_apply.is_empty():
+		restore_object_visuals(defer_collision)
+
+func _ready():
+	add_to_group("building_chunks")
+	if not _runtime_visuals_activated and (baked_snapshot_loaded or not objects.is_empty() or not _pending_mesh_apply.is_empty()):
+		activate_runtime_visuals(false)
 
 func get_voxel(local_pos: Vector3i) -> int:
 	if local_pos.x < 0 or local_pos.y < 0 or local_pos.z < 0: return 0
@@ -186,10 +214,10 @@ func apply_voxel_batch_indices(local_indices: PackedInt32Array, block_types: Pac
 	is_empty = false
 
 func _should_batch_simple_visual(object_id: int) -> bool:
-	return manager and manager.world_map_mode and not ("skip_building_visual_batches_for_test" in manager and manager.skip_building_visual_batches_for_test) and ObjectRegistry.is_simple_visual_batch_object(object_id)
+	return manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled() and not ("skip_building_visual_batches_for_test" in manager and manager.skip_building_visual_batches_for_test) and ObjectRegistry.is_simple_visual_batch_object(object_id)
 
 func _should_batch_proxy_visual(object_id: int) -> bool:
-	return manager and manager.world_map_mode and not ("skip_building_visual_batches_for_test" in manager and manager.skip_building_visual_batches_for_test) and ObjectRegistry.is_proxy_visual_batch_object(object_id)
+	return manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled() and not ("skip_building_visual_batches_for_test" in manager and manager.skip_building_visual_batches_for_test) and ObjectRegistry.is_proxy_visual_batch_object(object_id)
 
 func _build_simple_visual_transform(local_anchor: Vector3i, object_id: int, rotation: int, fractional_pos: Vector3, mesh_transform: Transform3D) -> Transform3D:
 	var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
@@ -296,6 +324,15 @@ func _rebuild_simple_visual_batch(object_id: int) -> void:
 		multimesh.mesh = mesh
 
 	multimesh.instance_count = entries.size()
+	var geometry_helper: Variant = null
+	if manager and manager.has_method("get_prefab_geometry_native_helper"):
+		geometry_helper = manager.get_prefab_geometry_native_helper()
+	if geometry_helper and geometry_helper.has_method("pack_multimesh_buffer_from_instances"):
+		var buffer: PackedFloat32Array = geometry_helper.pack_multimesh_buffer_from_instances(entries)
+		if not buffer.is_empty():
+			multimesh.set_buffer(buffer)
+			return
+
 	for i in range(entries.size()):
 		var entry: Dictionary = entries[i]
 		var transform: Transform3D = entry.get("transform", Transform3D.IDENTITY)
@@ -307,8 +344,18 @@ func _remove_simple_visual_batch_instance(local_anchor: Vector3i) -> bool:
 
 	var instance_data: Dictionary = simple_visual_instances[local_anchor]
 	var object_id := int(instance_data.get("object_id", -1))
+	if object_nodes.has(local_anchor):
+		var live_node = object_nodes[local_anchor]
+		if live_node and is_instance_valid(live_node):
+			live_node.queue_free()
+		object_nodes.erase(local_anchor)
+	if object_collision_nodes.has(local_anchor):
+		var collision_node = object_collision_nodes[local_anchor]
+		if collision_node and is_instance_valid(collision_node):
+			collision_node.queue_free()
+		object_collision_nodes.erase(local_anchor)
 	simple_visual_instances.erase(local_anchor)
-	if manager and manager.world_map_mode and manager.has_method("remove_global_visual_batch"):
+	if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled() and manager.has_method("remove_global_visual_batch"):
 		manager.remove_global_visual_batch(_get_world_visual_batch_anchor(local_anchor, chunk_coord))
 		return true
 
@@ -351,7 +398,15 @@ func place_simple_visual_object(local_anchor: Vector3i, object_id: int, rotation
 		return false
 	var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
 
-	objects[local_anchor] = {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
+	var object_state := {
+		"object_id": object_id,
+		"rotation": rotation,
+		"fractional_pos": fractional_pos
+	}
+	if objects.has(local_anchor) and typeof(objects[local_anchor]) == TYPE_DICTIONARY and objects[local_anchor].has("should_populate_loot"):
+		object_state["should_populate_loot"] = bool(objects[local_anchor].get("should_populate_loot", false))
+	objects[local_anchor] = object_state
+	_has_deferred_runtime_visuals = true
 	for cell in cells:
 		occupied_by_object[cell] = local_anchor
 
@@ -361,13 +416,17 @@ func place_simple_visual_object(local_anchor: Vector3i, object_id: int, rotation
 		"fractional_pos": fractional_pos
 	}
 	var final_transform := _build_simple_visual_transform(local_anchor, object_id, rotation, fractional_pos, mesh_transform)
-	if manager and manager.world_map_mode and manager.has_method("register_global_visual_batch"):
+	if _should_use_simple_object_collision(object_id):
+		_generate_simple_visual_collision(local_anchor, object_id, final_transform, mesh)
+	if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled() and manager.has_method("register_global_visual_batch"):
 		var chunk_origin := Transform3D(Basis.IDENTITY, Vector3(chunk_coord) * float(SIZE))
 		var world_transform := chunk_origin * final_transform
 		var world_anchor := _get_world_visual_batch_anchor(local_anchor, chunk_coord)
 		if manager.register_global_visual_batch(world_anchor, object_id, world_transform, mesh, defer_global_visual_batch_rebuild):
 			is_empty = false
 			return true
+	# Keep the fallback batch entry attached to the chunk even before it enters
+	# the scene tree so the visual can appear as soon as the chunk becomes active.
 	_append_simple_visual_batch_instance(object_id, local_anchor, final_transform, mesh)
 	is_empty = false
 	return true
@@ -386,7 +445,15 @@ func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation:
 		return false
 	var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
 
-	objects[local_anchor] = {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
+	var object_state := {
+		"object_id": object_id,
+		"rotation": rotation,
+		"fractional_pos": fractional_pos
+	}
+	if objects.has(local_anchor) and typeof(objects[local_anchor]) == TYPE_DICTIONARY and objects[local_anchor].has("should_populate_loot"):
+		object_state["should_populate_loot"] = bool(objects[local_anchor].get("should_populate_loot", false))
+	objects[local_anchor] = object_state
+	_has_deferred_runtime_visuals = true
 	for cell in cells:
 		occupied_by_object[cell] = local_anchor
 
@@ -397,23 +464,215 @@ func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation:
 	}
 
 	if scene_instance:
-		if manager and manager.world_map_mode:
+		if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled():
 			_set_shadow_casting_recursive(scene_instance, true)
 		_hide_mesh_descendants(scene_instance)
 		if ObjectRegistry.get_object_has_authored_collision(object_id):
 			_prune_proxy_visual_children(scene_instance)
 
 	var final_transform := _build_simple_visual_transform(local_anchor, object_id, rotation, fractional_pos, mesh_transform)
-	if manager and manager.world_map_mode and manager.has_method("register_global_visual_batch"):
+	if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled() and manager.has_method("register_global_visual_batch"):
 		var chunk_origin := Transform3D(Basis.IDENTITY, Vector3(chunk_coord) * float(SIZE))
 		var world_transform := chunk_origin * final_transform
 		var world_anchor := _get_world_visual_batch_anchor(local_anchor, chunk_coord)
 		if manager.register_global_visual_batch(world_anchor, object_id, world_transform, mesh, defer_global_visual_batch_rebuild):
 			is_empty = false
 			return true
+	# Preserve the local fallback batch so proxy objects do not disappear if
+	# the global batch path is unavailable during restore.
 	_append_simple_visual_batch_instance(object_id, local_anchor, final_transform, mesh)
 	is_empty = false
 	return true
+
+func _spawn_proxy_gameplay_shell(local_anchor: Vector3i, object_id: int, rotation: int, fractional_pos: Vector3) -> Node3D:
+	var scene_instance: Node3D = ObjectRegistry.create_proxy_gameplay_shell(object_id, bool(manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled()))
+	if not scene_instance:
+		return null
+
+	var obj_data: Dictionary = objects.get(local_anchor, {})
+	if scene_instance.has_method("populate_loot") and bool(obj_data.get("should_populate_loot", false)):
+		scene_instance.set_meta("should_populate_loot", true)
+
+	add_child(scene_instance)
+	if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled():
+		_set_shadow_casting_recursive(scene_instance, true)
+
+	var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
+	var offset_x = float(original_size.x) / 2.0
+	var offset_z = float(original_size.z) / 2.0
+	if rotation == 1 or rotation == 3:
+		var temp = offset_x
+		offset_x = offset_z
+		offset_z = temp
+
+	scene_instance.position = Vector3(local_anchor.x + offset_x, local_anchor.y, local_anchor.z + offset_z) + fractional_pos
+	scene_instance.rotation_degrees.y = rotation * 90
+	scene_instance.add_to_group("placed_objects")
+	scene_instance.set_meta("anchor", local_anchor)
+	scene_instance.set_meta("chunk", self)
+	scene_instance.set_meta("object_id", object_id)
+	object_nodes[local_anchor] = scene_instance
+	return scene_instance
+
+func promote_simple_visual_batches_to_global() -> void:
+	if not manager or not manager.has_method("is_baked_world_map_visual_mode_enabled") or not manager.is_baked_world_map_visual_mode_enabled():
+		return
+	if not manager.has_method("register_global_visual_batch"):
+		return
+	if not is_inside_tree():
+		return
+
+	var promoted_any := false
+	var chunk_origin := Transform3D(Basis.IDENTITY, Vector3(chunk_coord) * float(SIZE))
+	var object_id_variants: Array = simple_visual_batch_entries.keys()
+	for object_id_variant in object_id_variants:
+		var object_id := int(object_id_variant)
+		var entries: Array = simple_visual_batch_entries.get(object_id, [])
+		if entries.is_empty():
+			continue
+
+		var visual_data := ObjectRegistry.get_object_visual_data(object_id)
+		if visual_data.is_empty():
+			continue
+		var mesh: Mesh = visual_data.get("mesh")
+		if not mesh:
+			continue
+
+		var remaining: Array = []
+		for entry_variant in entries:
+			if typeof(entry_variant) != TYPE_DICTIONARY:
+				continue
+			var entry: Dictionary = entry_variant
+			var local_anchor: Vector3i = entry.get("anchor", Vector3i.ZERO)
+			var transform: Transform3D = entry.get("transform", Transform3D.IDENTITY)
+			var world_anchor := _get_world_visual_batch_anchor(local_anchor, chunk_coord)
+			var world_transform := chunk_origin * transform
+			if manager.register_global_visual_batch(world_anchor, object_id, world_transform, mesh, true):
+				promoted_any = true
+			else:
+				remaining.append(entry)
+
+		if remaining.is_empty():
+			simple_visual_batch_entries.erase(object_id)
+			if simple_visual_batch_nodes.has(object_id):
+				var node = simple_visual_batch_nodes[object_id]
+				if node and is_instance_valid(node):
+					node.queue_free()
+				simple_visual_batch_nodes.erase(object_id)
+		elif remaining.size() != entries.size() or not simple_visual_batch_nodes.has(object_id):
+			simple_visual_batch_entries[object_id] = remaining
+			_rebuild_simple_visual_batch(object_id)
+
+	if promoted_any and manager.has_method("flush_global_visual_batches"):
+		manager.flush_global_visual_batches()
+
+func refresh_proxy_visual_shells(viewer_position: Vector3, activation_distance: float, generous_activation_distance: float = 0.0) -> void:
+	if activation_distance <= 0.0:
+		return
+	if not manager or not manager.world_map_mode:
+		return
+	if not manager.has_method("is_eager_baked_building_residency_enabled") or not manager.is_eager_baked_building_residency_enabled():
+		return
+
+	var activation_sq := activation_distance * activation_distance
+	var generous_activation_sq := generous_activation_distance * generous_activation_distance
+	var chunk_origin := Vector3(chunk_coord) * float(SIZE)
+
+	for local_anchor_variant in simple_visual_instances.keys():
+		var local_anchor: Vector3i = local_anchor_variant
+		var instance_data: Dictionary = simple_visual_instances[local_anchor]
+		var object_id := int(instance_data.get("object_id", -1))
+		if not ObjectRegistry.is_proxy_visual_batch_object(object_id):
+			continue
+
+		var rotation := int(instance_data.get("rotation", 0))
+		var fractional_pos: Vector3 = instance_data.get("fractional_pos", Vector3.ZERO)
+		var visual_data := ObjectRegistry.get_object_visual_data(object_id)
+		var mesh_transform := Transform3D.IDENTITY
+		if not visual_data.is_empty():
+			mesh_transform = visual_data.get("mesh_transform", Transform3D.IDENTITY)
+
+		var final_transform := _build_simple_visual_transform(local_anchor, object_id, rotation, fractional_pos, mesh_transform)
+		var world_pos := chunk_origin + final_transform.origin
+		var shell_activation_sq := activation_sq
+		if generous_activation_sq > activation_sq and ObjectRegistry.is_high_priority_proxy_visual_batch_object(object_id):
+			shell_activation_sq = generous_activation_sq
+		var shell_active := object_nodes.has(local_anchor)
+		if shell_active:
+			var existing = object_nodes[local_anchor]
+			if not existing or not is_instance_valid(existing):
+				object_nodes.erase(local_anchor)
+				shell_active = false
+
+		if world_pos.distance_squared_to(viewer_position) <= shell_activation_sq:
+			if not shell_active:
+				_spawn_proxy_gameplay_shell(local_anchor, object_id, rotation, fractional_pos)
+		elif shell_active:
+			var node = object_nodes[local_anchor]
+			if node and is_instance_valid(node):
+				node.queue_free()
+			object_nodes.erase(local_anchor)
+
+func refresh_lazy_object_visuals(viewer_position: Vector3, activation_distance: float) -> void:
+	if activation_distance <= 0.0:
+		return
+	if not manager or not manager.world_map_mode:
+		return
+	if not manager.has_method("is_eager_baked_building_residency_enabled") or not manager.is_eager_baked_building_residency_enabled():
+		return
+
+	var activation_sq := activation_distance * activation_distance
+	var chunk_origin := Vector3(chunk_coord) * float(SIZE)
+
+	for local_anchor_variant in objects.keys():
+		var local_anchor: Vector3i = local_anchor_variant
+		var obj_data: Dictionary = objects[local_anchor]
+		var object_id := int(obj_data.get("object_id", -1))
+		if object_id < 0:
+			continue
+		if ObjectRegistry.is_simple_visual_batch_object(object_id) or ObjectRegistry.is_proxy_visual_batch_object(object_id):
+			continue
+		var effective_activation_sq := activation_sq
+		if ObjectRegistry.is_high_priority_lazy_scene_object(object_id):
+			effective_activation_sq = activation_sq * 16.0
+
+		var rotation := int(obj_data.get("rotation", 0))
+		var fractional_pos: Vector3 = obj_data.get("fractional_pos", Vector3.ZERO)
+		var object_def := ObjectRegistry.get_object(object_id)
+		if object_def.is_empty():
+			continue
+		var scene_path := str(object_def.get("scene", ""))
+		if scene_path.is_empty():
+			continue
+		var object_size: Vector3i = object_def.get("size", Vector3i(1, 1, 1))
+
+		var object_anchor := chunk_origin + Vector3(local_anchor)
+		var object_center := object_anchor + Vector3(float(object_size.x) * 0.5, 0.0, float(object_size.z) * 0.5)
+		if rotation == 1 or rotation == 3:
+			object_center = object_anchor + Vector3(float(object_size.z) * 0.5, 0.0, float(object_size.x) * 0.5)
+		object_center += fractional_pos
+
+		var active_node_exists := object_nodes.has(local_anchor)
+		if active_node_exists:
+			var active_node = object_nodes[local_anchor]
+			if not active_node or not is_instance_valid(active_node):
+				object_nodes.erase(local_anchor)
+				active_node_exists = false
+
+		if object_center.distance_squared_to(viewer_position) <= effective_activation_sq:
+			if active_node_exists:
+				continue
+			var packed = ObjectRegistry.get_preloaded_scene(scene_path)
+			if not packed:
+				continue
+			var scene_instance: Node3D = packed.instantiate()
+			if scene_instance:
+				var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
+				var has_authored_collision := ObjectRegistry.get_object_has_authored_collision(object_id)
+				var should_populate_loot := bool(obj_data.get("should_populate_loot", false))
+				if should_populate_loot and scene_instance.has_method("populate_loot"):
+					scene_instance.set_meta("should_populate_loot", true)
+				place_object(local_anchor, object_id, rotation, cells, scene_instance, fractional_pos, false, true, object_size, has_authored_collision, true)
 
 func rebuild_mesh():
 	if mesher:
@@ -475,24 +734,22 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 		mesh_dirty = false
 		return
 
-	# World-map buildings use merged box colliders so the physics server handles fewer shapes.
-	# This keeps the block occupancy collision exact at voxel resolution while avoiding trimesh cooking.
-	if is_world_map_mode and collision_boxes.size() > 0:
+	# Prefer the exact collision shape whenever the mesher produced one.
+	# Box collision is only a fallback for chunks that do not have a usable
+	# exact shape payload.
+	_clear_static_body_shapes()
+	if _shape_is_usable(shape):
+		_apply_primary_collision_shape(shape)
+	elif is_world_map_mode and collision_boxes.size() > 0:
 		var handled_native_boxes := false
 		if mesher and mesher.has_method("apply_world_map_collision_boxes") and static_body:
 			handled_native_boxes = mesher.apply_world_map_collision_boxes(static_body.get_rid(), collision_boxes)
 		if not handled_native_boxes:
-			_clear_static_body_shapes()
 			_apply_collision_boxes(collision_boxes)
-	else:
-		# Use native shape when available; otherwise build a native trimesh shape from the mesh resource.
-		_clear_static_body_shapes()
-		if _shape_is_usable(shape):
-			_apply_primary_collision_shape(shape)
-		elif mesh_instance.mesh and mesh_instance.mesh.get_surface_count() > 0:
-			var native_trimesh_shape := _build_native_trimesh_collision_shape(mesh_instance.mesh)
-			if _shape_is_usable(native_trimesh_shape):
-				_apply_primary_collision_shape(native_trimesh_shape)
+	elif mesh_instance.mesh and mesh_instance.mesh.get_surface_count() > 0:
+		var native_trimesh_shape := _build_native_trimesh_collision_shape(mesh_instance.mesh)
+		if _shape_is_usable(native_trimesh_shape):
+			_apply_primary_collision_shape(native_trimesh_shape)
 
 	mesh_dirty = false
 	return
@@ -520,11 +777,17 @@ func apply_bake_snapshot(snapshot: Resource) -> void:
 	mesh_dirty = false
 	baked_snapshot_loaded = true
 	baked_snapshot_chunk_coord = bake_snapshot.chunk_coord
+	_runtime_visuals_activated = false
+	_pending_mesh_apply = {
+		"arrays": [],
+		"shape": bake_snapshot.collision_shape,
+		"source_mesh": bake_snapshot.mesh,
+		"collision_boxes": bake_snapshot.collision_boxes.duplicate(true)
+	}
 	_clear_object_runtime_state(chunk_coord)
 	_load_objects_from_bake(bake_snapshot.objects_data)
-	apply_mesh([], bake_snapshot.collision_shape, bake_snapshot.mesh, bake_snapshot.collision_boxes)
 	if is_inside_tree():
-		restore_object_visuals(true)
+		activate_runtime_visuals(false)
 
 func _serialize_objects_for_bake() -> Array:
 	var serialized: Array = []
@@ -537,7 +800,8 @@ func _serialize_objects_for_bake() -> Array:
 			"anchor": [local_anchor.x, local_anchor.y, local_anchor.z],
 			"object_id": int(obj_data.get("object_id", -1)),
 			"rotation": int(obj_data.get("rotation", 0)),
-			"fractional_pos": [fractional_pos.x, fractional_pos.y, fractional_pos.z]
+			"fractional_pos": [fractional_pos.x, fractional_pos.y, fractional_pos.z],
+			"should_populate_loot": bool(obj_data.get("should_populate_loot", false))
 		})
 	return serialized
 
@@ -549,6 +813,7 @@ func _load_objects_from_bake(objects_data: Array) -> void:
 	simple_visual_instances.clear()
 	simple_visual_batch_entries.clear()
 	simple_visual_batch_nodes.clear()
+	_has_deferred_runtime_visuals = false
 	for entry_variant in objects_data:
 		if typeof(entry_variant) != TYPE_DICTIONARY:
 			continue
@@ -560,6 +825,8 @@ func _load_objects_from_bake(objects_data: Array) -> void:
 		var object_id := int(entry.get("object_id", -1))
 		if object_id < 0:
 			continue
+		if not ObjectRegistry.is_simple_visual_batch_object(object_id):
+			_has_deferred_runtime_visuals = true
 		var rotation := int(entry.get("rotation", 0))
 		var fractional_arr: Array = entry.get("fractional_pos", [0.0, 0.0, 0.0])
 		var fractional_pos := Vector3(
@@ -570,7 +837,8 @@ func _load_objects_from_bake(objects_data: Array) -> void:
 		objects[local_anchor] = {
 			"object_id": object_id,
 			"rotation": rotation,
-			"fractional_pos": fractional_pos
+			"fractional_pos": fractional_pos,
+			"should_populate_loot": bool(entry.get("should_populate_loot", false))
 		}
 		var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
 		for cell in cells:
@@ -585,7 +853,10 @@ func _clear_object_runtime_state(previous_chunk_coord: Vector3i) -> void:
 		var collision_node = object_collision_nodes[anchor]
 		if collision_node and is_instance_valid(collision_node):
 			collision_node.queue_free()
-	if manager and manager.world_map_mode and manager.has_method("remove_global_visual_batch"):
+	if prop_collision_body and is_instance_valid(prop_collision_body):
+		prop_collision_body.queue_free()
+	prop_collision_body = null
+	if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled() and manager.has_method("remove_global_visual_batch"):
 		for anchor in simple_visual_instances:
 			manager.remove_global_visual_batch(_get_world_visual_batch_anchor(anchor, previous_chunk_coord))
 	for batch_node in simple_visual_batch_nodes.values():
@@ -599,7 +870,11 @@ func _clear_object_runtime_state(previous_chunk_coord: Vector3i) -> void:
 	simple_visual_instances.clear()
 	simple_visual_batch_entries.clear()
 	simple_visual_batch_nodes.clear()
+	_has_deferred_runtime_visuals = false
 	_applied_collision_boxes.clear()
+
+func requires_runtime_visual_refresh() -> bool:
+	return _has_deferred_runtime_visuals
 
 func _apply_collision_boxes(collision_boxes: Array) -> void:
 	if not static_body:
@@ -626,16 +901,15 @@ func _apply_primary_collision_shape(shape: Shape3D) -> void:
 	if not static_body:
 		return
 
-	var body_rid := static_body.get_rid()
-	if not body_rid.is_valid():
-		return
-
 	if not _shape_is_usable(shape):
 		return
 
-	PhysicsServer3D.body_add_shape(body_rid, shape.get_rid(), Transform3D.IDENTITY)
+	if collision_shape and is_instance_valid(collision_shape):
+		collision_shape.shape = shape
 
 func _clear_static_body_shapes() -> void:
+	if collision_shape and is_instance_valid(collision_shape):
+		collision_shape.shape = null
 	if static_body and is_instance_valid(static_body):
 		var body_rid := static_body.get_rid()
 		if body_rid.is_valid():
@@ -649,6 +923,18 @@ func _shape_is_usable(candidate: Shape3D) -> bool:
 	if candidate is ConcavePolygonShape3D:
 		return candidate.get_faces().size() > 0
 	return true
+
+func get_runtime_collision_shape_count() -> int:
+	var total_shapes := 0
+	if static_body and is_instance_valid(static_body):
+		var body_rid := static_body.get_rid()
+		if body_rid.is_valid():
+			total_shapes += PhysicsServer3D.body_get_shape_count(body_rid)
+	if prop_collision_body and is_instance_valid(prop_collision_body):
+		var prop_body_rid := prop_collision_body.get_rid()
+		if prop_body_rid.is_valid():
+			total_shapes += PhysicsServer3D.body_get_shape_count(prop_body_rid)
+	return total_shapes
 
 func mark_mesh_dirty() -> void:
 	mesh_dirty = true
@@ -678,7 +964,14 @@ func is_cell_available(local_pos: Vector3i) -> bool:
 ## fractional_pos is the 3D offset from the anchor block's origin (0,0,0)
 func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO, defer_collision: bool = false, defer_global_visual_batch_rebuild: bool = false, object_size: Vector3i = Vector3i.ZERO, has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> bool:
 	# Store object data (include fractional_pos for persistence)
-	objects[local_anchor] = {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
+	var object_state := {
+		"object_id": object_id,
+		"rotation": rotation,
+		"fractional_pos": fractional_pos
+	}
+	if objects.has(local_anchor) and typeof(objects[local_anchor]) == TYPE_DICTIONARY and objects[local_anchor].has("should_populate_loot"):
+		object_state["should_populate_loot"] = bool(objects[local_anchor].get("should_populate_loot", false))
+	objects[local_anchor] = object_state
 	
 	# Mark all occupied cells
 	for cell in cells:
@@ -687,7 +980,9 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 	# Add visual instance with collision
 	if scene_instance:
 		add_child(scene_instance)
-		if manager and manager.world_map_mode:
+		if not ObjectRegistry.is_simple_visual_batch_object(object_id):
+			_has_deferred_runtime_visuals = true
+		if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled():
 			_set_shadow_casting_recursive(scene_instance, true)
 		
 		# Position logic:
@@ -722,6 +1017,11 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 		scene_instance.set_meta("chunk", self)
 		scene_instance.set_meta("object_id", object_id)
 		var resolved_has_authored_collision := has_authored_collision if has_authored_collision_valid else ObjectRegistry.get_object_has_authored_collision(object_id)
+		if _should_batch_proxy_visual(object_id):
+			# Proxy shells already provide their own lightweight collision.
+			# Skipping the generic collision cooking path keeps the eager path
+			# from doing redundant physics work per object.
+			resolved_has_authored_collision = true
 
 		if _should_batch_proxy_visual(object_id):
 			var proxy_cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
@@ -773,24 +1073,77 @@ func _generate_simple_object_collision(obj: Node3D, anchor: Vector3i, object_id:
 		_generate_object_collision(obj, anchor)
 		return
 
-	var mesh_global_transform := obj.global_transform * mesh_transform
+	var mesh_local_transform := obj.transform * mesh_transform
 	var aabb := mesh.get_aabb()
 	var box_size := Vector3(
 		maxf(aabb.size.x, 0.05),
 		maxf(aabb.size.y, 0.05),
 		maxf(aabb.size.z, 0.05)
 	)
+	_create_simple_object_collision_node(anchor, object_id, mesh_local_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5)), box_size, obj)
+
+func _generate_simple_visual_collision(local_anchor: Vector3i, object_id: int, final_transform: Transform3D, mesh: Mesh) -> void:
+	if _should_skip_object_collisions():
+		return
+	if not mesh:
+		return
+
+	var aabb := mesh.get_aabb()
+	var box_size := Vector3(
+		maxf(aabb.size.x, 0.05),
+		maxf(aabb.size.y, 0.05),
+		maxf(aabb.size.z, 0.05)
+	)
+	_create_simple_object_collision_node(local_anchor, object_id, final_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5)), box_size, null)
+
+func _create_simple_object_collision_node(anchor: Vector3i, object_id: int, collision_transform: Transform3D, box_size: Vector3, object_node: Node3D = null) -> void:
+	if _should_skip_object_collisions():
+		return
+	if object_collision_nodes.has(anchor):
+		var existing_collision = object_collision_nodes[anchor]
+		if existing_collision and is_instance_valid(existing_collision):
+			return
+		object_collision_nodes.erase(anchor)
+
+	_ensure_runtime_nodes()
+	if not prop_collision_body or not is_instance_valid(prop_collision_body):
+		return
+	prop_collision_body.collision_layer = static_body.collision_layer if static_body and is_instance_valid(static_body) else 1 + 512
+	prop_collision_body.collision_mask = static_body.collision_mask if static_body and is_instance_valid(static_body) else 1
 
 	var collision := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
 	box_shape.size = box_size
 	collision.shape = box_shape
+	collision.add_to_group("placed_objects")
+	collision.transform = collision_transform
 	collision.set_meta("anchor", anchor)
 	collision.set_meta("chunk", self)
 	collision.set_meta("object_id", object_id)
-	collision.global_transform = mesh_global_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5))
-	static_body.add_child(collision)
+	if object_node and is_instance_valid(object_node):
+		collision.set_meta("object_node", object_node)
+	prop_collision_body.add_child(collision)
 	object_collision_nodes[anchor] = collision
+
+func resolve_collision_hit_target(collider: Object, shape_index: int = -1) -> Node:
+	if collider is Node and collider.is_in_group("placed_objects"):
+		return collider
+
+	if collider is CollisionObject3D and shape_index >= 0:
+		var owner_id: int = collider.shape_find_owner(shape_index)
+		if owner_id != -1:
+			var owner: Object = collider.shape_owner_get_owner(owner_id)
+			if owner is Node:
+				var owner_node: Node = owner
+				if owner_node.has_meta("object_node"):
+					var object_node = owner_node.get_meta("object_node")
+					if object_node and is_instance_valid(object_node):
+						return object_node
+				return owner_node
+
+	if collider is Node:
+		return collider
+	return null
 
 func _scene_has_authored_collision(node: Node) -> bool:
 	if node is CollisionShape3D or node is CollisionPolygon3D:
@@ -837,6 +1190,10 @@ func _generate_object_collision(obj: Node3D, anchor: Vector3i):
 		return
 	# Skip collision generation for interactable objects (they manage their own)
 	if obj.is_in_group("interactable"):
+		return
+	var object_id := int(obj.get_meta("object_id", -1))
+	if _should_use_simple_object_collision(object_id):
+		_generate_simple_object_collision(obj, anchor, object_id)
 		return
 	# Find all MeshInstance3D children and create collision shapes
 	for child in obj.get_children():
@@ -907,7 +1264,7 @@ func get_object_at(local_pos: Vector3i):
 
 ## Restore visual instances for all stored objects (called after load)
 ## This spawns the scene instances for objects that were saved to the objects dictionary
-func restore_object_visuals(defer_collision: bool = true):
+func _restore_object_visuals_legacy(defer_collision: bool = true):
 	for local_anchor in objects:
 		# Skip if visual already exists
 		if (object_nodes.has(local_anchor) and is_instance_valid(object_nodes[local_anchor])) or simple_visual_instances.has(local_anchor):
@@ -930,17 +1287,19 @@ func restore_object_visuals(defer_collision: bool = true):
 			continue
 		
 		var scene_instance: Node3D = null
-		if manager and manager.world_map_mode and ObjectRegistry.is_proxy_visual_batch_object(object_id):
-			scene_instance = ObjectRegistry.create_proxy_gameplay_shell(object_id, manager.world_map_mode)
+		if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled() and ObjectRegistry.is_proxy_visual_batch_object(object_id):
+			scene_instance = ObjectRegistry.create_proxy_gameplay_shell(object_id, true)
 		if scene_instance == null:
 			var packed = ObjectRegistry.get_preloaded_scene(scene_path)
 			if not packed:
 				continue
 			scene_instance = packed.instantiate()
+		if scene_instance.has_method("populate_loot") and bool(obj_data.get("should_populate_loot", false)):
+			scene_instance.set_meta("should_populate_loot", true)
 		
 		# Add and position the visual
 		add_child(scene_instance)
-		if manager and manager.world_map_mode:
+		if manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled():
 			_set_shadow_casting_recursive(scene_instance, true)
 		var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
 		var offset_x = float(original_size.x) / 2.0
@@ -961,6 +1320,8 @@ func restore_object_visuals(defer_collision: bool = true):
 		scene_instance.set_meta("chunk", self)
 		scene_instance.set_meta("object_id", object_id)
 		var has_authored_collision := ObjectRegistry.get_object_has_authored_collision(object_id)
+		if _should_batch_proxy_visual(object_id):
+			has_authored_collision = true
 
 		if _should_batch_proxy_visual(object_id):
 			var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
@@ -978,3 +1339,113 @@ func restore_object_visuals(defer_collision: bool = true):
 				_generate_object_collision_measured(scene_instance, local_anchor)
 
 		object_nodes[local_anchor] = scene_instance
+
+	for object_id_variant in simple_visual_batch_entries.keys():
+		_rebuild_simple_visual_batch(int(object_id_variant))
+
+	promote_simple_visual_batches_to_global()
+
+func restore_object_visuals(defer_collision: bool = true):
+	var baked_world_visual_mode := bool(manager and manager.has_method("is_baked_world_map_visual_mode_enabled") and manager.is_baked_world_map_visual_mode_enabled())
+	var proxy_shell_activation_distance := 0.0
+	var proxy_shell_activation_sq := 0.0
+	var proxy_shell_culling_enabled := false
+	var viewer_position := Vector3.ZERO
+	var lazy_shell_activation_sq := 0.0
+	if baked_world_visual_mode and manager.has_method("get_proxy_shell_activation_distance") and "viewer" in manager and manager.viewer and manager.has_method("get_viewer_position"):
+		proxy_shell_activation_distance = float(manager.get_proxy_shell_activation_distance())
+		if proxy_shell_activation_distance > 0.0:
+			proxy_shell_activation_sq = proxy_shell_activation_distance * proxy_shell_activation_distance
+			viewer_position = manager.get_viewer_position()
+			proxy_shell_culling_enabled = true
+			if manager.has_method("get_lazy_object_activation_distance"):
+				var lazy_shell_activation_distance := float(manager.get_lazy_object_activation_distance())
+				if lazy_shell_activation_distance > proxy_shell_activation_distance:
+					lazy_shell_activation_sq = lazy_shell_activation_distance * lazy_shell_activation_distance
+
+	for local_anchor in objects:
+		# Skip if visual already exists
+		if (object_nodes.has(local_anchor) and is_instance_valid(object_nodes[local_anchor])) or simple_visual_instances.has(local_anchor):
+			continue
+		var obj_data = objects[local_anchor]
+		var object_id = obj_data.object_id
+		var rotation = obj_data.rotation
+		var fractional_pos: Vector3 = obj_data.get("fractional_pos", Vector3(0.0, float(obj_data.get("fractional_y", 0.0)), 0.0))
+		if _should_batch_simple_visual(object_id):
+			var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
+			if place_simple_visual_object(local_anchor, object_id, rotation, cells, fractional_pos):
+				continue
+
+		var obj_def = ObjectRegistry.get_object(object_id)
+		if obj_def.is_empty():
+			continue
+
+		var scene_path = obj_def.get("scene", "")
+		if scene_path == "":
+			continue
+
+		var scene_instance: Node3D = null
+		var should_spawn_runtime_shell := true
+		var visual_data: Dictionary = {}
+		if baked_world_visual_mode and _should_batch_proxy_visual(object_id):
+			visual_data = ObjectRegistry.get_object_visual_data(object_id)
+			if visual_data.is_empty():
+				continue
+			if proxy_shell_culling_enabled:
+				var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
+				var final_transform := _build_simple_visual_transform(local_anchor, object_id, rotation, fractional_pos, mesh_transform)
+				var chunk_origin := Transform3D(Basis.IDENTITY, Vector3(chunk_coord) * float(SIZE))
+				var world_transform := chunk_origin * final_transform
+				var shell_activation_sq := proxy_shell_activation_sq
+				if lazy_shell_activation_sq > proxy_shell_activation_sq and ObjectRegistry.is_high_priority_proxy_visual_batch_object(object_id):
+					shell_activation_sq = lazy_shell_activation_sq
+				if world_transform.origin.distance_squared_to(viewer_position) > shell_activation_sq:
+					should_spawn_runtime_shell = false
+
+		if should_spawn_runtime_shell:
+			if baked_world_visual_mode and ObjectRegistry.is_proxy_visual_batch_object(object_id):
+				scene_instance = ObjectRegistry.create_proxy_gameplay_shell(object_id, true)
+			if scene_instance == null:
+				var packed = ObjectRegistry.get_preloaded_scene(scene_path)
+				if not packed:
+					continue
+				scene_instance = packed.instantiate()
+			if scene_instance and scene_instance.has_method("populate_loot") and bool(obj_data.get("should_populate_loot", false)):
+				scene_instance.set_meta("should_populate_loot", true)
+
+			add_child(scene_instance)
+			if baked_world_visual_mode:
+				_set_shadow_casting_recursive(scene_instance, true)
+			var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
+			var offset_x = float(original_size.x) / 2.0
+			var offset_z = float(original_size.z) / 2.0
+
+			if rotation == 1 or rotation == 3:
+				var temp = offset_x
+				offset_x = offset_z
+				offset_z = temp
+
+			scene_instance.position = Vector3(local_anchor.x + offset_x, local_anchor.y, local_anchor.z + offset_z) + fractional_pos
+			scene_instance.rotation_degrees.y = rotation * 90
+			scene_instance.add_to_group("placed_objects")
+			scene_instance.set_meta("anchor", local_anchor)
+			scene_instance.set_meta("chunk", self)
+			scene_instance.set_meta("object_id", object_id)
+
+		var has_authored_collision := ObjectRegistry.get_object_has_authored_collision(object_id)
+		if _should_batch_proxy_visual(object_id):
+			has_authored_collision = true
+
+		if _should_batch_proxy_visual(object_id):
+			var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
+			if not visual_data.is_empty():
+				place_proxy_visual_object(local_anchor, object_id, rotation, cells, scene_instance, fractional_pos, visual_data)
+
+		if not has_authored_collision:
+			if defer_collision and manager and manager.has_method("queue_object_collision"):
+				manager.queue_object_collision(self, scene_instance, local_anchor)
+			else:
+				_generate_object_collision_measured(scene_instance, local_anchor)
+
+		if scene_instance:
+			object_nodes[local_anchor] = scene_instance

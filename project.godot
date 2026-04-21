@@ -72,6 +72,9 @@ sprint={
 
 3d/physics_engine="Jolt Physics"
 
+[physics/jolt_physics_3d/limits]
+max_bodies=40960
+
 [rendering]
 
 rendering_device/staging_buffer/block_size_kb=256000

@@ -43,6 +43,7 @@ var _last_world_map_spawn_ms: float = 0.0
 var _last_world_map_spawn_candidates: int = 0
 var _last_world_map_spawn_queued: int = 0
 var _last_world_map_spawn_chunk: Vector3i = Vector3i.ZERO
+var _world_map_baked_buildings_primed: bool = false
 
 # Track spawned doors for distance-based cleanup
 var spawned_doors: Dictionary = {} # "x_z" -> door instance
@@ -139,24 +140,55 @@ func _ready():
 	load_user_prefabs()
 
 func _process(_delta):
+	if not viewer:
+		viewer = get_tree().get_first_node_in_group("player")
+	if building_manager and building_manager.world_map_mode and building_manager.has_method("is_eager_baked_building_residency_enabled") and building_manager.is_eager_baked_building_residency_enabled():
+		if not _world_map_baked_buildings_primed:
+			preload_baked_world_map_buildings()
 	_process_pending_spawn_jobs()
 	_cleanup_distant_doors()
 
 func clear_pending_spawn_jobs() -> void:
 	pending_spawn_jobs.clear()
 	pending_spawn_keys.clear()
+	_world_map_baked_buildings_primed = false
 	_last_spawn_job_msec = 0
 	_last_spawn_processing_ms = 0.0
 	_last_spawn_jobs_processed = 0
 
 
+func reset_spawn_state(clear_doors: bool = true) -> void:
+	spawned_positions.clear()
+	clear_pending_spawn_jobs()
+	if clear_doors:
+		for key in spawned_doors:
+			var door = spawned_doors[key]
+			if door and is_instance_valid(door):
+				door.queue_free()
+		spawned_doors.clear()
+	_world_map_baked_buildings_primed = false
+	_last_world_map_spawn_mode = "none"
+	_last_world_map_spawn_ms = 0.0
+	_last_world_map_spawn_candidates = 0
+	_last_world_map_spawn_queued = 0
+	_last_world_map_spawn_chunk = Vector3i.ZERO
+
+
 func has_pending_spawn_jobs() -> bool:
 	return not pending_spawn_jobs.is_empty()
 
+
+func has_world_map_baked_buildings_primed() -> bool:
+	return _world_map_baked_buildings_primed and pending_spawn_jobs.is_empty()
+
 func get_telemetry_snapshot() -> Dictionary:
+	var eager_building_residency := false
+	if building_manager and building_manager.has_method("is_eager_baked_building_residency_enabled"):
+		eager_building_residency = building_manager.is_eager_baked_building_residency_enabled()
 	return {
 		"enabled": enabled,
 		"world_map_mode": bool(building_manager and building_manager.world_map_mode),
+		"eager_baked_building_residency": eager_building_residency,
 		"road_spacing": road_spacing,
 		"road_width": road_width,
 		"spawn_distance_from_road": spawn_distance_from_road,
@@ -171,6 +203,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"skip_block_placement_for_test": skip_block_placement_for_test,
 		"skip_chunk_flush_for_test": skip_chunk_flush_for_test,
 		"skip_carving_for_test": skip_carving_for_test,
+		"world_map_baked_buildings_primed": _world_map_baked_buildings_primed,
 		"world_map_spawn_profile": {
 			"mode": _last_world_map_spawn_mode,
 			"load_ms": _last_world_map_spawn_ms,
@@ -188,17 +221,107 @@ func _queue_spawn_job(spawn_key: String, job: Dictionary) -> void:
 		return
 	job["spawn_key"] = spawn_key
 	spawned_positions[spawn_key] = true
-	if building_manager and building_manager.world_map_mode and not pending_spawn_jobs.is_empty():
+	if building_manager and building_manager.world_map_mode:
 		_insert_world_map_spawn_job_sorted(job)
 	else:
 		pending_spawn_jobs.append(job)
 	pending_spawn_keys[spawn_key] = true
+
+
+func _build_world_map_spawn_job(bldg: Dictionary) -> Dictionary:
+	if bldg.is_empty():
+		return {}
+
+	var prefab_name := str(bldg.get("type", ""))
+	if prefab_name.is_empty():
+		return {}
+
+	var bx: float = float(bldg.get("x", 0))
+	var by: float = float(bldg.get("y", 12))
+	var bz: float = float(bldg.get("z", 0))
+	var rot := int(bldg.get("rotation", 0))
+	var spawn_pos := Vector3(
+		float(bldg.get("spawn_origin_x", bx)),
+		float(bldg.get("spawn_origin_y", by)),
+		float(bldg.get("spawn_origin_z", bz))
+	)
+	if not bldg.has("spawn_origin_x"):
+		spawn_pos = PrefabGeometry.get_spawn_origin_for_occupied_min(prefab_name, Vector3(bx, by, bz), rot)
+
+	return {
+		"spawn_key": "baked_%d_%d" % [int(bx), int(bz)],
+		"prefab_name": prefab_name,
+		"world_pos": spawn_pos,
+		"submerge_offset": 0,
+		"rotation": rot,
+		"carve_terrain": false,
+		"skip_blocks": false,
+		"interior_carve": false,
+		"clear_vegetation": false
+	}
 
 func _insert_world_map_spawn_job_sorted(job: Dictionary) -> void:
 	var insert_index := pending_spawn_jobs.size()
 	while insert_index > 0 and _sort_world_map_spawn_job_by_distance(job, pending_spawn_jobs[insert_index - 1]):
 		insert_index -= 1
 	pending_spawn_jobs.insert(insert_index, job)
+
+
+func preload_baked_world_map_buildings() -> int:
+	if not building_manager or not building_manager.world_map_mode:
+		return 0
+	if not terrain_manager:
+		return 0
+	if terrain_manager.has_method("has_world_map_buildings_loaded") and not terrain_manager.has_world_map_buildings_loaded():
+		return 0
+	if _world_map_baked_buildings_primed:
+		return _last_world_map_spawn_queued
+	if not ("_world_map_buildings" in terrain_manager):
+		return 0
+
+	var world_buildings: Array = terrain_manager._world_map_buildings
+	if world_buildings.is_empty():
+		_world_map_baked_buildings_primed = true
+		_last_world_map_spawn_mode = "preload_empty"
+		_last_world_map_spawn_ms = 0.0
+		_last_world_map_spawn_candidates = 0
+		_last_world_map_spawn_queued = 0
+		_last_world_map_spawn_chunk = Vector3i.ZERO
+		return 0
+
+	var start_us := Time.get_ticks_usec()
+	if building_manager.has_method("update_building_chunks") and "viewer" in building_manager and building_manager.viewer:
+		building_manager.update_building_chunks()
+
+	var jobs: Array = []
+	for bldg in world_buildings:
+		var job: Dictionary = _build_world_map_spawn_job(bldg)
+		if job.is_empty():
+			continue
+		jobs.append(job)
+
+	if jobs.is_empty():
+		_world_map_baked_buildings_primed = true
+		_last_world_map_spawn_mode = "preload_empty"
+		_last_world_map_spawn_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+		_last_world_map_spawn_candidates = world_buildings.size()
+		_last_world_map_spawn_queued = 0
+		_last_world_map_spawn_chunk = Vector3i.ZERO
+		return 0
+
+	jobs.sort_custom(Callable(self, "_sort_world_map_spawn_job_by_distance"))
+	for job_variant in jobs:
+		var job: Dictionary = job_variant
+		_queue_spawn_job(str(job.get("spawn_key", "")), job)
+
+	_process_pending_spawn_jobs()
+	_world_map_baked_buildings_primed = pending_spawn_jobs.is_empty()
+	_last_world_map_spawn_mode = "preload_drained" if _world_map_baked_buildings_primed else "preload_partial"
+	_last_world_map_spawn_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+	_last_world_map_spawn_candidates = world_buildings.size()
+	_last_world_map_spawn_queued = jobs.size()
+	_last_world_map_spawn_chunk = Vector3i.ZERO
+	return jobs.size()
 
 func _process_pending_spawn_jobs() -> void:
 	if not building_manager:
@@ -210,8 +333,15 @@ func _process_pending_spawn_jobs() -> void:
 	var processed := 0
 	var now_msec := Time.get_ticks_msec()
 	var effective_budget_ms := spawn_processing_budget_ms
+	var eager_building_residency := false
+	if building_manager and building_manager.has_method("is_eager_baked_building_residency_enabled"):
+		eager_building_residency = building_manager.is_eager_baked_building_residency_enabled()
 	if building_manager and building_manager.world_map_mode:
-		effective_budget_ms = min(effective_budget_ms, 3.0)
+		if eager_building_residency:
+			# Preload mode should finish the queue before gameplay starts.
+			effective_budget_ms = maxf(effective_budget_ms, 1000000.0)
+		else:
+			effective_budget_ms = min(effective_budget_ms, 3.0)
 
 	while not pending_spawn_jobs.is_empty():
 		if processed > 0:
@@ -256,6 +386,12 @@ func _process_pending_spawn_jobs() -> void:
 		# spawn tick during town entry.
 		if pending_spawn_jobs.is_empty():
 			building_manager.flush_global_visual_batches()
+
+	if eager_building_residency and building_manager:
+		if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
+			building_manager.flush_global_visual_batches()
+		if not skip_chunk_flush_for_test and building_manager.has_method("has_dirty_chunks") and building_manager.has_dirty_chunks():
+			building_manager.flush_dirty_chunks()
 
 	_last_spawn_processing_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	_last_spawn_jobs_processed = processed
@@ -438,40 +574,16 @@ func _spawn_baked_buildings(coord: Vector3i):
 
 	for bldg in terrain_manager._world_map_buildings:
 		candidate_count += 1
+		var job: Dictionary = _build_world_map_spawn_job(bldg)
+		if job.is_empty():
+			continue
 		var bx = float(bldg.get("x", 0))
 		var bz = float(bldg.get("z", 0))
-		var by = float(bldg.get("y", 12))
-		var btype = str(bldg.get("type", "small_house"))
 
 		# Check if this building falls within this chunk
 		if bx >= chunk_x and bx < chunk_x + chunk_stride \
 			and bz >= chunk_z and bz < chunk_z + chunk_stride:
-			var key = "baked_%d_%d" % [int(bx), int(bz)]
-			if spawned_positions.has(key):
-				continue
-
-			# Use the baked Y exactly. The generator has already flattened the lot
-			# and baked the final height, so runtime height probing can only drift.
-			by = floor(by)
-			var rot = int(bldg.get("rotation", 0))
-			var spawn_pos = Vector3(
-				float(bldg.get("spawn_origin_x", bx)),
-				float(bldg.get("spawn_origin_y", by)),
-				float(bldg.get("spawn_origin_z", bz))
-			)
-			if not bldg.has("spawn_origin_x"):
-				spawn_pos = PrefabGeometry.get_spawn_origin_for_occupied_min(btype, Vector3(bx, by, bz), rot)
-			var spawn_key = "baked_%d_%d" % [int(bx), int(bz)]
-			_queue_spawn_job(spawn_key, {
-				"prefab_name": btype,
-				"world_pos": spawn_pos,
-				"submerge_offset": 0,
-				"rotation": rot,
-				"carve_terrain": false,
-				"skip_blocks": false,
-				"interior_carve": false,
-				"clear_vegetation": false
-			})
+			_queue_spawn_job(str(job.get("spawn_key", "")), job)
 			queued_count += 1
 	_last_world_map_spawn_mode = "runtime_fallback"
 	_last_world_map_spawn_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
@@ -642,11 +754,10 @@ func get_save_data() -> Dictionary:
 	}
 
 func load_save_data(data: Dictionary):
+	reset_spawn_state(true)
 	if data.has("spawned_positions"):
-		spawned_positions.clear()
 		for key in data.spawned_positions:
 			spawned_positions[key] = true
-	clear_pending_spawn_jobs()
 
 # ============ USER PREFAB SUPPORT ============
 

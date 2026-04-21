@@ -43,12 +43,18 @@ func bake_world_buildings(
 	building_manager.name = "BakedBuildingManager"
 	building_manager.world_map_mode = true
 	building_manager.render_distance = 999999
+	if building_manager.has_method("sync_proxy_shell_activation_distance_from_render_distance"):
+		building_manager.sync_proxy_shell_activation_distance_from_render_distance()
+	if building_manager.has_method("set_eager_baked_building_residency"):
+		building_manager.set_eager_baked_building_residency(true)
+	building_manager.viewer = terrain_proxy
 	bake_root.add_child(building_manager)
 
 	var prefab_spawner := PrefabSpawnerScript.new()
 	prefab_spawner.name = "BakedPrefabSpawner"
 	prefab_spawner.terrain_manager = terrain_proxy
 	prefab_spawner.building_manager = building_manager
+	prefab_spawner.viewer = terrain_proxy
 	bake_root.add_child(prefab_spawner)
 
 	await context_node.get_tree().process_frame

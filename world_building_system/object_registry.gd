@@ -181,6 +181,12 @@ static func is_simple_visual_batch_object(object_id: int) -> bool:
 static func is_proxy_visual_batch_object(object_id: int) -> bool:
 	return PROXY_VISUAL_BATCH_OBJECT_IDS.has(object_id)
 
+static func is_high_priority_proxy_visual_batch_object(object_id: int) -> bool:
+	return false
+
+static func is_high_priority_lazy_scene_object(object_id: int) -> bool:
+	return false
+
 static func _find_render_mesh_instance(root: Node, preferred_root_name: String = "") -> MeshInstance3D:
 	if not root:
 		return null
