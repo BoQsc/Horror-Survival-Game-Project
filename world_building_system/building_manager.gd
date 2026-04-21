@@ -32,6 +32,9 @@ var _global_visual_batch_entries: Dictionary = {} # int object_id -> Array[{ anc
 var _global_visual_batch_nodes: Dictionary = {} # int object_id -> MultiMeshInstance3D
 var _dirty_global_visual_batch_object_ids: Dictionary = {} # int object_id -> true
 var _world_map_baked_building_visual_nodes: Dictionary = {} # String building_key -> Node3D
+var _world_map_baked_building_visual_payloads_by_key: Dictionary = {} # String building_key -> Dictionary visual payload
+var _world_map_baked_building_keys_by_chunk: Dictionary = {} # Vector3i chunk_coord -> Array[String]
+var _world_map_baked_building_chunk_coords_by_key: Dictionary = {} # String building_key -> Array[Vector3i]
 
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
@@ -340,8 +343,121 @@ func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 			else:
 				node.queue_free()
 	_world_map_baked_building_visual_nodes.clear()
+	_world_map_baked_building_visual_payloads_by_key.clear()
+	_world_map_baked_building_keys_by_chunk.clear()
+	_world_map_baked_building_chunk_coords_by_key.clear()
 	_last_apply_world_map_baked_building_visual_ms = 0.0
 	_last_apply_world_map_baked_building_visual_count = 0
+
+
+func _register_world_map_baked_building_chunk_coords(building_key: String, chunk_coords: Array) -> void:
+	if building_key.is_empty() or chunk_coords.is_empty():
+		return
+
+	var stored_coords: Array = []
+	for coord_variant in chunk_coords:
+		if typeof(coord_variant) != TYPE_VECTOR3I:
+			continue
+		var coord: Vector3i = coord_variant
+		if not stored_coords.has(coord):
+			stored_coords.append(coord)
+		var building_keys: Array = _world_map_baked_building_keys_by_chunk.get(coord, [])
+		if not building_keys.has(building_key):
+			building_keys.append(building_key)
+		_world_map_baked_building_keys_by_chunk[coord] = building_keys
+
+	if not stored_coords.is_empty():
+		_world_map_baked_building_chunk_coords_by_key[building_key] = stored_coords
+
+
+func _get_world_map_baked_building_keys_for_chunk(chunk_coord: Vector3i, preferred_building_key: String = "") -> Array:
+	var building_keys: Array = []
+	if not preferred_building_key.is_empty():
+		var preferred_payload_variant: Variant = _world_map_baked_building_visual_payloads_by_key.get(preferred_building_key, {})
+		if typeof(preferred_payload_variant) == TYPE_DICTIONARY:
+			var preferred_payload: Dictionary = preferred_payload_variant
+			if not preferred_payload.is_empty():
+				building_keys.append(preferred_building_key)
+				return building_keys
+
+	var keys_variant: Variant = _world_map_baked_building_keys_by_chunk.get(chunk_coord, [])
+	if typeof(keys_variant) != TYPE_ARRAY:
+		return building_keys
+
+	for key_variant in keys_variant:
+		var building_key := str(key_variant)
+		if building_key.is_empty() or building_keys.has(building_key):
+			continue
+		building_keys.append(building_key)
+
+	return building_keys
+
+
+func _remove_world_map_baked_building_visual(building_key: String) -> void:
+	if building_key.is_empty():
+		return
+	var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
+	if root and is_instance_valid(root):
+		root.queue_free()
+	_world_map_baked_building_visual_nodes.erase(building_key)
+
+
+func _update_world_map_baked_building_visual_for_voxel(building_key: String, voxel_pos: Vector3, value: int, meta: int) -> bool:
+	if building_key.is_empty():
+		return false
+
+	var payload_variant: Variant = _world_map_baked_building_visual_payloads_by_key.get(building_key, {})
+	if typeof(payload_variant) != TYPE_DICTIONARY:
+		return false
+	var visual_payload: Dictionary = payload_variant
+	if visual_payload.is_empty():
+		return false
+
+	var voxel_bytes: PackedByteArray = visual_payload.get("voxel_bytes", PackedByteArray())
+	var voxel_meta: PackedByteArray = visual_payload.get("voxel_meta", PackedByteArray())
+	var voxel_size := int(visual_payload.get("voxel_size", 0))
+	var voxel_origin_variant: Variant = visual_payload.get("voxel_origin", Vector3.ZERO)
+	var voxel_origin: Vector3 = voxel_origin_variant if typeof(voxel_origin_variant) == TYPE_VECTOR3 else Vector3.ZERO
+	if voxel_bytes.is_empty() or voxel_meta.is_empty() or voxel_size <= 0:
+		return false
+
+	var local_x := int(floor(voxel_pos.x)) - int(floor(voxel_origin.x))
+	var local_y := int(floor(voxel_pos.y)) - int(floor(voxel_origin.y))
+	var local_z := int(floor(voxel_pos.z)) - int(floor(voxel_origin.z))
+	if local_x < 0 or local_y < 0 or local_z < 0 or local_x >= voxel_size or local_y >= voxel_size or local_z >= voxel_size:
+		return false
+
+	var local_index := local_x + local_y * voxel_size + local_z * voxel_size * voxel_size
+	if local_index < 0 or local_index >= voxel_bytes.size():
+		return false
+
+	voxel_bytes.encode_u8(local_index, mini(maxi(int(value), 0), 255))
+	voxel_meta.encode_u8(local_index, mini(maxi(int(meta), 0), 255))
+	visual_payload["voxel_bytes"] = voxel_bytes
+	visual_payload["voxel_meta"] = voxel_meta
+	_world_map_baked_building_visual_payloads_by_key[building_key] = visual_payload
+
+	var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
+	if root == null or not is_instance_valid(root):
+		return false
+
+	if not mesher or not mesher.has_method("build_building_mesh_from_voxels"):
+		return false
+
+	var use_box_collision := true
+	if mesher.has_method("voxels_need_detailed_collision"):
+		use_box_collision = not bool(mesher.voxels_need_detailed_collision(voxel_bytes))
+
+	var mesh_result: Dictionary = mesher.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, use_box_collision, voxel_size)
+	if mesh_result.is_empty():
+		_remove_world_map_baked_building_visual(building_key)
+		return true
+
+	visual_payload["mesh"] = mesh_result.get("mesh", null)
+	visual_payload["shape"] = mesh_result.get("shape", null)
+	visual_payload["collision_boxes"] = mesh_result.get("collision_boxes", [])
+	_world_map_baked_building_visual_payloads_by_key[building_key] = visual_payload
+	return _apply_world_map_baked_building_visual(building_key, visual_payload)
 
 
 func clear_for_shutdown() -> void:
@@ -418,6 +534,11 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 	var applied_building_visual := false
 	var visual_start_us := 0
 	var defer_global_visual_batch_rebuild := world_map_mode
+
+	if not building_key.is_empty():
+		_register_world_map_baked_building_chunk_coords(building_key, chunk_payload.keys())
+		if not building_visual_payload.is_empty():
+			_world_map_baked_building_visual_payloads_by_key[building_key] = building_visual_payload
 
 	if world_map_mode and not building_visual_payload.is_empty():
 		visual_start_us = Time.get_ticks_usec()
@@ -802,7 +923,7 @@ func release_chunk(chunk_coord: Vector3i):
 	else:
 		chunk.queue_free()
 
-func set_voxel(global_pos: Vector3, value: int, meta: int = 0):
+func set_voxel(global_pos: Vector3, value: int, meta: int = 0, baked_building_key: String = ""):
 	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
 	var chunk_y = floor(global_pos.y / CHUNK_SIZE)
 	var chunk_z = floor(global_pos.z / CHUNK_SIZE)
@@ -822,14 +943,24 @@ func set_voxel(global_pos: Vector3, value: int, meta: int = 0):
 	
 	# Update building map
 	_update_building_map_pixel(global_pos, value > 0)
-	
-	# Trigger rebuild for this chunk if it's visible
-	if visible_chunks.has(chunk_coord):
+
+	var handled_world_map_baked_building := false
+	if world_map_mode:
+		var baked_building_keys := _get_world_map_baked_building_keys_for_chunk(chunk_coord, baked_building_key)
+		for building_key_variant in baked_building_keys:
+			var building_key := str(building_key_variant)
+			if building_key.is_empty():
+				continue
+			if _update_world_map_baked_building_visual_for_voxel(building_key, global_pos, value, meta):
+				handled_world_map_baked_building = true
+
+	# Trigger rebuild for this chunk if it's visible and we did not update a baked whole-building visual instead.
+	if visible_chunks.has(chunk_coord) and not handled_world_map_baked_building:
 		chunk.rebuild_mesh()
 
 ## Set voxel WITHOUT triggering immediate mesh rebuild (for batch operations)
 ## Call flush_dirty_chunks() after all batch operations are complete
-func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0):
+func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0, baked_building_key: String = ""):
 	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
 	var chunk_y = floor(global_pos.y / CHUNK_SIZE)
 	var chunk_z = floor(global_pos.z / CHUNK_SIZE)
@@ -849,9 +980,20 @@ func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0):
 	
 	# Update building map
 	_update_building_map_pixel(global_pos, value > 0)
-	
-	# Always mark chunk as dirty - rebuild will check visibility
-	mark_chunk_dirty(chunk_coord, chunk)
+
+	var handled_world_map_baked_building := false
+	if world_map_mode:
+		var baked_building_keys := _get_world_map_baked_building_keys_for_chunk(chunk_coord, baked_building_key)
+		for building_key_variant in baked_building_keys:
+			var building_key := str(building_key_variant)
+			if building_key.is_empty():
+				continue
+			if _update_world_map_baked_building_visual_for_voxel(building_key, global_pos, value, meta):
+				handled_world_map_baked_building = true
+
+	# Always mark chunk as dirty unless the baked whole-building visual was updated in place.
+	if not handled_world_map_baked_building:
+		mark_chunk_dirty(chunk_coord, chunk)
 
 ## Rebuild all chunks that were modified by batched operations.
 ## Call this once after completing a batch of set_voxel_batched calls.

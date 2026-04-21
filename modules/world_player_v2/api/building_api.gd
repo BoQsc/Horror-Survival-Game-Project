@@ -334,9 +334,10 @@ func remove_block(hit: Dictionary) -> bool:
 	# Move slightly into the object to find the voxel
 	var remove_pos = hit.position - hit.normal * 0.01
 	var voxel_pos = Vector3(floor(remove_pos.x), floor(remove_pos.y), floor(remove_pos.z))
+	var baked_building_key := _get_baked_building_key(hit.collider)
 	
 	if building_manager.has_method("set_voxel"):
-		building_manager.set_voxel(voxel_pos, 0.0)
+		building_manager.set_voxel(voxel_pos, 0, 0, baked_building_key)
 		block_removed.emit(voxel_pos)
 		
 		# FILL mode undo: Restore original terrain by digging filled area
@@ -364,6 +365,16 @@ func remove_block(hit: Dictionary) -> bool:
 		return true
 	
 	return false
+
+func _get_baked_building_key(collider: Node) -> String:
+	var node = collider
+	for _i in range(12):
+		if not node:
+			break
+		if node.has_meta("building_key"):
+			return str(node.get_meta("building_key"))
+		node = node.get_parent()
+	return ""
 
 ## Check if collider belongs to the building system (walk up tree)
 func _is_building_chunk(collider: Node) -> bool:
