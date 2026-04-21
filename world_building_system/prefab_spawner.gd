@@ -142,7 +142,12 @@ func _ready():
 func _process(_delta):
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
-	if building_manager and building_manager.world_map_mode and building_manager.has_method("is_eager_baked_building_residency_enabled") and building_manager.is_eager_baked_building_residency_enabled():
+	if building_manager and building_manager.world_map_mode and _is_world_building_bake_enabled():
+		return
+	if terrain_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active and not _is_world_building_bake_enabled() and not _world_map_baked_buildings_primed:
+		if "_world_map_buildings" in terrain_manager and not terrain_manager._world_map_buildings.is_empty():
+			_spawn_baked_buildings(Vector3i.ZERO)
+	if building_manager and building_manager.has_method("is_eager_baked_building_residency_enabled") and building_manager.is_eager_baked_building_residency_enabled():
 		if not _world_map_baked_buildings_primed:
 			preload_baked_world_map_buildings()
 	_process_pending_spawn_jobs()
@@ -179,7 +184,18 @@ func has_pending_spawn_jobs() -> bool:
 
 
 func has_world_map_baked_buildings_primed() -> bool:
+	if building_manager and building_manager.has_method("has_pending_visible_baked_building_work") and building_manager.world_map_mode and _is_world_building_bake_enabled():
+		if building_manager.has_method("is_baked_buildings_fully_loaded"):
+			return building_manager.is_baked_buildings_fully_loaded()
+		return building_manager.has_baked_buildings_loaded()
 	return _world_map_baked_buildings_primed and pending_spawn_jobs.is_empty()
+
+
+func _is_world_building_bake_enabled() -> bool:
+	var save_manager := get_node_or_null("/root/SaveManager")
+	if save_manager and "pending_world_building_bake_enabled" in save_manager:
+		return bool(save_manager.pending_world_building_bake_enabled)
+	return true
 
 func get_telemetry_snapshot() -> Dictionary:
 	var eager_building_residency := false
@@ -203,7 +219,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"skip_block_placement_for_test": skip_block_placement_for_test,
 		"skip_chunk_flush_for_test": skip_chunk_flush_for_test,
 		"skip_carving_for_test": skip_carving_for_test,
-		"world_map_baked_buildings_primed": _world_map_baked_buildings_primed,
+		"world_map_baked_buildings_primed": has_world_map_baked_buildings_primed(),
 		"world_map_spawn_profile": {
 			"mode": _last_world_map_spawn_mode,
 			"load_ms": _last_world_map_spawn_ms,
@@ -217,11 +233,13 @@ func get_telemetry_snapshot() -> Dictionary:
 	}
 
 func _queue_spawn_job(spawn_key: String, job: Dictionary) -> void:
+	if building_manager and building_manager.world_map_mode and _is_world_building_bake_enabled():
+		return
 	if spawned_positions.has(spawn_key) or pending_spawn_keys.has(spawn_key):
 		return
 	job["spawn_key"] = spawn_key
 	spawned_positions[spawn_key] = true
-	if building_manager and building_manager.world_map_mode:
+	if building_manager and building_manager.world_map_mode and _is_world_building_bake_enabled():
 		_insert_world_map_spawn_job_sorted(job)
 	else:
 		pending_spawn_jobs.append(job)
@@ -274,6 +292,14 @@ func preload_baked_world_map_buildings() -> int:
 		return 0
 	if terrain_manager.has_method("has_world_map_buildings_loaded") and not terrain_manager.has_world_map_buildings_loaded():
 		return 0
+	if building_manager.has_method("has_baked_buildings_loaded") and building_manager.has_baked_buildings_loaded():
+		_world_map_baked_buildings_primed = true
+		_last_world_map_spawn_mode = "manifest_primed"
+		_last_world_map_spawn_ms = 0.0
+		_last_world_map_spawn_candidates = 0
+		_last_world_map_spawn_queued = 0
+		_last_world_map_spawn_chunk = Vector3i.ZERO
+		return 0
 	if _world_map_baked_buildings_primed:
 		return _last_world_map_spawn_queued
 	if not ("_world_map_buildings" in terrain_manager):
@@ -325,6 +351,10 @@ func preload_baked_world_map_buildings() -> int:
 
 func _process_pending_spawn_jobs() -> void:
 	if not building_manager:
+		_last_spawn_processing_ms = 0.0
+		_last_spawn_jobs_processed = 0
+		return
+	if building_manager.world_map_mode and _is_world_building_bake_enabled():
 		_last_spawn_processing_ms = 0.0
 		_last_spawn_jobs_processed = 0
 		return
@@ -533,7 +563,9 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 			_last_world_map_spawn_queued = 0
 			_last_world_map_spawn_chunk = coord
 			return
-		_spawn_baked_buildings(coord)
+		if not _is_world_building_bake_enabled():
+			_spawn_baked_buildings(coord)
+			return
 		return
 	
 	# Procedural mode: check for road intersections in this chunk
@@ -555,36 +587,40 @@ func _spawn_baked_buildings(coord: Vector3i):
 		_last_world_map_spawn_queued = 0
 		_last_world_map_spawn_chunk = coord
 		return
+	if not _is_world_building_bake_enabled() and _world_map_baked_buildings_primed:
+		_last_world_map_spawn_mode = "runtime_fallback_primed"
+		_last_world_map_spawn_ms = 0.0
+		_last_world_map_spawn_candidates = 0
+		_last_world_map_spawn_queued = 0
+		_last_world_map_spawn_chunk = coord
+		return
 
 	var start_us := Time.get_ticks_usec()
-	var chunk_stride = 31
-	var chunk_x = coord.x * chunk_stride
-	var chunk_z = coord.z * chunk_stride
+	var world_buildings: Array = terrain_manager._world_map_buildings
+	if world_buildings.is_empty():
+		_last_world_map_spawn_mode = "runtime_fallback_waiting"
+		_last_world_map_spawn_ms = 0.0
+		_last_world_map_spawn_candidates = 0
+		_last_world_map_spawn_queued = 0
+		_last_world_map_spawn_chunk = coord
+		return
+
 	var candidate_count := 0
 	var queued_count := 0
 
-	if building_manager and not building_manager.world_map_mode:
-		building_manager.world_map_mode = true
-		# Town entry is the critical path: keep the spawn/rebuild batches smaller
-		# so the loading work stays spread out instead of clustering into spikes.
-		if building_manager.has_variable("dirty_chunk_flush_budget") and building_manager.dirty_chunk_flush_budget < 1:
-			building_manager.dirty_chunk_flush_budget = 1
-		if spawn_processing_budget_ms < 1.0:
-			spawn_processing_budget_ms = 1.0
-
-	for bldg in terrain_manager._world_map_buildings:
+	for bldg in world_buildings:
 		candidate_count += 1
 		var job: Dictionary = _build_world_map_spawn_job(bldg)
 		if job.is_empty():
 			continue
-		var bx = float(bldg.get("x", 0))
-		var bz = float(bldg.get("z", 0))
+		_queue_spawn_job(str(job.get("spawn_key", "")), job)
+		queued_count += 1
 
-		# Check if this building falls within this chunk
-		if bx >= chunk_x and bx < chunk_x + chunk_stride \
-			and bz >= chunk_z and bz < chunk_z + chunk_stride:
-			_queue_spawn_job(str(job.get("spawn_key", "")), job)
-			queued_count += 1
+	var previous_spawn_budget_ms := spawn_processing_budget_ms
+	spawn_processing_budget_ms = 1000000.0
+	_process_pending_spawn_jobs()
+	spawn_processing_budget_ms = previous_spawn_budget_ms
+	_world_map_baked_buildings_primed = pending_spawn_jobs.is_empty() and queued_count > 0
 	_last_world_map_spawn_mode = "runtime_fallback"
 	_last_world_map_spawn_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 	_last_world_map_spawn_candidates = candidate_count

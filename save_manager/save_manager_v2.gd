@@ -676,19 +676,9 @@ func _check_building_readiness() -> void:
 	if building_manager.has_method("is_baked_buildings_fully_loaded"):
 		baked_fully_loaded = building_manager.is_baked_buildings_fully_loaded()
 
-	var has_pending_work := false
-	if prefab_spawner and prefab_spawner.has_method("has_world_map_baked_buildings_primed") and not prefab_spawner.has_world_map_baked_buildings_primed():
-		has_pending_work = true
-	if building_manager.has_method("has_pending_building_work"):
-		has_pending_work = building_manager.has_pending_building_work()
-	if building_manager.has_method("has_pending_visual_batch_work"):
-		has_pending_work = has_pending_work or building_manager.has_pending_visual_batch_work()
-	if prefab_spawner and prefab_spawner.has_method("has_pending_spawn_jobs"):
-		has_pending_work = has_pending_work or prefab_spawner.has_pending_spawn_jobs()
-	if _has_pending_building_generator_work():
-		has_pending_work = true
+	var has_pending_work := _has_pending_world_building_work()
 
-	if not baked_fully_loaded or has_pending_work:
+	if has_pending_work:
 		if not _building_wait_telemetry_logged:
 			var pending_spawn_jobs := 0
 			if prefab_spawner and "pending_spawn_jobs" in prefab_spawner:
@@ -705,6 +695,23 @@ func _check_building_readiness() -> void:
 	_building_wait_telemetry_logged = false
 	_capture_load_telemetry("buildings_ready")
 	_check_world_readiness()
+
+func _has_pending_world_building_work() -> bool:
+	if not building_manager or not is_instance_valid(building_manager):
+		return false
+
+	var has_pending_work := false
+	if building_manager.has_method("has_pending_visible_baked_building_work") and building_manager.has_pending_visible_baked_building_work():
+		has_pending_work = true
+	if building_manager.has_method("has_pending_building_work"):
+		has_pending_work = has_pending_work or building_manager.has_pending_building_work()
+	if building_manager.has_method("has_pending_visual_batch_work"):
+		has_pending_work = has_pending_work or building_manager.has_pending_visual_batch_work()
+	if prefab_spawner and prefab_spawner.has_method("has_pending_spawn_jobs"):
+		has_pending_work = has_pending_work or prefab_spawner.has_pending_spawn_jobs()
+	if _has_pending_building_generator_work():
+		has_pending_work = true
+	return has_pending_work
 
 ## Get list of available save files
 func get_save_files() -> Array[String]:
@@ -1045,14 +1052,7 @@ func _load_world_definition_path(path: String):
 			awaiting_buildings_ready = false
 			_building_wait_telemetry_logged = false
 			if loaded_bake:
-				var building_pending_work := false
-				if building_manager.has_method("has_pending_building_work"):
-					building_pending_work = building_manager.has_pending_building_work()
-				if building_manager.has_method("has_pending_visual_batch_work"):
-					building_pending_work = building_pending_work or building_manager.has_pending_visual_batch_work()
-				if _has_pending_building_generator_work():
-					building_pending_work = true
-				awaiting_buildings_ready = building_pending_work
+				awaiting_buildings_ready = _has_pending_world_building_work()
 			_sync_world_building_render_distance_policy()
 			_pending_world_building_bake_load = false
 		elif building_manager.has_method("clear_all_building_chunks"):

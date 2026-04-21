@@ -12,10 +12,13 @@ signal terrain_ready  # Emitted when terrain meshes are loaded (before vegetatio
 
 var is_loading: bool = true
 var fade_timer: float = 0.0
+var save_manager_completed: bool = false
 const FADE_DURATION: float = 0.5
 const TOPMOST_CANVAS_LAYER: int = 4096
 const TERRAIN_STAGE_FULL_GRACE_MS: int = 1000
 const TERRAIN_STAGE_MAX_WAIT_MS: int = 15000
+const BUILDING_STAGE_MAX_WAIT_MS: int = 15000
+const MIN_STAGE_VISUAL_HOLD_MS: int = 500
 
 var has_emitted_terrain_ready: bool = false  # Track if we've signaled player
 var save_manager_step: String = ""  # Current step from SaveManager
@@ -48,9 +51,10 @@ func _connect_to_save_manager() -> void:
 			sm.load_step.connect(_on_load_step)
 
 func _on_save_manager_load_completed(_success: bool, _path: String) -> void:
-	# Force fade out when SaveManager says it's done
-	if is_loading:
-		_start_fade_out()
+	# SaveManager completion is only a readiness hint. Let this screen finish
+	# its own terrain / prefab / vegetation sequence so the user can actually
+	# see the staged loading progress.
+	save_manager_completed = true
 
 func _on_load_step(step_name: String, step_index: int, total_steps: int) -> void:
 	save_manager_step = step_name
@@ -62,7 +66,10 @@ func _on_load_step(step_name: String, step_index: int, total_steps: int) -> void
 
 func _start_loading_sequence() -> void:
 	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	var save_manager = get_node_or_null("/root/SaveManager")
 	var building_generator = get_tree().root.find_child("BuildingGenerator", true, false)
+	var building_manager = get_tree().root.find_child("BuildingManager", true, false)
+	var prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
 	var vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 	var terrain_stage_started_ms := Time.get_ticks_msec()
 	var terrain_stage_full_since_ms := -1
@@ -89,6 +96,8 @@ func _start_loading_sequence() -> void:
 			if is_complete:
 				# Terrain visually complete, move to next stage
 				update_progress(100.0, "Terrain loaded!")
+				print("[LoadingScreen] Terrain stage complete")
+				await _hold_stage_visible(terrain_stage_started_ms)
 				current_stage = Stage.PREFABS
 				break
 			else:
@@ -114,7 +123,9 @@ func _start_loading_sequence() -> void:
 					var full_elapsed_ms := now_ms - terrain_stage_full_since_ms
 					var stage_elapsed_ms := now_ms - terrain_stage_started_ms
 					if full_elapsed_ms >= TERRAIN_STAGE_FULL_GRACE_MS or stage_elapsed_ms >= TERRAIN_STAGE_MAX_WAIT_MS:
-						update_progress(100.0, "Terrain finalizing...")
+						update_progress(100.0, "Terrain loaded!")
+						print("[LoadingScreen] Terrain stage complete")
+						await _hold_stage_visible(terrain_stage_started_ms)
 						current_stage = Stage.PREFABS
 						break
 				else:
@@ -131,30 +142,52 @@ func _start_loading_sequence() -> void:
 		
 		await get_tree().create_timer(0.1).timeout
 	
-	# Stage 2: Prefab buildings - poll queue until empty (no timeout)
+	# Stage 2: Buildings - wait for the actual building work to settle.
 	if is_loading and current_stage == Stage.PREFABS:
+		var prefab_stage_started_ms := Time.get_ticks_msec()
+		var initial_queue_size := 0
 		if building_generator and is_instance_valid(building_generator):
-			var queue = building_generator.get("spawn_queue")
-			var initial_queue_size = queue.size() if queue is Array else 0
-			
-			if initial_queue_size > 0:
-				while is_loading:
-					queue = building_generator.get("spawn_queue")
-					var remaining = queue.size() if queue is Array else 0
-					
-					if remaining == 0:
-						break
-					
-					var spawned = initial_queue_size - remaining
-					var percent = (float(spawned) / float(initial_queue_size)) * 100.0
-					update_progress(percent, "Spawning buildings: %d/%d" % [spawned, initial_queue_size])
-					
-					await get_tree().create_timer(0.2).timeout
-		
-		current_stage = Stage.VEGETATION
+			var queue: Variant = building_generator.get("spawn_queue")
+			if queue is Array:
+				initial_queue_size = queue.size()
+
+		while is_loading and current_stage == Stage.PREFABS:
+			var building_pending := _has_pending_building_stage_work(save_manager, building_manager, prefab_spawner, building_generator)
+			if not building_pending:
+				update_progress(100.0, "Buildings loaded!")
+				print("[LoadingScreen] Buildings stage complete")
+				await _hold_stage_visible(prefab_stage_started_ms)
+				current_stage = Stage.VEGETATION
+				break
+
+			var now_ms := Time.get_ticks_msec()
+			var stage_elapsed_ms := now_ms - prefab_stage_started_ms
+			if stage_elapsed_ms >= BUILDING_STAGE_MAX_WAIT_MS:
+				push_warning("[LoadingScreen] Buildings stage timed out, continuing")
+				update_progress(100.0, "Buildings loaded!")
+				print("[LoadingScreen] Buildings stage complete")
+				await _hold_stage_visible(prefab_stage_started_ms)
+				current_stage = Stage.VEGETATION
+				break
+
+			var percent := min(99.0, float(stage_elapsed_ms) / float(BUILDING_STAGE_MAX_WAIT_MS) * 100.0)
+			var message := "Loading buildings..."
+			if initial_queue_size > 0 and building_generator and is_instance_valid(building_generator):
+				var queue: Variant = building_generator.get("spawn_queue")
+				var remaining := initial_queue_size
+				if queue is Array:
+					remaining = queue.size()
+				var spawned := maxi(0, initial_queue_size - remaining)
+				if remaining > 0:
+					percent = clamp((float(spawned) / float(initial_queue_size)) * 100.0, 0.0, 99.0)
+					message = "Spawning buildings: %d/%d" % [spawned, initial_queue_size]
+			if save_manager and bool(save_manager.get("awaiting_buildings_ready")):
+				message = "Waiting for buildings..."
+			update_progress(percent, message)
+			await get_tree().create_timer(0.2).timeout
 	
-	# Stage 3: Vegetation - wait for trees/grass/rocks to spawn
 	if is_loading and current_stage == Stage.VEGETATION:
+		var vegetation_stage_started_ms := Time.get_ticks_msec()
 		if vegetation_manager and is_instance_valid(vegetation_manager):
 			var is_veg_ready = false
 			if vegetation_manager.has_method("is_vegetation_ready"):
@@ -177,6 +210,9 @@ func _start_loading_sequence() -> void:
 					update_progress(50.0, "Placing vegetation... (%d chunks)" % pending)
 					
 					await get_tree().create_timer(0.2).timeout
+		update_progress(100.0, "Vegetation loaded!")
+		print("[LoadingScreen] Vegetation stage complete")
+		await _hold_stage_visible(vegetation_stage_started_ms)
 		
 		current_stage = Stage.COMPLETE
 	
@@ -195,6 +231,31 @@ func _start_fade_out() -> void:
 	is_loading = false
 	fade_timer = FADE_DURATION
 	loading_complete.emit()
+
+func _hold_stage_visible(stage_started_ms: int) -> void:
+	var elapsed_ms := Time.get_ticks_msec() - stage_started_ms
+	if elapsed_ms < MIN_STAGE_VISUAL_HOLD_MS:
+		await get_tree().create_timer(float(MIN_STAGE_VISUAL_HOLD_MS - elapsed_ms) / 1000.0).timeout
+	else:
+		await get_tree().process_frame
+
+func _has_pending_building_stage_work(save_manager: Node, building_manager: Node, prefab_spawner: Node, building_generator: Node) -> bool:
+	if save_manager and is_instance_valid(save_manager) and bool(save_manager.get("awaiting_buildings_ready")):
+		return true
+	if building_manager and is_instance_valid(building_manager):
+		if building_manager.has_method("has_pending_visible_baked_building_work") and building_manager.has_pending_visible_baked_building_work():
+			return true
+		if building_manager.has_method("has_pending_building_work") and building_manager.has_pending_building_work():
+			return true
+		if building_manager.has_method("has_pending_visual_batch_work") and building_manager.has_pending_visual_batch_work():
+			return true
+	if prefab_spawner and is_instance_valid(prefab_spawner) and prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs():
+		return true
+	if building_generator:
+		var spawn_queue: Variant = building_generator.get("spawn_queue")
+		if spawn_queue is Array and not spawn_queue.is_empty():
+			return true
+	return false
 
 func _process(delta: float) -> void:
 	if not is_loading and fade_timer > 0:

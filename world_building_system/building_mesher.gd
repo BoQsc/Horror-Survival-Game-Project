@@ -11,6 +11,7 @@ var exit_thread: bool = false
 var queue: Array = [] # Array of BuildingChunk
 var pending_apply_queue: Array = []
 var pending_apply_queue_index: int = 0
+var _apply_in_progress: bool = false
 var compute_shader: RDShaderFile
 var native_builder: Object = null
 var _native_backend_ready: bool = false
@@ -79,6 +80,7 @@ func _process(_delta: float) -> void:
 	if pending_apply_queue_index >= pending_apply_queue.size():
 		pending_apply_queue.clear()
 		pending_apply_queue_index = 0
+	_apply_in_progress = not apply_items.is_empty()
 	mutex.unlock()
 
 	for item_variant in apply_items:
@@ -94,10 +96,13 @@ func _process(_delta: float) -> void:
 			item.get("mesh", null),
 			item.get("collision_boxes", [])
 		)
+	mutex.lock()
+	_apply_in_progress = false
+	mutex.unlock()
 
 func has_pending_work() -> bool:
 	mutex.lock()
-	var pending := not queue.is_empty() or pending_apply_queue_index < pending_apply_queue.size()
+	var pending := not queue.is_empty() or pending_apply_queue_index < pending_apply_queue.size() or _apply_in_progress
 	mutex.unlock()
 	return pending
 

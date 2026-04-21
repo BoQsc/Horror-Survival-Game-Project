@@ -21,6 +21,10 @@ var simple_visual_batch_nodes: Dictionary = {} # int object_id -> MultiMeshInsta
 var _has_deferred_runtime_visuals: bool = false
 var _runtime_nodes_ready: bool = false
 var _runtime_visuals_activated: bool = false
+var _last_snapshot_mesh_surface_count: int = -1
+var _last_snapshot_collision_box_count: int = -1
+var _last_runtime_mesh_surface_count: int = -1
+var _last_runtime_mesh_visible: bool = false
 var mesh_dirty: bool = true
 
 # Visuals
@@ -104,6 +108,10 @@ func reset(new_coord: Vector3i):
 	baked_snapshot_chunk_coord = Vector3i(-2147483648, -2147483648, -2147483648)
 	_pending_mesh_apply.clear()
 	_runtime_visuals_activated = false
+	_last_snapshot_mesh_surface_count = -1
+	_last_snapshot_collision_box_count = -1
+	_last_runtime_mesh_surface_count = -1
+	_last_runtime_mesh_visible = false
 	_clear_object_runtime_state(previous_chunk_coord)
 
 func _ensure_runtime_nodes() -> void:
@@ -727,6 +735,8 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 	else:
 		if mesh_instance.mesh != mesh:
 			mesh_instance.mesh = mesh
+	_last_runtime_mesh_surface_count = mesh.get_surface_count() if mesh else -1
+	_last_runtime_mesh_visible = mesh_instance.visible if mesh_instance else false
 
 	if _should_skip_chunk_collisions():
 		_clear_static_body_shapes()
@@ -761,10 +771,43 @@ func capture_bake_snapshot() -> BuildingBakeSnapshot:
 	snapshot.voxel_bytes = voxel_bytes.duplicate()
 	snapshot.voxel_meta = voxel_meta.duplicate()
 	snapshot.objects_data = _serialize_objects_for_bake()
-	snapshot.mesh = mesh_instance.mesh if mesh_instance else null
-	snapshot.collision_shape = collision_shape.shape if collision_shape else null
-	snapshot.collision_boxes = _applied_collision_boxes.duplicate(true)
+	var snapshot_mesh: ArrayMesh = null
+	if mesh_instance and is_instance_valid(mesh_instance) and mesh_instance.mesh:
+		snapshot_mesh = mesh_instance.mesh as ArrayMesh
+	elif _pending_mesh_apply.has("source_mesh"):
+		snapshot_mesh = _pending_mesh_apply.get("source_mesh", null) as ArrayMesh
+	snapshot.mesh = snapshot_mesh
+
+	var snapshot_collision_shape: Shape3D = null
+	if collision_shape and is_instance_valid(collision_shape) and collision_shape.shape:
+		snapshot_collision_shape = collision_shape.shape
+	elif _pending_mesh_apply.has("shape"):
+		snapshot_collision_shape = _pending_mesh_apply.get("shape", null)
+	snapshot.collision_shape = snapshot_collision_shape
+
+	var snapshot_collision_boxes: Array = _applied_collision_boxes.duplicate(true)
+	if snapshot_collision_boxes.is_empty() and _pending_mesh_apply.has("collision_boxes"):
+		snapshot_collision_boxes = _pending_mesh_apply.get("collision_boxes", []).duplicate(true)
+	snapshot.collision_boxes = snapshot_collision_boxes
+	_last_snapshot_mesh_surface_count = snapshot.mesh.get_surface_count() if snapshot.mesh else -1
+	_last_snapshot_collision_box_count = snapshot.collision_boxes.size()
 	return snapshot
+
+func _resolve_baked_snapshot_resource_path(file_name: String) -> String:
+	if file_name.is_empty():
+		return ""
+	if not manager or not ("baked_buildings_world_path" in manager):
+		return ""
+	var world_path := str(manager.baked_buildings_world_path)
+	if world_path.is_empty():
+		return ""
+	return world_path.path_join("baked_buildings").path_join(file_name)
+
+func _load_baked_snapshot_resource(file_name: String) -> Resource:
+	var resource_path := _resolve_baked_snapshot_resource_path(file_name)
+	if resource_path.is_empty() or not FileAccess.file_exists(resource_path):
+		return null
+	return ResourceLoader.load(resource_path, "", ResourceLoader.CACHE_MODE_REPLACE)
 
 func apply_bake_snapshot(snapshot: Resource) -> void:
 	if snapshot == null or not snapshot is BuildingBakeSnapshot:
@@ -778,14 +821,42 @@ func apply_bake_snapshot(snapshot: Resource) -> void:
 	baked_snapshot_loaded = true
 	baked_snapshot_chunk_coord = bake_snapshot.chunk_coord
 	_runtime_visuals_activated = false
-	_pending_mesh_apply = {
-		"arrays": [],
-		"shape": bake_snapshot.collision_shape,
-		"source_mesh": bake_snapshot.mesh,
-		"collision_boxes": bake_snapshot.collision_boxes.duplicate(true)
-	}
 	_clear_object_runtime_state(chunk_coord)
 	_load_objects_from_bake(bake_snapshot.objects_data)
+
+	var resolved_mesh: ArrayMesh = bake_snapshot.mesh
+	if not resolved_mesh and not str(bake_snapshot.mesh_file).is_empty():
+		var loaded_mesh := _load_baked_snapshot_resource(str(bake_snapshot.mesh_file))
+		if loaded_mesh is ArrayMesh:
+			resolved_mesh = loaded_mesh as ArrayMesh
+
+	var resolved_collision_shape: Shape3D = bake_snapshot.collision_shape
+	if not resolved_collision_shape and not str(bake_snapshot.collision_shape_file).is_empty():
+		var loaded_shape := _load_baked_snapshot_resource(str(bake_snapshot.collision_shape_file))
+		if loaded_shape is Shape3D:
+			resolved_collision_shape = loaded_shape as Shape3D
+
+	var resolved_collision_boxes: Array = bake_snapshot.collision_boxes.duplicate(true)
+	_last_snapshot_mesh_surface_count = resolved_mesh.get_surface_count() if resolved_mesh else -1
+	_last_snapshot_collision_box_count = resolved_collision_boxes.size()
+
+	if resolved_mesh:
+		_pending_mesh_apply = {
+			"arrays": [],
+			"shape": resolved_collision_shape,
+			"source_mesh": resolved_mesh,
+			"collision_boxes": resolved_collision_boxes
+		}
+	else:
+		_pending_mesh_apply.clear()
+		if voxel_bytes.size() > 0:
+			mesh_dirty = true
+			# Defer the fallback rebuild until the chunk is actually visible.
+			# Off-tree baked chunks should stay dormant so eager manifest loads do
+			# not recreate the full runtime chunk graph up front.
+			if is_inside_tree():
+				rebuild_mesh()
+
 	if is_inside_tree():
 		activate_runtime_visuals(false)
 
@@ -875,6 +946,33 @@ func _clear_object_runtime_state(previous_chunk_coord: Vector3i) -> void:
 
 func requires_runtime_visual_refresh() -> bool:
 	return _has_deferred_runtime_visuals
+
+func is_runtime_visuals_activated() -> bool:
+	return _runtime_visuals_activated
+
+func get_runtime_mesh_surface_count() -> int:
+	if not mesh_instance or not is_instance_valid(mesh_instance):
+		return 0
+	if not mesh_instance.mesh:
+		return 0
+	return mesh_instance.mesh.get_surface_count()
+
+func is_runtime_mesh_visible() -> bool:
+	if not mesh_instance or not is_instance_valid(mesh_instance):
+		return false
+	return mesh_instance.visible
+
+func get_last_snapshot_mesh_surface_count() -> int:
+	return _last_snapshot_mesh_surface_count
+
+func get_last_snapshot_collision_box_count() -> int:
+	return _last_snapshot_collision_box_count
+
+func get_last_runtime_mesh_surface_count() -> int:
+	return _last_runtime_mesh_surface_count
+
+func get_last_runtime_mesh_visible() -> bool:
+	return _last_runtime_mesh_visible
 
 func _apply_collision_boxes(collision_boxes: Array) -> void:
 	if not static_body:

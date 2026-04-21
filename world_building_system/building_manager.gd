@@ -48,6 +48,7 @@ var baked_buildings_loaded: bool = false
 var baked_buildings_world_path: String = ""
 var baked_building_manifest: Dictionary = {}
 var baked_building_manifest_index: Dictionary = {}
+var baked_building_manifest_coords: Array[Vector3i] = []
 var baked_building_snapshot_cache: Dictionary = {}
 var baked_building_loaded_chunk_keys: Dictionary = {}
 var _last_baked_building_load_ms: float = 0.0
@@ -170,6 +171,8 @@ func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 214748
 			floor(p_pos.z / CHUNK_SIZE)
 		)
 	var viewer_position := get_viewer_position()
+	if world_map_mode and baked_buildings_loaded and not baked_building_manifest_coords.is_empty():
+		_prime_visible_baked_building_chunks(viewer_position)
 	
 	# 1. Unload chunks that are too far (remove from scene tree, keep data)
 	var chunks_to_unload = []
@@ -215,6 +218,20 @@ func _is_chunk_within_render_distance(chunk_coord: Vector3i, viewer_position: Ve
 	)
 	return viewer_position.distance_squared_to(nearest) <= threshold_sq
 
+func _prime_visible_baked_building_chunks(viewer_position: Vector3) -> int:
+	if not world_map_mode or not baked_buildings_loaded:
+		return 0
+	if baked_building_manifest_coords.is_empty():
+		return 0
+
+	var loaded_count := 0
+	for chunk_coord in baked_building_manifest_coords:
+		if not _is_chunk_within_render_distance(chunk_coord, viewer_position, render_distance):
+			continue
+		if ensure_baked_building_chunk_loaded(chunk_coord):
+			loaded_count += 1
+	return loaded_count
+
 func _load_chunk_visual(coord: Vector3i):
 	if not chunks.has(coord):
 		return
@@ -223,14 +240,15 @@ func _load_chunk_visual(coord: Vector3i):
 	var was_visible := visible_chunks.has(coord)
 	if not chunk.is_inside_tree():
 		add_child(chunk)
-		chunk.position = Vector3(coord) * CHUNK_SIZE
-		# Rebuild mesh if chunk has data
-		if not chunk.is_empty and chunk.is_mesh_dirty():
-			chunk.rebuild_mesh()
-		if chunk.has_method("activate_runtime_visuals"):
-			chunk.activate_runtime_visuals(false)
-		elif chunk.has_method("restore_object_visuals"):
-			chunk.restore_object_visuals(false)
+	chunk.position = Vector3(coord) * CHUNK_SIZE
+	# Make the load path idempotent: a chunk may already be in-tree from
+	# eager baked priming, but still need its runtime visuals activated.
+	if not chunk.is_empty and chunk.is_mesh_dirty():
+		chunk.rebuild_mesh()
+	if chunk.has_method("activate_runtime_visuals"):
+		chunk.activate_runtime_visuals(false)
+	elif chunk.has_method("restore_object_visuals"):
+		chunk.restore_object_visuals(false)
 
 	visible_chunks[coord] = true
 
@@ -468,6 +486,7 @@ func clear_all_building_chunks() -> void:
 	baked_buildings_world_path = ""
 	baked_building_manifest.clear()
 	baked_building_manifest_index.clear()
+	baked_building_manifest_coords.clear()
 	baked_building_snapshot_cache.clear()
 	baked_building_loaded_chunk_keys.clear()
 	_last_baked_building_load_ms = 0.0
@@ -602,7 +621,10 @@ func get_telemetry_snapshot() -> Dictionary:
 	var total_object_nodes := 0
 	var total_object_collision_nodes := 0
 	var total_collision_box_shapes := 0
+	var total_collision_shape_resources := 0
 	var total_runtime_chunk_collision_shapes := 0
+	var total_runtime_chunk_mesh_surfaces := 0
+	var total_snapshot_mesh_surfaces := 0
 	var total_simple_visual_instances := 0
 	var total_visual_batches := 0
 	var total_proxy_shell_nodes := 0
@@ -616,6 +638,11 @@ func get_telemetry_snapshot() -> Dictionary:
 	var total_dirty_hidden_chunks := maxi(0, total_mesh_dirty_chunks - total_dirty_visible_chunks)
 	var viewer_chunk_coord := Vector3i.ZERO
 	var viewer_chunk_collision_shapes := 0
+	var viewer_chunk_collision_shape_resources := 0
+	var viewer_chunk_mesh_surface_count := 0
+	var viewer_chunk_mesh_visible := false
+	var viewer_snapshot_mesh_surface_count := 0
+	var viewer_snapshot_collision_box_count := 0
 	var viewer_chunk_objects := 0
 	var viewer_chunk_visual_batches := 0
 	if viewer and is_instance_valid(viewer) and has_method("get_viewer_position"):
@@ -628,8 +655,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		if viewer_chunk and is_instance_valid(viewer_chunk):
 			viewer_chunk_objects = viewer_chunk.objects.size()
 			viewer_chunk_visual_batches = viewer_chunk.simple_visual_batch_nodes.size()
+			viewer_chunk_collision_shape_resources = 1 if viewer_chunk.collision_shape and viewer_chunk.collision_shape.shape else 0
 			if viewer_chunk.has_method("get_runtime_collision_shape_count"):
 				viewer_chunk_collision_shapes = int(viewer_chunk.get_runtime_collision_shape_count())
+			if viewer_chunk.has_method("get_runtime_mesh_surface_count"):
+				viewer_chunk_mesh_surface_count = int(viewer_chunk.get_runtime_mesh_surface_count())
+			if viewer_chunk.has_method("is_runtime_mesh_visible"):
+				viewer_chunk_mesh_visible = bool(viewer_chunk.is_runtime_mesh_visible())
+			if viewer_chunk.has_method("get_last_snapshot_mesh_surface_count"):
+				viewer_snapshot_mesh_surface_count = int(viewer_chunk.get_last_snapshot_mesh_surface_count())
+			if viewer_chunk.has_method("get_last_snapshot_collision_box_count"):
+				viewer_snapshot_collision_box_count = int(viewer_chunk.get_last_snapshot_collision_box_count())
 
 	for chunk_coord_variant in chunks:
 		var chunk: BuildingChunk = chunks[chunk_coord_variant]
@@ -640,8 +676,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		total_object_nodes += chunk.object_nodes.size()
 		total_object_collision_nodes += chunk.object_collision_nodes.size()
 		total_collision_box_shapes += 1 if chunk.collision_shape else 0
+		total_collision_shape_resources += 1 if chunk.collision_shape and chunk.collision_shape.shape else 0
 		if chunk.has_method("get_runtime_collision_shape_count"):
 			total_runtime_chunk_collision_shapes += int(chunk.get_runtime_collision_shape_count())
+		if chunk.has_method("get_runtime_mesh_surface_count"):
+			total_runtime_chunk_mesh_surfaces += int(chunk.get_runtime_mesh_surface_count())
+		if chunk.has_method("get_last_snapshot_mesh_surface_count"):
+			total_snapshot_mesh_surfaces += int(chunk.get_last_snapshot_mesh_surface_count())
 		total_simple_visual_instances += chunk.simple_visual_instances.size()
 		total_visual_batches += chunk.simple_visual_batch_nodes.size()
 		total_occupied_cells += chunk.occupied_by_object.size()
@@ -679,7 +720,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_object_nodes": total_object_nodes,
 		"total_object_collision_nodes": total_object_collision_nodes,
 		"total_collision_box_nodes": total_collision_box_shapes,
+		"total_collision_shape_resources": total_collision_shape_resources,
 		"total_runtime_chunk_collision_shapes": total_runtime_chunk_collision_shapes,
+		"total_runtime_chunk_mesh_surfaces": total_runtime_chunk_mesh_surfaces,
+		"total_snapshot_mesh_surfaces": total_snapshot_mesh_surfaces,
 		"total_simple_visual_instances": total_simple_visual_instances,
 		"total_visual_batches": total_visual_batches,
 		"total_proxy_shell_nodes": total_proxy_shell_nodes,
@@ -695,6 +739,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_occupied_cells": total_occupied_cells,
 		"viewer_chunk_coord": viewer_chunk_coord,
 		"viewer_chunk_collision_shapes": viewer_chunk_collision_shapes,
+		"viewer_chunk_collision_shape_resources": viewer_chunk_collision_shape_resources,
+		"viewer_chunk_mesh_surface_count": viewer_chunk_mesh_surface_count,
+		"viewer_chunk_mesh_visible": viewer_chunk_mesh_visible,
+		"viewer_snapshot_mesh_surface_count": viewer_snapshot_mesh_surface_count,
+		"viewer_snapshot_collision_box_count": viewer_snapshot_collision_box_count,
 		"viewer_chunk_objects": viewer_chunk_objects,
 		"viewer_chunk_visual_batches": viewer_chunk_visual_batches,
 		"mesh_dirty_chunks": total_mesh_dirty_chunks,
@@ -711,6 +760,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"loaded_baked_chunk_count": baked_building_loaded_chunk_keys.size(),
 		"baked_buildings_fully_loaded": is_baked_buildings_fully_loaded(),
 		"has_pending_building_work": has_pending_building_work(),
+		"pending_visible_baked_building_work": has_pending_visible_baked_building_work(),
 		"has_pending_visual_batch_work": has_pending_visual_batch_work(),
 		"baked_building_load_profile": {
 			"mode": _last_baked_building_load_mode,
@@ -884,10 +934,34 @@ func has_dirty_visible_chunks() -> bool:
 
 func has_pending_building_work() -> bool:
 	# Only gameplay-critical building work should block terrain finalization.
-	# Render-only visual batch rebuilds can lag behind without affecting play.
+	# Visible baked residency is a runtime concern and can lag behind without
+	# preventing the world from becoming playable.
 	return _dirty_visible_chunk_count > 0 \
 		or not _pending_object_collision_tasks.is_empty() \
 		or (mesher and mesher.has_method("has_pending_work") and mesher.has_pending_work())
+
+func has_pending_visible_baked_building_work() -> bool:
+	if not world_map_mode or not baked_buildings_loaded:
+		return false
+	if not viewer or not is_instance_valid(viewer):
+		return true
+
+	var viewer_position := get_viewer_position()
+	for chunk_coord in baked_building_manifest_coords:
+		if not _is_chunk_within_render_distance(chunk_coord, viewer_position, render_distance):
+			continue
+
+		var chunk: BuildingChunk = chunks.get(chunk_coord, null)
+		if not chunk or not is_instance_valid(chunk):
+			return true
+		if not chunk.baked_snapshot_loaded or chunk.baked_snapshot_chunk_coord != chunk_coord:
+			return true
+		if not chunk.is_inside_tree():
+			return true
+		if chunk.has_method("is_runtime_visuals_activated") and not chunk.is_runtime_visuals_activated():
+			return true
+
+	return false
 
 func has_pending_visual_batch_work() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
@@ -960,6 +1034,7 @@ func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool
 	baked_building_manifest = manifest.duplicate(true)
 	baked_buildings_world_path = world_path
 	baked_building_manifest_index.clear()
+	baked_building_manifest_coords.clear()
 	baked_building_snapshot_cache.clear()
 	baked_building_loaded_chunk_keys.clear()
 
@@ -974,6 +1049,7 @@ func load_baked_buildings_from_manifest(world_path: String, clear_existing: bool
 			continue
 		var chunk_coord := Vector3i(int(coord_arr[0]), int(coord_arr[1]), int(coord_arr[2]))
 		baked_building_manifest_index[_coord_key(chunk_coord)] = entry
+		baked_building_manifest_coords.append(chunk_coord)
 	baked_buildings_loaded = not baked_building_manifest_index.is_empty()
 	eager_baked_building_residency = false
 
@@ -1136,6 +1212,24 @@ func _export_baked_buildings(world_path: String, only_dirty: bool) -> Dictionary
 			continue
 		var file_name := "chunk_%d_%d_%d.tres" % [coord.x, coord.y, coord.z]
 		var file_path := bake_dir.path_join(file_name)
+		if snapshot.mesh and snapshot.mesh is ArrayMesh:
+			var mesh_file_name := "chunk_%d_%d_%d_mesh.res" % [coord.x, coord.y, coord.z]
+			var mesh_path := bake_dir.path_join(mesh_file_name)
+			var mesh_save_err := ResourceSaver.save(snapshot.mesh, mesh_path)
+			if mesh_save_err == OK:
+				snapshot.mesh_file = mesh_file_name
+				snapshot.mesh = null
+			else:
+				push_error("[BuildingManager] Failed to save baked chunk mesh %s (err %d)" % [mesh_path, mesh_save_err])
+		if snapshot.collision_shape and snapshot.collision_shape is Shape3D:
+			var collision_shape_file_name := "chunk_%d_%d_%d_collision_shape.res" % [coord.x, coord.y, coord.z]
+			var collision_shape_path := bake_dir.path_join(collision_shape_file_name)
+			var collision_shape_save_err := ResourceSaver.save(snapshot.collision_shape, collision_shape_path)
+			if collision_shape_save_err == OK:
+				snapshot.collision_shape_file = collision_shape_file_name
+				snapshot.collision_shape = null
+			else:
+				push_error("[BuildingManager] Failed to save baked chunk collision shape %s (err %d)" % [collision_shape_path, collision_shape_save_err])
 		var save_err := ResourceSaver.save(snapshot, file_path)
 		if save_err != OK:
 			push_error("[BuildingManager] Failed to save baked chunk %s (err %d)" % [file_path, save_err])
@@ -1147,7 +1241,7 @@ func _export_baked_buildings(world_path: String, only_dirty: bool) -> Dictionary
 		exported_chunk_count += 1
 
 	var manifest := {
-		"schema_version": 1,
+		"schema_version": 2,
 		"world_definition_path": world_path,
 		"chunk_count": entries_by_key.size(),
 		"exported_chunk_count": exported_chunk_count,

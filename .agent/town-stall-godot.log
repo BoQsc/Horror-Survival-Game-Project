@@ -1,8 +1,12 @@
 Godot Engine v4.6.2.stable.steam.71f334935 - https://godotengine.org
 Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 with Max-Q Design
 
+SCRIPT ERROR: Parse Error: The variable type is being inferred from a Variant value, so it will be typed as Variant. (Warning treated as error.)
+   at: GDScript::reload (res://modules/world_player_v2/features/ui_loading_screen/loading_screen.gd:173)
+ERROR: Failed to load script "res://modules/world_player_v2/features/ui_loading_screen/loading_screen.gd" with error "Parse error".
+   at: load (modules/gdscript/gdscript.cpp:2907)
 [TOWN_STALL_TEST] Harness starting
-[TOWN_STALL_TEST] Auto teleport: OFF
+[TOWN_STALL_TEST] Auto teleport: ON
 [TOWN_STALL_TEST] Disable buildings: OFF
 [TOWN_STALL_TEST] Disable building objects: OFF
 [TOWN_STALL_TEST] Disable building blocks: OFF
@@ -14,133 +18,15 @@ Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 wi
 [TOWN_STALL_TEST] Disable building chunk collisions: OFF
 [TOWN_STALL_TEST] Disable terrain chunk updates: OFF
 [TOWN_STALL_TEST] Disable entities: OFF
+[TOWN_STALL_TEST] Disable building bake: OFF
+[TOWN_STALL_TEST] Preload buildings: OFF
 [TOWN_STALL_TEST] Repeat entry: OFF
-[TOWN_STALL_TEST] Hold seconds: 40.0
+[TOWN_STALL_TEST] Hold seconds: 60.0
 [TOWN_STALL_TEST] Generating world seed 12345...
-[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_36089
+[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_30702
 [TOWN_STALL_TEST] Selected town: x=374.0 z=-298.0 buildings=72 radius=71.0
 [TOWN_STALL_TEST] Removed helper node: DebugTeleporter
 [TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...
-[TOWN_STALL_TEST] Flying to town center: (374.0, 23.0, -298.0)
-[TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.
-[TOWN_STALL_TEST] Flying to town center: (374.0, 15.0, -298.0) buildings=72 radius=71.0
-[TOWN_STALL_TEST] Auto fly reached target, starting hold
+[TOWN_STALL_TEST] Teleported to town at (374.0, 23.0, -298.0)
+[TOWN_STALL_TEST] Waiting 60.0 seconds for the stall window...
 [TOWN_STALL_TEST] Hold started
-WARNING: 38 RIDs of type "StorageBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-   GDScript backtrace (most recent call first):
-       [0] _thread_function (res://world_marching_cubes/chunk_manager.gd:2018)
-ERROR: 10 RID allocations of type 'P11JoltShape3D' were leaked at exit.
-ERROR: 78 RID allocations of type 'P10JoltBody3D' were leaked at exit.
-ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceSurfaceDataCacheE
-   at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
-ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceForwardClusteredE
-   at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
-ERROR: 9 shaders of type SceneForwardClusteredShaderRD were never freed
-   at: ~ShaderRD (servers/rendering/renderer_rd/shader_rd.cpp:1056)
-ERROR: 2 RID allocations of type 'N10RendererRD11MeshStorage8SkeletonE' were leaked at exit.
-ERROR: 41 RID allocations of type 'N10RendererRD11MeshStorage4MeshE' were leaked at exit.
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-ERROR: 14 RID allocations of type 'N10RendererRD15MaterialStorage8MaterialE' were leaked at exit.
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-ERROR: 9 RID allocations of type 'N10RendererRD15MaterialStorage6ShaderE' were leaked at exit.
-ERROR: 31 RID allocations of type 'N10RendererRD14TextureStorage7TextureE' were leaked at exit.
-ERROR: 98 RID allocations of type 'N17RendererSceneCull8InstanceE' were leaked at exit.
-WARNING: 2 RIDs of type "StorageBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 14 RIDs of type "UniformBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 79 RIDs of type "IndexArray" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 79 RIDs of type "IndexBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 27 RIDs of type "VertexArray" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 70 RIDs of type "VertexBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 52 RIDs of type "Texture" were leaked.
-   at: finalize (servers/rendering/rendering_device.cpp:7505)
-WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
-   at: cleanup (core/object/object.cpp:2641)
-ERROR: 98 resources still in use at exit (run with --verbose for details).
-   at: clear (core/io/resource.cpp:810)
