@@ -104,7 +104,8 @@ class ChunkData:
 	var density_buffer_water: RID
 	var material_buffer_terrain: RID # Material IDs per voxel (GPU)
 
-	# Optimization: Use PhysicsServer3D RIDs directly instead of Nodes for terrain collision
+	# Terrain collision can be represented either by a live PhysicsServer RID
+	# or by a StaticBody3D + CollisionShape3D when the chunk has been modified.
 	var body_rid_terrain: RID
 
 	var collision_shape_terrain: CollisionShape3D # For dynamic enable/disable
@@ -172,6 +173,7 @@ var _native_backends_ready: bool = false
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_update_backend: String = ""
+var _last_terrain_finalization_defer_reason: String = ""
 var _last_update_duration_ms: float = 0.0
 var _last_pending_node_process_ms: float = 0.0
 var _last_finalize_terrain_ms: float = 0.0
@@ -330,6 +332,7 @@ func get_telemetry_snapshot() -> Dictionary:
 	var rendered_terrain_chunk_count := 0
 	var rendered_water_chunk_count := 0
 	var collision_chunk_count := 0
+	var collision_ready_chunk_count := 0
 	var dirty_loaded_chunk_count := 0
 	var active_render_chunk_count := 0
 
@@ -350,6 +353,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		if data.node_terrain or data.node_water:
 			active_render_chunk_count += 1
 
+	if terrain_grid and terrain_grid.has_method("get_collision_ready_chunk_count"):
+		collision_ready_chunk_count = terrain_grid.get_collision_ready_chunk_count()
+
 	return {
 		"active_chunk_count": active_chunks.size(),
 		"loaded_chunk_count": loaded_chunk_count,
@@ -357,6 +363,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"rendered_terrain_chunk_count": rendered_terrain_chunk_count,
 		"rendered_water_chunk_count": rendered_water_chunk_count,
 		"collision_chunk_count": collision_chunk_count,
+		"collision_ready_chunk_count": collision_ready_chunk_count,
+		"pending_terrain_collision_create_count": pending_terrain_collision_creates.size(),
+		"last_terrain_collision_create_count": _last_terrain_collision_create_count,
+		"last_terrain_collision_create_ms": _last_terrain_collision_create_ms,
 		"loaded_dirty_chunk_count": dirty_loaded_chunk_count,
 		"active_render_chunk_count": active_render_chunk_count,
 		"pending_node_count": pending_nodes.size(),
@@ -379,6 +389,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_update_loads": _last_update_loads,
 		"last_update_unloads": _last_update_unloads,
 		"last_update_backend": _last_update_backend,
+		"last_terrain_finalization_defer_reason": _last_terrain_finalization_defer_reason,
 		"last_update_duration_ms": _last_update_duration_ms,
 		"last_pending_node_process_ms": _last_pending_node_process_ms,
 		"last_finalize_terrain_ms": _last_finalize_terrain_ms,
@@ -510,26 +521,24 @@ func _process(delta):
 		return
 
 	var defer_terrain_finalization := false
+	var terrain_defer_reason := ""
 	if not initial_load_phase:
 		var frame_budget_ms := 1000.0 / 60.0
 		if _last_frame_ms > frame_budget_ms:
 			_hot_frame_backoff_remaining_frames = maxi(_hot_frame_backoff_remaining_frames, terrain_hot_frame_backoff_frames)
 		if _hot_frame_backoff_remaining_frames > 0:
 			defer_terrain_finalization = true
+			if terrain_defer_reason.is_empty():
+				terrain_defer_reason = "hot_frame_backoff"
 			_hot_frame_backoff_remaining_frames -= 1
-
-		var building_manager = _get_building_manager()
-		var prefab_spawner: Node = _get_prefab_spawner()
-		var prefab_spawn_backlog: bool = prefab_spawner and prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs()
-		var pending_visual_batches: bool = building_manager and building_manager.has_method("has_pending_visual_batch_work") and building_manager.has_pending_visual_batch_work()
-		if (building_manager and building_manager.has_method("has_pending_building_work") and building_manager.has_pending_building_work()) or pending_visual_batches or prefab_spawn_backlog:
-			defer_terrain_finalization = true
+	_last_terrain_finalization_defer_reason = terrain_defer_reason
 	if not defer_terrain_finalization:
 		update_chunks()
 
 		process_pending_nodes()
 
 	update_collision_proximity() # Enable/disable collision based on player distance
+	process_pending_terrain_collision_creates()
 
 	# HOTFIX: Ensure all existing chunks have layer 512 (Layer 10) for pickups
 	if active_chunks.size() > 0 and not get_meta("collision_fixed", false):
@@ -600,16 +609,13 @@ func _adjust_adaptive_loading():
 		adaptive_frame_budget_ms = 1.5 # Max 1.5ms (reduced from 3ms)
 		chunks_per_frame_limit = 1
 
-var collision_update_counter: int = 0
 var _last_collision_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_collision_active_count: int = -1
+var pending_terrain_collision_creates: Dictionary = {}
+var _last_terrain_collision_create_ms: float = 0.0
+var _last_terrain_collision_create_count: int = 0
+@export_range(1, 16, 1) var terrain_collision_create_budget_per_frame: int = 2
 func update_collision_proximity():
-	# Only update every 30 frames to reduce overhead
-	collision_update_counter += 1
-	if collision_update_counter < 30:
-		return
-	collision_update_counter = 0
-
 	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
@@ -627,19 +633,141 @@ func update_collision_proximity():
 		if data == null:
 			continue
 
-		# 3D distance for collision check
-		var dx = coord.x - center_chunk.x
-		var dy = coord.y - center_chunk.y
-		var dz = coord.z - center_chunk.z
-		var dist_xz_sq = dx * dx + dz * dz
-		# Enable collision if close horizontally AND within 2 Y layers
-		var should_have_collision = dist_xz_sq <= collision_distance_sq and abs(dy) <= 2
+		var should_have_collision = _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
+		_sync_terrain_collision_state(coord, data, should_have_collision)
 
-		# Enable/disable collision shape
+func _should_have_terrain_collision(coord: Vector3i, center_chunk: Vector3i, collision_distance_sq: int) -> bool:
+	var dx = coord.x - center_chunk.x
+	var dy = coord.y - center_chunk.y
+	var dz = coord.z - center_chunk.z
+	var dist_xz_sq = dx * dx + dz * dz
+	return dist_xz_sq <= collision_distance_sq and abs(dy) <= 2
+
+func _queue_terrain_collision_create(coord: Vector3i) -> void:
+	pending_terrain_collision_creates[coord] = true
+
+func _sync_terrain_collision_state(coord: Vector3i, data, should_have_collision: bool) -> void:
+	if data == null:
+		return
+
+	# Modified terrain chunks use a real node-based StaticBody3D, so we can
+	# just toggle the shape there.
+	if data.node_terrain is StaticBody3D:
 		if data.collision_shape_terrain:
 			var desired_disabled: bool = not should_have_collision
 			if data.collision_shape_terrain.disabled != desired_disabled:
 				data.collision_shape_terrain.disabled = desired_disabled
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, should_have_collision and data.collision_shape_terrain != null)
+		pending_terrain_collision_creates.erase(coord)
+		return
+
+	# Initial-load terrain chunks use a PhysicsServer RID so we can keep the
+	# visual mesh alive while only paying collision cost when the player is near.
+	# Body creation is budgeted separately so entering town does not wake the
+	# entire collision neighborhood in one frame.
+	if should_have_collision:
+		if data.body_rid_terrain.is_valid():
+			var world = get_world_3d()
+			if world:
+				PhysicsServer3D.body_set_space(data.body_rid_terrain, world.space)
+				PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 1 | 512)
+				PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 1)
+			if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+				terrain_grid.set_chunk_collision_ready(coord, true)
+			pending_terrain_collision_creates.erase(coord)
+			return
+		if not data.node_terrain or not data.terrain_shape:
+			if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+				terrain_grid.set_chunk_collision_ready(coord, false)
+			return
+
+		_queue_terrain_collision_create(coord)
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, false)
+	else:
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, false)
+		if data.body_rid_terrain.is_valid():
+			var world = get_world_3d()
+			if world:
+				PhysicsServer3D.body_set_space(data.body_rid_terrain, RID())
+			PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
+			PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
+			pending_terrain_collision_creates.erase(coord)
+
+func _terrain_collision_sort_score(coord: Vector3i, center_chunk: Vector3i) -> int:
+	var dx = coord.x - center_chunk.x
+	var dy = coord.y - center_chunk.y
+	var dz = coord.z - center_chunk.z
+	return dx * dx + dz * dz + abs(dy) * 10
+
+func process_pending_terrain_collision_creates():
+	if pending_terrain_collision_creates.is_empty():
+		_last_terrain_collision_create_count = 0
+		_last_terrain_collision_create_ms = 0.0
+		return
+
+	var start_us := Time.get_ticks_usec()
+	var p_pos = get_viewer_position()
+	var center_chunk = Vector3i(
+		int(floor(p_pos.x / CHUNK_STRIDE)),
+		int(floor(p_pos.y / CHUNK_STRIDE)),
+		int(floor(p_pos.z / CHUNK_STRIDE))
+	)
+	var collision_distance_sq := collision_distance * collision_distance
+	var queued_coords: Array[Vector3i] = []
+	for coord_variant in pending_terrain_collision_creates.keys():
+		queued_coords.append(coord_variant)
+	queued_coords.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
+		return _terrain_collision_sort_score(a, center_chunk) < _terrain_collision_sort_score(b, center_chunk)
+	)
+
+	var created := 0
+	for coord in queued_coords:
+		if created >= terrain_collision_create_budget_per_frame:
+			break
+
+		if not pending_terrain_collision_creates.has(coord):
+			continue
+		if not active_chunks.has(coord):
+			pending_terrain_collision_creates.erase(coord)
+			continue
+
+		var data = active_chunks[coord]
+		if data == null:
+			pending_terrain_collision_creates.erase(coord)
+			continue
+		if data.body_rid_terrain.is_valid():
+			pending_terrain_collision_creates.erase(coord)
+			continue
+		if not _should_have_terrain_collision(coord, center_chunk, collision_distance_sq):
+			pending_terrain_collision_creates.erase(coord)
+			continue
+		if not data.node_terrain or not data.terrain_shape:
+			continue
+
+		var world = get_world_3d()
+		if not world:
+			continue
+
+		var body_rid = PhysicsServer3D.body_create()
+		PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
+		PhysicsServer3D.body_add_shape(body_rid, data.terrain_shape.get_rid())
+		PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
+		PhysicsServer3D.body_set_collision_mask(body_rid, 1)
+		PhysicsServer3D.body_set_space(body_rid, world.space)
+		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+		PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, Transform3D(Basis(), chunk_pos))
+		PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
+		data.body_rid_terrain = body_rid
+		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+			terrain_grid.set_chunk_collision_ready(coord, true)
+		pending_terrain_collision_creates.erase(coord)
+		created += 1
+
+	_last_terrain_collision_create_count = created
+	_last_terrain_collision_create_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
 # Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
 func process_pending_nodes():
@@ -1444,9 +1572,6 @@ func _exit_tree():
 		for item in pending_nodes:
 			if item is Dictionary:
 				if item.get("type", "") == "final_terrain":
-					var body_rid = item.get("body_rid", RID())
-					if body_rid.is_valid():
-						PhysicsServer3D.free_rid(body_rid)
 					var dens_rid = item.get("dens", RID())
 					if dens_rid.is_valid():
 						cleanup_tasks.append({"type": "free", "rid": dens_rid})
@@ -1594,11 +1719,17 @@ func _unload_chunk(coord: Vector3i):
 	if data:
 		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
 			terrain_grid.set_chunk_collision_ready(coord, false)
+		pending_terrain_collision_creates.erase(coord)
 		if data.node_terrain: data.node_terrain.queue_free()
 		if data.node_water: data.node_water.queue_free()
 
 		# Free Physics Body RID (Immediate, Main Thread/Thread Safe)
 		if data.body_rid_terrain.is_valid():
+			var world = get_world_3d()
+			if world:
+				PhysicsServer3D.body_set_space(data.body_rid_terrain, RID())
+			PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
+			PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
 			PhysicsServer3D.free_rid(data.body_rid_terrain)
 
 		var tasks = []
@@ -1635,6 +1766,9 @@ func clear_all_chunks():
 	pending_nodes.clear()
 	pending_nodes_needs_sort = false
 	pending_nodes_mutex.unlock()
+	pending_terrain_collision_creates.clear()
+	_last_terrain_collision_create_count = 0
+	_last_terrain_collision_create_ms = 0.0
 
 	# 3. Wipe all active chunks (frees Meshes, RIDs, and Collision)
 	# Working on a copy of keys because _unload_chunk modifies the dictionary
@@ -2712,40 +2846,6 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 
 	pending_nodes_mutex.lock()
 
-	# Split into two separate tasks to spread main-thread load
-	# Task 1: Terrain (Heavier - ~4ms)
-	# Task 1: Terrain (Heavier ~4ms - NOW ~0ms on Main Thread)
-	# Optimize: Create Physics Body ON THREAD to avoid Main Thread spike
-	var body_rid = RID()
-	var shape_rid = RID()
-
-	if result_t.shape:
-		# 1. Create Body
-		body_rid = PhysicsServer3D.body_create()
-		PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
-
-		# 2. Create and Add Shape
-		shape_rid = result_t.shape.get_rid() # Get RID from the Shape3D resource
-		# Note: We need to keep the Shape3D resource alive or the RID might become invalid if ref count hits 0?
-		# Actually, Shape3D resource holds the RID. As long as we hold 'result_t.shape', it's fine.
-		# But wait, we can't share Shape3D RID usage easily if we want to be safe?
-		# ConcavePolygonShape3D keeps the mesh-backed collision data alive through the shared Shape3D resource.
-
-		PhysicsServer3D.body_add_shape(body_rid, shape_rid)
-
-		# 3. Set Layer/Mask (Layer 1 = Terrain)
-		PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
-		PhysicsServer3D.body_set_collision_mask(body_rid, 1)
-
-		# 4. Add to Space (The heavy part - Done on Thread!)
-		var space = get_world_3d().space
-		PhysicsServer3D.body_set_space(body_rid, space)
-
-		# 5. Set Position (Chunk Origin)
-		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-		var transform = Transform3D(Basis(), chunk_pos)
-		PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, transform)
-
 	pending_nodes.append({
 		"type": "final_terrain",
 		"coord": coord,
@@ -2753,8 +2853,7 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"dens": dens_t,
 		"mat_buf": mat_t,
 		"cpu_dens": cpu_dens_t,
-		"cpu_mat": cpu_mat_t,
-		"body_rid": body_rid # Pass the pre-cooked body
+		"cpu_mat": cpu_mat_t
 	})
 
 	# Task 2: Water (Lighter - ~2ms)
@@ -2775,9 +2874,6 @@ func _finalize_chunk_creation(item: Dictionary):
 		var coord = item.coord
 
 		if not active_chunks.has(coord):
-			# Cleanup orphan RIDs if chunk was cancelled
-			if item.get("body_rid", RID()).is_valid():
-				PhysicsServer3D.free_rid(item.body_rid)
 			return
 
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
@@ -2797,20 +2893,20 @@ func _finalize_chunk_creation(item: Dictionary):
 
 		data.node_terrain = result.node if not result.is_empty() else null
 
-		# Link Visual Node to Physics Body (for Raycasts/Interaction)
-		var body_rid = item.get("body_rid", RID())
-		if body_rid.is_valid() and data.node_terrain:
-			# This links the RID to the InstanceID of the visual mesh instance/node
-			# So that when raycast hits the RID, we can find the Node.
-			PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
-			data.body_rid_terrain = body_rid
-		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
-			terrain_grid.set_chunk_collision_ready(coord, data.node_terrain != null)
-
 		# CRITICAL: Keep Shape3D resource alive!
 		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
-		if item.result.get("shape"):
-			data.terrain_shape = item.result.shape
+		data.terrain_shape = item.result.shape
+
+		# Terrain collision is created lazily so we only keep live physics bodies
+		# close to the player.
+		var p_pos = get_viewer_position()
+		var center_chunk = Vector3i(
+			int(floor(p_pos.x / CHUNK_STRIDE)),
+			int(floor(p_pos.y / CHUNK_STRIDE)),
+			int(floor(p_pos.z / CHUNK_STRIDE))
+		)
+		var collision_distance_sq := collision_distance * collision_distance
+		_sync_terrain_collision_state(coord, data, _should_have_terrain_collision(coord, center_chunk, collision_distance_sq))
 
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
@@ -2948,6 +3044,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		# CRITICAL: Free the PhysicsServer body RID first (contains stale collision)
 		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
 			terrain_grid.set_chunk_collision_ready(coord, false)
+		pending_terrain_collision_creates.erase(coord)
 		if data.body_rid_terrain.is_valid():
 			PhysicsServer3D.free_rid(data.body_rid_terrain)
 			data.body_rid_terrain = RID() # Clear to prevent double-free
@@ -2964,8 +3061,14 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			data.cpu_density_terrain = cpu_dens
 		if not cpu_mat.is_empty():
 			data.cpu_material_terrain = cpu_mat
-		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
-			terrain_grid.set_chunk_collision_ready(coord, data.node_terrain != null)
+		var p_pos = get_viewer_position()
+		var center_chunk = Vector3i(
+			int(floor(p_pos.x / CHUNK_STRIDE)),
+			int(floor(p_pos.y / CHUNK_STRIDE)),
+			int(floor(p_pos.z / CHUNK_STRIDE))
+		)
+		var collision_distance_sq := collision_distance * collision_distance
+		_sync_terrain_collision_state(coord, data, _should_have_terrain_collision(coord, center_chunk, collision_distance_sq))
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water

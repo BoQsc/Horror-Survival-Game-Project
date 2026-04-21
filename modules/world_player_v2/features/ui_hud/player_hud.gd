@@ -151,6 +151,12 @@ func _ready() -> void:
 	if world_map_cache_toggle:
 		world_map_cache_toggle.toggled.connect(_on_world_map_data_cache_toggled)
 		_sync_world_map_data_cache_toggle()
+
+	# Connect instant baked buildings toggle
+	var instant_baked_buildings_toggle = game_menu.find_child("InstantBakedBuildingsToggle", true, false)
+	if instant_baked_buildings_toggle:
+		instant_baked_buildings_toggle.toggled.connect(_on_world_map_instant_baked_buildings_toggled)
+		_sync_world_map_instant_baked_buildings_toggle()
  
 	# Connect spawning buttons
 	var spawn_entity_btn = game_menu.find_child("SpawnEntityButton", true, false)
@@ -604,6 +610,19 @@ func _on_world_map_data_cache_toggled(is_enabled: bool) -> void:
 	if tm and "world_map_data_cache_enabled" in tm:
 		tm.world_map_data_cache_enabled = is_enabled
 
+func _on_world_map_instant_baked_buildings_toggled(is_enabled: bool) -> void:
+	var save_mgr = get_tree().get_first_node_in_group("save_manager")
+	if not save_mgr and has_node("/root/SaveManager"):
+		save_mgr = get_node("/root/SaveManager")
+
+	if save_mgr and save_mgr.has_method("set_world_map_instant_baked_buildings_enabled"):
+		save_mgr.set_world_map_instant_baked_buildings_enabled(is_enabled)
+		return
+
+	var prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
+	if prefab_spawner and "instant_baked_buildings_enabled" in prefab_spawner:
+		prefab_spawner.instant_baked_buildings_enabled = is_enabled
+
 func _on_spawn_entity_pressed() -> void:
 	var em = get_tree().get_first_node_in_group("entity_manager")
 	if em and em.has_method("spawn_entity_near_player"):
@@ -864,6 +883,7 @@ func _on_load_completed(success: bool, _path: String) -> void:
 		notification_label.visible = true
 		notification_timer = 2.0  # Show for 2 seconds
 	_sync_world_map_data_cache_toggle()
+	_sync_world_map_instant_baked_buildings_toggle()
 
 func _sync_world_map_data_cache_toggle() -> void:
 	var world_map_cache_toggle = game_menu.find_child("WorldMapDataCacheToggle", true, false)
@@ -884,6 +904,26 @@ func _sync_world_map_data_cache_toggle() -> void:
 
 	if world_map_cache_toggle.button_pressed != enabled:
 		world_map_cache_toggle.set_pressed_no_signal(enabled)
+
+func _sync_world_map_instant_baked_buildings_toggle() -> void:
+	var instant_baked_buildings_toggle = game_menu.find_child("InstantBakedBuildingsToggle", true, false)
+	if not instant_baked_buildings_toggle:
+		return
+
+	var enabled := true
+	var save_mgr = get_tree().get_first_node_in_group("save_manager")
+	if not save_mgr and has_node("/root/SaveManager"):
+		save_mgr = get_node("/root/SaveManager")
+
+	if save_mgr and save_mgr.has_method("get_world_map_instant_baked_buildings_enabled"):
+		enabled = save_mgr.get_world_map_instant_baked_buildings_enabled()
+	else:
+		var prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
+		if prefab_spawner and "instant_baked_buildings_enabled" in prefab_spawner:
+			enabled = prefab_spawner.instant_baked_buildings_enabled
+
+	if instant_baked_buildings_toggle.button_pressed != enabled:
+		instant_baked_buildings_toggle.set_pressed_no_signal(enabled)
 
 func _on_creative_catalog_pressed() -> void:
 	if not _is_editor_mode_active() or not game_menu.visible:

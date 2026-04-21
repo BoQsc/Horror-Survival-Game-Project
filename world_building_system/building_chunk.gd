@@ -463,6 +463,8 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 		else:
 			mesh_instance.visible = true
 			if use_source_mesh:
+				# Prebuilt meshes still need the shared building surface materials.
+				BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes)
 				mesh_instance.mesh = mesh
 				if use_legacy_material_override:
 					BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes)
@@ -884,4 +886,3 @@ func restore_object_visuals(defer_collision: bool = true):
 				_generate_object_collision_measured(scene_instance, local_anchor)
 
 		object_nodes[local_anchor] = scene_instance
-

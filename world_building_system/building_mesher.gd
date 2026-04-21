@@ -177,6 +177,16 @@ func pack_rotated_world_map_block_batches(prefab_blocks: Array, rotation: int, s
 		return []
 	return builder.pack_rotated_world_map_block_batches(prefab_blocks, rotation, spawn_pos, chunk_size)
 
+func voxels_need_detailed_collision(voxel_bytes: PackedByteArray) -> bool:
+	return _voxels_need_detailed_collision(voxel_bytes)
+
+func build_building_mesh_from_voxels(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, use_box_collision: bool, chunk_size: int) -> Dictionary:
+	var builder := _get_native_builder()
+	if not builder or not builder.has_method("build_building_mesh_from_voxels"):
+		push_error("[BuildingMesher] MeshBuilder.build_building_mesh_from_voxels() is required.")
+		return {}
+	return builder.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, use_box_collision, chunk_size)
+
 func build_trimesh_collision_shape_from_faces(faces: PackedVector3Array) -> Shape3D:
 	var builder := _get_native_builder()
 	if not builder or not builder.has_method("build_trimesh_collision_shape_from_faces"):

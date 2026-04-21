@@ -10,6 +10,7 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_chunk_collision_ready", "coord", "ready"), &TerrainGrid::set_chunk_collision_ready);
     ClassDB::bind_method(D_METHOD("has_chunk", "coord"), &TerrainGrid::has_chunk);
     ClassDB::bind_method(D_METHOD("is_collision_ready_at", "position", "chunk_stride"), &TerrainGrid::is_collision_ready_at);
+    ClassDB::bind_method(D_METHOD("get_collision_ready_chunk_count"), &TerrainGrid::get_collision_ready_chunk_count);
     ClassDB::bind_method(D_METHOD("clear"), &TerrainGrid::clear);
     ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "chunks_per_frame_limit"), &TerrainGrid::update);
     ClassDB::bind_method(D_METHOD("get_chunk_height_map", "density", "size", "step"), &TerrainGrid::get_chunk_height_map);
@@ -60,6 +61,10 @@ bool TerrainGrid::is_collision_ready_at(Vector3 position, int chunk_stride) {
     }
 
     return false;
+}
+
+int TerrainGrid::get_collision_ready_chunk_count() {
+    return collision_ready_chunks.size();
 }
 
 void TerrainGrid::clear() {

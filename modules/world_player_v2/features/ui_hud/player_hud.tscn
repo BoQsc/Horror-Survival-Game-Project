@@ -274,6 +274,11 @@ text = "Show Road Zones"
 layout_mode = 2
 text = "World Map Cache"
 
+[node name="InstantBakedBuildingsToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456795]
+layout_mode = 2
+button_pressed = true
+text = "Instant Baked Buildings"
+
 [node name="HSeparator" type="HSeparator" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel"]
 layout_mode = 2
 

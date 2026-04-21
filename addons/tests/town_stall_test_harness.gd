@@ -63,6 +63,7 @@ var disable_building_object_collisions_enabled: bool = false
 var disable_building_chunk_flush_enabled: bool = false
 var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
+var instant_baked_buildings_enabled: bool = true
 var disable_entities_enabled: bool = false
 var repeat_entry_enabled: bool = false
 var configured_hold_seconds: float = HOLD_SECONDS
@@ -74,6 +75,8 @@ var current_hold_seconds: float = HOLD_SECONDS
 
 var game_root: Node3D = null
 var terrain_manager: Node = null
+var building_manager: Node = null
+var entity_manager: Node = null
 var chunk_manager: Node = null
 var player: WorldPlayerV2 = null
 var mode_manager: Node = null
@@ -220,6 +223,39 @@ func _build_native_town_entry_sample() -> Dictionary:
 	var vram_mb := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / (1024.0 * 1024.0)
 	var other_ms := maxf(0.0, total_ms - physics_ms - navigation_ms)
 	var top_measure := _resolve_native_top_measure(total_ms, physics_ms, navigation_ms, other_ms, draw_calls)
+	var terrain_active_chunk_count := 0
+	var terrain_pending_node_count := 0
+	var terrain_pending_collision_create_count := 0
+	var terrain_last_finalize_terrain_ms := 0.0
+	var terrain_last_pending_node_process_ms := 0.0
+	var terrain_last_collision_create_ms := 0.0
+	var terrain_last_collision_create_count := 0
+	var building_dirty_visible_chunk_count := 0
+	var building_last_flush_dirty_chunks_ms := 0.0
+	var entity_active_entities := 0
+	var entity_pending_spawns := 0
+	var entity_dormant_entities := 0
+	var entity_spawned_chunks := 0
+	if is_instance_valid(terrain_manager):
+		terrain_active_chunk_count = int(terrain_manager.active_chunks.size())
+		terrain_pending_node_count = int(terrain_manager.pending_nodes.size())
+		terrain_pending_collision_create_count = int(terrain_manager.pending_terrain_collision_creates.size())
+		terrain_last_finalize_terrain_ms = float(terrain_manager._last_finalize_terrain_ms)
+		terrain_last_pending_node_process_ms = float(terrain_manager._last_pending_node_process_ms)
+		terrain_last_collision_create_ms = float(terrain_manager._last_terrain_collision_create_ms)
+		terrain_last_collision_create_count = int(terrain_manager._last_terrain_collision_create_count)
+	if not is_instance_valid(building_manager):
+		building_manager = _find_manager_node("building_manager", "BuildingManager")
+	if is_instance_valid(building_manager):
+		building_dirty_visible_chunk_count = int(building_manager._dirty_visible_chunk_count)
+		building_last_flush_dirty_chunks_ms = float(building_manager._last_flush_dirty_chunks_ms)
+	if not is_instance_valid(entity_manager):
+		entity_manager = _find_manager_node("entity_manager", "EntityManager")
+	if is_instance_valid(entity_manager):
+		entity_active_entities = int(entity_manager.active_entities.size())
+		entity_pending_spawns = int(entity_manager.pending_spawns.size())
+		entity_dormant_entities = int(entity_manager.dormant_entities.size())
+		entity_spawned_chunks = int(entity_manager.spawned_chunks.size())
 
 	return {
 		"frame": frame_number,
@@ -231,6 +267,19 @@ func _build_native_town_entry_sample() -> Dictionary:
 		"navigation_ms": navigation_ms,
 		"vram_mb": vram_mb,
 		"other_ms": other_ms,
+		"terrain_active_chunk_count": terrain_active_chunk_count,
+		"terrain_pending_node_count": terrain_pending_node_count,
+		"terrain_pending_collision_create_count": terrain_pending_collision_create_count,
+		"terrain_last_finalize_terrain_ms": terrain_last_finalize_terrain_ms,
+		"terrain_last_pending_node_process_ms": terrain_last_pending_node_process_ms,
+		"terrain_last_collision_create_ms": terrain_last_collision_create_ms,
+		"terrain_last_collision_create_count": terrain_last_collision_create_count,
+		"building_dirty_visible_chunk_count": building_dirty_visible_chunk_count,
+		"building_last_flush_dirty_chunks_ms": building_last_flush_dirty_chunks_ms,
+		"entity_active_entities": entity_active_entities,
+		"entity_pending_spawns": entity_pending_spawns,
+		"entity_dormant_entities": entity_dormant_entities,
+		"entity_spawned_chunks": entity_spawned_chunks,
 		"top_measure_name": str(top_measure.get("name", "Unknown")),
 		"top_measure_bucket": str(top_measure.get("bucket", "Unknown")),
 		"top_measure_ms": float(top_measure.get("ms", 0.0)),
@@ -738,6 +787,7 @@ func _ready() -> void:
 	disable_building_chunk_flush_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_FLUSH") == "1"
 	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
+	instant_baked_buildings_enabled = OS.get_environment("TOWN_STALL_INSTANT_BAKED_BUILDINGS") != "0"
 	disable_entities_enabled = OS.get_environment("TOWN_STALL_DISABLE_ENTITIES") == "1"
 	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
@@ -753,6 +803,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable building chunk flush: %s" % ("ON" if disable_building_chunk_flush_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Instant baked buildings: %s" % ("ON" if instant_baked_buildings_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
@@ -769,6 +820,7 @@ func _ready() -> void:
 		"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
 		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
 		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
+		"instant_baked_buildings": instant_baked_buildings_enabled,
 		"disable_entities": disable_entities_enabled,
 		"repeat_entry": repeat_entry_enabled,
 		"hold_seconds": configured_hold_seconds
@@ -886,6 +938,9 @@ func _start_game_scene() -> void:
 		if building_manager_override and "render_distance" in building_manager_override:
 			building_manager_override.render_distance = render_distance_override
 			print("[TOWN_STALL_TEST] Building render distance override: %d" % render_distance_override)
+	var prefab_spawner_override := game_root.find_child("PrefabSpawner", true, false)
+	if prefab_spawner_override and "instant_baked_buildings_enabled" in prefab_spawner_override:
+		prefab_spawner_override.instant_baked_buildings_enabled = instant_baked_buildings_enabled
 
 	# Strip out the old test-only helpers so the harness owns the flow.
 	for node_name in ["DebugTeleporter", "MovementBot"]:
@@ -900,6 +955,8 @@ func _start_game_scene() -> void:
 		return
 
 	save_manager.pending_world_definition_path = generated_world_path
+	if save_manager.has_method("set_world_map_instant_baked_buildings_enabled"):
+		save_manager.set_world_map_instant_baked_buildings_enabled(instant_baked_buildings_enabled)
 	if disable_buildings_enabled and ("disable_buildings_for_test" in save_manager):
 		save_manager.disable_buildings_for_test = true
 		_apply_buildings_toggle()

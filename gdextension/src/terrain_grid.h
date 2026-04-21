@@ -45,6 +45,8 @@ public:
     bool has_chunk(Vector3i coord);
     // Check whether terrain collision is ready around a position.
     bool is_collision_ready_at(Vector3 position, int chunk_stride);
+    // Count chunks whose collision bodies are currently ready.
+    int get_collision_ready_chunk_count();
     // Clear all tracking
     void clear();
 

@@ -28,6 +28,7 @@ var disable_buildings_for_test: bool = false
 # World Map Generator integration: set before scene change, consumed by chunk_manager on _ready
 var pending_world_definition_path: String = ""
 var pending_world_map_data_cache_enabled: bool = true
+var pending_world_map_instant_baked_buildings_enabled: bool = true
 
 # V2: New player system references
 var player_inventory: Node = null
@@ -1139,6 +1140,7 @@ func _get_game_settings_data() -> Dictionary:
 		"autosave_enabled": autosave_enabled,
 		"autosave_interval": autosave_interval_seconds,
 		"world_map_data_cache_enabled": _get_world_map_data_cache_enabled(),
+		"world_map_instant_baked_buildings_enabled": _get_world_map_instant_baked_buildings_enabled(),
 		"time_of_day": 0.5, # Placeholder for TimeManager
 		"weather": "clear", # Placeholder for WeatherManager
 		"difficulty": "normal"
@@ -1156,6 +1158,8 @@ func _load_game_settings_data(data: Dictionary):
 		_setup_autosave() # Re-apply interval
 	if data.has("world_map_data_cache_enabled"):
 		_apply_world_map_data_cache_enabled(bool(data.world_map_data_cache_enabled))
+	if data.has("world_map_instant_baked_buildings_enabled"):
+		_apply_world_map_instant_baked_buildings_enabled(bool(data.world_map_instant_baked_buildings_enabled))
 	
 	# Restore time/weather once those systems exist
 
@@ -1175,6 +1179,29 @@ func _get_world_map_data_cache_enabled() -> bool:
 	if chunk_manager and "world_map_data_cache_enabled" in chunk_manager:
 		return chunk_manager.world_map_data_cache_enabled
 	return pending_world_map_data_cache_enabled
+
+func set_world_map_instant_baked_buildings_enabled(enabled: bool) -> void:
+	_apply_world_map_instant_baked_buildings_enabled(enabled)
+
+func get_world_map_instant_baked_buildings_enabled() -> bool:
+	return _get_world_map_instant_baked_buildings_enabled()
+
+func _apply_world_map_instant_baked_buildings_enabled(enabled: bool) -> void:
+	pending_world_map_instant_baked_buildings_enabled = enabled
+	if prefab_spawner and "instant_baked_buildings_enabled" in prefab_spawner:
+		prefab_spawner.instant_baked_buildings_enabled = enabled
+		if enabled and "terrain_manager" in prefab_spawner:
+			var spawner_terrain_manager = prefab_spawner.terrain_manager
+			if spawner_terrain_manager and "world_map_active" in spawner_terrain_manager and spawner_terrain_manager.world_map_active:
+				if prefab_spawner.has_method("_ensure_world_map_baked_building_payloads"):
+					prefab_spawner._ensure_world_map_baked_building_payloads()
+				if prefab_spawner.has_method("_apply_existing_world_map_baked_buildings"):
+					prefab_spawner._apply_existing_world_map_baked_buildings()
+
+func _get_world_map_instant_baked_buildings_enabled() -> bool:
+	if prefab_spawner and "instant_baked_buildings_enabled" in prefab_spawner:
+		return bool(prefab_spawner.instant_baked_buildings_enabled)
+	return pending_world_map_instant_baked_buildings_enabled
 
 ## Reset all load-related flags on failure (prevents permanent state corruption)
 func _reset_load_flags():

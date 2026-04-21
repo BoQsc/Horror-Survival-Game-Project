@@ -38,6 +38,10 @@ var _last_flush_dirty_chunks_ms: float = 0.0
 var _last_flush_dirty_chunks_count: int = 0
 var _last_flush_global_visual_batches_ms: float = 0.0
 var _last_flush_global_visual_batches_count: int = 0
+var _last_apply_world_map_baked_building_payload_ms: float = 0.0
+var _last_apply_world_map_baked_building_chunk_count: int = 0
+var _last_apply_world_map_baked_building_object_count: int = 0
+var _last_apply_world_map_baked_building_prebuilt_chunk_count: int = 0
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -219,6 +223,13 @@ func mark_chunk_dirty(chunk_coord: Vector3i, chunk: BuildingChunk) -> void:
 	if not was_dirty and visible_chunks.has(chunk_coord):
 		_dirty_visible_chunk_count += 1
 
+func _clear_chunk_dirty(chunk_coord: Vector3i) -> void:
+	if not _dirty_chunks.has(chunk_coord):
+		return
+	_dirty_chunks.erase(chunk_coord)
+	if visible_chunks.has(chunk_coord):
+		_dirty_visible_chunk_count = maxi(0, _dirty_visible_chunk_count - 1)
+
 func _process_pending_object_collisions() -> void:
 	if _pending_object_collision_tasks.is_empty():
 		return
@@ -378,6 +389,100 @@ func flush_global_visual_batches() -> void:
 		rebuilt += 1
 	_last_flush_global_visual_batches_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	_last_flush_global_visual_batches_count = rebuilt
+
+func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_spawns: Array = [], flush_now: bool = true, force_flush: bool = false) -> void:
+	if chunk_payload.is_empty() and object_spawns.is_empty():
+		return
+
+	var start_time := Time.get_ticks_usec()
+	var applied_chunks := 0
+	var applied_objects := 0
+	var applied_prebuilt_chunks := 0
+	var defer_global_visual_batch_rebuild := world_map_mode
+
+	for chunk_coord_variant in chunk_payload.keys():
+		var chunk_coord: Vector3i = chunk_coord_variant
+		var batch_variant: Variant = chunk_payload.get(chunk_coord, {})
+		if typeof(batch_variant) != TYPE_DICTIONARY:
+			continue
+		var batch: Dictionary = batch_variant
+		if batch.is_empty():
+			continue
+
+		var indices_variant: Variant = batch.get("indices", PackedInt32Array())
+		var types_variant: Variant = batch.get("types", PackedByteArray())
+		var metas_variant: Variant = batch.get("metas", PackedByteArray())
+		var arrays_variant: Variant = batch.get("arrays", [])
+		var mesh_variant: Variant = batch.get("mesh", null)
+		var shape_variant: Variant = batch.get("shape", null)
+		var collision_boxes_variant: Variant = batch.get("collision_boxes", [])
+		var indices: PackedInt32Array = indices_variant
+		var types: PackedByteArray = types_variant
+		var metas: PackedByteArray = metas_variant
+		if indices.is_empty() or types.is_empty() or metas.is_empty():
+			continue
+
+		var chunk := get_chunk(chunk_coord)
+		chunk.apply_voxel_batch_indices(indices, types, metas)
+		var arrays: Array = arrays_variant
+		var mesh: ArrayMesh = mesh_variant
+		var shape: Shape3D = shape_variant
+		var collision_boxes: Array = collision_boxes_variant
+		var applied_direct_mesh := false
+		if mesh != null:
+			chunk.apply_mesh([], shape, mesh, collision_boxes)
+			applied_direct_mesh = true
+		elif not arrays.is_empty():
+			chunk.apply_mesh(arrays, shape, null, collision_boxes)
+			applied_direct_mesh = true
+
+		if applied_direct_mesh:
+			_clear_chunk_dirty(chunk_coord)
+			applied_prebuilt_chunks += 1
+		else:
+			mark_chunk_dirty(chunk_coord, chunk)
+		applied_chunks += 1
+
+	if flush_now and has_dirty_chunks():
+		flush_dirty_chunks(force_flush)
+
+	for spawn_variant in object_spawns:
+		if typeof(spawn_variant) != TYPE_DICTIONARY:
+			continue
+
+		var spawn: Dictionary = spawn_variant
+		var world_pos_variant: Variant = spawn.get("world_pos", Vector3.ZERO)
+		if typeof(world_pos_variant) != TYPE_VECTOR3:
+			continue
+		var world_pos: Vector3 = world_pos_variant
+		var object_id := int(spawn.get("object_id", -1))
+		var object_scene_path := str(spawn.get("object_scene_path", ""))
+		if object_id < 0 and object_scene_path.is_empty():
+			continue
+
+		var success := place_object(
+			world_pos,
+			object_id,
+			int(spawn.get("rotation", 0)),
+			true,
+			true,
+			defer_global_visual_batch_rebuild,
+			spawn.get("precomputed_cells", []),
+			Vector3i(spawn.get("object_size", Vector3i.ZERO)),
+			object_scene_path,
+			bool(spawn.get("has_authored_collision", false)),
+			bool(spawn.get("has_authored_collision_valid", false))
+		)
+		if success:
+			applied_objects += 1
+
+	if defer_global_visual_batch_rebuild and has_dirty_global_visual_batches():
+		flush_global_visual_batches()
+
+	_last_apply_world_map_baked_building_payload_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
+	_last_apply_world_map_baked_building_chunk_count = applied_chunks
+	_last_apply_world_map_baked_building_object_count = applied_objects
+	_last_apply_world_map_baked_building_prebuilt_chunk_count = applied_prebuilt_chunks
 func has_dirty_global_visual_batches() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
 
@@ -517,7 +622,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_flush_dirty_chunks_ms": _last_flush_dirty_chunks_ms,
 		"last_flush_dirty_chunks_count": _last_flush_dirty_chunks_count,
 		"last_flush_global_visual_batches_ms": _last_flush_global_visual_batches_ms,
-		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count
+		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count,
+		"last_apply_world_map_baked_building_payload_ms": _last_apply_world_map_baked_building_payload_ms,
+		"last_apply_world_map_baked_building_chunk_count": _last_apply_world_map_baked_building_chunk_count,
+		"last_apply_world_map_baked_building_object_count": _last_apply_world_map_baked_building_object_count,
+		"last_apply_world_map_baked_building_prebuilt_chunk_count": _last_apply_world_map_baked_building_prebuilt_chunk_count
 	}
 
 ## Get or create a chunk at the given coordinate. Uses pool for recycling.
@@ -631,9 +740,10 @@ func set_voxel_batched(global_pos: Vector3, value: int, meta: int = 0):
 	# Always mark chunk as dirty - rebuild will check visibility
 	mark_chunk_dirty(chunk_coord, chunk)
 
-## Rebuild all chunks that were modified by batched operations
-## Call this once after completing a batch of set_voxel_batched calls
-func flush_dirty_chunks():
+## Rebuild all chunks that were modified by batched operations.
+## Call this once after completing a batch of set_voxel_batched calls.
+## Set force_all=true when a burst must fully settle visible chunks right away.
+func flush_dirty_chunks(force_all: bool = false):
 	if _dirty_chunks.is_empty():
 		return
 
@@ -641,7 +751,9 @@ func flush_dirty_chunks():
 	# Only rebuild a limited number of visible chunks per flush so we do not
 	# turn one town burst into a single giant rebuild spike.
 	var effective_budget := dirty_chunk_flush_budget
-	if world_map_mode:
+	if force_all:
+		effective_budget = maxi(_dirty_chunks.size(), 1)
+	elif world_map_mode:
 		effective_budget = mini(dirty_chunk_flush_budget, 2)
 	var rebuilt = 0
 	var processed = 0
@@ -656,7 +768,7 @@ func flush_dirty_chunks():
 			hidden_coords.append(coord)
 
 	var coord_lists: Array = [visible_coords]
-	if not world_map_mode:
+	if force_all or not world_map_mode:
 		coord_lists.append(hidden_coords)
 
 	for coord_list in coord_lists:
@@ -690,10 +802,9 @@ func has_dirty_visible_chunks() -> bool:
 	return _dirty_visible_chunk_count > 0
 
 func has_pending_building_work() -> bool:
-	# Only gameplay-critical building work should block terrain finalization.
-	# Render-only visual batch rebuilds can lag behind without affecting play.
-	return _dirty_visible_chunk_count > 0 \
-		or not _pending_object_collision_tasks.is_empty()
+	# Only visible building mesh work should block terrain finalization.
+	# Collision cooking can continue in the background without stalling terrain loads.
+	return _dirty_visible_chunk_count > 0
 
 func has_pending_visual_batch_work() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
@@ -759,7 +870,7 @@ func _build_object_cells(anchor: Vector3i, object_id: int, rotation: int, precom
 
 ## Place an object at the given global position (supports fractional Y for terrain surface)
 ## Set is_procedural=true when spawning from prefab system to trigger loot population
-func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false, is_procedural: bool = false, defer_global_visual_batch_rebuild: bool = false, precomputed_cells: Array = [], object_size: Vector3i = Vector3i.ZERO, object_scene_path: String = "", has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> bool:
+func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_collision: bool = false, is_procedural: bool = false, defer_global_visual_batch_rebuild: bool = false, precomputed_cells: Array = [], object_size: Vector3i = Vector3i.ZERO, object_scene_path: String = "", has_authored_collision: bool = false, has_authored_collision_valid: bool = false, force_immediate_collision: bool = false) -> bool:
 	var obj_def: Dictionary = {}
 	var needs_registry_lookup := object_scene_path.is_empty() or object_size == Vector3i.ZERO or not has_authored_collision_valid
 	if needs_registry_lookup:
@@ -827,7 +938,10 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	if is_procedural and scene_instance and scene_instance.has_method("populate_loot"):
 		scene_instance.set_meta("should_populate_loot", true)
 	
-	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos, is_procedural, defer_global_visual_batch_rebuild, object_size, has_authored_collision, has_authored_collision_valid)
+	var defer_collision := is_procedural and not force_immediate_collision
+	if force_immediate_collision and (not chunk.is_inside_tree() or not chunk.static_body):
+		defer_collision = true
+	var success = chunk.place_object(local_anchor, object_id, rotation, local_cells, scene_instance, fractional_pos, defer_collision, defer_global_visual_batch_rebuild, object_size, has_authored_collision, has_authored_collision_valid)
 	return success
 
 ## Remove an object at the given global position
