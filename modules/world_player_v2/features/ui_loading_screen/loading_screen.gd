@@ -13,6 +13,9 @@ signal terrain_ready  # Emitted when terrain meshes are loaded (before vegetatio
 var is_loading: bool = true
 var fade_timer: float = 0.0
 const FADE_DURATION: float = 0.5
+const TOPMOST_CANVAS_LAYER: int = 4096
+const TERRAIN_STAGE_FULL_GRACE_MS: int = 1000
+const TERRAIN_STAGE_MAX_WAIT_MS: int = 15000
 
 var has_emitted_terrain_ready: bool = false  # Track if we've signaled player
 var save_manager_step: String = ""  # Current step from SaveManager
@@ -26,6 +29,8 @@ var current_stage: Stage = Stage.TERRAIN
 func _ready() -> void:
 	# Start visible
 	visible = true
+	layer = maxi(layer, TOPMOST_CANVAS_LAYER)
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	if panel:
 		panel.modulate.a = 1.0
 	
@@ -59,6 +64,8 @@ func _start_loading_sequence() -> void:
 	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	var building_generator = get_tree().root.find_child("BuildingGenerator", true, false)
 	var vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	var terrain_stage_started_ms := Time.get_ticks_msec()
+	var terrain_stage_full_since_ms := -1
 	
 	if not terrain_manager:
 		# No terrain manager, hide after short delay
@@ -99,6 +106,19 @@ func _start_loading_sequence() -> void:
 				if progress > 0 and not has_emitted_terrain_ready:
 					terrain_ready.emit()
 					has_emitted_terrain_ready = true
+
+				var now_ms := Time.get_ticks_msec()
+				if progress >= 99.9:
+					if terrain_stage_full_since_ms < 0:
+						terrain_stage_full_since_ms = now_ms
+					var full_elapsed_ms := now_ms - terrain_stage_full_since_ms
+					var stage_elapsed_ms := now_ms - terrain_stage_started_ms
+					if full_elapsed_ms >= TERRAIN_STAGE_FULL_GRACE_MS or stage_elapsed_ms >= TERRAIN_STAGE_MAX_WAIT_MS:
+						update_progress(100.0, "Terrain finalizing...")
+						current_stage = Stage.PREFABS
+						break
+				else:
+					terrain_stage_full_since_ms = -1
 				
 				var pending = 0
 				if terrain_manager.has_method("get_pending_nodes_count"):

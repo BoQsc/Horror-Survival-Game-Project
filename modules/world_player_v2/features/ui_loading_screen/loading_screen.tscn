@@ -3,7 +3,7 @@
 [ext_resource type="Script" uid="uid://b718hmy6nfd8s" path="res://modules/world_player_v2/features/ui_loading_screen/loading_screen.gd" id="1_script"]
 
 [node name="LoadingScreen" type="CanvasLayer" unique_id=1560120558]
-layer = 100
+layer = 4096
 script = ExtResource("1_script")
 
 [node name="Panel" type="PanelContainer" parent="." unique_id=1660372839]
