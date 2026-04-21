@@ -510,6 +510,17 @@ func apply_mesh(arrays: Array, shape: Shape3D = null, source_mesh: ArrayMesh = n
 
 	mesh_dirty = false
 	return
+
+func clear_baked_render_state() -> void:
+	if mesh_instance:
+		mesh_instance.visible = false
+		mesh_instance.mesh = null
+		mesh_instance.material_override = null
+	if collision_shape:
+		collision_shape.shape = null
+	_clear_static_body_shapes()
+	mesh_dirty = false
+
 func _apply_collision_boxes(collision_boxes: Array) -> void:
 	if not static_body:
 		return

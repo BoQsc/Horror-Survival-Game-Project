@@ -37,8 +37,8 @@ var pending_spawn_jobs: Array[Dictionary] = []
 var pending_spawn_keys: Dictionary = {}
 var rotated_block_batches_cache: Dictionary = {}
 var _world_map_baked_buildings_by_chunk: Dictionary = {}
-var _world_map_baked_chunk_payloads_by_terrain_chunk: Dictionary = {}
-var _world_map_baked_object_spawns_by_terrain_chunk: Dictionary = {}
+var _world_map_baked_building_payloads_by_key: Dictionary = {}
+var _world_map_baked_building_keys_by_terrain_chunk: Dictionary = {}
 var _world_map_baked_buildings_index_signature: String = ""
 var _world_map_baked_buildings_index_count: int = 0
 var _world_map_baked_building_payload_signature: String = ""
@@ -53,6 +53,7 @@ var _world_map_baked_buildings_bootstrapped: bool = false
 var _last_immediate_baked_building_spawn_ms: float = 0.0
 var _last_immediate_baked_building_spawn_count: int = 0
 var _spawned_world_map_baked_terrain_chunks: Dictionary = {}
+var _spawned_world_map_baked_building_keys: Dictionary = {}
 var _last_spawn_job_msec: int = 0
 var _last_spawn_processing_ms: float = 0.0
 var _last_spawn_jobs_processed: int = 0
@@ -193,14 +194,18 @@ func get_telemetry_snapshot() -> Dictionary:
 		"world_map_baked_building_count": _world_map_baked_buildings_index_count,
 		"last_world_map_baked_building_index_ms": _last_world_map_baked_buildings_index_ms,
 		"world_map_baked_building_payload_signature": _world_map_baked_building_payload_signature,
-		"world_map_baked_building_payload_chunk_count": _world_map_baked_chunk_payloads_by_terrain_chunk.size(),
+		"world_map_baked_building_key_count": _world_map_baked_building_payloads_by_key.size(),
+		"world_map_baked_building_trigger_chunk_count": _world_map_baked_building_keys_by_terrain_chunk.size(),
+		"world_map_baked_building_payload_chunk_count": _world_map_baked_building_keys_by_terrain_chunk.size(),
 		"world_map_baked_building_payload_count": _world_map_baked_building_payload_count,
 		"world_map_baked_building_block_count": _world_map_baked_building_block_count,
 		"world_map_baked_building_object_count": _world_map_baked_building_object_count,
 		"world_map_baked_building_prebuilt_chunk_count": _world_map_baked_building_prebuilt_chunk_count,
+		"world_map_baked_building_visual_count": _world_map_baked_building_prebuilt_chunk_count,
 		"last_world_map_baked_building_payload_build_ms": _last_world_map_baked_building_payload_build_ms,
 		"last_world_map_baked_building_prebuild_ms": _last_world_map_baked_building_prebuild_ms,
 		"spawned_world_map_baked_terrain_chunk_count": _spawned_world_map_baked_terrain_chunks.size(),
+		"spawned_world_map_baked_building_count": _spawned_world_map_baked_building_keys.size(),
 		"skip_object_spawns_for_test": skip_object_spawns_for_test,
 		"skip_block_placement_for_test": skip_block_placement_for_test,
 		"skip_chunk_flush_for_test": skip_chunk_flush_for_test,
@@ -245,6 +250,17 @@ func _get_world_map_baked_building_source_signature() -> String:
 
 	return "%s|%s|%d" % [world_definition_path, meta_signature, terrain_manager._world_map_buildings.size()]
 
+func _get_world_map_baked_building_key(building_index: int, bldg: Dictionary, spawn_pos: Vector3, rotation: int) -> String:
+	var prefab_name := str(bldg.get("prefab_name", bldg.get("type", "")))
+	return "%d|%s|%.3f|%.3f|%.3f|%d" % [
+		building_index,
+		prefab_name,
+		spawn_pos.x,
+		spawn_pos.y,
+		spawn_pos.z,
+		rotation
+	]
+
 func _reset_world_map_baked_building_index() -> void:
 	_world_map_baked_buildings_by_chunk.clear()
 	_world_map_baked_buildings_index_signature = ""
@@ -252,8 +268,8 @@ func _reset_world_map_baked_building_index() -> void:
 	_last_world_map_baked_buildings_index_ms = 0.0
 
 func _reset_world_map_baked_building_payloads() -> void:
-	_world_map_baked_chunk_payloads_by_terrain_chunk.clear()
-	_world_map_baked_object_spawns_by_terrain_chunk.clear()
+	_world_map_baked_building_payloads_by_key.clear()
+	_world_map_baked_building_keys_by_terrain_chunk.clear()
 	_world_map_baked_building_payload_signature = ""
 	_world_map_baked_building_payload_count = 0
 	_world_map_baked_building_block_count = 0
@@ -263,6 +279,7 @@ func _reset_world_map_baked_building_payloads() -> void:
 	_last_world_map_baked_building_prebuild_ms = 0.0
 	_world_map_baked_buildings_bootstrapped = false
 	_spawned_world_map_baked_terrain_chunks.clear()
+	_spawned_world_map_baked_building_keys.clear()
 
 func _ensure_world_map_baked_building_index() -> void:
 	if not terrain_manager or not ("_world_map_buildings" in terrain_manager):
@@ -306,14 +323,15 @@ func _ensure_world_map_baked_building_payloads() -> void:
 		return
 
 	_ensure_world_map_baked_building_index()
-	var source_signature := "%s|payload_v1" % _world_map_baked_buildings_index_signature
-	if source_signature == _world_map_baked_building_payload_signature and not _world_map_baked_chunk_payloads_by_terrain_chunk.is_empty():
+	var source_signature := "%s|payload_v3" % _world_map_baked_buildings_index_signature
+	if source_signature == _world_map_baked_building_payload_signature and not _world_map_baked_building_payloads_by_key.is_empty():
 		return
 
 	var build_start_us := Time.get_ticks_usec()
-	_world_map_baked_chunk_payloads_by_terrain_chunk.clear()
-	_world_map_baked_object_spawns_by_terrain_chunk.clear()
+	_world_map_baked_building_payloads_by_key.clear()
+	_world_map_baked_building_keys_by_terrain_chunk.clear()
 	_spawned_world_map_baked_terrain_chunks.clear()
+	_spawned_world_map_baked_building_keys.clear()
 	_world_map_baked_building_payload_signature = source_signature
 	_world_map_baked_building_payload_count = 0
 	_world_map_baked_building_block_count = 0
@@ -327,10 +345,12 @@ func _ensure_world_map_baked_building_payloads() -> void:
 		return
 
 	var mesher: Node = building_manager.mesher if building_manager and "mesher" in building_manager else null
-	var can_prebuild_meshes := mesher and mesher.has_method("build_building_mesh_from_voxels") and mesher.has_method("voxels_need_detailed_collision")
+	var can_build_visuals := mesher and mesher.has_method("build_building_mesh_from_voxels") and mesher.has_method("voxels_need_detailed_collision")
 	var chunk_stride := 31
+	var built_visual_count := 0
 
-	for bldg_variant in terrain_manager._world_map_buildings:
+	for building_index in range(terrain_manager._world_map_buildings.size()):
+		var bldg_variant: Variant = terrain_manager._world_map_buildings[building_index]
 		if typeof(bldg_variant) != TYPE_DICTIONARY:
 			continue
 		var bldg: Dictionary = bldg_variant
@@ -353,10 +373,9 @@ func _ensure_world_map_baked_building_payloads() -> void:
 			0,
 			int(floor(bz / float(chunk_stride)))
 		)
+		var building_key := _get_world_map_baked_building_key(building_index, bldg, spawn_pos, rotation)
 
-		var chunk_payload: Dictionary = _world_map_baked_chunk_payloads_by_terrain_chunk.get(terrain_coord, {})
-		if chunk_payload.is_empty():
-			chunk_payload = {}
+		var chunk_payload: Dictionary = {}
 
 		var prefab_blocks: Array = prefabs.get(prefab_name, [])
 		var chunk_batches: Array = []
@@ -375,49 +394,75 @@ func _ensure_world_map_baked_building_payloads() -> void:
 			_world_map_baked_building_block_count += merged_indices.size()
 
 		var rotated_objects: Array = PrefabGeometry.get_rotated_objects(prefab_name, rotation)
+		var object_spawns: Array = []
 		if not rotated_objects.is_empty():
-			var object_spawns: Array = _world_map_baked_object_spawns_by_terrain_chunk.get(terrain_coord, [])
 			for rotated_object_variant in rotated_objects:
 				if typeof(rotated_object_variant) != TYPE_DICTIONARY:
 					continue
 				object_spawns.append(_build_world_map_baked_object_spawn(spawn_pos, rotated_object_variant))
 			object_spawns.sort_custom(Callable(self, "_sort_world_map_prefab_object_spawn"))
-			_world_map_baked_object_spawns_by_terrain_chunk[terrain_coord] = object_spawns
 			_world_map_baked_building_object_count += rotated_objects.size()
 
-		_world_map_baked_chunk_payloads_by_terrain_chunk[terrain_coord] = chunk_payload
-		_world_map_baked_building_payload_count += 1
-
-	if can_prebuild_meshes:
-		var prebuild_start_us := Time.get_ticks_usec()
-		for terrain_coord_variant in _world_map_baked_chunk_payloads_by_terrain_chunk.keys():
-			var terrain_chunk_payload: Dictionary = _world_map_baked_chunk_payloads_by_terrain_chunk[terrain_coord_variant]
-			for chunk_coord_variant in terrain_chunk_payload.keys():
-				var batch_variant: Variant = terrain_chunk_payload[chunk_coord_variant]
-				if typeof(batch_variant) != TYPE_DICTIONARY:
-					continue
-				var batch: Dictionary = batch_variant
-				var voxel_payload := _build_world_map_baked_voxel_payload(batch)
-				if voxel_payload.is_empty():
-					continue
-				var voxel_bytes: PackedByteArray = voxel_payload.get("voxel_bytes", PackedByteArray())
-				var voxel_meta: PackedByteArray = voxel_payload.get("voxel_meta", PackedByteArray())
-				if voxel_bytes.is_empty() or voxel_meta.is_empty():
-					continue
+		var rotated_blocks_for_visual: Array = _get_rotated_block_batches(prefab_name, rotation)
+		var building_voxel_payload := _build_world_map_baked_building_voxel_payload(rotated_blocks_for_visual, spawn_pos)
+		var visual_payload: Dictionary = {}
+		if not building_voxel_payload.is_empty() and can_build_visuals:
+			var voxel_bytes: PackedByteArray = building_voxel_payload.get("voxel_bytes", PackedByteArray())
+			var voxel_meta: PackedByteArray = building_voxel_payload.get("voxel_meta", PackedByteArray())
+			var voxel_size := int(building_voxel_payload.get("voxel_size", 0))
+			if not voxel_bytes.is_empty() and not voxel_meta.is_empty() and voxel_size > 0:
 				var use_box_collision := true
 				if mesher.has_method("voxels_need_detailed_collision"):
 					use_box_collision = not bool(mesher.voxels_need_detailed_collision(voxel_bytes))
-				var mesh_result: Dictionary = mesher.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, use_box_collision, BUILDING_CHUNK_SIZE)
-				if mesh_result.is_empty():
-					continue
-				batch["mesh"] = mesh_result.get("mesh", null)
-				batch["shape"] = mesh_result.get("shape", null)
-				batch["collision_boxes"] = mesh_result.get("collision_boxes", [])
-				batch["arrays"] = mesh_result.get("arrays", [])
-				terrain_chunk_payload[chunk_coord_variant] = batch
-				_world_map_baked_building_prebuilt_chunk_count += 1
-			_world_map_baked_chunk_payloads_by_terrain_chunk[terrain_coord_variant] = terrain_chunk_payload
-		_last_world_map_baked_building_prebuild_ms = float(Time.get_ticks_usec() - prebuild_start_us) / 1000.0
+				var mesh_result: Dictionary = mesher.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, use_box_collision, voxel_size)
+				if not mesh_result.is_empty():
+					visual_payload = {
+						"building_index": building_index,
+						"voxel_origin": building_voxel_payload.get("voxel_origin", Vector3.ZERO),
+						"voxel_size": voxel_size,
+						"voxel_bytes": voxel_bytes,
+						"voxel_meta": voxel_meta,
+						"mesh": mesh_result.get("mesh", null),
+						"shape": mesh_result.get("shape", null),
+						"collision_boxes": mesh_result.get("collision_boxes", [])
+					}
+					built_visual_count += 1
+
+		if chunk_payload.is_empty() and object_spawns.is_empty() and visual_payload.is_empty():
+			continue
+
+		var trigger_terrain_coords: Array = []
+		if not building_voxel_payload.is_empty():
+			trigger_terrain_coords = _get_world_map_baked_building_trigger_coords(
+				building_voxel_payload.get("min_coord", Vector3i.ZERO),
+				building_voxel_payload.get("max_coord", Vector3i.ZERO),
+				chunk_stride
+			)
+		if trigger_terrain_coords.is_empty():
+			trigger_terrain_coords = [terrain_coord]
+
+		for trigger_coord_variant in trigger_terrain_coords:
+			if typeof(trigger_coord_variant) != TYPE_VECTOR3I:
+				continue
+			var trigger_coord: Vector3i = trigger_coord_variant
+			var trigger_building_keys: Array = _world_map_baked_building_keys_by_terrain_chunk.get(trigger_coord, [])
+			if not trigger_building_keys.has(building_key):
+				trigger_building_keys.append(building_key)
+			_world_map_baked_building_keys_by_terrain_chunk[trigger_coord] = trigger_building_keys
+
+		_world_map_baked_building_payloads_by_key[building_key] = {
+			"building_index": building_index,
+			"prefab_name": prefab_name,
+			"terrain_coord": terrain_coord,
+			"trigger_terrain_coords": trigger_terrain_coords,
+			"chunk_payload": chunk_payload,
+			"object_spawns": object_spawns,
+			"visual_payload": visual_payload
+		}
+		_world_map_baked_building_payload_count += 1
+
+	_last_world_map_baked_building_prebuild_ms = float(Time.get_ticks_usec() - build_start_us) / 1000.0
+	_world_map_baked_building_prebuilt_chunk_count = built_visual_count
 
 	_last_world_map_baked_building_payload_build_ms = float(Time.get_ticks_usec() - build_start_us) / 1000.0
 
@@ -425,7 +470,7 @@ func _apply_existing_world_map_baked_buildings() -> void:
 	if not terrain_manager or not building_manager:
 		return
 	_ensure_world_map_baked_building_payloads()
-	if _world_map_baked_chunk_payloads_by_terrain_chunk.is_empty() and _world_map_baked_object_spawns_by_terrain_chunk.is_empty():
+	if _world_map_baked_buildings_by_chunk.is_empty() and _world_map_baked_building_payloads_by_key.is_empty():
 		return
 
 	for coord_variant in terrain_manager.active_chunks:
@@ -436,6 +481,24 @@ func _apply_existing_world_map_baked_buildings() -> void:
 			continue
 		_apply_world_map_baked_buildings(coord_variant)
 	_world_map_baked_buildings_bootstrapped = true
+
+func _apply_world_map_baked_building_payload_for_key(building_key: String) -> bool:
+	if building_key.is_empty() or _spawned_world_map_baked_building_keys.has(building_key):
+		return false
+
+	var payload_variant: Variant = _world_map_baked_building_payloads_by_key.get(building_key, {})
+	if typeof(payload_variant) != TYPE_DICTIONARY:
+		return false
+	var payload: Dictionary = payload_variant
+	if payload.is_empty():
+		return false
+
+	var chunk_payload: Dictionary = payload.get("chunk_payload", {})
+	var object_spawns: Array = payload.get("object_spawns", [])
+	var visual_payload: Dictionary = payload.get("visual_payload", {})
+	building_manager.apply_world_map_baked_building_payload(chunk_payload, object_spawns, true, true, visual_payload, building_key)
+	_spawned_world_map_baked_building_keys[building_key] = true
+	return true
 
 func _apply_world_map_baked_buildings(terrain_coord: Vector3i) -> void:
 	if not building_manager:
@@ -459,9 +522,16 @@ func _apply_world_map_baked_buildings(terrain_coord: Vector3i) -> void:
 			if not live_job.is_empty():
 				_queue_spawn_job(str(live_job.get("spawn_key", "")), live_job)
 
-	var chunk_payload: Dictionary = _world_map_baked_chunk_payloads_by_terrain_chunk.get(terrain_coord, {})
-	var object_spawns: Array = _world_map_baked_object_spawns_by_terrain_chunk.get(terrain_coord, [])
-	if chunk_payload.is_empty() and has_baked_candidates:
+	var building_keys: Array = _world_map_baked_building_keys_by_terrain_chunk.get(terrain_coord, [])
+	var applied_baked_buildings := 0
+	for building_key_variant in building_keys:
+		var building_key := str(building_key_variant)
+		if building_key.is_empty():
+			continue
+		if _apply_world_map_baked_building_payload_for_key(building_key):
+			applied_baked_buildings += 1
+
+	if applied_baked_buildings == 0 and has_baked_candidates and building_keys.is_empty():
 		for bldg_variant in chunk_buildings:
 			if typeof(bldg_variant) != TYPE_DICTIONARY:
 				continue
@@ -471,25 +541,11 @@ func _apply_world_map_baked_buildings(terrain_coord: Vector3i) -> void:
 			var live_job := _build_world_map_live_spawn_job(bldg)
 			if not live_job.is_empty():
 				_queue_spawn_job(str(live_job.get("spawn_key", "")), live_job)
-		if not object_spawns.is_empty():
-			building_manager.apply_world_map_baked_building_payload({}, object_spawns, false, false)
+
+	if applied_baked_buildings == 0 and not has_unbaked_candidates and chunk_buildings.is_empty():
 		_spawned_world_map_baked_terrain_chunks[terrain_coord] = true
 		return
 
-	if chunk_payload.is_empty() and object_spawns.is_empty() and not has_unbaked_candidates:
-		_spawned_world_map_baked_terrain_chunks[terrain_coord] = true
-		return
-
-	if not chunk_payload.is_empty() or not object_spawns.is_empty():
-		var needs_flush := false
-		for batch_variant in chunk_payload.values():
-			if typeof(batch_variant) != TYPE_DICTIONARY:
-				continue
-			var batch: Dictionary = batch_variant
-			if batch.get("mesh", null) == null and (batch.get("arrays", []) as Array).is_empty():
-				needs_flush = true
-				break
-		building_manager.apply_world_map_baked_building_payload(chunk_payload, object_spawns, needs_flush, needs_flush)
 	_spawned_world_map_baked_terrain_chunks[terrain_coord] = true
 
 func _resolve_world_map_baked_spawn_pos(prefab_name: String, bldg: Dictionary, rotation: int) -> Vector3:
@@ -550,6 +606,98 @@ func _build_world_map_baked_object_spawn(spawn_pos: Vector3, rotated_object: Dic
 		"object_name": str(rotated_object.get("object_name", object_scene_path)),
 		"scene": object_scene_path
 	}
+
+func _build_world_map_baked_building_voxel_payload(rotated_blocks: Array, spawn_pos: Vector3) -> Dictionary:
+	if rotated_blocks.is_empty():
+		return {}
+
+	var block_positions: Array = []
+	block_positions.resize(rotated_blocks.size())
+	var min_x := 2147483647
+	var min_y := 2147483647
+	var min_z := 2147483647
+	var max_x := -2147483648
+	var max_y := -2147483648
+	var max_z := -2147483648
+	var valid_blocks := 0
+
+	for block_index in range(rotated_blocks.size()):
+		var block_variant: Variant = rotated_blocks[block_index]
+		if typeof(block_variant) != TYPE_DICTIONARY:
+			continue
+		var block: Dictionary = block_variant
+		var rotated_offset: Vector3i = block.get("offset", Vector3i.ZERO)
+		var block_global_pos := spawn_pos + Vector3(rotated_offset)
+		var gx := int(floor(block_global_pos.x))
+		var gy := int(floor(block_global_pos.y))
+		var gz := int(floor(block_global_pos.z))
+		var block_pos := Vector3i(gx, gy, gz)
+		block_positions[block_index] = block_pos
+		min_x = mini(min_x, gx)
+		min_y = mini(min_y, gy)
+		min_z = mini(min_z, gz)
+		max_x = maxi(max_x, gx)
+		max_y = maxi(max_y, gy)
+		max_z = maxi(max_z, gz)
+		valid_blocks += 1
+
+	if valid_blocks <= 0:
+		return {}
+
+	var edge_size := maxi(maxi(max_x - min_x + 1, max_y - min_y + 1), max_z - min_z + 1)
+	if edge_size <= 0:
+		return {}
+
+	var voxel_count := edge_size * edge_size * edge_size
+	var voxel_bytes := PackedByteArray()
+	voxel_bytes.resize(voxel_count)
+	voxel_bytes.fill(0)
+	var voxel_meta := PackedByteArray()
+	voxel_meta.resize(voxel_count)
+	voxel_meta.fill(0)
+
+	for block_index in range(rotated_blocks.size()):
+		var block_variant: Variant = rotated_blocks[block_index]
+		if typeof(block_variant) != TYPE_DICTIONARY:
+			continue
+		var block: Dictionary = block_variant
+		var block_pos_variant: Variant = block_positions[block_index]
+		if typeof(block_pos_variant) != TYPE_VECTOR3I:
+			continue
+		var block_pos: Vector3i = block_pos_variant
+		var local_x := block_pos.x - min_x
+		var local_y := block_pos.y - min_y
+		var local_z := block_pos.z - min_z
+		if local_x < 0 or local_y < 0 or local_z < 0 or local_x >= edge_size or local_y >= edge_size or local_z >= edge_size:
+			continue
+		var local_index := local_x + local_y * edge_size + local_z * edge_size * edge_size
+		voxel_bytes.encode_u8(local_index, int(block.get("type", 0)))
+		voxel_meta.encode_u8(local_index, int(block.get("meta", 0)))
+
+	return {
+		"voxel_bytes": voxel_bytes,
+		"voxel_meta": voxel_meta,
+		"voxel_origin": Vector3(float(min_x), float(min_y), float(min_z)),
+		"voxel_size": edge_size,
+		"min_coord": Vector3i(min_x, min_y, min_z),
+		"max_coord": Vector3i(max_x, max_y, max_z)
+	}
+
+func _get_world_map_baked_building_trigger_coords(min_coord: Vector3i, max_coord: Vector3i, chunk_stride: int = 31) -> Array:
+	var trigger_coords: Array = []
+	if chunk_stride <= 0 or min_coord.x > max_coord.x or min_coord.z > max_coord.z:
+		return trigger_coords
+
+	var min_chunk_x := int(floor(float(min_coord.x) / float(chunk_stride)))
+	var max_chunk_x := int(floor(float(max_coord.x) / float(chunk_stride)))
+	var min_chunk_z := int(floor(float(min_coord.z) / float(chunk_stride)))
+	var max_chunk_z := int(floor(float(max_coord.z) / float(chunk_stride)))
+
+	for chunk_x in range(min_chunk_x, max_chunk_x + 1):
+		for chunk_z in range(min_chunk_z, max_chunk_z + 1):
+			trigger_coords.append(Vector3i(chunk_x, 0, chunk_z))
+
+	return trigger_coords
 
 func _build_world_map_baked_voxel_payload(batch: Dictionary) -> Dictionary:
 	var indices: PackedInt32Array = batch.get("indices", PackedInt32Array())
@@ -821,10 +969,6 @@ func _spawn_baked_buildings(coord: Vector3i):
 
 	_ensure_world_map_baked_building_index()
 	var chunk_buildings: Array = _world_map_baked_buildings_by_chunk.get(coord, [])
-	if chunk_buildings.is_empty():
-		if instant_baked_buildings_enabled:
-			_spawned_world_map_baked_terrain_chunks[coord] = true
-		return
 
 	if building_manager and not building_manager.world_map_mode:
 		building_manager.world_map_mode = true
@@ -838,6 +982,9 @@ func _spawn_baked_buildings(coord: Vector3i):
 	if instant_baked_buildings_enabled:
 		_ensure_world_map_baked_building_payloads()
 		_apply_world_map_baked_buildings(coord)
+		return
+
+	if chunk_buildings.is_empty():
 		return
 
 	for bldg_variant in chunk_buildings:

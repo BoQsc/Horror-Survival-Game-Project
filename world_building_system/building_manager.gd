@@ -1,4 +1,5 @@
 extends Node3D
+const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
 
 # Maps Vector3i (Chunk Coord) -> BuildingChunk (data always persisted)
 var chunks: Dictionary = {}
@@ -30,6 +31,7 @@ var _global_visual_batch_instances: Dictionary = {} # Vector3i anchor -> { objec
 var _global_visual_batch_entries: Dictionary = {} # int object_id -> Array[{ anchor, transform }]
 var _global_visual_batch_nodes: Dictionary = {} # int object_id -> MultiMeshInstance3D
 var _dirty_global_visual_batch_object_ids: Dictionary = {} # int object_id -> true
+var _world_map_baked_building_visual_nodes: Dictionary = {} # String building_key -> Node3D
 
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
@@ -39,6 +41,8 @@ var _last_flush_dirty_chunks_count: int = 0
 var _last_flush_global_visual_batches_ms: float = 0.0
 var _last_flush_global_visual_batches_count: int = 0
 var _last_apply_world_map_baked_building_payload_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_count: int = 0
 var _last_apply_world_map_baked_building_chunk_count: int = 0
 var _last_apply_world_map_baked_building_object_count: int = 0
 var _last_apply_world_map_baked_building_prebuilt_chunk_count: int = 0
@@ -328,10 +332,22 @@ func clear_global_visual_batches() -> void:
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 
+func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
+	for node in _world_map_baked_building_visual_nodes.values():
+		if node and is_instance_valid(node):
+			if immediate:
+				node.free()
+			else:
+				node.queue_free()
+	_world_map_baked_building_visual_nodes.clear()
+	_last_apply_world_map_baked_building_visual_ms = 0.0
+	_last_apply_world_map_baked_building_visual_count = 0
+
 
 func clear_for_shutdown() -> void:
 	clear_pending_object_collision_tasks()
 	clear_global_visual_batches()
+	clear_world_map_baked_building_visuals()
 	for chunk in chunk_pool:
 		if chunk and is_instance_valid(chunk):
 			chunk.queue_free()
@@ -347,6 +363,7 @@ func clear_immediate_for_shutdown() -> void:
 	for node in _global_visual_batch_nodes.values():
 		if node and is_instance_valid(node):
 			node.free()
+	clear_world_map_baked_building_visuals(true)
 	for chunk in chunk_pool:
 		if chunk and is_instance_valid(chunk):
 			chunk.free()
@@ -390,7 +407,7 @@ func flush_global_visual_batches() -> void:
 	_last_flush_global_visual_batches_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	_last_flush_global_visual_batches_count = rebuilt
 
-func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_spawns: Array = [], flush_now: bool = true, force_flush: bool = false) -> void:
+func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_spawns: Array = [], flush_now: bool = true, force_flush: bool = false, building_visual_payload: Dictionary = {}, building_key: String = "") -> void:
 	if chunk_payload.is_empty() and object_spawns.is_empty():
 		return
 
@@ -398,7 +415,15 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 	var applied_chunks := 0
 	var applied_objects := 0
 	var applied_prebuilt_chunks := 0
+	var applied_building_visual := false
+	var visual_start_us := 0
 	var defer_global_visual_batch_rebuild := world_map_mode
+
+	if world_map_mode and not building_visual_payload.is_empty():
+		visual_start_us = Time.get_ticks_usec()
+		applied_building_visual = _apply_world_map_baked_building_visual(building_key, building_visual_payload)
+		if applied_building_visual:
+			applied_prebuilt_chunks = 1
 
 	for chunk_coord_variant in chunk_payload.keys():
 		var chunk_coord: Vector3i = chunk_coord_variant
@@ -424,23 +449,27 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 
 		var chunk := get_chunk(chunk_coord)
 		chunk.apply_voxel_batch_indices(indices, types, metas)
-		var arrays: Array = arrays_variant
-		var mesh: ArrayMesh = mesh_variant
-		var shape: Shape3D = shape_variant
-		var collision_boxes: Array = collision_boxes_variant
-		var applied_direct_mesh := false
-		if mesh != null:
-			chunk.apply_mesh([], shape, mesh, collision_boxes)
-			applied_direct_mesh = true
-		elif not arrays.is_empty():
-			chunk.apply_mesh(arrays, shape, null, collision_boxes)
-			applied_direct_mesh = true
-
-		if applied_direct_mesh:
+		if applied_building_visual:
+			chunk.clear_baked_render_state()
 			_clear_chunk_dirty(chunk_coord)
-			applied_prebuilt_chunks += 1
 		else:
-			mark_chunk_dirty(chunk_coord, chunk)
+			var arrays: Array = arrays_variant
+			var mesh: ArrayMesh = mesh_variant
+			var shape: Shape3D = shape_variant
+			var collision_boxes: Array = collision_boxes_variant
+			var applied_direct_mesh := false
+			if mesh != null:
+				chunk.apply_mesh([], shape, mesh, collision_boxes)
+				applied_direct_mesh = true
+			elif not arrays.is_empty():
+				chunk.apply_mesh(arrays, shape, null, collision_boxes)
+				applied_direct_mesh = true
+
+			if applied_direct_mesh:
+				_clear_chunk_dirty(chunk_coord)
+				applied_prebuilt_chunks += 1
+			else:
+				mark_chunk_dirty(chunk_coord, chunk)
 		applied_chunks += 1
 
 	if flush_now and has_dirty_chunks():
@@ -479,10 +508,91 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 	if defer_global_visual_batch_rebuild and has_dirty_global_visual_batches():
 		flush_global_visual_batches()
 
+	if applied_building_visual:
+		_last_apply_world_map_baked_building_visual_ms = float(Time.get_ticks_usec() - visual_start_us) / 1000.0
+		_last_apply_world_map_baked_building_visual_count = 1
+	else:
+		_last_apply_world_map_baked_building_visual_ms = 0.0
+		_last_apply_world_map_baked_building_visual_count = 0
+
 	_last_apply_world_map_baked_building_payload_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	_last_apply_world_map_baked_building_chunk_count = applied_chunks
 	_last_apply_world_map_baked_building_object_count = applied_objects
 	_last_apply_world_map_baked_building_prebuilt_chunk_count = applied_prebuilt_chunks
+
+func _apply_world_map_baked_building_visual(building_key: String, visual_payload: Dictionary) -> bool:
+	if building_key.is_empty() or visual_payload.is_empty():
+		return false
+
+	var mesh_variant: Variant = visual_payload.get("mesh", null)
+	if mesh_variant == null or not (mesh_variant is ArrayMesh):
+		return false
+	var mesh: ArrayMesh = mesh_variant
+
+	var voxel_bytes: PackedByteArray = visual_payload.get("voxel_bytes", PackedByteArray())
+	if voxel_bytes.is_empty():
+		return false
+
+	var voxel_origin_variant: Variant = visual_payload.get("voxel_origin", Vector3.ZERO)
+	var voxel_origin: Vector3 = voxel_origin_variant if typeof(voxel_origin_variant) == TYPE_VECTOR3 else Vector3.ZERO
+	var building_index := int(visual_payload.get("building_index", -1))
+
+	var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
+	if root == null or not is_instance_valid(root):
+		root = Node3D.new()
+		root.name = "BakedBuilding_%d" % maxi(building_index, 0)
+		root.add_to_group("building_chunks")
+		root.set_meta("building_key", building_key)
+		add_child(root)
+		_world_map_baked_building_visual_nodes[building_key] = root
+
+	root.global_position = voxel_origin
+
+	var mesh_instance := root.get_node_or_null("Mesh") as MeshInstance3D
+	if not mesh_instance:
+		mesh_instance = MeshInstance3D.new()
+		mesh_instance.name = "Mesh"
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		root.add_child(mesh_instance)
+
+	BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes)
+	mesh_instance.mesh = mesh
+	mesh_instance.visible = true
+	if BuildingVisuals.use_legacy_building_shader_override_for_test():
+		BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes)
+	else:
+		mesh_instance.material_override = null
+		var surface_count := mesh.get_surface_count()
+		for surface_index in range(surface_count):
+			mesh_instance.set_surface_override_material(surface_index, null)
+
+	var static_body := root.get_node_or_null("StaticBody") as StaticBody3D
+	if not static_body:
+		static_body = StaticBody3D.new()
+		static_body.name = "StaticBody"
+		static_body.add_to_group("building_chunks")
+		static_body.collision_layer = 1 + 512
+		root.add_child(static_body)
+
+	for child in static_body.get_children():
+		if child:
+			child.free()
+
+	var collision_boxes: Array = visual_payload.get("collision_boxes", [])
+	var shape_variant: Variant = visual_payload.get("shape", null)
+	var shape: Shape3D = shape_variant if shape_variant is Shape3D else null
+	if collision_boxes.size() > 0 and mesher and mesher.has_method("apply_world_map_collision_boxes"):
+		if not mesher.apply_world_map_collision_boxes(static_body.get_rid(), collision_boxes) and shape != null:
+			var collision := CollisionShape3D.new()
+			collision.shape = shape
+			static_body.add_child(collision)
+	elif shape != null:
+		var collision := CollisionShape3D.new()
+		collision.shape = shape
+		static_body.add_child(collision)
+
+	return true
+
 func has_dirty_global_visual_batches() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
 
@@ -624,9 +734,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_flush_global_visual_batches_ms": _last_flush_global_visual_batches_ms,
 		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count,
 		"last_apply_world_map_baked_building_payload_ms": _last_apply_world_map_baked_building_payload_ms,
+		"last_apply_world_map_baked_building_visual_ms": _last_apply_world_map_baked_building_visual_ms,
+		"last_apply_world_map_baked_building_visual_count": _last_apply_world_map_baked_building_visual_count,
 		"last_apply_world_map_baked_building_chunk_count": _last_apply_world_map_baked_building_chunk_count,
 		"last_apply_world_map_baked_building_object_count": _last_apply_world_map_baked_building_object_count,
-		"last_apply_world_map_baked_building_prebuilt_chunk_count": _last_apply_world_map_baked_building_prebuilt_chunk_count
+		"last_apply_world_map_baked_building_prebuilt_chunk_count": _last_apply_world_map_baked_building_prebuilt_chunk_count,
+		"total_world_map_baked_building_visual_nodes": _world_map_baked_building_visual_nodes.size()
 	}
 
 ## Get or create a chunk at the given coordinate. Uses pool for recycling.
