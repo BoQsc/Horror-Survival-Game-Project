@@ -10,6 +10,7 @@ set TOWN_STALL_HOLD_SECONDS=9999
 
 :: --- Warmup Logic ---
 set TOWN_STALL_MACHINE_WARMUP_DISABLED=1
+set TOWN_STALL_RENDER_DISTANCE=10
 
 
 :: --- Execution ---
