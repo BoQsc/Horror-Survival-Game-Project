@@ -2180,7 +2180,7 @@ func _thread_function():
 	# Create a tiny buffer ring for meshing (9 floats per vertex: pos + normal + color)
 	# This lets a couple of chunks overlap without reusing the same GPU storage buffers
 	# before readback has completed.
-	const MAX_IN_FLIGHT = 1 # Safe baseline while detection is improved
+	const MAX_IN_FLIGHT = 2 # Conservative batch size: overlaps generation without large buffer growth.
 	var output_bytes_size = MAX_TRIANGLES * 3 * 9 * 4
 	var buffer_slots: Array[Dictionary] = []
 	for _slot in range(MAX_IN_FLIGHT):
@@ -2213,13 +2213,7 @@ func _thread_function():
 		if task.is_empty():
 			var should_exit = exit_thread
 			# Only complete in-flight when no tasks pending
-			if in_flight.size() > 0:
-				rd.sync()
-				for flight_data in in_flight:
-					var slot_index := int(flight_data.get("buffer_slot", 0))
-					var slot: Dictionary = buffer_slots[slot_index]
-					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
-				in_flight.clear()
+			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
 			if should_exit:
 				break
 			continue
@@ -2227,52 +2221,34 @@ func _thread_function():
 		# 2. Handle task types
 		if task.type == "modify":
 			# HIGHEST PRIORITY: Process modifications immediately, sync all pending work first
-			if in_flight.size() > 0:
-				rd.sync()
-				for fd in in_flight:
-					var slot_index := int(fd.get("buffer_slot", 0))
-					var slot: Dictionary = buffer_slots[slot_index]
-					_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
-				in_flight.clear()
+			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"], modify_mesh_builder)
 		elif task.type == "generate":
-			# Complete any in-flight before starting new generation
-			if in_flight.size() > 0:
-				rd.sync()
-				for flight_data in in_flight:
-					var slot_index := int(flight_data.get("buffer_slot", 0))
-					var slot: Dictionary = buffer_slots[slot_index]
-					_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
-				in_flight.clear()
+			var task_has_stored_mods := _get_modifications_for_chunk(task.coord).size() > 0
+			if task_has_stored_mods and not in_flight.is_empty():
+				_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
+				_delay_after_generation_batch()
 
-			# Dispatch all GPU work, NO sync - will be completed next iteration
+			if in_flight.size() >= MAX_IN_FLIGHT:
+				_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
+				_delay_after_generation_batch()
+
+			# Queue generation work without syncing. If more generate tasks are already
+			# queued, the next loop can fill another buffer slot before one batch submit.
 			var flight_data = _dispatch_chunk_generation(rd, task, sid_gen, sid_gen_water, sid_mod, pipe_gen, pipe_gen_water, pipe_mod)
 			if flight_data:
 				flight_data["buffer_slot"] = in_flight.size()
 				in_flight.append(flight_data)
-				rd.submit() # Submit but don't sync - let GPU work while we process more
 
-				# If at max in-flight, immediately complete to avoid GPU buildup
-				if in_flight.size() >= MAX_IN_FLIGHT:
-					rd.sync()
-					for fd in in_flight:
-						var slot_index := int(fd.get("buffer_slot", 0))
-						var slot: Dictionary = buffer_slots[slot_index]
-						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
-					in_flight.clear()
-
-					# Two-phase loading: fast initial load, then throttled exploration.
-					# Initial progress is counted in complete_generation(), after CPU mesh work
-					# has produced the pending visual nodes.
-					if initial_load_phase:
-						# During initial load: minimal or no delay for fast loading
-						if initial_load_delay_ms > 0:
-							_interruptible_delay(initial_load_delay_ms)
-					else:
-						# Exploration phase: longer delay to prevent stutters
-						# Use interruptible delay so modifications can break through
-						_interruptible_delay(exploration_delay_ms)
+				# Flush when the slot ring is full, or immediately when the queue drained.
+				# The queue-drained case prevents a lone chunk from sitting in-flight until
+				# some unrelated future semaphore post wakes the thread.
+				if in_flight.size() >= MAX_IN_FLIGHT or not _has_pending_gpu_tasks():
+					_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
+					_delay_after_generation_batch()
 		elif task.type == "free":
+			# Keep resource frees ordered after any pending GPU work.
+			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
 			if task.rid.is_valid():
 				rd.free_rid(task.rid)
 
@@ -2299,6 +2275,39 @@ func _thread_function():
 	_free_world_map_excavation_buffers(rd)
 
 	rd.free()
+
+
+func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pipe_mesh, buffer_slots: Array) -> void:
+	if in_flight.is_empty():
+		return
+
+	var needs_submit := false
+	for flight_data in in_flight:
+		if bool(flight_data.get("needs_submit", true)):
+			needs_submit = true
+			break
+
+	if needs_submit:
+		rd.submit()
+	rd.sync()
+	for flight_data in in_flight:
+		var slot_index := int(flight_data.get("buffer_slot", 0))
+		if slot_index < 0 or slot_index >= buffer_slots.size():
+			slot_index = 0
+		var slot: Dictionary = buffer_slots[slot_index]
+		_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
+	in_flight.clear()
+
+
+func _delay_after_generation_batch() -> void:
+	# Two-phase loading: fast initial load, then throttled exploration.
+	# Initial progress is counted in complete_generation(), after CPU mesh work
+	# has produced the pending visual nodes.
+	if initial_load_phase:
+		if initial_load_delay_ms > 0:
+			_interruptible_delay(initial_load_delay_ms)
+	else:
+		_interruptible_delay(exploration_delay_ms)
 
 # Dispatch generation work WITHOUT syncing - returns in-flight data for later readback
 func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod, pipe_gen, pipe_gen_water, pipe_mod) -> Dictionary:
@@ -2391,7 +2400,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"chunk_pos": chunk_pos,
 		"dens_buf_terrain": dens_buf_terrain,
 		"dens_buf_water": dens_buf_water,
-		"mat_buf_terrain": mat_buf_terrain
+		"mat_buf_terrain": mat_buf_terrain,
+		"needs_submit": mods_for_chunk.is_empty()
 	}
 
 # Complete readback and queue to CPU workers (called after density sync)
