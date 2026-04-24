@@ -36,6 +36,7 @@ var _world_map_baked_building_visual_payloads_by_key: Dictionary = {} # String b
 var _world_map_baked_building_keys_by_chunk: Dictionary = {} # Vector3i chunk_coord -> Array[String]
 var _world_map_baked_building_chunk_coords_by_key: Dictionary = {} # String building_key -> Array[Vector3i]
 var _world_map_baked_building_edits_by_key: Dictionary = {} # String building_key -> Dictionary[voxel_key] = { value, meta }
+var _last_global_visual_batch_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
@@ -113,12 +114,7 @@ func _ready():
 
 func _process(_delta):
 	if viewer:
-		var p_pos = get_viewer_position()
-		var center_chunk = Vector3i(
-			floor(p_pos.x / CHUNK_SIZE),
-			floor(p_pos.y / CHUNK_SIZE),
-			floor(p_pos.z / CHUNK_SIZE)
-		)
+		var center_chunk := _get_current_building_center_chunk()
 		if center_chunk != _last_building_viewer_chunk:
 			_last_building_viewer_chunk = center_chunk
 			update_building_chunks(center_chunk)
@@ -136,6 +132,14 @@ func get_viewer_position() -> Vector3:
 	
 	return viewer.global_position
 
+func _get_current_building_center_chunk() -> Vector3i:
+	var p_pos = get_viewer_position()
+	return Vector3i(
+		floor(p_pos.x / CHUNK_SIZE),
+		floor(p_pos.y / CHUNK_SIZE),
+		floor(p_pos.z / CHUNK_SIZE)
+	)
+
 func _get_vehicle_manager() -> Node:
 	if _cached_vehicle_manager and is_instance_valid(_cached_vehicle_manager):
 		return _cached_vehicle_manager
@@ -145,12 +149,7 @@ func _get_vehicle_manager() -> Node:
 
 func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)):
 	if center_chunk.x == 2147483647:
-		var p_pos = get_viewer_position()
-		center_chunk = Vector3i(
-			floor(p_pos.x / CHUNK_SIZE),
-			floor(p_pos.y / CHUNK_SIZE),
-			floor(p_pos.z / CHUNK_SIZE)
-		)
+		center_chunk = _get_current_building_center_chunk()
 	var render_distance_sq := render_distance * render_distance
 	
 	# 1. Unload chunks that are too far (remove from scene tree, keep data)
@@ -177,6 +176,9 @@ func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 214748
 		var dist_sq = dx * dx + dy * dy + dz * dz
 		if dist_sq <= render_distance_sq:
 			_load_chunk_visual(coord)
+
+	_update_world_map_baked_building_visual_visibility(center_chunk)
+	_update_global_visual_batch_visibility(center_chunk)
 
 func _unload_chunk_visual(coord: Vector3i):
 	if not chunks.has(coord):
@@ -271,6 +273,7 @@ func clear_pending_object_collision_tasks() -> void:
 func register_global_visual_batch(anchor: Vector3i, object_id: int, transform: Transform3D, mesh: Mesh, defer_rebuild: bool = false) -> bool:
 	if skip_building_visual_batches_for_test or object_id < 0 or not mesh:
 		return false
+	_ensure_global_visual_batch_center_chunk()
 
 	_global_visual_batch_instances[anchor] = {
 		"object_id": object_id,
@@ -286,7 +289,7 @@ func register_global_visual_batch(anchor: Vector3i, object_id: int, transform: T
 	_global_visual_batch_entries[object_id] = entries
 	var batch_node: MultiMeshInstance3D = _global_visual_batch_nodes.get(object_id, null)
 	var can_append := batch_node and is_instance_valid(batch_node) and not _dirty_global_visual_batch_object_ids.has(object_id)
-	if can_append:
+	if can_append and _is_global_visual_batch_anchor_in_range(anchor, _last_global_visual_batch_center_chunk, 2):
 		_append_global_visual_batch_instance(object_id, transform, mesh)
 	elif defer_rebuild:
 		_dirty_global_visual_batch_object_ids[object_id] = true
@@ -335,11 +338,90 @@ func clear_global_visual_batches() -> void:
 	_global_visual_batch_entries.clear()
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
+	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
+
+func _is_global_visual_batch_center_valid() -> bool:
+	return _last_global_visual_batch_center_chunk.x != 2147483647
+
+
+func _ensure_global_visual_batch_center_chunk() -> void:
+	if _is_global_visual_batch_center_valid() or not viewer:
+		return
+	_last_global_visual_batch_center_chunk = _get_current_building_center_chunk()
+
+
+func _get_global_visual_batch_anchor_chunk(anchor: Vector3i) -> Vector3i:
+	return Vector3i(
+		floor(float(anchor.x) / float(CHUNK_SIZE)),
+		floor(float(anchor.y) / float(CHUNK_SIZE)),
+		floor(float(anchor.z) / float(CHUNK_SIZE))
+	)
+
+
+func _is_global_visual_batch_anchor_in_range(anchor: Vector3i, center_chunk: Vector3i, extra_distance: int = 0) -> bool:
+	if center_chunk.x == 2147483647:
+		return true
+
+	var anchor_chunk := _get_global_visual_batch_anchor_chunk(anchor)
+	var max_dist := render_distance + extra_distance
+	var max_dist_sq := max_dist * max_dist
+	var dx := anchor_chunk.x - center_chunk.x
+	var dy := anchor_chunk.y - center_chunk.y
+	var dz := anchor_chunk.z - center_chunk.z
+	return dx * dx + dy * dy + dz * dz <= max_dist_sq
+
+
+func _get_visible_global_visual_batch_entries(entries: Array) -> Array:
+	if not _is_global_visual_batch_center_valid():
+		return entries.duplicate()
+
+	var visible_entries: Array = []
+	for entry_variant in entries:
+		if typeof(entry_variant) != TYPE_DICTIONARY:
+			continue
+		var entry: Dictionary = entry_variant
+		var anchor: Vector3i = entry.get("anchor", Vector3i.ZERO)
+		if _is_global_visual_batch_anchor_in_range(anchor, _last_global_visual_batch_center_chunk, 2):
+			visible_entries.append(entry)
+	return visible_entries
+
+
+func _update_global_visual_batch_visibility(center_chunk: Vector3i) -> void:
+	if center_chunk == _last_global_visual_batch_center_chunk:
+		return
+
+	_last_global_visual_batch_center_chunk = center_chunk
+	if _global_visual_batch_entries.is_empty():
+		return
+
+	for object_id_variant in _global_visual_batch_entries.keys():
+		_dirty_global_visual_batch_object_ids[int(object_id_variant)] = true
+	flush_global_visual_batches()
+
+
+func _count_visible_global_visual_batch_instances() -> int:
+	var total := 0
+	for node in _global_visual_batch_nodes.values():
+		if node == null or not is_instance_valid(node):
+			continue
+		var batch_node := node as MultiMeshInstance3D
+		if batch_node == null or batch_node.multimesh == null:
+			continue
+		total += batch_node.multimesh.instance_count
+	return total
+
+
+func _count_visible_world_map_baked_building_visual_nodes() -> int:
+	var total := 0
+	for node in _world_map_baked_building_visual_nodes.values():
+		if node and is_instance_valid(node) and node.is_inside_tree():
+			total += 1
+	return total
 
 func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 	for node in _world_map_baked_building_visual_nodes.values():
 		if node and is_instance_valid(node):
-			if immediate:
+			if immediate or not node.is_inside_tree():
 				node.free()
 			else:
 				node.queue_free()
@@ -404,8 +486,84 @@ func _remove_world_map_baked_building_visual(building_key: String) -> void:
 		return
 	var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
 	if root and is_instance_valid(root):
-		root.queue_free()
+		if root.is_inside_tree():
+			root.queue_free()
+		else:
+			root.free()
 	_world_map_baked_building_visual_nodes.erase(building_key)
+
+
+func _is_world_map_baked_building_in_range(building_key: String, center_chunk: Vector3i, extra_distance: int = 0) -> bool:
+	var coords_variant: Variant = _world_map_baked_building_chunk_coords_by_key.get(building_key, [])
+	if typeof(coords_variant) != TYPE_ARRAY:
+		return true
+	var coords: Array = coords_variant
+	if coords.is_empty():
+		return true
+
+	var max_dist := render_distance + extra_distance
+	var max_dist_sq := max_dist * max_dist
+	for coord_variant in coords:
+		if typeof(coord_variant) != TYPE_VECTOR3I:
+			continue
+		var coord: Vector3i = coord_variant
+		var dx := coord.x - center_chunk.x
+		var dy := coord.y - center_chunk.y
+		var dz := coord.z - center_chunk.z
+		if dx * dx + dy * dy + dz * dz <= max_dist_sq:
+			return true
+	return false
+
+
+func _set_world_map_baked_building_visual_in_tree(building_key: String, should_be_in_tree: bool) -> void:
+	var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
+	if root == null or not is_instance_valid(root):
+		return
+
+	if should_be_in_tree:
+		var parent := root.get_parent()
+		if parent == self:
+			return
+		if parent:
+			parent.remove_child(root)
+		add_child(root)
+		return
+
+	var existing_parent := root.get_parent()
+	if existing_parent:
+		existing_parent.remove_child(root)
+
+
+func _sync_world_map_baked_building_visual_visibility_for_key(building_key: String) -> void:
+	if building_key.is_empty():
+		return
+	if not viewer:
+		_set_world_map_baked_building_visual_in_tree(building_key, true)
+		return
+	var center_chunk := _get_current_building_center_chunk()
+	_set_world_map_baked_building_visual_in_tree(
+		building_key,
+		_is_world_map_baked_building_in_range(building_key, center_chunk)
+	)
+
+
+func _update_world_map_baked_building_visual_visibility(center_chunk: Vector3i) -> void:
+	if _world_map_baked_building_visual_nodes.is_empty():
+		return
+
+	var stale_keys: Array[String] = []
+	for key_variant in _world_map_baked_building_visual_nodes.keys():
+		var building_key := str(key_variant)
+		var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
+		if root == null or not is_instance_valid(root):
+			stale_keys.append(building_key)
+			continue
+
+		var should_be_visible := _is_world_map_baked_building_in_range(building_key, center_chunk, 2)
+		_set_world_map_baked_building_visual_in_tree(building_key, should_be_visible)
+
+	for building_key in stale_keys:
+		_world_map_baked_building_visual_nodes.erase(building_key)
 
 
 func _update_world_map_baked_building_visual_for_voxel(building_key: String, voxel_pos: Vector3, value: int, meta: int) -> bool:
@@ -640,6 +798,7 @@ func clear_immediate_for_shutdown() -> void:
 	_global_visual_batch_entries.clear()
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
+	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
 	_cached_vehicle_manager = null
 
 
@@ -649,6 +808,7 @@ func _exit_tree() -> void:
 func flush_global_visual_batches() -> void:
 	if _dirty_global_visual_batch_object_ids.is_empty():
 		return
+	_ensure_global_visual_batch_center_chunk()
 
 	var start_time := Time.get_ticks_usec()
 	var dirty_ids: Array = _dirty_global_visual_batch_object_ids.keys()
@@ -816,10 +976,9 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 		root.name = "BakedBuilding_%d" % maxi(building_index, 0)
 		root.add_to_group("building_chunks")
 		root.set_meta("building_key", building_key)
-		add_child(root)
 		_world_map_baked_building_visual_nodes[building_key] = root
 
-	root.global_position = voxel_origin
+	root.position = to_local(voxel_origin) if is_inside_tree() else voxel_origin
 
 	var mesh_instance := root.get_node_or_null("Mesh") as MeshInstance3D
 	if not mesh_instance:
@@ -864,6 +1023,7 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 		collision.shape = shape
 		static_body.add_child(collision)
 
+	_sync_world_map_baked_building_visual_visibility_for_key(building_key)
 	return true
 
 func has_dirty_global_visual_batches() -> bool:
@@ -944,9 +1104,10 @@ func _rebuild_global_visual_batch(object_id: int, mesh: Mesh = null) -> void:
 	else:
 		multimesh.mesh = mesh
 
-	multimesh.instance_count = entries.size()
-	for i in range(entries.size()):
-		var entry: Dictionary = entries[i]
+	var visible_entries := _get_visible_global_visual_batch_entries(entries)
+	multimesh.instance_count = visible_entries.size()
+	for i in range(visible_entries.size()):
+		var entry: Dictionary = visible_entries[i]
 		var transform: Transform3D = entry.get("transform", Transform3D.IDENTITY)
 		multimesh.set_instance_transform(i, transform)
 
@@ -997,6 +1158,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_visual_batches": total_visual_batches,
 		"total_global_visual_batches": _global_visual_batch_nodes.size(),
 		"total_global_visual_instances": _global_visual_batch_instances.size(),
+		"visible_global_visual_instances": _count_visible_global_visual_batch_instances(),
 		"pending_visual_batch_rebuilds": _dirty_global_visual_batch_object_ids.size(),
 		"total_occupied_cells": total_occupied_cells,
 		"mesh_dirty_chunks": total_mesh_dirty_chunks,
@@ -1014,7 +1176,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_apply_world_map_baked_building_prebuilt_chunk_count": _last_apply_world_map_baked_building_prebuilt_chunk_count,
 		"world_map_baked_building_edit_keys": _world_map_baked_building_edits_by_key.size(),
 		"world_map_baked_building_edit_count": _get_world_map_baked_building_edit_count(),
-		"total_world_map_baked_building_visual_nodes": _world_map_baked_building_visual_nodes.size()
+		"total_world_map_baked_building_visual_nodes": _world_map_baked_building_visual_nodes.size(),
+		"visible_world_map_baked_building_visual_nodes": _count_visible_world_map_baked_building_visual_nodes()
 	}
 
 ## Get or create a chunk at the given coordinate. Uses pool for recycling.

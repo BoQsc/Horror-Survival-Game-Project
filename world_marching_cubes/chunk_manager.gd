@@ -164,6 +164,7 @@ var fps_sample_sum: float = 0.0
 var adaptive_frame_budget_ms: float = 1.0 # Dynamically adjusted (reduced for smoother FPS)
 var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
+@export_range(1, 64, 1) var terrain_unload_budget_per_frame: int = 8
 @export_range(0, 5, 1) var terrain_hot_frame_backoff_frames: int = 2
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
@@ -1639,16 +1640,23 @@ func update_chunks():
 func _update_chunks_native():
 	var update_start_us := Time.get_ticks_usec()
 	_last_update_backend = "native"
-	if loading_paused:
-		_last_update_loads = 0
-		_last_update_unloads = 0
-		_last_update_duration_ms = 0.0
-		return
 
 	var p_pos = viewer.global_position
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
+	if loading_paused:
+		var paused_unloads := _unload_out_of_range_chunks(
+			p_chunk_x,
+			p_chunk_y,
+			p_chunk_z,
+			terrain_unload_budget_per_frame
+		)
+		_last_update_loads = 0
+		_last_update_unloads = paused_unloads
+		_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
+		return
+
 	var is_above_ground = p_chunk_y >= 0
 	var render_distance_sq = render_distance * render_distance
 
@@ -1662,6 +1670,14 @@ func _update_chunks_native():
 		unload_count += 1
 		_unload_chunk(coord)
 		terrain_grid.remove_chunk(coord)
+
+	if unload_count < terrain_unload_budget_per_frame:
+		unload_count += _unload_out_of_range_chunks(
+			p_chunk_x,
+			p_chunk_y,
+			p_chunk_z,
+			terrain_unload_budget_per_frame - unload_count
+		)
 
 	# 3. Process Loads
 	var chunks_queued = 0
@@ -1693,6 +1709,36 @@ func _update_chunks_native():
 	_last_update_loads = chunks_queued
 	_last_update_unloads = unload_count
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
+
+func _unload_out_of_range_chunks(center_x: int, center_y: int, center_z: int, budget: int) -> int:
+	if budget <= 0:
+		return 0
+
+	var unload_distance := render_distance + 2
+	var unload_distance_sq := unload_distance * unload_distance
+	var coords_to_unload: Array[Vector3i] = []
+
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		var dx := coord.x - center_x
+		var dz := coord.z - center_z
+		var dist_xz_sq := dx * dx + dz * dz
+		var is_terrain_layer := coord.y >= -20 and coord.y <= 1
+		if dist_xz_sq > unload_distance_sq or (not is_terrain_layer and abs(coord.y - center_y) > 3):
+			coords_to_unload.append(coord)
+
+	var unloaded := 0
+	for coord in coords_to_unload:
+		if unloaded >= budget:
+			break
+		if not active_chunks.has(coord):
+			continue
+		_unload_chunk(coord)
+		if terrain_grid and terrain_grid.has_method("remove_chunk"):
+			terrain_grid.remove_chunk(coord)
+		unloaded += 1
+
+	return unloaded
 
 func _load_chunk(coord: Vector3i):
 	active_chunks[coord] = null
