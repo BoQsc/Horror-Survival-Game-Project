@@ -2261,11 +2261,10 @@ func _thread_function():
 						_complete_chunk_readback(rd, fd, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
 					in_flight.clear()
 
-					# Two-phase loading: fast initial load, then throttled exploration
+					# Two-phase loading: fast initial load, then throttled exploration.
+					# Initial progress is counted in complete_generation(), after CPU mesh work
+					# has produced the pending visual nodes.
 					if initial_load_phase:
-						chunks_loaded_initial += 1
-						if chunks_loaded_initial >= initial_load_target_chunks:
-							initial_load_phase = false
 						# During initial load: minimal or no delay for fast loading
 						if initial_load_delay_ms > 0:
 							_interruptible_delay(initial_load_delay_ms)
@@ -2843,6 +2842,8 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 
 	if initial_load_phase:
 		chunks_loaded_initial += 1
+		if chunks_loaded_initial >= initial_load_target_chunks:
+			initial_load_phase = false
 
 	pending_nodes_mutex.lock()
 
