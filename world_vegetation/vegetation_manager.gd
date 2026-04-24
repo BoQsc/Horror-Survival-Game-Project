@@ -272,6 +272,7 @@ func _build_vegetation_native_config(
 		procedural_road_width: float,
 		world_map_active: bool,
 		water_level: float,
+		noise_values: PackedFloat32Array,
 		noise_seed: int,
 		noise_frequency: float,
 		noise_threshold: float,
@@ -297,6 +298,7 @@ func _build_vegetation_native_config(
 		"procedural_road_width": procedural_road_width,
 		"world_map_active": world_map_active,
 		"water_level": water_level,
+		"noise_values": noise_values,
 		"noise_seed": noise_seed,
 		"noise_frequency": noise_frequency,
 		"noise_threshold": noise_threshold,
@@ -308,6 +310,18 @@ func _build_vegetation_native_config(
 		"use_water_density": use_water_density,
 		"record_random_scale_factor": record_random_scale_factor
 	}
+
+
+func _build_vegetation_noise_samples(noise_source: FastNoiseLite, chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int, use_noise: bool) -> PackedFloat32Array:
+	var samples := PackedFloat32Array()
+	if not use_noise or noise_source == null:
+		return samples
+
+	for x in range(0, chunk_stride, step):
+		for z in range(0, chunk_stride, step):
+			samples.append(noise_source.get_noise_2d(chunk_origin_x + x, chunk_origin_z + z))
+
+	return samples
 
 
 func _build_native_vegetation_instances(
@@ -1244,6 +1258,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			terrain_manager.procedural_road_width,
 			terrain_manager.world_map_active,
 			terrain_manager.water_level,
+			_build_vegetation_noise_samples(forest_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, true),
 			int(forest_noise.seed),
 			float(forest_noise.frequency),
 			0.4,
@@ -1525,6 +1540,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			terrain_manager.procedural_road_width,
 			terrain_manager.world_map_active,
 			terrain_manager.water_level,
+			_build_vegetation_noise_samples(grass_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, not dense_grass_mode),
 			int(grass_noise.seed),
 			float(grass_noise.frequency),
 			0.3,
@@ -2004,6 +2020,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			terrain_manager.procedural_road_width,
 			terrain_manager.world_map_active,
 			terrain_manager.water_level,
+			_build_vegetation_noise_samples(rock_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, true),
 			int(rock_noise.seed),
 			float(rock_noise.frequency),
 			0.35,

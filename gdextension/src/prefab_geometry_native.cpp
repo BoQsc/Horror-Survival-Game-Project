@@ -10,7 +10,6 @@
 #include <utility>
 #include <vector>
 
-#include <godot_cpp/classes/fast_noise_lite.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
@@ -689,8 +688,7 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	const double procedural_road_spacing = double(config.get("procedural_road_spacing", 100.0));
 	const double procedural_road_width = double(config.get("procedural_road_width", 8.0));
 	const bool world_map_active = bool(config.get("world_map_active", false));
-	const int noise_seed = int(config.get("noise_seed", 0));
-	const double noise_frequency = double(config.get("noise_frequency", 0.0));
+	const PackedFloat32Array noise_values = config.get("noise_values", PackedFloat32Array());
 	const double noise_threshold = double(config.get("noise_threshold", 0.0));
 	const bool use_noise = bool(config.get("use_noise", true));
 	const bool use_water_density = bool(config.get("use_water_density", false));
@@ -700,12 +698,6 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	const double scale_multiplier = double(config.get("scale_multiplier", 1.0));
 	const double y_offset = double(config.get("y_offset", 0.0));
 	const bool record_random_scale_factor = bool(config.get("record_random_scale_factor", true));
-
-	Ref<FastNoiseLite> noise;
-	noise.instantiate();
-	noise->set_noise_type(FastNoiseLite::TYPE_SIMPLEX);
-	noise->set_seed(noise_seed);
-	noise->set_frequency(static_cast<float>(noise_frequency));
 
 	int sample_index = 0;
 	for (int x = 0; x < chunk_stride; x += step) {
@@ -731,7 +723,10 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 			}
 
 			if (use_noise) {
-				const double noise_value = noise->get_noise_2d(global_x, global_z);
+				if (current_sample >= noise_values.size()) {
+					continue;
+				}
+				const double noise_value = noise_values[current_sample];
 				if (noise_value < noise_threshold) {
 					continue;
 				}
