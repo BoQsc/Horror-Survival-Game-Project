@@ -11,6 +11,7 @@ layout(set = 0, binding = 0, std430) restrict buffer OutputVertices {
 
 layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
     uint triangle_count;
+    uint output_format_magic;
 } counter;
 
 // New Binding: Input Density Map
@@ -31,6 +32,7 @@ layout(push_constant) uniform PushConstants {
 
 const int CHUNK_SIZE = 32;
 const uint PACKED_VERTEX_WORDS = 6u;
+const uint PACKED_OUTPUT_MAGIC = 0x5041434Bu; // "PACK"
 const float ISO_LEVEL = 0.0;
 
 #include "res://world_marching_cubes/marching_cubes_lookup_table.glslinc"
@@ -121,6 +123,10 @@ vec3 interpolate_vertex(vec3 p1, vec3 p2, float v1, float v2) {
 
 void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
+
+    if (id.x == 0u && id.y == 0u && id.z == 0u) {
+        counter.output_format_magic = PACKED_OUTPUT_MAGIC;
+    }
     
     if (id.x >= uint(CHUNK_SIZE) - 1u || id.y >= uint(CHUNK_SIZE) - 1u || id.z >= uint(CHUNK_SIZE) - 1u) {
         return;
