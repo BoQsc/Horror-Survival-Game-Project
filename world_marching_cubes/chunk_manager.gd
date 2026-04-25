@@ -2272,7 +2272,7 @@ func _thread_function():
 	# Create a tiny buffer ring for meshing (9 floats per vertex: pos + normal + color)
 	# This lets a couple of chunks overlap without reusing the same GPU storage buffers
 	# before readback has completed.
-	const MAX_IN_FLIGHT = 2 # Conservative batch size: overlaps generation without large buffer growth.
+	const MAX_IN_FLIGHT = 4 # Batch more terrain work before sync; output stays identical.
 	var output_bytes_size = MAX_TRIANGLES * 3 * 9 * 4
 	var buffer_slots: Array[Dictionary] = []
 	for _slot in range(MAX_IN_FLIGHT):
@@ -2382,12 +2382,21 @@ func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pi
 	if needs_submit:
 		rd.submit()
 	rd.sync()
+
+	var mesh_readbacks: Array[Dictionary] = []
 	for flight_data in in_flight:
 		var slot_index := int(flight_data.get("buffer_slot", 0))
 		if slot_index < 0 or slot_index >= buffer_slots.size():
 			slot_index = 0
 		var slot: Dictionary = buffer_slots[slot_index]
-		_complete_chunk_readback(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"])
+		mesh_readbacks.append(_dispatch_chunk_meshing(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"]))
+
+	if not mesh_readbacks.is_empty():
+		rd.submit()
+		rd.sync()
+		for readback in mesh_readbacks:
+			_complete_chunk_readback(rd, readback)
+
 	in_flight.clear()
 
 
@@ -2496,29 +2505,37 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"needs_submit": mods_for_chunk.is_empty()
 	}
 
-# Complete readback and queue to CPU workers (called after density sync)
-# OPTIMIZED: Uses separate buffers for terrain/water to enable batch dispatch with single sync
-func _complete_chunk_readback(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water):
+# Dispatch terrain and water meshing without syncing so the whole chunk batch can complete together.
+func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water) -> Dictionary:
+	var chunk_pos = flight_data.chunk_pos
+	var dens_buf_terrain = flight_data.dens_buf_terrain
+	var dens_buf_water = flight_data.dens_buf_water
+	var mat_buf_terrain = flight_data.mat_buf_terrain
+
+	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain)
+	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water)
+
+	return {
+		"flight_data": flight_data,
+		"set_mesh_t": set_mesh_t,
+		"set_mesh_w": set_mesh_w,
+		"vertex_buffer_terrain": vertex_buffer_terrain,
+		"counter_buffer_terrain": counter_buffer_terrain,
+		"vertex_buffer_water": vertex_buffer_water,
+		"counter_buffer_water": counter_buffer_water
+	}
+
+# Complete readback and queue to CPU workers (called after density and mesh syncs)
+func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
+	var flight_data: Dictionary = readback.flight_data
 	var coord = flight_data.coord
 	var chunk_pos = flight_data.chunk_pos
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 
-	# BATCH DISPATCH: Dispatch BOTH mesh shaders, THEN sync ONCE (reduces GPU stalls by 50%)
-	# Terrain mesh (uses material buffer for vertex colors) -> terrain buffers
-	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain)
-
-	# Water mesh (uses terrain's material buffer for now) -> water buffers
-	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water)
-
-	# SINGLE SYNC for both dispatches (was 2 syncs before!)
-	rd.submit()
-	rd.sync()
-
-	# Readback both meshes (GPU work already complete)
-	var vert_floats_terrain = run_gpu_meshing_readback(rd, vertex_buffer_terrain, counter_buffer_terrain, set_mesh_t)
-	var vert_floats_water = run_gpu_meshing_readback(rd, vertex_buffer_water, counter_buffer_water, set_mesh_w)
+	var vert_floats_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.set_mesh_t)
+	var vert_floats_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.set_mesh_w)
 
 	# Readback density for physics
 	var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
@@ -2645,15 +2662,17 @@ func _cpu_thread_function():
 		var mesh_terrain = null
 		var shape_terrain = null
 		if task.vert_floats_terrain.size() > 0:
-			mesh_terrain = build_mesh(task.vert_floats_terrain, material_terrain, builder)
-			shape_terrain = builder.build_collision_shape(task.vert_floats_terrain, 9)
+			var built_terrain := build_mesh_and_collision(task.vert_floats_terrain, material_terrain, builder)
+			mesh_terrain = built_terrain.get("mesh", null)
+			shape_terrain = built_terrain.get("shape", null)
 
 		# Build water mesh and collision (CPU intensive)
 		var mesh_water = null
 		var shape_water = null
 		if task.vert_floats_water.size() > 0:
-			mesh_water = build_mesh(task.vert_floats_water, material_water, builder)
-			shape_water = builder.build_collision_shape(task.vert_floats_water, 9)
+			var built_water := build_mesh_and_collision(task.vert_floats_water, material_water, builder)
+			mesh_water = built_water.get("mesh", null)
+			shape_water = built_water.get("shape", null)
 
 		# Package results
 		var result_t = {"mesh": mesh_terrain, "shape": shape_terrain}
@@ -2854,6 +2873,31 @@ func build_mesh(data: PackedFloat32Array, material_instance: Material, builder_o
 
 	return mesh
 
+func build_mesh_and_collision(data: PackedFloat32Array, material_instance: Material, builder_override: Object = null) -> Dictionary:
+	if data.size() == 0:
+		return {"mesh": null, "shape": null}
+
+	var native_builder = builder_override
+	if not native_builder:
+		native_builder = ClassDB.instantiate("MeshBuilder")
+		if not native_builder:
+			push_error("[ChunkManager] MeshBuilder GDExtension is required for mesh/collision building.")
+			return {"mesh": null, "shape": null}
+
+	if native_builder.has_method("build_mesh_and_collision"):
+		var result: Dictionary = native_builder.build_mesh_and_collision(data, 9)
+		var native_mesh = result.get("mesh", null)
+		if native_mesh:
+			native_mesh.surface_set_material(0, material_instance)
+			result["mesh"] = native_mesh
+		return result
+
+	var mesh = build_mesh(data, material_instance, native_builder)
+	var shape = null
+	if mesh:
+		shape = native_builder.build_collision_shape(data, 9)
+	return {"mesh": mesh, "shape": shape}
+
 func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer, builder_override: Object = null):
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
@@ -2921,9 +2965,9 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 		var total_floats = tri_count * 3 * 9 # 9 floats per vertex
 		var vert_bytes = rd.buffer_get_data(vertex_buffer, 0, total_floats * 4)
 		var vert_floats = vert_bytes.to_float32_array()
-		mesh = build_mesh(vert_floats, material_instance, builder)
-		if mesh:
-			shape = builder.build_collision_shape(vert_floats, 9)
+		var built := build_mesh_and_collision(vert_floats, material_instance, builder)
+		mesh = built.get("mesh", null)
+		shape = built.get("shape", null)
 
 	if set_mesh.is_valid(): rd.free_rid(set_mesh)
 

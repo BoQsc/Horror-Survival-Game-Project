@@ -874,6 +874,7 @@ Ref<BoxShape3D> MeshBuilder::_get_cached_box_shape(const Vector3i& size) {
 
 void MeshBuilder::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_mesh_native", "data", "stride"), &MeshBuilder::build_mesh_native);
+	ClassDB::bind_method(D_METHOD("build_mesh_and_collision", "data", "stride"), &MeshBuilder::build_mesh_and_collision);
 	ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
 	ClassDB::bind_method(D_METHOD("has_player_material_overrides", "data", "width", "height", "depth"), &MeshBuilder::has_player_material_overrides);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
@@ -946,6 +947,74 @@ Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, in
     mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 
     return mesh;
+}
+
+
+Dictionary MeshBuilder::build_mesh_and_collision(const PackedFloat32Array& data, int stride) {
+    Dictionary result;
+    Ref<ArrayMesh> mesh;
+    Ref<ConcavePolygonShape3D> shape;
+
+    if (data.size() == 0 || stride <= 0) {
+        result["mesh"] = mesh;
+        result["shape"] = shape;
+        return result;
+    }
+
+    const int vertex_count = data.size() / stride;
+    if (vertex_count == 0) {
+        result["mesh"] = mesh;
+        result["shape"] = shape;
+        return result;
+    }
+
+    const float* src = data.ptr();
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedColorArray colors;
+    PackedVector3Array faces;
+
+    vertices.resize(vertex_count);
+    normals.resize(vertex_count);
+    colors.resize(vertex_count);
+    if ((vertex_count % 3) == 0) {
+        faces.resize(vertex_count);
+    }
+
+    Vector3* v_ptr = vertices.ptrw();
+    Vector3* n_ptr = normals.ptrw();
+    Color* c_ptr = colors.ptrw();
+    Vector3* f_ptr = faces.is_empty() ? nullptr : faces.ptrw();
+
+    for (int i = 0; i < vertex_count; ++i) {
+        const int idx = i * stride;
+
+        v_ptr[i] = *reinterpret_cast<const Vector3*>(&src[idx]);
+        n_ptr[i] = *reinterpret_cast<const Vector3*>(&src[idx + 3]);
+        c_ptr[i] = Color(src[idx + 6], src[idx + 7], src[idx + 8]);
+        if (f_ptr) {
+            f_ptr[i] = v_ptr[i];
+        }
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_COLOR] = colors;
+
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+
+    if (!faces.is_empty()) {
+        shape.instantiate();
+        shape->set_faces(faces);
+    }
+
+    result["mesh"] = mesh;
+    result["shape"] = shape;
+    return result;
 }
 
 
