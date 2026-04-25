@@ -1361,7 +1361,7 @@ func _sample_height_map_local(data, local_x: int, local_z: int) -> float:
 	if data == null or data.cpu_height_map_terrain.is_empty():
 		return -1000.0
 
-	var map_size := data.cpu_height_map_size
+	var map_size: int = int(data.cpu_height_map_size)
 	if map_size <= 0:
 		map_size = CHUNK_STRIDE
 	if local_x < 0 or local_z < 0:
@@ -1371,7 +1371,7 @@ func _sample_height_map_local(data, local_x: int, local_z: int) -> float:
 	if local_z >= map_size:
 		local_z = map_size - 1
 
-	var index = local_x * map_size + local_z
+	var index: int = local_x * map_size + local_z
 	if index < 0 or index >= data.cpu_height_map_terrain.size():
 		return -1000.0
 	return data.cpu_height_map_terrain[index]
