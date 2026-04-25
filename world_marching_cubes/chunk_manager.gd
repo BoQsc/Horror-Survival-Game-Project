@@ -2487,6 +2487,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	# Apply runtime terrain edits only.
 	# Baked world-map excavation is injected directly into gen_density.glsl via _world_map_excavation_buffers.
 	var mods_for_chunk = _get_modifications_for_chunk(coord)
+	var needs_material_readback := false
 
 	if mods_for_chunk.size() > 0:
 		# Debug: show when mods are applied to underground chunks
@@ -2494,6 +2495,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		rd.submit()
 		rd.sync()
 		for mod in mods_for_chunk:
+			if int(mod.get("material_id", -1)) >= 0:
+				needs_material_readback = true
 			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
 
@@ -2508,6 +2511,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"dens_buf_terrain": dens_buf_terrain,
 		"dens_buf_water": dens_buf_water,
 		"mat_buf_terrain": mat_buf_terrain,
+		"needs_material_readback": needs_material_readback,
 		"needs_submit": mods_for_chunk.is_empty()
 	}
 
@@ -2549,8 +2553,10 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 	var cpu_density_bytes_t = rd.buffer_get_data(dens_buf_terrain)
 	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
 
-	# Readback material buffer for 3D texture creation
-	var cpu_material_bytes = rd.buffer_get_data(mat_buf_terrain)
+	# Only material edits need a CPU material copy for per-chunk override textures.
+	var cpu_material_bytes = PackedByteArray()
+	if bool(flight_data.get("needs_material_readback", false)):
+		cpu_material_bytes = rd.buffer_get_data(mat_buf_terrain)
 
 	# Queue to CPU workers for mesh building
 

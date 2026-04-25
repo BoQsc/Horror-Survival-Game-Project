@@ -172,6 +172,13 @@ void main() {
     if ((edgeTable[cubeIndex] & 1024) != 0) vertList[10] = interpolate_vertex(corners[2], corners[6], densities[2], densities[6]);
     if ((edgeTable[cubeIndex] & 2048) != 0) vertList[11] = interpolate_vertex(corners[3], corners[7], densities[3], densities[7]);
 
+    vec3 normalList[12];
+    for (int e = 0; e < 12; e++) {
+        if ((edgeTable[cubeIndex] & (1 << e)) != 0) {
+            normalList[e] = get_normal(vertList[e]);
+        }
+    }
+
     // === DUAL-MATERIAL DETECTION ===
     // Find the two materials present among solid corners in this cube.
     // mat_A = primary (first solid corner found)
@@ -222,15 +229,12 @@ void main() {
         vec3 v2 = vertList[e2];
         vec3 v3 = vertList[e3];
         
-        vec3 n1 = get_normal(v1);
-        write_packed_vertex(start_ptr, v1, n1, mat_A, mat_B, blendList[e1]);
+        write_packed_vertex(start_ptr, v1, normalList[e1], mat_A, mat_B, blendList[e1]);
         
         // Vertex 3 (note: order is 1,3,2 for winding)
-        vec3 n3 = get_normal(v3);
-        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS, v3, n3, mat_A, mat_B, blendList[e3]);
+        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS, v3, normalList[e3], mat_A, mat_B, blendList[e3]);
         
         // Vertex 2
-        vec3 n2 = get_normal(v2);
-        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS * 2u, v2, n2, mat_A, mat_B, blendList[e2]);
+        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS * 2u, v2, normalList[e2], mat_A, mat_B, blendList[e2]);
     }
 }
