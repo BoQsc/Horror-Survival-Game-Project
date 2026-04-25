@@ -1022,6 +1022,54 @@ func _get_generated_water_density(world_pos: Vector3) -> float:
 	var effective_height := water_level - (1.0 - water_mask) * 20.0
 	return world_pos.y - effective_height
 
+func _get_generated_water_surface_height(global_x: float, global_z: float) -> float:
+	if world_map_active:
+		if _world_map_water_image == null:
+			return -INF
+		var water_width := _world_map_water_image.get_width()
+		var water_height := _world_map_water_image.get_height()
+		if water_width <= 0 or water_height <= 0 or world_map_size <= 0.0:
+			return -INF
+		var px := clampi(int(global_x + world_map_half), 0, water_width - 1)
+		var pz := clampi(int(global_z + world_map_half), 0, water_height - 1)
+		var water_pixel := _world_map_water_image.get_pixel(px, pz)
+		return water_level if water_pixel.r > 0.5019608 else -INF
+
+	var mask_value := _shader_water_noise(Vector3(global_x, 0.0, global_z) * (noise_frequency * 0.1))
+	mask_value = (mask_value * 2.0) - 1.0
+	var water_mask := _shader_smoothstep(-0.3, 0.3, mask_value)
+	return water_level - (1.0 - water_mask) * 20.0
+
+func _chunk_may_have_generated_water_surface(coord: Vector3i) -> bool:
+	var chunk_min_y := float(coord.y * CHUNK_STRIDE)
+	var chunk_max_y := chunk_min_y + float(CHUNK_SIZE)
+	var min_surface_y := chunk_min_y - 0.5
+	var max_surface_y := chunk_max_y + 0.5
+	var chunk_origin_x := coord.x * CHUNK_STRIDE
+	var chunk_origin_z := coord.z * CHUNK_STRIDE
+
+	if world_map_active:
+		if _world_map_water_image == null:
+			return false
+		for local_x in range(0, DENSITY_GRID_SIZE):
+			var global_x := float(chunk_origin_x + local_x)
+			for local_z in range(0, DENSITY_GRID_SIZE):
+				var surface_y := _get_generated_water_surface_height(global_x, float(chunk_origin_z + local_z))
+				if surface_y >= min_surface_y and surface_y <= max_surface_y:
+					return true
+		return false
+
+	# Procedural water changes very slowly, so a small conservative grid is
+	# enough to skip clearly dry chunks without doing a full density scan.
+	const PROCEDURAL_WATER_SURFACE_SAMPLE_STEP := 4
+	for local_x in range(0, DENSITY_GRID_SIZE, PROCEDURAL_WATER_SURFACE_SAMPLE_STEP):
+		var global_x := float(chunk_origin_x + local_x)
+		for local_z in range(0, DENSITY_GRID_SIZE, PROCEDURAL_WATER_SURFACE_SAMPLE_STEP):
+			var surface_y := _get_generated_water_surface_height(global_x, float(chunk_origin_z + local_z))
+			if surface_y >= min_surface_y and surface_y <= max_surface_y:
+				return true
+	return false
+
 ## Returns true when initial terrain chunks are visually ready (meshes created)
 func is_initial_load_complete() -> bool:
 	pending_nodes_mutex.lock()
@@ -2637,6 +2685,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var needs_material_readback := false
 	var needs_terrain_density_readback := false
 	var needs_water_density_readback := false
+	var water_surface_possible := _chunk_may_have_generated_water_surface(coord)
 
 	if mods_for_chunk.size() > 0:
 		# Debug: show when mods are applied to underground chunks
@@ -2651,6 +2700,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 				needs_terrain_density_readback = true
 			else:
 				needs_water_density_readback = true
+				water_surface_possible = true
 			var target_buffer = dens_buf_terrain if mod_layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
 
@@ -2668,6 +2718,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"needs_material_readback": needs_material_readback,
 		"needs_terrain_density_readback": needs_terrain_density_readback,
 		"needs_water_density_readback": needs_water_density_readback,
+		"water_surface_possible": water_surface_possible,
 		"needs_submit": mods_for_chunk.is_empty()
 	}
 
@@ -2679,12 +2730,16 @@ func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_m
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 
 	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain)
-	var set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water)
+	var skip_water_mesh := not bool(flight_data.get("water_surface_possible", true))
+	var set_mesh_w = RID()
+	if not skip_water_mesh:
+		set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water)
 
 	return {
 		"flight_data": flight_data,
 		"set_mesh_t": set_mesh_t,
 		"set_mesh_w": set_mesh_w,
+		"skip_water_mesh": skip_water_mesh,
 		"vertex_buffer_terrain": vertex_buffer_terrain,
 		"counter_buffer_terrain": counter_buffer_terrain,
 		"vertex_buffer_water": vertex_buffer_water,
@@ -2701,7 +2756,9 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 
 	var mesh_data_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.set_mesh_t)
-	var mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.set_mesh_w)
+	var mesh_data_water = {}
+	if not bool(readback.get("skip_water_mesh", false)):
+		mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.set_mesh_w)
 
 	# Water and terrain density remain full CPU mirrors only for modified chunks.
 	# Normal generated chunks answer water queries from the shader-equivalent
