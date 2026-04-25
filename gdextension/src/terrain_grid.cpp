@@ -12,7 +12,7 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_collision_ready_at", "position", "chunk_stride"), &TerrainGrid::is_collision_ready_at);
     ClassDB::bind_method(D_METHOD("get_collision_ready_chunk_count"), &TerrainGrid::get_collision_ready_chunk_count);
     ClassDB::bind_method(D_METHOD("clear"), &TerrainGrid::clear);
-    ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "chunks_per_frame_limit"), &TerrainGrid::update);
+    ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "load_chunks_per_frame_limit", "unload_chunks_per_frame_limit"), &TerrainGrid::update);
     ClassDB::bind_method(D_METHOD("get_chunk_height_map", "density", "size", "step"), &TerrainGrid::get_chunk_height_map);
 }
 
@@ -77,12 +77,12 @@ void TerrainGrid::clear() {
     cached_unload_cursor = 0;
 }
 
-Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride, int chunks_per_frame_limit) {
+Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride, int load_chunks_per_frame_limit, int unload_chunks_per_frame_limit) {
     Dictionary result;
     Array to_load;
     Array to_unload;
 
-    if (chunks_per_frame_limit <= 0) {
+    if (load_chunks_per_frame_limit <= 0 && unload_chunks_per_frame_limit <= 0) {
         result["load"] = to_load;
         result["unload"] = to_unload;
         return result;
@@ -172,13 +172,13 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
 
     int load_count = 0;
     int unload_count = 0;
-    while (cached_unload_cursor < cached_unload_candidates.size() && unload_count < chunks_per_frame_limit) {
+    while (cached_unload_cursor < cached_unload_candidates.size() && unload_count < unload_chunks_per_frame_limit) {
         to_unload.append(cached_unload_candidates[cached_unload_cursor]);
         cached_unload_cursor++;
         unload_count++;
     }
 
-    while (cached_load_cursor < cached_load_candidates.size() && load_count < chunks_per_frame_limit) {
+    while (cached_load_cursor < cached_load_candidates.size() && load_count < load_chunks_per_frame_limit) {
         to_load.append(cached_load_candidates[cached_load_cursor]);
         cached_load_cursor++;
         load_count++;

@@ -52,7 +52,7 @@ public:
 
     // Main update function
     // is_above_ground: true = load only Y=0, false = load spherical volume
-    Dictionary update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride, int chunks_per_frame_limit);
+    Dictionary update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride, int load_chunks_per_frame_limit, int unload_chunks_per_frame_limit);
 
     // Optimized height lookup for vegetation (Process entire chunk at once)
     // Returns PackedFloat32Array of heights. If not found, returns -1000.0.

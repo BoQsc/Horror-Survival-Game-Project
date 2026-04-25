@@ -487,6 +487,56 @@ func _clear_gpu_task_queues() -> void:
 	mutex.unlock()
 
 
+func _queue_gpu_free_tasks(tasks: Array[Dictionary]) -> void:
+	if tasks.is_empty() or not mutex or not semaphore:
+		return
+
+	mutex.lock()
+	for t in tasks:
+		task_queue.append(t)
+	mutex.unlock()
+
+	for _task in tasks:
+		semaphore.post()
+
+
+func _append_pending_finalization_free_tasks(item: Dictionary, cleanup_tasks: Array[Dictionary]) -> void:
+	var item_type := String(item.get("type", ""))
+	if item_type == "final_terrain":
+		var dens_rid = item.get("dens", RID())
+		if dens_rid.is_valid():
+			cleanup_tasks.append({"type": "free", "rid": dens_rid})
+		var mat_rid = item.get("mat_buf", RID())
+		if mat_rid.is_valid():
+			cleanup_tasks.append({"type": "free", "rid": mat_rid})
+	elif item_type == "final_water":
+		var water_rid = item.get("dens", RID())
+		if water_rid.is_valid():
+			cleanup_tasks.append({"type": "free", "rid": water_rid})
+
+
+func _queue_pending_finalization_item_free(item: Dictionary) -> void:
+	var cleanup_tasks: Array[Dictionary] = []
+	_append_pending_finalization_free_tasks(item, cleanup_tasks)
+	_queue_gpu_free_tasks(cleanup_tasks)
+
+
+func _drain_pending_finalization_free_tasks() -> Array[Dictionary]:
+	var cleanup_tasks: Array[Dictionary] = []
+	if not pending_nodes_mutex:
+		return cleanup_tasks
+
+	pending_nodes_mutex.lock()
+	for item in pending_nodes:
+		if item is Dictionary:
+			_append_pending_finalization_free_tasks(item, cleanup_tasks)
+	pending_nodes.clear()
+	pending_nodes_needs_sort = false
+	pending_nodes_mutex.unlock()
+
+	return cleanup_tasks
+
+
 func _remove_pending_generate_tasks_for_coord(coord: Vector3i) -> void:
 	mutex.lock()
 	_remove_pending_generate_tasks_from_queue(priority_task_queue, coord)
@@ -537,6 +587,8 @@ func _process(delta):
 		update_chunks()
 
 		process_pending_nodes()
+	else:
+		update_chunk_unloads_only()
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 	process_pending_terrain_collision_creates()
@@ -812,10 +864,11 @@ func process_pending_nodes():
 func _sort_pending_by_distance():
 	if pending_nodes.size() <= 1 or not viewer:
 		return
+	var p_pos = get_viewer_position()
 	var viewer_chunk = Vector3i(
-		int(floor(viewer.global_position.x / CHUNK_STRIDE)),
-		int(floor(viewer.global_position.y / CHUNK_STRIDE)),
-		int(floor(viewer.global_position.z / CHUNK_STRIDE))
+		int(floor(p_pos.x / CHUNK_STRIDE)),
+		int(floor(p_pos.y / CHUNK_STRIDE)),
+		int(floor(p_pos.z / CHUNK_STRIDE))
 	)
 	pending_nodes.sort_custom(func(a, b):
 		var dist_a = (a.coord - viewer_chunk).length_squared()
@@ -1567,32 +1620,7 @@ func _exit_tree():
 		_unload_chunk(coord)
 
 	# 2. Clear pending nodes queue (prevents creating nodes after cleanup)
-	if pending_nodes_mutex:
-		pending_nodes_mutex.lock()
-		var cleanup_tasks: Array[Dictionary] = []
-		for item in pending_nodes:
-			if item is Dictionary:
-				if item.get("type", "") == "final_terrain":
-					var dens_rid = item.get("dens", RID())
-					if dens_rid.is_valid():
-						cleanup_tasks.append({"type": "free", "rid": dens_rid})
-					var mat_rid = item.get("mat_buf", RID())
-					if mat_rid.is_valid():
-						cleanup_tasks.append({"type": "free", "rid": mat_rid})
-				elif item.get("type", "") == "final_water":
-					var water_rid = item.get("dens", RID())
-					if water_rid.is_valid():
-						cleanup_tasks.append({"type": "free", "rid": water_rid})
-		if not cleanup_tasks.is_empty():
-			mutex.lock()
-			for t in cleanup_tasks:
-				task_queue.append(t)
-			mutex.unlock()
-			for _task in cleanup_tasks:
-				semaphore.post()
-		pending_nodes.clear()
-		pending_nodes_needs_sort = false
-		pending_nodes_mutex.unlock()
+	_queue_gpu_free_tasks(_drain_pending_finalization_free_tasks())
 
 	# 3. Signal threads to exit
 	mutex.lock()
@@ -1637,11 +1665,32 @@ func update_chunks():
 		return
 	_update_chunks_native()
 
+func update_chunk_unloads_only():
+	if not _native_backends_ready or not terrain_grid or not is_instance_valid(terrain_grid):
+		return
+
+	var update_start_us := Time.get_ticks_usec()
+	_last_update_backend = "native_unload_only"
+
+	var p_pos = get_viewer_position()
+	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
+	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
+	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
+	var unload_count := _unload_out_of_range_chunks(
+		p_chunk_x,
+		p_chunk_y,
+		p_chunk_z,
+		terrain_unload_budget_per_frame
+	)
+	_last_update_loads = 0
+	_last_update_unloads = unload_count
+	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
+
 func _update_chunks_native():
 	var update_start_us := Time.get_ticks_usec()
 	_last_update_backend = "native"
 
-	var p_pos = viewer.global_position
+	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
@@ -1662,7 +1711,7 @@ func _update_chunks_native():
 
 	# 1. Update Grid (C++)
 	# Returns { "load": [Vector3i], "unload": [Vector3i] }
-	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE, chunks_per_frame_limit)
+	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE, chunks_per_frame_limit, terrain_unload_budget_per_frame)
 
 	# 2. Process Unloads
 	var unload_count := 0
@@ -1808,10 +1857,7 @@ func clear_all_chunks():
 	cpu_mutex.unlock()
 
 	# 2. Clear finalization queue
-	pending_nodes_mutex.lock()
-	pending_nodes.clear()
-	pending_nodes_needs_sort = false
-	pending_nodes_mutex.unlock()
+	_queue_gpu_free_tasks(_drain_pending_finalization_free_tasks())
 	pending_terrain_collision_creates.clear()
 	_last_terrain_collision_create_count = 0
 	_last_terrain_collision_create_ms = 0.0
@@ -1847,7 +1893,7 @@ func clear_all_chunks():
 func _update_chunks_legacy():
 	var update_start_us := Time.get_ticks_usec()
 	_last_update_backend = "legacy"
-	var p_pos = viewer.global_position
+	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE)) # Y uses CHUNK_STRIDE for 1-voxel overlap
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
@@ -2931,6 +2977,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		var coord = item.coord
 
 		if not active_chunks.has(coord):
+			_queue_pending_finalization_item_free(item)
 			return
 
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
@@ -2983,7 +3030,9 @@ func _finalize_chunk_creation(item: Dictionary):
 		var start = Time.get_ticks_usec()
 		var coord = item.coord
 
-		if not active_chunks.has(coord): return
+		if not active_chunks.has(coord):
+			_queue_pending_finalization_item_free(item)
+			return
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 
 		# Create Node
