@@ -24,6 +24,9 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(1, 256, 1) var dormant_respawn_checks_per_frame: int = 32
 @export_range(0.1, 5.0, 0.1) var spawn_queue_budget_ms: float = 1.0
 @export_range(0.1, 5.0, 0.1) var dormant_respawn_budget_ms: float = 1.0
+@export_range(0.0, 1.0, 0.01) var proximity_update_interval: float = 0.10
+@export_range(0.0, 1.0, 0.01) var spawn_queue_update_interval: float = 0.10
+@export_range(0.0, 1.0, 0.01) var dormant_respawn_update_interval: float = 0.25
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
@@ -42,6 +45,19 @@ var entity_pool: Array[Node3D] = [] # Pooled inactive entities
 var _proximity_scan_cursor: int = 0
 var _pending_spawn_scan_cursor: int = 0
 var _dormant_scan_cursor: int = 0
+var _proximity_update_accumulator: float = 0.0
+var _spawn_queue_update_accumulator: float = 0.0
+var _dormant_respawn_update_accumulator: float = 0.0
+var _last_proximity_update_ms: float = 0.0
+var _last_proximity_processed: int = 0
+var _last_spawn_queue_update_ms: float = 0.0
+var _last_spawn_queue_processed: int = 0
+var _last_spawn_queue_raycasts: int = 0
+var _last_spawn_queue_spawned: int = 0
+var _last_dormant_respawn_update_ms: float = 0.0
+var _last_dormant_respawn_processed: int = 0
+var _last_dormant_respawn_raycasts: int = 0
+var _last_dormant_respawn_spawned: int = 0
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
@@ -90,6 +106,19 @@ func get_telemetry_snapshot() -> Dictionary:
 		"pending_spawn_checks_per_frame": pending_spawn_checks_per_frame,
 		"dormant_respawn_checks_per_frame": dormant_respawn_checks_per_frame,
 		"proximity_update_budget_ms": proximity_update_budget_ms,
+		"proximity_update_interval": proximity_update_interval,
+		"spawn_queue_update_interval": spawn_queue_update_interval,
+		"dormant_respawn_update_interval": dormant_respawn_update_interval,
+		"last_proximity_update_ms": _last_proximity_update_ms,
+		"last_proximity_processed": _last_proximity_processed,
+		"last_spawn_queue_update_ms": _last_spawn_queue_update_ms,
+		"last_spawn_queue_processed": _last_spawn_queue_processed,
+		"last_spawn_queue_raycasts": _last_spawn_queue_raycasts,
+		"last_spawn_queue_spawned": _last_spawn_queue_spawned,
+		"last_dormant_respawn_update_ms": _last_dormant_respawn_update_ms,
+		"last_dormant_respawn_processed": _last_dormant_respawn_processed,
+		"last_dormant_respawn_raycasts": _last_dormant_respawn_raycasts,
+		"last_dormant_respawn_spawned": _last_dormant_respawn_spawned,
 		"viewer_present": is_instance_valid(viewer),
 		"player_present": is_instance_valid(player)
 	}
@@ -128,20 +157,54 @@ func _physics_process(_delta):
 	if not viewer or not is_instance_valid(viewer):
 		viewer = player
 
-	_update_entity_proximity()
-	_check_dormant_respawns()
+	var has_active_entities := not active_entities.is_empty()
+	_proximity_update_accumulator += _delta
+	if _should_run_interval(_proximity_update_accumulator, proximity_update_interval, has_active_entities):
+		_proximity_update_accumulator = 0.0
+		_update_entity_proximity()
+	elif not has_active_entities:
+		_last_proximity_update_ms = 0.0
+		_last_proximity_processed = 0
+
+	var has_dormant_entities := not dormant_entities.is_empty()
+	_dormant_respawn_update_accumulator += _delta
+	if _should_run_interval(_dormant_respawn_update_accumulator, dormant_respawn_update_interval, has_dormant_entities):
+		_dormant_respawn_update_accumulator = 0.0
+		_check_dormant_respawns()
+	elif not has_dormant_entities:
+		_last_dormant_respawn_update_ms = 0.0
+		_last_dormant_respawn_processed = 0
+		_last_dormant_respawn_raycasts = 0
+		_last_dormant_respawn_spawned = 0
 	
 	# Process spawn queue - spawns when terrain is ready
-	if not pending_spawns.is_empty():
+	var has_pending_spawns := not pending_spawns.is_empty()
+	_spawn_queue_update_accumulator += _delta
+	if _should_run_interval(_spawn_queue_update_accumulator, spawn_queue_update_interval, has_pending_spawns):
+		_spawn_queue_update_accumulator = 0.0
 		_process_spawn_queue()
+	elif not has_pending_spawns:
+		_last_spawn_queue_update_ms = 0.0
+		_last_spawn_queue_processed = 0
+		_last_spawn_queue_raycasts = 0
+		_last_spawn_queue_spawned = 0
+
+
+func _should_run_interval(elapsed: float, interval: float, has_work: bool) -> bool:
+	if not has_work:
+		return false
+	return interval <= 0.0 or elapsed >= interval
 
 ## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():
+	var start_time := Time.get_ticks_usec()
 	var player_pos = viewer.global_position if viewer else player.global_position
 	var freeze_dist_sq = _get_effective_freeze_radius_squared()
 	var despawn_dist_sq = despawn_radius * despawn_radius
 	
 	if active_entities.is_empty():
+		_last_proximity_update_ms = 0.0
+		_last_proximity_processed = 0
 		return
 
 	var total := active_entities.size()
@@ -152,7 +215,6 @@ func _update_entity_proximity():
 	var processed := 0
 	var to_despawn: Array[Node3D] = []
 	var invalid_indices: Array[int] = []
-	var start_time := Time.get_ticks_usec()
 	var collision_range_sq := _get_collision_range_squared()
 	var space_state = get_world_3d().direct_space_state if not frozen_entities.is_empty() else null
 
@@ -186,6 +248,8 @@ func _update_entity_proximity():
 	_bump_frame_entity_stat("proximity_processed", processed)
 	_bump_frame_entity_stat("proximity_invalid", invalid_indices.size())
 	_bump_frame_entity_stat("proximity_despawned", to_despawn.size())
+	_last_proximity_processed = processed
+	_last_proximity_update_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 
 	for i in range(invalid_indices.size() - 1, -1, -1):
 		active_entities.remove_at(invalid_indices[i])
@@ -267,7 +331,12 @@ func _unfreeze_entity(entity: Node3D, collision_range_sq: float, space_state):
 
 ## Check if any dormant entities should be respawned (player returned to their area)
 func _check_dormant_respawns():
+	var start_time := Time.get_ticks_usec()
+	_last_dormant_respawn_processed = 0
+	_last_dormant_respawn_raycasts = 0
+	_last_dormant_respawn_spawned = 0
 	if dormant_entities.is_empty() or not viewer:
+		_last_dormant_respawn_update_ms = 0.0
 		return
 	
 	var player_pos = viewer.global_position
@@ -278,7 +347,6 @@ func _check_dormant_respawns():
 	var checks := mini(dormant_respawn_checks_per_frame, total)
 	var start_index := _dormant_scan_cursor % total
 	var processed := 0
-	var start_time := Time.get_ticks_usec()
 	
 	while processed < checks:
 		if processed > 0:
@@ -313,6 +381,7 @@ func _check_dormant_respawns():
 		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 		query.collision_mask = 1 # Only terrain layer
 		_bump_frame_entity_stat("dormant_raycasts")
+		_last_dormant_respawn_raycasts += 1
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
@@ -332,8 +401,11 @@ func _check_dormant_respawns():
 						entity.current_health = data.health
 					completed.append(i)
 					_bump_frame_entity_stat("dormant_respawns")
+					_last_dormant_respawn_spawned += 1
 
 	_dormant_scan_cursor = (start_index + processed) % max(1, dormant_entities.size())
+	_last_dormant_respawn_processed = processed
+	_last_dormant_respawn_update_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	completed.sort()
 
 	# Remove respawned entities from dormant list (reverse order)
@@ -443,7 +515,12 @@ func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 ## Process spawn queue - spawns entities immediately when terrain collision is ready via raycast
 ## Event-driven: no hardcoded delays, spawn as soon as raycast hits terrain
 func _process_spawn_queue():
+	var start_time := Time.get_ticks_usec()
+	_last_spawn_queue_processed = 0
+	_last_spawn_queue_raycasts = 0
+	_last_spawn_queue_spawned = 0
 	if pending_spawns.is_empty() or not viewer:
+		_last_spawn_queue_update_ms = 0.0
 		return
 	
 	var completed: Array[int] = []
@@ -455,7 +532,6 @@ func _process_spawn_queue():
 	var checks := mini(pending_spawn_checks_per_frame, total)
 	var start_index := _pending_spawn_scan_cursor % total
 	var processed := 0
-	var start_time := Time.get_ticks_usec()
 	
 	while processed < checks:
 		if processed > 0:
@@ -500,6 +576,7 @@ func _process_spawn_queue():
 		var query = PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 		query.collision_mask = 1 # Only terrain layer
 		_bump_frame_entity_stat("spawn_queue_raycasts")
+		_last_spawn_queue_raycasts += 1
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
@@ -525,6 +602,7 @@ func _process_spawn_queue():
 			var entity = spawn_entity(spawn_pos, spawn_data.scene)
 			if entity:
 				_bump_frame_entity_stat("spawn_queue_spawns")
+				_last_spawn_queue_spawned += 1
 			completed.append(i)
 		else:
 			# Hit something that's not terrain - keep waiting for actual terrain
@@ -532,6 +610,8 @@ func _process_spawn_queue():
 				pass
 
 	_pending_spawn_scan_cursor = (start_index + processed) % max(1, pending_spawns.size())
+	_last_spawn_queue_processed = processed
+	_last_spawn_queue_update_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	completed.sort()
 	
 	# Remove processed spawns (reverse order)
