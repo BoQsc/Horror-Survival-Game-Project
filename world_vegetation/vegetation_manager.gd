@@ -1772,8 +1772,8 @@ func _get_chunk_height_map(coord: Vector2i, chunk_stride: int, step: int) -> Pac
 	if not terrain_manager:
 		return PackedFloat32Array()
 
-	if not terrain_manager.get("terrain_grid"):
-		return PackedFloat32Array()
+	if terrain_manager.has_method("get_cached_chunk_height_map"):
+		return terrain_manager.get_cached_chunk_height_map(coord, chunk_stride, step)
 
 	var chunk_key = Vector3i(coord.x, 0, coord.y)
 	if not terrain_manager.active_chunks.has(chunk_key):
@@ -1781,6 +1781,9 @@ func _get_chunk_height_map(coord: Vector2i, chunk_stride: int, step: int) -> Pac
 
 	var c_data = terrain_manager.active_chunks[chunk_key]
 	if not c_data or c_data.cpu_density_terrain.is_empty():
+		return PackedFloat32Array()
+
+	if not terrain_manager.get("terrain_grid"):
 		return PackedFloat32Array()
 
 	return terrain_manager.terrain_grid.get_chunk_height_map(c_data.cpu_density_terrain, chunk_stride, step)

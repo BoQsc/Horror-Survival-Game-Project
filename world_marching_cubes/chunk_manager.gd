@@ -116,6 +116,10 @@ class ChunkData:
 	# CPU mirrors for physics detection
 	var cpu_density_water: PackedFloat32Array = PackedFloat32Array()
 	var cpu_density_terrain: PackedFloat32Array = PackedFloat32Array()
+	# Compact top-down terrain surface cache. This replaces full density reads
+	# for normal generated chunks while keeping vegetation/height queries fast.
+	var cpu_height_map_terrain: PackedFloat32Array = PackedFloat32Array()
+	var cpu_height_map_size: int = 0
 	# CPU mirror for materials (for 3D texture creation)
 	var cpu_material_terrain: PackedByteArray = PackedByteArray()
 	# 3D texture for fragment shader sampling
@@ -1313,6 +1317,97 @@ func _free_world_map_excavation_buffers(rd: RenderingDevice) -> void:
 		rd.free_rid(_world_map_empty_excavation_buf)
 		_world_map_empty_excavation_buf = RID()
 
+func _scan_density_column_local(density: PackedFloat32Array, local_x: int, local_z: int) -> float:
+	if density.size() < DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE:
+		return -1000.0
+	if local_x < 0 or local_x >= DENSITY_GRID_SIZE or local_z < 0 or local_z >= DENSITY_GRID_SIZE:
+		return -1000.0
+
+	var prev_density = 1.0
+	var col_offset = local_x + (local_z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+	var stride_y = DENSITY_GRID_SIZE
+
+	for iy in range(DENSITY_GRID_SIZE - 1, -1, -1):
+		var index = col_offset + (iy * stride_y)
+		var density_value = density[index]
+
+		if density_value < 0.0:
+			if iy < DENSITY_GRID_SIZE - 1:
+				var t = prev_density / (prev_density - density_value)
+				return float(iy + 1) - t
+			return float(iy)
+
+		prev_density = density_value
+
+	return -1000.0
+
+func _build_height_map_from_density(density: PackedFloat32Array) -> PackedFloat32Array:
+	if density.is_empty():
+		return PackedFloat32Array()
+
+	if terrain_grid and terrain_grid.has_method("get_chunk_height_map"):
+		return terrain_grid.get_chunk_height_map(density, CHUNK_STRIDE, 1)
+
+	var heights := PackedFloat32Array()
+	heights.resize(CHUNK_STRIDE * CHUNK_STRIDE)
+	var write_idx := 0
+	for x in range(CHUNK_STRIDE):
+		for z in range(CHUNK_STRIDE):
+			heights[write_idx] = _scan_density_column_local(density, x, z)
+			write_idx += 1
+	return heights
+
+func _sample_height_map_local(data, local_x: int, local_z: int) -> float:
+	if data == null or data.cpu_height_map_terrain.is_empty():
+		return -1000.0
+
+	var map_size := data.cpu_height_map_size
+	if map_size <= 0:
+		map_size = CHUNK_STRIDE
+	if local_x < 0 or local_z < 0:
+		return -1000.0
+	if local_x >= map_size:
+		local_x = map_size - 1
+	if local_z >= map_size:
+		local_z = map_size - 1
+
+	var index = local_x * map_size + local_z
+	if index < 0 or index >= data.cpu_height_map_terrain.size():
+		return -1000.0
+	return data.cpu_height_map_terrain[index]
+
+func get_cached_chunk_height_map(coord: Vector2i, chunk_stride: int, step: int) -> PackedFloat32Array:
+	var chunk_key = Vector3i(coord.x, 0, coord.y)
+	if not active_chunks.has(chunk_key):
+		return PackedFloat32Array()
+
+	var data = active_chunks[chunk_key]
+	if data == null:
+		return PackedFloat32Array()
+
+	if data.cpu_height_map_terrain.is_empty() and not data.cpu_density_terrain.is_empty():
+		data.cpu_height_map_terrain = _build_height_map_from_density(data.cpu_density_terrain)
+		data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
+
+	if data.cpu_height_map_terrain.is_empty():
+		return PackedFloat32Array()
+
+	var heights := PackedFloat32Array()
+	var count := 0
+	for _x in range(0, chunk_stride, step):
+		count += 1
+	heights.resize(count * count)
+
+	var write_idx := 0
+	var chunk_base_y = float(chunk_key.y * CHUNK_STRIDE)
+	for x in range(0, chunk_stride, step):
+		for z in range(0, chunk_stride, step):
+			var local_height = _sample_height_map_local(data, x, z)
+			heights[write_idx] = local_height + chunk_base_y if local_height > -100.0 else local_height
+			write_idx += 1
+
+	return heights
+
 func get_terrain_height(global_x: float, global_z: float) -> float:
 	# Find X,Z chunk coordinates
 	var chunk_x = int(floor(global_x / CHUNK_STRIDE))
@@ -1337,32 +1432,25 @@ func get_terrain_height(global_x: float, global_z: float) -> float:
 			continue
 
 		var data = active_chunks[coord]
-		if data == null or data.cpu_density_terrain.is_empty():
+		if data == null:
 			continue
 
 		var chunk_base_y = chunk_y * CHUNK_STRIDE
+		var cached_height = _sample_height_map_local(data, local_x, local_z)
+		if cached_height > -100.0:
+			return chunk_base_y + cached_height
+
+		if data.cpu_density_terrain.is_empty():
+			continue
 
 		# Scan Y column from top to bottom within this chunk
-		var prev_density = 1.0 # Assume air above
-		for iy in range(DENSITY_GRID_SIZE - 1, -1, -1):
-			var index = local_x + (iy * DENSITY_GRID_SIZE) + (local_z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
-			var density = data.cpu_density_terrain[index]
-
-			if density < 0.0:
-				# Found ground! Interpolate for accurate isosurface height
-				var local_height: float
-				if iy < DENSITY_GRID_SIZE - 1:
-					var t = prev_density / (prev_density - density)
-					local_height = float(iy + 1) - t
-				else:
-					local_height = float(iy)
-
-				var world_height = chunk_base_y + local_height
-				if world_height > best_height:
-					best_height = world_height
-				# Found surface in this chunk, stop searching
-				return best_height
-			prev_density = density
+		var density_height = _scan_density_column_local(data.cpu_density_terrain, local_x, local_z)
+		if density_height > -100.0:
+			var world_height = chunk_base_y + density_height
+			if world_height > best_height:
+				best_height = world_height
+			# Found surface in this chunk, stop searching
+			return best_height
 
 	return best_height # Return -1000.0 if no terrain found
 
@@ -1372,37 +1460,25 @@ func get_chunk_surface_height(coord: Vector3i, local_x: int, local_z: int) -> fl
 		return -1000.0
 
 	var data = active_chunks[coord]
-	if data == null or data.cpu_density_terrain.is_empty():
+	if data == null:
 		return -1000.0
 
-	# Scan Y column from top to bottom within this chunk
 	var chunk_base_y = coord.y * CHUNK_STRIDE
-	var prev_density = 1.0 # Assume air above
 
 	# Safety check for bounds
 	if local_x < 0 or local_x >= DENSITY_GRID_SIZE or local_z < 0 or local_z >= DENSITY_GRID_SIZE:
 		return -1000.0
 
-	# Pre-calculate index offsets to avoid multiplication in loop
-	var col_offset = local_x + (local_z * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
-	var stride_y = DENSITY_GRID_SIZE
+	var cached_height = _sample_height_map_local(data, local_x, local_z)
+	if cached_height > -100.0:
+		return chunk_base_y + cached_height
 
-	for iy in range(DENSITY_GRID_SIZE - 1, -1, -1):
-		var index = col_offset + (iy * stride_y)
-		var density = data.cpu_density_terrain[index]
+	if data.cpu_density_terrain.is_empty():
+		return -1000.0
 
-		if density < 0.0:
-			# Found ground! Interpolate
-			var local_height: float
-			if iy < DENSITY_GRID_SIZE - 1:
-				var t = prev_density / (prev_density - density)
-				local_height = float(iy + 1) - t
-			else:
-				local_height = float(iy)
-
-			return chunk_base_y + local_height
-
-		prev_density = density
+	var density_height = _scan_density_column_local(data.cpu_density_terrain, local_x, local_z)
+	if density_height > -100.0:
+		return chunk_base_y + density_height
 
 	return -1000.0
 
@@ -2488,6 +2564,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	# Baked world-map excavation is injected directly into gen_density.glsl via _world_map_excavation_buffers.
 	var mods_for_chunk = _get_modifications_for_chunk(coord)
 	var needs_material_readback := false
+	var needs_terrain_density_readback := false
 
 	if mods_for_chunk.size() > 0:
 		# Debug: show when mods are applied to underground chunks
@@ -2497,7 +2574,10 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		for mod in mods_for_chunk:
 			if int(mod.get("material_id", -1)) >= 0:
 				needs_material_readback = true
-			var target_buffer = dens_buf_terrain if mod.layer == 0 else dens_buf_water
+			var mod_layer := int(mod.get("layer", 0))
+			if mod_layer == 0:
+				needs_terrain_density_readback = true
+			var target_buffer = dens_buf_terrain if mod_layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
 
 	# Free uniform sets
@@ -2512,6 +2592,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"dens_buf_water": dens_buf_water,
 		"mat_buf_terrain": mat_buf_terrain,
 		"needs_material_readback": needs_material_readback,
+		"needs_terrain_density_readback": needs_terrain_density_readback,
 		"needs_submit": mods_for_chunk.is_empty()
 	}
 
@@ -2547,11 +2628,18 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 	var mesh_data_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.set_mesh_t)
 	var mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.set_mesh_w)
 
-	# Readback density for physics
+	# Water density remains live gameplay data. Terrain density is only needed
+	# for modified or legacy chunks now; normal generated chunks use a compact
+	# mesh-derived height map produced by the CPU mesh builder.
 	var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
 	var cpu_density_floats_w = cpu_density_bytes_w.to_float32_array()
-	var cpu_density_bytes_t = rd.buffer_get_data(dens_buf_terrain)
-	var cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
+	var cpu_density_floats_t = PackedFloat32Array()
+	var needs_terrain_density_readback := bool(flight_data.get("needs_terrain_density_readback", false))
+	if not bool(mesh_data_terrain.get("packed", false)):
+		needs_terrain_density_readback = true
+	if needs_terrain_density_readback:
+		var cpu_density_bytes_t = rd.buffer_get_data(dens_buf_terrain)
+		cpu_density_floats_t = cpu_density_bytes_t.to_float32_array()
 
 	# Only material edits need a CPU material copy for per-chunk override textures.
 	var cpu_material_bytes = PackedByteArray()
@@ -2688,11 +2776,13 @@ func _cpu_thread_function():
 		# Build terrain mesh and collision (CPU intensive)
 		var mesh_terrain = null
 		var shape_terrain = null
+		var height_map_terrain := PackedFloat32Array()
 		var mesh_data_terrain: Dictionary = task.get("mesh_data_terrain", {})
 		if int(mesh_data_terrain.get("vertex_count", 0)) > 0:
-			var built_terrain := build_packed_mesh_and_collision(mesh_data_terrain, material_terrain, builder)
+			var built_terrain := build_packed_mesh_and_collision(mesh_data_terrain, material_terrain, builder, true)
 			mesh_terrain = built_terrain.get("mesh", null)
 			shape_terrain = built_terrain.get("shape", null)
+			height_map_terrain = built_terrain.get("height_map", PackedFloat32Array())
 
 		# Build water mesh and collision (CPU intensive)
 		var mesh_water = null
@@ -2708,7 +2798,7 @@ func _cpu_thread_function():
 		var result_w = {"mesh": mesh_water, "shape": shape_water}
 
 		# Send to main thread
-		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t, task.mat_buf_terrain, task.cpu_mat_t)
+		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t, height_map_terrain, task.mat_buf_terrain, task.cpu_mat_t)
 
 # Helper to apply a single modification to a density buffer (used during generation replay)
 func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, density_buffer: RID, material_buffer: RID, chunk_pos: Vector3, mod: Dictionary):
@@ -2927,7 +3017,7 @@ func build_mesh_and_collision(data: PackedFloat32Array, material_instance: Mater
 		shape = native_builder.build_collision_shape(data, 9)
 	return {"mesh": mesh, "shape": shape}
 
-func build_packed_mesh_and_collision(mesh_data: Dictionary, material_instance: Material, builder_override: Object = null) -> Dictionary:
+func build_packed_mesh_and_collision(mesh_data: Dictionary, material_instance: Material, builder_override: Object = null, include_height_map: bool = false) -> Dictionary:
 	var vertex_count := int(mesh_data.get("vertex_count", 0))
 	if not bool(mesh_data.get("packed", true)):
 		var legacy_floats: PackedFloat32Array = mesh_data.get("floats", PackedFloat32Array())
@@ -2943,6 +3033,14 @@ func build_packed_mesh_and_collision(mesh_data: Dictionary, material_instance: M
 		if not native_builder:
 			push_error("[ChunkManager] MeshBuilder GDExtension is required for packed mesh/collision building.")
 			return {"mesh": null, "shape": null}
+
+	if include_height_map and native_builder.has_method("build_packed_mesh_collision_height_map"):
+		var height_result: Dictionary = native_builder.build_packed_mesh_collision_height_map(vertex_bytes, vertex_count, CHUNK_STRIDE)
+		var height_mesh = height_result.get("mesh", null)
+		if height_mesh:
+			height_mesh.surface_set_material(0, material_instance)
+			height_result["mesh"] = height_mesh
+		return height_result
 
 	if not native_builder.has_method("build_packed_mesh_and_collision"):
 		push_error("[ChunkManager] MeshBuilder.build_packed_mesh_and_collision() is required for packed terrain meshes.")
@@ -3040,7 +3138,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 
 	return {"mesh": mesh, "shape": shape}
 
-func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, mat_t: RID = RID(), cpu_mat_t: PackedByteArray = PackedByteArray()):
+func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, height_map_t: PackedFloat32Array = PackedFloat32Array(), mat_t: RID = RID(), cpu_mat_t: PackedByteArray = PackedByteArray()):
 	if not active_chunks.has(coord):
 		var tasks = []
 		tasks.append({"type": "free", "rid": dens_t})
@@ -3067,6 +3165,7 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"dens": dens_t,
 		"mat_buf": mat_t,
 		"cpu_dens": cpu_dens_t,
+		"height_map": height_map_t,
 		"cpu_mat": cpu_mat_t
 	})
 
@@ -3126,6 +3225,10 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
 		data.cpu_density_terrain = item.cpu_dens
+		data.cpu_height_map_terrain = item.get("height_map", PackedFloat32Array())
+		if data.cpu_height_map_terrain.is_empty() and not data.cpu_density_terrain.is_empty():
+			data.cpu_height_map_terrain = _build_height_map_from_density(data.cpu_density_terrain)
+		data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
 
@@ -3276,6 +3379,8 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		data.chunk_material = chunk_material
 		if not cpu_dens.is_empty():
 			data.cpu_density_terrain = cpu_dens
+			data.cpu_height_map_terrain = _build_height_map_from_density(cpu_dens)
+			data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
 		if not cpu_mat.is_empty():
 			data.cpu_material_terrain = cpu_mat
 		var p_pos = get_viewer_position()

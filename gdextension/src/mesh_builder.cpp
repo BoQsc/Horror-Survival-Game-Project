@@ -99,6 +99,90 @@ static inline float half_to_float(uint16_t h) {
     return u32_to_float(bits);
 }
 
+static inline void update_height_map_sample(float *heights, int height_map_size, int x, int z, float y) {
+    if (x < 0 || z < 0 || x >= height_map_size || z >= height_map_size) {
+        return;
+    }
+
+    const int index = x * height_map_size + z;
+    if (y > heights[index]) {
+        heights[index] = y;
+    }
+}
+
+static void rasterize_triangle_height(float *heights, int height_map_size, const Vector3 &a, const Vector3 &b, const Vector3 &c) {
+    if (height_map_size <= 0) {
+        return;
+    }
+
+    const int ax = static_cast<int>(std::floor(a.x + 0.5f));
+    const int az = static_cast<int>(std::floor(a.z + 0.5f));
+    const int bx = static_cast<int>(std::floor(b.x + 0.5f));
+    const int bz = static_cast<int>(std::floor(b.z + 0.5f));
+    const int cx = static_cast<int>(std::floor(c.x + 0.5f));
+    const int cz = static_cast<int>(std::floor(c.z + 0.5f));
+    update_height_map_sample(heights, height_map_size, ax, az, a.y);
+    update_height_map_sample(heights, height_map_size, bx, bz, b.y);
+    update_height_map_sample(heights, height_map_size, cx, cz, c.y);
+
+    const float min_xf = std::min(std::min(a.x, b.x), c.x);
+    const float max_xf = std::max(std::max(a.x, b.x), c.x);
+    const float min_zf = std::min(std::min(a.z, b.z), c.z);
+    const float max_zf = std::max(std::max(a.z, b.z), c.z);
+
+    const int min_x = std::max(0, static_cast<int>(std::ceil(min_xf - 0.001f)));
+    const int max_x = std::min(height_map_size - 1, static_cast<int>(std::floor(max_xf + 0.001f)));
+    const int min_z = std::max(0, static_cast<int>(std::ceil(min_zf - 0.001f)));
+    const int max_z = std::min(height_map_size - 1, static_cast<int>(std::floor(max_zf + 0.001f)));
+    if (min_x > max_x || min_z > max_z) {
+        return;
+    }
+
+    const float denom = ((b.z - c.z) * (a.x - c.x)) + ((c.x - b.x) * (a.z - c.z));
+    if (std::abs(denom) < 0.000001f) {
+        return;
+    }
+
+    constexpr float edge_epsilon = -0.0005f;
+    for (int x = min_x; x <= max_x; ++x) {
+        for (int z = min_z; z <= max_z; ++z) {
+            const float px = static_cast<float>(x);
+            const float pz = static_cast<float>(z);
+            const float wa = (((b.z - c.z) * (px - c.x)) + ((c.x - b.x) * (pz - c.z))) / denom;
+            const float wb = (((c.z - a.z) * (px - c.x)) + ((a.x - c.x) * (pz - c.z))) / denom;
+            const float wc = 1.0f - wa - wb;
+            if (wa < edge_epsilon || wb < edge_epsilon || wc < edge_epsilon) {
+                continue;
+            }
+
+            const float y = (wa * a.y) + (wb * b.y) + (wc * c.y);
+            update_height_map_sample(heights, height_map_size, x, z, y);
+        }
+    }
+}
+
+static PackedFloat32Array build_top_down_height_map(const PackedVector3Array &vertices, int height_map_size) {
+    PackedFloat32Array heights;
+    if (height_map_size <= 0 || vertices.size() < 3) {
+        return heights;
+    }
+
+    heights.resize(height_map_size * height_map_size);
+    float *height_ptr = heights.ptrw();
+    for (int i = 0; i < heights.size(); ++i) {
+        height_ptr[i] = -1000.0f;
+    }
+
+    const Vector3 *vertex_ptr = vertices.ptr();
+    const int triangle_count = vertices.size() / 3;
+    for (int tri = 0; tri < triangle_count; ++tri) {
+        const int base = tri * 3;
+        rasterize_triangle_height(height_ptr, height_map_size, vertex_ptr[base], vertex_ptr[base + 1], vertex_ptr[base + 2]);
+    }
+
+    return heights;
+}
+
 static void append_batch_dictionary(Array &batches, int index, const BlockBatchData &batch) {
     batches[index] = make_batch_dictionary(batch);
 }
@@ -918,8 +1002,9 @@ Ref<BoxShape3D> MeshBuilder::_get_cached_box_shape(const Vector3i& size) {
 
 void MeshBuilder::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_mesh_native", "data", "stride"), &MeshBuilder::build_mesh_native);
-	ClassDB::bind_method(D_METHOD("build_mesh_and_collision", "data", "stride"), &MeshBuilder::build_mesh_and_collision);
+    ClassDB::bind_method(D_METHOD("build_mesh_and_collision", "data", "stride"), &MeshBuilder::build_mesh_and_collision);
 	ClassDB::bind_method(D_METHOD("build_packed_mesh_and_collision", "data", "vertex_count"), &MeshBuilder::build_packed_mesh_and_collision);
+	ClassDB::bind_method(D_METHOD("build_packed_mesh_collision_height_map", "data", "vertex_count", "height_map_size"), &MeshBuilder::build_packed_mesh_collision_height_map);
 	ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
 	ClassDB::bind_method(D_METHOD("has_player_material_overrides", "data", "width", "height", "depth"), &MeshBuilder::has_player_material_overrides);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
@@ -1145,6 +1230,93 @@ Dictionary MeshBuilder::build_packed_mesh_and_collision(const PackedByteArray& d
 
     result["mesh"] = mesh;
     result["shape"] = shape;
+    return result;
+}
+
+Dictionary MeshBuilder::build_packed_mesh_collision_height_map(const PackedByteArray& data, int vertex_count, int height_map_size) {
+    Dictionary result;
+    Ref<ArrayMesh> mesh;
+    Ref<ConcavePolygonShape3D> shape;
+    PackedFloat32Array height_map;
+
+    result["mesh"] = mesh;
+    result["shape"] = shape;
+    result["height_map"] = height_map;
+
+    if (vertex_count <= 0) {
+        return result;
+    }
+
+    const int bytes_per_vertex = TERRAIN_PACKED_VERTEX_WORDS * static_cast<int>(sizeof(uint32_t));
+    if (data.size() < vertex_count * bytes_per_vertex) {
+        return result;
+    }
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedColorArray colors;
+    PackedVector3Array faces;
+
+    vertices.resize(vertex_count);
+    normals.resize(vertex_count);
+    colors.resize(vertex_count);
+    if ((vertex_count % 3) == 0) {
+        faces.resize(vertex_count);
+    }
+
+    const uint8_t *src = data.ptr();
+    Vector3 *v_ptr = vertices.ptrw();
+    Vector3 *n_ptr = normals.ptrw();
+    Color *c_ptr = colors.ptrw();
+    Vector3 *f_ptr = faces.is_empty() ? nullptr : faces.ptrw();
+
+    for (int i = 0; i < vertex_count; ++i) {
+        const uint8_t *vertex_src = src + i * bytes_per_vertex;
+        const uint32_t px = read_u32_le(vertex_src + 0);
+        const uint32_t py = read_u32_le(vertex_src + 4);
+        const uint32_t pz = read_u32_le(vertex_src + 8);
+        const uint32_t normal_xy = read_u32_le(vertex_src + 12);
+        const uint32_t normal_z = read_u32_le(vertex_src + 16);
+        const uint32_t material_payload = read_u32_le(vertex_src + 20);
+
+        v_ptr[i] = Vector3(u32_to_float(px), u32_to_float(py), u32_to_float(pz));
+        n_ptr[i] = Vector3(
+            half_to_float(static_cast<uint16_t>(normal_xy & 0xFFFFu)),
+            half_to_float(static_cast<uint16_t>((normal_xy >> 16) & 0xFFFFu)),
+            half_to_float(static_cast<uint16_t>(normal_z & 0xFFFFu))
+        );
+
+        const uint8_t mat_a = static_cast<uint8_t>(material_payload & 0xFFu);
+        const uint8_t mat_b = static_cast<uint8_t>((material_payload >> 8) & 0xFFu);
+        const uint8_t blend = static_cast<uint8_t>((material_payload >> 16) & 0xFFu);
+        c_ptr[i] = Color(
+            static_cast<float>(mat_a) / 255.0f,
+            static_cast<float>(mat_b) / 255.0f,
+            static_cast<float>(blend) / 255.0f
+        );
+
+        if (f_ptr) {
+            f_ptr[i] = v_ptr[i];
+        }
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_COLOR] = colors;
+
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+
+    if (!faces.is_empty()) {
+        shape.instantiate();
+        shape->set_faces(faces);
+    }
+
+    result["mesh"] = mesh;
+    result["shape"] = shape;
+    result["height_map"] = build_top_down_height_map(vertices, height_map_size);
     return result;
 }
 

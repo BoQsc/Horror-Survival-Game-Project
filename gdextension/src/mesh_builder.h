@@ -42,6 +42,7 @@ public:
     Ref<ArrayMesh> build_mesh_native(const PackedFloat32Array& data, int stride);
     Dictionary build_mesh_and_collision(const PackedFloat32Array& data, int stride);
     Dictionary build_packed_mesh_and_collision(const PackedByteArray& data, int vertex_count);
+    Dictionary build_packed_mesh_collision_height_map(const PackedByteArray& data, int vertex_count, int height_map_size);
 
 	// Native implementation of 3D texture creation
 	// Converts raw density bytes directly to ImageTexture3D
