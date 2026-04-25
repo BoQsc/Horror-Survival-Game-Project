@@ -1,6 +1,8 @@
 ﻿#include "mesh_builder.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <godot_cpp/classes/box_shape3d.hpp>
 #include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -53,7 +55,49 @@ struct Vector3iEqual {
 
 using BlockBatchMap = std::unordered_map<Vector3i, BlockBatchData, Vector3iHash, Vector3iEqual>;
 
+static constexpr int TERRAIN_PACKED_VERTEX_WORDS = 6;
+
 static Dictionary make_batch_dictionary(const BlockBatchData &batch);
+
+static inline uint32_t read_u32_le(const uint8_t *src) {
+    return static_cast<uint32_t>(src[0])
+        | (static_cast<uint32_t>(src[1]) << 8)
+        | (static_cast<uint32_t>(src[2]) << 16)
+        | (static_cast<uint32_t>(src[3]) << 24);
+}
+
+static inline float u32_to_float(uint32_t bits) {
+    float value;
+    std::memcpy(&value, &bits, sizeof(float));
+    return value;
+}
+
+static inline float half_to_float(uint16_t h) {
+    const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+    int32_t exponent = static_cast<int32_t>((h >> 10) & 0x1Fu);
+    uint32_t mantissa = h & 0x03FFu;
+
+    uint32_t bits;
+    if (exponent == 0) {
+        if (mantissa == 0) {
+            bits = sign;
+        } else {
+            exponent = 1;
+            while ((mantissa & 0x0400u) == 0) {
+                mantissa <<= 1;
+                --exponent;
+            }
+            mantissa &= 0x03FFu;
+            bits = sign | (static_cast<uint32_t>(exponent + 112) << 23) | (mantissa << 13);
+        }
+    } else if (exponent == 31) {
+        bits = sign | 0x7F800000u | (mantissa << 13);
+    } else {
+        bits = sign | (static_cast<uint32_t>(exponent + 112) << 23) | (mantissa << 13);
+    }
+
+    return u32_to_float(bits);
+}
 
 static void append_batch_dictionary(Array &batches, int index, const BlockBatchData &batch) {
     batches[index] = make_batch_dictionary(batch);
@@ -875,6 +919,7 @@ Ref<BoxShape3D> MeshBuilder::_get_cached_box_shape(const Vector3i& size) {
 void MeshBuilder::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_mesh_native", "data", "stride"), &MeshBuilder::build_mesh_native);
 	ClassDB::bind_method(D_METHOD("build_mesh_and_collision", "data", "stride"), &MeshBuilder::build_mesh_and_collision);
+	ClassDB::bind_method(D_METHOD("build_packed_mesh_and_collision", "data", "vertex_count"), &MeshBuilder::build_packed_mesh_and_collision);
 	ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
 	ClassDB::bind_method(D_METHOD("has_player_material_overrides", "data", "width", "height", "depth"), &MeshBuilder::has_player_material_overrides);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
@@ -993,6 +1038,92 @@ Dictionary MeshBuilder::build_mesh_and_collision(const PackedFloat32Array& data,
         v_ptr[i] = *reinterpret_cast<const Vector3*>(&src[idx]);
         n_ptr[i] = *reinterpret_cast<const Vector3*>(&src[idx + 3]);
         c_ptr[i] = Color(src[idx + 6], src[idx + 7], src[idx + 8]);
+        if (f_ptr) {
+            f_ptr[i] = v_ptr[i];
+        }
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_COLOR] = colors;
+
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+
+    if (!faces.is_empty()) {
+        shape.instantiate();
+        shape->set_faces(faces);
+    }
+
+    result["mesh"] = mesh;
+    result["shape"] = shape;
+    return result;
+}
+
+
+Dictionary MeshBuilder::build_packed_mesh_and_collision(const PackedByteArray& data, int vertex_count) {
+    Dictionary result;
+    Ref<ArrayMesh> mesh;
+    Ref<ConcavePolygonShape3D> shape;
+
+    if (vertex_count <= 0) {
+        result["mesh"] = mesh;
+        result["shape"] = shape;
+        return result;
+    }
+
+    const int bytes_per_vertex = TERRAIN_PACKED_VERTEX_WORDS * static_cast<int>(sizeof(uint32_t));
+    if (data.size() < vertex_count * bytes_per_vertex) {
+        result["mesh"] = mesh;
+        result["shape"] = shape;
+        return result;
+    }
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedColorArray colors;
+    PackedVector3Array faces;
+
+    vertices.resize(vertex_count);
+    normals.resize(vertex_count);
+    colors.resize(vertex_count);
+    if ((vertex_count % 3) == 0) {
+        faces.resize(vertex_count);
+    }
+
+    const uint8_t *src = data.ptr();
+    Vector3 *v_ptr = vertices.ptrw();
+    Vector3 *n_ptr = normals.ptrw();
+    Color *c_ptr = colors.ptrw();
+    Vector3 *f_ptr = faces.is_empty() ? nullptr : faces.ptrw();
+
+    for (int i = 0; i < vertex_count; ++i) {
+        const uint8_t *vertex_src = src + i * bytes_per_vertex;
+        const uint32_t px = read_u32_le(vertex_src + 0);
+        const uint32_t py = read_u32_le(vertex_src + 4);
+        const uint32_t pz = read_u32_le(vertex_src + 8);
+        const uint32_t normal_xy = read_u32_le(vertex_src + 12);
+        const uint32_t normal_z = read_u32_le(vertex_src + 16);
+        const uint32_t material_payload = read_u32_le(vertex_src + 20);
+
+        v_ptr[i] = Vector3(u32_to_float(px), u32_to_float(py), u32_to_float(pz));
+        n_ptr[i] = Vector3(
+            half_to_float(static_cast<uint16_t>(normal_xy & 0xFFFFu)),
+            half_to_float(static_cast<uint16_t>((normal_xy >> 16) & 0xFFFFu)),
+            half_to_float(static_cast<uint16_t>(normal_z & 0xFFFFu))
+        );
+
+        const uint8_t mat_a = static_cast<uint8_t>(material_payload & 0xFFu);
+        const uint8_t mat_b = static_cast<uint8_t>((material_payload >> 8) & 0xFFu);
+        const uint8_t blend = static_cast<uint8_t>((material_payload >> 16) & 0xFFu);
+        c_ptr[i] = Color(
+            static_cast<float>(mat_a) / 255.0f,
+            static_cast<float>(mat_b) / 255.0f,
+            static_cast<float>(blend) / 255.0f
+        );
+
         if (f_ptr) {
             f_ptr[i] = v_ptr[i];
         }

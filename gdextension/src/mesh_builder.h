@@ -41,6 +41,7 @@ public:
     // Expects: [pos.x, pos.y, pos.z, norm.x, norm.y, norm.z, col.r, col.g, col.b, ...]
     Ref<ArrayMesh> build_mesh_native(const PackedFloat32Array& data, int stride);
     Dictionary build_mesh_and_collision(const PackedFloat32Array& data, int stride);
+    Dictionary build_packed_mesh_and_collision(const PackedByteArray& data, int vertex_count);
 
 	// Native implementation of 3D texture creation
 	// Converts raw density bytes directly to ImageTexture3D

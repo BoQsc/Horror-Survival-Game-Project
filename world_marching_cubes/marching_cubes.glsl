@@ -6,7 +6,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 // BINDINGS
 layout(set = 0, binding = 0, std430) restrict buffer OutputVertices {
-    float vertices[]; 
+    uint words[];
 } mesh_output;
 
 layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
@@ -30,6 +30,7 @@ layout(push_constant) uniform PushConstants {
 } params;
 
 const int CHUNK_SIZE = 32;
+const uint PACKED_VERTEX_WORDS = 6u;
 const float ISO_LEVEL = 0.0;
 
 #include "res://world_marching_cubes/marching_cubes_lookup_table.glslinc"
@@ -67,8 +68,18 @@ uint get_material_from_buffer(vec3 p) {
 // B = blend factor (0.0 = 100% mat_A, 1.0 = 100% mat_B)
 // Material IDs: 0=Grass, 1=Stone, 2=Ore, 3=Sand, 4=Gravel, 5=Snow, 6=Road, 9=Granite, 100+=Player
 
-float encode_mat(uint mat_id) {
-    return float(mat_id) / 255.0;
+uint pack_material_payload(uint mat_a, uint mat_b, float blend) {
+    uint blend_byte = (blend > 0.5) ? 255u : 0u;
+    return (mat_a & 0xFFu) | ((mat_b & 0xFFu) << 8u) | (blend_byte << 16u);
+}
+
+void write_packed_vertex(uint base_word, vec3 pos, vec3 normal, uint mat_a, uint mat_b, float blend) {
+    mesh_output.words[base_word + 0u] = floatBitsToUint(pos.x);
+    mesh_output.words[base_word + 1u] = floatBitsToUint(pos.y);
+    mesh_output.words[base_word + 2u] = floatBitsToUint(pos.z);
+    mesh_output.words[base_word + 3u] = packHalf2x16(normal.xy);
+    mesh_output.words[base_word + 4u] = packHalf2x16(vec2(normal.z, 0.0));
+    mesh_output.words[base_word + 5u] = pack_material_payload(mat_a, mat_b, blend);
 }
 
 // Edge-to-corner mapping (standard MC edge numbering)
@@ -177,9 +188,6 @@ void main() {
     }
     if (!found_B) mat_B = mat_A;  // Only one material in this cube
 
-    float encoded_A = encode_mat(mat_A);
-    float encoded_B = encode_mat(mat_B);
-
     // === PER-VERTEX BLEND FACTORS ===
     // For each edge vertex, check which material is on the solid side.
     // blend = 0.0 if solid corner has mat_A, blend = 1.0 if mat_B.
@@ -198,7 +206,7 @@ void main() {
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
         uint idx = atomicAdd(counter.triangle_count, 1);
-        uint start_ptr = idx * 27;  // 9 floats per vertex (pos + normal + color) 
+        uint start_ptr = idx * 3u * PACKED_VERTEX_WORDS;
 
         int e1 = triTable[cubeIndex * 16 + i];
         int e2 = triTable[cubeIndex * 16 + i + 1];
@@ -208,40 +216,15 @@ void main() {
         vec3 v2 = vertList[e2];
         vec3 v3 = vertList[e3];
         
-        // Vertex 1: R=mat_A, G=mat_B, B=blend
         vec3 n1 = get_normal(v1);
-        mesh_output.vertices[start_ptr + 0] = v1.x;
-        mesh_output.vertices[start_ptr + 1] = v1.y;
-        mesh_output.vertices[start_ptr + 2] = v1.z;
-        mesh_output.vertices[start_ptr + 3] = n1.x;
-        mesh_output.vertices[start_ptr + 4] = n1.y;
-        mesh_output.vertices[start_ptr + 5] = n1.z;
-        mesh_output.vertices[start_ptr + 6] = encoded_A;
-        mesh_output.vertices[start_ptr + 7] = encoded_B;
-        mesh_output.vertices[start_ptr + 8] = blendList[e1];
+        write_packed_vertex(start_ptr, v1, n1, mat_A, mat_B, blendList[e1]);
         
         // Vertex 3 (note: order is 1,3,2 for winding)
         vec3 n3 = get_normal(v3);
-        mesh_output.vertices[start_ptr + 9] = v3.x;
-        mesh_output.vertices[start_ptr + 10] = v3.y;
-        mesh_output.vertices[start_ptr + 11] = v3.z;
-        mesh_output.vertices[start_ptr + 12] = n3.x;
-        mesh_output.vertices[start_ptr + 13] = n3.y;
-        mesh_output.vertices[start_ptr + 14] = n3.z;
-        mesh_output.vertices[start_ptr + 15] = encoded_A;
-        mesh_output.vertices[start_ptr + 16] = encoded_B;
-        mesh_output.vertices[start_ptr + 17] = blendList[e3];
+        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS, v3, n3, mat_A, mat_B, blendList[e3]);
         
         // Vertex 2
         vec3 n2 = get_normal(v2);
-        mesh_output.vertices[start_ptr + 18] = v2.x;
-        mesh_output.vertices[start_ptr + 19] = v2.y;
-        mesh_output.vertices[start_ptr + 20] = v2.z;
-        mesh_output.vertices[start_ptr + 21] = n2.x;
-        mesh_output.vertices[start_ptr + 22] = n2.y;
-        mesh_output.vertices[start_ptr + 23] = n2.z;
-        mesh_output.vertices[start_ptr + 24] = encoded_A;
-        mesh_output.vertices[start_ptr + 25] = encoded_B;
-        mesh_output.vertices[start_ptr + 26] = blendList[e2];
+        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS * 2u, v2, n2, mat_A, mat_B, blendList[e2]);
     }
 }
