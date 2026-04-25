@@ -12,6 +12,7 @@ layout(set = 0, binding = 0, std430) restrict buffer OutputVertices {
 layout(set = 0, binding = 1, std430) restrict buffer CounterBuffer {
     uint triangle_count;
     uint output_format_magic;
+    uint vertex_count;
 } counter;
 
 // New Binding: Input Density Map
@@ -24,6 +25,10 @@ layout(set = 0, binding = 3, std430) restrict buffer MaterialBuffer {
     uint values[];
 } material_buffer;
 
+layout(set = 0, binding = 4, std430) restrict buffer OutputIndices {
+    uint values[];
+} index_output;
+
 layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position
     float noise_freq;
@@ -32,7 +37,7 @@ layout(push_constant) uniform PushConstants {
 
 const int CHUNK_SIZE = 32;
 const uint PACKED_VERTEX_WORDS = 6u;
-const uint PACKED_OUTPUT_MAGIC = 0x5041434Bu; // "PACK"
+const uint PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950u; // "PIDX"
 const float ISO_LEVEL = 0.0;
 
 #include "res://world_marching_cubes/marching_cubes_lookup_table.glslinc"
@@ -125,7 +130,7 @@ void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
 
     if (id.x == 0u && id.y == 0u && id.z == 0u) {
-        counter.output_format_magic = PACKED_OUTPUT_MAGIC;
+        counter.output_format_magic = PACKED_INDEXED_OUTPUT_MAGIC;
     }
     
     if (id.x >= uint(CHUNK_SIZE) - 1u || id.y >= uint(CHUNK_SIZE) - 1u || id.z >= uint(CHUNK_SIZE) - 1u) {
@@ -216,25 +221,28 @@ void main() {
         }
     }
 
+    uint vertexIndexList[12];
+    for (int e = 0; e < 12; e++) {
+        if ((edgeTable[cubeIndex] & (1 << e)) != 0) {
+            uint vertex_idx = atomicAdd(counter.vertex_count, 1u);
+            vertexIndexList[e] = vertex_idx;
+            write_packed_vertex(vertex_idx * PACKED_VERTEX_WORDS, vertList[e], normalList[e], mat_A, mat_B, blendList[e]);
+        }
+    }
+
     for (int i = 0; triTable[cubeIndex * 16 + i] != -1; i += 3) {
         
         uint idx = atomicAdd(counter.triangle_count, 1);
-        uint start_ptr = idx * 3u * PACKED_VERTEX_WORDS;
+        uint start_ptr = idx * 3u;
 
         int e1 = triTable[cubeIndex * 16 + i];
         int e2 = triTable[cubeIndex * 16 + i + 1];
         int e3 = triTable[cubeIndex * 16 + i + 2];
 
-        vec3 v1 = vertList[e1];
-        vec3 v2 = vertList[e2];
-        vec3 v3 = vertList[e3];
-        
-        write_packed_vertex(start_ptr, v1, normalList[e1], mat_A, mat_B, blendList[e1]);
-        
+        index_output.values[start_ptr + 0u] = vertexIndexList[e1];
         // Vertex 3 (note: order is 1,3,2 for winding)
-        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS, v3, normalList[e3], mat_A, mat_B, blendList[e3]);
-        
+        index_output.values[start_ptr + 1u] = vertexIndexList[e3];
         // Vertex 2
-        write_packed_vertex(start_ptr + PACKED_VERTEX_WORDS * 2u, v2, normalList[e2], mat_A, mat_B, blendList[e2]);
+        index_output.values[start_ptr + 2u] = vertexIndexList[e2];
     }
 }

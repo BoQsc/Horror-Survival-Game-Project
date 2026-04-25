@@ -24,6 +24,7 @@ const MAX_TRIANGLES = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE * 5
 const PACKED_VERTEX_UINTS = 6 # pos.xyz float32 + normal.xyz float16 + packed material payload
 const LEGACY_VERTEX_FLOATS = 9
 const PACKED_OUTPUT_MAGIC = 0x5041434B # "PACK"
+const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 
 @export var viewer: Node3D
 @export var render_distance: int = 5 # Visual range
@@ -2473,21 +2474,26 @@ func _thread_function():
 	# before readback has completed.
 	const MAX_IN_FLIGHT = 4 # Batch more terrain work before sync; output stays identical.
 	var output_bytes_size = MAX_TRIANGLES * 3 * LEGACY_VERTEX_FLOATS * 4
+	var output_index_bytes_size = MAX_TRIANGLES * 3 * 4
 	var buffer_slots: Array[Dictionary] = []
 	for _slot in range(MAX_IN_FLIGHT):
 		var counter_data_t = PackedByteArray()
-		counter_data_t.resize(8)
+		counter_data_t.resize(12)
 		counter_data_t.encode_u32(0, 0)
 		counter_data_t.encode_u32(4, 0)
+		counter_data_t.encode_u32(8, 0)
 		var counter_data_w = PackedByteArray()
-		counter_data_w.resize(8)
+		counter_data_w.resize(12)
 		counter_data_w.encode_u32(0, 0)
 		counter_data_w.encode_u32(4, 0)
+		counter_data_w.encode_u32(8, 0)
 		buffer_slots.append({
 			"vertex_buffer_terrain": rd.storage_buffer_create(output_bytes_size),
-			"counter_buffer_terrain": rd.storage_buffer_create(8, counter_data_t),
+			"counter_buffer_terrain": rd.storage_buffer_create(12, counter_data_t),
+			"index_buffer_terrain": rd.storage_buffer_create(output_index_bytes_size),
 			"vertex_buffer_water": rd.storage_buffer_create(output_bytes_size),
-			"counter_buffer_water": rd.storage_buffer_create(8, counter_data_w)
+			"counter_buffer_water": rd.storage_buffer_create(12, counter_data_w),
+			"index_buffer_water": rd.storage_buffer_create(output_index_bytes_size)
 		})
 
 	var modify_mesh_builder = ClassDB.instantiate("MeshBuilder")
@@ -2515,7 +2521,7 @@ func _thread_function():
 		if task.type == "modify":
 			# HIGHEST PRIORITY: Process modifications immediately, sync all pending work first
 			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
-			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"], modify_mesh_builder)
+			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"], buffer_slots[0]["index_buffer_terrain"], modify_mesh_builder)
 		elif task.type == "generate":
 			var task_has_stored_mods := _get_modifications_for_chunk(task.coord).size() > 0
 			if task_has_stored_mods and not in_flight.is_empty():
@@ -2549,8 +2555,10 @@ func _thread_function():
 	for slot in buffer_slots:
 		rd.free_rid(slot["vertex_buffer_terrain"])
 		rd.free_rid(slot["counter_buffer_terrain"])
+		rd.free_rid(slot["index_buffer_terrain"])
 		rd.free_rid(slot["vertex_buffer_water"])
 		rd.free_rid(slot["counter_buffer_water"])
+		rd.free_rid(slot["index_buffer_water"])
 	rd.free_rid(pipe_gen)
 	rd.free_rid(pipe_gen_water)
 	rd.free_rid(pipe_mod)
@@ -2590,7 +2598,18 @@ func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pi
 		if slot_index < 0 or slot_index >= buffer_slots.size():
 			slot_index = 0
 		var slot: Dictionary = buffer_slots[slot_index]
-		mesh_readbacks.append(_dispatch_chunk_meshing(rd, flight_data, sid_mesh, pipe_mesh, slot["vertex_buffer_terrain"], slot["counter_buffer_terrain"], slot["vertex_buffer_water"], slot["counter_buffer_water"]))
+		mesh_readbacks.append(_dispatch_chunk_meshing(
+			rd,
+			flight_data,
+			sid_mesh,
+			pipe_mesh,
+			slot["vertex_buffer_terrain"],
+			slot["counter_buffer_terrain"],
+			slot["index_buffer_terrain"],
+			slot["vertex_buffer_water"],
+			slot["counter_buffer_water"],
+			slot["index_buffer_water"]
+		))
 
 	if not mesh_readbacks.is_empty():
 		rd.submit()
@@ -2723,17 +2742,17 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	}
 
 # Dispatch terrain and water meshing without syncing so the whole chunk batch can complete together.
-func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, vertex_buffer_water, counter_buffer_water) -> Dictionary:
+func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, index_buffer_terrain, vertex_buffer_water, counter_buffer_water, index_buffer_water) -> Dictionary:
 	var chunk_pos = flight_data.chunk_pos
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 
-	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain)
+	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain, index_buffer_terrain)
 	var skip_water_mesh := not bool(flight_data.get("water_surface_possible", true))
 	var set_mesh_w = RID()
 	if not skip_water_mesh:
-		set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water)
+		set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water, index_buffer_water)
 
 	return {
 		"flight_data": flight_data,
@@ -2742,8 +2761,10 @@ func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_m
 		"skip_water_mesh": skip_water_mesh,
 		"vertex_buffer_terrain": vertex_buffer_terrain,
 		"counter_buffer_terrain": counter_buffer_terrain,
+		"index_buffer_terrain": index_buffer_terrain,
 		"vertex_buffer_water": vertex_buffer_water,
-		"counter_buffer_water": counter_buffer_water
+		"counter_buffer_water": counter_buffer_water,
+		"index_buffer_water": index_buffer_water
 	}
 
 # Complete readback and queue to CPU workers (called after density and mesh syncs)
@@ -2755,10 +2776,10 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 
-	var mesh_data_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.set_mesh_t)
+	var mesh_data_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.index_buffer_terrain, readback.set_mesh_t)
 	var mesh_data_water = {}
 	if not bool(readback.get("skip_water_mesh", false)):
-		mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.set_mesh_w)
+		mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.index_buffer_water, readback.set_mesh_w)
 
 	# Water and terrain density remain full CPU mirrors only for modified chunks.
 	# Normal generated chunks answer water queries from the shader-equivalent
@@ -2802,13 +2823,14 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 	cpu_semaphore.post()
 
 # GPU meshing dispatch only - NO sync, returns uniform set for later cleanup
-func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> RID:
+func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer) -> RID:
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
-	zero_data.resize(8)
+	zero_data.resize(12)
 	zero_data.encode_u32(0, 0)
 	zero_data.encode_u32(4, 0)
-	rd.buffer_update(counter_buffer, 0, 8, zero_data)
+	zero_data.encode_u32(8, 0)
+	rd.buffer_update(counter_buffer, 0, 12, zero_data)
 
 	var u_vert = RDUniform.new()
 	u_vert.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
@@ -2830,7 +2852,12 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 	u_mat.binding = 3
 	u_mat.add_id(material_buffer)
 
-	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat], sid_mesh, 0)
+	var u_index = RDUniform.new()
+	u_index.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_index.binding = 4
+	u_index.add_id(index_buffer)
+
+	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat, u_index], sid_mesh, 0)
 
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
@@ -2850,20 +2877,45 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 	return set_mesh
 
 # Readback packed mesh data AFTER sync has been called.
-func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer, set_mesh: RID) -> Dictionary:
+func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer, index_buffer, set_mesh: RID) -> Dictionary:
 	# Read back vertex data
 	var count_bytes = rd.buffer_get_data(counter_buffer)
+	if count_bytes.size() < 4:
+		if set_mesh.is_valid(): rd.free_rid(set_mesh)
+		return {
+			"bytes": PackedByteArray(),
+			"indices": PackedByteArray(),
+			"floats": PackedFloat32Array(),
+			"vertex_count": 0,
+			"index_count": 0,
+			"packed": false,
+			"indexed": false
+		}
+
 	var tri_count = count_bytes.decode_u32(0)
-	var vertex_count = tri_count * 3
+	var index_count = tri_count * 3
+	var vertex_count = index_count
 
 	var output_format_magic := 0
 	if count_bytes.size() >= 8:
 		output_format_magic = count_bytes.decode_u32(4)
+	var indexed := output_format_magic == PACKED_INDEXED_OUTPUT_MAGIC
+	if indexed and count_bytes.size() >= 12:
+		vertex_count = count_bytes.decode_u32(8)
+	elif indexed:
+		indexed = false
 
 	var vertex_bytes = PackedByteArray()
+	var index_bytes = PackedByteArray()
 	var vert_floats = PackedFloat32Array()
 	if tri_count > 0:
-		if output_format_magic == PACKED_OUTPUT_MAGIC:
+		if indexed:
+			if vertex_count > 0:
+				var total_vertex_bytes = vertex_count * PACKED_VERTEX_UINTS * 4
+				var total_index_bytes = index_count * 4
+				vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, total_vertex_bytes)
+				index_bytes = rd.buffer_get_data(index_buffer, 0, total_index_bytes)
+		elif output_format_magic == PACKED_OUTPUT_MAGIC:
 			var total_bytes = vertex_count * PACKED_VERTEX_UINTS * 4
 			vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, total_bytes)
 		else:
@@ -2874,17 +2926,20 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 
 	return {
 		"bytes": vertex_bytes,
+		"indices": index_bytes,
 		"floats": vert_floats,
 		"vertex_count": vertex_count,
-		"packed": output_format_magic == PACKED_OUTPUT_MAGIC
+		"index_count": index_count,
+		"packed": output_format_magic == PACKED_OUTPUT_MAGIC or indexed,
+		"indexed": indexed
 	}
 
 # Legacy function for modify path (still needs sync inline)
-func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer) -> Dictionary:
-	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer)
+func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer) -> Dictionary:
+	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer)
 	rd.submit()
 	rd.sync()
-	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, set_mesh)
+	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, index_buffer, set_mesh)
 
 # CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
 func _cpu_thread_function():
@@ -2990,7 +3045,7 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
-func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer, builder_override: Object = null):
+func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer, index_buffer, builder_override: Object = null):
 	var density_buffer = task.rid
 	var material_buffer = task.get("material_rid", RID()) # Material buffer from chunk
 	var chunk_pos = task.pos
@@ -3052,7 +3107,7 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
 	var material = material_terrain if layer == 0 else material_water
-	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material, vertex_buffer, counter_buffer, builder_override)
+	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material, vertex_buffer, counter_buffer, index_buffer, builder_override)
 
 	var cpu_density_floats = PackedFloat32Array()
 	# Read back density for this layer
@@ -3164,6 +3219,7 @@ func build_packed_mesh_and_collision(mesh_data: Dictionary, material_instance: M
 		var legacy_floats: PackedFloat32Array = mesh_data.get("floats", PackedFloat32Array())
 		return build_mesh_and_collision(legacy_floats, material_instance, builder_override)
 
+	var indexed := bool(mesh_data.get("indexed", false))
 	var vertex_bytes: PackedByteArray = mesh_data.get("bytes", PackedByteArray())
 	if vertex_count <= 0 or vertex_bytes.is_empty():
 		return {"mesh": null, "shape": null}
@@ -3174,6 +3230,31 @@ func build_packed_mesh_and_collision(mesh_data: Dictionary, material_instance: M
 		if not native_builder:
 			push_error("[ChunkManager] MeshBuilder GDExtension is required for packed mesh/collision building.")
 			return {"mesh": null, "shape": null}
+
+	if indexed:
+		var index_count := int(mesh_data.get("index_count", 0))
+		var index_bytes: PackedByteArray = mesh_data.get("indices", PackedByteArray())
+		if index_count <= 0 or index_bytes.is_empty():
+			return {"mesh": null, "shape": null}
+
+		if include_height_map and native_builder.has_method("build_packed_indexed_mesh_collision_height_map"):
+			var indexed_height_result: Dictionary = native_builder.build_packed_indexed_mesh_collision_height_map(vertex_bytes, index_bytes, vertex_count, index_count, CHUNK_STRIDE)
+			var indexed_height_mesh = indexed_height_result.get("mesh", null)
+			if indexed_height_mesh:
+				indexed_height_mesh.surface_set_material(0, material_instance)
+				indexed_height_result["mesh"] = indexed_height_mesh
+			return indexed_height_result
+
+		if not native_builder.has_method("build_packed_indexed_mesh_and_collision"):
+			push_error("[ChunkManager] MeshBuilder.build_packed_indexed_mesh_and_collision() is required for indexed packed terrain meshes.")
+			return {"mesh": null, "shape": null}
+
+		var indexed_result: Dictionary = native_builder.build_packed_indexed_mesh_and_collision(vertex_bytes, index_bytes, vertex_count, index_count)
+		var indexed_mesh = indexed_result.get("mesh", null)
+		if indexed_mesh:
+			indexed_mesh.surface_set_material(0, material_instance)
+			indexed_result["mesh"] = indexed_mesh
+		return indexed_result
 
 	if include_height_map and native_builder.has_method("build_packed_mesh_collision_height_map"):
 		var height_result: Dictionary = native_builder.build_packed_mesh_collision_height_map(vertex_bytes, vertex_count, CHUNK_STRIDE)
@@ -3194,90 +3275,20 @@ func build_packed_mesh_and_collision(mesh_data: Dictionary, material_instance: M
 		result["mesh"] = native_mesh
 	return result
 
-func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer, builder_override: Object = null):
-	# Reset Counter to 0
-	var zero_data = PackedByteArray()
-	zero_data.resize(8)
-	zero_data.encode_u32(0, 0)
-	zero_data.encode_u32(4, 0)
-	rd.buffer_update(counter_buffer, 0, 8, zero_data)
-
-	var u_vert = RDUniform.new()
-	u_vert.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_vert.binding = 0
-	u_vert.add_id(vertex_buffer)
-
-	var u_count = RDUniform.new()
-	u_count.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_count.binding = 1
-	u_count.add_id(counter_buffer)
-
-	var u_dens = RDUniform.new()
-	u_dens.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_dens.binding = 2
-	u_dens.add_id(density_buffer)
-
-	var u_mat = RDUniform.new()
-	u_mat.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_mat.binding = 3
-	if material_buffer.is_valid():
-		u_mat.add_id(material_buffer)
-	else:
-		# Placeholder when material data is unavailable.
-		u_mat.add_id(density_buffer)
-
-	var set_mesh = rd.uniform_set_create([u_vert, u_count, u_dens, u_mat], sid_mesh, 0)
-
-	var list = rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(list, pipe_mesh)
-	rd.compute_list_bind_uniform_set(list, set_mesh, 0)
-
-	var push_data = PackedFloat32Array([
-		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
-		noise_frequency, terrain_height, 0.0, 0.0
-	])
-	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
-
-	var groups = CHUNK_SIZE / 8
-	rd.compute_list_dispatch(list, groups, groups, groups)
-	rd.compute_list_end()
-
+func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material_instance: Material, vertex_buffer, counter_buffer, index_buffer, builder_override: Object = null):
+	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer)
 	rd.submit()
 	rd.sync()
 
-	# Read back
-	var count_bytes = rd.buffer_get_data(counter_buffer)
-	var tri_count = count_bytes.decode_u32(0)
-	var output_format_magic := 0
-	if count_bytes.size() >= 8:
-		output_format_magic = count_bytes.decode_u32(4)
-
-	var mesh = null
-	var shape = null
-	var builder = builder_override
-	if not builder:
-		builder = ClassDB.instantiate("MeshBuilder")
-	if not builder:
-		push_error("[ChunkManager] MeshBuilder GDExtension is required for mesh generation.")
+	var mesh_data := run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, index_buffer, set_mesh)
+	if int(mesh_data.get("vertex_count", 0)) <= 0:
 		return {"mesh": null, "shape": null}
 
-	if tri_count > 0:
-		var vertex_count = tri_count * 3
-		var built: Dictionary
-		if output_format_magic == PACKED_OUTPUT_MAGIC:
-			var total_bytes = vertex_count * PACKED_VERTEX_UINTS * 4
-			var vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, total_bytes)
-			built = build_packed_mesh_and_collision({"bytes": vertex_bytes, "vertex_count": vertex_count, "packed": true}, material_instance, builder)
-		else:
-			var total_float_bytes = vertex_count * LEGACY_VERTEX_FLOATS * 4
-			var vert_floats = rd.buffer_get_data(vertex_buffer, 0, total_float_bytes).to_float32_array()
-			built = build_mesh_and_collision(vert_floats, material_instance, builder)
-		mesh = built.get("mesh", null)
-		shape = built.get("shape", null)
-
-	if set_mesh.is_valid(): rd.free_rid(set_mesh)
-
-	return {"mesh": mesh, "shape": shape}
+	var built := build_packed_mesh_and_collision(mesh_data, material_instance, builder_override)
+	return {
+		"mesh": built.get("mesh", null),
+		"shape": built.get("shape", null)
+	}
 
 func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, height_map_t: PackedFloat32Array = PackedFloat32Array(), mat_t: RID = RID(), cpu_mat_t: PackedByteArray = PackedByteArray()):
 	if not active_chunks.has(coord):
