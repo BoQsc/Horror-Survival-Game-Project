@@ -55,6 +55,7 @@ var _world_map_road_buf: RID = RID()
 var _world_map_water_buf: RID = RID()
 var _world_map_empty_excavation_buf: RID = RID()
 var _world_map_road_image: Image = null
+var _world_map_water_image: Image = null
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
@@ -115,6 +116,7 @@ class ChunkData:
 	var terrain_shape: Shape3D # Store the shape for lazy creation
 	# CPU mirrors for physics detection
 	var cpu_density_water: PackedFloat32Array = PackedFloat32Array()
+	var generated_water_density_available: bool = false
 	var cpu_density_terrain: PackedFloat32Array = PackedFloat32Array()
 	# Compact top-down terrain surface cache. This replaces full density reads
 	# for normal generated chunks while keeping vegetation/height queries fast.
@@ -931,7 +933,7 @@ func get_water_density(global_pos: Vector3) -> float:
 		return 1.0 # Air (Positive is air, Negative is water)
 
 	var data = active_chunks[coord]
-	if data == null or data.cpu_density_water.is_empty():
+	if data == null:
 		return 1.0
 
 	# Find local position within chunk
@@ -946,12 +948,79 @@ func get_water_density(global_pos: Vector3) -> float:
 	if ix < 0 or ix >= DENSITY_GRID_SIZE or iy < 0 or iy >= DENSITY_GRID_SIZE or iz < 0 or iz >= DENSITY_GRID_SIZE:
 		return 1.0 # Out of bounds
 
+	if data.cpu_density_water.is_empty() and bool(data.generated_water_density_available):
+		var sample_world_pos = chunk_origin + Vector3(ix, iy, iz)
+		return _get_generated_water_density(sample_world_pos)
+
+	if data.cpu_density_water.is_empty():
+		return 1.0
+
 	var index = ix + (iy * DENSITY_GRID_SIZE) + (iz * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
 
 	if index >= 0 and index < data.cpu_density_water.size():
 		return data.cpu_density_water[index]
 
 	return 1.0
+
+func _shader_water_hash(p: Vector3) -> float:
+	var h := Vector3(
+		p.x * 0.3183099 + 0.1,
+		p.y * 0.3183099 + 0.1,
+		p.z * 0.3183099 + 0.1
+	)
+	h = Vector3(h.x - floor(h.x), h.y - floor(h.y), h.z - floor(h.z))
+	h *= 17.0
+	var value := h.x * h.y * h.z * (h.x + h.y + h.z)
+	return value - floor(value)
+
+func _shader_water_noise(p: Vector3) -> float:
+	var i := Vector3(floor(p.x), floor(p.y), floor(p.z))
+	var f := Vector3(p.x - i.x, p.y - i.y, p.z - i.z)
+	var fi := Vector3(
+		f.x * f.x * (3.0 - 2.0 * f.x),
+		f.y * f.y * (3.0 - 2.0 * f.y),
+		f.z * f.z * (3.0 - 2.0 * f.z)
+	)
+
+	var h000 := _shader_water_hash(i + Vector3(0, 0, 0))
+	var h100 := _shader_water_hash(i + Vector3(1, 0, 0))
+	var h010 := _shader_water_hash(i + Vector3(0, 1, 0))
+	var h110 := _shader_water_hash(i + Vector3(1, 1, 0))
+	var h001 := _shader_water_hash(i + Vector3(0, 0, 1))
+	var h101 := _shader_water_hash(i + Vector3(1, 0, 1))
+	var h011 := _shader_water_hash(i + Vector3(0, 1, 1))
+	var h111 := _shader_water_hash(i + Vector3(1, 1, 1))
+
+	return lerp(
+		lerp(lerp(h000, h100, fi.x), lerp(h010, h110, fi.x), fi.y),
+		lerp(lerp(h001, h101, fi.x), lerp(h011, h111, fi.x), fi.y),
+		fi.z
+	)
+
+func _shader_smoothstep(edge0: float, edge1: float, value: float) -> float:
+	var t := clampf((value - edge0) / (edge1 - edge0), 0.0, 1.0)
+	return t * t * (3.0 - 2.0 * t)
+
+func _get_generated_water_density(world_pos: Vector3) -> float:
+	if world_map_active:
+		if _world_map_water_image == null:
+			return 1.0
+		var water_width := _world_map_water_image.get_width()
+		var water_height := _world_map_water_image.get_height()
+		if water_width <= 0 or water_height <= 0 or world_map_size <= 0.0:
+			return 1.0
+		var px := clampi(int(world_pos.x + world_map_half), 0, water_width - 1)
+		var pz := clampi(int(world_pos.z + world_map_half), 0, water_height - 1)
+		var water_pixel := _world_map_water_image.get_pixel(px, pz)
+		if water_pixel.r > 0.5019608:
+			return world_pos.y - water_level
+		return 100.0
+
+	var mask_value := _shader_water_noise(Vector3(world_pos.x, 0.0, world_pos.z) * (noise_frequency * 0.1))
+	mask_value = (mask_value * 2.0) - 1.0
+	var water_mask := _shader_smoothstep(-0.3, 0.3, mask_value)
+	var effective_height := water_level - (1.0 - water_mask) * 20.0
+	return world_pos.y - effective_height
 
 ## Returns true when initial terrain chunks are visually ready (meshes created)
 func is_initial_load_complete() -> bool:
@@ -2235,6 +2304,7 @@ func _thread_function():
 	# === World Map Buffers (uploaded from editor PNGs) ===
 
 	_world_map_buildings = []
+	_world_map_water_image = null
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
 	var world_map_setup_start_us := 0
@@ -2273,6 +2343,7 @@ func _thread_function():
 			# Upload water map if available
 			if loaded.has("water"):
 				var wmap: Image = loaded.water
+				_world_map_water_image = wmap
 				var w_bytes = wmap.get_data()
 				while w_bytes.size() % 4 != 0: w_bytes.append(0)
 				_world_map_water_buf = rd.storage_buffer_create(w_bytes.size(), w_bytes)
@@ -2565,6 +2636,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var mods_for_chunk = _get_modifications_for_chunk(coord)
 	var needs_material_readback := false
 	var needs_terrain_density_readback := false
+	var needs_water_density_readback := false
 
 	if mods_for_chunk.size() > 0:
 		# Debug: show when mods are applied to underground chunks
@@ -2577,6 +2649,8 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 			var mod_layer := int(mod.get("layer", 0))
 			if mod_layer == 0:
 				needs_terrain_density_readback = true
+			else:
+				needs_water_density_readback = true
 			var target_buffer = dens_buf_terrain if mod_layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
 
@@ -2593,6 +2667,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"mat_buf_terrain": mat_buf_terrain,
 		"needs_material_readback": needs_material_readback,
 		"needs_terrain_density_readback": needs_terrain_density_readback,
+		"needs_water_density_readback": needs_water_density_readback,
 		"needs_submit": mods_for_chunk.is_empty()
 	}
 
@@ -2628,11 +2703,15 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 	var mesh_data_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.set_mesh_t)
 	var mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.set_mesh_w)
 
-	# Water density remains live gameplay data. Terrain density is only needed
-	# for modified or legacy chunks now; normal generated chunks use a compact
-	# mesh-derived height map produced by the CPU mesh builder.
-	var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
-	var cpu_density_floats_w = cpu_density_bytes_w.to_float32_array()
+	# Water and terrain density remain full CPU mirrors only for modified chunks.
+	# Normal generated chunks answer water queries from the shader-equivalent
+	# CPU formula and terrain queries from compact height maps.
+	var cpu_density_floats_w = PackedFloat32Array()
+	var generated_water_density := true
+	if bool(flight_data.get("needs_water_density_readback", false)):
+		var cpu_density_bytes_w = rd.buffer_get_data(dens_buf_water)
+		cpu_density_floats_w = cpu_density_bytes_w.to_float32_array()
+		generated_water_density = false
 	var cpu_density_floats_t = PackedFloat32Array()
 	var needs_terrain_density_readback := bool(flight_data.get("needs_terrain_density_readback", false))
 	if not bool(mesh_data_terrain.get("packed", false)):
@@ -2655,6 +2734,7 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 		"mesh_data_terrain": mesh_data_terrain,
 		"mesh_data_water": mesh_data_water,
 		"cpu_dens_w": cpu_density_floats_w,
+		"generated_water_density": generated_water_density,
 		"cpu_dens_t": cpu_density_floats_t,
 		"cpu_mat_t": cpu_material_bytes, # Material data for 3D texture
 		"dens_buf_terrain": dens_buf_terrain,
@@ -2795,7 +2875,11 @@ func _cpu_thread_function():
 
 		# Package results
 		var result_t = {"mesh": mesh_terrain, "shape": shape_terrain}
-		var result_w = {"mesh": mesh_water, "shape": shape_water}
+		var result_w = {
+			"mesh": mesh_water,
+			"shape": shape_water,
+			"generated_density": bool(task.get("generated_water_density", false))
+		}
 
 		# Send to main thread
 		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t, height_map_terrain, task.mat_buf_terrain, task.cpu_mat_t)
@@ -3175,7 +3259,8 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"coord": coord,
 		"result": result_w,
 		"dens": dens_w,
-		"cpu_dens": cpu_dens_w
+		"cpu_dens": cpu_dens_w,
+		"generated_density": bool(result_w.get("generated_density", false))
 	})
 	pending_nodes_needs_sort = true
 
@@ -3261,6 +3346,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.node_water = result.node if not result.is_empty() else null
 		data.density_buffer_water = item.dens
 		data.cpu_density_water = item.cpu_dens
+		data.generated_water_density_available = bool(item.get("generated_density", false))
 
 		_last_finalize_water_ms = float(Time.get_ticks_usec() - start) / 1000.0
 
@@ -3399,6 +3485,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		data.node_water = result_node.node if not result_node.is_empty() else null
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
+			data.generated_water_density_available = false
 	_last_chunk_update_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false, custom_material: Material = null, defer_collision: bool = false) -> Dictionary:
