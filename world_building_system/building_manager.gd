@@ -264,7 +264,7 @@ func _process_pending_object_collisions() -> void:
 		if not is_instance_valid(chunk) or not is_instance_valid(obj):
 			continue
 
-		chunk._generate_object_collision(obj, anchor)
+		chunk.generate_deferred_object_collision(obj, anchor)
 		processed += 1
 
 func clear_pending_object_collision_tasks() -> void:

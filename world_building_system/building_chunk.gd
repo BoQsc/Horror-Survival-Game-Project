@@ -669,7 +669,13 @@ func _generate_object_collision_measured(obj: Node3D, anchor: Vector3i) -> void:
 	if _should_use_simple_object_collision(object_id):
 		_generate_simple_object_collision(obj, anchor, object_id)
 	else:
-		_generate_object_collision(obj, anchor)
+		_generate_exact_object_collision(obj, anchor, object_id)
+
+func generate_deferred_object_collision(obj: Node3D, anchor: Vector3i) -> void:
+	if _should_skip_object_collisions():
+		return
+	var object_id := int(obj.get_meta("object_id", -1))
+	_generate_exact_object_collision(obj, anchor, object_id)
 
 func _should_use_simple_object_collision(object_id: int) -> bool:
 	return SIMPLE_OBJECT_COLLISION_IDS.has(object_id)
@@ -751,7 +757,62 @@ func _find_first_mesh_instance(node: Node) -> MeshInstance3D:
 ## Generate collision for an object by finding its meshes
 ## anchor is passed in since child nodes may not have the meta set
 ## Skips objects in "interactable" group - they handle their own collision
-func _generate_object_collision(obj: Node3D, anchor: Vector3i):
+func _generate_exact_object_collision(obj: Node3D, anchor: Vector3i, object_id: int = -1) -> void:
+	if _generate_cached_object_collision(obj, anchor, object_id):
+		return
+	_generate_object_collision(obj, anchor)
+
+func _generate_cached_object_collision(obj: Node3D, anchor: Vector3i, object_id: int) -> bool:
+	if _should_skip_object_collisions():
+		return true
+	if object_id < 0 or obj.is_in_group("interactable"):
+		return false
+
+	var descriptors := ObjectRegistry.get_object_collision_mesh_descriptors(object_id)
+	if descriptors.is_empty():
+		return false
+
+	var mesh_instances: Array = []
+	var collision_shapes: Array = []
+	for descriptor_variant in descriptors:
+		if typeof(descriptor_variant) != TYPE_DICTIONARY:
+			continue
+		var descriptor: Dictionary = descriptor_variant
+		var mesh_path: NodePath = descriptor.get("path", NodePath(""))
+		if str(mesh_path) == "":
+			continue
+		var mesh_inst := obj.get_node_or_null(mesh_path) as MeshInstance3D
+		if not mesh_inst or not mesh_inst.mesh:
+			return false
+		var collision_shape := _get_cached_object_collision_shape(mesh_inst.mesh)
+		if not _shape_is_usable(collision_shape):
+			continue
+		mesh_instances.append(mesh_inst)
+		collision_shapes.append(collision_shape)
+
+	for i in range(mesh_instances.size()):
+		_attach_object_collision_shape(mesh_instances[i], collision_shapes[i], anchor)
+
+	return true
+
+func _attach_object_collision_shape(mesh_inst: MeshInstance3D, collision_shape: Shape3D, anchor: Vector3i) -> void:
+	var static_body = StaticBody3D.new()
+	static_body.add_to_group("placed_objects")
+	static_body.set_meta("anchor", anchor)
+	static_body.set_meta("chunk", self)
+
+	var collision = CollisionShape3D.new()
+	collision.shape = collision_shape
+	static_body.add_child(collision)
+
+	# Preserve the legacy generated collision transform exactly.
+	static_body.position = mesh_inst.position
+	static_body.rotation = mesh_inst.rotation
+	static_body.scale = mesh_inst.scale
+
+	mesh_inst.add_child(static_body)
+
+func _generate_object_collision(obj: Node3D, anchor: Vector3i) -> void:
 	if _should_skip_object_collisions():
 		return
 	# Skip collision generation for interactable objects (they manage their own)
@@ -766,22 +827,7 @@ func _generate_object_collision(obj: Node3D, anchor: Vector3i):
 				var collision_shape := _get_cached_object_collision_shape(mesh_inst.mesh)
 				if not _shape_is_usable(collision_shape):
 					continue
-
-				var static_body = StaticBody3D.new()
-				static_body.add_to_group("placed_objects")
-				static_body.set_meta("anchor", anchor)
-				static_body.set_meta("chunk", self)
-				
-				var collision = CollisionShape3D.new()
-				collision.shape = collision_shape
-				static_body.add_child(collision)
-				
-				# Match the mesh position
-				static_body.position = mesh_inst.position
-				static_body.rotation = mesh_inst.rotation
-				static_body.scale = mesh_inst.scale
-				
-				mesh_inst.add_child(static_body)
+				_attach_object_collision_shape(mesh_inst, collision_shape, anchor)
 		# Recurse into children
 		if child is Node3D:
 			_generate_object_collision(child, anchor)

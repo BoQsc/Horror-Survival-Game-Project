@@ -82,6 +82,7 @@ static var _preload_done: bool = false
 static var _visual_data_cache: Dictionary = {} # scene_path -> { mesh, mesh_transform }
 static var _authored_collision_cache: Dictionary = {} # scene_path -> bool
 static var _occupied_cells_cache: Dictionary = {} # id:rotation -> Array[Vector3i]
+static var _generic_collision_mesh_cache: Dictionary = {} # scene_path -> Array[{ path, mesh }]
 
 ## Preload all object scenes (call at game startup for faster spawning)
 static func preload_all_scenes() -> void:
@@ -98,7 +99,9 @@ static func preload_all_scenes() -> void:
 				_preloaded_scenes[scene_path] = load(scene_path)
 		if is_simple_visual_batch_object(int(id)) or is_proxy_visual_batch_object(int(id)):
 			get_object_visual_data(int(id))
-		get_object_has_authored_collision(int(id))
+		var has_authored_collision := get_object_has_authored_collision(int(id))
+		if not has_authored_collision:
+			get_object_collision_mesh_descriptors(int(id))
 	
 	var elapsed = Time.get_ticks_msec() - start_time
 	_preload_done = true
@@ -174,6 +177,29 @@ static func get_object_has_authored_collision(object_id: int) -> bool:
 	if instance:
 		instance.free()
 	return has_collision
+
+static func get_object_collision_mesh_descriptors(object_id: int) -> Array:
+	var obj = get_object(object_id)
+	if obj.is_empty():
+		return []
+	var scene_path = str(obj.get("scene", ""))
+	if scene_path == "":
+		return []
+	if _generic_collision_mesh_cache.has(scene_path):
+		return _generic_collision_mesh_cache[scene_path]
+	var packed = get_preloaded_scene(scene_path)
+	if not packed:
+		_generic_collision_mesh_cache[scene_path] = []
+		return []
+	var instance = packed.instantiate()
+	if not instance:
+		_generic_collision_mesh_cache[scene_path] = []
+		return []
+	var descriptors: Array = []
+	_collect_generic_collision_mesh_descriptors(instance, instance, descriptors)
+	_generic_collision_mesh_cache[scene_path] = descriptors
+	instance.free()
+	return descriptors
 
 static func is_simple_visual_batch_object(object_id: int) -> bool:
 	return SIMPLE_VISUAL_BATCH_OBJECT_IDS.has(object_id)
@@ -317,3 +343,17 @@ static func _scene_has_authored_collision(node: Node) -> bool:
 		if _scene_has_authored_collision(child):
 			return true
 	return false
+
+static func _collect_generic_collision_mesh_descriptors(node: Node, root: Node, descriptors: Array) -> void:
+	if not node or node.is_in_group("interactable"):
+		return
+	for child in node.get_children():
+		if child is MeshInstance3D:
+			var mesh_inst := child as MeshInstance3D
+			if mesh_inst.mesh:
+				descriptors.append({
+					"path": root.get_path_to(mesh_inst),
+					"mesh": mesh_inst.mesh
+				})
+		if child is Node3D:
+			_collect_generic_collision_mesh_descriptors(child, root, descriptors)
