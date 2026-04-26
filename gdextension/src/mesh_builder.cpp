@@ -202,6 +202,46 @@ static PackedFloat32Array build_top_down_height_map(const PackedVector3Array &ve
     return heights;
 }
 
+static float sample_world_map_height_bilinear(const PackedByteArray &heightmap_data, int width, int height, float world_x, float world_z, float map_half, float max_height) {
+    if (width <= 0 || height <= 0 || heightmap_data.size() < width * height || max_height <= 0.0f) {
+        return 0.0f;
+    }
+
+    const uint8_t *height_ptr = heightmap_data.ptr();
+
+    const float px = std::clamp(world_x + map_half, 0.0f, static_cast<float>(width - 1));
+    const float pz = std::clamp(world_z + map_half, 0.0f, static_cast<float>(height - 1));
+    const int x0 = static_cast<int>(std::floor(px));
+    const int z0 = static_cast<int>(std::floor(pz));
+    const int x1 = std::min(x0 + 1, width - 1);
+    const int z1 = std::min(z0 + 1, height - 1);
+    const float tx = px - static_cast<float>(x0);
+    const float tz = pz - static_cast<float>(z0);
+
+    const float h00 = static_cast<float>(height_ptr[z0 * width + x0]) / 255.0f;
+    const float h10 = static_cast<float>(height_ptr[z0 * width + x1]) / 255.0f;
+    const float h01 = static_cast<float>(height_ptr[z1 * width + x0]) / 255.0f;
+    const float h11 = static_cast<float>(height_ptr[z1 * width + x1]) / 255.0f;
+    const float h0 = h00 + (h10 - h00) * tx;
+    const float h1 = h01 + (h11 - h01) * tx;
+    const float h = h0 + (h1 - h0) * tz;
+
+    return std::clamp(h * max_height, 1.0f, 28.0f);
+}
+
+static Vector3 calculate_lod_normal(const std::vector<float> &heights, int grid_size, int x, int z, float spacing) {
+    const int left = std::max(x - 1, 0);
+    const int right = std::min(x + 1, grid_size - 1);
+    const int back = std::max(z - 1, 0);
+    const int forward = std::min(z + 1, grid_size - 1);
+    const float h_l = heights[left * grid_size + z];
+    const float h_r = heights[right * grid_size + z];
+    const float h_b = heights[x * grid_size + back];
+    const float h_f = heights[x * grid_size + forward];
+    Vector3 normal(h_l - h_r, spacing * 2.0f, h_b - h_f);
+    return normal.normalized();
+}
+
 static Dictionary build_indexed_packed_terrain_mesh(const PackedByteArray &data, int vertex_count, bool include_height_map, int height_map_size) {
     Dictionary result;
     Ref<ArrayMesh> mesh;
@@ -1265,6 +1305,107 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_world_map_baked_building_trigger_coords", "min_coord", "max_coord", "chunk_stride"), &MeshBuilder::get_world_map_baked_building_trigger_coords);
     ClassDB::bind_method(D_METHOD("build_collision_boxes_from_voxels", "voxel_bytes", "chunk_size"), &MeshBuilder::build_collision_boxes_from_voxels);
     ClassDB::bind_method(D_METHOD("apply_world_map_collision_boxes", "body_rid", "collision_boxes"), &MeshBuilder::apply_world_map_collision_boxes);
+    ClassDB::bind_method(D_METHOD("build_world_map_lod_mesh", "heightmap_data", "heightmap_width", "heightmap_height", "chunk_x", "chunk_z", "chunk_stride", "sample_step", "map_half", "max_height"), &MeshBuilder::build_world_map_lod_mesh);
+}
+
+Ref<ArrayMesh> MeshBuilder::build_world_map_lod_mesh(const PackedByteArray& heightmap_data, int heightmap_width, int heightmap_height, int chunk_x, int chunk_z, int chunk_stride, int sample_step, float map_half, float max_height) {
+    Ref<ArrayMesh> mesh;
+    if (heightmap_width <= 0 || heightmap_height <= 0 || heightmap_data.size() < heightmap_width * heightmap_height || chunk_stride <= 0 || max_height <= 0.0f) {
+        return mesh;
+    }
+
+    sample_step = std::clamp(sample_step, 1, std::max(1, chunk_stride));
+
+    std::vector<int> offsets;
+    offsets.reserve((chunk_stride / sample_step) + 2);
+    for (int offset = 0; offset < chunk_stride; offset += sample_step) {
+        offsets.push_back(offset);
+    }
+    if (offsets.empty() || offsets.back() != chunk_stride) {
+        offsets.push_back(chunk_stride);
+    }
+
+    const int grid_size = static_cast<int>(offsets.size());
+    const int vertex_count = grid_size * grid_size;
+    if (vertex_count < 4) {
+        return mesh;
+    }
+
+    std::vector<float> heights(vertex_count, 0.0f);
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedColorArray colors;
+    PackedVector2Array uvs;
+    PackedInt32Array indices;
+
+    vertices.resize(vertex_count);
+    normals.resize(vertex_count);
+    colors.resize(vertex_count);
+    uvs.resize(vertex_count);
+
+    Vector3 *vertex_ptr = vertices.ptrw();
+    Color *color_ptr = colors.ptrw();
+    Vector2 *uv_ptr = uvs.ptrw();
+
+    const float origin_x = static_cast<float>(chunk_x * chunk_stride);
+    const float origin_z = static_cast<float>(chunk_z * chunk_stride);
+
+    for (int x = 0; x < grid_size; ++x) {
+        for (int z = 0; z < grid_size; ++z) {
+            const int index = x * grid_size + z;
+            const float local_x = static_cast<float>(offsets[x]);
+            const float local_z = static_cast<float>(offsets[z]);
+            const float world_x = origin_x + local_x;
+            const float world_z = origin_z + local_z;
+            const float y = sample_world_map_height_bilinear(heightmap_data, heightmap_width, heightmap_height, world_x, world_z, map_half, max_height);
+
+            heights[index] = y;
+            vertex_ptr[index] = Vector3(local_x, y, local_z);
+            color_ptr[index] = Color(0.0f, 0.0f, 0.0f, 1.0f);
+            uv_ptr[index] = Vector2(world_x, world_z);
+        }
+    }
+
+    Vector3 *normal_ptr = normals.ptrw();
+    const float normal_spacing = static_cast<float>(sample_step);
+    for (int x = 0; x < grid_size; ++x) {
+        for (int z = 0; z < grid_size; ++z) {
+            const int index = x * grid_size + z;
+            normal_ptr[index] = calculate_lod_normal(heights, grid_size, x, z, normal_spacing);
+        }
+    }
+
+    const int index_count = (grid_size - 1) * (grid_size - 1) * 6;
+    indices.resize(index_count);
+    int32_t *index_ptr = indices.ptrw();
+    int write_index = 0;
+    for (int x = 0; x < grid_size - 1; ++x) {
+        for (int z = 0; z < grid_size - 1; ++z) {
+            const int v00 = x * grid_size + z;
+            const int v01 = x * grid_size + z + 1;
+            const int v10 = (x + 1) * grid_size + z;
+            const int v11 = (x + 1) * grid_size + z + 1;
+
+            index_ptr[write_index++] = v00;
+            index_ptr[write_index++] = v10;
+            index_ptr[write_index++] = v01;
+            index_ptr[write_index++] = v10;
+            index_ptr[write_index++] = v11;
+            index_ptr[write_index++] = v01;
+        }
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    arrays[Mesh::ARRAY_NORMAL] = normals;
+    arrays[Mesh::ARRAY_COLOR] = colors;
+    arrays[Mesh::ARRAY_TEX_UV] = uvs;
+    arrays[Mesh::ARRAY_INDEX] = indices;
+
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    return mesh;
 }
 
 Ref<ArrayMesh> MeshBuilder::build_mesh_native(const PackedFloat32Array& data, int stride) {

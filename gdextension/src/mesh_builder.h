@@ -5,7 +5,6 @@
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/box_shape3d.hpp>
-#include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/image_texture3d.hpp>
 #include <godot_cpp/classes/concave_polygon_shape3d.hpp>
 #include <godot_cpp/classes/physics_server3d.hpp>
@@ -89,6 +88,9 @@ public:
 
 	// Applies merged world-map collision boxes to an existing body RID.
 	bool apply_world_map_collision_boxes(const RID& body_rid, const Array& collision_boxes);
+
+	// Builds a visual-only heightfield terrain mesh from the baked world-map heightmap.
+	Ref<ArrayMesh> build_world_map_lod_mesh(const PackedByteArray& heightmap_data, int heightmap_width, int heightmap_height, int chunk_x, int chunk_z, int chunk_stride, int sample_step, float map_half, float max_height);
 };
 
 }

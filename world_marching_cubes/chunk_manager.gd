@@ -46,6 +46,10 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 ## When set, the terrain reads height/biome/road data from PNGs instead of procedural noise
 @export var world_definition_path: String = ""
 @export var world_map_data_cache_enabled: bool = true # Toggle cached world-map loads
+@export var distant_world_map_lod_enabled: bool = false
+@export_range(1, 64, 1) var distant_world_map_lod_distance: int = 10
+@export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
+@export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -55,6 +59,9 @@ var _world_map_biome_buf: RID = RID()
 var _world_map_road_buf: RID = RID()
 var _world_map_water_buf: RID = RID()
 var _world_map_empty_excavation_buf: RID = RID()
+var _world_map_heightmap_data: PackedByteArray = PackedByteArray()
+var _world_map_heightmap_width: int = 0
+var _world_map_heightmap_height: int = 0
 var _world_map_road_image: Image = null
 var _world_map_water_image: Image = null
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
@@ -195,6 +202,19 @@ var _last_world_map_entry_ms: float = 0.0
 var _last_world_map_load_profile: Dictionary = {}
 var _startup_world_map_data: Dictionary = {}
 var _startup_world_map_load_profile: Dictionary = {}
+var _world_map_lod_chunks: Dictionary = {}
+var _world_map_lod_builder: Object = null
+var _world_map_lod_load_candidates: Array[Vector2i] = []
+var _world_map_lod_unload_candidates: Array[Vector2i] = []
+var _world_map_lod_load_cursor: int = 0
+var _world_map_lod_unload_cursor: int = 0
+var _world_map_lod_sort_center: Vector2i = Vector2i.ZERO
+var _last_world_map_lod_center: Vector2i = Vector2i(2147483647, 2147483647)
+var _last_world_map_lod_inner_distance: int = -1
+var _last_world_map_lod_outer_distance: int = -1
+var _last_world_map_lod_update_ms: float = 0.0
+var _last_world_map_lod_loads: int = 0
+var _last_world_map_lod_unloads: int = 0
 
 
 # Persistent modification storage - survives chunk unloading
@@ -312,6 +332,11 @@ func _ready():
 			world_map_half = world_map_size / 2.0
 			world_map_max_height = meta_terrain_height * 2.5
 			water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
+		if loaded.has("heightmap"):
+			var startup_hmap: Image = loaded.heightmap
+			_world_map_heightmap_data = startup_hmap.get_data()
+			_world_map_heightmap_width = startup_hmap.get_width()
+			_world_map_heightmap_height = startup_hmap.get_height()
 		# Pass world map road image as road_mask for per-pixel road edge blending
 		# UV mapping: road_uv = world_pos.xz * scale + 0.5 = (world_pos.xz + half) / size
 		if loaded.has("roads"):
@@ -409,6 +434,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_modify_terrain_ms": _last_modify_terrain_ms,
 		"last_world_map_entry_ms": _last_world_map_entry_ms,
 		"world_map_load_profile": _last_world_map_load_profile.duplicate(true),
+		"world_map_lod_chunk_count": _world_map_lod_chunks.size(),
+		"last_world_map_lod_update_ms": _last_world_map_lod_update_ms,
+		"last_world_map_lod_loads": _last_world_map_lod_loads,
+		"last_world_map_lod_unloads": _last_world_map_lod_unloads,
+		"distant_world_map_lod_distance": distant_world_map_lod_distance,
 		"hot_frame_backoff_remaining_frames": _hot_frame_backoff_remaining_frames,
 		"world_map_building_count": _world_map_buildings.size(),
 		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
@@ -431,6 +461,163 @@ func get_viewer_position() -> Vector3:
 
 	# Default: player's position
 	return viewer.global_position
+
+func _world_map_lod_distance_sq(coord: Vector2i, center: Vector2i) -> int:
+	var dx := coord.x - center.x
+	var dz := coord.y - center.y
+	return dx * dx + dz * dz
+
+func _compare_world_map_lod_coord_distance(a: Vector2i, b: Vector2i) -> bool:
+	return _world_map_lod_distance_sq(a, _world_map_lod_sort_center) < _world_map_lod_distance_sq(b, _world_map_lod_sort_center)
+
+func _get_world_map_lod_builder() -> Object:
+	if _world_map_lod_builder and is_instance_valid(_world_map_lod_builder):
+		return _world_map_lod_builder
+	if not ClassDB.class_exists("MeshBuilder"):
+		return null
+	_world_map_lod_builder = ClassDB.instantiate("MeshBuilder")
+	return _world_map_lod_builder
+
+func _reset_world_map_lod_candidates() -> void:
+	_world_map_lod_load_candidates.clear()
+	_world_map_lod_unload_candidates.clear()
+	_world_map_lod_load_cursor = 0
+	_world_map_lod_unload_cursor = 0
+
+func _rebuild_world_map_lod_candidates(center: Vector2i) -> void:
+	_reset_world_map_lod_candidates()
+	_world_map_lod_sort_center = center
+
+	var inner_distance := maxi(render_distance, 0)
+	var outer_distance := maxi(distant_world_map_lod_distance, inner_distance)
+	var inner_sq := inner_distance * inner_distance
+	var outer_sq := outer_distance * outer_distance
+
+	for coord_variant in _world_map_lod_chunks.keys():
+		var coord: Vector2i = coord_variant
+		var dist_sq := _world_map_lod_distance_sq(coord, center)
+		if dist_sq <= inner_sq or dist_sq > outer_sq:
+			_world_map_lod_unload_candidates.append(coord)
+
+	for x in range(center.x - outer_distance, center.x + outer_distance + 1):
+		for z in range(center.y - outer_distance, center.y + outer_distance + 1):
+			var coord := Vector2i(x, z)
+			var dist_sq := _world_map_lod_distance_sq(coord, center)
+			if dist_sq <= inner_sq or dist_sq > outer_sq:
+				continue
+			if _world_map_lod_chunks.has(coord):
+				continue
+			if active_chunks.has(Vector3i(coord.x, 0, coord.y)):
+				continue
+			_world_map_lod_load_candidates.append(coord)
+
+	_world_map_lod_unload_candidates.sort_custom(_compare_world_map_lod_coord_distance)
+	_world_map_lod_load_candidates.sort_custom(_compare_world_map_lod_coord_distance)
+
+func _clear_world_map_lod_chunks(immediate: bool = false) -> void:
+	for node_variant in _world_map_lod_chunks.values():
+		var node := node_variant as Node
+		if not node:
+			continue
+		if immediate:
+			node.free()
+		else:
+			node.queue_free()
+	_world_map_lod_chunks.clear()
+	_reset_world_map_lod_candidates()
+	_last_world_map_lod_center = Vector2i(2147483647, 2147483647)
+	_last_world_map_lod_inner_distance = -1
+	_last_world_map_lod_outer_distance = -1
+
+func _unload_world_map_lod_chunk(coord: Vector2i, immediate: bool = false) -> bool:
+	if not _world_map_lod_chunks.has(coord):
+		return false
+	var node := _world_map_lod_chunks[coord] as Node
+	_world_map_lod_chunks.erase(coord)
+	if node:
+		if immediate:
+			node.free()
+		else:
+			node.queue_free()
+	return true
+
+func _load_world_map_lod_chunk(coord: Vector2i) -> bool:
+	if _world_map_heightmap_data.is_empty() or _world_map_heightmap_width <= 0 or _world_map_heightmap_height <= 0:
+		return false
+	if _world_map_lod_chunks.has(coord):
+		return false
+	if active_chunks.has(Vector3i(coord.x, 0, coord.y)):
+		return false
+
+	var builder := _get_world_map_lod_builder()
+	if not builder or not builder.has_method("build_world_map_lod_mesh"):
+		return false
+
+	var mesh: ArrayMesh = builder.build_world_map_lod_mesh(
+		_world_map_heightmap_data,
+		_world_map_heightmap_width,
+		_world_map_heightmap_height,
+		coord.x,
+		coord.y,
+		CHUNK_STRIDE,
+		distant_world_map_lod_sample_step,
+		world_map_half,
+		world_map_max_height
+	)
+	if mesh == null:
+		return false
+
+	var lod_node := MeshInstance3D.new()
+	lod_node.name = "WorldMapLOD_%d_%d" % [coord.x, coord.y]
+	lod_node.mesh = mesh
+	lod_node.material_override = material_terrain
+	lod_node.position = Vector3(coord.x * CHUNK_STRIDE, 0.0, coord.y * CHUNK_STRIDE)
+	lod_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lod_node.add_to_group("world_map_lod")
+	add_child(lod_node)
+	_world_map_lod_chunks[coord] = lod_node
+	return true
+
+func _update_world_map_lod_chunks() -> void:
+	var start_us := Time.get_ticks_usec()
+	_last_world_map_lod_loads = 0
+	_last_world_map_lod_unloads = 0
+
+	if not distant_world_map_lod_enabled or not world_map_active or _world_map_heightmap_data.is_empty() or distant_world_map_lod_distance <= render_distance:
+		if not _world_map_lod_chunks.is_empty():
+			_clear_world_map_lod_chunks()
+		_last_world_map_lod_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+		return
+
+	var p_pos := get_viewer_position()
+	var center := Vector2i(int(floor(p_pos.x / CHUNK_STRIDE)), int(floor(p_pos.z / CHUNK_STRIDE)))
+	if center != _last_world_map_lod_center or render_distance != _last_world_map_lod_inner_distance or distant_world_map_lod_distance != _last_world_map_lod_outer_distance:
+		_last_world_map_lod_center = center
+		_last_world_map_lod_inner_distance = render_distance
+		_last_world_map_lod_outer_distance = distant_world_map_lod_distance
+		_rebuild_world_map_lod_candidates(center)
+
+	var budget := distant_world_map_lod_budget_per_frame
+	while budget > 0 and _world_map_lod_unload_cursor < _world_map_lod_unload_candidates.size():
+		var coord_to_unload := _world_map_lod_unload_candidates[_world_map_lod_unload_cursor]
+		_world_map_lod_unload_cursor += 1
+		if _unload_world_map_lod_chunk(coord_to_unload):
+			_last_world_map_lod_unloads += 1
+			budget -= 1
+
+	while budget > 0 and _world_map_lod_load_cursor < _world_map_lod_load_candidates.size():
+		var coord_to_load := _world_map_lod_load_candidates[_world_map_lod_load_cursor]
+		_world_map_lod_load_cursor += 1
+		if active_chunks.has(Vector3i(coord_to_load.x, 0, coord_to_load.y)):
+			continue
+		if _load_world_map_lod_chunk(coord_to_load):
+			_last_world_map_lod_loads += 1
+		budget -= 1
+
+	if _world_map_lod_unload_cursor >= _world_map_lod_unload_candidates.size() and _world_map_lod_load_cursor >= _world_map_lod_load_candidates.size():
+		_reset_world_map_lod_candidates()
+
+	_last_world_map_lod_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
 func _get_vehicle_manager() -> Node:
 	if _cached_vehicle_manager and is_instance_valid(_cached_vehicle_manager):
@@ -602,6 +789,7 @@ func _process(delta):
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 	process_pending_terrain_collision_creates()
+	_update_world_map_lod_chunks()
 
 	# HOTFIX: Ensure all existing chunks have layer 512 (Layer 10) for pickups
 	if active_chunks.size() > 0 and not get_meta("collision_fixed", false):
@@ -1832,6 +2020,7 @@ func _exit_tree():
 	# This fixes 682 resource leaks (StorageBuffers, Meshes, Collision, Materials)
 
 	# 1. Unload all active chunks (frees meshes, collision, GPU buffers)
+	_clear_world_map_lod_chunks(true)
 	var coords_to_unload = active_chunks.keys()
 	for coord in coords_to_unload:
 		_unload_chunk(coord)
@@ -2068,6 +2257,7 @@ func clear_all_chunks():
 
 	# 1. Clear background task queues immediately
 	_clear_gpu_task_queues()
+	_clear_world_map_lod_chunks()
 
 	cpu_mutex.lock()
 	cpu_task_queue.clear()
@@ -2373,6 +2563,9 @@ func _thread_function():
 	# === World Map Buffers (uploaded from editor PNGs) ===
 
 	_world_map_buildings = []
+	_world_map_heightmap_data.clear()
+	_world_map_heightmap_width = 0
+	_world_map_heightmap_height = 0
 	_world_map_water_image = null
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
@@ -2397,6 +2590,9 @@ func _thread_function():
 
 			# Upload raw bytes as storage buffers
 			var h_bytes = hmap.get_data()
+			_world_map_heightmap_data = h_bytes.duplicate()
+			_world_map_heightmap_width = hmap.get_width()
+			_world_map_heightmap_height = hmap.get_height()
 			var b_bytes = bmap.get_data()
 			var r_bytes = rmap.get_data()
 
