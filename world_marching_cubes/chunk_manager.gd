@@ -48,6 +48,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export var world_map_data_cache_enabled: bool = true # Toggle cached world-map loads
 @export var distant_world_map_lod_enabled: bool = false
 @export_range(1, 64, 1) var distant_world_map_lod_distance: int = 10
+@export_range(0, 8, 1) var distant_world_map_lod_overlap: int = 2
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
 var world_map_active: bool = false
@@ -439,6 +440,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_world_map_lod_loads": _last_world_map_lod_loads,
 		"last_world_map_lod_unloads": _last_world_map_lod_unloads,
 		"distant_world_map_lod_distance": distant_world_map_lod_distance,
+		"distant_world_map_lod_overlap": distant_world_map_lod_overlap,
 		"hot_frame_backoff_remaining_frames": _hot_frame_backoff_remaining_frames,
 		"world_map_building_count": _world_map_buildings.size(),
 		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
@@ -467,6 +469,20 @@ func _world_map_lod_distance_sq(coord: Vector2i, center: Vector2i) -> int:
 	var dz := coord.y - center.y
 	return dx * dx + dz * dz
 
+func _world_map_lod_inner_distance() -> int:
+	return maxi(render_distance - distant_world_map_lod_overlap, 0)
+
+func _has_visible_world_map_terrain_chunk(coord: Vector2i) -> bool:
+	var terrain_coord := Vector3i(coord.x, 0, coord.y)
+	if not active_chunks.has(terrain_coord):
+		return false
+
+	var data = active_chunks[terrain_coord]
+	if data == null:
+		return false
+
+	return data.node_terrain != null and is_instance_valid(data.node_terrain)
+
 func _compare_world_map_lod_coord_distance(a: Vector2i, b: Vector2i) -> bool:
 	return _world_map_lod_distance_sq(a, _world_map_lod_sort_center) < _world_map_lod_distance_sq(b, _world_map_lod_sort_center)
 
@@ -488,7 +504,7 @@ func _rebuild_world_map_lod_candidates(center: Vector2i) -> void:
 	_reset_world_map_lod_candidates()
 	_world_map_lod_sort_center = center
 
-	var inner_distance := maxi(render_distance, 0)
+	var inner_distance := _world_map_lod_inner_distance()
 	var outer_distance := maxi(distant_world_map_lod_distance, inner_distance)
 	var inner_sq := inner_distance * inner_distance
 	var outer_sq := outer_distance * outer_distance
@@ -496,7 +512,7 @@ func _rebuild_world_map_lod_candidates(center: Vector2i) -> void:
 	for coord_variant in _world_map_lod_chunks.keys():
 		var coord: Vector2i = coord_variant
 		var dist_sq := _world_map_lod_distance_sq(coord, center)
-		if dist_sq <= inner_sq or dist_sq > outer_sq:
+		if dist_sq <= inner_sq or dist_sq > outer_sq or _has_visible_world_map_terrain_chunk(coord):
 			_world_map_lod_unload_candidates.append(coord)
 
 	for x in range(center.x - outer_distance, center.x + outer_distance + 1):
@@ -507,7 +523,7 @@ func _rebuild_world_map_lod_candidates(center: Vector2i) -> void:
 				continue
 			if _world_map_lod_chunks.has(coord):
 				continue
-			if active_chunks.has(Vector3i(coord.x, 0, coord.y)):
+			if _has_visible_world_map_terrain_chunk(coord):
 				continue
 			_world_map_lod_load_candidates.append(coord)
 
@@ -546,7 +562,7 @@ func _load_world_map_lod_chunk(coord: Vector2i) -> bool:
 		return false
 	if _world_map_lod_chunks.has(coord):
 		return false
-	if active_chunks.has(Vector3i(coord.x, 0, coord.y)):
+	if _has_visible_world_map_terrain_chunk(coord):
 		return false
 
 	var builder := _get_world_map_lod_builder()
@@ -583,7 +599,8 @@ func _update_world_map_lod_chunks() -> void:
 	_last_world_map_lod_loads = 0
 	_last_world_map_lod_unloads = 0
 
-	if not distant_world_map_lod_enabled or not world_map_active or _world_map_heightmap_data.is_empty() or distant_world_map_lod_distance <= render_distance:
+	var inner_distance := _world_map_lod_inner_distance()
+	if not distant_world_map_lod_enabled or not world_map_active or _world_map_heightmap_data.is_empty() or distant_world_map_lod_distance <= inner_distance:
 		if not _world_map_lod_chunks.is_empty():
 			_clear_world_map_lod_chunks()
 		_last_world_map_lod_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
@@ -591,9 +608,9 @@ func _update_world_map_lod_chunks() -> void:
 
 	var p_pos := get_viewer_position()
 	var center := Vector2i(int(floor(p_pos.x / CHUNK_STRIDE)), int(floor(p_pos.z / CHUNK_STRIDE)))
-	if center != _last_world_map_lod_center or render_distance != _last_world_map_lod_inner_distance or distant_world_map_lod_distance != _last_world_map_lod_outer_distance:
+	if center != _last_world_map_lod_center or inner_distance != _last_world_map_lod_inner_distance or distant_world_map_lod_distance != _last_world_map_lod_outer_distance:
 		_last_world_map_lod_center = center
-		_last_world_map_lod_inner_distance = render_distance
+		_last_world_map_lod_inner_distance = inner_distance
 		_last_world_map_lod_outer_distance = distant_world_map_lod_distance
 		_rebuild_world_map_lod_candidates(center)
 
@@ -608,7 +625,7 @@ func _update_world_map_lod_chunks() -> void:
 	while budget > 0 and _world_map_lod_load_cursor < _world_map_lod_load_candidates.size():
 		var coord_to_load := _world_map_lod_load_candidates[_world_map_lod_load_cursor]
 		_world_map_lod_load_cursor += 1
-		if active_chunks.has(Vector3i(coord_to_load.x, 0, coord_to_load.y)):
+		if _has_visible_world_map_terrain_chunk(coord_to_load):
 			continue
 		if _load_world_map_lod_chunk(coord_to_load):
 			_last_world_map_lod_loads += 1
@@ -3575,6 +3592,8 @@ func _finalize_chunk_creation(item: Dictionary):
 			active_chunks[coord] = data
 
 		data.node_terrain = result.node if not result.is_empty() else null
+		if coord.y == 0 and data.node_terrain:
+			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
 
 		# CRITICAL: Keep Shape3D resource alive!
 		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
@@ -3740,6 +3759,8 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 
 		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, false, chunk_material)
 		data.node_terrain = result_node.node if not result_node.is_empty() else null
+		if coord.y == 0 and data.node_terrain:
+			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
 		data.collision_shape_terrain = result_node.collision_shape if not result_node.is_empty() else null
 		data.chunk_material = chunk_material
 		if not cpu_dens.is_empty():
