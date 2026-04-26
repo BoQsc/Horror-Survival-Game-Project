@@ -707,6 +707,12 @@ func _should_have_terrain_collision(coord: Vector3i, center_chunk: Vector3i, col
 	return dist_xz_sq <= collision_distance_sq and abs(dy) <= 2
 
 func _queue_terrain_collision_create(coord: Vector3i) -> void:
+	if pending_terrain_collision_creates.has(coord):
+		return
+	if active_chunks.has(coord):
+		var data = active_chunks[coord]
+		if data != null and data.body_rid_terrain.is_valid():
+			return
 	pending_terrain_collision_creates[coord] = true
 
 func _sync_terrain_collision_state(coord: Vector3i, data, should_have_collision: bool) -> void:
@@ -779,6 +785,7 @@ func process_pending_terrain_collision_creates():
 		int(floor(p_pos.z / CHUNK_STRIDE))
 	)
 	var collision_distance_sq := collision_distance * collision_distance
+	var world = get_world_3d()
 	var queued_coords: Array[Vector3i] = []
 	for coord_variant in pending_terrain_collision_creates.keys():
 		queued_coords.append(coord_variant)
@@ -802,30 +809,43 @@ func process_pending_terrain_collision_creates():
 			pending_terrain_collision_creates.erase(coord)
 			continue
 		if data.body_rid_terrain.is_valid():
-			pending_terrain_collision_creates.erase(coord)
-			continue
-		if not _should_have_terrain_collision(coord, center_chunk, collision_distance_sq):
+			var should_have_collision := _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
+			if should_have_collision:
+				if world:
+					PhysicsServer3D.body_set_space(data.body_rid_terrain, world.space)
+				PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 1 | 512)
+				PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 1)
+			else:
+				PhysicsServer3D.body_set_space(data.body_rid_terrain, RID())
+				PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
+				PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
+			if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+				terrain_grid.set_chunk_collision_ready(coord, should_have_collision)
 			pending_terrain_collision_creates.erase(coord)
 			continue
 		if not data.node_terrain or not data.terrain_shape:
 			continue
-
-		var world = get_world_3d()
 		if not world:
 			continue
 
 		var body_rid = PhysicsServer3D.body_create()
 		PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
 		PhysicsServer3D.body_add_shape(body_rid, data.terrain_shape.get_rid())
-		PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
-		PhysicsServer3D.body_set_collision_mask(body_rid, 1)
-		PhysicsServer3D.body_set_space(body_rid, world.space)
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 		PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, Transform3D(Basis(), chunk_pos))
 		PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
 		data.body_rid_terrain = body_rid
+		var should_have_collision := _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
+		if should_have_collision:
+			PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
+			PhysicsServer3D.body_set_collision_mask(body_rid, 1)
+			PhysicsServer3D.body_set_space(body_rid, world.space)
+		else:
+			PhysicsServer3D.body_set_collision_layer(body_rid, 0)
+			PhysicsServer3D.body_set_collision_mask(body_rid, 0)
+			PhysicsServer3D.body_set_space(body_rid, RID())
 		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
-			terrain_grid.set_chunk_collision_ready(coord, true)
+			terrain_grid.set_chunk_collision_ready(coord, should_have_collision)
 		pending_terrain_collision_creates.erase(coord)
 		created += 1
 
@@ -3364,16 +3384,11 @@ func _finalize_chunk_creation(item: Dictionary):
 		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
 		data.terrain_shape = item.result.shape
 
-		# Terrain collision is created lazily so we only keep live physics bodies
-		# close to the player.
-		var p_pos = get_viewer_position()
-		var center_chunk = Vector3i(
-			int(floor(p_pos.x / CHUNK_STRIDE)),
-			int(floor(p_pos.y / CHUNK_STRIDE)),
-			int(floor(p_pos.z / CHUNK_STRIDE))
-		)
-		var collision_distance_sq := collision_distance * collision_distance
-		_sync_terrain_collision_state(coord, data, _should_have_terrain_collision(coord, center_chunk, collision_distance_sq))
+		# Queue collision body creation as soon as the visual chunk is ready so
+		# the expensive PhysicsServer body creation is not tied to the next player
+		# boundary crossing.
+		_queue_terrain_collision_create(coord)
+		_sync_terrain_collision_state(coord, data, false)
 
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
@@ -3537,6 +3552,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
 		if not cpu_mat.is_empty():
 			data.cpu_material_terrain = cpu_mat
+		_queue_terrain_collision_create(coord)
 		var p_pos = get_viewer_position()
 		var center_chunk = Vector3i(
 			int(floor(p_pos.x / CHUNK_STRIDE)),
@@ -3544,6 +3560,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			int(floor(p_pos.z / CHUNK_STRIDE))
 		)
 		var collision_distance_sq := collision_distance * collision_distance
+		_queue_terrain_collision_create(coord)
 		_sync_terrain_collision_state(coord, data, _should_have_terrain_collision(coord, center_chunk, collision_distance_sq))
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
