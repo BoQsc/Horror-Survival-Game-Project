@@ -24,6 +24,7 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(1, 256, 1) var dormant_respawn_checks_per_frame: int = 32
 @export_range(0.1, 5.0, 0.1) var spawn_queue_budget_ms: float = 1.0
 @export_range(0.1, 5.0, 0.1) var dormant_respawn_budget_ms: float = 1.0
+@export_range(0.5, 8.0, 0.5) var entity_maintenance_budget_ms: float = 2.5
 @export_range(0.0, 1.0, 0.01) var proximity_update_interval: float = 0.10
 @export_range(0.0, 1.0, 0.01) var spawn_queue_update_interval: float = 0.10
 @export_range(0.0, 1.0, 0.01) var dormant_respawn_update_interval: float = 0.25
@@ -42,6 +43,7 @@ var active_entities: Array[Node3D] = []
 var frozen_entities: Dictionary = {} # entity -> { position: Vector3 }
 var dormant_entities: Array = [] # Stored entities: { position, scene_path, health, state }
 var entity_pool: Array[Node3D] = [] # Pooled inactive entities
+var _scene_cache: Dictionary = {} # scene_path -> PackedScene
 var _proximity_scan_cursor: int = 0
 var _pending_spawn_scan_cursor: int = 0
 var _dormant_scan_cursor: int = 0
@@ -157,43 +159,55 @@ func _physics_process(_delta):
 	if not viewer or not is_instance_valid(viewer):
 		viewer = player
 
+	var entity_maintenance_start_us := Time.get_ticks_usec()
+	var entity_maintenance_budget_hit := false
+
 	var has_active_entities := not active_entities.is_empty()
 	_proximity_update_accumulator += _delta
 	if _should_run_interval(_proximity_update_accumulator, proximity_update_interval, has_active_entities):
 		_proximity_update_accumulator = 0.0
 		_update_entity_proximity()
+		entity_maintenance_budget_hit = _is_entity_maintenance_budget_exhausted(entity_maintenance_start_us)
 	elif not has_active_entities:
 		_last_proximity_update_ms = 0.0
 		_last_proximity_processed = 0
 
-	var has_dormant_entities := not dormant_entities.is_empty()
-	_dormant_respawn_update_accumulator += _delta
-	if _should_run_interval(_dormant_respawn_update_accumulator, dormant_respawn_update_interval, has_dormant_entities):
-		_dormant_respawn_update_accumulator = 0.0
-		_check_dormant_respawns()
-	elif not has_dormant_entities:
-		_last_dormant_respawn_update_ms = 0.0
-		_last_dormant_respawn_processed = 0
-		_last_dormant_respawn_raycasts = 0
-		_last_dormant_respawn_spawned = 0
-	
 	# Process spawn queue - spawns when terrain is ready
 	var has_pending_spawns := not pending_spawns.is_empty()
 	_spawn_queue_update_accumulator += _delta
-	if _should_run_interval(_spawn_queue_update_accumulator, spawn_queue_update_interval, has_pending_spawns):
+	if not entity_maintenance_budget_hit and _should_run_interval(_spawn_queue_update_accumulator, spawn_queue_update_interval, has_pending_spawns):
 		_spawn_queue_update_accumulator = 0.0
 		_process_spawn_queue()
+		entity_maintenance_budget_hit = _is_entity_maintenance_budget_exhausted(entity_maintenance_start_us)
 	elif not has_pending_spawns:
 		_last_spawn_queue_update_ms = 0.0
 		_last_spawn_queue_processed = 0
 		_last_spawn_queue_raycasts = 0
 		_last_spawn_queue_spawned = 0
 
+	var has_dormant_entities := not dormant_entities.is_empty()
+	_dormant_respawn_update_accumulator += _delta
+	if not entity_maintenance_budget_hit and _should_run_interval(_dormant_respawn_update_accumulator, dormant_respawn_update_interval, has_dormant_entities):
+		_dormant_respawn_update_accumulator = 0.0
+		_check_dormant_respawns()
+		entity_maintenance_budget_hit = _is_entity_maintenance_budget_exhausted(entity_maintenance_start_us)
+	elif not has_dormant_entities:
+		_last_dormant_respawn_update_ms = 0.0
+		_last_dormant_respawn_processed = 0
+		_last_dormant_respawn_raycasts = 0
+		_last_dormant_respawn_spawned = 0
+
 
 func _should_run_interval(elapsed: float, interval: float, has_work: bool) -> bool:
 	if not has_work:
 		return false
 	return interval <= 0.0 or elapsed >= interval
+
+
+func _is_entity_maintenance_budget_exhausted(start_time_us: int) -> bool:
+	if entity_maintenance_budget_ms <= 0.0:
+		return false
+	return float(Time.get_ticks_usec() - start_time_us) / 1000.0 >= entity_maintenance_budget_ms
 
 ## Manage entity states based on distance: Active -> Frozen -> Despawn
 func _update_entity_proximity():
@@ -391,7 +405,7 @@ func _check_dormant_respawns():
 		var terrain_y = result.position.y
 		var scene_path = data.scene_path
 		if scene_path != "":
-			var scene = load(scene_path)
+			var scene = _get_cached_scene(scene_path)
 			if scene:
 				var respawn_pos = Vector3(pos.x, terrain_y + 1.5, pos.z)
 				var entity = spawn_entity(respawn_pos, scene)
@@ -753,8 +767,8 @@ func load_save_data(data: Dictionary):
 		var entity: Node3D = null
 		
 		# Spawn using scene path or default
-		if ent_data.has("scene_path") and ResourceLoader.exists(ent_data.scene_path):
-			var scene = load(ent_data.scene_path)
+		if ent_data.has("scene_path"):
+			var scene = _get_cached_scene(ent_data.scene_path)
 			entity = spawn_entity(pos, scene)
 		elif default_entity_scene:
 			entity = spawn_entity(pos, default_entity_scene)
@@ -797,6 +811,20 @@ func _finish_load():
 	if procedural_spawning_enabled and zombie_scene == null:
 		_setup_procedural_spawning()
 
+
+func _get_cached_scene(scene_path: String) -> PackedScene:
+	if scene_path.is_empty():
+		return null
+	if _scene_cache.has(scene_path):
+		return _scene_cache[scene_path]
+	if not ResourceLoader.exists(scene_path):
+		_scene_cache[scene_path] = null
+		return null
+
+	var packed := load(scene_path) as PackedScene
+	_scene_cache[scene_path] = packed
+	return packed
+
 # ============ PROCEDURAL SPAWNING ============
 
 ## Setup procedural spawning - connect to terrain signals
@@ -805,9 +833,8 @@ func _setup_procedural_spawning():
 		return
 	
 	# Load zombie scene for procedural spawning
-	if ResourceLoader.exists("res://game/entities/zombie_base.tscn"):
-		zombie_scene = load("res://game/entities/zombie_base.tscn")
-	else:
+	zombie_scene = _get_cached_scene("res://game/entities/zombie_base.tscn")
+	if not zombie_scene:
 		push_warning("[EntityManager] Zombie scene not found - procedural spawning disabled")
 		procedural_spawning_enabled = false
 		return
