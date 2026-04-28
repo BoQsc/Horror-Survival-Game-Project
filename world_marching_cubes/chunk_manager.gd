@@ -86,6 +86,7 @@ var cpu_threads: Array[Thread] = []
 var cpu_task_queue: Array[Dictionary] = []
 var cpu_mutex: Mutex
 var cpu_semaphore: Semaphore
+var stored_modifications_mutex: Mutex
 
 # Task queues (GPU tasks)
 # Priority work stays separate so modifications and spawn requests do not
@@ -222,6 +223,8 @@ var _last_world_map_lod_unloads: int = 0
 # Format: coord (Vector2i) -> Array of { brush_pos: Vector3, radius: float, value: float, shape: int, layer: int }
 var stored_modifications: Dictionary = {}
 var _world_map_terrain_modifications: Dictionary = {}
+var _modification_coord_cache: Array[Vector3i] = []
+var _modification_coord_cache_dirty: bool = true
 
 # Spawn zone tracking - positions waiting for terrain to load
 # Format: Array of { "position": Vector3, "radius": int, "pending_coords": Array[Vector3i] }
@@ -233,6 +236,7 @@ func _ready():
 	pending_nodes_mutex = Mutex.new()
 	cpu_mutex = Mutex.new()
 	cpu_semaphore = Semaphore.new()
+	stored_modifications_mutex = Mutex.new()
 
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
@@ -806,18 +810,8 @@ func _process(delta):
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 	process_pending_terrain_collision_creates()
-	_update_world_map_lod_chunks()
-
-	# HOTFIX: Ensure all existing chunks have layer 512 (Layer 10) for pickups
-	if active_chunks.size() > 0 and not get_meta("collision_fixed", false):
-		for coord in active_chunks:
-			var data = active_chunks[coord]
-			if data:
-				if data.body_rid_terrain.is_valid():
-					PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 1 | 512)
-				if data.node_terrain is StaticBody3D:
-					data.node_terrain.collision_layer = 1 | 512
-		set_meta("collision_fixed", true)
+	if not defer_terrain_finalization and not loading_paused:
+		_update_world_map_lod_chunks()
 
 var debug_chunk_bounds: bool = false
 
@@ -880,6 +874,10 @@ func _adjust_adaptive_loading():
 var _last_collision_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_collision_active_count: int = -1
 var pending_terrain_collision_creates: Dictionary = {}
+var _pending_terrain_collision_candidates: Array[Vector3i] = []
+var _pending_terrain_collision_candidate_index: int = 0
+var _pending_terrain_collision_candidates_dirty: bool = true
+var _pending_terrain_collision_sort_center: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_terrain_collision_create_ms: float = 0.0
 var _last_terrain_collision_create_count: int = 0
 @export_range(1, 16, 1) var terrain_collision_create_budget_per_frame: int = 2
@@ -919,6 +917,7 @@ func _queue_terrain_collision_create(coord: Vector3i) -> void:
 		if data != null and data.body_rid_terrain.is_valid():
 			return
 	pending_terrain_collision_creates[coord] = true
+	_pending_terrain_collision_candidates_dirty = true
 
 func _sync_terrain_collision_state(coord: Vector3i, data, should_have_collision: bool) -> void:
 	if data == null:
@@ -978,6 +977,9 @@ func _terrain_collision_sort_score(coord: Vector3i, center_chunk: Vector3i) -> i
 
 func process_pending_terrain_collision_creates():
 	if pending_terrain_collision_creates.is_empty():
+		_pending_terrain_collision_candidate_index = 0
+		_pending_terrain_collision_candidates.clear()
+		_pending_terrain_collision_candidates_dirty = true
 		_last_terrain_collision_create_count = 0
 		_last_terrain_collision_create_ms = 0.0
 		return
@@ -991,17 +993,20 @@ func process_pending_terrain_collision_creates():
 	)
 	var collision_distance_sq := collision_distance * collision_distance
 	var world = get_world_3d()
-	var queued_coords: Array[Vector3i] = []
-	for coord_variant in pending_terrain_collision_creates.keys():
-		queued_coords.append(coord_variant)
-	queued_coords.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
-		return _terrain_collision_sort_score(a, center_chunk) < _terrain_collision_sort_score(b, center_chunk)
-	)
+	if not world:
+		_last_terrain_collision_create_count = 0
+		_last_terrain_collision_create_ms = 0.0
+		return
+	if _pending_terrain_collision_candidates_dirty or center_chunk != _pending_terrain_collision_sort_center or _pending_terrain_collision_candidate_index >= _pending_terrain_collision_candidates.size():
+		_rebuild_pending_terrain_collision_candidates(center_chunk)
 
 	var created := 0
-	for coord in queued_coords:
+	while _pending_terrain_collision_candidate_index < _pending_terrain_collision_candidates.size():
 		if created >= terrain_collision_create_budget_per_frame:
 			break
+
+		var coord: Vector3i = _pending_terrain_collision_candidates[_pending_terrain_collision_candidate_index]
+		_pending_terrain_collision_candidate_index += 1
 
 		if not pending_terrain_collision_creates.has(coord):
 			continue
@@ -1053,6 +1058,15 @@ func process_pending_terrain_collision_creates():
 			terrain_grid.set_chunk_collision_ready(coord, should_have_collision)
 		pending_terrain_collision_creates.erase(coord)
 		created += 1
+
+	if pending_terrain_collision_creates.is_empty():
+		_pending_terrain_collision_candidate_index = 0
+		_pending_terrain_collision_candidates.clear()
+		_pending_terrain_collision_candidates_dirty = true
+	elif _pending_terrain_collision_candidate_index >= _pending_terrain_collision_candidates.size():
+		_pending_terrain_collision_candidate_index = 0
+		_pending_terrain_collision_candidates.clear()
+		_pending_terrain_collision_candidates_dirty = true
 
 	_last_terrain_collision_create_count = created
 	_last_terrain_collision_create_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
@@ -1477,22 +1491,50 @@ func _is_world_map_road_at_position(global_x: float, global_z: float) -> bool:
 	return road_pixel.r > 0.5
 
 func _get_all_modification_coords() -> Array:
-	var coords: Array = []
-	var seen: Dictionary = {}
-	for coord in _world_map_terrain_modifications:
-		seen[coord] = true
-		coords.append(coord)
-	for coord in stored_modifications:
-		if seen.has(coord):
-			continue
-		coords.append(coord)
-	return coords
+	if _modification_coord_cache_dirty:
+		_modification_coord_cache.clear()
+		var seen: Dictionary = {}
+		for coord_variant in _world_map_terrain_modifications.keys():
+			var coord: Vector3i = coord_variant
+			seen[coord] = true
+			_modification_coord_cache.append(coord)
+		for coord_variant in stored_modifications.keys():
+			var coord: Vector3i = coord_variant
+			if seen.has(coord):
+				continue
+			_modification_coord_cache.append(coord)
+		_modification_coord_cache_dirty = false
+	return _modification_coord_cache
+
+func _mark_modification_coord_cache_dirty() -> void:
+	_modification_coord_cache_dirty = true
+
+func _append_stored_modification(coord: Vector3i, modification: Dictionary) -> void:
+	stored_modifications_mutex.lock()
+	if not stored_modifications.has(coord):
+		stored_modifications[coord] = []
+	var coord_mods: Array = stored_modifications[coord]
+	coord_mods.append(modification)
+	stored_modifications[coord] = coord_mods
+	stored_modifications_mutex.unlock()
+	_mark_modification_coord_cache_dirty()
+
+func _rebuild_pending_terrain_collision_candidates(center_chunk: Vector3i) -> void:
+	_pending_terrain_collision_candidates.clear()
+	_pending_terrain_collision_candidate_index = 0
+	_pending_terrain_collision_sort_center = center_chunk
+	for coord_variant in pending_terrain_collision_creates.keys():
+		_pending_terrain_collision_candidates.append(coord_variant)
+	_pending_terrain_collision_candidates.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
+		return _terrain_collision_sort_score(a, center_chunk) < _terrain_collision_sort_score(b, center_chunk)
+	)
+	_pending_terrain_collision_candidates_dirty = false
 
 func _get_modifications_for_chunk(coord: Vector3i) -> Array:
 	var mods_for_chunk: Array = []
-	mutex.lock()
+	stored_modifications_mutex.lock()
 	var runtime_mods = stored_modifications.get(coord, []).duplicate()
-	mutex.unlock()
+	stored_modifications_mutex.unlock()
 	if not runtime_mods.is_empty():
 		mods_for_chunk.append_array(runtime_mods)
 	return mods_for_chunk
@@ -1500,6 +1542,7 @@ func _get_modifications_for_chunk(coord: Vector3i) -> Array:
 func _cache_world_map_terrain_modifications(raw_mods: Array) -> void:
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
+	_mark_modification_coord_cache_dirty()
 	for raw_mod in raw_mods:
 		var mod := _normalize_world_map_modification(raw_mod)
 		if mod.is_empty():
@@ -1861,9 +1904,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 				var coord = Vector3i(x, y, z)
 
 				# Store the modification for this chunk (persists across unloads)
-				if not stored_modifications.has(coord):
-					stored_modifications[coord] = []
-				stored_modifications[coord].append({
+				_append_stored_modification(coord, {
 					"brush_pos": pos,
 					"radius": radius,
 					"value": value,
@@ -1966,9 +2007,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 				var coord = Vector3i(chunk_x, chunk_y, chunk_z)
 
 				# Store modification for persistence
-				if not stored_modifications.has(coord):
-					stored_modifications[coord] = []
-				stored_modifications[coord].append({
+				_append_stored_modification(coord, {
 					"brush_pos": pos,
 					"radius": 0.6, # Minimal radius, column shape uses XZ distance
 					"value": value,
@@ -2078,6 +2117,9 @@ func _exit_tree():
 	cpu_task_queue.clear()
 	pending_spawn_zones.clear()
 	pending_batches.clear()
+	_pending_terrain_collision_candidates.clear()
+	_pending_terrain_collision_candidate_index = 0
+	_pending_terrain_collision_candidates_dirty = true
 	active_chunks.clear()
 	PrefabGeometry.clear_cache()
 
@@ -2096,15 +2138,14 @@ func update_chunk_unloads_only():
 	_last_update_backend = "native_unload_only"
 
 	var p_pos = get_viewer_position()
-	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
-	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
-	var unload_count := _unload_out_of_range_chunks(
-		p_chunk_x,
-		p_chunk_y,
-		p_chunk_z,
-		terrain_unload_budget_per_frame
-	)
+	var is_above_ground = p_chunk_y >= 0
+	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE, 0, terrain_unload_budget_per_frame)
+	var unload_count := 0
+	for coord in result["unload"]:
+		unload_count += 1
+		_unload_chunk(coord)
+		terrain_grid.remove_chunk(coord)
 	_last_update_loads = 0
 	_last_update_unloads = unload_count
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
@@ -2118,12 +2159,13 @@ func _update_chunks_native():
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
 	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
 	if loading_paused:
-		var paused_unloads := _unload_out_of_range_chunks(
-			p_chunk_x,
-			p_chunk_y,
-			p_chunk_z,
-			terrain_unload_budget_per_frame
-		)
+		var is_above_ground = p_chunk_y >= 0
+		var paused_result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE, 0, terrain_unload_budget_per_frame)
+		var paused_unloads := 0
+		for coord in paused_result["unload"]:
+			paused_unloads += 1
+			_unload_chunk(coord)
+			terrain_grid.remove_chunk(coord)
 		_last_update_loads = 0
 		_last_update_unloads = paused_unloads
 		_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
@@ -2142,14 +2184,6 @@ func _update_chunks_native():
 		unload_count += 1
 		_unload_chunk(coord)
 		terrain_grid.remove_chunk(coord)
-
-	if unload_count < terrain_unload_budget_per_frame:
-		unload_count += _unload_out_of_range_chunks(
-			p_chunk_x,
-			p_chunk_y,
-			p_chunk_z,
-			terrain_unload_budget_per_frame - unload_count
-		)
 
 	# 3. Process Loads
 	var chunks_queued = 0
@@ -2283,6 +2317,9 @@ func clear_all_chunks():
 	# 2. Clear finalization queue
 	_queue_gpu_free_tasks(_drain_pending_finalization_free_tasks())
 	pending_terrain_collision_creates.clear()
+	_pending_terrain_collision_candidates.clear()
+	_pending_terrain_collision_candidate_index = 0
+	_pending_terrain_collision_candidates_dirty = true
 	_last_terrain_collision_create_count = 0
 	_last_terrain_collision_create_ms = 0.0
 
@@ -2586,6 +2623,7 @@ func _thread_function():
 	_world_map_water_image = null
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
+	_mark_modification_coord_cache_dirty()
 	var world_map_setup_start_us := 0
 	if world_map_active and world_definition_path != "":
 		world_map_setup_start_us = Time.get_ticks_usec()
@@ -2633,6 +2671,7 @@ func _thread_function():
 			# Load baked buildings and terrain edits
 			_world_map_buildings = []
 			_world_map_terrain_modifications.clear()
+			_mark_modification_coord_cache_dirty()
 			if loaded.has("buildings"):
 				_world_map_buildings = loaded.buildings
 			if loaded.has("terrain_modifications"):

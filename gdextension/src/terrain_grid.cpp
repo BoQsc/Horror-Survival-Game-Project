@@ -75,6 +75,8 @@ void TerrainGrid::clear() {
     cached_unload_candidates.clear();
     cached_load_cursor = 0;
     cached_unload_cursor = 0;
+    cached_load_candidates_valid = false;
+    cached_unload_candidates_valid = false;
 }
 
 Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride, int load_chunks_per_frame_limit, int unload_chunks_per_frame_limit) {
@@ -104,14 +106,19 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
         cached_unload_candidates.clear();
         cached_load_cursor = 0;
         cached_unload_cursor = 0;
+        cached_load_candidates_valid = false;
+        cached_unload_candidates_valid = false;
         cached_center_chunk = center_chunk;
         cached_render_distance = render_distance;
         cached_is_above_ground = is_above_ground;
         cached_chunk_stride = chunk_stride;
+        update_cache_valid = true;
+    }
+
+    if (unload_chunks_per_frame_limit > 0 && !cached_unload_candidates_valid) {
         double unload_distance_sq = (double)(render_distance + 2) * (double)(render_distance + 2);
 
-        // 1. Calculate Unloads
-        // We iterate active_chunks (HashSet iteration is fast)
+        // Calculate unloads from the current active set.
         for (const Vector3i &coord : active_chunks) {
             double dx = (double)(coord.x - center_x);
             double dy = (double)(coord.y - center_y);
@@ -132,7 +139,11 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
             }
         }
 
-        // 2. Calculate Loads
+        cached_unload_candidates_valid = true;
+    }
+
+    if (load_chunks_per_frame_limit > 0 && !cached_load_candidates_valid) {
+        // Calculate Loads
         List<int> y_layers;
         if (is_above_ground) {
             y_layers.push_back(0);
@@ -167,7 +178,7 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
             }
         }
 
-        update_cache_valid = true;
+        cached_load_candidates_valid = true;
     }
 
     int load_count = 0;

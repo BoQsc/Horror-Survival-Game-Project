@@ -25,6 +25,7 @@ signal building_spawned(position: Vector3, prefab_name: String)
 
 # --- State ---
 var spawn_queue: Array = [] # Queue of {position, rotation, prefab_name}
+var spawn_queue_index: int = 0
 var spawned_buildings: Dictionary = {} # Key: chunk_coord, Value: Array of positions
 var global_building_positions: Array[Vector3] = [] # All building positions for overlap check
 var spawn_timer: float = 0.0
@@ -47,6 +48,7 @@ func load_save_data(data: Dictionary) -> void:
 	spawned_buildings.clear()
 	global_building_positions.clear()
 	spawn_queue.clear()
+	spawn_queue_index = 0
 	
 	if data.has("spawned_chunks"):
 		for key in data.spawned_chunks:
@@ -88,10 +90,13 @@ func _process(delta):
 
 ## Process one building from the queue
 func _process_spawn_queue() -> void:
-	if spawn_queue.is_empty():
+	if spawn_queue_index >= spawn_queue.size():
+		spawn_queue.clear()
+		spawn_queue_index = 0
 		return
 	
-	var item = spawn_queue.pop_front()
+	var item = spawn_queue[spawn_queue_index]
+	spawn_queue_index += 1
 	_spawn_building(item.position, item.rotation, item.prefab_name)
 
 ## Called when a chunk finishes generating

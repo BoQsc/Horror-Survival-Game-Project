@@ -27,6 +27,8 @@ private:
     Array cached_unload_candidates;
     int cached_load_cursor = 0;
     int cached_unload_cursor = 0;
+    bool cached_load_candidates_valid = false;
+    bool cached_unload_candidates_valid = false;
 
 protected:
     static void _bind_methods();

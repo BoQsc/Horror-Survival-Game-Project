@@ -8,7 +8,8 @@ var mutex: Mutex
 var semaphore: Semaphore
 var exit_thread: bool = false
 
-var queue: Array = [] # Array of BuildingChunk
+var queue: Array = [] # Array of { chunk: BuildingChunk, chunk_id: int }
+var _queued_chunk_ids: Dictionary = {}
 var pending_apply_queue: Array = []
 var pending_apply_queue_index: int = 0
 var compute_shader: RDShaderFile
@@ -202,13 +203,20 @@ func build_trimesh_collision_shape_from_faces(faces: PackedVector3Array) -> Shap
 	return builder.build_trimesh_collision_shape_from_faces(faces)
 
 func request_mesh_generation(chunk: BuildingChunk):
-	if not _native_backend_ready:
+	if not _native_backend_ready or not chunk or not is_instance_valid(chunk):
 		return
+	var chunk_id := chunk.get_instance_id()
 	mutex.lock()
-	if not queue.has(chunk):
-		queue.append(chunk)
+	if not _queued_chunk_ids.has(chunk_id):
+		queue.append({
+			"chunk": chunk,
+			"chunk_id": chunk_id
+		})
+		_queued_chunk_ids[chunk_id] = true
+		mutex.unlock()
+		semaphore.post()
+		return
 	mutex.unlock()
-	semaphore.post()
 
 func _thread_loop():
 	var rd = RenderingServer.create_local_rendering_device()
@@ -246,7 +254,11 @@ func _thread_loop():
 			mutex.unlock()
 			continue
 			
-		var chunk = queue.pop_front()
+		var task: Dictionary = queue.pop_back()
+		var chunk_id := int(task.get("chunk_id", -1))
+		if chunk_id >= 0:
+			_queued_chunk_ids.erase(chunk_id)
+		var chunk = task.get("chunk", null)
 		# IMPORTANT: Copy data inside lock to ensure thread safety
 		if not is_instance_valid(chunk):
 			mutex.unlock()
@@ -526,3 +538,7 @@ func _exit_tree():
 	mutex.unlock()
 	semaphore.post()
 	thread.wait_to_finish()
+	mutex.lock()
+	queue.clear()
+	_queued_chunk_ids.clear()
+	mutex.unlock()
