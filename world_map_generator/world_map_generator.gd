@@ -2866,6 +2866,8 @@ func save_world(path: String, images: Dictionary) -> bool:
 		save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 		last_save_profile = save_profile.duplicate(true)
 		return false
+	var cache_signature_ctx := HashingContext.new()
+	var cache_signature_ready := cache_signature_ctx.start(HashingContext.HASH_SHA256) == OK
 	var baked_image_names := WorldMapData.get_baked_image_names()
 	for key in baked_image_names:
 		if not images.has(key):
@@ -2891,6 +2893,9 @@ func save_world(path: String, images: Dictionary) -> bool:
 			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 			last_save_profile = save_profile.duplicate(true)
 			return false
+		if cache_signature_ready:
+			cache_signature_ctx.update(key.to_utf8_buffer())
+			cache_signature_ctx.update(png_bytes)
 		var png_path := save_dir.path_join(key + ".png")
 		var png_file = FileAccess.open(png_path, FileAccess.WRITE)
 		if not png_file:
@@ -2927,6 +2932,16 @@ func save_world(path: String, images: Dictionary) -> bool:
 		meta["towns"] = images.towns
 	if images.has("terrain_modifications"):
 		meta["terrain_modifications"] = images.terrain_modifications
+
+	if cache_signature_ready:
+		var stable_meta := meta.duplicate(true)
+		stable_meta.erase("created")
+		stable_meta[WorldMapData.get_world_meta_cache_version_key()] = WorldMapData.get_world_meta_current_cache_version()
+		var meta_bytes := JSON.stringify(stable_meta).to_utf8_buffer()
+		cache_signature_ctx.update(meta_bytes)
+		var cache_signature := cache_signature_ctx.finish().hex_encode()
+		meta[WorldMapData.get_world_meta_cache_version_key()] = WorldMapData.get_world_meta_current_cache_version()
+		meta[WorldMapData.get_world_meta_cache_signature_key()] = cache_signature
 	
 	var meta_path := save_dir.path_join("world_meta.json")
 	var meta_start_us := Time.get_ticks_usec()
@@ -2941,6 +2956,14 @@ func save_world(path: String, images: Dictionary) -> bool:
 		last_save_profile = save_profile.duplicate(true)
 		return false
 	save_profile["meta_write_ms"] = float(Time.get_ticks_usec() - meta_start_us) / 1000.0
+
+	if cache_signature_ready:
+		var signature_path := save_dir.path_join(WorldMapData.WORLD_CACHE_SIGNATURE_FILE)
+		var signature_file = FileAccess.open(signature_path, FileAccess.WRITE)
+		if signature_file:
+			signature_file.store_line(str(meta.get(WorldMapData.get_world_meta_cache_signature_key(), "")))
+			signature_file.close()
+
 	save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 	save_profile["success"] = true
 	last_save_profile = save_profile.duplicate(true)

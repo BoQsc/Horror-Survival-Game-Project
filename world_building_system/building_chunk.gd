@@ -605,6 +605,10 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 
 	# Add visual instance with collision
 	if scene_instance:
+		if manager and manager.world_map_mode:
+			# World-map town props that opt in to the flag must see it before they
+			# enter the tree so their scripts can freeze instead of simulating.
+			_set_world_map_mode_recursive(scene_instance, true)
 		add_child(scene_instance)
 		if manager and manager.world_map_mode:
 			_set_shadow_casting_recursive(scene_instance, true)
@@ -685,6 +689,30 @@ func _should_skip_object_collisions() -> bool:
 
 func _should_skip_chunk_collisions() -> bool:
 	return manager and "skip_building_chunk_collisions_for_test" in manager and bool(manager.skip_building_chunk_collisions_for_test)
+
+static func _node_has_property(node: Object, property_name: String) -> bool:
+	if not node or property_name.is_empty():
+		return false
+
+	for property_variant in node.get_property_list():
+		if typeof(property_variant) != TYPE_DICTIONARY:
+			continue
+		var property_info: Dictionary = property_variant
+		if str(property_info.get("name", "")) == property_name:
+			return true
+	return false
+
+
+static func _set_world_map_mode_recursive(node: Node, enabled: bool) -> void:
+	if not node:
+		return
+
+	if _node_has_property(node, "world_map_mode"):
+		node.set("world_map_mode", enabled)
+
+	for child in node.get_children():
+		if child is Node:
+			_set_world_map_mode_recursive(child, enabled)
 
 func _generate_simple_object_collision(obj: Node3D, anchor: Vector3i, object_id: int) -> void:
 	var visual_data := ObjectRegistry.get_object_visual_data(object_id)
@@ -904,6 +932,9 @@ func restore_object_visuals(defer_collision: bool = true):
 			scene_instance = packed.instantiate()
 		
 		# Add and position the visual
+		if manager and manager.world_map_mode:
+			# Propagate the world-map flag before _ready() runs on the loaded scene.
+			_set_world_map_mode_recursive(scene_instance, true)
 		add_child(scene_instance)
 		if manager and manager.world_map_mode:
 			_set_shadow_casting_recursive(scene_instance, true)

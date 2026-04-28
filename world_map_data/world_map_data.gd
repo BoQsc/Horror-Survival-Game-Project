@@ -1,12 +1,19 @@
 extends RefCounted
 class_name WorldMapData
 ## Shared loader for baked world map data.
-## Caches decoded PNGs and metadata in memory, while returning safe copies by default.
+## Caches decoded PNGs and metadata in memory and on disk, while returning safe copies by default.
 
 const CACHE_LIMIT: int = 4
+const DISK_CACHE_MAGIC: int = 0x574D4443 # "WMDC"
+const DISK_CACHE_VERSION: int = 1
+const DISK_CACHE_DIR: String = "user://world_map_data_cache"
+const WORLD_CACHE_SIGNATURE_FILE: String = "world_cache_signature.txt"
 const WORLD_META_SCHEMA_VERSION_KEY: String = "schema_version"
+const WORLD_META_CACHE_SIGNATURE_KEY: String = "world_cache_signature"
+const WORLD_META_CACHE_VERSION_KEY: String = "world_cache_version"
 const WORLD_META_VERSION_KEY: String = "version"
 const WORLD_META_CURRENT_SCHEMA_VERSION: int = 7
+const WORLD_META_CURRENT_CACHE_VERSION: int = 1
 const WORLD_META_BUILDING_PLACEMENT_SCHEMA_KEY: String = "building_placement_schema"
 const WORLD_META_DEFAULT_BUILDING_PLACEMENT_SCHEMA: String = "occupied_min_v1"
 const WORLD_META_BUILDINGS_KEY: String = "buildings"
@@ -52,6 +59,15 @@ static func get_world_meta_schema_version_key() -> String:
 static func get_world_meta_version_key() -> String:
 	return WORLD_META_VERSION_KEY
 
+static func get_world_meta_cache_signature_key() -> String:
+	return WORLD_META_CACHE_SIGNATURE_KEY
+
+static func get_world_meta_cache_version_key() -> String:
+	return WORLD_META_CACHE_VERSION_KEY
+
+static func get_world_meta_current_cache_version() -> int:
+	return WORLD_META_CURRENT_CACHE_VERSION
+
 static func get_world_meta_building_placement_schema_key() -> String:
 	return WORLD_META_BUILDING_PLACEMENT_SCHEMA_KEY
 
@@ -87,11 +103,15 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 		"world_path": cache_key,
 		"cache_enabled": allow_cache,
 		"cache_hit": false,
+		"disk_cache_hit": false,
 		"duplicate_on_return": duplicate_on_return,
 		"signature_us": 0.0,
+		"signature_hint_found": false,
 		"image_decode_us": 0.0,
 		"image_convert_us": 0.0,
 		"metadata_parse_us": 0.0,
+		"disk_cache_read_us": 0.0,
+		"disk_cache_write_us": 0.0,
 		"duplicate_us": 0.0,
 		"loaded_image_count": 0,
 		"metadata_found": false,
@@ -101,7 +121,9 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 	}
 	if allow_cache:
 		var signature_start_us := Time.get_ticks_usec()
-		signature = _build_world_signature(cache_key)
+		signature = _read_world_cache_signature_hint(cache_key, profile)
+		if signature.is_empty():
+			signature = _build_world_signature(cache_key)
 		profile["signature_us"] = float(Time.get_ticks_usec() - signature_start_us)
 		if _world_cache.has(cache_key):
 			var cached_entry: Dictionary = _world_cache[cache_key]
@@ -122,6 +144,23 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 				_apply_profile_out(profile_out, profile)
 				return cached_data
 			_evict_cache_key(cache_key)
+		var disk_cached_data := _load_world_disk_cache(signature, profile)
+		if not disk_cached_data.is_empty():
+			_store_cache_entry(cache_key, signature, disk_cached_data)
+			profile["cache_hit"] = true
+			profile["disk_cache_hit"] = true
+			if duplicate_on_return:
+				var duplicate_start_us := Time.get_ticks_usec()
+				var duplicated_disk_cached := _duplicate_world_data(disk_cached_data)
+				profile["duplicate_us"] = float(Time.get_ticks_usec() - duplicate_start_us)
+				profile["load_total_us"] = float(Time.get_ticks_usec() - call_start_us)
+				_record_load_profile(cache_key, profile)
+				_apply_profile_out(profile_out, profile)
+				return duplicated_disk_cached
+			profile["load_total_us"] = float(Time.get_ticks_usec() - call_start_us)
+			_record_load_profile(cache_key, profile)
+			_apply_profile_out(profile_out, profile)
+			return disk_cached_data
 
 	var load_start_us := Time.get_ticks_usec()
 	var loaded: Dictionary = _load_world_uncached(cache_key, profile)
@@ -134,6 +173,7 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 
 	if allow_cache:
 		_store_cache_entry(cache_key, signature, loaded)
+		_store_world_disk_cache(signature, loaded, profile)
 
 	if duplicate_on_return:
 		var duplicate_start_us := Time.get_ticks_usec()
@@ -190,6 +230,135 @@ static func _load_world_uncached(path: String, profile: Dictionary) -> Dictionar
 			file.close()
 		profile["metadata_parse_us"] = float(profile.get("metadata_parse_us", 0.0)) + float(Time.get_ticks_usec() - metadata_start_us)
 	return result
+
+static func _read_world_cache_signature_hint(cache_key: String, profile: Variant = null) -> String:
+	var signature_path := cache_key.path_join(WORLD_CACHE_SIGNATURE_FILE)
+	if not signature_path.is_empty() and FileAccess.file_exists(signature_path):
+		var file := FileAccess.open(signature_path, FileAccess.READ)
+		if file:
+			var signature := file.get_line().strip_edges()
+			file.close()
+			if profile is Dictionary:
+				var profile_dict: Dictionary = profile
+				profile_dict["signature_hint_found"] = not signature.is_empty()
+			if not signature.is_empty():
+				return signature
+
+	var meta_path := cache_key.path_join("world_meta.json")
+	if meta_path.is_empty() or not FileAccess.file_exists(meta_path):
+		return ""
+
+	var file := FileAccess.open(meta_path, FileAccess.READ)
+	if not file:
+		return ""
+
+	var signature := ""
+	var json := JSON.new()
+	if json.parse(file.get_as_text()) == OK:
+		var metadata = json.get_data()
+		if metadata is Dictionary:
+			signature = str(metadata.get(WORLD_META_CACHE_SIGNATURE_KEY, ""))
+			if profile is Dictionary:
+				var profile_dict: Dictionary = profile
+				profile_dict["signature_hint_found"] = not signature.is_empty()
+	file.close()
+	return signature
+
+static func _load_world_disk_cache(signature: String, profile: Dictionary) -> Dictionary:
+	var cache_path := _get_world_disk_cache_path(signature)
+	if cache_path.is_empty() or not FileAccess.file_exists(cache_path):
+		return {}
+
+	var read_start_us := Time.get_ticks_usec()
+	var file := FileAccess.open(cache_path, FileAccess.READ)
+	if not file:
+		return {}
+
+	var result: Dictionary = {}
+	var valid := false
+	if file.get_32() == DISK_CACHE_MAGIC and file.get_32() == DISK_CACHE_VERSION:
+		var cached_signature := str(file.get_var(true))
+		if cached_signature == signature:
+			var payload_variant: Variant = file.get_var(true)
+			if typeof(payload_variant) == TYPE_DICTIONARY:
+				result = payload_variant
+				for image_name in WORLD_IMAGE_NAMES:
+					var has_image := file.get_8() != 0
+					if not has_image:
+						continue
+
+					var width := int(file.get_32())
+					var height := int(file.get_32())
+					var format := int(file.get_32())
+					var data_size := int(file.get_32())
+					if width <= 0 or height <= 0 or data_size <= 0:
+						if data_size > 0:
+							file.seek(file.get_position() + data_size)
+						continue
+
+					var data := file.get_buffer(data_size)
+					if data.size() != data_size:
+						continue
+
+					var image := Image.new()
+					image.set_data(width, height, false, format, data)
+					result[image_name] = image
+				profile["loaded_image_count"] = WORLD_IMAGE_NAMES.size()
+				profile["metadata_found"] = result.has("metadata")
+				profile["metadata_valid"] = result.has("metadata") and result["metadata"] is Dictionary
+				if result.has("schema_version"):
+					profile["schema_version"] = int(result.get("schema_version", 0))
+				valid = true
+
+	file.close()
+	profile["disk_cache_read_us"] = float(profile.get("disk_cache_read_us", 0.0)) + float(Time.get_ticks_usec() - read_start_us)
+	if valid:
+		return result
+	return {}
+
+static func _store_world_disk_cache(signature: String, data: Dictionary, profile: Dictionary) -> void:
+	var cache_path := _get_world_disk_cache_path(signature)
+	if cache_path.is_empty():
+		return
+
+	var cache_dir := DISK_CACHE_DIR
+	if not DirAccess.dir_exists_absolute(cache_dir):
+		var make_err := DirAccess.make_dir_recursive_absolute(cache_dir)
+		if make_err != OK:
+			return
+
+	var payload := data.duplicate(true)
+	for image_name in WORLD_IMAGE_NAMES:
+		payload.erase(image_name)
+
+	var write_start_us := Time.get_ticks_usec()
+	var file := FileAccess.open(cache_path, FileAccess.WRITE)
+	if not file:
+		return
+
+	file.store_32(DISK_CACHE_MAGIC)
+	file.store_32(DISK_CACHE_VERSION)
+	file.store_var(signature, true)
+	file.store_var(payload, true)
+
+	for image_name in WORLD_IMAGE_NAMES:
+		var image_variant: Variant = data.get(image_name, null)
+		var has_image := image_variant is Image
+		file.store_8(1 if has_image else 0)
+		if not has_image:
+			continue
+
+		var image := image_variant as Image
+		var image_data := image.get_data()
+		file.store_32(image.get_width())
+		file.store_32(image.get_height())
+		file.store_32(image.get_format())
+		file.store_32(image_data.size())
+		file.store_buffer(image_data)
+
+	file.flush()
+	file.close()
+	profile["disk_cache_write_us"] = float(profile.get("disk_cache_write_us", 0.0)) + float(Time.get_ticks_usec() - write_start_us)
 
 static func _store_cache_entry(cache_key: String, signature: String, data: Dictionary) -> void:
 	_world_cache[cache_key] = {
@@ -264,6 +433,12 @@ static func _get_world_image_candidates(image_name: String) -> Array[String]:
 	if WORLD_IMAGE_ALIASES.has(image_name):
 		candidates.append_array(WORLD_IMAGE_ALIASES[image_name])
 	return candidates
+
+static func _get_world_disk_cache_path(signature: String) -> String:
+	if signature.is_empty():
+		return ""
+	var cache_name := "%s.wmdc" % signature
+	return DISK_CACHE_DIR.path_join(cache_name)
 
 static func _file_signature(file_path: String) -> String:
 	if file_path == "" or not FileAccess.file_exists(file_path):

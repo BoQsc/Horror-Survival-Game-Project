@@ -5,9 +5,6 @@ const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inv
 var _sleep_timer: Timer = null
 
 func _ready():
-	# Bump up significantly to ensure we clear any terrain noise
-	global_position.y += 0.5
-	
 	# Lay flat on its side
 	rotation_degrees.z = 90.0
 	rotation_degrees.x = 0.0 
@@ -15,6 +12,8 @@ func _ready():
 	if world_map_mode:
 		# World-map towns do not need the pistol to physically settle. Keep the
 		# pickup shell interactive, but stop the rigid body from waking/simulating.
+		# Do not apply the usual upward offset here, or the gun will hover above
+		# tables when it is frozen in place.
 		_generate_precise_collision()
 		freeze = true
 		sleeping = true
@@ -22,6 +21,10 @@ func _ready():
 		continuous_cd = false
 		set_physics_process(false)
 		return
+
+	# Bump up slightly in normal physics mode so the pistol clears terrain noise
+	# before it settles.
+	global_position.y += 0.5
 	
 	# Keep authored collision shapes when present.
 	# The heavy pistol scene already has a box collider, so we only generate
