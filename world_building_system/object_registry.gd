@@ -9,6 +9,7 @@ const OBJECTS = {
 		"name": "Cardboard Box",
 		"scene": "res://models/objects/cardboard/1/cc0_free_cardboard_box.tscn",
 		"visual_mesh_root": "BoxModel",
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(1, 1, 1),
 		"material": "paper",
 		"movable": true,
@@ -17,6 +18,7 @@ const OBJECTS = {
 		"name": "Long Crate",
 		"scene": "res://models/objects/crate/1/simple_long_crate.tscn", 
 		"visual_mesh_root": "CrateModel",
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(2, 1, 1),
 		"material": "wood",
 		"movable": true,
@@ -25,6 +27,7 @@ const OBJECTS = {
 		"name": "Wooden Table",
 		"scene": "res://models/objects/table/1/psx_wooden_table.tscn",
 		"visual_mesh_root": "TableModel",
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(2, 1, 1),
 		"material": "wood",
 		"movable": true,
@@ -33,6 +36,7 @@ const OBJECTS = {
 		"name": "Door",
 		"scene": "res://models/objects/interactive_door/interactive_door.tscn",
 		"visual_mesh_root": "DoorModel",
+		"visual_batch_mode": "none",
 		"size": Vector3i(1, 2, 1),
 		"material": "wood",
 		"movable": false,
@@ -41,6 +45,8 @@ const OBJECTS = {
 		"name": "Window",
 		"scene": "res://models/objects/window/1/window.tscn",
 		"visual_mesh_root": "WindowModel",
+		# Windows stay visually correct by using the merged proxy mesh path.
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(1, 1, 1),
 		"material": "wood",
 		"movable": false,
@@ -49,6 +55,7 @@ const OBJECTS = {
 		"name": "Heavy Pistol",
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn",
 		"visual_mesh_root": "Visuals",
+		"visual_batch_mode": "none",
 		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
 		"material": "metal",
 		"movable": true,
@@ -57,20 +64,16 @@ const OBJECTS = {
 		"name": "Chair",
 		"scene": "res://models/objects/chair/1/cc0_chair_8.tscn",
 		"visual_mesh_root": "ChairModel",
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(1, 1, 1),
 		"material": "wood",
 		"movable": false,
 	},
 }
 
-const SIMPLE_VISUAL_BATCH_OBJECT_IDS := {
-}
-
-# Proxy batching is disabled for now because the active batch path can hide
-# authored meshes in some scenes. Keep the explicit render-root metadata so we
-# can revisit batching later without redoing the scene inspection work.
-const PROXY_VISUAL_BATCH_OBJECT_IDS := {
-}
+# Batching is opt-in via `visual_batch_mode` on each object definition.
+# Modes are intentionally conservative: only objects with batch-safe visuals
+# should opt into `simple` or `proxy`.
 
 const CONTAINER_INTERACTABLE_SCRIPT := preload("res://modules/world_player_v2/features/data_containers/container_interactable.gd")
 const PROP_PHYSICS_SETTLER_SCRIPT := preload("res://world_building_system/prop_physics_settler.gd")
@@ -147,10 +150,35 @@ static func get_object_visual_data(object_id: int) -> Dictionary:
 		if instance:
 			instance.free()
 		return {}
+	var mesh_instance_count := _count_visible_mesh_instances(instance)
 	var data := {
 		"mesh": mesh_inst.mesh,
-		"mesh_transform": _get_scene_relative_transform(mesh_inst)
+		"mesh_transform": _get_scene_relative_transform(mesh_inst),
+		"mesh_instance_count": mesh_instance_count,
+		"is_single_mesh": mesh_instance_count == 1
 	}
+	var batch_mode := get_visual_batch_mode(object_id)
+	var instance_root := instance as Node3D
+	if batch_mode == "proxy" and mesh_instance_count > 1 and instance_root:
+		var merged_visual_data := _build_merged_visual_mesh(instance_root)
+		if not merged_visual_data.is_empty():
+			data["mesh"] = merged_visual_data.get("mesh", null)
+			data["mesh_transform"] = Transform3D.IDENTITY
+			data["proxy_mesh_merged"] = true
+			data["proxy_mesh_surface_count"] = int(merged_visual_data.get("surface_count", 0))
+		else:
+			push_warning("[ObjectRegistry] Object %d (%s) is marked '%s' but its merged proxy mesh could not be built; batching is disabled for safety." % [
+				object_id,
+				str(obj.get("name", "Unknown")),
+				batch_mode
+			])
+	elif batch_mode == "simple" and mesh_instance_count != 1:
+		push_warning("[ObjectRegistry] Object %d (%s) is marked '%s' but has %d visible mesh instances; batching is disabled for safety." % [
+			object_id,
+			str(obj.get("name", "Unknown")),
+			batch_mode,
+			mesh_instance_count
+		])
 	_visual_data_cache[scene_path] = data
 	if instance:
 		instance.free()
@@ -201,11 +229,150 @@ static func get_object_collision_mesh_descriptors(object_id: int) -> Array:
 	instance.free()
 	return descriptors
 
+static func get_visual_batch_mode(object_id: int) -> String:
+	var obj = get_object(object_id)
+	if obj.is_empty():
+		return "none"
+
+	var mode := str(obj.get("visual_batch_mode", "none")).to_lower()
+	match mode:
+		"simple", "proxy":
+			return mode
+		_:
+			return "none"
+
+static func _count_visible_mesh_instances(node: Node, ancestors_visible: bool = true) -> int:
+	if not node:
+		return 0
+
+	var node_visible := ancestors_visible
+	if node is Node3D:
+		node_visible = ancestors_visible and (node as Node3D).visible
+
+	var total := 1 if node is MeshInstance3D and node_visible else 0
+	for child in node.get_children():
+		total += _count_visible_mesh_instances(child, node_visible)
+	return total
+
+static func _collect_visible_mesh_instances(node: Node, ancestors_visible: bool, result: Array) -> void:
+	if not node:
+		return
+
+	var node_visible := ancestors_visible
+	if node is Node3D:
+		node_visible = ancestors_visible and bool((node as Node3D).visible)
+
+	if node is MeshInstance3D and node_visible:
+		var mesh_inst := node as MeshInstance3D
+		if mesh_inst.mesh:
+			result.append(mesh_inst)
+
+	for child in node.get_children():
+		_collect_visible_mesh_instances(child, node_visible, result)
+
+static func _transform_visual_surface_arrays(arrays: Array, transform: Transform3D) -> Array:
+	if arrays.is_empty():
+		return []
+
+	var transformed_arrays: Array = arrays.duplicate(true)
+	var vertices: PackedVector3Array = transformed_arrays[Mesh.ARRAY_VERTEX]
+	if vertices.is_empty():
+		return []
+
+	var transformed_vertices := PackedVector3Array()
+	transformed_vertices.resize(vertices.size())
+	for i in range(vertices.size()):
+		transformed_vertices[i] = transform * vertices[i]
+	transformed_arrays[Mesh.ARRAY_VERTEX] = transformed_vertices
+
+	var normals: PackedVector3Array = transformed_arrays[Mesh.ARRAY_NORMAL]
+	if not normals.is_empty():
+		var normal_basis := transform.basis
+		if absf(transform.basis.determinant()) > 0.000001:
+			normal_basis = transform.basis.inverse().transposed()
+		var transformed_normals := PackedVector3Array()
+		transformed_normals.resize(normals.size())
+		for i in range(normals.size()):
+			transformed_normals[i] = (normal_basis * normals[i]).normalized()
+		transformed_arrays[Mesh.ARRAY_NORMAL] = transformed_normals
+
+	var tangents: PackedFloat32Array = transformed_arrays[Mesh.ARRAY_TANGENT]
+	if not tangents.is_empty():
+		var tangent_basis := transform.basis
+		var transformed_tangents := PackedFloat32Array()
+		transformed_tangents.resize(tangents.size())
+		for i in range(0, tangents.size(), 4):
+			var tangent := Vector3(tangents[i], tangents[i + 1], tangents[i + 2])
+			tangent = tangent_basis * tangent
+			tangent = tangent.normalized()
+			transformed_tangents[i] = tangent.x
+			transformed_tangents[i + 1] = tangent.y
+			transformed_tangents[i + 2] = tangent.z
+			transformed_tangents[i + 3] = tangents[i + 3]
+		transformed_arrays[Mesh.ARRAY_TANGENT] = transformed_tangents
+
+	return transformed_arrays
+
+static func _build_merged_visual_mesh(root: Node3D) -> Dictionary:
+	if not root:
+		return {}
+
+	var mesh_instances: Array = []
+	_collect_visible_mesh_instances(root, true, mesh_instances)
+	if mesh_instances.is_empty():
+		return {}
+
+	var merged_mesh := ArrayMesh.new()
+	var surface_count := 0
+	for mesh_inst_variant in mesh_instances:
+		if typeof(mesh_inst_variant) != TYPE_OBJECT:
+			continue
+		var mesh_inst := mesh_inst_variant as MeshInstance3D
+		if not mesh_inst or not mesh_inst.mesh:
+			continue
+
+		var mesh_transform := _get_scene_relative_transform(mesh_inst)
+		for surface_idx in range(mesh_inst.mesh.get_surface_count()):
+			var arrays: Array = mesh_inst.mesh.surface_get_arrays(surface_idx)
+			var transformed_arrays := _transform_visual_surface_arrays(arrays, mesh_transform)
+			if transformed_arrays.is_empty():
+				continue
+
+			var primitive_type: int = mesh_inst.mesh.surface_get_primitive_type(surface_idx)
+			merged_mesh.add_surface_from_arrays(primitive_type, transformed_arrays)
+			var material := mesh_inst.mesh.surface_get_material(surface_idx)
+			if material:
+				merged_mesh.surface_set_material(merged_mesh.get_surface_count() - 1, material)
+			surface_count += 1
+
+	if surface_count == 0:
+		return {}
+
+	return {
+		"mesh": merged_mesh,
+		"mesh_instance_count": mesh_instances.size(),
+		"surface_count": surface_count,
+		"proxy_mesh_merged": true
+	}
+
+static func is_visual_batch_safe(object_id: int) -> bool:
+	var mode := get_visual_batch_mode(object_id)
+	if mode == "none":
+		return false
+
+	var visual_data := get_object_visual_data(object_id)
+	if visual_data.is_empty():
+		return false
+
+	if mode == "simple":
+		return int(visual_data.get("mesh_instance_count", 0)) == 1
+	return bool(visual_data.get("proxy_mesh_merged", false)) or int(visual_data.get("mesh_instance_count", 0)) == 1
+
 static func is_simple_visual_batch_object(object_id: int) -> bool:
-	return SIMPLE_VISUAL_BATCH_OBJECT_IDS.has(object_id)
+	return get_visual_batch_mode(object_id) == "simple" and is_visual_batch_safe(object_id)
 
 static func is_proxy_visual_batch_object(object_id: int) -> bool:
-	return PROXY_VISUAL_BATCH_OBJECT_IDS.has(object_id)
+	return get_visual_batch_mode(object_id) == "proxy" and is_visual_batch_safe(object_id)
 
 static func _find_render_mesh_instance(root: Node, preferred_root_name: String = "") -> MeshInstance3D:
 	if not root:
@@ -220,13 +387,19 @@ static func _find_render_mesh_instance(root: Node, preferred_root_name: String =
 	return _find_first_visible_mesh_instance(root)
 
 static func create_proxy_gameplay_shell(object_id: int, world_map_mode: bool = false) -> Node3D:
+	if not is_proxy_visual_batch_object(object_id):
+		return null
 	match object_id:
 		1:
 			return _create_container_shell("CardboardBoxShell", 6, "Cardboard Box", Vector3(0.8, 0.7, 0.8))
 		2:
 			return _create_container_shell("LongCrateShell", 12, "Long Crate", Vector3(1.8, 0.7, 0.8))
+		3:
+			return _create_visual_box_proxy_shell("WoodenTableShell", object_id)
 		6:
 			return _create_pistol_shell(world_map_mode)
+		7:
+			return _create_visual_box_proxy_shell("ChairShell", object_id)
 	return null
 
 static func _create_container_shell(node_name: String, slot_count: int, container_name: String, box_size: Vector3) -> StaticBody3D:
@@ -257,6 +430,38 @@ static func _create_pistol_shell(world_map_mode: bool = false) -> RigidBody3D:
 	var box_shape := BoxShape3D.new()
 	box_shape.size = Vector3(0.2, 0.15, 0.05)
 	collision.shape = box_shape
+	shell.add_child(collision)
+	return shell
+
+static func _create_visual_box_proxy_shell(node_name: String, object_id: int) -> StaticBody3D:
+	var shell := StaticBody3D.new()
+	if not shell:
+		return null
+	shell.name = node_name
+	shell.collision_layer = 4
+	shell.collision_mask = 0
+	shell.add_to_group("objects")
+
+	var box_size := Vector3.ONE
+	var box_transform := Transform3D.IDENTITY
+	var visual_data := get_object_visual_data(object_id)
+	if not visual_data.is_empty():
+		var mesh: Mesh = visual_data.get("mesh")
+		if mesh:
+			var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
+			var aabb := mesh.get_aabb()
+			box_size = Vector3(
+				maxf(aabb.size.x, 0.05),
+				maxf(aabb.size.y, 0.05),
+				maxf(aabb.size.z, 0.05)
+			)
+			box_transform = mesh_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5))
+
+	var collision := CollisionShape3D.new()
+	var box_shape := BoxShape3D.new()
+	box_shape.size = box_size
+	collision.shape = box_shape
+	collision.transform = box_transform
 	shell.add_child(collision)
 	return shell
 

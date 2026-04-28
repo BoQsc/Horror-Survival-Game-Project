@@ -1,5 +1,6 @@
 extends Node3D
 const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
+const WORLD_MAP_VISIBILITY_EXTRA_DISTANCE := 0
 
 # Maps Vector3i (Chunk Coord) -> BuildingChunk (data always persisted)
 var chunks: Dictionary = {}
@@ -381,7 +382,7 @@ func _get_visible_global_visual_batch_entries(entries: Array) -> Array:
 			continue
 		var entry: Dictionary = entry_variant
 		var anchor: Vector3i = entry.get("anchor", Vector3i.ZERO)
-		if _is_global_visual_batch_anchor_in_range(anchor, _last_global_visual_batch_center_chunk, 2):
+		if _is_global_visual_batch_anchor_in_range(anchor, _last_global_visual_batch_center_chunk, WORLD_MAP_VISIBILITY_EXTRA_DISTANCE):
 			visible_entries.append(entry)
 	return visible_entries
 
@@ -559,7 +560,7 @@ func _update_world_map_baked_building_visual_visibility(center_chunk: Vector3i) 
 			stale_keys.append(building_key)
 			continue
 
-		var should_be_visible := _is_world_map_baked_building_in_range(building_key, center_chunk, 2)
+		var should_be_visible := _is_world_map_baked_building_in_range(building_key, center_chunk, WORLD_MAP_VISIBILITY_EXTRA_DISTANCE)
 		_set_world_map_baked_building_visual_in_tree(building_key, should_be_visible)
 
 	for building_key in stale_keys:

@@ -606,10 +606,6 @@ func _process_spawn_queue():
 		var hit_collider = result.collider
 		var terrain_y = result.position.y
 		
-		# DEBUG: Log what we hit
-		var collider_name = hit_collider.name if hit_collider else "null"
-		var collider_groups = hit_collider.get_groups() if hit_collider else []
-		
 		# Only spawn if we hit actual terrain
 		if hit_collider and hit_collider.is_in_group("terrain"):
 			var spawn_pos = Vector3(pos.x, terrain_y + 1.5, pos.z)

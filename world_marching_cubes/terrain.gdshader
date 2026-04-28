@@ -236,6 +236,21 @@ vec3 apply_world_map_road(vec3 color, vec3 col_road, vec3 w_pos) {
 	float road_blend = smoothstep(0.1, 0.9, road_raw);
 	return mix(color, col_road, road_blend);
 }
+
+vec3 sample_exact_material_color(int mat_id, vec3 weights, vec3 uv_pos) {
+	bool is_placed = (mat_id >= 100);
+	int id = is_placed ? (mat_id - 100) : mat_id;
+
+	if (id == 0) return triplanar_texture(texture_grass, weights, uv_pos).rgb;
+	else if (id == 1) return triplanar_texture(texture_stone, weights, uv_pos).rgb;
+	else if (id == 2) return triplanar_texture(texture_stone, weights, uv_pos).rgb * vec3(1.2, 1.0, 0.5);  // Ore
+	else if (id == 3) return triplanar_texture(texture_sand, weights, uv_pos).rgb;
+	else if (id == 4) return triplanar_texture(texture_stone, weights, uv_pos).rgb;  // Gravel
+	else if (id == 5) return triplanar_texture(texture_snow, weights, uv_pos).rgb;
+	else if (id == 6) return triplanar_texture(texture_road, weights, uv_pos).rgb;
+	else if (id == 9) return triplanar_texture(texture_stone, weights, uv_pos).rgb * vec3(0.7, 0.65, 0.6);  // Granite
+	else return triplanar_texture(texture_grass, weights, uv_pos).rgb;
+}
 // Resolve a material ID to its texture color
 vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road, vec3 procedural_col) {
 	bool is_placed = (mat_id >= 100);
@@ -252,10 +267,19 @@ vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col
 		else if (id == 6) return col_road;
 		else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
 		else return col_grass;
+	} else if (use_world_map) {
+		if (id == 0) return col_grass;
+		else if (id == 1) return col_stone;
+		else if (id == 2) return col_stone * vec3(1.2, 1.0, 0.5);  // Ore
+		else if (id == 3) return col_sand;
+		else if (id == 4) return col_stone;  // Gravel
+		else if (id == 5) return col_snow;
+		else if (id == 6) return col_road;
+		else if (id == 9) return col_stone * vec3(0.7, 0.65, 0.6);  // Granite
+		else return col_grass;
 	} else {
-		// Natural voxel: honor road material, otherwise use procedural per-pixel color
-		// In world map mode, we use procedural_col (which already has apply_world_map_road blending)
-		// even for voxels tagged as ID 6 to ensure smooth per-pixel edges.
+		// Natural voxel: honor road material in procedural mode, otherwise use the
+		// exact world-map material color path above.
 		if (id == 6 && !use_world_map) return col_road;
 		return procedural_col;
 	}
@@ -268,14 +292,6 @@ void fragment() {
 	weights /= dot(weights, vec3(1.0));
 	
 	vec3 uv_pos = world_pos * uv_scale;
-	
-	// Sample all textures (triplanar)
-	vec3 col_grass = triplanar_texture(texture_grass, weights, uv_pos).rgb;
-	vec3 col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;    // Cliff faces
-	vec3 col_stone = triplanar_texture(texture_stone, weights, uv_pos).rgb;  // Underground/gravel
-	vec3 col_sand = triplanar_texture(texture_sand, weights, uv_pos).rgb;
-	vec3 col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
-	vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
 	
 	// === DUAL-MATERIAL DECODING ===
 	// material_ids is flat (from provoking vertex, NOT interpolated)
@@ -304,24 +320,47 @@ void fragment() {
 	// === Material Color Resolution ===
 	vec3 base_color;
 	
-	// Pre-calculate the computationally perfect procedural layer
-	vec3 procedural_perfect_color = get_procedural_color(world_pos, col_grass, col_stone, col_sand, col_snow, col_road);
-	
-	// In world map mode, apply per-pixel road blending to the procedural color
-	// This smooths the road-to-biome edge that voxel material IDs make rectangular
-	if (use_world_map) {
-		procedural_perfect_color = apply_world_map_road(procedural_perfect_color, col_road, world_pos);
-	}
-	
-	if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
-		// Single material lookup
-		int mat_id = (abs(blend) < 0.001) ? mat_id_A : ((blend > 0.999) ? mat_id_B : mat_id_A);
-		base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
+	// Only pay for the procedural biome/road layer when it is actually needed.
+	vec3 procedural_perfect_color = vec3(0.0);
+	vec3 col_grass = vec3(0.0);
+	vec3 col_rock = vec3(0.0);
+	vec3 col_stone = vec3(0.0);
+	vec3 col_sand = vec3(0.0);
+	vec3 col_snow = vec3(0.0);
+	vec3 col_road = vec3(0.0);
+
+	if (!use_world_map) {
+		col_grass = triplanar_texture(texture_grass, weights, uv_pos).rgb;
+		col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;    // Cliff faces
+		col_stone = triplanar_texture(texture_stone, weights, uv_pos).rgb;  // Underground/gravel
+		col_sand = triplanar_texture(texture_sand, weights, uv_pos).rgb;
+		col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
+		col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
+
+		procedural_perfect_color = get_procedural_color(world_pos, col_grass, col_stone, col_sand, col_snow, col_road);
+		if (mat_id_A == mat_id_B || abs(blend) < 0.001) {
+			// Single material lookup
+			int mat_id = (abs(blend) < 0.001) ? mat_id_A : ((blend > 0.999) ? mat_id_B : mat_id_A);
+			base_color = resolve_material_color(mat_id, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
+		} else {
+			// Dual material transition (Smoothly blends natural terrain with player-placed blocks)
+			vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
+			vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
+			base_color = mix(color_A, color_B, blend);
+		}
 	} else {
-		// Dual material transition (Smoothly blends natural terrain with player-placed blocks)
-		vec3 color_A = resolve_material_color(mat_id_A, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
-		vec3 color_B = resolve_material_color(mat_id_B, col_grass, col_stone, col_sand, col_snow, col_road, procedural_perfect_color);
-		base_color = mix(color_A, color_B, blend);
+		if (mat_id_A == mat_id_B || abs(blend) < 0.001 || blend > 0.999) {
+			// Single material lookup
+			int mat_id = (blend > 0.999) ? mat_id_B : mat_id_A;
+			base_color = sample_exact_material_color(mat_id, weights, uv_pos);
+		} else {
+			// Dual material transition (Smoothly blends natural terrain with player-placed blocks)
+			vec3 color_A = sample_exact_material_color(mat_id_A, weights, uv_pos);
+			vec3 color_B = sample_exact_material_color(mat_id_B, weights, uv_pos);
+			base_color = mix(color_A, color_B, blend);
+		}
+		col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
+		base_color = apply_world_map_road(base_color, col_road, world_pos);
 	}
 
 	// Slope needed for road and weather effects
@@ -334,22 +373,29 @@ void fragment() {
 		// Height-based surface check with smooth transition
 		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
 		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;
+		vec3 col_rock = triplanar_texture(texture_rock, weights, uv_pos).rgb;
 		// Apply partial transparency to the rock texture so the underlying material remains slightly visible (e.g. 80% max opacity)
 		base_color = mix(base_color, col_rock, cliff_mix * 0.8);
 	}
 	
 	// === Player Road Overlay (from road_mask texture) ===
 	// This allows player-painted roads to overlay procedural materials
-	vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
-	float road_raw = texture(road_mask, road_uv).r;
-	float road_slope_mask = smoothstep(0.7, 0.85, slope);
-	float road_intensity = is_player_placed ? 0.0 : road_raw * road_slope_mask;
-	base_color = mix(base_color, col_road, road_intensity);
+	if (!use_world_map) {
+		vec2 road_uv = (world_pos.xz + road_mask_offset) * road_mask_scale + 0.5;
+		float road_raw = texture(road_mask, road_uv).r;
+		float road_slope_mask = smoothstep(0.7, 0.85, slope);
+		float road_intensity = is_player_placed ? 0.0 : road_raw * road_slope_mask;
+		vec3 col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
+		base_color = mix(base_color, col_road, road_intensity);
+	}
 	
 	
 	// === Dynamic Weather Snow ===
 	// Applies based on global_snow_amount, sticks to flat surfaces
 	if (!is_player_placed) {
+		if (use_world_map && global_snow_amount > 0.0) {
+			col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
+		}
 		float weather_snow = global_snow_amount * smoothstep(0.3, 0.6, slope);
 		weather_snow *= smoothstep(0.0, 1.0, noise(world_pos.xz * 0.5) + 0.5);
 		ALBEDO = mix(base_color, col_snow, clamp(weather_snow, 0.0, 1.0));
