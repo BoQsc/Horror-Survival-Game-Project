@@ -1,6 +1,7 @@
 extends Node3D
 const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
 const WORLD_MAP_VISIBILITY_EXTRA_DISTANCE := 0
+const WORLD_MAP_TERRAIN_CHUNK_STRIDE := 31
 
 # Maps Vector3i (Chunk Coord) -> BuildingChunk (data always persisted)
 var chunks: Dictionary = {}
@@ -364,6 +365,8 @@ func _is_global_visual_batch_anchor_in_range(anchor: Vector3i, center_chunk: Vec
 		return true
 
 	var anchor_chunk := _get_global_visual_batch_anchor_chunk(anchor)
+	# Keep repeated-prop batches on the native building-chunk radius. Only the
+	# baked building shells need the terrain-matched reveal distance.
 	var max_dist := render_distance + extra_distance
 	var max_dist_sq := max_dist * max_dist
 	var dx := anchor_chunk.x - center_chunk.x
@@ -502,7 +505,7 @@ func _is_world_map_baked_building_in_range(building_key: String, center_chunk: V
 	if coords.is_empty():
 		return true
 
-	var max_dist := render_distance + extra_distance
+	var max_dist := _get_world_map_visibility_distance(extra_distance)
 	var max_dist_sq := max_dist * max_dist
 	for coord_variant in coords:
 		if typeof(coord_variant) != TYPE_VECTOR3I:
@@ -565,6 +568,18 @@ func _update_world_map_baked_building_visual_visibility(center_chunk: Vector3i) 
 
 	for building_key in stale_keys:
 		_world_map_baked_building_visual_nodes.erase(building_key)
+
+
+func _get_world_map_visibility_distance(extra_distance: int = 0) -> int:
+	var base_distance := maxi(render_distance + extra_distance, 0)
+	if not world_map_mode:
+		return base_distance
+
+	# Terrain chunks span a larger world-space footprint than building chunks.
+	# Match building reveal distance to the terrain reveal boundary so town
+	# visuals do not lag behind the terrain at the same numeric render distance.
+	var terrain_world_radius := base_distance * WORLD_MAP_TERRAIN_CHUNK_STRIDE
+	return maxi(base_distance, int(ceil(float(terrain_world_radius) / float(CHUNK_SIZE))))
 
 
 func _update_world_map_baked_building_visual_for_voxel(building_key: String, voxel_pos: Vector3, value: int, meta: int) -> bool:
