@@ -406,9 +406,21 @@ static func create_proxy_gameplay_shell(object_id: int, world_map_mode: bool = f
 		return null
 	match object_id:
 		1:
-			return _create_container_shell("CardboardBoxShell", 6, "Cardboard Box", Vector3(0.8, 0.7, 0.8))
+			return _create_container_shell(
+				"CardboardBoxShell",
+				6,
+				"Cardboard Box",
+				Vector3(0.7589844, 0.48020607, 0.6033878),
+				Transform3D(Basis.IDENTITY, Vector3(-0.016992182, 0.23745339, -0.0048420727))
+			)
 		2:
-			return _create_container_shell("LongCrateShell", 12, "Long Crate", Vector3(1.8, 0.7, 0.8))
+			return _create_container_shell(
+				"LongCrateShell",
+				12,
+				"Long Crate",
+				Vector3(1.8, 0.7, 0.8),
+				Transform3D(Basis.IDENTITY, Vector3(0.0, 0.35, 0.0))
+			)
 		3:
 			return _create_visual_box_proxy_shell("WoodenTableShell", object_id)
 		5:
@@ -481,7 +493,13 @@ static func _get_cached_box_shape(cache_key: String, box_size: Vector3) -> BoxSh
 	_proxy_shell_box_shape_cache[cache_key] = box_shape
 	return box_shape
 
-static func _create_container_shell(node_name: String, slot_count: int, container_name: String, box_size: Vector3) -> StaticBody3D:
+static func _create_container_shell(
+	node_name: String,
+	slot_count: int,
+	container_name: String,
+	box_size: Vector3,
+	collision_transform: Transform3D = Transform3D.IDENTITY
+) -> StaticBody3D:
 	var shell := CONTAINER_INTERACTABLE_SCRIPT.new() as StaticBody3D
 	if not shell:
 		return null
@@ -492,6 +510,7 @@ static func _create_container_shell(node_name: String, slot_count: int, containe
 	shell.add_to_group("objects")
 	var collision := CollisionShape3D.new()
 	collision.shape = _get_cached_box_shape("container:%s:%s" % [container_name, str(box_size)], box_size)
+	collision.transform = collision_transform
 	shell.add_child(collision)
 	return shell
 
