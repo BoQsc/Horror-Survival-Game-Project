@@ -3,16 +3,18 @@ extends Node
 ## Immediately switches to D3D12 if they fail - BEFORE game loads
 
 func _enter_tree():
+	if OS.has_feature("headless"):
+		return
+	
 	# Check if we're already using D3D12
 	if _using_d3d12():
 		return
 	
 	# Test if Vulkan compute works
-	if not _test_vulkan_compute():
-		# TEMPORARILY DISABLED - keep logs connected
-		#_restart_with_d3d12()
-		push_error("ERROR: Vulkan compute failed - D3D12 required")
-		push_error("Plugin should have configured this automatically")
+	if _test_vulkan_compute():
+		return
+
+	_restart_with_d3d12()
 
 func _using_d3d12() -> bool:
 	"""Check if already running with D3D12"""
@@ -25,7 +27,6 @@ func _test_vulkan_compute() -> bool:
 	"""Test if Vulkan supports compute pipelines using the ACTUAL marching_cubes shader"""
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd:
-		push_error("[RendererFallback] Failed to create RenderingDevice")
 		return false
 	
 	# Use the ACTUAL marching_cubes shader that's causing problems
