@@ -15,11 +15,8 @@ func _ready():
 	rotation_degrees.x = 0.0 
 
 	if world_map_mode:
-		# World-map towns do not need the pistol to physically settle. Keep the
-		# pickup shell interactive, but stop the rigid body from waking/simulating.
-		# Do not apply the usual upward offset here, or the gun will hover above
-		# tables when it is frozen in place.
-		_generate_precise_collision()
+		# World-map towns already provide a dedicated proxy collision shell for
+		# this prop, so there is no need to recook a convex hull here.
 		_apply_world_map_freeze()
 		return
 

@@ -201,6 +201,8 @@ static func get_rotated_objects(prefab_name: String, rotation: int) -> Array:
 		var object_name := scene_path
 		if not obj_def.is_empty():
 			object_name = str(obj_def.get("name", object_name))
+			if scene_path.is_empty():
+				scene_path = str(obj_def.get("scene", ""))
 			object_size = obj_def.get("size", Vector3i.ONE)
 			obj_size = Vector3(float(object_size.x), float(object_size.y), float(object_size.z))
 			has_authored_collision = bool(obj_def.get("has_authored_collision", ObjectRegistry.get_object_has_authored_collision(object_id)))

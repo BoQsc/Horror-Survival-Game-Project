@@ -55,7 +55,7 @@ const OBJECTS = {
 		"name": "Heavy Pistol",
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn",
 		"visual_mesh_root": "Visuals",
-		"visual_batch_mode": "none",
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
 		"material": "metal",
 		"movable": true,
