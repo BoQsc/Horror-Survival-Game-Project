@@ -1,7 +1,7 @@
 @echo off
 :: --- Environment Configuration ---
 set TOWN_STALL_SEED=12345
-set TOWN_STALL_AUTO_TELEPORT=1
+set TOWN_STALL_AUTO_TELEPORT=0
 
 :: --- Performance Stripping (Disable visuals/physics for long runs) ---
 
@@ -10,7 +10,7 @@ set TOWN_STALL_HOLD_SECONDS=9999
 
 :: --- Warmup Logic ---
 set TOWN_STALL_MACHINE_WARMUP_DISABLED=1
-set TOWN_STALL_RENDER_DISTANCE=10
+set TOWN_STALL_RENDER_DISTANCE=5
 
 
 :: --- Execution ---
