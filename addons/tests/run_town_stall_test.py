@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 import time
+import atexit
+import msvcrt
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +16,8 @@ DEFAULT_TIMEOUT = 900
 SNAPSHOT_DIR = Path(r"C:\Users\Windows10_new\AppData\Roaming\Godot\app_userdata\Horror Survival Game Project\debug\performance")
 LOG_DIR = SNAPSHOT_DIR.parent.parent / "logs"
 LOG_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-godot.log"
+RUN_LOCK_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-test.lock"
+_RUN_LOCK_HANDLE = None
 
 
 def _safe_text(text: str) -> str:
@@ -90,6 +94,71 @@ def _run_powershell_json(command: str, timeout_seconds: int = 20) -> Optional[di
         return None
 
     return parsed if isinstance(parsed, dict) else None
+
+
+def _release_run_lock() -> None:
+    global _RUN_LOCK_HANDLE
+    if _RUN_LOCK_HANDLE is None:
+        return
+
+    try:
+        _RUN_LOCK_HANDLE.seek(0)
+        msvcrt.locking(_RUN_LOCK_HANDLE.fileno(), msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+
+    try:
+        _RUN_LOCK_HANDLE.close()
+    except OSError:
+        pass
+
+    _RUN_LOCK_HANDLE = None
+
+
+def _acquire_run_lock() -> bool:
+    global _RUN_LOCK_HANDLE
+    RUN_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    handle = open(RUN_LOCK_FILE, "a+b")
+    try:
+        handle.seek(0)
+        handle.write(b"0")
+        handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        try:
+            handle.close()
+        except OSError:
+            pass
+        return False
+
+    _RUN_LOCK_HANDLE = handle
+    atexit.register(_release_run_lock)
+    return True
+
+
+def _find_running_town_stall_processes() -> list[dict]:
+    command = r"""
+$projectPath = "C:\Users\Windows10_new\Documents\gpu-marching-cubes"
+$sceneName = "town_stall_test_harness.tscn"
+Get-CimInstance Win32_Process | Where-Object {
+  $_.Name -ieq "godot.windows.opt.tools.64.exe" -and
+  $_.CommandLine -and
+  $_.CommandLine -like ("*" + $sceneName + "*") -and
+  $_.CommandLine -like ("*" + $projectPath + "*")
+} | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress -Depth 3
+""".strip()
+
+    payload = _run_powershell_json(command)
+    if not payload:
+        return []
+
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        return [entry for entry in payload if isinstance(entry, dict)]
+    return []
 
 
 def _collect_machine_state() -> dict:
@@ -413,6 +482,11 @@ def _detect_run_failure(output: str, returncode: Optional[int]) -> list[str]:
 
 
 def main() -> int:
+    if not _acquire_run_lock():
+        print("ERROR: Another town stall benchmark launcher is already running.")
+        print("Close the existing launcher before starting a new one.")
+        return 2
+
     print("Running Town Stall Automation Test...")
     print(f"   Scene: {MAIN_SCENE}")
     print("-" * 50)
@@ -485,6 +559,19 @@ def main() -> int:
 
     print("\nMachine state probe:")
     _print_machine_state_summary(machine_state)
+
+    running_processes = _find_running_town_stall_processes()
+    if running_processes:
+        print("ERROR: Another town stall game instance is already running.")
+        print("Close the existing instance before starting a new town test.")
+        for process in running_processes[:5]:
+            process_id = int(process.get("ProcessId", 0) or 0)
+            process_name = str(process.get("Name", "godot"))
+            print(f"  PID {process_id} - {process_name}")
+            command_line = str(process.get("CommandLine", "")).strip()
+            if command_line:
+                print(f"    {command_line}")
+        return 2
 
     try:
         proc = subprocess.Popen(

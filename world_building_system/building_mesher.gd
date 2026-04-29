@@ -16,7 +16,7 @@ var compute_shader: RDShaderFile
 var native_builder: Object = null
 var _native_backend_ready: bool = false
 const BUILDING_MESH_CACHE_LIMIT: int = 96
-const BUILDING_MESH_CACHE_VERSION: int = 7
+const BUILDING_MESH_CACHE_VERSION: int = 8
 const BUILDING_CHUNK_SIZE: int = 16
 const BUILDING_CHUNK_VOLUME: int = BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE * BUILDING_CHUNK_SIZE
 const BUILDING_APPLY_BUDGET_PER_FRAME: int = 4
@@ -107,18 +107,19 @@ func _get_native_builder() -> Object:
 		push_error("[BuildingMesher] Failed to instantiate MeshBuilder GDExtension.")
 	return native_builder
 
-func _make_building_mesh_cache_key(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String) -> String:
-	return "%d:%s:%d:%d:%d:%d" % [
+func _make_building_mesh_cache_key(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String, chunk_size: int = BUILDING_CHUNK_SIZE) -> String:
+	return "%d:%s:%d:%d:%d:%d:%d" % [
 		BUILDING_MESH_CACHE_VERSION,
 		collision_mode,
+		chunk_size,
 		hash(voxel_bytes),
 		hash(voxel_meta),
 		voxel_bytes.size(),
 		voxel_meta.size()
 	]
 
-func _get_cached_building_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String) -> Dictionary:
-	var cache_key := _make_building_mesh_cache_key(voxel_bytes, voxel_meta, collision_mode)
+func _get_cached_building_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String, chunk_size: int = BUILDING_CHUNK_SIZE) -> Dictionary:
+	var cache_key := _make_building_mesh_cache_key(voxel_bytes, voxel_meta, collision_mode, chunk_size)
 	if not _building_mesh_cache.has(cache_key):
 		return {}
 
@@ -142,13 +143,13 @@ func _voxels_need_detailed_collision(voxel_bytes: PackedByteArray) -> bool:
 			return true
 	return false
 
-func _store_cached_building_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String, mesh: ArrayMesh, shape: Shape3D, collision_boxes: Array) -> void:
+func _store_cached_building_mesh(voxel_bytes: PackedByteArray, voxel_meta: PackedByteArray, collision_mode: String, mesh: ArrayMesh, shape: Shape3D, collision_boxes: Array, chunk_size: int = BUILDING_CHUNK_SIZE) -> void:
 	if not mesh:
 		return
 
 	BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes)
 
-	var cache_key := _make_building_mesh_cache_key(voxel_bytes, voxel_meta, collision_mode)
+	var cache_key := _make_building_mesh_cache_key(voxel_bytes, voxel_meta, collision_mode, chunk_size)
 	if _building_mesh_cache.has(cache_key):
 		_building_mesh_cache_order.erase(cache_key)
 	elif _building_mesh_cache_order.size() >= BUILDING_MESH_CACHE_LIMIT:
@@ -193,7 +194,27 @@ func build_building_mesh_from_voxels(voxel_bytes: PackedByteArray, voxel_meta: P
 	if not builder or not builder.has_method("build_building_mesh_from_voxels"):
 		push_error("[BuildingMesher] MeshBuilder.build_building_mesh_from_voxels() is required.")
 		return {}
-	return builder.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, use_box_collision, chunk_size)
+	var collision_mode := "boxes" if use_box_collision else "shape"
+	var cached_result := _get_cached_building_mesh(voxel_bytes, voxel_meta, collision_mode, chunk_size)
+	if not cached_result.is_empty():
+		return cached_result
+
+	var result: Dictionary = builder.build_building_mesh_from_voxels(voxel_bytes, voxel_meta, use_box_collision, chunk_size)
+	if result.is_empty():
+		return result
+
+	var mesh_variant: Variant = result.get("mesh", null)
+	if mesh_variant is ArrayMesh:
+		_store_cached_building_mesh(
+			voxel_bytes,
+			voxel_meta,
+			collision_mode,
+			mesh_variant,
+			result.get("shape", null),
+			result.get("collision_boxes", []),
+			chunk_size
+		)
+	return result
 
 func build_trimesh_collision_shape_from_faces(faces: PackedVector3Array) -> Shape3D:
 	var builder := _get_native_builder()

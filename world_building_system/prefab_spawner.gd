@@ -58,6 +58,9 @@ var _spawned_world_map_baked_building_keys: Dictionary = {}
 var _last_spawn_job_msec: int = 0
 var _last_spawn_processing_ms: float = 0.0
 var _last_spawn_jobs_processed: int = 0
+var _capture_world_map_object_telemetry: bool = false
+var _last_world_map_object_mix_summary: Array = []
+var _last_world_map_slow_object_spawns: Array = []
 
 # Track spawned doors for distance-based cleanup
 var spawned_doors: Dictionary = {} # "x_z" -> door instance
@@ -120,6 +123,7 @@ var forest_noise: FastNoiseLite
 
 func _ready():
 	add_to_group("prefab_spawner")
+	_capture_world_map_object_telemetry = OS.get_environment("TOWN_STALL_CAPTURE_OBJECT_TELEMETRY") == "1"
 
 	# Find managers if not assigned
 	if not terrain_manager:
@@ -205,6 +209,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"world_map_baked_building_visual_count": _world_map_baked_building_prebuilt_chunk_count,
 		"last_world_map_baked_building_payload_build_ms": _last_world_map_baked_building_payload_build_ms,
 		"last_world_map_baked_building_prebuild_ms": _last_world_map_baked_building_prebuild_ms,
+		"world_map_object_telemetry_enabled": _capture_world_map_object_telemetry,
+		"last_world_map_object_mix_summary": _last_world_map_object_mix_summary,
+		"last_world_map_slow_object_spawns": _last_world_map_slow_object_spawns,
 		"spawned_world_map_baked_terrain_chunk_count": _spawned_world_map_baked_terrain_chunks.size(),
 		"spawned_world_map_baked_building_count": _spawned_world_map_baked_building_keys.size(),
 		"skip_object_spawns_for_test": skip_object_spawns_for_test,
@@ -462,6 +469,11 @@ func _ensure_world_map_baked_building_payload_for_key(building_key: String) -> b
 		var voxel_meta: PackedByteArray = building_voxel_payload.get("voxel_meta", PackedByteArray())
 		var voxel_size := int(building_voxel_payload.get("voxel_size", 0))
 		if not voxel_bytes.is_empty() and not voxel_meta.is_empty() and voxel_size > 0:
+			var has_church_floor := false
+			for block_id in voxel_bytes:
+				if block_id == 8:
+					has_church_floor = true
+					break
 			var use_box_collision := true
 			if mesher.has_method("voxels_need_detailed_collision"):
 				use_box_collision = not bool(mesher.voxels_need_detailed_collision(voxel_bytes))
@@ -473,6 +485,7 @@ func _ensure_world_map_baked_building_payload_for_key(building_key: String) -> b
 					"voxel_size": voxel_size,
 					"voxel_bytes": voxel_bytes,
 					"voxel_meta": voxel_meta,
+					"has_church_floor": has_church_floor,
 					"mesh": mesh_result.get("mesh", null),
 					"shape": mesh_result.get("shape", null),
 					"collision_boxes": mesh_result.get("collision_boxes", [])
@@ -1556,7 +1569,7 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 		if objects_data.has(prefab_name):
 			var object_start_us := Time.get_ticks_usec()
 			var use_world_map_mode := bool(building_manager and building_manager.world_map_mode)
-			collect_object_telemetry = not use_world_map_mode
+			collect_object_telemetry = _capture_world_map_object_telemetry or not use_world_map_mode
 			var prefab_objects: Array = objects_data[prefab_name]
 			if use_world_map_mode and has_meta("prefab_objects_sorted"):
 				var sorted_objects_data = get_meta("prefab_objects_sorted")
@@ -1686,6 +1699,12 @@ func spawn_user_prefab(prefab_name: String, world_pos: Vector3, submerge_offset:
 			if flush_visual_batches and defer_global_visual_batch_rebuild and building_manager and building_manager.has_method("flush_global_visual_batches"):
 				building_manager.flush_global_visual_batches()
 			object_spawn_elapsed_ms = float(Time.get_ticks_usec() - object_start_us) / 1000.0
+			if collect_object_telemetry:
+				_last_world_map_object_mix_summary = _build_top_object_mix_summary(object_mix_counts)
+				_last_world_map_slow_object_spawns = _build_top_slow_object_spawns(slow_object_spawns)
+			elif not _capture_world_map_object_telemetry:
+				_last_world_map_object_mix_summary = []
+				_last_world_map_slow_object_spawns = []
 
 	if not skip_blocks and not skip_block_placement_for_test and _should_seal_prefab_foundation(placement_profile):
 		var seal_start_us := Time.get_ticks_usec()

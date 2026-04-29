@@ -91,14 +91,17 @@ static func get_last_load_profile(path: String = "") -> Dictionary:
 		profile = _last_load_profiles.get(cache_key, {})
 	return profile.duplicate(true)
 
-static func load_world(path: String, use_cache: bool = true, duplicate_on_return: bool = true, profile_out: Variant = null) -> Dictionary:
+static func load_world(path: String, use_cache: bool = true, duplicate_on_return: bool = true, profile_out: Variant = null, requested_image_names: Array = WORLD_IMAGE_NAMES) -> Dictionary:
 	var cache_key := _normalize_world_path(path)
 	if cache_key == "":
 		return {}
 
 	var call_start_us := Time.get_ticks_usec()
 	var allow_cache := cache_enabled and use_cache
+	var load_image_names := _normalize_requested_image_names(requested_image_names)
+	var load_all_images := load_image_names == WORLD_IMAGE_NAMES
 	var signature := ""
+	var metadata_hint: Dictionary = {}
 	var profile: Dictionary = {
 		"world_path": cache_key,
 		"cache_enabled": allow_cache,
@@ -121,11 +124,11 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 	}
 	if allow_cache:
 		var signature_start_us := Time.get_ticks_usec()
-		signature = _read_world_cache_signature_hint(cache_key, profile)
+		signature = _read_world_cache_signature_hint(cache_key, profile, metadata_hint)
 		if signature.is_empty():
 			signature = _build_world_signature(cache_key)
 		profile["signature_us"] = float(Time.get_ticks_usec() - signature_start_us)
-		if _world_cache.has(cache_key):
+		if load_all_images and _world_cache.has(cache_key):
 			var cached_entry: Dictionary = _world_cache[cache_key]
 			if cached_entry.get("signature", "") == signature:
 				_touch_cache_key(cache_key)
@@ -144,10 +147,11 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 				_apply_profile_out(profile_out, profile)
 				return cached_data
 			_evict_cache_key(cache_key)
-		var disk_cached_data := _load_world_disk_cache(signature, profile)
+		var disk_cached_data := _load_world_disk_cache(signature, profile, load_image_names)
 		if not disk_cached_data.is_empty():
-			_store_cache_entry(cache_key, signature, disk_cached_data)
-			profile["cache_hit"] = true
+			if load_all_images:
+				_store_cache_entry(cache_key, signature, disk_cached_data)
+				profile["cache_hit"] = true
 			profile["disk_cache_hit"] = true
 			if duplicate_on_return:
 				var duplicate_start_us := Time.get_ticks_usec()
@@ -163,7 +167,7 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 			return disk_cached_data
 
 	var load_start_us := Time.get_ticks_usec()
-	var loaded: Dictionary = _load_world_uncached(cache_key, profile)
+	var loaded: Dictionary = _load_world_uncached(cache_key, profile, metadata_hint, load_image_names)
 	profile["load_total_us"] = float(Time.get_ticks_usec() - call_start_us)
 	profile["uncached_load_us"] = float(Time.get_ticks_usec() - load_start_us)
 	if loaded.is_empty():
@@ -171,7 +175,7 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 		_apply_profile_out(profile_out, profile)
 		return {}
 
-	if allow_cache:
+	if allow_cache and load_all_images:
 		_store_cache_entry(cache_key, signature, loaded)
 		_store_world_disk_cache(signature, loaded, profile)
 
@@ -187,9 +191,10 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 	_apply_profile_out(profile_out, profile)
 	return loaded
 
-static func _load_world_uncached(path: String, profile: Dictionary) -> Dictionary:
+static func _load_world_uncached(path: String, profile: Dictionary, metadata_hint: Dictionary = {}, requested_image_names: Array = WORLD_IMAGE_NAMES) -> Dictionary:
 	var result: Dictionary = {}
-	for image_name in WORLD_IMAGE_NAMES:
+	var load_image_names := _normalize_requested_image_names(requested_image_names)
+	for image_name in load_image_names:
 		var image_path := _resolve_world_image_path(path, image_name)
 		if not FileAccess.file_exists(image_path):
 			continue
@@ -204,36 +209,40 @@ static func _load_world_uncached(path: String, profile: Dictionary) -> Dictionar
 				profile["image_convert_us"] = float(profile.get("image_convert_us", 0.0)) + float(Time.get_ticks_usec() - convert_start_us)
 			result[image_name] = image
 
-	var meta_path := path.path_join("world_meta.json")
-	if FileAccess.file_exists(meta_path):
+	var metadata: Dictionary = metadata_hint
+	if metadata.is_empty():
+		var meta_path := path.path_join("world_meta.json")
+		if FileAccess.file_exists(meta_path):
+			profile["metadata_found"] = true
+			var metadata_start_us := Time.get_ticks_usec()
+			var file := FileAccess.open(meta_path, FileAccess.READ)
+			if file:
+				var json := JSON.new()
+				var parse_error := json.parse(file.get_as_text())
+				if parse_error == OK:
+					var parsed_metadata = json.get_data()
+					if parsed_metadata is Dictionary:
+						metadata = _normalize_world_metadata(parsed_metadata)
+				file.close()
+			profile["metadata_parse_us"] = float(profile.get("metadata_parse_us", 0.0)) + float(Time.get_ticks_usec() - metadata_start_us)
+	if not metadata.is_empty():
 		profile["metadata_found"] = true
-		var metadata_start_us := Time.get_ticks_usec()
-		var file := FileAccess.open(meta_path, FileAccess.READ)
-		if file:
-			var json := JSON.new()
-			var parse_error := json.parse(file.get_as_text())
-			if parse_error == OK:
-				var metadata = json.get_data()
-				if metadata is Dictionary:
-					metadata = _normalize_world_metadata(metadata)
-					result["metadata"] = metadata
-					result["schema_version"] = int(metadata.get(WORLD_META_SCHEMA_VERSION_KEY, 0))
-					profile["metadata_valid"] = true
-					profile["schema_version"] = int(result["schema_version"])
-					profile["metadata_key_count"] = metadata.size()
-					if metadata.has(WORLD_META_BUILDINGS_KEY):
-						result["buildings"] = metadata.buildings
-					if metadata.has(WORLD_META_TOWNS_KEY):
-						result["towns"] = metadata.towns
-					if metadata.has(WORLD_META_TERRAIN_MODIFICATIONS_KEY):
-						result["terrain_modifications"] = metadata.terrain_modifications
-			file.close()
-		profile["metadata_parse_us"] = float(profile.get("metadata_parse_us", 0.0)) + float(Time.get_ticks_usec() - metadata_start_us)
+		result["metadata"] = metadata
+		result["schema_version"] = int(metadata.get(WORLD_META_SCHEMA_VERSION_KEY, 0))
+		profile["metadata_valid"] = true
+		profile["schema_version"] = int(result["schema_version"])
+		profile["metadata_key_count"] = metadata.size()
+		if metadata.has(WORLD_META_BUILDINGS_KEY):
+			result["buildings"] = metadata.buildings
+		if metadata.has(WORLD_META_TOWNS_KEY):
+			result["towns"] = metadata.towns
+		if metadata.has(WORLD_META_TERRAIN_MODIFICATIONS_KEY):
+			result["terrain_modifications"] = metadata.terrain_modifications
 	return result
 
-static func _read_world_cache_signature_hint(cache_key: String, profile: Variant = null) -> String:
+static func _read_world_cache_signature_hint(cache_key: String, profile: Variant = null, metadata_out: Variant = null) -> String:
 	var signature_path := cache_key.path_join(WORLD_CACHE_SIGNATURE_FILE)
-	if not signature_path.is_empty() and FileAccess.file_exists(signature_path):
+	if not signature_path.is_empty():
 		var file := FileAccess.open(signature_path, FileAccess.READ)
 		if file:
 			var signature := file.get_line().strip_edges()
@@ -257,16 +266,22 @@ static func _read_world_cache_signature_hint(cache_key: String, profile: Variant
 	if json.parse(file.get_as_text()) == OK:
 		var metadata = json.get_data()
 		if metadata is Dictionary:
-			signature = str(metadata.get(WORLD_META_CACHE_SIGNATURE_KEY, ""))
+			var normalized_metadata := _normalize_world_metadata(metadata)
+			signature = str(normalized_metadata.get(WORLD_META_CACHE_SIGNATURE_KEY, ""))
 			if profile is Dictionary:
 				var profile_dict: Dictionary = profile
 				profile_dict["signature_hint_found"] = not signature.is_empty()
+			if metadata_out is Dictionary:
+				var metadata_dict: Dictionary = metadata_out
+				metadata_dict.clear()
+				for key in normalized_metadata:
+					metadata_dict[key] = normalized_metadata[key]
 	file.close()
 	return signature
 
-static func _load_world_disk_cache(signature: String, profile: Dictionary) -> Dictionary:
+static func _load_world_disk_cache(signature: String, profile: Dictionary, requested_image_names: Array = WORLD_IMAGE_NAMES) -> Dictionary:
 	var cache_path := _get_world_disk_cache_path(signature)
-	if cache_path.is_empty() or not FileAccess.file_exists(cache_path):
+	if cache_path.is_empty():
 		return {}
 
 	var read_start_us := Time.get_ticks_usec()
@@ -274,12 +289,13 @@ static func _load_world_disk_cache(signature: String, profile: Dictionary) -> Di
 	if not file:
 		return {}
 
+	var load_image_names := _normalize_requested_image_names(requested_image_names)
 	var result: Dictionary = {}
 	var valid := false
 	if file.get_32() == DISK_CACHE_MAGIC and file.get_32() == DISK_CACHE_VERSION:
-		var cached_signature := str(file.get_var(true))
+		var cached_signature := str(file.get_var(false))
 		if cached_signature == signature:
-			var payload_variant: Variant = file.get_var(true)
+			var payload_variant: Variant = file.get_var(false)
 			if typeof(payload_variant) == TYPE_DICTIONARY:
 				result = payload_variant
 				for image_name in WORLD_IMAGE_NAMES:
@@ -296,6 +312,10 @@ static func _load_world_disk_cache(signature: String, profile: Dictionary) -> Di
 							file.seek(file.get_position() + data_size)
 						continue
 
+					if not load_image_names.has(image_name):
+						file.seek(file.get_position() + data_size)
+						continue
+
 					var data := file.get_buffer(data_size)
 					if data.size() != data_size:
 						continue
@@ -303,7 +323,7 @@ static func _load_world_disk_cache(signature: String, profile: Dictionary) -> Di
 					var image := Image.new()
 					image.set_data(width, height, false, format, data)
 					result[image_name] = image
-				profile["loaded_image_count"] = WORLD_IMAGE_NAMES.size()
+					profile["loaded_image_count"] = int(profile.get("loaded_image_count", 0)) + 1
 				profile["metadata_found"] = result.has("metadata")
 				profile["metadata_valid"] = result.has("metadata") and result["metadata"] is Dictionary
 				if result.has("schema_version"):
@@ -327,9 +347,11 @@ static func _store_world_disk_cache(signature: String, data: Dictionary, profile
 		if make_err != OK:
 			return
 
-	var payload := data.duplicate(true)
-	for image_name in WORLD_IMAGE_NAMES:
-		payload.erase(image_name)
+	var payload: Dictionary = {}
+	for key in data:
+		if WORLD_IMAGE_NAMES.has(key):
+			continue
+		payload[key] = data[key]
 
 	var write_start_us := Time.get_ticks_usec()
 	var file := FileAccess.open(cache_path, FileAccess.WRITE)
@@ -338,8 +360,8 @@ static func _store_world_disk_cache(signature: String, data: Dictionary, profile
 
 	file.store_32(DISK_CACHE_MAGIC)
 	file.store_32(DISK_CACHE_VERSION)
-	file.store_var(signature, true)
-	file.store_var(payload, true)
+	file.store_var(signature, false)
+	file.store_var(payload, false)
 
 	for image_name in WORLD_IMAGE_NAMES:
 		var image_variant: Variant = data.get(image_name, null)
@@ -402,8 +424,20 @@ static func _normalize_world_path(path: String) -> String:
 		normalized = normalized.substr(0, normalized.length() - 1)
 	return normalized
 
+static func _normalize_requested_image_names(requested_image_names: Array) -> Array[String]:
+	var normalized: Array[String] = []
+	var source := requested_image_names
+	if source.is_empty():
+		source = WORLD_IMAGE_NAMES
+	for image_name_variant in source:
+		var image_name := str(image_name_variant)
+		if image_name.is_empty() or normalized.has(image_name):
+			continue
+		normalized.append(image_name)
+	return normalized
+
 static func _normalize_world_metadata(metadata: Dictionary) -> Dictionary:
-	var normalized := metadata.duplicate(true)
+	var normalized := metadata.duplicate()
 	var meta_version := int(normalized.get(WORLD_META_SCHEMA_VERSION_KEY, normalized.get(WORLD_META_VERSION_KEY, 0)))
 	normalized[WORLD_META_SCHEMA_VERSION_KEY] = meta_version
 	normalized[WORLD_META_VERSION_KEY] = meta_version

@@ -49,24 +49,28 @@ func _deferred_init():
 		return
 	_ensure_cached_door_scene_paths(door_model)
 	_resolve_animation_player(door_model)
-	_setup_audio()
 	_disable_glb_collisions(door_model)
 	_setup_collisions(door_model)
 
-func _setup_audio():
+func _ensure_audio() -> void:
+	if door_open_sound and is_instance_valid(door_open_sound) and door_close_sound and is_instance_valid(door_close_sound):
+		return
+
 	# Open sound
-	door_open_sound = AudioStreamPlayer3D.new()
-	door_open_sound.stream = DOOR_OPEN_SOUND_FILE
-	door_open_sound.volume_db = -5.0
-	door_open_sound.max_distance = 20.0
-	add_child(door_open_sound)
+	if not door_open_sound or not is_instance_valid(door_open_sound):
+		door_open_sound = AudioStreamPlayer3D.new()
+		door_open_sound.stream = DOOR_OPEN_SOUND_FILE
+		door_open_sound.volume_db = -5.0
+		door_open_sound.max_distance = 20.0
+		add_child(door_open_sound)
 	
 	# Close sound
-	door_close_sound = AudioStreamPlayer3D.new()
-	door_close_sound.stream = DOOR_CLOSE_SOUND_FILE
-	door_close_sound.volume_db = -5.0
-	door_close_sound.max_distance = 20.0
-	add_child(door_close_sound)
+	if not door_close_sound or not is_instance_valid(door_close_sound):
+		door_close_sound = AudioStreamPlayer3D.new()
+		door_close_sound.stream = DOOR_CLOSE_SOUND_FILE
+		door_close_sound.volume_db = -5.0
+		door_close_sound.max_distance = 20.0
+		add_child(door_close_sound)
 
 func _ensure_cached_door_scene_paths(door_model: Node) -> void:
 	if _cached_door_scene_ready:
@@ -189,6 +193,7 @@ func interact():
 		open_door()
 
 func open_door():
+	_ensure_audio()
 	if door_open_sound:
 		door_open_sound.play()
 	if animation_player and animation_player.has_animation("HN_Door_Open"):
@@ -196,6 +201,7 @@ func open_door():
 	is_open = true
 
 func close_door():
+	_ensure_audio()
 	if door_close_sound:
 		door_close_sound.play()
 	if animation_player and animation_player.has_animation("HN_Door_Close"):

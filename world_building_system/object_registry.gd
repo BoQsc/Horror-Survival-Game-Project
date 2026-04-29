@@ -86,6 +86,9 @@ static var _visual_data_cache: Dictionary = {} # scene_path -> { mesh, mesh_tran
 static var _authored_collision_cache: Dictionary = {} # scene_path -> bool
 static var _occupied_cells_cache: Dictionary = {} # id:rotation -> Array[Vector3i]
 static var _generic_collision_mesh_cache: Dictionary = {} # scene_path -> Array[{ path, mesh }]
+static var _proxy_shell_box_shape_cache: Dictionary = {} # cache_key -> BoxShape3D
+static var _proxy_shell_box_data_cache: Dictionary = {} # object_id -> { size, transform }
+static var _simple_object_collision_data_cache: Dictionary = {} # object_id -> { shape, transform }
 
 ## Preload all object scenes (call at game startup for faster spawning)
 static func preload_all_scenes() -> void:
@@ -100,8 +103,20 @@ static func preload_all_scenes() -> void:
 		if scene_path != "" and not _preloaded_scenes.has(scene_path):
 			if ResourceLoader.exists(scene_path):
 				_preloaded_scenes[scene_path] = load(scene_path)
+				var warmed_scene: Node = _preloaded_scenes[scene_path].instantiate()
+				if warmed_scene:
+					if warmed_scene.has_method("_ensure_cached_door_scene_paths"):
+						var door_model := warmed_scene.get_node_or_null("DoorModel")
+						if door_model:
+							warmed_scene.call("_ensure_cached_door_scene_paths", door_model)
+							warmed_scene.call("_resolve_animation_player", door_model)
+					warmed_scene.free()
 		if is_simple_visual_batch_object(int(id)) or is_proxy_visual_batch_object(int(id)):
 			get_object_visual_data(int(id))
+		if is_proxy_visual_batch_object(int(id)):
+			_get_proxy_shell_box_data(int(id))
+		if int(id) == 3 or int(id) == 5 or int(id) == 7:
+			get_simple_object_collision_data(int(id))
 		var has_authored_collision := get_object_has_authored_collision(int(id))
 		if not has_authored_collision:
 			get_object_collision_mesh_descriptors(int(id))
@@ -396,11 +411,75 @@ static func create_proxy_gameplay_shell(object_id: int, world_map_mode: bool = f
 			return _create_container_shell("LongCrateShell", 12, "Long Crate", Vector3(1.8, 0.7, 0.8))
 		3:
 			return _create_visual_box_proxy_shell("WoodenTableShell", object_id)
+		5:
+			return _create_visual_box_proxy_shell("WindowShell", object_id)
 		6:
 			return _create_pistol_shell(world_map_mode)
 		7:
 			return _create_visual_box_proxy_shell("ChairShell", object_id)
 	return null
+
+static func _get_proxy_shell_box_data(object_id: int) -> Dictionary:
+	if _proxy_shell_box_data_cache.has(object_id):
+		return _proxy_shell_box_data_cache[object_id]
+
+	var visual_data := get_object_visual_data(object_id)
+	if visual_data.is_empty():
+		return {}
+
+	var mesh: Mesh = visual_data.get("mesh")
+	if not mesh:
+		return {}
+
+	var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
+	var aabb := mesh.get_aabb()
+	var box_size := Vector3(
+		maxf(aabb.size.x, 0.05),
+		maxf(aabb.size.y, 0.05),
+		maxf(aabb.size.z, 0.05)
+	)
+	var box_transform := mesh_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5))
+	var data := {
+		"size": box_size,
+		"transform": box_transform
+	}
+	_proxy_shell_box_data_cache[object_id] = data
+	return data
+
+static func get_simple_object_collision_data(object_id: int) -> Dictionary:
+	if _simple_object_collision_data_cache.has(object_id):
+		return _simple_object_collision_data_cache[object_id]
+
+	var visual_data := get_object_visual_data(object_id)
+	if visual_data.is_empty():
+		return {}
+
+	var mesh: Mesh = visual_data.get("mesh")
+	if not mesh:
+		return {}
+
+	var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
+	var aabb := mesh.get_aabb()
+	var box_size := Vector3(
+		maxf(aabb.size.x, 0.05),
+		maxf(aabb.size.y, 0.05),
+		maxf(aabb.size.z, 0.05)
+	)
+	var data := {
+		"shape": _get_cached_box_shape("simple_visual:%d" % object_id, box_size),
+		"transform": mesh_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5))
+	}
+	_simple_object_collision_data_cache[object_id] = data
+	return data
+
+static func _get_cached_box_shape(cache_key: String, box_size: Vector3) -> BoxShape3D:
+	if _proxy_shell_box_shape_cache.has(cache_key):
+		return _proxy_shell_box_shape_cache[cache_key]
+
+	var box_shape := BoxShape3D.new()
+	box_shape.size = box_size
+	_proxy_shell_box_shape_cache[cache_key] = box_shape
+	return box_shape
 
 static func _create_container_shell(node_name: String, slot_count: int, container_name: String, box_size: Vector3) -> StaticBody3D:
 	var shell := CONTAINER_INTERACTABLE_SCRIPT.new() as StaticBody3D
@@ -412,9 +491,7 @@ static func _create_container_shell(node_name: String, slot_count: int, containe
 		shell.set("container_name", container_name)
 	shell.add_to_group("objects")
 	var collision := CollisionShape3D.new()
-	var box_shape := BoxShape3D.new()
-	box_shape.size = box_size
-	collision.shape = box_shape
+	collision.shape = _get_cached_box_shape("container:%s:%s" % [container_name, str(box_size)], box_size)
 	shell.add_child(collision)
 	return shell
 
@@ -426,10 +503,15 @@ static func _create_pistol_shell(world_map_mode: bool = false) -> RigidBody3D:
 	shell.add_to_group("interactable")
 	if shell.has_method("set"):
 		shell.set("world_map_mode", world_map_mode)
+	if world_map_mode:
+		shell.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+		shell.freeze = true
+		shell.sleeping = true
+		shell.can_sleep = false
+		shell.continuous_cd = false
+		shell.set_physics_process(false)
 	var collision := CollisionShape3D.new()
-	var box_shape := BoxShape3D.new()
-	box_shape.size = Vector3(0.2, 0.15, 0.05)
-	collision.shape = box_shape
+	collision.shape = _get_cached_box_shape("pistol", Vector3(0.2, 0.15, 0.05))
 	shell.add_child(collision)
 	return shell
 
@@ -444,23 +526,13 @@ static func _create_visual_box_proxy_shell(node_name: String, object_id: int) ->
 
 	var box_size := Vector3.ONE
 	var box_transform := Transform3D.IDENTITY
-	var visual_data := get_object_visual_data(object_id)
-	if not visual_data.is_empty():
-		var mesh: Mesh = visual_data.get("mesh")
-		if mesh:
-			var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
-			var aabb := mesh.get_aabb()
-			box_size = Vector3(
-				maxf(aabb.size.x, 0.05),
-				maxf(aabb.size.y, 0.05),
-				maxf(aabb.size.z, 0.05)
-			)
-			box_transform = mesh_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5))
+	var box_data := _get_proxy_shell_box_data(object_id)
+	if not box_data.is_empty():
+		box_size = box_data.get("size", box_size)
+		box_transform = box_data.get("transform", box_transform)
 
 	var collision := CollisionShape3D.new()
-	var box_shape := BoxShape3D.new()
-	box_shape.size = box_size
-	collision.shape = box_shape
+	collision.shape = _get_cached_box_shape("visual_box:%d" % object_id, box_size)
 	collision.transform = box_transform
 	shell.add_child(collision)
 	return shell

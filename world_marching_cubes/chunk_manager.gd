@@ -324,12 +324,11 @@ func _ready():
 		# are controlled by the material buffer (depth-limited to 2 blocks)
 		material_terrain.set_shader_parameter("procedural_road_enabled", false)
 		material_terrain.set_shader_parameter("use_world_map", true)
-		PrefabGeometry.clear_cache()
 		# Read metadata for map params (biome blending now uses GPU fbm() directly, no texture needed)
 		var startup_world_map_load_profile: Dictionary = {}
-		var loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled, false, startup_world_map_load_profile)
+		var loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled, false, startup_world_map_load_profile, ["heightmap", "biomes", "roads", "water"])
 		_startup_world_map_data = loaded
-		_startup_world_map_load_profile = startup_world_map_load_profile.duplicate(true)
+		_startup_world_map_load_profile = startup_world_map_load_profile
 		if loaded.has("metadata"):
 			var meta = loaded.metadata
 			var meta_terrain_height = float(meta.get("terrain_height", terrain_height))
@@ -1688,11 +1687,24 @@ func _rebuild_world_map_excavation_buffers(rd: RenderingDevice) -> void:
 	_free_world_map_excavation_buffers(rd)
 	var empty_mask := _create_empty_excavation_mask_bytes()
 	_world_map_empty_excavation_buf = rd.storage_buffer_create(empty_mask.size(), empty_mask)
-	for coord in _world_map_excavation_masks:
-		var mask: PackedByteArray = _world_map_excavation_masks.get(coord, PackedByteArray())
-		if mask.size() != EXCAVATION_MASK_BYTE_COUNT:
-			continue
-		_world_map_excavation_buffers[coord] = rd.storage_buffer_create(mask.size(), mask)
+
+
+func _get_world_map_excavation_buffer(coord: Vector3i, rd: RenderingDevice) -> RID:
+	if _world_map_excavation_buffers.has(coord):
+		var existing: RID = _world_map_excavation_buffers[coord]
+		if existing.is_valid():
+			return existing
+
+	var mask: PackedByteArray = _world_map_excavation_masks.get(coord, PackedByteArray())
+	if mask.size() != EXCAVATION_MASK_BYTE_COUNT:
+		return _world_map_empty_excavation_buf
+
+	if not rd:
+		return _world_map_empty_excavation_buf
+
+	var buffer := rd.storage_buffer_create(mask.size(), mask)
+	_world_map_excavation_buffers[coord] = buffer
+	return buffer
 
 func _free_world_map_excavation_buffers(rd: RenderingDevice) -> void:
 	for buffer_rid in _world_map_excavation_buffers.values():
@@ -2572,54 +2584,18 @@ func _thread_function():
 	var pipe_mod = rd.compute_pipeline_create(sid_mod)
 	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
 
-	# === GPU Biome Map Generation (for minimap — uses same fbm() as terrain shader) ===
-	if world_map_active:
-		var biome_spirv = load("res://world_marching_cubes/gen_biome_map.glsl").get_spirv()
-		var sid_biome = rd.shader_create_from_spirv(biome_spirv)
-		var pipe_biome = rd.compute_pipeline_create(sid_biome)
-
-		var map_size_i = int(world_map_size)
-		var buf_size = map_size_i * map_size_i
-		# Pad to 4-byte alignment
-		while buf_size % 4 != 0: buf_size += 1
-		var biome_init = PackedByteArray()
-		biome_init.resize(buf_size)
-		biome_init.fill(0)
-		var biome_buf_rid = rd.storage_buffer_create(buf_size, biome_init)
-
-		var u_biome = RDUniform.new()
-		u_biome.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-		u_biome.binding = 0
-		u_biome.add_id(biome_buf_rid)
-		var biome_set = rd.uniform_set_create([u_biome], sid_biome, 0)
-
-		# Push constants: map_size, map_half, pad, pad
-		var pc = PackedFloat32Array([world_map_size, world_map_half, 0.0, 0.0])
-		var pc_bytes = pc.to_byte_array()
-
-		var cl = rd.compute_list_begin()
-		rd.compute_list_bind_compute_pipeline(cl, pipe_biome)
-		rd.compute_list_bind_uniform_set(cl, biome_set, 0)
-		rd.compute_list_set_push_constant(cl, pc_bytes, pc_bytes.size())
-		var groups = int(ceil(world_map_size / 16.0))
-		rd.compute_list_dispatch(cl, groups, groups, 1)
-		rd.compute_list_end()
-		rd.submit()
-		rd.sync()
-
-		# Read back GPU-generated biome data
-		gpu_biome_map = rd.buffer_get_data(biome_buf_rid)
-		gpu_biome_map.resize(map_size_i * map_size_i)  # Trim to exact size
-
-		rd.free_rid(biome_buf_rid)
-		rd.free_rid(sid_biome)
+	# Use the baked biome bytes already loaded with the world map.
+	# The minimap only needs the byte values, so there is no need to spend
+	# startup time recomputing them through a separate GPU pass.
+	gpu_biome_map = PackedByteArray()
+	if world_map_active and not _startup_world_map_data.is_empty():
+		var startup_biomes_variant: Variant = _startup_world_map_data.get("biomes", null)
+		if startup_biomes_variant is Image:
+			gpu_biome_map = (startup_biomes_variant as Image).get_data()
 
 	# === World Map Buffers (uploaded from editor PNGs) ===
 
 	_world_map_buildings = []
-	_world_map_heightmap_data.clear()
-	_world_map_heightmap_width = 0
-	_world_map_heightmap_height = 0
 	_world_map_water_image = null
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
@@ -2627,31 +2603,38 @@ func _thread_function():
 	var world_map_setup_start_us := 0
 	if world_map_active and world_definition_path != "":
 		world_map_setup_start_us = Time.get_ticks_usec()
-		PrefabGeometry.clear_cache()
 		var loaded: Dictionary = {}
 		if not _startup_world_map_data.is_empty():
 			loaded = _startup_world_map_data
 			_startup_world_map_data = {}
-			_last_world_map_load_profile = _startup_world_map_load_profile.duplicate(true)
+			_last_world_map_load_profile = _startup_world_map_load_profile
 		else:
 			var world_map_load_profile: Dictionary = {}
-			loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled, false, world_map_load_profile)
-			_last_world_map_load_profile = world_map_load_profile.duplicate(true)
+			loaded = WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled, false, world_map_load_profile, ["heightmap", "biomes", "roads", "water"])
+			_last_world_map_load_profile = world_map_load_profile
 
 		if loaded.has("heightmap") and loaded.has("biomes") and loaded.has("roads"):
-			var hmap: Image = loaded.heightmap
+			var h_bytes: PackedByteArray = _world_map_heightmap_data
+			var h_width := _world_map_heightmap_width
+			var h_height := _world_map_heightmap_height
+			if h_bytes.is_empty() or h_width <= 0 or h_height <= 0:
+				var hmap: Image = loaded.heightmap
+				h_bytes = hmap.get_data()
+				h_width = hmap.get_width()
+				h_height = hmap.get_height()
+				_world_map_heightmap_data = h_bytes
+				_world_map_heightmap_width = h_width
+				_world_map_heightmap_height = h_height
 			var bmap: Image = loaded.biomes
 			var rmap: Image = loaded.roads
 
 			# Upload raw bytes as storage buffers
-			var h_bytes = hmap.get_data()
-			_world_map_heightmap_data = h_bytes.duplicate()
-			_world_map_heightmap_width = hmap.get_width()
-			_world_map_heightmap_height = hmap.get_height()
 			var b_bytes = bmap.get_data()
 			var r_bytes = rmap.get_data()
 
 			# Pad to 4-byte alignment for uint packing
+			if h_bytes.size() % 4 != 0:
+				h_bytes = h_bytes.duplicate()
 			while h_bytes.size() % 4 != 0: h_bytes.append(0)
 			while b_bytes.size() % 4 != 0: b_bytes.append(0)
 			while r_bytes.size() % 4 != 0: r_bytes.append(0)
@@ -2928,7 +2911,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var u_excavation_t = RDUniform.new()
 	u_excavation_t.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	u_excavation_t.binding = 2
-	u_excavation_t.add_id(_world_map_excavation_buffers.get(coord, _world_map_empty_excavation_buf))
+	u_excavation_t.add_id(_get_world_map_excavation_buffer(coord, rd))
 
 	var set_gen_t = rd.uniform_set_create([u_density_t, u_material_t, u_excavation_t], sid_gen, 0)
 	var list = rd.compute_list_begin()

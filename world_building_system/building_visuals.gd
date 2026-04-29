@@ -29,7 +29,11 @@ static func get_shared_wood_block_material() -> StandardMaterial3D:
 static func get_shared_church_floor_material() -> Material:
 	return get_shared_building_material()
 
-static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedByteArray) -> void:
+static func _set_surface_override_material_if_needed(mesh_instance: MeshInstance3D, surface_index: int, material: Material) -> void:
+	if mesh_instance.get_surface_override_material(surface_index) != material:
+		mesh_instance.set_surface_override_material(surface_index, material)
+
+static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedByteArray, has_church_floor: bool = false) -> void:
 	if not mesh:
 		return
 	if use_legacy_building_shader_override_for_test():
@@ -43,17 +47,12 @@ static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedB
 	if surface_count <= 0:
 		return
 
-	var has_church_floor := false
-	var has_non_floor_geometry := false
-	for block_id in voxel_bytes:
-		if block_id == 8:
-			has_church_floor = true
-		elif block_id != 0:
-			has_non_floor_geometry = true
-		if has_church_floor and has_non_floor_geometry:
-			break
-
 	if surface_count == 1:
+		if not has_church_floor:
+			for block_id in voxel_bytes:
+				if block_id == 8:
+					has_church_floor = true
+					break
 		# The shader uses vertex color to separate wood and church-floor faces.
 		var single_surface_material := get_shared_church_floor_material() if has_church_floor else get_shared_wood_block_material()
 		mesh.surface_set_material(0, single_surface_material)
@@ -65,7 +64,7 @@ static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedB
 
 	_prepared_mesh_surface_materials[mesh_id] = true
 
-static func apply_runtime_surface_materials(mesh_instance: MeshInstance3D, voxel_bytes: PackedByteArray) -> void:
+static func apply_runtime_surface_materials(mesh_instance: MeshInstance3D, voxel_bytes: PackedByteArray, has_church_floor: bool = false) -> void:
 	if not mesh_instance:
 		return
 
@@ -78,31 +77,27 @@ static func apply_runtime_surface_materials(mesh_instance: MeshInstance3D, voxel
 		mesh_instance.material_override = get_shared_building_material()
 		return
 
-	mesh_instance.material_override = null
+	if mesh_instance.material_override != null:
+		mesh_instance.material_override = null
 	var surface_count := mesh.get_surface_count()
 	if surface_count <= 0:
 		return
 
-	var has_church_floor := false
-	var has_non_floor_geometry := false
-	for block_id in voxel_bytes:
-		if block_id == 8:
-			has_church_floor = true
-		elif block_id != 0:
-			has_non_floor_geometry = true
-		if has_church_floor and has_non_floor_geometry:
-			break
-
 	if surface_count == 1:
+		if not has_church_floor:
+			for block_id in voxel_bytes:
+				if block_id == 8:
+					has_church_floor = true
+					break
 		# The shader uses vertex color to separate wood and church-floor faces.
 		var single_surface_material := get_shared_church_floor_material() if has_church_floor else get_shared_wood_block_material()
-		mesh_instance.set_surface_override_material(0, single_surface_material)
+		_set_surface_override_material_if_needed(mesh_instance, 0, single_surface_material)
 		return
 
-	mesh_instance.set_surface_override_material(0, get_shared_wood_block_material())
-	mesh_instance.set_surface_override_material(1, get_shared_church_floor_material())
+	_set_surface_override_material_if_needed(mesh_instance, 0, get_shared_wood_block_material())
+	_set_surface_override_material_if_needed(mesh_instance, 1, get_shared_church_floor_material())
 	for surface_index in range(2, surface_count):
-		mesh_instance.set_surface_override_material(surface_index, get_shared_wood_block_material())
+		_set_surface_override_material_if_needed(mesh_instance, surface_index, get_shared_wood_block_material())
 
 static func get_shared_building_material() -> Material:
 	if _shared_building_material:

@@ -386,7 +386,7 @@ func place_simple_visual_object(local_anchor: Vector3i, object_id: int, rotation
 	is_empty = false
 	return true
 
-func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO, visual_data: Dictionary = {}, defer_global_visual_batch_rebuild: bool = false) -> bool:
+func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], scene_instance: Node3D, fractional_pos: Vector3 = Vector3.ZERO, visual_data: Dictionary = {}, defer_global_visual_batch_rebuild: bool = false, has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> bool:
 	if not _should_batch_proxy_visual(object_id):
 		return false
 
@@ -399,6 +399,7 @@ func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation:
 	if not mesh:
 		return false
 	var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
+	var resolved_has_authored_collision := has_authored_collision if has_authored_collision_valid else ObjectRegistry.get_object_has_authored_collision(object_id)
 
 	objects[local_anchor] = {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
 	for cell in cells:
@@ -414,7 +415,7 @@ func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation:
 		if manager and manager.world_map_mode:
 			_set_shadow_casting_recursive(scene_instance, true)
 		_hide_mesh_descendants(scene_instance)
-		if ObjectRegistry.get_object_has_authored_collision(object_id):
+		if resolved_has_authored_collision:
 			_prune_proxy_visual_children(scene_instance)
 
 	var final_transform := _build_simple_visual_transform(local_anchor, object_id, rotation, fractional_pos, mesh_transform)
@@ -605,14 +606,6 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 
 	# Add visual instance with collision
 	if scene_instance:
-		if manager and manager.world_map_mode:
-			# World-map town props that opt in to the flag must see it before they
-			# enter the tree so their scripts can freeze instead of simulating.
-			_set_world_map_mode_recursive(scene_instance, true)
-		add_child(scene_instance)
-		if manager and manager.world_map_mode:
-			_set_shadow_casting_recursive(scene_instance, true)
-		
 		# Position logic:
 		# Center the object over its ORIGINAL footprint (unrotated size)
 		# The visual rotation is applied to the model, so we use original size for offset
@@ -645,12 +638,22 @@ func place_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: 
 		scene_instance.set_meta("chunk", self)
 		scene_instance.set_meta("object_id", object_id)
 		var resolved_has_authored_collision := has_authored_collision if has_authored_collision_valid else ObjectRegistry.get_object_has_authored_collision(object_id)
+		if manager and manager.world_map_mode and _should_batch_proxy_visual(object_id):
+			# World-map proxy shells already carry their own collision body.
+			resolved_has_authored_collision = true
+		if manager and manager.world_map_mode:
+			# World-map town props that opt in to the flag must see it before they
+			# enter the tree so their scripts can freeze instead of simulating.
+			_set_world_map_mode_recursive(scene_instance, true)
+		var did_proxy_visual := false
 
 		if _should_batch_proxy_visual(object_id):
-			var proxy_cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
 			var visual_data := ObjectRegistry.get_object_visual_data(object_id)
 			if not visual_data.is_empty():
-				place_proxy_visual_object(local_anchor, object_id, rotation, proxy_cells, scene_instance, fractional_pos, visual_data, defer_global_visual_batch_rebuild)
+				did_proxy_visual = place_proxy_visual_object(local_anchor, object_id, rotation, cells, scene_instance, fractional_pos, visual_data, defer_global_visual_batch_rebuild, resolved_has_authored_collision, true)
+		add_child(scene_instance)
+		if manager and manager.world_map_mode and not did_proxy_visual:
+			_set_shadow_casting_recursive(scene_instance, true)
 		
 		# Objects that already ship with authored collision do not need the extra
 		# generic collision cooking pass.
@@ -715,33 +718,23 @@ static func _set_world_map_mode_recursive(node: Node, enabled: bool) -> void:
 			_set_world_map_mode_recursive(child, enabled)
 
 func _generate_simple_object_collision(obj: Node3D, anchor: Vector3i, object_id: int) -> void:
-	var visual_data := ObjectRegistry.get_object_visual_data(object_id)
-	if visual_data.is_empty():
+	var collision_data := ObjectRegistry.get_simple_object_collision_data(object_id)
+	if collision_data.is_empty():
 		_generate_object_collision(obj, anchor)
 		return
 
-	var mesh: Mesh = visual_data.get("mesh")
-	var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
-	if not mesh:
+	var collision_shape: Shape3D = collision_data.get("shape")
+	var box_transform: Transform3D = collision_data.get("transform", Transform3D.IDENTITY)
+	if not _shape_is_usable(collision_shape):
 		_generate_object_collision(obj, anchor)
 		return
-
-	var mesh_global_transform := obj.global_transform * mesh_transform
-	var aabb := mesh.get_aabb()
-	var box_size := Vector3(
-		maxf(aabb.size.x, 0.05),
-		maxf(aabb.size.y, 0.05),
-		maxf(aabb.size.z, 0.05)
-	)
 
 	var collision := CollisionShape3D.new()
-	var box_shape := BoxShape3D.new()
-	box_shape.size = box_size
-	collision.shape = box_shape
+	collision.shape = collision_shape
 	collision.set_meta("anchor", anchor)
 	collision.set_meta("chunk", self)
 	collision.set_meta("object_id", object_id)
-	collision.global_transform = mesh_global_transform * Transform3D(Basis.IDENTITY, aabb.position + (aabb.size * 0.5))
+	collision.global_transform = obj.global_transform * box_transform
 	static_body.add_child(collision)
 	object_collision_nodes[anchor] = collision
 
@@ -875,9 +868,7 @@ func remove_object(local_anchor: Vector3i) -> bool:
 		occupied_by_object.erase(cell)
 	
 	# Remove visual
-	if _remove_simple_visual_batch_instance(local_anchor):
-		objects.erase(local_anchor)
-		return true
+	_remove_simple_visual_batch_instance(local_anchor)
 	if object_nodes.has(local_anchor):
 		var node = object_nodes[local_anchor]
 		if node and is_instance_valid(node):
@@ -931,13 +922,6 @@ func restore_object_visuals(defer_collision: bool = true):
 				continue
 			scene_instance = packed.instantiate()
 		
-		# Add and position the visual
-		if manager and manager.world_map_mode:
-			# Propagate the world-map flag before _ready() runs on the loaded scene.
-			_set_world_map_mode_recursive(scene_instance, true)
-		add_child(scene_instance)
-		if manager and manager.world_map_mode:
-			_set_shadow_casting_recursive(scene_instance, true)
 		var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
 		var offset_x = float(original_size.x) / 2.0
 		var offset_z = float(original_size.z) / 2.0
@@ -957,12 +941,19 @@ func restore_object_visuals(defer_collision: bool = true):
 		scene_instance.set_meta("chunk", self)
 		scene_instance.set_meta("object_id", object_id)
 		var has_authored_collision := ObjectRegistry.get_object_has_authored_collision(object_id)
+		if manager and manager.world_map_mode:
+			# Propagate the world-map flag before _ready() runs on the loaded scene.
+			_set_world_map_mode_recursive(scene_instance, true)
+		var did_proxy_visual := false
 
 		if _should_batch_proxy_visual(object_id):
 			var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
 			var visual_data := ObjectRegistry.get_object_visual_data(object_id)
 			if not visual_data.is_empty():
-				place_proxy_visual_object(local_anchor, object_id, rotation, cells, scene_instance, fractional_pos, visual_data)
+				did_proxy_visual = place_proxy_visual_object(local_anchor, object_id, rotation, cells, scene_instance, fractional_pos, visual_data, false, has_authored_collision, true)
+		add_child(scene_instance)
+		if manager and manager.world_map_mode and not did_proxy_visual:
+			_set_shadow_casting_recursive(scene_instance, true)
 		
 		# Objects that already ship with authored collision do not need the extra
 		# generic collision cooking pass.

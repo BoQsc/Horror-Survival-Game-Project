@@ -48,7 +48,21 @@ var _last_flush_dirty_chunks_count: int = 0
 var _last_flush_global_visual_batches_ms: float = 0.0
 var _last_flush_global_visual_batches_count: int = 0
 var _last_apply_world_map_baked_building_payload_ms: float = 0.0
+var _last_apply_world_map_baked_building_payload_chunk_ms: float = 0.0
+var _last_apply_world_map_baked_building_payload_object_ms: float = 0.0
+var _last_apply_world_map_baked_building_payload_flush_ms: float = 0.0
+var _last_apply_world_map_baked_building_payload_slowest_object_ms: float = 0.0
+var _last_apply_world_map_baked_building_payload_slowest_object_id: int = -1
+var _last_apply_world_map_baked_building_payload_slowest_object_scene_path: String = ""
+var _last_apply_world_map_baked_building_payload_slowest_object_world_pos: Vector3 = Vector3.ZERO
+var _last_apply_world_map_baked_building_payload_slow_object_spawns: Array = []
 var _last_apply_world_map_baked_building_visual_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_root_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_mesh_attach_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_body_attach_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_mesh_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_collision_ms: float = 0.0
+var _last_apply_world_map_baked_building_visual_sync_ms: float = 0.0
 var _last_apply_world_map_baked_building_visual_count: int = 0
 var _last_apply_world_map_baked_building_chunk_count: int = 0
 var _last_apply_world_map_baked_building_object_count: int = 0
@@ -434,7 +448,22 @@ func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 	_world_map_baked_building_keys_by_chunk.clear()
 	_world_map_baked_building_chunk_coords_by_key.clear()
 	clear_world_map_baked_building_edits()
+	_last_apply_world_map_baked_building_payload_ms = 0.0
+	_last_apply_world_map_baked_building_payload_chunk_ms = 0.0
+	_last_apply_world_map_baked_building_payload_object_ms = 0.0
+	_last_apply_world_map_baked_building_payload_flush_ms = 0.0
+	_last_apply_world_map_baked_building_payload_slowest_object_ms = 0.0
+	_last_apply_world_map_baked_building_payload_slowest_object_id = -1
+	_last_apply_world_map_baked_building_payload_slowest_object_scene_path = ""
+	_last_apply_world_map_baked_building_payload_slowest_object_world_pos = Vector3.ZERO
+	_last_apply_world_map_baked_building_payload_slow_object_spawns = []
 	_last_apply_world_map_baked_building_visual_ms = 0.0
+	_last_apply_world_map_baked_building_visual_root_ms = 0.0
+	_last_apply_world_map_baked_building_visual_mesh_attach_ms = 0.0
+	_last_apply_world_map_baked_building_visual_body_attach_ms = 0.0
+	_last_apply_world_map_baked_building_visual_mesh_ms = 0.0
+	_last_apply_world_map_baked_building_visual_collision_ms = 0.0
+	_last_apply_world_map_baked_building_visual_sync_ms = 0.0
 	_last_apply_world_map_baked_building_visual_count = 0
 
 
@@ -871,6 +900,7 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 		if applied_building_visual:
 			applied_prebuilt_chunks = 1
 
+	var chunk_apply_start_us := Time.get_ticks_usec()
 	for chunk_coord_variant in chunk_payload.keys():
 		var chunk_coord: Vector3i = chunk_coord_variant
 		var batch_variant: Variant = chunk_payload.get(chunk_coord, {})
@@ -917,13 +947,16 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 			else:
 				mark_chunk_dirty(chunk_coord, chunk)
 		applied_chunks += 1
+	_last_apply_world_map_baked_building_payload_chunk_ms = float(Time.get_ticks_usec() - chunk_apply_start_us) / 1000.0
 
 	if not building_key.is_empty():
 		_apply_world_map_baked_building_saved_edits(building_key)
 
+	var object_apply_start_us := Time.get_ticks_usec()
 	if flush_now and has_dirty_chunks():
 		flush_dirty_chunks(force_flush)
 
+	var slow_object_spawns: Array = []
 	for spawn_variant in object_spawns:
 		if typeof(spawn_variant) != TYPE_DICTIONARY:
 			continue
@@ -933,6 +966,7 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 		if typeof(world_pos_variant) != TYPE_VECTOR3:
 			continue
 		var world_pos: Vector3 = world_pos_variant
+		var spawn_start_us := Time.get_ticks_usec()
 		var object_id := int(spawn.get("object_id", -1))
 		var object_scene_path := str(spawn.get("object_scene_path", ""))
 		if object_id < 0 and object_scene_path.is_empty():
@@ -951,11 +985,28 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 			bool(spawn.get("has_authored_collision", false)),
 			bool(spawn.get("has_authored_collision_valid", false))
 		)
+		var object_elapsed_ms := float(Time.get_ticks_usec() - spawn_start_us) / 1000.0
+		if object_elapsed_ms > _last_apply_world_map_baked_building_payload_slowest_object_ms:
+			_last_apply_world_map_baked_building_payload_slowest_object_ms = object_elapsed_ms
+			_last_apply_world_map_baked_building_payload_slowest_object_id = object_id
+			_last_apply_world_map_baked_building_payload_slowest_object_scene_path = object_scene_path
+			_last_apply_world_map_baked_building_payload_slowest_object_world_pos = world_pos
+		slow_object_spawns.append({
+			"elapsed_ms": object_elapsed_ms,
+			"object_id": object_id,
+			"scene_path": object_scene_path,
+			"world_pos": world_pos,
+			"rotation": int(spawn.get("rotation", 0))
+		})
 		if success:
 			applied_objects += 1
+	_last_apply_world_map_baked_building_payload_object_ms = float(Time.get_ticks_usec() - object_apply_start_us) / 1000.0
+	_last_apply_world_map_baked_building_payload_slow_object_spawns = _build_top_world_map_baked_building_slow_object_spawns(slow_object_spawns)
 
+	var flush_start_us := Time.get_ticks_usec()
 	if defer_global_visual_batch_rebuild and has_dirty_global_visual_batches():
 		flush_global_visual_batches()
+	_last_apply_world_map_baked_building_payload_flush_ms = float(Time.get_ticks_usec() - flush_start_us) / 1000.0
 
 	if applied_building_visual:
 		_last_apply_world_map_baked_building_visual_ms = float(Time.get_ticks_usec() - visual_start_us) / 1000.0
@@ -986,6 +1037,7 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 	var voxel_origin: Vector3 = voxel_origin_variant if typeof(voxel_origin_variant) == TYPE_VECTOR3 else Vector3.ZERO
 	var building_index := int(visual_payload.get("building_index", -1))
 
+	var visual_root_start_us := Time.get_ticks_usec()
 	var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
 	if root == null or not is_instance_valid(root):
 		root = Node3D.new()
@@ -994,37 +1046,58 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 		root.set_meta("building_key", building_key)
 		_world_map_baked_building_visual_nodes[building_key] = root
 
-	root.position = to_local(voxel_origin) if is_inside_tree() else voxel_origin
+	var target_position := to_local(voxel_origin) if is_inside_tree() else voxel_origin
+	if root.position != target_position:
+		root.position = target_position
+	_last_apply_world_map_baked_building_visual_root_ms = float(Time.get_ticks_usec() - visual_root_start_us) / 1000.0
 
+	var visual_mesh_attach_start_us := Time.get_ticks_usec()
 	var mesh_instance := root.get_node_or_null("Mesh") as MeshInstance3D
+	var mesh_instance_was_created := false
 	if not mesh_instance:
 		mesh_instance = MeshInstance3D.new()
 		mesh_instance.name = "Mesh"
 		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		root.add_child(mesh_instance)
+		mesh_instance_was_created = true
+	_last_apply_world_map_baked_building_visual_mesh_attach_ms = float(Time.get_ticks_usec() - visual_mesh_attach_start_us) / 1000.0
 
-	BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes)
-	mesh_instance.mesh = mesh
-	mesh_instance.visible = true
+	var has_church_floor := bool(visual_payload.get("has_church_floor", false))
+	var visual_mesh_start_us := Time.get_ticks_usec()
+	BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes, has_church_floor)
+	var mesh_changed := mesh_instance.mesh != mesh
+	if mesh_changed:
+		mesh_instance.mesh = mesh
+	if not mesh_instance.visible:
+		mesh_instance.visible = true
 	if BuildingVisuals.use_legacy_building_shader_override_for_test():
-		BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes)
+		BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes, has_church_floor)
 	else:
-		mesh_instance.material_override = null
-		var surface_count := mesh.get_surface_count()
-		for surface_index in range(surface_count):
-			mesh_instance.set_surface_override_material(surface_index, null)
+		if not mesh_instance_was_created and mesh_changed:
+			var surface_count := mesh.get_surface_count()
+			for surface_index in range(surface_count):
+				mesh_instance.set_surface_override_material(surface_index, null)
+		if not mesh_instance_was_created and mesh_instance.material_override != null:
+			mesh_instance.material_override = null
+	_last_apply_world_map_baked_building_visual_mesh_ms = float(Time.get_ticks_usec() - visual_mesh_start_us) / 1000.0
 
+	var visual_body_attach_start_us := Time.get_ticks_usec()
 	var static_body := root.get_node_or_null("StaticBody") as StaticBody3D
+	var static_body_was_created := false
 	if not static_body:
 		static_body = StaticBody3D.new()
 		static_body.name = "StaticBody"
 		static_body.add_to_group("building_chunks")
 		static_body.collision_layer = 1 + 512
 		root.add_child(static_body)
+		static_body_was_created = true
+	_last_apply_world_map_baked_building_visual_body_attach_ms = float(Time.get_ticks_usec() - visual_body_attach_start_us) / 1000.0
 
-	for child in static_body.get_children():
-		if child:
-			child.free()
+	var visual_collision_start_us := Time.get_ticks_usec()
+	if not static_body_was_created:
+		for child in static_body.get_children():
+			if child:
+				child.free()
 
 	var collision_boxes: Array = visual_payload.get("collision_boxes", [])
 	var shape_variant: Variant = visual_payload.get("shape", null)
@@ -1038,8 +1111,11 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 		var collision := CollisionShape3D.new()
 		collision.shape = shape
 		static_body.add_child(collision)
+	_last_apply_world_map_baked_building_visual_collision_ms = float(Time.get_ticks_usec() - visual_collision_start_us) / 1000.0
 
+	var visual_sync_start_us := Time.get_ticks_usec()
 	_sync_world_map_baked_building_visual_visibility_for_key(building_key)
+	_last_apply_world_map_baked_building_visual_sync_ms = float(Time.get_ticks_usec() - visual_sync_start_us) / 1000.0
 	return true
 
 func has_dirty_global_visual_batches() -> bool:
@@ -1185,7 +1261,21 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_flush_global_visual_batches_ms": _last_flush_global_visual_batches_ms,
 		"last_flush_global_visual_batches_count": _last_flush_global_visual_batches_count,
 		"last_apply_world_map_baked_building_payload_ms": _last_apply_world_map_baked_building_payload_ms,
+		"last_apply_world_map_baked_building_payload_chunk_ms": _last_apply_world_map_baked_building_payload_chunk_ms,
+		"last_apply_world_map_baked_building_payload_object_ms": _last_apply_world_map_baked_building_payload_object_ms,
+		"last_apply_world_map_baked_building_payload_flush_ms": _last_apply_world_map_baked_building_payload_flush_ms,
+		"last_apply_world_map_baked_building_payload_slowest_object_ms": _last_apply_world_map_baked_building_payload_slowest_object_ms,
+		"last_apply_world_map_baked_building_payload_slowest_object_id": _last_apply_world_map_baked_building_payload_slowest_object_id,
+		"last_apply_world_map_baked_building_payload_slowest_object_scene_path": _last_apply_world_map_baked_building_payload_slowest_object_scene_path,
+		"last_apply_world_map_baked_building_payload_slowest_object_world_pos": _last_apply_world_map_baked_building_payload_slowest_object_world_pos,
+		"last_apply_world_map_baked_building_payload_slow_object_spawns": _last_apply_world_map_baked_building_payload_slow_object_spawns,
 		"last_apply_world_map_baked_building_visual_ms": _last_apply_world_map_baked_building_visual_ms,
+		"last_apply_world_map_baked_building_visual_root_ms": _last_apply_world_map_baked_building_visual_root_ms,
+		"last_apply_world_map_baked_building_visual_mesh_attach_ms": _last_apply_world_map_baked_building_visual_mesh_attach_ms,
+		"last_apply_world_map_baked_building_visual_body_attach_ms": _last_apply_world_map_baked_building_visual_body_attach_ms,
+		"last_apply_world_map_baked_building_visual_mesh_ms": _last_apply_world_map_baked_building_visual_mesh_ms,
+		"last_apply_world_map_baked_building_visual_collision_ms": _last_apply_world_map_baked_building_visual_collision_ms,
+		"last_apply_world_map_baked_building_visual_sync_ms": _last_apply_world_map_baked_building_visual_sync_ms,
 		"last_apply_world_map_baked_building_visual_count": _last_apply_world_map_baked_building_visual_count,
 		"last_apply_world_map_baked_building_chunk_count": _last_apply_world_map_baked_building_chunk_count,
 		"last_apply_world_map_baked_building_object_count": _last_apply_world_map_baked_building_object_count,
@@ -1480,7 +1570,30 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	# Calculate anchor (integer grid position) and fractional position offset
 	var anchor = Vector3i(int(floor(global_pos.x)), int(floor(global_pos.y)), int(floor(global_pos.z)))
 	var fractional_pos = global_pos - Vector3(anchor) # Full 3D offset from anchor
-	var cells: Array[Vector3i] = _build_object_cells(anchor, object_id, rotation, precomputed_cells)
+	var cells: Array[Vector3i] = []
+	var local_cells: Array[Vector3i] = []
+	if precomputed_cells.is_empty():
+		cells = _build_object_cells(anchor, object_id, rotation, precomputed_cells)
+		local_cells.resize(cells.size())
+		for i in range(cells.size()):
+			var cell: Vector3i = cells[i]
+			var local_cell = Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
+			if local_cell.x < 0: local_cell.x += CHUNK_SIZE
+			if local_cell.y < 0: local_cell.y += CHUNK_SIZE
+			if local_cell.z < 0: local_cell.z += CHUNK_SIZE
+			local_cells[i] = local_cell
+	else:
+		cells.resize(precomputed_cells.size())
+		local_cells.resize(precomputed_cells.size())
+		for i in range(precomputed_cells.size()):
+			var precomputed_cell: Vector3i = precomputed_cells[i]
+			var cell: Vector3i = precomputed_cell + anchor
+			cells[i] = cell
+			var local_cell = Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
+			if local_cell.x < 0: local_cell.x += CHUNK_SIZE
+			if local_cell.y < 0: local_cell.y += CHUNK_SIZE
+			if local_cell.z < 0: local_cell.z += CHUNK_SIZE
+			local_cells[i] = local_cell
 	if not ignore_collision and not _can_place_cells(cells, object_id):
 		return false
 	
@@ -1495,15 +1608,6 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 	if local_anchor.x < 0: local_anchor.x += CHUNK_SIZE
 	if local_anchor.y < 0: local_anchor.y += CHUNK_SIZE
 	if local_anchor.z < 0: local_anchor.z += CHUNK_SIZE
-	
-	# Convert cells to local coordinates for the anchor chunk
-	var local_cells: Array[Vector3i] = []
-	for cell in cells:
-		var local_cell = Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
-		if local_cell.x < 0: local_cell.x += CHUNK_SIZE
-		if local_cell.y < 0: local_cell.y += CHUNK_SIZE
-		if local_cell.z < 0: local_cell.z += CHUNK_SIZE
-		local_cells.append(local_cell)
 	
 	var chunk = get_chunk(chunk_coord)
 
@@ -1564,3 +1668,18 @@ func remove_object_at(global_pos: Vector3) -> bool:
 		# Clear this cell on the building map
 		_update_building_map_pixel(global_pos, false)
 	return result
+
+func _build_top_world_map_baked_building_slow_object_spawns(entries: Array, limit: int = 5) -> Array:
+	if entries.is_empty():
+		return []
+	entries.sort_custom(Callable(self, "_sort_world_map_baked_building_slow_object_spawn_desc"))
+	if entries.size() > limit:
+		entries.resize(limit)
+	return entries
+
+func _sort_world_map_baked_building_slow_object_spawn_desc(a: Dictionary, b: Dictionary) -> bool:
+	var a_ms := float(a.get("elapsed_ms", 0.0))
+	var b_ms := float(b.get("elapsed_ms", 0.0))
+	if a_ms == b_ms:
+		return int(a.get("object_id", -1)) < int(b.get("object_id", -1))
+	return a_ms > b_ms

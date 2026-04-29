@@ -4,6 +4,10 @@ const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inv
 @export var world_map_mode: bool = false
 var _sleep_timer: Timer = null
 
+func _enter_tree():
+	if world_map_mode:
+		_apply_world_map_freeze()
+
 func _ready():
 	# Lay flat on its side
 	rotation_degrees.z = 90.0
@@ -15,11 +19,7 @@ func _ready():
 		# Do not apply the usual upward offset here, or the gun will hover above
 		# tables when it is frozen in place.
 		_generate_precise_collision()
-		freeze = true
-		sleeping = true
-		can_sleep = false
-		continuous_cd = false
-		set_physics_process(false)
+		_apply_world_map_freeze()
 		return
 
 	# Bump up slightly in normal physics mode so the pistol clears terrain noise
@@ -59,6 +59,14 @@ func _ready():
 	_sleep_timer.timeout.connect(_on_sleep_timer_timeout)
 	add_child(_sleep_timer)
 	_sleep_timer.start()
+
+func _apply_world_map_freeze() -> void:
+	freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
+	freeze = true
+	sleeping = true
+	can_sleep = false
+	continuous_cd = false
+	set_physics_process(false)
 
 var life_time: float = 0.0
 @export var freeze_on_sleep: bool = true
