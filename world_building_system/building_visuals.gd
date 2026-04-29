@@ -33,7 +33,7 @@ static func _set_surface_override_material_if_needed(mesh_instance: MeshInstance
 	if mesh_instance.get_surface_override_material(surface_index) != material:
 		mesh_instance.set_surface_override_material(surface_index, material)
 
-static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedByteArray, has_church_floor: bool = false) -> void:
+static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedByteArray, has_church_floor: bool = false, skip_voxel_scan: bool = false) -> void:
 	if not mesh:
 		return
 	if use_legacy_building_shader_override_for_test():
@@ -48,7 +48,7 @@ static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedB
 		return
 
 	if surface_count == 1:
-		if not has_church_floor:
+		if not has_church_floor and not skip_voxel_scan:
 			for block_id in voxel_bytes:
 				if block_id == 8:
 					has_church_floor = true
@@ -64,7 +64,7 @@ static func apply_shared_surface_materials(mesh: ArrayMesh, voxel_bytes: PackedB
 
 	_prepared_mesh_surface_materials[mesh_id] = true
 
-static func apply_runtime_surface_materials(mesh_instance: MeshInstance3D, voxel_bytes: PackedByteArray, has_church_floor: bool = false) -> void:
+static func apply_runtime_surface_materials(mesh_instance: MeshInstance3D, voxel_bytes: PackedByteArray, has_church_floor: bool = false, skip_voxel_scan: bool = false) -> void:
 	if not mesh_instance:
 		return
 
@@ -84,7 +84,7 @@ static func apply_runtime_surface_materials(mesh_instance: MeshInstance3D, voxel
 		return
 
 	if surface_count == 1:
-		if not has_church_floor:
+		if not has_church_floor and not skip_voxel_scan:
 			for block_id in voxel_bytes:
 				if block_id == 8:
 					has_church_floor = true

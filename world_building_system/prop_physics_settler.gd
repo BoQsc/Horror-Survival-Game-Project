@@ -3,6 +3,7 @@ extends RigidBody3D
 const ItemDefinitions = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
 @export var world_map_mode: bool = false
 var _sleep_timer: Timer = null
+static var _authored_collision_scene_cache: Dictionary = {}
 
 func _enter_tree():
 	if world_map_mode:
@@ -94,10 +95,8 @@ func _on_sleep_timer_timeout() -> void:
 	_sleep_timer = null
 
 func _generate_precise_collision():
-	# Keep authored collision shapes when they already exist.
-	for child in get_children():
-		if child is CollisionShape3D or child is CollisionPolygon3D:
-			return
+	if _scene_has_authored_collision_cached():
+		return
 			
 	# Find meshes and generate convex hulls
 	var mesh_instances = []
@@ -124,6 +123,24 @@ func _generate_precise_collision():
 		col_node.transform = self.global_transform.affine_inverse() * mesh_inst.global_transform
 		
 		add_child(col_node)
+
+func _scene_has_authored_collision_cached() -> bool:
+	var cache_key := scene_file_path
+	if not cache_key.is_empty() and _authored_collision_scene_cache.has(cache_key):
+		return bool(_authored_collision_scene_cache[cache_key])
+
+	var has_collision := _scene_has_authored_collision(self)
+	if not cache_key.is_empty():
+		_authored_collision_scene_cache[cache_key] = has_collision
+	return has_collision
+
+func _scene_has_authored_collision(node: Node) -> bool:
+	if node is CollisionShape3D or node is CollisionPolygon3D:
+		return true
+	for child in node.get_children():
+		if _scene_has_authored_collision(child):
+			return true
+	return false
 
 func _find_meshes_recursive(node: Node, result: Array):
 	if node is MeshInstance3D:

@@ -1064,14 +1064,14 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 
 	var has_church_floor := bool(visual_payload.get("has_church_floor", false))
 	var visual_mesh_start_us := Time.get_ticks_usec()
-	BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes, has_church_floor)
+	BuildingVisuals.apply_shared_surface_materials(mesh, voxel_bytes, has_church_floor, true)
 	var mesh_changed := mesh_instance.mesh != mesh
 	if mesh_changed:
 		mesh_instance.mesh = mesh
 	if not mesh_instance.visible:
 		mesh_instance.visible = true
 	if BuildingVisuals.use_legacy_building_shader_override_for_test():
-		BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes, has_church_floor)
+		BuildingVisuals.apply_runtime_surface_materials(mesh_instance, voxel_bytes, has_church_floor, true)
 	else:
 		if not mesh_instance_was_created and mesh_changed:
 			var surface_count := mesh.get_surface_count()
