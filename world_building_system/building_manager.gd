@@ -22,12 +22,15 @@ var chunk_pool: Array[BuildingChunk] = []
 const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 
 @export_range(0.5, 20.0, 0.5) var object_collision_budget_ms: float = 2.0
+@export_range(0.25, 10.0, 0.25) var world_map_baked_object_spawn_budget_ms: float = 2.0
+@export_range(1, 32, 1) var world_map_baked_object_spawn_max_per_frame: int = 4
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
 var skip_object_collisions_for_test: bool = false
 var skip_building_chunk_collisions_for_test: bool = false
 var skip_building_chunk_mesh_render_for_test: bool = false
 var skip_building_visual_batches_for_test: bool = false
 var _pending_object_collision_tasks: Array[Dictionary] = []
+var _pending_world_map_baked_object_spawns: Array[Dictionary] = []
 
 # Global world-map visual batching for repeated props
 var _global_visual_batch_instances: Dictionary = {} # Vector3i anchor -> { object_id, transform, mesh }
@@ -68,6 +71,8 @@ var _last_apply_world_map_baked_building_visual_count: int = 0
 var _last_apply_world_map_baked_building_chunk_count: int = 0
 var _last_apply_world_map_baked_building_object_count: int = 0
 var _last_apply_world_map_baked_building_prebuilt_chunk_count: int = 0
+var _last_world_map_baked_object_spawn_queue_ms: float = 0.0
+var _last_world_map_baked_object_spawn_queue_count: int = 0
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -135,6 +140,7 @@ func _process(_delta):
 		if center_chunk != _last_building_viewer_chunk:
 			_last_building_viewer_chunk = center_chunk
 			update_building_chunks(center_chunk)
+	_process_pending_world_map_baked_object_spawns()
 	_process_pending_object_collisions()
 
 ## Gets effective viewer position - returns vehicle position if player is driving
@@ -293,6 +299,85 @@ func _process_pending_object_collisions() -> void:
 
 func clear_pending_object_collision_tasks() -> void:
 	_pending_object_collision_tasks.clear()
+
+func clear_pending_world_map_baked_object_spawns() -> void:
+	_pending_world_map_baked_object_spawns.clear()
+	_last_world_map_baked_object_spawn_queue_ms = 0.0
+	_last_world_map_baked_object_spawn_queue_count = 0
+
+func has_pending_world_map_baked_object_spawns() -> bool:
+	return not _pending_world_map_baked_object_spawns.is_empty()
+
+func _queue_world_map_baked_object_spawns(object_spawns: Array) -> int:
+	if object_spawns.is_empty():
+		return 0
+
+	var queued := 0
+	for i in range(object_spawns.size() - 1, -1, -1):
+		var spawn_variant: Variant = object_spawns[i]
+		if typeof(spawn_variant) != TYPE_DICTIONARY:
+			continue
+		var spawn: Dictionary = spawn_variant
+		_pending_world_map_baked_object_spawns.append(spawn)
+		queued += 1
+	return queued
+
+func _process_pending_world_map_baked_object_spawns() -> void:
+	if _pending_world_map_baked_object_spawns.is_empty():
+		_last_world_map_baked_object_spawn_queue_ms = 0.0
+		_last_world_map_baked_object_spawn_queue_count = 0
+		_flush_world_map_baked_object_spawn_visuals_if_ready()
+		return
+
+	var start_time := Time.get_ticks_usec()
+	var processed := 0
+	var applied := 0
+	var slow_object_spawns: Array = []
+	var max_per_frame := maxi(1, world_map_baked_object_spawn_max_per_frame)
+
+	while not _pending_world_map_baked_object_spawns.is_empty() and processed < max_per_frame:
+		if processed > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
+			if elapsed_ms >= world_map_baked_object_spawn_budget_ms:
+				break
+
+		var spawn: Dictionary = _pending_world_map_baked_object_spawns.pop_back()
+		processed += 1
+		var world_pos_variant: Variant = spawn.get("world_pos", Vector3.ZERO)
+		if typeof(world_pos_variant) != TYPE_VECTOR3:
+			continue
+		var world_pos: Vector3 = world_pos_variant
+		var object_id := int(spawn.get("object_id", -1))
+		var object_scene_path := str(spawn.get("object_scene_path", ""))
+		if object_id < 0 and object_scene_path.is_empty():
+			continue
+
+		var spawn_start_us := Time.get_ticks_usec()
+		var success := _apply_world_map_baked_object_spawn(spawn, true)
+		var object_elapsed_ms := float(Time.get_ticks_usec() - spawn_start_us) / 1000.0
+		_record_world_map_baked_object_spawn_timing(
+			spawn,
+			object_elapsed_ms,
+			object_id,
+			object_scene_path,
+			world_pos,
+			slow_object_spawns
+		)
+		if success:
+			applied += 1
+
+	_last_world_map_baked_object_spawn_queue_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
+	_last_world_map_baked_object_spawn_queue_count = applied
+	_last_apply_world_map_baked_building_payload_object_ms = _last_world_map_baked_object_spawn_queue_ms
+	_last_apply_world_map_baked_building_object_count = applied
+	_last_apply_world_map_baked_building_payload_slow_object_spawns = _build_top_world_map_baked_building_slow_object_spawns(slow_object_spawns)
+	_flush_world_map_baked_object_spawn_visuals_if_ready()
+
+func _flush_world_map_baked_object_spawn_visuals_if_ready() -> void:
+	if not _pending_world_map_baked_object_spawns.is_empty():
+		return
+	if has_dirty_global_visual_batches():
+		flush_global_visual_batches()
 
 func register_global_visual_batch(anchor: Vector3i, object_id: int, transform: Transform3D, mesh: Mesh, defer_rebuild: bool = false) -> bool:
 	if skip_building_visual_batches_for_test or object_id < 0 or not mesh:
@@ -472,6 +557,7 @@ func _count_visible_world_map_baked_building_visual_surfaces() -> int:
 	return total
 
 func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
+	clear_pending_world_map_baked_object_spawns()
 	for node in _world_map_baked_building_visual_nodes.values():
 		if node and is_instance_valid(node):
 			if immediate or not node.is_inside_tree():
@@ -500,6 +586,8 @@ func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 	_last_apply_world_map_baked_building_visual_collision_ms = 0.0
 	_last_apply_world_map_baked_building_visual_sync_ms = 0.0
 	_last_apply_world_map_baked_building_visual_count = 0
+	_last_world_map_baked_object_spawn_queue_ms = 0.0
+	_last_world_map_baked_object_spawn_queue_count = 0
 
 
 func clear_world_map_baked_building_edits() -> void:
@@ -853,6 +941,7 @@ func _get_world_map_baked_building_edit_count() -> int:
 
 func clear_for_shutdown() -> void:
 	clear_pending_object_collision_tasks()
+	clear_pending_world_map_baked_object_spawns()
 	clear_global_visual_batches()
 	clear_world_map_baked_building_visuals()
 	for chunk in chunk_pool:
@@ -867,6 +956,7 @@ func clear_for_shutdown() -> void:
 
 func clear_immediate_for_shutdown() -> void:
 	clear_pending_object_collision_tasks()
+	clear_pending_world_map_baked_object_spawns()
 	for node in _global_visual_batch_nodes.values():
 		if node and is_instance_valid(node):
 			node.free()
@@ -996,54 +1086,41 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 		flush_dirty_chunks(force_flush)
 
 	var slow_object_spawns: Array = []
-	for spawn_variant in object_spawns:
-		if typeof(spawn_variant) != TYPE_DICTIONARY:
-			continue
+	if world_map_mode and not flush_now:
+		applied_objects = _queue_world_map_baked_object_spawns(object_spawns)
+	else:
+		for spawn_variant in object_spawns:
+			if typeof(spawn_variant) != TYPE_DICTIONARY:
+				continue
 
-		var spawn: Dictionary = spawn_variant
-		var world_pos_variant: Variant = spawn.get("world_pos", Vector3.ZERO)
-		if typeof(world_pos_variant) != TYPE_VECTOR3:
-			continue
-		var world_pos: Vector3 = world_pos_variant
-		var spawn_start_us := Time.get_ticks_usec()
-		var object_id := int(spawn.get("object_id", -1))
-		var object_scene_path := str(spawn.get("object_scene_path", ""))
-		if object_id < 0 and object_scene_path.is_empty():
-			continue
+			var spawn: Dictionary = spawn_variant
+			var world_pos_variant: Variant = spawn.get("world_pos", Vector3.ZERO)
+			if typeof(world_pos_variant) != TYPE_VECTOR3:
+				continue
+			var world_pos: Vector3 = world_pos_variant
+			var object_id := int(spawn.get("object_id", -1))
+			var object_scene_path := str(spawn.get("object_scene_path", ""))
+			if object_id < 0 and object_scene_path.is_empty():
+				continue
 
-		var success := place_object(
-			world_pos,
-			object_id,
-			int(spawn.get("rotation", 0)),
-			true,
-			true,
-			defer_global_visual_batch_rebuild,
-			spawn.get("precomputed_cells", []),
-			Vector3i(spawn.get("object_size", Vector3i.ZERO)),
-			object_scene_path,
-			bool(spawn.get("has_authored_collision", false)),
-			bool(spawn.get("has_authored_collision_valid", false))
-		)
-		var object_elapsed_ms := float(Time.get_ticks_usec() - spawn_start_us) / 1000.0
-		if object_elapsed_ms > _last_apply_world_map_baked_building_payload_slowest_object_ms:
-			_last_apply_world_map_baked_building_payload_slowest_object_ms = object_elapsed_ms
-			_last_apply_world_map_baked_building_payload_slowest_object_id = object_id
-			_last_apply_world_map_baked_building_payload_slowest_object_scene_path = object_scene_path
-			_last_apply_world_map_baked_building_payload_slowest_object_world_pos = world_pos
-		slow_object_spawns.append({
-			"elapsed_ms": object_elapsed_ms,
-			"object_id": object_id,
-			"scene_path": object_scene_path,
-			"world_pos": world_pos,
-			"rotation": int(spawn.get("rotation", 0))
-		})
-		if success:
-			applied_objects += 1
+			var spawn_start_us := Time.get_ticks_usec()
+			var success := _apply_world_map_baked_object_spawn(spawn, defer_global_visual_batch_rebuild)
+			var object_elapsed_ms := float(Time.get_ticks_usec() - spawn_start_us) / 1000.0
+			_record_world_map_baked_object_spawn_timing(
+				spawn,
+				object_elapsed_ms,
+				object_id,
+				object_scene_path,
+				world_pos,
+				slow_object_spawns
+			)
+			if success:
+				applied_objects += 1
 	_last_apply_world_map_baked_building_payload_object_ms = float(Time.get_ticks_usec() - object_apply_start_us) / 1000.0
 	_last_apply_world_map_baked_building_payload_slow_object_spawns = _build_top_world_map_baked_building_slow_object_spawns(slow_object_spawns)
 
 	var flush_start_us := Time.get_ticks_usec()
-	if defer_global_visual_batch_rebuild and has_dirty_global_visual_batches():
+	if flush_now and defer_global_visual_batch_rebuild and has_dirty_global_visual_batches():
 		flush_global_visual_batches()
 	_last_apply_world_map_baked_building_payload_flush_ms = float(Time.get_ticks_usec() - flush_start_us) / 1000.0
 
@@ -1058,6 +1135,44 @@ func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_sp
 	_last_apply_world_map_baked_building_chunk_count = applied_chunks
 	_last_apply_world_map_baked_building_object_count = applied_objects
 	_last_apply_world_map_baked_building_prebuilt_chunk_count = applied_prebuilt_chunks
+
+func _apply_world_map_baked_object_spawn(spawn: Dictionary, defer_global_visual_batch_rebuild: bool) -> bool:
+	var world_pos_variant: Variant = spawn.get("world_pos", Vector3.ZERO)
+	if typeof(world_pos_variant) != TYPE_VECTOR3:
+		return false
+	var world_pos: Vector3 = world_pos_variant
+	var object_id := int(spawn.get("object_id", -1))
+	var object_scene_path := str(spawn.get("object_scene_path", ""))
+	if object_id < 0 and object_scene_path.is_empty():
+		return false
+
+	return place_object(
+		world_pos,
+		object_id,
+		int(spawn.get("rotation", 0)),
+		true,
+		true,
+		defer_global_visual_batch_rebuild,
+		spawn.get("precomputed_cells", []),
+		Vector3i(spawn.get("object_size", Vector3i.ZERO)),
+		object_scene_path,
+		bool(spawn.get("has_authored_collision", false)),
+		bool(spawn.get("has_authored_collision_valid", false))
+	)
+
+func _record_world_map_baked_object_spawn_timing(spawn: Dictionary, object_elapsed_ms: float, object_id: int, object_scene_path: String, world_pos: Vector3, slow_object_spawns: Array) -> void:
+	if object_elapsed_ms > _last_apply_world_map_baked_building_payload_slowest_object_ms:
+		_last_apply_world_map_baked_building_payload_slowest_object_ms = object_elapsed_ms
+		_last_apply_world_map_baked_building_payload_slowest_object_id = object_id
+		_last_apply_world_map_baked_building_payload_slowest_object_scene_path = object_scene_path
+		_last_apply_world_map_baked_building_payload_slowest_object_world_pos = world_pos
+	slow_object_spawns.append({
+		"elapsed_ms": object_elapsed_ms,
+		"object_id": object_id,
+		"scene_path": object_scene_path,
+		"world_pos": world_pos,
+		"rotation": int(spawn.get("rotation", 0))
+	})
 
 func _apply_world_map_baked_building_visual(building_key: String, visual_payload: Dictionary) -> bool:
 	if building_key.is_empty() or visual_payload.is_empty():
@@ -1280,6 +1395,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"visible_chunk_count": visible_chunks.size(),
 		"dirty_chunk_count": _dirty_chunks.size(),
 		"pending_object_collision_jobs": _pending_object_collision_tasks.size(),
+		"pending_world_map_baked_object_spawns": _pending_world_map_baked_object_spawns.size(),
+		"world_map_baked_object_spawn_budget_ms": world_map_baked_object_spawn_budget_ms,
+		"world_map_baked_object_spawn_max_per_frame": world_map_baked_object_spawn_max_per_frame,
+		"last_world_map_baked_object_spawn_queue_ms": _last_world_map_baked_object_spawn_queue_ms,
+		"last_world_map_baked_object_spawn_queue_count": _last_world_map_baked_object_spawn_queue_count,
 		"chunk_pool_size": chunk_pool.size(),
 		"total_objects": total_objects,
 		"total_object_nodes": total_object_nodes,

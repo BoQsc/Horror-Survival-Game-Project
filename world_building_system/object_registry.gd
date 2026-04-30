@@ -36,7 +36,7 @@ const OBJECTS = {
 		"name": "Door",
 		"scene": "res://models/objects/interactive_door/interactive_door.tscn",
 		"visual_mesh_root": "DoorModel",
-		"visual_batch_mode": "none",
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(1, 2, 1),
 		"material": "wood",
 		"movable": false,
@@ -55,7 +55,7 @@ const OBJECTS = {
 		"name": "Heavy Pistol",
 		"scene": "res://models/pistol/heavy_pistol_physics.tscn",
 		"visual_mesh_root": "Visuals",
-		"visual_batch_mode": "none",
+		"visual_batch_mode": "proxy",
 		"size": Vector3i(1, 1, 1), # Small prop, 1x1 footprint
 		"material": "metal",
 		"movable": true,
@@ -76,6 +76,7 @@ const OBJECTS = {
 # should opt into `simple` or `proxy`.
 
 const CONTAINER_INTERACTABLE_SCRIPT := preload("res://modules/world_player_v2/features/data_containers/container_interactable.gd")
+const DOOR_PROXY_SHELL_SCRIPT := preload("res://world_building_system/door_proxy_shell.gd")
 const PROP_PHYSICS_SETTLER_SCRIPT := preload("res://world_building_system/prop_physics_settler.gd")
 
 # === PRELOADED SCENE CACHE ===
@@ -559,6 +560,8 @@ static func create_proxy_gameplay_shell(object_id: int, world_map_mode: bool = f
 			)
 		3:
 			return _create_visual_box_proxy_shell("WoodenTableShell", object_id)
+		4:
+			return _create_door_proxy_shell()
 		5:
 			return _create_visual_box_proxy_shell("WindowShell", object_id)
 		6:
@@ -667,6 +670,30 @@ static func _create_pistol_shell(world_map_mode: bool = false) -> RigidBody3D:
 		shell.set_physics_process(false)
 	var collision := CollisionShape3D.new()
 	collision.shape = _get_cached_box_shape("pistol", Vector3(0.2, 0.15, 0.05))
+	shell.add_child(collision)
+	return shell
+
+static func _create_door_proxy_shell() -> StaticBody3D:
+	var shell := DOOR_PROXY_SHELL_SCRIPT.new() as StaticBody3D
+	if not shell:
+		return null
+	shell.name = "DoorProxyShell"
+	shell.collision_layer = 4
+	shell.collision_mask = 0
+	shell.add_to_group("objects")
+	shell.add_to_group("interactable")
+	shell.add_to_group("breakable")
+
+	var box_size := Vector3(0.9, 2.0, 0.2)
+	var box_transform := Transform3D(Basis.IDENTITY, Vector3(0.0, 1.0, 0.0))
+	var box_data := _get_proxy_shell_box_data(4)
+	if not box_data.is_empty():
+		box_size = box_data.get("size", box_size)
+		box_transform = box_data.get("transform", box_transform)
+
+	var collision := CollisionShape3D.new()
+	collision.shape = _get_cached_box_shape("door_proxy", box_size)
+	collision.transform = box_transform
 	shell.add_child(collision)
 	return shell
 

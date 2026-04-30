@@ -2,6 +2,7 @@ extends Node3D
 class_name VegetationManager
 
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
+const GLOBAL_VEGETATION_RENDER_AABB := AABB(Vector3(-4096.0, -128.0, -4096.0), Vector3(8192.0, 512.0, 8192.0))
 
 
 signal tree_chopped(world_position: Vector3)
@@ -18,6 +19,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var collision_height: float = 8.0
 @export var collider_distance: float = 30.0 # Only trees within this distance get colliders
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
+@export var global_render_batches_enabled: bool = true
 
 # Grass settings
 @export var grass_model_path: String = "res://models/grass/2/grass_lowpoly.glb"
@@ -97,6 +99,17 @@ var _last_collider_refresh_ms: float = 0.0
 var _last_queued_collider_update_ms: float = 0.0
 var _last_pending_placements_ms: float = 0.0
 var _terrain_supports_road_query: bool = false
+var _global_tree_render_mmi: MultiMeshInstance3D = null
+var _global_grass_render_mmi: MultiMeshInstance3D = null
+var _global_rock_render_mmi: MultiMeshInstance3D = null
+var _global_tree_render_dirty: bool = false
+var _global_grass_render_dirty: bool = false
+var _global_rock_render_dirty: bool = false
+var _last_global_render_sync_ms: float = 0.0
+var _last_global_render_sync_kind: String = ""
+var _global_tree_render_instance_count: int = 0
+var _global_grass_render_instance_count: int = 0
+var _global_rock_render_instance_count: int = 0
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
@@ -139,7 +152,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_collider_refresh_ms": _last_collider_refresh_ms,
 		"last_queued_collider_update_ms": _last_queued_collider_update_ms,
 		"last_pending_placements_ms": _last_pending_placements_ms,
-		"terrain_supports_road_query": _terrain_supports_road_query
+		"terrain_supports_road_query": _terrain_supports_road_query,
+		"global_render_batches_enabled": global_render_batches_enabled,
+		"global_render_batch_count": _get_global_render_batch_count(),
+		"global_tree_render_instances": _global_tree_render_instance_count,
+		"global_grass_render_instances": _global_grass_render_instance_count,
+		"global_rock_render_instances": _global_rock_render_instance_count,
+		"global_render_dirty_kinds": _get_global_render_dirty_kinds(),
+		"last_global_render_sync_ms": _last_global_render_sync_ms,
+		"last_global_render_sync_kind": _last_global_render_sync_kind
 	}
 
 
@@ -184,6 +205,180 @@ func _vegetation_custom_aabb(chunk_stride: int) -> AABB:
 		Vector3(-16.0, -32.0, -16.0),
 		Vector3(chunk_stride + 32.0, 128.0, chunk_stride + 32.0)
 	)
+
+func _global_vegetation_custom_aabb(transforms: Array) -> AABB:
+	if transforms.is_empty():
+		return GLOBAL_VEGETATION_RENDER_AABB
+
+	var first_transform := _get_vegetation_instance_transform(transforms[0])
+	var bounds := AABB(first_transform.origin, Vector3.ZERO)
+	for transform_variant in transforms:
+		var transform := _get_vegetation_instance_transform(transform_variant)
+		bounds = bounds.expand(transform.origin)
+	return bounds.grow(96.0)
+
+func _get_global_render_batch_count() -> int:
+	var count := 0
+	if _global_tree_render_mmi and is_instance_valid(_global_tree_render_mmi):
+		count += 1
+	if _global_grass_render_mmi and is_instance_valid(_global_grass_render_mmi):
+		count += 1
+	if _global_rock_render_mmi and is_instance_valid(_global_rock_render_mmi):
+		count += 1
+	return count
+
+func _get_global_render_dirty_kinds() -> Array[String]:
+	var kinds: Array[String] = []
+	if _global_tree_render_dirty:
+		kinds.append("tree")
+	if _global_grass_render_dirty:
+		kinds.append("grass")
+	if _global_rock_render_dirty:
+		kinds.append("rock")
+	return kinds
+
+func _prepare_chunk_multimesh(mmi: MultiMeshInstance3D, kind: String) -> void:
+	if not mmi:
+		return
+	mmi.set_meta("vegetation_kind", kind)
+	if global_render_batches_enabled:
+		# Data remains per chunk for gameplay/colliders; rendering is handled by
+		# the global batch for this vegetation type.
+		mmi.visible = false
+
+func _mark_global_vegetation_render_dirty(kind: String) -> void:
+	if not global_render_batches_enabled:
+		return
+	match kind:
+		"tree":
+			_global_tree_render_dirty = true
+		"grass":
+			_global_grass_render_dirty = true
+		"rock":
+			_global_rock_render_dirty = true
+
+func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> void:
+	var nodes := [_global_tree_render_mmi, _global_grass_render_mmi, _global_rock_render_mmi]
+	for node in nodes:
+		if node and is_instance_valid(node):
+			if immediate_free:
+				node.free()
+			else:
+				node.queue_free()
+	_global_tree_render_mmi = null
+	_global_grass_render_mmi = null
+	_global_rock_render_mmi = null
+	_global_tree_render_dirty = false
+	_global_grass_render_dirty = false
+	_global_rock_render_dirty = false
+	_global_tree_render_instance_count = 0
+	_global_grass_render_instance_count = 0
+	_global_rock_render_instance_count = 0
+
+func _get_global_render_multimesh(kind: String) -> MultiMeshInstance3D:
+	var existing: MultiMeshInstance3D = null
+	var mesh: Mesh = null
+	match kind:
+		"tree":
+			existing = _global_tree_render_mmi
+			mesh = tree_mesh
+		"grass":
+			existing = _global_grass_render_mmi
+			mesh = grass_mesh
+		"rock":
+			existing = _global_rock_render_mmi
+			mesh = rock_mesh
+		_:
+			return null
+	if not mesh:
+		return null
+	if existing and is_instance_valid(existing):
+		return existing
+
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = "Global%sRenderBatch" % kind.capitalize()
+	mmi.multimesh = MultiMesh.new()
+	mmi.multimesh.mesh = mesh
+	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	mmi.multimesh.use_colors = false
+	mmi.multimesh.use_custom_data = false
+	mmi.multimesh.custom_aabb = GLOBAL_VEGETATION_RENDER_AABB
+	mmi.extra_cull_margin = 1000.0
+	mmi.ignore_occlusion_culling = true
+	mmi.lod_bias = 100.0
+	mmi.visibility_range_end = 0.0
+	add_child(mmi)
+
+	match kind:
+		"tree":
+			_global_tree_render_mmi = mmi
+		"grass":
+			_global_grass_render_mmi = mmi
+		"rock":
+			_global_rock_render_mmi = mmi
+	return mmi
+
+func _get_global_vegetation_instance_transform(item) -> Transform3D:
+	var transform := _get_vegetation_instance_transform(item)
+	if item is Dictionary:
+		var world_pos: Vector3 = item.get("world_pos", transform.origin)
+		transform.origin = to_local(world_pos) if is_inside_tree() else world_pos
+	return transform
+
+func _append_alive_global_vegetation_transforms(target: Array, entries: Array) -> void:
+	for item in entries:
+		if item is Dictionary and not bool(item.get("alive", true)):
+			continue
+		target.append(_get_global_vegetation_instance_transform(item))
+
+func _collect_global_vegetation_transforms(kind: String) -> Array:
+	var transforms: Array = []
+	match kind:
+		"tree":
+			for data in chunk_tree_data.values():
+				_append_alive_global_vegetation_transforms(transforms, data.get("trees", []))
+		"grass":
+			for data in chunk_grass_data.values():
+				_append_alive_global_vegetation_transforms(transforms, data.get("grass_list", []))
+		"rock":
+			for data in chunk_rock_data.values():
+				_append_alive_global_vegetation_transforms(transforms, data.get("rock_list", []))
+	return transforms
+
+func _sync_global_vegetation_render_batch(kind: String) -> void:
+	if not global_render_batches_enabled:
+		return
+	var start_us := Time.get_ticks_usec()
+	var mmi := _get_global_render_multimesh(kind)
+	if not mmi or not mmi.multimesh:
+		return
+
+	var transforms := _collect_global_vegetation_transforms(kind)
+	mmi.multimesh.instance_count = transforms.size()
+	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(transforms)
+	mmi.multimesh.custom_aabb = _global_vegetation_custom_aabb(transforms)
+	match kind:
+		"tree":
+			_global_tree_render_dirty = false
+			_global_tree_render_instance_count = transforms.size()
+		"grass":
+			_global_grass_render_dirty = false
+			_global_grass_render_instance_count = transforms.size()
+		"rock":
+			_global_rock_render_dirty = false
+			_global_rock_render_instance_count = transforms.size()
+	_last_global_render_sync_kind = kind
+	_last_global_render_sync_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+
+func _flush_one_global_vegetation_render_batch() -> void:
+	if not global_render_batches_enabled:
+		return
+	if _global_tree_render_dirty:
+		_sync_global_vegetation_render_batch("tree")
+	elif _global_grass_render_dirty:
+		_sync_global_vegetation_render_batch("grass")
+	elif _global_rock_render_dirty:
+		_sync_global_vegetation_render_batch("rock")
 
 
 func _pack_multimesh_buffer_from_instances(instances: Array) -> PackedFloat32Array:
@@ -234,6 +429,13 @@ func _get_vegetation_instance_transform(item) -> Transform3D:
 func _sync_multimesh_from_instances(mmi: MultiMeshInstance3D, instances: Array, chunk_stride: int) -> void:
 	if not mmi or not mmi.multimesh:
 		return
+
+	if global_render_batches_enabled and mmi.has_meta("vegetation_kind"):
+		mmi.visible = false
+		_mark_global_vegetation_render_dirty(str(mmi.get_meta("vegetation_kind")))
+		return
+	elif mmi.has_meta("vegetation_kind"):
+		mmi.visible = true
 
 	mmi.multimesh.instance_count = instances.size()
 	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(instances)
@@ -550,6 +752,7 @@ func _cleanup_chunk_trees(coord: Vector2i, immediate_free: bool = false):
 			_free_vegetation_instance_entries(data.trees)
 		chunk_tree_data.erase(coord)
 		_mark_collider_refresh_dirty()
+		_mark_global_vegetation_render_dirty("tree")
 
 func _cleanup_chunk_grass(coord: Vector2i, immediate_free: bool = false):
 	if chunk_grass_data.has(coord):
@@ -573,6 +776,7 @@ func _cleanup_chunk_grass(coord: Vector2i, immediate_free: bool = false):
 			_free_vegetation_instance_entries(data.grass_list)
 		chunk_grass_data.erase(coord)
 		_mark_collider_refresh_dirty()
+		_mark_global_vegetation_render_dirty("grass")
 
 func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 	if chunk_rock_data.has(coord):
@@ -596,6 +800,7 @@ func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 			_free_vegetation_instance_entries(data.rock_list)
 		chunk_rock_data.erase(coord)
 		_mark_collider_refresh_dirty()
+		_mark_global_vegetation_render_dirty("rock")
 
 
 func _free_vegetation_instance_entries(entries: Array) -> void:
@@ -679,6 +884,7 @@ func _physics_process(_delta):
 	# Process pending placements (retry when chunk becomes valid)
 	var pending_placements_start_us := Time.get_ticks_usec()
 	_process_pending_placements()
+	_flush_one_global_vegetation_render_batch()
 	_last_pending_placements_ms = float(Time.get_ticks_usec() - pending_placements_start_us) / 1000.0
 
 func _process_queued_collider_updates():
@@ -1230,6 +1436,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	mmi.multimesh.use_colors = false
 	mmi.multimesh.use_custom_data = false
+	_prepare_chunk_multimesh(mmi, "tree")
 
 	var tree_list: Array = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
@@ -1504,6 +1711,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	mmi.multimesh.use_colors = false
 	mmi.multimesh.use_custom_data = false
+	_prepare_chunk_multimesh(mmi, "grass")
 
 	# Fix distance visibility issues
 	mmi.extra_cull_margin = 1000.0 # Very large margin
@@ -1995,6 +2203,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	mmi.multimesh.use_colors = false
 	mmi.multimesh.use_custom_data = false
+	_prepare_chunk_multimesh(mmi, "rock")
 
 	var rock_list: Array = []
 	var valid_transforms = []
@@ -2580,6 +2789,8 @@ func clear_all_data(immediate_free: bool = false):
 	var tree_coords = chunk_tree_data.keys().duplicate()
 	for coord in tree_coords:
 		_cleanup_chunk_trees(coord, immediate_free)
+
+	_clear_global_vegetation_render_batches(immediate_free)
 
 	if immediate_free:
 		for collider in collider_pool:

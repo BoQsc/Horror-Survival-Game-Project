@@ -284,6 +284,17 @@ func _build_native_town_entry_sample() -> Dictionary:
 	var terrain_last_collision_create_count := 0
 	var building_dirty_visible_chunk_count := 0
 	var building_last_flush_dirty_chunks_ms := 0.0
+	var building_last_apply_payload_ms := 0.0
+	var building_last_apply_payload_object_ms := 0.0
+	var building_last_apply_payload_visual_ms := 0.0
+	var building_pending_visual_batch_rebuilds := 0
+	var building_pending_baked_object_spawns := 0
+	var building_last_baked_object_spawn_queue_ms := 0.0
+	var building_last_baked_object_spawn_queue_count := 0
+	var prefab_pending_baked_payload_jobs := 0
+	var prefab_last_baked_payload_apply_ms := 0.0
+	var prefab_last_baked_payload_apply_count := 0
+	var prefab_last_baked_payload_flush_ms := 0.0
 	var entity_active_entities := 0
 	var entity_pending_spawns := 0
 	var entity_dormant_entities := 0
@@ -301,6 +312,19 @@ func _build_native_town_entry_sample() -> Dictionary:
 	if is_instance_valid(building_manager):
 		building_dirty_visible_chunk_count = int(building_manager._dirty_visible_chunk_count)
 		building_last_flush_dirty_chunks_ms = float(building_manager._last_flush_dirty_chunks_ms)
+		building_last_apply_payload_ms = float(building_manager._last_apply_world_map_baked_building_payload_ms)
+		building_last_apply_payload_object_ms = float(building_manager._last_apply_world_map_baked_building_payload_object_ms)
+		building_last_apply_payload_visual_ms = float(building_manager._last_apply_world_map_baked_building_visual_ms)
+		building_pending_visual_batch_rebuilds = int(building_manager._dirty_global_visual_batch_object_ids.size())
+		building_pending_baked_object_spawns = int(building_manager._pending_world_map_baked_object_spawns.size())
+		building_last_baked_object_spawn_queue_ms = float(building_manager._last_world_map_baked_object_spawn_queue_ms)
+		building_last_baked_object_spawn_queue_count = int(building_manager._last_world_map_baked_object_spawn_queue_count)
+	var prefab_spawner_node := _find_manager_node("prefab_spawner", "PrefabSpawner")
+	if is_instance_valid(prefab_spawner_node):
+		prefab_pending_baked_payload_jobs = int(prefab_spawner_node._pending_world_map_baked_building_payloads.size())
+		prefab_last_baked_payload_apply_ms = float(prefab_spawner_node._last_world_map_baked_payload_apply_ms)
+		prefab_last_baked_payload_apply_count = int(prefab_spawner_node._last_world_map_baked_payload_apply_count)
+		prefab_last_baked_payload_flush_ms = float(prefab_spawner_node._last_world_map_baked_payload_flush_ms)
 	if not is_instance_valid(entity_manager):
 		entity_manager = _find_manager_node("entity_manager", "EntityManager")
 	if is_instance_valid(entity_manager):
@@ -328,6 +352,17 @@ func _build_native_town_entry_sample() -> Dictionary:
 		"terrain_last_collision_create_count": terrain_last_collision_create_count,
 		"building_dirty_visible_chunk_count": building_dirty_visible_chunk_count,
 		"building_last_flush_dirty_chunks_ms": building_last_flush_dirty_chunks_ms,
+		"building_last_apply_payload_ms": building_last_apply_payload_ms,
+		"building_last_apply_payload_object_ms": building_last_apply_payload_object_ms,
+		"building_last_apply_payload_visual_ms": building_last_apply_payload_visual_ms,
+		"building_pending_visual_batch_rebuilds": building_pending_visual_batch_rebuilds,
+		"building_pending_baked_object_spawns": building_pending_baked_object_spawns,
+		"building_last_baked_object_spawn_queue_ms": building_last_baked_object_spawn_queue_ms,
+		"building_last_baked_object_spawn_queue_count": building_last_baked_object_spawn_queue_count,
+		"prefab_pending_baked_payload_jobs": prefab_pending_baked_payload_jobs,
+		"prefab_last_baked_payload_apply_ms": prefab_last_baked_payload_apply_ms,
+		"prefab_last_baked_payload_apply_count": prefab_last_baked_payload_apply_count,
+		"prefab_last_baked_payload_flush_ms": prefab_last_baked_payload_flush_ms,
 		"entity_active_entities": entity_active_entities,
 		"entity_pending_spawns": entity_pending_spawns,
 		"entity_dormant_entities": entity_dormant_entities,
@@ -636,18 +671,23 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 			+ float(building.get("total_object_collision_nodes", 0)) * 0.5 \
 			+ float(building.get("total_collision_box_nodes", 0)) * 0.25 \
 			+ float(building.get("pending_visual_batch_rebuilds", 0)) * 10.0 \
+			+ float(building.get("pending_world_map_baked_object_spawns", 0)) * 6.0 \
+			+ float(building.get("last_world_map_baked_object_spawn_queue_ms", 0.0)) * 8.0 \
 			+ float(building.get("pending_object_collision_jobs", 0)) * 4.0 \
 			+ float(building.get("dirty_visible_chunk_count", 0)) * 8.0
 		rankings.append(_build_pressure_entry(
 			"BuildingManager",
 			building_score,
-			"objects=%d object_nodes=%d visual_batches=%d global_instances=%d global_surfaces=%d baked_surfaces=%d dirty_visible=%d" % [
+			"objects=%d object_nodes=%d visual_batches=%d global_instances=%d global_surfaces=%d baked_surfaces=%d baked_object_queue=%d/%d %.2fms dirty_visible=%d" % [
 				int(building.get("total_objects", 0)),
 				int(building.get("total_object_nodes", 0)),
 				int(building.get("total_visual_batches", 0)),
 				int(building.get("total_global_visual_instances", 0)),
 				int(building.get("visible_global_visual_batch_surfaces", 0)),
 				int(building.get("visible_world_map_baked_building_visual_surfaces", 0)),
+				int(building.get("pending_world_map_baked_object_spawns", 0)),
+				int(building.get("last_world_map_baked_object_spawn_queue_count", 0)),
+				float(building.get("last_world_map_baked_object_spawn_queue_ms", 0.0)),
 				int(building.get("dirty_visible_chunk_count", 0))
 			]
 		))
@@ -679,26 +719,37 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 
 	var vegetation: Dictionary = system_telemetry.get("vegetation_manager", {})
 	if not vegetation.is_empty():
-		var vegetation_score := float(vegetation.get("tree_chunk_count", 0)) * 4.0 \
-			+ float(vegetation.get("grass_chunk_count", 0)) * 3.0 \
-			+ float(vegetation.get("rock_chunk_count", 0)) * 2.0 \
+		var global_render_batches_enabled := bool(vegetation.get("global_render_batches_enabled", false))
+		var global_render_dirty_kinds: Array = vegetation.get("global_render_dirty_kinds", [])
+		var visual_chunk_pressure_scale := 0.25 if global_render_batches_enabled else 1.0
+		var vegetation_score := float(vegetation.get("tree_chunk_count", 0)) * 4.0 * visual_chunk_pressure_scale \
+			+ float(vegetation.get("grass_chunk_count", 0)) * 3.0 * visual_chunk_pressure_scale \
+			+ float(vegetation.get("rock_chunk_count", 0)) * 2.0 * visual_chunk_pressure_scale \
 			+ float(vegetation.get("active_tree_colliders", 0)) * 3.0 \
 			+ float(vegetation.get("active_grass_colliders", 0)) * 2.0 \
 			+ float(vegetation.get("active_rock_colliders", 0)) * 2.0 \
 			+ float(vegetation.get("pending_chunks", 0)) * 4.0 \
 			+ float(vegetation.get("pending_collider_adds", 0)) * 1.0 \
-			+ float(vegetation.get("pending_collider_removes", 0)) * 1.0
+			+ float(vegetation.get("pending_collider_removes", 0)) * 1.0 \
+			+ float(global_render_dirty_kinds.size()) * 20.0 \
+			+ float(vegetation.get("last_global_render_sync_ms", 0.0)) * 8.0
 		rankings.append(_build_pressure_entry(
 			"VegetationManager",
 			vegetation_score,
-			"trees=%d grass=%d rocks=%d colliders=%d/%d/%d pending=%d" % [
+			"trees=%d grass=%d rocks=%d colliders=%d/%d/%d pending=%d global_batches=%d instances=%d/%d/%d dirty=%d last_global_sync=%.2fms" % [
 				int(vegetation.get("tree_chunk_count", 0)),
 				int(vegetation.get("grass_chunk_count", 0)),
 				int(vegetation.get("rock_chunk_count", 0)),
 				int(vegetation.get("active_tree_colliders", 0)),
 				int(vegetation.get("active_grass_colliders", 0)),
 				int(vegetation.get("active_rock_colliders", 0)),
-				int(vegetation.get("pending_chunks", 0))
+				int(vegetation.get("pending_chunks", 0)),
+				int(vegetation.get("global_render_batch_count", 0)),
+				int(vegetation.get("global_tree_render_instances", 0)),
+				int(vegetation.get("global_grass_render_instances", 0)),
+				int(vegetation.get("global_rock_render_instances", 0)),
+				global_render_dirty_kinds.size(),
+				float(vegetation.get("last_global_render_sync_ms", 0.0))
 			]
 		))
 
@@ -706,14 +757,21 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 	if not prefab_spawner.is_empty():
 		var prefab_score := float(prefab_spawner.get("pending_spawn_jobs", 0)) * 10.0 \
 			+ float(prefab_spawner.get("pending_spawn_keys", 0)) * 3.0 \
+			+ float(prefab_spawner.get("pending_world_map_baked_payload_jobs", 0)) * 12.0 \
+			+ float(prefab_spawner.get("last_world_map_baked_payload_apply_ms", 0.0)) * 8.0 \
+			+ float(prefab_spawner.get("last_world_map_baked_payload_flush_ms", 0.0)) * 8.0 \
 			+ float(prefab_spawner.get("spawned_doors", 0)) * 0.5 \
 			+ float(prefab_spawner.get("rotated_block_batches_cache_size", 0)) * 0.1
 		rankings.append(_build_pressure_entry(
 			"PrefabSpawner",
 			prefab_score,
-			"pending_jobs=%d pending_keys=%d spawned=%d doors=%d" % [
+			"pending_jobs=%d pending_keys=%d baked_queue=%d baked_apply=%d/%.2fms baked_flush=%.2fms spawned=%d doors=%d" % [
 				int(prefab_spawner.get("pending_spawn_jobs", 0)),
 				int(prefab_spawner.get("pending_spawn_keys", 0)),
+				int(prefab_spawner.get("pending_world_map_baked_payload_jobs", 0)),
+				int(prefab_spawner.get("last_world_map_baked_payload_apply_count", 0)),
+				float(prefab_spawner.get("last_world_map_baked_payload_apply_ms", 0.0)),
+				float(prefab_spawner.get("last_world_map_baked_payload_flush_ms", 0.0)),
 				int(prefab_spawner.get("spawned_positions", 0)),
 				int(prefab_spawner.get("spawned_doors", 0))
 			]
