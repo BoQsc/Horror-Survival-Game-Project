@@ -181,6 +181,7 @@ static func get_object_visual_data(object_id: int) -> Dictionary:
 			data["mesh_transform"] = Transform3D.IDENTITY
 			data["proxy_mesh_merged"] = true
 			data["proxy_mesh_surface_count"] = int(merged_visual_data.get("surface_count", 0))
+			data["proxy_mesh_source_surface_count"] = int(merged_visual_data.get("source_surface_count", 0))
 		else:
 			push_warning("[ObjectRegistry] Object %d (%s) is marked '%s' but its merged proxy mesh could not be built; batching is disabled for safety." % [
 				object_id,
@@ -328,6 +329,119 @@ static func _transform_visual_surface_arrays(arrays: Array, transform: Transform
 
 	return transformed_arrays
 
+static func _mesh_array_slot_has_data(value: Variant) -> bool:
+	match typeof(value):
+		TYPE_PACKED_BYTE_ARRAY, TYPE_PACKED_INT32_ARRAY, TYPE_PACKED_FLOAT32_ARRAY, TYPE_PACKED_VECTOR2_ARRAY, TYPE_PACKED_VECTOR3_ARRAY, TYPE_PACKED_COLOR_ARRAY, TYPE_PACKED_VECTOR4_ARRAY:
+			return value.size() > 0
+		_:
+			return false
+
+static func _surface_array_mask(arrays: Array) -> int:
+	var mask := 0
+	var slot_count := mini(arrays.size(), Mesh.ARRAY_MAX)
+	for i in range(slot_count):
+		if _mesh_array_slot_has_data(arrays[i]):
+			mask |= 1 << i
+	return mask
+
+static func _surface_material_key(material: Material) -> String:
+	if material == null:
+		return "<null>"
+	if not material.resource_path.is_empty():
+		return material.resource_path
+	return str(material.get_instance_id())
+
+static func _empty_packed_array_like(value: Variant) -> Variant:
+	match typeof(value):
+		TYPE_PACKED_BYTE_ARRAY:
+			return PackedByteArray()
+		TYPE_PACKED_INT32_ARRAY:
+			return PackedInt32Array()
+		TYPE_PACKED_FLOAT32_ARRAY:
+			return PackedFloat32Array()
+		TYPE_PACKED_VECTOR2_ARRAY:
+			return PackedVector2Array()
+		TYPE_PACKED_VECTOR3_ARRAY:
+			return PackedVector3Array()
+		TYPE_PACKED_COLOR_ARRAY:
+			return PackedColorArray()
+		TYPE_PACKED_VECTOR4_ARRAY:
+			return PackedVector4Array()
+		_:
+			return null
+
+static func _empty_surface_arrays_like(source: Array) -> Array:
+	var result: Array = []
+	result.resize(Mesh.ARRAY_MAX)
+	var slot_count := mini(source.size(), Mesh.ARRAY_MAX)
+	for i in range(slot_count):
+		if _mesh_array_slot_has_data(source[i]):
+			result[i] = _empty_packed_array_like(source[i])
+	return result
+
+static func _append_mesh_array(dst: Variant, src: Variant) -> Variant:
+	match typeof(src):
+		TYPE_PACKED_BYTE_ARRAY:
+			var out_bytes: PackedByteArray = dst
+			out_bytes.append_array(src)
+			return out_bytes
+		TYPE_PACKED_INT32_ARRAY:
+			var out_i32: PackedInt32Array = dst
+			out_i32.append_array(src)
+			return out_i32
+		TYPE_PACKED_FLOAT32_ARRAY:
+			var out_f32: PackedFloat32Array = dst
+			out_f32.append_array(src)
+			return out_f32
+		TYPE_PACKED_VECTOR2_ARRAY:
+			var out_v2: PackedVector2Array = dst
+			out_v2.append_array(src)
+			return out_v2
+		TYPE_PACKED_VECTOR3_ARRAY:
+			var out_v3: PackedVector3Array = dst
+			out_v3.append_array(src)
+			return out_v3
+		TYPE_PACKED_COLOR_ARRAY:
+			var out_color: PackedColorArray = dst
+			out_color.append_array(src)
+			return out_color
+		TYPE_PACKED_VECTOR4_ARRAY:
+			var out_v4: PackedVector4Array = dst
+			out_v4.append_array(src)
+			return out_v4
+		_:
+			return dst
+
+static func _adjust_surface_indices(arrays: Array, vertex_offset: int) -> Array:
+	if arrays.size() <= Mesh.ARRAY_INDEX:
+		return arrays
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	if indices.is_empty() or vertex_offset == 0:
+		return arrays
+	var adjusted := PackedInt32Array()
+	adjusted.resize(indices.size())
+	for i in range(indices.size()):
+		adjusted[i] = indices[i] + vertex_offset
+	arrays[Mesh.ARRAY_INDEX] = adjusted
+	return arrays
+
+static func _append_surface_to_group(group: Dictionary, surface_arrays: Array) -> void:
+	var group_arrays: Array = group.get("arrays", [])
+	var vertices: PackedVector3Array = group_arrays[Mesh.ARRAY_VERTEX]
+	var vertex_offset := vertices.size()
+	var adjusted_arrays := _adjust_surface_indices(surface_arrays.duplicate(true), vertex_offset)
+	var slot_count := mini(adjusted_arrays.size(), Mesh.ARRAY_MAX)
+
+	for i in range(slot_count):
+		var src: Variant = adjusted_arrays[i]
+		if not _mesh_array_slot_has_data(src):
+			continue
+		var dst: Variant = group_arrays[i]
+		group_arrays[i] = _append_mesh_array(dst, src)
+
+	group["arrays"] = group_arrays
+	group["source_surface_count"] = int(group.get("source_surface_count", 0)) + 1
+
 static func _build_merged_visual_mesh(root: Node3D) -> Dictionary:
 	if not root:
 		return {}
@@ -338,7 +452,9 @@ static func _build_merged_visual_mesh(root: Node3D) -> Dictionary:
 		return {}
 
 	var merged_mesh := ArrayMesh.new()
-	var surface_count := 0
+	var surface_groups: Dictionary = {}
+	var surface_group_order: Array[String] = []
+	var source_surface_count := 0
 	for mesh_inst_variant in mesh_instances:
 		if typeof(mesh_inst_variant) != TYPE_OBJECT:
 			continue
@@ -354,12 +470,31 @@ static func _build_merged_visual_mesh(root: Node3D) -> Dictionary:
 				continue
 
 			var primitive_type: int = mesh_inst.mesh.surface_get_primitive_type(surface_idx)
-			merged_mesh.add_surface_from_arrays(primitive_type, transformed_arrays)
 			var material := mesh_inst.mesh.surface_get_material(surface_idx)
-			if material:
-				merged_mesh.surface_set_material(merged_mesh.get_surface_count() - 1, material)
-			surface_count += 1
+			var array_mask := _surface_array_mask(transformed_arrays)
+			var group_key := "%d|%d|%s" % [primitive_type, array_mask, _surface_material_key(material)]
+			if not surface_groups.has(group_key):
+				surface_groups[group_key] = {
+					"arrays": _empty_surface_arrays_like(transformed_arrays),
+					"material": material,
+					"primitive_type": primitive_type,
+					"source_surface_count": 0
+				}
+				surface_group_order.append(group_key)
+			_append_surface_to_group(surface_groups[group_key], transformed_arrays)
+			source_surface_count += 1
 
+	for group_key in surface_group_order:
+		var group: Dictionary = surface_groups[group_key]
+		var group_arrays: Array = group.get("arrays", [])
+		if group_arrays.is_empty():
+			continue
+		merged_mesh.add_surface_from_arrays(int(group.get("primitive_type", Mesh.PRIMITIVE_TRIANGLES)), group_arrays)
+		var material: Material = group.get("material", null)
+		if material:
+			merged_mesh.surface_set_material(merged_mesh.get_surface_count() - 1, material)
+
+	var surface_count := merged_mesh.get_surface_count()
 	if surface_count == 0:
 		return {}
 
@@ -367,6 +502,7 @@ static func _build_merged_visual_mesh(root: Node3D) -> Dictionary:
 		"mesh": merged_mesh,
 		"mesh_instance_count": mesh_instances.size(),
 		"surface_count": surface_count,
+		"source_surface_count": source_surface_count,
 		"proxy_mesh_merged": true
 	}
 

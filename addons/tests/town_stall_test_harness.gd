@@ -630,6 +630,8 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 	if not building.is_empty():
 		var building_score := float(building.get("total_object_nodes", 0)) * 6.0 \
 			+ float(building.get("total_global_visual_instances", 0)) * 1.0 \
+			+ float(building.get("visible_global_visual_batch_surfaces", 0)) * 12.0 \
+			+ float(building.get("visible_world_map_baked_building_visual_surfaces", 0)) * 8.0 \
 			+ float(building.get("total_visual_batches", 0)) * 12.0 \
 			+ float(building.get("total_object_collision_nodes", 0)) * 0.5 \
 			+ float(building.get("total_collision_box_nodes", 0)) * 0.25 \
@@ -639,11 +641,13 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 		rankings.append(_build_pressure_entry(
 			"BuildingManager",
 			building_score,
-			"objects=%d object_nodes=%d visual_batches=%d global_instances=%d dirty_visible=%d" % [
+			"objects=%d object_nodes=%d visual_batches=%d global_instances=%d global_surfaces=%d baked_surfaces=%d dirty_visible=%d" % [
 				int(building.get("total_objects", 0)),
 				int(building.get("total_object_nodes", 0)),
 				int(building.get("total_visual_batches", 0)),
 				int(building.get("total_global_visual_instances", 0)),
+				int(building.get("visible_global_visual_batch_surfaces", 0)),
+				int(building.get("visible_world_map_baked_building_visual_surfaces", 0)),
 				int(building.get("dirty_visible_chunk_count", 0))
 			]
 		))

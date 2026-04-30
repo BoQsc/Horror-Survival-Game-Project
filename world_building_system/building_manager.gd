@@ -12,6 +12,7 @@ var mesher: BuildingMesher
 @export var render_distance: int = 8 # Increased for better visibility
 var _last_building_viewer_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _cached_vehicle_manager: Node = null
+var _cached_terrain_manager: Node = null
 
 # Track which chunks are currently visible (have nodes in scene tree)
 var visible_chunks: Dictionary = {} # Vector3i -> true
@@ -162,6 +163,13 @@ func _get_vehicle_manager() -> Node:
 
 	_cached_vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
 	return _cached_vehicle_manager
+
+func _get_terrain_manager() -> Node:
+	if _cached_terrain_manager and is_instance_valid(_cached_terrain_manager):
+		return _cached_terrain_manager
+
+	_cached_terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	return _cached_terrain_manager
 
 func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)):
 	if center_chunk.x == 2147483647:
@@ -428,12 +436,39 @@ func _count_visible_global_visual_batch_instances() -> int:
 		total += batch_node.multimesh.instance_count
 	return total
 
+func _count_visible_global_visual_batch_surfaces() -> int:
+	var total := 0
+	for node in _global_visual_batch_nodes.values():
+		if node == null or not is_instance_valid(node):
+			continue
+		var batch_node := node as MultiMeshInstance3D
+		if batch_node == null or batch_node.multimesh == null:
+			continue
+		if batch_node.multimesh.instance_count <= 0 or batch_node.multimesh.mesh == null:
+			continue
+		total += batch_node.multimesh.mesh.get_surface_count()
+	return total
+
 
 func _count_visible_world_map_baked_building_visual_nodes() -> int:
 	var total := 0
 	for node in _world_map_baked_building_visual_nodes.values():
 		if node and is_instance_valid(node) and node.is_inside_tree():
 			total += 1
+	return total
+
+func _count_visible_world_map_baked_building_visual_surfaces() -> int:
+	var total := 0
+	for node in _world_map_baked_building_visual_nodes.values():
+		if not (node and is_instance_valid(node) and node.is_inside_tree()):
+			continue
+		var root := node as Node3D
+		if root == null:
+			continue
+		var mesh_instance := root.get_node_or_null("Mesh") as MeshInstance3D
+		if mesh_instance == null or not mesh_instance.visible or mesh_instance.mesh == null:
+			continue
+		total += mesh_instance.mesh.get_surface_count()
 	return total
 
 func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
@@ -605,9 +640,13 @@ func _get_world_map_visibility_distance(extra_distance: int = 0) -> int:
 		return base_distance
 
 	# Terrain chunks span a larger world-space footprint than building chunks.
-	# Match building reveal distance to the terrain reveal boundary so town
-	# visuals do not lag behind the terrain at the same numeric render distance.
-	var terrain_world_radius := base_distance * WORLD_MAP_TERRAIN_CHUNK_STRIDE
+	# Match against the actual TerrainManager radius so baked building shells do
+	# not stay visible far beyond the loaded terrain boundary.
+	var terrain_render_distance := base_distance
+	var terrain_manager := _get_terrain_manager()
+	if terrain_manager and "render_distance" in terrain_manager:
+		terrain_render_distance = maxi(int(terrain_manager.render_distance) + extra_distance, 0)
+	var terrain_world_radius := terrain_render_distance * WORLD_MAP_TERRAIN_CHUNK_STRIDE
 	return maxi(base_distance, int(ceil(float(terrain_world_radius) / float(CHUNK_SIZE))))
 
 
@@ -1251,6 +1290,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_global_visual_batches": _global_visual_batch_nodes.size(),
 		"total_global_visual_instances": _global_visual_batch_instances.size(),
 		"visible_global_visual_instances": _count_visible_global_visual_batch_instances(),
+		"visible_global_visual_batch_surfaces": _count_visible_global_visual_batch_surfaces(),
 		"pending_visual_batch_rebuilds": _dirty_global_visual_batch_object_ids.size(),
 		"total_occupied_cells": total_occupied_cells,
 		"mesh_dirty_chunks": total_mesh_dirty_chunks,
@@ -1282,8 +1322,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_apply_world_map_baked_building_prebuilt_chunk_count": _last_apply_world_map_baked_building_prebuilt_chunk_count,
 		"world_map_baked_building_edit_keys": _world_map_baked_building_edits_by_key.size(),
 		"world_map_baked_building_edit_count": _get_world_map_baked_building_edit_count(),
+		"world_map_visibility_distance_chunks": _get_world_map_visibility_distance(WORLD_MAP_VISIBILITY_EXTRA_DISTANCE),
 		"total_world_map_baked_building_visual_nodes": _world_map_baked_building_visual_nodes.size(),
-		"visible_world_map_baked_building_visual_nodes": _count_visible_world_map_baked_building_visual_nodes()
+		"visible_world_map_baked_building_visual_nodes": _count_visible_world_map_baked_building_visual_nodes(),
+		"visible_world_map_baked_building_visual_surfaces": _count_visible_world_map_baked_building_visual_surfaces()
 	}
 
 ## Get or create a chunk at the given coordinate. Uses pool for recycling.
