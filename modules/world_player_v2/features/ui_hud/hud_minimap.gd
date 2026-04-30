@@ -8,6 +8,7 @@ const MINIMAP_RADIUS: int = 120  # World units shown around player
 const FULLMAP_SIZE: int = 600  # Full map overlay size on screen
 const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 
 var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
@@ -113,8 +114,8 @@ func _deferred_init() -> void:
 	if _terrain_manager and "world_map_active" in _terrain_manager and _terrain_manager.world_map_active:
 		_build_minimap_image()
 		visible = true
-		# World map mode is baked-only: keep the HUD image immutable so runtime
-		# placement cannot create double marks or drift from the baked PNG.
+		# World map mode starts from baked data; runtime edits repaint through
+		# terrain_manager.get_surface_material_at() so the HUD stays in sync.
 		if _building_manager:
 			_building_manager.world_map_mode = true
 		# Connect to terrain modification signal for real-time map updates
@@ -308,8 +309,8 @@ func _build_minimap_image() -> void:
 	var build_start_us := Time.get_ticks_usec()
 	_last_minimap_build_ms = 0.0
 	_last_minimap_load_profile = {}
-	# Build FROZEN map once (terrain + roads + water + buildings from PNG).
-	# Never modified at runtime — generator is the single source of truth.
+	# Build map once from the authoritative baked PNGs. Runtime edits are
+	# applied later through the same terrain material query used by gameplay.
 	if not _terrain_manager or not "world_definition_path" in _terrain_manager:
 		return
 	
@@ -329,10 +330,10 @@ func _build_minimap_image() -> void:
 	var wmap: Image = loaded.get("water", null)
 	
 	var b_data: PackedByteArray
-	if _terrain_manager and "gpu_biome_map" in _terrain_manager and _terrain_manager.gpu_biome_map.size() > 0:
-		b_data = _terrain_manager.gpu_biome_map
-	elif loaded.has("biomes"):
+	if loaded.has("biomes"):
 		b_data = loaded.biomes.get_data()
+	elif _terrain_manager and "gpu_biome_map" in _terrain_manager and _terrain_manager.gpu_biome_map.size() > 0:
+		b_data = _terrain_manager.gpu_biome_map
 	else:
 		return
 	
@@ -355,15 +356,16 @@ func _build_minimap_image() -> void:
 		var shade = 0.5 + height_val * 0.5
 		var biome = b_data[i] if i < b_data.size() else 0
 		
-		var r: int = 80; var g: int = 160; var b: int = 60
-		if biome == 3: r = 194; g = 178; b = 128
-		elif biome == 5: r = 230; g = 230; b = 240
-		elif biome == 4: r = 140; g = 130; b = 115
+		var rgb := MaterialRegistry.get_minimap_rgb(biome)
+		var r: int = rgb.x
+		var g: int = rgb.y
+		var b: int = rgb.z
 		
 		if r_data.size() > 0:
 			var ri = i * 2
 			if ri < r_data.size() and r_data[ri] > 128:
-				r = 64; g = 64; b = 77
+				rgb = MaterialRegistry.get_minimap_rgb(MaterialRegistry.ROAD)
+				r = rgb.x; g = rgb.y; b = rgb.z
 		
 		if w_data.size() > 0 and i < w_data.size() and w_data[i] > 128:
 			r = 40; g = 80; b = 160
@@ -408,8 +410,8 @@ func _on_terrain_modified(coord: Vector3i, _chunk_node: Node3D) -> void:
 	# Update all pixels in the modified chunk's XZ footprint
 	var base_x = coord.x * stride
 	var base_z = coord.z * stride
-	for lx in range(0, stride, 4):  # Sample every 4th pixel for performance
-		for lz in range(0, stride, 4):
+	for lx in range(0, stride):
+		for lz in range(0, stride):
 			var wx = float(base_x + lx)
 			var wz = float(base_z + lz)
 			var px = int(wx + map_half)
@@ -420,12 +422,15 @@ func _on_terrain_modified(coord: Vector3i, _chunk_node: Node3D) -> void:
 			var h = _terrain_manager.get_terrain_height(wx, wz)
 			if h <= -500.0:
 				continue
-			var max_h = _terrain_manager.terrain_height * 2.5
+			var max_h = _terrain_manager.world_map_max_height if "world_map_max_height" in _terrain_manager else _terrain_manager.terrain_height * 2.5
 			var shade = 0.5 + clampf(h / max_h, 0.0, 1.0) * 0.5
-			# Use grass color as default for modified terrain
-			var r = clampf(80.0 * shade / 255.0, 0.0, 1.0)
-			var g = clampf(160.0 * shade / 255.0, 0.0, 1.0)
-			var b = clampf(60.0 * shade / 255.0, 0.0, 1.0)
+			var mat_id := MaterialRegistry.GRASS
+			if _terrain_manager.has_method("get_surface_material_at"):
+				mat_id = int(_terrain_manager.get_surface_material_at(wx, wz, true))
+			var rgb := MaterialRegistry.get_minimap_rgb(mat_id)
+			var r = clampf(float(rgb.x) * shade / 255.0, 0.0, 1.0)
+			var g = clampf(float(rgb.y) * shade / 255.0, 0.0, 1.0)
+			var b = clampf(float(rgb.z) * shade / 255.0, 0.0, 1.0)
 			_minimap_image.set_pixel(px, pz, Color(r, g, b, 1.0))
 	_minimap_dirty = true
 	_last_minimap_terrain_modified_ms = float(Time.get_ticks_usec() - modify_start_us) / 1000.0

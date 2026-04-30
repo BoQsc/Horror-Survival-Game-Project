@@ -16,6 +16,8 @@ const WORLD_META_CURRENT_SCHEMA_VERSION: int = 7
 const WORLD_META_CURRENT_CACHE_VERSION: int = 1
 const WORLD_META_BUILDING_PLACEMENT_SCHEMA_KEY: String = "building_placement_schema"
 const WORLD_META_DEFAULT_BUILDING_PLACEMENT_SCHEMA: String = "occupied_min_v1"
+const WORLD_META_BIOME_MATERIAL_SCHEMA_KEY: String = "biome_material_schema"
+const WORLD_META_DEFAULT_BIOME_MATERIAL_SCHEMA: String = "material_id_r8_v1"
 const WORLD_META_BUILDINGS_KEY: String = "buildings"
 const WORLD_META_TOWNS_KEY: String = "towns"
 const WORLD_META_TERRAIN_MODIFICATIONS_KEY: String = "terrain_modifications"
@@ -73,6 +75,12 @@ static func get_world_meta_building_placement_schema_key() -> String:
 
 static func get_world_meta_default_building_placement_schema() -> String:
 	return WORLD_META_DEFAULT_BUILDING_PLACEMENT_SCHEMA
+
+static func get_world_meta_biome_material_schema_key() -> String:
+	return WORLD_META_BIOME_MATERIAL_SCHEMA_KEY
+
+static func get_world_meta_default_biome_material_schema() -> String:
+	return WORLD_META_DEFAULT_BIOME_MATERIAL_SCHEMA
 
 static func invalidate_world(path: String) -> void:
 	var cache_key := _normalize_world_path(path)

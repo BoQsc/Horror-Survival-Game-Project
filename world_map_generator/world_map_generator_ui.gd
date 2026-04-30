@@ -5,6 +5,7 @@ class_name WorldMapGeneratorUI
 
 const WorldMapGen = preload("res://world_map_generator/world_map_generator.gd")
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 const SAVE_BASE = "user://worlds/"
 
 # UI References
@@ -509,13 +510,13 @@ func _erase_at(cx: int, cz: int) -> void:
 func _process(_delta: float) -> void:
 	if Input.is_key_pressed(KEY_1):
 		current_tool = Tool.PAINT_BIOME
-		paint_biome_id = WorldMapGen.MaterialID.SAND
+		paint_biome_id = MaterialRegistry.SAND
 	elif Input.is_key_pressed(KEY_2):
 		current_tool = Tool.PAINT_BIOME
-		paint_biome_id = WorldMapGen.MaterialID.SNOW
+		paint_biome_id = MaterialRegistry.SNOW
 	elif Input.is_key_pressed(KEY_3):
 		current_tool = Tool.PAINT_BIOME
-		paint_biome_id = WorldMapGen.MaterialID.GRAVEL
+		paint_biome_id = MaterialRegistry.GRAVEL
 	elif Input.is_key_pressed(KEY_4):
 		current_tool = Tool.PAINT_ROAD
 	elif Input.is_key_pressed(KEY_5):

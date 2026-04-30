@@ -14,6 +14,7 @@ const EXCAVATION_MASK_POINT_COUNT = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENS
 const EXCAVATION_MASK_UINT_COUNT = int(ceil(float(EXCAVATION_MASK_POINT_COUNT) / 32.0))
 const EXCAVATION_MASK_BYTE_COUNT = EXCAVATION_MASK_UINT_COUNT * 4
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 
 # Y-layer limits for vertical chunk stacking
 const MIN_Y_LAYER = -20 # How deep you can dig (in chunk layers)
@@ -63,7 +64,10 @@ var _world_map_empty_excavation_buf: RID = RID()
 var _world_map_heightmap_data: PackedByteArray = PackedByteArray()
 var _world_map_heightmap_width: int = 0
 var _world_map_heightmap_height: int = 0
+var _world_map_biome_image: Image = null
+var _world_map_biome_texture: ImageTexture = null
 var _world_map_road_image: Image = null
+var _world_map_road_texture: ImageTexture = null
 var _world_map_water_image: Image = null
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
@@ -71,7 +75,7 @@ var _world_map_buildings: Array = []  # Baked building positions from world_meta
 var _world_map_building_map: Image = null  # R8 building footprint map from buildings.png
 var _world_map_excavation_masks: Dictionary = {}
 var _world_map_excavation_buffers: Dictionary = {}
-var gpu_biome_map: PackedByteArray = PackedByteArray()  # GPU-generated biome map for minimap (uses same fbm() as shader)
+var gpu_biome_map: PackedByteArray = PackedByteArray()  # Baked biome/material bytes for minimap compatibility
 
 # GPU Threading (single thread for compute shaders)
 var compute_thread: Thread
@@ -206,6 +210,7 @@ var _startup_world_map_data: Dictionary = {}
 var _startup_world_map_load_profile: Dictionary = {}
 var _world_map_lod_chunks: Dictionary = {}
 var _world_map_lod_builder: Object = null
+var _world_map_lod_material: ShaderMaterial = null
 var _world_map_lod_load_candidates: Array[Vector2i] = []
 var _world_map_lod_unload_candidates: Array[Vector2i] = []
 var _world_map_lod_load_cursor: int = 0
@@ -341,15 +346,20 @@ func _ready():
 			_world_map_heightmap_data = startup_hmap.get_data()
 			_world_map_heightmap_width = startup_hmap.get_width()
 			_world_map_heightmap_height = startup_hmap.get_height()
-		# Pass world map road image as road_mask for per-pixel road edge blending
-		# UV mapping: road_uv = world_pos.xz * scale + 0.5 = (world_pos.xz + half) / size
+		if loaded.has("biomes"):
+			_world_map_biome_image = loaded.biomes
+			gpu_biome_map = _world_map_biome_image.get_data()
+			_world_map_biome_texture = ImageTexture.create_from_image(_world_map_biome_image)
+			material_terrain.set_shader_parameter("world_map_biome_map", _world_map_biome_texture)
+			material_terrain.set_shader_parameter("world_map_texture_scale", 1.0 / world_map_size)
+		# LOD uses baked map textures directly; near terrain uses baked material IDs.
 		if loaded.has("roads"):
 			var rmap: Image = loaded.roads
 			_world_map_road_image = rmap
-			var road_tex = ImageTexture.create_from_image(rmap)
-			material_terrain.set_shader_parameter("road_mask", road_tex)
-			material_terrain.set_shader_parameter("road_mask_offset", Vector2(0.0, 0.0))
-			material_terrain.set_shader_parameter("road_mask_scale", 1.0 / world_map_size)
+			_world_map_road_texture = ImageTexture.create_from_image(rmap)
+			material_terrain.set_shader_parameter("world_map_road_map", _world_map_road_texture)
+		if loaded.has("water"):
+			_world_map_water_image = loaded.water
 
 	# Start GPU thread
 	compute_thread = Thread.new()
@@ -497,6 +507,24 @@ func _get_world_map_lod_builder() -> Object:
 	_world_map_lod_builder = ClassDB.instantiate("MeshBuilder")
 	return _world_map_lod_builder
 
+func _get_world_map_lod_material() -> ShaderMaterial:
+	if _world_map_lod_material and is_instance_valid(_world_map_lod_material):
+		return _world_map_lod_material
+
+	var base_material := material_terrain as ShaderMaterial
+	if not base_material:
+		return null
+
+	_world_map_lod_material = base_material.duplicate() as ShaderMaterial
+	_world_map_lod_material.set_shader_parameter("use_world_map", true)
+	_world_map_lod_material.set_shader_parameter("world_map_fragment_lookup_enabled", true)
+	_world_map_lod_material.set_shader_parameter("world_map_texture_scale", 1.0 / world_map_size)
+	if _world_map_biome_texture:
+		_world_map_lod_material.set_shader_parameter("world_map_biome_map", _world_map_biome_texture)
+	if _world_map_road_texture:
+		_world_map_lod_material.set_shader_parameter("world_map_road_map", _world_map_road_texture)
+	return _world_map_lod_material
+
 func _reset_world_map_lod_candidates() -> void:
 	_world_map_lod_load_candidates.clear()
 	_world_map_lod_unload_candidates.clear()
@@ -589,7 +617,7 @@ func _load_world_map_lod_chunk(coord: Vector2i) -> bool:
 	var lod_node := MeshInstance3D.new()
 	lod_node.name = "WorldMapLOD_%d_%d" % [coord.x, coord.y]
 	lod_node.mesh = mesh
-	lod_node.material_override = material_terrain
+	lod_node.material_override = _get_world_map_lod_material()
 	lod_node.position = Vector3(coord.x * CHUNK_STRIDE, 0.0, coord.y * CHUNK_STRIDE)
 	lod_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	lod_node.add_to_group("world_map_lod")
@@ -1329,6 +1357,88 @@ func get_pending_nodes_count() -> int:
 	pending_nodes_mutex.unlock()
 	return count
 
+func _get_world_map_pixel(global_x: float, global_z: float, image: Image) -> Vector2i:
+	if image == null or world_map_size <= 0.0:
+		return Vector2i(-1, -1)
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return Vector2i(-1, -1)
+
+	var px_f := global_x + world_map_half
+	var pz_f := global_z + world_map_half
+	if px_f < 0.0 or pz_f < 0.0 or px_f >= world_map_size or pz_f >= world_map_size:
+		return Vector2i(-1, -1)
+
+	return Vector2i(
+		clampi(int(floor(px_f)), 0, width - 1),
+		clampi(int(floor(pz_f)), 0, height - 1)
+	)
+
+func _read_world_map_biome_pixel(pixel: Vector2i) -> int:
+	if _world_map_biome_image == null or pixel.x < 0 or pixel.y < 0:
+		return -1
+	return int(round(_world_map_biome_image.get_pixel(pixel.x, pixel.y).r * 255.0))
+
+func _is_world_map_road_pixel(pixel: Vector2i) -> bool:
+	if _world_map_road_image == null or pixel.x < 0 or pixel.y < 0:
+		return false
+	var road_width := _world_map_road_image.get_width()
+	var road_height := _world_map_road_image.get_height()
+	if pixel.x >= road_width or pixel.y >= road_height:
+		return false
+	return _world_map_road_image.get_pixel(pixel.x, pixel.y).r > 0.5
+
+func _sample_world_map_height(global_x: float, global_z: float) -> float:
+	if _world_map_heightmap_data.is_empty() or _world_map_heightmap_width <= 0 or _world_map_heightmap_height <= 0:
+		return -1000.0
+	var px := clampf(global_x + world_map_half, 0.0, float(_world_map_heightmap_width - 1))
+	var pz := clampf(global_z + world_map_half, 0.0, float(_world_map_heightmap_height - 1))
+	var x0 := int(floor(px))
+	var z0 := int(floor(pz))
+	var x1 := mini(x0 + 1, _world_map_heightmap_width - 1)
+	var z1 := mini(z0 + 1, _world_map_heightmap_height - 1)
+	var tx := px - float(x0)
+	var tz := pz - float(z0)
+
+	var h00 := float(_world_map_heightmap_data[z0 * _world_map_heightmap_width + x0]) / 255.0
+	var h10 := float(_world_map_heightmap_data[z0 * _world_map_heightmap_width + x1]) / 255.0
+	var h01 := float(_world_map_heightmap_data[z1 * _world_map_heightmap_width + x0]) / 255.0
+	var h11 := float(_world_map_heightmap_data[z1 * _world_map_heightmap_width + x1]) / 255.0
+	var h0: float = lerpf(h00, h10, tx)
+	var h1: float = lerpf(h01, h11, tx)
+	return clampf(lerpf(h0, h1, tz) * world_map_max_height, 1.0, 28.0)
+
+func get_surface_material_at(global_x: float, global_z: float, include_roads: bool = true) -> int:
+	if not world_map_active:
+		return -1
+	var pixel := _get_world_map_pixel(global_x, global_z, _world_map_biome_image)
+	if pixel.x < 0:
+		return -1
+
+	var biome_id := _read_world_map_biome_pixel(pixel)
+	if include_roads and (_is_world_map_road_pixel(pixel) or biome_id == MaterialRegistry.ROAD):
+		return MaterialRegistry.ROAD
+	if biome_id == MaterialRegistry.ROAD:
+		return MaterialRegistry.DEFAULT_SURFACE_MATERIAL
+	return MaterialRegistry.normalize_world_map_biome_id(biome_id)
+
+func _get_world_map_material_at(global_pos: Vector3) -> int:
+	var surface_material := get_surface_material_at(global_pos.x, global_pos.z, true)
+	if surface_material < 0:
+		return -1
+
+	var surface_height := _sample_world_map_height(global_pos.x, global_pos.z)
+	if surface_height < -100.0:
+		return surface_material
+
+	var depth := surface_height - global_pos.y
+	if depth > 10.0:
+		return MaterialRegistry.STONE
+	if surface_material == MaterialRegistry.ROAD and depth >= 2.0:
+		return MaterialRegistry.GRASS
+	return surface_material
+
 ## Get material ID at world position (reads from CPU-cached chunk data)
 ## Returns -1 if position is outside loaded chunks or no material data
 func get_material_at(global_pos: Vector3) -> int:
@@ -1339,10 +1449,14 @@ func get_material_at(global_pos: Vector3) -> int:
 	var coord = Vector3i(chunk_x, chunk_y, chunk_z)
 
 	if not active_chunks.has(coord):
+		if world_map_active:
+			return _get_world_map_material_at(global_pos)
 		return -1 # Chunk not loaded
 
 	var data = active_chunks[coord]
 	if data == null or data.cpu_material_terrain.is_empty():
+		if world_map_active:
+			return _get_world_map_material_at(global_pos)
 		return -1 # No material data
 
 	# Find local position within chunk
@@ -2627,6 +2741,9 @@ func _thread_function():
 				_world_map_heightmap_height = h_height
 			var bmap: Image = loaded.biomes
 			var rmap: Image = loaded.roads
+			_world_map_biome_image = bmap
+			_world_map_road_image = rmap
+			gpu_biome_map = bmap.get_data()
 
 			# Upload raw bytes as storage buffers
 			var b_bytes = bmap.get_data()

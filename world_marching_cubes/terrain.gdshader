@@ -44,6 +44,10 @@ uniform bool has_material_map = false;  // Whether this chunk has player-placed 
 uniform bool debug_show_chunk_bounds = false;  // Toggle to show chunk boundary lines
 uniform bool debug_show_road_zones = false;   // Toggle to show road zone detection
 uniform bool use_world_map = false;           // Use exact material IDs instead of procedural noise
+uniform bool world_map_fragment_lookup_enabled = false; // Heightfield LOD samples baked map textures directly
+uniform sampler2D world_map_biome_map : hint_default_black, filter_nearest, repeat_disable;
+uniform sampler2D world_map_road_map : hint_default_black, filter_nearest, repeat_disable;
+uniform float world_map_texture_scale = 0.0005;
 
 
 varying vec3 world_pos;
@@ -251,6 +255,36 @@ vec3 sample_exact_material_color(int mat_id, vec3 weights, vec3 uv_pos) {
 	else if (id == 9) return triplanar_texture(texture_stone, weights, uv_pos).rgb * vec3(0.7, 0.65, 0.6);  // Granite
 	else return triplanar_texture(texture_grass, weights, uv_pos).rgb;
 }
+
+int normalize_world_map_biome_id(int biome_id) {
+	if (biome_id == 0 || biome_id == 3 || biome_id == 4 || biome_id == 5) {
+		return biome_id;
+	}
+	return 0;
+}
+
+int sample_world_map_fragment_material(vec3 w_pos) {
+	ivec2 biome_size = textureSize(world_map_biome_map, 0);
+	if (biome_size.x <= 0 || biome_size.y <= 0) {
+		return 0;
+	}
+
+	vec2 uv = clamp(w_pos.xz * world_map_texture_scale + vec2(0.5), vec2(0.0), vec2(0.999999));
+	ivec2 biome_px = clamp(ivec2(floor(uv * vec2(biome_size))), ivec2(0), biome_size - ivec2(1));
+	int biome_id = int(round(texelFetch(world_map_biome_map, biome_px, 0).r * 255.0));
+
+	ivec2 road_size = textureSize(world_map_road_map, 0);
+	if (road_size.x > 0 && road_size.y > 0) {
+		ivec2 road_px = clamp(ivec2(floor(uv * vec2(road_size))), ivec2(0), road_size - ivec2(1));
+		int road_id = int(round(texelFetch(world_map_road_map, road_px, 0).r * 255.0));
+		if (road_id > 128 || biome_id == 6) {
+			return 6;
+		}
+	}
+
+	return normalize_world_map_biome_id(biome_id);
+}
+
 // Resolve a material ID to its texture color
 vec3 resolve_material_color(int mat_id, vec3 col_grass, vec3 col_stone, vec3 col_sand, vec3 col_snow, vec3 col_road, vec3 procedural_col) {
 	bool is_placed = (mat_id >= 100);
@@ -349,7 +383,9 @@ void fragment() {
 			base_color = mix(color_A, color_B, blend);
 		}
 	} else {
-		if (mat_id_A == mat_id_B || abs(blend) < 0.001 || blend > 0.999) {
+		if (world_map_fragment_lookup_enabled && !is_player_placed) {
+			base_color = sample_exact_material_color(sample_world_map_fragment_material(world_pos), weights, uv_pos);
+		} else if (mat_id_A == mat_id_B || abs(blend) < 0.001 || blend > 0.999) {
 			// Single material lookup
 			int mat_id = (blend > 0.999) ? mat_id_B : mat_id_A;
 			base_color = sample_exact_material_color(mat_id, weights, uv_pos);
@@ -359,8 +395,6 @@ void fragment() {
 			vec3 color_B = sample_exact_material_color(mat_id_B, weights, uv_pos);
 			base_color = mix(color_A, color_B, blend);
 		}
-		col_road = triplanar_texture(texture_road, weights, uv_pos).rgb;
-		base_color = apply_world_map_road(base_color, col_road, world_pos);
 	}
 
 	// Slope needed for road and weather effects
@@ -369,7 +403,7 @@ void fragment() {
 	// === Slope-based Cliff Rock (visual enhancement, not material change) ===
 	// Only apply to SURFACE cliffs (above threshold). Underground shows raw materials.
 	// This ensures players can see stone, ore, etc. when mining underground.
-	if (cliff_rock_enabled && !is_player_placed && mat_id_A != 6 && mat_id_B != 6) {
+	if (cliff_rock_enabled && !use_world_map && !is_player_placed && mat_id_A != 6 && mat_id_B != 6) {
 		// Height-based surface check with smooth transition
 		float surface_blend = smoothstep(surface_cliff_threshold - 2.0, surface_cliff_threshold + 2.0, world_pos.y);
 		float cliff_mix = (1.0 - smoothstep(0.5, 0.7, slope)) * surface_blend;

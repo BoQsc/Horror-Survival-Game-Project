@@ -8,6 +8,7 @@ class_name WorldMapGenerator
 const PrefabGeometry = preload("res://world_building_system/prefab_geometry.gd")
 const FoundationSupport = preload("res://world_building_system/foundation_support.gd")
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 
 const MAP_SIZE: int = 2048  # 1 pixel = 1 meter
 
@@ -75,11 +76,6 @@ var _height_noise: FastNoiseLite
 var _biome_noise: FastNoiseLite
 var _road_height_noise: FastNoiseLite
 var _lake_noise: FastNoiseLite
-
-enum MaterialID {
-	GRASS = 0, STONE = 1, ORE = 2, SAND = 3,
-	GRAVEL = 4, SNOW = 5, ROAD = 6, GRANITE = 9
-}
 
 func _init_noise() -> void:
 	_height_noise = FastNoiseLite.new()
@@ -161,10 +157,10 @@ func generate_world() -> Dictionary:
 			var h = terrain_height + (h_raw * 0.5 + 0.5) * terrain_height
 			height_bytes[idx] = _encode_height_byte(h, max_h)
 			var bv = _biome_noise.get_noise_2d(wx, wz)
-			var biome: int = MaterialID.GRASS
-			if bv < -0.2: biome = MaterialID.SAND
-			elif bv > 0.6: biome = MaterialID.SNOW
-			elif bv > 0.2: biome = MaterialID.GRAVEL
+			var biome: int = MaterialRegistry.GRASS
+			if bv < -0.2: biome = MaterialRegistry.SAND
+			elif bv > 0.6: biome = MaterialRegistry.SNOW
+			elif bv > 0.2: biome = MaterialRegistry.GRAVEL
 			biome_bytes[idx] = biome
 	generation_profile["height_biome_ms"] = float(Time.get_ticks_usec() - height_biome_start_us) / 1000.0
 
@@ -1118,7 +1114,7 @@ func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_byte
 					var h_byte = _encode_height_byte(r_height, max_h)
 					road_bytes[ridx] = 255
 					road_bytes[ridx + 1] = r_height_byte
-					biome_bytes[idx] = MaterialID.ROAD
+					biome_bytes[idx] = MaterialRegistry.ROAD
 					height_bytes[idx] = h_byte
 				else:
 					# Blend zone — smooth lerp from road height to terrain height
@@ -1167,7 +1163,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 					var r_height_byte = int(clampf(path_y / 64.0, 0.0, 1.0) * 255.0)
 					road_bytes[ridx] = max(road_bytes[ridx], 196)
 					road_bytes[ridx + 1] = max(road_bytes[ridx + 1], r_height_byte)
-					biome_bytes[idx] = MaterialID.ROAD
+					biome_bytes[idx] = MaterialRegistry.ROAD
 					height_bytes[idx] = h_byte
 				else:
 					var blend_t = clampf((dist - half_w_local) / max(0.001, flatten_local - half_w_local), 0.0, 1.0)
@@ -2764,7 +2760,7 @@ func _generate_grid_roads(height_bytes: PackedByteArray, biome_bytes: PackedByte
 					
 					if min_dist < half_road_w:
 						is_road_byte = 255
-						biome_bytes[idx] = MaterialID.ROAD
+						biome_bytes[idx] = MaterialRegistry.ROAD
 						height_bytes[idx] = _encode_height_byte(r_height, max_h)
 					else:
 						var t = clampf((min_dist - flat_zone_end) / (flatten_width - flat_zone_end), 0.0, 1.0)
@@ -2924,6 +2920,7 @@ func save_world(path: String, images: Dictionary) -> bool:
 		"use_grid_roads": use_grid_roads,
 		"deep_lakes_enabled": deep_lakes_enabled,
 		WorldMapData.get_world_meta_building_placement_schema_key(): WorldMapData.get_world_meta_default_building_placement_schema(),
+		WorldMapData.get_world_meta_biome_material_schema_key(): WorldMapData.get_world_meta_default_biome_material_schema(),
 		"created": Time.get_datetime_string_from_system(),
 	}
 	if images.has("buildings"):

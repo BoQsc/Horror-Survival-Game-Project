@@ -2,7 +2,7 @@
 extends SceneTree
 
 func _init() -> void:
-var WorldMapGen = load("res://world_map_generator/world_map_generator.gd")
+	var WorldMapGen = load("res://world_map_generator/world_map_generator.gd")
 	if not WorldMapGen:
 		quit()
 		return

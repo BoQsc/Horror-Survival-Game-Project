@@ -106,6 +106,22 @@ vec2 sample_world_road(vec2 world_xz) {
     return vec2(r, g);
 }
 
+uint normalize_world_biome_material(uint biome_id) {
+    if (biome_id == 0u || biome_id == 3u || biome_id == 4u || biome_id == 5u) {
+        return biome_id;
+    }
+    return 0u;
+}
+
+uint sample_world_surface_material(vec2 world_xz, float depth) {
+    uint biome_id = sample_world_biome(world_xz);
+    vec2 road_data = sample_world_road(world_xz);
+    if ((road_data.x > 128.0 || biome_id == 6u) && depth < 2.0) {
+        return 6u;
+    }
+    return normalize_world_biome_material(biome_id);
+}
+
 // === Noise Functions ===
 float hash(vec3 p) {
     p = fract(p * 0.3183099 + .1);
@@ -272,16 +288,7 @@ uint get_material(vec3 pos, float terrain_height_at_pos, float road_dist, float 
             return 1u;
         }
         // Check road buffer — roads override biome (only top 2 blocks, like procedural mode)
-        vec2 road_data = sample_world_road(world_pos.xz);
-        if (road_data.x > 128.0 && depth < 2.0) {
-            return 6u;  // Road (asphalt)
-        }
-        // Biome: use same GPU fbm() as procedural mode for perfect shader alignment
-        float biome_val = fbm(world_pos.xz * 0.002);
-        if (biome_val < -0.2) return 3u;      // Sand
-        if (biome_val > 0.6) return 5u;        // Snow
-        if (biome_val > 0.2) return 4u;        // Gravel
-        return 0u;                              // Grass
+        return sample_world_surface_material(world_pos.xz, depth);
     }
     
     // === PROCEDURAL MODE ===

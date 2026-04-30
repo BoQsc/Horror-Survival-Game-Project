@@ -929,6 +929,11 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 
 ## Get biome ID at world position (must match gen_density.glsl)
 func _get_biome_at(world_x: float, world_z: float) -> int:
+	if terrain_manager and terrain_manager.has_method("get_surface_material_at"):
+		var terrain_biome := int(terrain_manager.get_surface_material_at(world_x, world_z, false))
+		if terrain_biome >= 0:
+			return terrain_biome
+
 	if not biome_noise:
 		return 0 # Default grass
 	

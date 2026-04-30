@@ -17,11 +17,11 @@ Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 wi
 [TOWN_STALL_TEST] Baked building persistence smoke: OFF
 [TOWN_STALL_TEST] Disable entities: OFF
 [TOWN_STALL_TEST] Repeat entry: OFF
-[TOWN_STALL_TEST] Hold seconds: 20.0
-[TOWN_STALL_TEST] Machine state: Intel(R) Core(TM) i5-7300HQ CPU @ 2.50GHz | current=2501 MHz max=2501 MHz freq=2501 MHz perf=100% max=100% load=21% eff~2501 MHz thermal=unavailable
-[TOWN_STALL_TEST] Warmup note: Machine warmup gate disabled via env.
+[TOWN_STALL_TEST] Hold seconds: 40.0
+[TOWN_STALL_TEST] Machine state: Intel(R) Core(TM) i5-7300HQ CPU @ 2.50GHz | current=2400 MHz max=2501 MHz freq=2400 MHz perf=95% max=95% load=60% eff~2280 MHz thermal=unavailable
+[TOWN_STALL_TEST] Warmup note: Machine held at baseline for 3 consecutive samples before benchmark start (61.5s, 4 samples).
 [TOWN_STALL_TEST] Generating world seed 12345...
-[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_37497
+[TOWN_STALL_TEST] World saved to user://worlds/town_stall_12345_44342
 [TOWN_STALL_TEST] Selected town: x=374.0 z=-298.0 buildings=72 radius=71.0
 [TOWN_STALL_TEST] Removed helper node: DebugTeleporter
 [TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...
@@ -31,65 +31,3 @@ Vulkan 1.3.289 - Forward+ - Using Device #0: NVIDIA - NVIDIA GeForce GTX 1060 wi
 [TOWN_STALL_TEST] Auto fly reached target, starting hold
 [TOWN_STALL_TEST] Hold started
 [TOWN_STALL_TEST] Hold complete, quitting
-ERROR: 8 RID allocations of type 'P11JoltShape3D' were leaked at exit.
-ERROR: 119 RID allocations of type 'P10JoltBody3D' were leaked at exit.
-ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceSurfaceDataCacheE
-   at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
-ERROR: Pages in use exist at exit in PagedAllocator: N33RendererSceneRenderImplementation22RenderForwardClustered32GeometryInstanceForwardClusteredE
-   at: ~PagedAllocator (./core/templates/paged_allocator.h:169)
-ERROR: 2 shaders of type SceneForwardClusteredShaderRD were never freed
-   at: ~ShaderRD (servers/rendering/renderer_rd/shader_rd.cpp:1056)
-ERROR: 4 RID allocations of type 'N10RendererRD11MeshStorage8SkeletonE' were leaked at exit.
-ERROR: 19 RID allocations of type 'N10RendererRD11MeshStorage4MeshE' were leaked at exit.
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-ERROR: 4 RID allocations of type 'N10RendererRD15MaterialStorage8MaterialE' were leaked at exit.
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-WARNING: Leaked instance dependency: Bug - did not call instance_notify_deleted when freeing.
-   at: ~Dependency (servers/rendering/storage/utilities.cpp:56)
-ERROR: 2 RID allocations of type 'N10RendererRD15MaterialStorage6ShaderE' were leaked at exit.
-ERROR: 12 RID allocations of type 'N10RendererRD14TextureStorage7TextureE' were leaked at exit.
-ERROR: 35 RID allocations of type 'N17RendererSceneCull8InstanceE' were leaked at exit.
-WARNING: 4 RIDs of type "StorageBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 4 RIDs of type "UniformBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 49 RIDs of type "IndexArray" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 49 RIDs of type "IndexBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 18 RIDs of type "VertexArray" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 32 RIDs of type "VertexBuffer" were leaked.
-   at: _free_rids (servers/rendering/rendering_device.cpp:7295)
-WARNING: 20 RIDs of type "Texture" were leaked.
-   at: finalize (servers/rendering/rendering_device.cpp:7505)
-WARNING: ObjectDB instances leaked at exit (run with --verbose for details).
-   at: cleanup (core/object/object.cpp:2641)
-ERROR: 50 resources still in use at exit (run with --verbose for details).
-   at: clear (core/io/resource.cpp:810)
