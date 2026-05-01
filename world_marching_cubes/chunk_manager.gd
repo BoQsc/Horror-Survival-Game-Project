@@ -15,6 +15,8 @@ const EXCAVATION_MASK_UINT_COUNT = int(ceil(float(EXCAVATION_MASK_POINT_COUNT) /
 const EXCAVATION_MASK_BYTE_COUNT = EXCAVATION_MASK_UINT_COUNT * 4
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
+const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
+const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 
 # Y-layer limits for vertical chunk stacking
 const MIN_Y_LAYER = -20 # How deep you can dig (in chunk layers)
@@ -189,6 +191,7 @@ var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
 @export_range(1, 64, 1) var terrain_unload_budget_per_frame: int = 8
 @export_range(0, 5, 1) var terrain_hot_frame_backoff_frames: int = 2
+@export_range(0, 60, 1) var render_resource_prewarm_frames: int = 12
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
@@ -222,6 +225,8 @@ var _last_world_map_lod_outer_distance: int = -1
 var _last_world_map_lod_update_ms: float = 0.0
 var _last_world_map_lod_loads: int = 0
 var _last_world_map_lod_unloads: int = 0
+var _render_resource_prewarm_started: bool = false
+var _render_resource_prewarm_node: Node = null
 
 
 # Persistent modification storage - survives chunk unloading
@@ -361,6 +366,8 @@ func _ready():
 		if loaded.has("water"):
 			_world_map_water_image = loaded.water
 
+	_start_render_resource_prewarm()
+
 	# Start GPU thread
 	compute_thread = Thread.new()
 	compute_thread.start(_thread_function)
@@ -458,8 +465,47 @@ func get_telemetry_snapshot() -> Dictionary:
 		"world_map_building_count": _world_map_buildings.size(),
 		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
 		"world_map_excavation_buffer_count": _world_map_excavation_buffers.size(),
+		"render_resource_prewarm_started": _render_resource_prewarm_started,
+		"render_resource_prewarm_active": _is_render_resource_prewarm_active(),
+		"render_resource_prewarm_frames_remaining": _get_render_resource_prewarm_frames_remaining(),
 		"native_backends_ready": _native_backends_ready
 	}
+
+func _start_render_resource_prewarm() -> void:
+	if render_resource_prewarm_frames <= 0 or _render_resource_prewarm_started:
+		return
+
+	_render_resource_prewarm_started = true
+	var materials: Array = []
+	_append_render_prewarm_material(materials, material_terrain)
+	_append_render_prewarm_material(materials, material_water)
+	if world_map_active:
+		_append_render_prewarm_material(materials, _get_world_map_lod_material())
+	_append_render_prewarm_material(materials, BuildingVisuals.get_shared_wood_block_material())
+	_append_render_prewarm_material(materials, BuildingVisuals.get_shared_building_material())
+
+	if materials.is_empty():
+		return
+
+	var prewarmer: Node = RenderResourcePrewarm.new()
+	prewarmer.name = "RenderResourcePrewarm"
+	add_child(prewarmer)
+	_render_resource_prewarm_node = prewarmer
+	prewarmer.configure(materials, render_resource_prewarm_frames)
+
+func _append_render_prewarm_material(materials: Array, material: Material) -> void:
+	if material and not materials.has(material):
+		materials.append(material)
+
+func _is_render_resource_prewarm_active() -> bool:
+	return _render_resource_prewarm_node != null and is_instance_valid(_render_resource_prewarm_node)
+
+func _get_render_resource_prewarm_frames_remaining() -> int:
+	if not _is_render_resource_prewarm_active():
+		return 0
+	if not _render_resource_prewarm_node.has_method("get_frames_remaining"):
+		return 0
+	return int(_render_resource_prewarm_node.get_frames_remaining())
 
 
 ## Gets the effective viewer position for chunk loading.
