@@ -2,13 +2,16 @@ extends Node
 
 const PREWARM_VIEWPORT_SIZE := Vector2i(128, 128)
 const DEFAULT_PREWARM_FRAMES := 12
+const PREWARM_GRID_COLUMNS := 6
+const PREWARM_GRID_SPACING := 1.8
 
 var _viewport: SubViewport = null
 var _frames_remaining: int = DEFAULT_PREWARM_FRAMES
 
-func configure(materials: Array, frames: int = DEFAULT_PREWARM_FRAMES) -> void:
+func configure(materials: Array, frames: int = DEFAULT_PREWARM_FRAMES, mesh_entries: Array = []) -> void:
 	var unique_materials := _unique_materials(materials)
-	if unique_materials.is_empty():
+	var unique_mesh_entries := _unique_mesh_entries(mesh_entries)
+	if unique_materials.is_empty() and unique_mesh_entries.is_empty():
 		queue_free()
 		return
 
@@ -42,13 +45,27 @@ func configure(materials: Array, frames: int = DEFAULT_PREWARM_FRAMES) -> void:
 	var box_mesh := BoxMesh.new()
 	box_mesh.size = Vector3(1.0, 1.0, 1.0)
 
+	var slot_index := 0
 	for index in range(unique_materials.size()):
 		var material: Material = unique_materials[index]
-		var column := index % 4
-		var row := index / 4
-		var position := Vector3(float(column) * 1.8 - 2.7, float(row) * -1.5 + 1.5, 0.0)
-		_add_mesh_instance(root, surface_mesh, material, position)
-		_add_multimesh_instance(root, box_mesh, material, position + Vector3(0.0, 0.0, -1.6))
+		var position := _slot_position(slot_index)
+		_add_mesh_instance(root, surface_mesh, material, Transform3D(Basis(), position), "PrewarmMaterialMesh")
+		_add_multimesh_instance(root, box_mesh, material, Transform3D(Basis(), position + Vector3(0.0, 0.0, -1.6)), "PrewarmMaterialMultiMesh")
+		slot_index += 1
+
+	for mesh_entry_variant in unique_mesh_entries:
+		var mesh_entry: Dictionary = mesh_entry_variant
+		var mesh: Mesh = mesh_entry.get("mesh", null)
+		if not mesh:
+			continue
+
+		var source_transform: Transform3D = mesh_entry.get("transform", Transform3D.IDENTITY)
+		var position := _slot_position(slot_index)
+		var mesh_transform := _mesh_slot_transform(mesh, position, source_transform)
+		var multimesh_transform := _mesh_slot_transform(mesh, position + Vector3(0.0, 0.0, -1.6), source_transform)
+		_add_mesh_instance(root, mesh, null, mesh_transform, "PrewarmResourceMesh")
+		_add_multimesh_instance(root, mesh, null, multimesh_transform, "PrewarmResourceMultiMesh")
+		slot_index += 1
 
 func _process(_delta: float) -> void:
 	_frames_remaining -= 1
@@ -72,27 +89,101 @@ func _unique_materials(materials: Array) -> Array:
 			unique.append(material)
 	return unique
 
-func _add_mesh_instance(parent: Node3D, mesh: Mesh, material: Material, position: Vector3) -> void:
+func _unique_mesh_entries(mesh_entries: Array) -> Array:
+	var unique: Array = []
+	var unique_meshes: Array = []
+	for entry_variant in mesh_entries:
+		var mesh: Mesh = null
+		var transform := Transform3D.IDENTITY
+
+		if entry_variant is Mesh:
+			mesh = entry_variant as Mesh
+		elif entry_variant is Dictionary:
+			var mesh_entry: Dictionary = entry_variant
+			mesh = mesh_entry.get("mesh", null)
+			var transform_variant = mesh_entry.get("transform", Transform3D.IDENTITY)
+			if typeof(transform_variant) == TYPE_TRANSFORM3D:
+				transform = transform_variant
+
+		if mesh and not unique_meshes.has(mesh):
+			unique_meshes.append(mesh)
+			unique.append({
+				"mesh": mesh,
+				"transform": transform
+			})
+	return unique
+
+func _slot_position(slot_index: int) -> Vector3:
+	var column := slot_index % PREWARM_GRID_COLUMNS
+	var row := slot_index / PREWARM_GRID_COLUMNS
+	var horizontal_origin := -float(PREWARM_GRID_COLUMNS - 1) * PREWARM_GRID_SPACING * 0.5
+	return Vector3(
+		horizontal_origin + float(column) * PREWARM_GRID_SPACING,
+		1.5 - float(row) * 1.5,
+		0.0
+	)
+
+func _add_mesh_instance(parent: Node3D, mesh: Mesh, material: Material, transform: Transform3D, node_name: String) -> void:
 	var instance := MeshInstance3D.new()
-	instance.name = "PrewarmMesh"
+	instance.name = node_name
 	instance.mesh = mesh
-	instance.position = position
-	instance.material_override = material
+	instance.transform = transform
+	if material:
+		instance.material_override = material
 	parent.add_child(instance)
 
-func _add_multimesh_instance(parent: Node3D, mesh: Mesh, material: Material, position: Vector3) -> void:
+func _add_multimesh_instance(parent: Node3D, mesh: Mesh, material: Material, transform: Transform3D, node_name: String) -> void:
 	var multimesh := MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	multimesh.mesh = mesh
 	multimesh.instance_count = 2
-	multimesh.set_instance_transform(0, Transform3D(Basis(), position))
-	multimesh.set_instance_transform(1, Transform3D(Basis().scaled(Vector3(0.6, 0.6, 0.6)), position + Vector3(0.8, 0.0, 0.0)))
+	multimesh.set_instance_transform(0, transform)
+
+	var second_transform := transform
+	second_transform.origin += Vector3(0.8, 0.0, 0.0)
+	second_transform.basis = second_transform.basis.scaled(Vector3(0.6, 0.6, 0.6))
+	multimesh.set_instance_transform(1, second_transform)
 
 	var instance := MultiMeshInstance3D.new()
-	instance.name = "PrewarmMultiMesh"
+	instance.name = node_name
 	instance.multimesh = multimesh
-	instance.material_override = material
+	if material:
+		instance.material_override = material
 	parent.add_child(instance)
+
+func _mesh_slot_transform(mesh: Mesh, position: Vector3, source_transform: Transform3D) -> Transform3D:
+	var bounds := _mesh_transformed_aabb(mesh, source_transform)
+	var max_size := maxf(maxf(bounds.size.x, bounds.size.y), bounds.size.z)
+	if max_size <= 0.001:
+		return Transform3D(Basis(), position) * source_transform
+
+	var fit_scale := clampf(1.2 / max_size, 0.05, 4.0)
+	var bounds_center := bounds.position + bounds.size * 0.5
+	var fit_transform := Transform3D(
+		Basis().scaled(Vector3(fit_scale, fit_scale, fit_scale)),
+		-bounds_center * fit_scale
+	)
+	return Transform3D(Basis(), position) * fit_transform * source_transform
+
+func _mesh_transformed_aabb(mesh: Mesh, transform: Transform3D) -> AABB:
+	var source_aabb := mesh.get_aabb()
+	var min_corner := source_aabb.position
+	var max_corner := source_aabb.position + source_aabb.size
+	var corners := PackedVector3Array([
+		Vector3(min_corner.x, min_corner.y, min_corner.z),
+		Vector3(max_corner.x, min_corner.y, min_corner.z),
+		Vector3(min_corner.x, max_corner.y, min_corner.z),
+		Vector3(max_corner.x, max_corner.y, min_corner.z),
+		Vector3(min_corner.x, min_corner.y, max_corner.z),
+		Vector3(max_corner.x, min_corner.y, max_corner.z),
+		Vector3(min_corner.x, max_corner.y, max_corner.z),
+		Vector3(max_corner.x, max_corner.y, max_corner.z)
+	])
+
+	var bounds := AABB(transform * corners[0], Vector3.ZERO)
+	for i in range(1, corners.size()):
+		bounds = bounds.expand(transform * corners[i])
+	return bounds
 
 func _create_representative_surface_mesh() -> ArrayMesh:
 	var vertices := PackedVector3Array([

@@ -3,6 +3,7 @@ class_name VegetationManager
 
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 const GLOBAL_VEGETATION_RENDER_AABB := AABB(Vector3(-4096.0, -128.0, -4096.0), Vector3(8192.0, 512.0, 8192.0))
+const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 
 
 signal tree_chopped(world_position: Vector3)
@@ -20,6 +21,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var collider_distance: float = 30.0 # Only trees within this distance get colliders
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
 @export var global_render_batches_enabled: bool = true
+@export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
 
 # Grass settings
 @export var grass_model_path: String = "res://models/grass/2/grass_lowpoly.glb"
@@ -110,6 +112,8 @@ var _last_global_render_sync_kind: String = ""
 var _global_tree_render_instance_count: int = 0
 var _global_grass_render_instance_count: int = 0
 var _global_rock_render_instance_count: int = 0
+var _vegetation_render_resource_prewarm_node: Node = null
+var _vegetation_render_resource_prewarm_mesh_count: int = 0
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
@@ -160,7 +164,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_rock_render_instances": _global_rock_render_instance_count,
 		"global_render_dirty_kinds": _get_global_render_dirty_kinds(),
 		"last_global_render_sync_ms": _last_global_render_sync_ms,
-		"last_global_render_sync_kind": _last_global_render_sync_kind
+		"last_global_render_sync_kind": _last_global_render_sync_kind,
+		"vegetation_render_prewarm_frames": vegetation_render_prewarm_frames,
+		"vegetation_render_prewarm_mesh_count": _vegetation_render_resource_prewarm_mesh_count,
+		"vegetation_render_prewarm_active": _is_vegetation_render_resource_prewarm_active(),
+		"vegetation_render_prewarm_frames_remaining": _get_vegetation_render_resource_prewarm_frames_remaining()
 	}
 
 
@@ -172,9 +180,52 @@ func _get_native_helper() -> Object:
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
 
+func _start_vegetation_render_resource_prewarm() -> void:
+	if vegetation_render_prewarm_frames <= 0 or _is_vegetation_render_resource_prewarm_active():
+		return
+
+	var mesh_entries := _collect_vegetation_render_resource_prewarm_entries()
+	_vegetation_render_resource_prewarm_mesh_count = mesh_entries.size()
+	if mesh_entries.is_empty():
+		return
+
+	var prewarmer: Node = RenderResourcePrewarm.new()
+	prewarmer.name = "VegetationRenderResourcePrewarm"
+	add_child(prewarmer)
+	_vegetation_render_resource_prewarm_node = prewarmer
+	prewarmer.configure([], vegetation_render_prewarm_frames, mesh_entries)
+
+func _collect_vegetation_render_resource_prewarm_entries() -> Array:
+	var entries: Array = []
+	var unique_meshes: Array = []
+	_append_vegetation_render_resource_prewarm_entry(entries, unique_meshes, tree_mesh, tree_base_transform)
+	_append_vegetation_render_resource_prewarm_entry(entries, unique_meshes, grass_mesh, grass_base_transform)
+	_append_vegetation_render_resource_prewarm_entry(entries, unique_meshes, rock_mesh, rock_base_transform)
+	return entries
+
+func _append_vegetation_render_resource_prewarm_entry(entries: Array, unique_meshes: Array, mesh: Mesh, transform: Transform3D) -> void:
+	if not mesh or unique_meshes.has(mesh):
+		return
+	unique_meshes.append(mesh)
+	entries.append({
+		"mesh": mesh,
+		"transform": transform
+	})
+
+func _is_vegetation_render_resource_prewarm_active() -> bool:
+	return _vegetation_render_resource_prewarm_node != null and is_instance_valid(_vegetation_render_resource_prewarm_node)
+
+func _get_vegetation_render_resource_prewarm_frames_remaining() -> int:
+	if not _is_vegetation_render_resource_prewarm_active():
+		return 0
+	if not _vegetation_render_resource_prewarm_node.has_method("get_frames_remaining"):
+		return 0
+	return int(_vegetation_render_resource_prewarm_node.get_frames_remaining())
+
 
 func _exit_tree() -> void:
 	clear_all_data(true)
+	_vegetation_render_resource_prewarm_node = null
 	_native_helper = null
 
 
@@ -570,6 +621,8 @@ func _ready():
 	else:
 		push_warning("Failed to load rock model, using basic mesh")
 		rock_mesh = create_basic_rock_mesh()
+
+	_start_vegetation_render_resource_prewarm()
 
 	# Initialize noise generators with current seed
 	initialize_noise()

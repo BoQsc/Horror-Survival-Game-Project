@@ -19,6 +19,8 @@ const AUTO_FLY_ENTRY_CAPTURE_BUFFER := 64.0
 const FRAME_BUDGET_MS := 1000.0 / 60.0
 const TOWN_ENTRY_WINDOW_RECENT_LIMIT := 10
 const PERFORMANCE_SNAPSHOT_DIR := "user://debug/performance"
+const RENDER_DIAGNOSTIC_DEFAULT_LIMIT := 48
+const PEAK_ENTRY_SAMPLE_LIMIT := 12
 
 enum Phase {
 	GENERATING,
@@ -54,6 +56,9 @@ var _scope_states: Dictionary = {}
 var _recent_scope_events: Array[Dictionary] = []
 var _town_entry_latest_town_state: Dictionary = {}
 var _town_entry_latest_entities_state: Dictionary = {}
+var _previous_native_town_entry_sample: Dictionary = {}
+var _render_diagnostic_samples: Array[Dictionary] = []
+var runtime_mode: String = "unknown"
 var auto_teleport_enabled: bool = true
 var disable_buildings_enabled: bool = false
 var disable_building_objects_enabled: bool = false
@@ -75,6 +80,10 @@ var baked_building_persistence_smoke_load_success: bool = false
 var baked_building_persistence_smoke_load_path: String = ""
 var disable_entities_enabled: bool = false
 var repeat_entry_enabled: bool = false
+var render_diagnostics_enabled: bool = false
+var render_diagnostics_scene_scan_enabled: bool = false
+var render_diagnostics_threshold_ms: float = FRAME_BUDGET_MS
+var render_diagnostics_sample_limit: int = RENDER_DIAGNOSTIC_DEFAULT_LIMIT
 var configured_hold_seconds: float = HOLD_SECONDS
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
@@ -229,6 +238,8 @@ func _emit_scope_event(scope: String, event_name: String, payload: Dictionary) -
 
 func _reset_town_measurement_window(reason: String) -> void:
 	_town_entry_samples.clear()
+	_previous_native_town_entry_sample.clear()
+	_render_diagnostic_samples.clear()
 	_scope_states.clear()
 	_recent_scope_events.clear()
 	_town_entry_snapshot_stamp = ""
@@ -253,28 +264,33 @@ func _get_current_frame_number() -> int:
 	return _town_entry_samples.size() + 1
 
 
-func _capture_native_town_entry_sample() -> void:
+func _capture_native_town_entry_sample(delta: float) -> void:
 	if not town_entry_capture_started or pending_quit:
 		return
 
-	var sample := _build_native_town_entry_sample()
+	var sample := _build_native_town_entry_sample(delta)
 	if sample.is_empty():
 		return
 
+	_enrich_sample_with_previous_delta(sample)
 	_town_entry_samples.append(sample)
+	_capture_render_diagnostic_sample(sample)
+	_previous_native_town_entry_sample = sample.duplicate(false)
 
 
-func _build_native_town_entry_sample() -> Dictionary:
+func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var frame_number := _get_current_frame_number()
 	var fps := float(Performance.get_monitor(Performance.TIME_FPS))
-	var total_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+	var total_ms := maxf(delta * 1000.0, 0.0)
+	var process_monitor_ms := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
 	var physics_ms := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
 	var navigation_ms := Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0
 	var draw_calls := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 	var objects := int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))
 	var vram_mb := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / (1024.0 * 1024.0)
-	var other_ms := maxf(0.0, total_ms - physics_ms - navigation_ms)
-	var top_measure := _resolve_native_top_measure(total_ms, physics_ms, navigation_ms, other_ms, draw_calls)
+	var monitor_sum_ms := process_monitor_ms + physics_ms + navigation_ms
+	var other_ms := maxf(0.0, total_ms - monitor_sum_ms)
+	var top_measure := _resolve_native_top_measure(total_ms, process_monitor_ms, physics_ms, navigation_ms, other_ms, draw_calls)
 	var terrain_active_chunk_count := 0
 	var terrain_pending_node_count := 0
 	var terrain_pending_collision_create_count := 0
@@ -282,6 +298,11 @@ func _build_native_town_entry_sample() -> Dictionary:
 	var terrain_last_pending_node_process_ms := 0.0
 	var terrain_last_collision_create_ms := 0.0
 	var terrain_last_collision_create_count := 0
+	var terrain_last_update_loads := 0
+	var terrain_last_update_unloads := 0
+	var terrain_last_world_map_lod_loads := 0
+	var terrain_last_world_map_lod_unloads := 0
+	var terrain_last_world_map_lod_update_ms := 0.0
 	var building_dirty_visible_chunk_count := 0
 	var building_last_flush_dirty_chunks_ms := 0.0
 	var building_last_apply_payload_ms := 0.0
@@ -291,6 +312,13 @@ func _build_native_town_entry_sample() -> Dictionary:
 	var building_pending_baked_object_spawns := 0
 	var building_last_baked_object_spawn_queue_ms := 0.0
 	var building_last_baked_object_spawn_queue_count := 0
+	var building_last_visibility_update_ms := 0.0
+	var building_last_visibility_added := 0
+	var building_last_visibility_removed := 0
+	var building_last_visibility_target_visible := 0
+	var building_last_visibility_total_roots := 0
+	var building_visible_baked_visual_nodes := 0
+	var building_visible_baked_visual_surfaces := 0
 	var prefab_pending_baked_payload_jobs := 0
 	var prefab_last_baked_payload_apply_ms := 0.0
 	var prefab_last_baked_payload_apply_count := 0
@@ -311,6 +339,11 @@ func _build_native_town_entry_sample() -> Dictionary:
 		terrain_last_pending_node_process_ms = float(terrain_manager._last_pending_node_process_ms)
 		terrain_last_collision_create_ms = float(terrain_manager._last_terrain_collision_create_ms)
 		terrain_last_collision_create_count = int(terrain_manager._last_terrain_collision_create_count)
+		terrain_last_update_loads = int(terrain_manager._last_update_loads)
+		terrain_last_update_unloads = int(terrain_manager._last_update_unloads)
+		terrain_last_world_map_lod_loads = int(terrain_manager._last_world_map_lod_loads)
+		terrain_last_world_map_lod_unloads = int(terrain_manager._last_world_map_lod_unloads)
+		terrain_last_world_map_lod_update_ms = float(terrain_manager._last_world_map_lod_update_ms)
 	if not is_instance_valid(building_manager):
 		building_manager = _find_manager_node("building_manager", "BuildingManager")
 	if is_instance_valid(building_manager):
@@ -323,6 +356,13 @@ func _build_native_town_entry_sample() -> Dictionary:
 		building_pending_baked_object_spawns = int(building_manager._pending_world_map_baked_object_spawns.size())
 		building_last_baked_object_spawn_queue_ms = float(building_manager._last_world_map_baked_object_spawn_queue_ms)
 		building_last_baked_object_spawn_queue_count = int(building_manager._last_world_map_baked_object_spawn_queue_count)
+		building_last_visibility_update_ms = float(building_manager._last_world_map_baked_visibility_update_ms)
+		building_last_visibility_added = int(building_manager._last_world_map_baked_visibility_added)
+		building_last_visibility_removed = int(building_manager._last_world_map_baked_visibility_removed)
+		building_last_visibility_target_visible = int(building_manager._last_world_map_baked_visibility_target_visible)
+		building_last_visibility_total_roots = int(building_manager._last_world_map_baked_visibility_total_roots)
+		building_visible_baked_visual_nodes = int(building_manager._count_visible_world_map_baked_building_visual_nodes())
+		building_visible_baked_visual_surfaces = int(building_manager._count_visible_world_map_baked_building_visual_surfaces())
 	var prefab_spawner_node := _find_manager_node("prefab_spawner", "PrefabSpawner")
 	if is_instance_valid(prefab_spawner_node):
 		prefab_pending_baked_payload_jobs = int(prefab_spawner_node._pending_world_map_baked_building_payloads.size())
@@ -345,6 +385,10 @@ func _build_native_town_entry_sample() -> Dictionary:
 		"frame": frame_number,
 		"fps": fps,
 		"total_ms": total_ms,
+		"frame_delta_ms": total_ms,
+		"process_monitor_ms": process_monitor_ms,
+		"monitor_sum_ms": monitor_sum_ms,
+		"monitor_exceeds_frame_ms": maxf(0.0, monitor_sum_ms - total_ms),
 		"draw_calls": draw_calls,
 		"objects": objects,
 		"physics_ms": physics_ms,
@@ -358,6 +402,11 @@ func _build_native_town_entry_sample() -> Dictionary:
 		"terrain_last_pending_node_process_ms": terrain_last_pending_node_process_ms,
 		"terrain_last_collision_create_ms": terrain_last_collision_create_ms,
 		"terrain_last_collision_create_count": terrain_last_collision_create_count,
+		"terrain_last_update_loads": terrain_last_update_loads,
+		"terrain_last_update_unloads": terrain_last_update_unloads,
+		"terrain_last_world_map_lod_loads": terrain_last_world_map_lod_loads,
+		"terrain_last_world_map_lod_unloads": terrain_last_world_map_lod_unloads,
+		"terrain_last_world_map_lod_update_ms": terrain_last_world_map_lod_update_ms,
 		"building_dirty_visible_chunk_count": building_dirty_visible_chunk_count,
 		"building_last_flush_dirty_chunks_ms": building_last_flush_dirty_chunks_ms,
 		"building_last_apply_payload_ms": building_last_apply_payload_ms,
@@ -367,6 +416,13 @@ func _build_native_town_entry_sample() -> Dictionary:
 		"building_pending_baked_object_spawns": building_pending_baked_object_spawns,
 		"building_last_baked_object_spawn_queue_ms": building_last_baked_object_spawn_queue_ms,
 		"building_last_baked_object_spawn_queue_count": building_last_baked_object_spawn_queue_count,
+		"building_last_visibility_update_ms": building_last_visibility_update_ms,
+		"building_last_visibility_added": building_last_visibility_added,
+		"building_last_visibility_removed": building_last_visibility_removed,
+		"building_last_visibility_target_visible": building_last_visibility_target_visible,
+		"building_last_visibility_total_roots": building_last_visibility_total_roots,
+		"building_visible_baked_visual_nodes": building_visible_baked_visual_nodes,
+		"building_visible_baked_visual_surfaces": building_visible_baked_visual_surfaces,
 		"prefab_pending_baked_payload_jobs": prefab_pending_baked_payload_jobs,
 		"prefab_last_baked_payload_apply_ms": prefab_last_baked_payload_apply_ms,
 		"prefab_last_baked_payload_apply_count": prefab_last_baked_payload_apply_count,
@@ -385,13 +441,139 @@ func _build_native_town_entry_sample() -> Dictionary:
 		"top_measure_pct": float(top_measure.get("pct", 0.0))
 	}
 
+func _enrich_sample_with_previous_delta(sample: Dictionary) -> void:
+	if _previous_native_town_entry_sample.is_empty():
+		sample["frame_delta"] = 0
+		sample["total_ms_delta"] = 0.0
+		sample["draw_calls_delta"] = 0
+		sample["objects_delta"] = 0
+		sample["vram_mb_delta"] = 0.0
+		return
 
-func _resolve_native_top_measure(total_ms: float, physics_ms: float, navigation_ms: float, other_ms: float, draw_calls: int) -> Dictionary:
+	sample["frame_delta"] = int(sample.get("frame", 0)) - int(_previous_native_town_entry_sample.get("frame", 0))
+	sample["total_ms_delta"] = float(sample.get("total_ms", 0.0)) - float(_previous_native_town_entry_sample.get("total_ms", 0.0))
+	sample["draw_calls_delta"] = int(sample.get("draw_calls", 0)) - int(_previous_native_town_entry_sample.get("draw_calls", 0))
+	sample["objects_delta"] = int(sample.get("objects", 0)) - int(_previous_native_town_entry_sample.get("objects", 0))
+	sample["vram_mb_delta"] = float(sample.get("vram_mb", 0.0)) - float(_previous_native_town_entry_sample.get("vram_mb", 0.0))
+
+
+func _collect_render_monitor_snapshot() -> Dictionary:
+	return {
+		"object_count": int(Performance.get_monitor(Performance.OBJECT_COUNT)),
+		"resource_count": int(Performance.get_monitor(Performance.OBJECT_RESOURCE_COUNT)),
+		"node_count": int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)),
+		"orphan_node_count": int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT)),
+		"render_objects_in_frame": int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)),
+		"render_primitives_in_frame": int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
+		"render_draw_calls_in_frame": int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
+		"render_video_mem_mb": Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / (1024.0 * 1024.0),
+		"render_texture_mem_mb": Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED) / (1024.0 * 1024.0),
+		"render_buffer_mem_mb": Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED) / (1024.0 * 1024.0),
+		"physics_3d_active_objects": int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
+		"physics_3d_collision_pairs": int(Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS)),
+		"physics_3d_islands": int(Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT))
+	}
+
+
+func _collect_render_scene_scan() -> Dictionary:
+	var counts := {
+		"geometry_instances": 0,
+		"visible_geometry_instances": 0,
+		"mesh_instances": 0,
+		"visible_mesh_instances": 0,
+		"multimesh_instances": 0,
+		"visible_multimesh_instances": 0,
+		"terrain_geometry": 0,
+		"building_geometry": 0,
+		"vegetation_geometry": 0,
+		"entity_geometry": 0,
+		"other_geometry": 0
+	}
+	if not is_instance_valid(game_root):
+		return counts
+
+	_scan_render_node(game_root, counts)
+	return counts
+
+
+func _scan_render_node(node: Node, counts: Dictionary) -> void:
+	if node is GeometryInstance3D:
+		var geometry := node as GeometryInstance3D
+		var visible := geometry.is_visible_in_tree()
+		counts["geometry_instances"] = int(counts.get("geometry_instances", 0)) + 1
+		if visible:
+			counts["visible_geometry_instances"] = int(counts.get("visible_geometry_instances", 0)) + 1
+		if geometry is MeshInstance3D:
+			counts["mesh_instances"] = int(counts.get("mesh_instances", 0)) + 1
+			if visible:
+				counts["visible_mesh_instances"] = int(counts.get("visible_mesh_instances", 0)) + 1
+		elif geometry is MultiMeshInstance3D:
+			counts["multimesh_instances"] = int(counts.get("multimesh_instances", 0)) + 1
+			if visible:
+				counts["visible_multimesh_instances"] = int(counts.get("visible_multimesh_instances", 0)) + 1
+
+		var category := _get_render_diagnostic_node_category(geometry)
+		counts["%s_geometry" % category] = int(counts.get("%s_geometry" % category, 0)) + 1
+
+	for child in node.get_children():
+		_scan_render_node(child, counts)
+
+
+func _get_render_diagnostic_node_category(node: Node) -> String:
+	var path_text := str(node.get_path()).to_lower()
+	var name_text := str(node.name).to_lower()
+	if path_text.contains("chunkmanager") or path_text.contains("terrain") or name_text.contains("terrain") or name_text.contains("water"):
+		return "terrain"
+	if path_text.contains("buildingmanager") or name_text.contains("building") or name_text.contains("globalvisualbatch") or name_text.contains("prewarm"):
+		return "building"
+	if path_text.contains("vegetation") or name_text.contains("tree") or name_text.contains("grass") or name_text.contains("rock"):
+		return "vegetation"
+	if path_text.contains("entity") or name_text.contains("zombie") or name_text.contains("enemy"):
+		return "entity"
+	return "other"
+
+
+func _capture_render_diagnostic_sample(sample: Dictionary) -> void:
+	if not render_diagnostics_enabled:
+		return
+	if float(sample.get("total_ms", 0.0)) < render_diagnostics_threshold_ms:
+		return
+
+	var diagnostic := {
+		"sample": sample.duplicate(true),
+		"render_monitor": _collect_render_monitor_snapshot()
+	}
+	if render_diagnostics_scene_scan_enabled:
+		diagnostic["scene_scan"] = _collect_render_scene_scan()
+
+	_render_diagnostic_samples.append(diagnostic)
+	_trim_render_diagnostic_samples()
+
+
+func _trim_render_diagnostic_samples() -> void:
+	while _render_diagnostic_samples.size() > render_diagnostics_sample_limit:
+		var lowest_index := 0
+		var lowest_ms := 1.0e20
+		for index in range(_render_diagnostic_samples.size()):
+			var diagnostic: Dictionary = _render_diagnostic_samples[index]
+			var sample: Dictionary = diagnostic.get("sample", {})
+			var total_ms := float(sample.get("total_ms", 0.0))
+			if total_ms < lowest_ms:
+				lowest_ms = total_ms
+				lowest_index = index
+		_render_diagnostic_samples.remove_at(lowest_index)
+
+
+func _resolve_native_top_measure(total_ms: float, process_monitor_ms: float, physics_ms: float, navigation_ms: float, other_ms: float, draw_calls: int) -> Dictionary:
 	var top_name := "Unmeasured"
 	var top_bucket := "Unmeasured"
 	var top_ms := other_ms
 
-	if physics_ms >= navigation_ms and physics_ms >= other_ms:
+	if process_monitor_ms >= physics_ms and process_monitor_ms >= navigation_ms and process_monitor_ms >= other_ms:
+		top_name = "Engine: Process"
+		top_bucket = top_name
+		top_ms = process_monitor_ms
+	elif physics_ms >= navigation_ms and physics_ms >= other_ms:
 		top_name = "Engine: Physics"
 		top_bucket = top_name
 		top_ms = physics_ms
@@ -400,8 +582,8 @@ func _resolve_native_top_measure(total_ms: float, physics_ms: float, navigation_
 		top_bucket = top_name
 		top_ms = navigation_ms
 	elif draw_calls > 0:
-		top_name = "GPU/Render (%d draws)" % draw_calls
-		top_bucket = "GPU/Render"
+		top_name = "Unattributed/Render Wait (%d draws)" % draw_calls
+		top_bucket = "Unattributed/Render Wait"
 
 	return {
 		"name": top_name,
@@ -440,6 +622,7 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"peak_top_measure_ms": 0.0,
 		"peak_top_measure_pct": 0.0,
 		"peak_entry_sample": {},
+		"peak_entry_samples": [],
 		"stable_top_bucket": "Unknown",
 		"stable_top_bucket_count": 0,
 		"top_bucket_counts": {},
@@ -476,6 +659,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var peak_top_measure_name := "Unknown"
 	var peak_top_measure_ms := 0.0
 	var peak_top_measure_pct := 0.0
+	var peak_entries: Array[Dictionary] = []
 	var frames_over_budget := 0
 	var frames_over_40ms := 0
 	var frames_over_50ms := 0
@@ -512,6 +696,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 			peak_top_measure_name = str(entry.get("top_measure_name", "Unknown"))
 			peak_top_measure_ms = float(entry.get("top_measure_ms", 0.0))
 			peak_top_measure_pct = float(entry.get("top_measure_pct", 0.0))
+		_insert_peak_entry_sample(peak_entries, entry)
 
 		if frame_total_ms >= FRAME_BUDGET_MS:
 			frames_over_budget += 1
@@ -590,6 +775,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"peak_top_measure_ms": peak_top_measure_ms,
 		"peak_top_measure_pct": peak_top_measure_pct,
 		"peak_entry_sample": peak_entry.duplicate(true) if not peak_entry.is_empty() else {},
+		"peak_entry_samples": _duplicate_peak_entry_samples(peak_entries),
 		"stable_top_bucket": str(dominant_bucket.get("bucket", "Unknown")),
 		"stable_top_bucket_count": int(dominant_bucket.get("count", 0)),
 		"top_bucket_counts": bucket_counts,
@@ -597,6 +783,41 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"latest_town_state": _town_entry_latest_town_state.duplicate(true),
 		"latest_entities_state": _town_entry_latest_entities_state.duplicate(true)
 	}
+
+
+func _insert_peak_entry_sample(peak_entries: Array[Dictionary], entry: Dictionary) -> void:
+	if entry.is_empty():
+		return
+
+	peak_entries.append(entry)
+	while peak_entries.size() > PEAK_ENTRY_SAMPLE_LIMIT:
+		var lowest_index := 0
+		var lowest_ms := 1.0e20
+		for index in range(peak_entries.size()):
+			var candidate: Dictionary = peak_entries[index]
+			var candidate_ms := float(candidate.get("total_ms", 0.0))
+			if candidate_ms < lowest_ms:
+				lowest_ms = candidate_ms
+				lowest_index = index
+		peak_entries.remove_at(lowest_index)
+
+
+func _duplicate_peak_entry_samples(peak_entries: Array[Dictionary]) -> Array:
+	var output: Array = []
+	var remaining := peak_entries.duplicate()
+	while not remaining.is_empty():
+		var highest_index := 0
+		var highest_ms := -1.0
+		for index in range(remaining.size()):
+			var candidate: Dictionary = remaining[index]
+			var candidate_ms := float(candidate.get("total_ms", 0.0))
+			if candidate_ms > highest_ms:
+				highest_ms = candidate_ms
+				highest_index = index
+		var selected: Dictionary = remaining[highest_index]
+		output.append(selected.duplicate(true))
+		remaining.remove_at(highest_index)
+	return output
 
 
 func _get_node_telemetry(node: Node) -> Dictionary:
@@ -883,6 +1104,7 @@ func _write_native_town_entry_snapshot() -> void:
 		"town_entry_window": town_window,
 		"latest_town_state": town_window.get("latest_town_state", {}),
 		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {})),
+		"runtime_mode": runtime_mode,
 		"machine_state": _machine_state.duplicate(true) if not _machine_state.is_empty() else {},
 		"warmup_note": str(_machine_state.get("warmup_note", "")),
 		"system_telemetry": system_telemetry,
@@ -893,6 +1115,15 @@ func _write_native_town_entry_snapshot() -> void:
 		snapshot["scope_states"] = _scope_states.duplicate(true)
 	if not _recent_scope_events.is_empty():
 		snapshot["recent_scope_events"] = _recent_scope_events.duplicate(true)
+	if render_diagnostics_enabled:
+		snapshot["render_diagnostics"] = {
+			"enabled": true,
+			"threshold_ms": render_diagnostics_threshold_ms,
+			"scene_scan_enabled": render_diagnostics_scene_scan_enabled,
+			"sample_limit": render_diagnostics_sample_limit,
+			"sample_count": _render_diagnostic_samples.size(),
+			"samples": _render_diagnostic_samples.duplicate(true)
+		}
 
 	_atomic_write_text_file("%ssnapshot_menu_%s.json" % [snapshot_dir, _town_entry_snapshot_stamp], JSON.stringify(snapshot, "\t"))
 
@@ -926,6 +1157,13 @@ func _ready() -> void:
 	baked_building_persistence_smoke_timeout_seconds = _get_positive_env_float("TOWN_STALL_BAKED_BUILDING_PERSISTENCE_TIMEOUT", 60.0)
 	disable_entities_enabled = OS.get_environment("TOWN_STALL_DISABLE_ENTITIES") == "1"
 	repeat_entry_enabled = OS.get_environment("TOWN_STALL_REPEAT_ENTRY") == "1"
+	runtime_mode = OS.get_environment("TOWN_STALL_RUNTIME_MODE").strip_edges()
+	if runtime_mode.is_empty():
+		runtime_mode = "unknown"
+	render_diagnostics_enabled = OS.get_environment("TOWN_STALL_RENDER_DIAGNOSTICS") == "1"
+	render_diagnostics_scene_scan_enabled = OS.get_environment("TOWN_STALL_RENDER_DIAGNOSTIC_SCENE_SCAN") == "1"
+	render_diagnostics_threshold_ms = _get_positive_env_float("TOWN_STALL_RENDER_DIAGNOSTIC_THRESHOLD_MS", FRAME_BUDGET_MS)
+	render_diagnostics_sample_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_LIMIT)
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
@@ -943,6 +1181,13 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Baked building persistence smoke: %s" % ("ON" if baked_building_persistence_smoke_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
+	print("[TOWN_STALL_TEST] Render diagnostics: %s threshold=%.2f scene_scan=%s limit=%d" % [
+		"ON" if render_diagnostics_enabled else "OFF",
+		render_diagnostics_threshold_ms,
+		"ON" if render_diagnostics_scene_scan_enabled else "OFF",
+		render_diagnostics_sample_limit
+	])
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
 	_machine_state = _parse_machine_state_env()
 	if not _machine_state.is_empty():
@@ -967,6 +1212,10 @@ func _ready() -> void:
 		"baked_building_persistence_smoke": baked_building_persistence_smoke_enabled,
 		"disable_entities": disable_entities_enabled,
 		"repeat_entry": repeat_entry_enabled,
+		"runtime_mode": runtime_mode,
+		"render_diagnostics": render_diagnostics_enabled,
+		"render_diagnostics_scene_scan": render_diagnostics_scene_scan_enabled,
+		"render_diagnostics_threshold_ms": render_diagnostics_threshold_ms,
 		"hold_seconds": configured_hold_seconds,
 		"machine_state_available": not _machine_state.is_empty(),
 		"warmup_note": str(_machine_state.get("warmup_note", ""))
@@ -977,7 +1226,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	phase_time += delta
 	if town_entry_capture_started and phase != Phase.DONE and phase != Phase.FAILED and not pending_quit:
-		_capture_native_town_entry_sample()
+		_capture_native_town_entry_sample(delta)
 
 	match phase:
 		Phase.WAIT_WORLD_READY:

@@ -20,6 +20,13 @@ RUN_LOCK_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-test.lock"
 _RUN_LOCK_HANDLE = None
 
 
+def _runtime_mode_label() -> str:
+    godot_name = Path(GODOT_BIN).name.lower()
+    if ".tools." in godot_name or godot_name.endswith(".tools.exe"):
+        return "godot_tools_debug_runner"
+    return "godot_runtime_runner"
+
+
 def _safe_text(text: str) -> str:
     return text.encode("ascii", errors="replace").decode("ascii")
 
@@ -489,6 +496,7 @@ def main() -> int:
 
     print("Running Town Stall Automation Test...")
     print(f"   Scene: {MAIN_SCENE}")
+    print(f"   Runtime mode: {_runtime_mode_label()} ({Path(GODOT_BIN).name})")
     print("-" * 50)
     run_start_mtime = time.time()
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -532,6 +540,7 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_ENTITIES"] = os.environ.get("TOWN_STALL_DISABLE_ENTITIES", "0")
     env["TOWN_STALL_DISABLE_EXIT_AUTOSAVE"] = os.environ.get("TOWN_STALL_DISABLE_EXIT_AUTOSAVE", "1")
     env["TOWN_STALL_HOLD_SECONDS"] = os.environ.get("TOWN_STALL_HOLD_SECONDS", "")
+    env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "0") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
     machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)

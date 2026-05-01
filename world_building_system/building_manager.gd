@@ -1,7 +1,9 @@
 extends Node3D
 const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
+const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 const WORLD_MAP_VISIBILITY_EXTRA_DISTANCE := 0
 const WORLD_MAP_TERRAIN_CHUNK_STRIDE := 31
+const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 
 # Maps Vector3i (Chunk Coord) -> BuildingChunk (data always persisted)
 var chunks: Dictionary = {}
@@ -25,6 +27,7 @@ const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 @export_range(0.25, 10.0, 0.25) var world_map_baked_object_spawn_budget_ms: float = 2.0
 @export_range(1, 32, 1) var world_map_baked_object_spawn_max_per_frame: int = 4
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
+@export_range(0, 60, 1) var object_render_prewarm_frames: int = 12
 var skip_object_collisions_for_test: bool = false
 var skip_building_chunk_collisions_for_test: bool = false
 var skip_building_chunk_mesh_render_for_test: bool = false
@@ -43,6 +46,8 @@ var _world_map_baked_building_keys_by_chunk: Dictionary = {} # Vector3i chunk_co
 var _world_map_baked_building_chunk_coords_by_key: Dictionary = {} # String building_key -> Array[Vector3i]
 var _world_map_baked_building_edits_by_key: Dictionary = {} # String building_key -> Dictionary[voxel_key] = { value, meta }
 var _last_global_visual_batch_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _object_render_resource_prewarm_node: Node = null
+var _object_render_resource_prewarm_mesh_count: int = 0
 
 # Batched operations - accumulate changes, rebuild once
 var _dirty_chunks: Dictionary = {} # Vector3i -> BuildingChunk (chunks needing rebuild)
@@ -73,6 +78,13 @@ var _last_apply_world_map_baked_building_object_count: int = 0
 var _last_apply_world_map_baked_building_prebuilt_chunk_count: int = 0
 var _last_world_map_baked_object_spawn_queue_ms: float = 0.0
 var _last_world_map_baked_object_spawn_queue_count: int = 0
+var _last_world_map_baked_visibility_update_ms: float = 0.0
+var _last_world_map_baked_visibility_added: int = 0
+var _last_world_map_baked_visibility_removed: int = 0
+var _last_world_map_baked_visibility_kept_visible: int = 0
+var _last_world_map_baked_visibility_target_visible: int = 0
+var _last_world_map_baked_visibility_total_roots: int = 0
+var _last_world_map_baked_visibility_stale_roots: int = 0
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -126,6 +138,7 @@ func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
 func _ready():
 	# Preload all object scenes for faster building spawning
 	ObjectRegistry.preload_all_scenes()
+	_start_object_render_resource_prewarm()
 	
 	mesher = BuildingMesher.new()
 	add_child(mesher)
@@ -176,6 +189,51 @@ func _get_terrain_manager() -> Node:
 
 	_cached_terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	return _cached_terrain_manager
+
+func _start_object_render_resource_prewarm() -> void:
+	if object_render_prewarm_frames <= 0 or _is_object_render_resource_prewarm_active():
+		return
+
+	var mesh_entries := _collect_object_render_resource_prewarm_entries()
+	_object_render_resource_prewarm_mesh_count = mesh_entries.size()
+	if mesh_entries.is_empty():
+		return
+
+	var prewarmer: Node = RenderResourcePrewarm.new()
+	prewarmer.name = "ObjectRenderResourcePrewarm"
+	add_child(prewarmer)
+	_object_render_resource_prewarm_node = prewarmer
+	prewarmer.configure([], object_render_prewarm_frames, mesh_entries)
+
+func _collect_object_render_resource_prewarm_entries() -> Array:
+	var entries: Array = []
+	var unique_meshes: Array = []
+	for object_id_variant in ObjectRegistry.get_all_ids():
+		var object_id := int(object_id_variant)
+		var visual_data := ObjectRegistry.get_object_visual_data(object_id)
+		if visual_data.is_empty():
+			continue
+
+		var mesh: Mesh = visual_data.get("mesh", null)
+		if not mesh or unique_meshes.has(mesh):
+			continue
+
+		unique_meshes.append(mesh)
+		entries.append({
+			"mesh": mesh,
+			"transform": visual_data.get("mesh_transform", Transform3D.IDENTITY)
+		})
+	return entries
+
+func _is_object_render_resource_prewarm_active() -> bool:
+	return _object_render_resource_prewarm_node != null and is_instance_valid(_object_render_resource_prewarm_node)
+
+func _get_object_render_resource_prewarm_frames_remaining() -> int:
+	if not _is_object_render_resource_prewarm_active():
+		return 0
+	if not _object_render_resource_prewarm_node.has_method("get_frames_remaining"):
+		return 0
+	return int(_object_render_resource_prewarm_node.get_frames_remaining())
 
 func update_building_chunks(center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)):
 	if center_chunk.x == 2147483647:
@@ -588,6 +646,13 @@ func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 	_last_apply_world_map_baked_building_visual_count = 0
 	_last_world_map_baked_object_spawn_queue_ms = 0.0
 	_last_world_map_baked_object_spawn_queue_count = 0
+	_last_world_map_baked_visibility_update_ms = 0.0
+	_last_world_map_baked_visibility_added = 0
+	_last_world_map_baked_visibility_removed = 0
+	_last_world_map_baked_visibility_kept_visible = 0
+	_last_world_map_baked_visibility_target_visible = 0
+	_last_world_map_baked_visibility_total_roots = 0
+	_last_world_map_baked_visibility_stale_roots = 0
 
 
 func clear_world_map_baked_building_edits() -> void:
@@ -705,8 +770,21 @@ func _sync_world_map_baked_building_visual_visibility_for_key(building_key: Stri
 
 func _update_world_map_baked_building_visual_visibility(center_chunk: Vector3i) -> void:
 	if _world_map_baked_building_visual_nodes.is_empty():
+		_last_world_map_baked_visibility_update_ms = 0.0
+		_last_world_map_baked_visibility_added = 0
+		_last_world_map_baked_visibility_removed = 0
+		_last_world_map_baked_visibility_kept_visible = 0
+		_last_world_map_baked_visibility_target_visible = 0
+		_last_world_map_baked_visibility_total_roots = 0
+		_last_world_map_baked_visibility_stale_roots = 0
 		return
 
+	var start_us := Time.get_ticks_usec()
+	var added := 0
+	var removed := 0
+	var kept_visible := 0
+	var target_visible := 0
+	var total_roots := 0
 	var stale_keys: Array[String] = []
 	for key_variant in _world_map_baked_building_visual_nodes.keys():
 		var building_key := str(key_variant)
@@ -715,11 +793,30 @@ func _update_world_map_baked_building_visual_visibility(center_chunk: Vector3i) 
 			stale_keys.append(building_key)
 			continue
 
+		total_roots += 1
+		var was_visible := root.is_inside_tree()
 		var should_be_visible := _is_world_map_baked_building_in_range(building_key, center_chunk, WORLD_MAP_VISIBILITY_EXTRA_DISTANCE)
+		if should_be_visible:
+			target_visible += 1
 		_set_world_map_baked_building_visual_in_tree(building_key, should_be_visible)
+		var is_visible := root.is_inside_tree()
+		if not was_visible and is_visible:
+			added += 1
+		elif was_visible and not is_visible:
+			removed += 1
+		elif is_visible:
+			kept_visible += 1
 
 	for building_key in stale_keys:
 		_world_map_baked_building_visual_nodes.erase(building_key)
+
+	_last_world_map_baked_visibility_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+	_last_world_map_baked_visibility_added = added
+	_last_world_map_baked_visibility_removed = removed
+	_last_world_map_baked_visibility_kept_visible = kept_visible
+	_last_world_map_baked_visibility_target_visible = target_visible
+	_last_world_map_baked_visibility_total_roots = total_roots
+	_last_world_map_baked_visibility_stale_roots = stale_keys.size()
 
 
 func _get_world_map_visibility_distance(extra_distance: int = 0) -> int:
@@ -1352,10 +1449,30 @@ func _rebuild_global_visual_batch(object_id: int, mesh: Mesh = null) -> void:
 
 	var visible_entries := _get_visible_global_visual_batch_entries(entries)
 	multimesh.instance_count = visible_entries.size()
-	for i in range(visible_entries.size()):
-		var entry: Dictionary = visible_entries[i]
+	multimesh.buffer = _pack_global_visual_batch_transform_buffer(visible_entries)
+
+func _pack_global_visual_batch_transform_buffer(entries: Array) -> PackedFloat32Array:
+	var buffer := PackedFloat32Array()
+	buffer.resize(entries.size() * MULTIMESH_FLOATS_PER_INSTANCE_3D)
+
+	var write_index := 0
+	for entry_variant in entries:
+		var entry: Dictionary = entry_variant
 		var transform: Transform3D = entry.get("transform", Transform3D.IDENTITY)
-		multimesh.set_instance_transform(i, transform)
+		buffer[write_index + 0] = transform.basis.x.x
+		buffer[write_index + 1] = transform.basis.y.x
+		buffer[write_index + 2] = transform.basis.z.x
+		buffer[write_index + 3] = transform.origin.x
+		buffer[write_index + 4] = transform.basis.x.y
+		buffer[write_index + 5] = transform.basis.y.y
+		buffer[write_index + 6] = transform.basis.z.y
+		buffer[write_index + 7] = transform.origin.y
+		buffer[write_index + 8] = transform.basis.x.z
+		buffer[write_index + 9] = transform.basis.y.z
+		buffer[write_index + 10] = transform.basis.z.z
+		buffer[write_index + 11] = transform.origin.z
+		write_index += MULTIMESH_FLOATS_PER_INSTANCE_3D
+	return buffer
 
 func get_telemetry_snapshot() -> Dictionary:
 	var total_objects := 0
@@ -1400,6 +1517,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"world_map_baked_object_spawn_max_per_frame": world_map_baked_object_spawn_max_per_frame,
 		"last_world_map_baked_object_spawn_queue_ms": _last_world_map_baked_object_spawn_queue_ms,
 		"last_world_map_baked_object_spawn_queue_count": _last_world_map_baked_object_spawn_queue_count,
+		"object_render_prewarm_frames": object_render_prewarm_frames,
+		"object_render_prewarm_mesh_count": _object_render_resource_prewarm_mesh_count,
+		"object_render_prewarm_active": _is_object_render_resource_prewarm_active(),
+		"object_render_prewarm_frames_remaining": _get_object_render_resource_prewarm_frames_remaining(),
+		"last_world_map_baked_visibility_update_ms": _last_world_map_baked_visibility_update_ms,
+		"last_world_map_baked_visibility_added": _last_world_map_baked_visibility_added,
+		"last_world_map_baked_visibility_removed": _last_world_map_baked_visibility_removed,
+		"last_world_map_baked_visibility_kept_visible": _last_world_map_baked_visibility_kept_visible,
+		"last_world_map_baked_visibility_target_visible": _last_world_map_baked_visibility_target_visible,
+		"last_world_map_baked_visibility_total_roots": _last_world_map_baked_visibility_total_roots,
+		"last_world_map_baked_visibility_stale_roots": _last_world_map_baked_visibility_stale_roots,
 		"chunk_pool_size": chunk_pool.size(),
 		"total_objects": total_objects,
 		"total_object_nodes": total_object_nodes,
