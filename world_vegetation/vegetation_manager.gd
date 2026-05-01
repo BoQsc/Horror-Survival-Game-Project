@@ -22,6 +22,11 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
 @export var global_render_batches_enabled: bool = true
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
+@export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 3.0
+@export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 10.0
+@export_range(0, 8, 1) var vegetation_chunk_start_delay_frames: int = 0
+@export_range(1, 128, 1) var vegetation_max_stages_per_frame: int = 24
+@export var prioritize_nearby_vegetation_chunks: bool = true
 
 # Grass settings
 @export var grass_model_path: String = "res://models/grass/2/grass_lowpoly.glb"
@@ -97,6 +102,8 @@ var _collider_refresh_dirty: bool = true
 var _last_collider_update_chunk: Vector2i = Vector2i(2147483647, 2147483647)
 var _last_collider_update_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
 var _last_pending_chunk_process_ms: float = 0.0
+var _last_pending_chunk_budget_ms: float = 0.0
+var _last_pending_chunk_stages_processed: int = 0
 var _last_collider_refresh_ms: float = 0.0
 var _last_queued_collider_update_ms: float = 0.0
 var _last_pending_placements_ms: float = 0.0
@@ -153,6 +160,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"initial_load_count": initial_load_count,
 		"is_initial_load_batch": is_initial_load_batch,
 		"last_pending_chunk_process_ms": _last_pending_chunk_process_ms,
+		"last_pending_chunk_budget_ms": _last_pending_chunk_budget_ms,
+		"last_pending_chunk_stages_processed": _last_pending_chunk_stages_processed,
+		"vegetation_stream_budget_ms": vegetation_stream_budget_ms,
+		"vegetation_initial_load_budget_ms": vegetation_initial_load_budget_ms,
+		"vegetation_chunk_start_delay_frames": vegetation_chunk_start_delay_frames,
+		"vegetation_max_stages_per_frame": vegetation_max_stages_per_frame,
+		"prioritize_nearby_vegetation_chunks": prioritize_nearby_vegetation_chunks,
 		"last_collider_refresh_ms": _last_collider_refresh_ms,
 		"last_queued_collider_update_ms": _last_queued_collider_update_ms,
 		"last_pending_placements_ms": _last_pending_placements_ms,
@@ -861,46 +875,96 @@ func _free_vegetation_instance_entries(entries: Array) -> void:
 		if entry is Object and is_instance_valid(entry):
 			entry.free()
 
-func _physics_process(_delta):
+func _get_pending_vegetation_budget_ms() -> float:
+	var budget := vegetation_initial_load_budget_ms if is_initial_load_batch else vegetation_stream_budget_ms
+	return maxf(0.1, budget)
+
+func _get_next_pending_chunk_index() -> int:
+	if pending_chunks.is_empty():
+		return -1
+	if not prioritize_nearby_vegetation_chunks or not player or not terrain_manager:
+		return 0
+
+	var player_pos := player.global_position
+	var chunk_stride := int(terrain_manager.CHUNK_STRIDE)
+	var best_index := 0
+	var best_distance_sq := 1.0e30
+	for i in range(pending_chunks.size()):
+		var item := pending_chunks[i]
+		var coord: Vector2i = item.get("coord", Vector2i.ZERO)
+		var center_x := (float(coord.x) + 0.5) * float(chunk_stride)
+		var center_z := (float(coord.y) + 0.5) * float(chunk_stride)
+		var dx := player_pos.x - center_x
+		var dz := player_pos.z - center_z
+		var distance_sq := dx * dx + dz * dz
+		if distance_sq < best_distance_sq:
+			best_distance_sq = distance_sq
+			best_index = i
+	return best_index
+
+func _complete_initial_load_pending_chunk() -> void:
+	if not is_initial_load_batch:
+		return
+	initial_load_count -= 1
+	if initial_load_count <= 0:
+		is_initial_load_batch = false
+		initial_load_count = 0
+		all_vegetation_ready.emit()
+
+func _process_pending_vegetation_chunks() -> void:
 	var pending_chunk_start_us := Time.get_ticks_usec()
-	# Process only ONE pending chunk per physics frame (rate limited)
-	if not pending_chunks.is_empty():
-		var item = pending_chunks[0]
+	_last_pending_chunk_stages_processed = 0
+	_last_pending_chunk_budget_ms = _get_pending_vegetation_budget_ms()
 
-		# Wait 5 frames for colliders before starting anything
-		if item.frames_waited < 5:
-			item.frames_waited += 1
-			# Continue to collider updates
+	while not pending_chunks.is_empty():
+		if _last_pending_chunk_stages_processed >= vegetation_max_stages_per_frame:
+			break
 
-		elif is_instance_valid(item.chunk_node):
-			# Stage 0: Trees
-			if item.stage == 0:
-				_place_vegetation_for_chunk(item.coord, item.chunk_node)
-				item.stage = 1
+		var elapsed_ms := float(Time.get_ticks_usec() - pending_chunk_start_us) / 1000.0
+		if _last_pending_chunk_stages_processed > 0 and elapsed_ms >= _last_pending_chunk_budget_ms:
+			break
 
-			# Stage 1: Grass
-			elif item.stage == 1:
-				_place_grass_for_chunk(item.coord, item.chunk_node)
-				item.stage = 2
+		var item_index := _get_next_pending_chunk_index()
+		if item_index < 0:
+			break
 
-			# Stage 2: Rocks
-			elif item.stage == 2:
-				_place_rocks_for_chunk(item.coord, item.chunk_node)
+		var item := pending_chunks[item_index]
+		var frames_waited := int(item.get("frames_waited", 0))
+		if frames_waited < vegetation_chunk_start_delay_frames:
+			item["frames_waited"] = frames_waited + 1
+			pending_chunks[item_index] = item
+			break
 
-				# All stages done
-				pending_chunks.pop_front()
+		var chunk_node: Node3D = item.get("chunk_node", null)
+		if not is_instance_valid(chunk_node):
+			pending_chunks.remove_at(item_index)
+			_complete_initial_load_pending_chunk()
+			continue
 
-				# Check if initial load batch is complete
-				if is_initial_load_batch:
-					initial_load_count -= 1
-					if initial_load_count <= 0:
-						is_initial_load_batch = false
-						initial_load_count = 0
-						all_vegetation_ready.emit()
-		else:
-			# Invalid chunk, remove
-			pending_chunks.pop_front()
+		var stage := int(item.get("stage", 0))
+		var coord: Vector2i = item.get("coord", Vector2i.ZERO)
+		match stage:
+			0:
+				_place_vegetation_for_chunk(coord, chunk_node)
+				item["stage"] = 1
+				pending_chunks[item_index] = item
+			1:
+				_place_grass_for_chunk(coord, chunk_node)
+				item["stage"] = 2
+				pending_chunks[item_index] = item
+			2:
+				_place_rocks_for_chunk(coord, chunk_node)
+				pending_chunks.remove_at(item_index)
+				_complete_initial_load_pending_chunk()
+			_:
+				pending_chunks.remove_at(item_index)
+				_complete_initial_load_pending_chunk()
+		_last_pending_chunk_stages_processed += 1
+
 	_last_pending_chunk_process_ms = float(Time.get_ticks_usec() - pending_chunk_start_us) / 1000.0
+
+func _physics_process(_delta):
+	_process_pending_vegetation_chunks()
 
 	# Refresh colliders when the player actually moves far enough or the
 	# loaded vegetation set changes, instead of doing a blind timer sweep.
@@ -937,7 +1001,8 @@ func _physics_process(_delta):
 	# Process pending placements (retry when chunk becomes valid)
 	var pending_placements_start_us := Time.get_ticks_usec()
 	_process_pending_placements()
-	_flush_one_global_vegetation_render_batch()
+	if pending_chunks.is_empty() or _last_pending_chunk_process_ms < _last_pending_chunk_budget_ms:
+		_flush_one_global_vegetation_render_batch()
 	_last_pending_placements_ms = float(Time.get_ticks_usec() - pending_placements_start_us) / 1000.0
 
 func _process_queued_collider_updates():
