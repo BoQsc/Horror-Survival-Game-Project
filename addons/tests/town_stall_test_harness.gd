@@ -296,9 +296,13 @@ func _build_native_town_entry_sample() -> Dictionary:
 	var prefab_last_baked_payload_apply_count := 0
 	var prefab_last_baked_payload_flush_ms := 0.0
 	var entity_active_entities := 0
+	var entity_frozen_entities := 0
 	var entity_pending_spawns := 0
 	var entity_dormant_entities := 0
 	var entity_spawned_chunks := 0
+	var entity_last_proximity_update_ms := 0.0
+	var entity_last_spawn_queue_update_ms := 0.0
+	var entity_last_spawn_queue_spawned := 0
 	if is_instance_valid(terrain_manager):
 		terrain_active_chunk_count = int(terrain_manager.active_chunks.size())
 		terrain_pending_node_count = int(terrain_manager.pending_nodes.size())
@@ -329,9 +333,13 @@ func _build_native_town_entry_sample() -> Dictionary:
 		entity_manager = _find_manager_node("entity_manager", "EntityManager")
 	if is_instance_valid(entity_manager):
 		entity_active_entities = int(entity_manager.active_entities.size())
+		entity_frozen_entities = int(entity_manager.frozen_entities.size())
 		entity_pending_spawns = int(entity_manager.pending_spawns.size())
 		entity_dormant_entities = int(entity_manager.dormant_entities.size())
 		entity_spawned_chunks = int(entity_manager.spawned_chunks.size())
+		entity_last_proximity_update_ms = float(entity_manager._last_proximity_update_ms)
+		entity_last_spawn_queue_update_ms = float(entity_manager._last_spawn_queue_update_ms)
+		entity_last_spawn_queue_spawned = int(entity_manager._last_spawn_queue_spawned)
 
 	return {
 		"frame": frame_number,
@@ -364,9 +372,13 @@ func _build_native_town_entry_sample() -> Dictionary:
 		"prefab_last_baked_payload_apply_count": prefab_last_baked_payload_apply_count,
 		"prefab_last_baked_payload_flush_ms": prefab_last_baked_payload_flush_ms,
 		"entity_active_entities": entity_active_entities,
+		"entity_frozen_entities": entity_frozen_entities,
 		"entity_pending_spawns": entity_pending_spawns,
 		"entity_dormant_entities": entity_dormant_entities,
 		"entity_spawned_chunks": entity_spawned_chunks,
+		"entity_last_proximity_update_ms": entity_last_proximity_update_ms,
+		"entity_last_spawn_queue_update_ms": entity_last_spawn_queue_update_ms,
+		"entity_last_spawn_queue_spawned": entity_last_spawn_queue_spawned,
 		"top_measure_name": str(top_measure.get("name", "Unknown")),
 		"top_measure_bucket": str(top_measure.get("bucket", "Unknown")),
 		"top_measure_ms": float(top_measure.get("ms", 0.0)),
@@ -779,20 +791,26 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 
 	var entities: Dictionary = system_telemetry.get("entity_manager", {})
 	if not entities.is_empty():
-		var entity_score := float(entities.get("active_entities", 0)) * 6.0 \
-			+ float(entities.get("frozen_entities", 0)) * 2.0 \
+		var active_physics_entities := maxi(0, int(entities.get("active_entities", 0)) - int(entities.get("frozen_entities", 0)))
+		var entity_score := float(active_physics_entities) * 8.0 \
+			+ float(entities.get("frozen_entities", 0)) * 1.0 \
 			+ float(entities.get("dormant_entities", 0)) * 1.0 \
 			+ float(entities.get("pending_spawns", 0)) * 8.0 \
+			+ float(entities.get("last_proximity_update_ms", 0.0)) * 8.0 \
+			+ float(entities.get("last_spawn_queue_update_ms", 0.0)) * 8.0 \
 			+ float(entities.get("spawned_chunks", 0)) * 0.25 \
 			+ float(entities.get("entity_pool_size", 0)) * 0.25
 		rankings.append(_build_pressure_entry(
 			"EntityManager",
 			entity_score,
-			"active=%d frozen=%d dormant=%d pending=%d spawned_chunks=%d" % [
+			"active=%d active_physics=%d frozen=%d dormant=%d pending=%d prox=%.2fms spawn_queue=%.2fms spawned_chunks=%d" % [
 				int(entities.get("active_entities", 0)),
+				active_physics_entities,
 				int(entities.get("frozen_entities", 0)),
 				int(entities.get("dormant_entities", 0)),
 				int(entities.get("pending_spawns", 0)),
+				float(entities.get("last_proximity_update_ms", 0.0)),
+				float(entities.get("last_spawn_queue_update_ms", 0.0)),
 				int(entities.get("spawned_chunks", 0))
 			]
 		))

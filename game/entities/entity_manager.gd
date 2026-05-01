@@ -16,6 +16,7 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export var terrain_manager: Node3D # Reference to ChunkManager for terrain interaction
 @export var max_entities: int = 50 # Maximum number of active entities
 @export var spawn_radius: float = 50.0 # Range around player where entities can spawn
+@export var active_physics_radius: float = 55.0 # Entities outside this range stay frozen until they matter
 @export var freeze_radius: float = 60.0 # Fallback freeze distance when terrain collision range is unavailable
 @export var despawn_radius: float = 100.0 # Distance at which entities are removed
 @export_range(0.0, 31.0, 0.5) var freeze_collision_margin: float = 8.0 # Keep entities active until near the collision-ready edge
@@ -101,6 +102,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"spawned_chunks": spawned_chunks.size(),
 		"max_entities": max_entities,
 		"spawn_radius": spawn_radius,
+		"active_physics_radius": active_physics_radius,
 		"freeze_radius": freeze_radius,
 		"despawn_radius": despawn_radius,
 		"procedural_spawning_enabled": procedural_spawning_enabled,
@@ -214,6 +216,7 @@ func _update_entity_proximity():
 	var start_time := Time.get_ticks_usec()
 	var player_pos = viewer.global_position if viewer else player.global_position
 	var freeze_dist_sq = _get_effective_freeze_radius_squared()
+	var active_physics_dist_sq = _get_effective_active_physics_radius_squared(freeze_dist_sq)
 	var despawn_dist_sq = despawn_radius * despawn_radius
 	
 	if active_entities.is_empty():
@@ -251,8 +254,9 @@ func _update_entity_proximity():
 		if dist_sq > despawn_dist_sq:
 			# Beyond despawn radius - remove entity
 			to_despawn.append(entity)
-		elif dist_sq > freeze_dist_sq:
-			# In freeze zone - disable physics
+		elif dist_sq > active_physics_dist_sq:
+			# Keep mid-distance entities present but asleep. This prevents town
+			# entry from simulating every spawned zombie at once.
 			_freeze_entity(entity)
 		elif not is_loading_save:
 			# In active zone - ensure physics enabled (ONLY if not loading)
@@ -984,6 +988,13 @@ func _get_effective_freeze_radius() -> float:
 func _get_effective_freeze_radius_squared() -> float:
 	var effective_radius := _get_effective_freeze_radius()
 	return effective_radius * effective_radius
+
+
+func _get_effective_active_physics_radius_squared(freeze_dist_sq: float) -> float:
+	if active_physics_radius <= 0.0:
+		return freeze_dist_sq
+	var active_radius_sq := active_physics_radius * active_physics_radius
+	return minf(active_radius_sq, freeze_dist_sq)
 
 
 func _is_terrain_collision_ready(position: Vector3) -> bool:
