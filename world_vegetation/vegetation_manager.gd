@@ -119,6 +119,8 @@ var _last_global_render_sync_kind: String = ""
 var _global_tree_render_instance_count: int = 0
 var _global_grass_render_instance_count: int = 0
 var _global_rock_render_instance_count: int = 0
+var _last_global_render_collect_ms: float = 0.0
+var _last_global_render_pack_ms: float = 0.0
 var _vegetation_render_resource_prewarm_node: Node = null
 var _vegetation_render_resource_prewarm_mesh_count: int = 0
 
@@ -178,6 +180,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_rock_render_instances": _global_rock_render_instance_count,
 		"global_render_dirty_kinds": _get_global_render_dirty_kinds(),
 		"last_global_render_sync_ms": _last_global_render_sync_ms,
+		"last_global_render_collect_ms": _last_global_render_collect_ms,
+		"last_global_render_pack_ms": _last_global_render_pack_ms,
 		"last_global_render_sync_kind": _last_global_render_sync_kind,
 		"vegetation_render_prewarm_frames": vegetation_render_prewarm_frames,
 		"vegetation_render_prewarm_mesh_count": _vegetation_render_resource_prewarm_mesh_count,
@@ -410,6 +414,45 @@ func _collect_global_vegetation_transforms(kind: String) -> Array:
 				_append_alive_global_vegetation_transforms(transforms, data.get("rock_list", []))
 	return transforms
 
+func _append_alive_global_vegetation_payload(payload: Dictionary, entries: Array) -> void:
+	var transforms: Array = payload.transforms
+	var has_bounds := bool(payload.has_bounds)
+	var bounds: AABB = payload.bounds
+	for item in entries:
+		if item is Dictionary and not bool(item.get("alive", true)):
+			continue
+		var transform := _get_global_vegetation_instance_transform(item)
+		transforms.append(transform)
+		if has_bounds:
+			bounds = bounds.expand(transform.origin)
+		else:
+			bounds = AABB(transform.origin, Vector3.ZERO)
+			has_bounds = true
+	payload.transforms = transforms
+	payload.bounds = bounds
+	payload.has_bounds = has_bounds
+
+func _collect_global_vegetation_render_payload(kind: String) -> Dictionary:
+	var payload := {
+		"transforms": [],
+		"bounds": GLOBAL_VEGETATION_RENDER_AABB,
+		"has_bounds": false
+	}
+	match kind:
+		"tree":
+			for data in chunk_tree_data.values():
+				_append_alive_global_vegetation_payload(payload, data.get("trees", []))
+		"grass":
+			for data in chunk_grass_data.values():
+				_append_alive_global_vegetation_payload(payload, data.get("grass_list", []))
+		"rock":
+			for data in chunk_rock_data.values():
+				_append_alive_global_vegetation_payload(payload, data.get("rock_list", []))
+	if bool(payload.has_bounds):
+		var payload_bounds: AABB = payload.bounds
+		payload.bounds = payload_bounds.grow(96.0)
+	return payload
+
 func _sync_global_vegetation_render_batch(kind: String) -> void:
 	if not global_render_batches_enabled:
 		return
@@ -418,10 +461,15 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 	if not mmi or not mmi.multimesh:
 		return
 
-	var transforms := _collect_global_vegetation_transforms(kind)
+	var collect_start_us := Time.get_ticks_usec()
+	var payload := _collect_global_vegetation_render_payload(kind)
+	var transforms: Array = payload.get("transforms", [])
+	_last_global_render_collect_ms = float(Time.get_ticks_usec() - collect_start_us) / 1000.0
+	var pack_start_us := Time.get_ticks_usec()
 	mmi.multimesh.instance_count = transforms.size()
-	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(transforms)
-	mmi.multimesh.custom_aabb = _global_vegetation_custom_aabb(transforms)
+	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(transforms, true)
+	mmi.multimesh.custom_aabb = payload.get("bounds", GLOBAL_VEGETATION_RENDER_AABB)
+	_last_global_render_pack_ms = float(Time.get_ticks_usec() - pack_start_us) / 1000.0
 	match kind:
 		"tree":
 			_global_tree_render_dirty = false
@@ -446,9 +494,13 @@ func _flush_one_global_vegetation_render_batch() -> void:
 		_sync_global_vegetation_render_batch("rock")
 
 
-func _pack_multimesh_buffer_from_instances(instances: Array) -> PackedFloat32Array:
+func _pack_multimesh_buffer_from_instances(instances: Array, instances_are_transforms: bool = false) -> PackedFloat32Array:
 	var native := _get_native_helper()
 	if native and native.has_method("pack_multimesh_buffer_from_instances"):
+		if instances_are_transforms:
+			var native_transform_buffer: PackedFloat32Array = native.pack_multimesh_buffer_from_instances(instances)
+			return native_transform_buffer
+
 		var transforms: Array = []
 		transforms.resize(instances.size())
 		var write_index := 0

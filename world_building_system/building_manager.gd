@@ -1041,6 +1041,9 @@ func clear_for_shutdown() -> void:
 	clear_pending_world_map_baked_object_spawns()
 	clear_global_visual_batches()
 	clear_world_map_baked_building_visuals()
+	for chunk in chunks.values():
+		if chunk and is_instance_valid(chunk):
+			chunk.queue_free()
 	for chunk in chunk_pool:
 		if chunk and is_instance_valid(chunk):
 			chunk.queue_free()
@@ -1058,6 +1061,9 @@ func clear_immediate_for_shutdown() -> void:
 		if node and is_instance_valid(node):
 			node.free()
 	clear_world_map_baked_building_visuals(true)
+	for chunk in chunks.values():
+		if chunk and is_instance_valid(chunk):
+			chunk.free()
 	for chunk in chunk_pool:
 		if chunk and is_instance_valid(chunk):
 			chunk.free()

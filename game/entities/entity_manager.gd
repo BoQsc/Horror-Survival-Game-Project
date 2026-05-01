@@ -4,6 +4,7 @@ extends Node3D
 
 const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 const ZOMBIE_SCENE_PATH := "res://game/entities/zombie_base.tscn"
+const TERRAIN_CHUNK_STRIDE := 31.0
 
 signal entity_spawned(entity: Node3D)
 signal entity_despawned(entity: Node3D)
@@ -33,6 +34,7 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(0.0, 1.0, 0.01) var spawn_queue_update_interval: float = 0.10
 @export_range(0.0, 1.0, 0.01) var dormant_respawn_update_interval: float = 0.25
 @export_range(0, 60, 1) var entity_render_prewarm_frames: int = 12
+@export_range(1, 128, 1) var deferred_spawn_chunks_per_frame: int = 32
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
@@ -65,12 +67,15 @@ var _last_dormant_respawn_update_ms: float = 0.0
 var _last_dormant_respawn_processed: int = 0
 var _last_dormant_respawn_raycasts: int = 0
 var _last_dormant_respawn_spawned: int = 0
+var _deferred_spawn_chunk_cursor: int = 0
 var _entity_render_resource_prewarm_node: Node = null
 var _entity_render_resource_prewarm_mesh_count: int = 0
 var _entity_render_resource_prewarm_started: bool = false
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
+var deferred_spawn_chunks: Dictionary = {} # Vector2i -> { coord: Vector3i, spawns: Array[Dictionary] }
+var deferred_spawn_chunk_keys: Array[Vector2i] = [] # Stable ring queue to avoid copying Dictionary.keys() each update
 
 # Procedural spawning tracking
 var spawned_chunks: Dictionary = {} # Vector2i -> true (tracks which chunks already spawned entities)
@@ -106,6 +111,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"dormant_entities": dormant_entities.size(),
 		"entity_pool_size": entity_pool.size(),
 		"pending_spawns": pending_spawns.size(),
+		"deferred_spawn_chunks": deferred_spawn_chunks.size(),
+		"deferred_spawn_chunk_keys": deferred_spawn_chunk_keys.size(),
+		"deferred_spawn_plans": _get_deferred_spawn_plan_count(),
 		"spawned_chunks": spawned_chunks.size(),
 		"max_entities": max_entities,
 		"spawn_radius": spawn_radius,
@@ -190,10 +198,11 @@ func _physics_process(_delta):
 		_last_proximity_processed = 0
 
 	# Process spawn queue - spawns when terrain is ready
-	var has_pending_spawns := not pending_spawns.is_empty()
+	var has_pending_spawns := not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()
 	_spawn_queue_update_accumulator += _delta
 	if not entity_maintenance_budget_hit and _should_run_interval(_spawn_queue_update_accumulator, spawn_queue_update_interval, has_pending_spawns):
 		_spawn_queue_update_accumulator = 0.0
+		_process_deferred_spawn_chunks()
 		_process_spawn_queue()
 		entity_maintenance_budget_hit = _is_entity_maintenance_budget_exhausted(entity_maintenance_start_us)
 	elif not has_pending_spawns:
@@ -734,6 +743,7 @@ func clear_all_entities():
 	# CRITICAL FIX: Clear any pending procedural spawns queued during scene load
 	# These were queued BEFORE is_loading_save was set, so they would duplicate!
 	pending_spawns.clear()
+	_clear_deferred_spawn_chunks()
 	_pending_spawn_scan_cursor = 0
 	
 	# CRITICAL FIX: Clear dormant entities - these get populated by despawn_all()
@@ -947,6 +957,8 @@ func _setup_procedural_spawning():
 			terrain_manager.chunk_generated.connect(_on_chunk_generated)
 		else:
 			pass
+		if terrain_manager.has_signal("chunk_unloaded") and not terrain_manager.chunk_unloaded.is_connected(_on_chunk_unloaded):
+			terrain_manager.chunk_unloaded.connect(_on_chunk_unloaded)
 	else:
 		push_warning("[EntityManager] Could not connect to terrain - procedural spawning disabled")
 		procedural_spawning_enabled = false
@@ -963,30 +975,157 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	var chunk_key = Vector2i(coord.x, coord.z)
 	
 	# Skip if already processed this chunk
-	if spawned_chunks.has(chunk_key):
+	if spawned_chunks.has(chunk_key) or deferred_spawn_chunks.has(chunk_key):
 		return
 	
-	# CRITICAL: Mark chunk as processed FIRST, before is_loading_save check
-	# This prevents duplicate spawning after load completes
-	spawned_chunks[chunk_key] = true
-	
-	# Skip procedural spawning if currently loading a save (but chunk is still marked)
+	# Save loads still mark chunks as processed to prevent duplicate procedural
+	# spawns after load completes. Normal runtime chunks may be deferred until
+	# the player is close enough for collision-backed spawning.
 	if is_loading_save:
+		spawned_chunks[chunk_key] = true
 		debug_chunk_spawn_blocked.emit(chunk_key, "loading_save")
 		return
-	
-	debug_chunk_spawn_processed.emit(chunk_key)
-	
+
+	_process_procedural_spawn_chunk(coord, chunk_key, not _is_procedural_spawn_chunk_near_viewer(coord))
+
+
+func _on_chunk_unloaded(coord: Vector3i) -> void:
+	if coord.y != 0:
+		return
+	# Deferred spawn plans are simulation state for explored chunks, not terrain
+	# node state. Keep them across unloads so moving away and back cannot reduce
+	# the deterministic population for that chunk.
+
+
+func _process_deferred_spawn_chunks() -> void:
+	if deferred_spawn_chunks.is_empty() or not viewer:
+		if deferred_spawn_chunks.is_empty():
+			_clear_deferred_spawn_chunks()
+		return
+
+	if deferred_spawn_chunk_keys.is_empty():
+		_rebuild_deferred_spawn_chunk_keys()
+
+	var total := deferred_spawn_chunk_keys.size()
+	if total <= 0:
+		_deferred_spawn_chunk_cursor = 0
+		return
+
+	var checks := mini(deferred_spawn_chunks_per_frame, total)
+	var start_index := _deferred_spawn_chunk_cursor % total
+	var stale_count := 0
+	for offset in range(checks):
+		var chunk_key: Vector2i = deferred_spawn_chunk_keys[(start_index + offset) % total]
+		if not deferred_spawn_chunks.has(chunk_key):
+			stale_count += 1
+			continue
+
+		var deferred_data_variant: Variant = deferred_spawn_chunks.get(chunk_key, {})
+		if typeof(deferred_data_variant) != TYPE_DICTIONARY:
+			deferred_spawn_chunks.erase(chunk_key)
+			stale_count += 1
+			continue
+
+		var deferred_data: Dictionary = deferred_data_variant
+		var coord_variant: Variant = deferred_data.get("coord", Vector3i.ZERO)
+		if typeof(coord_variant) != TYPE_VECTOR3I:
+			deferred_spawn_chunks.erase(chunk_key)
+			stale_count += 1
+			continue
+
+		var coord: Vector3i = coord_variant
+		if not _is_procedural_spawn_chunk_near_viewer(coord):
+			continue
+
+		deferred_spawn_chunks.erase(chunk_key)
+		_activate_procedural_spawn_plan(chunk_key, deferred_data.get("spawns", []))
+
+	if deferred_spawn_chunks.is_empty():
+		_clear_deferred_spawn_chunks()
+		return
+
+	_deferred_spawn_chunk_cursor = (start_index + checks) % maxi(1, deferred_spawn_chunk_keys.size())
+	if stale_count > 0 and deferred_spawn_chunk_keys.size() > deferred_spawn_chunks.size() + deferred_spawn_chunks_per_frame:
+		_rebuild_deferred_spawn_chunk_keys()
+
+
+func _defer_spawn_chunk(chunk_key: Vector2i, coord: Vector3i, spawns: Array) -> void:
+	if deferred_spawn_chunks.has(chunk_key):
+		return
+	deferred_spawn_chunks[chunk_key] = {
+		"coord": coord,
+		"spawns": spawns
+	}
+	deferred_spawn_chunk_keys.append(chunk_key)
+
+
+func _clear_deferred_spawn_chunks() -> void:
+	deferred_spawn_chunks.clear()
+	deferred_spawn_chunk_keys.clear()
+	_deferred_spawn_chunk_cursor = 0
+
+
+func _rebuild_deferred_spawn_chunk_keys() -> void:
+	var rebuilt_keys: Array[Vector2i] = []
+	var seen: Dictionary = {}
+	for key in deferred_spawn_chunk_keys:
+		if deferred_spawn_chunks.has(key) and not seen.has(key):
+			rebuilt_keys.append(key)
+			seen[key] = true
+	for key_variant in deferred_spawn_chunks.keys():
+		var key: Vector2i = key_variant
+		if not seen.has(key):
+			rebuilt_keys.append(key)
+			seen[key] = true
+	deferred_spawn_chunk_keys = rebuilt_keys
+	if deferred_spawn_chunk_keys.is_empty():
+		_deferred_spawn_chunk_cursor = 0
+	else:
+		_deferred_spawn_chunk_cursor = _deferred_spawn_chunk_cursor % deferred_spawn_chunk_keys.size()
+
+
+func _is_procedural_spawn_chunk_near_viewer(coord: Vector3i) -> bool:
+	if not viewer or not is_instance_valid(viewer):
+		return false
+
+	var chunk_center := Vector3(
+		float(coord.x) * TERRAIN_CHUNK_STRIDE + TERRAIN_CHUNK_STRIDE * 0.5,
+		0.0,
+		float(coord.z) * TERRAIN_CHUNK_STRIDE + TERRAIN_CHUNK_STRIDE * 0.5
+	)
+	var spawn_queue_radius := spawn_radius + TERRAIN_CHUNK_STRIDE
+	return _planar_distance_squared(chunk_center, viewer.global_position) <= spawn_queue_radius * spawn_queue_radius
+
+
+func _process_procedural_spawn_chunk(coord: Vector3i, chunk_key: Vector2i, defer_activation: bool = false) -> void:
+	if spawned_chunks.has(chunk_key) or deferred_spawn_chunks.has(chunk_key):
+		return
+
+	var spawn_plan := _build_procedural_spawn_plan(coord, chunk_key)
+	if spawn_plan.is_empty():
+		spawned_chunks[chunk_key] = true
+		debug_chunk_spawn_processed.emit(chunk_key)
+		return
+
+	if defer_activation:
+		_defer_spawn_chunk(chunk_key, coord, spawn_plan)
+		debug_chunk_spawn_blocked.emit(chunk_key, "deferred_activation")
+		return
+
+	_activate_procedural_spawn_plan(chunk_key, spawn_plan)
+
+
+func _build_procedural_spawn_plan(coord: Vector3i, chunk_key: Vector2i) -> Array:
 	# Deterministic RNG based on chunk coordinate
 	var rng = RandomNumberGenerator.new()
 	rng.seed = hash(chunk_key) + (terrain_manager.world_seed if "world_seed" in terrain_manager else 12345)
 	
 	# Roll spawn chance
 	if rng.randf() > spawn_chance_per_chunk:
-		return # No spawn this chunk
+		return [] # No spawn this chunk
 	
 	# Calculate chunk center for biome detection
-	var chunk_center = Vector3(coord.x * 31.0 + 16.0, 0, coord.z * 31.0 + 16.0) # CHUNK_STRIDE = 31
+	var chunk_center = Vector3(coord.x * TERRAIN_CHUNK_STRIDE + 16.0, 0, coord.z * TERRAIN_CHUNK_STRIDE + 16.0)
 	
 	# Determine biome at chunk center
 	var biome_id = _get_biome_at(chunk_center.x, chunk_center.z)
@@ -995,6 +1134,7 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 	# Roll for zombie spawn based on biome
 	var zombie_chance = rules.get("zombie_chance", 0.3)
 	
+	var spawn_plan: Array = []
 	var spawns_this_chunk = 0
 	for i in range(max_spawns_per_chunk):
 		if spawns_this_chunk >= max_spawns_per_chunk:
@@ -1006,11 +1146,10 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 		# Random position within chunk
 		var offset_x = rng.randf_range(2.0, 29.0) # Avoid chunk edges
 		var offset_z = rng.randf_range(2.0, 29.0)
-		var spawn_x = coord.x * 31.0 + offset_x
-		var spawn_z = coord.z * 31.0 + offset_z
+		var spawn_x = coord.x * TERRAIN_CHUNK_STRIDE + offset_x
+		var spawn_z = coord.z * TERRAIN_CHUNK_STRIDE + offset_z
 		
-		# Queue spawn (will be processed when terrain collision is ready)
-		pending_spawns.append({
+		spawn_plan.append({
 			"position": Vector3(spawn_x, 0, spawn_z),
 			"scene": zombie_scene,
 			"procedural": true, # Mark as procedurally spawned
@@ -1018,8 +1157,32 @@ func _on_chunk_generated(coord: Vector3i, _chunk_node: Node3D):
 		})
 		spawns_this_chunk += 1
 	
-	if spawns_this_chunk > 0:
-		pass
+	return spawn_plan
+
+
+func _enqueue_procedural_spawn_plan(spawn_plan: Array) -> void:
+	for spawn_data in spawn_plan:
+		if spawn_data is Dictionary:
+			pending_spawns.append(spawn_data)
+
+
+func _activate_procedural_spawn_plan(chunk_key: Vector2i, spawn_plan: Array) -> void:
+	if spawned_chunks.has(chunk_key):
+		return
+	spawned_chunks[chunk_key] = true
+	debug_chunk_spawn_processed.emit(chunk_key)
+	_enqueue_procedural_spawn_plan(spawn_plan)
+
+
+func _get_deferred_spawn_plan_count() -> int:
+	var total := 0
+	for deferred_data_variant in deferred_spawn_chunks.values():
+		if typeof(deferred_data_variant) != TYPE_DICTIONARY:
+			continue
+		var deferred_data: Dictionary = deferred_data_variant
+		var spawns: Array = deferred_data.get("spawns", [])
+		total += spawns.size()
+	return total
 
 ## Get biome ID at world position (must match gen_density.glsl)
 func _get_biome_at(world_x: float, world_z: float) -> int:
@@ -1046,6 +1209,7 @@ func _get_biome_at(world_x: float, world_z: float) -> int:
 ## Clear spawned chunks tracking (called on new game)
 func clear_spawned_chunks():
 	spawned_chunks.clear()
+	_clear_deferred_spawn_chunks()
 
 
 func is_entity_frozen(entity: Node3D) -> bool:

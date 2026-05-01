@@ -92,6 +92,8 @@ var cpu_threads: Array[Thread] = []
 var cpu_task_queue: Array[Dictionary] = []
 var cpu_mutex: Mutex
 var cpu_semaphore: Semaphore
+var completed_generation_queue: Array[Dictionary] = []
+var completed_generation_mutex: Mutex
 var stored_modifications_mutex: Mutex
 
 # Task queues (GPU tasks)
@@ -155,6 +157,12 @@ var active_chunks: Dictionary = {}
 var pending_nodes: Array[Dictionary] = [] # Queue of completed chunks waiting for node creation
 var pending_nodes_mutex: Mutex
 var pending_nodes_needs_sort: bool = false
+var _pending_nodes_sort_center: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _pending_nodes_sort_size_at_last_sort: int = 0
+var _last_pending_node_sort_ms: float = 0.0
+var _last_pending_node_sort_count: int = 0
+var _last_pending_node_sort_skipped: bool = false
+@export_range(1, 256, 1) var pending_node_resort_growth_threshold: int = 64
 
 # Time-distributed finalization - spreads chunk appearances evenly over time
 var last_finalization_time_ms: int = 0
@@ -203,6 +211,8 @@ var _last_update_backend: String = ""
 var _last_terrain_finalization_defer_reason: String = ""
 var _last_update_duration_ms: float = 0.0
 var _last_pending_node_process_ms: float = 0.0
+var _last_completed_generation_drain_ms: float = 0.0
+var _last_completed_generation_drain_count: int = 0
 var _last_finalize_terrain_ms: float = 0.0
 var _last_finalize_water_ms: float = 0.0
 var _last_chunk_update_ms: float = 0.0
@@ -227,6 +237,8 @@ var _last_world_map_lod_loads: int = 0
 var _last_world_map_lod_unloads: int = 0
 var _render_resource_prewarm_started: bool = false
 var _render_resource_prewarm_node: Node = null
+@export_range(1, 256, 1) var completed_generation_drain_limit_per_frame: int = 32
+@export_range(0.1, 10.0, 0.1) var completed_generation_drain_budget_ms: float = 2.0
 
 
 # Persistent modification storage - survives chunk unloading
@@ -246,6 +258,7 @@ func _ready():
 	pending_nodes_mutex = Mutex.new()
 	cpu_mutex = Mutex.new()
 	cpu_semaphore = Semaphore.new()
+	completed_generation_mutex = Mutex.new()
 	stored_modifications_mutex = Mutex.new()
 
 	if not viewer:
@@ -424,10 +437,19 @@ func get_telemetry_snapshot() -> Dictionary:
 		"pending_terrain_collision_create_count": pending_terrain_collision_creates.size(),
 		"last_terrain_collision_create_count": _last_terrain_collision_create_count,
 		"last_terrain_collision_create_ms": _last_terrain_collision_create_ms,
+		"last_terrain_collision_create_skipped_far": _last_terrain_collision_create_skipped_far,
+		"last_terrain_collision_create_stale": _last_terrain_collision_create_stale,
+		"last_terrain_collision_candidate_checks": _last_terrain_collision_candidate_checks,
+		"terrain_collision_candidate_checks_per_frame": terrain_collision_candidate_checks_per_frame,
 		"loaded_dirty_chunk_count": dirty_loaded_chunk_count,
 		"active_render_chunk_count": active_render_chunk_count,
 		"pending_node_count": pending_nodes.size(),
 		"pending_node_sort_needed": pending_nodes_needs_sort,
+		"pending_node_sorted_prefix_count": _pending_nodes_sort_size_at_last_sort,
+		"pending_node_resort_growth_threshold": pending_node_resort_growth_threshold,
+		"last_pending_node_sort_ms": _last_pending_node_sort_ms,
+		"last_pending_node_sort_count": _last_pending_node_sort_count,
+		"last_pending_node_sort_skipped": _last_pending_node_sort_skipped,
 		"pending_batch_count": pending_batches.size(),
 		"task_queue_count": _get_task_queue_count(),
 		"cpu_task_queue_count": cpu_task_queue.size(),
@@ -448,6 +470,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_update_backend": _last_update_backend,
 		"last_terrain_finalization_defer_reason": _last_terrain_finalization_defer_reason,
 		"last_update_duration_ms": _last_update_duration_ms,
+		"completed_generation_queue_count": _get_completed_generation_queue_count(),
+		"completed_generation_drain_limit_per_frame": completed_generation_drain_limit_per_frame,
+		"completed_generation_drain_budget_ms": completed_generation_drain_budget_ms,
+		"last_completed_generation_drain_ms": _last_completed_generation_drain_ms,
+		"last_completed_generation_drain_count": _last_completed_generation_drain_count,
 		"last_pending_node_process_ms": _last_pending_node_process_ms,
 		"last_finalize_terrain_ms": _last_finalize_terrain_ms,
 		"last_finalize_water_ms": _last_finalize_water_ms,
@@ -812,6 +839,105 @@ func _queue_pending_finalization_item_free(item: Dictionary) -> void:
 	_queue_gpu_free_tasks(cleanup_tasks)
 
 
+func _append_completed_generation_free_tasks(item: Dictionary, cleanup_tasks: Array[Dictionary]) -> void:
+	var dens_t: RID = item.get("dens_t", RID())
+	if dens_t.is_valid():
+		cleanup_tasks.append({"type": "free", "rid": dens_t})
+	var dens_w: RID = item.get("dens_w", RID())
+	if dens_w.is_valid():
+		cleanup_tasks.append({"type": "free", "rid": dens_w})
+	var mat_t: RID = item.get("mat_t", RID())
+	if mat_t.is_valid():
+		cleanup_tasks.append({"type": "free", "rid": mat_t})
+
+
+func _drain_completed_generation_free_tasks() -> Array[Dictionary]:
+	var cleanup_tasks: Array[Dictionary] = []
+	if not completed_generation_mutex:
+		return cleanup_tasks
+
+	completed_generation_mutex.lock()
+	for item in completed_generation_queue:
+		if item is Dictionary:
+			_append_completed_generation_free_tasks(item, cleanup_tasks)
+	completed_generation_queue.clear()
+	completed_generation_mutex.unlock()
+	_last_completed_generation_drain_count = 0
+	_last_completed_generation_drain_ms = 0.0
+
+	return cleanup_tasks
+
+
+func _enqueue_completed_generation(item: Dictionary) -> void:
+	if not completed_generation_mutex:
+		call_deferred("_complete_generation_from_queue_item", item)
+		return
+
+	completed_generation_mutex.lock()
+	completed_generation_queue.append(item)
+	completed_generation_mutex.unlock()
+
+
+func _get_completed_generation_queue_count() -> int:
+	if not completed_generation_mutex:
+		return 0
+	completed_generation_mutex.lock()
+	var count := completed_generation_queue.size()
+	completed_generation_mutex.unlock()
+	return count
+
+
+func _pop_completed_generation_item() -> Dictionary:
+	if not completed_generation_mutex:
+		return {}
+	completed_generation_mutex.lock()
+	var item := {}
+	if not completed_generation_queue.is_empty():
+		item = completed_generation_queue.pop_back()
+	completed_generation_mutex.unlock()
+	return item
+
+
+func _drain_completed_generation_queue() -> void:
+	if not completed_generation_mutex:
+		_last_completed_generation_drain_count = 0
+		_last_completed_generation_drain_ms = 0.0
+		return
+
+	var start_us := Time.get_ticks_usec()
+	var drained := 0
+	while drained < completed_generation_drain_limit_per_frame:
+		if drained > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_us) / 1000.0
+			if elapsed_ms >= completed_generation_drain_budget_ms:
+				break
+
+		var item := _pop_completed_generation_item()
+		if item.is_empty():
+			break
+
+		_complete_generation_from_queue_item(item)
+		drained += 1
+
+	_last_completed_generation_drain_count = drained
+	_last_completed_generation_drain_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+
+
+func _complete_generation_from_queue_item(item: Dictionary) -> void:
+	complete_generation(
+		item.get("coord", Vector3i.ZERO),
+		item.get("result_t", {}),
+		item.get("dens_t", RID()),
+		item.get("result_w", {}),
+		item.get("dens_w", RID()),
+		item.get("cpu_dens_w", PackedFloat32Array()),
+		item.get("cpu_dens_t", PackedFloat32Array()),
+		item.get("height_map_t", PackedFloat32Array()),
+		item.get("mat_t", RID()),
+		item.get("cpu_mat_t", PackedByteArray())
+	)
+
+
 func _drain_pending_finalization_free_tasks() -> Array[Dictionary]:
 	var cleanup_tasks: Array[Dictionary] = []
 	if not pending_nodes_mutex:
@@ -822,10 +948,19 @@ func _drain_pending_finalization_free_tasks() -> Array[Dictionary]:
 		if item is Dictionary:
 			_append_pending_finalization_free_tasks(item, cleanup_tasks)
 	pending_nodes.clear()
-	pending_nodes_needs_sort = false
+	_reset_pending_node_sort_state()
 	pending_nodes_mutex.unlock()
 
 	return cleanup_tasks
+
+
+func _reset_pending_node_sort_state() -> void:
+	pending_nodes_needs_sort = false
+	_pending_nodes_sort_center = Vector3i(2147483647, 2147483647, 2147483647)
+	_pending_nodes_sort_size_at_last_sort = 0
+	_last_pending_node_sort_ms = 0.0
+	_last_pending_node_sort_count = 0
+	_last_pending_node_sort_skipped = false
 
 
 func _remove_pending_generate_tasks_for_coord(coord: Vector3i) -> void:
@@ -877,6 +1012,7 @@ func _process(delta):
 	if not defer_terrain_finalization:
 		update_chunks()
 
+		_drain_completed_generation_queue()
 		process_pending_nodes()
 	else:
 		update_chunk_unloads_only()
@@ -953,7 +1089,11 @@ var _pending_terrain_collision_candidates_dirty: bool = true
 var _pending_terrain_collision_sort_center: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_terrain_collision_create_ms: float = 0.0
 var _last_terrain_collision_create_count: int = 0
+var _last_terrain_collision_create_skipped_far: int = 0
+var _last_terrain_collision_create_stale: int = 0
+var _last_terrain_collision_candidate_checks: int = 0
 @export_range(1, 16, 1) var terrain_collision_create_budget_per_frame: int = 2
+@export_range(1, 256, 1) var terrain_collision_candidate_checks_per_frame: int = 64
 func update_collision_proximity():
 	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
@@ -1055,6 +1195,9 @@ func process_pending_terrain_collision_creates():
 		_pending_terrain_collision_candidates_dirty = true
 		_last_terrain_collision_create_count = 0
 		_last_terrain_collision_create_ms = 0.0
+		_last_terrain_collision_create_skipped_far = 0
+		_last_terrain_collision_create_stale = 0
+		_last_terrain_collision_candidate_checks = 0
 		return
 
 	var start_us := Time.get_ticks_usec()
@@ -1069,30 +1212,41 @@ func process_pending_terrain_collision_creates():
 	if not world:
 		_last_terrain_collision_create_count = 0
 		_last_terrain_collision_create_ms = 0.0
+		_last_terrain_collision_create_skipped_far = 0
+		_last_terrain_collision_create_stale = 0
+		_last_terrain_collision_candidate_checks = 0
 		return
 	if _pending_terrain_collision_candidates_dirty or center_chunk != _pending_terrain_collision_sort_center or _pending_terrain_collision_candidate_index >= _pending_terrain_collision_candidates.size():
 		_rebuild_pending_terrain_collision_candidates(center_chunk)
 
 	var created := 0
+	var skipped_far := 0
+	var stale := 0
+	var candidate_checks := 0
 	while _pending_terrain_collision_candidate_index < _pending_terrain_collision_candidates.size():
 		if created >= terrain_collision_create_budget_per_frame:
+			break
+		if candidate_checks >= terrain_collision_candidate_checks_per_frame:
 			break
 
 		var coord: Vector3i = _pending_terrain_collision_candidates[_pending_terrain_collision_candidate_index]
 		_pending_terrain_collision_candidate_index += 1
+		candidate_checks += 1
 
 		if not pending_terrain_collision_creates.has(coord):
 			continue
 		if not active_chunks.has(coord):
 			pending_terrain_collision_creates.erase(coord)
+			stale += 1
 			continue
 
 		var data = active_chunks[coord]
 		if data == null:
 			pending_terrain_collision_creates.erase(coord)
+			stale += 1
 			continue
+		var should_have_collision := _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
 		if data.body_rid_terrain.is_valid():
-			var should_have_collision := _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
 			if should_have_collision:
 				if world:
 					PhysicsServer3D.body_set_space(data.body_rid_terrain, world.space)
@@ -1107,8 +1261,16 @@ func process_pending_terrain_collision_creates():
 			pending_terrain_collision_creates.erase(coord)
 			continue
 		if not data.node_terrain or not data.terrain_shape:
+			if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+				terrain_grid.set_chunk_collision_ready(coord, false)
+			pending_terrain_collision_creates.erase(coord)
+			stale += 1
 			continue
-		if not world:
+		if not should_have_collision:
+			if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+				terrain_grid.set_chunk_collision_ready(coord, false)
+			pending_terrain_collision_creates.erase(coord)
+			skipped_far += 1
 			continue
 
 		var body_rid = PhysicsServer3D.body_create()
@@ -1118,17 +1280,11 @@ func process_pending_terrain_collision_creates():
 		PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, Transform3D(Basis(), chunk_pos))
 		PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
 		data.body_rid_terrain = body_rid
-		var should_have_collision := _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
-		if should_have_collision:
-			PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
-			PhysicsServer3D.body_set_collision_mask(body_rid, 1)
-			PhysicsServer3D.body_set_space(body_rid, world.space)
-		else:
-			PhysicsServer3D.body_set_collision_layer(body_rid, 0)
-			PhysicsServer3D.body_set_collision_mask(body_rid, 0)
-			PhysicsServer3D.body_set_space(body_rid, RID())
+		PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
+		PhysicsServer3D.body_set_collision_mask(body_rid, 1)
+		PhysicsServer3D.body_set_space(body_rid, world.space)
 		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
-			terrain_grid.set_chunk_collision_ready(coord, should_have_collision)
+			terrain_grid.set_chunk_collision_ready(coord, true)
 		pending_terrain_collision_creates.erase(coord)
 		created += 1
 
@@ -1142,6 +1298,9 @@ func process_pending_terrain_collision_creates():
 		_pending_terrain_collision_candidates_dirty = true
 
 	_last_terrain_collision_create_count = created
+	_last_terrain_collision_create_skipped_far = skipped_far
+	_last_terrain_collision_create_stale = stale
+	_last_terrain_collision_candidate_checks = candidate_checks
 	_last_terrain_collision_create_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
 # Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
@@ -1170,28 +1329,74 @@ func process_pending_nodes():
 		pending_nodes_mutex.unlock()
 		return
 
-	# Sort by distance to player (closest first) only when new items arrived.
-	if pending_nodes_needs_sort:
+	_last_pending_node_sort_skipped = false
+	if _should_resort_pending_nodes():
+		var sort_start_us := Time.get_ticks_usec()
 		_sort_pending_by_distance()
+		_last_pending_node_sort_ms = float(Time.get_ticks_usec() - sort_start_us) / 1000.0
+		_last_pending_node_sort_count = pending_nodes.size()
+		_pending_nodes_sort_center = _get_pending_node_viewer_chunk()
+		_pending_nodes_sort_size_at_last_sort = pending_nodes.size()
 		pending_nodes_needs_sort = false
+	elif pending_nodes_needs_sort:
+		_last_pending_node_sort_skipped = true
 
-	var item = pending_nodes.pop_back()
+	var item = _pop_next_pending_node_item()
+	if pending_nodes.is_empty():
+		_reset_pending_node_sort_state()
 	pending_nodes_mutex.unlock()
 
 	_finalize_chunk_creation(item)
 	last_finalization_time_ms = current_time
 	_last_pending_node_process_ms = float(Time.get_ticks_usec() - process_start_us) / 1000.0
 
-# Sort pending nodes by distance to player (closest first)
-func _sort_pending_by_distance():
-	if pending_nodes.size() <= 1 or not viewer:
-		return
+
+func _get_pending_node_viewer_chunk() -> Vector3i:
 	var p_pos = get_viewer_position()
-	var viewer_chunk = Vector3i(
+	return Vector3i(
 		int(floor(p_pos.x / CHUNK_STRIDE)),
 		int(floor(p_pos.y / CHUNK_STRIDE)),
 		int(floor(p_pos.z / CHUNK_STRIDE))
 	)
+
+
+func _should_resort_pending_nodes() -> bool:
+	if not pending_nodes_needs_sort:
+		return false
+	if pending_nodes.size() <= 1 or not viewer:
+		return false
+
+	var viewer_chunk := _get_pending_node_viewer_chunk()
+	if _pending_nodes_sort_size_at_last_sort <= 0:
+		return true
+	if viewer_chunk != _pending_nodes_sort_center:
+		return true
+
+	return pending_nodes.size() >= _pending_nodes_sort_size_at_last_sort + pending_node_resort_growth_threshold
+
+
+func _pop_next_pending_node_item() -> Dictionary:
+	var pop_index := pending_nodes.size() - 1
+	if pending_nodes_needs_sort and _pending_nodes_sort_size_at_last_sort > 0:
+		_pending_nodes_sort_size_at_last_sort = mini(_pending_nodes_sort_size_at_last_sort, pending_nodes.size())
+		pop_index = _pending_nodes_sort_size_at_last_sort - 1
+
+	var item: Dictionary = pending_nodes[pop_index]
+	pending_nodes.remove_at(pop_index)
+
+	if _pending_nodes_sort_size_at_last_sort > 0:
+		if pop_index < _pending_nodes_sort_size_at_last_sort:
+			_pending_nodes_sort_size_at_last_sort -= 1
+		_pending_nodes_sort_size_at_last_sort = mini(_pending_nodes_sort_size_at_last_sort, pending_nodes.size())
+
+	return item
+
+
+# Sort pending nodes by distance to player (closest first)
+func _sort_pending_by_distance():
+	if pending_nodes.size() <= 1 or not viewer:
+		return
+	var viewer_chunk := _get_pending_node_viewer_chunk()
 	pending_nodes.sort_custom(func(a, b):
 		var dist_a = (a.coord - viewer_chunk).length_squared()
 		var dist_b = (b.coord - viewer_chunk).length_squared()
@@ -2254,6 +2459,7 @@ func _exit_tree():
 		_unload_chunk(coord)
 
 	# 2. Clear pending nodes queue (prevents creating nodes after cleanup)
+	_queue_gpu_free_tasks(_drain_completed_generation_free_tasks())
 	_queue_gpu_free_tasks(_drain_pending_finalization_free_tasks())
 
 	# 3. Signal threads to exit
@@ -2455,6 +2661,7 @@ func _unload_chunk(coord: Vector3i):
 			PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
 			PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
 			PhysicsServer3D.free_rid(data.body_rid_terrain)
+			data.body_rid_terrain = RID()
 
 		var tasks = []
 		if data.density_buffer_terrain.is_valid():
@@ -2487,6 +2694,7 @@ func clear_all_chunks():
 	cpu_mutex.unlock()
 
 	# 2. Clear finalization queue
+	_queue_gpu_free_tasks(_drain_completed_generation_free_tasks())
 	_queue_gpu_free_tasks(_drain_pending_finalization_free_tasks())
 	pending_terrain_collision_creates.clear()
 	_pending_terrain_collision_candidates.clear()
@@ -2494,6 +2702,9 @@ func clear_all_chunks():
 	_pending_terrain_collision_candidates_dirty = true
 	_last_terrain_collision_create_count = 0
 	_last_terrain_collision_create_ms = 0.0
+	_last_terrain_collision_create_skipped_far = 0
+	_last_terrain_collision_create_stale = 0
+	_last_terrain_collision_candidate_checks = 0
 
 	# 3. Wipe all active chunks (frees Meshes, RIDs, and Collision)
 	# Working on a copy of keys because _unload_chunk modifies the dictionary
@@ -3411,8 +3622,22 @@ func _cpu_thread_function():
 			"generated_density": bool(task.get("generated_water_density", false))
 		}
 
-		# Send to main thread
-		call_deferred("complete_generation", task.coord, result_t, task.dens_buf_terrain, result_w, task.dens_buf_water, task.cpu_dens_w, task.cpu_dens_t, height_map_terrain, task.mat_buf_terrain, task.cpu_mat_t)
+		# Send to the main thread through a bounded queue. A call_deferred per
+		# chunk can flood Engine: Process when render distance 10 completes a
+		# large town burst; the queue preserves every result while draining under
+		# the same frame-budget discipline as node finalization.
+		_enqueue_completed_generation({
+			"coord": task.coord,
+			"result_t": result_t,
+			"dens_t": task.dens_buf_terrain,
+			"result_w": result_w,
+			"dens_w": task.dens_buf_water,
+			"cpu_dens_w": task.cpu_dens_w,
+			"cpu_dens_t": task.cpu_dens_t,
+			"height_map_t": height_map_terrain,
+			"mat_t": task.mat_buf_terrain,
+			"cpu_mat_t": task.cpu_mat_t
+		})
 
 # Helper to apply a single modification to a density buffer (used during generation replay)
 func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, density_buffer: RID, material_buffer: RID, chunk_pos: Vector3, mod: Dictionary):
@@ -3784,12 +4009,6 @@ func _finalize_chunk_creation(item: Dictionary):
 		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
 		data.terrain_shape = item.result.shape
 
-		# Queue collision body creation as soon as the visual chunk is ready so
-		# the expensive PhysicsServer body creation is not tied to the next player
-		# boundary crossing.
-		_queue_terrain_collision_create(coord)
-		_sync_terrain_collision_state(coord, data, false)
-
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
 		data.cpu_density_terrain = item.cpu_dens
@@ -3799,6 +4018,15 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
+
+		var p_pos = get_viewer_position()
+		var center_chunk = Vector3i(
+			int(floor(p_pos.x / CHUNK_STRIDE)),
+			int(floor(p_pos.y / CHUNK_STRIDE)),
+			int(floor(p_pos.z / CHUNK_STRIDE))
+		)
+		var collision_distance_sq := collision_distance * collision_distance
+		_sync_terrain_collision_state(coord, data, _should_have_terrain_collision(coord, center_chunk, collision_distance_sq))
 
 		# Spawn Zones
 		call_deferred("emit_signal", "chunk_generated", coord, data.node_terrain)
@@ -3954,7 +4182,6 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
 		if not cpu_mat.is_empty():
 			data.cpu_material_terrain = cpu_mat
-		_queue_terrain_collision_create(coord)
 		var p_pos = get_viewer_position()
 		var center_chunk = Vector3i(
 			int(floor(p_pos.x / CHUNK_STRIDE)),
@@ -3962,7 +4189,6 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			int(floor(p_pos.z / CHUNK_STRIDE))
 		)
 		var collision_distance_sq := collision_distance * collision_distance
-		_queue_terrain_collision_create(coord)
 		_sync_terrain_collision_state(coord, data, _should_have_terrain_collision(coord, center_chunk, collision_distance_sq))
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
