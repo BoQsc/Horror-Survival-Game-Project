@@ -2,6 +2,9 @@ extends Node3D
 ## Entity Manager - handles spawning, tracking, and despawning of entities
 ## Uses distance-based zones: Active -> Frozen -> Despawn
 
+const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
+const ZOMBIE_SCENE_PATH := "res://game/entities/zombie_base.tscn"
+
 signal entity_spawned(entity: Node3D)
 signal entity_despawned(entity: Node3D)
 
@@ -29,6 +32,7 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(0.0, 1.0, 0.01) var proximity_update_interval: float = 0.10
 @export_range(0.0, 1.0, 0.01) var spawn_queue_update_interval: float = 0.10
 @export_range(0.0, 1.0, 0.01) var dormant_respawn_update_interval: float = 0.25
+@export_range(0, 60, 1) var entity_render_prewarm_frames: int = 12
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
@@ -61,6 +65,9 @@ var _last_dormant_respawn_update_ms: float = 0.0
 var _last_dormant_respawn_processed: int = 0
 var _last_dormant_respawn_raycasts: int = 0
 var _last_dormant_respawn_spawned: int = 0
+var _entity_render_resource_prewarm_node: Node = null
+var _entity_render_resource_prewarm_mesh_count: int = 0
+var _entity_render_resource_prewarm_started: bool = false
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
@@ -123,6 +130,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_dormant_respawn_processed": _last_dormant_respawn_processed,
 		"last_dormant_respawn_raycasts": _last_dormant_respawn_raycasts,
 		"last_dormant_respawn_spawned": _last_dormant_respawn_spawned,
+		"entity_render_prewarm_frames": entity_render_prewarm_frames,
+		"entity_render_prewarm_mesh_count": _entity_render_resource_prewarm_mesh_count,
+		"entity_render_prewarm_active": _is_entity_render_resource_prewarm_active(),
+		"entity_render_prewarm_frames_remaining": _get_entity_render_resource_prewarm_frames_remaining(),
 		"viewer_present": is_instance_valid(viewer),
 		"player_present": is_instance_valid(player)
 	}
@@ -139,6 +150,9 @@ func _ready():
 	viewer = player  # Default viewer is the player
 	if not player:
 		push_warning("EntityManager: Player not found in 'player' group!")
+
+	_cache_procedural_entity_scenes()
+	_start_entity_render_resource_prewarm()
 	
 	# CRITICAL FIX: Check if we're in the middle of a QuickLoad
 	# If so, skip procedural spawning - load_save_data will handle entities
@@ -149,6 +163,7 @@ func _ready():
 	
 	# Setup procedural spawning
 	_setup_procedural_spawning()
+	_start_entity_render_resource_prewarm()
 
 func _physics_process(_delta):
 	if not player:
@@ -825,6 +840,81 @@ func _get_cached_scene(scene_path: String) -> PackedScene:
 	_scene_cache[scene_path] = packed
 	return packed
 
+func _cache_procedural_entity_scenes() -> void:
+	if procedural_spawning_enabled and zombie_scene == null:
+		zombie_scene = _get_cached_scene(ZOMBIE_SCENE_PATH)
+
+func _start_entity_render_resource_prewarm() -> void:
+	if entity_render_prewarm_frames <= 0 or _entity_render_resource_prewarm_started or _is_entity_render_resource_prewarm_active():
+		return
+
+	var mesh_entries := _collect_entity_render_resource_prewarm_entries()
+	_entity_render_resource_prewarm_mesh_count = mesh_entries.size()
+	if mesh_entries.is_empty():
+		return
+
+	var prewarmer: Node = RenderResourcePrewarm.new()
+	prewarmer.name = "EntityRenderResourcePrewarm"
+	add_child(prewarmer)
+	_entity_render_resource_prewarm_node = prewarmer
+	_entity_render_resource_prewarm_started = true
+	prewarmer.configure([], entity_render_prewarm_frames, mesh_entries)
+
+func _collect_entity_render_resource_prewarm_entries() -> Array:
+	var entries: Array = []
+	var unique_meshes: Array = []
+	_append_entity_scene_render_prewarm_entries(entries, unique_meshes, default_entity_scene)
+	_append_entity_scene_render_prewarm_entries(entries, unique_meshes, zombie_scene)
+	return entries
+
+func _append_entity_scene_render_prewarm_entries(entries: Array, unique_meshes: Array, scene: PackedScene) -> void:
+	if not scene:
+		return
+
+	var instance := scene.instantiate()
+	if not instance:
+		return
+
+	_append_entity_node_render_prewarm_entries(entries, unique_meshes, instance, Transform3D.IDENTITY)
+	instance.free()
+
+func _append_entity_node_render_prewarm_entries(entries: Array, unique_meshes: Array, node: Node, parent_transform: Transform3D) -> void:
+	var node_transform := parent_transform
+	if node is Node3D:
+		var node_3d := node as Node3D
+		node_transform = parent_transform * node_3d.transform
+
+		if node is MeshInstance3D:
+			var mesh_instance := node as MeshInstance3D
+			_append_entity_mesh_render_prewarm_entry(entries, unique_meshes, mesh_instance.mesh, node_transform)
+		elif node is MultiMeshInstance3D:
+			var multimesh_instance := node as MultiMeshInstance3D
+			if multimesh_instance.multimesh:
+				_append_entity_mesh_render_prewarm_entry(entries, unique_meshes, multimesh_instance.multimesh.mesh, node_transform)
+
+	for child in node.get_children():
+		_append_entity_node_render_prewarm_entries(entries, unique_meshes, child, node_transform)
+
+func _append_entity_mesh_render_prewarm_entry(entries: Array, unique_meshes: Array, mesh: Mesh, transform: Transform3D) -> void:
+	if not mesh or unique_meshes.has(mesh):
+		return
+
+	unique_meshes.append(mesh)
+	entries.append({
+		"mesh": mesh,
+		"transform": transform
+	})
+
+func _is_entity_render_resource_prewarm_active() -> bool:
+	return _entity_render_resource_prewarm_node != null and is_instance_valid(_entity_render_resource_prewarm_node)
+
+func _get_entity_render_resource_prewarm_frames_remaining() -> int:
+	if not _is_entity_render_resource_prewarm_active():
+		return 0
+	if not _entity_render_resource_prewarm_node.has_method("get_frames_remaining"):
+		return 0
+	return int(_entity_render_resource_prewarm_node.get_frames_remaining())
+
 # ============ PROCEDURAL SPAWNING ============
 
 ## Setup procedural spawning - connect to terrain signals
@@ -833,7 +923,7 @@ func _setup_procedural_spawning():
 		return
 	
 	# Load zombie scene for procedural spawning
-	zombie_scene = _get_cached_scene("res://game/entities/zombie_base.tscn")
+	zombie_scene = _get_cached_scene(ZOMBIE_SCENE_PATH)
 	if not zombie_scene:
 		push_warning("[EntityManager] Zombie scene not found - procedural spawning disabled")
 		procedural_spawning_enabled = false
