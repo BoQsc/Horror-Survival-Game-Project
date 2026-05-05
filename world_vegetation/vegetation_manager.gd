@@ -22,6 +22,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
 @export var global_render_batches_enabled: bool = true
 @export_range(1, 32, 1) var vegetation_render_cluster_size: int = 8
+@export_range(1, 32, 1) var vegetation_grass_render_cluster_size: int = 6
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
 @export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 1.5
 @export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 3.0
@@ -188,6 +189,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_supports_road_query": _terrain_supports_road_query,
 		"global_render_batches_enabled": global_render_batches_enabled,
 		"vegetation_render_cluster_size": vegetation_render_cluster_size,
+		"vegetation_grass_render_cluster_size": vegetation_grass_render_cluster_size,
 		"global_render_batch_count": _get_global_render_batch_count(),
 		"global_tree_render_instances": _global_tree_render_instance_count,
 		"global_grass_render_instances": _global_grass_render_instance_count,
@@ -335,6 +337,23 @@ func _prepare_chunk_multimesh(mmi: MultiMeshInstance3D, kind: String, coord: Vec
 		# clustered render batches for this vegetation type.
 		mmi.visible = false
 
+func _attach_chunk_multimesh(mmi: MultiMeshInstance3D, chunk_node: Node3D) -> void:
+	if not mmi:
+		return
+	if global_render_batches_enabled:
+		var global_parent := mmi.get_parent()
+		if global_parent:
+			global_parent.remove_child(mmi)
+		return
+	if not is_instance_valid(chunk_node):
+		return
+	var current_parent := mmi.get_parent()
+	if current_parent == chunk_node:
+		return
+	if current_parent:
+		current_parent.remove_child(mmi)
+	chunk_node.add_child(mmi)
+
 func _get_global_render_cluster_dictionary(kind: String) -> Dictionary:
 	match kind:
 		"tree":
@@ -364,8 +383,9 @@ func _set_global_render_dirty_flag(kind: String, dirty: bool) -> void:
 		"rock":
 			_global_rock_render_dirty = dirty
 
-func _vegetation_cluster_key(coord: Vector2i) -> Vector2i:
-	var cluster_size := maxi(vegetation_render_cluster_size, 1)
+func _vegetation_cluster_key(kind: String, coord: Vector2i) -> Vector2i:
+	var cluster_size := vegetation_grass_render_cluster_size if kind == "grass" else vegetation_render_cluster_size
+	cluster_size = maxi(cluster_size, 1)
 	return Vector2i(
 		int(floor(float(coord.x) / float(cluster_size))),
 		int(floor(float(coord.y) / float(cluster_size)))
@@ -376,13 +396,13 @@ func _mark_all_global_vegetation_clusters_dirty(kind: String) -> void:
 	match kind:
 		"tree":
 			for coord in chunk_tree_data.keys():
-				dirty_clusters[_vegetation_cluster_key(coord)] = true
+				dirty_clusters[_vegetation_cluster_key(kind, coord)] = true
 		"grass":
 			for coord in chunk_grass_data.keys():
-				dirty_clusters[_vegetation_cluster_key(coord)] = true
+				dirty_clusters[_vegetation_cluster_key(kind, coord)] = true
 		"rock":
 			for coord in chunk_rock_data.keys():
-				dirty_clusters[_vegetation_cluster_key(coord)] = true
+				dirty_clusters[_vegetation_cluster_key(kind, coord)] = true
 	_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
 
 func _mark_global_vegetation_render_dirty(kind: String, coord = null) -> void:
@@ -390,7 +410,7 @@ func _mark_global_vegetation_render_dirty(kind: String, coord = null) -> void:
 		return
 	if typeof(coord) == TYPE_VECTOR2I:
 		var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
-		dirty_clusters[_vegetation_cluster_key(coord)] = true
+		dirty_clusters[_vegetation_cluster_key(kind, coord)] = true
 		_set_global_render_dirty_flag(kind, true)
 	else:
 		_mark_all_global_vegetation_clusters_dirty(kind)
@@ -474,19 +494,19 @@ func _collect_global_vegetation_transforms(kind: String, cluster_key = null) -> 
 	match kind:
 		"tree":
 			for coord in chunk_tree_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
 					continue
 				var data = chunk_tree_data[coord]
 				_append_alive_global_vegetation_transforms(transforms, data.get("trees", []))
 		"grass":
 			for coord in chunk_grass_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
 					continue
 				var data = chunk_grass_data[coord]
 				_append_alive_global_vegetation_transforms(transforms, data.get("grass_list", []))
 		"rock":
 			for coord in chunk_rock_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
 					continue
 				var data = chunk_rock_data[coord]
 				_append_alive_global_vegetation_transforms(transforms, data.get("rock_list", []))
@@ -520,21 +540,21 @@ func _collect_global_vegetation_render_payload(kind: String, cluster_key = null)
 	match kind:
 		"tree":
 			for coord in chunk_tree_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
 					continue
 				var data = chunk_tree_data[coord]
 				payload.chunk_count = int(payload.chunk_count) + 1
 				_append_alive_global_vegetation_payload(payload, data.get("trees", []))
 		"grass":
 			for coord in chunk_grass_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
 					continue
 				var data = chunk_grass_data[coord]
 				payload.chunk_count = int(payload.chunk_count) + 1
 				_append_alive_global_vegetation_payload(payload, data.get("grass_list", []))
 		"rock":
 			for coord in chunk_rock_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
 					continue
 				var data = chunk_rock_data[coord]
 				payload.chunk_count = int(payload.chunk_count) + 1
@@ -908,27 +928,21 @@ func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
 		var data = chunk_tree_data[surface_key]
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
 			var mmi = data.multimesh as MultiMeshInstance3D
-			if mmi and mmi.get_parent():
-				mmi.get_parent().remove_child(mmi)
-				chunk_node.add_child(mmi)
+			_attach_chunk_multimesh(mmi, chunk_node)
 		data.chunk_node = chunk_node
 
 	if chunk_grass_data.has(surface_key):
 		var data = chunk_grass_data[surface_key]
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
 			var mmi = data.multimesh as MultiMeshInstance3D
-			if mmi and mmi.get_parent():
-				mmi.get_parent().remove_child(mmi)
-				chunk_node.add_child(mmi)
+			_attach_chunk_multimesh(mmi, chunk_node)
 		data.chunk_node = chunk_node
 
 	if chunk_rock_data.has(surface_key):
 		var data = chunk_rock_data[surface_key]
 		if data.has("multimesh") and is_instance_valid(data.multimesh):
 			var mmi = data.multimesh as MultiMeshInstance3D
-			if mmi and mmi.get_parent():
-				mmi.get_parent().remove_child(mmi)
-				chunk_node.add_child(mmi)
+			_attach_chunk_multimesh(mmi, chunk_node)
 		data.chunk_node = chunk_node
 
 ## Called when a chunk is unloaded - clean up vegetation data and colliders
@@ -1817,7 +1831,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		_append_native_generated_instances(tree_list, native_records)
 
 		if tree_list.size() > 0:
-			chunk_node.add_child(mmi)
+			_attach_chunk_multimesh(mmi, chunk_node)
 
 		chunk_tree_data[coord] = {
 			"multimesh": mmi,
@@ -1897,7 +1911,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			))
 
 	if tree_list.size() > 0:
-		chunk_node.add_child(mmi)
+		_attach_chunk_multimesh(mmi, chunk_node)
 
 	chunk_tree_data[coord] = {
 		"multimesh": mmi,
@@ -2126,8 +2140,8 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 		_sync_multimesh_from_instances(mmi, grass_list, chunk_stride)
 
-		# ALWAYS add to chunk and store data, even if empty (so player can place grass here)
-		chunk_node.add_child(mmi)
+		# Store data even when the render node is data-only under global batching.
+		_attach_chunk_multimesh(mmi, chunk_node)
 
 		chunk_grass_data[coord] = {
 			"multimesh": mmi,
@@ -2241,8 +2255,8 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 	_sync_multimesh_from_instances(mmi, grass_list, chunk_stride)
 
-	# ALWAYS add to chunk and store data, even if empty (so player can place grass here)
-	chunk_node.add_child(mmi)
+	# Store data even when the render node is data-only under global batching.
+	_attach_chunk_multimesh(mmi, chunk_node)
 
 	chunk_grass_data[coord] = {
 		"multimesh": mmi,
@@ -2610,8 +2624,8 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 		_sync_multimesh_from_instances(mmi, rock_list, chunk_stride)
 
-		# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
-		chunk_node.add_child(mmi)
+		# Store data even when the render node is data-only under global batching.
+		_attach_chunk_multimesh(mmi, chunk_node)
 
 		chunk_rock_data[coord] = {
 			"multimesh": mmi,
@@ -2724,8 +2738,8 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	_sync_multimesh_from_instances(mmi, rock_list, chunk_stride)
 
 
-	# ALWAYS add to chunk and store data, even if empty (so player can place rocks here)
-	chunk_node.add_child(mmi)
+	# Store data even when the render node is data-only under global batching.
+	_attach_chunk_multimesh(mmi, chunk_node)
 
 	chunk_rock_data[coord] = {
 		"multimesh": mmi,

@@ -339,6 +339,17 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var entity_last_proximity_update_ms := 0.0
 	var entity_last_spawn_queue_update_ms := 0.0
 	var entity_last_spawn_queue_spawned := 0
+	var terrain_visual_batch_node_count := 0
+	var terrain_visual_batch_dirty_count := 0
+	var terrain_last_visual_batch_rebuild_ms := 0.0
+	var terrain_last_visual_batch_rebuild_count := 0
+	var terrain_last_visual_batch_hidden_chunk_count := 0
+	var terrain_visual_batch_stream_idle_frames := 0
+	var vegetation_global_render_batch_count := 0
+	var vegetation_last_global_render_sync_ms := 0.0
+	var vegetation_last_global_render_sync_kind := ""
+	var vegetation_last_global_render_sync_chunk_count := 0
+	var vegetation_global_render_dirty_kind_count := 0
 	if is_instance_valid(terrain_manager):
 		terrain_active_chunk_count = int(terrain_manager.active_chunks.size())
 		terrain_pending_node_count = int(terrain_manager.pending_nodes.size())
@@ -352,6 +363,12 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_last_world_map_lod_loads = int(terrain_manager._last_world_map_lod_loads)
 		terrain_last_world_map_lod_unloads = int(terrain_manager._last_world_map_lod_unloads)
 		terrain_last_world_map_lod_update_ms = float(terrain_manager._last_world_map_lod_update_ms)
+		terrain_visual_batch_node_count = int(terrain_manager._terrain_visual_batches.size())
+		terrain_visual_batch_dirty_count = int(terrain_manager._terrain_visual_batch_dirty.size())
+		terrain_last_visual_batch_rebuild_ms = float(terrain_manager._last_terrain_visual_batch_rebuild_ms)
+		terrain_last_visual_batch_rebuild_count = int(terrain_manager._last_terrain_visual_batch_rebuild_count)
+		terrain_last_visual_batch_hidden_chunk_count = int(terrain_manager._last_terrain_visual_batch_hidden_chunk_count)
+		terrain_visual_batch_stream_idle_frames = int(terrain_manager._terrain_visual_batch_stream_idle_frames)
 	if not is_instance_valid(building_manager):
 		building_manager = _find_manager_node("building_manager", "BuildingManager")
 	if is_instance_valid(building_manager):
@@ -377,6 +394,14 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		prefab_last_baked_payload_apply_ms = float(prefab_spawner_node._last_world_map_baked_payload_apply_ms)
 		prefab_last_baked_payload_apply_count = int(prefab_spawner_node._last_world_map_baked_payload_apply_count)
 		prefab_last_baked_payload_flush_ms = float(prefab_spawner_node._last_world_map_baked_payload_flush_ms)
+	if not is_instance_valid(vegetation_manager):
+		vegetation_manager = _find_manager_node("vegetation_manager", "VegetationManager")
+	if is_instance_valid(vegetation_manager):
+		vegetation_global_render_batch_count = int(vegetation_manager._get_global_render_batch_count())
+		vegetation_last_global_render_sync_ms = float(vegetation_manager._last_global_render_sync_ms)
+		vegetation_last_global_render_sync_kind = str(vegetation_manager._last_global_render_sync_kind)
+		vegetation_last_global_render_sync_chunk_count = int(vegetation_manager._last_global_render_sync_chunk_count)
+		vegetation_global_render_dirty_kind_count = int(vegetation_manager._get_global_render_dirty_kinds().size())
 	if not is_instance_valid(entity_manager):
 		entity_manager = _find_manager_node("entity_manager", "EntityManager")
 	if is_instance_valid(entity_manager):
@@ -415,6 +440,12 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_last_world_map_lod_loads": terrain_last_world_map_lod_loads,
 		"terrain_last_world_map_lod_unloads": terrain_last_world_map_lod_unloads,
 		"terrain_last_world_map_lod_update_ms": terrain_last_world_map_lod_update_ms,
+		"terrain_visual_batch_node_count": terrain_visual_batch_node_count,
+		"terrain_visual_batch_dirty_count": terrain_visual_batch_dirty_count,
+		"terrain_last_visual_batch_rebuild_ms": terrain_last_visual_batch_rebuild_ms,
+		"terrain_last_visual_batch_rebuild_count": terrain_last_visual_batch_rebuild_count,
+		"terrain_last_visual_batch_hidden_chunk_count": terrain_last_visual_batch_hidden_chunk_count,
+		"terrain_visual_batch_stream_idle_frames": terrain_visual_batch_stream_idle_frames,
 		"building_dirty_visible_chunk_count": building_dirty_visible_chunk_count,
 		"building_last_flush_dirty_chunks_ms": building_last_flush_dirty_chunks_ms,
 		"building_last_apply_payload_ms": building_last_apply_payload_ms,
@@ -435,6 +466,11 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"prefab_last_baked_payload_apply_ms": prefab_last_baked_payload_apply_ms,
 		"prefab_last_baked_payload_apply_count": prefab_last_baked_payload_apply_count,
 		"prefab_last_baked_payload_flush_ms": prefab_last_baked_payload_flush_ms,
+		"vegetation_global_render_batch_count": vegetation_global_render_batch_count,
+		"vegetation_last_global_render_sync_ms": vegetation_last_global_render_sync_ms,
+		"vegetation_last_global_render_sync_kind": vegetation_last_global_render_sync_kind,
+		"vegetation_last_global_render_sync_chunk_count": vegetation_last_global_render_sync_chunk_count,
+		"vegetation_global_render_dirty_kind_count": vegetation_global_render_dirty_kind_count,
 		"entity_active_entities": entity_active_entities,
 		"entity_frozen_entities": entity_frozen_entities,
 		"entity_pending_spawns": entity_pending_spawns,

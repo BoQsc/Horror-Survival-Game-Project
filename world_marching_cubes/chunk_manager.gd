@@ -55,7 +55,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
 @export var terrain_visual_batching_enabled: bool = true
-@export_range(1, 16, 1) var terrain_visual_batch_size: int = 4
+@export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
@@ -923,6 +923,9 @@ func _clear_terrain_visual_batches(immediate: bool = false) -> void:
 	_terrain_visual_batch_dirty.clear()
 	_last_terrain_visual_batch_hidden_chunk_count = 0
 
+func _visual_batch_streaming_busy() -> bool:
+	return _last_update_loads > 0 or _last_update_unloads > 0 or not pending_nodes.is_empty() or _get_completed_generation_queue_count() > 0 or _get_task_queue_count() > 0 or _get_cpu_task_queue_count() > 0
+
 func _process_terrain_visual_batch_rebuilds() -> void:
 	_last_terrain_visual_batch_rebuild_count = 0
 	_last_terrain_visual_batch_rebuild_ms = 0.0
@@ -936,8 +939,7 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 		return
 	if _last_frame_ms > 1000.0 / 60.0:
 		return
-	var streaming_busy := _last_update_loads > 0 or _last_update_unloads > 0 or not pending_nodes.is_empty() or _get_completed_generation_queue_count() > 0 or _get_task_queue_count() > 0 or _get_cpu_task_queue_count() > 0
-	if streaming_busy:
+	if _visual_batch_streaming_busy():
 		_terrain_visual_batch_stream_idle_frames = 0
 		return
 	_terrain_visual_batch_stream_idle_frames += 1
