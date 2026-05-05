@@ -91,6 +91,10 @@ public:
 
 	// Builds a visual-only heightfield terrain mesh from the baked world-map heightmap.
 	Ref<ArrayMesh> build_world_map_lod_mesh(const PackedByteArray& heightmap_data, int heightmap_width, int heightmap_height, int chunk_x, int chunk_z, int chunk_stride, int sample_step, float map_half, float max_height);
+
+	// Merges already-built terrain ArrayMeshes into one visual mesh.
+	// Each Array entry is a Dictionary with { mesh: ArrayMesh, offset: Vector3 }.
+	Ref<ArrayMesh> build_merged_array_mesh(const Array& chunks);
 };
 
 }

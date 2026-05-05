@@ -1306,6 +1306,136 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("build_collision_boxes_from_voxels", "voxel_bytes", "chunk_size"), &MeshBuilder::build_collision_boxes_from_voxels);
     ClassDB::bind_method(D_METHOD("apply_world_map_collision_boxes", "body_rid", "collision_boxes"), &MeshBuilder::apply_world_map_collision_boxes);
     ClassDB::bind_method(D_METHOD("build_world_map_lod_mesh", "heightmap_data", "heightmap_width", "heightmap_height", "chunk_x", "chunk_z", "chunk_stride", "sample_step", "map_half", "max_height"), &MeshBuilder::build_world_map_lod_mesh);
+    ClassDB::bind_method(D_METHOD("build_merged_array_mesh", "chunks"), &MeshBuilder::build_merged_array_mesh);
+}
+
+Ref<ArrayMesh> MeshBuilder::build_merged_array_mesh(const Array& chunks) {
+    Ref<ArrayMesh> merged_mesh;
+    if (chunks.is_empty()) {
+        return merged_mesh;
+    }
+
+    struct SourceSurface {
+        PackedVector3Array vertices;
+        PackedVector3Array normals;
+        PackedColorArray colors;
+        PackedInt32Array indices;
+        Vector3 offset;
+    };
+
+    std::vector<SourceSurface> surfaces;
+    surfaces.reserve(static_cast<size_t>(chunks.size()));
+
+    int total_vertices = 0;
+    int total_indices = 0;
+    bool any_normals = false;
+    bool any_colors = false;
+
+    for (int i = 0; i < chunks.size(); ++i) {
+        Dictionary entry = chunks[i];
+        Ref<ArrayMesh> mesh = entry.get("mesh", Ref<ArrayMesh>());
+        if (mesh.is_null() || mesh->get_surface_count() <= 0) {
+            continue;
+        }
+
+        Array arrays = mesh->surface_get_arrays(0);
+        if (arrays.size() <= Mesh::ARRAY_VERTEX) {
+            continue;
+        }
+
+        PackedVector3Array vertices = arrays[Mesh::ARRAY_VERTEX];
+        if (vertices.is_empty()) {
+            continue;
+        }
+
+        SourceSurface surface;
+        surface.vertices = vertices;
+        if (arrays.size() > Mesh::ARRAY_NORMAL) {
+            surface.normals = arrays[Mesh::ARRAY_NORMAL];
+        }
+        if (arrays.size() > Mesh::ARRAY_COLOR) {
+            surface.colors = arrays[Mesh::ARRAY_COLOR];
+        }
+        if (arrays.size() > Mesh::ARRAY_INDEX) {
+            surface.indices = arrays[Mesh::ARRAY_INDEX];
+        }
+        surface.offset = entry.get("offset", Vector3());
+
+        total_vertices += surface.vertices.size();
+        total_indices += surface.indices.is_empty() ? surface.vertices.size() : surface.indices.size();
+        any_normals = any_normals || !surface.normals.is_empty();
+        any_colors = any_colors || !surface.colors.is_empty();
+        surfaces.push_back(surface);
+    }
+
+    if (total_vertices <= 0 || total_indices <= 0) {
+        return merged_mesh;
+    }
+
+    PackedVector3Array vertices;
+    PackedVector3Array normals;
+    PackedColorArray colors;
+    PackedInt32Array indices;
+    vertices.resize(total_vertices);
+    indices.resize(total_indices);
+    if (any_normals) {
+        normals.resize(total_vertices);
+    }
+    if (any_colors) {
+        colors.resize(total_vertices);
+    }
+
+    Vector3 *vertex_ptr = vertices.ptrw();
+    Vector3 *normal_ptr = any_normals ? normals.ptrw() : nullptr;
+    Color *color_ptr = any_colors ? colors.ptrw() : nullptr;
+    int32_t *index_ptr = indices.ptrw();
+
+    int vertex_write = 0;
+    int index_write = 0;
+    for (const SourceSurface &surface : surfaces) {
+        const int source_vertex_count = surface.vertices.size();
+        const Vector3 *source_vertices = surface.vertices.ptr();
+        const Vector3 *source_normals = surface.normals.is_empty() ? nullptr : surface.normals.ptr();
+        const Color *source_colors = surface.colors.is_empty() ? nullptr : surface.colors.ptr();
+        const int32_t *source_indices = surface.indices.is_empty() ? nullptr : surface.indices.ptr();
+        const int vertex_offset = vertex_write;
+
+        for (int i = 0; i < source_vertex_count; ++i) {
+            vertex_ptr[vertex_write] = source_vertices[i] + surface.offset;
+            if (normal_ptr) {
+                normal_ptr[vertex_write] = source_normals ? source_normals[i] : Vector3(0.0, 1.0, 0.0);
+            }
+            if (color_ptr) {
+                color_ptr[vertex_write] = source_colors ? source_colors[i] : Color(1.0, 1.0, 1.0, 1.0);
+            }
+            ++vertex_write;
+        }
+
+        if (source_indices) {
+            for (int i = 0; i < surface.indices.size(); ++i) {
+                index_ptr[index_write++] = vertex_offset + source_indices[i];
+            }
+        } else {
+            for (int i = 0; i < source_vertex_count; ++i) {
+                index_ptr[index_write++] = vertex_offset + i;
+            }
+        }
+    }
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = vertices;
+    if (any_normals) {
+        arrays[Mesh::ARRAY_NORMAL] = normals;
+    }
+    if (any_colors) {
+        arrays[Mesh::ARRAY_COLOR] = colors;
+    }
+    arrays[Mesh::ARRAY_INDEX] = indices;
+
+    merged_mesh.instantiate();
+    merged_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    return merged_mesh;
 }
 
 Ref<ArrayMesh> MeshBuilder::build_world_map_lod_mesh(const PackedByteArray& heightmap_data, int heightmap_width, int heightmap_height, int chunk_x, int chunk_z, int chunk_stride, int sample_step, float map_half, float max_height) {

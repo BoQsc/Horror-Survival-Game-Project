@@ -21,6 +21,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var collider_distance: float = 30.0 # Only trees within this distance get colliders
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
 @export var global_render_batches_enabled: bool = true
+@export_range(1, 32, 1) var vegetation_render_cluster_size: int = 8
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
 @export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 1.5
 @export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 3.0
@@ -58,6 +59,7 @@ var forest_noise: FastNoiseLite
 var grass_noise: FastNoiseLite
 var rock_noise: FastNoiseLite
 var player: Node3D
+var _cached_vehicle_manager: Node = null
 
 # Queue for deferred vegetation placement
 var pending_chunks: Array[Dictionary] = []
@@ -112,11 +114,19 @@ var _terrain_supports_road_query: bool = false
 var _global_tree_render_mmi: MultiMeshInstance3D = null
 var _global_grass_render_mmi: MultiMeshInstance3D = null
 var _global_rock_render_mmi: MultiMeshInstance3D = null
+var _global_tree_render_clusters: Dictionary = {}
+var _global_grass_render_clusters: Dictionary = {}
+var _global_rock_render_clusters: Dictionary = {}
+var _global_tree_dirty_clusters: Dictionary = {}
+var _global_grass_dirty_clusters: Dictionary = {}
+var _global_rock_dirty_clusters: Dictionary = {}
 var _global_tree_render_dirty: bool = false
 var _global_grass_render_dirty: bool = false
 var _global_rock_render_dirty: bool = false
 var _last_global_render_sync_ms: float = 0.0
 var _last_global_render_sync_kind: String = ""
+var _last_global_render_sync_cluster: Vector2i = Vector2i.ZERO
+var _last_global_render_sync_chunk_count: int = 0
 var _global_tree_render_instance_count: int = 0
 var _global_grass_render_instance_count: int = 0
 var _global_rock_render_instance_count: int = 0
@@ -177,6 +187,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_pending_placements_ms": _last_pending_placements_ms,
 		"terrain_supports_road_query": _terrain_supports_road_query,
 		"global_render_batches_enabled": global_render_batches_enabled,
+		"vegetation_render_cluster_size": vegetation_render_cluster_size,
 		"global_render_batch_count": _get_global_render_batch_count(),
 		"global_tree_render_instances": _global_tree_render_instance_count,
 		"global_grass_render_instances": _global_grass_render_instance_count,
@@ -186,6 +197,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_global_render_collect_ms": _last_global_render_collect_ms,
 		"last_global_render_pack_ms": _last_global_render_pack_ms,
 		"last_global_render_sync_kind": _last_global_render_sync_kind,
+		"last_global_render_sync_cluster": str(_last_global_render_sync_cluster),
+		"last_global_render_sync_chunk_count": _last_global_render_sync_chunk_count,
 		"vegetation_render_prewarm_frames": vegetation_render_prewarm_frames,
 		"vegetation_render_prewarm_mesh_count": _vegetation_render_resource_prewarm_mesh_count,
 		"vegetation_render_prewarm_active": _is_vegetation_render_resource_prewarm_active(),
@@ -291,12 +304,15 @@ func _global_vegetation_custom_aabb(transforms: Array) -> AABB:
 
 func _get_global_render_batch_count() -> int:
 	var count := 0
-	if _global_tree_render_mmi and is_instance_valid(_global_tree_render_mmi):
-		count += 1
-	if _global_grass_render_mmi and is_instance_valid(_global_grass_render_mmi):
-		count += 1
-	if _global_rock_render_mmi and is_instance_valid(_global_rock_render_mmi):
-		count += 1
+	for batch in _global_tree_render_clusters.values():
+		if batch and is_instance_valid(batch):
+			count += 1
+	for batch in _global_grass_render_clusters.values():
+		if batch and is_instance_valid(batch):
+			count += 1
+	for batch in _global_rock_render_clusters.values():
+		if batch and is_instance_valid(batch):
+			count += 1
 	return count
 
 func _get_global_render_dirty_kinds() -> Array[String]:
@@ -309,28 +325,81 @@ func _get_global_render_dirty_kinds() -> Array[String]:
 		kinds.append("rock")
 	return kinds
 
-func _prepare_chunk_multimesh(mmi: MultiMeshInstance3D, kind: String) -> void:
+func _prepare_chunk_multimesh(mmi: MultiMeshInstance3D, kind: String, coord: Vector2i) -> void:
 	if not mmi:
 		return
 	mmi.set_meta("vegetation_kind", kind)
+	mmi.set_meta("vegetation_coord", coord)
 	if global_render_batches_enabled:
 		# Data remains per chunk for gameplay/colliders; rendering is handled by
-		# the global batch for this vegetation type.
+		# clustered render batches for this vegetation type.
 		mmi.visible = false
 
-func _mark_global_vegetation_render_dirty(kind: String) -> void:
-	if not global_render_batches_enabled:
-		return
+func _get_global_render_cluster_dictionary(kind: String) -> Dictionary:
 	match kind:
 		"tree":
-			_global_tree_render_dirty = true
+			return _global_tree_render_clusters
 		"grass":
-			_global_grass_render_dirty = true
+			return _global_grass_render_clusters
 		"rock":
-			_global_rock_render_dirty = true
+			return _global_rock_render_clusters
+	return {}
+
+func _get_global_render_dirty_cluster_dictionary(kind: String) -> Dictionary:
+	match kind:
+		"tree":
+			return _global_tree_dirty_clusters
+		"grass":
+			return _global_grass_dirty_clusters
+		"rock":
+			return _global_rock_dirty_clusters
+	return {}
+
+func _set_global_render_dirty_flag(kind: String, dirty: bool) -> void:
+	match kind:
+		"tree":
+			_global_tree_render_dirty = dirty
+		"grass":
+			_global_grass_render_dirty = dirty
+		"rock":
+			_global_rock_render_dirty = dirty
+
+func _vegetation_cluster_key(coord: Vector2i) -> Vector2i:
+	var cluster_size := maxi(vegetation_render_cluster_size, 1)
+	return Vector2i(
+		int(floor(float(coord.x) / float(cluster_size))),
+		int(floor(float(coord.y) / float(cluster_size)))
+	)
+
+func _mark_all_global_vegetation_clusters_dirty(kind: String) -> void:
+	var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
+	match kind:
+		"tree":
+			for coord in chunk_tree_data.keys():
+				dirty_clusters[_vegetation_cluster_key(coord)] = true
+		"grass":
+			for coord in chunk_grass_data.keys():
+				dirty_clusters[_vegetation_cluster_key(coord)] = true
+		"rock":
+			for coord in chunk_rock_data.keys():
+				dirty_clusters[_vegetation_cluster_key(coord)] = true
+	_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
+
+func _mark_global_vegetation_render_dirty(kind: String, coord = null) -> void:
+	if not global_render_batches_enabled:
+		return
+	if typeof(coord) == TYPE_VECTOR2I:
+		var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
+		dirty_clusters[_vegetation_cluster_key(coord)] = true
+		_set_global_render_dirty_flag(kind, true)
+	else:
+		_mark_all_global_vegetation_clusters_dirty(kind)
 
 func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> void:
 	var nodes := [_global_tree_render_mmi, _global_grass_render_mmi, _global_rock_render_mmi]
+	nodes.append_array(_global_tree_render_clusters.values())
+	nodes.append_array(_global_grass_render_clusters.values())
+	nodes.append_array(_global_rock_render_clusters.values())
 	for node in nodes:
 		if node and is_instance_valid(node):
 			if immediate_free:
@@ -340,6 +409,12 @@ func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> vo
 	_global_tree_render_mmi = null
 	_global_grass_render_mmi = null
 	_global_rock_render_mmi = null
+	_global_tree_render_clusters.clear()
+	_global_grass_render_clusters.clear()
+	_global_rock_render_clusters.clear()
+	_global_tree_dirty_clusters.clear()
+	_global_grass_dirty_clusters.clear()
+	_global_rock_dirty_clusters.clear()
 	_global_tree_render_dirty = false
 	_global_grass_render_dirty = false
 	_global_rock_render_dirty = false
@@ -347,18 +422,16 @@ func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> vo
 	_global_grass_render_instance_count = 0
 	_global_rock_render_instance_count = 0
 
-func _get_global_render_multimesh(kind: String) -> MultiMeshInstance3D:
-	var existing: MultiMeshInstance3D = null
+func _get_global_render_multimesh(kind: String, cluster_key: Vector2i) -> MultiMeshInstance3D:
+	var clusters := _get_global_render_cluster_dictionary(kind)
+	var existing: MultiMeshInstance3D = clusters.get(cluster_key, null)
 	var mesh: Mesh = null
 	match kind:
 		"tree":
-			existing = _global_tree_render_mmi
 			mesh = tree_mesh
 		"grass":
-			existing = _global_grass_render_mmi
 			mesh = grass_mesh
 		"rock":
-			existing = _global_rock_render_mmi
 			mesh = rock_mesh
 		_:
 			return null
@@ -368,7 +441,7 @@ func _get_global_render_multimesh(kind: String) -> MultiMeshInstance3D:
 		return existing
 
 	var mmi := MultiMeshInstance3D.new()
-	mmi.name = "Global%sRenderBatch" % kind.capitalize()
+	mmi.name = "Global%sRenderBatch_%d_%d" % [kind.capitalize(), cluster_key.x, cluster_key.y]
 	mmi.multimesh = MultiMesh.new()
 	mmi.multimesh.mesh = mesh
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
@@ -380,14 +453,7 @@ func _get_global_render_multimesh(kind: String) -> MultiMeshInstance3D:
 	mmi.lod_bias = 100.0
 	mmi.visibility_range_end = 0.0
 	add_child(mmi)
-
-	match kind:
-		"tree":
-			_global_tree_render_mmi = mmi
-		"grass":
-			_global_grass_render_mmi = mmi
-		"rock":
-			_global_rock_render_mmi = mmi
+	clusters[cluster_key] = mmi
 	return mmi
 
 func _get_global_vegetation_instance_transform(item) -> Transform3D:
@@ -403,17 +469,26 @@ func _append_alive_global_vegetation_transforms(target: Array, entries: Array) -
 			continue
 		target.append(_get_global_vegetation_instance_transform(item))
 
-func _collect_global_vegetation_transforms(kind: String) -> Array:
+func _collect_global_vegetation_transforms(kind: String, cluster_key = null) -> Array:
 	var transforms: Array = []
 	match kind:
 		"tree":
-			for data in chunk_tree_data.values():
+			for coord in chunk_tree_data.keys():
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+					continue
+				var data = chunk_tree_data[coord]
 				_append_alive_global_vegetation_transforms(transforms, data.get("trees", []))
 		"grass":
-			for data in chunk_grass_data.values():
+			for coord in chunk_grass_data.keys():
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+					continue
+				var data = chunk_grass_data[coord]
 				_append_alive_global_vegetation_transforms(transforms, data.get("grass_list", []))
 		"rock":
-			for data in chunk_rock_data.values():
+			for coord in chunk_rock_data.keys():
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+					continue
+				var data = chunk_rock_data[coord]
 				_append_alive_global_vegetation_transforms(transforms, data.get("rock_list", []))
 	return transforms
 
@@ -435,55 +510,100 @@ func _append_alive_global_vegetation_payload(payload: Dictionary, entries: Array
 	payload.bounds = bounds
 	payload.has_bounds = has_bounds
 
-func _collect_global_vegetation_render_payload(kind: String) -> Dictionary:
+func _collect_global_vegetation_render_payload(kind: String, cluster_key = null) -> Dictionary:
 	var payload := {
 		"transforms": [],
 		"bounds": GLOBAL_VEGETATION_RENDER_AABB,
-		"has_bounds": false
+		"has_bounds": false,
+		"chunk_count": 0
 	}
 	match kind:
 		"tree":
-			for data in chunk_tree_data.values():
+			for coord in chunk_tree_data.keys():
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+					continue
+				var data = chunk_tree_data[coord]
+				payload.chunk_count = int(payload.chunk_count) + 1
 				_append_alive_global_vegetation_payload(payload, data.get("trees", []))
 		"grass":
-			for data in chunk_grass_data.values():
+			for coord in chunk_grass_data.keys():
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+					continue
+				var data = chunk_grass_data[coord]
+				payload.chunk_count = int(payload.chunk_count) + 1
 				_append_alive_global_vegetation_payload(payload, data.get("grass_list", []))
 		"rock":
-			for data in chunk_rock_data.values():
+			for coord in chunk_rock_data.keys():
+				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(coord) != cluster_key:
+					continue
+				var data = chunk_rock_data[coord]
+				payload.chunk_count = int(payload.chunk_count) + 1
 				_append_alive_global_vegetation_payload(payload, data.get("rock_list", []))
 	if bool(payload.has_bounds):
 		var payload_bounds: AABB = payload.bounds
 		payload.bounds = payload_bounds.grow(96.0)
 	return payload
 
+func _recount_global_render_instances(kind: String) -> int:
+	var total := 0
+	var clusters := _get_global_render_cluster_dictionary(kind)
+	for batch_variant in clusters.values():
+		var batch := batch_variant as MultiMeshInstance3D
+		if batch and is_instance_valid(batch) and batch.multimesh:
+			total += batch.multimesh.instance_count
+	match kind:
+		"tree":
+			_global_tree_render_instance_count = total
+		"grass":
+			_global_grass_render_instance_count = total
+		"rock":
+			_global_rock_render_instance_count = total
+	return total
+
 func _sync_global_vegetation_render_batch(kind: String) -> void:
 	if not global_render_batches_enabled:
 		return
-	var start_us := Time.get_ticks_usec()
-	var mmi := _get_global_render_multimesh(kind)
-	if not mmi or not mmi.multimesh:
+	var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
+	if dirty_clusters.is_empty():
+		_set_global_render_dirty_flag(kind, false)
 		return
+	var cluster_key: Vector2i = dirty_clusters.keys()[0]
+	var start_us := Time.get_ticks_usec()
 
 	var collect_start_us := Time.get_ticks_usec()
-	var payload := _collect_global_vegetation_render_payload(kind)
+	var payload := _collect_global_vegetation_render_payload(kind, cluster_key)
 	var transforms: Array = payload.get("transforms", [])
 	_last_global_render_collect_ms = float(Time.get_ticks_usec() - collect_start_us) / 1000.0
+	var clusters := _get_global_render_cluster_dictionary(kind)
+	if transforms.is_empty():
+		var old_batch := clusters.get(cluster_key, null) as Node
+		if old_batch and is_instance_valid(old_batch):
+			old_batch.queue_free()
+		clusters.erase(cluster_key)
+		dirty_clusters.erase(cluster_key)
+		_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
+		_recount_global_render_instances(kind)
+		_last_global_render_pack_ms = 0.0
+		_last_global_render_sync_kind = kind
+		_last_global_render_sync_cluster = cluster_key
+		_last_global_render_sync_chunk_count = int(payload.get("chunk_count", 0))
+		_last_global_render_sync_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+		return
+
+	var mmi := _get_global_render_multimesh(kind, cluster_key)
+	if not mmi or not mmi.multimesh:
+		return
 	var pack_start_us := Time.get_ticks_usec()
 	mmi.multimesh.instance_count = transforms.size()
 	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(transforms, true)
 	mmi.multimesh.custom_aabb = payload.get("bounds", GLOBAL_VEGETATION_RENDER_AABB)
 	_last_global_render_pack_ms = float(Time.get_ticks_usec() - pack_start_us) / 1000.0
-	match kind:
-		"tree":
-			_global_tree_render_dirty = false
-			_global_tree_render_instance_count = transforms.size()
-		"grass":
-			_global_grass_render_dirty = false
-			_global_grass_render_instance_count = transforms.size()
-		"rock":
-			_global_rock_render_dirty = false
-			_global_rock_render_instance_count = transforms.size()
+	dirty_clusters.erase(cluster_key)
+	_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
+	_recount_global_render_instances(kind)
 	_last_global_render_sync_kind = kind
+	_last_global_render_sync_cluster = cluster_key
+	_last_global_render_sync_chunk_count = int(payload.get("chunk_count", 0))
 	_last_global_render_sync_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
 func _flush_one_global_vegetation_render_batch() -> void:
@@ -572,7 +692,8 @@ func _sync_multimesh_from_instances(mmi: MultiMeshInstance3D, instances: Array, 
 
 	if global_render_batches_enabled and mmi.has_meta("vegetation_kind"):
 		mmi.visible = false
-		_mark_global_vegetation_render_dirty(str(mmi.get_meta("vegetation_kind")))
+		var coord = mmi.get_meta("vegetation_coord") if mmi.has_meta("vegetation_coord") else null
+		_mark_global_vegetation_render_dirty(str(mmi.get_meta("vegetation_kind")), coord)
 		return
 	elif mmi.has_meta("vegetation_kind"):
 		mmi.visible = true
@@ -728,6 +849,29 @@ func _ready():
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
 
+
+func get_viewer_position() -> Vector3:
+	var vehicle_manager := _get_vehicle_manager()
+	if vehicle_manager and "current_player_vehicle" in vehicle_manager:
+		var vehicle: Node3D = vehicle_manager.current_player_vehicle
+		if is_instance_valid(vehicle):
+			return vehicle.global_position
+
+	if not is_instance_valid(player):
+		player = get_tree().get_first_node_in_group("player")
+	if is_instance_valid(player):
+		return player.global_position
+	return global_position
+
+
+func _get_vehicle_manager() -> Node:
+	if _cached_vehicle_manager and is_instance_valid(_cached_vehicle_manager):
+		return _cached_vehicle_manager
+
+	_cached_vehicle_manager = get_tree().get_first_node_in_group("vehicle_manager")
+	return _cached_vehicle_manager
+
+
 ## Initialize or re-initialize noise generators based on current terrain seed
 func initialize_noise():
 	# Derive seed from world seed for reproducibility
@@ -811,6 +955,7 @@ func _on_chunk_unloaded(coord: Vector3i):
 				active_colliders.erase(key)
 				colliders_removed += 1
 		chunk_tree_data.erase(surface_key)
+		_mark_global_vegetation_render_dirty("tree", surface_key)
 
 	# Clean up grass
 	if chunk_grass_data.has(surface_key):
@@ -823,6 +968,7 @@ func _on_chunk_unloaded(coord: Vector3i):
 				_return_grass_collider_to_pool(active_grass_colliders[key])
 				active_grass_colliders.erase(key)
 		chunk_grass_data.erase(surface_key)
+		_mark_global_vegetation_render_dirty("grass", surface_key)
 
 	# Clean up rocks
 	if chunk_rock_data.has(surface_key):
@@ -835,6 +981,7 @@ func _on_chunk_unloaded(coord: Vector3i):
 				_return_rock_collider_to_pool(active_rock_colliders[key])
 				active_rock_colliders.erase(key)
 		chunk_rock_data.erase(surface_key)
+		_mark_global_vegetation_render_dirty("rock", surface_key)
 
 	_mark_collider_refresh_dirty()
 
@@ -894,7 +1041,7 @@ func _cleanup_chunk_trees(coord: Vector2i, immediate_free: bool = false):
 			_free_vegetation_instance_entries(data.trees)
 		chunk_tree_data.erase(coord)
 		_mark_collider_refresh_dirty()
-		_mark_global_vegetation_render_dirty("tree")
+		_mark_global_vegetation_render_dirty("tree", coord)
 
 func _cleanup_chunk_grass(coord: Vector2i, immediate_free: bool = false):
 	if chunk_grass_data.has(coord):
@@ -918,7 +1065,7 @@ func _cleanup_chunk_grass(coord: Vector2i, immediate_free: bool = false):
 			_free_vegetation_instance_entries(data.grass_list)
 		chunk_grass_data.erase(coord)
 		_mark_collider_refresh_dirty()
-		_mark_global_vegetation_render_dirty("grass")
+		_mark_global_vegetation_render_dirty("grass", coord)
 
 func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 	if chunk_rock_data.has(coord):
@@ -942,7 +1089,7 @@ func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 			_free_vegetation_instance_entries(data.rock_list)
 		chunk_rock_data.erase(coord)
 		_mark_collider_refresh_dirty()
-		_mark_global_vegetation_render_dirty("rock")
+		_mark_global_vegetation_render_dirty("rock", coord)
 
 
 func _free_vegetation_instance_entries(entries: Array) -> void:
@@ -957,10 +1104,10 @@ func _get_pending_vegetation_budget_ms() -> float:
 func _get_next_pending_chunk_index() -> int:
 	if pending_chunks.is_empty():
 		return -1
-	if not prioritize_nearby_vegetation_chunks or not player or not terrain_manager:
+	if not prioritize_nearby_vegetation_chunks or not terrain_manager:
 		return 0
 
-	var player_pos := player.global_position
+	var viewer_pos := get_viewer_position()
 	var chunk_stride := int(terrain_manager.CHUNK_STRIDE)
 	var best_index := 0
 	var best_distance_sq := 1.0e30
@@ -969,8 +1116,8 @@ func _get_next_pending_chunk_index() -> int:
 		var coord: Vector2i = item.get("coord", Vector2i.ZERO)
 		var center_x := (float(coord.x) + 0.5) * float(chunk_stride)
 		var center_z := (float(coord.y) + 0.5) * float(chunk_stride)
-		var dx := player_pos.x - center_x
-		var dz := player_pos.z - center_z
+		var dx := viewer_pos.x - center_x
+		var dz := viewer_pos.z - center_z
 		var distance_sq := dx * dx + dz * dz
 		if distance_sq < best_distance_sq:
 			best_distance_sq = distance_sq
@@ -1048,26 +1195,25 @@ func _process(_delta):
 
 
 func _physics_process(_delta):
-	# Refresh colliders when the player actually moves far enough or the
+	# Refresh colliders when the active viewer actually moves far enough or the
 	# loaded vegetation set changes, instead of doing a blind timer sweep.
 	var collider_refresh_start_us := Time.get_ticks_usec()
 	var should_refresh_colliders := _collider_refresh_dirty or not pending_collider_adds.is_empty() or not pending_collider_removes.is_empty()
-	var current_player_pos := Vector3.ZERO
-	var current_player_chunk := _last_collider_update_chunk
-	if player and terrain_manager:
-		current_player_pos = player.global_position
+	var current_viewer_pos := get_viewer_position()
+	var current_viewer_chunk := _last_collider_update_chunk
+	if terrain_manager:
 		var chunk_stride = terrain_manager.CHUNK_STRIDE
-		current_player_chunk = Vector2i(int(floor(current_player_pos.x / chunk_stride)), int(floor(current_player_pos.z / chunk_stride)))
+		current_viewer_chunk = Vector2i(int(floor(current_viewer_pos.x / chunk_stride)), int(floor(current_viewer_pos.z / chunk_stride)))
 		var collider_refresh_distance: float = max(4.0, collider_distance * 0.25)
 		var collider_refresh_distance_sq: float = collider_refresh_distance * collider_refresh_distance
-		if current_player_chunk != _last_collider_update_chunk:
+		if current_viewer_chunk != _last_collider_update_chunk:
 			should_refresh_colliders = true
-		elif current_player_pos.distance_squared_to(_last_collider_update_pos) >= collider_refresh_distance_sq:
+		elif current_viewer_pos.distance_squared_to(_last_collider_update_pos) >= collider_refresh_distance_sq:
 			should_refresh_colliders = true
 
-	if should_refresh_colliders and player and terrain_manager:
-		_last_collider_update_chunk = current_player_chunk
-		_last_collider_update_pos = current_player_pos
+	if should_refresh_colliders and terrain_manager:
+		_last_collider_update_chunk = current_viewer_chunk
+		_last_collider_update_pos = current_viewer_pos
 		_collider_refresh_dirty = false
 		_update_proximity_colliders()
 		_update_grass_proximity_colliders()
@@ -1263,20 +1409,17 @@ func _cleanup_orphan_colliders():
 				cleaned += 1
 
 func _update_proximity_colliders():
-	if not player:
-		player = get_tree().get_first_node_in_group("player")
-		if not player:
-			push_warning("VegetationManager: Player not found in 'player' group!")
-			return
+	if not terrain_manager:
+		return
 
-	var player_pos = player.global_position
+	var player_pos = get_viewer_position()
 	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 
 	# Collect trees that need colliders (only from nearby chunks)
 	var trees_needing_colliders: Array[Dictionary] = []
 
-	# Optimized: Check only 3x3 chunks around player instead of iterating all loaded chunks
+	# Optimized: Check only 3x3 chunks around the active viewer instead of iterating all loaded chunks
 	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
 	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
 
@@ -1444,17 +1587,17 @@ func _return_grass_collider_to_pool(collider: Area3D):
 	grass_collider_pool.append(collider)
 
 func _update_grass_proximity_colliders():
-	if not player:
+	if not terrain_manager:
 		return
 
-	var player_pos = player.global_position
+	var player_pos = get_viewer_position()
 	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 
 	# Collect grass that needs colliders
 	var grass_needing_colliders: Array[Dictionary] = []
 
-	# Optimized: Check only 3x3 chunks around player
+	# Optimized: Check only 3x3 chunks around the active viewer
 	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
 	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
 
@@ -1565,16 +1708,16 @@ func _return_rock_collider_to_pool(collider: Area3D):
 	rock_collider_pool.append(collider)
 
 func _update_rock_proximity_colliders():
-	if not player:
+	if not terrain_manager:
 		return
 
-	var player_pos = player.global_position
+	var player_pos = get_viewer_position()
 	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 
 	var rocks_needing_colliders: Array[Dictionary] = []
 
-	# Optimized: Check only 3x3 chunks around player
+	# Optimized: Check only 3x3 chunks around the active viewer
 	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
 	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
 
@@ -1629,7 +1772,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	mmi.multimesh.use_colors = false
 	mmi.multimesh.use_custom_data = false
-	_prepare_chunk_multimesh(mmi, "tree")
+	_prepare_chunk_multimesh(mmi, "tree", coord)
 
 	var tree_list: Array = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
@@ -1904,7 +2047,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	mmi.multimesh.use_colors = false
 	mmi.multimesh.use_custom_data = false
-	_prepare_chunk_multimesh(mmi, "grass")
+	_prepare_chunk_multimesh(mmi, "grass", coord)
 
 	# Fix distance visibility issues
 	mmi.extra_cull_margin = 1000.0 # Very large margin
@@ -2396,7 +2539,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 	mmi.multimesh.use_colors = false
 	mmi.multimesh.use_custom_data = false
-	_prepare_chunk_multimesh(mmi, "rock")
+	_prepare_chunk_multimesh(mmi, "rock", coord)
 
 	var rock_list: Array = []
 	var valid_transforms = []
