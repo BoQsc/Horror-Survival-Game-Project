@@ -653,7 +653,7 @@ func do_punch(item: Dictionary) -> void:
 		return
 	
 	# Try placed objects
-	if _try_damage_placed_object(target, item, position):
+	if _try_damage_placed_object(target, item, position, hit):
 		return
 	
 	# Try building blocks
@@ -725,7 +725,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		return
 	
 	# Priority 3: Placed objects
-	if _try_damage_placed_object(target, item, position):
+	if _try_damage_placed_object(target, item, position, hit):
 		return
 	
 	# Priority 4: Building blocks
@@ -860,7 +860,7 @@ func _do_axe_damage(item: Dictionary) -> void:
 		return
 	
 	# Priority 3: Placed objects
-	if _try_damage_placed_object(target, item, position):
+	if _try_damage_placed_object(target, item, position, hit):
 		return
 	
 	# Priority 4: Building blocks
@@ -982,7 +982,7 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		return
 	
 	# Priority 3: Placed objects
-	if _try_damage_placed_object(target, item, position):
+	if _try_damage_placed_object(target, item, position, hit):
 		return
 	
 	# Priority 4: Building blocks
@@ -1316,48 +1316,87 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 	
 	return false
 
-func _try_damage_placed_object(target: Node, item: Dictionary, _position: Vector3) -> bool:
+func _try_damage_placed_object(target: Node, item: Dictionary, _position: Vector3, hit: Dictionary = {}) -> bool:
 	if not target or not target.is_in_group("placed_objects") or not building_manager:
 		return false
 	
-	var obj_rid = target.get_rid()
+	var object_hit := _resolve_placed_object_hit(target, _position, hit)
+	if object_hit.is_empty():
+		return false
+	var chunk: Node = object_hit.get("chunk", null)
+	var anchor: Vector3i = object_hit.get("anchor", Vector3i.ZERO)
+	if not chunk or not chunk.objects.has(anchor):
+		return false
+
+	var damage_key: Variant = object_hit.get("damage_key", target.get_rid())
 	var obj_dmg = item.get("damage", 1)
 	var item_id = item.get("id", "")
 	
 	if "pickaxe" in item_id:
 		obj_dmg = 5
 	
-	object_damage[obj_rid] = object_damage.get(obj_rid, 0) + obj_dmg
-	var current_hp = OBJECT_HP - object_damage[obj_rid]
-	durability_target = obj_rid
+	object_damage[damage_key] = object_damage.get(damage_key, 0) + obj_dmg
+	var current_hp = OBJECT_HP - object_damage[damage_key]
+	durability_target = damage_key
 	
-	_emit_durability_hit(current_hp, OBJECT_HP, target.name, durability_target)
+	var object_id = chunk.objects[anchor].get("object_id", 0)
+	var object_name := str(ObjectRegistry.get_object(object_id).get("name", target.name))
+	_emit_durability_hit(current_hp, OBJECT_HP, object_name, durability_target)
 	
 	# Play sound if object is made of wood
-	if target.has_meta("anchor") and target.has_meta("chunk"):
-		var anchor = target.get_meta("anchor")
-		var chunk = target.get_meta("chunk")
-		if chunk and chunk.objects.has(anchor):
-			var object_id = chunk.objects[anchor].get("object_id", 0)
-			var obj_def = ObjectRegistry.get_object(object_id)
-			if obj_def.get("material", "") == "wood":
-				if object_damage[obj_rid] >= OBJECT_HP:
-					# Play break sound (range 4)
-					_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["break"])
-				else:
-					# Play random hit sound (ranges 1-3)
-					var rand_idx = randi() % 3 + 1
-					_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["hit_%d" % rand_idx])
+	var obj_def = ObjectRegistry.get_object(object_id)
+	if obj_def.get("material", "") == "wood":
+		if object_damage[damage_key] >= OBJECT_HP:
+			# Play break sound (range 4)
+			_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["break"])
+		else:
+			# Play random hit sound (ranges 1-3)
+			var rand_idx = randi() % 3 + 1
+			_play_audio_range(wood_block_hit_audio_player, WOOD_AUDIO_RANGES["hit_%d" % rand_idx])
 
-	if object_damage[obj_rid] >= OBJECT_HP:
-		if target.has_meta("anchor") and target.has_meta("chunk"):
-			var anchor = target.get_meta("anchor")
-			var chunk = target.get_meta("chunk")
-			chunk.remove_object(anchor)
-		object_damage.erase(obj_rid)
+	if object_damage[damage_key] >= OBJECT_HP:
+		chunk.remove_object(anchor)
+		object_damage.erase(damage_key)
 		_emit_durability_cleared()
 	
 	return true
+
+func _resolve_placed_object_hit(target: Node, position: Vector3, hit: Dictionary = {}) -> Dictionary:
+	if target.has_meta("anchor") and target.has_meta("chunk"):
+		var direct_chunk = target.get_meta("chunk")
+		var direct_anchor = target.get_meta("anchor")
+		if direct_chunk and direct_anchor != null:
+			return {
+				"chunk": direct_chunk,
+				"anchor": direct_anchor,
+				"damage_key": target.get_rid()
+			}
+
+	if not target.has_meta("chunk_static_proxy_body") or not target.has_meta("chunk"):
+		return {}
+
+	var proxy_chunk: Node = target.get_meta("chunk", null)
+	if not proxy_chunk or not proxy_chunk.has_method("get_chunk_static_proxy_anchor_for_shape"):
+		return {}
+
+	var shape_index := int(hit.get("shape", -1))
+	var proxy_anchor_variant: Variant = proxy_chunk.get_chunk_static_proxy_anchor_for_shape(shape_index)
+	if proxy_anchor_variant == null:
+		if proxy_chunk.has_method("get_object_at"):
+			var chunk_node := proxy_chunk as Node3D
+			if not chunk_node:
+				return {}
+			var local_position: Vector3 = chunk_node.to_local(position)
+			var local_cell := Vector3i(floor(local_position.x), floor(local_position.y), floor(local_position.z))
+			proxy_anchor_variant = proxy_chunk.get_object_at(local_cell)
+	if proxy_anchor_variant == null:
+		return {}
+
+	return {
+		"chunk": proxy_chunk,
+		"anchor": proxy_anchor_variant,
+		"damage_key": "%s:%d" % [str(target.get_rid()), shape_index]
+	}
 
 func _try_damage_building_block(target: Node, item: Dictionary, position: Vector3, hit: Dictionary) -> bool:
 	if not target or not building_manager:

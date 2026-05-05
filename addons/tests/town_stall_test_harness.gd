@@ -102,6 +102,8 @@ var mode_editor: Node = null
 var movement_component: Node = null
 var loading_screen: Node = null
 var pending_quit: bool = false
+var pending_town_spawn_requested: bool = false
+var pending_town_teleport_pos: Vector3 = Vector3.ZERO
 
 func _get_town_stall_seed() -> int:
 	var seed_text := OS.get_environment("TOWN_STALL_SEED")
@@ -1613,20 +1615,28 @@ func _teleport_into_town() -> void:
 		_fail("Game scene references vanished before teleport")
 		return
 
-	_reset_town_measurement_window("auto_teleport_entry")
-	_apply_terrain_chunk_updates_toggle()
-
 	var town_x: float = float(selected_town.get("x", 0.0))
 	var town_z: float = float(selected_town.get("z", 0.0))
 	var town_y: float = float(selected_town.get("terrain_y", 12.0))
 	var teleport_pos := Vector3(town_x, town_y + TELEPORT_HEIGHT_OFFSET, town_z)
 
+	if not pending_town_spawn_requested:
+		_apply_terrain_chunk_updates_toggle()
+		pending_town_teleport_pos = teleport_pos
+		pending_town_spawn_requested = true
+		if chunk_manager.has_method("request_spawn_zone"):
+			chunk_manager.request_spawn_zone(teleport_pos, 2)
+		print("[TOWN_STALL_TEST] Preparing town terrain at (%.1f, %.1f, %.1f)..." % [teleport_pos.x, teleport_pos.y, teleport_pos.z])
+		return
+
+	if not _is_town_spawn_ready(pending_town_teleport_pos):
+		return
+
+	_reset_town_measurement_window("auto_teleport_entry")
 	player.global_position = teleport_pos
 	player.velocity = Vector3.ZERO
 	hold_started_logged = false
-
-	if chunk_manager.has_method("request_spawn_zone"):
-		chunk_manager.request_spawn_zone(teleport_pos, 2)
+	pending_town_spawn_requested = false
 
 	_emit_scope_state("town_stall_test", {
 		"phase": "town_teleported",
@@ -1651,6 +1661,16 @@ func _teleport_into_town() -> void:
 	phase = Phase.HOLD_FIRST
 	phase_time = 0.0
 	hold_started_logged = false
+
+
+func _is_town_spawn_ready(position: Vector3) -> bool:
+	if chunk_manager.has_method("is_spawn_zone_ready"):
+		return bool(chunk_manager.is_spawn_zone_ready(position, 2))
+	if chunk_manager.has_method("are_chunks_ready_around") and not bool(chunk_manager.are_chunks_ready_around(position, 2)):
+		return false
+	if chunk_manager.has_method("ensure_collision_ready_at"):
+		return bool(chunk_manager.ensure_collision_ready_at(position, 1))
+	return true
 
 
 func _enter_fly_to_town() -> void:

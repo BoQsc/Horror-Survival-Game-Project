@@ -16,6 +16,10 @@ var occupied_by_object: Dictionary = {} # Vector3i (any local cell) -> Vector3i 
 var object_nodes: Dictionary = {} # Vector3i (local anchor) -> Node3D (visual instance)
 var object_collision_nodes: Dictionary = {} # Vector3i (local anchor) -> Node3D (simple collision holder)
 var simple_visual_instances: Dictionary = {} # Vector3i (local anchor) -> { object_id, rotation, fractional_pos }
+var chunk_static_proxy_instances: Dictionary = {} # Vector3i anchor -> { object_id, rotation, fractional_pos, shape }
+var chunk_static_proxy_shape_indices: Dictionary = {} # Vector3i anchor -> int shape index
+var chunk_static_proxy_shape_anchors: Dictionary = {} # int shape index -> Vector3i anchor
+var virtual_container_nodes: Dictionary = {} # Vector3i anchor -> VirtualContainerInteractable
 var simple_visual_batch_entries: Dictionary = {} # int object_id -> Array[{ anchor, transform }]
 var simple_visual_batch_nodes: Dictionary = {} # int object_id -> MultiMeshInstance3D
 var mesh_dirty: bool = true
@@ -23,6 +27,7 @@ var mesh_dirty: bool = true
 # Visuals
 var mesh_instance: MeshInstance3D
 var static_body: StaticBody3D
+var static_proxy_body: StaticBody3D
 var collision_shape: CollisionShape3D
 var _pending_mesh_apply: Dictionary = {}
 
@@ -105,6 +110,13 @@ func reset(new_coord: Vector3i):
 		var collision_node = object_collision_nodes[anchor]
 		if collision_node and is_instance_valid(collision_node):
 			collision_node.queue_free()
+	for anchor in virtual_container_nodes:
+		var container_node = virtual_container_nodes[anchor]
+		if container_node and is_instance_valid(container_node):
+			container_node.queue_free()
+	if static_proxy_body and is_instance_valid(static_proxy_body):
+		static_proxy_body.queue_free()
+		static_proxy_body = null
 	if manager and manager.world_map_mode and manager.has_method("remove_global_visual_batch"):
 		for anchor in simple_visual_instances:
 			manager.remove_global_visual_batch(_get_world_visual_batch_anchor(anchor, previous_chunk_coord))
@@ -115,6 +127,10 @@ func reset(new_coord: Vector3i):
 	occupied_by_object.clear()
 	object_nodes.clear()
 	object_collision_nodes.clear()
+	chunk_static_proxy_instances.clear()
+	chunk_static_proxy_shape_indices.clear()
+	chunk_static_proxy_shape_anchors.clear()
+	virtual_container_nodes.clear()
 	_clear_static_body_shapes()
 	simple_visual_instances.clear()
 	simple_visual_batch_entries.clear()
@@ -135,6 +151,10 @@ func _ready():
 	
 	collision_shape = CollisionShape3D.new()
 	static_body.add_child(collision_shape)
+
+	if not chunk_static_proxy_instances.is_empty():
+		_ensure_static_proxy_body()
+		_rebuild_chunk_static_proxy_collisions()
 
 	if not _pending_mesh_apply.is_empty():
 		var pending := _pending_mesh_apply
@@ -428,6 +448,234 @@ func place_proxy_visual_object(local_anchor: Vector3i, object_id: int, rotation:
 			return true
 	_append_simple_visual_batch_instance(object_id, local_anchor, final_transform, mesh)
 	is_empty = false
+	return true
+
+func place_chunk_static_proxy_object(local_anchor: Vector3i, object_id: int, rotation: int, cells: Array[Vector3i], fractional_pos: Vector3 = Vector3.ZERO, visual_data: Dictionary = {}, defer_global_visual_batch_rebuild: bool = false, should_populate_loot: bool = false) -> bool:
+	if not _should_batch_proxy_visual(object_id):
+		return false
+	if not ObjectRegistry.is_chunk_static_proxy_object(object_id):
+		return false
+
+	if visual_data.is_empty():
+		visual_data = ObjectRegistry.get_object_visual_data(object_id)
+	if visual_data.is_empty():
+		return false
+
+	var mesh: Mesh = visual_data.get("mesh")
+	if not mesh:
+		return false
+	var mesh_transform: Transform3D = visual_data.get("mesh_transform", Transform3D.IDENTITY)
+
+	var object_record := {"object_id": object_id, "rotation": rotation, "fractional_pos": fractional_pos}
+	if should_populate_loot:
+		object_record["should_populate_loot"] = true
+	objects[local_anchor] = object_record
+	for cell in cells:
+		occupied_by_object[cell] = local_anchor
+
+	simple_visual_instances[local_anchor] = {
+		"object_id": object_id,
+		"rotation": rotation,
+		"fractional_pos": fractional_pos
+	}
+	chunk_static_proxy_instances[local_anchor] = {
+		"object_id": object_id,
+		"rotation": rotation,
+		"fractional_pos": fractional_pos,
+		"should_populate_loot": should_populate_loot
+	}
+	if ObjectRegistry.is_virtual_container_object(object_id):
+		_ensure_virtual_container_node(local_anchor, object_id, rotation, fractional_pos, should_populate_loot)
+
+	var final_transform := _build_simple_visual_transform(local_anchor, object_id, rotation, fractional_pos, mesh_transform)
+	if manager and manager.world_map_mode and manager.has_method("register_global_visual_batch"):
+		var chunk_origin := Transform3D(Basis.IDENTITY, Vector3(chunk_coord) * float(SIZE))
+		var world_transform := chunk_origin * final_transform
+		var world_anchor := _get_world_visual_batch_anchor(local_anchor, chunk_coord)
+		if not manager.register_global_visual_batch(world_anchor, object_id, world_transform, mesh, defer_global_visual_batch_rebuild):
+			_append_simple_visual_batch_instance(object_id, local_anchor, final_transform, mesh)
+	else:
+		_append_simple_visual_batch_instance(object_id, local_anchor, final_transform, mesh)
+
+	_add_chunk_static_proxy_collision(local_anchor)
+	is_empty = false
+	return true
+
+func _build_virtual_container_id(local_anchor: Vector3i, object_id: int) -> String:
+	var world_anchor := Vector3i(
+		chunk_coord.x * SIZE + local_anchor.x,
+		chunk_coord.y * SIZE + local_anchor.y,
+		chunk_coord.z * SIZE + local_anchor.z
+	)
+	return "worldmap_container:%d:%d:%d:%d" % [object_id, world_anchor.x, world_anchor.y, world_anchor.z]
+
+func _ensure_virtual_container_node(local_anchor: Vector3i, object_id: int, rotation: int, fractional_pos: Vector3, should_populate_loot: bool = false) -> Node3D:
+	if virtual_container_nodes.has(local_anchor):
+		var existing := virtual_container_nodes[local_anchor] as Node3D
+		if existing and is_instance_valid(existing):
+			return existing
+		virtual_container_nodes.erase(local_anchor)
+
+	var container_id := _build_virtual_container_id(local_anchor, object_id)
+	var container_node := ObjectRegistry.create_virtual_container_interactable(object_id, container_id, should_populate_loot)
+	if not container_node:
+		return null
+	container_node.transform = _get_chunk_static_proxy_root_transform(local_anchor, object_id, rotation, fractional_pos)
+	container_node.set_meta("anchor", local_anchor)
+	container_node.set_meta("chunk", self)
+	container_node.set_meta("object_id", object_id)
+	add_child(container_node)
+	virtual_container_nodes[local_anchor] = container_node
+	return container_node
+
+func _ensure_static_proxy_body() -> StaticBody3D:
+	if static_proxy_body and is_instance_valid(static_proxy_body):
+		return static_proxy_body
+
+	static_proxy_body = StaticBody3D.new()
+	static_proxy_body.name = "StaticProxyBody"
+	static_proxy_body.collision_layer = 4
+	static_proxy_body.collision_mask = 0
+	static_proxy_body.add_to_group("placed_objects")
+	static_proxy_body.set_meta("chunk_static_proxy_body", true)
+	static_proxy_body.set_meta("chunk", self)
+	add_child(static_proxy_body)
+	return static_proxy_body
+
+func _get_chunk_static_proxy_root_transform(local_anchor: Vector3i, object_id: int, rotation: int, fractional_pos: Vector3) -> Transform3D:
+	var original_size = ObjectRegistry.get_object(object_id).get("size", Vector3i(1, 1, 1))
+	var offset_x = float(original_size.x) / 2.0
+	var offset_z = float(original_size.z) / 2.0
+	if rotation == 1 or rotation == 3:
+		var temp = offset_x
+		offset_x = offset_z
+		offset_z = temp
+	var base_pos = Vector3(local_anchor.x + offset_x, local_anchor.y, local_anchor.z + offset_z) + fractional_pos
+	return Transform3D(Basis.from_euler(Vector3(0.0, deg_to_rad(rotation * 90), 0.0)), base_pos)
+
+func _add_chunk_static_proxy_collision(local_anchor: Vector3i) -> void:
+	if not chunk_static_proxy_instances.has(local_anchor):
+		return
+	var body := _ensure_static_proxy_body()
+	if not body:
+		return
+	var body_rid := body.get_rid()
+	if not body_rid.is_valid():
+		return
+
+	_remove_chunk_static_proxy_collision(local_anchor)
+	var instance_data: Dictionary = chunk_static_proxy_instances.get(local_anchor, {})
+	var object_id := int(instance_data.get("object_id", -1))
+	var collision_data := ObjectRegistry.get_chunk_static_proxy_collision_data(object_id)
+	if collision_data.is_empty():
+		return
+
+	var shape: Shape3D = collision_data.get("shape", null)
+	if not _shape_is_usable(shape):
+		return
+	var rotation := int(instance_data.get("rotation", 0))
+	var fractional_pos: Vector3 = instance_data.get("fractional_pos", Vector3.ZERO)
+	var root_transform := _get_chunk_static_proxy_root_transform(local_anchor, object_id, rotation, fractional_pos)
+	var collision_transform: Transform3D = collision_data.get("transform", Transform3D.IDENTITY)
+	var shape_index := PhysicsServer3D.body_get_shape_count(body_rid)
+	PhysicsServer3D.body_add_shape(body_rid, shape.get_rid(), root_transform * collision_transform)
+	chunk_static_proxy_shape_indices[local_anchor] = shape_index
+	chunk_static_proxy_shape_anchors[shape_index] = local_anchor
+
+func _remove_chunk_static_proxy_collision(local_anchor: Vector3i) -> void:
+	if not chunk_static_proxy_shape_indices.has(local_anchor):
+		return
+	if not static_proxy_body or not is_instance_valid(static_proxy_body):
+		chunk_static_proxy_shape_indices.erase(local_anchor)
+		return
+
+	var body_rid := static_proxy_body.get_rid()
+	var shape_index := int(chunk_static_proxy_shape_indices.get(local_anchor, -1))
+	if body_rid.is_valid() and shape_index >= 0 and shape_index < PhysicsServer3D.body_get_shape_count(body_rid):
+		PhysicsServer3D.body_remove_shape(body_rid, shape_index)
+	chunk_static_proxy_shape_indices.erase(local_anchor)
+	chunk_static_proxy_shape_anchors.erase(shape_index)
+	_reindex_chunk_static_proxy_shapes_after_remove(shape_index)
+
+func _reindex_chunk_static_proxy_shapes_after_remove(removed_shape_index: int) -> void:
+	if removed_shape_index < 0:
+		return
+
+	var updated_shape_anchors: Dictionary = {}
+	for shape_index_variant in chunk_static_proxy_shape_anchors.keys():
+		var shape_index := int(shape_index_variant)
+		var anchor: Vector3i = chunk_static_proxy_shape_anchors[shape_index_variant]
+		var updated_index := shape_index - 1 if shape_index > removed_shape_index else shape_index
+		updated_shape_anchors[updated_index] = anchor
+		chunk_static_proxy_shape_indices[anchor] = updated_index
+	chunk_static_proxy_shape_anchors = updated_shape_anchors
+
+func _clear_chunk_static_proxy_body_shapes() -> void:
+	chunk_static_proxy_shape_indices.clear()
+	chunk_static_proxy_shape_anchors.clear()
+	if static_proxy_body and is_instance_valid(static_proxy_body):
+		var body_rid := static_proxy_body.get_rid()
+		if body_rid.is_valid():
+			var shape_count := PhysicsServer3D.body_get_shape_count(body_rid)
+			for shape_idx in range(shape_count - 1, -1, -1):
+				PhysicsServer3D.body_remove_shape(body_rid, shape_idx)
+
+func _rebuild_chunk_static_proxy_collisions() -> void:
+	if chunk_static_proxy_instances.is_empty():
+		return
+	_clear_chunk_static_proxy_body_shapes()
+	for anchor_variant in chunk_static_proxy_instances.keys():
+		var anchor: Vector3i = anchor_variant
+		_add_chunk_static_proxy_collision(anchor)
+
+func get_chunk_static_proxy_anchor_for_shape(shape_index: int) -> Variant:
+	if chunk_static_proxy_shape_anchors.has(shape_index):
+		return chunk_static_proxy_shape_anchors[shape_index]
+	return null
+
+func _resolve_chunk_static_proxy_anchor(shape_index: int, world_position: Vector3 = Vector3(INF, INF, INF)) -> Variant:
+	var anchor_variant: Variant = get_chunk_static_proxy_anchor_for_shape(shape_index)
+	if anchor_variant != null:
+		return anchor_variant
+	if world_position.is_finite():
+		var local_position := to_local(world_position)
+		var local_cell := Vector3i(floor(local_position.x), floor(local_position.y), floor(local_position.z))
+		return get_object_at(local_cell)
+	return null
+
+func get_chunk_static_proxy_interaction_prompt(shape_index: int, world_position: Vector3 = Vector3(INF, INF, INF)) -> String:
+	var anchor_variant: Variant = _resolve_chunk_static_proxy_anchor(shape_index, world_position)
+	if anchor_variant == null or not chunk_static_proxy_instances.has(anchor_variant):
+		return ""
+	var anchor: Vector3i = anchor_variant
+	var instance_data: Dictionary = chunk_static_proxy_instances[anchor]
+	var object_id := int(instance_data.get("object_id", -1))
+	if not ObjectRegistry.is_virtual_container_object(object_id):
+		return ""
+	var rotation := int(instance_data.get("rotation", 0))
+	var fractional_pos: Vector3 = instance_data.get("fractional_pos", Vector3.ZERO)
+	var should_populate_loot := bool(instance_data.get("should_populate_loot", false))
+	var container_node := _ensure_virtual_container_node(anchor, object_id, rotation, fractional_pos, should_populate_loot)
+	if container_node and container_node.has_method("get_interaction_prompt"):
+		return str(container_node.get_interaction_prompt())
+	return ""
+
+func interact_chunk_static_proxy(shape_index: int, world_position: Vector3 = Vector3(INF, INF, INF)) -> bool:
+	var anchor_variant: Variant = _resolve_chunk_static_proxy_anchor(shape_index, world_position)
+	if anchor_variant == null or not chunk_static_proxy_instances.has(anchor_variant):
+		return false
+	var anchor: Vector3i = anchor_variant
+	var instance_data: Dictionary = chunk_static_proxy_instances[anchor]
+	var object_id := int(instance_data.get("object_id", -1))
+	if not ObjectRegistry.is_virtual_container_object(object_id):
+		return false
+	var rotation := int(instance_data.get("rotation", 0))
+	var fractional_pos: Vector3 = instance_data.get("fractional_pos", Vector3.ZERO)
+	var should_populate_loot := bool(instance_data.get("should_populate_loot", false))
+	var container_node := _ensure_virtual_container_node(anchor, object_id, rotation, fractional_pos, should_populate_loot)
+	if not container_node or not container_node.has_method("interact"):
+		return false
+	container_node.interact()
 	return true
 
 func rebuild_mesh():
@@ -869,6 +1117,14 @@ func remove_object(local_anchor: Vector3i) -> bool:
 	
 	# Remove visual
 	_remove_simple_visual_batch_instance(local_anchor)
+	if chunk_static_proxy_instances.has(local_anchor):
+		_remove_chunk_static_proxy_collision(local_anchor)
+		chunk_static_proxy_instances.erase(local_anchor)
+	if virtual_container_nodes.has(local_anchor):
+		var container_node = virtual_container_nodes[local_anchor]
+		if container_node and is_instance_valid(container_node):
+			container_node.queue_free()
+		virtual_container_nodes.erase(local_anchor)
 	if object_nodes.has(local_anchor):
 		var node = object_nodes[local_anchor]
 		if node and is_instance_valid(node):
@@ -903,6 +1159,12 @@ func restore_object_visuals(defer_collision: bool = true):
 		if _should_batch_simple_visual(object_id):
 			var cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
 			if place_simple_visual_object(local_anchor, object_id, rotation, cells, fractional_pos):
+				continue
+		if manager and manager.world_map_mode and ObjectRegistry.is_chunk_static_proxy_object(object_id):
+			var static_proxy_cells := ObjectRegistry.get_occupied_cells(object_id, local_anchor, rotation)
+			var visual_data := ObjectRegistry.get_object_visual_data(object_id)
+			var should_populate_loot := bool(obj_data.get("should_populate_loot", false))
+			if place_chunk_static_proxy_object(local_anchor, object_id, rotation, static_proxy_cells, fractional_pos, visual_data, false, should_populate_loot):
 				continue
 		# Load and instantiate the scene
 		var obj_def = ObjectRegistry.get_object(object_id)

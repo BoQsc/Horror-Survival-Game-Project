@@ -22,10 +22,11 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
 @export var global_render_batches_enabled: bool = true
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
-@export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 3.0
-@export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 10.0
+@export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 1.5
+@export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 3.0
 @export_range(0, 8, 1) var vegetation_chunk_start_delay_frames: int = 0
-@export_range(1, 128, 1) var vegetation_max_stages_per_frame: int = 24
+@export_range(1, 128, 1) var vegetation_max_stages_per_frame: int = 8
+@export_range(0, 120, 1) var vegetation_global_render_stream_flush_interval_frames: int = 12
 @export var prioritize_nearby_vegetation_chunks: bool = true
 
 # Grass settings
@@ -119,6 +120,7 @@ var _last_global_render_sync_kind: String = ""
 var _global_tree_render_instance_count: int = 0
 var _global_grass_render_instance_count: int = 0
 var _global_rock_render_instance_count: int = 0
+var _global_render_stream_flush_counter: int = 0
 var _last_global_render_collect_ms: float = 0.0
 var _last_global_render_pack_ms: float = 0.0
 var _vegetation_render_resource_prewarm_node: Node = null
@@ -168,6 +170,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_initial_load_budget_ms": vegetation_initial_load_budget_ms,
 		"vegetation_chunk_start_delay_frames": vegetation_chunk_start_delay_frames,
 		"vegetation_max_stages_per_frame": vegetation_max_stages_per_frame,
+		"vegetation_global_render_stream_flush_interval_frames": vegetation_global_render_stream_flush_interval_frames,
 		"prioritize_nearby_vegetation_chunks": prioritize_nearby_vegetation_chunks,
 		"last_collider_refresh_ms": _last_collider_refresh_ms,
 		"last_queued_collider_update_ms": _last_queued_collider_update_ms,
@@ -492,6 +495,26 @@ func _flush_one_global_vegetation_render_batch() -> void:
 		_sync_global_vegetation_render_batch("grass")
 	elif _global_rock_render_dirty:
 		_sync_global_vegetation_render_batch("rock")
+
+
+func _has_dirty_global_vegetation_render_batch() -> bool:
+	return _global_tree_render_dirty or _global_grass_render_dirty or _global_rock_render_dirty
+
+
+func _should_flush_global_vegetation_render_batch() -> bool:
+	if not global_render_batches_enabled or not _has_dirty_global_vegetation_render_batch():
+		_global_render_stream_flush_counter = 0
+		return false
+	if pending_chunks.is_empty():
+		_global_render_stream_flush_counter = 0
+		return true
+	if vegetation_global_render_stream_flush_interval_frames <= 0:
+		return false
+	_global_render_stream_flush_counter += 1
+	if _global_render_stream_flush_counter >= vegetation_global_render_stream_flush_interval_frames:
+		_global_render_stream_flush_counter = 0
+		return true
+	return false
 
 
 func _pack_multimesh_buffer_from_instances(instances: Array, instances_are_transforms: bool = false) -> PackedFloat32Array:
@@ -1015,9 +1038,16 @@ func _process_pending_vegetation_chunks() -> void:
 
 	_last_pending_chunk_process_ms = float(Time.get_ticks_usec() - pending_chunk_start_us) / 1000.0
 
-func _physics_process(_delta):
+func _process(_delta):
+	var pending_placements_start_us := Time.get_ticks_usec()
 	_process_pending_vegetation_chunks()
+	_process_pending_placements()
+	if _should_flush_global_vegetation_render_batch():
+		_flush_one_global_vegetation_render_batch()
+	_last_pending_placements_ms = float(Time.get_ticks_usec() - pending_placements_start_us) / 1000.0
 
+
+func _physics_process(_delta):
 	# Refresh colliders when the player actually moves far enough or the
 	# loaded vegetation set changes, instead of doing a blind timer sweep.
 	var collider_refresh_start_us := Time.get_ticks_usec()
@@ -1049,13 +1079,6 @@ func _physics_process(_delta):
 	var queued_collider_updates_start_us := Time.get_ticks_usec()
 	_process_queued_collider_updates()
 	_last_queued_collider_update_ms = float(Time.get_ticks_usec() - queued_collider_updates_start_us) / 1000.0
-
-	# Process pending placements (retry when chunk becomes valid)
-	var pending_placements_start_us := Time.get_ticks_usec()
-	_process_pending_placements()
-	if pending_chunks.is_empty() or _last_pending_chunk_process_ms < _last_pending_chunk_budget_ms:
-		_flush_one_global_vegetation_render_batch()
-	_last_pending_placements_ms = float(Time.get_ticks_usec() - pending_placements_start_us) / 1000.0
 
 func _process_queued_collider_updates():
 	var updates_done = 0
@@ -2936,8 +2959,9 @@ func _serialize_placed_list(list: Array) -> Array:
 		})
 	return result
 
-## Clear all internal vegetation data for a fresh start (e.g. before loading a save)
-func clear_all_data(immediate_free: bool = false):
+## Clear loaded vegetation chunk visuals/colliders without touching persistent
+## chopped/removed/placed state. Used when terrain chunks are reset or relocated.
+func clear_loaded_chunk_data(immediate_free: bool = false):
 	# Stop all pending work
 	pending_chunks.clear()
 	pending_grass_placements.clear()
@@ -2980,14 +3004,19 @@ func clear_all_data(immediate_free: bool = false):
 		active_grass_colliders.clear()
 		active_rock_colliders.clear()
 
+	# Reset states
+	pending_vegetation_regen = false
+	is_initial_load_batch = false
+	initial_load_count = 0
+
+
+## Clear all internal vegetation data for a fresh start (e.g. before loading a save)
+func clear_all_data(immediate_free: bool = false):
+	clear_loaded_chunk_data(immediate_free)
+
 	# Clear persistent tracking
 	removed_grass.clear()
 	removed_rocks.clear()
 	chopped_trees.clear()
 	placed_grass.clear()
 	placed_rocks.clear()
-
-	# Reset states
-	pending_vegetation_regen = false
-	is_initial_load_batch = false
-	initial_load_count = 0

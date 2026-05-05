@@ -4,7 +4,7 @@ class_name LoadingScreen
 ## Tracks visual completion: terrain meshes, buildings, and vegetation
 
 signal loading_complete
-signal terrain_ready  # Emitted when terrain meshes are loaded (before vegetation/buildings)
+signal terrain_ready  # Emitted when terrain/collision is safe for player physics
 
 @onready var panel: PanelContainer = $Panel
 @onready var progress_bar: ProgressBar = $Panel/VBox/ProgressBar
@@ -80,7 +80,10 @@ func _start_loading_sequence() -> void:
 				is_complete = terrain_manager.get("initial_load_phase") == false
 			
 			if is_complete:
-				# Terrain visually complete, move to next stage
+				# terrain_ready gates player physics, so wait for collision-safe terrain completion.
+				if not has_emitted_terrain_ready:
+					terrain_ready.emit()
+					has_emitted_terrain_ready = true
 				update_progress(100.0, "Terrain loaded!")
 				current_stage = Stage.PREFABS
 				break
@@ -94,11 +97,6 @@ func _start_loading_sequence() -> void:
 					var target = terrain_manager.get("initial_load_target_chunks")
 					if target != null and target > 0:
 						progress = (float(chunks_loaded) / float(target)) * 100.0
-				
-				# Emit terrain_ready as soon as first chunks start rendering
-				if progress > 0 and not has_emitted_terrain_ready:
-					terrain_ready.emit()
-					has_emitted_terrain_ready = true
 				
 				var pending = 0
 				if terrain_manager.has_method("get_pending_nodes_count"):

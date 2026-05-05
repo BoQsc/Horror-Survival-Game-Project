@@ -24,8 +24,8 @@ var chunk_pool: Array[BuildingChunk] = []
 const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 
 @export_range(0.5, 20.0, 0.5) var object_collision_budget_ms: float = 2.0
-@export_range(0.25, 10.0, 0.25) var world_map_baked_object_spawn_budget_ms: float = 2.0
-@export_range(1, 32, 1) var world_map_baked_object_spawn_max_per_frame: int = 4
+@export_range(0.25, 10.0, 0.25) var world_map_baked_object_spawn_budget_ms: float = 1.0
+@export_range(1, 32, 1) var world_map_baked_object_spawn_max_per_frame: int = 2
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
 @export_range(0, 60, 1) var object_render_prewarm_frames: int = 12
 var skip_object_collisions_for_test: bool = false
@@ -1488,6 +1488,9 @@ func get_telemetry_snapshot() -> Dictionary:
 	var total_simple_visual_instances := 0
 	var total_visual_batches := 0
 	var total_occupied_cells := 0
+	var total_chunk_static_proxy_instances := 0
+	var total_chunk_static_proxy_shapes := 0
+	var total_virtual_container_nodes := 0
 	var total_mesh_dirty_chunks := _dirty_chunks.size()
 	var total_dirty_visible_chunks := _dirty_visible_chunk_count
 	var total_dirty_hidden_chunks := maxi(0, total_mesh_dirty_chunks - total_dirty_visible_chunks)
@@ -1502,6 +1505,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		total_object_collision_nodes += chunk.object_collision_nodes.size()
 		total_collision_box_shapes += 1 if chunk.collision_shape else 0
 		total_simple_visual_instances += chunk.simple_visual_instances.size()
+		total_chunk_static_proxy_instances += chunk.chunk_static_proxy_instances.size()
+		total_chunk_static_proxy_shapes += chunk.chunk_static_proxy_shape_indices.size()
+		total_virtual_container_nodes += chunk.virtual_container_nodes.size()
 		total_visual_batches += chunk.simple_visual_batch_nodes.size()
 		total_occupied_cells += chunk.occupied_by_object.size()
 
@@ -1540,6 +1546,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_object_collision_nodes": total_object_collision_nodes,
 		"total_collision_box_nodes": total_collision_box_shapes,
 		"total_simple_visual_instances": total_simple_visual_instances,
+		"total_chunk_static_proxy_instances": total_chunk_static_proxy_instances,
+		"total_chunk_static_proxy_shapes": total_chunk_static_proxy_shapes,
+		"total_virtual_container_nodes": total_virtual_container_nodes,
 		"total_visual_batches": total_visual_batches,
 		"total_global_visual_batches": _global_visual_batch_nodes.size(),
 		"total_global_visual_instances": _global_visual_batch_instances.size(),
@@ -1912,6 +1921,13 @@ func place_object(global_pos: Vector3, object_id: int, rotation: int, ignore_col
 		if not visual_data.is_empty():
 			var simple_success = chunk.place_simple_visual_object(local_anchor, object_id, rotation, local_cells, fractional_pos, visual_data, defer_global_visual_batch_rebuild)
 			if simple_success:
+				return true
+
+	if world_map_mode and ObjectRegistry.is_chunk_static_proxy_object(object_id):
+		var static_proxy_visual_data = ObjectRegistry.get_object_visual_data(object_id)
+		if not static_proxy_visual_data.is_empty():
+			var static_proxy_success = chunk.place_chunk_static_proxy_object(local_anchor, object_id, rotation, local_cells, fractional_pos, static_proxy_visual_data, defer_global_visual_batch_rebuild, is_procedural)
+			if static_proxy_success:
 				return true
 
 	var scene_instance: Node3D = null

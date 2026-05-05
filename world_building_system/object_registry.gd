@@ -76,6 +76,7 @@ const OBJECTS = {
 # should opt into `simple` or `proxy`.
 
 const CONTAINER_INTERACTABLE_SCRIPT := preload("res://modules/world_player_v2/features/data_containers/container_interactable.gd")
+const VIRTUAL_CONTAINER_INTERACTABLE_SCRIPT := preload("res://world_building_system/virtual_container_interactable.gd")
 const DOOR_PROXY_SHELL_SCRIPT := preload("res://world_building_system/door_proxy_shell.gd")
 const PROP_PHYSICS_SETTLER_SCRIPT := preload("res://world_building_system/prop_physics_settler.gd")
 
@@ -116,6 +117,8 @@ static func preload_all_scenes() -> void:
 			get_object_visual_data(int(id))
 		if is_proxy_visual_batch_object(int(id)):
 			_get_proxy_shell_box_data(int(id))
+		if is_chunk_static_proxy_object(int(id)):
+			get_chunk_static_proxy_collision_data(int(id))
 		if int(id) == 3 or int(id) == 5 or int(id) == 7:
 			get_simple_object_collision_data(int(id))
 		var has_authored_collision := get_object_has_authored_collision(int(id))
@@ -526,6 +529,42 @@ static func is_simple_visual_batch_object(object_id: int) -> bool:
 static func is_proxy_visual_batch_object(object_id: int) -> bool:
 	return get_visual_batch_mode(object_id) == "proxy" and is_visual_batch_safe(object_id)
 
+static func is_chunk_static_proxy_object(object_id: int) -> bool:
+	if not is_proxy_visual_batch_object(object_id):
+		return false
+	match object_id:
+		1, 2:
+			return true
+		# Tables already use a static proxy shell in world-map mode, so a
+		# chunk-level static proxy preserves the current gameplay surface.
+		3, 5, 7:
+			return true
+	if is_movable_object(object_id):
+		return false
+	return false
+
+static func is_virtual_container_object(object_id: int) -> bool:
+	match object_id:
+		1, 2:
+			return true
+	return false
+
+static func get_virtual_container_data(object_id: int) -> Dictionary:
+	match object_id:
+		1:
+			return {
+				"node_name": "CardboardBoxVirtualContainer",
+				"slot_count": 6,
+				"container_name": "Cardboard Box"
+			}
+		2:
+			return {
+				"node_name": "LongCrateVirtualContainer",
+				"slot_count": 12,
+				"container_name": "Long Crate"
+			}
+	return {}
+
 static func _find_render_mesh_instance(root: Node, preferred_root_name: String = "") -> MeshInstance3D:
 	if not root:
 		return null
@@ -623,6 +662,31 @@ static func get_simple_object_collision_data(object_id: int) -> Dictionary:
 	_simple_object_collision_data_cache[object_id] = data
 	return data
 
+static func get_proxy_visual_box_collision_data(object_id: int) -> Dictionary:
+	var box_data := _get_proxy_shell_box_data(object_id)
+	if box_data.is_empty():
+		return {}
+
+	var box_size: Vector3 = box_data.get("size", Vector3.ONE)
+	return {
+		"shape": _get_cached_box_shape("visual_box:%d" % object_id, box_size),
+		"transform": box_data.get("transform", Transform3D.IDENTITY)
+	}
+
+static func get_chunk_static_proxy_collision_data(object_id: int) -> Dictionary:
+	match object_id:
+		1:
+			return {
+				"shape": _get_cached_box_shape("container:Cardboard Box:%s" % str(Vector3(0.7589844, 0.48020607, 0.6033878)), Vector3(0.7589844, 0.48020607, 0.6033878)),
+				"transform": Transform3D(Basis.IDENTITY, Vector3(-0.016992182, 0.23745339, -0.0048420727))
+			}
+		2:
+			return {
+				"shape": _get_cached_box_shape("container:Long Crate:%s" % str(Vector3(1.8, 0.7, 0.8)), Vector3(1.8, 0.7, 0.8)),
+				"transform": Transform3D(Basis.IDENTITY, Vector3(0.0, 0.35, 0.0))
+			}
+	return get_proxy_visual_box_collision_data(object_id)
+
 static func _get_cached_box_shape(cache_key: String, box_size: Vector3) -> BoxShape3D:
 	if _proxy_shell_box_shape_cache.has(cache_key):
 		return _proxy_shell_box_shape_cache[cache_key]
@@ -652,6 +716,24 @@ static func _create_container_shell(
 	collision.transform = collision_transform
 	shell.add_child(collision)
 	return shell
+
+static func create_virtual_container_interactable(object_id: int, container_id: String = "", should_populate_loot: bool = false) -> Node3D:
+	var container_data := get_virtual_container_data(object_id)
+	if container_data.is_empty():
+		return null
+	var node := VIRTUAL_CONTAINER_INTERACTABLE_SCRIPT.new() as Node3D
+	if not node:
+		return null
+	node.name = str(container_data.get("node_name", "VirtualContainer"))
+	if node.has_method("set"):
+		node.set("slot_count", int(container_data.get("slot_count", 6)))
+		node.set("container_name", str(container_data.get("container_name", "Container")))
+		node.set("should_populate_loot", should_populate_loot)
+	if not container_id.is_empty():
+		node.set_meta("container_id", container_id)
+	if should_populate_loot:
+		node.set_meta("should_populate_loot", true)
+	return node
 
 static func _create_pistol_shell(world_map_mode: bool = false) -> RigidBody3D:
 	var shell := PROP_PHYSICS_SETTLER_SCRIPT.new() as RigidBody3D

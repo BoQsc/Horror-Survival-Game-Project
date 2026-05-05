@@ -13,6 +13,7 @@ var entity_manager: Node = null
 
 var current_target: Node = null
 var current_prompt: String = ""
+var current_target_hit: Dictionary = {}
 var is_holding_e: bool = false
 var hold_time: float = 0.0
 const BARRICADE_HOLD_TIME: float = 1.0
@@ -153,25 +154,36 @@ func _update_interaction_target() -> void:
 	if collider.has_meta("door"):
 		var door = collider.get_meta("door")
 		if door and door.is_in_group("interactable"):
-			_set_target(door)
+			_set_target(door, hit)
 			return
+
+	if collider.has_meta("chunk_static_proxy_body") and collider.has_meta("chunk"):
+		var proxy_chunk = collider.get_meta("chunk")
+		if proxy_chunk and proxy_chunk.has_method("get_chunk_static_proxy_interaction_prompt"):
+			var prompt := str(proxy_chunk.get_chunk_static_proxy_interaction_prompt(int(hit.get("shape", -1)), hit.get("position", Vector3.ZERO)))
+			if not prompt.is_empty():
+				_set_target(collider, hit, prompt)
+				return
 	
 	var node = collider
 	while node:
 		if node.is_in_group("interactable") or node.is_in_group("vehicle"):
-			_set_target(node)
+			_set_target(node, hit)
 			return
 		node = node.get_parent()
 	
 	_clear_target()
 
-func _set_target(target: Node) -> void:
-	if target == current_target:
+func _set_target(target: Node, hit: Dictionary = {}, prompt_override: String = "") -> void:
+	if target == current_target and hit == current_target_hit and prompt_override == "":
 		return
 	
 	current_target = target
+	current_target_hit = hit.duplicate()
 	
-	if target.has_method("get_interaction_prompt"):
+	if not prompt_override.is_empty():
+		current_prompt = prompt_override
+	elif target.has_method("get_interaction_prompt"):
 		current_prompt = target.get_interaction_prompt()
 	elif target.is_in_group("vehicle"):
 		current_prompt = "[E] Enter Vehicle"
@@ -184,6 +196,7 @@ func _set_target(target: Node) -> void:
 func _clear_target() -> void:
 	if current_target != null:
 		current_target = null
+		current_target_hit = {}
 		current_prompt = ""
 		if has_node("/root/PlayerSignals"):
 			PlayerSignals.interaction_unavailable.emit()
@@ -195,6 +208,15 @@ func _do_interaction() -> void:
 	if current_target.is_in_group("vehicle"):
 		_enter_vehicle(current_target)
 		return
+
+	if current_target.has_meta("chunk_static_proxy_body") and current_target.has_meta("chunk"):
+		var proxy_chunk = current_target.get_meta("chunk")
+		if proxy_chunk and proxy_chunk.has_method("interact_chunk_static_proxy"):
+			var did_interact := bool(proxy_chunk.interact_chunk_static_proxy(int(current_target_hit.get("shape", -1)), current_target_hit.get("position", Vector3.ZERO)))
+			if did_interact:
+				if has_node("/root/PlayerSignals"):
+					PlayerSignals.interaction_performed.emit(current_target, "interact")
+				return
 	
 	if current_target.has_method("interact"):
 		current_target.interact()

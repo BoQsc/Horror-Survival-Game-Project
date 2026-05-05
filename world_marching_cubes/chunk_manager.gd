@@ -114,6 +114,7 @@ var shader_mesh_spirv: RDShaderSPIRV
 
 var material_terrain: Material
 var material_water: Material
+var _chunk_node_root: Node3D = null
 var _material_texture_builder: Object = null
 var _cached_vehicle_manager: Node = null
 var _cached_building_manager: Node = null
@@ -162,12 +163,14 @@ var _pending_nodes_sort_size_at_last_sort: int = 0
 var _last_pending_node_sort_ms: float = 0.0
 var _last_pending_node_sort_count: int = 0
 var _last_pending_node_sort_skipped: bool = false
+var _last_pending_node_finalize_count: int = 0
 @export_range(1, 256, 1) var pending_node_resort_growth_threshold: int = 64
+@export_range(1, 64, 1) var pending_node_finalize_max_per_frame: int = 8
+@export_range(1, 128, 1) var pending_node_initial_finalize_max_per_frame: int = 32
 
-# Time-distributed finalization - spreads chunk appearances evenly over time
+# Budgeted finalization - spreads chunk appearances without letting ready chunks starve.
 var last_finalization_time_ms: int = 0
-## Minimum time between chunk finalizations (ms). Lower = faster loading, Higher = smoother appearance.
-## 100ms = max 10 chunks/second for very smooth visual spread.
+## Legacy editor knob retained for saved scenes; finalization now uses frame budgets.
 @export_range(0, 5000, 10) var min_finalization_interval_ms: int = 100
 
 # Two-phase loading system
@@ -200,6 +203,8 @@ var loading_paused: bool = false
 @export_range(1, 64, 1) var terrain_unload_budget_per_frame: int = 8
 @export_range(0, 5, 1) var terrain_hot_frame_backoff_frames: int = 2
 @export_range(0, 60, 1) var render_resource_prewarm_frames: int = 12
+@export_range(0, 256, 1) var spawn_zone_far_reset_distance_chunks: int = 16
+@export_range(1, 128, 1) var retired_chunk_node_cleanup_budget_per_frame: int = 24
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
@@ -218,6 +223,12 @@ var _last_finalize_water_ms: float = 0.0
 var _last_chunk_update_ms: float = 0.0
 var _last_modify_terrain_ms: float = 0.0
 var _last_world_map_entry_ms: float = 0.0
+var _last_spawn_zone_far_reset_ms: float = 0.0
+var _last_spawn_zone_far_reset_cleared_chunks: int = 0
+var _spawn_zone_far_reset_count: int = 0
+var _last_retired_chunk_node_cleanup_ms: float = 0.0
+var _last_retired_chunk_node_cleanup_count: int = 0
+var _retired_chunk_node_roots: Array[Node3D] = []
 var _last_world_map_load_profile: Dictionary = {}
 var _startup_world_map_data: Dictionary = {}
 var _startup_world_map_load_profile: Dictionary = {}
@@ -260,6 +271,7 @@ func _ready():
 	cpu_semaphore = Semaphore.new()
 	completed_generation_mutex = Mutex.new()
 	stored_modifications_mutex = Mutex.new()
+	_ensure_chunk_node_root()
 
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
@@ -401,6 +413,7 @@ func get_telemetry_snapshot() -> Dictionary:
 	var pending_chunk_count := 0
 	var rendered_terrain_chunk_count := 0
 	var rendered_water_chunk_count := 0
+	var water_physics_area_count := 0
 	var collision_chunk_count := 0
 	var collision_ready_chunk_count := 0
 	var dirty_loaded_chunk_count := 0
@@ -418,6 +431,8 @@ func get_telemetry_snapshot() -> Dictionary:
 			rendered_terrain_chunk_count += 1
 		if data.node_water:
 			rendered_water_chunk_count += 1
+			if data.node_water is Area3D:
+				water_physics_area_count += 1
 		if data.body_rid_terrain.is_valid():
 			collision_chunk_count += 1
 		if data.node_terrain or data.node_water:
@@ -432,6 +447,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"pending_chunk_count": pending_chunk_count,
 		"rendered_terrain_chunk_count": rendered_terrain_chunk_count,
 		"rendered_water_chunk_count": rendered_water_chunk_count,
+		"water_physics_area_count": water_physics_area_count,
 		"collision_chunk_count": collision_chunk_count,
 		"collision_ready_chunk_count": collision_ready_chunk_count,
 		"pending_terrain_collision_create_count": pending_terrain_collision_creates.size(),
@@ -450,6 +466,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_pending_node_sort_ms": _last_pending_node_sort_ms,
 		"last_pending_node_sort_count": _last_pending_node_sort_count,
 		"last_pending_node_sort_skipped": _last_pending_node_sort_skipped,
+		"last_pending_node_finalize_count": _last_pending_node_finalize_count,
+		"pending_node_finalize_max_per_frame": pending_node_finalize_max_per_frame,
+		"pending_node_initial_finalize_max_per_frame": pending_node_initial_finalize_max_per_frame,
 		"pending_batch_count": pending_batches.size(),
 		"task_queue_count": _get_task_queue_count(),
 		"cpu_task_queue_count": cpu_task_queue.size(),
@@ -481,6 +500,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_chunk_update_ms": _last_chunk_update_ms,
 		"last_modify_terrain_ms": _last_modify_terrain_ms,
 		"last_world_map_entry_ms": _last_world_map_entry_ms,
+		"last_spawn_zone_far_reset_ms": _last_spawn_zone_far_reset_ms,
+		"last_spawn_zone_far_reset_cleared_chunks": _last_spawn_zone_far_reset_cleared_chunks,
+		"spawn_zone_far_reset_count": _spawn_zone_far_reset_count,
+		"retired_chunk_node_root_count": _retired_chunk_node_roots.size(),
+		"last_retired_chunk_node_cleanup_ms": _last_retired_chunk_node_cleanup_ms,
+		"last_retired_chunk_node_cleanup_count": _last_retired_chunk_node_cleanup_count,
 		"world_map_load_profile": _last_world_map_load_profile.duplicate(true),
 		"world_map_lod_chunk_count": _world_map_lod_chunks.size(),
 		"last_world_map_lod_update_ms": _last_world_map_lod_update_ms,
@@ -523,6 +548,53 @@ func _start_render_resource_prewarm() -> void:
 func _append_render_prewarm_material(materials: Array, material: Material) -> void:
 	if material and not materials.has(material):
 		materials.append(material)
+
+func _ensure_chunk_node_root() -> Node3D:
+	if _chunk_node_root and is_instance_valid(_chunk_node_root):
+		return _chunk_node_root
+
+	_chunk_node_root = Node3D.new()
+	_chunk_node_root.name = "ChunkNodes"
+	add_child(_chunk_node_root)
+	return _chunk_node_root
+
+func _reset_chunk_node_root() -> void:
+	if _chunk_node_root and is_instance_valid(_chunk_node_root):
+		_chunk_node_root.visible = false
+		_chunk_node_root.process_mode = Node.PROCESS_MODE_DISABLED
+		_retired_chunk_node_roots.append(_chunk_node_root)
+	_chunk_node_root = null
+	_ensure_chunk_node_root()
+
+func _process_retired_chunk_node_cleanup() -> void:
+	_last_retired_chunk_node_cleanup_count = 0
+	_last_retired_chunk_node_cleanup_ms = 0.0
+	if _retired_chunk_node_roots.is_empty():
+		return
+
+	var start_us := Time.get_ticks_usec()
+	var remaining_budget := retired_chunk_node_cleanup_budget_per_frame
+	var root_index := _retired_chunk_node_roots.size() - 1
+	while root_index >= 0 and remaining_budget > 0:
+		var root := _retired_chunk_node_roots[root_index]
+		if not is_instance_valid(root):
+			_retired_chunk_node_roots.remove_at(root_index)
+			root_index -= 1
+			continue
+
+		while root.get_child_count() > 0 and remaining_budget > 0:
+			var child := root.get_child(root.get_child_count() - 1)
+			root.remove_child(child)
+			child.queue_free()
+			remaining_budget -= 1
+			_last_retired_chunk_node_cleanup_count += 1
+
+		if root.get_child_count() == 0:
+			_retired_chunk_node_roots.remove_at(root_index)
+			root.queue_free()
+		root_index -= 1
+
+	_last_retired_chunk_node_cleanup_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
 func _is_render_resource_prewarm_active() -> bool:
 	return _render_resource_prewarm_node != null and is_instance_valid(_render_resource_prewarm_node)
@@ -765,6 +837,16 @@ func _get_prefab_spawner() -> Node:
 		_cached_prefab_spawner = get_tree().root.find_child("PrefabSpawner", true, false)
 	return _cached_prefab_spawner
 
+func _clear_vegetation_runtime_chunks_for_world_reset() -> bool:
+	var vegetation_manager := get_tree().get_first_node_in_group("vegetation_manager")
+	if not vegetation_manager:
+		vegetation_manager = get_tree().root.find_child("VegetationManager", true, false)
+	if not vegetation_manager or not vegetation_manager.has_method("clear_loaded_chunk_data"):
+		return false
+
+	vegetation_manager.clear_loaded_chunk_data(false)
+	return true
+
 
 func _get_task_queue_count() -> int:
 	mutex.lock()
@@ -810,12 +892,19 @@ func _queue_gpu_free_tasks(tasks: Array[Dictionary]) -> void:
 		return
 
 	mutex.lock()
-	for t in tasks:
-		task_queue.append(t)
+	if tasks.size() == 1:
+		task_queue.append(tasks[0])
+	else:
+		var rids := []
+		for t in tasks:
+			var rid: RID = t.get("rid", RID())
+			if rid.is_valid():
+				rids.append(rid)
+		if not rids.is_empty():
+			task_queue.append({"type": "free_many", "rids": rids})
 	mutex.unlock()
 
-	for _task in tasks:
-		semaphore.post()
+	semaphore.post()
 
 
 func _append_pending_finalization_free_tasks(item: Dictionary, cleanup_tasks: Array[Dictionary]) -> void:
@@ -984,6 +1073,8 @@ func _capture_terrain_telemetry(event_label: String = "", details: Dictionary = 
 
 
 func _process(delta):
+	_process_retired_chunk_node_cleanup()
+
 	if not viewer:
 		return
 
@@ -1019,8 +1110,15 @@ func _process(delta):
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 	process_pending_terrain_collision_creates()
+	if not pending_spawn_zones.is_empty():
+		_check_spawn_zone_readiness(Vector3i(2147483647, 2147483647, 2147483647))
 	if not defer_terrain_finalization and not loading_paused:
 		_update_world_map_lod_chunks()
+
+func _physics_process(_delta):
+	if not viewer or skip_terrain_chunk_updates_for_test:
+		return
+	update_collision_proximity()
 
 var debug_chunk_bounds: bool = false
 
@@ -1273,18 +1371,7 @@ func process_pending_terrain_collision_creates():
 			skipped_far += 1
 			continue
 
-		var body_rid = PhysicsServer3D.body_create()
-		PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
-		PhysicsServer3D.body_add_shape(body_rid, data.terrain_shape.get_rid())
-		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-		PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, Transform3D(Basis(), chunk_pos))
-		PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
-		data.body_rid_terrain = body_rid
-		PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
-		PhysicsServer3D.body_set_collision_mask(body_rid, 1)
-		PhysicsServer3D.body_set_space(body_rid, world.space)
-		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
-			terrain_grid.set_chunk_collision_ready(coord, true)
+		_create_terrain_body_rid_for_chunk(coord, data, world)
 		pending_terrain_collision_creates.erase(coord)
 		created += 1
 
@@ -1303,51 +1390,119 @@ func process_pending_terrain_collision_creates():
 	_last_terrain_collision_candidate_checks = candidate_checks
 	_last_terrain_collision_create_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
+
+func _create_terrain_body_rid_for_chunk(coord: Vector3i, data: ChunkData, world: World3D) -> bool:
+	if data == null or data.body_rid_terrain.is_valid():
+		return data != null and data.body_rid_terrain.is_valid()
+	if not data.node_terrain or not data.terrain_shape:
+		return false
+
+	var body_rid = PhysicsServer3D.body_create()
+	PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
+	PhysicsServer3D.body_add_shape(body_rid, data.terrain_shape.get_rid())
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+	PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, Transform3D(Basis(), chunk_pos))
+	PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
+	data.body_rid_terrain = body_rid
+	PhysicsServer3D.body_set_collision_layer(body_rid, 1 | 512)
+	PhysicsServer3D.body_set_collision_mask(body_rid, 1)
+	PhysicsServer3D.body_set_space(body_rid, world.space)
+	if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+		terrain_grid.set_chunk_collision_ready(coord, true)
+	pending_terrain_collision_creates.erase(coord)
+	return true
+
+
+func ensure_collision_ready_at(position: Vector3, radius: int = 1) -> bool:
+	var world := get_world_3d()
+	if not world:
+		return false
+
+	var center_x := int(floor(position.x / CHUNK_STRIDE))
+	var center_z := int(floor(position.z / CHUNK_STRIDE))
+	var center_ready := false
+	var radius_clamped := maxi(radius, 0)
+	for dx in range(-radius_clamped, radius_clamped + 1):
+		for dz in range(-radius_clamped, radius_clamped + 1):
+			var is_center_column := dx == 0 and dz == 0
+			for y in range(MIN_Y_LAYER, 2):
+				var coord := Vector3i(center_x + dx, y, center_z + dz)
+				if not active_chunks.has(coord):
+					continue
+				var data: ChunkData = active_chunks[coord]
+				if data == null:
+					continue
+				if data.node_terrain is StaticBody3D:
+					if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+						terrain_grid.set_chunk_collision_ready(coord, data.collision_shape_terrain != null)
+					center_ready = center_ready or (is_center_column and data.collision_shape_terrain != null)
+					continue
+				if data.body_rid_terrain.is_valid():
+					PhysicsServer3D.body_set_space(data.body_rid_terrain, world.space)
+					PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 1 | 512)
+					PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 1)
+					if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
+						terrain_grid.set_chunk_collision_ready(coord, true)
+					pending_terrain_collision_creates.erase(coord)
+					center_ready = center_ready or is_center_column
+					continue
+				if _create_terrain_body_rid_for_chunk(coord, data, world):
+					center_ready = center_ready or is_center_column
+
+	return center_ready
+
 # Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
 func process_pending_nodes():
 	if pending_nodes.is_empty():
+		_last_pending_node_finalize_count = 0
 		return
 
 	# Skip entirely if loading is paused due to low FPS
 	if loading_paused:
+		_last_pending_node_finalize_count = 0
 		return
 	var process_start_us := Time.get_ticks_usec()
-
-	# Time-distributed: Only finalize if enough time has passed since last chunk
-	# This spreads chunk appearances evenly over time instead of bursts
-	var current_time = Time.get_ticks_msec()
-	var time_since_last = current_time - last_finalization_time_ms
-
-	# During initial load phase, process faster (50ms interval)
-	var effective_interval = 50 if initial_load_phase else min_finalization_interval_ms
-
-	if time_since_last < effective_interval:
-		return
-
-	pending_nodes_mutex.lock()
-	if pending_nodes.is_empty():
-		pending_nodes_mutex.unlock()
-		return
-
+	var budget_ms := maxf(adaptive_frame_budget_ms, 0.1)
+	var max_items := pending_node_initial_finalize_max_per_frame if initial_load_phase else pending_node_finalize_max_per_frame
+	var processed := 0
 	_last_pending_node_sort_skipped = false
-	if _should_resort_pending_nodes():
-		var sort_start_us := Time.get_ticks_usec()
-		_sort_pending_by_distance()
-		_last_pending_node_sort_ms = float(Time.get_ticks_usec() - sort_start_us) / 1000.0
-		_last_pending_node_sort_count = pending_nodes.size()
-		_pending_nodes_sort_center = _get_pending_node_viewer_chunk()
-		_pending_nodes_sort_size_at_last_sort = pending_nodes.size()
-		pending_nodes_needs_sort = false
-	elif pending_nodes_needs_sort:
-		_last_pending_node_sort_skipped = true
 
-	var item = _pop_next_pending_node_item()
-	if pending_nodes.is_empty():
-		_reset_pending_node_sort_state()
-	pending_nodes_mutex.unlock()
+	while processed < max_items:
+		pending_nodes_mutex.lock()
+		if pending_nodes.is_empty():
+			if processed == 0:
+				_last_pending_node_finalize_count = 0
+			pending_nodes_mutex.unlock()
+			break
 
-	_finalize_chunk_creation(item)
-	last_finalization_time_ms = current_time
+		if processed == 0:
+			if _should_resort_pending_nodes():
+				var sort_start_us := Time.get_ticks_usec()
+				_sort_pending_by_distance()
+				_last_pending_node_sort_ms = float(Time.get_ticks_usec() - sort_start_us) / 1000.0
+				_last_pending_node_sort_count = pending_nodes.size()
+				_pending_nodes_sort_center = _get_pending_node_viewer_chunk()
+				_pending_nodes_sort_size_at_last_sort = pending_nodes.size()
+				pending_nodes_needs_sort = false
+			elif pending_nodes_needs_sort:
+				_last_pending_node_sort_skipped = true
+
+		var item := _pop_next_pending_node_item()
+		if pending_nodes.is_empty():
+			_reset_pending_node_sort_state()
+		pending_nodes_mutex.unlock()
+
+		_finalize_chunk_creation(item)
+		processed += 1
+		last_finalization_time_ms = Time.get_ticks_msec()
+
+		if processed >= max_items:
+			break
+		var elapsed_ms := float(Time.get_ticks_usec() - process_start_us) / 1000.0
+		if elapsed_ms >= budget_ms:
+			break
+
+	_last_pending_node_finalize_count = processed
 	_last_pending_node_process_ms = float(Time.get_ticks_usec() - process_start_us) / 1000.0
 
 
@@ -1392,6 +1547,15 @@ func _pop_next_pending_node_item() -> Dictionary:
 	return item
 
 
+func _pending_node_type_priority(item: Dictionary) -> int:
+	var item_type := str(item.get("type", ""))
+	if item_type == "final_terrain":
+		return 0
+	if item_type == "final_water":
+		return 1
+	return 2
+
+
 # Sort pending nodes by distance to player (closest first)
 func _sort_pending_by_distance():
 	if pending_nodes.size() <= 1 or not viewer:
@@ -1400,6 +1564,8 @@ func _sort_pending_by_distance():
 	pending_nodes.sort_custom(func(a, b):
 		var dist_a = (a.coord - viewer_chunk).length_squared()
 		var dist_b = (b.coord - viewer_chunk).length_squared()
+		if dist_a == dist_b:
+			return _pending_node_type_priority(a) > _pending_node_type_priority(b)
 		return dist_a > dist_b
 	)
 
@@ -1593,7 +1759,12 @@ func is_initial_load_complete() -> bool:
 	pending_nodes_mutex.lock()
 	var nodes_empty = pending_nodes.is_empty()
 	pending_nodes_mutex.unlock()
-	return not initial_load_phase and nodes_empty
+	if initial_load_phase or not nodes_empty:
+		return false
+	if viewer:
+		if not ensure_collision_ready_at(viewer.global_position, 1):
+			return false
+	return true
 
 ## Progress: 0.0-1.0 based on chunks loaded during initial phase
 func get_loading_progress() -> float:
@@ -2639,7 +2810,28 @@ func _load_chunk(coord: Vector3i):
 	mutex.unlock()
 	semaphore.post()
 
-func _unload_chunk(coord: Vector3i):
+func _append_chunk_gpu_free_tasks(data: ChunkData, tasks: Array[Dictionary]) -> void:
+	if data.density_buffer_terrain.is_valid():
+		tasks.append({"type": "free", "rid": data.density_buffer_terrain})
+	if data.density_buffer_water.is_valid():
+		tasks.append({"type": "free", "rid": data.density_buffer_water})
+	if data.material_buffer_terrain.is_valid():
+		tasks.append({"type": "free", "rid": data.material_buffer_terrain})
+		data.material_buffer_terrain = RID()
+
+func _free_chunk_body_rid(data: ChunkData) -> void:
+	if not data.body_rid_terrain.is_valid():
+		return
+
+	var world = get_world_3d()
+	if world:
+		PhysicsServer3D.body_set_space(data.body_rid_terrain, RID())
+	PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
+	PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
+	PhysicsServer3D.free_rid(data.body_rid_terrain)
+	data.body_rid_terrain = RID()
+
+func _unload_chunk(coord: Vector3i, queue_nodes: bool = true, emit_unloaded: bool = true):
 	if not active_chunks.has(coord):
 		return
 
@@ -2650,36 +2842,18 @@ func _unload_chunk(coord: Vector3i):
 		if terrain_grid and terrain_grid.has_method("set_chunk_collision_ready"):
 			terrain_grid.set_chunk_collision_ready(coord, false)
 		pending_terrain_collision_creates.erase(coord)
-		if data.node_terrain: data.node_terrain.queue_free()
-		if data.node_water: data.node_water.queue_free()
+		if queue_nodes:
+			if data.node_terrain: data.node_terrain.queue_free()
+			if data.node_water: data.node_water.queue_free()
 
-		# Free Physics Body RID (Immediate, Main Thread/Thread Safe)
-		if data.body_rid_terrain.is_valid():
-			var world = get_world_3d()
-			if world:
-				PhysicsServer3D.body_set_space(data.body_rid_terrain, RID())
-			PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
-			PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
-			PhysicsServer3D.free_rid(data.body_rid_terrain)
-			data.body_rid_terrain = RID()
-
-		var tasks = []
-		if data.density_buffer_terrain.is_valid():
-			tasks.append({"type": "free", "rid": data.density_buffer_terrain})
-		if data.density_buffer_water.is_valid():
-			tasks.append({"type": "free", "rid": data.density_buffer_water})
-		if data.material_buffer_terrain.is_valid():
-			tasks.append({"type": "free", "rid": data.material_buffer_terrain})
-			data.material_buffer_terrain = RID()
-
-		mutex.lock()
-		for t in tasks: task_queue.append(t)
-		mutex.unlock()
-
-		for t in tasks: semaphore.post()
+		var tasks: Array[Dictionary] = []
+		_free_chunk_body_rid(data)
+		_append_chunk_gpu_free_tasks(data, tasks)
+		_queue_gpu_free_tasks(tasks)
 
 	active_chunks.erase(coord)
-	chunk_unloaded.emit(coord)
+	if emit_unloaded:
+		chunk_unloaded.emit(coord)
 
 ## Atomic world reset: cancels all background work and clears active chunks
 ## Used during Save/Load to prevent "double rendering" and redundant processing
@@ -2709,8 +2883,18 @@ func clear_all_chunks():
 	# 3. Wipe all active chunks (frees Meshes, RIDs, and Collision)
 	# Working on a copy of keys because _unload_chunk modifies the dictionary
 	var coords = active_chunks.keys()
+	_reset_chunk_node_root()
+	var vegetation_bulk_cleared := _clear_vegetation_runtime_chunks_for_world_reset()
+	var gpu_free_tasks: Array[Dictionary] = []
 	for coord in coords:
-		_unload_chunk(coord)
+		var data: ChunkData = active_chunks.get(coord, null)
+		if data:
+			pending_terrain_collision_creates.erase(coord)
+			_free_chunk_body_rid(data)
+			_append_chunk_gpu_free_tasks(data, gpu_free_tasks)
+		if not vegetation_bulk_cleared:
+			chunk_unloaded.emit(coord)
+	_queue_gpu_free_tasks(gpu_free_tasks)
 
 	# 4. Reset internal state
 	active_chunks.clear()
@@ -3179,6 +3363,13 @@ func _thread_function():
 			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
 			if task.rid.is_valid():
 				rd.free_rid(task.rid)
+		elif task.type == "free_many":
+			# Keep batched resource frees ordered after any pending GPU work.
+			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
+			for rid_variant in task.get("rids", []):
+				var rid: RID = rid_variant
+				if rid.is_valid():
+					rd.free_rid(rid)
 
 	# Cleanup
 	for slot in buffer_slots:
@@ -4045,8 +4236,9 @@ func _finalize_chunk_creation(item: Dictionary):
 			return
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 
-		# Create Node
-		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, true)
+		# World-map swimming/underwater checks use density sampling, not Area3D
+		# overlap state, so the water mesh can stay visual-only in that mode.
+		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, true, null, world_map_active)
 
 		# Update Data
 		var data = active_chunks[coord]
@@ -4194,7 +4386,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water
 		if data.node_water: data.node_water.queue_free()
-		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true)
+		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true, null, world_map_active)
 		data.node_water = result_node.node if not result_node.is_empty() else null
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
@@ -4208,11 +4400,17 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	var node: Node3D
 
 	if is_water:
-		node = Area3D.new()
+		if defer_collision:
+			node = Node3D.new()
+			node.set_meta("visual_water_only", true)
+		else:
+			var water_area := Area3D.new()
+			# Ensure it's monitorable so legacy/procedural water can still be
+			# detected through Area3D physics when collision is requested.
+			water_area.monitorable = true
+			water_area.monitoring = false # Terrain chunks don't need to monitor others
+			node = water_area
 		node.add_to_group("water")
-		# Ensure it's monitorable so the player can detect it
-		node.monitorable = true
-		node.monitoring = false # Terrain chunks don't need to monitor others
 	elif defer_collision:
 		node = Node3D.new()
 		node.add_to_group("terrain")
@@ -4234,6 +4432,10 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	# but the material handles most transparency.
 	if is_water:
 		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	elif world_map_active:
+		# World-map terrain is large, dense, and mostly self-shadowing at town scale.
+		# Keep it receiving shadows while avoiding a shadow-caster draw per chunk.
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	node.add_child(mesh_instance)
 
@@ -4245,7 +4447,7 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 		node.add_child(collision_shape)
 
 	# Optimization: Add to tree LAST to perform single update
-	add_child(node)
+	_ensure_chunk_node_root().add_child(node)
 
 	# Return both node and collision_shape for tracking
 	return {"node": node, "collision_shape": collision_shape}
@@ -4259,6 +4461,7 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
 	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
 	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
+	_reset_far_chunks_before_spawn_zone(chunk_x, chunk_y, chunk_z)
 
 	# RESET LOADING PHASE for Save/Load tracking
 	initial_load_phase = true
@@ -4300,7 +4503,12 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 			"position": str(position),
 			"radius": radius
 		})
-		call_deferred("emit_signal", "spawn_zones_ready", [position])
+		pending_spawn_zones.append({
+			"position": position,
+			"radius": radius,
+			"pending_coords": pending_coords
+		})
+		call_deferred("_check_spawn_zone_readiness", Vector3i(2147483647, 2147483647, 2147483647))
 	else:
 		# Track this spawn zone
 		pending_spawn_zones.append({
@@ -4313,6 +4521,44 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 			"radius": radius,
 			"pending_coords": pending_coords.size()
 		})
+
+
+func _reset_far_chunks_before_spawn_zone(chunk_x: int, _chunk_y: int, chunk_z: int) -> void:
+	_last_spawn_zone_far_reset_ms = 0.0
+	_last_spawn_zone_far_reset_cleared_chunks = 0
+	if spawn_zone_far_reset_distance_chunks <= 0 or active_chunks.is_empty():
+		return
+
+	var reset_distance := maxi(render_distance + 2, spawn_zone_far_reset_distance_chunks)
+	var reset_distance_sq := reset_distance * reset_distance
+	var nearby_chunks := 0
+	var stale_chunks := 0
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		var dx := coord.x - chunk_x
+		var dz := coord.z - chunk_z
+		if dx * dx + dz * dz <= reset_distance_sq:
+			nearby_chunks += 1
+		else:
+			stale_chunks += 1
+
+	if stale_chunks < 64 or stale_chunks <= nearby_chunks:
+		return
+
+	var clear_start_us := Time.get_ticks_usec()
+	var cleared_chunks := active_chunks.size()
+	clear_all_chunks()
+	_spawn_zone_far_reset_count += 1
+	_last_spawn_zone_far_reset_cleared_chunks = cleared_chunks
+	_last_spawn_zone_far_reset_ms = float(Time.get_ticks_usec() - clear_start_us) / 1000.0
+	_capture_terrain_telemetry("spawn_zone_far_reset", {
+		"target_chunk_x": chunk_x,
+		"target_chunk_z": chunk_z,
+		"cleared_chunks": cleared_chunks,
+		"nearby_chunks": nearby_chunks,
+		"stale_chunks": stale_chunks,
+		"elapsed_ms": _last_spawn_zone_far_reset_ms
+	})
 
 ## Check if chunks around a position are ready (loaded with data)
 func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
@@ -4328,6 +4574,12 @@ func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
 				if not active_chunks.has(coord) or active_chunks[coord] == null:
 					return false
 	return true
+
+
+func is_spawn_zone_ready(position: Vector3, radius: int = 2) -> bool:
+	if not are_chunks_ready_around(position, radius):
+		return false
+	return ensure_collision_ready_at(position, 1)
 
 
 func is_collision_ready_at(position: Vector3) -> bool:
@@ -4362,6 +4614,9 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 		zone.pending_coords.erase(completed_coord)
 
 		if zone.pending_coords.is_empty():
+			var zone_radius := int(zone.get("radius", 2))
+			if not is_spawn_zone_ready(zone.position, zone_radius):
+				continue
 			zones_to_remove.append(i)
 			ready_positions.append(zone.position)
 
