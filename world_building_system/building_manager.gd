@@ -46,6 +46,7 @@ var _world_map_baked_building_keys_by_chunk: Dictionary = {} # Vector3i chunk_co
 var _world_map_baked_building_chunk_coords_by_key: Dictionary = {} # String building_key -> Array[Vector3i]
 var _world_map_baked_building_edits_by_key: Dictionary = {} # String building_key -> Dictionary[voxel_key] = { value, meta }
 var _last_global_visual_batch_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _native_helper: Object = null
 var _object_render_resource_prewarm_node: Node = null
 var _object_render_resource_prewarm_mesh_count: int = 0
 
@@ -506,6 +507,15 @@ func clear_global_visual_batches() -> void:
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
+
+
+func _get_native_helper() -> Object:
+	if _native_helper and is_instance_valid(_native_helper):
+		return _native_helper
+	if not ClassDB.class_exists("PrefabGeometryNative"):
+		return null
+	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
+	return _native_helper
 
 func _is_global_visual_batch_center_valid() -> bool:
 	return _last_global_visual_batch_center_chunk.x != 2147483647
@@ -1052,6 +1062,7 @@ func clear_for_shutdown() -> void:
 	visible_chunks.clear()
 	_dirty_chunks.clear()
 	_cached_vehicle_manager = null
+	_native_helper = null
 
 
 func clear_immediate_for_shutdown() -> void:
@@ -1077,6 +1088,7 @@ func clear_immediate_for_shutdown() -> void:
 	_dirty_global_visual_batch_object_ids.clear()
 	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
 	_cached_vehicle_manager = null
+	_native_helper = null
 
 
 func _exit_tree() -> void:
@@ -1458,6 +1470,10 @@ func _rebuild_global_visual_batch(object_id: int, mesh: Mesh = null) -> void:
 	multimesh.buffer = _pack_global_visual_batch_transform_buffer(visible_entries)
 
 func _pack_global_visual_batch_transform_buffer(entries: Array) -> PackedFloat32Array:
+	var native := _get_native_helper()
+	if native and native.has_method("pack_multimesh_buffer_from_instances"):
+		return native.pack_multimesh_buffer_from_instances(entries)
+
 	var buffer := PackedFloat32Array()
 	buffer.resize(entries.size() * MULTIMESH_FLOATS_PER_INSTANCE_3D)
 

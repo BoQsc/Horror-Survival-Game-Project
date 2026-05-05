@@ -327,6 +327,25 @@ func _get_global_render_dirty_kinds() -> Array[String]:
 		kinds.append("rock")
 	return kinds
 
+func _create_chunk_multimesh_handle(kind: String, coord: Vector2i, mesh: Mesh):
+	if global_render_batches_enabled:
+		return {
+			"vegetation_kind": kind,
+			"vegetation_coord": coord
+		}
+
+	if not mesh:
+		return null
+
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = MultiMesh.new()
+	mmi.multimesh.mesh = mesh
+	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	mmi.multimesh.use_colors = false
+	mmi.multimesh.use_custom_data = false
+	_prepare_chunk_multimesh(mmi, kind, coord)
+	return mmi
+
 func _prepare_chunk_multimesh(mmi: MultiMeshInstance3D, kind: String, coord: Vector2i) -> void:
 	if not mmi:
 		return
@@ -337,22 +356,59 @@ func _prepare_chunk_multimesh(mmi: MultiMeshInstance3D, kind: String, coord: Vec
 		# clustered render batches for this vegetation type.
 		mmi.visible = false
 
-func _attach_chunk_multimesh(mmi: MultiMeshInstance3D, chunk_node: Node3D) -> void:
+func _chunk_multimesh_handle_kind(handle) -> String:
+	if typeof(handle) == TYPE_DICTIONARY:
+		return str(handle.get("vegetation_kind", ""))
+	if handle is Object and is_instance_valid(handle) and handle.has_meta("vegetation_kind"):
+		return str(handle.get_meta("vegetation_kind"))
+	return ""
+
+func _chunk_multimesh_handle_coord(handle):
+	if typeof(handle) == TYPE_DICTIONARY:
+		return handle.get("vegetation_coord", null)
+	if handle is Object and is_instance_valid(handle) and handle.has_meta("vegetation_coord"):
+		return handle.get_meta("vegetation_coord")
+	return null
+
+func _is_chunk_multimesh_handle_valid(handle) -> bool:
+	if typeof(handle) == TYPE_DICTIONARY:
+		return not _chunk_multimesh_handle_kind(handle).is_empty()
+	if not (handle is Object) or not is_instance_valid(handle):
+		return false
+	var mmi := handle as MultiMeshInstance3D
+	if global_render_batches_enabled and handle.has_meta("vegetation_kind"):
+		return true
+	return mmi != null and mmi.multimesh != null
+
+func _free_chunk_multimesh_handle(handle, immediate_free: bool = false) -> void:
+	if not (handle is Object) or not is_instance_valid(handle):
+		return
+	if handle is Node:
+		if immediate_free:
+			handle.free()
+		else:
+			handle.queue_free()
+
+func _attach_chunk_multimesh(mmi, chunk_node: Node3D) -> void:
 	if not mmi:
 		return
 	if global_render_batches_enabled:
-		var global_parent := mmi.get_parent()
-		if global_parent:
-			global_parent.remove_child(mmi)
+		if mmi is Node:
+			var global_parent: Node = mmi.get_parent()
+			if global_parent:
+				global_parent.remove_child(mmi)
 		return
 	if not is_instance_valid(chunk_node):
 		return
-	var current_parent := mmi.get_parent()
+	var mmi_node := mmi as MultiMeshInstance3D
+	if not mmi_node:
+		return
+	var current_parent := mmi_node.get_parent()
 	if current_parent == chunk_node:
 		return
 	if current_parent:
-		current_parent.remove_child(mmi)
-	chunk_node.add_child(mmi)
+		current_parent.remove_child(mmi_node)
+	chunk_node.add_child(mmi_node)
 
 func _get_global_render_cluster_dictionary(kind: String) -> Dictionary:
 	match kind:
@@ -706,21 +762,26 @@ func _get_vegetation_instance_transform(item) -> Transform3D:
 	return Transform3D.IDENTITY
 
 
-func _sync_multimesh_from_instances(mmi: MultiMeshInstance3D, instances: Array, chunk_stride: int) -> void:
-	if not mmi or not mmi.multimesh:
+func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int) -> void:
+	if not _is_chunk_multimesh_handle_valid(mmi):
 		return
 
-	if global_render_batches_enabled and mmi.has_meta("vegetation_kind"):
-		mmi.visible = false
-		var coord = mmi.get_meta("vegetation_coord") if mmi.has_meta("vegetation_coord") else null
-		_mark_global_vegetation_render_dirty(str(mmi.get_meta("vegetation_kind")), coord)
+	var kind := _chunk_multimesh_handle_kind(mmi)
+	if global_render_batches_enabled and not kind.is_empty():
+		if mmi is MultiMeshInstance3D:
+			mmi.visible = false
+		_mark_global_vegetation_render_dirty(kind, _chunk_multimesh_handle_coord(mmi))
 		return
-	elif mmi.has_meta("vegetation_kind"):
+	elif mmi is MultiMeshInstance3D and mmi.has_meta("vegetation_kind"):
 		mmi.visible = true
 
-	mmi.multimesh.instance_count = instances.size()
-	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(instances)
-	mmi.multimesh.custom_aabb = _vegetation_custom_aabb(chunk_stride)
+	var mmi_node := mmi as MultiMeshInstance3D
+	if not mmi_node or not mmi_node.multimesh:
+		return
+
+	mmi_node.multimesh.instance_count = instances.size()
+	mmi_node.multimesh.buffer = _pack_multimesh_buffer_from_instances(instances)
+	mmi_node.multimesh.custom_aabb = _vegetation_custom_aabb(chunk_stride)
 
 
 func _append_native_generated_instances(target: Array, records: Array) -> void:
@@ -926,23 +987,20 @@ func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
 	# This prevents them from being deleted when old chunk_node is freed
 	if chunk_tree_data.has(surface_key):
 		var data = chunk_tree_data[surface_key]
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			var mmi = data.multimesh as MultiMeshInstance3D
-			_attach_chunk_multimesh(mmi, chunk_node)
+		if data.has("multimesh") and _is_chunk_multimesh_handle_valid(data.multimesh):
+			_attach_chunk_multimesh(data.multimesh, chunk_node)
 		data.chunk_node = chunk_node
 
 	if chunk_grass_data.has(surface_key):
 		var data = chunk_grass_data[surface_key]
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			var mmi = data.multimesh as MultiMeshInstance3D
-			_attach_chunk_multimesh(mmi, chunk_node)
+		if data.has("multimesh") and _is_chunk_multimesh_handle_valid(data.multimesh):
+			_attach_chunk_multimesh(data.multimesh, chunk_node)
 		data.chunk_node = chunk_node
 
 	if chunk_rock_data.has(surface_key):
 		var data = chunk_rock_data[surface_key]
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			var mmi = data.multimesh as MultiMeshInstance3D
-			_attach_chunk_multimesh(mmi, chunk_node)
+		if data.has("multimesh") and _is_chunk_multimesh_handle_valid(data.multimesh):
+			_attach_chunk_multimesh(data.multimesh, chunk_node)
 		data.chunk_node = chunk_node
 
 ## Called when a chunk is unloaded - clean up vegetation data and colliders
@@ -959,8 +1017,8 @@ func _on_chunk_unloaded(coord: Vector3i):
 		var tree_count = data.trees.size() if data.has("trees") else 0
 		var colliders_removed = 0
 		# Free MultiMesh
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
+		if data.has("multimesh"):
+			_free_chunk_multimesh_handle(data.multimesh)
 		# Return colliders to pool
 		for tree in data.trees:
 			var key = _tree_key(surface_key, tree.index)
@@ -974,8 +1032,8 @@ func _on_chunk_unloaded(coord: Vector3i):
 	# Clean up grass
 	if chunk_grass_data.has(surface_key):
 		var data = chunk_grass_data[surface_key]
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
+		if data.has("multimesh"):
+			_free_chunk_multimesh_handle(data.multimesh)
 		for grass in data.grass_list:
 			var key = _grass_key(surface_key, grass.index)
 			if active_grass_colliders.has(key):
@@ -987,8 +1045,8 @@ func _on_chunk_unloaded(coord: Vector3i):
 	# Clean up rocks
 	if chunk_rock_data.has(surface_key):
 		var data = chunk_rock_data[surface_key]
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			data.multimesh.queue_free()
+		if data.has("multimesh"):
+			_free_chunk_multimesh_handle(data.multimesh)
 		for rock in data.rock_list:
 			var key = _rock_key(surface_key, rock.index)
 			if active_rock_colliders.has(key):
@@ -1036,11 +1094,8 @@ func _cleanup_chunk_trees(coord: Vector2i, immediate_free: bool = false):
 	if chunk_tree_data.has(coord):
 		var data = chunk_tree_data[coord]
 		# FIX: Properly free the MultiMeshInstance3D to prevent "ghost" trees
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			if immediate_free:
-				data.multimesh.free()
-			else:
-				data.multimesh.queue_free()
+		if data.has("multimesh"):
+			_free_chunk_multimesh_handle(data.multimesh, immediate_free)
 
 		# Return colliders to pool
 		for tree in data.trees:
@@ -1061,11 +1116,8 @@ func _cleanup_chunk_grass(coord: Vector2i, immediate_free: bool = false):
 	if chunk_grass_data.has(coord):
 		var data = chunk_grass_data[coord]
 		# FIX: Properly free the MultiMeshInstance3D
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			if immediate_free:
-				data.multimesh.free()
-			else:
-				data.multimesh.queue_free()
+		if data.has("multimesh"):
+			_free_chunk_multimesh_handle(data.multimesh, immediate_free)
 
 		for grass in data.grass_list:
 			var key = _grass_key(coord, grass.index)
@@ -1085,11 +1137,8 @@ func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 	if chunk_rock_data.has(coord):
 		var data = chunk_rock_data[coord]
 		# FIX: Properly free the MultiMeshInstance3D
-		if data.has("multimesh") and is_instance_valid(data.multimesh):
-			if immediate_free:
-				data.multimesh.free()
-			else:
-				data.multimesh.queue_free()
+		if data.has("multimesh"):
+			_free_chunk_multimesh_handle(data.multimesh, immediate_free)
 
 		for rock in data.rock_list:
 			var key = _rock_key(coord, rock.index)
@@ -1355,7 +1404,7 @@ func _process_pending_placements():
 
 		if chunk_rock_data.has(coord):
 			var data = chunk_rock_data[coord]
-			if data.has("chunk_node") and is_instance_valid(data.chunk_node) and data.has("multimesh") and is_instance_valid(data.multimesh):
+			if data.has("chunk_node") and is_instance_valid(data.chunk_node) and data.has("multimesh") and _is_chunk_multimesh_handle_valid(data.multimesh):
 				# Chunk is now valid, add the rock
 				if _add_rock_to_chunk(placement.world_pos, placement.scale, placement.rotation, coord):
 					completed_rocks.append(i)
@@ -1372,7 +1421,7 @@ func _process_pending_placements():
 
 		if chunk_grass_data.has(coord):
 			var data = chunk_grass_data[coord]
-			if data.has("chunk_node") and is_instance_valid(data.chunk_node) and data.has("multimesh") and is_instance_valid(data.multimesh):
+			if data.has("chunk_node") and is_instance_valid(data.chunk_node) and data.has("multimesh") and _is_chunk_multimesh_handle_valid(data.multimesh):
 				if _add_grass_to_chunk(placement.world_pos, placement.scale, placement.rotation, coord):
 					completed_grass.append(i)
 
@@ -1780,13 +1829,7 @@ func _update_rock_proximity_colliders():
 			keys_pending_add[key] = true
 
 func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
-	var mmi = MultiMeshInstance3D.new()
-	mmi.multimesh = MultiMesh.new()
-	mmi.multimesh.mesh = tree_mesh
-	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	mmi.multimesh.use_colors = false
-	mmi.multimesh.use_custom_data = false
-	_prepare_chunk_multimesh(mmi, "tree", coord)
+	var mmi = _create_chunk_multimesh_handle("tree", coord, tree_mesh)
 
 	var tree_list: Array = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
@@ -1952,11 +1995,9 @@ func chop_tree_by_collider(collider: Node) -> bool:
 			var persist_key = _position_hash(tree.world_pos)
 			chopped_trees[persist_key] = true
 
-			# Hide in MultiMesh
-			var mmi = data.multimesh as MultiMeshInstance3D
-			if mmi and mmi.multimesh:
-				tree.transform = _make_hidden_transform(tree.local_pos)
-				_sync_multimesh_from_instances(mmi, data.trees, terrain_manager.CHUNK_STRIDE)
+			tree.transform = _make_hidden_transform(tree.local_pos)
+			if data.has("multimesh"):
+				_sync_multimesh_from_instances(data.multimesh, data.trees, terrain_manager.CHUNK_STRIDE)
 
 			# Remove collider
 			var key = _tree_key(coord, tree_index)
@@ -2004,9 +2045,8 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 						if active_colliders.has(key):
 							_return_collider_to_pool(active_colliders[key])
 							active_colliders.erase(key)
-				var mmi = tree_data.multimesh as MultiMeshInstance3D
-				if tree_dirty and mmi and mmi.multimesh:
-					_sync_multimesh_from_instances(mmi, tree_data.trees, chunk_stride)
+				if tree_dirty and tree_data.has("multimesh"):
+					_sync_multimesh_from_instances(tree_data.multimesh, tree_data.trees, chunk_stride)
 
 			if chunk_grass_data.has(coord):
 				var grass_data = chunk_grass_data[coord]
@@ -2024,9 +2064,8 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 						if active_grass_colliders.has(key):
 							_return_grass_collider_to_pool(active_grass_colliders[key])
 							active_grass_colliders.erase(key)
-				var mmi = grass_data.multimesh as MultiMeshInstance3D
-				if grass_dirty and mmi and mmi.multimesh:
-					_sync_multimesh_from_instances(mmi, grass_data.grass_list, chunk_stride)
+				if grass_dirty and grass_data.has("multimesh"):
+					_sync_multimesh_from_instances(grass_data.multimesh, grass_data.grass_list, chunk_stride)
 
 			if chunk_rock_data.has(coord):
 				var rock_data = chunk_rock_data[coord]
@@ -2044,9 +2083,8 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 						if active_rock_colliders.has(key):
 							_return_rock_collider_to_pool(active_rock_colliders[key])
 							active_rock_colliders.erase(key)
-				var mmi = rock_data.multimesh as MultiMeshInstance3D
-				if rock_dirty and mmi and mmi.multimesh:
-					_sync_multimesh_from_instances(mmi, rock_data.rock_list, chunk_stride)
+				if rock_dirty and rock_data.has("multimesh"):
+					_sync_multimesh_from_instances(rock_data.multimesh, rock_data.rock_list, chunk_stride)
 
 
 # ========== GRASS SPAWNING AND HARVESTING ==========
@@ -2055,19 +2093,14 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	if not grass_mesh:
 		return
 
-	var mmi = MultiMeshInstance3D.new()
-	mmi.multimesh = MultiMesh.new()
-	mmi.multimesh.mesh = grass_mesh
-	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	mmi.multimesh.use_colors = false
-	mmi.multimesh.use_custom_data = false
-	_prepare_chunk_multimesh(mmi, "grass", coord)
+	var mmi = _create_chunk_multimesh_handle("grass", coord, grass_mesh)
 
 	# Fix distance visibility issues
-	mmi.extra_cull_margin = 1000.0 # Very large margin
-	mmi.ignore_occlusion_culling = true # Ignore occlusion
-	mmi.lod_bias = 100.0 # Prevent LOD from hiding mesh
-	mmi.visibility_range_end = 0.0 # 0 = infinite visibility
+	if mmi is MultiMeshInstance3D:
+		mmi.extra_cull_margin = 1000.0 # Very large margin
+		mmi.ignore_occlusion_culling = true # Ignore occlusion
+		mmi.lod_bias = 100.0 # Prevent LOD from hiding mesh
+		mmi.visibility_range_end = 0.0 # 0 = infinite visibility
 
 	var grass_list: Array = []
 	var valid_transforms = []
@@ -2300,12 +2333,9 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 			var pos_hash = _position_hash(grass.world_pos)
 			removed_grass[pos_hash] = true
 
-			# Hide in MultiMesh (only if valid)
-			if data.has("multimesh") and is_instance_valid(data.multimesh):
-				var mmi = data.multimesh as MultiMeshInstance3D
-				if mmi and mmi.multimesh:
-					grass.transform = _make_hidden_transform(grass.local_pos)
-					_sync_multimesh_from_instances(mmi, data.grass_list, terrain_manager.CHUNK_STRIDE)
+			grass.transform = _make_hidden_transform(grass.local_pos)
+			if data.has("multimesh"):
+				_sync_multimesh_from_instances(data.multimesh, data.grass_list, terrain_manager.CHUNK_STRIDE)
 
 			# Remove collider
 			var key = _grass_key(coord, grass_index)
@@ -2474,30 +2504,26 @@ func place_grass(world_pos: Vector3) -> bool:
 	t = t.scaled(Vector3(final_scale, final_scale, final_scale))
 	t.origin = local_pos
 
-	# Add to MultiMesh - need to expand instance count
-	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+	# Add to the chunk render data and mark the real render batch dirty.
+	if not data.has("multimesh") or not _is_chunk_multimesh_handle_valid(data.multimesh):
 		# MultiMesh not valid - queue for retry
 		pending_grass_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true # Stored for later
 
-	var mmi = data.multimesh as MultiMeshInstance3D
-	if mmi and mmi.multimesh:
-		var grass_entry = _make_vegetation_generated(
-			world_pos + Vector3(0, grass_y_offset, 0),
-			local_pos,
-			world_pos,
-			rotation_angle,
-			0.0,
-			data.grass_list.size(),
-			final_scale,
-			true,
-			t
-		)
-		data.grass_list.append(grass_entry)
-		_sync_multimesh_from_instances(mmi, data.grass_list, chunk_stride)
-		return true
-
-	return true # Already stored for persistence
+	var grass_entry = _make_vegetation_generated(
+		world_pos + Vector3(0, grass_y_offset, 0),
+		local_pos,
+		world_pos,
+		rotation_angle,
+		0.0,
+		data.grass_list.size(),
+		final_scale,
+		true,
+		t
+	)
+	data.grass_list.append(grass_entry)
+	_sync_multimesh_from_instances(data.multimesh, data.grass_list, chunk_stride)
+	return true
 
 func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: float, coord: Vector2i) -> bool:
 	"""Helper to add a grass instance to an existing chunk."""
@@ -2509,7 +2535,7 @@ func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle:
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
 		return false
 
-	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+	if not data.has("multimesh") or not _is_chunk_multimesh_handle_valid(data.multimesh):
 		return false
 
 	var chunk_node = data.chunk_node
@@ -2522,24 +2548,20 @@ func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle:
 	t = t.scaled(Vector3(final_scale, final_scale, final_scale))
 	t.origin = local_pos
 
-	var mmi = data.multimesh as MultiMeshInstance3D
-	if mmi and mmi.multimesh:
-		var grass_entry = _make_vegetation_generated(
-			world_pos + Vector3(0, grass_y_offset, 0),
-			local_pos,
-			world_pos,
-			rotation_angle,
-			0.0,
-			data.grass_list.size(),
-			final_scale,
-			true,
-			t
-		)
-		data.grass_list.append(grass_entry)
-		_sync_multimesh_from_instances(mmi, data.grass_list, terrain_manager.CHUNK_STRIDE)
-		return true
-
-	return false
+	var grass_entry = _make_vegetation_generated(
+		world_pos + Vector3(0, grass_y_offset, 0),
+		local_pos,
+		world_pos,
+		rotation_angle,
+		0.0,
+		data.grass_list.size(),
+		final_scale,
+		true,
+		t
+	)
+	data.grass_list.append(grass_entry)
+	_sync_multimesh_from_instances(data.multimesh, data.grass_list, terrain_manager.CHUNK_STRIDE)
+	return true
 
 # ========== ROCK SPAWNING AND HARVESTING ==========
 
@@ -2547,13 +2569,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	if not rock_mesh:
 		return
 
-	var mmi = MultiMeshInstance3D.new()
-	mmi.multimesh = MultiMesh.new()
-	mmi.multimesh.mesh = rock_mesh
-	mmi.multimesh.transform_format = MultiMesh.TRANSFORM_3D
-	mmi.multimesh.use_colors = false
-	mmi.multimesh.use_custom_data = false
-	_prepare_chunk_multimesh(mmi, "rock", coord)
+	var mmi = _create_chunk_multimesh_handle("rock", coord, rock_mesh)
 
 	var rock_list: Array = []
 	var valid_transforms = []
@@ -2782,12 +2798,9 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 			var pos_hash = _position_hash(rock.world_pos)
 			removed_rocks[pos_hash] = true
 
-			# Hide in MultiMesh (only if valid)
-			if data.has("multimesh") and is_instance_valid(data.multimesh):
-				var mmi = data.multimesh as MultiMeshInstance3D
-				if mmi and mmi.multimesh:
-					rock.transform = _make_hidden_transform(rock.local_pos)
-					_sync_multimesh_from_instances(mmi, data.rock_list, terrain_manager.CHUNK_STRIDE)
+			rock.transform = _make_hidden_transform(rock.local_pos)
+			if data.has("multimesh"):
+				_sync_multimesh_from_instances(data.multimesh, data.rock_list, terrain_manager.CHUNK_STRIDE)
 
 			var key = _rock_key(coord, rock_index)
 			if active_rock_colliders.has(key):
@@ -2825,15 +2838,14 @@ func place_rock(world_pos: Vector3) -> bool:
 		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true
 
-	# Validate multimesh
-	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+	# Validate render data
+	if not data.has("multimesh") or not _is_chunk_multimesh_handle_valid(data.multimesh):
 		# MultiMesh not valid - queue for retry
 		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
 		return true
 
 	# Can place immediately
 	if _add_rock_to_chunk(world_pos, final_scale, rotation_angle, coord):
-		return true
 		return true
 
 	return true
@@ -2848,7 +2860,7 @@ func _add_rock_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: 
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
 		return false
 
-	if not data.has("multimesh") or not is_instance_valid(data.multimesh):
+	if not data.has("multimesh") or not _is_chunk_multimesh_handle_valid(data.multimesh):
 		return false
 
 	var chunk_node = data.chunk_node
@@ -2861,24 +2873,20 @@ func _add_rock_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle: 
 	t = t.scaled(Vector3(final_scale, final_scale, final_scale))
 	t.origin = local_pos
 
-	var mmi = data.multimesh as MultiMeshInstance3D
-	if mmi and mmi.multimesh:
-		var rock_entry = _make_vegetation_generated(
-			world_pos + Vector3(0, rock_y_offset, 0),
-			local_pos,
-			world_pos,
-			rotation_angle,
-			0.0,
-			data.rock_list.size(),
-			final_scale,
-			true,
-			t
-		)
-		data.rock_list.append(rock_entry)
-		_sync_multimesh_from_instances(mmi, data.rock_list, terrain_manager.CHUNK_STRIDE)
-		return true
-
-	return false
+	var rock_entry = _make_vegetation_generated(
+		world_pos + Vector3(0, rock_y_offset, 0),
+		local_pos,
+		world_pos,
+		rotation_angle,
+		0.0,
+		data.rock_list.size(),
+		final_scale,
+		true,
+		t
+	)
+	data.rock_list.append(rock_entry)
+	_sync_multimesh_from_instances(data.multimesh, data.rock_list, terrain_manager.CHUNK_STRIDE)
+	return true
 
 func load_tree_mesh_from_glb(path: String) -> Dictionary:
 	if _loaded_model_cache.has(path):
@@ -3094,7 +3102,6 @@ func _apply_chopped_trees():
 	# Mark trees as dead based on chopped_trees dictionary
 	for coord in chunk_tree_data:
 		var data = chunk_tree_data[coord]
-		var mmi = data.multimesh as MultiMeshInstance3D
 		var chunk_dirty := false
 		for tree in data.trees:
 			var key = _position_hash(tree.world_pos)
@@ -3103,8 +3110,8 @@ func _apply_chopped_trees():
 				tree.transform = _make_hidden_transform(tree.local_pos)
 				chunk_dirty = true
 
-		if chunk_dirty and mmi and mmi.multimesh:
-			_sync_multimesh_from_instances(mmi, data.trees, terrain_manager.CHUNK_STRIDE)
+		if chunk_dirty and data.has("multimesh"):
+			_sync_multimesh_from_instances(data.multimesh, data.trees, terrain_manager.CHUNK_STRIDE)
 
 func _serialize_placed_list(list: Array) -> Array:
 	var result = []
