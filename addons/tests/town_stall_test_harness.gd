@@ -95,6 +95,7 @@ var game_root: Node3D = null
 var terrain_manager: Node = null
 var building_manager: Node = null
 var entity_manager: Node = null
+var vegetation_manager: Node = null
 var chunk_manager: Node = null
 var player: WorldPlayerV2 = null
 var mode_manager: Node = null
@@ -104,6 +105,11 @@ var loading_screen: Node = null
 var pending_quit: bool = false
 var pending_town_spawn_requested: bool = false
 var pending_town_teleport_pos: Vector3 = Vector3.ZERO
+var town_spawn_ready_settle_frames: int = 0
+var town_terrain_stable_frames: int = 0
+var town_terrain_stability_signature: String = ""
+var town_entity_stable_frames: int = 0
+var town_entity_stability_signature: String = ""
 
 func _get_town_stall_seed() -> int:
 	var seed_text := OS.get_environment("TOWN_STALL_SEED")
@@ -1624,19 +1630,30 @@ func _teleport_into_town() -> void:
 		_apply_terrain_chunk_updates_toggle()
 		pending_town_teleport_pos = teleport_pos
 		pending_town_spawn_requested = true
+		_reset_town_stream_stability()
+		_set_player_movement_enabled(false)
+		player.global_position = teleport_pos
+		player.velocity = Vector3.ZERO
 		if chunk_manager.has_method("request_spawn_zone"):
 			chunk_manager.request_spawn_zone(teleport_pos, 2)
 		print("[TOWN_STALL_TEST] Preparing town terrain at (%.1f, %.1f, %.1f)..." % [teleport_pos.x, teleport_pos.y, teleport_pos.z])
 		return
 
 	if not _is_town_spawn_ready(pending_town_teleport_pos):
+		town_spawn_ready_settle_frames = 0
+		return
+
+	if town_spawn_ready_settle_frames < 3:
+		town_spawn_ready_settle_frames += 1
 		return
 
 	_reset_town_measurement_window("auto_teleport_entry")
 	player.global_position = teleport_pos
 	player.velocity = Vector3.ZERO
+	_set_player_movement_enabled(true)
 	hold_started_logged = false
 	pending_town_spawn_requested = false
+	town_spawn_ready_settle_frames = 0
 
 	_emit_scope_state("town_stall_test", {
 		"phase": "town_teleported",
@@ -1665,12 +1682,144 @@ func _teleport_into_town() -> void:
 
 func _is_town_spawn_ready(position: Vector3) -> bool:
 	if chunk_manager.has_method("is_spawn_zone_ready"):
-		return bool(chunk_manager.is_spawn_zone_ready(position, 2))
-	if chunk_manager.has_method("are_chunks_ready_around") and not bool(chunk_manager.are_chunks_ready_around(position, 2)):
+		if not bool(chunk_manager.is_spawn_zone_ready(position, 2)):
+			return false
+	elif chunk_manager.has_method("are_chunks_ready_around") and not bool(chunk_manager.are_chunks_ready_around(position, 2)):
 		return false
-	if chunk_manager.has_method("ensure_collision_ready_at"):
-		return bool(chunk_manager.ensure_collision_ready_at(position, 1))
+	elif chunk_manager.has_method("ensure_collision_ready_at") and not bool(chunk_manager.ensure_collision_ready_at(position, 1)):
+		return false
+	if not _is_town_terrain_stream_ready():
+		return false
+	if not _is_town_building_stream_ready():
+		return false
+	if not _is_town_vegetation_stream_ready():
+		return false
+	if not _is_town_entity_stream_ready():
+		return false
 	return true
+
+
+func _is_town_terrain_stream_ready() -> bool:
+	if not chunk_manager.has_method("get_telemetry_snapshot"):
+		return true
+	var telemetry: Dictionary = chunk_manager.get_telemetry_snapshot()
+	var render_distance := int(telemetry.get("render_distance", 0))
+	var min_loaded_chunks := int(ceil(PI * float(render_distance * render_distance)))
+	var terrain_busy := false
+	terrain_busy = terrain_busy or (render_distance > 0 and int(telemetry.get("loaded_chunk_count", 0)) < min_loaded_chunks)
+	terrain_busy = terrain_busy or int(telemetry.get("pending_chunk_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("pending_node_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("task_queue_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("cpu_task_queue_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("completed_generation_queue_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("pending_terrain_collision_create_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("last_update_loads", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("last_update_unloads", 0)) > 0
+	terrain_busy = terrain_busy or bool(telemetry.get("render_resource_prewarm_active", false))
+	if terrain_busy:
+		_reset_town_terrain_stability()
+		return false
+
+	var signature := "%d:%d:%d:%d:%d:%d" % [
+		int(telemetry.get("active_chunk_count", 0)),
+		int(telemetry.get("loaded_chunk_count", 0)),
+		int(telemetry.get("rendered_terrain_chunk_count", 0)),
+		int(telemetry.get("rendered_water_chunk_count", 0)),
+		int(telemetry.get("collision_ready_chunk_count", 0)),
+		int(telemetry.get("world_map_lod_chunk_count", 0))
+	]
+	if signature != town_terrain_stability_signature:
+		town_terrain_stability_signature = signature
+		town_terrain_stable_frames = 0
+		return false
+	town_terrain_stable_frames += 1
+	return town_terrain_stable_frames >= 12
+
+
+func _is_town_building_stream_ready() -> bool:
+	var prefab_spawner := _find_manager_node("prefab_spawner", "PrefabSpawner")
+	if is_instance_valid(prefab_spawner):
+		if prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs():
+			return false
+		if prefab_spawner.has_method("has_pending_world_map_baked_payload_jobs") and prefab_spawner.has_pending_world_map_baked_payload_jobs():
+			return false
+	if not is_instance_valid(building_manager):
+		building_manager = _find_manager_node("building_manager", "BuildingManager")
+	if is_instance_valid(building_manager):
+		if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
+			return false
+		if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
+			return false
+		if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
+			return false
+	return true
+
+
+func _is_town_vegetation_stream_ready() -> bool:
+	if not is_instance_valid(vegetation_manager):
+		vegetation_manager = _find_manager_node("vegetation_manager", "VegetationManager")
+	if is_instance_valid(vegetation_manager) and vegetation_manager.has_method("is_vegetation_ready"):
+		return bool(vegetation_manager.is_vegetation_ready())
+	return true
+
+
+func _is_town_entity_stream_ready() -> bool:
+	if not is_instance_valid(entity_manager):
+		entity_manager = _find_manager_node("entity_manager", "EntityManager")
+	if not is_instance_valid(entity_manager) or not entity_manager.has_method("get_telemetry_snapshot"):
+		return true
+	var telemetry: Dictionary = entity_manager.get_telemetry_snapshot()
+	var entity_busy := false
+	entity_busy = entity_busy or bool(telemetry.get("entity_render_prewarm_active", false))
+	entity_busy = entity_busy or int(telemetry.get("last_spawn_queue_spawned", 0)) > 0
+	entity_busy = entity_busy or int(telemetry.get("last_dormant_respawn_spawned", 0)) > 0
+	if entity_busy:
+		_reset_town_entity_stability()
+		return false
+
+	var signature := "%d:%d:%d:%d:%d:%d:%d" % [
+		int(telemetry.get("active_entities", 0)),
+		int(telemetry.get("frozen_entities", 0)),
+		int(telemetry.get("dormant_entities", 0)),
+		int(telemetry.get("pending_spawns", 0)),
+		int(telemetry.get("deferred_spawn_chunks", 0)),
+		int(telemetry.get("deferred_spawn_plans", 0)),
+		int(telemetry.get("spawned_chunks", 0))
+	]
+	if signature != town_entity_stability_signature:
+		town_entity_stability_signature = signature
+		town_entity_stable_frames = 0
+		return false
+	town_entity_stable_frames += 1
+	return town_entity_stable_frames >= 20
+
+
+func _reset_town_stream_stability() -> void:
+	_reset_town_terrain_stability()
+	_reset_town_entity_stability()
+
+
+func _reset_town_terrain_stability() -> void:
+	town_terrain_stable_frames = 0
+	town_terrain_stability_signature = ""
+
+
+func _reset_town_entity_stability() -> void:
+	town_entity_stable_frames = 0
+	town_entity_stability_signature = ""
+
+
+func _set_player_movement_enabled(enabled: bool) -> void:
+	if not is_instance_valid(player):
+		return
+	if movement_component == null or not is_instance_valid(movement_component):
+		movement_component = player.get_node_or_null("Components/Movement")
+	if movement_component:
+		if movement_component.has_method("set_physics_process"):
+			movement_component.set_physics_process(enabled)
+		if movement_component.has_method("set_process"):
+			movement_component.set_process(enabled)
+	player.velocity = Vector3.ZERO
 
 
 func _enter_fly_to_town() -> void:

@@ -133,7 +133,7 @@ var initial_load_count: int = 0 # Specifically track chunks from the load regene
 
 ## Returns true when all queued vegetation has been placed (for loading screen)
 func is_vegetation_ready() -> bool:
-	return pending_chunks.is_empty()
+	return pending_chunks.is_empty() and not _has_dirty_global_vegetation_render_batch()
 
 ## Get count of pending vegetation chunks (for loading screen progress)
 func get_pending_chunks_count() -> int:

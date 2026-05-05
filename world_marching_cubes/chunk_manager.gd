@@ -880,11 +880,25 @@ func _pop_next_gpu_task() -> Dictionary:
 	return task
 
 
-func _clear_gpu_task_queues() -> void:
+func _clear_gpu_task_queues(discard_free_tasks: bool = false) -> void:
 	mutex.lock()
-	priority_task_queue.clear()
-	task_queue.clear()
+	if discard_free_tasks:
+		priority_task_queue.clear()
+		task_queue.clear()
+	else:
+		_keep_only_gpu_free_tasks(priority_task_queue)
+		_keep_only_gpu_free_tasks(task_queue)
 	mutex.unlock()
+
+
+func _keep_only_gpu_free_tasks(queue: Array[Dictionary]) -> void:
+	var i := queue.size() - 1
+	while i >= 0:
+		var task: Dictionary = queue[i]
+		var task_type := str(task.get("type", ""))
+		if task_type != "free" and task_type != "free_many":
+			queue.remove_at(i)
+		i -= 1
 
 
 func _queue_gpu_free_tasks(tasks: Array[Dictionary]) -> void:
@@ -926,6 +940,47 @@ func _queue_pending_finalization_item_free(item: Dictionary) -> void:
 	var cleanup_tasks: Array[Dictionary] = []
 	_append_pending_finalization_free_tasks(item, cleanup_tasks)
 	_queue_gpu_free_tasks(cleanup_tasks)
+
+
+func _append_cpu_task_free_tasks(item: Dictionary, cleanup_tasks: Array[Dictionary]) -> void:
+	var dens_t: RID = item.get("dens_buf_terrain", RID())
+	if dens_t.is_valid():
+		cleanup_tasks.append({"type": "free", "rid": dens_t})
+	var dens_w: RID = item.get("dens_buf_water", RID())
+	if dens_w.is_valid():
+		cleanup_tasks.append({"type": "free", "rid": dens_w})
+	var mat_t: RID = item.get("mat_buf_terrain", RID())
+	if mat_t.is_valid():
+		cleanup_tasks.append({"type": "free", "rid": mat_t})
+
+
+func _drain_cpu_task_free_tasks() -> Array[Dictionary]:
+	var cleanup_tasks: Array[Dictionary] = []
+	if not cpu_mutex:
+		return cleanup_tasks
+
+	cpu_mutex.lock()
+	for item in cpu_task_queue:
+		if item is Dictionary:
+			_append_cpu_task_free_tasks(item, cleanup_tasks)
+	cpu_task_queue.clear()
+	cpu_mutex.unlock()
+
+	return cleanup_tasks
+
+
+func _free_gpu_cleanup_tasks_now(rd: RenderingDevice, tasks: Array[Dictionary]) -> void:
+	for task in tasks:
+		var task_type := str(task.get("type", ""))
+		if task_type == "free_many":
+			for rid_variant in task.get("rids", []):
+				var rid_many: RID = rid_variant
+				if rid_many.is_valid():
+					rd.free_rid(rid_many)
+		else:
+			var rid: RID = task.get("rid", RID())
+			if rid.is_valid():
+				rd.free_rid(rid)
 
 
 func _append_completed_generation_free_tasks(item: Dictionary, cleanup_tasks: Array[Dictionary]) -> void:
@@ -2645,25 +2700,25 @@ func _exit_tree():
 	for i in range(_cpu_worker_count):
 		cpu_semaphore.post()
 
-	# 5. Wait for GPU thread to finish (processes remaining "free" tasks)
-	if compute_thread:
-		compute_thread.wait_to_finish()
-		compute_thread = null
-
-	# 6. Wait for CPU workers to finish
+	# 5. Wait for CPU workers first; the GPU thread drains any late CPU/completed
+	# queues during its own cleanup before freeing the local rendering device.
 	for i in range(cpu_threads.size()):
 		var thread = cpu_threads[i]
 		if thread:
 			thread.wait_to_finish()
 	cpu_threads.clear()
 
+	# 6. Wait for GPU thread to finish (processes remaining "free" tasks)
+	if compute_thread:
+		compute_thread.wait_to_finish()
+		compute_thread = null
+
 	# Drop helper references and any leftover queued payloads now that workers are done.
 	if terrain_grid and terrain_grid.has_method("clear"):
 		terrain_grid.clear()
 	terrain_grid = null
 	_native_backends_ready = false
-	_clear_gpu_task_queues()
-	cpu_task_queue.clear()
+	_clear_gpu_task_queues(true)
 	pending_spawn_zones.clear()
 	pending_batches.clear()
 	_pending_terrain_collision_candidates.clear()
@@ -2863,9 +2918,8 @@ func clear_all_chunks():
 	_clear_gpu_task_queues()
 	_clear_world_map_lod_chunks()
 
-	cpu_mutex.lock()
-	cpu_task_queue.clear()
-	cpu_mutex.unlock()
+	var cpu_cleanup_tasks := _drain_cpu_task_free_tasks()
+	_queue_gpu_free_tasks(cpu_cleanup_tasks)
 
 	# 2. Clear finalization queue
 	_queue_gpu_free_tasks(_drain_completed_generation_free_tasks())
@@ -3372,6 +3426,9 @@ func _thread_function():
 					rd.free_rid(rid)
 
 	# Cleanup
+	_free_gpu_cleanup_tasks_now(rd, _drain_cpu_task_free_tasks())
+	_free_gpu_cleanup_tasks_now(rd, _drain_completed_generation_free_tasks())
+	_free_gpu_cleanup_tasks_now(rd, _drain_pending_finalization_free_tasks())
 	for slot in buffer_slots:
 		rd.free_rid(slot["vertex_buffer_terrain"])
 		rd.free_rid(slot["counter_buffer_terrain"])

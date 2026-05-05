@@ -43,9 +43,14 @@ func _connect_to_save_manager() -> void:
 			sm.load_step.connect(_on_load_step)
 
 func _on_save_manager_load_completed(_success: bool, _path: String) -> void:
-	# Force fade out when SaveManager says it's done
-	if is_loading:
-		_start_fade_out()
+	# Save data completion is not the same as world readiness. Keep the loading
+	# screen alive while terrain/building/vegetation startup gates are active.
+	if not is_loading:
+		return
+	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	if terrain_manager and is_instance_valid(terrain_manager):
+		return
+	_start_fade_out()
 
 func _on_load_step(step_name: String, step_index: int, total_steps: int) -> void:
 	save_manager_step = step_name
@@ -58,6 +63,8 @@ func _on_load_step(step_name: String, step_index: int, total_steps: int) -> void
 func _start_loading_sequence() -> void:
 	var terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
 	var building_generator = get_tree().root.find_child("BuildingGenerator", true, false)
+	var prefab_spawner = get_tree().get_first_node_in_group("prefab_spawner")
+	var building_manager = get_tree().get_first_node_in_group("building_manager")
 	var vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 	
 	if not terrain_manager:
@@ -128,6 +135,13 @@ func _start_loading_sequence() -> void:
 					update_progress(percent, "Spawning buildings: %d/%d" % [spawned, initial_queue_size])
 					
 					await get_tree().create_timer(0.2).timeout
+
+		while is_loading:
+			var pending_world_content := _get_pending_world_content_count(prefab_spawner, building_manager)
+			if pending_world_content <= 0:
+				break
+			update_progress(100.0, "Spawning buildings: %d pending" % pending_world_content)
+			await get_tree().create_timer(0.2).timeout
 		
 		current_stage = Stage.VEGETATION
 	
@@ -168,6 +182,22 @@ func update_progress(percent: float, message: String) -> void:
 		progress_bar.value = percent
 	if status_label:
 		status_label.text = message
+
+func _get_pending_world_content_count(prefab_spawner: Node, building_manager: Node) -> int:
+	var pending := 0
+	if prefab_spawner and is_instance_valid(prefab_spawner):
+		if prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs():
+			pending += 1
+		if prefab_spawner.has_method("has_pending_world_map_baked_payload_jobs") and prefab_spawner.has_pending_world_map_baked_payload_jobs():
+			pending += 1
+	if building_manager and is_instance_valid(building_manager):
+		if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
+			pending += 1
+		if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
+			pending += 1
+		if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
+			pending += 1
+	return pending
 
 func _start_fade_out() -> void:
 	is_loading = false

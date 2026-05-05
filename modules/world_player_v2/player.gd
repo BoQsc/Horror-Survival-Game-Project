@@ -56,18 +56,16 @@ func _ready() -> void:
 		if movement_feature:
 			movement_feature.set_physics_process(false)
 		
-		# Wait for LoadingScreen terrain stage to complete
+		# Wait for the loading screen to finish heavy world setup before enabling player physics.
 		var loading_screen = get_tree().root.find_child("LoadingScreen", true, false)
-		if loading_screen and loading_screen.has_signal("terrain_ready"):
+		if loading_screen and loading_screen.has_signal("loading_complete"):
+			await loading_screen.loading_complete
+		elif loading_screen and loading_screen.has_signal("terrain_ready"):
 			await loading_screen.terrain_ready
 			
-			# Re-enable movement when terrain is ready
-			if movement_feature:
-				movement_feature.set_physics_process(true)
-		else:
-			# No loading screen or signal, unfreeze immediately
-			if movement_feature:
-				movement_feature.set_physics_process(true)
+		# Re-enable movement when world startup is ready for gameplay
+		if movement_feature:
+			movement_feature.set_physics_process(true)
 	
 	# Initialize features with shared references
 	if combat_feature and combat_feature.has_method("initialize"):
