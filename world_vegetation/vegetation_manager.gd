@@ -121,6 +121,15 @@ var _global_rock_render_clusters: Dictionary = {}
 var _global_tree_render_chunk_payloads: Dictionary = {}
 var _global_grass_render_chunk_payloads: Dictionary = {}
 var _global_rock_render_chunk_payloads: Dictionary = {}
+var _global_tree_render_cluster_chunks: Dictionary = {}
+var _global_grass_render_cluster_chunks: Dictionary = {}
+var _global_rock_render_cluster_chunks: Dictionary = {}
+var _global_tree_render_chunk_clusters: Dictionary = {}
+var _global_grass_render_chunk_clusters: Dictionary = {}
+var _global_rock_render_chunk_clusters: Dictionary = {}
+var _global_tree_render_cluster_instance_counts: Dictionary = {}
+var _global_grass_render_cluster_instance_counts: Dictionary = {}
+var _global_rock_render_cluster_instance_counts: Dictionary = {}
 var _global_tree_dirty_clusters: Dictionary = {}
 var _global_grass_dirty_clusters: Dictionary = {}
 var _global_rock_dirty_clusters: Dictionary = {}
@@ -137,6 +146,7 @@ var _global_rock_render_instance_count: int = 0
 var _global_render_stream_flush_counter: int = 0
 var _last_global_render_collect_ms: float = 0.0
 var _last_global_render_pack_ms: float = 0.0
+var _last_global_render_candidate_chunk_count: int = 0
 var _vegetation_render_resource_prewarm_node: Node = null
 var _vegetation_render_resource_prewarm_mesh_count: int = 0
 
@@ -207,6 +217,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_global_render_sync_kind": _last_global_render_sync_kind,
 		"last_global_render_sync_cluster": str(_last_global_render_sync_cluster),
 		"last_global_render_sync_chunk_count": _last_global_render_sync_chunk_count,
+		"last_global_render_candidate_chunk_count": _last_global_render_candidate_chunk_count,
 		"vegetation_render_prewarm_frames": vegetation_render_prewarm_frames,
 		"vegetation_render_prewarm_mesh_count": _vegetation_render_resource_prewarm_mesh_count,
 		"vegetation_render_prewarm_active": _is_vegetation_render_resource_prewarm_active(),
@@ -446,6 +457,36 @@ func _get_global_render_chunk_payload_dictionary(kind: String) -> Dictionary:
 			return _global_rock_render_chunk_payloads
 	return {}
 
+func _get_global_render_cluster_chunk_dictionary(kind: String) -> Dictionary:
+	match kind:
+		"tree":
+			return _global_tree_render_cluster_chunks
+		"grass":
+			return _global_grass_render_cluster_chunks
+		"rock":
+			return _global_rock_render_cluster_chunks
+	return {}
+
+func _get_global_render_chunk_cluster_dictionary(kind: String) -> Dictionary:
+	match kind:
+		"tree":
+			return _global_tree_render_chunk_clusters
+		"grass":
+			return _global_grass_render_chunk_clusters
+		"rock":
+			return _global_rock_render_chunk_clusters
+	return {}
+
+func _get_global_render_cluster_instance_count_dictionary(kind: String) -> Dictionary:
+	match kind:
+		"tree":
+			return _global_tree_render_cluster_instance_counts
+		"grass":
+			return _global_grass_render_cluster_instance_counts
+		"rock":
+			return _global_rock_render_cluster_instance_counts
+	return {}
+
 func _set_global_render_dirty_flag(kind: String, dirty: bool) -> void:
 	match kind:
 		"tree":
@@ -487,6 +528,57 @@ func _mark_global_vegetation_render_dirty(kind: String, coord = null) -> void:
 	else:
 		_mark_all_global_vegetation_clusters_dirty(kind)
 
+func _remove_global_render_chunk_membership(kind: String, coord: Vector2i) -> void:
+	var chunk_clusters := _get_global_render_chunk_cluster_dictionary(kind)
+	var old_cluster_variant: Variant = chunk_clusters.get(coord, null)
+	if typeof(old_cluster_variant) != TYPE_VECTOR2I:
+		return
+
+	var old_cluster: Vector2i = old_cluster_variant
+	var cluster_chunks := _get_global_render_cluster_chunk_dictionary(kind)
+	var chunk_set: Dictionary = cluster_chunks.get(old_cluster, {})
+	if not chunk_set.is_empty():
+		chunk_set.erase(coord)
+		if chunk_set.is_empty():
+			cluster_chunks.erase(old_cluster)
+		else:
+			cluster_chunks[old_cluster] = chunk_set
+	chunk_clusters.erase(coord)
+
+func _set_global_render_chunk_membership(kind: String, coord: Vector2i) -> Vector2i:
+	var cluster_key := _vegetation_cluster_key(kind, coord)
+	var chunk_clusters := _get_global_render_chunk_cluster_dictionary(kind)
+	var old_cluster_variant: Variant = chunk_clusters.get(coord, null)
+	if typeof(old_cluster_variant) == TYPE_VECTOR2I and old_cluster_variant != cluster_key:
+		_remove_global_render_chunk_membership(kind, coord)
+
+	chunk_clusters[coord] = cluster_key
+	var cluster_chunks := _get_global_render_cluster_chunk_dictionary(kind)
+	var chunk_set: Dictionary = cluster_chunks.get(cluster_key, {})
+	chunk_set[coord] = true
+	cluster_chunks[cluster_key] = chunk_set
+	return cluster_key
+
+func _set_global_render_cluster_instance_count(kind: String, cluster_key: Vector2i, instance_count: int) -> void:
+	var counts := _get_global_render_cluster_instance_count_dictionary(kind)
+	var previous_count := int(counts.get(cluster_key, 0))
+	if instance_count > 0:
+		counts[cluster_key] = instance_count
+	else:
+		counts.erase(cluster_key)
+
+	var delta := instance_count - previous_count
+	if delta == 0:
+		return
+
+	match kind:
+		"tree":
+			_global_tree_render_instance_count += delta
+		"grass":
+			_global_grass_render_instance_count += delta
+		"rock":
+			_global_rock_render_instance_count += delta
+
 func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> void:
 	var nodes := [_global_tree_render_mmi, _global_grass_render_mmi, _global_rock_render_mmi]
 	nodes.append_array(_global_tree_render_clusters.values())
@@ -507,6 +599,15 @@ func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> vo
 	_global_tree_render_chunk_payloads.clear()
 	_global_grass_render_chunk_payloads.clear()
 	_global_rock_render_chunk_payloads.clear()
+	_global_tree_render_cluster_chunks.clear()
+	_global_grass_render_cluster_chunks.clear()
+	_global_rock_render_cluster_chunks.clear()
+	_global_tree_render_chunk_clusters.clear()
+	_global_grass_render_chunk_clusters.clear()
+	_global_rock_render_chunk_clusters.clear()
+	_global_tree_render_cluster_instance_counts.clear()
+	_global_grass_render_cluster_instance_counts.clear()
+	_global_rock_render_cluster_instance_counts.clear()
 	_global_tree_dirty_clusters.clear()
 	_global_grass_dirty_clusters.clear()
 	_global_rock_dirty_clusters.clear()
@@ -592,13 +693,15 @@ func _update_global_vegetation_chunk_render_payload(kind: String, coord, instanc
 	var payloads := _get_global_render_chunk_payload_dictionary(kind)
 	var payload := _build_global_vegetation_chunk_render_payload(instances)
 	if int(payload.get("instance_count", 0)) <= 0:
-		payloads.erase(coord)
+		_clear_global_vegetation_chunk_render_payload(kind, coord)
 		return
 	payloads[coord] = payload
+	_set_global_render_chunk_membership(kind, coord)
 
 func _clear_global_vegetation_chunk_render_payload(kind: String, coord: Vector2i) -> void:
 	var payloads := _get_global_render_chunk_payload_dictionary(kind)
 	payloads.erase(coord)
+	_remove_global_render_chunk_membership(kind, coord)
 
 func _collect_global_vegetation_transforms(kind: String, cluster_key = null) -> Array:
 	var transforms: Array = []
@@ -633,10 +736,16 @@ func _collect_global_vegetation_render_payload(kind: String, cluster_key = null)
 	}
 	var cluster_buffer: PackedFloat32Array = payload.buffer
 	var payloads := _get_global_render_chunk_payload_dictionary(kind)
-	for coord_variant in payloads.keys():
+	var coord_keys: Array = []
+	if typeof(cluster_key) == TYPE_VECTOR2I:
+		var cluster_chunks := _get_global_render_cluster_chunk_dictionary(kind)
+		var chunk_set: Dictionary = cluster_chunks.get(cluster_key, {})
+		coord_keys = chunk_set.keys()
+	else:
+		coord_keys = payloads.keys()
+	_last_global_render_candidate_chunk_count = coord_keys.size()
+	for coord_variant in coord_keys:
 		var coord: Vector2i = coord_variant
-		if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
-			continue
 		var chunk_payload: Dictionary = payloads.get(coord, {})
 		var instance_count := int(chunk_payload.get("instance_count", 0))
 		if instance_count <= 0:
@@ -700,7 +809,7 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 		clusters.erase(cluster_key)
 		dirty_clusters.erase(cluster_key)
 		_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
-		_recount_global_render_instances(kind)
+		_set_global_render_cluster_instance_count(kind, cluster_key, 0)
 		_last_global_render_pack_ms = 0.0
 		_last_global_render_sync_kind = kind
 		_last_global_render_sync_cluster = cluster_key
@@ -718,7 +827,7 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 	_last_global_render_pack_ms = float(Time.get_ticks_usec() - pack_start_us) / 1000.0
 	dirty_clusters.erase(cluster_key)
 	_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
-	_recount_global_render_instances(kind)
+	_set_global_render_cluster_instance_count(kind, cluster_key, instance_count)
 	_last_global_render_sync_kind = kind
 	_last_global_render_sync_cluster = cluster_key
 	_last_global_render_sync_chunk_count = int(payload.get("chunk_count", 0))

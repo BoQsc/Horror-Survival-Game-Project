@@ -311,6 +311,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_last_collision_proximity_enable_count := 0
 	var terrain_last_collision_proximity_disable_count := 0
 	var terrain_last_collision_proximity_prewarm_queued := 0
+	var terrain_collision_space_attached_chunk_count := 0
 	var terrain_collision_body_cache_count := 0
 	var terrain_collision_body_cache_hits := 0
 	var terrain_collision_body_cache_misses := 0
@@ -374,8 +375,11 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_visual_batch_stream_idle_frames := 0
 	var vegetation_global_render_batch_count := 0
 	var vegetation_last_global_render_sync_ms := 0.0
+	var vegetation_last_global_render_collect_ms := 0.0
+	var vegetation_last_global_render_pack_ms := 0.0
 	var vegetation_last_global_render_sync_kind := ""
 	var vegetation_last_global_render_sync_chunk_count := 0
+	var vegetation_last_global_render_candidate_chunk_count := 0
 	var vegetation_global_render_dirty_kind_count := 0
 	if is_instance_valid(terrain_manager):
 		terrain_active_chunk_count = int(terrain_manager.active_chunks.size())
@@ -390,6 +394,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_last_collision_proximity_enable_count = int(terrain_manager._last_collision_proximity_enable_count)
 		terrain_last_collision_proximity_disable_count = int(terrain_manager._last_collision_proximity_disable_count)
 		terrain_last_collision_proximity_prewarm_queued = int(terrain_manager._last_collision_proximity_prewarm_queued)
+		terrain_collision_space_attached_chunk_count = int(terrain_manager._terrain_collision_space_attached_coords.size())
 		terrain_collision_body_cache_count = int(terrain_manager._terrain_collision_body_cache.size())
 		terrain_collision_body_cache_hits = int(terrain_manager._terrain_collision_body_cache_hits)
 		terrain_collision_body_cache_misses = int(terrain_manager._terrain_collision_body_cache_misses)
@@ -453,8 +458,11 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	if is_instance_valid(vegetation_manager):
 		vegetation_global_render_batch_count = int(vegetation_manager._get_global_render_batch_count())
 		vegetation_last_global_render_sync_ms = float(vegetation_manager._last_global_render_sync_ms)
+		vegetation_last_global_render_collect_ms = float(vegetation_manager._last_global_render_collect_ms)
+		vegetation_last_global_render_pack_ms = float(vegetation_manager._last_global_render_pack_ms)
 		vegetation_last_global_render_sync_kind = str(vegetation_manager._last_global_render_sync_kind)
 		vegetation_last_global_render_sync_chunk_count = int(vegetation_manager._last_global_render_sync_chunk_count)
+		vegetation_last_global_render_candidate_chunk_count = int(vegetation_manager._last_global_render_candidate_chunk_count)
 		vegetation_global_render_dirty_kind_count = int(vegetation_manager._get_global_render_dirty_kinds().size())
 	if not is_instance_valid(entity_manager):
 		entity_manager = _find_manager_node("entity_manager", "EntityManager")
@@ -494,6 +502,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_last_collision_proximity_enable_count": terrain_last_collision_proximity_enable_count,
 		"terrain_last_collision_proximity_disable_count": terrain_last_collision_proximity_disable_count,
 		"terrain_last_collision_proximity_prewarm_queued": terrain_last_collision_proximity_prewarm_queued,
+		"terrain_collision_space_attached_chunk_count": terrain_collision_space_attached_chunk_count,
 		"terrain_collision_body_cache_count": terrain_collision_body_cache_count,
 		"terrain_collision_body_cache_hits": terrain_collision_body_cache_hits,
 		"terrain_collision_body_cache_misses": terrain_collision_body_cache_misses,
@@ -549,8 +558,11 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"prefab_last_baked_payload_flush_ms": prefab_last_baked_payload_flush_ms,
 		"vegetation_global_render_batch_count": vegetation_global_render_batch_count,
 		"vegetation_last_global_render_sync_ms": vegetation_last_global_render_sync_ms,
+		"vegetation_last_global_render_collect_ms": vegetation_last_global_render_collect_ms,
+		"vegetation_last_global_render_pack_ms": vegetation_last_global_render_pack_ms,
 		"vegetation_last_global_render_sync_kind": vegetation_last_global_render_sync_kind,
 		"vegetation_last_global_render_sync_chunk_count": vegetation_last_global_render_sync_chunk_count,
+		"vegetation_last_global_render_candidate_chunk_count": vegetation_last_global_render_candidate_chunk_count,
 		"vegetation_global_render_dirty_kind_count": vegetation_global_render_dirty_kind_count,
 		"entity_active_entities": entity_active_entities,
 		"entity_frozen_entities": entity_frozen_entities,
@@ -1458,6 +1470,12 @@ func _start_game_scene() -> void:
 		if building_manager_override and "render_distance" in building_manager_override:
 			building_manager_override.render_distance = render_distance_override
 			print("[TOWN_STALL_TEST] Building render distance override: %d" % render_distance_override)
+	var keep_disabled_collision_in_space_override := OS.get_environment("TOWN_STALL_KEEP_DISABLED_TERRAIN_COLLISION_IN_SPACE").strip_edges()
+	if not keep_disabled_collision_in_space_override.is_empty():
+		var terrain_manager_collision_override := game_root.find_child("TerrainManager", true, false)
+		if terrain_manager_collision_override and "keep_disabled_terrain_collision_bodies_in_space" in terrain_manager_collision_override:
+			terrain_manager_collision_override.keep_disabled_terrain_collision_bodies_in_space = keep_disabled_collision_in_space_override != "0"
+			print("[TOWN_STALL_TEST] Keep disabled terrain collision bodies in space: %s" % ("ON" if terrain_manager_collision_override.keep_disabled_terrain_collision_bodies_in_space else "OFF"))
 	var prefab_spawner_override := game_root.find_child("PrefabSpawner", true, false)
 	if prefab_spawner_override and "instant_baked_buildings_enabled" in prefab_spawner_override:
 		prefab_spawner_override.instant_baked_buildings_enabled = instant_baked_buildings_enabled
