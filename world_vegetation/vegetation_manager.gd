@@ -118,6 +118,9 @@ var _global_rock_render_mmi: MultiMeshInstance3D = null
 var _global_tree_render_clusters: Dictionary = {}
 var _global_grass_render_clusters: Dictionary = {}
 var _global_rock_render_clusters: Dictionary = {}
+var _global_tree_render_chunk_payloads: Dictionary = {}
+var _global_grass_render_chunk_payloads: Dictionary = {}
+var _global_rock_render_chunk_payloads: Dictionary = {}
 var _global_tree_dirty_clusters: Dictionary = {}
 var _global_grass_dirty_clusters: Dictionary = {}
 var _global_rock_dirty_clusters: Dictionary = {}
@@ -191,6 +194,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_render_cluster_size": vegetation_render_cluster_size,
 		"vegetation_grass_render_cluster_size": vegetation_grass_render_cluster_size,
 		"global_render_batch_count": _get_global_render_batch_count(),
+		"global_tree_render_chunk_payloads": _global_tree_render_chunk_payloads.size(),
+		"global_grass_render_chunk_payloads": _global_grass_render_chunk_payloads.size(),
+		"global_rock_render_chunk_payloads": _global_rock_render_chunk_payloads.size(),
 		"global_tree_render_instances": _global_tree_render_instance_count,
 		"global_grass_render_instances": _global_grass_render_instance_count,
 		"global_rock_render_instances": _global_rock_render_instance_count,
@@ -430,6 +436,16 @@ func _get_global_render_dirty_cluster_dictionary(kind: String) -> Dictionary:
 			return _global_rock_dirty_clusters
 	return {}
 
+func _get_global_render_chunk_payload_dictionary(kind: String) -> Dictionary:
+	match kind:
+		"tree":
+			return _global_tree_render_chunk_payloads
+		"grass":
+			return _global_grass_render_chunk_payloads
+		"rock":
+			return _global_rock_render_chunk_payloads
+	return {}
+
 func _set_global_render_dirty_flag(kind: String, dirty: bool) -> void:
 	match kind:
 		"tree":
@@ -488,6 +504,9 @@ func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> vo
 	_global_tree_render_clusters.clear()
 	_global_grass_render_clusters.clear()
 	_global_rock_render_clusters.clear()
+	_global_tree_render_chunk_payloads.clear()
+	_global_grass_render_chunk_payloads.clear()
+	_global_rock_render_chunk_payloads.clear()
 	_global_tree_dirty_clusters.clear()
 	_global_grass_dirty_clusters.clear()
 	_global_rock_dirty_clusters.clear()
@@ -545,6 +564,42 @@ func _append_alive_global_vegetation_transforms(target: Array, entries: Array) -
 			continue
 		target.append(_get_global_vegetation_instance_transform(item))
 
+func _build_global_vegetation_chunk_render_payload(instances: Array) -> Dictionary:
+	var transforms: Array = []
+	var bounds := GLOBAL_VEGETATION_RENDER_AABB
+	var has_bounds := false
+	for item in instances:
+		if item is Dictionary and not bool(item.get("alive", true)):
+			continue
+		var transform := _get_global_vegetation_instance_transform(item)
+		transforms.append(transform)
+		if has_bounds:
+			bounds = bounds.expand(transform.origin)
+		else:
+			bounds = AABB(transform.origin, Vector3.ZERO)
+			has_bounds = true
+
+	return {
+		"buffer": _pack_multimesh_buffer_from_instances(transforms, true),
+		"instance_count": transforms.size(),
+		"bounds": bounds,
+		"has_bounds": has_bounds
+	}
+
+func _update_global_vegetation_chunk_render_payload(kind: String, coord, instances: Array) -> void:
+	if not global_render_batches_enabled or typeof(coord) != TYPE_VECTOR2I:
+		return
+	var payloads := _get_global_render_chunk_payload_dictionary(kind)
+	var payload := _build_global_vegetation_chunk_render_payload(instances)
+	if int(payload.get("instance_count", 0)) <= 0:
+		payloads.erase(coord)
+		return
+	payloads[coord] = payload
+
+func _clear_global_vegetation_chunk_render_payload(kind: String, coord: Vector2i) -> void:
+	var payloads := _get_global_render_chunk_payload_dictionary(kind)
+	payloads.erase(coord)
+
 func _collect_global_vegetation_transforms(kind: String, cluster_key = null) -> Array:
 	var transforms: Array = []
 	match kind:
@@ -568,53 +623,39 @@ func _collect_global_vegetation_transforms(kind: String, cluster_key = null) -> 
 				_append_alive_global_vegetation_transforms(transforms, data.get("rock_list", []))
 	return transforms
 
-func _append_alive_global_vegetation_payload(payload: Dictionary, entries: Array) -> void:
-	var transforms: Array = payload.transforms
-	var has_bounds := bool(payload.has_bounds)
-	var bounds: AABB = payload.bounds
-	for item in entries:
-		if item is Dictionary and not bool(item.get("alive", true)):
-			continue
-		var transform := _get_global_vegetation_instance_transform(item)
-		transforms.append(transform)
-		if has_bounds:
-			bounds = bounds.expand(transform.origin)
-		else:
-			bounds = AABB(transform.origin, Vector3.ZERO)
-			has_bounds = true
-	payload.transforms = transforms
-	payload.bounds = bounds
-	payload.has_bounds = has_bounds
-
 func _collect_global_vegetation_render_payload(kind: String, cluster_key = null) -> Dictionary:
 	var payload := {
-		"transforms": [],
+		"buffer": PackedFloat32Array(),
 		"bounds": GLOBAL_VEGETATION_RENDER_AABB,
 		"has_bounds": false,
-		"chunk_count": 0
+		"chunk_count": 0,
+		"instance_count": 0
 	}
-	match kind:
-		"tree":
-			for coord in chunk_tree_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
-					continue
-				var data = chunk_tree_data[coord]
-				payload.chunk_count = int(payload.chunk_count) + 1
-				_append_alive_global_vegetation_payload(payload, data.get("trees", []))
-		"grass":
-			for coord in chunk_grass_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
-					continue
-				var data = chunk_grass_data[coord]
-				payload.chunk_count = int(payload.chunk_count) + 1
-				_append_alive_global_vegetation_payload(payload, data.get("grass_list", []))
-		"rock":
-			for coord in chunk_rock_data.keys():
-				if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
-					continue
-				var data = chunk_rock_data[coord]
-				payload.chunk_count = int(payload.chunk_count) + 1
-				_append_alive_global_vegetation_payload(payload, data.get("rock_list", []))
+	var cluster_buffer: PackedFloat32Array = payload.buffer
+	var payloads := _get_global_render_chunk_payload_dictionary(kind)
+	for coord_variant in payloads.keys():
+		var coord: Vector2i = coord_variant
+		if typeof(cluster_key) == TYPE_VECTOR2I and _vegetation_cluster_key(kind, coord) != cluster_key:
+			continue
+		var chunk_payload: Dictionary = payloads.get(coord, {})
+		var instance_count := int(chunk_payload.get("instance_count", 0))
+		if instance_count <= 0:
+			continue
+		var chunk_buffer: PackedFloat32Array = chunk_payload.get("buffer", PackedFloat32Array())
+		if chunk_buffer.is_empty():
+			continue
+		cluster_buffer.append_array(chunk_buffer)
+		payload.chunk_count = int(payload.chunk_count) + 1
+		payload.instance_count = int(payload.instance_count) + instance_count
+		if bool(chunk_payload.get("has_bounds", false)):
+			var chunk_bounds: AABB = chunk_payload.get("bounds", GLOBAL_VEGETATION_RENDER_AABB)
+			if bool(payload.has_bounds):
+				var merged_bounds: AABB = payload.bounds
+				payload.bounds = merged_bounds.merge(chunk_bounds)
+			else:
+				payload.bounds = chunk_bounds
+				payload.has_bounds = true
+	payload.buffer = cluster_buffer
 	if bool(payload.has_bounds):
 		var payload_bounds: AABB = payload.bounds
 		payload.bounds = payload_bounds.grow(96.0)
@@ -648,10 +689,11 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 
 	var collect_start_us := Time.get_ticks_usec()
 	var payload := _collect_global_vegetation_render_payload(kind, cluster_key)
-	var transforms: Array = payload.get("transforms", [])
+	var instance_count := int(payload.get("instance_count", 0))
+	var buffer: PackedFloat32Array = payload.get("buffer", PackedFloat32Array())
 	_last_global_render_collect_ms = float(Time.get_ticks_usec() - collect_start_us) / 1000.0
 	var clusters := _get_global_render_cluster_dictionary(kind)
-	if transforms.is_empty():
+	if instance_count <= 0 or buffer.is_empty():
 		var old_batch := clusters.get(cluster_key, null) as Node
 		if old_batch and is_instance_valid(old_batch):
 			old_batch.queue_free()
@@ -670,8 +712,8 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 	if not mmi or not mmi.multimesh:
 		return
 	var pack_start_us := Time.get_ticks_usec()
-	mmi.multimesh.instance_count = transforms.size()
-	mmi.multimesh.buffer = _pack_multimesh_buffer_from_instances(transforms, true)
+	mmi.multimesh.instance_count = instance_count
+	mmi.multimesh.buffer = buffer
 	mmi.multimesh.custom_aabb = payload.get("bounds", GLOBAL_VEGETATION_RENDER_AABB)
 	_last_global_render_pack_ms = float(Time.get_ticks_usec() - pack_start_us) / 1000.0
 	dirty_clusters.erase(cluster_key)
@@ -770,7 +812,9 @@ func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int) ->
 	if global_render_batches_enabled and not kind.is_empty():
 		if mmi is MultiMeshInstance3D:
 			mmi.visible = false
-		_mark_global_vegetation_render_dirty(kind, _chunk_multimesh_handle_coord(mmi))
+		var coord = _chunk_multimesh_handle_coord(mmi)
+		_update_global_vegetation_chunk_render_payload(kind, coord, instances)
+		_mark_global_vegetation_render_dirty(kind, coord)
 		return
 	elif mmi is MultiMeshInstance3D and mmi.has_meta("vegetation_kind"):
 		mmi.visible = true
@@ -1027,6 +1071,7 @@ func _on_chunk_unloaded(coord: Vector3i):
 				active_colliders.erase(key)
 				colliders_removed += 1
 		chunk_tree_data.erase(surface_key)
+		_clear_global_vegetation_chunk_render_payload("tree", surface_key)
 		_mark_global_vegetation_render_dirty("tree", surface_key)
 
 	# Clean up grass
@@ -1040,6 +1085,7 @@ func _on_chunk_unloaded(coord: Vector3i):
 				_return_grass_collider_to_pool(active_grass_colliders[key])
 				active_grass_colliders.erase(key)
 		chunk_grass_data.erase(surface_key)
+		_clear_global_vegetation_chunk_render_payload("grass", surface_key)
 		_mark_global_vegetation_render_dirty("grass", surface_key)
 
 	# Clean up rocks
@@ -1053,6 +1099,7 @@ func _on_chunk_unloaded(coord: Vector3i):
 				_return_rock_collider_to_pool(active_rock_colliders[key])
 				active_rock_colliders.erase(key)
 		chunk_rock_data.erase(surface_key)
+		_clear_global_vegetation_chunk_render_payload("rock", surface_key)
 		_mark_global_vegetation_render_dirty("rock", surface_key)
 
 	_mark_collider_refresh_dirty()
@@ -1109,6 +1156,7 @@ func _cleanup_chunk_trees(coord: Vector2i, immediate_free: bool = false):
 		if immediate_free:
 			_free_vegetation_instance_entries(data.trees)
 		chunk_tree_data.erase(coord)
+		_clear_global_vegetation_chunk_render_payload("tree", coord)
 		_mark_collider_refresh_dirty()
 		_mark_global_vegetation_render_dirty("tree", coord)
 
@@ -1130,6 +1178,7 @@ func _cleanup_chunk_grass(coord: Vector2i, immediate_free: bool = false):
 		if immediate_free:
 			_free_vegetation_instance_entries(data.grass_list)
 		chunk_grass_data.erase(coord)
+		_clear_global_vegetation_chunk_render_payload("grass", coord)
 		_mark_collider_refresh_dirty()
 		_mark_global_vegetation_render_dirty("grass", coord)
 
@@ -1151,6 +1200,7 @@ func _cleanup_chunk_rocks(coord: Vector2i, immediate_free: bool = false):
 		if immediate_free:
 			_free_vegetation_instance_entries(data.rock_list)
 		chunk_rock_data.erase(coord)
+		_clear_global_vegetation_chunk_render_payload("rock", coord)
 		_mark_collider_refresh_dirty()
 		_mark_global_vegetation_render_dirty("rock", coord)
 

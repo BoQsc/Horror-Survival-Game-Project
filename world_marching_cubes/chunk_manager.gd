@@ -59,6 +59,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
 @export_range(1, 60, 1) var terrain_visual_batch_hot_rebuild_interval_frames: int = 2
 @export_range(1, 512, 1) var terrain_visual_batch_hot_rebuild_dirty_threshold: int = 8
+@export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 24000
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -264,6 +265,10 @@ var _terrain_visual_batch_builder: Object = null
 var _last_terrain_visual_batch_rebuild_ms: float = 0.0
 var _last_terrain_visual_batch_rebuild_count: int = 0
 var _last_terrain_visual_batch_hidden_chunk_count: int = 0
+var _last_terrain_visual_batch_vertex_count: int = 0
+var _last_terrain_visual_batch_index_count: int = 0
+var _last_terrain_visual_batch_skipped_heavy_count: int = 0
+var _terrain_visual_batch_total_heavy_skips: int = 0
 var _terrain_visual_batch_stream_idle_frames: int = 0
 var _terrain_visual_batch_hot_rebuild_frame_counter: int = 0
 var _last_terrain_visual_batch_hot_rebuild: bool = false
@@ -494,12 +499,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_size": terrain_visual_batch_size,
 		"terrain_visual_batch_hot_rebuild_interval_frames": terrain_visual_batch_hot_rebuild_interval_frames,
 		"terrain_visual_batch_hot_rebuild_dirty_threshold": terrain_visual_batch_hot_rebuild_dirty_threshold,
+		"terrain_visual_batch_max_vertices": terrain_visual_batch_max_vertices,
 		"terrain_visual_batch_node_count": _terrain_visual_batches.size(),
 		"terrain_visual_batch_dirty_count": _terrain_visual_batch_dirty.size(),
 		"last_terrain_visual_batch_rebuild_ms": _last_terrain_visual_batch_rebuild_ms,
 		"last_terrain_visual_batch_rebuild_count": _last_terrain_visual_batch_rebuild_count,
 		"last_terrain_visual_batch_hot_rebuild": _last_terrain_visual_batch_hot_rebuild,
 		"last_terrain_visual_batch_hidden_chunk_count": _last_terrain_visual_batch_hidden_chunk_count,
+		"last_terrain_visual_batch_vertex_count": _last_terrain_visual_batch_vertex_count,
+		"last_terrain_visual_batch_index_count": _last_terrain_visual_batch_index_count,
+		"last_terrain_visual_batch_skipped_heavy_count": _last_terrain_visual_batch_skipped_heavy_count,
+		"terrain_visual_batch_total_heavy_skips": _terrain_visual_batch_total_heavy_skips,
 		"terrain_visual_batch_stream_idle_frames": _terrain_visual_batch_stream_idle_frames,
 		"terrain_visual_mesh_retire_queue_count": _terrain_visual_mesh_retire_queue.size(),
 		"pending_node_count": pending_nodes.size(),
@@ -902,6 +912,28 @@ func _get_chunk_terrain_visual_mesh(data) -> Mesh:
 		return mesh_instance.mesh
 	return null
 
+func _get_mesh_surface_vertex_count(mesh: Mesh) -> int:
+	if mesh == null or mesh.get_surface_count() <= 0:
+		return 0
+	if mesh.has_method("surface_get_array_len"):
+		return int(mesh.surface_get_array_len(0))
+	var arrays := mesh.surface_get_arrays(0)
+	if arrays.size() <= Mesh.ARRAY_VERTEX:
+		return 0
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	return vertices.size()
+
+func _get_mesh_surface_index_count(mesh: Mesh) -> int:
+	if mesh == null or mesh.get_surface_count() <= 0:
+		return 0
+	if mesh.has_method("surface_get_array_index_len"):
+		return int(mesh.surface_get_array_index_len(0))
+	var arrays := mesh.surface_get_arrays(0)
+	if arrays.size() <= Mesh.ARRAY_INDEX:
+		return _get_mesh_surface_vertex_count(mesh)
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	return indices.size() if not indices.is_empty() else _get_mesh_surface_vertex_count(mesh)
+
 func _ensure_chunk_terrain_mesh_instance(data) -> MeshInstance3D:
 	if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):
 		return null
@@ -955,7 +987,7 @@ func _retire_chunk_terrain_mesh_instance(data) -> void:
 func _process_terrain_visual_mesh_retire_queue() -> void:
 	if _terrain_visual_mesh_retire_queue.is_empty():
 		return
-	if initial_load_phase or _visual_batch_streaming_busy() or not _terrain_visual_batch_dirty.is_empty():
+	if initial_load_phase or _visual_batch_streaming_busy():
 		return
 	if _last_frame_ms > 1000.0 / 60.0:
 		return
@@ -1026,6 +1058,10 @@ func _clear_terrain_visual_batches(immediate: bool = false) -> void:
 	_terrain_visual_mesh_retire_queue.clear()
 	_terrain_visual_mesh_retire_queued.clear()
 	_last_terrain_visual_batch_hidden_chunk_count = 0
+	_last_terrain_visual_batch_vertex_count = 0
+	_last_terrain_visual_batch_index_count = 0
+	_last_terrain_visual_batch_skipped_heavy_count = 0
+	_terrain_visual_batch_total_heavy_skips = 0
 	_terrain_visual_batch_hot_rebuild_frame_counter = 0
 	_last_terrain_visual_batch_hot_rebuild = false
 
@@ -1039,6 +1075,7 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 	_last_terrain_visual_batch_rebuild_count = 0
 	_last_terrain_visual_batch_rebuild_ms = 0.0
 	_last_terrain_visual_batch_hot_rebuild = false
+	_last_terrain_visual_batch_skipped_heavy_count = 0
 	if not terrain_visual_batching_enabled or not world_map_active:
 		if not _terrain_visual_batches.is_empty():
 			_clear_terrain_visual_batches()
@@ -1118,6 +1155,8 @@ func _select_nearest_terrain_visual_batch_key(keys: Array) -> Vector2i:
 func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object) -> void:
 	var merge_inputs: Array[Dictionary] = []
 	var eligible_coords: Array[Vector3i] = []
+	var total_vertices := 0
+	var total_indices := 0
 
 	for coord_variant in active_chunks.keys():
 		var coord: Vector3i = coord_variant
@@ -1131,11 +1170,18 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object) -> void:
 		if terrain_mesh == null:
 			_set_chunk_mesh_visible(data, true, coord)
 			continue
+		var vertex_count := _get_mesh_surface_vertex_count(terrain_mesh)
+		var index_count := _get_mesh_surface_index_count(terrain_mesh)
+		total_vertices += vertex_count
+		total_indices += index_count
 		merge_inputs.append({
 			"mesh": terrain_mesh,
 			"offset": data.node_terrain.position
 		})
 		eligible_coords.append(coord)
+
+	_last_terrain_visual_batch_vertex_count = total_vertices
+	_last_terrain_visual_batch_index_count = total_indices
 
 	if merge_inputs.is_empty():
 		if _terrain_visual_batches.has(key):
@@ -1143,6 +1189,18 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object) -> void:
 			_terrain_visual_batches.erase(key)
 			if old_node:
 				old_node.queue_free()
+		return
+
+	if terrain_visual_batch_max_vertices > 0 and total_vertices > terrain_visual_batch_max_vertices:
+		if _terrain_visual_batches.has(key):
+			var heavy_old_node := _terrain_visual_batches[key] as Node
+			_terrain_visual_batches.erase(key)
+			if heavy_old_node:
+				heavy_old_node.queue_free()
+		_show_individual_terrain_visuals_for_batch(key)
+		_last_terrain_visual_batch_skipped_heavy_count += 1
+		_terrain_visual_batch_total_heavy_skips += 1
+		_last_terrain_visual_batch_hidden_chunk_count = _count_hidden_terrain_visual_batch_chunks()
 		return
 
 	var merged_mesh: ArrayMesh = builder.build_merged_array_mesh(merge_inputs)
@@ -3430,6 +3488,7 @@ func _update_chunks_legacy():
 
 		var data = active_chunks[coord]
 		if data:
+			_mark_terrain_visual_batch_dirty(coord, true)
 			_set_terrain_collision_ready(coord, data, false)
 			if data.node_terrain: data.node_terrain.queue_free()
 			if data.node_water: data.node_water.queue_free()
@@ -4731,7 +4790,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		var data = active_chunks[coord]
 		if data == null:
 			data = ChunkData.new()
-			active_chunks[coord] = data
+		active_chunks[coord] = data
 
 		data.node_water = result.node if not result.is_empty() else null
 		data.density_buffer_water = item.dens

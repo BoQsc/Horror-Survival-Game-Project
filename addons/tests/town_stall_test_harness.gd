@@ -344,6 +344,10 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_last_visual_batch_rebuild_ms := 0.0
 	var terrain_last_visual_batch_rebuild_count := 0
 	var terrain_last_visual_batch_hidden_chunk_count := 0
+	var terrain_last_visual_batch_vertex_count := 0
+	var terrain_last_visual_batch_index_count := 0
+	var terrain_last_visual_batch_skipped_heavy_count := 0
+	var terrain_visual_batch_total_heavy_skips := 0
 	var terrain_visual_batch_stream_idle_frames := 0
 	var vegetation_global_render_batch_count := 0
 	var vegetation_last_global_render_sync_ms := 0.0
@@ -368,6 +372,10 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_last_visual_batch_rebuild_ms = float(terrain_manager._last_terrain_visual_batch_rebuild_ms)
 		terrain_last_visual_batch_rebuild_count = int(terrain_manager._last_terrain_visual_batch_rebuild_count)
 		terrain_last_visual_batch_hidden_chunk_count = int(terrain_manager._last_terrain_visual_batch_hidden_chunk_count)
+		terrain_last_visual_batch_vertex_count = int(terrain_manager._last_terrain_visual_batch_vertex_count)
+		terrain_last_visual_batch_index_count = int(terrain_manager._last_terrain_visual_batch_index_count)
+		terrain_last_visual_batch_skipped_heavy_count = int(terrain_manager._last_terrain_visual_batch_skipped_heavy_count)
+		terrain_visual_batch_total_heavy_skips = int(terrain_manager._terrain_visual_batch_total_heavy_skips)
 		terrain_visual_batch_stream_idle_frames = int(terrain_manager._terrain_visual_batch_stream_idle_frames)
 	if not is_instance_valid(building_manager):
 		building_manager = _find_manager_node("building_manager", "BuildingManager")
@@ -445,6 +453,10 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_last_visual_batch_rebuild_ms": terrain_last_visual_batch_rebuild_ms,
 		"terrain_last_visual_batch_rebuild_count": terrain_last_visual_batch_rebuild_count,
 		"terrain_last_visual_batch_hidden_chunk_count": terrain_last_visual_batch_hidden_chunk_count,
+		"terrain_last_visual_batch_vertex_count": terrain_last_visual_batch_vertex_count,
+		"terrain_last_visual_batch_index_count": terrain_last_visual_batch_index_count,
+		"terrain_last_visual_batch_skipped_heavy_count": terrain_last_visual_batch_skipped_heavy_count,
+		"terrain_visual_batch_total_heavy_skips": terrain_visual_batch_total_heavy_skips,
 		"terrain_visual_batch_stream_idle_frames": terrain_visual_batch_stream_idle_frames,
 		"building_dirty_visible_chunk_count": building_dirty_visible_chunk_count,
 		"building_last_flush_dirty_chunks_ms": building_last_flush_dirty_chunks_ms,
