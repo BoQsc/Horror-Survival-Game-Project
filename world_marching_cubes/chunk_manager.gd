@@ -57,9 +57,17 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export var terrain_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
+@export_range(0, 16, 1) var terrain_visual_batch_cached_rebuilds_per_frame: int = 4
+@export_range(0.1, 5.0, 0.1) var terrain_visual_batch_cached_rebuild_budget_ms: float = 0.75
+@export var terrain_visual_batch_async_build_enabled: bool = true
+@export_range(1, 16, 1) var terrain_visual_batch_async_builds_per_frame: int = 1
+@export_range(1, 64, 1) var terrain_visual_batch_async_build_queue_limit: int = 8
+@export_range(1, 16, 1) var terrain_visual_batch_async_apply_per_frame: int = 4
+@export_range(0.1, 5.0, 0.1) var terrain_visual_batch_async_apply_budget_ms: float = 1.0
 @export_range(1, 60, 1) var terrain_visual_batch_hot_rebuild_interval_frames: int = 2
 @export_range(1, 512, 1) var terrain_visual_batch_hot_rebuild_dirty_threshold: int = 8
 @export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 24000
+@export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -165,6 +173,7 @@ var active_chunks: Dictionary = {}
 # Collision distance - only enable collision within this range (cheaper than render_distance)
 @export var collision_distance: int = 3 # Chunks within this get collision
 @export var collision_prewarm_distance: int = 5 # Disabled bodies prepared ahead of fast vehicle/player motion
+@export_range(0, 512, 1) var terrain_collision_body_cache_limit: int = 256
 
 # Time-budgeted node creation - prevents stutters from multiple chunks completing at once
 var pending_nodes: Array[Dictionary] = [] # Queue of completed chunks waiting for node creation
@@ -179,6 +188,8 @@ var _last_pending_node_finalize_count: int = 0
 @export_range(1, 256, 1) var pending_node_resort_growth_threshold: int = 64
 @export_range(1, 64, 1) var pending_node_finalize_max_per_frame: int = 8
 @export_range(1, 128, 1) var pending_node_initial_finalize_max_per_frame: int = 32
+@export_range(1, 16, 1) var spawn_zone_pending_node_finalize_max_per_frame: int = 2
+@export_range(0.1, 5.0, 0.1) var spawn_zone_pending_node_finalize_budget_ms: float = 0.75
 
 # Budgeted finalization - spreads chunk appearances without letting ready chunks starve.
 var last_finalization_time_ms: int = 0
@@ -224,6 +235,9 @@ var terrain_grid = null
 var _native_backends_ready: bool = false
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
+var _last_fallback_unloads: int = 0
+var _last_fallback_unload_ms: float = 0.0
+var _last_native_grid_active_chunk_count: int = 0
 var _last_update_backend: String = ""
 var _last_terrain_finalization_defer_reason: String = ""
 var _last_update_duration_ms: float = 0.0
@@ -261,6 +275,11 @@ var _last_world_map_lod_unloads: int = 0
 var _terrain_visual_batch_root: Node3D = null
 var _terrain_visual_batches: Dictionary = {}
 var _terrain_visual_batch_dirty: Dictionary = {}
+var _terrain_visual_batch_mesh_cache: Dictionary = {}
+var _terrain_visual_batch_mesh_cache_order: Array[String] = []
+var _terrain_visual_batch_builds_in_flight: Dictionary = {}
+var _completed_terrain_visual_batch_builds: Array[Dictionary] = []
+var _completed_terrain_visual_batch_mutex: Mutex
 var _terrain_visual_batch_builder: Object = null
 var _last_terrain_visual_batch_rebuild_ms: float = 0.0
 var _last_terrain_visual_batch_rebuild_count: int = 0
@@ -268,6 +287,16 @@ var _last_terrain_visual_batch_hidden_chunk_count: int = 0
 var _last_terrain_visual_batch_vertex_count: int = 0
 var _last_terrain_visual_batch_index_count: int = 0
 var _last_terrain_visual_batch_skipped_heavy_count: int = 0
+var _last_terrain_visual_batch_cache_hit: bool = false
+var _last_terrain_visual_batch_cached_rebuild_count: int = 0
+var _last_terrain_visual_batch_cached_rebuild_ms: float = 0.0
+var _last_terrain_visual_batch_cached_rebuild_attempts: int = 0
+var _last_terrain_visual_batch_async_queued_count: int = 0
+var _last_terrain_visual_batch_async_apply_count: int = 0
+var _last_terrain_visual_batch_async_apply_ms: float = 0.0
+var _last_terrain_visual_batch_async_stale_count: int = 0
+var _terrain_visual_batch_mesh_cache_hits: int = 0
+var _terrain_visual_batch_mesh_cache_misses: int = 0
 var _terrain_visual_batch_total_heavy_skips: int = 0
 var _terrain_visual_batch_stream_idle_frames: int = 0
 var _terrain_visual_batch_hot_rebuild_frame_counter: int = 0
@@ -299,6 +328,7 @@ func _ready():
 	cpu_mutex = Mutex.new()
 	cpu_semaphore = Semaphore.new()
 	completed_generation_mutex = Mutex.new()
+	_completed_terrain_visual_batch_mutex = Mutex.new()
 	stored_modifications_mutex = Mutex.new()
 	_ensure_chunk_node_root()
 
@@ -446,6 +476,7 @@ func get_telemetry_snapshot() -> Dictionary:
 	var collision_chunk_count := 0
 	var collision_enabled_chunk_count := 0
 	var collision_ready_chunk_count := 0
+	var native_grid_active_chunk_count := 0
 	var dirty_loaded_chunk_count := 0
 	var active_render_chunk_count := 0
 
@@ -472,9 +503,13 @@ func get_telemetry_snapshot() -> Dictionary:
 
 	if terrain_grid and terrain_grid.has_method("get_collision_ready_chunk_count"):
 		collision_ready_chunk_count = terrain_grid.get_collision_ready_chunk_count()
+	if terrain_grid and terrain_grid.has_method("get_active_chunk_count"):
+		native_grid_active_chunk_count = terrain_grid.get_active_chunk_count()
+		_last_native_grid_active_chunk_count = native_grid_active_chunk_count
 
 	return {
 		"active_chunk_count": active_chunks.size(),
+		"native_grid_active_chunk_count": native_grid_active_chunk_count,
 		"loaded_chunk_count": loaded_chunk_count,
 		"pending_chunk_count": pending_chunk_count,
 		"rendered_terrain_chunk_count": rendered_terrain_chunk_count,
@@ -491,15 +526,36 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_terrain_collision_create_stale": _last_terrain_collision_create_stale,
 		"last_terrain_collision_create_deferred_prewarm": _last_terrain_collision_create_deferred_prewarm,
 		"last_terrain_collision_candidate_checks": _last_terrain_collision_candidate_checks,
+		"last_collision_proximity_update_ms": _last_collision_proximity_update_ms,
+		"last_collision_proximity_enable_count": _last_collision_proximity_enable_count,
+		"last_collision_proximity_disable_count": _last_collision_proximity_disable_count,
+		"last_collision_proximity_prewarm_queued": _last_collision_proximity_prewarm_queued,
 		"terrain_collision_create_budget_per_frame": terrain_collision_create_budget_per_frame,
 		"terrain_collision_candidate_checks_per_frame": terrain_collision_candidate_checks_per_frame,
+		"terrain_collision_body_cache_limit": terrain_collision_body_cache_limit,
+		"terrain_collision_body_cache_count": _terrain_collision_body_cache.size(),
+		"terrain_collision_body_cache_hits": _terrain_collision_body_cache_hits,
+		"terrain_collision_body_cache_misses": _terrain_collision_body_cache_misses,
+		"terrain_collision_body_cache_stores": _terrain_collision_body_cache_stores,
+		"terrain_collision_body_cache_evictions": _terrain_collision_body_cache_evictions,
 		"loaded_dirty_chunk_count": dirty_loaded_chunk_count,
 		"active_render_chunk_count": active_render_chunk_count,
 		"terrain_visual_batching_enabled": terrain_visual_batching_enabled,
 		"terrain_visual_batch_size": terrain_visual_batch_size,
+		"terrain_visual_batch_cached_rebuilds_per_frame": terrain_visual_batch_cached_rebuilds_per_frame,
+		"terrain_visual_batch_cached_rebuild_budget_ms": terrain_visual_batch_cached_rebuild_budget_ms,
+		"terrain_visual_batch_async_build_enabled": terrain_visual_batch_async_build_enabled,
+		"terrain_visual_batch_async_builds_per_frame": terrain_visual_batch_async_builds_per_frame,
+		"terrain_visual_batch_async_build_queue_limit": terrain_visual_batch_async_build_queue_limit,
+		"terrain_visual_batch_async_apply_per_frame": terrain_visual_batch_async_apply_per_frame,
+		"terrain_visual_batch_async_apply_budget_ms": terrain_visual_batch_async_apply_budget_ms,
 		"terrain_visual_batch_hot_rebuild_interval_frames": terrain_visual_batch_hot_rebuild_interval_frames,
 		"terrain_visual_batch_hot_rebuild_dirty_threshold": terrain_visual_batch_hot_rebuild_dirty_threshold,
 		"terrain_visual_batch_max_vertices": terrain_visual_batch_max_vertices,
+		"terrain_visual_batch_mesh_cache_limit": terrain_visual_batch_mesh_cache_limit,
+		"terrain_visual_batch_mesh_cache_count": _terrain_visual_batch_mesh_cache.size(),
+		"terrain_visual_batch_mesh_cache_hits": _terrain_visual_batch_mesh_cache_hits,
+		"terrain_visual_batch_mesh_cache_misses": _terrain_visual_batch_mesh_cache_misses,
 		"terrain_visual_batch_node_count": _terrain_visual_batches.size(),
 		"terrain_visual_batch_dirty_count": _terrain_visual_batch_dirty.size(),
 		"last_terrain_visual_batch_rebuild_ms": _last_terrain_visual_batch_rebuild_ms,
@@ -509,6 +565,16 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_terrain_visual_batch_vertex_count": _last_terrain_visual_batch_vertex_count,
 		"last_terrain_visual_batch_index_count": _last_terrain_visual_batch_index_count,
 		"last_terrain_visual_batch_skipped_heavy_count": _last_terrain_visual_batch_skipped_heavy_count,
+		"last_terrain_visual_batch_cache_hit": _last_terrain_visual_batch_cache_hit,
+		"last_terrain_visual_batch_cached_rebuild_count": _last_terrain_visual_batch_cached_rebuild_count,
+		"last_terrain_visual_batch_cached_rebuild_ms": _last_terrain_visual_batch_cached_rebuild_ms,
+		"last_terrain_visual_batch_cached_rebuild_attempts": _last_terrain_visual_batch_cached_rebuild_attempts,
+		"terrain_visual_batch_async_in_flight_count": _terrain_visual_batch_builds_in_flight.size(),
+		"terrain_visual_batch_async_completed_count": _completed_terrain_visual_batch_builds.size(),
+		"last_terrain_visual_batch_async_queued_count": _last_terrain_visual_batch_async_queued_count,
+		"last_terrain_visual_batch_async_apply_count": _last_terrain_visual_batch_async_apply_count,
+		"last_terrain_visual_batch_async_apply_ms": _last_terrain_visual_batch_async_apply_ms,
+		"last_terrain_visual_batch_async_stale_count": _last_terrain_visual_batch_async_stale_count,
 		"terrain_visual_batch_total_heavy_skips": _terrain_visual_batch_total_heavy_skips,
 		"terrain_visual_batch_stream_idle_frames": _terrain_visual_batch_stream_idle_frames,
 		"terrain_visual_mesh_retire_queue_count": _terrain_visual_mesh_retire_queue.size(),
@@ -522,6 +588,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_pending_node_finalize_count": _last_pending_node_finalize_count,
 		"pending_node_finalize_max_per_frame": pending_node_finalize_max_per_frame,
 		"pending_node_initial_finalize_max_per_frame": pending_node_initial_finalize_max_per_frame,
+		"spawn_zone_pending_node_finalize_max_per_frame": spawn_zone_pending_node_finalize_max_per_frame,
+		"spawn_zone_pending_node_finalize_budget_ms": spawn_zone_pending_node_finalize_budget_ms,
 		"pending_batch_count": pending_batches.size(),
 		"task_queue_count": _get_task_queue_count(),
 		"cpu_task_queue_count": cpu_task_queue.size(),
@@ -539,6 +607,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"chunks_per_frame_limit": chunks_per_frame_limit,
 		"last_update_loads": _last_update_loads,
 		"last_update_unloads": _last_update_unloads,
+		"last_fallback_unloads": _last_fallback_unloads,
+		"last_fallback_unload_ms": _last_fallback_unload_ms,
 		"last_update_backend": _last_update_backend,
 		"last_terrain_finalization_defer_reason": _last_terrain_finalization_defer_reason,
 		"last_update_duration_ms": _last_update_duration_ms,
@@ -888,6 +958,72 @@ func _terrain_visual_batch_key(coord: Vector3i) -> Vector2i:
 		int(floor(float(coord.z) / float(batch_size)))
 	)
 
+func _terrain_visual_batch_cache_key(key: Vector2i, coords: Array[Vector3i]) -> String:
+	var sorted_coords := coords.duplicate()
+	sorted_coords.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
+		if a.x != b.x:
+			return a.x < b.x
+		if a.y != b.y:
+			return a.y < b.y
+		return a.z < b.z
+	)
+
+	var parts := PackedStringArray()
+	parts.append("%d,%d" % [key.x, key.y])
+	for coord in sorted_coords:
+		var data = active_chunks.get(coord, null)
+		var version := int(data.mod_version) if data != null else -1
+		parts.append("%d,%d,%d:%d" % [coord.x, coord.y, coord.z, version])
+	return "|".join(parts)
+
+func _clear_terrain_visual_batch_mesh_cache() -> void:
+	_terrain_visual_batch_mesh_cache.clear()
+	_terrain_visual_batch_mesh_cache_order.clear()
+	_terrain_visual_batch_builds_in_flight.clear()
+	if _completed_terrain_visual_batch_mutex:
+		_completed_terrain_visual_batch_mutex.lock()
+		_completed_terrain_visual_batch_builds.clear()
+		_completed_terrain_visual_batch_mutex.unlock()
+	else:
+		_completed_terrain_visual_batch_builds.clear()
+	_terrain_visual_batch_mesh_cache_hits = 0
+	_terrain_visual_batch_mesh_cache_misses = 0
+	_last_terrain_visual_batch_cache_hit = false
+	_last_terrain_visual_batch_cached_rebuild_count = 0
+	_last_terrain_visual_batch_cached_rebuild_ms = 0.0
+	_last_terrain_visual_batch_cached_rebuild_attempts = 0
+	_last_terrain_visual_batch_async_queued_count = 0
+	_last_terrain_visual_batch_async_apply_count = 0
+	_last_terrain_visual_batch_async_apply_ms = 0.0
+	_last_terrain_visual_batch_async_stale_count = 0
+
+func _remember_terrain_visual_batch_mesh(cache_key: String, mesh: ArrayMesh) -> void:
+	if terrain_visual_batch_mesh_cache_limit <= 0 or cache_key.is_empty() or mesh == null:
+		return
+	if not _terrain_visual_batch_mesh_cache.has(cache_key):
+		_terrain_visual_batch_mesh_cache_order.append(cache_key)
+	_terrain_visual_batch_mesh_cache[cache_key] = mesh
+	while _terrain_visual_batch_mesh_cache_order.size() > terrain_visual_batch_mesh_cache_limit:
+		var evicted_key: String = str(_terrain_visual_batch_mesh_cache_order.pop_front())
+		_terrain_visual_batch_mesh_cache.erase(evicted_key)
+
+func _enqueue_completed_terrain_visual_batch_build(item: Dictionary) -> void:
+	if not _completed_terrain_visual_batch_mutex:
+		return
+	_completed_terrain_visual_batch_mutex.lock()
+	_completed_terrain_visual_batch_builds.append(item)
+	_completed_terrain_visual_batch_mutex.unlock()
+
+func _pop_completed_terrain_visual_batch_build() -> Dictionary:
+	if not _completed_terrain_visual_batch_mutex:
+		return {}
+	_completed_terrain_visual_batch_mutex.lock()
+	var item := {}
+	if not _completed_terrain_visual_batch_builds.is_empty():
+		item = _completed_terrain_visual_batch_builds.pop_front()
+	_completed_terrain_visual_batch_mutex.unlock()
+	return item
+
 func _get_chunk_mesh_instance(node: Node) -> MeshInstance3D:
 	if node == null:
 		return null
@@ -1068,14 +1204,65 @@ func _clear_terrain_visual_batches(immediate: bool = false) -> void:
 func _visual_batch_streaming_busy() -> bool:
 	return _last_update_loads > 0 or _last_update_unloads > 0 or not pending_nodes.is_empty() or _get_completed_generation_queue_count() > 0 or _get_task_queue_count() > 0 or _get_cpu_task_queue_count() > 0
 
+func _has_pending_spawn_zone_work() -> bool:
+	return not pending_spawn_zones.is_empty()
+
 func _terrain_visual_batch_rebuild_busy(_hot_frame: bool) -> bool:
 	return _last_update_loads > 0 or _last_update_unloads > 0 or not pending_nodes.is_empty() or _get_completed_generation_queue_count() > 0 or _get_task_queue_count() > 0 or _get_cpu_task_queue_count() > 0
+
+func _process_completed_terrain_visual_batch_builds() -> void:
+	_last_terrain_visual_batch_async_apply_count = 0
+	_last_terrain_visual_batch_async_apply_ms = 0.0
+	_last_terrain_visual_batch_async_stale_count = 0
+	if terrain_visual_batch_async_apply_per_frame <= 0:
+		return
+	var start_us := Time.get_ticks_usec()
+	var applied := 0
+	var stale := 0
+	while applied < terrain_visual_batch_async_apply_per_frame:
+		if applied > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_us) / 1000.0
+			if elapsed_ms >= terrain_visual_batch_async_apply_budget_ms:
+				break
+		var item := _pop_completed_terrain_visual_batch_build()
+		if item.is_empty():
+			break
+
+		var key: Vector2i = item.get("batch_key", Vector2i.ZERO)
+		var cache_key := str(item.get("cache_key", ""))
+		_terrain_visual_batch_builds_in_flight.erase(cache_key)
+		var merged_mesh := item.get("mesh", null) as ArrayMesh
+		if merged_mesh == null or cache_key.is_empty():
+			stale += 1
+			continue
+
+		_remember_terrain_visual_batch_mesh(cache_key, merged_mesh)
+		var collected := _collect_terrain_visual_batch_inputs(key)
+		var eligible_coords: Array[Vector3i] = collected.get("eligible_coords", [])
+		if eligible_coords.is_empty():
+			stale += 1
+			continue
+		if _terrain_visual_batch_cache_key(key, eligible_coords) != cache_key:
+			stale += 1
+			continue
+
+		_apply_terrain_visual_batch_mesh(key, eligible_coords, merged_mesh)
+		_terrain_visual_batch_dirty.erase(key)
+		applied += 1
+
+	_last_terrain_visual_batch_async_apply_count = applied
+	_last_terrain_visual_batch_async_stale_count = stale
+	_last_terrain_visual_batch_async_apply_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
 func _process_terrain_visual_batch_rebuilds() -> void:
 	_last_terrain_visual_batch_rebuild_count = 0
 	_last_terrain_visual_batch_rebuild_ms = 0.0
 	_last_terrain_visual_batch_hot_rebuild = false
 	_last_terrain_visual_batch_skipped_heavy_count = 0
+	_last_terrain_visual_batch_cached_rebuild_count = 0
+	_last_terrain_visual_batch_cached_rebuild_ms = 0.0
+	_last_terrain_visual_batch_cached_rebuild_attempts = 0
+	_last_terrain_visual_batch_async_queued_count = 0
 	if not terrain_visual_batching_enabled or not world_map_active:
 		if not _terrain_visual_batches.is_empty():
 			_clear_terrain_visual_batches()
@@ -1097,6 +1284,7 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 		_terrain_visual_batch_hot_rebuild_frame_counter = 0
 	if _terrain_visual_batch_rebuild_busy(hot_frame):
 		_terrain_visual_batch_stream_idle_frames = 0
+		_process_cached_terrain_visual_batch_rebuilds()
 		return
 	if hot_frame:
 		_last_terrain_visual_batch_hot_rebuild = true
@@ -1112,11 +1300,30 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 	var start_us := Time.get_ticks_usec()
 	var rebuilt := 0
 	var keys := _terrain_visual_batch_dirty.keys()
+	if terrain_visual_batch_async_build_enabled:
+		var queued_or_applied := 0
+		for key_variant in keys:
+			if queued_or_applied >= terrain_visual_batch_async_builds_per_frame:
+				break
+			var key: Vector2i = key_variant
+			if _terrain_visual_batch_key_in_flight(key):
+				continue
+			var queued_before := _last_terrain_visual_batch_async_queued_count
+			if _rebuild_terrain_visual_batch(key, builder):
+				_terrain_visual_batch_dirty.erase(key)
+				rebuilt += 1
+				queued_or_applied += 1
+			elif _last_terrain_visual_batch_async_queued_count > queued_before:
+				queued_or_applied += 1
+		_last_terrain_visual_batch_rebuild_count = rebuilt
+		_last_terrain_visual_batch_rebuild_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+		return
+
 	if terrain_visual_batch_rebuilds_per_frame <= 1 and keys.size() > 1:
 		var key := _select_nearest_terrain_visual_batch_key(keys)
-		_rebuild_terrain_visual_batch(key, builder)
-		_terrain_visual_batch_dirty.erase(key)
-		rebuilt = 1
+		if _rebuild_terrain_visual_batch(key, builder):
+			_terrain_visual_batch_dirty.erase(key)
+			rebuilt = 1
 		_last_terrain_visual_batch_rebuild_count = rebuilt
 		_last_terrain_visual_batch_rebuild_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 		return
@@ -1125,12 +1332,47 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 		if rebuilt >= terrain_visual_batch_rebuilds_per_frame:
 			break
 		var key: Vector2i = key_variant
-		_rebuild_terrain_visual_batch(key, builder)
-		_terrain_visual_batch_dirty.erase(key)
-		rebuilt += 1
+		if _rebuild_terrain_visual_batch(key, builder):
+			_terrain_visual_batch_dirty.erase(key)
+			rebuilt += 1
 
 	_last_terrain_visual_batch_rebuild_count = rebuilt
 	_last_terrain_visual_batch_rebuild_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+
+func _process_cached_terrain_visual_batch_rebuilds() -> void:
+	if terrain_visual_batch_cached_rebuilds_per_frame <= 0 or terrain_visual_batch_mesh_cache_limit <= 0:
+		return
+	if _terrain_visual_batch_dirty.is_empty() or _terrain_visual_batch_mesh_cache.is_empty():
+		return
+
+	var start_us := Time.get_ticks_usec()
+	var rebuilt := 0
+	var attempts := 0
+	var keys := _terrain_visual_batch_dirty.keys()
+	for key_variant in keys:
+		if rebuilt >= terrain_visual_batch_cached_rebuilds_per_frame:
+			break
+		if attempts > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_us) / 1000.0
+			if elapsed_ms >= terrain_visual_batch_cached_rebuild_budget_ms:
+				break
+
+		var key: Vector2i = key_variant
+		attempts += 1
+		if _rebuild_terrain_visual_batch(key, null, true):
+			_terrain_visual_batch_dirty.erase(key)
+			rebuilt += 1
+
+	_last_terrain_visual_batch_cached_rebuild_count = rebuilt
+	_last_terrain_visual_batch_cached_rebuild_attempts = attempts
+	_last_terrain_visual_batch_cached_rebuild_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+
+func _terrain_visual_batch_key_in_flight(key: Vector2i) -> bool:
+	for in_flight_key_variant in _terrain_visual_batch_builds_in_flight.values():
+		var in_flight_key: Vector2i = in_flight_key_variant
+		if in_flight_key == key:
+			return true
+	return false
 
 func _select_nearest_terrain_visual_batch_key(keys: Array) -> Vector2i:
 	var p_pos := get_viewer_position()
@@ -1152,7 +1394,7 @@ func _select_nearest_terrain_visual_batch_key(keys: Array) -> Vector2i:
 			best_key = key
 	return best_key
 
-func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object) -> void:
+func _collect_terrain_visual_batch_inputs(key: Vector2i) -> Dictionary:
 	var merge_inputs: Array[Dictionary] = []
 	var eligible_coords: Array[Vector3i] = []
 	var total_vertices := 0
@@ -1180,34 +1422,14 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object) -> void:
 		})
 		eligible_coords.append(coord)
 
-	_last_terrain_visual_batch_vertex_count = total_vertices
-	_last_terrain_visual_batch_index_count = total_indices
+	return {
+		"merge_inputs": merge_inputs,
+		"eligible_coords": eligible_coords,
+		"total_vertices": total_vertices,
+		"total_indices": total_indices
+	}
 
-	if merge_inputs.is_empty():
-		if _terrain_visual_batches.has(key):
-			var old_node := _terrain_visual_batches[key] as Node
-			_terrain_visual_batches.erase(key)
-			if old_node:
-				old_node.queue_free()
-		return
-
-	if terrain_visual_batch_max_vertices > 0 and total_vertices > terrain_visual_batch_max_vertices:
-		if _terrain_visual_batches.has(key):
-			var heavy_old_node := _terrain_visual_batches[key] as Node
-			_terrain_visual_batches.erase(key)
-			if heavy_old_node:
-				heavy_old_node.queue_free()
-		_show_individual_terrain_visuals_for_batch(key)
-		_last_terrain_visual_batch_skipped_heavy_count += 1
-		_terrain_visual_batch_total_heavy_skips += 1
-		_last_terrain_visual_batch_hidden_chunk_count = _count_hidden_terrain_visual_batch_chunks()
-		return
-
-	var merged_mesh: ArrayMesh = builder.build_merged_array_mesh(merge_inputs)
-	if merged_mesh == null:
-		_show_individual_terrain_visuals_for_batch(key)
-		return
-
+func _apply_terrain_visual_batch_mesh(key: Vector2i, eligible_coords: Array[Vector3i], merged_mesh: ArrayMesh) -> void:
 	var batch_node: MeshInstance3D = null
 	if _terrain_visual_batches.has(key):
 		batch_node = _terrain_visual_batches[key] as MeshInstance3D
@@ -1228,6 +1450,89 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object) -> void:
 		var data = active_chunks.get(coord, null)
 		_set_chunk_mesh_visible(data, false, coord)
 	_last_terrain_visual_batch_hidden_chunk_count = _count_hidden_terrain_visual_batch_chunks()
+
+func _queue_terrain_visual_batch_build(key: Vector2i, cache_key: String, merge_inputs: Array[Dictionary]) -> bool:
+	if not terrain_visual_batch_async_build_enabled or cache_key.is_empty() or merge_inputs.is_empty():
+		return false
+	if _terrain_visual_batch_builds_in_flight.has(cache_key):
+		return true
+	if _terrain_visual_batch_builds_in_flight.size() >= terrain_visual_batch_async_build_queue_limit:
+		return false
+	_terrain_visual_batch_builds_in_flight[cache_key] = key
+	cpu_mutex.lock()
+	cpu_task_queue.append({
+		"type": "terrain_visual_batch",
+		"batch_key": key,
+		"cache_key": cache_key,
+		"merge_inputs": merge_inputs
+	})
+	cpu_mutex.unlock()
+	cpu_semaphore.post()
+	_last_terrain_visual_batch_async_queued_count += 1
+	return true
+
+func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object, cache_only: bool = false) -> bool:
+	var collected := _collect_terrain_visual_batch_inputs(key)
+	var merge_inputs: Array[Dictionary] = collected.get("merge_inputs", [])
+	var eligible_coords: Array[Vector3i] = collected.get("eligible_coords", [])
+	var total_vertices := int(collected.get("total_vertices", 0))
+	var total_indices := int(collected.get("total_indices", 0))
+
+	_last_terrain_visual_batch_vertex_count = total_vertices
+	_last_terrain_visual_batch_index_count = total_indices
+
+	if merge_inputs.is_empty():
+		if _terrain_visual_batches.has(key):
+			var old_node := _terrain_visual_batches[key] as Node
+			_terrain_visual_batches.erase(key)
+			if old_node:
+				old_node.queue_free()
+		return true
+
+	if terrain_visual_batch_max_vertices > 0 and total_vertices > terrain_visual_batch_max_vertices:
+		if cache_only:
+			return false
+		if _terrain_visual_batches.has(key):
+			var heavy_old_node := _terrain_visual_batches[key] as Node
+			_terrain_visual_batches.erase(key)
+			if heavy_old_node:
+				heavy_old_node.queue_free()
+		_show_individual_terrain_visuals_for_batch(key)
+		_last_terrain_visual_batch_skipped_heavy_count += 1
+		_terrain_visual_batch_total_heavy_skips += 1
+		_last_terrain_visual_batch_hidden_chunk_count = _count_hidden_terrain_visual_batch_chunks()
+		return true
+
+	var cache_key := _terrain_visual_batch_cache_key(key, eligible_coords)
+	var merged_mesh: ArrayMesh = null
+	if terrain_visual_batch_mesh_cache_limit > 0 and _terrain_visual_batch_mesh_cache.has(cache_key):
+		merged_mesh = _terrain_visual_batch_mesh_cache[cache_key] as ArrayMesh
+		_last_terrain_visual_batch_cache_hit = merged_mesh != null
+	else:
+		_last_terrain_visual_batch_cache_hit = false
+
+	if merged_mesh == null:
+		if cache_only:
+			return false
+		if terrain_visual_batch_async_build_enabled:
+			_queue_terrain_visual_batch_build(key, cache_key, merge_inputs)
+			return false
+		if builder == null or not builder.has_method("build_merged_array_mesh"):
+			return false
+		merged_mesh = builder.build_merged_array_mesh(merge_inputs)
+		_terrain_visual_batch_mesh_cache_misses += 1
+		_remember_terrain_visual_batch_mesh(cache_key, merged_mesh)
+	else:
+		_terrain_visual_batch_mesh_cache_hits += 1
+
+	if merged_mesh == null:
+		if cache_only:
+			return false
+		_show_individual_terrain_visuals_for_batch(key)
+		return true
+
+	_apply_terrain_visual_batch_mesh(key, eligible_coords, merged_mesh)
+	return true
 
 func _count_hidden_terrain_visual_batch_chunks() -> int:
 	var count := 0
@@ -1571,6 +1876,7 @@ func _process(delta):
 	if skip_terrain_chunk_updates_for_test:
 		return
 
+	var spawn_zone_work_pending := _has_pending_spawn_zone_work()
 	var defer_terrain_finalization := false
 	var terrain_defer_reason := ""
 	if not initial_load_phase:
@@ -1590,6 +1896,9 @@ func _process(delta):
 		process_pending_nodes()
 	else:
 		update_chunk_unloads_only()
+		if spawn_zone_work_pending:
+			_drain_completed_generation_queue()
+			process_pending_nodes(true)
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 	process_pending_terrain_collision_creates()
@@ -1597,6 +1906,7 @@ func _process(delta):
 		_check_spawn_zone_readiness(Vector3i(2147483647, 2147483647, 2147483647))
 	if not defer_terrain_finalization and not loading_paused:
 		_update_world_map_lod_chunks()
+	_process_completed_terrain_visual_batch_builds()
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
 
@@ -1665,6 +1975,17 @@ func _adjust_adaptive_loading():
 
 var _last_collision_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_collision_active_count: int = -1
+var _terrain_collision_active_coords: Dictionary = {}
+var _terrain_collision_body_cache: Dictionary = {}
+var _terrain_collision_body_cache_order: Array[Vector3i] = []
+var _last_collision_proximity_update_ms: float = 0.0
+var _last_collision_proximity_enable_count: int = 0
+var _last_collision_proximity_disable_count: int = 0
+var _last_collision_proximity_prewarm_queued: int = 0
+var _terrain_collision_body_cache_hits: int = 0
+var _terrain_collision_body_cache_misses: int = 0
+var _terrain_collision_body_cache_stores: int = 0
+var _terrain_collision_body_cache_evictions: int = 0
 var pending_terrain_collision_creates: Dictionary = {}
 var _pending_terrain_collision_candidates: Array[Vector3i] = []
 var _pending_terrain_collision_candidate_index: int = 0
@@ -1679,6 +2000,11 @@ var _last_terrain_collision_candidate_checks: int = 0
 @export_range(1, 16, 1) var terrain_collision_create_budget_per_frame: int = 1
 @export_range(1, 256, 1) var terrain_collision_candidate_checks_per_frame: int = 64
 func update_collision_proximity():
+	var update_start_us := Time.get_ticks_usec()
+	_last_collision_proximity_enable_count = 0
+	_last_collision_proximity_disable_count = 0
+	_last_collision_proximity_prewarm_queued = 0
+
 	var p_pos = get_viewer_position()
 	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
 	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
@@ -1686,6 +2012,7 @@ func update_collision_proximity():
 	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
 	var active_count := active_chunks.size()
 	if center_chunk == _last_collision_center_chunk and active_count == _last_collision_active_count:
+		_last_collision_proximity_update_ms = 0.0
 		return
 	_last_collision_center_chunk = center_chunk
 	_last_collision_active_count = active_count
@@ -1693,15 +2020,64 @@ func update_collision_proximity():
 	var collision_prewarm_distance_sq := maxi(collision_prewarm_distance, collision_distance) * maxi(collision_prewarm_distance, collision_distance)
 	var world := get_world_3d()
 
-	for coord in active_chunks:
+	var desired_collision_coords: Dictionary = {}
+	var min_collision_y := maxi(MIN_Y_LAYER, center_chunk.y - 2)
+	var max_collision_y := mini(MAX_Y_LAYER, center_chunk.y + 2)
+	for x in range(center_chunk.x - collision_distance, center_chunk.x + collision_distance + 1):
+		for z in range(center_chunk.z - collision_distance, center_chunk.z + collision_distance + 1):
+			var dx: int = x - center_chunk.x
+			var dz: int = z - center_chunk.z
+			if dx * dx + dz * dz > collision_distance_sq:
+				continue
+			for y in range(min_collision_y, max_collision_y + 1):
+				var coord := Vector3i(x, y, z)
+				desired_collision_coords[coord] = true
+				var data = active_chunks.get(coord, null)
+				if data == null:
+					continue
+				var was_enabled := bool(data.terrain_collision_enabled)
+				_sync_terrain_collision_state(coord, data, true, world)
+				if not was_enabled and bool(data.terrain_collision_enabled):
+					_last_collision_proximity_enable_count += 1
+
+	for coord_variant in _terrain_collision_active_coords.keys():
+		var coord: Vector3i = coord_variant
+		if desired_collision_coords.has(coord):
+			continue
+		if not active_chunks.has(coord):
+			_terrain_collision_active_coords.erase(coord)
+			continue
 		var data = active_chunks[coord]
 		if data == null:
+			_terrain_collision_active_coords.erase(coord)
 			continue
+		var was_enabled := bool(data.terrain_collision_enabled)
+		_sync_terrain_collision_state(coord, data, false, world)
+		if was_enabled and not bool(data.terrain_collision_enabled):
+			_last_collision_proximity_disable_count += 1
 
-		var should_have_collision = _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
-		_sync_terrain_collision_state(coord, data, should_have_collision, world)
-		if not should_have_collision and _should_prewarm_terrain_collision(coord, center_chunk, collision_prewarm_distance_sq):
-			_queue_terrain_collision_create(coord)
+	var prewarm_distance := maxi(collision_prewarm_distance, collision_distance)
+	if prewarm_distance > collision_distance:
+		var min_prewarm_y := maxi(MIN_Y_LAYER, center_chunk.y - 2)
+		var max_prewarm_y := mini(MAX_Y_LAYER, center_chunk.y + 2)
+		for x in range(center_chunk.x - prewarm_distance, center_chunk.x + prewarm_distance + 1):
+			for z in range(center_chunk.z - prewarm_distance, center_chunk.z + prewarm_distance + 1):
+				var dx: int = x - center_chunk.x
+				var dz: int = z - center_chunk.z
+				var dist_xz_sq: int = dx * dx + dz * dz
+				if dist_xz_sq > collision_prewarm_distance_sq or dist_xz_sq <= collision_distance_sq:
+					continue
+				for y in range(min_prewarm_y, max_prewarm_y + 1):
+					var coord := Vector3i(x, y, z)
+					var data = active_chunks.get(coord, null)
+					if data == null or data.body_rid_terrain.is_valid() or not data.node_terrain or not data.terrain_shape:
+						continue
+					var was_pending := pending_terrain_collision_creates.has(coord)
+					_queue_terrain_collision_create(coord)
+					if not was_pending and pending_terrain_collision_creates.has(coord):
+						_last_collision_proximity_prewarm_queued += 1
+
+	_last_collision_proximity_update_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func _should_have_terrain_collision(coord: Vector3i, center_chunk: Vector3i, collision_distance_sq: int) -> bool:
 	var dx = coord.x - center_chunk.x
@@ -1727,6 +2103,88 @@ func _queue_terrain_collision_create(coord: Vector3i) -> void:
 	pending_terrain_collision_creates[coord] = true
 	_pending_terrain_collision_candidates_dirty = true
 
+func _mark_terrain_collision_active(coord: Vector3i, active: bool) -> void:
+	if active:
+		_terrain_collision_active_coords[coord] = true
+	else:
+		_terrain_collision_active_coords.erase(coord)
+
+func _can_cache_terrain_collision_body(coord: Vector3i, data: ChunkData) -> bool:
+	if terrain_collision_body_cache_limit <= 0 or data == null:
+		return false
+	if not data.terrain_shape:
+		return false
+	if int(data.mod_version) != 0:
+		return false
+	if stored_modifications.has(coord):
+		return false
+	return true
+
+func _drop_terrain_collision_body_cache_entry(coord: Vector3i) -> void:
+	if not _terrain_collision_body_cache.has(coord):
+		return
+	var entry: Dictionary = _terrain_collision_body_cache[coord]
+	var body_rid: RID = entry.get("body_rid", RID())
+	if body_rid.is_valid():
+		PhysicsServer3D.free_rid(body_rid)
+	_terrain_collision_body_cache.erase(coord)
+	_terrain_collision_body_cache_order.erase(coord)
+
+func _remember_terrain_collision_body(coord: Vector3i, data: ChunkData, body_rid: RID) -> bool:
+	if not body_rid.is_valid() or not _can_cache_terrain_collision_body(coord, data):
+		return false
+
+	_drop_terrain_collision_body_cache_entry(coord)
+	_terrain_collision_body_cache[coord] = {
+		"body_rid": body_rid,
+		"shape": data.terrain_shape
+	}
+	_terrain_collision_body_cache_order.append(coord)
+	_terrain_collision_body_cache_stores += 1
+
+	while _terrain_collision_body_cache_order.size() > terrain_collision_body_cache_limit:
+		var evict_coord: Vector3i = _terrain_collision_body_cache_order.pop_front()
+		if _terrain_collision_body_cache.has(evict_coord):
+			_drop_terrain_collision_body_cache_entry(evict_coord)
+			_terrain_collision_body_cache_evictions += 1
+	return true
+
+func _take_cached_terrain_collision_body(coord: Vector3i) -> Dictionary:
+	if stored_modifications.has(coord):
+		_drop_terrain_collision_body_cache_entry(coord)
+		_terrain_collision_body_cache_misses += 1
+		return {}
+	if not _terrain_collision_body_cache.has(coord):
+		_terrain_collision_body_cache_misses += 1
+		return {}
+
+	var entry: Dictionary = _terrain_collision_body_cache[coord]
+	_terrain_collision_body_cache.erase(coord)
+	_terrain_collision_body_cache_order.erase(coord)
+	var body_rid: RID = entry.get("body_rid", RID())
+	var shape: Shape3D = entry.get("shape", null)
+	if not body_rid.is_valid() or shape == null:
+		if body_rid.is_valid():
+			PhysicsServer3D.free_rid(body_rid)
+		_terrain_collision_body_cache_misses += 1
+		return {}
+
+	_terrain_collision_body_cache_hits += 1
+	return {
+		"body_rid": body_rid,
+		"shape": shape
+	}
+
+func _clear_terrain_collision_body_cache() -> void:
+	for coord_variant in _terrain_collision_body_cache.keys():
+		var coord: Vector3i = coord_variant
+		var entry: Dictionary = _terrain_collision_body_cache[coord]
+		var body_rid: RID = entry.get("body_rid", RID())
+		if body_rid.is_valid():
+			PhysicsServer3D.free_rid(body_rid)
+	_terrain_collision_body_cache.clear()
+	_terrain_collision_body_cache_order.clear()
+
 func _set_terrain_collision_ready(coord: Vector3i, data, ready: bool) -> void:
 	if data != null:
 		var already_reported: bool = bool(data.terrain_collision_ready_reported)
@@ -1744,12 +2202,15 @@ func _set_terrain_collision_ready(coord: Vector3i, data, ready: bool) -> void:
 
 func _set_terrain_body_collision_enabled(coord: Vector3i, data, world, enabled: bool) -> void:
 	if data == null or not data.body_rid_terrain.is_valid():
+		_mark_terrain_collision_active(coord, false)
 		_set_terrain_collision_ready(coord, data, false)
 		return
 	if enabled and not world:
+		_mark_terrain_collision_active(coord, false)
 		_set_terrain_collision_ready(coord, data, false)
 		return
 	if bool(data.terrain_collision_enabled) == enabled:
+		_mark_terrain_collision_active(coord, enabled)
 		_set_terrain_collision_ready(coord, data, enabled)
 		return
 
@@ -1763,6 +2224,7 @@ func _set_terrain_body_collision_enabled(coord: Vector3i, data, world, enabled: 
 		PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
 
 	data.terrain_collision_enabled = enabled
+	_mark_terrain_collision_active(coord, enabled)
 	_set_terrain_collision_ready(coord, data, enabled)
 
 func _sync_terrain_collision_state(coord: Vector3i, data, should_have_collision: bool, world = null) -> void:
@@ -1778,6 +2240,7 @@ func _sync_terrain_collision_state(coord: Vector3i, data, should_have_collision:
 			if data.collision_shape_terrain.disabled != desired_disabled:
 				data.collision_shape_terrain.disabled = desired_disabled
 		data.terrain_collision_enabled = ready
+		_mark_terrain_collision_active(coord, ready)
 		_set_terrain_collision_ready(coord, data, ready)
 		pending_terrain_collision_creates.erase(coord)
 		return
@@ -1803,6 +2266,7 @@ func _sync_terrain_collision_state(coord: Vector3i, data, should_have_collision:
 			pending_terrain_collision_creates.erase(coord)
 		else:
 			data.terrain_collision_enabled = false
+			_mark_terrain_collision_active(coord, false)
 			_set_terrain_collision_ready(coord, data, false)
 
 func _terrain_collision_sort_score(coord: Vector3i, center_chunk: Vector3i) -> int:
@@ -1921,9 +2385,14 @@ func _create_terrain_body_rid_for_chunk(coord: Vector3i, data: ChunkData, world:
 	if not data.node_terrain or not data.terrain_shape:
 		return false
 
-	var body_rid = PhysicsServer3D.body_create()
-	PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
-	PhysicsServer3D.body_add_shape(body_rid, data.terrain_shape.get_rid())
+	var cached_body := _take_cached_terrain_collision_body(coord)
+	var body_rid: RID = cached_body.get("body_rid", RID())
+	if body_rid.is_valid():
+		data.terrain_shape = cached_body.get("shape", data.terrain_shape)
+	else:
+		body_rid = PhysicsServer3D.body_create()
+		PhysicsServer3D.body_set_mode(body_rid, PhysicsServer3D.BODY_MODE_STATIC)
+		PhysicsServer3D.body_add_shape(body_rid, data.terrain_shape.get_rid())
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 	PhysicsServer3D.body_set_state(body_rid, PhysicsServer3D.BODY_STATE_TRANSFORM, Transform3D(Basis(), chunk_pos))
 	PhysicsServer3D.body_attach_object_instance_id(body_rid, data.node_terrain.get_instance_id())
@@ -1937,6 +2406,7 @@ func _create_terrain_body_rid_for_chunk(coord: Vector3i, data: ChunkData, world:
 		PhysicsServer3D.body_set_collision_layer(body_rid, 0)
 		PhysicsServer3D.body_set_collision_mask(body_rid, 0)
 	data.terrain_collision_enabled = enable_body
+	_mark_terrain_collision_active(coord, enable_body)
 	_set_terrain_collision_ready(coord, data, enable_body)
 	pending_terrain_collision_creates.erase(coord)
 	return true
@@ -1966,6 +2436,7 @@ func ensure_collision_ready_at(position: Vector3, radius: int = 1) -> bool:
 					if has_shape and data.collision_shape_terrain.disabled:
 						data.collision_shape_terrain.disabled = false
 					data.terrain_collision_enabled = has_shape
+					_mark_terrain_collision_active(coord, has_shape)
 					_set_terrain_collision_ready(coord, data, has_shape)
 					center_ready = center_ready or (is_center_column and has_shape)
 					continue
@@ -1980,18 +2451,21 @@ func ensure_collision_ready_at(position: Vector3, radius: int = 1) -> bool:
 	return center_ready
 
 # Process pending node creations - TIME-DISTRIBUTED to eliminate burst loading
-func process_pending_nodes():
+func process_pending_nodes(force_spawn_zone_progress: bool = false):
 	if pending_nodes.is_empty():
 		_last_pending_node_finalize_count = 0
 		return
 
 	# Skip entirely if loading is paused due to low FPS
-	if loading_paused:
+	if loading_paused and not force_spawn_zone_progress:
 		_last_pending_node_finalize_count = 0
 		return
 	var process_start_us := Time.get_ticks_usec()
-	var budget_ms := maxf(adaptive_frame_budget_ms, 0.1)
+	var use_spawn_zone_budget := force_spawn_zone_progress and not initial_load_phase
+	var budget_ms := spawn_zone_pending_node_finalize_budget_ms if use_spawn_zone_budget else maxf(adaptive_frame_budget_ms, 0.1)
 	var max_items := pending_node_initial_finalize_max_per_frame if initial_load_phase else pending_node_finalize_max_per_frame
+	if use_spawn_zone_budget:
+		max_items = mini(max_items, spawn_zone_pending_node_finalize_max_per_frame)
 	var processed := 0
 	_last_pending_node_sort_skipped = false
 
@@ -2573,6 +3047,7 @@ func _mark_modification_coord_cache_dirty() -> void:
 	_modification_coord_cache_dirty = true
 
 func _append_stored_modification(coord: Vector3i, modification: Dictionary) -> void:
+	_drop_terrain_collision_body_cache_entry(coord)
 	stored_modifications_mutex.lock()
 	if not stored_modifications.has(coord):
 		stored_modifications[coord] = []
@@ -3023,6 +3498,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					# This handles digging into underground layers (Y=-1, etc.)
 					if not active_chunks.has(coord): # Not already queued
 						active_chunks[coord] = null # Mark as pending
+						_register_active_chunk_with_grid(coord)
 						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 						chunks_to_generate.append({
 							"type": "generate",
@@ -3117,6 +3593,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 							})
 				else:
 					active_chunks[coord] = null
+					_register_active_chunk_with_grid(coord)
 					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 					chunks_to_generate.append({
 						"type": "generate",
@@ -3154,9 +3631,12 @@ func _exit_tree():
 	# 1. Unload all active chunks (frees meshes, collision, GPU buffers)
 	_clear_world_map_lod_chunks(true)
 	_clear_terrain_visual_batches(true)
+	_clear_terrain_visual_batch_mesh_cache()
 	var coords_to_unload = active_chunks.keys()
 	for coord in coords_to_unload:
 		_unload_chunk(coord)
+	_clear_terrain_collision_body_cache()
+	_terrain_collision_active_coords.clear()
 
 	# 2. Clear pending nodes queue (prevents creating nodes after cleanup)
 	_queue_gpu_free_tasks(_drain_completed_generation_free_tasks())
@@ -3208,6 +3688,10 @@ func update_chunks():
 		return
 	_update_chunks_native()
 
+func _register_active_chunk_with_grid(coord: Vector3i) -> void:
+	if terrain_grid and is_instance_valid(terrain_grid) and terrain_grid.has_method("add_chunk"):
+		terrain_grid.add_chunk(coord)
+
 func update_chunk_unloads_only():
 	if not _native_backends_ready or not terrain_grid or not is_instance_valid(terrain_grid):
 		return
@@ -3224,8 +3708,9 @@ func update_chunk_unloads_only():
 		unload_count += 1
 		_unload_chunk(coord)
 		terrain_grid.remove_chunk(coord)
+	var fallback_unloads := _unload_grid_mismatch_chunks(int(floor(p_pos.x / CHUNK_STRIDE)), p_chunk_y, int(floor(p_pos.z / CHUNK_STRIDE)), terrain_unload_budget_per_frame)
 	_last_update_loads = 0
-	_last_update_unloads = unload_count
+	_last_update_unloads = unload_count + fallback_unloads
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func _update_chunks_native():
@@ -3244,8 +3729,9 @@ func _update_chunks_native():
 			paused_unloads += 1
 			_unload_chunk(coord)
 			terrain_grid.remove_chunk(coord)
+		var paused_fallback_unloads := _unload_grid_mismatch_chunks(p_chunk_x, p_chunk_y, p_chunk_z, terrain_unload_budget_per_frame)
 		_last_update_loads = 0
-		_last_update_unloads = paused_unloads
+		_last_update_unloads = paused_unloads + paused_fallback_unloads
 		_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 		return
 
@@ -3274,7 +3760,6 @@ func _update_chunks_native():
 			continue
 
 		_load_chunk(coord)
-		terrain_grid.add_chunk(coord)
 		chunks_queued += 1
 
 	# 4. Special Case: Stored Modifications (Force load if nearby)
@@ -3287,11 +3772,12 @@ func _update_chunks_native():
 			var dz = coord.z - p_chunk_z
 			if dx * dx + dz * dz <= render_distance_sq:
 				_load_chunk(coord)
-				terrain_grid.add_chunk(coord)
 				chunks_queued += 1
 
+	var fallback_unloads := _unload_grid_mismatch_chunks(p_chunk_x, p_chunk_y, p_chunk_z, terrain_unload_budget_per_frame)
+
 	_last_update_loads = chunks_queued
-	_last_update_unloads = unload_count
+	_last_update_unloads = unload_count + fallback_unloads
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func _unload_out_of_range_chunks(center_x: int, center_y: int, center_z: int, budget: int) -> int:
@@ -3324,8 +3810,29 @@ func _unload_out_of_range_chunks(center_x: int, center_y: int, center_z: int, bu
 
 	return unloaded
 
+func _unload_grid_mismatch_chunks(center_x: int, center_y: int, center_z: int, budget: int) -> int:
+	_last_fallback_unloads = 0
+	_last_fallback_unload_ms = 0.0
+	if budget <= 0:
+		return 0
+	if not terrain_grid or not is_instance_valid(terrain_grid) or not terrain_grid.has_method("get_active_chunk_count"):
+		return 0
+
+	var native_grid_active_count := int(terrain_grid.get_active_chunk_count())
+	_last_native_grid_active_chunk_count = native_grid_active_count
+	if active_chunks.size() <= native_grid_active_count + budget * 2:
+		return 0
+
+	var unload_start_us := Time.get_ticks_usec()
+	var unloaded := _unload_out_of_range_chunks(center_x, center_y, center_z, budget)
+	_last_fallback_unloads = unloaded
+	if unloaded > 0:
+		_last_fallback_unload_ms = float(Time.get_ticks_usec() - unload_start_us) / 1000.0
+	return unloaded
+
 func _load_chunk(coord: Vector3i):
 	active_chunks[coord] = null
+	_register_active_chunk_with_grid(coord)
 
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 	var task = {
@@ -3348,23 +3855,27 @@ func _append_chunk_gpu_free_tasks(data: ChunkData, tasks: Array[Dictionary]) -> 
 		tasks.append({"type": "free", "rid": data.material_buffer_terrain})
 		data.material_buffer_terrain = RID()
 
-func _free_chunk_body_rid(data: ChunkData) -> void:
+func _free_chunk_body_rid(data: ChunkData, coord: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)) -> void:
 	if not data.body_rid_terrain.is_valid():
 		data.terrain_collision_enabled = false
 		data.terrain_collision_ready = false
 		data.terrain_collision_ready_reported = false
+		_mark_terrain_collision_active(coord, false)
 		return
 
+	var body_rid := data.body_rid_terrain
 	var world = get_world_3d()
 	if world:
-		PhysicsServer3D.body_set_space(data.body_rid_terrain, RID())
-	PhysicsServer3D.body_set_collision_layer(data.body_rid_terrain, 0)
-	PhysicsServer3D.body_set_collision_mask(data.body_rid_terrain, 0)
-	PhysicsServer3D.free_rid(data.body_rid_terrain)
+		PhysicsServer3D.body_set_space(body_rid, RID())
+	PhysicsServer3D.body_set_collision_layer(body_rid, 0)
+	PhysicsServer3D.body_set_collision_mask(body_rid, 0)
+	if coord == Vector3i(2147483647, 2147483647, 2147483647) or not _remember_terrain_collision_body(coord, data, body_rid):
+		PhysicsServer3D.free_rid(body_rid)
 	data.body_rid_terrain = RID()
 	data.terrain_collision_enabled = false
 	data.terrain_collision_ready = false
 	data.terrain_collision_ready_reported = false
+	_mark_terrain_collision_active(coord, false)
 
 func _unload_chunk(coord: Vector3i, queue_nodes: bool = true, emit_unloaded: bool = true):
 	if not active_chunks.has(coord):
@@ -3382,7 +3893,7 @@ func _unload_chunk(coord: Vector3i, queue_nodes: bool = true, emit_unloaded: boo
 			if data.node_water: data.node_water.queue_free()
 
 		var tasks: Array[Dictionary] = []
-		_free_chunk_body_rid(data)
+		_free_chunk_body_rid(data, coord)
 		_append_chunk_gpu_free_tasks(data, tasks)
 		_queue_gpu_free_tasks(tasks)
 
@@ -3398,6 +3909,9 @@ func clear_all_chunks():
 	_clear_gpu_task_queues()
 	_clear_world_map_lod_chunks()
 	_clear_terrain_visual_batches()
+	_clear_terrain_visual_batch_mesh_cache()
+	_clear_terrain_collision_body_cache()
+	_terrain_collision_active_coords.clear()
 
 	var cpu_cleanup_tasks := _drain_cpu_task_free_tasks()
 	_queue_gpu_free_tasks(cpu_cleanup_tasks)
@@ -3425,11 +3939,13 @@ func clear_all_chunks():
 		var data: ChunkData = active_chunks.get(coord, null)
 		if data:
 			pending_terrain_collision_creates.erase(coord)
-			_free_chunk_body_rid(data)
+			_free_chunk_body_rid(data, coord)
 			_append_chunk_gpu_free_tasks(data, gpu_free_tasks)
 		if not vegetation_bulk_cleared:
 			chunk_unloaded.emit(coord)
 	_queue_gpu_free_tasks(gpu_free_tasks)
+	_clear_terrain_collision_body_cache()
+	_terrain_collision_active_coords.clear()
 
 	# 4. Reset internal state
 	active_chunks.clear()
@@ -3494,7 +4010,7 @@ func _update_chunks_legacy():
 			if data.node_water: data.node_water.queue_free()
 
 			# Free Physics Body RID
-			_free_chunk_body_rid(data)
+			_free_chunk_body_rid(data, coord)
 
 			var tasks = []
 			if data.density_buffer_terrain.is_valid():
@@ -3557,6 +4073,7 @@ func _update_chunks_legacy():
 						continue
 
 					active_chunks[coord] = null
+					_register_active_chunk_with_grid(coord)
 
 					# Debug: track when underground chunks are queued
 
@@ -3592,6 +4109,7 @@ func _update_chunks_legacy():
 					continue
 
 				active_chunks[coord] = null
+				_register_active_chunk_with_grid(coord)
 				var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 				var task = {"type": "generate", "coord": coord, "pos": chunk_pos}
 
@@ -3625,6 +4143,7 @@ func _update_chunks_legacy():
 						continue
 
 					active_chunks[coord] = null
+					_register_active_chunk_with_grid(coord)
 
 					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
 
@@ -4324,6 +4843,17 @@ func _cpu_thread_function():
 		var task = cpu_task_queue.pop_back()
 		cpu_mutex.unlock()
 
+		if str(task.get("type", "")) == "terrain_visual_batch":
+			var merged_mesh = null
+			if builder.has_method("build_merged_array_mesh"):
+				merged_mesh = builder.build_merged_array_mesh(task.get("merge_inputs", []))
+			_enqueue_completed_terrain_visual_batch_build({
+				"batch_key": task.get("batch_key", Vector2i.ZERO),
+				"cache_key": str(task.get("cache_key", "")),
+				"mesh": merged_mesh
+			})
+			continue
+
 		# Build terrain mesh and collision (CPU intensive)
 		var mesh_terrain = null
 		var shape_terrain = null
@@ -4900,7 +5430,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		# CRITICAL: Free the PhysicsServer body RID first (contains stale collision)
 		_set_terrain_collision_ready(coord, data, false)
 		pending_terrain_collision_creates.erase(coord)
-		_free_chunk_body_rid(data)
+		_free_chunk_body_rid(data, coord)
 		if data.node_terrain: data.node_terrain.queue_free()
 
 		# Recreate chunk material with updated 3D texture
@@ -5032,6 +5562,7 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 				# Mark as pending
 				if not active_chunks.has(coord):
 					active_chunks[coord] = null
+					_register_active_chunk_with_grid(coord)
 					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 					var task = {
 						"type": "generate",

@@ -402,30 +402,51 @@ static Dictionary build_shader_indexed_packed_terrain_mesh(const PackedByteArray
     Vector3 *n_ptr = normals.ptrw();
     Color *c_ptr = colors.ptrw();
 
+    std::unordered_map<TerrainPackedVertexKey, int32_t, TerrainPackedVertexKeyHash> unique_lookup;
+    unique_lookup.reserve(static_cast<size_t>(vertex_count));
+    std::vector<int32_t> remapped_vertices(static_cast<size_t>(vertex_count), -1);
+    int32_t unique_count = 0;
+
     for (int i = 0; i < vertex_count; ++i) {
         const uint8_t *src = vertex_src + i * bytes_per_vertex;
-        const uint32_t px = read_u32_le(src + 0);
-        const uint32_t py = read_u32_le(src + 4);
-        const uint32_t pz = read_u32_le(src + 8);
-        const uint32_t normal_xy = read_u32_le(src + 12);
-        const uint32_t normal_z = read_u32_le(src + 16);
-        const uint32_t material_payload = read_u32_le(src + 20);
+        TerrainPackedVertexKey key;
+        key.words[0] = read_u32_le(src + 0);
+        key.words[1] = read_u32_le(src + 4);
+        key.words[2] = read_u32_le(src + 8);
+        key.words[3] = read_u32_le(src + 12);
+        key.words[4] = read_u32_le(src + 16);
+        key.words[5] = read_u32_le(src + 20);
 
-        v_ptr[i] = Vector3(u32_to_float(px), u32_to_float(py), u32_to_float(pz));
-        n_ptr[i] = Vector3(
-            half_to_float(static_cast<uint16_t>(normal_xy & 0xFFFFu)),
-            half_to_float(static_cast<uint16_t>((normal_xy >> 16) & 0xFFFFu)),
-            half_to_float(static_cast<uint16_t>(normal_z & 0xFFFFu))
-        );
+        int32_t index = 0;
+        const auto found = unique_lookup.find(key);
+        if (found != unique_lookup.end()) {
+            index = found->second;
+        } else {
+            index = unique_count++;
+            unique_lookup.emplace(key, index);
 
-        const uint8_t mat_a = static_cast<uint8_t>(material_payload & 0xFFu);
-        const uint8_t mat_b = static_cast<uint8_t>((material_payload >> 8) & 0xFFu);
-        const uint8_t blend = static_cast<uint8_t>((material_payload >> 16) & 0xFFu);
-        c_ptr[i] = Color(
-            static_cast<float>(mat_a) / 255.0f,
-            static_cast<float>(mat_b) / 255.0f,
-            static_cast<float>(blend) / 255.0f
-        );
+            const uint32_t normal_xy = key.words[3];
+            const uint32_t normal_z = key.words[4];
+            const uint32_t material_payload = key.words[5];
+
+            v_ptr[index] = Vector3(u32_to_float(key.words[0]), u32_to_float(key.words[1]), u32_to_float(key.words[2]));
+            n_ptr[index] = Vector3(
+                half_to_float(static_cast<uint16_t>(normal_xy & 0xFFFFu)),
+                half_to_float(static_cast<uint16_t>((normal_xy >> 16) & 0xFFFFu)),
+                half_to_float(static_cast<uint16_t>(normal_z & 0xFFFFu))
+            );
+
+            const uint8_t mat_a = static_cast<uint8_t>(material_payload & 0xFFu);
+            const uint8_t mat_b = static_cast<uint8_t>((material_payload >> 8) & 0xFFu);
+            const uint8_t blend = static_cast<uint8_t>((material_payload >> 16) & 0xFFu);
+            c_ptr[index] = Color(
+                static_cast<float>(mat_a) / 255.0f,
+                static_cast<float>(mat_b) / 255.0f,
+                static_cast<float>(blend) / 255.0f
+            );
+        }
+
+        remapped_vertices[static_cast<size_t>(i)] = index;
     }
 
     const uint8_t *index_src = index_data.ptr();
@@ -438,9 +459,18 @@ static Dictionary build_shader_indexed_packed_terrain_mesh(const PackedByteArray
             return result;
         }
 
-        i_ptr[i] = static_cast<int32_t>(vertex_index);
-        f_ptr[i] = v_ptr[vertex_index];
+        const int32_t remapped_index = remapped_vertices[static_cast<size_t>(vertex_index)];
+        if (remapped_index < 0 || remapped_index >= unique_count) {
+            return result;
+        }
+
+        i_ptr[i] = remapped_index;
+        f_ptr[i] = v_ptr[remapped_index];
     }
+
+    vertices.resize(unique_count);
+    normals.resize(unique_count);
+    colors.resize(unique_count);
 
     Array arrays;
     arrays.resize(Mesh::ARRAY_MAX);
@@ -457,8 +487,8 @@ static Dictionary build_shader_indexed_packed_terrain_mesh(const PackedByteArray
 
     result["mesh"] = mesh;
     result["shape"] = shape;
-    result["unique_vertex_count"] = vertex_count;
-    result["source_vertex_count"] = index_count;
+    result["unique_vertex_count"] = unique_count;
+    result["source_vertex_count"] = vertex_count;
     result["index_count"] = index_count;
     if (include_height_map) {
         result["height_map"] = build_top_down_height_map(faces, height_map_size);

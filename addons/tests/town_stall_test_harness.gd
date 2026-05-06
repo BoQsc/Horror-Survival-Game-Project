@@ -300,14 +300,25 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var other_ms := maxf(0.0, total_ms - monitor_sum_ms)
 	var top_measure := _resolve_native_top_measure(total_ms, process_monitor_ms, physics_ms, navigation_ms, other_ms, draw_calls)
 	var terrain_active_chunk_count := 0
+	var terrain_native_grid_active_chunk_count := 0
 	var terrain_pending_node_count := 0
 	var terrain_pending_collision_create_count := 0
 	var terrain_last_finalize_terrain_ms := 0.0
 	var terrain_last_pending_node_process_ms := 0.0
 	var terrain_last_collision_create_ms := 0.0
 	var terrain_last_collision_create_count := 0
+	var terrain_last_collision_proximity_update_ms := 0.0
+	var terrain_last_collision_proximity_enable_count := 0
+	var terrain_last_collision_proximity_disable_count := 0
+	var terrain_last_collision_proximity_prewarm_queued := 0
+	var terrain_collision_body_cache_count := 0
+	var terrain_collision_body_cache_hits := 0
+	var terrain_collision_body_cache_misses := 0
+	var terrain_collision_body_cache_stores := 0
 	var terrain_last_update_loads := 0
 	var terrain_last_update_unloads := 0
+	var terrain_last_fallback_unloads := 0
+	var terrain_last_fallback_unload_ms := 0.0
 	var terrain_last_world_map_lod_loads := 0
 	var terrain_last_world_map_lod_unloads := 0
 	var terrain_last_world_map_lod_update_ms := 0.0
@@ -348,6 +359,18 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_last_visual_batch_index_count := 0
 	var terrain_last_visual_batch_skipped_heavy_count := 0
 	var terrain_visual_batch_total_heavy_skips := 0
+	var terrain_visual_batch_mesh_cache_count := 0
+	var terrain_visual_batch_mesh_cache_hits := 0
+	var terrain_visual_batch_mesh_cache_misses := 0
+	var terrain_last_visual_batch_cached_rebuild_count := 0
+	var terrain_last_visual_batch_cached_rebuild_ms := 0.0
+	var terrain_last_visual_batch_cached_rebuild_attempts := 0
+	var terrain_visual_batch_async_in_flight_count := 0
+	var terrain_visual_batch_async_completed_count := 0
+	var terrain_last_visual_batch_async_queued_count := 0
+	var terrain_last_visual_batch_async_apply_count := 0
+	var terrain_last_visual_batch_async_apply_ms := 0.0
+	var terrain_last_visual_batch_async_stale_count := 0
 	var terrain_visual_batch_stream_idle_frames := 0
 	var vegetation_global_render_batch_count := 0
 	var vegetation_last_global_render_sync_ms := 0.0
@@ -356,14 +379,25 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var vegetation_global_render_dirty_kind_count := 0
 	if is_instance_valid(terrain_manager):
 		terrain_active_chunk_count = int(terrain_manager.active_chunks.size())
+		terrain_native_grid_active_chunk_count = int(terrain_manager._last_native_grid_active_chunk_count)
 		terrain_pending_node_count = int(terrain_manager.pending_nodes.size())
 		terrain_pending_collision_create_count = int(terrain_manager.pending_terrain_collision_creates.size())
 		terrain_last_finalize_terrain_ms = float(terrain_manager._last_finalize_terrain_ms)
 		terrain_last_pending_node_process_ms = float(terrain_manager._last_pending_node_process_ms)
 		terrain_last_collision_create_ms = float(terrain_manager._last_terrain_collision_create_ms)
 		terrain_last_collision_create_count = int(terrain_manager._last_terrain_collision_create_count)
+		terrain_last_collision_proximity_update_ms = float(terrain_manager._last_collision_proximity_update_ms)
+		terrain_last_collision_proximity_enable_count = int(terrain_manager._last_collision_proximity_enable_count)
+		terrain_last_collision_proximity_disable_count = int(terrain_manager._last_collision_proximity_disable_count)
+		terrain_last_collision_proximity_prewarm_queued = int(terrain_manager._last_collision_proximity_prewarm_queued)
+		terrain_collision_body_cache_count = int(terrain_manager._terrain_collision_body_cache.size())
+		terrain_collision_body_cache_hits = int(terrain_manager._terrain_collision_body_cache_hits)
+		terrain_collision_body_cache_misses = int(terrain_manager._terrain_collision_body_cache_misses)
+		terrain_collision_body_cache_stores = int(terrain_manager._terrain_collision_body_cache_stores)
 		terrain_last_update_loads = int(terrain_manager._last_update_loads)
 		terrain_last_update_unloads = int(terrain_manager._last_update_unloads)
+		terrain_last_fallback_unloads = int(terrain_manager._last_fallback_unloads)
+		terrain_last_fallback_unload_ms = float(terrain_manager._last_fallback_unload_ms)
 		terrain_last_world_map_lod_loads = int(terrain_manager._last_world_map_lod_loads)
 		terrain_last_world_map_lod_unloads = int(terrain_manager._last_world_map_lod_unloads)
 		terrain_last_world_map_lod_update_ms = float(terrain_manager._last_world_map_lod_update_ms)
@@ -376,6 +410,18 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_last_visual_batch_index_count = int(terrain_manager._last_terrain_visual_batch_index_count)
 		terrain_last_visual_batch_skipped_heavy_count = int(terrain_manager._last_terrain_visual_batch_skipped_heavy_count)
 		terrain_visual_batch_total_heavy_skips = int(terrain_manager._terrain_visual_batch_total_heavy_skips)
+		terrain_visual_batch_mesh_cache_count = int(terrain_manager._terrain_visual_batch_mesh_cache.size())
+		terrain_visual_batch_mesh_cache_hits = int(terrain_manager._terrain_visual_batch_mesh_cache_hits)
+		terrain_visual_batch_mesh_cache_misses = int(terrain_manager._terrain_visual_batch_mesh_cache_misses)
+		terrain_last_visual_batch_cached_rebuild_count = int(terrain_manager._last_terrain_visual_batch_cached_rebuild_count)
+		terrain_last_visual_batch_cached_rebuild_ms = float(terrain_manager._last_terrain_visual_batch_cached_rebuild_ms)
+		terrain_last_visual_batch_cached_rebuild_attempts = int(terrain_manager._last_terrain_visual_batch_cached_rebuild_attempts)
+		terrain_visual_batch_async_in_flight_count = int(terrain_manager._terrain_visual_batch_builds_in_flight.size())
+		terrain_visual_batch_async_completed_count = int(terrain_manager._completed_terrain_visual_batch_builds.size())
+		terrain_last_visual_batch_async_queued_count = int(terrain_manager._last_terrain_visual_batch_async_queued_count)
+		terrain_last_visual_batch_async_apply_count = int(terrain_manager._last_terrain_visual_batch_async_apply_count)
+		terrain_last_visual_batch_async_apply_ms = float(terrain_manager._last_terrain_visual_batch_async_apply_ms)
+		terrain_last_visual_batch_async_stale_count = int(terrain_manager._last_terrain_visual_batch_async_stale_count)
 		terrain_visual_batch_stream_idle_frames = int(terrain_manager._terrain_visual_batch_stream_idle_frames)
 	if not is_instance_valid(building_manager):
 		building_manager = _find_manager_node("building_manager", "BuildingManager")
@@ -437,14 +483,25 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"vram_mb": vram_mb,
 		"other_ms": other_ms,
 		"terrain_active_chunk_count": terrain_active_chunk_count,
+		"terrain_native_grid_active_chunk_count": terrain_native_grid_active_chunk_count,
 		"terrain_pending_node_count": terrain_pending_node_count,
 		"terrain_pending_collision_create_count": terrain_pending_collision_create_count,
 		"terrain_last_finalize_terrain_ms": terrain_last_finalize_terrain_ms,
 		"terrain_last_pending_node_process_ms": terrain_last_pending_node_process_ms,
 		"terrain_last_collision_create_ms": terrain_last_collision_create_ms,
 		"terrain_last_collision_create_count": terrain_last_collision_create_count,
+		"terrain_last_collision_proximity_update_ms": terrain_last_collision_proximity_update_ms,
+		"terrain_last_collision_proximity_enable_count": terrain_last_collision_proximity_enable_count,
+		"terrain_last_collision_proximity_disable_count": terrain_last_collision_proximity_disable_count,
+		"terrain_last_collision_proximity_prewarm_queued": terrain_last_collision_proximity_prewarm_queued,
+		"terrain_collision_body_cache_count": terrain_collision_body_cache_count,
+		"terrain_collision_body_cache_hits": terrain_collision_body_cache_hits,
+		"terrain_collision_body_cache_misses": terrain_collision_body_cache_misses,
+		"terrain_collision_body_cache_stores": terrain_collision_body_cache_stores,
 		"terrain_last_update_loads": terrain_last_update_loads,
 		"terrain_last_update_unloads": terrain_last_update_unloads,
+		"terrain_last_fallback_unloads": terrain_last_fallback_unloads,
+		"terrain_last_fallback_unload_ms": terrain_last_fallback_unload_ms,
 		"terrain_last_world_map_lod_loads": terrain_last_world_map_lod_loads,
 		"terrain_last_world_map_lod_unloads": terrain_last_world_map_lod_unloads,
 		"terrain_last_world_map_lod_update_ms": terrain_last_world_map_lod_update_ms,
@@ -457,6 +514,18 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_last_visual_batch_index_count": terrain_last_visual_batch_index_count,
 		"terrain_last_visual_batch_skipped_heavy_count": terrain_last_visual_batch_skipped_heavy_count,
 		"terrain_visual_batch_total_heavy_skips": terrain_visual_batch_total_heavy_skips,
+		"terrain_visual_batch_mesh_cache_count": terrain_visual_batch_mesh_cache_count,
+		"terrain_visual_batch_mesh_cache_hits": terrain_visual_batch_mesh_cache_hits,
+		"terrain_visual_batch_mesh_cache_misses": terrain_visual_batch_mesh_cache_misses,
+		"terrain_last_visual_batch_cached_rebuild_count": terrain_last_visual_batch_cached_rebuild_count,
+		"terrain_last_visual_batch_cached_rebuild_ms": terrain_last_visual_batch_cached_rebuild_ms,
+		"terrain_last_visual_batch_cached_rebuild_attempts": terrain_last_visual_batch_cached_rebuild_attempts,
+		"terrain_visual_batch_async_in_flight_count": terrain_visual_batch_async_in_flight_count,
+		"terrain_visual_batch_async_completed_count": terrain_visual_batch_async_completed_count,
+		"terrain_last_visual_batch_async_queued_count": terrain_last_visual_batch_async_queued_count,
+		"terrain_last_visual_batch_async_apply_count": terrain_last_visual_batch_async_apply_count,
+		"terrain_last_visual_batch_async_apply_ms": terrain_last_visual_batch_async_apply_ms,
+		"terrain_last_visual_batch_async_stale_count": terrain_last_visual_batch_async_stale_count,
 		"terrain_visual_batch_stream_idle_frames": terrain_visual_batch_stream_idle_frames,
 		"building_dirty_visible_chunk_count": building_dirty_visible_chunk_count,
 		"building_last_flush_dirty_chunks_ms": building_last_flush_dirty_chunks_ms,
