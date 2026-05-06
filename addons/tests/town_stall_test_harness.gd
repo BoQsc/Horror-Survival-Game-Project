@@ -312,6 +312,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_last_collision_proximity_disable_count := 0
 	var terrain_last_collision_proximity_prewarm_queued := 0
 	var terrain_collision_space_attached_chunk_count := 0
+	var terrain_shared_collision_body_enabled := false
+	var terrain_shared_collision_shape_count := 0
+	var terrain_shared_collision_cluster_body_count := 0
 	var terrain_collision_body_cache_count := 0
 	var terrain_collision_body_cache_hits := 0
 	var terrain_collision_body_cache_misses := 0
@@ -395,6 +398,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_last_collision_proximity_disable_count = int(terrain_manager._last_collision_proximity_disable_count)
 		terrain_last_collision_proximity_prewarm_queued = int(terrain_manager._last_collision_proximity_prewarm_queued)
 		terrain_collision_space_attached_chunk_count = int(terrain_manager._terrain_collision_space_attached_coords.size())
+		terrain_shared_collision_body_enabled = bool(terrain_manager.shared_terrain_collision_body_enabled)
+		terrain_shared_collision_shape_count = int(terrain_manager._shared_terrain_collision_shape_coords.size())
+		terrain_shared_collision_cluster_body_count = int(terrain_manager._shared_terrain_collision_cluster_bodies.size())
 		terrain_collision_body_cache_count = int(terrain_manager._terrain_collision_body_cache.size())
 		terrain_collision_body_cache_hits = int(terrain_manager._terrain_collision_body_cache_hits)
 		terrain_collision_body_cache_misses = int(terrain_manager._terrain_collision_body_cache_misses)
@@ -503,6 +509,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_last_collision_proximity_disable_count": terrain_last_collision_proximity_disable_count,
 		"terrain_last_collision_proximity_prewarm_queued": terrain_last_collision_proximity_prewarm_queued,
 		"terrain_collision_space_attached_chunk_count": terrain_collision_space_attached_chunk_count,
+		"terrain_shared_collision_body_enabled": terrain_shared_collision_body_enabled,
+		"terrain_shared_collision_shape_count": terrain_shared_collision_shape_count,
+		"terrain_shared_collision_cluster_body_count": terrain_shared_collision_cluster_body_count,
 		"terrain_collision_body_cache_count": terrain_collision_body_cache_count,
 		"terrain_collision_body_cache_hits": terrain_collision_body_cache_hits,
 		"terrain_collision_body_cache_misses": terrain_collision_body_cache_misses,
@@ -1476,6 +1485,12 @@ func _start_game_scene() -> void:
 		if terrain_manager_collision_override and "keep_disabled_terrain_collision_bodies_in_space" in terrain_manager_collision_override:
 			terrain_manager_collision_override.keep_disabled_terrain_collision_bodies_in_space = keep_disabled_collision_in_space_override != "0"
 			print("[TOWN_STALL_TEST] Keep disabled terrain collision bodies in space: %s" % ("ON" if terrain_manager_collision_override.keep_disabled_terrain_collision_bodies_in_space else "OFF"))
+	var shared_collision_override := OS.get_environment("TOWN_STALL_SHARED_TERRAIN_COLLISION_BODY").strip_edges()
+	if not shared_collision_override.is_empty():
+		var terrain_manager_shared_collision_override := game_root.find_child("TerrainManager", true, false)
+		if terrain_manager_shared_collision_override and "shared_terrain_collision_body_enabled" in terrain_manager_shared_collision_override:
+			terrain_manager_shared_collision_override.shared_terrain_collision_body_enabled = shared_collision_override != "0"
+			print("[TOWN_STALL_TEST] Shared terrain collision body: %s" % ("ON" if terrain_manager_shared_collision_override.shared_terrain_collision_body_enabled else "OFF"))
 	var prefab_spawner_override := game_root.find_child("PrefabSpawner", true, false)
 	if prefab_spawner_override and "instant_baked_buildings_enabled" in prefab_spawner_override:
 		prefab_spawner_override.instant_baked_buildings_enabled = instant_baked_buildings_enabled
