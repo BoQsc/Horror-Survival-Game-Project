@@ -26,6 +26,9 @@ const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 @export_range(0.5, 20.0, 0.5) var object_collision_budget_ms: float = 2.0
 @export_range(0.25, 10.0, 0.25) var world_map_baked_object_spawn_budget_ms: float = 1.0
 @export_range(1, 32, 1) var world_map_baked_object_spawn_max_per_frame: int = 2
+@export_range(0.25, 10.0, 0.25) var world_map_baked_object_spawn_headroom_budget_ms: float = 1.5
+@export_range(1, 64, 1) var world_map_baked_object_spawn_headroom_max_per_frame: int = 4
+@export_range(0.1, 5.0, 0.1) var world_map_baked_object_spawn_hot_budget_ms: float = 0.35
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
 @export_range(0, 60, 1) var object_render_prewarm_frames: int = 12
 var skip_object_collisions_for_test: bool = false
@@ -34,6 +37,7 @@ var skip_building_chunk_mesh_render_for_test: bool = false
 var skip_building_visual_batches_for_test: bool = false
 var _pending_object_collision_tasks: Array[Dictionary] = []
 var _pending_world_map_baked_object_spawns: Array[Dictionary] = []
+var _object_spawn_profile_cache: Dictionary = {}
 
 # Global world-map visual batching for repeated props
 var _global_visual_batch_instances: Dictionary = {} # Vector3i anchor -> { object_id, transform, mesh }
@@ -79,6 +83,10 @@ var _last_apply_world_map_baked_building_object_count: int = 0
 var _last_apply_world_map_baked_building_prebuilt_chunk_count: int = 0
 var _last_world_map_baked_object_spawn_queue_ms: float = 0.0
 var _last_world_map_baked_object_spawn_queue_count: int = 0
+var _last_world_map_baked_object_spawn_queue_budget_ms: float = 0.0
+var _last_world_map_baked_object_spawn_queue_max_per_frame: int = 0
+var _last_world_map_baked_object_spawn_queue_hot_frame: bool = false
+var _last_frame_ms: float = 0.0
 var _last_world_map_baked_visibility_update_ms: float = 0.0
 var _last_world_map_baked_visibility_added: int = 0
 var _last_world_map_baked_visibility_removed: int = 0
@@ -148,7 +156,8 @@ func _ready():
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
 
-func _process(_delta):
+func _process(delta):
+	_last_frame_ms = delta * 1000.0
 	if viewer:
 		var center_chunk := _get_current_building_center_chunk()
 		if center_chunk != _last_building_viewer_chunk:
@@ -363,9 +372,34 @@ func clear_pending_world_map_baked_object_spawns() -> void:
 	_pending_world_map_baked_object_spawns.clear()
 	_last_world_map_baked_object_spawn_queue_ms = 0.0
 	_last_world_map_baked_object_spawn_queue_count = 0
+	_last_world_map_baked_object_spawn_queue_budget_ms = 0.0
+	_last_world_map_baked_object_spawn_queue_max_per_frame = 0
+	_last_world_map_baked_object_spawn_queue_hot_frame = false
 
 func has_pending_world_map_baked_object_spawns() -> bool:
 	return not _pending_world_map_baked_object_spawns.is_empty()
+
+func _get_world_map_baked_object_spawn_schedule() -> Dictionary:
+	var frame_budget_ms := 1000.0 / 60.0
+	if _last_frame_ms > frame_budget_ms:
+		return {
+			"budget_ms": world_map_baked_object_spawn_hot_budget_ms,
+			"max_per_frame": 1,
+			"hot_frame": true
+		}
+
+	if _last_frame_ms > 0.0 and _last_frame_ms <= 14.5 and _dirty_chunks.is_empty() and _dirty_global_visual_batch_object_ids.is_empty():
+		return {
+			"budget_ms": world_map_baked_object_spawn_headroom_budget_ms,
+			"max_per_frame": world_map_baked_object_spawn_headroom_max_per_frame,
+			"hot_frame": false
+		}
+
+	return {
+		"budget_ms": world_map_baked_object_spawn_budget_ms,
+		"max_per_frame": world_map_baked_object_spawn_max_per_frame,
+		"hot_frame": false
+	}
 
 func _queue_world_map_baked_object_spawns(object_spawns: Array) -> int:
 	if object_spawns.is_empty():
@@ -392,12 +426,17 @@ func _process_pending_world_map_baked_object_spawns() -> void:
 	var processed := 0
 	var applied := 0
 	var slow_object_spawns: Array = []
-	var max_per_frame := maxi(1, world_map_baked_object_spawn_max_per_frame)
+	var schedule := _get_world_map_baked_object_spawn_schedule()
+	var budget_ms := maxf(float(schedule.get("budget_ms", world_map_baked_object_spawn_budget_ms)), 0.1)
+	var max_per_frame := maxi(1, int(schedule.get("max_per_frame", world_map_baked_object_spawn_max_per_frame)))
+	_last_world_map_baked_object_spawn_queue_budget_ms = budget_ms
+	_last_world_map_baked_object_spawn_queue_max_per_frame = max_per_frame
+	_last_world_map_baked_object_spawn_queue_hot_frame = bool(schedule.get("hot_frame", false))
 
 	while not _pending_world_map_baked_object_spawns.is_empty() and processed < max_per_frame:
 		if processed > 0:
 			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
-			if elapsed_ms >= world_map_baked_object_spawn_budget_ms:
+			if elapsed_ms >= budget_ms:
 				break
 
 		var spawn: Dictionary = _pending_world_map_baked_object_spawns.pop_back()
@@ -1061,6 +1100,7 @@ func clear_for_shutdown() -> void:
 	chunks.clear()
 	visible_chunks.clear()
 	_dirty_chunks.clear()
+	_object_spawn_profile_cache.clear()
 	_cached_vehicle_manager = null
 	_native_helper = null
 
@@ -1087,6 +1127,7 @@ func clear_immediate_for_shutdown() -> void:
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
+	_object_spawn_profile_cache.clear()
 	_cached_vehicle_manager = null
 	_native_helper = null
 
@@ -1260,6 +1301,8 @@ func _apply_world_map_baked_object_spawn(spawn: Dictionary, defer_global_visual_
 	var object_scene_path := str(spawn.get("object_scene_path", ""))
 	if object_id < 0 and object_scene_path.is_empty():
 		return false
+	if world_map_mode and object_id >= 0:
+		return _place_world_map_baked_object_spawn(spawn, world_pos, object_id, object_scene_path, defer_global_visual_batch_rebuild)
 
 	return place_object(
 		world_pos,
@@ -1273,6 +1316,137 @@ func _apply_world_map_baked_object_spawn(spawn: Dictionary, defer_global_visual_
 		object_scene_path,
 		bool(spawn.get("has_authored_collision", false)),
 		bool(spawn.get("has_authored_collision_valid", false))
+	)
+
+func _get_object_spawn_profile(object_id: int, object_scene_path: String = "", object_size: Vector3i = Vector3i.ZERO, has_authored_collision: bool = false, has_authored_collision_valid: bool = false) -> Dictionary:
+	if object_id < 0:
+		return {}
+	var profile_key := "%d|%s|%s|%s|%s" % [object_id, object_scene_path, str(object_size), str(has_authored_collision), str(has_authored_collision_valid)]
+	if _object_spawn_profile_cache.has(profile_key):
+		return _object_spawn_profile_cache[profile_key]
+
+	var obj_def := ObjectRegistry.get_object(object_id)
+	if obj_def.is_empty():
+		return {}
+
+	var resolved_scene_path := object_scene_path if not object_scene_path.is_empty() else str(obj_def.get("scene", ""))
+	var resolved_size := object_size
+	if resolved_size == Vector3i.ZERO:
+		resolved_size = Vector3i(obj_def.get("size", Vector3i(1, 1, 1)))
+	var visual_data := ObjectRegistry.get_object_visual_data(object_id)
+	var batch_mode := ObjectRegistry.get_visual_batch_mode(object_id)
+	var visual_safe := false
+	if not visual_data.is_empty():
+		if batch_mode == "simple":
+			visual_safe = int(visual_data.get("mesh_instance_count", 0)) == 1
+		elif batch_mode == "proxy":
+			visual_safe = bool(visual_data.get("proxy_mesh_merged", false)) or int(visual_data.get("mesh_instance_count", 0)) == 1
+	var proxy_visual := batch_mode == "proxy" and visual_safe
+	var chunk_static_proxy := false
+	if proxy_visual:
+		match object_id:
+			1, 2, 3, 5, 7:
+				chunk_static_proxy = true
+
+	var profile := {
+		"scene_path": resolved_scene_path,
+		"size": resolved_size,
+		"has_authored_collision": has_authored_collision if has_authored_collision_valid else ObjectRegistry.get_object_has_authored_collision(object_id),
+		"visual_data": visual_data,
+		"simple_visual": batch_mode == "simple" and visual_safe,
+		"proxy_visual": proxy_visual,
+		"chunk_static_proxy": chunk_static_proxy
+	}
+	_object_spawn_profile_cache[profile_key] = profile
+	return profile
+
+func _build_object_local_cells(anchor: Vector3i, object_id: int, rotation: int, precomputed_cells: Array) -> Dictionary:
+	var cells: Array[Vector3i] = []
+	var local_cells: Array[Vector3i] = []
+	if precomputed_cells.is_empty():
+		cells = _build_object_cells(anchor, object_id, rotation, precomputed_cells)
+		local_cells.resize(cells.size())
+		for i in range(cells.size()):
+			var cell: Vector3i = cells[i]
+			var local_cell := Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
+			if local_cell.x < 0: local_cell.x += CHUNK_SIZE
+			if local_cell.y < 0: local_cell.y += CHUNK_SIZE
+			if local_cell.z < 0: local_cell.z += CHUNK_SIZE
+			local_cells[i] = local_cell
+	else:
+		cells.resize(precomputed_cells.size())
+		local_cells.resize(precomputed_cells.size())
+		for i in range(precomputed_cells.size()):
+			var precomputed_cell: Vector3i = precomputed_cells[i]
+			var cell: Vector3i = precomputed_cell + anchor
+			cells[i] = cell
+			var local_cell := Vector3i(cell.x % CHUNK_SIZE, cell.y % CHUNK_SIZE, cell.z % CHUNK_SIZE)
+			if local_cell.x < 0: local_cell.x += CHUNK_SIZE
+			if local_cell.y < 0: local_cell.y += CHUNK_SIZE
+			if local_cell.z < 0: local_cell.z += CHUNK_SIZE
+			local_cells[i] = local_cell
+	return {
+		"cells": cells,
+		"local_cells": local_cells
+	}
+
+func _place_world_map_baked_object_spawn(spawn: Dictionary, world_pos: Vector3, object_id: int, object_scene_path: String, defer_global_visual_batch_rebuild: bool) -> bool:
+	var profile := _get_object_spawn_profile(
+		object_id,
+		object_scene_path,
+		Vector3i(spawn.get("object_size", Vector3i.ZERO)),
+		bool(spawn.get("has_authored_collision", false)),
+		bool(spawn.get("has_authored_collision_valid", false))
+	)
+	if profile.is_empty():
+		return false
+
+	var anchor := Vector3i(int(floor(world_pos.x)), int(floor(world_pos.y)), int(floor(world_pos.z)))
+	var fractional_pos := world_pos - Vector3(anchor)
+	var cell_data := _build_object_local_cells(anchor, object_id, int(spawn.get("rotation", 0)), spawn.get("precomputed_cells", []))
+	var local_cells: Array[Vector3i] = cell_data.get("local_cells", [])
+
+	var chunk_coord := Vector3i(
+		int(floor(float(anchor.x) / CHUNK_SIZE)),
+		int(floor(float(anchor.y) / CHUNK_SIZE)),
+		int(floor(float(anchor.z) / CHUNK_SIZE))
+	)
+	var local_anchor := Vector3i(anchor.x % CHUNK_SIZE, anchor.y % CHUNK_SIZE, anchor.z % CHUNK_SIZE)
+	if local_anchor.x < 0: local_anchor.x += CHUNK_SIZE
+	if local_anchor.y < 0: local_anchor.y += CHUNK_SIZE
+	if local_anchor.z < 0: local_anchor.z += CHUNK_SIZE
+
+	var chunk := get_chunk(chunk_coord)
+	var visual_data: Dictionary = profile.get("visual_data", {})
+	var rotation := int(spawn.get("rotation", 0))
+	if bool(profile.get("simple_visual", false)) and not visual_data.is_empty():
+		return chunk.place_simple_visual_object(local_anchor, object_id, rotation, local_cells, fractional_pos, visual_data, defer_global_visual_batch_rebuild)
+	if bool(profile.get("chunk_static_proxy", false)) and not visual_data.is_empty():
+		return chunk.place_chunk_static_proxy_object(local_anchor, object_id, rotation, local_cells, fractional_pos, visual_data, defer_global_visual_batch_rebuild, true)
+
+	var scene_instance: Node3D = null
+	if bool(profile.get("proxy_visual", false)):
+		scene_instance = ObjectRegistry.create_proxy_gameplay_shell(object_id, world_map_mode)
+	if scene_instance == null:
+		var scene_path := str(profile.get("scene_path", ""))
+		var packed := ObjectRegistry.get_preloaded_scene(scene_path)
+		if packed:
+			scene_instance = packed.instantiate()
+	if scene_instance and scene_instance.has_method("populate_loot"):
+		scene_instance.set_meta("should_populate_loot", true)
+
+	return chunk.place_object(
+		local_anchor,
+		object_id,
+		rotation,
+		local_cells,
+		scene_instance,
+		fractional_pos,
+		true,
+		defer_global_visual_batch_rebuild,
+		profile.get("size", Vector3i(1, 1, 1)),
+		bool(profile.get("has_authored_collision", false)),
+		true
 	)
 
 func _record_world_map_baked_object_spawn_timing(spawn: Dictionary, object_elapsed_ms: float, object_id: int, object_scene_path: String, world_pos: Vector3, slow_object_spawns: Array) -> void:
@@ -1543,8 +1717,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"pending_world_map_baked_object_spawns": _pending_world_map_baked_object_spawns.size(),
 		"world_map_baked_object_spawn_budget_ms": world_map_baked_object_spawn_budget_ms,
 		"world_map_baked_object_spawn_max_per_frame": world_map_baked_object_spawn_max_per_frame,
+		"world_map_baked_object_spawn_headroom_budget_ms": world_map_baked_object_spawn_headroom_budget_ms,
+		"world_map_baked_object_spawn_headroom_max_per_frame": world_map_baked_object_spawn_headroom_max_per_frame,
+		"world_map_baked_object_spawn_hot_budget_ms": world_map_baked_object_spawn_hot_budget_ms,
 		"last_world_map_baked_object_spawn_queue_ms": _last_world_map_baked_object_spawn_queue_ms,
 		"last_world_map_baked_object_spawn_queue_count": _last_world_map_baked_object_spawn_queue_count,
+		"last_world_map_baked_object_spawn_queue_budget_ms": _last_world_map_baked_object_spawn_queue_budget_ms,
+		"last_world_map_baked_object_spawn_queue_max_per_frame": _last_world_map_baked_object_spawn_queue_max_per_frame,
+		"last_world_map_baked_object_spawn_queue_hot_frame": _last_world_map_baked_object_spawn_queue_hot_frame,
+		"object_spawn_profile_cache_count": _object_spawn_profile_cache.size(),
 		"object_render_prewarm_frames": object_render_prewarm_frames,
 		"object_render_prewarm_mesh_count": _object_render_resource_prewarm_mesh_count,
 		"object_render_prewarm_active": _is_object_render_resource_prewarm_active(),
