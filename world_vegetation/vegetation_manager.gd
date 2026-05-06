@@ -1220,8 +1220,13 @@ func _process_pending_vegetation_chunks() -> void:
 			pending_chunks[item_index] = item
 			break
 
-		var chunk_node: Node3D = item.get("chunk_node", null)
-		if not is_instance_valid(chunk_node):
+		var chunk_node_variant: Variant = item.get("chunk_node", null)
+		if not is_instance_valid(chunk_node_variant):
+			pending_chunks.remove_at(item_index)
+			_complete_initial_load_pending_chunk()
+			continue
+		var chunk_node: Node3D = chunk_node_variant as Node3D
+		if chunk_node == null:
 			pending_chunks.remove_at(item_index)
 			_complete_initial_load_pending_chunk()
 			continue
