@@ -21,6 +21,8 @@ var has_target: bool = false
 # Material display - tracking
 var last_target_material: String = ""
 var material_target_marker: MeshInstance3D = null
+var target_material_update_interval: float = 0.1
+var _target_material_update_elapsed: float = 0.1
 
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
@@ -49,9 +51,12 @@ func _find_managers() -> void:
 	if not brush_registry:
 		brush_registry = get_tree().get_first_node_in_group("brush_registry")
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	_update_terrain_targeting()
-	_update_target_material()
+	_target_material_update_elapsed += delta
+	if _target_material_update_elapsed >= target_material_update_interval:
+		_target_material_update_elapsed = 0.0
+		_update_target_material()
 
 ## Initialize references (called by parent after scene ready)
 func initialize(p_player: Node, p_terrain: Node, p_hotbar: Node) -> void:
