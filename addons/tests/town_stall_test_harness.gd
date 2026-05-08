@@ -1469,7 +1469,8 @@ func _start_game_scene() -> void:
 		_fail("Failed to instance game scene")
 		return
 
-	var render_distance_override := _get_positive_env_int("TOWN_STALL_RENDER_DISTANCE", -1)
+	# Town stall tests use a wider default render window than gameplay.
+	var render_distance_override := _get_positive_env_int("TOWN_STALL_RENDER_DISTANCE", 10)
 	if render_distance_override > 0:
 		var terrain_manager_override := game_root.find_child("TerrainManager", true, false)
 		if terrain_manager_override and "render_distance" in terrain_manager_override:

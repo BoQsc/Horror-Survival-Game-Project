@@ -280,6 +280,7 @@ var _last_world_map_lod_loads: int = 0
 var _last_world_map_lod_unloads: int = 0
 var _terrain_visual_batch_root: Node3D = null
 var _terrain_visual_batches: Dictionary = {}
+var _terrain_visual_batch_members: Dictionary = {}
 var _terrain_visual_batch_dirty: Dictionary = {}
 var _terrain_visual_batch_mesh_cache: Dictionary = {}
 var _terrain_visual_batch_mesh_cache_order: Array[String] = []
@@ -969,6 +970,29 @@ func _terrain_visual_batch_key(coord: Vector3i) -> Vector2i:
 		int(floor(float(coord.z) / float(batch_size)))
 	)
 
+func _register_terrain_visual_batch_member(coord: Vector3i) -> void:
+	if coord.y != 0:
+		return
+	var key := _terrain_visual_batch_key(coord)
+	var batch_members: Dictionary = _terrain_visual_batch_members.get(key, {})
+	if batch_members.has(coord):
+		return
+	batch_members[coord] = true
+	_terrain_visual_batch_members[key] = batch_members
+
+func _unregister_terrain_visual_batch_member(coord: Vector3i) -> void:
+	if coord.y != 0:
+		return
+	var key := _terrain_visual_batch_key(coord)
+	if not _terrain_visual_batch_members.has(key):
+		return
+	var batch_members: Dictionary = _terrain_visual_batch_members[key]
+	batch_members.erase(coord)
+	if batch_members.is_empty():
+		_terrain_visual_batch_members.erase(key)
+	else:
+		_terrain_visual_batch_members[key] = batch_members
+
 func _terrain_visual_batch_cache_key(key: Vector2i, coords: Array[Vector3i]) -> String:
 	var sorted_coords := coords.duplicate()
 	sorted_coords.sort_custom(func(a: Vector3i, b: Vector3i) -> bool:
@@ -1169,11 +1193,10 @@ func _set_chunk_mesh_visible(data, visible: bool, coord: Vector3i = Vector3i(214
 		_queue_terrain_visual_mesh_retire(coord)
 
 func _show_individual_terrain_visuals_for_batch(key: Vector2i) -> void:
-	for coord_variant in active_chunks.keys():
+	var batch_members: Dictionary = _terrain_visual_batch_members.get(key, {})
+	for coord_variant in batch_members:
 		var coord: Vector3i = coord_variant
-		if coord.y != 0 or _terrain_visual_batch_key(coord) != key:
-			continue
-		var data = active_chunks[coord]
+		var data = active_chunks.get(coord, null)
 		_set_chunk_mesh_visible(data, true, coord)
 
 func _mark_terrain_visual_batch_dirty(coord: Vector3i, invalidate_visible_batch: bool = false) -> void:
@@ -1188,10 +1211,9 @@ func _mark_terrain_visual_batch_dirty(coord: Vector3i, invalidate_visible_batch:
 		_show_individual_terrain_visuals_for_batch(key)
 
 func _clear_terrain_visual_batches(immediate: bool = false) -> void:
-	for coord_variant in active_chunks.keys():
-		var coord: Vector3i = coord_variant
-		var data = active_chunks[coord]
-		_set_chunk_mesh_visible(data, true, coord)
+	for batch_variant in _terrain_visual_batch_members.keys():
+		var key: Vector2i = batch_variant
+		_show_individual_terrain_visuals_for_batch(key)
 	for batch_variant in _terrain_visual_batches.values():
 		var batch_node := batch_variant as Node
 		if not batch_node:
@@ -1411,11 +1433,10 @@ func _collect_terrain_visual_batch_inputs(key: Vector2i) -> Dictionary:
 	var total_vertices := 0
 	var total_indices := 0
 
-	for coord_variant in active_chunks.keys():
+	var batch_members: Dictionary = _terrain_visual_batch_members.get(key, {})
+	for coord_variant in batch_members:
 		var coord: Vector3i = coord_variant
-		if coord.y != 0 or _terrain_visual_batch_key(coord) != key:
-			continue
-		var data = active_chunks[coord]
+		var data = active_chunks.get(coord, null)
 		if not _is_chunk_eligible_for_terrain_visual_batch(coord, data):
 			_set_chunk_mesh_visible(data, true, coord)
 			continue
@@ -1547,13 +1568,16 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object, cache_only: b
 
 func _count_hidden_terrain_visual_batch_chunks() -> int:
 	var count := 0
-	for coord_variant in active_chunks.keys():
-		var coord: Vector3i = coord_variant
-		var data = active_chunks[coord]
-		if not _is_chunk_eligible_for_terrain_visual_batch(coord, data):
-			continue
-		if bool(data.terrain_visual_batched):
-			count += 1
+	for batch_variant in _terrain_visual_batch_members.keys():
+		var key: Vector2i = batch_variant
+		var batch_members: Dictionary = _terrain_visual_batch_members.get(key, {})
+		for coord_variant in batch_members:
+			var coord: Vector3i = coord_variant
+			var data = active_chunks.get(coord, null)
+			if not _is_chunk_eligible_for_terrain_visual_batch(coord, data):
+				continue
+			if bool(data.terrain_visual_batched):
+				count += 1
 	return count
 
 func _get_vehicle_manager() -> Node:
@@ -3716,6 +3740,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 					if not active_chunks.has(coord): # Not already queued
 						active_chunks[coord] = null # Mark as pending
 						_register_active_chunk_with_grid(coord)
+						_register_terrain_visual_batch_member(coord)
 						var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 						chunks_to_generate.append({
 							"type": "generate",
@@ -3811,6 +3836,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 				else:
 					active_chunks[coord] = null
 					_register_active_chunk_with_grid(coord)
+					_register_terrain_visual_batch_member(coord)
 					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 					chunks_to_generate.append({
 						"type": "generate",
@@ -4051,6 +4077,7 @@ func _unload_grid_mismatch_chunks(center_x: int, center_y: int, center_z: int, b
 func _load_chunk(coord: Vector3i):
 	active_chunks[coord] = null
 	_register_active_chunk_with_grid(coord)
+	_register_terrain_visual_batch_member(coord)
 
 	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 	var task = {
@@ -4111,6 +4138,7 @@ func _unload_chunk(coord: Vector3i, queue_nodes: bool = true, emit_unloaded: boo
 	_remove_pending_generate_tasks_for_coord(coord)
 
 	var data = active_chunks[coord]
+	_unregister_terrain_visual_batch_member(coord)
 	if data:
 		_mark_terrain_visual_batch_dirty(coord, true)
 		_set_terrain_collision_ready(coord, data, false)
@@ -4177,6 +4205,7 @@ func clear_all_chunks():
 	_clear_shared_terrain_collision_body()
 	_terrain_collision_active_coords.clear()
 	_terrain_collision_space_attached_coords.clear()
+	_terrain_visual_batch_members.clear()
 
 	# 4. Reset internal state
 	active_chunks.clear()
@@ -4258,6 +4287,7 @@ func _update_chunks_legacy():
 
 			for t in tasks: semaphore.post()
 
+		_unregister_terrain_visual_batch_member(coord)
 		active_chunks.erase(coord)
 
 		# Notify systems that chunk has unloaded (for vegetation cleanup, etc.)
@@ -4305,6 +4335,7 @@ func _update_chunks_legacy():
 
 					active_chunks[coord] = null
 					_register_active_chunk_with_grid(coord)
+					_register_terrain_visual_batch_member(coord)
 
 					# Debug: track when underground chunks are queued
 
@@ -4341,6 +4372,7 @@ func _update_chunks_legacy():
 
 				active_chunks[coord] = null
 				_register_active_chunk_with_grid(coord)
+				_register_terrain_visual_batch_member(coord)
 				var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 				var task = {"type": "generate", "coord": coord, "pos": chunk_pos}
 
@@ -4375,6 +4407,7 @@ func _update_chunks_legacy():
 
 					active_chunks[coord] = null
 					_register_active_chunk_with_grid(coord)
+					_register_terrain_visual_batch_member(coord)
 
 					var chunk_pos = Vector3(x * CHUNK_STRIDE, y * CHUNK_STRIDE, z * CHUNK_STRIDE)
 
@@ -5497,6 +5530,7 @@ func _finalize_chunk_creation(item: Dictionary):
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
 		data.terrain_visual_mesh = item.result.mesh
 		data.terrain_visual_batched = false
+		_register_terrain_visual_batch_member(coord)
 
 		# CRITICAL: Keep Shape3D resource alive!
 		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
@@ -5794,6 +5828,7 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 				if not active_chunks.has(coord):
 					active_chunks[coord] = null
 					_register_active_chunk_with_grid(coord)
+					_register_terrain_visual_batch_member(coord)
 					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 					var task = {
 						"type": "generate",
