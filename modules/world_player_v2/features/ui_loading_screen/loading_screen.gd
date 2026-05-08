@@ -9,10 +9,13 @@ signal terrain_ready  # Emitted when terrain/collision is safe for player physic
 @onready var panel: PanelContainer = $Panel
 @onready var progress_bar: ProgressBar = $Panel/VBox/ProgressBar
 @onready var status_label: Label = $Panel/VBox/StatusLabel
+@onready var elapsed_time_label: Label = $Panel/VBox/ElapsedTimeLabel
 
 var is_loading: bool = true
 var fade_timer: float = 0.0
 const FADE_DURATION: float = 0.5
+var loading_start_msec: int = 0
+var completed_elapsed_seconds: float = 0.0
 
 var has_emitted_terrain_ready: bool = false  # Track if we've signaled player
 var save_manager_step: String = ""  # Current step from SaveManager
@@ -26,8 +29,10 @@ var current_stage: Stage = Stage.TERRAIN
 func _ready() -> void:
 	# Start visible
 	visible = true
+	loading_start_msec = Time.get_ticks_msec()
 	if panel:
 		panel.modulate.a = 1.0
+	_update_elapsed_time_label()
 	
 	# Find managers and start monitoring
 	_connect_to_save_manager()
@@ -182,6 +187,23 @@ func update_progress(percent: float, message: String) -> void:
 		progress_bar.value = percent
 	if status_label:
 		status_label.text = message
+	_update_elapsed_time_label()
+
+func _get_elapsed_seconds() -> float:
+	if loading_start_msec <= 0:
+		return 0.0
+	return max(0.0, float(Time.get_ticks_msec() - loading_start_msec) / 1000.0)
+
+func _update_elapsed_time_label() -> void:
+	if not elapsed_time_label:
+		return
+	var seconds: float = completed_elapsed_seconds
+	if is_loading or seconds <= 0.0:
+		seconds = _get_elapsed_seconds()
+	if is_loading:
+		elapsed_time_label.text = "Elapsed: %.1fs" % seconds
+	else:
+		elapsed_time_label.text = "Loaded in %.1fs" % seconds
 
 func _get_pending_world_content_count(prefab_spawner: Node, building_manager: Node) -> int:
 	var pending := 0
@@ -201,11 +223,16 @@ func _get_pending_world_content_count(prefab_spawner: Node, building_manager: No
 
 func _start_fade_out() -> void:
 	is_loading = false
+	completed_elapsed_seconds = _get_elapsed_seconds()
+	_update_elapsed_time_label()
 	fade_timer = FADE_DURATION
 	loading_complete.emit()
 
 func _process(delta: float) -> void:
-	if not is_loading and fade_timer > 0:
+	if is_loading:
+		_update_elapsed_time_label()
+		return
+	if fade_timer > 0:
 		fade_timer -= delta
 		if panel:
 			panel.modulate.a = fade_timer / FADE_DURATION

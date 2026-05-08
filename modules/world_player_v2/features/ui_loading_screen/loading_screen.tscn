@@ -3,14 +3,14 @@
 [ext_resource type="Script" uid="uid://b718hmy6nfd8s" path="res://modules/world_player_v2/features/ui_loading_screen/loading_screen.gd" id="1_script"]
 
 [node name="LoadingScreen" type="CanvasLayer" unique_id=1560120558]
-layer = 100
+layer = 200
 script = ExtResource("1_script")
 
 [node name="Panel" type="PanelContainer" parent="." unique_id=1660372839]
 offset_left = 20.0
 offset_top = 20.0
 offset_right = 320.0
-offset_bottom = 100.0
+offset_bottom = 124.0
 
 
 [node name="VBox" type="VBoxContainer" parent="Panel" unique_id=875743496]
@@ -30,4 +30,10 @@ layout_mode = 2
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Initializing..."
+horizontal_alignment = 1
+
+[node name="ElapsedTimeLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+text = "Elapsed: 0.0s"
 horizontal_alignment = 1
