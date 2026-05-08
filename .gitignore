@@ -15,6 +15,10 @@ export_presets.cfg
 data_*/
 mono_crash.*.json
 
+# Generated local test and agent logs
+*.log
+.agent/*.lock
+
 
 
 # GDExtension build artifacts (only track after successful build)
