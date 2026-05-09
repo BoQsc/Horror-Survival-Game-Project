@@ -169,6 +169,7 @@ class ChunkData:
 	var chunk_material: ShaderMaterial = null # Per-chunk material instance
 	# Modification version - incremented on each modify, used to skip stale updates
 	var mod_version: int = 0
+	var water_mod_version: int = 0
 
 var active_chunks: Dictionary = {}
 
@@ -1641,11 +1642,41 @@ func _pop_next_gpu_task() -> Dictionary:
 	mutex.lock()
 	var task: Dictionary = {}
 	if not priority_task_queue.is_empty():
-		task = priority_task_queue.pop_back()
+		var modify_index := -1
+		for i in range(priority_task_queue.size()):
+			var queued_task: Dictionary = priority_task_queue[i]
+			if str(queued_task.get("type", "")) == "modify":
+				modify_index = i
+				break
+		if modify_index >= 0:
+			task = priority_task_queue[modify_index]
+			priority_task_queue.remove_at(modify_index)
+		else:
+			task = priority_task_queue.pop_front()
 	elif not task_queue.is_empty():
 		task = task_queue.pop_back()
 	mutex.unlock()
 	return task
+
+func _get_chunk_layer_mod_version(data: ChunkData, layer: int) -> int:
+	if data == null:
+		return 0
+	return int(data.water_mod_version) if layer == 1 else int(data.mod_version)
+
+func _set_generated_mod_version(data: ChunkData, stored_mod_version: int) -> void:
+	if data == null:
+		return
+	data.mod_version = maxi(data.mod_version, stored_mod_version)
+	data.water_mod_version = maxi(data.water_mod_version, stored_mod_version)
+
+func _bump_chunk_layer_mod_version(data: ChunkData, layer: int, stored_mod_version: int) -> int:
+	if data == null:
+		return 0
+	if layer == 1:
+		data.water_mod_version = maxi(data.water_mod_version + 1, stored_mod_version)
+		return data.water_mod_version
+	data.mod_version = maxi(data.mod_version + 1, stored_mod_version)
+	return data.mod_version
 
 
 func _clear_gpu_task_queues(discard_free_tasks: bool = false) -> void:
@@ -1846,7 +1877,8 @@ func _complete_generation_from_queue_item(item: Dictionary) -> void:
 		item.get("cpu_dens_t", PackedFloat32Array()),
 		item.get("height_map_t", PackedFloat32Array()),
 		item.get("mat_t", RID()),
-		item.get("cpu_mat_t", PackedByteArray())
+		item.get("cpu_mat_t", PackedByteArray()),
+		int(item.get("stored_mod_version", 0))
 	)
 
 
@@ -3287,7 +3319,7 @@ func _get_all_modification_coords() -> Array:
 func _mark_modification_coord_cache_dirty() -> void:
 	_modification_coord_cache_dirty = true
 
-func _append_stored_modification(coord: Vector3i, modification: Dictionary) -> void:
+func _append_stored_modification(coord: Vector3i, modification: Dictionary) -> int:
 	_drop_terrain_collision_body_cache_entry(coord)
 	stored_modifications_mutex.lock()
 	if not stored_modifications.has(coord):
@@ -3295,8 +3327,10 @@ func _append_stored_modification(coord: Vector3i, modification: Dictionary) -> v
 	var coord_mods: Array = stored_modifications[coord]
 	coord_mods.append(modification)
 	stored_modifications[coord] = coord_mods
+	var stored_count := coord_mods.size()
 	stored_modifications_mutex.unlock()
 	_mark_modification_coord_cache_dirty()
+	return stored_count
 
 func _rebuild_pending_terrain_collision_candidates(center_chunk: Vector3i) -> void:
 	_pending_terrain_collision_candidates.clear()
@@ -3309,14 +3343,42 @@ func _rebuild_pending_terrain_collision_candidates(center_chunk: Vector3i) -> vo
 	)
 	_pending_terrain_collision_candidates_dirty = false
 
+func _get_modification_snapshot_for_chunk(coord: Vector3i) -> Dictionary:
+	stored_modifications_mutex.lock()
+	var runtime_mods: Array = stored_modifications.get(coord, []).duplicate()
+	var stored_count: int = runtime_mods.size()
+	stored_modifications_mutex.unlock()
+	return {
+		"mods": runtime_mods,
+		"version": stored_count
+	}
+
 func _get_modifications_for_chunk(coord: Vector3i) -> Array:
 	var mods_for_chunk: Array = []
-	stored_modifications_mutex.lock()
-	var runtime_mods = stored_modifications.get(coord, []).duplicate()
-	stored_modifications_mutex.unlock()
+	var snapshot := _get_modification_snapshot_for_chunk(coord)
+	var runtime_mods: Array = snapshot.get("mods", [])
 	if not runtime_mods.is_empty():
 		mods_for_chunk.append_array(runtime_mods)
 	return mods_for_chunk
+
+func _get_stored_modification_count(coord: Vector3i) -> int:
+	stored_modifications_mutex.lock()
+	var stored_count := 0
+	if stored_modifications.has(coord):
+		var coord_mods: Array = stored_modifications[coord]
+		stored_count = coord_mods.size()
+	stored_modifications_mutex.unlock()
+	return stored_count
+
+func _get_stored_modifications_after(coord: Vector3i, after_version: int) -> Array:
+	var mods_after: Array = []
+	stored_modifications_mutex.lock()
+	var coord_mods: Array = stored_modifications.get(coord, [])
+	var start_index: int = clampi(after_version, 0, coord_mods.size())
+	for i in range(start_index, coord_mods.size()):
+		mods_after.append(coord_mods[i])
+	stored_modifications_mutex.unlock()
+	return mods_after
 
 func _cache_world_map_terrain_modifications(raw_mods: Array) -> void:
 	_world_map_terrain_modifications.clear()
@@ -3696,7 +3758,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 				var coord = Vector3i(x, y, z)
 
 				# Store the modification for this chunk (persists across unloads)
-				_append_stored_modification(coord, {
+				var stored_mod_version := _append_stored_modification(coord, {
 					"brush_pos": pos,
 					"radius": radius,
 					"value": value,
@@ -3716,8 +3778,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 
 							# Increment chunk's modification version and capture for stale detection
-							data.mod_version += 1
-							var start_mod_version = data.mod_version
+							var start_mod_version := _bump_chunk_layer_mod_version(data, layer, stored_mod_version)
 
 							var task = {
 								"type": "modify",
@@ -3762,10 +3823,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 		var batch_count = tasks_to_add.size()
 
 		mutex.lock()
-		# Priority work stays on a separate queue so we can use simple append/pop
-		# stacks without shifting large arrays.
-		for i in range(tasks_to_add.size() - 1, -1, -1): # Reverse order to maintain sequence
-			var t = tasks_to_add[i]
+		for t in tasks_to_add:
 			t["batch_id"] = modification_batch_id
 			t["batch_count"] = batch_count
 			priority_task_queue.append(t)
@@ -3801,7 +3859,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 				var coord = Vector3i(chunk_x, chunk_y, chunk_z)
 
 				# Store modification for persistence
-				_append_stored_modification(coord, {
+				var stored_mod_version := _append_stored_modification(coord, {
 					"brush_pos": pos,
 					"radius": 0.6, # Minimal radius, column shape uses XZ distance
 					"value": value,
@@ -3818,6 +3876,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 						var target_buffer = data.density_buffer_terrain if layer == 0 else data.density_buffer_water
 						if target_buffer.is_valid():
 							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+							var start_mod_version := _bump_chunk_layer_mod_version(data, layer, stored_mod_version)
 							tasks_to_add.append({
 								"type": "modify",
 								"coord": coord,
@@ -3831,7 +3890,8 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 								"layer": layer,
 								"y_min": y_from,
 								"y_max": y_to,
-								"material_id": - 1
+								"material_id": - 1,
+								"start_mod_version": start_mod_version
 							})
 				else:
 					active_chunks[coord] = null
@@ -3857,8 +3917,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 		var batch_count = tasks_to_add.size()
 
 		mutex.lock()
-		for i in range(tasks_to_add.size() - 1, -1, -1):
-			var t = tasks_to_add[i]
+		for t in tasks_to_add:
 			t["batch_id"] = modification_batch_id
 			t["batch_count"] = batch_count
 			priority_task_queue.append(t)
@@ -4655,7 +4714,7 @@ func _thread_function():
 			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"], buffer_slots[0]["index_buffer_terrain"], modify_mesh_builder)
 		elif task.type == "generate":
-			var task_has_stored_mods := _get_modifications_for_chunk(task.coord).size() > 0
+			var task_has_stored_mods := _get_stored_modification_count(task.coord) > 0
 			if task_has_stored_mods and not in_flight.is_empty():
 				_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
 				_delay_after_generation_batch()
@@ -4842,7 +4901,9 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 
 	# Apply runtime terrain edits only.
 	# Baked world-map excavation is injected directly into gen_density.glsl via _world_map_excavation_buffers.
-	var mods_for_chunk = _get_modifications_for_chunk(coord)
+	var modification_snapshot := _get_modification_snapshot_for_chunk(coord)
+	var mods_for_chunk: Array = modification_snapshot.get("mods", [])
+	var stored_mod_version := int(modification_snapshot.get("version", 0))
 	var needs_material_readback := false
 	var needs_terrain_density_readback := false
 	var needs_water_density_readback := false
@@ -4880,6 +4941,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"needs_terrain_density_readback": needs_terrain_density_readback,
 		"needs_water_density_readback": needs_water_density_readback,
 		"water_surface_possible": water_surface_possible,
+		"stored_mod_version": stored_mod_version,
 		"needs_submit": mods_for_chunk.is_empty()
 	}
 
@@ -4959,7 +5021,8 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 		"cpu_mat_t": cpu_material_bytes, # Material data for 3D texture
 		"dens_buf_terrain": dens_buf_terrain,
 		"dens_buf_water": dens_buf_water,
-		"mat_buf_terrain": mat_buf_terrain # Material buffer for modify path
+		"mat_buf_terrain": mat_buf_terrain, # Material buffer for modify path
+		"stored_mod_version": int(flight_data.get("stored_mod_version", 0))
 	})
 	cpu_mutex.unlock()
 	cpu_semaphore.post()
@@ -5160,7 +5223,8 @@ func _cpu_thread_function():
 			"cpu_dens_t": task.cpu_dens_t,
 			"height_map_t": height_map_terrain,
 			"mat_t": task.mat_buf_terrain,
-			"cpu_mat_t": task.cpu_mat_t
+			"cpu_mat_t": task.cpu_mat_t,
+			"stored_mod_version": int(task.get("stored_mod_version", 0))
 		})
 
 # Helper to apply a single modification to a density buffer (used during generation replay)
@@ -5457,7 +5521,7 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 		"shape": built.get("shape", null)
 	}
 
-func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, height_map_t: PackedFloat32Array = PackedFloat32Array(), mat_t: RID = RID(), cpu_mat_t: PackedByteArray = PackedByteArray()):
+func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, height_map_t: PackedFloat32Array = PackedFloat32Array(), mat_t: RID = RID(), cpu_mat_t: PackedByteArray = PackedByteArray(), stored_mod_version: int = 0):
 	if not active_chunks.has(coord):
 		var tasks = []
 		tasks.append({"type": "free", "rid": dens_t})
@@ -5485,7 +5549,8 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"mat_buf": mat_t,
 		"cpu_dens": cpu_dens_t,
 		"height_map": height_map_t,
-		"cpu_mat": cpu_mat_t
+		"cpu_mat": cpu_mat_t,
+		"stored_mod_version": stored_mod_version
 	})
 
 	# Task 2: Water (Lighter - ~2ms)
@@ -5495,11 +5560,66 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"result": result_w,
 		"dens": dens_w,
 		"cpu_dens": cpu_dens_w,
-		"generated_density": bool(result_w.get("generated_density", false))
+		"generated_density": bool(result_w.get("generated_density", false)),
+		"stored_mod_version": stored_mod_version
 	})
 	pending_nodes_needs_sort = true
 
 	pending_nodes_mutex.unlock()
+
+func _queue_stored_modifications_after(coord: Vector3i, data: ChunkData, after_version: int, target_layer: int) -> void:
+	if data == null:
+		return
+	var missed_mods := _get_stored_modifications_after(coord, after_version)
+	if missed_mods.is_empty():
+		return
+
+	var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+	var tasks_to_add: Array[Dictionary] = []
+	_set_generated_mod_version(data, after_version)
+
+	for mod_variant in missed_mods:
+		if not (mod_variant is Dictionary):
+			continue
+		var mod: Dictionary = mod_variant
+		var mod_layer := int(mod.get("layer", 0))
+		if mod_layer != target_layer:
+			continue
+		var target_buffer: RID = data.density_buffer_terrain if mod_layer == 0 else data.density_buffer_water
+		if not target_buffer.is_valid():
+			continue
+
+		var brush_pos: Vector3 = mod.get("brush_pos", Vector3.ZERO)
+		var start_mod_version := _bump_chunk_layer_mod_version(data, mod_layer, after_version)
+		var task := {
+			"type": "modify",
+			"coord": coord,
+			"rid": target_buffer,
+			"material_rid": data.material_buffer_terrain,
+			"pos": chunk_pos,
+			"brush_pos": brush_pos,
+			"radius": float(mod.get("radius", 0.0)),
+			"value": float(mod.get("value", 0.0)),
+			"shape": int(mod.get("shape", 0)),
+			"layer": mod_layer,
+			"material_id": int(mod.get("material_id", -1)),
+			"start_mod_version": start_mod_version
+		}
+		if int(task.get("shape", 0)) == 2:
+			task["y_min"] = float(mod.get("y_min", brush_pos.y))
+			task["y_max"] = float(mod.get("y_max", brush_pos.y))
+		tasks_to_add.append(task)
+
+	if tasks_to_add.is_empty():
+		return
+
+	mutex.lock()
+	for task in tasks_to_add:
+		priority_task_queue.append(task)
+	mutex.unlock()
+
+	for i in range(tasks_to_add.size()):
+		semaphore.post()
 
 func _finalize_chunk_creation(item: Dictionary):
 	if item.type == "final_terrain":
@@ -5530,6 +5650,7 @@ func _finalize_chunk_creation(item: Dictionary):
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
 		data.terrain_visual_mesh = item.result.mesh
 		data.terrain_visual_batched = false
+		_set_generated_mod_version(data, int(item.get("stored_mod_version", 0)))
 		_register_terrain_visual_batch_member(coord)
 
 		# CRITICAL: Keep Shape3D resource alive!
@@ -5559,6 +5680,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		if not should_have_collision and _should_prewarm_terrain_collision(coord, center_chunk, collision_prewarm_distance_sq):
 			_queue_terrain_collision_create(coord)
 		_mark_terrain_visual_batch_dirty(coord)
+		_queue_stored_modifications_after(coord, data, int(item.get("stored_mod_version", 0)), 0)
 
 		# Spawn Zones
 		call_deferred("emit_signal", "chunk_generated", coord, data.node_terrain)
@@ -5591,6 +5713,8 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.density_buffer_water = item.dens
 		data.cpu_density_water = item.cpu_dens
 		data.generated_water_density_available = bool(item.get("generated_density", false))
+		_set_generated_mod_version(data, int(item.get("stored_mod_version", 0)))
+		_queue_stored_modifications_after(coord, data, int(item.get("stored_mod_version", 0)), 1)
 
 		_last_finalize_water_ms = float(Time.get_ticks_usec() - start) / 1000.0
 
@@ -5651,7 +5775,7 @@ func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batc
 		# STALE CHECK for non-batched updates
 		if active_chunks.has(coord):
 			var chunk_data = active_chunks[coord]
-			if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
+			if chunk_data != null and start_mod_version > 0 and start_mod_version < _get_chunk_layer_mod_version(chunk_data, layer):
 				return
 		_apply_chunk_update(coord, result, layer, cpu_dens, cpu_mat, start_mod_version)
 		return
@@ -5667,7 +5791,7 @@ func complete_modification(coord: Vector3i, result: Dictionary, layer: int, batc
 	var is_stale = false
 	if active_chunks.has(coord):
 		var chunk_data = active_chunks[coord]
-		if chunk_data != null and start_mod_version > 0 and start_mod_version < chunk_data.mod_version:
+		if chunk_data != null and start_mod_version > 0 and start_mod_version < _get_chunk_layer_mod_version(chunk_data, layer):
 			is_stale = true
 
 	if not is_stale and active_chunks.has(coord):
@@ -5684,7 +5808,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 	var data = active_chunks[coord]
 
 	# STALE CHECK: Secondary check at application time (for batched updates)
-	if data != null and start_mod_version > 0 and start_mod_version < data.mod_version:
+	if data != null and start_mod_version > 0 and start_mod_version < _get_chunk_layer_mod_version(data, layer):
 		return
 
 	var update_start_us := Time.get_ticks_usec()
