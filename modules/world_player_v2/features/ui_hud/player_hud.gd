@@ -44,9 +44,12 @@ var notification_timer: float = 0.0
 
 # UI State
 var show_terrain_info: bool = false
+var _default_canvas_layer: int = 0
+const GAME_MENU_CANVAS_LAYER: int = 300
 
 func _ready() -> void:
 	add_to_group("player_hud")
+	_default_canvas_layer = layer
 	var input_lock := _get_local_input_lock()
 	if input_lock:
 		input_lock.clear()
@@ -540,6 +543,7 @@ func _on_inventory_toggled(_is_open: bool) -> void:
 	pass
 
 func _on_game_menu_toggled(is_open: bool) -> void:
+	layer = GAME_MENU_CANVAS_LAYER if is_open else _default_canvas_layer
 	game_menu.visible = is_open
 	if not is_open:
 		_close_creative_catalog_panel()
