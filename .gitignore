@@ -17,6 +17,9 @@ mono_crash.*.json
 
 # Generated local test and agent logs
 *.log
+.agent/
+__pycache__/
+*.pyc
 .agent/*.lock
 
 
