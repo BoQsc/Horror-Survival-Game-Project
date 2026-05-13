@@ -541,7 +541,7 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_EXIT_AUTOSAVE"] = os.environ.get("TOWN_STALL_DISABLE_EXIT_AUTOSAVE", "1")
     env["TOWN_STALL_HOLD_SECONDS"] = os.environ.get("TOWN_STALL_HOLD_SECONDS", "")
     env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
-    machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "0") == "1"
+    machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
     machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)
     machine_warmup_max_wait_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_MAX_WAIT_SECONDS", 180.0)
