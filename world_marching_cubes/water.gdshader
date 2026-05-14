@@ -25,7 +25,6 @@ uniform float refraction_strength = 0.008;  // Very subtle distortion
 uniform sampler2D water_normal_texture : hint_normal, filter_linear_mipmap, repeat_enable;
 uniform float normal_texture_scale = 0.05;  // Tiling scale
 uniform float normal_texture_strength = 0.4;  // How much texture affects normal
-uniform bool expensive_effects_enabled = true;
 
 uniform sampler2D depth_texture : hint_depth_texture, filter_linear_mipmap;
 uniform sampler2D screen_texture : hint_screen_texture, filter_linear_mipmap;
@@ -79,14 +78,6 @@ float fresnel(float amount, vec3 normal, vec3 view) {
 }
 
 void fragment() {
-	if (!expensive_effects_enabled) {
-		ALBEDO = mix(albedo_shallow, albedo, 0.65);
-		METALLIC = metallic;
-		ROUGHNESS = max(roughness, 0.2);
-		ALPHA = 0.55;
-		return;
-	}
-
 	float time = TIME * wave_speed;
 	vec2 uv = world_pos.xz * wave_scale;  // World-space UV, won't move with camera
 	
