@@ -55,7 +55,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
 @export var terrain_visual_batching_enabled: bool = true
-@export_range(1, 16, 1) var terrain_visual_batch_size: int = 3
+@export_range(1, 16, 1) var terrain_visual_batch_size: int = 4
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 16, 1) var terrain_visual_batch_cached_rebuilds_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_cached_rebuild_budget_ms: float = 0.75
@@ -66,7 +66,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_async_apply_budget_ms: float = 1.0
 @export_range(1, 60, 1) var terrain_visual_batch_hot_rebuild_interval_frames: int = 2
 @export_range(1, 512, 1) var terrain_visual_batch_hot_rebuild_dirty_threshold: int = 8
-@export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 24000
+@export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 48000
 @export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
@@ -220,6 +220,9 @@ var underground_load_triggered: bool = false # Track if Y=-1 burst load has been
 ## Higher values reduce FPS drops but make terrain load slower as you move.
 ## Recommended: 100-200ms for smooth exploration.
 @export_range(0, 6000, 10) var exploration_delay_ms: int = 300
+@export var terrain_gpu_separate_water_meshing: bool = true
+@export_range(1, 8, 1) var terrain_gpu_mesh_slices_per_chunk: int = 1
+@export_range(0, 20, 1) var terrain_gpu_mesh_slice_delay_ms: int = 2
 
 # Adaptive loading - throttles based on current FPS
 var target_fps: float = 75.0
@@ -235,22 +238,68 @@ var loading_paused: bool = false
 @export_range(0, 60, 1) var render_resource_prewarm_frames: int = 12
 @export_range(0, 256, 1) var spawn_zone_far_reset_distance_chunks: int = 16
 @export_range(1, 128, 1) var retired_chunk_node_cleanup_budget_per_frame: int = 24
+@export var runtime_power_mode_enabled: bool = true
+@export_range(30, 240, 1) var runtime_power_active_max_fps: int = 60
+@export_range(15, 120, 1) var runtime_power_idle_max_fps: int = 30
+@export_range(15, 120, 1) var runtime_power_deep_idle_max_fps: int = 15
+@export_range(0.1, 10.0, 0.1) var runtime_power_idle_enter_delay_s: float = 1.25
+@export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 8.0
+@export_range(0.0, 5.0, 0.1) var runtime_power_active_grace_s: float = 0.75
+@export_range(0.001, 1.0, 0.001) var runtime_power_position_epsilon: float = 0.10
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
 var terrain_grid = null
 var _native_backends_ready: bool = false
+var _runtime_power_mode: String = "active"
+var _runtime_power_target_fps: int = 0
+var _runtime_power_idle_seconds: float = 0.0
+var _runtime_power_active_grace_remaining_s: float = 0.0
+var _runtime_power_last_viewer_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _runtime_power_active_frame_count: int = 0
+var _runtime_power_idle_frame_count: int = 0
+var _runtime_power_deep_idle_frame_count: int = 0
+var _runtime_power_active_reason: String = "startup"
+var _runtime_power_disabled_reason: String = ""
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_fallback_unloads: int = 0
 var _last_fallback_unload_ms: float = 0.0
 var _last_native_grid_active_chunk_count: int = 0
 var _last_update_backend: String = ""
+var _last_terrain_stream_update_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
+var _last_terrain_stream_update_render_distance: int = -1
+var _last_terrain_stream_update_loading_paused: bool = false
+var _last_terrain_stream_update_gate_reason: String = ""
+var _terrain_stream_update_idle_skip_count: int = 0
 var _last_terrain_finalization_defer_reason: String = ""
 var _last_update_duration_ms: float = 0.0
 var _last_pending_node_process_ms: float = 0.0
 var _last_completed_generation_drain_ms: float = 0.0
 var _last_completed_generation_drain_count: int = 0
+var _last_gpu_generation_dispatch_ms: float = 0.0
+var _last_gpu_generation_dispatch_coord: Vector3i = Vector3i.ZERO
+var _last_gpu_generation_mod_sync_ms: float = 0.0
+var _last_gpu_generation_batch_ms: float = 0.0
+var _last_gpu_generation_batch_chunk_count: int = 0
+var _last_gpu_generation_sync_ms: float = 0.0
+var _last_gpu_meshing_dispatch_ms: float = 0.0
+var _last_gpu_meshing_sync_ms: float = 0.0
+var _last_gpu_mesh_readback_ms: float = 0.0
+var _last_gpu_mesh_readback_chunk_count: int = 0
+var _last_gpu_mesh_readback_terrain_vertices: int = 0
+var _last_gpu_mesh_readback_water_vertices: int = 0
+var _last_gpu_mesh_slice_count: int = 0
+var _last_gpu_mesh_slice_max_sync_ms: float = 0.0
+var _last_gpu_generation_batch_event_id: int = 0
+var _last_cpu_mesh_build_ms: float = 0.0
+var _last_cpu_mesh_build_terrain_ms: float = 0.0
+var _last_cpu_mesh_build_water_ms: float = 0.0
+var _last_cpu_mesh_build_queue_wait_ms: float = 0.0
+var _last_cpu_mesh_build_terrain_vertices: int = 0
+var _last_cpu_mesh_build_water_vertices: int = 0
+var _last_cpu_mesh_build_coord: Vector3i = Vector3i.ZERO
+var _last_cpu_mesh_build_event_id: int = 0
 var _last_finalize_terrain_ms: float = 0.0
 var _last_finalize_water_ms: float = 0.0
 var _last_chunk_update_ms: float = 0.0
@@ -340,6 +389,7 @@ func _ready():
 	stored_modifications_mutex = Mutex.new()
 	_ensure_chunk_node_root()
 	add_to_group("terrain")
+	_configure_runtime_power_mode_from_env()
 
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
@@ -620,6 +670,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"chunks_per_frame_limit": chunks_per_frame_limit,
 		"last_update_loads": _last_update_loads,
 		"last_update_unloads": _last_update_unloads,
+		"last_terrain_stream_update_gate_reason": _last_terrain_stream_update_gate_reason,
+		"terrain_stream_update_idle_skip_count": _terrain_stream_update_idle_skip_count,
+		"terrain_stream_min_chunk_target": _get_min_loaded_stream_chunk_count(),
+		"terrain_stream_under_target": active_chunks.size() < _get_min_loaded_stream_chunk_count(),
 		"last_fallback_unloads": _last_fallback_unloads,
 		"last_fallback_unload_ms": _last_fallback_unload_ms,
 		"last_update_backend": _last_update_backend,
@@ -630,6 +684,32 @@ func get_telemetry_snapshot() -> Dictionary:
 		"completed_generation_drain_budget_ms": completed_generation_drain_budget_ms,
 		"last_completed_generation_drain_ms": _last_completed_generation_drain_ms,
 		"last_completed_generation_drain_count": _last_completed_generation_drain_count,
+		"terrain_gpu_separate_water_meshing": terrain_gpu_separate_water_meshing,
+		"terrain_gpu_mesh_slices_per_chunk": terrain_gpu_mesh_slices_per_chunk,
+		"terrain_gpu_mesh_slice_delay_ms": terrain_gpu_mesh_slice_delay_ms,
+		"last_gpu_generation_dispatch_ms": _last_gpu_generation_dispatch_ms,
+		"last_gpu_generation_dispatch_coord": str(_last_gpu_generation_dispatch_coord),
+		"last_gpu_generation_mod_sync_ms": _last_gpu_generation_mod_sync_ms,
+		"last_gpu_generation_batch_ms": _last_gpu_generation_batch_ms,
+		"last_gpu_generation_batch_chunk_count": _last_gpu_generation_batch_chunk_count,
+		"last_gpu_generation_sync_ms": _last_gpu_generation_sync_ms,
+		"last_gpu_meshing_dispatch_ms": _last_gpu_meshing_dispatch_ms,
+		"last_gpu_meshing_sync_ms": _last_gpu_meshing_sync_ms,
+		"last_gpu_mesh_readback_ms": _last_gpu_mesh_readback_ms,
+		"last_gpu_mesh_readback_chunk_count": _last_gpu_mesh_readback_chunk_count,
+		"last_gpu_mesh_readback_terrain_vertices": _last_gpu_mesh_readback_terrain_vertices,
+		"last_gpu_mesh_readback_water_vertices": _last_gpu_mesh_readback_water_vertices,
+		"last_gpu_mesh_slice_count": _last_gpu_mesh_slice_count,
+		"last_gpu_mesh_slice_max_sync_ms": _last_gpu_mesh_slice_max_sync_ms,
+		"last_gpu_generation_batch_event_id": _last_gpu_generation_batch_event_id,
+		"last_cpu_mesh_build_ms": _last_cpu_mesh_build_ms,
+		"last_cpu_mesh_build_terrain_ms": _last_cpu_mesh_build_terrain_ms,
+		"last_cpu_mesh_build_water_ms": _last_cpu_mesh_build_water_ms,
+		"last_cpu_mesh_build_queue_wait_ms": _last_cpu_mesh_build_queue_wait_ms,
+		"last_cpu_mesh_build_terrain_vertices": _last_cpu_mesh_build_terrain_vertices,
+		"last_cpu_mesh_build_water_vertices": _last_cpu_mesh_build_water_vertices,
+		"last_cpu_mesh_build_coord": str(_last_cpu_mesh_build_coord),
+		"last_cpu_mesh_build_event_id": _last_cpu_mesh_build_event_id,
 		"last_pending_node_process_ms": _last_pending_node_process_ms,
 		"last_finalize_terrain_ms": _last_finalize_terrain_ms,
 		"last_finalize_water_ms": _last_finalize_water_ms,
@@ -639,6 +719,18 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_spawn_zone_far_reset_ms": _last_spawn_zone_far_reset_ms,
 		"last_spawn_zone_far_reset_cleared_chunks": _last_spawn_zone_far_reset_cleared_chunks,
 		"spawn_zone_far_reset_count": _spawn_zone_far_reset_count,
+		"runtime_power_mode_enabled": runtime_power_mode_enabled,
+		"runtime_power_mode": _runtime_power_mode,
+		"runtime_power_target_fps": _runtime_power_target_fps,
+		"runtime_power_active_max_fps": runtime_power_active_max_fps,
+		"runtime_power_idle_max_fps": runtime_power_idle_max_fps,
+		"runtime_power_deep_idle_max_fps": runtime_power_deep_idle_max_fps,
+		"runtime_power_idle_seconds": _runtime_power_idle_seconds,
+		"runtime_power_active_frame_count": _runtime_power_active_frame_count,
+		"runtime_power_idle_frame_count": _runtime_power_idle_frame_count,
+		"runtime_power_deep_idle_frame_count": _runtime_power_deep_idle_frame_count,
+		"runtime_power_active_reason": _runtime_power_active_reason,
+		"runtime_power_disabled_reason": _runtime_power_disabled_reason,
 		"retired_chunk_node_root_count": _retired_chunk_node_roots.size(),
 		"last_retired_chunk_node_cleanup_ms": _last_retired_chunk_node_cleanup_ms,
 		"last_retired_chunk_node_cleanup_count": _last_retired_chunk_node_cleanup_count,
@@ -1637,6 +1729,12 @@ func _has_pending_gpu_tasks() -> bool:
 	mutex.unlock()
 	return has_tasks
 
+func _has_pending_priority_gpu_tasks_or_exit() -> bool:
+	mutex.lock()
+	var has_tasks := exit_thread or not priority_task_queue.is_empty()
+	mutex.unlock()
+	return has_tasks
+
 
 func _pop_next_gpu_task() -> Dictionary:
 	mutex.lock()
@@ -1957,12 +2055,20 @@ func _process(delta):
 			_hot_frame_backoff_remaining_frames -= 1
 	_last_terrain_finalization_defer_reason = terrain_defer_reason
 	if not defer_terrain_finalization:
-		update_chunks()
+		if _terrain_stream_update_needed():
+			update_chunks()
+			_record_terrain_stream_update_key()
+		else:
+			_skip_terrain_stream_update()
 
 		_drain_completed_generation_queue()
 		process_pending_nodes()
 	else:
-		update_chunk_unloads_only()
+		if _terrain_stream_update_needed():
+			update_chunk_unloads_only()
+			_record_terrain_stream_update_key()
+		else:
+			_skip_terrain_stream_update()
 		if spawn_zone_work_pending:
 			_drain_completed_generation_queue()
 			process_pending_nodes(true)
@@ -1976,11 +2082,7 @@ func _process(delta):
 	_process_completed_terrain_visual_batch_builds()
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
-
-func _physics_process(_delta):
-	if not viewer or skip_terrain_chunk_updates_for_test:
-		return
-	update_collision_proximity()
+	_update_runtime_power_mode(delta)
 
 var debug_chunk_bounds: bool = false
 
@@ -2039,6 +2141,176 @@ func _adjust_adaptive_loading():
 		loading_paused = false
 		adaptive_frame_budget_ms = 1.5 # Max 1.5ms (reduced from 3ms)
 		chunks_per_frame_limit = 1
+
+func _get_runtime_power_env_int(name: String, default_value: int) -> int:
+	var raw := OS.get_environment(name).strip_edges()
+	if raw.is_empty() or not raw.is_valid_int():
+		return default_value
+	var value := int(raw)
+	return value if value > 0 else default_value
+
+func _get_runtime_power_env_float(name: String, default_value: float) -> float:
+	var raw := OS.get_environment(name).strip_edges()
+	if raw.is_empty() or not raw.is_valid_float():
+		return default_value
+	var value := float(raw)
+	return value if value > 0.0 else default_value
+
+func _configure_runtime_power_mode_from_env() -> void:
+	_runtime_power_disabled_reason = ""
+	if OS.get_environment("TOWN_STALL_DISABLE_RUNTIME_POWER_MODE") == "1":
+		runtime_power_mode_enabled = false
+		_runtime_power_disabled_reason = "disabled_by_env"
+	elif not OS.get_environment("TOWN_STALL_MAX_FPS").strip_edges().is_empty() and OS.get_environment("TOWN_STALL_ENABLE_RUNTIME_POWER_MODE") != "1":
+		runtime_power_mode_enabled = false
+		_runtime_power_disabled_reason = "fixed_max_fps_test_override"
+
+	runtime_power_active_max_fps = _get_runtime_power_env_int("TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS", runtime_power_active_max_fps)
+	runtime_power_idle_max_fps = _get_runtime_power_env_int("TOWN_STALL_RUNTIME_POWER_IDLE_FPS", runtime_power_idle_max_fps)
+	runtime_power_deep_idle_max_fps = _get_runtime_power_env_int("TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS", runtime_power_deep_idle_max_fps)
+	runtime_power_idle_enter_delay_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_IDLE_DELAY_S", runtime_power_idle_enter_delay_s)
+	runtime_power_deep_idle_enter_delay_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S", runtime_power_deep_idle_enter_delay_s)
+	runtime_power_active_grace_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_ACTIVE_GRACE_S", runtime_power_active_grace_s)
+	runtime_power_idle_max_fps = mini(runtime_power_idle_max_fps, runtime_power_active_max_fps)
+	runtime_power_deep_idle_max_fps = mini(runtime_power_deep_idle_max_fps, runtime_power_idle_max_fps)
+	runtime_power_deep_idle_enter_delay_s = maxf(runtime_power_deep_idle_enter_delay_s, runtime_power_idle_enter_delay_s)
+
+	if runtime_power_mode_enabled:
+		_apply_runtime_power_fps("active", runtime_power_active_max_fps)
+
+func _runtime_power_input_active() -> bool:
+	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]
+	for action in actions:
+		if InputMap.has_action(action) and Input.is_action_pressed(action):
+			return true
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
+		return true
+	return Input.get_last_mouse_velocity().length_squared() > 1.0
+
+func _runtime_power_viewer_moved() -> bool:
+	var viewer_pos := get_viewer_position()
+	if _runtime_power_last_viewer_pos.x > 9.0e19:
+		_runtime_power_last_viewer_pos = viewer_pos
+		return true
+	var moved := viewer_pos.distance_squared_to(_runtime_power_last_viewer_pos) > runtime_power_position_epsilon * runtime_power_position_epsilon
+	_runtime_power_last_viewer_pos = viewer_pos
+	return moved
+
+func _runtime_power_terrain_busy() -> bool:
+	return initial_load_phase \
+		or _last_update_loads > 0 \
+		or _last_update_unloads > 0 \
+		or not pending_nodes.is_empty() \
+		or _get_completed_generation_queue_count() > 0 \
+		or _get_task_queue_count() > 0 \
+		or _get_cpu_task_queue_count() > 0 \
+		or not pending_terrain_collision_creates.is_empty() \
+		or not _terrain_visual_batch_dirty.is_empty() \
+		or not _terrain_visual_batch_builds_in_flight.is_empty() \
+		or not _completed_terrain_visual_batch_builds.is_empty()
+
+func _apply_runtime_power_fps(mode: String, target_fps_value: int) -> void:
+	_runtime_power_mode = mode
+	_runtime_power_target_fps = target_fps_value
+	if Engine.max_fps != target_fps_value:
+		Engine.max_fps = target_fps_value
+
+func _update_runtime_power_mode(delta: float) -> void:
+	if not runtime_power_mode_enabled:
+		return
+
+	var input_active := _runtime_power_input_active()
+	var viewer_moved := _runtime_power_viewer_moved()
+	var terrain_busy := _runtime_power_terrain_busy()
+	var active_now := input_active or viewer_moved or terrain_busy
+	if active_now:
+		if input_active:
+			_runtime_power_active_reason = "input"
+		elif viewer_moved:
+			_runtime_power_active_reason = "viewer_moved"
+		elif terrain_busy:
+			_runtime_power_active_reason = "terrain_busy"
+		else:
+			_runtime_power_active_reason = "active"
+		_runtime_power_idle_seconds = 0.0
+		_runtime_power_active_grace_remaining_s = runtime_power_active_grace_s
+	else:
+		if _runtime_power_active_grace_remaining_s > 0.0:
+			_runtime_power_active_reason = "active_grace"
+			_runtime_power_active_grace_remaining_s = maxf(0.0, _runtime_power_active_grace_remaining_s - delta)
+			_runtime_power_idle_seconds = 0.0
+		else:
+			_runtime_power_active_reason = "idle"
+			_runtime_power_idle_seconds += delta
+
+	if _runtime_power_idle_seconds >= runtime_power_deep_idle_enter_delay_s:
+		_runtime_power_deep_idle_frame_count += 1
+		_apply_runtime_power_fps("deep_idle", runtime_power_deep_idle_max_fps)
+	elif _runtime_power_idle_seconds >= runtime_power_idle_enter_delay_s:
+		_runtime_power_idle_frame_count += 1
+		_apply_runtime_power_fps("idle", runtime_power_idle_max_fps)
+	else:
+		_runtime_power_active_frame_count += 1
+		_apply_runtime_power_fps("active", runtime_power_active_max_fps)
+
+func _get_viewer_chunk_coord() -> Vector3i:
+	var p_pos := get_viewer_position()
+	return Vector3i(
+		int(floor(p_pos.x / CHUNK_STRIDE)),
+		int(floor(p_pos.y / CHUNK_STRIDE)),
+		int(floor(p_pos.z / CHUNK_STRIDE))
+	)
+
+func _get_min_loaded_stream_chunk_count() -> int:
+	if render_distance <= 0:
+		return 0
+	var render_target := int(PI * float(render_distance * render_distance))
+	return maxi(initial_load_target_chunks, render_target)
+
+func _terrain_stream_update_needed() -> bool:
+	if initial_load_phase:
+		_last_terrain_stream_update_gate_reason = "initial_load"
+		return true
+	if active_chunks.is_empty():
+		_last_terrain_stream_update_gate_reason = "empty_world"
+		return true
+	var min_loaded_chunk_count := _get_min_loaded_stream_chunk_count()
+	if min_loaded_chunk_count > 0 and active_chunks.size() < min_loaded_chunk_count:
+		_last_terrain_stream_update_gate_reason = "below_stream_target"
+		return true
+	if _last_update_loads > 0 or _last_update_unloads > 0:
+		_last_terrain_stream_update_gate_reason = "continuing_stream_burst"
+		return true
+	if not pending_spawn_zones.is_empty():
+		_last_terrain_stream_update_gate_reason = "spawn_zone_pending"
+		return true
+	if _modification_coord_cache_dirty:
+		_last_terrain_stream_update_gate_reason = "modification_cache_dirty"
+		return true
+	var center_chunk := _get_viewer_chunk_coord()
+	if center_chunk != _last_terrain_stream_update_center_chunk:
+		_last_terrain_stream_update_gate_reason = "viewer_chunk_changed"
+		return true
+	if render_distance != _last_terrain_stream_update_render_distance:
+		_last_terrain_stream_update_gate_reason = "render_distance_changed"
+		return true
+	if loading_paused != _last_terrain_stream_update_loading_paused:
+		_last_terrain_stream_update_gate_reason = "loading_pause_changed"
+		return true
+	_last_terrain_stream_update_gate_reason = "idle_same_chunk"
+	return false
+
+func _record_terrain_stream_update_key() -> void:
+	_last_terrain_stream_update_center_chunk = _get_viewer_chunk_coord()
+	_last_terrain_stream_update_render_distance = render_distance
+	_last_terrain_stream_update_loading_paused = loading_paused
+
+func _skip_terrain_stream_update() -> void:
+	_terrain_stream_update_idle_skip_count += 1
+	_last_update_backend = "idle_gate"
+	_last_update_loads = 0
+	_last_update_unloads = 0
+	_last_update_duration_ms = 0.0
 
 var _last_collision_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_collision_active_count: int = -1
@@ -2233,71 +2505,60 @@ func update_collision_proximity():
 		return
 	_last_collision_center_chunk = center_chunk
 	_last_collision_active_count = active_count
-	var collision_distance_sq := collision_distance * collision_distance
-	var collision_prewarm_distance_sq := maxi(collision_prewarm_distance, collision_distance) * maxi(collision_prewarm_distance, collision_distance)
-	var active_collision_distance := _shared_terrain_collision_distance() if shared_terrain_collision_body_enabled else collision_distance
-	var active_collision_distance_sq := active_collision_distance * active_collision_distance
 	var world := get_world_3d()
+	if not terrain_grid or not terrain_grid.has_method("get_collision_proximity_update"):
+		_last_collision_proximity_update_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
+		return
 
-	var desired_collision_coords: Dictionary = {}
-	var min_collision_y := maxi(MIN_Y_LAYER, center_chunk.y - 2)
-	var max_collision_y := mini(MAX_Y_LAYER, center_chunk.y + 2)
-	for x in range(center_chunk.x - active_collision_distance, center_chunk.x + active_collision_distance + 1):
-		for z in range(center_chunk.z - active_collision_distance, center_chunk.z + active_collision_distance + 1):
-			var dx: int = x - center_chunk.x
-			var dz: int = z - center_chunk.z
-			if dx * dx + dz * dz > active_collision_distance_sq:
-				continue
-			for y in range(min_collision_y, max_collision_y + 1):
-				var coord := Vector3i(x, y, z)
-				desired_collision_coords[coord] = true
-				var data = active_chunks.get(coord, null)
-				if data == null:
-					continue
-				var was_enabled := bool(data.terrain_collision_enabled)
-				_sync_terrain_collision_state(coord, data, true, world)
-				if not was_enabled and bool(data.terrain_collision_enabled):
-					_last_collision_proximity_enable_count += 1
+	var proximity_update: Dictionary = terrain_grid.get_collision_proximity_update(
+		center_chunk,
+		collision_distance,
+		collision_prewarm_distance,
+		MIN_Y_LAYER,
+		MAX_Y_LAYER,
+		shared_terrain_collision_body_enabled
+	)
 
-	for coord_variant in _terrain_collision_active_coords.keys():
+	for coord_variant in proximity_update.get("enable", []):
 		var coord: Vector3i = coord_variant
-		if desired_collision_coords.has(coord):
+		var data = active_chunks.get(coord, null)
+		if data == null:
 			continue
+		var was_enabled := bool(data.terrain_collision_enabled)
+		_sync_terrain_collision_state(coord, data, true, world)
+		if not was_enabled and bool(data.terrain_collision_enabled):
+			_last_collision_proximity_enable_count += 1
+
+	for coord_variant in proximity_update.get("disable", []):
+		var coord: Vector3i = coord_variant
 		if not active_chunks.has(coord):
 			_terrain_collision_active_coords.erase(coord)
+			if terrain_grid and terrain_grid.has_method("set_chunk_collision_active"):
+				terrain_grid.set_chunk_collision_active(coord, false)
 			continue
 		var data = active_chunks[coord]
 		if data == null:
 			_terrain_collision_active_coords.erase(coord)
+			if terrain_grid and terrain_grid.has_method("set_chunk_collision_active"):
+				terrain_grid.set_chunk_collision_active(coord, false)
 			continue
 		var was_enabled := bool(data.terrain_collision_enabled)
 		_sync_terrain_collision_state(coord, data, false, world)
 		if was_enabled and not bool(data.terrain_collision_enabled):
 			_last_collision_proximity_disable_count += 1
 
-	var prewarm_distance := maxi(collision_prewarm_distance, collision_distance)
 	if shared_terrain_collision_body_enabled:
 		_last_collision_proximity_update_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 		return
-	if prewarm_distance > collision_distance:
-		var min_prewarm_y := maxi(MIN_Y_LAYER, center_chunk.y - 2)
-		var max_prewarm_y := mini(MAX_Y_LAYER, center_chunk.y + 2)
-		for x in range(center_chunk.x - prewarm_distance, center_chunk.x + prewarm_distance + 1):
-			for z in range(center_chunk.z - prewarm_distance, center_chunk.z + prewarm_distance + 1):
-				var dx: int = x - center_chunk.x
-				var dz: int = z - center_chunk.z
-				var dist_xz_sq: int = dx * dx + dz * dz
-				if dist_xz_sq > collision_prewarm_distance_sq or dist_xz_sq <= collision_distance_sq:
-					continue
-				for y in range(min_prewarm_y, max_prewarm_y + 1):
-					var coord := Vector3i(x, y, z)
-					var data = active_chunks.get(coord, null)
-					if data == null or _has_terrain_collision_server_shape(data) or not data.node_terrain or not data.terrain_shape:
-						continue
-					var was_pending := pending_terrain_collision_creates.has(coord)
-					_queue_terrain_collision_create(coord)
-					if not was_pending and pending_terrain_collision_creates.has(coord):
-						_last_collision_proximity_prewarm_queued += 1
+	for coord_variant in proximity_update.get("prewarm", []):
+		var coord: Vector3i = coord_variant
+		var data = active_chunks.get(coord, null)
+		if data == null or _has_terrain_collision_server_shape(data) or not data.node_terrain or not data.terrain_shape:
+			continue
+		var was_pending := pending_terrain_collision_creates.has(coord)
+		_queue_terrain_collision_create(coord)
+		if not was_pending and pending_terrain_collision_creates.has(coord):
+			_last_collision_proximity_prewarm_queued += 1
 
 	_last_collision_proximity_update_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
@@ -2330,6 +2591,8 @@ func _mark_terrain_collision_active(coord: Vector3i, active: bool) -> void:
 		_terrain_collision_active_coords[coord] = true
 	else:
 		_terrain_collision_active_coords.erase(coord)
+	if terrain_grid and terrain_grid.has_method("set_chunk_collision_active"):
+		terrain_grid.set_chunk_collision_active(coord, active)
 
 func _mark_terrain_collision_space_attached(coord: Vector3i, attached: bool) -> void:
 	if attached:
@@ -4282,6 +4545,9 @@ func clear_all_chunks():
 	pending_spawn_zones.clear()
 	modification_batch_id = 0
 	pending_batches.clear()
+	_last_terrain_stream_update_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
+	_last_terrain_stream_update_render_distance = -1
+	_terrain_stream_update_idle_skip_count = 0
 	_last_update_backend = "clear"
 	_last_update_loads = 0
 	_last_update_unloads = 0
@@ -4491,8 +4757,9 @@ func _update_chunks_legacy():
 func _interruptible_delay(total_ms: int):
 	var elapsed = 0
 	while elapsed < total_ms:
-		# Check if any GPU terrain work is waiting; priority tasks should interrupt.
-		var has_pending_gpu_task = _has_pending_gpu_tasks()
+		# Exploration pacing should only yield to priority work such as edits,
+		# spawn-zone requests, or shutdown. Normal background generation waits.
+		var has_pending_gpu_task = _has_pending_priority_gpu_tasks_or_exit()
 
 		if has_pending_gpu_task:
 			return # Stop delaying, process immediately
@@ -4663,7 +4930,7 @@ func _thread_function():
 	# the end before Godot reimports the packed-output shader.
 	# This lets a couple of chunks overlap without reusing the same GPU storage buffers
 	# before readback has completed.
-	const MAX_IN_FLIGHT = 4 # Batch more terrain work before sync; output stays identical.
+	const MAX_IN_FLIGHT = 1 # Keep gameplay frames smooth by avoiding multi-chunk GPU sync spikes.
 	var output_bytes_size = MAX_TRIANGLES * 3 * LEGACY_VERTEX_FLOATS * 4
 	var output_index_bytes_size = MAX_TRIANGLES * 3 * 4
 	var buffer_slots: Array[Dictionary] = []
@@ -4783,23 +5050,29 @@ func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pi
 	if in_flight.is_empty():
 		return
 
+	var batch_start_us := Time.get_ticks_usec()
+	var batch_count := in_flight.size()
 	var needs_submit := false
 	for flight_data in in_flight:
 		if bool(flight_data.get("needs_submit", true)):
 			needs_submit = true
 			break
 
+	var generation_sync_start_us := Time.get_ticks_usec()
 	if needs_submit:
 		rd.submit()
 	rd.sync()
+	var generation_sync_ms := float(Time.get_ticks_usec() - generation_sync_start_us) / 1000.0
 
 	var mesh_readbacks: Array[Dictionary] = []
+	var synced_mesh_readbacks: Array[Dictionary] = []
+	var meshing_dispatch_start_us := Time.get_ticks_usec()
 	for flight_data in in_flight:
 		var slot_index := int(flight_data.get("buffer_slot", 0))
 		if slot_index < 0 or slot_index >= buffer_slots.size():
 			slot_index = 0
 		var slot: Dictionary = buffer_slots[slot_index]
-		mesh_readbacks.append(_dispatch_chunk_meshing(
+		var mesh_readback: Dictionary = _dispatch_chunk_meshing(
 			rd,
 			flight_data,
 			sid_mesh,
@@ -4810,13 +5083,54 @@ func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pi
 			slot["vertex_buffer_water"],
 			slot["counter_buffer_water"],
 			slot["index_buffer_water"]
-		))
+		)
+		if bool(mesh_readback.get("already_synced", false)):
+			synced_mesh_readbacks.append(mesh_readback)
+		else:
+			mesh_readbacks.append(mesh_readback)
+	var meshing_dispatch_ms := float(Time.get_ticks_usec() - meshing_dispatch_start_us) / 1000.0
 
+	var meshing_sync_ms := 0.0
+	var mesh_readback_ms := 0.0
+	var mesh_readback_count := 0
+	var terrain_vertex_count := 0
+	var water_vertex_count := 0
+	var mesh_slice_count := 0
+	var mesh_slice_max_sync_ms := 0.0
+	for readback in synced_mesh_readbacks:
+		meshing_sync_ms += float(readback.get("mesh_sync_ms", 0.0))
+		mesh_readback_ms += float(readback.get("mesh_readback_ms", 0.0))
+		mesh_slice_count += int(readback.get("mesh_slice_count", 0))
+		mesh_slice_max_sync_ms = maxf(mesh_slice_max_sync_ms, float(readback.get("mesh_slice_max_sync_ms", 0.0)))
+		var readback_summary: Dictionary = _complete_chunk_readback(rd, readback)
+		mesh_readback_count += 1
+		terrain_vertex_count += int(readback_summary.get("terrain_vertex_count", 0))
+		water_vertex_count += int(readback_summary.get("water_vertex_count", 0))
 	if not mesh_readbacks.is_empty():
+		var meshing_sync_start_us := Time.get_ticks_usec()
 		rd.submit()
 		rd.sync()
+		meshing_sync_ms = float(Time.get_ticks_usec() - meshing_sync_start_us) / 1000.0
+		var mesh_readback_start_us := Time.get_ticks_usec()
 		for readback in mesh_readbacks:
-			_complete_chunk_readback(rd, readback)
+			var readback_summary: Dictionary = _complete_chunk_readback(rd, readback)
+			mesh_readback_count += 1
+			terrain_vertex_count += int(readback_summary.get("terrain_vertex_count", 0))
+			water_vertex_count += int(readback_summary.get("water_vertex_count", 0))
+		mesh_readback_ms = float(Time.get_ticks_usec() - mesh_readback_start_us) / 1000.0
+
+	_last_gpu_generation_batch_ms = float(Time.get_ticks_usec() - batch_start_us) / 1000.0
+	_last_gpu_generation_batch_chunk_count = batch_count
+	_last_gpu_generation_sync_ms = generation_sync_ms
+	_last_gpu_meshing_dispatch_ms = meshing_dispatch_ms
+	_last_gpu_meshing_sync_ms = meshing_sync_ms
+	_last_gpu_mesh_readback_ms = mesh_readback_ms
+	_last_gpu_mesh_readback_chunk_count = mesh_readback_count
+	_last_gpu_mesh_readback_terrain_vertices = terrain_vertex_count
+	_last_gpu_mesh_readback_water_vertices = water_vertex_count
+	_last_gpu_mesh_slice_count = mesh_slice_count
+	_last_gpu_mesh_slice_max_sync_ms = mesh_slice_max_sync_ms
+	_last_gpu_generation_batch_event_id += 1
 
 	in_flight.clear()
 
@@ -4833,6 +5147,7 @@ func _delay_after_generation_batch() -> void:
 
 # Dispatch generation work WITHOUT syncing - returns in-flight data for later readback
 func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_water, sid_mod, pipe_gen, pipe_gen_water, pipe_mod) -> Dictionary:
+	var dispatch_start_us := Time.get_ticks_usec()
 	var chunk_pos = task.pos
 	var coord = task.coord
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
@@ -4908,12 +5223,15 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var needs_terrain_density_readback := false
 	var needs_water_density_readback := false
 	var water_surface_possible := _chunk_may_have_generated_water_surface(coord)
+	var modification_sync_ms := 0.0
 
 	if mods_for_chunk.size() > 0:
 		# Debug: show when mods are applied to underground chunks
 		# Need to sync before modifications since they read/write density
+		var modification_sync_start_us := Time.get_ticks_usec()
 		rd.submit()
 		rd.sync()
+		modification_sync_ms += float(Time.get_ticks_usec() - modification_sync_start_us) / 1000.0
 		for mod in mods_for_chunk:
 			if int(mod.get("material_id", -1)) >= 0:
 				needs_material_readback = true
@@ -4931,7 +5249,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	if set_gen_w.is_valid(): rd.free_rid(set_gen_w)
 
 	# Return in-flight data for later readback
-	return {
+	var flight_data := {
 		"coord": coord,
 		"chunk_pos": chunk_pos,
 		"dens_buf_terrain": dens_buf_terrain,
@@ -4944,6 +5262,10 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		"stored_mod_version": stored_mod_version,
 		"needs_submit": mods_for_chunk.is_empty()
 	}
+	_last_gpu_generation_dispatch_ms = float(Time.get_ticks_usec() - dispatch_start_us) / 1000.0
+	_last_gpu_generation_dispatch_coord = coord
+	_last_gpu_generation_mod_sync_ms = modification_sync_ms
+	return flight_data
 
 # Dispatch terrain and water meshing without syncing so the whole chunk batch can complete together.
 func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_mesh, pipe_mesh, vertex_buffer_terrain, counter_buffer_terrain, index_buffer_terrain, vertex_buffer_water, counter_buffer_water, index_buffer_water) -> Dictionary:
@@ -4951,9 +5273,43 @@ func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_m
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
+	var skip_water_mesh := not bool(flight_data.get("water_surface_possible", true))
+
+	if terrain_gpu_separate_water_meshing and not skip_water_mesh and terrain_gpu_mesh_slices_per_chunk <= 1:
+		var terrain_mesh: Dictionary = run_gpu_meshing_immediate_readback(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain, index_buffer_terrain)
+		if terrain_gpu_mesh_slice_delay_ms > 0:
+			OS.delay_msec(terrain_gpu_mesh_slice_delay_ms)
+		var water_mesh: Dictionary = run_gpu_meshing_immediate_readback(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water, index_buffer_water)
+		return {
+			"flight_data": flight_data,
+			"skip_water_mesh": skip_water_mesh,
+			"already_synced": true,
+			"mesh_data_terrain": terrain_mesh.get("mesh_data", {}),
+			"mesh_data_water": water_mesh.get("mesh_data", {}),
+			"mesh_sync_ms": float(terrain_mesh.get("sync_ms", 0.0)) + float(water_mesh.get("sync_ms", 0.0)),
+			"mesh_readback_ms": float(terrain_mesh.get("readback_ms", 0.0)) + float(water_mesh.get("readback_ms", 0.0)),
+			"mesh_slice_count": 2,
+			"mesh_slice_max_sync_ms": maxf(float(terrain_mesh.get("sync_ms", 0.0)), float(water_mesh.get("sync_ms", 0.0)))
+		}
+
+	if terrain_gpu_mesh_slices_per_chunk > 1:
+		var terrain_slices: Dictionary = run_gpu_meshing_sliced_readback(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain, index_buffer_terrain)
+		var water_slices: Dictionary = {"mesh_data": {}, "sync_ms": 0.0, "readback_ms": 0.0, "slice_count": 0, "max_slice_sync_ms": 0.0}
+		if not skip_water_mesh:
+			water_slices = run_gpu_meshing_sliced_readback(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water, index_buffer_water)
+		return {
+			"flight_data": flight_data,
+			"skip_water_mesh": skip_water_mesh,
+			"already_synced": true,
+			"mesh_data_terrain": terrain_slices.get("mesh_data", {}),
+			"mesh_data_water": water_slices.get("mesh_data", {}),
+			"mesh_sync_ms": float(terrain_slices.get("sync_ms", 0.0)) + float(water_slices.get("sync_ms", 0.0)),
+			"mesh_readback_ms": float(terrain_slices.get("readback_ms", 0.0)) + float(water_slices.get("readback_ms", 0.0)),
+			"mesh_slice_count": int(terrain_slices.get("slice_count", 0)) + int(water_slices.get("slice_count", 0)),
+			"mesh_slice_max_sync_ms": maxf(float(terrain_slices.get("max_slice_sync_ms", 0.0)), float(water_slices.get("max_slice_sync_ms", 0.0)))
+		}
 
 	var set_mesh_t = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain, index_buffer_terrain)
-	var skip_water_mesh := not bool(flight_data.get("water_surface_possible", true))
 	var set_mesh_w = RID()
 	if not skip_water_mesh:
 		set_mesh_w = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, dens_buf_water, mat_buf_terrain, chunk_pos, vertex_buffer_water, counter_buffer_water, index_buffer_water)
@@ -4972,7 +5328,7 @@ func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_m
 	}
 
 # Complete readback and queue to CPU workers (called after density and mesh syncs)
-func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
+func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary) -> Dictionary:
 	var flight_data: Dictionary = readback.flight_data
 	var coord = flight_data.coord
 	var chunk_pos = flight_data.chunk_pos
@@ -4980,10 +5336,13 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 
-	var mesh_data_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.index_buffer_terrain, readback.set_mesh_t)
-	var mesh_data_water = {}
+	var mesh_data_terrain: Dictionary = readback.get("mesh_data_terrain", {})
+	if mesh_data_terrain.is_empty():
+		mesh_data_terrain = run_gpu_meshing_readback(rd, readback.vertex_buffer_terrain, readback.counter_buffer_terrain, readback.index_buffer_terrain, readback.set_mesh_t)
+	var mesh_data_water: Dictionary = readback.get("mesh_data_water", {})
 	if not bool(readback.get("skip_water_mesh", false)):
-		mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.index_buffer_water, readback.set_mesh_w)
+		if mesh_data_water.is_empty():
+			mesh_data_water = run_gpu_meshing_readback(rd, readback.vertex_buffer_water, readback.counter_buffer_water, readback.index_buffer_water, readback.set_mesh_w)
 
 	# Water and terrain density remain full CPU mirrors only for modified chunks.
 	# Normal generated chunks answer water queries from the shader-equivalent
@@ -5022,13 +5381,111 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary):
 		"dens_buf_terrain": dens_buf_terrain,
 		"dens_buf_water": dens_buf_water,
 		"mat_buf_terrain": mat_buf_terrain, # Material buffer for modify path
-		"stored_mod_version": int(flight_data.get("stored_mod_version", 0))
+		"stored_mod_version": int(flight_data.get("stored_mod_version", 0)),
+		"queued_for_cpu_us": Time.get_ticks_usec()
 	})
 	cpu_mutex.unlock()
 	cpu_semaphore.post()
+	return {
+		"terrain_vertex_count": int(mesh_data_terrain.get("vertex_count", 0)),
+		"water_vertex_count": int(mesh_data_water.get("vertex_count", 0))
+	}
+
+func run_gpu_meshing_immediate_readback(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer) -> Dictionary:
+	var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer)
+	rd.submit()
+	var sync_start_us := Time.get_ticks_usec()
+	rd.sync()
+	var sync_ms := float(Time.get_ticks_usec() - sync_start_us) / 1000.0
+
+	var readback_start_us := Time.get_ticks_usec()
+	var mesh_data := run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, index_buffer, set_mesh)
+	var readback_ms := float(Time.get_ticks_usec() - readback_start_us) / 1000.0
+	return {
+		"mesh_data": mesh_data,
+		"sync_ms": sync_ms,
+		"readback_ms": readback_ms
+	}
+
+
+func run_gpu_meshing_sliced_readback(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer) -> Dictionary:
+	var target_cells := CHUNK_SIZE - 1
+	var requested_slices := clampi(terrain_gpu_mesh_slices_per_chunk, 1, 8)
+	var slice_height := maxi(1, int(ceil(float(target_cells) / float(requested_slices))))
+	var mesh_slices: Array[Dictionary] = []
+	var total_sync_ms := 0.0
+	var total_readback_ms := 0.0
+	var max_slice_sync_ms := 0.0
+	var actual_slice_count := 0
+
+	for slice_y in range(0, target_cells, slice_height):
+		var slice_count = mini(slice_height, target_cells - slice_y)
+		if slice_count <= 0:
+			continue
+		var set_mesh = run_gpu_meshing_dispatch(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer, slice_y, slice_count)
+		rd.submit()
+		var sync_start_us := Time.get_ticks_usec()
+		rd.sync()
+		var sync_ms := float(Time.get_ticks_usec() - sync_start_us) / 1000.0
+		total_sync_ms += sync_ms
+		max_slice_sync_ms = maxf(max_slice_sync_ms, sync_ms)
+
+		var readback_start_us := Time.get_ticks_usec()
+		var mesh_data := run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, index_buffer, set_mesh)
+		total_readback_ms += float(Time.get_ticks_usec() - readback_start_us) / 1000.0
+		actual_slice_count += 1
+		if int(mesh_data.get("vertex_count", 0)) > 0:
+			mesh_slices.append(mesh_data)
+
+		if terrain_gpu_mesh_slice_delay_ms > 0 and slice_y + slice_count < target_cells:
+			OS.delay_msec(terrain_gpu_mesh_slice_delay_ms)
+
+	return {
+		"mesh_data": _merge_packed_mesh_slices(mesh_slices),
+		"sync_ms": total_sync_ms,
+		"readback_ms": total_readback_ms,
+		"slice_count": actual_slice_count,
+		"max_slice_sync_ms": max_slice_sync_ms
+	}
+
+
+func _merge_packed_mesh_slices(mesh_slices: Array[Dictionary]) -> Dictionary:
+	var merged_vertices := PackedByteArray()
+	var merged_indices := PackedByteArray()
+	var total_vertex_count := 0
+	var total_index_count := 0
+
+	for mesh_data in mesh_slices:
+		if not bool(mesh_data.get("indexed", false)):
+			return mesh_data
+		var vertex_bytes: PackedByteArray = mesh_data.get("bytes", PackedByteArray())
+		var index_bytes: PackedByteArray = mesh_data.get("indices", PackedByteArray())
+		var vertex_count := int(mesh_data.get("vertex_count", 0))
+		var index_count := int(mesh_data.get("index_count", index_bytes.size() / 4))
+		if vertex_count <= 0 or vertex_bytes.is_empty() or index_count <= 0 or index_bytes.is_empty():
+			continue
+
+		merged_vertices.append_array(vertex_bytes)
+		var index_base_byte := merged_indices.size()
+		merged_indices.resize(index_base_byte + index_count * 4)
+		for index_i in range(index_count):
+			var local_index := int(index_bytes.decode_u32(index_i * 4))
+			merged_indices.encode_u32(index_base_byte + index_i * 4, local_index + total_vertex_count)
+		total_vertex_count += vertex_count
+		total_index_count += index_count
+
+	return {
+		"bytes": merged_vertices,
+		"indices": merged_indices,
+		"floats": PackedFloat32Array(),
+		"vertex_count": total_vertex_count,
+		"index_count": total_index_count,
+		"packed": true,
+		"indexed": true
+	}
 
 # GPU meshing dispatch only - NO sync, returns uniform set for later cleanup
-func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer) -> RID:
+func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, vertex_buffer, counter_buffer, index_buffer, slice_y_offset: int = 0, slice_y_count: int = CHUNK_SIZE - 1) -> RID:
 	# Reset Counter to 0
 	var zero_data = PackedByteArray()
 	zero_data.resize(12)
@@ -5070,12 +5527,13 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 
 	var push_data = PackedFloat32Array([
 		chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0,
-		noise_frequency, terrain_height, 0.0, 0.0
+		noise_frequency, terrain_height, float(slice_y_offset), float(slice_y_count)
 	])
 	rd.compute_list_set_push_constant(list, push_data.to_byte_array(), push_data.size() * 4)
 
 	var groups = CHUNK_SIZE / 8
-	rd.compute_list_dispatch(list, groups, groups, groups)
+	var groups_y = int(ceil(float(slice_y_count) / 8.0))
+	rd.compute_list_dispatch(list, groups, groups_y, groups)
 	rd.compute_list_end()
 	# NO submit/sync here - caller handles it
 
@@ -5182,24 +5640,46 @@ func _cpu_thread_function():
 			continue
 
 		# Build terrain mesh and collision (CPU intensive)
+		var cpu_build_start_us := Time.get_ticks_usec()
+		var queued_for_cpu_us := int(task.get("queued_for_cpu_us", 0))
+		var cpu_queue_wait_ms := 0.0
+		if queued_for_cpu_us > 0:
+			cpu_queue_wait_ms = float(cpu_build_start_us - queued_for_cpu_us) / 1000.0
 		var mesh_terrain = null
 		var shape_terrain = null
 		var height_map_terrain := PackedFloat32Array()
 		var mesh_data_terrain: Dictionary = task.get("mesh_data_terrain", {})
+		var terrain_vertex_count := int(mesh_data_terrain.get("vertex_count", 0))
+		var terrain_build_ms := 0.0
 		if int(mesh_data_terrain.get("vertex_count", 0)) > 0:
+			var terrain_build_start_us := Time.get_ticks_usec()
 			var built_terrain := build_packed_mesh_and_collision(mesh_data_terrain, material_terrain, builder, true)
 			mesh_terrain = built_terrain.get("mesh", null)
 			shape_terrain = built_terrain.get("shape", null)
 			height_map_terrain = built_terrain.get("height_map", PackedFloat32Array())
+			terrain_build_ms = float(Time.get_ticks_usec() - terrain_build_start_us) / 1000.0
 
 		# Build water mesh and collision (CPU intensive)
 		var mesh_water = null
 		var shape_water = null
 		var mesh_data_water: Dictionary = task.get("mesh_data_water", {})
+		var water_vertex_count := int(mesh_data_water.get("vertex_count", 0))
+		var water_build_ms := 0.0
 		if int(mesh_data_water.get("vertex_count", 0)) > 0:
+			var water_build_start_us := Time.get_ticks_usec()
 			var built_water := build_packed_mesh_and_collision(mesh_data_water, material_water, builder)
 			mesh_water = built_water.get("mesh", null)
 			shape_water = built_water.get("shape", null)
+			water_build_ms = float(Time.get_ticks_usec() - water_build_start_us) / 1000.0
+
+		_last_cpu_mesh_build_ms = float(Time.get_ticks_usec() - cpu_build_start_us) / 1000.0
+		_last_cpu_mesh_build_terrain_ms = terrain_build_ms
+		_last_cpu_mesh_build_water_ms = water_build_ms
+		_last_cpu_mesh_build_queue_wait_ms = cpu_queue_wait_ms
+		_last_cpu_mesh_build_terrain_vertices = terrain_vertex_count
+		_last_cpu_mesh_build_water_vertices = water_vertex_count
+		_last_cpu_mesh_build_coord = task.coord
+		_last_cpu_mesh_build_event_id += 1
 
 		# Package results
 		var result_t = {"mesh": mesh_terrain, "shape": shape_terrain}

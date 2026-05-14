@@ -58,6 +58,8 @@ var _town_entry_latest_town_state: Dictionary = {}
 var _town_entry_latest_entities_state: Dictionary = {}
 var _previous_native_town_entry_sample: Dictionary = {}
 var _render_diagnostic_samples: Array[Dictionary] = []
+var _hold_started_sample_index: int = -1
+var _hold_completed_sample_index: int = -1
 var runtime_mode: String = "unknown"
 var auto_teleport_enabled: bool = true
 var disable_buildings_enabled: bool = false
@@ -84,6 +86,7 @@ var render_diagnostics_enabled: bool = false
 var render_diagnostics_scene_scan_enabled: bool = false
 var render_diagnostics_threshold_ms: float = FRAME_BUDGET_MS
 var render_diagnostics_sample_limit: int = RENDER_DIAGNOSTIC_DEFAULT_LIMIT
+var measure_full_flight_enabled: bool = false
 var configured_hold_seconds: float = HOLD_SECONDS
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
@@ -248,6 +251,8 @@ func _reset_town_measurement_window(reason: String) -> void:
 	_town_entry_samples.clear()
 	_previous_native_town_entry_sample.clear()
 	_render_diagnostic_samples.clear()
+	_hold_started_sample_index = -1
+	_hold_completed_sample_index = -1
 	_scope_states.clear()
 	_recent_scope_events.clear()
 	_town_entry_snapshot_stamp = ""
@@ -302,7 +307,33 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_active_chunk_count := 0
 	var terrain_native_grid_active_chunk_count := 0
 	var terrain_pending_node_count := 0
+	var terrain_last_pending_node_sort_ms := 0.0
+	var terrain_last_pending_node_sort_count := 0
+	var terrain_last_pending_node_sort_skipped := false
 	var terrain_pending_collision_create_count := 0
+	var terrain_last_gpu_generation_dispatch_ms := 0.0
+	var terrain_last_gpu_generation_dispatch_coord := ""
+	var terrain_last_gpu_generation_mod_sync_ms := 0.0
+	var terrain_last_gpu_generation_batch_ms := 0.0
+	var terrain_last_gpu_generation_batch_chunk_count := 0
+	var terrain_last_gpu_generation_sync_ms := 0.0
+	var terrain_last_gpu_meshing_dispatch_ms := 0.0
+	var terrain_last_gpu_meshing_sync_ms := 0.0
+	var terrain_last_gpu_mesh_readback_ms := 0.0
+	var terrain_last_gpu_mesh_readback_chunk_count := 0
+	var terrain_last_gpu_mesh_readback_terrain_vertices := 0
+	var terrain_last_gpu_mesh_readback_water_vertices := 0
+	var terrain_last_gpu_mesh_slice_count := 0
+	var terrain_last_gpu_mesh_slice_max_sync_ms := 0.0
+	var terrain_last_gpu_generation_batch_event_id := 0
+	var terrain_last_cpu_mesh_build_ms := 0.0
+	var terrain_last_cpu_mesh_build_terrain_ms := 0.0
+	var terrain_last_cpu_mesh_build_water_ms := 0.0
+	var terrain_last_cpu_mesh_build_queue_wait_ms := 0.0
+	var terrain_last_cpu_mesh_build_terrain_vertices := 0
+	var terrain_last_cpu_mesh_build_water_vertices := 0
+	var terrain_last_cpu_mesh_build_coord := ""
+	var terrain_last_cpu_mesh_build_event_id := 0
 	var terrain_last_finalize_terrain_ms := 0.0
 	var terrain_last_pending_node_process_ms := 0.0
 	var terrain_last_collision_create_ms := 0.0
@@ -388,7 +419,33 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_active_chunk_count = int(terrain_manager.active_chunks.size())
 		terrain_native_grid_active_chunk_count = int(terrain_manager._last_native_grid_active_chunk_count)
 		terrain_pending_node_count = int(terrain_manager.pending_nodes.size())
+		terrain_last_pending_node_sort_ms = float(terrain_manager._last_pending_node_sort_ms)
+		terrain_last_pending_node_sort_count = int(terrain_manager._last_pending_node_sort_count)
+		terrain_last_pending_node_sort_skipped = bool(terrain_manager._last_pending_node_sort_skipped)
 		terrain_pending_collision_create_count = int(terrain_manager.pending_terrain_collision_creates.size())
+		terrain_last_gpu_generation_dispatch_ms = float(terrain_manager._last_gpu_generation_dispatch_ms)
+		terrain_last_gpu_generation_dispatch_coord = str(terrain_manager._last_gpu_generation_dispatch_coord)
+		terrain_last_gpu_generation_mod_sync_ms = float(terrain_manager._last_gpu_generation_mod_sync_ms)
+		terrain_last_gpu_generation_batch_ms = float(terrain_manager._last_gpu_generation_batch_ms)
+		terrain_last_gpu_generation_batch_chunk_count = int(terrain_manager._last_gpu_generation_batch_chunk_count)
+		terrain_last_gpu_generation_sync_ms = float(terrain_manager._last_gpu_generation_sync_ms)
+		terrain_last_gpu_meshing_dispatch_ms = float(terrain_manager._last_gpu_meshing_dispatch_ms)
+		terrain_last_gpu_meshing_sync_ms = float(terrain_manager._last_gpu_meshing_sync_ms)
+		terrain_last_gpu_mesh_readback_ms = float(terrain_manager._last_gpu_mesh_readback_ms)
+		terrain_last_gpu_mesh_readback_chunk_count = int(terrain_manager._last_gpu_mesh_readback_chunk_count)
+		terrain_last_gpu_mesh_readback_terrain_vertices = int(terrain_manager._last_gpu_mesh_readback_terrain_vertices)
+		terrain_last_gpu_mesh_readback_water_vertices = int(terrain_manager._last_gpu_mesh_readback_water_vertices)
+		terrain_last_gpu_mesh_slice_count = int(terrain_manager._last_gpu_mesh_slice_count)
+		terrain_last_gpu_mesh_slice_max_sync_ms = float(terrain_manager._last_gpu_mesh_slice_max_sync_ms)
+		terrain_last_gpu_generation_batch_event_id = int(terrain_manager._last_gpu_generation_batch_event_id)
+		terrain_last_cpu_mesh_build_ms = float(terrain_manager._last_cpu_mesh_build_ms)
+		terrain_last_cpu_mesh_build_terrain_ms = float(terrain_manager._last_cpu_mesh_build_terrain_ms)
+		terrain_last_cpu_mesh_build_water_ms = float(terrain_manager._last_cpu_mesh_build_water_ms)
+		terrain_last_cpu_mesh_build_queue_wait_ms = float(terrain_manager._last_cpu_mesh_build_queue_wait_ms)
+		terrain_last_cpu_mesh_build_terrain_vertices = int(terrain_manager._last_cpu_mesh_build_terrain_vertices)
+		terrain_last_cpu_mesh_build_water_vertices = int(terrain_manager._last_cpu_mesh_build_water_vertices)
+		terrain_last_cpu_mesh_build_coord = str(terrain_manager._last_cpu_mesh_build_coord)
+		terrain_last_cpu_mesh_build_event_id = int(terrain_manager._last_cpu_mesh_build_event_id)
 		terrain_last_finalize_terrain_ms = float(terrain_manager._last_finalize_terrain_ms)
 		terrain_last_pending_node_process_ms = float(terrain_manager._last_pending_node_process_ms)
 		terrain_last_collision_create_ms = float(terrain_manager._last_terrain_collision_create_ms)
@@ -499,7 +556,33 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_active_chunk_count": terrain_active_chunk_count,
 		"terrain_native_grid_active_chunk_count": terrain_native_grid_active_chunk_count,
 		"terrain_pending_node_count": terrain_pending_node_count,
+		"terrain_last_pending_node_sort_ms": terrain_last_pending_node_sort_ms,
+		"terrain_last_pending_node_sort_count": terrain_last_pending_node_sort_count,
+		"terrain_last_pending_node_sort_skipped": terrain_last_pending_node_sort_skipped,
 		"terrain_pending_collision_create_count": terrain_pending_collision_create_count,
+		"terrain_last_gpu_generation_dispatch_ms": terrain_last_gpu_generation_dispatch_ms,
+		"terrain_last_gpu_generation_dispatch_coord": terrain_last_gpu_generation_dispatch_coord,
+		"terrain_last_gpu_generation_mod_sync_ms": terrain_last_gpu_generation_mod_sync_ms,
+		"terrain_last_gpu_generation_batch_ms": terrain_last_gpu_generation_batch_ms,
+		"terrain_last_gpu_generation_batch_chunk_count": terrain_last_gpu_generation_batch_chunk_count,
+		"terrain_last_gpu_generation_sync_ms": terrain_last_gpu_generation_sync_ms,
+		"terrain_last_gpu_meshing_dispatch_ms": terrain_last_gpu_meshing_dispatch_ms,
+		"terrain_last_gpu_meshing_sync_ms": terrain_last_gpu_meshing_sync_ms,
+		"terrain_last_gpu_mesh_readback_ms": terrain_last_gpu_mesh_readback_ms,
+		"terrain_last_gpu_mesh_readback_chunk_count": terrain_last_gpu_mesh_readback_chunk_count,
+		"terrain_last_gpu_mesh_readback_terrain_vertices": terrain_last_gpu_mesh_readback_terrain_vertices,
+		"terrain_last_gpu_mesh_readback_water_vertices": terrain_last_gpu_mesh_readback_water_vertices,
+		"terrain_last_gpu_mesh_slice_count": terrain_last_gpu_mesh_slice_count,
+		"terrain_last_gpu_mesh_slice_max_sync_ms": terrain_last_gpu_mesh_slice_max_sync_ms,
+		"terrain_last_gpu_generation_batch_event_id": terrain_last_gpu_generation_batch_event_id,
+		"terrain_last_cpu_mesh_build_ms": terrain_last_cpu_mesh_build_ms,
+		"terrain_last_cpu_mesh_build_terrain_ms": terrain_last_cpu_mesh_build_terrain_ms,
+		"terrain_last_cpu_mesh_build_water_ms": terrain_last_cpu_mesh_build_water_ms,
+		"terrain_last_cpu_mesh_build_queue_wait_ms": terrain_last_cpu_mesh_build_queue_wait_ms,
+		"terrain_last_cpu_mesh_build_terrain_vertices": terrain_last_cpu_mesh_build_terrain_vertices,
+		"terrain_last_cpu_mesh_build_water_vertices": terrain_last_cpu_mesh_build_water_vertices,
+		"terrain_last_cpu_mesh_build_coord": terrain_last_cpu_mesh_build_coord,
+		"terrain_last_cpu_mesh_build_event_id": terrain_last_cpu_mesh_build_event_id,
 		"terrain_last_finalize_terrain_ms": terrain_last_finalize_terrain_ms,
 		"terrain_last_pending_node_process_ms": terrain_last_pending_node_process_ms,
 		"terrain_last_collision_create_ms": terrain_last_collision_create_ms,
@@ -931,6 +1014,21 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	}
 
 
+func _build_native_town_entry_window_range(samples: Array[Dictionary], start_index: int, end_index: int) -> Dictionary:
+	if samples.is_empty():
+		return _build_empty_native_town_entry_window()
+	var safe_start := clampi(start_index, 0, samples.size())
+	var safe_end := clampi(end_index, safe_start, samples.size())
+	var range_size := safe_end - safe_start
+	if range_size <= 0:
+		return _build_empty_native_town_entry_window()
+	var sliced: Array[Dictionary] = []
+	for index in range(safe_start, safe_end):
+		var entry: Dictionary = samples[index]
+		sliced.append(entry)
+	return _build_native_town_entry_window(sliced, sliced.size())
+
+
 func _insert_peak_entry_sample(peak_entries: Array[Dictionary], entry: Dictionary) -> void:
 	if entry.is_empty():
 		return
@@ -1225,6 +1323,10 @@ func _write_native_town_entry_snapshot() -> void:
 
 	var town_window := _build_native_town_entry_window(_town_entry_samples, _town_entry_samples.size())
 	var recent_window := _build_native_town_entry_window(_town_entry_samples, TOWN_ENTRY_WINDOW_RECENT_LIMIT)
+	var moving_end_index := _hold_started_sample_index if _hold_started_sample_index >= 0 else _town_entry_samples.size()
+	var hold_end_index := _hold_completed_sample_index if _hold_completed_sample_index >= 0 else _town_entry_samples.size()
+	var moving_entry_window := _build_native_town_entry_window_range(_town_entry_samples, 0, moving_end_index)
+	var stationary_hold_window := _build_native_town_entry_window_range(_town_entry_samples, moving_end_index, hold_end_index)
 	var stable_bucket := str(town_window.get("stable_top_bucket", "Unknown"))
 	var stable_bucket_count := int(town_window.get("stable_top_bucket_count", 0))
 	if stable_bucket.is_empty() or stable_bucket == "Unknown":
@@ -1248,6 +1350,10 @@ func _write_native_town_entry_snapshot() -> void:
 		"top_bucket_counts": town_window.get("top_bucket_counts", {}),
 		"recent_spike_window": recent_window,
 		"town_entry_window": town_window,
+		"moving_entry_window": moving_entry_window,
+		"stationary_hold_window": stationary_hold_window,
+		"hold_started_sample_index": _hold_started_sample_index,
+		"hold_completed_sample_index": _hold_completed_sample_index,
 		"latest_town_state": town_window.get("latest_town_state", {}),
 		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {})),
 		"runtime_mode": runtime_mode,
@@ -1310,7 +1416,11 @@ func _ready() -> void:
 	render_diagnostics_scene_scan_enabled = OS.get_environment("TOWN_STALL_RENDER_DIAGNOSTIC_SCENE_SCAN") == "1"
 	render_diagnostics_threshold_ms = _get_positive_env_float("TOWN_STALL_RENDER_DIAGNOSTIC_THRESHOLD_MS", FRAME_BUDGET_MS)
 	render_diagnostics_sample_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_LIMIT)
+	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
+	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
+	if max_fps_override > 0:
+		Engine.max_fps = max_fps_override
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable buildings: %s" % ("ON" if disable_buildings_enabled else "OFF"))
@@ -1327,7 +1437,9 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Baked building persistence smoke: %s" % ("ON" if baked_building_persistence_smoke_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Measure full flight: %s" % ("ON" if measure_full_flight_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
+	print("[TOWN_STALL_TEST] Engine max FPS: %d" % Engine.max_fps)
 	print("[TOWN_STALL_TEST] Render diagnostics: %s threshold=%.2f scene_scan=%s limit=%d" % [
 		"ON" if render_diagnostics_enabled else "OFF",
 		render_diagnostics_threshold_ms,
@@ -1362,6 +1474,7 @@ func _ready() -> void:
 		"render_diagnostics": render_diagnostics_enabled,
 		"render_diagnostics_scene_scan": render_diagnostics_scene_scan_enabled,
 		"render_diagnostics_threshold_ms": render_diagnostics_threshold_ms,
+		"measure_full_flight": measure_full_flight_enabled,
 		"hold_seconds": configured_hold_seconds,
 		"machine_state_available": not _machine_state.is_empty(),
 		"warmup_note": str(_machine_state.get("warmup_note", ""))
@@ -2006,6 +2119,7 @@ func _enter_fly_to_town() -> void:
 	var town_x: float = float(selected_town.get("x", 0.0))
 	var town_z: float = float(selected_town.get("z", 0.0))
 	var town_y: float = float(selected_town.get("terrain_y", 12.0))
+	town_entry_capture_started = false
 	_begin_flight_to_target(
 		Vector3(town_x, town_y + TELEPORT_HEIGHT_OFFSET, town_z),
 		Phase.FLY_TO_TOWN,
@@ -2018,7 +2132,6 @@ func _enter_fly_to_town() -> void:
 			"auto_fly": true
 		}
 	)
-	town_entry_capture_started = false
 	print("[TOWN_STALL_TEST] Auto fly mode active - editor/fly enabled.")
 	print("[TOWN_STALL_TEST] Flying to town center: (%.1f, %.1f, %.1f) buildings=%d radius=%.1f" % [
 		town_x,
@@ -2060,6 +2173,15 @@ func _begin_flight_to_target(target: Vector3, next_phase: Phase, target_label: S
 	for key in extra_state.keys():
 		state[key] = extra_state[key]
 	_emit_scope_state("town_stall_test", state)
+	if measure_full_flight_enabled and next_phase == Phase.FLY_TO_TOWN:
+		town_entry_capture_started = true
+		_reset_town_measurement_window("full_flight")
+		_emit_scope_event("town_stall_test", "full_flight_capture_started", {
+			"phase": scope_phase,
+			"target_x": target.x,
+			"target_y": target.y,
+			"target_z": target.z
+		})
 
 	if next_phase == Phase.FLY_TO_TOWN:
 		phase = Phase.FLY_TO_TOWN
@@ -2128,7 +2250,7 @@ func _fly_to_town(_delta: float) -> void:
 		var horizontal_target := Vector3(fly_target.x, current_pos.y, fly_target.z)
 		var to_target := horizontal_target - current_pos
 		to_target.y = 0.0
-		if not town_entry_capture_started:
+		if not town_entry_capture_started and not measure_full_flight_enabled:
 			var capture_radius := float(selected_town.get("radius", 0.0)) + AUTO_FLY_ENTRY_CAPTURE_BUFFER
 			if capture_radius > 0.0 and to_target.length() <= capture_radius:
 				town_entry_capture_started = true
@@ -2179,6 +2301,7 @@ func _fly_to_town(_delta: float) -> void:
 func _hold_in_town(_delta: float) -> void:
 	if not hold_started_logged:
 		print("[TOWN_STALL_TEST] Hold started")
+		_hold_started_sample_index = _town_entry_samples.size()
 		_emit_scope_event("town_stall_test", "hold_started", {
 			"phase": str(phase),
 			"hold_seconds": current_hold_seconds
@@ -2197,6 +2320,7 @@ func _hold_in_town(_delta: float) -> void:
 		return
 
 	if phase_time >= current_hold_seconds:
+		_hold_completed_sample_index = _town_entry_samples.size()
 		_emit_scope_event("town_stall_test", "hold_complete", {
 			"hold_seconds": current_hold_seconds,
 			"phase": str(phase)

@@ -33,6 +33,8 @@ layout(push_constant) uniform PushConstants {
     vec4 chunk_offset; // .xyz is position
     float noise_freq;
     float terrain_height;
+    float slice_y_offset;
+    float slice_y_count;
 } params;
 
 const int CHUNK_SIZE = 32;
@@ -42,31 +44,54 @@ const float ISO_LEVEL = 0.0;
 
 #include "res://world_marching_cubes/marching_cubes_lookup_table.glslinc"
 
+float get_density_at(int x, int y, int z) {
+    uint index = uint(x + (y * 33) + (z * 33 * 33));
+    return density_buffer.values[index];
+}
+
 float get_density_from_buffer(vec3 p) {
     // p is local coordinates (0..32)
     // The buffer is 33x33x33
-    int x = int(round(p.x));
-    int y = int(round(p.y));
-    int z = int(round(p.z));
+    int x = int(floor(p.x + 0.5));
+    int y = int(floor(p.y + 0.5));
+    int z = int(floor(p.z + 0.5));
     
     // Clamp to safe bounds
     x = clamp(x, 0, 32);
     y = clamp(y, 0, 32);
     z = clamp(z, 0, 32);
     
-    uint index = x + (y * 33) + (z * 33 * 33);
-    return density_buffer.values[index];
+    return get_density_at(x, y, z);
+}
+
+uint get_material_at(int x, int y, int z) {
+    uint index = uint(x + (y * 33) + (z * 33 * 33));
+    return material_buffer.values[index];
 }
 
 uint get_material_from_buffer(vec3 p) {
-    int x = int(round(p.x));
-    int y = int(round(p.y));
-    int z = int(round(p.z));
+    int x = int(floor(p.x + 0.5));
+    int y = int(floor(p.y + 0.5));
+    int z = int(floor(p.z + 0.5));
     x = clamp(x, 0, 32);
     y = clamp(y, 0, 32);
     z = clamp(z, 0, 32);
-    uint index = x + (y * 33) + (z * 33 * 33);
-    return material_buffer.values[index];
+    return get_material_at(x, y, z);
+}
+
+vec3 get_gradient_at_cell(ivec3 p) {
+    int x = clamp(p.x, 0, 32);
+    int y = clamp(p.y, 0, 32);
+    int z = clamp(p.z, 0, 32);
+
+    float v_xp = get_density_at(clamp(x + 1, 0, 32), y, z);
+    float v_xm = get_density_at(clamp(x - 1, 0, 32), y, z);
+    float v_yp = get_density_at(x, clamp(y + 1, 0, 32), z);
+    float v_ym = get_density_at(x, clamp(y - 1, 0, 32), z);
+    float v_zp = get_density_at(x, y, clamp(z + 1, 0, 32));
+    float v_zm = get_density_at(x, y, clamp(z - 1, 0, 32));
+
+    return vec3(v_xp - v_xm, v_yp - v_ym, v_zp - v_zm);
 }
 
 // Dual-material encoding for vertex color:
@@ -126,28 +151,40 @@ vec3 interpolate_vertex(vec3 p1, vec3 p2, float v1, float v2) {
     return p1 + (ISO_LEVEL - v1) * (p2 - p1) / (v2 - v1);
 }
 
+float interpolate_factor(float v1, float v2) {
+    if (abs(ISO_LEVEL - v1) < 0.00001) return 0.0;
+    if (abs(ISO_LEVEL - v2) < 0.00001) return 1.0;
+    if (abs(v1 - v2) < 0.00001) return 0.0;
+    return clamp((ISO_LEVEL - v1) / (v2 - v1), 0.0, 1.0);
+}
+
 void main() {
     uvec3 id = gl_GlobalInvocationID.xyz;
 
     if (id.x == 0u && id.y == 0u && id.z == 0u) {
         counter.output_format_magic = PACKED_INDEXED_OUTPUT_MAGIC;
     }
-    
-    if (id.x >= uint(CHUNK_SIZE) - 1u || id.y >= uint(CHUNK_SIZE) - 1u || id.z >= uint(CHUNK_SIZE) - 1u) {
+
+    uint slice_count = uint(max(params.slice_y_count, 0.0));
+    uint cell_y = id.y + uint(max(params.slice_y_offset, 0.0));
+    if (id.x >= uint(CHUNK_SIZE) - 1u || id.y >= slice_count || cell_y >= uint(CHUNK_SIZE) - 1u || id.z >= uint(CHUNK_SIZE) - 1u) {
         return;
     }
 
-    vec3 pos = vec3(id);
+    ivec3 cell = ivec3(int(id.x), int(cell_y), int(id.z));
+    vec3 pos = vec3(cell);
 
     // Sample 8 corners from the buffer
-    vec3 corners[8] = vec3[](
-        pos + vec3(0,0,0), pos + vec3(1,0,0), pos + vec3(1,0,1), pos + vec3(0,0,1),
-        pos + vec3(0,1,0), pos + vec3(1,1,0), pos + vec3(1,1,1), pos + vec3(0,1,1)
+    ivec3 corner_cells[8] = ivec3[](
+        cell + ivec3(0,0,0), cell + ivec3(1,0,0), cell + ivec3(1,0,1), cell + ivec3(0,0,1),
+        cell + ivec3(0,1,0), cell + ivec3(1,1,0), cell + ivec3(1,1,1), cell + ivec3(0,1,1)
     );
 
+    vec3 corners[8];
     float densities[8];
     for(int i = 0; i < 8; i++) {
-        densities[i] = get_density_from_buffer(corners[i]);
+        corners[i] = vec3(corner_cells[i]);
+        densities[i] = get_density_at(corner_cells[i].x, corner_cells[i].y, corner_cells[i].z);
     }
 
     int cubeIndex = 0;
@@ -163,6 +200,10 @@ void main() {
     if (edgeTable[cubeIndex] == 0) return;
 
     vec3 vertList[12];
+    vec3 cornerGradientList[8];
+    for (int i = 0; i < 8; i++) {
+        cornerGradientList[i] = get_gradient_at_cell(corner_cells[i]);
+    }
     
     if ((edgeTable[cubeIndex] & 1) != 0)    vertList[0] = interpolate_vertex(corners[0], corners[1], densities[0], densities[1]);
     if ((edgeTable[cubeIndex] & 2) != 0)    vertList[1] = interpolate_vertex(corners[1], corners[2], densities[1], densities[2]);
@@ -180,7 +221,10 @@ void main() {
     vec3 normalList[12];
     for (int e = 0; e < 12; e++) {
         if ((edgeTable[cubeIndex] & (1 << e)) != 0) {
-            normalList[e] = get_normal(vertList[e]);
+            int c1 = edge_corners[e * 2];
+            int c2 = edge_corners[e * 2 + 1];
+            float t = interpolate_factor(densities[c1], densities[c2]);
+            normalList[e] = normalize(mix(cornerGradientList[c1], cornerGradientList[c2], t));
         }
     }
 
@@ -194,7 +238,7 @@ void main() {
     bool found_B = false;
     for (int c = 0; c < 8; c++) {
         if (densities[c] < ISO_LEVEL) {
-            uint m = get_material_from_buffer(corners[c]);
+            uint m = get_material_at(corner_cells[c].x, corner_cells[c].y, corner_cells[c].z);
             if (!found_A) {
                 mat_A = m;
                 found_A = true;
@@ -216,7 +260,7 @@ void main() {
             int c2 = edge_corners[e * 2 + 1];
             // Find the solid corner on this edge
             int solid_c = (densities[c1] < ISO_LEVEL) ? c1 : c2;
-            uint solid_mat = get_material_from_buffer(corners[solid_c]);
+            uint solid_mat = get_material_at(corner_cells[solid_c].x, corner_cells[solid_c].y, corner_cells[solid_c].z);
             blendList[e] = (solid_mat == mat_A) ? 0.0 : 1.0;
         }
     }

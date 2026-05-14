@@ -18,6 +18,7 @@ class TerrainGrid : public RefCounted {
 private:
     HashSet<Vector3i> active_chunks;
     HashSet<Vector3i> collision_ready_chunks;
+    HashSet<Vector3i> active_collision_chunks;
     bool update_cache_valid = false;
     Vector3i cached_center_chunk = Vector3i(0, 0, 0);
     int cached_render_distance = -1;
@@ -43,12 +44,16 @@ public:
     void remove_chunk(Vector3i coord);
     // Mark whether the chunk's collision body has been created and is ready for raycasts.
     void set_chunk_collision_ready(Vector3i coord, bool ready);
+    // Track whether terrain collision is currently enabled for a chunk.
+    void set_chunk_collision_active(Vector3i coord, bool active);
     // Check if chunk is tracked
     bool has_chunk(Vector3i coord);
     // Check whether terrain collision is ready around a position.
     bool is_collision_ready_at(Vector3 position, int chunk_stride);
     // Count chunks whose collision bodies are currently ready.
     int get_collision_ready_chunk_count();
+    // Count chunks whose collision is currently enabled.
+    int get_active_collision_chunk_count();
     // Count chunks tracked by the native terrain grid.
     int get_active_chunk_count();
     // Clear all tracking
@@ -57,6 +62,9 @@ public:
     // Main update function
     // is_above_ground: true = load only Y=0, false = load spherical volume
     Dictionary update(Vector3 viewer_pos, int render_distance, bool is_above_ground, int chunk_stride, int load_chunks_per_frame_limit, int unload_chunks_per_frame_limit);
+
+    // Build terrain collision proximity candidate lists in native code.
+    Dictionary get_collision_proximity_update(Vector3i center_chunk, int collision_distance, int collision_prewarm_distance, int min_y_layer, int max_y_layer, bool shared_collision_body_enabled);
 
     // Optimized height lookup for vegetation (Process entire chunk at once)
     // Returns PackedFloat32Array of heights. If not found, returns -1000.0.

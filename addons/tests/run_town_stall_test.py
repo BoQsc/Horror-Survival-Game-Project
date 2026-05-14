@@ -6,7 +6,7 @@ import time
 import atexit
 import msvcrt
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # Configuration
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
@@ -68,7 +68,7 @@ def _positive_int_from_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
-def _run_powershell_json(command: str, timeout_seconds: int = 20) -> Optional[dict]:
+def _run_powershell_json(command: str, timeout_seconds: int = 20) -> Any:
     try:
         result = subprocess.run(
             [
@@ -100,7 +100,7 @@ def _run_powershell_json(command: str, timeout_seconds: int = 20) -> Optional[di
     except json.JSONDecodeError:
         return None
 
-    return parsed if isinstance(parsed, dict) else None
+    return parsed
 
 
 def _release_run_lock() -> None:
@@ -154,6 +154,24 @@ Get-CimInstance Win32_Process | Where-Object {
   $_.CommandLine -and
   $_.CommandLine -like ("*" + $sceneName + "*") -and
   $_.CommandLine -like ("*" + $projectPath + "*")
+} | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress -Depth 3
+""".strip()
+
+    payload = _run_powershell_json(command)
+    if not payload:
+        return []
+
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        return [entry for entry in payload if isinstance(entry, dict)]
+    return []
+
+
+def _find_running_godot_processes() -> list[dict]:
+    command = r"""
+Get-CimInstance Win32_Process | Where-Object {
+  $_.Name -like "godot*.exe" -or $_.Name -like "Godot*.exe"
 } | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress -Depth 3
 """.strip()
 
@@ -540,6 +558,8 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_ENTITIES"] = os.environ.get("TOWN_STALL_DISABLE_ENTITIES", "0")
     env["TOWN_STALL_DISABLE_EXIT_AUTOSAVE"] = os.environ.get("TOWN_STALL_DISABLE_EXIT_AUTOSAVE", "1")
     env["TOWN_STALL_HOLD_SECONDS"] = os.environ.get("TOWN_STALL_HOLD_SECONDS", "")
+    env["TOWN_STALL_MAX_FPS"] = os.environ.get("TOWN_STALL_MAX_FPS", "")
+    env["TOWN_STALL_MEASURE_FULL_FLIGHT"] = os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", "0")
     env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
@@ -569,10 +589,10 @@ def main() -> int:
     print("\nMachine state probe:")
     _print_machine_state_summary(machine_state)
 
-    running_processes = _find_running_town_stall_processes()
+    running_processes = _find_running_godot_processes()
     if running_processes:
-        print("ERROR: Another town stall game instance is already running.")
-        print("Close the existing instance before starting a new town test.")
+        print("ERROR: A Godot process is already running.")
+        print("Close the existing Godot instance before starting a new town test.")
         for process in running_processes[:5]:
             process_id = int(process.get("ProcessId", 0) or 0)
             process_name = str(process.get("Name", "godot"))

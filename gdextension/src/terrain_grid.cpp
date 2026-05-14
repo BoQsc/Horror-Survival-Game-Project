@@ -8,12 +8,15 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_chunk", "coord"), &TerrainGrid::add_chunk);
     ClassDB::bind_method(D_METHOD("remove_chunk", "coord"), &TerrainGrid::remove_chunk);
     ClassDB::bind_method(D_METHOD("set_chunk_collision_ready", "coord", "ready"), &TerrainGrid::set_chunk_collision_ready);
+    ClassDB::bind_method(D_METHOD("set_chunk_collision_active", "coord", "active"), &TerrainGrid::set_chunk_collision_active);
     ClassDB::bind_method(D_METHOD("has_chunk", "coord"), &TerrainGrid::has_chunk);
     ClassDB::bind_method(D_METHOD("is_collision_ready_at", "position", "chunk_stride"), &TerrainGrid::is_collision_ready_at);
     ClassDB::bind_method(D_METHOD("get_collision_ready_chunk_count"), &TerrainGrid::get_collision_ready_chunk_count);
+    ClassDB::bind_method(D_METHOD("get_active_collision_chunk_count"), &TerrainGrid::get_active_collision_chunk_count);
     ClassDB::bind_method(D_METHOD("get_active_chunk_count"), &TerrainGrid::get_active_chunk_count);
     ClassDB::bind_method(D_METHOD("clear"), &TerrainGrid::clear);
     ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "load_chunks_per_frame_limit", "unload_chunks_per_frame_limit"), &TerrainGrid::update);
+    ClassDB::bind_method(D_METHOD("get_collision_proximity_update", "center_chunk", "collision_distance", "collision_prewarm_distance", "min_y_layer", "max_y_layer", "shared_collision_body_enabled"), &TerrainGrid::get_collision_proximity_update);
     ClassDB::bind_method(D_METHOD("get_chunk_height_map", "density", "size", "step"), &TerrainGrid::get_chunk_height_map);
 }
 
@@ -26,12 +29,14 @@ TerrainGrid::~TerrainGrid() {
 void TerrainGrid::add_chunk(Vector3i coord) {
     active_chunks.insert(coord);
     collision_ready_chunks.erase(coord);
+    active_collision_chunks.erase(coord);
     update_cache_valid = false;
 }
 
 void TerrainGrid::remove_chunk(Vector3i coord) {
     active_chunks.erase(coord);
     collision_ready_chunks.erase(coord);
+    active_collision_chunks.erase(coord);
     update_cache_valid = false;
 }
 
@@ -40,6 +45,14 @@ void TerrainGrid::set_chunk_collision_ready(Vector3i coord, bool ready) {
         collision_ready_chunks.insert(coord);
     } else {
         collision_ready_chunks.erase(coord);
+    }
+}
+
+void TerrainGrid::set_chunk_collision_active(Vector3i coord, bool active) {
+    if (active) {
+        active_collision_chunks.insert(coord);
+    } else {
+        active_collision_chunks.erase(coord);
     }
 }
 
@@ -70,6 +83,10 @@ int TerrainGrid::get_collision_ready_chunk_count() {
     return collision_ready_chunks.size();
 }
 
+int TerrainGrid::get_active_collision_chunk_count() {
+    return active_collision_chunks.size();
+}
+
 int TerrainGrid::get_active_chunk_count() {
     return active_chunks.size();
 }
@@ -77,6 +94,7 @@ int TerrainGrid::get_active_chunk_count() {
 void TerrainGrid::clear() {
     active_chunks.clear();
     collision_ready_chunks.clear();
+    active_collision_chunks.clear();
     update_cache_valid = false;
     cached_load_candidates.clear();
     cached_unload_candidates.clear();
@@ -204,6 +222,73 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
 
     result["load"] = to_load;
     result["unload"] = to_unload;
+    return result;
+}
+
+Dictionary TerrainGrid::get_collision_proximity_update(Vector3i center_chunk, int collision_distance, int collision_prewarm_distance, int min_y_layer, int max_y_layer, bool shared_collision_body_enabled) {
+    Dictionary result;
+    Array enable;
+    Array disable;
+    Array prewarm;
+
+    const int max_collision_distance = collision_prewarm_distance > collision_distance ? collision_prewarm_distance : collision_distance;
+    const int active_distance = shared_collision_body_enabled ? max_collision_distance : collision_distance;
+    const int active_distance_sq = active_distance * active_distance;
+    const int prewarm_distance = max_collision_distance;
+    const int prewarm_distance_sq = prewarm_distance * prewarm_distance;
+    const int collision_distance_sq = collision_distance * collision_distance;
+    const int min_y = min_y_layer > center_chunk.y - 2 ? min_y_layer : center_chunk.y - 2;
+    const int max_y = max_y_layer < center_chunk.y + 2 ? max_y_layer : center_chunk.y + 2;
+
+    HashSet<Vector3i> desired_collision_chunks;
+
+    for (int x = center_chunk.x - active_distance; x <= center_chunk.x + active_distance; ++x) {
+        for (int z = center_chunk.z - active_distance; z <= center_chunk.z + active_distance; ++z) {
+            const int dx = x - center_chunk.x;
+            const int dz = z - center_chunk.z;
+            if (dx * dx + dz * dz > active_distance_sq) {
+                continue;
+            }
+
+            for (int y = min_y; y <= max_y; ++y) {
+                const Vector3i coord(x, y, z);
+                desired_collision_chunks.insert(coord);
+                if (active_chunks.has(coord) && !active_collision_chunks.has(coord)) {
+                    enable.append(coord);
+                }
+            }
+        }
+    }
+
+    for (const Vector3i &coord : active_collision_chunks) {
+        if (!active_chunks.has(coord) || !desired_collision_chunks.has(coord)) {
+            disable.append(coord);
+        }
+    }
+
+    if (!shared_collision_body_enabled && prewarm_distance > collision_distance) {
+        for (int x = center_chunk.x - prewarm_distance; x <= center_chunk.x + prewarm_distance; ++x) {
+            for (int z = center_chunk.z - prewarm_distance; z <= center_chunk.z + prewarm_distance; ++z) {
+                const int dx = x - center_chunk.x;
+                const int dz = z - center_chunk.z;
+                const int dist_xz_sq = dx * dx + dz * dz;
+                if (dist_xz_sq > prewarm_distance_sq || dist_xz_sq <= collision_distance_sq) {
+                    continue;
+                }
+
+                for (int y = min_y; y <= max_y; ++y) {
+                    const Vector3i coord(x, y, z);
+                    if (active_chunks.has(coord)) {
+                        prewarm.append(coord);
+                    }
+                }
+            }
+        }
+    }
+
+    result["enable"] = enable;
+    result["disable"] = disable;
+    result["prewarm"] = prewarm;
     return result;
 }
 
