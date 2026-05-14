@@ -45,9 +45,16 @@ CASE_DEFINITIONS = {
         },
     },
     "runtime_default": {
-        "description": "Runtime power manager defaults: 60 active, 30 idle, 20 deep idle.",
+        "description": "Runtime power manager defaults: 60 active, 30 idle, 15 deep idle.",
         "env": {
             "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+        },
+    },
+    "runtime_no_render_suspend": {
+        "description": "Runtime power manager defaults with deep-idle render-loop suspension disabled.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP": "0",
         },
     },
 }
@@ -62,6 +69,7 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_RUNTIME_POWER_IDLE_DELAY_S",
     "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S",
     "TOWN_STALL_RUNTIME_POWER_ACTIVE_GRACE_S",
+    "TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP",
 ]
 
 
@@ -293,6 +301,9 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "runtime_power_idle_seconds",
             "runtime_power_active_reason",
             "runtime_power_disabled_reason",
+            "runtime_power_suspend_render_loop_in_deep_idle",
+            "runtime_power_render_loop_suspended",
+            "runtime_power_render_loop_enabled",
         ]
         if key in telemetry
     }
@@ -415,7 +426,7 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
         {
             "TOWN_STALL_SEED": os.environ.get("TOWN_STALL_SEED", "12345"),
             "TOWN_STALL_AUTO_TELEPORT": os.environ.get("TOWN_STALL_AUTO_TELEPORT", "0"),
-            "TOWN_STALL_REPEAT_ENTRY": "0",
+            "TOWN_STALL_REPEAT_ENTRY": os.environ.get("TOWN_STALL_REPEAT_ENTRY", "0"),
             "TOWN_STALL_HOLD_SECONDS": f"{hold_seconds:.3f}",
             "TOWN_STALL_MACHINE_WARMUP_DISABLED": os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1"),
             "TOWN_STALL_DISABLE_BUILDINGS": "0",
@@ -464,7 +475,7 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
         "case": case_name,
         "repeat_index": repeat_index,
         "description": CASE_DEFINITIONS[case_name]["description"],
-        "env_overrides": {key: env.get(key, "") for key in sorted(set(RESET_ENV_KEYS + ["TOWN_STALL_HOLD_SECONDS", "TOWN_STALL_MEASURE_FULL_FLIGHT"]))},
+        "env_overrides": {key: env.get(key, "") for key in sorted(set(RESET_ENV_KEYS + ["TOWN_STALL_HOLD_SECONDS", "TOWN_STALL_MEASURE_FULL_FLIGHT", "TOWN_STALL_REPEAT_ENTRY"]))},
         "started_at_epoch": started,
         "ended_at_epoch": ended,
         "duration_s": ended - started,
@@ -552,7 +563,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_no_render_suspend")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)

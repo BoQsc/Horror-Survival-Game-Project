@@ -246,6 +246,7 @@ var loading_paused: bool = false
 @export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 8.0
 @export_range(0.0, 5.0, 0.1) var runtime_power_active_grace_s: float = 0.75
 @export_range(0.001, 1.0, 0.001) var runtime_power_position_epsilon: float = 0.10
+@export var runtime_power_suspend_render_loop_in_deep_idle: bool = true
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
@@ -261,6 +262,9 @@ var _runtime_power_idle_frame_count: int = 0
 var _runtime_power_deep_idle_frame_count: int = 0
 var _runtime_power_active_reason: String = "startup"
 var _runtime_power_disabled_reason: String = ""
+var _runtime_power_render_loop_suspended: bool = false
+var _runtime_power_render_loop_restore_enabled: bool = true
+var _runtime_power_render_loop_restore_captured: bool = false
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_fallback_unloads: int = 0
@@ -731,6 +735,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"runtime_power_deep_idle_frame_count": _runtime_power_deep_idle_frame_count,
 		"runtime_power_active_reason": _runtime_power_active_reason,
 		"runtime_power_disabled_reason": _runtime_power_disabled_reason,
+		"runtime_power_suspend_render_loop_in_deep_idle": runtime_power_suspend_render_loop_in_deep_idle,
+		"runtime_power_render_loop_suspended": _runtime_power_render_loop_suspended,
+		"runtime_power_render_loop_enabled": _get_runtime_power_render_loop_enabled(),
 		"retired_chunk_node_root_count": _retired_chunk_node_roots.size(),
 		"last_retired_chunk_node_cleanup_ms": _last_retired_chunk_node_cleanup_ms,
 		"last_retired_chunk_node_cleanup_count": _last_retired_chunk_node_cleanup_count,
@@ -2156,6 +2163,16 @@ func _get_runtime_power_env_float(name: String, default_value: float) -> float:
 	var value := float(raw)
 	return value if value > 0.0 else default_value
 
+func _get_runtime_power_env_bool(name: String, default_value: bool) -> bool:
+	var raw := OS.get_environment(name).strip_edges().to_lower()
+	if raw.is_empty():
+		return default_value
+	if raw == "1" or raw == "true" or raw == "yes" or raw == "on":
+		return true
+	if raw == "0" or raw == "false" or raw == "no" or raw == "off":
+		return false
+	return default_value
+
 func _configure_runtime_power_mode_from_env() -> void:
 	_runtime_power_disabled_reason = ""
 	if OS.get_environment("TOWN_STALL_DISABLE_RUNTIME_POWER_MODE") == "1":
@@ -2171,6 +2188,7 @@ func _configure_runtime_power_mode_from_env() -> void:
 	runtime_power_idle_enter_delay_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_IDLE_DELAY_S", runtime_power_idle_enter_delay_s)
 	runtime_power_deep_idle_enter_delay_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S", runtime_power_deep_idle_enter_delay_s)
 	runtime_power_active_grace_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_ACTIVE_GRACE_S", runtime_power_active_grace_s)
+	runtime_power_suspend_render_loop_in_deep_idle = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP", runtime_power_suspend_render_loop_in_deep_idle)
 	runtime_power_idle_max_fps = mini(runtime_power_idle_max_fps, runtime_power_active_max_fps)
 	runtime_power_deep_idle_max_fps = mini(runtime_power_deep_idle_max_fps, runtime_power_idle_max_fps)
 	runtime_power_deep_idle_enter_delay_s = maxf(runtime_power_deep_idle_enter_delay_s, runtime_power_idle_enter_delay_s)
@@ -2210,13 +2228,44 @@ func _runtime_power_terrain_busy() -> bool:
 		or not _completed_terrain_visual_batch_builds.is_empty()
 
 func _apply_runtime_power_fps(mode: String, target_fps_value: int) -> void:
+	var previous_mode := _runtime_power_mode
 	_runtime_power_mode = mode
 	_runtime_power_target_fps = target_fps_value
 	if Engine.max_fps != target_fps_value:
 		Engine.max_fps = target_fps_value
+	if previous_mode != mode or _runtime_power_render_loop_suspended or mode == "deep_idle":
+		_apply_runtime_power_render_loop_mode(mode)
+
+func _get_runtime_power_render_loop_enabled() -> bool:
+	if not RenderingServer.has_method("is_render_loop_enabled"):
+		return true
+	return bool(RenderingServer.call("is_render_loop_enabled"))
+
+func _apply_runtime_power_render_loop_mode(mode: String) -> void:
+	if not RenderingServer.has_method("set_render_loop_enabled"):
+		_runtime_power_render_loop_suspended = false
+		return
+
+	var should_suspend := runtime_power_mode_enabled \
+		and runtime_power_suspend_render_loop_in_deep_idle \
+		and mode == "deep_idle"
+	if should_suspend:
+		if not _runtime_power_render_loop_restore_captured:
+			_runtime_power_render_loop_restore_enabled = _get_runtime_power_render_loop_enabled()
+			_runtime_power_render_loop_restore_captured = true
+		if not _runtime_power_render_loop_suspended:
+			RenderingServer.call("set_render_loop_enabled", false)
+			_runtime_power_render_loop_suspended = true
+		return
+
+	if _runtime_power_render_loop_suspended:
+		var restore_enabled := _runtime_power_render_loop_restore_enabled if _runtime_power_render_loop_restore_captured else true
+		RenderingServer.call("set_render_loop_enabled", restore_enabled)
+		_runtime_power_render_loop_suspended = false
 
 func _update_runtime_power_mode(delta: float) -> void:
 	if not runtime_power_mode_enabled:
+		_apply_runtime_power_render_loop_mode("active")
 		return
 
 	var input_active := _runtime_power_input_active()
@@ -4190,6 +4239,8 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 			semaphore.post()
 
 func _exit_tree():
+	_apply_runtime_power_render_loop_mode("active")
+
 	# CRITICAL: Clean up all GPU resources BEFORE terminating threads
 	# This fixes 682 resource leaks (StorageBuffers, Meshes, Collision, Materials)
 
