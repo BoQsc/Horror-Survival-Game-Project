@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <godot_cpp/classes/box_shape3d.hpp>
+#include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/math.hpp>
@@ -18,6 +19,7 @@
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/rid.hpp>
+#include <cstdlib>
 #include <unordered_map>
 #include <vector>
 
@@ -57,6 +59,13 @@ struct Vector3iEqual {
 using BlockBatchMap = std::unordered_map<Vector3i, BlockBatchData, Vector3iHash, Vector3iEqual>;
 
 static constexpr int TERRAIN_PACKED_VERTEX_WORDS = 6;
+static constexpr float TERRAIN_ISO_LEVEL = 0.0f;
+
+struct MarchingCubesTables {
+    std::array<int, 256> edge_table{};
+    std::array<int, 4096> tri_table{};
+    bool valid = false;
+};
 
 struct TerrainPackedVertexKey {
     std::array<uint32_t, TERRAIN_PACKED_VERTEX_WORDS> words{};
@@ -89,6 +98,10 @@ static inline float u32_to_float(uint32_t bits) {
     float value;
     std::memcpy(&value, &bits, sizeof(float));
     return value;
+}
+
+static inline float read_f32_le(const uint8_t *src) {
+    return u32_to_float(read_u32_le(src));
 }
 
 static inline float half_to_float(uint16_t h) {
@@ -240,6 +253,319 @@ static Vector3 calculate_lod_normal(const std::vector<float> &heights, int grid_
     const float h_f = heights[x * grid_size + forward];
     Vector3 normal(h_l - h_r, spacing * 2.0f, h_b - h_f);
     return normal.normalized();
+}
+
+static bool parse_marching_cubes_table(const std::string &source, const std::string &name, int expected_count, int *out_values) {
+    const size_t name_pos = source.find(name);
+    if (name_pos == std::string::npos) {
+        return false;
+    }
+
+    const size_t open_pos = source.find('(', name_pos);
+    const size_t close_pos = source.find(");", open_pos);
+    if (open_pos == std::string::npos || close_pos == std::string::npos || close_pos <= open_pos) {
+        return false;
+    }
+
+    const std::string body = source.substr(open_pos + 1, close_pos - open_pos - 1);
+    const char *cursor = body.c_str();
+    int parsed = 0;
+    while (*cursor != '\0' && parsed < expected_count) {
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n' || *cursor == ',') {
+            ++cursor;
+        }
+        if (*cursor == '\0') {
+            break;
+        }
+
+        char *end = nullptr;
+        const long value = std::strtol(cursor, &end, 0);
+        if (end == cursor) {
+            ++cursor;
+            continue;
+        }
+        out_values[parsed++] = static_cast<int>(value);
+        cursor = end;
+    }
+
+    return parsed == expected_count;
+}
+
+static MarchingCubesTables load_marching_cubes_tables() {
+    MarchingCubesTables tables;
+    const String table_text = FileAccess::get_file_as_string("res://world_marching_cubes/marching_cubes_lookup_table.glslinc");
+    if (table_text.is_empty()) {
+        return tables;
+    }
+
+    const CharString utf8 = table_text.utf8();
+    const std::string source(utf8.get_data());
+    tables.valid =
+        parse_marching_cubes_table(source, "edgeTable", 256, tables.edge_table.data()) &&
+        parse_marching_cubes_table(source, "triTable", 4096, tables.tri_table.data());
+    return tables;
+}
+
+static const MarchingCubesTables &get_marching_cubes_tables() {
+    static const MarchingCubesTables tables = load_marching_cubes_tables();
+    return tables;
+}
+
+static inline int density_index(int density_size, int x, int y, int z) {
+    return x + (y * density_size) + (z * density_size * density_size);
+}
+
+static inline float read_density_at(const uint8_t *density_ptr, int density_size, int x, int y, int z) {
+    x = std::clamp(x, 0, density_size - 1);
+    y = std::clamp(y, 0, density_size - 1);
+    z = std::clamp(z, 0, density_size - 1);
+    return read_f32_le(density_ptr + density_index(density_size, x, y, z) * 4);
+}
+
+static inline uint32_t read_material_at(const uint8_t *material_ptr, int material_bytes, int density_size, int x, int y, int z) {
+    if (material_ptr == nullptr || material_bytes <= 0) {
+        return 0;
+    }
+    x = std::clamp(x, 0, density_size - 1);
+    y = std::clamp(y, 0, density_size - 1);
+    z = std::clamp(z, 0, density_size - 1);
+    const int byte_index = density_index(density_size, x, y, z) * 4;
+    if (byte_index + 4 > material_bytes) {
+        return 0;
+    }
+    return read_u32_le(material_ptr + byte_index);
+}
+
+static Vector3 density_gradient_at_cell(const uint8_t *density_ptr, int density_size, const Vector3i &cell) {
+    const int x = std::clamp(cell.x, 0, density_size - 1);
+    const int y = std::clamp(cell.y, 0, density_size - 1);
+    const int z = std::clamp(cell.z, 0, density_size - 1);
+
+    const float v_xp = read_density_at(density_ptr, density_size, x + 1, y, z);
+    const float v_xm = read_density_at(density_ptr, density_size, x - 1, y, z);
+    const float v_yp = read_density_at(density_ptr, density_size, x, y + 1, z);
+    const float v_ym = read_density_at(density_ptr, density_size, x, y - 1, z);
+    const float v_zp = read_density_at(density_ptr, density_size, x, y, z + 1);
+    const float v_zm = read_density_at(density_ptr, density_size, x, y, z - 1);
+
+    return Vector3(v_xp - v_xm, v_yp - v_ym, v_zp - v_zm);
+}
+
+static inline Vector3 interpolate_cpu_vertex(const Vector3 &p1, const Vector3 &p2, float v1, float v2) {
+    if (std::abs(TERRAIN_ISO_LEVEL - v1) < 0.00001f) {
+        return p1;
+    }
+    if (std::abs(TERRAIN_ISO_LEVEL - v2) < 0.00001f) {
+        return p2;
+    }
+    if (std::abs(v1 - v2) < 0.00001f) {
+        return p1;
+    }
+    return p1 + ((TERRAIN_ISO_LEVEL - v1) / (v2 - v1)) * (p2 - p1);
+}
+
+static inline float interpolate_cpu_factor(float v1, float v2) {
+    if (std::abs(TERRAIN_ISO_LEVEL - v1) < 0.00001f) {
+        return 0.0f;
+    }
+    if (std::abs(TERRAIN_ISO_LEVEL - v2) < 0.00001f) {
+        return 1.0f;
+    }
+    if (std::abs(v1 - v2) < 0.00001f) {
+        return 0.0f;
+    }
+    return std::clamp((TERRAIN_ISO_LEVEL - v1) / (v2 - v1), 0.0f, 1.0f);
+}
+
+static Dictionary build_density_marching_cubes_mesh(const PackedByteArray &density_data, const PackedByteArray &material_data, int density_size, int chunk_size, bool include_height_map, int height_map_size) {
+    Dictionary result;
+    Ref<ArrayMesh> mesh;
+    Ref<ConcavePolygonShape3D> shape;
+    PackedFloat32Array height_map;
+    result["mesh"] = mesh;
+    result["shape"] = shape;
+    if (include_height_map) {
+        result["height_map"] = height_map;
+    }
+
+    if (density_size < 2 || chunk_size < 2) {
+        return result;
+    }
+
+    const int voxel_count = density_size * density_size * density_size;
+    if (density_data.size() < voxel_count * 4) {
+        return result;
+    }
+
+    const MarchingCubesTables &tables = get_marching_cubes_tables();
+    if (!tables.valid) {
+        return result;
+    }
+
+    const uint8_t *density_ptr = density_data.ptr();
+    const uint8_t *material_ptr = material_data.is_empty() ? nullptr : material_data.ptr();
+    const int material_bytes = material_data.size();
+
+    static constexpr int edge_corners[24] = {
+        0, 1, 1, 2, 2, 3, 3, 0,
+        4, 5, 5, 6, 6, 7, 7, 4,
+        0, 4, 1, 5, 2, 6, 3, 7
+    };
+
+    std::vector<Vector3> vertices;
+    std::vector<Vector3> normals;
+    std::vector<Color> colors;
+    std::vector<Vector3> faces;
+    vertices.reserve(8192);
+    normals.reserve(8192);
+    colors.reserve(8192);
+    faces.reserve(8192);
+
+    const int target_cells = std::min(chunk_size - 1, density_size - 2);
+    for (int z = 0; z < target_cells; ++z) {
+        for (int y = 0; y < target_cells; ++y) {
+            for (int x = 0; x < target_cells; ++x) {
+                const Vector3i corner_cells[8] = {
+                    Vector3i(x, y, z),
+                    Vector3i(x + 1, y, z),
+                    Vector3i(x + 1, y, z + 1),
+                    Vector3i(x, y, z + 1),
+                    Vector3i(x, y + 1, z),
+                    Vector3i(x + 1, y + 1, z),
+                    Vector3i(x + 1, y + 1, z + 1),
+                    Vector3i(x, y + 1, z + 1)
+                };
+
+                Vector3 corners[8];
+                float densities[8];
+                int cube_index = 0;
+                for (int i = 0; i < 8; ++i) {
+                    corners[i] = Vector3(corner_cells[i].x, corner_cells[i].y, corner_cells[i].z);
+                    densities[i] = read_density_at(density_ptr, density_size, corner_cells[i].x, corner_cells[i].y, corner_cells[i].z);
+                    if (densities[i] < TERRAIN_ISO_LEVEL) {
+                        cube_index |= (1 << i);
+                    }
+                }
+
+                const int edge_mask = tables.edge_table[static_cast<size_t>(cube_index)];
+                if (edge_mask == 0) {
+                    continue;
+                }
+
+                Vector3 vert_list[12];
+                Vector3 normal_list[12];
+                Vector3 corner_gradients[8];
+                for (int i = 0; i < 8; ++i) {
+                    corner_gradients[i] = density_gradient_at_cell(density_ptr, density_size, corner_cells[i]);
+                }
+
+                for (int edge = 0; edge < 12; ++edge) {
+                    if ((edge_mask & (1 << edge)) == 0) {
+                        continue;
+                    }
+                    const int c1 = edge_corners[edge * 2];
+                    const int c2 = edge_corners[edge * 2 + 1];
+                    const float t = interpolate_cpu_factor(densities[c1], densities[c2]);
+                    vert_list[edge] = interpolate_cpu_vertex(corners[c1], corners[c2], densities[c1], densities[c2]);
+                    Vector3 normal = corner_gradients[c1].lerp(corner_gradients[c2], t);
+                    if (normal.length_squared() <= 0.0000001f) {
+                        normal = Vector3(0, 1, 0);
+                    } else {
+                        normal.normalize();
+                    }
+                    normal_list[edge] = normal;
+                }
+
+                uint32_t mat_a = 0;
+                uint32_t mat_b = 0;
+                bool found_a = false;
+                bool found_b = false;
+                for (int c = 0; c < 8; ++c) {
+                    if (densities[c] < TERRAIN_ISO_LEVEL) {
+                        const uint32_t material = read_material_at(material_ptr, material_bytes, density_size, corner_cells[c].x, corner_cells[c].y, corner_cells[c].z) & 0xFFu;
+                        if (!found_a) {
+                            mat_a = material;
+                            found_a = true;
+                        } else if (material != mat_a && !found_b) {
+                            mat_b = material;
+                            found_b = true;
+                        }
+                    }
+                }
+                if (!found_b) {
+                    mat_b = mat_a;
+                }
+
+                float blend_list[12] = {};
+                for (int edge = 0; edge < 12; ++edge) {
+                    if ((edge_mask & (1 << edge)) == 0) {
+                        continue;
+                    }
+                    const int c1 = edge_corners[edge * 2];
+                    const int c2 = edge_corners[edge * 2 + 1];
+                    const int solid_corner = (densities[c1] < TERRAIN_ISO_LEVEL) ? c1 : c2;
+                    const uint32_t solid_material = read_material_at(material_ptr, material_bytes, density_size, corner_cells[solid_corner].x, corner_cells[solid_corner].y, corner_cells[solid_corner].z) & 0xFFu;
+                    blend_list[edge] = (solid_material == mat_a) ? 0.0f : 1.0f;
+                }
+
+                for (int i = 0; tables.tri_table[static_cast<size_t>(cube_index * 16 + i)] != -1; i += 3) {
+                    const int e1 = tables.tri_table[static_cast<size_t>(cube_index * 16 + i)];
+                    const int e2 = tables.tri_table[static_cast<size_t>(cube_index * 16 + i + 1)];
+                    const int e3 = tables.tri_table[static_cast<size_t>(cube_index * 16 + i + 2)];
+                    const int ordered_edges[3] = { e1, e3, e2 };
+                    for (int ordered_edge : ordered_edges) {
+                        vertices.push_back(vert_list[ordered_edge]);
+                        normals.push_back(normal_list[ordered_edge]);
+                        colors.emplace_back(
+                            static_cast<float>(mat_a & 0xFFu) / 255.0f,
+                            static_cast<float>(mat_b & 0xFFu) / 255.0f,
+                            blend_list[ordered_edge]
+                        );
+                        faces.push_back(vert_list[ordered_edge]);
+                    }
+                }
+            }
+        }
+    }
+
+    if (vertices.empty()) {
+        return result;
+    }
+
+    PackedVector3Array packed_vertices;
+    PackedVector3Array packed_normals;
+    PackedColorArray packed_colors;
+    PackedVector3Array packed_faces;
+    packed_vertices.resize(static_cast<int>(vertices.size()));
+    packed_normals.resize(static_cast<int>(normals.size()));
+    packed_colors.resize(static_cast<int>(colors.size()));
+    packed_faces.resize(static_cast<int>(faces.size()));
+
+    std::copy(vertices.begin(), vertices.end(), packed_vertices.ptrw());
+    std::copy(normals.begin(), normals.end(), packed_normals.ptrw());
+    std::copy(colors.begin(), colors.end(), packed_colors.ptrw());
+    std::copy(faces.begin(), faces.end(), packed_faces.ptrw());
+
+    Array arrays;
+    arrays.resize(Mesh::ARRAY_MAX);
+    arrays[Mesh::ARRAY_VERTEX] = packed_vertices;
+    arrays[Mesh::ARRAY_NORMAL] = packed_normals;
+    arrays[Mesh::ARRAY_COLOR] = packed_colors;
+
+    mesh.instantiate();
+    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+
+    shape.instantiate();
+    shape->set_faces(packed_faces);
+
+    result["mesh"] = mesh;
+    result["shape"] = shape;
+    result["source_vertex_count"] = static_cast<int>(vertices.size());
+    result["unique_vertex_count"] = static_cast<int>(vertices.size());
+    if (include_height_map) {
+        result["height_map"] = build_top_down_height_map(packed_faces, height_map_size);
+    }
+    return result;
 }
 
 static Dictionary build_indexed_packed_terrain_mesh(const PackedByteArray &data, int vertex_count, bool include_height_map, int height_map_size) {
@@ -1320,6 +1646,8 @@ void MeshBuilder::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_packed_mesh_collision_height_map", "data", "vertex_count", "height_map_size"), &MeshBuilder::build_packed_mesh_collision_height_map);
 	ClassDB::bind_method(D_METHOD("build_packed_indexed_mesh_and_collision", "vertex_data", "index_data", "vertex_count", "index_count"), &MeshBuilder::build_packed_indexed_mesh_and_collision);
 	ClassDB::bind_method(D_METHOD("build_packed_indexed_mesh_collision_height_map", "vertex_data", "index_data", "vertex_count", "index_count", "height_map_size"), &MeshBuilder::build_packed_indexed_mesh_collision_height_map);
+	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_and_collision", "density_data", "material_data", "density_size", "chunk_size"), &MeshBuilder::build_density_marching_cubes_mesh_and_collision);
+	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_collision_height_map", "density_data", "material_data", "density_size", "chunk_size", "height_map_size"), &MeshBuilder::build_density_marching_cubes_mesh_collision_height_map);
 	ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
 	ClassDB::bind_method(D_METHOD("has_player_material_overrides", "data", "width", "height", "depth"), &MeshBuilder::has_player_material_overrides);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
@@ -1708,6 +2036,14 @@ Dictionary MeshBuilder::build_packed_indexed_mesh_and_collision(const PackedByte
 
 Dictionary MeshBuilder::build_packed_indexed_mesh_collision_height_map(const PackedByteArray& vertex_data, const PackedByteArray& index_data, int vertex_count, int index_count, int height_map_size) {
     return build_shader_indexed_packed_terrain_mesh(vertex_data, index_data, vertex_count, index_count, true, height_map_size);
+}
+
+Dictionary MeshBuilder::build_density_marching_cubes_mesh_and_collision(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size) {
+    return build_density_marching_cubes_mesh(density_data, material_data, density_size, chunk_size, false, 0);
+}
+
+Dictionary MeshBuilder::build_density_marching_cubes_mesh_collision_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size) {
+    return build_density_marching_cubes_mesh(density_data, material_data, density_size, chunk_size, true, height_map_size);
 }
 
 

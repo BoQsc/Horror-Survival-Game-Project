@@ -225,6 +225,7 @@ var underground_load_triggered: bool = false # Track if Y=-1 burst load has been
 @export var terrain_gpu_separate_water_meshing: bool = false
 @export_range(1, 8, 1) var terrain_gpu_mesh_slices_per_chunk: int = 1
 @export_range(0, 20, 1) var terrain_gpu_mesh_slice_delay_ms: int = 2
+@export var terrain_native_cpu_meshing_enabled: bool = true
 
 # Adaptive loading - throttles based on current FPS
 var target_fps: float = 75.0
@@ -701,6 +702,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_gpu_separate_water_meshing": terrain_gpu_separate_water_meshing,
 		"terrain_gpu_mesh_slices_per_chunk": terrain_gpu_mesh_slices_per_chunk,
 		"terrain_gpu_mesh_slice_delay_ms": terrain_gpu_mesh_slice_delay_ms,
+		"terrain_native_cpu_meshing_enabled": terrain_native_cpu_meshing_enabled,
 		"last_gpu_generation_dispatch_ms": _last_gpu_generation_dispatch_ms,
 		"last_gpu_generation_dispatch_coord": str(_last_gpu_generation_dispatch_coord),
 		"last_gpu_generation_mod_sync_ms": _last_gpu_generation_mod_sync_ms,
@@ -2276,6 +2278,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_separate_water_meshing = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_GPU_SEPARATE_WATER_MESHING", terrain_gpu_separate_water_meshing)
 	terrain_gpu_mesh_slices_per_chunk = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICES", terrain_gpu_mesh_slices_per_chunk, 1, 8)
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
+	terrain_native_cpu_meshing_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING", terrain_native_cpu_meshing_enabled)
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
@@ -5253,10 +5256,16 @@ func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pi
 		terrain_vertex_count += int(readback_summary.get("terrain_vertex_count", 0))
 		water_vertex_count += int(readback_summary.get("water_vertex_count", 0))
 	if not mesh_readbacks.is_empty():
-		var meshing_sync_start_us := Time.get_ticks_usec()
-		rd.submit()
-		rd.sync()
-		meshing_sync_ms = float(Time.get_ticks_usec() - meshing_sync_start_us) / 1000.0
+		var needs_mesh_submit := false
+		for readback in mesh_readbacks:
+			if not bool(readback.get("native_cpu_meshing", false)):
+				needs_mesh_submit = true
+				break
+		if needs_mesh_submit:
+			var meshing_sync_start_us := Time.get_ticks_usec()
+			rd.submit()
+			rd.sync()
+			meshing_sync_ms = float(Time.get_ticks_usec() - meshing_sync_start_us) / 1000.0
 		var mesh_readback_start_us := Time.get_ticks_usec()
 		for readback in mesh_readbacks:
 			var readback_summary: Dictionary = _complete_chunk_readback(rd, readback)
@@ -5421,6 +5430,13 @@ func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_m
 	var mat_buf_terrain = flight_data.mat_buf_terrain
 	var skip_water_mesh := not bool(flight_data.get("water_surface_possible", true))
 
+	if terrain_native_cpu_meshing_enabled:
+		return {
+			"flight_data": flight_data,
+			"skip_water_mesh": skip_water_mesh,
+			"native_cpu_meshing": true
+		}
+
 	if terrain_gpu_separate_water_meshing and not skip_water_mesh and terrain_gpu_mesh_slices_per_chunk <= 1:
 		var terrain_mesh: Dictionary = run_gpu_meshing_immediate_readback(rd, sid_mesh, pipe_mesh, dens_buf_terrain, mat_buf_terrain, chunk_pos, vertex_buffer_terrain, counter_buffer_terrain, index_buffer_terrain)
 		if terrain_gpu_mesh_slice_delay_ms > 0:
@@ -5481,6 +5497,53 @@ func _complete_chunk_readback(rd: RenderingDevice, readback: Dictionary) -> Dict
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
+
+	if bool(readback.get("native_cpu_meshing", false)):
+		var native_density_bytes_t: PackedByteArray = rd.buffer_get_data(dens_buf_terrain)
+		var native_density_bytes_w := PackedByteArray()
+		if not bool(readback.get("skip_water_mesh", false)):
+			native_density_bytes_w = rd.buffer_get_data(dens_buf_water)
+		var native_material_bytes: PackedByteArray = rd.buffer_get_data(mat_buf_terrain)
+
+		var native_cpu_density_floats_w = PackedFloat32Array()
+		var native_generated_water_density := true
+		if bool(flight_data.get("needs_water_density_readback", false)):
+			native_cpu_density_floats_w = native_density_bytes_w.to_float32_array()
+			native_generated_water_density = false
+
+		var native_cpu_density_floats_t = PackedFloat32Array()
+		if bool(flight_data.get("needs_terrain_density_readback", false)):
+			native_cpu_density_floats_t = native_density_bytes_t.to_float32_array()
+
+		var native_cpu_material_bytes = PackedByteArray()
+		if bool(flight_data.get("needs_material_readback", false)):
+			native_cpu_material_bytes = native_material_bytes
+
+		cpu_mutex.lock()
+		cpu_task_queue.append({
+			"coord": coord,
+			"chunk_pos": chunk_pos,
+			"native_cpu_meshing": true,
+			"density_bytes_terrain": native_density_bytes_t,
+			"density_bytes_water": native_density_bytes_w,
+			"mesh_material_bytes": native_material_bytes,
+			"skip_water_mesh": bool(readback.get("skip_water_mesh", false)),
+			"cpu_dens_w": native_cpu_density_floats_w,
+			"generated_water_density": native_generated_water_density,
+			"cpu_dens_t": native_cpu_density_floats_t,
+			"cpu_mat_t": native_cpu_material_bytes,
+			"dens_buf_terrain": dens_buf_terrain,
+			"dens_buf_water": dens_buf_water,
+			"mat_buf_terrain": mat_buf_terrain,
+			"stored_mod_version": int(flight_data.get("stored_mod_version", 0)),
+			"queued_for_cpu_us": Time.get_ticks_usec()
+		})
+		cpu_mutex.unlock()
+		cpu_semaphore.post()
+		return {
+			"terrain_vertex_count": 0,
+			"water_vertex_count": 0
+		}
 
 	var mesh_data_terrain: Dictionary = readback.get("mesh_data_terrain", {})
 	if mesh_data_terrain.is_empty():
@@ -5794,10 +5857,24 @@ func _cpu_thread_function():
 		var mesh_terrain = null
 		var shape_terrain = null
 		var height_map_terrain := PackedFloat32Array()
+		var native_cpu_meshing := bool(task.get("native_cpu_meshing", false))
 		var mesh_data_terrain: Dictionary = task.get("mesh_data_terrain", {})
 		var terrain_vertex_count := int(mesh_data_terrain.get("vertex_count", 0))
 		var terrain_build_ms := 0.0
-		if int(mesh_data_terrain.get("vertex_count", 0)) > 0:
+		if native_cpu_meshing:
+			var terrain_build_start_us := Time.get_ticks_usec()
+			var density_bytes_terrain: PackedByteArray = task.get("density_bytes_terrain", PackedByteArray())
+			var mesh_material_bytes: PackedByteArray = task.get("mesh_material_bytes", PackedByteArray())
+			if not density_bytes_terrain.is_empty() and builder.has_method("build_density_marching_cubes_mesh_collision_height_map"):
+				var built_terrain: Dictionary = builder.build_density_marching_cubes_mesh_collision_height_map(density_bytes_terrain, mesh_material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE, CHUNK_STRIDE)
+				mesh_terrain = built_terrain.get("mesh", null)
+				if mesh_terrain:
+					mesh_terrain.surface_set_material(0, material_terrain)
+				shape_terrain = built_terrain.get("shape", null)
+				height_map_terrain = built_terrain.get("height_map", PackedFloat32Array())
+				terrain_vertex_count = int(built_terrain.get("source_vertex_count", 0))
+			terrain_build_ms = float(Time.get_ticks_usec() - terrain_build_start_us) / 1000.0
+		elif int(mesh_data_terrain.get("vertex_count", 0)) > 0:
 			var terrain_build_start_us := Time.get_ticks_usec()
 			var built_terrain := build_packed_mesh_and_collision(mesh_data_terrain, material_terrain, builder, true)
 			mesh_terrain = built_terrain.get("mesh", null)
@@ -5811,7 +5888,19 @@ func _cpu_thread_function():
 		var mesh_data_water: Dictionary = task.get("mesh_data_water", {})
 		var water_vertex_count := int(mesh_data_water.get("vertex_count", 0))
 		var water_build_ms := 0.0
-		if int(mesh_data_water.get("vertex_count", 0)) > 0:
+		if native_cpu_meshing and not bool(task.get("skip_water_mesh", false)):
+			var water_build_start_us := Time.get_ticks_usec()
+			var density_bytes_water: PackedByteArray = task.get("density_bytes_water", PackedByteArray())
+			var mesh_material_bytes_water: PackedByteArray = task.get("mesh_material_bytes", PackedByteArray())
+			if not density_bytes_water.is_empty() and builder.has_method("build_density_marching_cubes_mesh_and_collision"):
+				var built_water: Dictionary = builder.build_density_marching_cubes_mesh_and_collision(density_bytes_water, mesh_material_bytes_water, DENSITY_GRID_SIZE, CHUNK_SIZE)
+				mesh_water = built_water.get("mesh", null)
+				if mesh_water:
+					mesh_water.surface_set_material(0, material_water)
+				shape_water = built_water.get("shape", null)
+				water_vertex_count = int(built_water.get("source_vertex_count", 0))
+			water_build_ms = float(Time.get_ticks_usec() - water_build_start_us) / 1000.0
+		elif int(mesh_data_water.get("vertex_count", 0)) > 0:
 			var water_build_start_us := Time.get_ticks_usec()
 			var built_water := build_packed_mesh_and_collision(mesh_data_water, material_water, builder)
 			mesh_water = built_water.get("mesh", null)
