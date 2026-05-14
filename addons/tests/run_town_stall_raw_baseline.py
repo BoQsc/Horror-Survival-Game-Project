@@ -379,6 +379,91 @@ def _extract_generation_peak(sample: dict[str, Any]) -> dict[str, Any]:
     return {key: sample.get(key) for key in keys if key in sample}
 
 
+def _as_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    return None
+
+
+def _validate_content_for_power_compare(
+    content: dict[str, Any],
+    stream_gate: dict[str, Any],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    target = _as_int(content.get("terrain_stream_min_chunk_target"))
+    active = _as_int(content.get("active_chunk_count"))
+    terrain = _as_int(content.get("rendered_terrain_chunk_count"))
+    water = _as_int(content.get("rendered_water_chunk_count"))
+    render_distance = _as_int(content.get("render_distance"))
+
+    if target is None or target <= 0:
+        reasons.append("missing_or_invalid_stream_target")
+    else:
+        terrain_min = max(1, int(float(target) * 0.90))
+        terrain_max = max(target, int(float(target) * 1.55 + 0.999))
+        active_min = terrain_min
+        active_max = terrain_max
+        water_min = max(1, int(float(target) * 0.20))
+        water_max = max(water_min, int(float(target) * 0.60 + 0.999))
+
+        content["rendered_terrain_target_min"] = terrain_min
+        content["rendered_terrain_target_max"] = terrain_max
+        content["active_chunk_target_min"] = active_min
+        content["active_chunk_target_max"] = active_max
+        content["rendered_water_target_min"] = water_min
+        content["rendered_water_target_max"] = water_max
+
+        if terrain is None:
+            reasons.append("missing_rendered_terrain_count")
+        elif terrain < terrain_min:
+            reasons.append(f"rendered_terrain_below_target:{terrain}<{terrain_min}")
+        elif terrain > terrain_max:
+            reasons.append(f"rendered_terrain_above_target:{terrain}>{terrain_max}")
+
+        if active is None:
+            reasons.append("missing_active_chunk_count")
+        elif active < active_min:
+            reasons.append(f"active_chunks_below_target:{active}<{active_min}")
+        elif active > active_max:
+            reasons.append(f"active_chunks_above_target:{active}>{active_max}")
+
+        if water is None:
+            reasons.append("missing_rendered_water_count")
+        elif water < water_min:
+            reasons.append(f"rendered_water_below_target:{water}<{water_min}")
+        elif water > water_max:
+            reasons.append(f"rendered_water_above_target:{water}>{water_max}")
+
+    if render_distance is None or render_distance <= 0:
+        reasons.append("missing_or_invalid_render_distance")
+
+    if content.get("terrain_stream_under_target") is True:
+        reasons.append("terrain_stream_under_target")
+
+    for key in [
+        "pending_node_count",
+        "task_queue_count",
+        "cpu_task_queue_count",
+        "completed_generation_queue_count",
+    ]:
+        count = _as_int(content.get(key))
+        if count is None:
+            reasons.append(f"missing_{key}")
+        elif count != 0:
+            reasons.append(f"{key}_not_idle:{count}")
+
+    gate = stream_gate.get("last_terrain_stream_update_gate_reason")
+    if gate != "idle_same_chunk":
+        reasons.append(f"stream_gate_not_idle:{gate}")
+
+    content["content_validation_reasons"] = reasons
+    content["content_valid_for_power_compare"] = not reasons
+    content["rendered_content_valid_for_power_compare"] = not reasons
+    return content
+
+
 def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     if path is None:
         return {}
@@ -471,18 +556,13 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "task_queue_count",
             "cpu_task_queue_count",
             "completed_generation_queue_count",
+            "render_distance",
             "terrain_stream_min_chunk_target",
             "terrain_stream_under_target",
         ]
         if key in telemetry
     }
-    target = content.get("terrain_stream_min_chunk_target")
-    active = content.get("active_chunk_count")
-    content["content_valid_for_power_compare"] = (
-        isinstance(target, (int, float))
-        and isinstance(active, (int, float))
-        and int(active) >= int(target)
-    )
+    content = _validate_content_for_power_compare(content, stream_gate)
     terrain_batch = {
         key: telemetry.get(key)
         for key in [
@@ -725,7 +805,11 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     terrain = content.get("rendered_terrain_chunk_count")
     water = content.get("rendered_water_chunk_count")
     valid = content.get("content_valid_for_power_compare")
+    reasons = content.get("content_validation_reasons")
     gate = stream.get("last_terrain_stream_update_gate_reason")
+    reason_text = ""
+    if isinstance(reasons, list) and reasons:
+        reason_text = " reasons=" + ";".join(str(reason) for reason in reasons[:4])
     return (
         f"{run.get('case')}#{run.get('repeat_index')}: "
         f"hold_power={power:.2f}W " if isinstance(power, (int, float)) else f"{run.get('case')}#{run.get('repeat_index')}: hold_power=? "
@@ -737,8 +821,13 @@ def _case_summary_line(run: dict[str, Any]) -> str:
         f"hold_segment={stationary_power:.2f}W " if isinstance(stationary_power, (int, float)) else "hold_segment=? "
     ) + (
         f"pstates={pstate} fps={fps} moving_fps={moving_fps} "
-        f"moving_over40={moving_over_40} terrain={terrain} water={water} valid={valid} gate={gate}"
+        f"moving_over40={moving_over_40} terrain={terrain} water={water} valid={valid} gate={gate}{reason_text}"
     )
+
+
+def _run_content_valid(run: dict[str, Any]) -> bool:
+    content = run.get("snapshot", {}).get("content", {})
+    return bool(content.get("content_valid_for_power_compare")) if isinstance(content, dict) else False
 
 
 def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -748,38 +837,46 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
     aggregate: dict[str, Any] = {}
     for case, case_runs in by_case.items():
+        comparison_runs = [run for run in case_runs if _run_content_valid(run)]
         hold_powers = [
             float(run["estimated_hold_gpu"]["avg_power_w"])
-            for run in case_runs
+            for run in comparison_runs
             if isinstance(run.get("estimated_hold_gpu", {}).get("avg_power_w"), (int, float))
         ]
         last20_powers = [
             float(run["last_20s_gpu"]["avg_power_w"])
-            for run in case_runs
+            for run in comparison_runs
             if isinstance(run.get("last_20s_gpu", {}).get("avg_power_w"), (int, float))
         ]
         moving_powers = [
             float(run["moving_entry_gpu"]["avg_power_w"])
-            for run in case_runs
+            for run in comparison_runs
             if isinstance(run.get("moving_entry_gpu", {}).get("avg_power_w"), (int, float))
         ]
         stationary_hold_powers = [
             float(run["stationary_hold_gpu"]["avg_power_w"])
-            for run in case_runs
+            for run in comparison_runs
             if isinstance(run.get("stationary_hold_gpu", {}).get("avg_power_w"), (int, float))
         ]
         p0_fractions = [
             float(run["estimated_hold_gpu"]["p0_fraction"])
-            for run in case_runs
+            for run in comparison_runs
             if isinstance(run.get("estimated_hold_gpu", {}).get("p0_fraction"), (int, float))
         ]
         fps_values = [
             float(run["snapshot"]["town_metrics"]["average_fps"])
-            for run in case_runs
+            for run in comparison_runs
             if isinstance(run.get("snapshot", {}).get("town_metrics", {}).get("average_fps"), (int, float))
         ]
         aggregate[case] = {
             "run_count": len(case_runs),
+            "valid_run_count": len(comparison_runs),
+            "invalid_run_count": len(case_runs) - len(comparison_runs),
+            "invalid_content_reasons": [
+                run.get("snapshot", {}).get("content", {}).get("content_validation_reasons", [])
+                for run in case_runs
+                if not _run_content_valid(run)
+            ],
             "avg_hold_power_w": _avg(hold_powers),
             "min_hold_power_w": min(hold_powers) if hold_powers else None,
             "max_hold_power_w": max(hold_powers) if hold_powers else None,
