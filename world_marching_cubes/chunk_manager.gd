@@ -243,7 +243,7 @@ var loading_paused: bool = false
 @export_range(15, 120, 1) var runtime_power_idle_max_fps: int = 30
 @export_range(15, 120, 1) var runtime_power_deep_idle_max_fps: int = 15
 @export_range(0.1, 10.0, 0.1) var runtime_power_idle_enter_delay_s: float = 1.25
-@export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 8.0
+@export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 2.5
 @export_range(0.0, 5.0, 0.1) var runtime_power_active_grace_s: float = 0.75
 @export_range(0.001, 1.0, 0.001) var runtime_power_position_epsilon: float = 0.10
 @export var runtime_power_suspend_render_loop_in_deep_idle: bool = true
@@ -261,6 +261,8 @@ var _runtime_power_active_frame_count: int = 0
 var _runtime_power_idle_frame_count: int = 0
 var _runtime_power_deep_idle_frame_count: int = 0
 var _runtime_power_active_reason: String = "startup"
+var _runtime_power_terrain_busy_last: bool = false
+var _runtime_power_foreground_terrain_busy_last: bool = false
 var _runtime_power_disabled_reason: String = ""
 var _runtime_power_render_loop_suspended: bool = false
 var _runtime_power_render_loop_restore_enabled: bool = true
@@ -736,6 +738,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"runtime_power_idle_frame_count": _runtime_power_idle_frame_count,
 		"runtime_power_deep_idle_frame_count": _runtime_power_deep_idle_frame_count,
 		"runtime_power_active_reason": _runtime_power_active_reason,
+		"runtime_power_terrain_busy": _runtime_power_terrain_busy_last,
+		"runtime_power_foreground_terrain_busy": _runtime_power_foreground_terrain_busy_last,
 		"runtime_power_disabled_reason": _runtime_power_disabled_reason,
 		"runtime_power_suspend_render_loop_in_deep_idle": runtime_power_suspend_render_loop_in_deep_idle,
 		"runtime_power_render_loop_suspended": _runtime_power_render_loop_suspended,
@@ -2048,6 +2052,7 @@ func _process(delta):
 	_adjust_adaptive_loading()
 
 	if skip_terrain_chunk_updates_for_test:
+		_update_runtime_power_mode(delta)
 		return
 
 	var spawn_zone_work_pending := _has_pending_spawn_zone_work()
@@ -2241,6 +2246,14 @@ func _runtime_power_terrain_busy() -> bool:
 		or not _terrain_visual_batch_builds_in_flight.is_empty() \
 		or not _completed_terrain_visual_batch_builds.is_empty()
 
+func _runtime_power_foreground_terrain_busy(terrain_busy: bool) -> bool:
+	if not terrain_busy:
+		return false
+	if initial_load_phase or active_chunks.is_empty() or not pending_spawn_zones.is_empty():
+		return true
+	var min_loaded_chunk_count := _get_min_loaded_stream_chunk_count()
+	return min_loaded_chunk_count > 0 and active_chunks.size() < min_loaded_chunk_count
+
 func _apply_runtime_power_fps(mode: String, target_fps_value: int) -> void:
 	var previous_mode := _runtime_power_mode
 	_runtime_power_mode = mode
@@ -2285,14 +2298,17 @@ func _update_runtime_power_mode(delta: float) -> void:
 	var input_active := _runtime_power_input_active()
 	var viewer_moved := _runtime_power_viewer_moved()
 	var terrain_busy := _runtime_power_terrain_busy()
-	var active_now := input_active or viewer_moved or terrain_busy
+	var foreground_terrain_busy := _runtime_power_foreground_terrain_busy(terrain_busy)
+	_runtime_power_terrain_busy_last = terrain_busy
+	_runtime_power_foreground_terrain_busy_last = foreground_terrain_busy
+	var active_now := input_active or viewer_moved or foreground_terrain_busy
 	if active_now:
 		if input_active:
 			_runtime_power_active_reason = "input"
 		elif viewer_moved:
 			_runtime_power_active_reason = "viewer_moved"
-		elif terrain_busy:
-			_runtime_power_active_reason = "terrain_busy"
+		elif foreground_terrain_busy:
+			_runtime_power_active_reason = "terrain_foreground"
 		else:
 			_runtime_power_active_reason = "active"
 		_runtime_power_idle_seconds = 0.0
@@ -2303,10 +2319,10 @@ func _update_runtime_power_mode(delta: float) -> void:
 			_runtime_power_active_grace_remaining_s = maxf(0.0, _runtime_power_active_grace_remaining_s - delta)
 			_runtime_power_idle_seconds = 0.0
 		else:
-			_runtime_power_active_reason = "idle"
+			_runtime_power_active_reason = "terrain_background_idle" if terrain_busy else "idle"
 			_runtime_power_idle_seconds += delta
 
-	if _runtime_power_idle_seconds >= runtime_power_deep_idle_enter_delay_s:
+	if _runtime_power_idle_seconds >= runtime_power_deep_idle_enter_delay_s and not terrain_busy:
 		_runtime_power_deep_idle_frame_count += 1
 		_apply_runtime_power_fps("deep_idle", runtime_power_deep_idle_max_fps)
 	elif _runtime_power_idle_seconds >= runtime_power_idle_enter_delay_s:

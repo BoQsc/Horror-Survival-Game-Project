@@ -57,6 +57,20 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP": "0",
         },
     },
+    "runtime_fast_deep_idle": {
+        "description": "Runtime power manager with faster deep-idle entry after all activity stops.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S": "2.5",
+        },
+    },
+    "runtime_no_terrain_stream": {
+        "description": "Runtime power manager with terrain chunk updates disabled for moving terrain-work isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES": "1",
+        },
+    },
     "runtime_joined_water_submit": {
         "description": "Runtime power manager with terrain and water meshing submitted together.",
         "env": {
@@ -95,6 +109,7 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_GPU_MESH_SLICES",
     "TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS",
     "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET",
+    "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES",
 ]
 
 
@@ -265,6 +280,54 @@ def _summarize_time_window(
     return summary
 
 
+def _summarize_time_range(
+    samples: list[dict[str, Any]],
+    start_epoch: Optional[float],
+    end_epoch: Optional[float],
+    trim_start_seconds: float = 0.0,
+    trim_end_seconds: float = 0.0,
+) -> dict[str, Any]:
+    if start_epoch is None or end_epoch is None or end_epoch <= start_epoch:
+        return {
+            "sample_count": 0,
+            "failed_sample_count": 0,
+            "pstates": {},
+            "start_epoch": start_epoch,
+            "end_epoch": end_epoch,
+            "duration_seconds": 0.0,
+            "trim_start_seconds": trim_start_seconds,
+            "trim_end_seconds": trim_end_seconds,
+        }
+    start_time = start_epoch + trim_start_seconds
+    end_time = end_epoch - trim_end_seconds
+    if end_time <= start_time:
+        end_time = end_epoch
+    window = [sample for sample in samples if start_time <= float(sample.get("time", 0.0)) <= end_time]
+    summary = _summarize_samples(window)
+    summary["start_epoch"] = start_epoch
+    summary["end_epoch"] = end_epoch
+    summary["duration_seconds"] = max(0.0, end_time - start_time)
+    summary["trim_start_seconds"] = trim_start_seconds
+    summary["trim_end_seconds"] = trim_end_seconds
+    return summary
+
+
+def _extract_town_phase_epochs(snapshot: dict[str, Any]) -> dict[str, float]:
+    phase_epochs: dict[str, float] = {}
+    for event in snapshot.get("recent_scope_events", []):
+        if not isinstance(event, dict):
+            continue
+        if event.get("scope") != "town_stall_test":
+            continue
+        label = str(event.get("label", ""))
+        if label not in {"measurement_reset", "hold_started", "hold_complete", "shutdown_requested"}:
+            continue
+        epoch = event.get("epoch")
+        if isinstance(epoch, (int, float)):
+            phase_epochs[label] = float(epoch)
+    return phase_epochs
+
+
 def _latest_snapshot(since_mtime: float) -> Optional[Path]:
     return town_runner._latest_snapshot(since_mtime)
 
@@ -308,6 +371,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     except Exception as exc:
         return {"snapshot_path": str(path), "snapshot_error": repr(exc)}
 
+    phase_epochs = _extract_town_phase_epochs(snapshot)
     town_window = snapshot.get("town_entry_window", {})
     moving_entry_window = snapshot.get("moving_entry_window", {})
     stationary_hold_window = snapshot.get("stationary_hold_window", {})
@@ -325,6 +389,8 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "runtime_power_deep_idle_max_fps",
             "runtime_power_idle_seconds",
             "runtime_power_active_reason",
+            "runtime_power_terrain_busy",
+            "runtime_power_foreground_terrain_busy",
             "runtime_power_disabled_reason",
             "runtime_power_suspend_render_loop_in_deep_idle",
             "runtime_power_render_loop_suspended",
@@ -403,6 +469,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     )
     return {
         "snapshot_path": str(path),
+        "phase_epochs": phase_epochs,
         "town_metrics": {
             "average_fps": snapshot.get("average_fps", town_window.get("average_fps")),
             "avg_total_ms": snapshot.get("avg_total_ms", town_window.get("avg_total_ms")),
@@ -493,6 +560,7 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
             "TOWN_STALL_MACHINE_WARMUP_DISABLED": os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1"),
             "TOWN_STALL_DISABLE_BUILDINGS": "0",
             "TOWN_STALL_DISABLE_ENTITIES": "0",
+            "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES": "0",
             "TOWN_STALL_DISABLE_EXIT_AUTOSAVE": "1",
             "TOWN_STALL_MEASURE_FULL_FLIGHT": "1" if measure_full_flight else os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", "0"),
         }
@@ -550,6 +618,25 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
         "snapshot": snapshot,
         "samples": sampler.samples,
     }
+    phase_epochs = snapshot.get("phase_epochs", {}) if isinstance(snapshot, dict) else {}
+    if isinstance(phase_epochs, dict):
+        measurement_reset_epoch = phase_epochs.get("measurement_reset")
+        hold_started_epoch = phase_epochs.get("hold_started")
+        hold_complete_epoch = phase_epochs.get("hold_complete")
+        result["moving_entry_gpu"] = _summarize_time_range(
+            sampler.samples,
+            measurement_reset_epoch if isinstance(measurement_reset_epoch, (int, float)) else None,
+            hold_started_epoch if isinstance(hold_started_epoch, (int, float)) else None,
+            trim_start_seconds=1.0,
+            trim_end_seconds=0.0,
+        )
+        result["stationary_hold_gpu"] = _summarize_time_range(
+            sampler.samples,
+            hold_started_epoch if isinstance(hold_started_epoch, (int, float)) else None,
+            hold_complete_epoch if isinstance(hold_complete_epoch, (int, float)) else None,
+            trim_start_seconds=2.0,
+            trim_end_seconds=1.0,
+        )
     if failure_reasons:
         result["stdout_tail"] = "\n".join((proc.stdout or "").splitlines()[-120:])
         result["stderr_tail"] = "\n".join((proc.stderr or "").splitlines()[-120:])
@@ -559,11 +646,15 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
 def _case_summary_line(run: dict[str, Any]) -> str:
     hold = run.get("estimated_hold_gpu", {})
     last20 = run.get("last_20s_gpu", {})
+    moving_gpu = run.get("moving_entry_gpu", {})
+    stationary_gpu = run.get("stationary_hold_gpu", {})
     town_metrics = run.get("snapshot", {}).get("town_metrics", {})
     content = run.get("snapshot", {}).get("content", {})
     stream = run.get("snapshot", {}).get("stream_gate", {})
     power = hold.get("avg_power_w")
     last20_power = last20.get("avg_power_w")
+    moving_power = moving_gpu.get("avg_power_w") if isinstance(moving_gpu, dict) else None
+    stationary_power = stationary_gpu.get("avg_power_w") if isinstance(stationary_gpu, dict) else None
     pstate = hold.get("pstates", {})
     fps = town_metrics.get("average_fps")
     moving = run.get("snapshot", {}).get("moving_entry_metrics", {})
@@ -578,6 +669,10 @@ def _case_summary_line(run: dict[str, Any]) -> str:
         f"hold_power={power:.2f}W " if isinstance(power, (int, float)) else f"{run.get('case')}#{run.get('repeat_index')}: hold_power=? "
     ) + (
         f"last20={last20_power:.2f}W " if isinstance(last20_power, (int, float)) else "last20=? "
+    ) + (
+        f"moving={moving_power:.2f}W " if isinstance(moving_power, (int, float)) else "moving=? "
+    ) + (
+        f"hold_segment={stationary_power:.2f}W " if isinstance(stationary_power, (int, float)) else "hold_segment=? "
     ) + (
         f"pstates={pstate} fps={fps} moving_fps={moving_fps} "
         f"moving_over40={moving_over_40} terrain={terrain} water={water} valid={valid} gate={gate}"
@@ -601,6 +696,16 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             for run in case_runs
             if isinstance(run.get("last_20s_gpu", {}).get("avg_power_w"), (int, float))
         ]
+        moving_powers = [
+            float(run["moving_entry_gpu"]["avg_power_w"])
+            for run in case_runs
+            if isinstance(run.get("moving_entry_gpu", {}).get("avg_power_w"), (int, float))
+        ]
+        stationary_hold_powers = [
+            float(run["stationary_hold_gpu"]["avg_power_w"])
+            for run in case_runs
+            if isinstance(run.get("stationary_hold_gpu", {}).get("avg_power_w"), (int, float))
+        ]
         p0_fractions = [
             float(run["estimated_hold_gpu"]["p0_fraction"])
             for run in case_runs
@@ -617,6 +722,8 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "min_hold_power_w": min(hold_powers) if hold_powers else None,
             "max_hold_power_w": max(hold_powers) if hold_powers else None,
             "avg_last20_power_w": _avg(last20_powers),
+            "avg_moving_power_w": _avg(moving_powers),
+            "avg_stationary_hold_power_w": _avg(stationary_hold_powers),
             "avg_hold_p0_fraction": _avg(p0_fractions),
             "avg_fps": _avg(fps_values),
         }
@@ -625,7 +732,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_no_render_suspend,runtime_joined_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_joined_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)

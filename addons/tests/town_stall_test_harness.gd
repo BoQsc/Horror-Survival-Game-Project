@@ -222,6 +222,7 @@ func _emit_scope_state(scope: String, payload: Dictionary) -> void:
 	var frame_number := _get_current_frame_number()
 	state["frame"] = frame_number
 	state["timestamp"] = Time.get_ticks_msec()
+	state["epoch"] = Time.get_unix_time_from_system()
 	_scope_states[scope] = state
 	if scope == "town" or scope == "town_stall_test":
 		_town_entry_latest_town_state = state.duplicate(true)
@@ -237,7 +238,8 @@ func _emit_scope_event(scope: String, event_name: String, payload: Dictionary) -
 		"scope": scope,
 		"label": event_name,
 		"frame": _get_current_frame_number(),
-		"timestamp": Time.get_ticks_msec()
+		"timestamp": Time.get_ticks_msec(),
+		"epoch": Time.get_unix_time_from_system()
 	}
 	if not payload.is_empty():
 		event["details"] = payload.duplicate(true)
@@ -541,6 +543,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 
 	return {
 		"frame": frame_number,
+		"epoch": Time.get_unix_time_from_system(),
 		"fps": fps,
 		"total_ms": total_ms,
 		"frame_delta_ms": total_ms,
