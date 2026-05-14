@@ -220,7 +220,7 @@ var underground_load_triggered: bool = false # Track if Y=-1 burst load has been
 ## Higher values reduce FPS drops but make terrain load slower as you move.
 ## Recommended: 100-200ms for smooth exploration.
 @export_range(0, 6000, 10) var exploration_delay_ms: int = 300
-@export var terrain_gpu_separate_water_meshing: bool = true
+@export var terrain_gpu_separate_water_meshing: bool = false
 @export_range(1, 8, 1) var terrain_gpu_mesh_slices_per_chunk: int = 1
 @export_range(0, 20, 1) var terrain_gpu_mesh_slice_delay_ms: int = 2
 

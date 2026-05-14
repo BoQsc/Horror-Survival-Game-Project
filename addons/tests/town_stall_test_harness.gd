@@ -21,6 +21,7 @@ const TOWN_ENTRY_WINDOW_RECENT_LIMIT := 10
 const PERFORMANCE_SNAPSHOT_DIR := "user://debug/performance"
 const RENDER_DIAGNOSTIC_DEFAULT_LIMIT := 48
 const PEAK_ENTRY_SAMPLE_LIMIT := 12
+const HOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
 
 enum Phase {
 	GENERATING,
@@ -93,6 +94,7 @@ var fly_target: Vector3 = Vector3.ZERO
 var fly_target_altitude: float = 0.0
 var return_origin: Vector3 = Vector3.ZERO
 var current_hold_seconds: float = HOLD_SECONDS
+var next_hold_snapshot_phase_time: float = -1.0
 
 var game_root: Node3D = null
 var terrain_manager: Node = null
@@ -716,10 +718,15 @@ func _collect_render_scene_scan() -> Dictionary:
 		"multimesh_instances": 0,
 		"visible_multimesh_instances": 0,
 		"terrain_geometry": 0,
+		"visible_terrain_geometry": 0,
 		"building_geometry": 0,
+		"visible_building_geometry": 0,
 		"vegetation_geometry": 0,
+		"visible_vegetation_geometry": 0,
 		"entity_geometry": 0,
-		"other_geometry": 0
+		"visible_entity_geometry": 0,
+		"other_geometry": 0,
+		"visible_other_geometry": 0
 	}
 	if not is_instance_valid(game_root):
 		return counts
@@ -746,6 +753,8 @@ func _scan_render_node(node: Node, counts: Dictionary) -> void:
 
 		var category := _get_render_diagnostic_node_category(geometry)
 		counts["%s_geometry" % category] = int(counts.get("%s_geometry" % category, 0)) + 1
+		if visible:
+			counts["visible_%s_geometry" % category] = int(counts.get("visible_%s_geometry" % category, 0)) + 1
 
 	for child in node.get_children():
 		_scan_render_node(child, counts)
@@ -1360,6 +1369,11 @@ func _write_native_town_entry_snapshot() -> void:
 		"latest_town_state": town_window.get("latest_town_state", {}),
 		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {})),
 		"runtime_mode": runtime_mode,
+		"benchmark_phase": str(phase),
+		"benchmark_phase_time": phase_time,
+		"benchmark_hold_seconds": current_hold_seconds,
+		"benchmark_pending_quit": pending_quit,
+		"benchmark_hold_complete": _hold_completed_sample_index >= 0,
 		"machine_state": _machine_state.duplicate(true) if not _machine_state.is_empty() else {},
 		"warmup_note": str(_machine_state.get("warmup_note", "")),
 		"system_telemetry": system_telemetry,
@@ -2310,6 +2324,12 @@ func _hold_in_town(_delta: float) -> void:
 			"hold_seconds": current_hold_seconds
 		})
 		hold_started_logged = true
+		next_hold_snapshot_phase_time = HOLD_SNAPSHOT_INTERVAL_SECONDS
+		_write_native_town_entry_snapshot()
+
+	if next_hold_snapshot_phase_time >= 0.0 and phase_time >= next_hold_snapshot_phase_time:
+		_write_native_town_entry_snapshot()
+		next_hold_snapshot_phase_time += HOLD_SNAPSHOT_INTERVAL_SECONDS
 
 	if baked_building_persistence_smoke_enabled:
 		if not baked_building_persistence_smoke_started:
