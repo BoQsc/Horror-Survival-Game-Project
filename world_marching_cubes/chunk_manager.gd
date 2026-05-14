@@ -60,7 +60,9 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(0, 16, 1) var terrain_visual_batch_cached_rebuilds_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_cached_rebuild_budget_ms: float = 0.75
 @export var terrain_visual_batch_async_build_enabled: bool = true
+@export var terrain_visual_batch_async_during_streaming: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_async_builds_per_frame: int = 1
+@export_range(0, 8, 1) var terrain_visual_batch_streaming_async_queue_per_frame: int = 1
 @export_range(1, 64, 1) var terrain_visual_batch_async_build_queue_limit: int = 8
 @export_range(1, 16, 1) var terrain_visual_batch_async_apply_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_async_apply_budget_ms: float = 1.0
@@ -355,6 +357,7 @@ var _last_terrain_visual_batch_cached_rebuild_count: int = 0
 var _last_terrain_visual_batch_cached_rebuild_ms: float = 0.0
 var _last_terrain_visual_batch_cached_rebuild_attempts: int = 0
 var _last_terrain_visual_batch_async_queued_count: int = 0
+var _last_terrain_visual_batch_streaming_async_queued_count: int = 0
 var _last_terrain_visual_batch_async_apply_count: int = 0
 var _last_terrain_visual_batch_async_apply_ms: float = 0.0
 var _last_terrain_visual_batch_async_stale_count: int = 0
@@ -616,7 +619,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_cached_rebuilds_per_frame": terrain_visual_batch_cached_rebuilds_per_frame,
 		"terrain_visual_batch_cached_rebuild_budget_ms": terrain_visual_batch_cached_rebuild_budget_ms,
 		"terrain_visual_batch_async_build_enabled": terrain_visual_batch_async_build_enabled,
+		"terrain_visual_batch_async_during_streaming": terrain_visual_batch_async_during_streaming,
 		"terrain_visual_batch_async_builds_per_frame": terrain_visual_batch_async_builds_per_frame,
+		"terrain_visual_batch_streaming_async_queue_per_frame": terrain_visual_batch_streaming_async_queue_per_frame,
 		"terrain_visual_batch_async_build_queue_limit": terrain_visual_batch_async_build_queue_limit,
 		"terrain_visual_batch_async_apply_per_frame": terrain_visual_batch_async_apply_per_frame,
 		"terrain_visual_batch_async_apply_budget_ms": terrain_visual_batch_async_apply_budget_ms,
@@ -643,6 +648,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_async_in_flight_count": _terrain_visual_batch_builds_in_flight.size(),
 		"terrain_visual_batch_async_completed_count": _completed_terrain_visual_batch_builds.size(),
 		"last_terrain_visual_batch_async_queued_count": _last_terrain_visual_batch_async_queued_count,
+		"last_terrain_visual_batch_streaming_async_queued_count": _last_terrain_visual_batch_streaming_async_queued_count,
 		"last_terrain_visual_batch_async_apply_count": _last_terrain_visual_batch_async_apply_count,
 		"last_terrain_visual_batch_async_apply_ms": _last_terrain_visual_batch_async_apply_ms,
 		"last_terrain_visual_batch_async_stale_count": _last_terrain_visual_batch_async_stale_count,
@@ -1402,6 +1408,7 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 	_last_terrain_visual_batch_cached_rebuild_ms = 0.0
 	_last_terrain_visual_batch_cached_rebuild_attempts = 0
 	_last_terrain_visual_batch_async_queued_count = 0
+	_last_terrain_visual_batch_streaming_async_queued_count = 0
 	if not terrain_visual_batching_enabled or not world_map_active:
 		if not _terrain_visual_batches.is_empty():
 			_clear_terrain_visual_batches()
@@ -1424,6 +1431,10 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 	if _terrain_visual_batch_rebuild_busy(hot_frame):
 		_terrain_visual_batch_stream_idle_frames = 0
 		_process_cached_terrain_visual_batch_rebuilds()
+		if terrain_visual_batch_async_during_streaming and terrain_visual_batch_async_build_enabled and not hot_frame:
+			var streaming_builder := _get_terrain_visual_batch_builder()
+			if streaming_builder and streaming_builder.has_method("build_merged_array_mesh"):
+				_queue_streaming_terrain_visual_batch_builds(streaming_builder)
 		return
 	if hot_frame:
 		_last_terrain_visual_batch_hot_rebuild = true
@@ -1478,6 +1489,36 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 	_last_terrain_visual_batch_rebuild_count = rebuilt
 	_last_terrain_visual_batch_rebuild_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
+func _queue_streaming_terrain_visual_batch_builds(builder: Object) -> void:
+	if terrain_visual_batch_streaming_async_queue_per_frame <= 0:
+		return
+	if _terrain_visual_batch_dirty.is_empty():
+		return
+	if _terrain_visual_batch_builds_in_flight.size() >= terrain_visual_batch_async_build_queue_limit:
+		return
+	# Do not let visual merge work compete with chunk mesh construction.
+	if _get_cpu_task_queue_count() > 0 or not _completed_terrain_visual_batch_builds.is_empty():
+		return
+
+	var queued := 0
+	var keys := _get_terrain_visual_batch_keys_sorted_by_viewer()
+	for key_variant in keys:
+		if queued >= terrain_visual_batch_streaming_async_queue_per_frame:
+			break
+		if _terrain_visual_batch_builds_in_flight.size() >= terrain_visual_batch_async_build_queue_limit:
+			break
+		var key: Vector2i = key_variant
+		if _terrain_visual_batch_key_in_flight(key):
+			continue
+
+		var queued_before := _last_terrain_visual_batch_async_queued_count
+		if _rebuild_terrain_visual_batch(key, builder):
+			_terrain_visual_batch_dirty.erase(key)
+			continue
+		if _last_terrain_visual_batch_async_queued_count > queued_before:
+			queued += 1
+			_last_terrain_visual_batch_streaming_async_queued_count += 1
+
 func _process_cached_terrain_visual_batch_rebuilds() -> void:
 	if terrain_visual_batch_cached_rebuilds_per_frame <= 0 or terrain_visual_batch_mesh_cache_limit <= 0:
 		return
@@ -1505,6 +1546,28 @@ func _process_cached_terrain_visual_batch_rebuilds() -> void:
 	_last_terrain_visual_batch_cached_rebuild_count = rebuilt
 	_last_terrain_visual_batch_cached_rebuild_attempts = attempts
 	_last_terrain_visual_batch_cached_rebuild_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+
+func _get_terrain_visual_batch_keys_sorted_by_viewer() -> Array:
+	var keys := _terrain_visual_batch_dirty.keys()
+	if keys.size() <= 1:
+		return keys
+
+	var p_pos := get_viewer_position()
+	var center_key := _terrain_visual_batch_key(Vector3i(
+		int(floor(p_pos.x / CHUNK_STRIDE)),
+		0,
+		int(floor(p_pos.z / CHUNK_STRIDE))
+	))
+	keys.sort_custom(func(a, b) -> bool:
+		var key_a: Vector2i = a
+		var key_b: Vector2i = b
+		var dx_a := key_a.x - center_key.x
+		var dz_a := key_a.y - center_key.y
+		var dx_b := key_b.x - center_key.x
+		var dz_b := key_b.y - center_key.y
+		return dx_a * dx_a + dz_a * dz_a < dx_b * dx_b + dz_b * dz_b
+	)
+	return keys
 
 func _terrain_visual_batch_key_in_flight(key: Vector2i) -> bool:
 	for in_flight_key_variant in _terrain_visual_batch_builds_in_flight.values():
@@ -2214,6 +2277,8 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_mesh_slices_per_chunk = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICES", terrain_gpu_mesh_slices_per_chunk, 1, 8)
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
+	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
+	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
 
 func _runtime_power_input_active() -> bool:
 	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]

@@ -50,6 +50,13 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
         },
     },
+    "runtime_no_streaming_batch_async": {
+        "description": "Runtime defaults with terrain visual batch async queueing during streaming disabled.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC": "0",
+        },
+    },
     "runtime_no_render_suspend": {
         "description": "Runtime power manager defaults with deep-idle render-loop suspension disabled.",
         "env": {
@@ -115,6 +122,8 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_GPU_SEPARATE_WATER_MESHING",
     "TOWN_STALL_TERRAIN_GPU_MESH_SLICES",
     "TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS",
+    "TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC",
+    "TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE",
     "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET",
     "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES",
 ]
@@ -474,6 +483,44 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         and isinstance(active, (int, float))
         and int(active) >= int(target)
     )
+    terrain_batch = {
+        key: telemetry.get(key)
+        for key in [
+            "terrain_visual_batching_enabled",
+            "terrain_visual_batch_size",
+            "terrain_visual_batch_cached_rebuilds_per_frame",
+            "terrain_visual_batch_cached_rebuild_budget_ms",
+            "terrain_visual_batch_async_build_enabled",
+            "terrain_visual_batch_async_during_streaming",
+            "terrain_visual_batch_async_builds_per_frame",
+            "terrain_visual_batch_streaming_async_queue_per_frame",
+            "terrain_visual_batch_async_build_queue_limit",
+            "terrain_visual_batch_async_apply_per_frame",
+            "terrain_visual_batch_async_apply_budget_ms",
+            "terrain_visual_batch_node_count",
+            "terrain_visual_batch_dirty_count",
+            "terrain_visual_batch_mesh_cache_count",
+            "terrain_visual_batch_mesh_cache_hits",
+            "terrain_visual_batch_mesh_cache_misses",
+            "terrain_visual_batch_async_in_flight_count",
+            "terrain_visual_batch_async_completed_count",
+            "last_terrain_visual_batch_hidden_chunk_count",
+            "last_terrain_visual_batch_rebuild_count",
+            "last_terrain_visual_batch_rebuild_ms",
+            "last_terrain_visual_batch_cached_rebuild_count",
+            "last_terrain_visual_batch_cached_rebuild_ms",
+            "last_terrain_visual_batch_cached_rebuild_attempts",
+            "last_terrain_visual_batch_async_queued_count",
+            "last_terrain_visual_batch_streaming_async_queued_count",
+            "last_terrain_visual_batch_async_apply_count",
+            "last_terrain_visual_batch_async_apply_ms",
+            "last_terrain_visual_batch_async_stale_count",
+            "terrain_visual_batch_stream_idle_frames",
+            "terrain_visual_batch_total_heavy_skips",
+            "terrain_visual_mesh_retire_queue_count",
+        ]
+        if key in telemetry
+    }
     return {
         "snapshot_path": str(path),
         "benchmark": {
@@ -523,6 +570,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         "collision": collision,
         "stream_gate": stream_gate,
         "content": content,
+        "terrain_batch": terrain_batch,
     }
 
 
@@ -746,7 +794,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_no_streaming_batch_async,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)

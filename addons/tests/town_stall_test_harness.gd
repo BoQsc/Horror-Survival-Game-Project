@@ -407,6 +407,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_visual_batch_async_in_flight_count := 0
 	var terrain_visual_batch_async_completed_count := 0
 	var terrain_last_visual_batch_async_queued_count := 0
+	var terrain_last_visual_batch_streaming_async_queued_count := 0
 	var terrain_last_visual_batch_async_apply_count := 0
 	var terrain_last_visual_batch_async_apply_ms := 0.0
 	var terrain_last_visual_batch_async_stale_count := 0
@@ -491,6 +492,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_visual_batch_async_in_flight_count = int(terrain_manager._terrain_visual_batch_builds_in_flight.size())
 		terrain_visual_batch_async_completed_count = int(terrain_manager._completed_terrain_visual_batch_builds.size())
 		terrain_last_visual_batch_async_queued_count = int(terrain_manager._last_terrain_visual_batch_async_queued_count)
+		terrain_last_visual_batch_streaming_async_queued_count = int(terrain_manager._last_terrain_visual_batch_streaming_async_queued_count)
 		terrain_last_visual_batch_async_apply_count = int(terrain_manager._last_terrain_visual_batch_async_apply_count)
 		terrain_last_visual_batch_async_apply_ms = float(terrain_manager._last_terrain_visual_batch_async_apply_ms)
 		terrain_last_visual_batch_async_stale_count = int(terrain_manager._last_terrain_visual_batch_async_stale_count)
@@ -629,6 +631,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_visual_batch_async_in_flight_count": terrain_visual_batch_async_in_flight_count,
 		"terrain_visual_batch_async_completed_count": terrain_visual_batch_async_completed_count,
 		"terrain_last_visual_batch_async_queued_count": terrain_last_visual_batch_async_queued_count,
+		"terrain_last_visual_batch_streaming_async_queued_count": terrain_last_visual_batch_streaming_async_queued_count,
 		"terrain_last_visual_batch_async_apply_count": terrain_last_visual_batch_async_apply_count,
 		"terrain_last_visual_batch_async_apply_ms": terrain_last_visual_batch_async_apply_ms,
 		"terrain_last_visual_batch_async_stale_count": terrain_last_visual_batch_async_stale_count,
