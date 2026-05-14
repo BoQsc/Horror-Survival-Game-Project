@@ -180,7 +180,7 @@ var active_chunks: Dictionary = {}
 @export var keep_disabled_terrain_collision_bodies_in_space: bool = true
 @export var shared_terrain_collision_body_enabled: bool = true
 @export_range(1, 8, 1) var shared_terrain_collision_cluster_size: int = 2
-@export_range(1, 64, 1) var shared_terrain_collision_create_budget_per_frame: int = 2
+@export_range(1, 64, 1) var shared_terrain_collision_create_budget_per_frame: int = 1
 
 # Time-budgeted node creation - prevents stutters from multiple chunks completing at once
 var pending_nodes: Array[Dictionary] = [] # Queue of completed chunks waiting for node creation
@@ -394,6 +394,7 @@ func _ready():
 	_ensure_chunk_node_root()
 	add_to_group("terrain")
 	_configure_runtime_power_mode_from_env()
+	_configure_terrain_gpu_mode_from_env()
 
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
@@ -584,6 +585,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"shared_collision_body_enabled": shared_terrain_collision_body_enabled,
 		"shared_collision_shape_count": _shared_terrain_collision_shape_coords.size(),
 		"shared_collision_cluster_body_count": _shared_terrain_collision_cluster_bodies.size(),
+		"shared_terrain_collision_create_budget_per_frame": shared_terrain_collision_create_budget_per_frame,
 		"collision_ready_chunk_count": collision_ready_chunk_count,
 		"collision_prewarm_distance": collision_prewarm_distance,
 		"pending_terrain_collision_create_count": pending_terrain_collision_creates.size(),
@@ -2156,6 +2158,12 @@ func _get_runtime_power_env_int(name: String, default_value: int) -> int:
 	var value := int(raw)
 	return value if value > 0 else default_value
 
+func _get_runtime_power_env_int_range(name: String, default_value: int, min_value: int, max_value: int) -> int:
+	var raw := OS.get_environment(name).strip_edges()
+	if raw.is_empty() or not raw.is_valid_int():
+		return default_value
+	return clampi(int(raw), min_value, max_value)
+
 func _get_runtime_power_env_float(name: String, default_value: float) -> float:
 	var raw := OS.get_environment(name).strip_edges()
 	if raw.is_empty() or not raw.is_valid_float():
@@ -2195,6 +2203,12 @@ func _configure_runtime_power_mode_from_env() -> void:
 
 	if runtime_power_mode_enabled:
 		_apply_runtime_power_fps("active", runtime_power_active_max_fps)
+
+func _configure_terrain_gpu_mode_from_env() -> void:
+	terrain_gpu_separate_water_meshing = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_GPU_SEPARATE_WATER_MESHING", terrain_gpu_separate_water_meshing)
+	terrain_gpu_mesh_slices_per_chunk = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICES", terrain_gpu_mesh_slices_per_chunk, 1, 8)
+	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
+	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
 
 func _runtime_power_input_active() -> bool:
 	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]

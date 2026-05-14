@@ -57,6 +57,27 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP": "0",
         },
     },
+    "runtime_joined_water_submit": {
+        "description": "Runtime power manager with terrain and water meshing submitted together.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_TERRAIN_GPU_SEPARATE_WATER_MESHING": "0",
+        },
+    },
+    "runtime_mesh_slices_1": {
+        "description": "Runtime power manager with terrain GPU meshing in one Y slice.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_TERRAIN_GPU_MESH_SLICES": "1",
+        },
+    },
+    "runtime_mesh_slices_2": {
+        "description": "Runtime power manager with terrain GPU meshing split into two Y slices.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_TERRAIN_GPU_MESH_SLICES": "2",
+        },
+    },
 }
 
 RESET_ENV_KEYS = [
@@ -70,6 +91,10 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S",
     "TOWN_STALL_RUNTIME_POWER_ACTIVE_GRACE_S",
     "TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP",
+    "TOWN_STALL_TERRAIN_GPU_SEPARATE_WATER_MESHING",
+    "TOWN_STALL_TERRAIN_GPU_MESH_SLICES",
+    "TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS",
+    "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET",
 ]
 
 
@@ -307,6 +332,41 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         ]
         if key in telemetry
     }
+    terrain_gpu = {
+        key: telemetry.get(key)
+        for key in [
+            "terrain_gpu_separate_water_meshing",
+            "terrain_gpu_mesh_slices_per_chunk",
+            "terrain_gpu_mesh_slice_delay_ms",
+            "last_gpu_generation_batch_ms",
+            "last_gpu_generation_sync_ms",
+            "last_gpu_meshing_dispatch_ms",
+            "last_gpu_meshing_sync_ms",
+            "last_gpu_mesh_readback_ms",
+            "last_gpu_mesh_slice_count",
+            "last_gpu_mesh_slice_max_sync_ms",
+        ]
+        if key in telemetry
+    }
+    collision = {
+        key: telemetry.get(key)
+        for key in [
+            "shared_collision_body_enabled",
+            "shared_terrain_collision_create_budget_per_frame",
+            "terrain_collision_create_budget_per_frame",
+            "pending_terrain_collision_create_count",
+            "last_terrain_collision_create_count",
+            "last_terrain_collision_create_ms",
+            "last_terrain_collision_create_skipped_far",
+            "last_terrain_collision_create_stale",
+            "last_terrain_collision_create_deferred_prewarm",
+            "last_terrain_collision_candidate_checks",
+            "collision_ready_chunk_count",
+            "collision_enabled_chunk_count",
+            "collision_space_attached_chunk_count",
+        ]
+        if key in telemetry
+    }
     stream_gate = {
         key: telemetry.get(key)
         for key in [
@@ -378,6 +438,8 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "peak_generation": _extract_generation_peak(stationary_peak_sample),
         },
         "runtime_power": runtime_power,
+        "terrain_gpu": terrain_gpu,
+        "collision": collision,
         "stream_gate": stream_gate,
         "content": content,
     }
@@ -563,7 +625,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_no_render_suspend")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_no_render_suspend,runtime_joined_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)
