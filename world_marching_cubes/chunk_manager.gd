@@ -223,6 +223,7 @@ var underground_load_triggered: bool = false # Track if Y=-1 burst load has been
 @export var terrain_gpu_separate_water_meshing: bool = true
 @export_range(1, 8, 1) var terrain_gpu_mesh_slices_per_chunk: int = 1
 @export_range(0, 20, 1) var terrain_gpu_mesh_slice_delay_ms: int = 2
+@export var water_expensive_effects_enabled: bool = true
 
 # Adaptive loading - throttles based on current FPS
 var target_fps: float = 75.0
@@ -459,6 +460,7 @@ func _ready():
 	material_water.set_shader_parameter("albedo_deep", Color(0.01, 0.06, 0.04))
 	material_water.set_shader_parameter("albedo_shallow", Color(0.1, 0.3, 0.2))
 	material_water.set_shader_parameter("beer_factor", 0.25)
+	material_water.set_shader_parameter("expensive_effects_enabled", water_expensive_effects_enabled)
 	# Water normal texture for detailed ripples
 	var water_normal = load("res://world_marching_cubes/water_texture.png")
 	if water_normal:
@@ -695,6 +697,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_gpu_separate_water_meshing": terrain_gpu_separate_water_meshing,
 		"terrain_gpu_mesh_slices_per_chunk": terrain_gpu_mesh_slices_per_chunk,
 		"terrain_gpu_mesh_slice_delay_ms": terrain_gpu_mesh_slice_delay_ms,
+		"water_expensive_effects_enabled": water_expensive_effects_enabled,
 		"last_gpu_generation_dispatch_ms": _last_gpu_generation_dispatch_ms,
 		"last_gpu_generation_dispatch_coord": str(_last_gpu_generation_dispatch_coord),
 		"last_gpu_generation_mod_sync_ms": _last_gpu_generation_mod_sync_ms,
@@ -2214,6 +2217,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_mesh_slices_per_chunk = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICES", terrain_gpu_mesh_slices_per_chunk, 1, 8)
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
+	water_expensive_effects_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_EXPENSIVE_EFFECTS", water_expensive_effects_enabled)
 
 func _runtime_power_input_active() -> bool:
 	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]
