@@ -34,6 +34,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export var terrain_height: float = 10.0
 @export var water_level: float = 13.0 # Lowered to keep roads dry
 @export var water_render_enabled: bool = true
+@export var terrain_skip_dry_water_density_dispatch: bool = true
 @export var noise_frequency: float = 0.1
 ## World generation seed - same seed = same world
 ## Change this for different world generation
@@ -305,6 +306,9 @@ var _last_gpu_mesh_readback_terrain_vertices: int = 0
 var _last_gpu_mesh_readback_water_vertices: int = 0
 var _last_gpu_mesh_slice_count: int = 0
 var _last_gpu_mesh_slice_max_sync_ms: float = 0.0
+var _last_gpu_water_density_dispatched: bool = false
+var _gpu_water_density_skipped_count: int = 0
+var _last_gpu_water_density_skipped_coord: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_gpu_generation_batch_event_id: int = 0
 var _last_cpu_mesh_build_ms: float = 0.0
 var _last_cpu_mesh_build_terrain_ms: float = 0.0
@@ -344,6 +348,7 @@ var _last_world_map_lod_outer_distance: int = -1
 var _last_world_map_lod_update_ms: float = 0.0
 var _last_world_map_lod_loads: int = 0
 var _last_world_map_lod_unloads: int = 0
+var _dry_water_density_bytes: PackedByteArray = PackedByteArray()
 var _terrain_visual_batch_root: Node3D = null
 var _terrain_visual_batches: Dictionary = {}
 var _terrain_visual_batch_members: Dictionary = {}
@@ -720,6 +725,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_gpu_mesh_slices_per_chunk": terrain_gpu_mesh_slices_per_chunk,
 		"terrain_gpu_mesh_slice_delay_ms": terrain_gpu_mesh_slice_delay_ms,
 		"terrain_native_cpu_meshing_enabled": terrain_native_cpu_meshing_enabled,
+		"terrain_skip_dry_water_density_dispatch": terrain_skip_dry_water_density_dispatch,
 		"water_render_enabled": water_render_enabled,
 		"last_gpu_generation_dispatch_ms": _last_gpu_generation_dispatch_ms,
 		"last_gpu_generation_dispatch_coord": str(_last_gpu_generation_dispatch_coord),
@@ -735,6 +741,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_gpu_mesh_readback_water_vertices": _last_gpu_mesh_readback_water_vertices,
 		"last_gpu_mesh_slice_count": _last_gpu_mesh_slice_count,
 		"last_gpu_mesh_slice_max_sync_ms": _last_gpu_mesh_slice_max_sync_ms,
+		"last_gpu_water_density_dispatched": _last_gpu_water_density_dispatched,
+		"gpu_water_density_skipped_count": _gpu_water_density_skipped_count,
+		"last_gpu_water_density_skipped_coord": str(_last_gpu_water_density_skipped_coord),
 		"last_gpu_generation_batch_event_id": _last_gpu_generation_batch_event_id,
 		"last_cpu_mesh_build_ms": _last_cpu_mesh_build_ms,
 		"last_cpu_mesh_build_terrain_ms": _last_cpu_mesh_build_terrain_ms,
@@ -2326,6 +2335,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_mesh_slices_per_chunk = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICES", terrain_gpu_mesh_slices_per_chunk, 1, 8)
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
 	terrain_native_cpu_meshing_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING", terrain_native_cpu_meshing_enabled)
+	terrain_skip_dry_water_density_dispatch = _get_runtime_power_env_bool("TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH", terrain_skip_dry_water_density_dispatch)
 	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
 		water_render_enabled = false
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
@@ -3467,6 +3477,17 @@ func _get_generated_water_density(world_pos: Vector3) -> float:
 	var water_mask := _shader_smoothstep(-0.3, 0.3, mask_value)
 	var effective_height := water_level - (1.0 - water_mask) * 20.0
 	return world_pos.y - effective_height
+
+func _get_dry_water_density_bytes() -> PackedByteArray:
+	if not _dry_water_density_bytes.is_empty():
+		return _dry_water_density_bytes
+
+	var values := PackedFloat32Array()
+	values.resize(DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE)
+	for i in range(values.size()):
+		values[i] = 100.0
+	_dry_water_density_bytes = values.to_byte_array()
+	return _dry_water_density_bytes
 
 func _get_generated_water_surface_height(global_x: float, global_z: float) -> float:
 	if world_map_active:
@@ -5385,9 +5406,27 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	var density_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4
 	var material_bytes = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * 4 # uint per voxel
 
+	var modification_snapshot := _get_modification_snapshot_for_chunk(coord)
+	var mods_for_chunk: Array = modification_snapshot.get("mods", [])
+	var stored_mod_version := int(modification_snapshot.get("version", 0))
+	var needs_material_readback := false
+	var needs_terrain_density_readback := false
+	var needs_water_density_readback := false
+	var water_surface_possible := _chunk_may_have_generated_water_surface(coord)
+	for mod in mods_for_chunk:
+		if int(mod.get("material_id", -1)) >= 0:
+			needs_material_readback = true
+		var mod_layer := int(mod.get("layer", 0))
+		if mod_layer == 0:
+			needs_terrain_density_readback = true
+		else:
+			needs_water_density_readback = true
+			water_surface_possible = true
+
 	# Create density and material buffers (will persist until readback)
 	var dens_buf_terrain = rd.storage_buffer_create(density_bytes)
-	var dens_buf_water = rd.storage_buffer_create(density_bytes)
+	var skip_dry_water_density_dispatch := terrain_skip_dry_water_density_dispatch and world_map_active and not water_surface_possible
+	var dens_buf_water = rd.storage_buffer_create(density_bytes, _get_dry_water_density_bytes()) if skip_dry_water_density_dispatch else rd.storage_buffer_create(density_bytes)
 	var mat_buf_terrain = rd.storage_buffer_create(material_bytes) # Material IDs
 
 	# --- Dispatch Terrain Density (no sync) ---
@@ -5429,32 +5468,31 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 	# NO sync here!
 
 	# --- Dispatch Water Density (no sync) ---
-	var u_density_w = RDUniform.new()
-	u_density_w.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
-	u_density_w.binding = 0
-	u_density_w.add_id(dens_buf_water)
+	var set_gen_w = RID()
+	if not skip_dry_water_density_dispatch:
+		var u_density_w = RDUniform.new()
+		u_density_w.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+		u_density_w.binding = 0
+		u_density_w.add_id(dens_buf_water)
 
-	var set_gen_w = rd.uniform_set_create([u_density_w], sid_gen_water, 0)
-	list = rd.compute_list_begin()
-	rd.compute_list_bind_compute_pipeline(list, pipe_gen_water)
-	rd.compute_list_bind_uniform_set(list, set_gen_w, 0)
-	rd.compute_list_bind_uniform_set(list, _world_map_water_set1, 1)
-	var use_wm_w = 1.0 if world_map_active else 0.0
-	var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, water_level, use_wm_w, world_map_size, world_map_half, 0.0, 0.0, 0.0])
-	rd.compute_list_set_push_constant(list, push_data_w.to_byte_array(), push_data_w.size() * 4)
-	rd.compute_list_dispatch(list, 9, 9, 9)
-	rd.compute_list_end()
-	# NO sync here!
+		set_gen_w = rd.uniform_set_create([u_density_w], sid_gen_water, 0)
+		list = rd.compute_list_begin()
+		rd.compute_list_bind_compute_pipeline(list, pipe_gen_water)
+		rd.compute_list_bind_uniform_set(list, set_gen_w, 0)
+		rd.compute_list_bind_uniform_set(list, _world_map_water_set1, 1)
+		var use_wm_w = 1.0 if world_map_active else 0.0
+		var push_data_w = PackedFloat32Array([chunk_pos.x, chunk_pos.y, chunk_pos.z, 0.0, noise_frequency, water_level, use_wm_w, world_map_size, world_map_half, 0.0, 0.0, 0.0])
+		rd.compute_list_set_push_constant(list, push_data_w.to_byte_array(), push_data_w.size() * 4)
+		rd.compute_list_dispatch(list, 9, 9, 9)
+		rd.compute_list_end()
+		_last_gpu_water_density_dispatched = true
+	else:
+		_last_gpu_water_density_dispatched = false
+		_gpu_water_density_skipped_count += 1
+		_last_gpu_water_density_skipped_coord = coord
 
 	# Apply runtime terrain edits only.
 	# Baked world-map excavation is injected directly into gen_density.glsl via _world_map_excavation_buffers.
-	var modification_snapshot := _get_modification_snapshot_for_chunk(coord)
-	var mods_for_chunk: Array = modification_snapshot.get("mods", [])
-	var stored_mod_version := int(modification_snapshot.get("version", 0))
-	var needs_material_readback := false
-	var needs_terrain_density_readback := false
-	var needs_water_density_readback := false
-	var water_surface_possible := _chunk_may_have_generated_water_surface(coord)
 	var modification_sync_ms := 0.0
 
 	if mods_for_chunk.size() > 0:
@@ -5465,14 +5503,7 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 		rd.sync()
 		modification_sync_ms += float(Time.get_ticks_usec() - modification_sync_start_us) / 1000.0
 		for mod in mods_for_chunk:
-			if int(mod.get("material_id", -1)) >= 0:
-				needs_material_readback = true
 			var mod_layer := int(mod.get("layer", 0))
-			if mod_layer == 0:
-				needs_terrain_density_readback = true
-			else:
-				needs_water_density_readback = true
-				water_surface_possible = true
 			var target_buffer = dens_buf_terrain if mod_layer == 0 else dens_buf_water
 			_apply_modification_to_buffer(rd, sid_mod, pipe_mod, target_buffer, mat_buf_terrain, chunk_pos, mod)
 

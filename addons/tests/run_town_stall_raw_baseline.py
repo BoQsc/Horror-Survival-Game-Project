@@ -17,6 +17,13 @@ PROJECT_PATH = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = PROJECT_PATH / ".agent" / "gpu-telemetry"
 PYTHON_BIN = sys.executable
 NVIDIA_SMI = "nvidia-smi"
+DEFAULT_IDLE_MAX_POWER_W = 15.0
+DEFAULT_IDLE_MAX_TEMP_C = 85.0
+DEFAULT_IDLE_MAX_P0_FRACTION = 0.20
+DEFAULT_IDLE_MAX_GPU_UTIL_PCT = 30.0
+DEFAULT_IDLE_MAX_CPU_LOAD_PCT = 55
+DEFAULT_IDLE_MAX_CPU_PERF_PCT = 115
+DEFAULT_RUN_MAX_GPU_TEMP_C = 90.0
 
 GPU_QUERY_FIELDS = [
     "timestamp",
@@ -64,6 +71,13 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING": "1",
         },
     },
+    "runtime_no_dry_water_density_skip": {
+        "description": "Runtime defaults with dry water-density dispatch skip disabled for A/B isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH": "0",
+        },
+    },
     "runtime_no_streaming_batch_async": {
         "description": "Runtime defaults with terrain visual batch async queueing during streaming disabled.",
         "env": {
@@ -99,6 +113,13 @@ CASE_DEFINITIONS = {
         "env": {
             "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
             "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES": "1",
+        },
+    },
+    "runtime_no_shared_collision": {
+        "description": "Runtime defaults with shared terrain collision body disabled for collision-spike isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_SHARED_TERRAIN_COLLISION_BODY": "0",
         },
     },
     "runtime_no_glow": {
@@ -160,6 +181,7 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_GPU_MESH_SLICES",
     "TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS",
     "TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING",
+    "TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH",
     "TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC",
     "TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE",
     "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET",
@@ -167,6 +189,7 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE",
     "TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES",
     "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES",
+    "TOWN_STALL_SHARED_TERRAIN_COLLISION_BODY",
     "TOWN_STALL_DISABLE_GLOW",
     "TOWN_STALL_DISABLE_WATER_RENDER",
 ]
@@ -232,10 +255,13 @@ def _query_gpu_sample(phase: str) -> dict[str, Any]:
 
 
 class GpuSampler:
-    def __init__(self, phase: str, interval_seconds: float) -> None:
+    def __init__(self, phase: str, interval_seconds: float, max_temp_c: Optional[float] = None) -> None:
         self.phase = phase
         self.interval_seconds = interval_seconds
+        self.max_temp_c = max_temp_c if max_temp_c is not None and max_temp_c > 0 else None
         self.samples: list[dict[str, Any]] = []
+        self.thermal_abort_event = threading.Event()
+        self.thermal_abort_sample: Optional[dict[str, Any]] = None
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -249,7 +275,12 @@ class GpuSampler:
     def _run(self) -> None:
         while not self._stop_event.is_set():
             try:
-                self.samples.append(_query_gpu_sample(self.phase))
+                sample = _query_gpu_sample(self.phase)
+                self.samples.append(sample)
+                temp_c = sample.get("temp_c")
+                if self.max_temp_c is not None and isinstance(temp_c, (int, float)) and temp_c >= self.max_temp_c:
+                    self.thermal_abort_sample = sample
+                    self.thermal_abort_event.set()
             except Exception as exc:
                 self.samples.append(
                     {
@@ -273,6 +304,71 @@ def _avg(values: list[float]) -> Optional[float]:
     if not values:
         return None
     return sum(values) / len(values)
+
+
+def _float_env(name: str, default_value: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default_value
+    try:
+        return float(raw)
+    except ValueError:
+        return default_value
+
+
+def _int_env(name: str, default_value: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default_value
+    try:
+        return int(raw)
+    except ValueError:
+        return default_value
+
+
+def _idle_contamination_thresholds() -> dict[str, Any]:
+    return {
+        "max_idle_power_w": _float_env("TOWN_STALL_IDLE_MAX_POWER_W", DEFAULT_IDLE_MAX_POWER_W),
+        "max_idle_temp_c": _float_env("TOWN_STALL_IDLE_MAX_TEMP_C", DEFAULT_IDLE_MAX_TEMP_C),
+        "max_idle_p0_fraction": _float_env("TOWN_STALL_IDLE_MAX_P0_FRACTION", DEFAULT_IDLE_MAX_P0_FRACTION),
+        "max_idle_gpu_util_pct": _float_env("TOWN_STALL_IDLE_MAX_GPU_UTIL_PCT", DEFAULT_IDLE_MAX_GPU_UTIL_PCT),
+        "max_idle_cpu_load_pct": _int_env("TOWN_STALL_IDLE_MAX_CPU_LOAD_PCT", DEFAULT_IDLE_MAX_CPU_LOAD_PCT),
+        "max_idle_cpu_perf_pct": _int_env("TOWN_STALL_IDLE_MAX_CPU_PERF_PCT", DEFAULT_IDLE_MAX_CPU_PERF_PCT),
+    }
+
+
+def _idle_contamination_reasons(idle_sample: dict[str, Any], machine_state: dict[str, Any], thresholds: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    gpu = idle_sample.get("gpu", {}) if isinstance(idle_sample, dict) else {}
+    if not isinstance(gpu, dict) or int(gpu.get("sample_count", 0) or 0) <= 0:
+        reasons.append("idle_gpu_samples_missing")
+        return reasons
+
+    avg_power = gpu.get("avg_power_w")
+    if isinstance(avg_power, (int, float)) and avg_power > float(thresholds["max_idle_power_w"]):
+        reasons.append(f"idle_gpu_power_high:{avg_power:.2f}W>{thresholds['max_idle_power_w']:.2f}W")
+
+    max_temp = gpu.get("max_temp_c")
+    if isinstance(max_temp, (int, float)) and max_temp > float(thresholds["max_idle_temp_c"]):
+        reasons.append(f"idle_gpu_temp_high:{max_temp:.1f}C>{thresholds['max_idle_temp_c']:.1f}C")
+
+    p0_fraction = gpu.get("p0_fraction")
+    if isinstance(p0_fraction, (int, float)) and p0_fraction > float(thresholds["max_idle_p0_fraction"]):
+        reasons.append(f"idle_gpu_p0_high:{p0_fraction:.3f}>{thresholds['max_idle_p0_fraction']:.3f}")
+
+    avg_gpu_util = gpu.get("avg_gpu_util_pct")
+    if isinstance(avg_gpu_util, (int, float)) and avg_gpu_util > float(thresholds["max_idle_gpu_util_pct"]):
+        reasons.append(f"idle_gpu_util_high:{avg_gpu_util:.1f}%>{thresholds['max_idle_gpu_util_pct']:.1f}%")
+
+    if isinstance(machine_state, dict):
+        cpu_load = machine_state.get("load_percentage")
+        if isinstance(cpu_load, (int, float)) and cpu_load > int(thresholds["max_idle_cpu_load_pct"]):
+            reasons.append(f"idle_cpu_load_high:{int(cpu_load)}%>{thresholds['max_idle_cpu_load_pct']}%")
+        cpu_perf = machine_state.get("percent_processor_performance")
+        if isinstance(cpu_perf, (int, float)) and cpu_perf > int(thresholds["max_idle_cpu_perf_pct"]):
+            reasons.append(f"idle_cpu_perf_high:{int(cpu_perf)}%>{thresholds['max_idle_cpu_perf_pct']}%")
+
+    return reasons
 
 
 def _summarize_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -549,6 +645,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "terrain_gpu_mesh_slices_per_chunk",
             "terrain_gpu_mesh_slice_delay_ms",
             "terrain_native_cpu_meshing_enabled",
+            "terrain_skip_dry_water_density_dispatch",
             "water_render_enabled",
             "last_gpu_generation_batch_ms",
             "last_gpu_generation_sync_ms",
@@ -557,6 +654,9 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "last_gpu_mesh_readback_ms",
             "last_gpu_mesh_slice_count",
             "last_gpu_mesh_slice_max_sync_ms",
+            "last_gpu_water_density_dispatched",
+            "gpu_water_density_skipped_count",
+            "last_gpu_water_density_skipped_coord",
         ]
         if key in telemetry
     }
@@ -596,6 +696,10 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         for key in [
             "rendered_terrain_chunk_count",
             "rendered_water_chunk_count",
+            "rendered_water_y0_chunk_count",
+            "rendered_water_non_y0_chunk_count",
+            "generated_water_surface_skip_count",
+            "last_generated_water_surface_skip_coord",
             "active_chunk_count",
             "pending_node_count",
             "task_queue_count",
@@ -715,6 +819,38 @@ def _assert_no_godot_processes() -> None:
     raise RuntimeError(f"Refusing to launch because Godot is already running: {details}")
 
 
+def _terminate_godot_processes_for_thermal_abort() -> list[dict[str, Any]]:
+    terminated: list[dict[str, Any]] = []
+    for process in town_runner._find_running_godot_processes():
+        try:
+            pid = int(process.get("ProcessId", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if pid <= 0:
+            continue
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        terminated.append(
+            {
+                "pid": pid,
+                "name": process.get("Name"),
+                "command_line": process.get("CommandLine"),
+            }
+        )
+    return terminated
+
+
 def _run_idle_sample(label: str, seconds: float, interval_seconds: float) -> dict[str, Any]:
     _assert_no_godot_processes()
     print(f"Idle sensor baseline: {label} for {seconds:.1f}s")
@@ -756,37 +892,73 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
     return env
 
 
-def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, interval_seconds: float, measure_full_flight: bool) -> dict[str, Any]:
+def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, interval_seconds: float, measure_full_flight: bool, max_gpu_temp_c: Optional[float]) -> dict[str, Any]:
     _assert_no_godot_processes()
     print(f"Town run: {case_name} repeat {repeat_index}")
     run_start_mtime = time.time()
     env = _build_case_env(case_name, hold_seconds, measure_full_flight)
-    sampler = GpuSampler(f"{case_name}_{repeat_index}", interval_seconds)
+    sampler = GpuSampler(f"{case_name}_{repeat_index}", interval_seconds, max_gpu_temp_c)
     cmd = [PYTHON_BIN, str(Path(__file__).with_name("run_town_stall_test.py"))]
     started = time.time()
     sampler.start()
-    proc = subprocess.run(
+    timeout_seconds = max(1200, int(hold_seconds + 900))
+    proc = subprocess.Popen(
         cmd,
         cwd=str(PROJECT_PATH),
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=max(1200, int(hold_seconds + 900)),
     )
+
+    thermal_abort_reason: Optional[str] = None
+    timeout_reason: Optional[str] = None
+    terminated_godot_processes: list[dict[str, Any]] = []
+    poll_sleep = min(0.25, max(0.05, interval_seconds / 4.0))
+    while proc.poll() is None:
+        if sampler.thermal_abort_event.is_set():
+            sample = sampler.thermal_abort_sample or {}
+            temp_c = sample.get("temp_c")
+            thermal_abort_reason = f"gpu_temp_reached_{temp_c}C_limit_{max_gpu_temp_c}C"
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+            terminated_godot_processes = _terminate_godot_processes_for_thermal_abort()
+            break
+        if time.time() - started > timeout_seconds:
+            timeout_reason = f"runner_timeout_after_{timeout_seconds}s"
+            proc.kill()
+            terminated_godot_processes = _terminate_godot_processes_for_thermal_abort()
+            break
+        time.sleep(poll_sleep)
+
+    try:
+        stdout, stderr = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate(timeout=10)
     ended = time.time()
     sampler.stop()
     _assert_no_godot_processes()
 
     snapshot_path = _latest_snapshot(run_start_mtime - 1.0)
     snapshot = _load_snapshot_summary(snapshot_path)
-    output = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    failure_reasons = town_runner._detect_run_failure(output, proc.returncode)
+    returncode = proc.returncode if proc.returncode is not None else -1
+    output = (stdout or "") + "\n" + (stderr or "")
+    failure_reasons = town_runner._detect_run_failure(output, returncode)
+    if thermal_abort_reason:
+        failure_reasons.append(f"thermal_abort:{thermal_abort_reason}")
+    if timeout_reason:
+        failure_reasons.append(timeout_reason)
     hold_completed = "[town_stall_test] hold complete, quitting" in output.lower()
-    shutdown_av = proc.returncode == 3221225477
+    shutdown_av = returncode == 3221225477
     if shutdown_av and snapshot_path and hold_completed:
-        failure_reasons = [reason for reason in failure_reasons if reason != f"process exited with code {proc.returncode}"]
+        failure_reasons = [reason for reason in failure_reasons if reason != f"process exited with code {returncode}"]
 
     result: dict[str, Any] = {
         "case": case_name,
@@ -796,8 +968,12 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
         "started_at_epoch": started,
         "ended_at_epoch": ended,
         "duration_s": ended - started,
-        "returncode": proc.returncode,
+        "returncode": returncode,
         "failure_reasons": failure_reasons,
+        "max_gpu_temp_c": max_gpu_temp_c,
+        "thermal_abort_reason": thermal_abort_reason,
+        "thermal_abort_sample": sampler.thermal_abort_sample,
+        "terminated_godot_processes": terminated_godot_processes,
         "all_run_gpu": _summarize_samples(sampler.samples),
         "estimated_hold_gpu": _summarize_time_window(sampler.samples, ended, hold_seconds, trim_end_seconds=1.0),
         "last_30s_gpu": _summarize_time_window(sampler.samples, ended, 30.0, trim_end_seconds=1.0),
@@ -825,8 +1001,8 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
             trim_end_seconds=1.0,
         )
     if failure_reasons:
-        result["stdout_tail"] = "\n".join((proc.stdout or "").splitlines()[-120:])
-        result["stderr_tail"] = "\n".join((proc.stderr or "").splitlines()[-120:])
+        result["stdout_tail"] = "\n".join((stdout or "").splitlines()[-120:])
+        result["stderr_tail"] = "\n".join((stderr or "").splitlines()[-120:])
     return result
 
 
@@ -936,12 +1112,14 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_gpu_meshing,runtime_native_cpu_meshing,runtime_no_streaming_batch_async,runtime_terrain_visual_batching,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_no_glow,runtime_no_water_render,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_gpu_meshing,runtime_native_cpu_meshing,runtime_no_dry_water_density_skip,runtime_no_streaming_batch_async,runtime_terrain_visual_batching,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_no_shared_collision,runtime_no_glow,runtime_no_water_render,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)
     parser.add_argument("--sample-interval", type=float, default=1.0)
     parser.add_argument("--measure-full-flight", action="store_true")
+    parser.add_argument("--allow-contaminated-idle", action="store_true", help="Run even when raw idle telemetry indicates external CPU/GPU load.")
+    parser.add_argument("--max-gpu-temp-c", type=float, default=_float_env("TOWN_STALL_MAX_GPU_TEMP_C", DEFAULT_RUN_MAX_GPU_TEMP_C), help="Abort the active run and terminate Godot if raw nvidia-smi temperature reaches this value. Use 0 to disable.")
     args = parser.parse_args()
 
     case_names = [case.strip() for case in args.cases.split(",") if case.strip()]
@@ -960,6 +1138,11 @@ def main() -> int:
     print(f"Raw baseline output: {output_path}")
     _assert_no_godot_processes()
 
+    preflight_machine_state = town_runner._collect_machine_state()
+    initial_idle = _run_idle_sample("initial_idle", args.idle_seconds, args.sample_interval)
+    contamination_thresholds = _idle_contamination_thresholds()
+    initial_contamination_reasons = _idle_contamination_reasons(initial_idle, preflight_machine_state, contamination_thresholds)
+
     payload: dict[str, Any] = {
         "started_at_epoch": started,
         "project_path": str(PROJECT_PATH),
@@ -969,20 +1152,44 @@ def main() -> int:
         "idle_seconds": args.idle_seconds,
         "sample_interval_seconds": args.sample_interval,
         "measure_full_flight": args.measure_full_flight,
-        "preflight_machine_state": town_runner._collect_machine_state(),
-        "initial_idle": _run_idle_sample("initial_idle", args.idle_seconds, args.sample_interval),
+        "allow_contaminated_idle": args.allow_contaminated_idle,
+        "max_gpu_temp_c": args.max_gpu_temp_c,
+        "preflight_machine_state": preflight_machine_state,
+        "initial_idle": initial_idle,
+        "contamination": {
+            "thresholds": contamination_thresholds,
+            "initial_idle_reasons": initial_contamination_reasons,
+            "initial_idle_clean": not initial_contamination_reasons,
+        },
         "runs": [],
     }
+
+    if initial_contamination_reasons and not args.allow_contaminated_idle:
+        payload["ended_at_epoch"] = time.time()
+        payload["duration_s"] = payload["ended_at_epoch"] - started
+        payload["aborted_reason"] = "initial_idle_contaminated"
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Initial idle contaminated: {', '.join(initial_contamination_reasons)}")
+        print(f"Wrote {output_path}")
+        return 3
 
     exit_code = 0
     for repeat_index in range(1, args.repeats + 1):
         for case_name in case_names:
-            payload["runs"].append(_run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight))
+            payload["runs"].append(_run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight, args.max_gpu_temp_c))
             print(_case_summary_line(payload["runs"][-1]))
             if payload["runs"][-1].get("failure_reasons"):
                 exit_code = 1
 
     payload["final_idle"] = _run_idle_sample("final_idle", args.idle_seconds, args.sample_interval)
+    final_contamination_reasons = _idle_contamination_reasons(payload["final_idle"], town_runner._collect_machine_state(), contamination_thresholds)
+    payload["contamination"]["final_idle_reasons"] = final_contamination_reasons
+    payload["contamination"]["final_idle_clean"] = not final_contamination_reasons
+    payload["contamination"]["comparison_clean"] = not initial_contamination_reasons and not final_contamination_reasons
+    if final_contamination_reasons and not args.allow_contaminated_idle:
+        exit_code = 1
+    if final_contamination_reasons:
+        print(f"Final idle contaminated: {', '.join(final_contamination_reasons)}")
     payload["ended_at_epoch"] = time.time()
     payload["duration_s"] = payload["ended_at_epoch"] - started
     payload["aggregate"] = _aggregate_case_runs(payload["runs"])
