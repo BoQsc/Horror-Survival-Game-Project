@@ -246,11 +246,12 @@ var loading_paused: bool = false
 @export var runtime_power_mode_enabled: bool = true
 @export_range(30, 240, 1) var runtime_power_active_max_fps: int = 60
 @export_range(30, 120, 1) var runtime_power_idle_max_fps: int = 60
-@export_range(30, 120, 1) var runtime_power_deep_idle_max_fps: int = 60
+@export_range(30, 120, 1) var runtime_power_deep_idle_max_fps: int = 30
 @export_range(0.1, 10.0, 0.1) var runtime_power_idle_enter_delay_s: float = 1.25
-@export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 2.5
+@export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 10.0
 @export_range(0.0, 5.0, 0.1) var runtime_power_active_grace_s: float = 0.75
 @export_range(0.001, 1.0, 0.001) var runtime_power_position_epsilon: float = 0.10
+@export_range(0.001, 0.1, 0.001) var runtime_power_orientation_epsilon: float = 0.01
 @export var runtime_power_suspend_render_loop_in_deep_idle: bool = false
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
@@ -262,6 +263,7 @@ var _runtime_power_target_fps: int = 0
 var _runtime_power_idle_seconds: float = 0.0
 var _runtime_power_active_grace_remaining_s: float = 0.0
 var _runtime_power_last_viewer_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _runtime_power_last_view_forward: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
 var _runtime_power_active_frame_count: int = 0
 var _runtime_power_idle_frame_count: int = 0
 var _runtime_power_deep_idle_frame_count: int = 0
@@ -2324,16 +2326,38 @@ func _runtime_power_input_active() -> bool:
 			return true
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
 		return true
-	return Input.get_last_mouse_velocity().length_squared() > 1.0
+	return false
+
+func _get_runtime_power_view_forward() -> Vector3:
+	var camera := get_viewport().get_camera_3d()
+	if is_instance_valid(camera):
+		return (-camera.global_transform.basis.z).normalized()
+	if viewer and is_instance_valid(viewer):
+		return (-viewer.global_transform.basis.z).normalized()
+	return Vector3.ZERO
 
 func _runtime_power_viewer_moved() -> bool:
 	var viewer_pos := get_viewer_position()
+	var first_position_sample := false
+	var position_changed := false
 	if _runtime_power_last_viewer_pos.x > 9.0e19:
+		first_position_sample = true
 		_runtime_power_last_viewer_pos = viewer_pos
-		return true
-	var moved := viewer_pos.distance_squared_to(_runtime_power_last_viewer_pos) > runtime_power_position_epsilon * runtime_power_position_epsilon
-	_runtime_power_last_viewer_pos = viewer_pos
-	return moved
+	else:
+		position_changed = viewer_pos.distance_squared_to(_runtime_power_last_viewer_pos) > runtime_power_position_epsilon * runtime_power_position_epsilon
+		_runtime_power_last_viewer_pos = viewer_pos
+
+	var view_forward := _get_runtime_power_view_forward()
+	var first_orientation_sample := false
+	var orientation_changed := false
+	if view_forward != Vector3.ZERO:
+		if _runtime_power_last_view_forward.x > 9.0e19:
+			first_orientation_sample = true
+		else:
+			orientation_changed = view_forward.distance_squared_to(_runtime_power_last_view_forward) > runtime_power_orientation_epsilon * runtime_power_orientation_epsilon
+		_runtime_power_last_view_forward = view_forward
+
+	return first_position_sample or first_orientation_sample or position_changed or orientation_changed
 
 func _runtime_power_terrain_busy() -> bool:
 	return initial_load_phase \
@@ -2425,7 +2449,7 @@ func _update_runtime_power_mode(delta: float) -> void:
 			_runtime_power_active_reason = "terrain_background_idle" if terrain_busy else "idle"
 			_runtime_power_idle_seconds += delta
 
-	if _runtime_power_idle_seconds >= runtime_power_deep_idle_enter_delay_s and not terrain_busy:
+	if _runtime_power_idle_seconds >= runtime_power_deep_idle_enter_delay_s and not foreground_terrain_busy:
 		_runtime_power_deep_idle_frame_count += 1
 		_apply_runtime_power_fps("deep_idle", runtime_power_deep_idle_max_fps)
 	elif _runtime_power_idle_seconds >= runtime_power_idle_enter_delay_s:
