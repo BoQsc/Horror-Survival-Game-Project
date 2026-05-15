@@ -33,6 +33,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export var render_distance: int = 5 # Visual range
 @export var terrain_height: float = 10.0
 @export var water_level: float = 13.0 # Lowered to keep roads dry
+@export var water_render_enabled: bool = true
 @export var noise_frequency: float = 0.1
 ## World generation seed - same seed = same world
 ## Change this for different world generation
@@ -54,13 +55,13 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(0, 8, 1) var distant_world_map_lod_overlap: int = 2
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
-@export var terrain_visual_batching_enabled: bool = true
+@export var terrain_visual_batching_enabled: bool = false
 @export_range(1, 16, 1) var terrain_visual_batch_size: int = 4
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 16, 1) var terrain_visual_batch_cached_rebuilds_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_cached_rebuild_budget_ms: float = 0.75
 @export var terrain_visual_batch_async_build_enabled: bool = true
-@export var terrain_visual_batch_async_during_streaming: bool = true
+@export var terrain_visual_batch_async_during_streaming: bool = false
 @export_range(1, 16, 1) var terrain_visual_batch_async_builds_per_frame: int = 1
 @export_range(0, 8, 1) var terrain_visual_batch_streaming_async_queue_per_frame: int = 1
 @export_range(1, 64, 1) var terrain_visual_batch_async_build_queue_limit: int = 8
@@ -197,6 +198,7 @@ var _last_pending_node_finalize_count: int = 0
 @export_range(1, 256, 1) var pending_node_resort_growth_threshold: int = 64
 @export_range(1, 64, 1) var pending_node_finalize_max_per_frame: int = 8
 @export_range(1, 128, 1) var pending_node_initial_finalize_max_per_frame: int = 32
+@export_range(1, 8, 1) var pending_node_runtime_render_commits_per_frame: int = 1
 @export_range(1, 16, 1) var spawn_zone_pending_node_finalize_max_per_frame: int = 2
 @export_range(0.1, 5.0, 0.1) var spawn_zone_pending_node_finalize_budget_ms: float = 0.75
 
@@ -243,13 +245,13 @@ var loading_paused: bool = false
 @export_range(1, 128, 1) var retired_chunk_node_cleanup_budget_per_frame: int = 24
 @export var runtime_power_mode_enabled: bool = true
 @export_range(30, 240, 1) var runtime_power_active_max_fps: int = 60
-@export_range(15, 120, 1) var runtime_power_idle_max_fps: int = 30
-@export_range(15, 120, 1) var runtime_power_deep_idle_max_fps: int = 15
+@export_range(30, 120, 1) var runtime_power_idle_max_fps: int = 60
+@export_range(30, 120, 1) var runtime_power_deep_idle_max_fps: int = 60
 @export_range(0.1, 10.0, 0.1) var runtime_power_idle_enter_delay_s: float = 1.25
 @export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 2.5
 @export_range(0.0, 5.0, 0.1) var runtime_power_active_grace_s: float = 0.75
 @export_range(0.001, 1.0, 0.001) var runtime_power_position_epsilon: float = 0.10
-@export var runtime_power_suspend_render_loop_in_deep_idle: bool = true
+@export var runtime_power_suspend_render_loop_in_deep_idle: bool = false
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
@@ -266,6 +268,7 @@ var _runtime_power_deep_idle_frame_count: int = 0
 var _runtime_power_active_reason: String = "startup"
 var _runtime_power_terrain_busy_last: bool = false
 var _runtime_power_foreground_terrain_busy_last: bool = false
+var _runtime_power_viewer_moved_last: bool = false
 var _runtime_power_disabled_reason: String = ""
 var _runtime_power_render_loop_suspended: bool = false
 var _runtime_power_render_loop_restore_enabled: bool = true
@@ -666,6 +669,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_pending_node_finalize_count": _last_pending_node_finalize_count,
 		"pending_node_finalize_max_per_frame": pending_node_finalize_max_per_frame,
 		"pending_node_initial_finalize_max_per_frame": pending_node_initial_finalize_max_per_frame,
+		"pending_node_runtime_render_commits_per_frame": pending_node_runtime_render_commits_per_frame,
 		"spawn_zone_pending_node_finalize_max_per_frame": spawn_zone_pending_node_finalize_max_per_frame,
 		"spawn_zone_pending_node_finalize_budget_ms": spawn_zone_pending_node_finalize_budget_ms,
 		"pending_batch_count": pending_batches.size(),
@@ -703,6 +707,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_gpu_mesh_slices_per_chunk": terrain_gpu_mesh_slices_per_chunk,
 		"terrain_gpu_mesh_slice_delay_ms": terrain_gpu_mesh_slice_delay_ms,
 		"terrain_native_cpu_meshing_enabled": terrain_native_cpu_meshing_enabled,
+		"water_render_enabled": water_render_enabled,
 		"last_gpu_generation_dispatch_ms": _last_gpu_generation_dispatch_ms,
 		"last_gpu_generation_dispatch_coord": str(_last_gpu_generation_dispatch_coord),
 		"last_gpu_generation_mod_sync_ms": _last_gpu_generation_mod_sync_ms,
@@ -746,6 +751,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"runtime_power_idle_frame_count": _runtime_power_idle_frame_count,
 		"runtime_power_deep_idle_frame_count": _runtime_power_deep_idle_frame_count,
 		"runtime_power_active_reason": _runtime_power_active_reason,
+		"runtime_power_viewer_moved": _runtime_power_viewer_moved_last,
 		"runtime_power_terrain_busy": _runtime_power_terrain_busy_last,
 		"runtime_power_foreground_terrain_busy": _runtime_power_foreground_terrain_busy_last,
 		"runtime_power_disabled_reason": _runtime_power_disabled_reason,
@@ -1357,10 +1363,17 @@ func _has_pending_spawn_zone_work() -> bool:
 func _terrain_visual_batch_rebuild_busy(_hot_frame: bool) -> bool:
 	return _last_update_loads > 0 or _last_update_unloads > 0 or not pending_nodes.is_empty() or _get_completed_generation_queue_count() > 0 or _get_task_queue_count() > 0 or _get_cpu_task_queue_count() > 0
 
+func _terrain_visual_batch_paused_for_active_gameplay() -> bool:
+	return runtime_power_mode_enabled and (_runtime_power_viewer_moved_last or _runtime_power_foreground_terrain_busy_last)
+
 func _process_completed_terrain_visual_batch_builds() -> void:
 	_last_terrain_visual_batch_async_apply_count = 0
 	_last_terrain_visual_batch_async_apply_ms = 0.0
 	_last_terrain_visual_batch_async_stale_count = 0
+	if not terrain_visual_batching_enabled:
+		return
+	if _terrain_visual_batch_paused_for_active_gameplay():
+		return
 	if terrain_visual_batch_async_apply_per_frame <= 0:
 		return
 	var start_us := Time.get_ticks_usec()
@@ -1379,6 +1392,11 @@ func _process_completed_terrain_visual_batch_builds() -> void:
 		var cache_key := str(item.get("cache_key", ""))
 		_terrain_visual_batch_builds_in_flight.erase(cache_key)
 		var merged_mesh := item.get("mesh", null) as ArrayMesh
+		if merged_mesh == null:
+			var mesh_result: Dictionary = item.get("mesh_result", {})
+			if not mesh_result.is_empty():
+				mesh_result = _materialize_deferred_mesh_result(mesh_result, material_terrain)
+				merged_mesh = mesh_result.get("mesh", null) as ArrayMesh
 		if merged_mesh == null or cache_key.is_empty():
 			stale += 1
 			continue
@@ -1411,6 +1429,9 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 	_last_terrain_visual_batch_cached_rebuild_attempts = 0
 	_last_terrain_visual_batch_async_queued_count = 0
 	_last_terrain_visual_batch_streaming_async_queued_count = 0
+	if _terrain_visual_batch_paused_for_active_gameplay():
+		_terrain_visual_batch_stream_idle_frames = 0
+		return
 	if not terrain_visual_batching_enabled or not world_map_active:
 		if not _terrain_visual_batches.is_empty():
 			_clear_terrain_visual_batches()
@@ -1615,12 +1636,23 @@ func _collect_terrain_visual_batch_inputs(key: Vector2i) -> Dictionary:
 		if terrain_mesh == null:
 			_set_chunk_mesh_visible(data, true, coord)
 			continue
+		if terrain_mesh.get_surface_count() <= 0:
+			_set_chunk_mesh_visible(data, true, coord)
+			continue
+		var surface_arrays := terrain_mesh.surface_get_arrays(0)
+		if surface_arrays.size() <= Mesh.ARRAY_VERTEX:
+			_set_chunk_mesh_visible(data, true, coord)
+			continue
+		var surface_vertices: PackedVector3Array = surface_arrays[Mesh.ARRAY_VERTEX]
+		if surface_vertices.is_empty():
+			_set_chunk_mesh_visible(data, true, coord)
+			continue
 		var vertex_count := _get_mesh_surface_vertex_count(terrain_mesh)
 		var index_count := _get_mesh_surface_index_count(terrain_mesh)
 		total_vertices += vertex_count
 		total_indices += index_count
 		merge_inputs.append({
-			"mesh": terrain_mesh,
+			"arrays": surface_arrays,
 			"offset": data.node_terrain.position
 		})
 		eligible_coords.append(coord)
@@ -2158,10 +2190,10 @@ func _process(delta):
 		_check_spawn_zone_readiness(Vector3i(2147483647, 2147483647, 2147483647))
 	if not defer_terrain_finalization and not loading_paused:
 		_update_world_map_lod_chunks()
+	_update_runtime_power_mode(delta)
 	_process_completed_terrain_visual_batch_builds()
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
-	_update_runtime_power_mode(delta)
 
 var debug_chunk_bounds: bool = false
 
@@ -2279,6 +2311,8 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_mesh_slices_per_chunk = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICES", terrain_gpu_mesh_slices_per_chunk, 1, 8)
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
 	terrain_native_cpu_meshing_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING", terrain_native_cpu_meshing_enabled)
+	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
+		water_render_enabled = false
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
@@ -2367,6 +2401,7 @@ func _update_runtime_power_mode(delta: float) -> void:
 	var viewer_moved := _runtime_power_viewer_moved()
 	var terrain_busy := _runtime_power_terrain_busy()
 	var foreground_terrain_busy := _runtime_power_foreground_terrain_busy(terrain_busy)
+	_runtime_power_viewer_moved_last = viewer_moved
 	_runtime_power_terrain_busy_last = terrain_busy
 	_runtime_power_foreground_terrain_busy_last = foreground_terrain_busy
 	var active_now := input_active or viewer_moved or foreground_terrain_busy
@@ -3147,6 +3182,8 @@ func process_pending_nodes(force_spawn_zone_progress: bool = false):
 	var use_spawn_zone_budget := force_spawn_zone_progress and not initial_load_phase
 	var budget_ms := spawn_zone_pending_node_finalize_budget_ms if use_spawn_zone_budget else maxf(adaptive_frame_budget_ms, 0.1)
 	var max_items := pending_node_initial_finalize_max_per_frame if initial_load_phase else pending_node_finalize_max_per_frame
+	if not initial_load_phase:
+		max_items = mini(max_items, pending_node_runtime_render_commits_per_frame)
 	if use_spawn_zone_budget:
 		max_items = mini(max_items, spawn_zone_pending_node_finalize_max_per_frame)
 	var processed := 0
@@ -5839,12 +5876,16 @@ func _cpu_thread_function():
 
 		if str(task.get("type", "")) == "terrain_visual_batch":
 			var merged_mesh = null
-			if builder.has_method("build_merged_array_mesh"):
+			var merged_mesh_result: Dictionary = {}
+			if builder.has_method("build_merged_array_mesh_data"):
+				merged_mesh_result = builder.build_merged_array_mesh_data(task.get("merge_inputs", []))
+			elif builder.has_method("build_merged_array_mesh"):
 				merged_mesh = builder.build_merged_array_mesh(task.get("merge_inputs", []))
 			_enqueue_completed_terrain_visual_batch_build({
 				"batch_key": task.get("batch_key", Vector2i.ZERO),
 				"cache_key": str(task.get("cache_key", "")),
-				"mesh": merged_mesh
+				"mesh": merged_mesh,
+				"mesh_result": merged_mesh_result
 			})
 			continue
 
@@ -5859,20 +5900,26 @@ func _cpu_thread_function():
 		var height_map_terrain := PackedFloat32Array()
 		var native_cpu_meshing := bool(task.get("native_cpu_meshing", false))
 		var mesh_data_terrain: Dictionary = task.get("mesh_data_terrain", {})
+		var built_terrain_result: Dictionary = {}
 		var terrain_vertex_count := int(mesh_data_terrain.get("vertex_count", 0))
 		var terrain_build_ms := 0.0
 		if native_cpu_meshing:
 			var terrain_build_start_us := Time.get_ticks_usec()
 			var density_bytes_terrain: PackedByteArray = task.get("density_bytes_terrain", PackedByteArray())
 			var mesh_material_bytes: PackedByteArray = task.get("mesh_material_bytes", PackedByteArray())
-			if not density_bytes_terrain.is_empty() and builder.has_method("build_density_marching_cubes_mesh_collision_height_map"):
-				var built_terrain: Dictionary = builder.build_density_marching_cubes_mesh_collision_height_map(density_bytes_terrain, mesh_material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE, CHUNK_STRIDE)
-				mesh_terrain = built_terrain.get("mesh", null)
+			if not density_bytes_terrain.is_empty() and builder.has_method("build_density_marching_cubes_mesh_data_height_map"):
+				built_terrain_result = builder.build_density_marching_cubes_mesh_data_height_map(density_bytes_terrain, mesh_material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE, CHUNK_STRIDE)
+				height_map_terrain = built_terrain_result.get("height_map", PackedFloat32Array())
+				terrain_vertex_count = int(built_terrain_result.get("source_vertex_count", 0))
+			elif not density_bytes_terrain.is_empty() and builder.has_method("build_density_marching_cubes_mesh_collision_height_map"):
+				built_terrain_result = builder.build_density_marching_cubes_mesh_collision_height_map(density_bytes_terrain, mesh_material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE, CHUNK_STRIDE)
+				mesh_terrain = built_terrain_result.get("mesh", null)
 				if mesh_terrain:
 					mesh_terrain.surface_set_material(0, material_terrain)
-				shape_terrain = built_terrain.get("shape", null)
-				height_map_terrain = built_terrain.get("height_map", PackedFloat32Array())
-				terrain_vertex_count = int(built_terrain.get("source_vertex_count", 0))
+					built_terrain_result["mesh"] = mesh_terrain
+				shape_terrain = built_terrain_result.get("shape", null)
+				height_map_terrain = built_terrain_result.get("height_map", PackedFloat32Array())
+				terrain_vertex_count = int(built_terrain_result.get("source_vertex_count", 0))
 			terrain_build_ms = float(Time.get_ticks_usec() - terrain_build_start_us) / 1000.0
 		elif int(mesh_data_terrain.get("vertex_count", 0)) > 0:
 			var terrain_build_start_us := Time.get_ticks_usec()
@@ -5886,19 +5933,24 @@ func _cpu_thread_function():
 		var mesh_water = null
 		var shape_water = null
 		var mesh_data_water: Dictionary = task.get("mesh_data_water", {})
+		var built_water_result: Dictionary = {}
 		var water_vertex_count := int(mesh_data_water.get("vertex_count", 0))
 		var water_build_ms := 0.0
 		if native_cpu_meshing and not bool(task.get("skip_water_mesh", false)):
 			var water_build_start_us := Time.get_ticks_usec()
 			var density_bytes_water: PackedByteArray = task.get("density_bytes_water", PackedByteArray())
 			var mesh_material_bytes_water: PackedByteArray = task.get("mesh_material_bytes", PackedByteArray())
-			if not density_bytes_water.is_empty() and builder.has_method("build_density_marching_cubes_mesh_and_collision"):
-				var built_water: Dictionary = builder.build_density_marching_cubes_mesh_and_collision(density_bytes_water, mesh_material_bytes_water, DENSITY_GRID_SIZE, CHUNK_SIZE)
-				mesh_water = built_water.get("mesh", null)
+			if not density_bytes_water.is_empty() and builder.has_method("build_density_marching_cubes_mesh_data"):
+				built_water_result = builder.build_density_marching_cubes_mesh_data(density_bytes_water, mesh_material_bytes_water, DENSITY_GRID_SIZE, CHUNK_SIZE)
+				water_vertex_count = int(built_water_result.get("source_vertex_count", 0))
+			elif not density_bytes_water.is_empty() and builder.has_method("build_density_marching_cubes_mesh_and_collision"):
+				built_water_result = builder.build_density_marching_cubes_mesh_and_collision(density_bytes_water, mesh_material_bytes_water, DENSITY_GRID_SIZE, CHUNK_SIZE)
+				mesh_water = built_water_result.get("mesh", null)
 				if mesh_water:
 					mesh_water.surface_set_material(0, material_water)
-				shape_water = built_water.get("shape", null)
-				water_vertex_count = int(built_water.get("source_vertex_count", 0))
+					built_water_result["mesh"] = mesh_water
+				shape_water = built_water_result.get("shape", null)
+				water_vertex_count = int(built_water_result.get("source_vertex_count", 0))
 			water_build_ms = float(Time.get_ticks_usec() - water_build_start_us) / 1000.0
 		elif int(mesh_data_water.get("vertex_count", 0)) > 0:
 			var water_build_start_us := Time.get_ticks_usec()
@@ -5917,12 +5969,9 @@ func _cpu_thread_function():
 		_last_cpu_mesh_build_event_id += 1
 
 		# Package results
-		var result_t = {"mesh": mesh_terrain, "shape": shape_terrain}
-		var result_w = {
-			"mesh": mesh_water,
-			"shape": shape_water,
-			"generated_density": bool(task.get("generated_water_density", false))
-		}
+		var result_t: Dictionary = built_terrain_result.duplicate() if not built_terrain_result.is_empty() else {"mesh": mesh_terrain, "shape": shape_terrain}
+		var result_w: Dictionary = built_water_result.duplicate() if not built_water_result.is_empty() else {"mesh": mesh_water, "shape": shape_water}
+		result_w["generated_density"] = bool(task.get("generated_water_density", false))
 
 		# Send to the main thread through a bounded queue. A call_deferred per
 		# chunk can flood Engine: Process when render distance 10 completes a
@@ -6336,6 +6385,35 @@ func _queue_stored_modifications_after(coord: Vector3i, data: ChunkData, after_v
 	for i in range(tasks_to_add.size()):
 		semaphore.post()
 
+func _materialize_deferred_mesh_result(mesh_result: Dictionary, material_instance: Material) -> Dictionary:
+	if not bool(mesh_result.get("deferred_mesh_data", false)):
+		var existing_mesh = mesh_result.get("mesh", null)
+		if existing_mesh and material_instance and existing_mesh.get_surface_count() > 0:
+			existing_mesh.surface_set_material(0, material_instance)
+			mesh_result["mesh"] = existing_mesh
+		return mesh_result
+
+	var arrays: Array = mesh_result.get("arrays", [])
+	if arrays.is_empty():
+		mesh_result["mesh"] = null
+		mesh_result["shape"] = null
+		return mesh_result
+
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	if material_instance and mesh.get_surface_count() > 0:
+		mesh.surface_set_material(0, material_instance)
+
+	var shape = null
+	var faces: PackedVector3Array = mesh_result.get("faces", PackedVector3Array())
+	if not faces.is_empty():
+		shape = ConcavePolygonShape3D.new()
+		shape.set_faces(faces)
+
+	mesh_result["mesh"] = mesh
+	mesh_result["shape"] = shape
+	return mesh_result
+
 func _finalize_chunk_creation(item: Dictionary):
 	if item.type == "final_terrain":
 		var start = Time.get_ticks_usec()
@@ -6349,10 +6427,11 @@ func _finalize_chunk_creation(item: Dictionary):
 
 		# Create Material
 		var chunk_material = _create_chunk_material(chunk_pos, item.get("cpu_mat", PackedByteArray()))
+		var terrain_mesh_result := _materialize_deferred_mesh_result(item.result, chunk_material)
 
 		# Create Node (VISUALS ONLY)
 		# Pass defer_collision=true to prevent create_chunk_node from creating a StaticBody3D/CollisionShape3D
-		var result = create_chunk_node(item.result.mesh, null, chunk_pos, false, chunk_material, true)
+		var result = create_chunk_node(terrain_mesh_result.get("mesh", null), null, chunk_pos, false, chunk_material, true)
 
 		# Update Data
 		var data = active_chunks[coord]
@@ -6363,14 +6442,14 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.node_terrain = result.node if not result.is_empty() else null
 		if coord.y == 0 and data.node_terrain:
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
-		data.terrain_visual_mesh = item.result.mesh
+		data.terrain_visual_mesh = terrain_mesh_result.get("mesh", null)
 		data.terrain_visual_batched = false
 		_set_generated_mod_version(data, int(item.get("stored_mod_version", 0)))
 		_register_terrain_visual_batch_member(coord)
 
 		# CRITICAL: Keep Shape3D resource alive!
 		# If we don't store this, the RefCount goes to 0 -> RID freed -> No Collision
-		data.terrain_shape = item.result.shape
+		data.terrain_shape = terrain_mesh_result.get("shape", null)
 
 		data.density_buffer_terrain = item.dens
 		data.material_buffer_terrain = item.get("mat_buf", RID())
@@ -6413,10 +6492,7 @@ func _finalize_chunk_creation(item: Dictionary):
 			_queue_pending_finalization_item_free(item)
 			return
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-
-		# World-map swimming/underwater checks use density sampling, not Area3D
-		# overlap state, so the water mesh can stay visual-only in that mode.
-		var result = create_chunk_node(item.result.mesh, item.result.shape, chunk_pos, true, null, world_map_active)
+		var water_mesh_result := _materialize_deferred_mesh_result(item.result, material_water)
 
 		# Update Data
 		var data = active_chunks[coord]
@@ -6424,7 +6500,15 @@ func _finalize_chunk_creation(item: Dictionary):
 			data = ChunkData.new()
 		active_chunks[coord] = data
 
-		data.node_water = result.node if not result.is_empty() else null
+		if water_render_enabled:
+			# World-map swimming/underwater checks use density sampling, not Area3D
+			# overlap state, so the water mesh can stay visual-only in that mode.
+			var result = create_chunk_node(water_mesh_result.get("mesh", null), water_mesh_result.get("shape", null), chunk_pos, true, null, world_map_active)
+			data.node_water = result.node if not result.is_empty() else null
+		else:
+			if data.node_water:
+				data.node_water.queue_free()
+			data.node_water = null
 		data.density_buffer_water = item.dens
 		data.cpu_density_water = item.cpu_dens
 		data.generated_water_density_available = bool(item.get("generated_density", false))
@@ -6539,6 +6623,12 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 
 		# Recreate chunk material with updated 3D texture
 		var chunk_material = _create_chunk_material(chunk_pos, cpu_mat)
+		var p_pos = get_viewer_position()
+		var center_chunk = Vector3i(
+			int(floor(p_pos.x / CHUNK_STRIDE)),
+			int(floor(p_pos.y / CHUNK_STRIDE)),
+			int(floor(p_pos.z / CHUNK_STRIDE))
+		)
 
 		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, false, chunk_material)
 		data.node_terrain = result_node.node if not result_node.is_empty() else null
@@ -6554,12 +6644,6 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
 		if not cpu_mat.is_empty():
 			data.cpu_material_terrain = cpu_mat
-		var p_pos = get_viewer_position()
-		var center_chunk = Vector3i(
-			int(floor(p_pos.x / CHUNK_STRIDE)),
-			int(floor(p_pos.y / CHUNK_STRIDE)),
-			int(floor(p_pos.z / CHUNK_STRIDE))
-		)
 		var collision_distance_sq := collision_distance * collision_distance
 		var collision_prewarm_distance_sq := maxi(collision_prewarm_distance, collision_distance) * maxi(collision_prewarm_distance, collision_distance)
 		var should_have_collision := _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
@@ -6571,8 +6655,11 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		chunk_modified.emit(coord, data.node_terrain)
 	else: # Water
 		if data.node_water: data.node_water.queue_free()
-		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true, null, world_map_active)
-		data.node_water = result_node.node if not result_node.is_empty() else null
+		if water_render_enabled:
+			var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true, null, world_map_active)
+			data.node_water = result_node.node if not result_node.is_empty() else null
+		else:
+			data.node_water = null
 		if not cpu_dens.is_empty():
 			data.cpu_density_water = cpu_dens
 			data.generated_water_density_available = false

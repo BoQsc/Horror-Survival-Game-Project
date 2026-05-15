@@ -15,7 +15,7 @@ config/tags=PackedStringArray("creative_commons", "open_source")
 run/main_scene="res://addons/renderer_fallback/compatibility_checker.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 run/max_fps=60
-run/low_processor_mode=true
+run/low_processor_mode=false
 config/icon="res://icon.svg"
 
 [autoload]

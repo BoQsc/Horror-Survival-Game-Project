@@ -46,6 +46,8 @@ public:
     Dictionary build_packed_indexed_mesh_collision_height_map(const PackedByteArray& vertex_data, const PackedByteArray& index_data, int vertex_count, int index_count, int height_map_size);
     Dictionary build_density_marching_cubes_mesh_and_collision(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size);
     Dictionary build_density_marching_cubes_mesh_collision_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size);
+    Dictionary build_density_marching_cubes_mesh_data(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size);
+    Dictionary build_density_marching_cubes_mesh_data_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size);
 
 	// Native implementation of 3D texture creation
 	// Converts raw density bytes directly to ImageTexture3D
@@ -97,6 +99,7 @@ public:
 	// Merges already-built terrain ArrayMeshes into one visual mesh.
 	// Each Array entry is a Dictionary with { mesh: ArrayMesh, offset: Vector3 }.
 	Ref<ArrayMesh> build_merged_array_mesh(const Array& chunks);
+	Dictionary build_merged_array_mesh_data(const Array& chunks);
 };
 
 }

@@ -73,6 +73,8 @@ var disable_building_object_collisions_enabled: bool = false
 var disable_building_chunk_flush_enabled: bool = false
 var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
+var disable_glow_enabled: bool = false
+var disable_water_render_enabled: bool = false
 var instant_baked_buildings_enabled: bool = true
 var baked_building_persistence_smoke_enabled: bool = false
 var baked_building_persistence_smoke_started: bool = false
@@ -95,6 +97,7 @@ var fly_target_altitude: float = 0.0
 var return_origin: Vector3 = Vector3.ZERO
 var current_hold_seconds: float = HOLD_SECONDS
 var next_hold_snapshot_phase_time: float = -1.0
+var hold_periodic_snapshots_enabled: bool = false
 
 var game_root: Node3D = null
 var terrain_manager: Node = null
@@ -1424,6 +1427,8 @@ func _ready() -> void:
 	disable_building_chunk_flush_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_FLUSH") == "1"
 	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
+	disable_glow_enabled = OS.get_environment("TOWN_STALL_DISABLE_GLOW") == "1"
+	disable_water_render_enabled = OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1"
 	instant_baked_buildings_enabled = OS.get_environment("TOWN_STALL_INSTANT_BAKED_BUILDINGS") != "0"
 	baked_building_persistence_smoke_enabled = OS.get_environment("TOWN_STALL_BAKED_BUILDING_PERSISTENCE_SMOKE") == "1"
 	baked_building_persistence_smoke_timeout_seconds = _get_positive_env_float("TOWN_STALL_BAKED_BUILDING_PERSISTENCE_TIMEOUT", 60.0)
@@ -1437,6 +1442,7 @@ func _ready() -> void:
 	render_diagnostics_threshold_ms = _get_positive_env_float("TOWN_STALL_RENDER_DIAGNOSTIC_THRESHOLD_MS", FRAME_BUDGET_MS)
 	render_diagnostics_sample_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_LIMIT)
 	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
+	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
@@ -1453,11 +1459,14 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable building chunk flush: %s" % ("ON" if disable_building_chunk_flush_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable glow: %s" % ("ON" if disable_glow_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable water render: %s" % ("ON" if disable_water_render_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Instant baked buildings: %s" % ("ON" if instant_baked_buildings_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Baked building persistence smoke: %s" % ("ON" if baked_building_persistence_smoke_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Measure full flight: %s" % ("ON" if measure_full_flight_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Periodic hold snapshots: %s" % ("ON" if hold_periodic_snapshots_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
 	print("[TOWN_STALL_TEST] Engine max FPS: %d" % Engine.max_fps)
 	print("[TOWN_STALL_TEST] Render diagnostics: %s threshold=%.2f scene_scan=%s limit=%d" % [
@@ -1486,6 +1495,8 @@ func _ready() -> void:
 		"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
 		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
 		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
+		"disable_glow": disable_glow_enabled,
+		"disable_water_render": disable_water_render_enabled,
 		"instant_baked_buildings": instant_baked_buildings_enabled,
 		"baked_building_persistence_smoke": baked_building_persistence_smoke_enabled,
 		"disable_entities": disable_entities_enabled,
@@ -1628,6 +1639,17 @@ func _start_game_scene() -> void:
 	var prefab_spawner_override := game_root.find_child("PrefabSpawner", true, false)
 	if prefab_spawner_override and "instant_baked_buildings_enabled" in prefab_spawner_override:
 		prefab_spawner_override.instant_baked_buildings_enabled = instant_baked_buildings_enabled
+	if disable_water_render_enabled:
+		var terrain_manager_water_override := game_root.find_child("TerrainManager", true, false)
+		if terrain_manager_water_override and "water_render_enabled" in terrain_manager_water_override:
+			terrain_manager_water_override.water_render_enabled = false
+			_emit_scope_state("town_stall_test", {
+				"phase": "water_render_disabled",
+				"disable_water_render": true
+			})
+			print("[TOWN_STALL_TEST] Water rendering disabled for test isolation.")
+	if disable_glow_enabled:
+		_apply_render_feature_toggles()
 
 	# Strip out the old test-only helpers so the harness owns the flow.
 	for node_name in ["DebugTeleporter", "MovementBot"]:
@@ -1856,6 +1878,38 @@ func _apply_entities_toggle() -> void:
 		"disable_entities": true
 	})
 	print("[TOWN_STALL_TEST] Entities disabled for test isolation.")
+
+
+func _apply_render_feature_toggles() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var glow_count := 0
+	if disable_glow_enabled:
+		glow_count = _set_glow_enabled_recursive(game_root, false)
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "render_features_toggled",
+		"disable_glow": disable_glow_enabled,
+		"glow_environment_count": glow_count
+	})
+	print("[TOWN_STALL_TEST] Render feature isolation toggles applied: glow_envs=%d" % glow_count)
+
+
+func _set_glow_enabled_recursive(node: Node, enabled: bool) -> int:
+	var changed := 0
+	var world_environment := node as WorldEnvironment
+	if world_environment:
+		var environment := world_environment.environment
+		if environment:
+			var environment_copy := environment.duplicate() as Environment
+			environment_copy.glow_enabled = enabled
+			world_environment.environment = environment_copy
+			changed += 1
+
+	for child in node.get_children():
+		changed += _set_glow_enabled_recursive(child, enabled)
+	return changed
 
 
 func _poll_world_ready() -> void:
@@ -2327,8 +2381,7 @@ func _hold_in_town(_delta: float) -> void:
 			"hold_seconds": current_hold_seconds
 		})
 		hold_started_logged = true
-		next_hold_snapshot_phase_time = HOLD_SNAPSHOT_INTERVAL_SECONDS
-		_write_native_town_entry_snapshot()
+		next_hold_snapshot_phase_time = HOLD_SNAPSHOT_INTERVAL_SECONDS if hold_periodic_snapshots_enabled else -1.0
 
 	if next_hold_snapshot_phase_time >= 0.0 and phase_time >= next_hold_snapshot_phase_time:
 		_write_native_town_entry_snapshot()

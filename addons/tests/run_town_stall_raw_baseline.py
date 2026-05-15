@@ -92,6 +92,20 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES": "1",
         },
     },
+    "runtime_no_glow": {
+        "description": "Runtime power manager with scene glow disabled for render-power isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_DISABLE_GLOW": "1",
+        },
+    },
+    "runtime_no_water_render": {
+        "description": "Runtime power manager with water mesh rendering disabled for render-power isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_DISABLE_WATER_RENDER": "1",
+        },
+    },
     "runtime_joined_water_submit": {
         "description": "Runtime power manager with terrain and water meshing submitted together.",
         "env": {
@@ -141,6 +155,8 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE",
     "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET",
     "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES",
+    "TOWN_STALL_DISABLE_GLOW",
+    "TOWN_STALL_DISABLE_WATER_RENDER",
 ]
 
 
@@ -521,6 +537,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "terrain_gpu_mesh_slices_per_chunk",
             "terrain_gpu_mesh_slice_delay_ms",
             "terrain_native_cpu_meshing_enabled",
+            "water_render_enabled",
             "last_gpu_generation_batch_ms",
             "last_gpu_generation_sync_ms",
             "last_gpu_meshing_dispatch_ms",
@@ -907,7 +924,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_gpu_meshing,runtime_native_cpu_meshing,runtime_no_streaming_batch_async,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_gpu_meshing,runtime_native_cpu_meshing,runtime_no_streaming_batch_async,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_no_glow,runtime_no_water_render,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)

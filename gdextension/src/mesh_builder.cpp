@@ -377,11 +377,12 @@ static inline float interpolate_cpu_factor(float v1, float v2) {
     return std::clamp((TERRAIN_ISO_LEVEL - v1) / (v2 - v1), 0.0f, 1.0f);
 }
 
-static Dictionary build_density_marching_cubes_mesh(const PackedByteArray &density_data, const PackedByteArray &material_data, int density_size, int chunk_size, bool include_height_map, int height_map_size) {
+static Dictionary build_density_marching_cubes_mesh_data_internal(const PackedByteArray &density_data, const PackedByteArray &material_data, int density_size, int chunk_size, bool include_height_map, int height_map_size) {
     Dictionary result;
     Ref<ArrayMesh> mesh;
     Ref<ConcavePolygonShape3D> shape;
     PackedFloat32Array height_map;
+    result["deferred_mesh_data"] = true;
     result["mesh"] = mesh;
     result["shape"] = shape;
     if (include_height_map) {
@@ -552,20 +553,39 @@ static Dictionary build_density_marching_cubes_mesh(const PackedByteArray &densi
     arrays[Mesh::ARRAY_NORMAL] = packed_normals;
     arrays[Mesh::ARRAY_COLOR] = packed_colors;
 
-    mesh.instantiate();
-    mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-
-    shape.instantiate();
-    shape->set_faces(packed_faces);
-
-    result["mesh"] = mesh;
-    result["shape"] = shape;
+    result["arrays"] = arrays;
+    result["faces"] = packed_faces;
     result["source_vertex_count"] = static_cast<int>(vertices.size());
     result["unique_vertex_count"] = static_cast<int>(vertices.size());
     if (include_height_map) {
         result["height_map"] = build_top_down_height_map(packed_faces, height_map_size);
     }
     return result;
+}
+
+static Dictionary materialize_density_marching_cubes_mesh(Dictionary result) {
+    Ref<ArrayMesh> mesh;
+    Ref<ConcavePolygonShape3D> shape;
+
+    Array arrays = result.get("arrays", Array());
+    if (!arrays.is_empty()) {
+        mesh.instantiate();
+        mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+    }
+
+    PackedVector3Array faces = result.get("faces", PackedVector3Array());
+    if (!faces.is_empty()) {
+        shape.instantiate();
+        shape->set_faces(faces);
+    }
+
+    result["mesh"] = mesh;
+    result["shape"] = shape;
+    return result;
+}
+
+static Dictionary build_density_marching_cubes_mesh(const PackedByteArray &density_data, const PackedByteArray &material_data, int density_size, int chunk_size, bool include_height_map, int height_map_size) {
+    return materialize_density_marching_cubes_mesh(build_density_marching_cubes_mesh_data_internal(density_data, material_data, density_size, chunk_size, include_height_map, height_map_size));
 }
 
 static Dictionary build_indexed_packed_terrain_mesh(const PackedByteArray &data, int vertex_count, bool include_height_map, int height_map_size) {
@@ -1648,6 +1668,8 @@ void MeshBuilder::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_packed_indexed_mesh_collision_height_map", "vertex_data", "index_data", "vertex_count", "index_count", "height_map_size"), &MeshBuilder::build_packed_indexed_mesh_collision_height_map);
 	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_and_collision", "density_data", "material_data", "density_size", "chunk_size"), &MeshBuilder::build_density_marching_cubes_mesh_and_collision);
 	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_collision_height_map", "density_data", "material_data", "density_size", "chunk_size", "height_map_size"), &MeshBuilder::build_density_marching_cubes_mesh_collision_height_map);
+	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_data", "density_data", "material_data", "density_size", "chunk_size"), &MeshBuilder::build_density_marching_cubes_mesh_data);
+	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_data_height_map", "density_data", "material_data", "density_size", "chunk_size", "height_map_size"), &MeshBuilder::build_density_marching_cubes_mesh_data_height_map);
 	ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
 	ClassDB::bind_method(D_METHOD("has_player_material_overrides", "data", "width", "height", "depth"), &MeshBuilder::has_player_material_overrides);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
@@ -1665,12 +1687,16 @@ void MeshBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("apply_world_map_collision_boxes", "body_rid", "collision_boxes"), &MeshBuilder::apply_world_map_collision_boxes);
     ClassDB::bind_method(D_METHOD("build_world_map_lod_mesh", "heightmap_data", "heightmap_width", "heightmap_height", "chunk_x", "chunk_z", "chunk_stride", "sample_step", "map_half", "max_height"), &MeshBuilder::build_world_map_lod_mesh);
     ClassDB::bind_method(D_METHOD("build_merged_array_mesh", "chunks"), &MeshBuilder::build_merged_array_mesh);
+    ClassDB::bind_method(D_METHOD("build_merged_array_mesh_data", "chunks"), &MeshBuilder::build_merged_array_mesh_data);
 }
 
-Ref<ArrayMesh> MeshBuilder::build_merged_array_mesh(const Array& chunks) {
+static Dictionary build_merged_array_mesh_data_internal(const Array& chunks) {
+    Dictionary result;
     Ref<ArrayMesh> merged_mesh;
+    result["deferred_mesh_data"] = true;
+    result["mesh"] = merged_mesh;
     if (chunks.is_empty()) {
-        return merged_mesh;
+        return result;
     }
 
     struct SourceSurface {
@@ -1691,12 +1717,14 @@ Ref<ArrayMesh> MeshBuilder::build_merged_array_mesh(const Array& chunks) {
 
     for (int i = 0; i < chunks.size(); ++i) {
         Dictionary entry = chunks[i];
-        Ref<ArrayMesh> mesh = entry.get("mesh", Ref<ArrayMesh>());
-        if (mesh.is_null() || mesh->get_surface_count() <= 0) {
-            continue;
+        Array arrays = entry.get("arrays", Array());
+        if (arrays.is_empty()) {
+            Ref<ArrayMesh> mesh = entry.get("mesh", Ref<ArrayMesh>());
+            if (mesh.is_null() || mesh->get_surface_count() <= 0) {
+                continue;
+            }
+            arrays = mesh->surface_get_arrays(0);
         }
-
-        Array arrays = mesh->surface_get_arrays(0);
         if (arrays.size() <= Mesh::ARRAY_VERTEX) {
             continue;
         }
@@ -1727,7 +1755,7 @@ Ref<ArrayMesh> MeshBuilder::build_merged_array_mesh(const Array& chunks) {
     }
 
     if (total_vertices <= 0 || total_indices <= 0) {
-        return merged_mesh;
+        return result;
     }
 
     PackedVector3Array vertices;
@@ -1791,6 +1819,23 @@ Ref<ArrayMesh> MeshBuilder::build_merged_array_mesh(const Array& chunks) {
     }
     arrays[Mesh::ARRAY_INDEX] = indices;
 
+    result["arrays"] = arrays;
+    result["source_vertex_count"] = total_vertices;
+    result["source_index_count"] = total_indices;
+    return result;
+}
+
+Dictionary MeshBuilder::build_merged_array_mesh_data(const Array& chunks) {
+    return build_merged_array_mesh_data_internal(chunks);
+}
+
+Ref<ArrayMesh> MeshBuilder::build_merged_array_mesh(const Array& chunks) {
+    Ref<ArrayMesh> merged_mesh;
+    Dictionary data = build_merged_array_mesh_data_internal(chunks);
+    Array arrays = data.get("arrays", Array());
+    if (arrays.is_empty()) {
+        return merged_mesh;
+    }
     merged_mesh.instantiate();
     merged_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
     return merged_mesh;
@@ -2044,6 +2089,14 @@ Dictionary MeshBuilder::build_density_marching_cubes_mesh_and_collision(const Pa
 
 Dictionary MeshBuilder::build_density_marching_cubes_mesh_collision_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size) {
     return build_density_marching_cubes_mesh(density_data, material_data, density_size, chunk_size, true, height_map_size);
+}
+
+Dictionary MeshBuilder::build_density_marching_cubes_mesh_data(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size) {
+    return build_density_marching_cubes_mesh_data_internal(density_data, material_data, density_size, chunk_size, false, 0);
+}
+
+Dictionary MeshBuilder::build_density_marching_cubes_mesh_data_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size) {
+    return build_density_marching_cubes_mesh_data_internal(density_data, material_data, density_size, chunk_size, true, height_map_size);
 }
 
 
