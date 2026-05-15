@@ -322,6 +322,8 @@ var _last_world_map_entry_ms: float = 0.0
 var _last_spawn_zone_far_reset_ms: float = 0.0
 var _last_spawn_zone_far_reset_cleared_chunks: int = 0
 var _spawn_zone_far_reset_count: int = 0
+var _generated_water_surface_skip_count: int = 0
+var _last_generated_water_surface_skip_coord: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_retired_chunk_node_cleanup_ms: float = 0.0
 var _last_retired_chunk_node_cleanup_count: int = 0
 var _retired_chunk_node_roots: Array[Node3D] = []
@@ -547,6 +549,8 @@ func get_telemetry_snapshot() -> Dictionary:
 	var pending_chunk_count := 0
 	var rendered_terrain_chunk_count := 0
 	var rendered_water_chunk_count := 0
+	var rendered_water_y0_chunk_count := 0
+	var rendered_water_non_y0_chunk_count := 0
 	var water_physics_area_count := 0
 	var collision_chunk_count := 0
 	var collision_enabled_chunk_count := 0
@@ -556,6 +560,7 @@ func get_telemetry_snapshot() -> Dictionary:
 	var active_render_chunk_count := 0
 
 	for coord_variant in active_chunks:
+		var coord: Vector3i = coord_variant
 		var data_variant: Variant = active_chunks[coord_variant]
 		if data_variant == null:
 			pending_chunk_count += 1
@@ -567,6 +572,10 @@ func get_telemetry_snapshot() -> Dictionary:
 			rendered_terrain_chunk_count += 1
 		if data.node_water:
 			rendered_water_chunk_count += 1
+			if coord.y == 0:
+				rendered_water_y0_chunk_count += 1
+			else:
+				rendered_water_non_y0_chunk_count += 1
 			if data.node_water is Area3D:
 				water_physics_area_count += 1
 		if data.body_rid_terrain.is_valid() or int(data.terrain_collision_shared_shape_index) >= 0:
@@ -589,6 +598,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"pending_chunk_count": pending_chunk_count,
 		"rendered_terrain_chunk_count": rendered_terrain_chunk_count,
 		"rendered_water_chunk_count": rendered_water_chunk_count,
+		"rendered_water_y0_chunk_count": rendered_water_y0_chunk_count,
+		"rendered_water_non_y0_chunk_count": rendered_water_non_y0_chunk_count,
 		"water_physics_area_count": water_physics_area_count,
 		"collision_chunk_count": collision_chunk_count,
 		"collision_enabled_chunk_count": collision_enabled_chunk_count,
@@ -742,6 +753,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_spawn_zone_far_reset_ms": _last_spawn_zone_far_reset_ms,
 		"last_spawn_zone_far_reset_cleared_chunks": _last_spawn_zone_far_reset_cleared_chunks,
 		"spawn_zone_far_reset_count": _spawn_zone_far_reset_count,
+		"generated_water_surface_skip_count": _generated_water_surface_skip_count,
+		"last_generated_water_surface_skip_coord": str(_last_generated_water_surface_skip_coord),
 		"runtime_power_mode_enabled": runtime_power_mode_enabled,
 		"runtime_power_mode": _runtime_power_mode,
 		"runtime_power_target_fps": _runtime_power_target_fps,
@@ -2316,6 +2329,9 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
 		water_render_enabled = false
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
+	terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_VISUAL_BATCHING", terrain_visual_batching_enabled)
+	terrain_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE", terrain_visual_batch_size, 1, 16)
+	terrain_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES", terrain_visual_batch_max_vertices, 0, 200000)
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
 
@@ -6524,14 +6540,22 @@ func _finalize_chunk_creation(item: Dictionary):
 			data = ChunkData.new()
 		active_chunks[coord] = data
 
-		if water_render_enabled:
+		var create_water_node := water_render_enabled
+		if create_water_node and world_map_active and bool(item.get("generated_density", false)) and not _chunk_may_have_generated_water_surface(coord):
+			create_water_node = false
+			_generated_water_surface_skip_count += 1
+			_last_generated_water_surface_skip_coord = coord
+
+		if data.node_water:
+			data.node_water.queue_free()
+			data.node_water = null
+
+		if create_water_node:
 			# World-map swimming/underwater checks use density sampling, not Area3D
 			# overlap state, so the water mesh can stay visual-only in that mode.
 			var result = create_chunk_node(water_mesh_result.get("mesh", null), water_mesh_result.get("shape", null), chunk_pos, true, null, world_map_active)
 			data.node_water = result.node if not result.is_empty() else null
 		else:
-			if data.node_water:
-				data.node_water.queue_free()
 			data.node_water = null
 		data.density_buffer_water = item.dens
 		data.cpu_density_water = item.cpu_dens
