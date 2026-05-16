@@ -364,6 +364,8 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_last_world_map_lod_loads := 0
 	var terrain_last_world_map_lod_unloads := 0
 	var terrain_last_world_map_lod_update_ms := 0.0
+	var terrain_runtime_power_world_work_suspended := false
+	var terrain_runtime_power_world_work_suspended_frame_count := 0
 	var building_dirty_visible_chunk_count := 0
 	var building_last_flush_dirty_chunks_ms := 0.0
 	var building_last_apply_payload_ms := 0.0
@@ -477,6 +479,10 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_last_world_map_lod_loads = int(terrain_manager._last_world_map_lod_loads)
 		terrain_last_world_map_lod_unloads = int(terrain_manager._last_world_map_lod_unloads)
 		terrain_last_world_map_lod_update_ms = float(terrain_manager._last_world_map_lod_update_ms)
+		if terrain_manager.has_method("is_world_work_suspended"):
+			terrain_runtime_power_world_work_suspended = bool(terrain_manager.is_world_work_suspended())
+		if "_runtime_power_world_work_suspended_frame_count" in terrain_manager:
+			terrain_runtime_power_world_work_suspended_frame_count = int(terrain_manager._runtime_power_world_work_suspended_frame_count)
 		terrain_visual_batch_node_count = int(terrain_manager._terrain_visual_batches.size())
 		terrain_visual_batch_dirty_count = int(terrain_manager._terrain_visual_batch_dirty.size())
 		terrain_last_visual_batch_rebuild_ms = float(terrain_manager._last_terrain_visual_batch_rebuild_ms)
@@ -616,6 +622,8 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_last_world_map_lod_loads": terrain_last_world_map_lod_loads,
 		"terrain_last_world_map_lod_unloads": terrain_last_world_map_lod_unloads,
 		"terrain_last_world_map_lod_update_ms": terrain_last_world_map_lod_update_ms,
+		"terrain_runtime_power_world_work_suspended": terrain_runtime_power_world_work_suspended,
+		"terrain_runtime_power_world_work_suspended_frame_count": terrain_runtime_power_world_work_suspended_frame_count,
 		"terrain_visual_batch_node_count": terrain_visual_batch_node_count,
 		"terrain_visual_batch_dirty_count": terrain_visual_batch_dirty_count,
 		"terrain_last_visual_batch_rebuild_ms": terrain_last_visual_batch_rebuild_ms,
@@ -874,6 +882,7 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"stable_top_bucket_count": 0,
 		"top_bucket_counts": {},
 		"baseline_comparison": {},
+		"terrain_runtime_power_world_work_suspended_samples": 0,
 		"latest_town_state": {},
 		"latest_entities_state": {}
 	}
@@ -919,6 +928,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var longest_over_budget_streak := 0
 	var longest_over_40ms_streak := 0
 	var longest_over_50ms_streak := 0
+	var terrain_runtime_power_world_work_suspended_samples := 0
 
 	for index in range(start_index, samples.size()):
 		var entry: Dictionary = samples[index]
@@ -969,6 +979,8 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 
 		var bucket := str(entry.get("top_measure_bucket", "Unknown"))
 		bucket_counts[bucket] = int(bucket_counts.get(bucket, 0)) + 1
+		if bool(entry.get("terrain_runtime_power_world_work_suspended", false)):
+			terrain_runtime_power_world_work_suspended_samples += 1
 
 	longest_over_budget_streak = maxi(longest_over_budget_streak, current_over_budget_streak)
 	longest_over_40ms_streak = maxi(longest_over_40ms_streak, current_over_40ms_streak)
@@ -1027,6 +1039,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"stable_top_bucket_count": int(dominant_bucket.get("count", 0)),
 		"top_bucket_counts": bucket_counts,
 		"baseline_comparison": latest_vs_window,
+		"terrain_runtime_power_world_work_suspended_samples": terrain_runtime_power_world_work_suspended_samples,
 		"latest_town_state": _town_entry_latest_town_state.duplicate(true),
 		"latest_entities_state": _town_entry_latest_entities_state.duplicate(true)
 	}
@@ -2043,14 +2056,16 @@ func _is_town_terrain_stream_ready() -> bool:
 	var telemetry: Dictionary = chunk_manager.get_telemetry_snapshot()
 	var render_distance := int(telemetry.get("render_distance", 0))
 	var min_loaded_chunks := int(ceil(PI * float(render_distance * render_distance)))
+	var world_work_suspended := bool(telemetry.get("runtime_power_world_work_suspended", false))
 	var terrain_busy := false
 	terrain_busy = terrain_busy or (render_distance > 0 and int(telemetry.get("loaded_chunk_count", 0)) < min_loaded_chunks)
-	terrain_busy = terrain_busy or int(telemetry.get("pending_chunk_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("pending_node_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("task_queue_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("cpu_task_queue_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("completed_generation_queue_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("pending_terrain_collision_create_count", 0)) > 0
+	if not world_work_suspended:
+		terrain_busy = terrain_busy or int(telemetry.get("pending_chunk_count", 0)) > 0
+		terrain_busy = terrain_busy or int(telemetry.get("pending_node_count", 0)) > 0
+		terrain_busy = terrain_busy or int(telemetry.get("task_queue_count", 0)) > 0
+		terrain_busy = terrain_busy or int(telemetry.get("cpu_task_queue_count", 0)) > 0
+		terrain_busy = terrain_busy or int(telemetry.get("completed_generation_queue_count", 0)) > 0
+		terrain_busy = terrain_busy or int(telemetry.get("pending_terrain_collision_create_count", 0)) > 0
 	terrain_busy = terrain_busy or int(telemetry.get("last_update_loads", 0)) > 0
 	terrain_busy = terrain_busy or int(telemetry.get("last_update_unloads", 0)) > 0
 	terrain_busy = terrain_busy or bool(telemetry.get("render_resource_prewarm_active", false))

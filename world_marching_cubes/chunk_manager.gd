@@ -137,6 +137,7 @@ var _material_texture_builder: Object = null
 var _cached_vehicle_manager: Node = null
 var _cached_building_manager: Node = null
 var _cached_prefab_spawner: Node = null
+var _cached_vegetation_manager: Node = null
 
 class ChunkData:
 	var node_terrain: Node3D
@@ -253,7 +254,8 @@ var loading_paused: bool = false
 @export_range(0.0, 5.0, 0.1) var runtime_power_active_grace_s: float = 0.75
 @export_range(0.001, 1.0, 0.001) var runtime_power_position_epsilon: float = 0.10
 @export_range(0.001, 0.1, 0.001) var runtime_power_orientation_epsilon: float = 0.01
-@export var runtime_power_suspend_render_loop_in_deep_idle: bool = false
+@export var runtime_power_suspend_render_loop_in_deep_idle: bool = true
+@export var runtime_power_suspend_background_world_work: bool = true
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
@@ -271,11 +273,18 @@ var _runtime_power_deep_idle_frame_count: int = 0
 var _runtime_power_active_reason: String = "startup"
 var _runtime_power_terrain_busy_last: bool = false
 var _runtime_power_foreground_terrain_busy_last: bool = false
+var _runtime_power_external_world_busy_last: bool = false
 var _runtime_power_viewer_moved_last: bool = false
 var _runtime_power_disabled_reason: String = ""
 var _runtime_power_render_loop_suspended: bool = false
 var _runtime_power_render_loop_restore_enabled: bool = true
 var _runtime_power_render_loop_restore_captured: bool = false
+var _runtime_power_world_work_suspended: bool = false
+var _runtime_power_world_work_suspended_frame_count: int = 0
+var _runtime_power_world_work_suspend_count: int = 0
+var _runtime_power_world_work_resume_count: int = 0
+var _runtime_power_world_work_suspend_reason: String = ""
+var _runtime_power_world_work_resume_reason: String = "startup"
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_fallback_unloads: int = 0
@@ -778,10 +787,18 @@ func get_telemetry_snapshot() -> Dictionary:
 		"runtime_power_viewer_moved": _runtime_power_viewer_moved_last,
 		"runtime_power_terrain_busy": _runtime_power_terrain_busy_last,
 		"runtime_power_foreground_terrain_busy": _runtime_power_foreground_terrain_busy_last,
+		"runtime_power_external_world_busy": _runtime_power_external_world_busy_last,
 		"runtime_power_disabled_reason": _runtime_power_disabled_reason,
 		"runtime_power_suspend_render_loop_in_deep_idle": runtime_power_suspend_render_loop_in_deep_idle,
 		"runtime_power_render_loop_suspended": _runtime_power_render_loop_suspended,
 		"runtime_power_render_loop_enabled": _get_runtime_power_render_loop_enabled(),
+		"runtime_power_suspend_background_world_work": runtime_power_suspend_background_world_work,
+		"runtime_power_world_work_suspended": _runtime_power_world_work_suspended,
+		"runtime_power_world_work_suspended_frame_count": _runtime_power_world_work_suspended_frame_count,
+		"runtime_power_world_work_suspend_count": _runtime_power_world_work_suspend_count,
+		"runtime_power_world_work_resume_count": _runtime_power_world_work_resume_count,
+		"runtime_power_world_work_suspend_reason": _runtime_power_world_work_suspend_reason,
+		"runtime_power_world_work_resume_reason": _runtime_power_world_work_resume_reason,
 		"retired_chunk_node_root_count": _retired_chunk_node_roots.size(),
 		"last_retired_chunk_node_cleanup_ms": _last_retired_chunk_node_cleanup_ms,
 		"last_retired_chunk_node_cleanup_count": _last_retired_chunk_node_cleanup_count,
@@ -1870,6 +1887,15 @@ func _has_pending_priority_gpu_tasks_or_exit() -> bool:
 	return has_tasks
 
 
+func _find_urgent_background_gpu_task_index(queue: Array[Dictionary]) -> int:
+	for i in range(queue.size() - 1, -1, -1):
+		var queued_task: Dictionary = queue[i]
+		var task_type := str(queued_task.get("type", ""))
+		if task_type == "free" or task_type == "free_many" or task_type == "modify":
+			return i
+	return -1
+
+
 func _pop_next_gpu_task() -> Dictionary:
 	mutex.lock()
 	var task: Dictionary = {}
@@ -1886,7 +1912,13 @@ func _pop_next_gpu_task() -> Dictionary:
 		else:
 			task = priority_task_queue.pop_front()
 	elif not task_queue.is_empty():
-		task = task_queue.pop_back()
+		if _runtime_power_world_work_suspended:
+			var urgent_index := _find_urgent_background_gpu_task_index(task_queue)
+			if urgent_index >= 0:
+				task = task_queue[urgent_index]
+				task_queue.remove_at(urgent_index)
+		else:
+			task = task_queue.pop_back()
 	mutex.unlock()
 	return task
 
@@ -2160,8 +2192,6 @@ func _capture_terrain_telemetry(event_label: String = "", details: Dictionary = 
 
 
 func _process(delta):
-	_process_retired_chunk_node_cleanup()
-
 	if not viewer:
 		return
 
@@ -2172,9 +2202,16 @@ func _process(delta):
 	# Adjust loading based on FPS
 	_adjust_adaptive_loading()
 
+	_update_runtime_power_mode(delta)
+
 	if skip_terrain_chunk_updates_for_test:
-		_update_runtime_power_mode(delta)
 		return
+
+	if _runtime_power_world_work_suspended:
+		_record_runtime_power_world_work_suspended_frame()
+		return
+
+	_process_retired_chunk_node_cleanup()
 
 	var spawn_zone_work_pending := _has_pending_spawn_zone_work()
 	var defer_terrain_finalization := false
@@ -2214,7 +2251,6 @@ func _process(delta):
 		_check_spawn_zone_readiness(Vector3i(2147483647, 2147483647, 2147483647))
 	if not defer_terrain_finalization and not loading_paused:
 		_update_world_map_lod_chunks()
-	_update_runtime_power_mode(delta)
 	_process_completed_terrain_visual_batch_builds()
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
@@ -2222,7 +2258,12 @@ func _process(delta):
 var debug_chunk_bounds: bool = false
 
 func _unhandled_input(_event):
-	pass
+	if runtime_power_mode_enabled and (_runtime_power_world_work_suspended or _runtime_power_render_loop_suspended):
+		_runtime_power_idle_seconds = 0.0
+		_runtime_power_active_grace_remaining_s = runtime_power_active_grace_s
+		_runtime_power_active_reason = "input_event"
+		_set_runtime_power_world_work_suspended(false, "input_event")
+		_apply_runtime_power_fps("active", runtime_power_active_max_fps)
 
 func set_debug_chunk_bounds(enabled: bool) -> void:
 	debug_chunk_bounds = enabled
@@ -2323,6 +2364,7 @@ func _configure_runtime_power_mode_from_env() -> void:
 	runtime_power_deep_idle_enter_delay_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S", runtime_power_deep_idle_enter_delay_s)
 	runtime_power_active_grace_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_ACTIVE_GRACE_S", runtime_power_active_grace_s)
 	runtime_power_suspend_render_loop_in_deep_idle = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP", runtime_power_suspend_render_loop_in_deep_idle)
+	runtime_power_suspend_background_world_work = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_SUSPEND_BACKGROUND_WORLD_WORK", runtime_power_suspend_background_world_work)
 	runtime_power_idle_max_fps = mini(runtime_power_idle_max_fps, runtime_power_active_max_fps)
 	runtime_power_deep_idle_max_fps = mini(runtime_power_deep_idle_max_fps, runtime_power_idle_max_fps)
 	runtime_power_deep_idle_enter_delay_s = maxf(runtime_power_deep_idle_enter_delay_s, runtime_power_idle_enter_delay_s)
@@ -2406,6 +2448,40 @@ func _runtime_power_foreground_terrain_busy(terrain_busy: bool) -> bool:
 	var min_loaded_chunk_count := _get_min_loaded_stream_chunk_count()
 	return min_loaded_chunk_count > 0 and active_chunks.size() < min_loaded_chunk_count
 
+func _get_cached_runtime_power_node(group_name: String, fallback_name: String, cached_node: Node) -> Node:
+	if cached_node and is_instance_valid(cached_node):
+		return cached_node
+	var node := get_tree().get_first_node_in_group(group_name)
+	if not node:
+		node = get_tree().root.find_child(fallback_name, true, false)
+	return node
+
+func _runtime_power_external_world_busy() -> bool:
+	_cached_prefab_spawner = _get_cached_runtime_power_node("prefab_spawner", "PrefabSpawner", _cached_prefab_spawner)
+	if _cached_prefab_spawner:
+		if _cached_prefab_spawner.has_method("has_pending_spawn_jobs") and _cached_prefab_spawner.has_pending_spawn_jobs():
+			return true
+		if _cached_prefab_spawner.has_method("has_pending_world_map_baked_payload_jobs") and _cached_prefab_spawner.has_pending_world_map_baked_payload_jobs():
+			return true
+
+	_cached_building_manager = _get_cached_runtime_power_node("building_manager", "BuildingManager", _cached_building_manager)
+	if _cached_building_manager:
+		if _cached_building_manager.has_method("has_pending_building_work") and _cached_building_manager.has_pending_building_work():
+			return true
+		if _cached_building_manager.has_method("has_pending_visual_batch_work") and _cached_building_manager.has_pending_visual_batch_work():
+			return true
+		if _cached_building_manager.has_method("has_pending_world_map_baked_object_spawns") and _cached_building_manager.has_pending_world_map_baked_object_spawns():
+			return true
+
+	_cached_vegetation_manager = _get_cached_runtime_power_node("vegetation_manager", "VegetationManager", _cached_vegetation_manager)
+	if _cached_vegetation_manager:
+		if _cached_vegetation_manager.has_method("is_vegetation_ready") and not _cached_vegetation_manager.is_vegetation_ready():
+			return true
+		if _cached_vegetation_manager.has_method("get_pending_chunks_count") and int(_cached_vegetation_manager.get_pending_chunks_count()) > 0:
+			return true
+
+	return false
+
 func _apply_runtime_power_fps(mode: String, target_fps_value: int) -> void:
 	var previous_mode := _runtime_power_mode
 	_runtime_power_mode = mode
@@ -2444,6 +2520,7 @@ func _apply_runtime_power_render_loop_mode(mode: String) -> void:
 
 func _update_runtime_power_mode(delta: float) -> void:
 	if not runtime_power_mode_enabled:
+		_set_runtime_power_world_work_suspended(false, "runtime_power_disabled")
 		_apply_runtime_power_render_loop_mode("active")
 		return
 
@@ -2451,10 +2528,12 @@ func _update_runtime_power_mode(delta: float) -> void:
 	var viewer_moved := _runtime_power_viewer_moved()
 	var terrain_busy := _runtime_power_terrain_busy()
 	var foreground_terrain_busy := _runtime_power_foreground_terrain_busy(terrain_busy)
+	var external_world_busy := _runtime_power_external_world_busy()
 	_runtime_power_viewer_moved_last = viewer_moved
 	_runtime_power_terrain_busy_last = terrain_busy
 	_runtime_power_foreground_terrain_busy_last = foreground_terrain_busy
-	var active_now := input_active or viewer_moved or foreground_terrain_busy
+	_runtime_power_external_world_busy_last = external_world_busy
+	var active_now := input_active or viewer_moved or foreground_terrain_busy or external_world_busy
 	if active_now:
 		if input_active:
 			_runtime_power_active_reason = "input"
@@ -2462,6 +2541,8 @@ func _update_runtime_power_mode(delta: float) -> void:
 			_runtime_power_active_reason = "viewer_moved"
 		elif foreground_terrain_busy:
 			_runtime_power_active_reason = "terrain_foreground"
+		elif external_world_busy:
+			_runtime_power_active_reason = "external_world"
 		else:
 			_runtime_power_active_reason = "active"
 		_runtime_power_idle_seconds = 0.0
@@ -2484,6 +2565,17 @@ func _update_runtime_power_mode(delta: float) -> void:
 	else:
 		_runtime_power_active_frame_count += 1
 		_apply_runtime_power_fps("active", runtime_power_active_max_fps)
+
+	var suspend_world_work := runtime_power_suspend_background_world_work \
+		and _runtime_power_idle_seconds >= runtime_power_idle_enter_delay_s \
+		and not foreground_terrain_busy \
+		and not external_world_busy
+	var suspend_reason := _runtime_power_active_reason
+	if terrain_busy and not foreground_terrain_busy:
+		suspend_reason = "background_world_work_idle"
+	elif not terrain_busy:
+		suspend_reason = "world_idle"
+	_set_runtime_power_world_work_suspended(suspend_world_work, suspend_reason)
 
 func _get_viewer_chunk_coord() -> Vector3i:
 	var p_pos := get_viewer_position()
@@ -2543,6 +2635,76 @@ func _skip_terrain_stream_update() -> void:
 	_last_update_loads = 0
 	_last_update_unloads = 0
 	_last_update_duration_ms = 0.0
+
+func is_world_work_suspended() -> bool:
+	return _runtime_power_world_work_suspended
+
+func _wake_suspended_background_workers() -> void:
+	var gpu_wake_count := 0
+	if mutex and semaphore:
+		mutex.lock()
+		gpu_wake_count = task_queue.size()
+		mutex.unlock()
+	for _gpu_wake_index in range(gpu_wake_count):
+		semaphore.post()
+
+	var cpu_wake_count := 0
+	if cpu_mutex and cpu_semaphore:
+		cpu_mutex.lock()
+		cpu_wake_count = cpu_task_queue.size()
+		cpu_mutex.unlock()
+	for _cpu_wake_index in range(cpu_wake_count):
+		cpu_semaphore.post()
+
+func _set_runtime_power_world_work_suspended(suspended: bool, reason: String) -> void:
+	var target_suspended := runtime_power_mode_enabled and runtime_power_suspend_background_world_work and suspended
+	if _runtime_power_world_work_suspended == target_suspended:
+		if target_suspended:
+			_runtime_power_world_work_suspend_reason = reason
+		return
+
+	_runtime_power_world_work_suspended = target_suspended
+	if target_suspended:
+		_runtime_power_world_work_suspend_count += 1
+		_runtime_power_world_work_suspend_reason = reason
+	else:
+		_runtime_power_world_work_resume_count += 1
+		_runtime_power_world_work_resume_reason = reason
+		_wake_suspended_background_workers()
+
+func _record_runtime_power_world_work_suspended_frame() -> void:
+	_runtime_power_world_work_suspended_frame_count += 1
+	_skip_terrain_stream_update()
+	_last_terrain_finalization_defer_reason = "runtime_power_world_work_suspended"
+	_last_completed_generation_drain_count = 0
+	_last_completed_generation_drain_ms = 0.0
+	_last_pending_node_finalize_count = 0
+	_last_pending_node_process_ms = 0.0
+	_last_collision_proximity_update_ms = 0.0
+	_last_collision_proximity_enable_count = 0
+	_last_collision_proximity_disable_count = 0
+	_last_collision_proximity_prewarm_queued = 0
+	_last_terrain_collision_create_count = 0
+	_last_terrain_collision_create_ms = 0.0
+	_last_terrain_collision_create_skipped_far = 0
+	_last_terrain_collision_create_stale = 0
+	_last_terrain_collision_create_deferred_prewarm = 0
+	_last_terrain_collision_candidate_checks = 0
+	_last_retired_chunk_node_cleanup_count = 0
+	_last_retired_chunk_node_cleanup_ms = 0.0
+	_last_world_map_lod_update_ms = 0.0
+	_last_world_map_lod_loads = 0
+	_last_world_map_lod_unloads = 0
+	_last_terrain_visual_batch_rebuild_count = 0
+	_last_terrain_visual_batch_rebuild_ms = 0.0
+	_last_terrain_visual_batch_cached_rebuild_count = 0
+	_last_terrain_visual_batch_cached_rebuild_ms = 0.0
+	_last_terrain_visual_batch_cached_rebuild_attempts = 0
+	_last_terrain_visual_batch_async_queued_count = 0
+	_last_terrain_visual_batch_streaming_async_queued_count = 0
+	_last_terrain_visual_batch_async_apply_count = 0
+	_last_terrain_visual_batch_async_apply_ms = 0.0
+	_last_terrain_visual_batch_async_stale_count = 0
 
 var _last_collision_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_collision_active_count: int = -1
@@ -4435,6 +4597,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 			semaphore.post()
 
 func _exit_tree():
+	_set_runtime_power_world_work_suspended(false, "exit_tree")
 	_apply_runtime_power_render_loop_mode("active")
 
 	# CRITICAL: Clean up all GPU resources BEFORE terminating threads
@@ -5220,6 +5383,8 @@ func _thread_function():
 			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
 			if should_exit:
 				break
+			if _runtime_power_world_work_suspended:
+				_interruptible_delay(50)
 			continue
 
 		# 2. Handle task types
@@ -5934,6 +6099,10 @@ func _cpu_thread_function():
 		mutex.lock()
 		var should_exit = exit_thread
 		mutex.unlock()
+
+		if _runtime_power_world_work_suspended and not should_exit:
+			_interruptible_delay(50)
+			continue
 
 		cpu_mutex.lock()
 		if cpu_task_queue.is_empty():
