@@ -5,6 +5,7 @@ import sys
 import time
 import atexit
 import msvcrt
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,6 +18,8 @@ SNAPSHOT_DIR = Path(r"C:\Users\Windows10_new\AppData\Roaming\Godot\app_userdata\
 LOG_DIR = SNAPSHOT_DIR.parent.parent / "logs"
 LOG_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-godot.log"
 RUN_LOCK_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-test.lock"
+SYSTEM_SAMPLE_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-system-samples.jsonl"
+SYSTEM_SAMPLE_SUMMARY_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-system-summary.json"
 _RUN_LOCK_HANDLE = None
 
 
@@ -437,6 +440,184 @@ def _print_machine_state_summary(machine_state: dict) -> None:
     print(f"  Warmup: {warmup_state} - {warmup_note}{warmup_gate_note}")
 
 
+def _collect_process_state(pid: int) -> dict:
+    command = rf"""
+$targetPid = {pid}
+$process = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object {{ $_.IDProcess -eq $targetPid }} | Select-Object -First 1 IDProcess,Name,PercentProcessorTime,WorkingSetPrivate,WorkingSet,ThreadCount
+$gpuEngines = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue | Where-Object {{ $_.Name -like ("pid_" + $targetPid + "_*") }}
+$gpuMemory = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUProcessMemory -ErrorAction SilentlyContinue | Where-Object {{ $_.Name -like ("pid_" + $targetPid + "_*") }} | Select-Object -First 1 Name,DedicatedUsage,LocalUsage,NonLocalUsage,SharedUsage,TotalCommitted
+$gpuEngineTotal = 0.0
+$gpuEngineMax = 0.0
+$gpuEngineCount = 0
+foreach ($engine in $gpuEngines) {{
+  $value = [double]$engine.UtilizationPercentage
+  $gpuEngineTotal += $value
+  if ($value -gt $gpuEngineMax) {{ $gpuEngineMax = $value }}
+  $gpuEngineCount += 1
+}}
+[ordered]@{{
+  process = $process
+  gpu = [ordered]@{{
+    engine_count = $gpuEngineCount
+    utilization_total_percent = $gpuEngineTotal
+    utilization_max_engine_percent = $gpuEngineMax
+    memory = $gpuMemory
+  }}
+}} | ConvertTo-Json -Compress -Depth 5
+""".strip()
+
+    payload = _run_powershell_json(command)
+    if not isinstance(payload, dict):
+        return {"available": False}
+
+    process = payload.get("process", {})
+    gpu = payload.get("gpu", {})
+    if not isinstance(process, dict):
+        process = {}
+    if not isinstance(gpu, dict):
+        gpu = {}
+
+    memory = gpu.get("memory", {})
+    if not isinstance(memory, dict):
+        memory = {}
+
+    return {
+        "available": bool(process),
+        "pid": pid,
+        "name": str(process.get("Name", "")),
+        "cpu_percent": float(process.get("PercentProcessorTime", 0.0) or 0.0),
+        "working_set_private_mb": round(float(process.get("WorkingSetPrivate", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+        "working_set_mb": round(float(process.get("WorkingSet", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+        "thread_count": int(process.get("ThreadCount", 0) or 0),
+        "gpu_engine_count": int(gpu.get("engine_count", 0) or 0),
+        "gpu_utilization_total_percent": float(gpu.get("utilization_total_percent", 0.0) or 0.0),
+        "gpu_utilization_max_engine_percent": float(gpu.get("utilization_max_engine_percent", 0.0) or 0.0),
+        "gpu_dedicated_mb": round(float(memory.get("DedicatedUsage", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+        "gpu_local_mb": round(float(memory.get("LocalUsage", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+        "gpu_nonlocal_mb": round(float(memory.get("NonLocalUsage", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+        "gpu_shared_mb": round(float(memory.get("SharedUsage", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+        "gpu_committed_mb": round(float(memory.get("TotalCommitted", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+    }
+
+
+def _write_system_sample(sample_file: Path, sample: dict) -> None:
+    sample_file.parent.mkdir(parents=True, exist_ok=True)
+    with sample_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(sample, separators=(",", ":")) + "\n")
+
+
+def _sample_system_until(stop_event: threading.Event, pid: int, interval_seconds: float, sample_file: Path) -> None:
+    while not stop_event.is_set():
+        sample = {
+            "epoch": time.time(),
+            "machine": _collect_machine_state(),
+            "process": _collect_process_state(pid),
+        }
+        _write_system_sample(sample_file, sample)
+        stop_event.wait(interval_seconds)
+
+
+def _summarize_numeric(values: list[float]) -> dict:
+    if not values:
+        return {"count": 0, "avg": 0.0, "max": 0.0, "min": 0.0}
+    return {
+        "count": len(values),
+        "avg": round(sum(values) / len(values), 3),
+        "max": round(max(values), 3),
+        "min": round(min(values), 3),
+    }
+
+
+def _summarize_system_samples(sample_file: Path) -> dict:
+    if not sample_file.exists():
+        return {"available": False, "sample_count": 0}
+
+    samples: list[dict] = []
+    with sample_file.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                samples.append(parsed)
+
+    if not samples:
+        return {"available": False, "sample_count": 0}
+
+    epochs = [float(sample.get("epoch", 0.0) or 0.0) for sample in samples]
+    process_samples = [sample.get("process", {}) for sample in samples if isinstance(sample.get("process", {}), dict)]
+    machine_samples = [sample.get("machine", {}) for sample in samples if isinstance(sample.get("machine", {}), dict)]
+    thermal_values = [
+        float(sample.get("thermal_c"))
+        for sample in machine_samples
+        if isinstance(sample.get("thermal_c", None), (int, float))
+    ]
+
+    return {
+        "available": True,
+        "sample_count": len(samples),
+        "duration_seconds": round(max(epochs) - min(epochs), 1) if len(epochs) >= 2 else 0.0,
+        "process_cpu_percent": _summarize_numeric([
+            float(sample.get("cpu_percent", 0.0) or 0.0)
+            for sample in process_samples
+            if bool(sample.get("available", False))
+        ]),
+        "gpu_total_percent": _summarize_numeric([
+            float(sample.get("gpu_utilization_total_percent", 0.0) or 0.0)
+            for sample in process_samples
+            if bool(sample.get("available", False))
+        ]),
+        "gpu_max_engine_percent": _summarize_numeric([
+            float(sample.get("gpu_utilization_max_engine_percent", 0.0) or 0.0)
+            for sample in process_samples
+            if bool(sample.get("available", False))
+        ]),
+        "working_set_private_mb": _summarize_numeric([
+            float(sample.get("working_set_private_mb", 0.0) or 0.0)
+            for sample in process_samples
+            if bool(sample.get("available", False))
+        ]),
+        "cpu_load_percent": _summarize_numeric([
+            float(sample.get("load_percentage", 0.0) or 0.0)
+            for sample in machine_samples
+        ]),
+        "cpu_processor_performance_percent": _summarize_numeric([
+            float(sample.get("percent_processor_performance", 0.0) or 0.0)
+            for sample in machine_samples
+        ]),
+        "thermal_c": _summarize_numeric(thermal_values),
+    }
+
+
+def _print_system_sample_summary(summary: dict) -> None:
+    if not summary or not bool(summary.get("available", False)):
+        print("System sampling: unavailable")
+        return
+    print("\nSystem sampling:")
+    print(f"  Samples: {int(summary.get('sample_count', 0))} over {float(summary.get('duration_seconds', 0.0)):.1f}s")
+    process_cpu = summary.get("process_cpu_percent", {})
+    gpu_total = summary.get("gpu_total_percent", {})
+    gpu_max_engine = summary.get("gpu_max_engine_percent", {})
+    working_set = summary.get("working_set_private_mb", {})
+    cpu_load = summary.get("cpu_load_percent", {})
+    cpu_perf = summary.get("cpu_processor_performance_percent", {})
+    thermal = summary.get("thermal_c", {})
+    print(f"  Godot CPU: avg {process_cpu.get('avg', 0.0)}% max {process_cpu.get('max', 0.0)}%")
+    print(f"  GPU total: avg {gpu_total.get('avg', 0.0)}% max {gpu_total.get('max', 0.0)}%")
+    print(f"  GPU max engine: avg {gpu_max_engine.get('avg', 0.0)}% max {gpu_max_engine.get('max', 0.0)}%")
+    print(f"  Working set: avg {working_set.get('avg', 0.0)} MB max {working_set.get('max', 0.0)} MB")
+    print(f"  CPU load: avg {cpu_load.get('avg', 0.0)}% max {cpu_load.get('max', 0.0)}%")
+    print(f"  CPU perf: avg {cpu_perf.get('avg', 0.0)}% max {cpu_perf.get('max', 0.0)}%")
+    if int(thermal.get("count", 0) or 0) > 0:
+        print(f"  Thermal: avg {thermal.get('avg', 0.0)} C max {thermal.get('max', 0.0)} C")
+    else:
+        print("  Thermal: unavailable")
+
+
 def _print_snapshot_summary(snapshot_path: Path) -> None:
     try:
         data = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -525,6 +706,12 @@ def main() -> int:
             LOG_FILE.unlink()
         except OSError:
             pass
+    for sample_path in [SYSTEM_SAMPLE_FILE, SYSTEM_SAMPLE_SUMMARY_FILE]:
+        if sample_path.exists():
+            try:
+                sample_path.unlink()
+            except OSError:
+                pass
     legacy_log_path = LOG_DIR / "godot.log"
     if legacy_log_path.exists():
         try:
@@ -585,6 +772,7 @@ def main() -> int:
 
     configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
     timeout = max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0))
+    system_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", 0.0)
 
     print("\nMachine state probe:")
     _print_machine_state_summary(machine_state)
@@ -602,6 +790,9 @@ def main() -> int:
                 print(f"    {command_line}")
         return 2
 
+    system_sample_stop: Optional[threading.Event] = None
+    system_sample_thread: Optional[threading.Thread] = None
+    system_sample_summary: dict = {}
     try:
         proc = subprocess.Popen(
             cmd,
@@ -612,6 +803,14 @@ def main() -> int:
             errors="replace",
             env=env,
         )
+        if system_sample_interval_seconds > 0.0:
+            system_sample_stop = threading.Event()
+            system_sample_thread = threading.Thread(
+                target=_sample_system_until,
+                args=(system_sample_stop, int(proc.pid), system_sample_interval_seconds, SYSTEM_SAMPLE_FILE),
+                daemon=True,
+            )
+            system_sample_thread.start()
         returncode = proc.returncode
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
@@ -620,6 +819,11 @@ def main() -> int:
             proc.kill()
             stdout, stderr = proc.communicate()
             returncode = proc.returncode
+        finally:
+            if system_sample_stop is not None:
+                system_sample_stop.set()
+            if system_sample_thread is not None:
+                system_sample_thread.join(timeout=max(5.0, system_sample_interval_seconds + 5.0))
         output = (stdout or "") + "\n" + (stderr or "")
     except subprocess.TimeoutExpired as exc:
         print(f"WARNING: Timeout after {timeout}s (bot may still be running)")
@@ -630,6 +834,13 @@ def main() -> int:
         return 1
     else:
         returncode = proc.returncode
+
+    if system_sample_interval_seconds > 0.0:
+        system_sample_summary = _summarize_system_samples(SYSTEM_SAMPLE_FILE)
+        try:
+            SYSTEM_SAMPLE_SUMMARY_FILE.write_text(json.dumps(system_sample_summary, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
     print("\n" + "=" * 50)
     print("FULL OUTPUT:")
@@ -649,6 +860,9 @@ def main() -> int:
         print("(No town stall debug output found)")
 
     print("=" * 50)
+
+    if system_sample_interval_seconds > 0.0:
+        _print_system_sample_summary(system_sample_summary)
 
     failure_reasons = _detect_run_failure(output, returncode)
     snapshot = _latest_snapshot(run_start_mtime - 1.0)
