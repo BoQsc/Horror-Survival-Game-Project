@@ -107,6 +107,7 @@ func _stop_and_free_audio_player(player_node: AudioStreamPlayer3D) -> void:
 		player_node.queue_free()
 
 func _ready() -> void:
+	set_process(false)
 	# Try to find local signals node
 	signals = get_node_or_null("../signals")
 	if not signals:
@@ -140,6 +141,7 @@ func _on_item_changed(_slot: int, _item: Dictionary) -> void:
 	# Add an equip delay to prevent bypass of weapon cooldowns via rapid switching
 	if attack_cooldown < 0.3:
 		attack_cooldown = 0.3
+		_wake_process_loop()
 
 func _find_managers() -> void:
 	if not terrain_manager:
@@ -236,10 +238,27 @@ func _setup_audio() -> void:
 
 func _process(delta: float) -> void:
 	if attack_cooldown > 0:
-		attack_cooldown -= delta
+		attack_cooldown = maxf(attack_cooldown - delta, 0.0)
 	
 	_update_held_prop(delta)
 	_check_durability_target()
+	_sync_process_loop()
+
+func _wake_process_loop() -> void:
+	if not is_processing():
+		set_process(true)
+
+func _sync_process_loop() -> void:
+	if attack_cooldown > 0:
+		_wake_process_loop()
+		return
+	if held_prop_instance and is_instance_valid(held_prop_instance):
+		_wake_process_loop()
+		return
+	if durability_target != null:
+		_wake_process_loop()
+		return
+	set_process(false)
 
 ## Initialize references (called by parent after scene ready)
 func initialize(p_player: Node, p_terrain: Node, p_vegetation: Node, p_building: Node, p_hotbar: Node) -> void:
@@ -420,6 +439,7 @@ func _try_grab_prop() -> void:
 	if obj_def.has("scene"):
 		var packed = load(obj_def.scene)
 		held_prop_instance = packed.instantiate()
+		_wake_process_loop()
 		
 		# Strip physics for holding
 		if held_prop_instance is RigidBody3D:
@@ -451,6 +471,7 @@ func _try_grab_prop() -> void:
 func _grab_dropped_prop(target: RigidBody3D) -> void:
 	# Store reference directly - don't need to respawn, just move it (V1 approach)
 	held_prop_instance = target
+	_wake_process_loop()
 	held_prop_id = -1  # No object registry ID for dropped items
 	held_prop_rotation = 0
 	
@@ -494,6 +515,7 @@ func _drop_grabbed_prop() -> void:
 			# Give a small drop velocity (V1)
 			held_prop_instance.linear_velocity = Vector3(0, -1, 0)
 		held_prop_instance = null
+		_sync_process_loop()
 		held_prop_id = -1
 		held_prop_rotation = 0
 		held_prop_original_collision_layer = -1
@@ -510,6 +532,7 @@ func _drop_grabbed_prop() -> void:
 	if held_prop_instance:
 		held_prop_instance.queue_free()
 	held_prop_instance = null
+	_sync_process_loop()
 	held_prop_id = -1
 	held_prop_rotation = 0
 	held_prop_original_collision_layer = -1
@@ -669,6 +692,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		return
 	
 	attack_cooldown = _get_attack_cooldown_time()
+	_wake_process_loop()
 	
 	var item_id = item.get("id", "")
 	
@@ -1669,12 +1693,14 @@ func _emit_axe_fired() -> void:
 		PlayerSignals.axe_fired.emit()
 
 func _emit_damage_dealt(target: Node, amount: int) -> void:
+	_wake_process_loop()
 	if signals and signals.has_signal("damage_dealt"):
 		signals.damage_dealt.emit(target, amount)
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.damage_dealt.emit(target, amount)
 
 func _emit_durability_hit(current_hp: int, max_hp: int, target_name: String, target_ref: Variant) -> void:
+	_wake_process_loop()
 	if signals and signals.has_signal("durability_hit"):
 		signals.durability_hit.emit(current_hp, max_hp, target_name, target_ref)
 	if has_node("/root/PlayerSignals"):
@@ -1685,6 +1711,7 @@ func _emit_durability_cleared() -> void:
 		signals.durability_cleared.emit()
 	if has_node("/root/PlayerSignals"):
 		PlayerSignals.durability_cleared.emit()
+	_sync_process_loop()
 
 ## Spawn a visual debug marker at hit position
 func _spawn_hit_marker(position: Vector3, color: Color) -> void:
