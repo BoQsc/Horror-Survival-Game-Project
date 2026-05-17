@@ -285,6 +285,7 @@ var _runtime_power_world_work_suspend_count: int = 0
 var _runtime_power_world_work_resume_count: int = 0
 var _runtime_power_world_work_suspend_reason: String = ""
 var _runtime_power_world_work_resume_reason: String = "startup"
+var _runtime_power_recent_events: Array[Dictionary] = []
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_fallback_unloads: int = 0
@@ -799,6 +800,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"runtime_power_world_work_resume_count": _runtime_power_world_work_resume_count,
 		"runtime_power_world_work_suspend_reason": _runtime_power_world_work_suspend_reason,
 		"runtime_power_world_work_resume_reason": _runtime_power_world_work_resume_reason,
+		"runtime_power_recent_events": _runtime_power_recent_events.duplicate(true),
 		"retired_chunk_node_root_count": _retired_chunk_node_roots.size(),
 		"last_retired_chunk_node_cleanup_ms": _last_retired_chunk_node_cleanup_ms,
 		"last_retired_chunk_node_cleanup_count": _last_retired_chunk_node_cleanup_count,
@@ -2482,12 +2484,35 @@ func _runtime_power_external_world_busy() -> bool:
 
 	return false
 
+func _record_runtime_power_event(label: String, details: Dictionary = {}) -> void:
+	if label.is_empty():
+		return
+	var event := {
+		"label": label,
+		"frame": int(Engine.get_process_frames()) if Engine.has_method("get_process_frames") else 0,
+		"timestamp": Time.get_ticks_msec(),
+		"epoch": Time.get_unix_time_from_system()
+	}
+	if not details.is_empty():
+		event["details"] = details.duplicate(true)
+	_runtime_power_recent_events.append(event)
+	while _runtime_power_recent_events.size() > 32:
+		_runtime_power_recent_events.pop_front()
+
 func _apply_runtime_power_fps(mode: String, target_fps_value: int) -> void:
 	var previous_mode := _runtime_power_mode
 	_runtime_power_mode = mode
 	_runtime_power_target_fps = target_fps_value
 	if Engine.max_fps != target_fps_value:
 		Engine.max_fps = target_fps_value
+	if previous_mode != mode:
+		_record_runtime_power_event("runtime_power_mode_changed", {
+			"from": previous_mode,
+			"to": mode,
+			"target_fps": target_fps_value,
+			"idle_seconds": _runtime_power_idle_seconds,
+			"reason": _runtime_power_active_reason
+		})
 	if previous_mode != mode or _runtime_power_render_loop_suspended or mode == "deep_idle":
 		_apply_runtime_power_render_loop_mode(mode)
 
@@ -2511,12 +2536,22 @@ func _apply_runtime_power_render_loop_mode(mode: String) -> void:
 		if not _runtime_power_render_loop_suspended:
 			RenderingServer.call("set_render_loop_enabled", false)
 			_runtime_power_render_loop_suspended = true
+			_record_runtime_power_event("runtime_power_render_loop_suspended", {
+				"mode": mode,
+				"target_fps": _runtime_power_target_fps,
+				"idle_seconds": _runtime_power_idle_seconds
+			})
 		return
 
 	if _runtime_power_render_loop_suspended:
 		var restore_enabled := _runtime_power_render_loop_restore_enabled if _runtime_power_render_loop_restore_captured else true
 		RenderingServer.call("set_render_loop_enabled", restore_enabled)
 		_runtime_power_render_loop_suspended = false
+		_record_runtime_power_event("runtime_power_render_loop_resumed", {
+			"mode": mode,
+			"restore_enabled": restore_enabled,
+			"idle_seconds": _runtime_power_idle_seconds
+		})
 
 func _update_runtime_power_mode(delta: float) -> void:
 	if not runtime_power_mode_enabled:
@@ -2667,9 +2702,17 @@ func _set_runtime_power_world_work_suspended(suspended: bool, reason: String) ->
 	if target_suspended:
 		_runtime_power_world_work_suspend_count += 1
 		_runtime_power_world_work_suspend_reason = reason
+		_record_runtime_power_event("runtime_power_world_work_suspended", {
+			"reason": reason,
+			"idle_seconds": _runtime_power_idle_seconds
+		})
 	else:
 		_runtime_power_world_work_resume_count += 1
 		_runtime_power_world_work_resume_reason = reason
+		_record_runtime_power_event("runtime_power_world_work_resumed", {
+			"reason": reason,
+			"idle_seconds": _runtime_power_idle_seconds
+		})
 		_wake_suspended_background_workers()
 
 func _record_runtime_power_world_work_suspended_frame() -> void:

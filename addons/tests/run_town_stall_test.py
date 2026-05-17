@@ -1102,6 +1102,65 @@ def _extract_town_scope_event_epochs(snapshot_path: Path) -> dict[str, float]:
     return epochs
 
 
+def _extract_terrain_runtime_power_events(snapshot_path: Path) -> list[dict]:
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    terrain = (
+        snapshot.get("system_telemetry", {})
+        .get("terrain_manager", {})
+        if isinstance(snapshot.get("system_telemetry", {}), dict)
+        else {}
+    )
+    if not isinstance(terrain, dict):
+        return []
+
+    raw_events = terrain.get("runtime_power_recent_events", [])
+    if not isinstance(raw_events, list):
+        return []
+
+    events: list[dict] = []
+    for event in raw_events:
+        if not isinstance(event, dict):
+            continue
+        epoch = event.get("epoch")
+        label = str(event.get("label", ""))
+        if not label or not isinstance(epoch, (int, float)):
+            continue
+        events.append(event)
+    events.sort(key=lambda item: float(item.get("epoch", 0.0) or 0.0))
+    return events
+
+
+def _find_runtime_power_event_epoch(
+    events: list[dict],
+    label: str,
+    after_epoch: Optional[float] = None,
+    before_epoch: Optional[float] = None,
+    detail_key: str = "",
+    detail_value: object = None,
+) -> Optional[float]:
+    for event in events:
+        if str(event.get("label", "")) != label:
+            continue
+        epoch = event.get("epoch")
+        if not isinstance(epoch, (int, float)):
+            continue
+        epoch_float = float(epoch)
+        if after_epoch is not None and epoch_float <= after_epoch:
+            continue
+        if before_epoch is not None and epoch_float >= before_epoch:
+            continue
+        if detail_key:
+            details = event.get("details", {})
+            if not isinstance(details, dict) or details.get(detail_key) != detail_value:
+                continue
+        return epoch_float
+    return None
+
+
 def _summarize_system_samples_in_epoch_range(
     samples: list[dict],
     name: str,
@@ -1148,6 +1207,39 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
     hold_complete_epoch = epochs.get("hold_complete")
     shutdown_epoch = epochs.get("shutdown_requested")
     last_sample_epoch = max(float(sample.get("epoch", 0.0) or 0.0) for sample in samples)
+    runtime_power_events = _extract_terrain_runtime_power_events(snapshot_path)
+    deep_idle_start_epoch = _find_runtime_power_event_epoch(
+        runtime_power_events,
+        "runtime_power_mode_changed",
+        hold_start_epoch,
+        hold_complete_epoch,
+        "to",
+        "deep_idle",
+    )
+    deep_idle_end_epoch = None
+    if deep_idle_start_epoch is not None:
+        deep_idle_end_epoch = _find_runtime_power_event_epoch(
+            runtime_power_events,
+            "runtime_power_mode_changed",
+            deep_idle_start_epoch,
+            hold_complete_epoch,
+            "from",
+            "deep_idle",
+        ) or hold_complete_epoch
+    render_loop_suspend_start_epoch = _find_runtime_power_event_epoch(
+        runtime_power_events,
+        "runtime_power_render_loop_suspended",
+        hold_start_epoch,
+        hold_complete_epoch,
+    )
+    render_loop_suspend_end_epoch = None
+    if render_loop_suspend_start_epoch is not None:
+        render_loop_suspend_end_epoch = _find_runtime_power_event_epoch(
+            runtime_power_events,
+            "runtime_power_render_loop_resumed",
+            render_loop_suspend_start_epoch,
+            hold_complete_epoch,
+        ) or hold_complete_epoch
 
     phase_windows = {
         "moving_entry": _summarize_system_samples_in_epoch_range(samples, "moving_entry", reset_epoch, hold_start_epoch),
@@ -1164,8 +1256,22 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
             reset_epoch,
             shutdown_epoch if shutdown_epoch is not None else last_sample_epoch,
         ),
+        "runtime_power_deep_idle": _summarize_system_samples_in_epoch_range(
+            samples,
+            "runtime_power_deep_idle",
+            deep_idle_start_epoch,
+            deep_idle_end_epoch,
+        ),
+        "runtime_power_render_loop_suspended": _summarize_system_samples_in_epoch_range(
+            samples,
+            "runtime_power_render_loop_suspended",
+            render_loop_suspend_start_epoch,
+            render_loop_suspend_end_epoch,
+        ),
     }
     system_summary["phase_event_epochs"] = epochs
+    if runtime_power_events:
+        system_summary["runtime_power_events"] = runtime_power_events
     system_summary["phase_windows"] = phase_windows
     return system_summary
 
@@ -1231,18 +1337,32 @@ def _print_phase_system_sample_summary(summary: dict) -> None:
         return
 
     print("\nSystem sampling phase windows:")
-    for key in ["moving_entry", "stationary_hold", "stationary_hold_tail_30s"]:
+    for key in [
+        "moving_entry",
+        "stationary_hold",
+        "stationary_hold_tail_30s",
+        "runtime_power_deep_idle",
+        "runtime_power_render_loop_suspended",
+    ]:
         window = windows.get(key, {})
         if not isinstance(window, dict):
             continue
         raw_gpu_power = window.get("raw_gpu_power_w", {})
         raw_gpu_temp = window.get("raw_gpu_temp_c", {})
+        raw_gpu_util = window.get("raw_gpu_util_percent", {})
+        raw_gpu_pstates = window.get("raw_gpu_pstates", {})
         if int(window.get("sample_count", 0) or 0) <= 0:
             print(f"  {key}: no samples")
             continue
+        pstate_summary = ""
+        if isinstance(raw_gpu_pstates, dict) and raw_gpu_pstates:
+            pstate_summary = " pstates=" + ",".join(
+                f"{pstate}:{count}" for pstate, count in sorted(raw_gpu_pstates.items())
+            )
         print(
             "  {key}: samples={samples} raw_gpu={raw_samples} "
-            "watts_avg/max={watts_avg}/{watts_max} temp_avg/max={temp_avg}/{temp_max}".format(
+            "watts_avg/max={watts_avg}/{watts_max} temp_avg/max={temp_avg}/{temp_max} "
+            "util_avg/max={util_avg}/{util_max}{pstates}".format(
                 key=key,
                 samples=int(window.get("sample_count", 0) or 0),
                 raw_samples=int(window.get("raw_gpu_available_count", 0) or 0),
@@ -1250,6 +1370,9 @@ def _print_phase_system_sample_summary(summary: dict) -> None:
                 watts_max=raw_gpu_power.get("max", 0.0),
                 temp_avg=raw_gpu_temp.get("avg", 0.0),
                 temp_max=raw_gpu_temp.get("max", 0.0),
+                util_avg=raw_gpu_util.get("avg", 0.0),
+                util_max=raw_gpu_util.get("max", 0.0),
+                pstates=pstate_summary,
             )
         )
 
