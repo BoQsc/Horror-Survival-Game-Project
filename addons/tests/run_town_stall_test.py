@@ -810,10 +810,14 @@ def _collect_idle_state_samples(delay_seconds: float, sample_count: int, interva
     count = max(1, sample_count)
     interval = max(0.1, interval_seconds)
     for index in range(count):
+        sample_start = time.perf_counter()
         samples.append({
             "epoch": time.time(),
+            "sample_index": index,
+            "sample_mode": "idle_probe",
             "machine": _collect_machine_state(),
             "raw_gpu": _collect_raw_gpu_state(),
+            "probe_seconds": round(time.perf_counter() - sample_start, 3),
         })
         if index < count - 1:
             time.sleep(interval)
@@ -822,6 +826,63 @@ def _collect_idle_state_samples(delay_seconds: float, sample_count: int, interva
 
 def _idle_state_contamination_reasons(samples: list[dict]) -> list[str]:
     return _preflight_contamination_reasons_for_idle_samples(samples)
+
+
+def _collect_postrun_idle_state_samples(
+    delay_seconds: float,
+    sample_count: int,
+    interval_seconds: float,
+    settle_timeout_seconds: float,
+) -> tuple[list[dict], list[str], dict]:
+    if delay_seconds > 0.0:
+        time.sleep(delay_seconds)
+
+    start_time = time.time()
+    all_samples: list[dict] = []
+    latest_batch: list[dict] = []
+    latest_reasons: list[str] = ["post-run idle samples unavailable"]
+    attempts = 0
+    count = max(1, sample_count)
+    interval = max(0.1, interval_seconds)
+    deadline = start_time + max(0.0, settle_timeout_seconds)
+
+    while True:
+        latest_batch = []
+        attempts += 1
+        for index in range(count):
+            sample_start = time.perf_counter()
+            sample = {
+                "epoch": time.time(),
+                "sample_index": len(all_samples),
+                "sample_mode": "postrun_idle_probe",
+                "postrun_idle_attempt": attempts,
+                "machine": _collect_machine_state(),
+                "raw_gpu": _collect_raw_gpu_state(),
+            }
+            sample["probe_seconds"] = round(time.perf_counter() - sample_start, 3)
+            all_samples.append(sample)
+            latest_batch.append(sample)
+            if index < count - 1:
+                time.sleep(interval)
+
+        latest_reasons = _idle_state_contamination_reasons(latest_batch)
+        if not latest_reasons:
+            return all_samples, [], {
+                "attempts": attempts,
+                "settled": True,
+                "settle_seconds": round(time.time() - start_time, 3),
+                "settle_timeout_seconds": settle_timeout_seconds,
+                "latest_batch_summary": _summarize_system_sample_list(latest_batch),
+            }
+
+        if settle_timeout_seconds <= 0.0 or time.time() >= deadline:
+            return all_samples, latest_reasons, {
+                "attempts": attempts,
+                "settled": False,
+                "settle_seconds": round(time.time() - start_time, 3),
+                "settle_timeout_seconds": settle_timeout_seconds,
+                "latest_batch_summary": _summarize_system_sample_list(latest_batch),
+            }
 
 
 def _summarize_numeric(values: list[float]) -> dict:
@@ -1069,6 +1130,23 @@ def _print_system_sample_summary(summary: dict) -> None:
         return
     print("\nSystem sampling:")
     print(f"  Samples: {int(summary.get('sample_count', 0))} over {float(summary.get('duration_seconds', 0.0)):.1f}s")
+    sample_modes = summary.get("sample_modes", {})
+    if isinstance(sample_modes, dict) and sample_modes:
+        modes = ", ".join(f"{key}={value}" for key, value in sorted(sample_modes.items()))
+        print(f"  Sample modes: {modes}")
+    probe_seconds = summary.get("probe_seconds", {})
+    if isinstance(probe_seconds, dict) and int(probe_seconds.get("count", 0) or 0) > 0:
+        print(f"  Probe seconds: avg {probe_seconds.get('avg', 0.0)} max {probe_seconds.get('max', 0.0)}")
+    settle = summary.get("settle", {})
+    if isinstance(settle, dict) and settle:
+        print(
+            "  Idle settle: {state} after {seconds}s attempts={attempts} timeout={timeout}s".format(
+                state="settled" if bool(settle.get("settled", False)) else "not settled",
+                seconds=settle.get("settle_seconds", 0.0),
+                attempts=int(settle.get("attempts", 0) or 0),
+                timeout=settle.get("settle_timeout_seconds", 0.0),
+            )
+        )
     process_cpu = summary.get("process_cpu_percent", {})
     gpu_total = summary.get("gpu_total_percent", {})
     gpu_max_engine = summary.get("gpu_max_engine_percent", {})
@@ -1287,6 +1365,7 @@ def main() -> int:
     postrun_idle_delay_seconds = _float_from_env("TOWN_STALL_POSTRUN_IDLE_DELAY_SECONDS", 2.0)
     postrun_idle_sample_count = _positive_int_from_env("TOWN_STALL_POSTRUN_IDLE_SAMPLE_COUNT", 3)
     postrun_idle_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_POSTRUN_IDLE_SAMPLE_INTERVAL_SECONDS", 1.0)
+    postrun_idle_settle_timeout_seconds = _float_from_env("TOWN_STALL_POSTRUN_IDLE_SETTLE_TIMEOUT_SECONDS", 30.0)
     preflight_idle_sample_count = _positive_int_from_env("TOWN_STALL_PREFLIGHT_IDLE_SAMPLE_COUNT", 3)
     preflight_idle_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_PREFLIGHT_IDLE_SAMPLE_INTERVAL_SECONDS", 1.0)
 
@@ -1396,13 +1475,14 @@ def main() -> int:
     postrun_idle_summary: dict = {}
     postrun_idle_reasons: list[str] = []
     if not postrun_idle_check_disabled:
-        postrun_idle_samples = _collect_idle_state_samples(
+        postrun_idle_samples, postrun_idle_reasons, postrun_idle_settle = _collect_postrun_idle_state_samples(
             postrun_idle_delay_seconds,
             postrun_idle_sample_count,
             postrun_idle_sample_interval_seconds,
+            postrun_idle_settle_timeout_seconds,
         )
         postrun_idle_summary = _summarize_system_sample_list(postrun_idle_samples)
-        postrun_idle_reasons = _idle_state_contamination_reasons(postrun_idle_samples)
+        postrun_idle_summary["settle"] = postrun_idle_settle
 
     if system_sample_interval_seconds > 0.0:
         system_sample_summary = _summarize_system_samples(SYSTEM_SAMPLE_FILE)
