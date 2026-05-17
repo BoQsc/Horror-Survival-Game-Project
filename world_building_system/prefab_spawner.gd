@@ -129,6 +129,7 @@ var prefabs = {
 var forest_noise: FastNoiseLite
 
 func _ready():
+	set_process(false)
 	add_to_group("prefab_spawner")
 	_capture_world_map_object_telemetry = OS.get_environment("TOWN_STALL_CAPTURE_OBJECT_TELEMETRY") == "1"
 
@@ -168,13 +169,59 @@ func _ready():
 			clear_pending_spawn_jobs()
 			_ensure_world_map_baked_building_payloads()
 			_apply_existing_world_map_baked_buildings()
+	_sync_process_loop()
 
 func _process(_delta):
-	if instant_baked_buildings_enabled and terrain_manager and building_manager and "world_map_active" in terrain_manager and terrain_manager.world_map_active and not _world_map_baked_buildings_bootstrapped:
+	if not _has_process_work_pending():
+		set_process(false)
+		return
+	if _needs_world_map_baked_bootstrap():
 		_apply_existing_world_map_baked_buildings()
 	_process_pending_world_map_baked_building_payloads()
 	_process_pending_spawn_jobs()
-	_cleanup_distant_doors()
+	if not spawned_doors.is_empty():
+		_cleanup_distant_doors()
+	_sync_process_loop()
+
+func _needs_world_map_baked_bootstrap() -> bool:
+	return (
+		instant_baked_buildings_enabled
+		and terrain_manager
+		and building_manager
+		and "world_map_active" in terrain_manager
+		and terrain_manager.world_map_active
+		and not _world_map_baked_buildings_bootstrapped
+	)
+
+func _has_deferred_building_flush_work() -> bool:
+	if not building_manager:
+		return false
+	if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
+		return true
+	if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
+		return true
+	if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
+		return true
+	return false
+
+func _has_process_work_pending() -> bool:
+	return (
+		_needs_world_map_baked_bootstrap()
+		or not pending_spawn_jobs.is_empty()
+		or not _pending_world_map_baked_building_payloads.is_empty()
+		or _has_deferred_building_flush_work()
+		or not spawned_doors.is_empty()
+	)
+
+func _wake_process_loop() -> void:
+	if not is_processing():
+		set_process(true)
+
+func _sync_process_loop() -> void:
+	if _has_process_work_pending():
+		_wake_process_loop()
+	else:
+		set_process(false)
 
 func clear_pending_spawn_jobs() -> void:
 	pending_spawn_jobs.clear()
@@ -182,6 +229,7 @@ func clear_pending_spawn_jobs() -> void:
 	_last_spawn_job_msec = 0
 	_last_spawn_processing_ms = 0.0
 	_last_spawn_jobs_processed = 0
+	_sync_process_loop()
 
 
 func clear_pending_world_map_baked_payload_jobs() -> void:
@@ -190,6 +238,7 @@ func clear_pending_world_map_baked_payload_jobs() -> void:
 	_last_world_map_baked_payload_apply_ms = 0.0
 	_last_world_map_baked_payload_apply_count = 0
 	_last_world_map_baked_payload_flush_ms = 0.0
+	_sync_process_loop()
 
 
 func has_pending_spawn_jobs() -> bool:
@@ -217,6 +266,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_world_map_baked_payload_apply_ms": _last_world_map_baked_payload_apply_ms,
 		"last_world_map_baked_payload_apply_count": _last_world_map_baked_payload_apply_count,
 		"last_world_map_baked_payload_flush_ms": _last_world_map_baked_payload_flush_ms,
+		"process_loop_awake": is_processing(),
 		"spawned_positions": spawned_positions.size(),
 		"pending_spawn_jobs": pending_spawn_jobs.size(),
 		"pending_spawn_keys": pending_spawn_keys.size(),
@@ -259,6 +309,7 @@ func _queue_spawn_job(spawn_key: String, job: Dictionary) -> void:
 	else:
 		pending_spawn_jobs.append(job)
 	pending_spawn_keys[spawn_key] = true
+	_wake_process_loop()
 
 func _sync_world_map_baked_buildings_setting() -> void:
 	var save_mgr = get_tree().get_first_node_in_group("save_manager")
@@ -589,6 +640,7 @@ func _queue_world_map_baked_building_payload(building_key: String, spawn_pos: Ve
 		insert_index -= 1
 	_pending_world_map_baked_building_payloads.insert(insert_index, job)
 	_pending_world_map_baked_building_payload_keys[building_key] = true
+	_wake_process_loop()
 	return true
 
 func _process_pending_world_map_baked_building_payloads() -> void:
@@ -1300,6 +1352,7 @@ func _spawn_door_at_prefab(prefab_world_pos: Vector3):
 	
 	# Track door for cleanup
 	spawned_doors[key] = door_instance
+	_wake_process_loop()
 	
 
 ## Save/Load persistence - prevents prefabs from respawning after load
