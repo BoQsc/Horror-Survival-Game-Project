@@ -85,6 +85,17 @@ def _positive_int_from_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _float_from_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def _parse_optional_float(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
@@ -584,6 +595,58 @@ def _collect_raw_gpu_state() -> dict:
     }
 
 
+def _raw_gpu_state_summary(raw_gpu: dict) -> str:
+    if not bool(raw_gpu.get("available", False)):
+        error = str(raw_gpu.get("error", "")).strip()
+        return f"unavailable ({error})" if error else "unavailable"
+
+    power_w = raw_gpu.get("power_w", None)
+    temp_c = raw_gpu.get("temp_c", None)
+    gpu_util = raw_gpu.get("gpu_util_percent", None)
+    pstate = str(raw_gpu.get("pstate", "unknown")).strip() or "unknown"
+    graphics_clock = raw_gpu.get("graphics_clock_mhz", None)
+    memory_clock = raw_gpu.get("memory_clock_mhz", None)
+    vram_used = raw_gpu.get("vram_used_mb", None)
+    return (
+        f"{power_w if power_w is not None else '?'} W | "
+        f"{temp_c if temp_c is not None else '?'} C | "
+        f"{pstate} | gpu={gpu_util if gpu_util is not None else '?'}% | "
+        f"clocks={graphics_clock if graphics_clock is not None else '?'}/"
+        f"{memory_clock if memory_clock is not None else '?'} MHz | "
+        f"vram={vram_used if vram_used is not None else '?'} MB"
+    )
+
+
+def _preflight_contamination_reasons(machine_state: dict, raw_gpu: dict) -> list[str]:
+    max_cpu_load = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_LOAD_PERCENT", 55.0)
+    max_cpu_perf = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_PERF_PERCENT", 115.0)
+    max_gpu_power = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_POWER_W", 15.0)
+    max_gpu_util = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_UTIL_PERCENT", 30.0)
+    max_gpu_temp = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_TEMP_C", 85.0)
+
+    reasons: list[str] = []
+    if isinstance(machine_state, dict) and machine_state.get("available", False):
+        cpu_load = float(machine_state.get("load_percentage", 0.0) or 0.0)
+        cpu_perf = float(machine_state.get("percent_processor_performance", 0.0) or 0.0)
+        if cpu_load > max_cpu_load:
+            reasons.append(f"CPU load {cpu_load:.1f}% > {max_cpu_load:.1f}%")
+        if cpu_perf > max_cpu_perf:
+            reasons.append(f"CPU processor performance {cpu_perf:.1f}% > {max_cpu_perf:.1f}%")
+
+    if isinstance(raw_gpu, dict) and raw_gpu.get("available", False):
+        power_w = raw_gpu.get("power_w", None)
+        gpu_util = raw_gpu.get("gpu_util_percent", None)
+        temp_c = raw_gpu.get("temp_c", None)
+        if power_w is not None and float(power_w) > max_gpu_power:
+            reasons.append(f"GPU power {float(power_w):.2f} W > {max_gpu_power:.2f} W")
+        if gpu_util is not None and float(gpu_util) > max_gpu_util:
+            reasons.append(f"GPU utilization {float(gpu_util):.1f}% > {max_gpu_util:.1f}%")
+        if temp_c is not None and float(temp_c) > max_gpu_temp:
+            reasons.append(f"GPU temperature {float(temp_c):.1f} C > {max_gpu_temp:.1f} C")
+
+    return reasons
+
+
 def _write_system_sample(sample_file: Path, sample: dict) -> None:
     sample_file.parent.mkdir(parents=True, exist_ok=True)
     with sample_file.open("a", encoding="utf-8") as handle:
@@ -1043,6 +1106,7 @@ def main() -> int:
         )
 
     env["TOWN_STALL_MACHINE_STATE_JSON"] = json.dumps(machine_state)
+    raw_gpu_preflight = _collect_raw_gpu_state()
 
     configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
     timeout = max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0))
@@ -1050,6 +1114,20 @@ def main() -> int:
 
     print("\nMachine state probe:")
     _print_machine_state_summary(machine_state)
+    print(f"Raw GPU preflight: {_raw_gpu_state_summary(raw_gpu_preflight)}")
+
+    preflight_reasons = _preflight_contamination_reasons(machine_state, raw_gpu_preflight)
+    allow_contaminated_idle = os.environ.get("TOWN_STALL_ALLOW_CONTAMINATED_IDLE", "0") == "1"
+    if preflight_reasons and not allow_contaminated_idle:
+        print("ERROR: Preflight idle state is contaminated; refusing to launch town benchmark.")
+        for reason in preflight_reasons:
+            print(f"  - {reason}")
+        print("Close unrelated CPU/GPU work or set TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1 to run anyway.")
+        return 3
+    if preflight_reasons:
+        print("WARNING: Running despite contaminated preflight idle state because TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1.")
+        for reason in preflight_reasons:
+            print(f"  - {reason}")
 
     running_processes = _find_running_godot_processes()
     if running_processes:
