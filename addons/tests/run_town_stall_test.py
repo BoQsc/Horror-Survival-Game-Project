@@ -772,15 +772,34 @@ def _write_system_sample(sample_file: Path, sample: dict) -> None:
 
 
 def _sample_system_until(stop_event: threading.Event, pid: int, interval_seconds: float, sample_file: Path) -> None:
+    raw_gpu_only = os.environ.get("TOWN_STALL_SYSTEM_SAMPLE_RAW_GPU_ONLY", "0") == "1"
+    full_sample_every = _positive_int_from_env("TOWN_STALL_SYSTEM_SAMPLE_FULL_EVERY", 1)
+    interval = max(0.1, interval_seconds)
+    sample_index = 0
     while not stop_event.is_set():
+        sample_start = time.perf_counter()
+        sample_mode = "raw_gpu_only" if raw_gpu_only else "full"
+        if not raw_gpu_only and full_sample_every > 1 and sample_index % full_sample_every != 0:
+            sample_mode = "raw_gpu"
+
+        machine = {"available": False, "skipped": True, "reason": sample_mode}
+        process = {"available": False, "skipped": True, "reason": sample_mode, "pid": pid}
+        if sample_mode == "full":
+            machine = _collect_machine_state()
+            process = _collect_process_state(pid)
+
         sample = {
             "epoch": time.time(),
-            "machine": _collect_machine_state(),
-            "process": _collect_process_state(pid),
+            "sample_index": sample_index,
+            "sample_mode": sample_mode,
+            "machine": machine,
+            "process": process,
             "raw_gpu": _collect_raw_gpu_state(),
         }
+        sample["probe_seconds"] = round(time.perf_counter() - sample_start, 3)
         _write_system_sample(sample_file, sample)
-        stop_event.wait(interval_seconds)
+        sample_index += 1
+        stop_event.wait(max(0.0, interval - (time.perf_counter() - sample_start)))
 
 
 def _collect_idle_state_samples(delay_seconds: float, sample_count: int, interval_seconds: float) -> list[dict]:
@@ -826,6 +845,14 @@ def _summarize_raw_gpu_pstates(samples: list[dict]) -> dict:
     return counts
 
 
+def _summarize_sample_modes(samples: list[dict]) -> dict:
+    counts: dict[str, int] = {}
+    for sample in samples:
+        mode = str(sample.get("sample_mode", "")).strip() or "unknown"
+        counts[mode] = int(counts.get(mode, 0)) + 1
+    return counts
+
+
 def _read_system_samples(sample_file: Path) -> list[dict]:
     if not sample_file.exists():
         return []
@@ -863,7 +890,13 @@ def _summarize_system_sample_list(samples: list[dict]) -> dict:
     return {
         "available": True,
         "sample_count": len(samples),
+        "sample_modes": _summarize_sample_modes(samples),
         "duration_seconds": round(max(epochs) - min(epochs), 1) if len(epochs) >= 2 else 0.0,
+        "probe_seconds": _summarize_numeric([
+            float(sample.get("probe_seconds", 0.0) or 0.0)
+            for sample in samples
+            if isinstance(sample.get("probe_seconds", None), (int, float))
+        ]),
         "process_cpu_percent": _summarize_numeric([
             float(sample.get("cpu_percent", 0.0) or 0.0)
             for sample in process_samples
@@ -887,10 +920,12 @@ def _summarize_system_sample_list(samples: list[dict]) -> dict:
         "cpu_load_percent": _summarize_numeric([
             float(sample.get("load_percentage", 0.0) or 0.0)
             for sample in machine_samples
+            if bool(sample.get("available", False))
         ]),
         "cpu_processor_performance_percent": _summarize_numeric([
             float(sample.get("percent_processor_performance", 0.0) or 0.0)
             for sample in machine_samples
+            if bool(sample.get("available", False))
         ]),
         "thermal_c": _summarize_numeric(thermal_values),
         "raw_gpu_available_count": len(available_raw_gpu_samples),
