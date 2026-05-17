@@ -69,6 +69,11 @@ def _validate_snapshot(snapshot: dict, system_summary: dict) -> list[str]:
         failures.append("system sample summary was unavailable")
     elif int(system_summary.get("raw_gpu_available_count", 0) or 0) <= 0:
         failures.append("raw GPU watt/temp samples were unavailable")
+    else:
+        phase_windows = system_summary.get("phase_windows", {})
+        hold_window = phase_windows.get("stationary_hold", {}) if isinstance(phase_windows, dict) else {}
+        if not isinstance(hold_window, dict) or int(hold_window.get("raw_gpu_available_count", 0) or 0) <= 0:
+            failures.append("stationary hold had no raw GPU watt/temp samples")
 
     return failures
 
@@ -122,6 +127,14 @@ def _print_idle_summary(snapshot_path: Path, snapshot: dict, system_summary: dic
         print(f"Raw GPU samples: {int(system_summary.get('raw_gpu_available_count', 0) or 0)}")
         print(f"Raw GPU watts avg/max: {raw_gpu_power.get('avg', 0.0)} W / {raw_gpu_power.get('max', 0.0)} W")
         print(f"Raw GPU temp avg/max: {raw_gpu_temp.get('avg', 0.0)} C / {raw_gpu_temp.get('max', 0.0)} C")
+        phase_windows = system_summary.get("phase_windows", {})
+        hold_window = phase_windows.get("stationary_hold", {}) if isinstance(phase_windows, dict) else {}
+        if isinstance(hold_window, dict) and int(hold_window.get("sample_count", 0) or 0) > 0:
+            hold_power = hold_window.get("raw_gpu_power_w", {})
+            hold_temp = hold_window.get("raw_gpu_temp_c", {})
+            print(f"Hold GPU samples: {int(hold_window.get('raw_gpu_available_count', 0) or 0)}")
+            print(f"Hold GPU watts avg/max: {hold_power.get('avg', 0.0)} W / {hold_power.get('max', 0.0)} W")
+            print(f"Hold GPU temp avg/max: {hold_temp.get('avg', 0.0)} C / {hold_temp.get('max', 0.0)} C")
     print("=" * 50)
 
 

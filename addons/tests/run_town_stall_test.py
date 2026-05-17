@@ -623,9 +623,9 @@ def _summarize_raw_gpu_pstates(samples: list[dict]) -> dict:
     return counts
 
 
-def _summarize_system_samples(sample_file: Path) -> dict:
+def _read_system_samples(sample_file: Path) -> list[dict]:
     if not sample_file.exists():
-        return {"available": False, "sample_count": 0}
+        return []
 
     samples: list[dict] = []
     with sample_file.open("r", encoding="utf-8") as handle:
@@ -639,7 +639,10 @@ def _summarize_system_samples(sample_file: Path) -> dict:
                 continue
             if isinstance(parsed, dict):
                 samples.append(parsed)
+    return samples
 
+
+def _summarize_system_sample_list(samples: list[dict]) -> dict:
     if not samples:
         return {"available": False, "sample_count": 0}
 
@@ -727,6 +730,101 @@ def _summarize_system_samples(sample_file: Path) -> dict:
     }
 
 
+def _summarize_system_samples(sample_file: Path) -> dict:
+    return _summarize_system_sample_list(_read_system_samples(sample_file))
+
+
+def _extract_town_scope_event_epochs(snapshot_path: Path) -> dict[str, float]:
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    events = snapshot.get("recent_scope_events", [])
+    if not isinstance(events, list):
+        return {}
+
+    epochs: dict[str, float] = {}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("scope", "")) != "town_stall_test":
+            continue
+        label = str(event.get("label", ""))
+        epoch = event.get("epoch")
+        if label and isinstance(epoch, (int, float)):
+            epochs[label] = float(epoch)
+    return epochs
+
+
+def _summarize_system_samples_in_epoch_range(
+    samples: list[dict],
+    name: str,
+    start_epoch: Optional[float],
+    end_epoch: Optional[float],
+) -> dict:
+    summary = {
+        "available": False,
+        "sample_count": 0,
+        "window_name": name,
+        "window_start_epoch": start_epoch,
+        "window_end_epoch": end_epoch,
+        "requested_duration_seconds": 0.0,
+    }
+    if start_epoch is None or end_epoch is None or end_epoch <= start_epoch:
+        return summary
+
+    summary["requested_duration_seconds"] = round(end_epoch - start_epoch, 3)
+    window_samples = [
+        sample
+        for sample in samples
+        if start_epoch <= float(sample.get("epoch", 0.0) or 0.0) <= end_epoch
+    ]
+    window_summary = _summarize_system_sample_list(window_samples)
+    summary.update(window_summary)
+    summary["window_name"] = name
+    summary["window_start_epoch"] = start_epoch
+    summary["window_end_epoch"] = end_epoch
+    summary["requested_duration_seconds"] = round(end_epoch - start_epoch, 3)
+    return summary
+
+
+def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path, snapshot_path: Optional[Path]) -> dict:
+    if not snapshot_path or not system_summary or not bool(system_summary.get("available", False)):
+        return system_summary
+
+    samples = _read_system_samples(sample_file)
+    if not samples:
+        return system_summary
+
+    epochs = _extract_town_scope_event_epochs(snapshot_path)
+    reset_epoch = epochs.get("measurement_reset")
+    hold_start_epoch = epochs.get("hold_started")
+    hold_complete_epoch = epochs.get("hold_complete")
+    shutdown_epoch = epochs.get("shutdown_requested")
+    last_sample_epoch = max(float(sample.get("epoch", 0.0) or 0.0) for sample in samples)
+
+    phase_windows = {
+        "moving_entry": _summarize_system_samples_in_epoch_range(samples, "moving_entry", reset_epoch, hold_start_epoch),
+        "stationary_hold": _summarize_system_samples_in_epoch_range(samples, "stationary_hold", hold_start_epoch, hold_complete_epoch),
+        "stationary_hold_tail_30s": _summarize_system_samples_in_epoch_range(
+            samples,
+            "stationary_hold_tail_30s",
+            max(hold_start_epoch, hold_complete_epoch - 30.0) if hold_start_epoch is not None and hold_complete_epoch is not None else None,
+            hold_complete_epoch,
+        ),
+        "measurement_to_shutdown": _summarize_system_samples_in_epoch_range(
+            samples,
+            "measurement_to_shutdown",
+            reset_epoch,
+            shutdown_epoch if shutdown_epoch is not None else last_sample_epoch,
+        ),
+    }
+    system_summary["phase_event_epochs"] = epochs
+    system_summary["phase_windows"] = phase_windows
+    return system_summary
+
+
 def _print_system_sample_summary(summary: dict) -> None:
     if not summary or not bool(summary.get("available", False)):
         print("System sampling: unavailable")
@@ -763,6 +861,35 @@ def _print_system_sample_summary(summary: dict) -> None:
         print(f"  Thermal: avg {thermal.get('avg', 0.0)} C max {thermal.get('max', 0.0)} C")
     else:
         print("  Thermal: unavailable")
+
+
+def _print_phase_system_sample_summary(summary: dict) -> None:
+    windows = summary.get("phase_windows", {}) if isinstance(summary, dict) else {}
+    if not isinstance(windows, dict) or not windows:
+        return
+
+    print("\nSystem sampling phase windows:")
+    for key in ["moving_entry", "stationary_hold", "stationary_hold_tail_30s"]:
+        window = windows.get(key, {})
+        if not isinstance(window, dict):
+            continue
+        raw_gpu_power = window.get("raw_gpu_power_w", {})
+        raw_gpu_temp = window.get("raw_gpu_temp_c", {})
+        if int(window.get("sample_count", 0) or 0) <= 0:
+            print(f"  {key}: no samples")
+            continue
+        print(
+            "  {key}: samples={samples} raw_gpu={raw_samples} "
+            "watts_avg/max={watts_avg}/{watts_max} temp_avg/max={temp_avg}/{temp_max}".format(
+                key=key,
+                samples=int(window.get("sample_count", 0) or 0),
+                raw_samples=int(window.get("raw_gpu_available_count", 0) or 0),
+                watts_avg=raw_gpu_power.get("avg", 0.0),
+                watts_max=raw_gpu_power.get("max", 0.0),
+                temp_avg=raw_gpu_temp.get("avg", 0.0),
+                temp_max=raw_gpu_temp.get("max", 0.0),
+            )
+        )
 
 
 def _print_snapshot_summary(snapshot_path: Path) -> None:
@@ -1020,6 +1147,13 @@ def main() -> int:
         print("WARNING: Godot exited with an access violation during shutdown after completing the benchmark; treating this as non-fatal because the hold finished and a snapshot was written.")
         failure_reasons = [reason for reason in failure_reasons if reason != f"process exited with code {returncode}"]
     if snapshot:
+        if system_sample_interval_seconds > 0.0:
+            system_sample_summary = _attach_phase_system_sample_summary(system_sample_summary, SYSTEM_SAMPLE_FILE, snapshot)
+            try:
+                SYSTEM_SAMPLE_SUMMARY_FILE.write_text(json.dumps(system_sample_summary, indent=2), encoding="utf-8")
+            except OSError:
+                pass
+            _print_phase_system_sample_summary(system_sample_summary)
         _print_snapshot_summary(snapshot)
     else:
         print("No performance snapshot found.")

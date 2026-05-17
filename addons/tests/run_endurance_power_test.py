@@ -44,6 +44,11 @@ def _validate_endurance_outputs(snapshot: dict, system_summary: dict) -> list[st
         failures.append("system sample summary had no samples")
     elif int(system_summary.get("raw_gpu_available_count", 0) or 0) <= 0:
         failures.append("raw GPU watt/temp samples were unavailable")
+    else:
+        phase_windows = system_summary.get("phase_windows", {})
+        hold_window = phase_windows.get("stationary_hold", {}) if isinstance(phase_windows, dict) else {}
+        if not isinstance(hold_window, dict) or int(hold_window.get("raw_gpu_available_count", 0) or 0) <= 0:
+            failures.append("stationary hold had no raw GPU watt/temp samples")
 
     if snapshot:
         system_telemetry = snapshot.get("system_telemetry", {})
@@ -85,6 +90,14 @@ def _print_summary(snapshot_path: Path, snapshot: dict, system_summary: dict) ->
         print(f"GPU total avg/max: {gpu_total.get('avg', 0.0)}% / {gpu_total.get('max', 0.0)}%")
         print(f"Raw GPU watts avg/max: {raw_gpu_power.get('avg', 0.0)} W / {raw_gpu_power.get('max', 0.0)} W")
         print(f"Raw GPU temp avg/max: {raw_gpu_temp.get('avg', 0.0)} C / {raw_gpu_temp.get('max', 0.0)} C")
+        phase_windows = system_summary.get("phase_windows", {})
+        hold_window = phase_windows.get("stationary_hold", {}) if isinstance(phase_windows, dict) else {}
+        if isinstance(hold_window, dict) and int(hold_window.get("sample_count", 0) or 0) > 0:
+            hold_power = hold_window.get("raw_gpu_power_w", {})
+            hold_temp = hold_window.get("raw_gpu_temp_c", {})
+            print(f"Hold GPU samples: {int(hold_window.get('raw_gpu_available_count', 0) or 0)}")
+            print(f"Hold GPU watts avg/max: {hold_power.get('avg', 0.0)} W / {hold_power.get('max', 0.0)} W")
+            print(f"Hold GPU temp avg/max: {hold_temp.get('avg', 0.0)} C / {hold_temp.get('max', 0.0)} C")
         print(f"CPU load avg/max: {cpu_load.get('avg', 0.0)}% / {cpu_load.get('max', 0.0)}%")
     print("=" * 50)
 
