@@ -226,6 +226,52 @@ Get-CimInstance Win32_Process | Where-Object {
     return []
 
 
+def _collect_top_cpu_processes(limit: int = 8) -> list[dict]:
+    command = rf"""
+Get-CimInstance Win32_PerfFormattedData_PerfProc_Process |
+  Where-Object {{ $_.Name -ne "_Total" -and $_.Name -ne "Idle" }} |
+  Sort-Object PercentProcessorTime -Descending |
+  Select-Object -First {max(1, int(limit))} IDProcess,Name,PercentProcessorTime,WorkingSetPrivate |
+  ConvertTo-Json -Compress -Depth 3
+""".strip()
+
+    payload = _run_powershell_json(command)
+    if not payload:
+        return []
+
+    raw_entries: list[dict] = []
+    if isinstance(payload, dict):
+        raw_entries = [payload]
+    elif isinstance(payload, list):
+        raw_entries = [entry for entry in payload if isinstance(entry, dict)]
+
+    entries: list[dict] = []
+    for entry in raw_entries:
+        entries.append({
+            "pid": int(entry.get("IDProcess", 0) or 0),
+            "name": str(entry.get("Name", "")),
+            "cpu_percent": float(entry.get("PercentProcessorTime", 0.0) or 0.0),
+            "working_set_private_mb": round(float(entry.get("WorkingSetPrivate", 0.0) or 0.0) / (1024.0 * 1024.0), 2),
+        })
+    return entries
+
+
+def _print_top_cpu_processes(processes: list[dict]) -> None:
+    if not processes:
+        print("Top CPU processes: unavailable")
+        return
+    print("Top CPU processes:")
+    for process in processes:
+        print(
+            "  PID {pid} {name}: cpu={cpu}% private_ws={memory} MB".format(
+                pid=int(process.get("pid", 0) or 0),
+                name=str(process.get("name", "")),
+                cpu=round(float(process.get("cpu_percent", 0.0) or 0.0), 1),
+                memory=round(float(process.get("working_set_private_mb", 0.0) or 0.0), 2),
+            )
+        )
+
+
 def _collect_machine_state() -> dict:
     command = r"""
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1 Name,CurrentClockSpeed,MaxClockSpeed,LoadPercentage
@@ -1407,6 +1453,7 @@ def main() -> int:
         print("ERROR: Preflight idle state is contaminated; refusing to launch town benchmark.")
         for reason in preflight_reasons:
             print(f"  - {reason}")
+        _print_top_cpu_processes(_collect_top_cpu_processes())
         print("Close unrelated CPU/GPU work or set TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1 to run anyway.")
         return 3
     if preflight_reasons:
