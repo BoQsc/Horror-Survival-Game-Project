@@ -29,6 +29,8 @@ var cooldown: float = 0.0
 const ATTACK_COOLDOWN: float = 0.3
 
 func _ready() -> void:
+	set_process(false)
+	set_process_input(false)
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
 		push_error("FirstPersonAxe: Must be child of Player/Components node")
@@ -205,5 +207,7 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	
 	if axe_mesh:
 		axe_mesh.visible = should_show
+		set_process(should_show)
+		set_process_input(should_show)
 		if should_show:
 			_try_play_idle()

@@ -32,6 +32,8 @@ const COLOR_DIG = Color(0.8, 0.2, 0.2, 0.5)   # Red for dig mode
 const COLOR_PLACE = Color(0.2, 0.8, 0.4, 0.5) # Green for place mode
 
 func _ready() -> void:
+	set_process(false)
+	set_process_input(false)
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
 		push_error("FirstPersonShovel: Must be child of Player/Components node")
@@ -184,6 +186,8 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var was_active = is_active
 	is_active = (item_id == "terraformer")
+	set_process(is_active)
+	set_process_input(is_active)
 	
 	if is_active:
 		var mat_name = "Grass"

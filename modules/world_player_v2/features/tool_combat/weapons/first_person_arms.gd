@@ -37,6 +37,8 @@ var place_cooldown: float = 0.0
 const PLACE_COOLDOWN_TIME: float = 0.5
 
 func _ready() -> void:
+	set_process(false)
+	set_process_unhandled_input(false)
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
 		push_error("FirstPersonArms: Must be child of Player/Components node")
@@ -102,6 +104,8 @@ func _load_arms_model() -> void:
 	
 	if anim_player:
 		_try_play_idle()
+	set_process(true)
+	set_process_unhandled_input(true)
 	
 	camera.near = 0.001
 
@@ -296,6 +300,8 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	
 	if arms_mesh:
 		arms_mesh.visible = should_show
+		set_process(should_show)
+		set_process_unhandled_input(should_show)
 		if should_show and anim_player:
 			# Use Collect_something pose for all placeable items, idle for fists
 			if category in [2, 3, 4, 5, 7, 8]:
@@ -307,5 +313,7 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 func set_arms_visible(visible: bool) -> void:
 	if arms_mesh:
 		arms_mesh.visible = visible
+		set_process(visible)
+		set_process_unhandled_input(visible)
 		if visible:
 			_try_play_idle()

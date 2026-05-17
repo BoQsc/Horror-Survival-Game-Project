@@ -17,6 +17,7 @@ const MELEE_RANGE: float = 2.5
 const TOOL_RANGE: float = 3.5
 
 func _ready() -> void:
+	set_process(false)
 	player = get_parent().get_parent()
 	hotbar = get_node_or_null("../../Systems/Hotbar")
 
@@ -29,6 +30,9 @@ func _process(delta: float) -> void:
 		if combo_timer <= 0:
 			combo_count = 0
 
+	if attack_cooldown <= 0 and combo_timer <= 0:
+		set_process(false)
+
 func can_attack() -> bool:
 	return attack_cooldown <= 0
 
@@ -37,6 +41,7 @@ func do_attack(item: Dictionary) -> Dictionary:
 		return {}
 	
 	attack_cooldown = BASE_ATTACK_COOLDOWN
+	set_process(true)
 	
 	var attack_range = MELEE_RANGE
 	var category = item.get("category", 0)

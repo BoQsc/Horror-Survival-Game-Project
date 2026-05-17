@@ -36,6 +36,8 @@ var is_reloading: bool = false
 var should_show_pending: bool = false
 
 func _ready() -> void:
+	set_process(false)
+	set_process_input(false)
 	player = get_parent().get_parent() as CharacterBody3D
 	if not player:
 		push_error("FirstPersonPistol: Must be child of Player/Components node")
@@ -92,6 +94,8 @@ func _setup_pistol() -> void:
 	
 	if pistol_mesh:
 		pistol_mesh.visible = should_show_pending
+		set_process(should_show_pending)
+		set_process_input(should_show_pending)
 
 func _find_anim_player(node: Node) -> AnimationPlayer:
 	if node is AnimationPlayer:
@@ -167,6 +171,8 @@ func _on_item_changed(_slot: int, item: Dictionary) -> void:
 	
 	if pistol_mesh:
 		pistol_mesh.visible = should_show
+		set_process(should_show)
+		set_process_input(should_show)
 
 func _on_pistol_fired() -> void:
 	if not shot_player:
