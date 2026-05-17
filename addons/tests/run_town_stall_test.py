@@ -21,6 +21,20 @@ RUN_LOCK_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-test.lock"
 SYSTEM_SAMPLE_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-system-samples.jsonl"
 SYSTEM_SAMPLE_SUMMARY_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-system-summary.json"
 _RUN_LOCK_HANDLE = None
+NVIDIA_SMI = os.environ.get("NVIDIA_SMI", "nvidia-smi")
+RAW_GPU_QUERY_FIELDS = [
+    "timestamp",
+    "name",
+    "pstate",
+    "power.draw",
+    "temperature.gpu",
+    "clocks.gr",
+    "clocks.mem",
+    "utilization.gpu",
+    "utilization.memory",
+    "memory.used",
+    "memory.total",
+]
 
 
 def _runtime_mode_label() -> str:
@@ -69,6 +83,18 @@ def _positive_int_from_env(name: str, default: int) -> int:
         return default
 
     return value if value > 0 else default
+
+
+def _parse_optional_float(value: Any) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text or text.upper() == "N/A":
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def _run_powershell_json(command: str, timeout_seconds: int = 20) -> Any:
@@ -500,6 +526,64 @@ foreach ($engine in $gpuEngines) {{
     }
 
 
+def _collect_raw_gpu_state() -> dict:
+    query = ",".join(RAW_GPU_QUERY_FIELDS)
+    try:
+        result = subprocess.run(
+            [
+                NVIDIA_SMI,
+                f"--query-gpu={query}",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=8,
+        )
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": repr(exc),
+        }
+
+    raw_output = (result.stdout or "").strip()
+    first_line = raw_output.splitlines()[0].strip() if raw_output else ""
+    if result.returncode != 0:
+        return {
+            "available": False,
+            "returncode": result.returncode,
+            "error": (result.stderr or "").strip(),
+            "raw": first_line,
+        }
+
+    parts = [part.strip() for part in first_line.split(",")]
+    if len(parts) < len(RAW_GPU_QUERY_FIELDS):
+        return {
+            "available": False,
+            "returncode": result.returncode,
+            "error": f"Expected {len(RAW_GPU_QUERY_FIELDS)} fields, got {len(parts)}",
+            "raw": first_line,
+        }
+
+    return {
+        "available": True,
+        "returncode": result.returncode,
+        "raw": first_line,
+        "timestamp": parts[0],
+        "name": parts[1],
+        "pstate": parts[2],
+        "power_w": _parse_optional_float(parts[3]),
+        "temp_c": _parse_optional_float(parts[4]),
+        "graphics_clock_mhz": _parse_optional_float(parts[5]),
+        "memory_clock_mhz": _parse_optional_float(parts[6]),
+        "gpu_util_percent": _parse_optional_float(parts[7]),
+        "memory_util_percent": _parse_optional_float(parts[8]),
+        "vram_used_mb": _parse_optional_float(parts[9]),
+        "vram_total_mb": _parse_optional_float(parts[10]),
+    }
+
+
 def _write_system_sample(sample_file: Path, sample: dict) -> None:
     sample_file.parent.mkdir(parents=True, exist_ok=True)
     with sample_file.open("a", encoding="utf-8") as handle:
@@ -512,6 +596,7 @@ def _sample_system_until(stop_event: threading.Event, pid: int, interval_seconds
             "epoch": time.time(),
             "machine": _collect_machine_state(),
             "process": _collect_process_state(pid),
+            "raw_gpu": _collect_raw_gpu_state(),
         }
         _write_system_sample(sample_file, sample)
         stop_event.wait(interval_seconds)
@@ -526,6 +611,16 @@ def _summarize_numeric(values: list[float]) -> dict:
         "max": round(max(values), 3),
         "min": round(min(values), 3),
     }
+
+
+def _summarize_raw_gpu_pstates(samples: list[dict]) -> dict:
+    counts: dict[str, int] = {}
+    for sample in samples:
+        if not bool(sample.get("available", False)):
+            continue
+        pstate = str(sample.get("pstate", "")).strip() or "unknown"
+        counts[pstate] = int(counts.get(pstate, 0)) + 1
+    return counts
 
 
 def _summarize_system_samples(sample_file: Path) -> dict:
@@ -551,6 +646,8 @@ def _summarize_system_samples(sample_file: Path) -> dict:
     epochs = [float(sample.get("epoch", 0.0) or 0.0) for sample in samples]
     process_samples = [sample.get("process", {}) for sample in samples if isinstance(sample.get("process", {}), dict)]
     machine_samples = [sample.get("machine", {}) for sample in samples if isinstance(sample.get("machine", {}), dict)]
+    raw_gpu_samples = [sample.get("raw_gpu", {}) for sample in samples if isinstance(sample.get("raw_gpu", {}), dict)]
+    available_raw_gpu_samples = [sample for sample in raw_gpu_samples if bool(sample.get("available", False))]
     thermal_values = [
         float(sample.get("thermal_c"))
         for sample in machine_samples
@@ -590,6 +687,43 @@ def _summarize_system_samples(sample_file: Path) -> dict:
             for sample in machine_samples
         ]),
         "thermal_c": _summarize_numeric(thermal_values),
+        "raw_gpu_available_count": len(available_raw_gpu_samples),
+        "raw_gpu_pstates": _summarize_raw_gpu_pstates(raw_gpu_samples),
+        "raw_gpu_power_w": _summarize_numeric([
+            float(sample.get("power_w", 0.0))
+            for sample in available_raw_gpu_samples
+            if isinstance(sample.get("power_w", None), (int, float))
+        ]),
+        "raw_gpu_temp_c": _summarize_numeric([
+            float(sample.get("temp_c", 0.0))
+            for sample in available_raw_gpu_samples
+            if isinstance(sample.get("temp_c", None), (int, float))
+        ]),
+        "raw_gpu_util_percent": _summarize_numeric([
+            float(sample.get("gpu_util_percent", 0.0))
+            for sample in available_raw_gpu_samples
+            if isinstance(sample.get("gpu_util_percent", None), (int, float))
+        ]),
+        "raw_gpu_memory_util_percent": _summarize_numeric([
+            float(sample.get("memory_util_percent", 0.0))
+            for sample in available_raw_gpu_samples
+            if isinstance(sample.get("memory_util_percent", None), (int, float))
+        ]),
+        "raw_gpu_graphics_clock_mhz": _summarize_numeric([
+            float(sample.get("graphics_clock_mhz", 0.0))
+            for sample in available_raw_gpu_samples
+            if isinstance(sample.get("graphics_clock_mhz", None), (int, float))
+        ]),
+        "raw_gpu_memory_clock_mhz": _summarize_numeric([
+            float(sample.get("memory_clock_mhz", 0.0))
+            for sample in available_raw_gpu_samples
+            if isinstance(sample.get("memory_clock_mhz", None), (int, float))
+        ]),
+        "raw_gpu_vram_used_mb": _summarize_numeric([
+            float(sample.get("vram_used_mb", 0.0))
+            for sample in available_raw_gpu_samples
+            if isinstance(sample.get("vram_used_mb", None), (int, float))
+        ]),
     }
 
 
@@ -606,9 +740,22 @@ def _print_system_sample_summary(summary: dict) -> None:
     cpu_load = summary.get("cpu_load_percent", {})
     cpu_perf = summary.get("cpu_processor_performance_percent", {})
     thermal = summary.get("thermal_c", {})
+    raw_gpu_power = summary.get("raw_gpu_power_w", {})
+    raw_gpu_temp = summary.get("raw_gpu_temp_c", {})
+    raw_gpu_util = summary.get("raw_gpu_util_percent", {})
     print(f"  Godot CPU: avg {process_cpu.get('avg', 0.0)}% max {process_cpu.get('max', 0.0)}%")
     print(f"  GPU total: avg {gpu_total.get('avg', 0.0)}% max {gpu_total.get('max', 0.0)}%")
     print(f"  GPU max engine: avg {gpu_max_engine.get('avg', 0.0)}% max {gpu_max_engine.get('max', 0.0)}%")
+    if int(raw_gpu_power.get("count", 0) or 0) > 0:
+        print(f"  Raw GPU watts: avg {raw_gpu_power.get('avg', 0.0)} W max {raw_gpu_power.get('max', 0.0)} W")
+    else:
+        print("  Raw GPU watts: unavailable")
+    if int(raw_gpu_temp.get("count", 0) or 0) > 0:
+        print(f"  Raw GPU temp: avg {raw_gpu_temp.get('avg', 0.0)} C max {raw_gpu_temp.get('max', 0.0)} C")
+    else:
+        print("  Raw GPU temp: unavailable")
+    if int(raw_gpu_util.get("count", 0) or 0) > 0:
+        print(f"  Raw GPU util: avg {raw_gpu_util.get('avg', 0.0)}% max {raw_gpu_util.get('max', 0.0)}%")
     print(f"  Working set: avg {working_set.get('avg', 0.0)} MB max {working_set.get('max', 0.0)} MB")
     print(f"  CPU load: avg {cpu_load.get('avg', 0.0)}% max {cpu_load.get('max', 0.0)}%")
     print(f"  CPU perf: avg {cpu_perf.get('avg', 0.0)}% max {cpu_perf.get('max', 0.0)}%")

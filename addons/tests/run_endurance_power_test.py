@@ -42,6 +42,8 @@ def _validate_endurance_outputs(snapshot: dict, system_summary: dict) -> list[st
         failures.append("system sample summary was unavailable")
     elif int(system_summary.get("sample_count", 0) or 0) <= 0:
         failures.append("system sample summary had no samples")
+    elif int(system_summary.get("raw_gpu_available_count", 0) or 0) <= 0:
+        failures.append("raw GPU watt/temp samples were unavailable")
 
     if snapshot:
         system_telemetry = snapshot.get("system_telemetry", {})
@@ -76,9 +78,13 @@ def _print_summary(snapshot_path: Path, snapshot: dict, system_summary: dict) ->
         print(f"System duration: {float(system_summary.get('duration_seconds', 0.0) or 0.0):.1f}s")
         process_cpu = system_summary.get("process_cpu_percent", {})
         gpu_total = system_summary.get("gpu_total_percent", {})
+        raw_gpu_power = system_summary.get("raw_gpu_power_w", {})
+        raw_gpu_temp = system_summary.get("raw_gpu_temp_c", {})
         cpu_load = system_summary.get("cpu_load_percent", {})
         print(f"Godot CPU avg/max: {process_cpu.get('avg', 0.0)}% / {process_cpu.get('max', 0.0)}%")
         print(f"GPU total avg/max: {gpu_total.get('avg', 0.0)}% / {gpu_total.get('max', 0.0)}%")
+        print(f"Raw GPU watts avg/max: {raw_gpu_power.get('avg', 0.0)} W / {raw_gpu_power.get('max', 0.0)} W")
+        print(f"Raw GPU temp avg/max: {raw_gpu_temp.get('avg', 0.0)} C / {raw_gpu_temp.get('max', 0.0)} C")
         print(f"CPU load avg/max: {cpu_load.get('avg', 0.0)}% / {cpu_load.get('max', 0.0)}%")
     print("=" * 50)
 

@@ -24,12 +24,13 @@ def _set_default_env() -> None:
         "TOWN_STALL_HOLD_SECONDS": "25",
         "TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS": "1",
         "TOWN_STALL_MACHINE_WARMUP_DISABLED": "1",
+        "TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS": "2",
     }
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
 
 
-def _validate_snapshot(snapshot: dict) -> list[str]:
+def _validate_snapshot(snapshot: dict, system_summary: dict) -> list[str]:
     failures: list[str] = []
     if not snapshot:
         return ["snapshot was empty or unreadable"]
@@ -64,10 +65,15 @@ def _validate_snapshot(snapshot: dict) -> list[str]:
     if not bool(terrain.get("runtime_power_suspend_background_world_work", False)):
         failures.append("background world-work suspension was not enabled in telemetry")
 
+    if not system_summary or not bool(system_summary.get("available", False)):
+        failures.append("system sample summary was unavailable")
+    elif int(system_summary.get("raw_gpu_available_count", 0) or 0) <= 0:
+        failures.append("raw GPU watt/temp samples were unavailable")
+
     return failures
 
 
-def _print_idle_summary(snapshot_path: Path, snapshot: dict) -> None:
+def _print_idle_summary(snapshot_path: Path, snapshot: dict, system_summary: dict) -> None:
     stationary_hold = snapshot.get("stationary_hold_window", {})
     system_telemetry = snapshot.get("system_telemetry", {})
     terrain = system_telemetry.get("terrain_manager", {}) if isinstance(system_telemetry, dict) else {}
@@ -110,6 +116,12 @@ def _print_idle_summary(snapshot_path: Path, snapshot: dict) -> None:
         f"completed={int(terrain.get('completed_generation_queue_count', 0) or 0)} "
         f"pending_nodes={int(terrain.get('pending_node_count', 0) or 0)}"
     )
+    if system_summary:
+        raw_gpu_power = system_summary.get("raw_gpu_power_w", {})
+        raw_gpu_temp = system_summary.get("raw_gpu_temp_c", {})
+        print(f"Raw GPU samples: {int(system_summary.get('raw_gpu_available_count', 0) or 0)}")
+        print(f"Raw GPU watts avg/max: {raw_gpu_power.get('avg', 0.0)} W / {raw_gpu_power.get('max', 0.0)} W")
+        print(f"Raw GPU temp avg/max: {raw_gpu_temp.get('avg', 0.0)} C / {raw_gpu_temp.get('max', 0.0)} C")
     print("=" * 50)
 
 
@@ -126,9 +138,10 @@ def main() -> int:
         return 1
 
     snapshot = _read_json(snapshot_path)
-    _print_idle_summary(snapshot_path, snapshot)
+    system_summary = _read_json(run_town_stall_test.SYSTEM_SAMPLE_SUMMARY_FILE)
+    _print_idle_summary(snapshot_path, snapshot, system_summary)
 
-    failures = _validate_snapshot(snapshot)
+    failures = _validate_snapshot(snapshot, system_summary)
     if failures:
         print("\nIDLE POWER REGRESSION FAILED")
         for failure in failures:
