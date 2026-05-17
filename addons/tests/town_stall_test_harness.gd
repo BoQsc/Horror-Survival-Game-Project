@@ -20,6 +20,8 @@ const FRAME_BUDGET_MS := 1000.0 / 60.0
 const TOWN_ENTRY_WINDOW_RECENT_LIMIT := 10
 const PERFORMANCE_SNAPSHOT_DIR := "user://debug/performance"
 const RENDER_DIAGNOSTIC_DEFAULT_LIMIT := 48
+const RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT := 24
+const RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT := 4
 const PEAK_ENTRY_SAMPLE_LIMIT := 12
 const HOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
 
@@ -59,6 +61,9 @@ var _town_entry_latest_town_state: Dictionary = {}
 var _town_entry_latest_entities_state: Dictionary = {}
 var _previous_native_town_entry_sample: Dictionary = {}
 var _render_diagnostic_samples: Array[Dictionary] = []
+var _render_diagnostic_candidate_count: int = 0
+var _render_diagnostic_skipped_count: int = 0
+var _render_diagnostic_scene_scan_count: int = 0
 var _hold_started_sample_index: int = -1
 var _hold_completed_sample_index: int = -1
 var runtime_mode: String = "unknown"
@@ -89,6 +94,8 @@ var render_diagnostics_enabled: bool = false
 var render_diagnostics_scene_scan_enabled: bool = false
 var render_diagnostics_threshold_ms: float = FRAME_BUDGET_MS
 var render_diagnostics_sample_limit: int = RENDER_DIAGNOSTIC_DEFAULT_LIMIT
+var render_diagnostics_scene_detail_limit: int = RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT
+var render_diagnostics_frame_scene_scan_limit: int = RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT
 var measure_full_flight_enabled: bool = false
 var configured_hold_seconds: float = HOLD_SECONDS
 var fly_stage: int = 0
@@ -733,8 +740,14 @@ func _collect_render_scene_scan() -> Dictionary:
 		"visible_geometry_instances": 0,
 		"mesh_instances": 0,
 		"visible_mesh_instances": 0,
+		"mesh_surface_count": 0,
+		"visible_mesh_surface_count": 0,
 		"multimesh_instances": 0,
 		"visible_multimesh_instances": 0,
+		"multimesh_surface_count": 0,
+		"visible_multimesh_surface_count": 0,
+		"multimesh_instance_count": 0,
+		"visible_multimesh_instance_count": 0,
 		"terrain_geometry": 0,
 		"visible_terrain_geometry": 0,
 		"building_geometry": 0,
@@ -746,40 +759,202 @@ func _collect_render_scene_scan() -> Dictionary:
 		"other_geometry": 0,
 		"visible_other_geometry": 0
 	}
+	var visible_details: Array[Dictionary] = []
+	var material_surface_counts := {}
 	if not is_instance_valid(game_root):
 		return counts
 
-	_scan_render_node(game_root, counts)
+	_scan_render_node(game_root, counts, visible_details, material_surface_counts)
+	visible_details.sort_custom(Callable(self, "_compare_render_geometry_detail"))
+	while visible_details.size() > render_diagnostics_scene_detail_limit:
+		visible_details.remove_at(visible_details.size() - 1)
+	counts["top_visible_geometry"] = visible_details
+	counts["visible_material_surface_counts"] = _sorted_render_count_entries(material_surface_counts, render_diagnostics_scene_detail_limit)
 	return counts
 
 
-func _scan_render_node(node: Node, counts: Dictionary) -> void:
+func _scan_render_node(node: Node, counts: Dictionary, visible_details: Array[Dictionary], material_surface_counts: Dictionary) -> void:
 	if node is GeometryInstance3D:
 		var geometry := node as GeometryInstance3D
 		var visible := geometry.is_visible_in_tree()
-		counts["geometry_instances"] = int(counts.get("geometry_instances", 0)) + 1
+		_increment_render_count(counts, "geometry_instances")
 		if visible:
-			counts["visible_geometry_instances"] = int(counts.get("visible_geometry_instances", 0)) + 1
-		if geometry is MeshInstance3D:
-			counts["mesh_instances"] = int(counts.get("mesh_instances", 0)) + 1
-			if visible:
-				counts["visible_mesh_instances"] = int(counts.get("visible_mesh_instances", 0)) + 1
-		elif geometry is MultiMeshInstance3D:
-			counts["multimesh_instances"] = int(counts.get("multimesh_instances", 0)) + 1
-			if visible:
-				counts["visible_multimesh_instances"] = int(counts.get("visible_multimesh_instances", 0)) + 1
+			_increment_render_count(counts, "visible_geometry_instances")
 
 		var category := _get_render_diagnostic_node_category(geometry)
-		counts["%s_geometry" % category] = int(counts.get("%s_geometry" % category, 0)) + 1
+		var detail := _build_render_geometry_detail(geometry, category)
+		if geometry is MeshInstance3D:
+			_increment_render_count(counts, "mesh_instances")
+			_increment_render_count(counts, "%s_mesh_instances" % category)
+			_increment_render_count(counts, "mesh_surface_count", int(detail.get("surface_count", 0)))
+			_increment_render_count(counts, "%s_mesh_surface_count" % category, int(detail.get("surface_count", 0)))
+			if visible:
+				_increment_render_count(counts, "visible_mesh_instances")
+				_increment_render_count(counts, "visible_%s_mesh_instances" % category)
+				_increment_render_count(counts, "visible_mesh_surface_count", int(detail.get("surface_count", 0)))
+				_increment_render_count(counts, "visible_%s_mesh_surface_count" % category, int(detail.get("surface_count", 0)))
+				_record_render_material_surfaces(geometry as MeshInstance3D, material_surface_counts)
+		elif geometry is MultiMeshInstance3D:
+			_increment_render_count(counts, "multimesh_instances")
+			_increment_render_count(counts, "%s_multimesh_instances" % category)
+			_increment_render_count(counts, "multimesh_surface_count", int(detail.get("surface_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_surface_count" % category, int(detail.get("surface_count", 0)))
+			_increment_render_count(counts, "multimesh_instance_count", int(detail.get("instance_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_instance_count" % category, int(detail.get("instance_count", 0)))
+			if visible:
+				_increment_render_count(counts, "visible_multimesh_instances")
+				_increment_render_count(counts, "visible_%s_multimesh_instances" % category)
+				_increment_render_count(counts, "visible_multimesh_surface_count", int(detail.get("surface_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_surface_count" % category, int(detail.get("surface_count", 0)))
+				_increment_render_count(counts, "visible_multimesh_instance_count", int(detail.get("instance_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_instance_count" % category, int(detail.get("instance_count", 0)))
+
+		_increment_render_count(counts, "%s_geometry" % category)
 		if visible:
-			counts["visible_%s_geometry" % category] = int(counts.get("visible_%s_geometry" % category, 0)) + 1
+			_increment_render_count(counts, "visible_%s_geometry" % category)
+			visible_details.append(detail)
 
 	for child in node.get_children():
-		_scan_render_node(child, counts)
+		_scan_render_node(child, counts, visible_details, material_surface_counts)
+
+
+func _increment_render_count(counts: Dictionary, key: String, amount: int = 1) -> void:
+	counts[key] = int(counts.get(key, 0)) + amount
+
+
+func _build_render_geometry_detail(geometry: GeometryInstance3D, category: String) -> Dictionary:
+	var surface_count := 0
+	var instance_count := 0
+	var mesh_resource_path := ""
+	var material_keys: Array[String] = []
+	if geometry is MeshInstance3D:
+		var mesh_instance := geometry as MeshInstance3D
+		if mesh_instance.mesh != null:
+			surface_count = mesh_instance.mesh.get_surface_count()
+			mesh_resource_path = str(mesh_instance.mesh.resource_path)
+			material_keys = _collect_render_material_keys(mesh_instance)
+	elif geometry is MultiMeshInstance3D:
+		var multimesh_instance := geometry as MultiMeshInstance3D
+		if multimesh_instance.multimesh != null:
+			instance_count = multimesh_instance.multimesh.instance_count
+			if multimesh_instance.multimesh.mesh != null:
+				surface_count = multimesh_instance.multimesh.mesh.get_surface_count()
+				mesh_resource_path = str(multimesh_instance.multimesh.mesh.resource_path)
+
+	var player_distance := -1.0
+	var geometry_position := Vector3.ZERO
+	if geometry.is_inside_tree():
+		geometry_position = geometry.global_position
+	if is_instance_valid(player) and player.is_inside_tree() and geometry.is_inside_tree():
+		player_distance = geometry_position.distance_to(player.global_position)
+
+	return {
+		"path": _get_render_node_path_text(geometry),
+		"name": str(geometry.name),
+		"class": geometry.get_class(),
+		"category": category,
+		"surface_count": surface_count,
+		"instance_count": instance_count,
+		"draw_proxy_score": maxi(surface_count, 1),
+		"render_work_proxy_score": maxi(surface_count, 1) * maxi(instance_count, 1),
+		"distance_to_player_m": player_distance,
+		"global_position": _vector3_to_snapshot(geometry_position),
+		"mesh_resource_path": mesh_resource_path,
+		"material_keys": material_keys
+	}
+
+
+func _compare_render_geometry_detail(left: Dictionary, right: Dictionary) -> bool:
+	var left_draw := int(left.get("draw_proxy_score", 0))
+	var right_draw := int(right.get("draw_proxy_score", 0))
+	if left_draw != right_draw:
+		return left_draw > right_draw
+
+	var left_work := int(left.get("render_work_proxy_score", 0))
+	var right_work := int(right.get("render_work_proxy_score", 0))
+	if left_work != right_work:
+		return left_work > right_work
+
+	var left_distance := float(left.get("distance_to_player_m", 1.0e20))
+	var right_distance := float(right.get("distance_to_player_m", 1.0e20))
+	return left_distance < right_distance
+
+
+func _record_render_material_surfaces(mesh_instance: MeshInstance3D, material_surface_counts: Dictionary) -> void:
+	var material_keys := _collect_render_material_keys(mesh_instance)
+	for material_key in material_keys:
+		_increment_render_count(material_surface_counts, material_key)
+
+
+func _collect_render_material_keys(mesh_instance: MeshInstance3D) -> Array[String]:
+	var keys: Array[String] = []
+	if mesh_instance.mesh == null:
+		return keys
+
+	var surface_count := mesh_instance.mesh.get_surface_count()
+	for surface_index in range(surface_count):
+		var material := mesh_instance.get_surface_override_material(surface_index)
+		if material == null:
+			material = mesh_instance.mesh.surface_get_material(surface_index)
+		keys.append(_get_render_material_key(material))
+	return keys
+
+
+func _get_render_material_key(material: Material) -> String:
+	if material == null:
+		return "<null-material>"
+
+	var resource_path := str(material.resource_path)
+	if not resource_path.is_empty():
+		return resource_path
+
+	if material is ShaderMaterial:
+		var shader_material := material as ShaderMaterial
+		if shader_material.shader != null:
+			var shader_path := str(shader_material.shader.resource_path)
+			if not shader_path.is_empty():
+				return "shader:%s" % shader_path
+
+	return material.get_class()
+
+
+func _sorted_render_count_entries(counts: Dictionary, limit: int) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	for key in counts.keys():
+		entries.append({
+			"key": str(key),
+			"count": int(counts.get(key, 0))
+		})
+	entries.sort_custom(Callable(self, "_compare_render_count_entry"))
+	while entries.size() > limit:
+		entries.remove_at(entries.size() - 1)
+	return entries
+
+
+func _compare_render_count_entry(left: Dictionary, right: Dictionary) -> bool:
+	var left_count := int(left.get("count", 0))
+	var right_count := int(right.get("count", 0))
+	if left_count != right_count:
+		return left_count > right_count
+	return str(left.get("key", "")) < str(right.get("key", ""))
+
+
+func _vector3_to_snapshot(value: Vector3) -> Dictionary:
+	return {
+		"x": value.x,
+		"y": value.y,
+		"z": value.z
+	}
+
+
+func _get_render_node_path_text(node: Node) -> String:
+	if node.is_inside_tree():
+		return str(node.get_path())
+	return str(node.name)
 
 
 func _get_render_diagnostic_node_category(node: Node) -> String:
-	var path_text := str(node.get_path()).to_lower()
+	var path_text := _get_render_node_path_text(node).to_lower()
 	var name_text := str(node.name).to_lower()
 	if path_text.contains("chunkmanager") or path_text.contains("terrain") or name_text.contains("terrain") or name_text.contains("water"):
 		return "terrain"
@@ -795,18 +970,38 @@ func _get_render_diagnostic_node_category(node: Node) -> String:
 func _capture_render_diagnostic_sample(sample: Dictionary) -> void:
 	if not render_diagnostics_enabled:
 		return
-	if float(sample.get("total_ms", 0.0)) < render_diagnostics_threshold_ms:
+	var total_ms := float(sample.get("total_ms", 0.0))
+	if total_ms < render_diagnostics_threshold_ms:
+		return
+	_render_diagnostic_candidate_count += 1
+	if not _should_retain_render_diagnostic_sample(total_ms):
+		_render_diagnostic_skipped_count += 1
 		return
 
 	var diagnostic := {
 		"sample": sample.duplicate(true),
 		"render_monitor": _collect_render_monitor_snapshot()
 	}
-	if render_diagnostics_scene_scan_enabled:
+	if render_diagnostics_scene_scan_enabled and _render_diagnostic_scene_scan_count < render_diagnostics_frame_scene_scan_limit:
 		diagnostic["scene_scan"] = _collect_render_scene_scan()
+		_render_diagnostic_scene_scan_count += 1
 
 	_render_diagnostic_samples.append(diagnostic)
 	_trim_render_diagnostic_samples()
+
+
+func _should_retain_render_diagnostic_sample(total_ms: float) -> bool:
+	if render_diagnostics_sample_limit <= 0:
+		return false
+	if _render_diagnostic_samples.size() < render_diagnostics_sample_limit:
+		return true
+
+	var lowest_ms := 1.0e20
+	for diagnostic_variant in _render_diagnostic_samples:
+		var diagnostic: Dictionary = diagnostic_variant
+		var retained_sample: Dictionary = diagnostic.get("sample", {})
+		lowest_ms = minf(lowest_ms, float(retained_sample.get("total_ms", 0.0)))
+	return total_ms > lowest_ms
 
 
 func _trim_render_diagnostic_samples() -> void:
@@ -1478,14 +1673,23 @@ func _write_native_town_entry_snapshot() -> void:
 	if not _recent_scope_events.is_empty():
 		snapshot["recent_scope_events"] = _recent_scope_events.duplicate(true)
 	if render_diagnostics_enabled:
-		snapshot["render_diagnostics"] = {
+		var render_diagnostics := {
 			"enabled": true,
 			"threshold_ms": render_diagnostics_threshold_ms,
 			"scene_scan_enabled": render_diagnostics_scene_scan_enabled,
 			"sample_limit": render_diagnostics_sample_limit,
+			"scene_detail_limit": render_diagnostics_scene_detail_limit,
+			"frame_scene_scan_limit": render_diagnostics_frame_scene_scan_limit,
+			"candidate_count": _render_diagnostic_candidate_count,
+			"skipped_count": _render_diagnostic_skipped_count,
+			"scene_scan_count": _render_diagnostic_scene_scan_count,
 			"sample_count": _render_diagnostic_samples.size(),
 			"samples": _render_diagnostic_samples.duplicate(true)
 		}
+		if render_diagnostics_scene_scan_enabled:
+			render_diagnostics["final_scene_scan"] = _collect_render_scene_scan()
+			render_diagnostics["final_scene_scan_available"] = true
+		snapshot["render_diagnostics"] = render_diagnostics
 
 	_atomic_write_text_file("%ssnapshot_menu_%s.json" % [snapshot_dir, _town_entry_snapshot_stamp], JSON.stringify(snapshot, "\t"))
 
@@ -1528,6 +1732,8 @@ func _ready() -> void:
 	render_diagnostics_scene_scan_enabled = OS.get_environment("TOWN_STALL_RENDER_DIAGNOSTIC_SCENE_SCAN") == "1"
 	render_diagnostics_threshold_ms = _get_positive_env_float("TOWN_STALL_RENDER_DIAGNOSTIC_THRESHOLD_MS", FRAME_BUDGET_MS)
 	render_diagnostics_sample_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_LIMIT)
+	render_diagnostics_scene_detail_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_SCENE_DETAIL_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT)
+	render_diagnostics_frame_scene_scan_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_FRAME_SCENE_SCAN_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT)
 	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
@@ -1556,11 +1762,13 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Periodic hold snapshots: %s" % ("ON" if hold_periodic_snapshots_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
 	print("[TOWN_STALL_TEST] Engine max FPS: %d" % Engine.max_fps)
-	print("[TOWN_STALL_TEST] Render diagnostics: %s threshold=%.2f scene_scan=%s limit=%d" % [
+	print("[TOWN_STALL_TEST] Render diagnostics: %s threshold=%.2f scene_scan=%s limit=%d scene_detail_limit=%d frame_scene_scan_limit=%d" % [
 		"ON" if render_diagnostics_enabled else "OFF",
 		render_diagnostics_threshold_ms,
 		"ON" if render_diagnostics_scene_scan_enabled else "OFF",
-		render_diagnostics_sample_limit
+		render_diagnostics_sample_limit,
+		render_diagnostics_scene_detail_limit,
+		render_diagnostics_frame_scene_scan_limit
 	])
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
 	_machine_state = _parse_machine_state_env()
@@ -1592,6 +1800,9 @@ func _ready() -> void:
 		"render_diagnostics": render_diagnostics_enabled,
 		"render_diagnostics_scene_scan": render_diagnostics_scene_scan_enabled,
 		"render_diagnostics_threshold_ms": render_diagnostics_threshold_ms,
+		"render_diagnostics_sample_limit": render_diagnostics_sample_limit,
+		"render_diagnostics_scene_detail_limit": render_diagnostics_scene_detail_limit,
+		"render_diagnostics_frame_scene_scan_limit": render_diagnostics_frame_scene_scan_limit,
 		"measure_full_flight": measure_full_flight_enabled,
 		"hold_seconds": configured_hold_seconds,
 		"machine_state_available": not _machine_state.is_empty(),

@@ -651,6 +651,120 @@ def _preflight_contamination_reasons(machine_state: dict, raw_gpu: dict) -> list
     return reasons
 
 
+def _median(values: list[float]) -> Optional[float]:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    middle = len(sorted_values) // 2
+    if len(sorted_values) % 2 == 1:
+        return sorted_values[middle]
+    return (sorted_values[middle - 1] + sorted_values[middle]) / 2.0
+
+
+def _idle_machine_values(samples: list[dict], key: str) -> list[float]:
+    values: list[float] = []
+    for sample in samples:
+        machine = sample.get("machine", {}) if isinstance(sample.get("machine", {}), dict) else {}
+        if not machine.get("available", False):
+            continue
+        value = machine.get(key, None)
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    return values
+
+
+def _idle_raw_gpu_values(samples: list[dict], key: str) -> list[float]:
+    values: list[float] = []
+    for sample in samples:
+        raw_gpu = sample.get("raw_gpu", {}) if isinstance(sample.get("raw_gpu", {}), dict) else {}
+        if not raw_gpu.get("available", False):
+            continue
+        value = raw_gpu.get(key, None)
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    return values
+
+
+def _summarize_preflight_idle_samples(samples: list[dict]) -> dict:
+    cpu_load_values = _idle_machine_values(samples, "load_percentage")
+    cpu_perf_values = _idle_machine_values(samples, "percent_processor_performance")
+    cpu_utility_values = _idle_machine_values(samples, "percent_processor_utility")
+    gpu_power_values = _idle_raw_gpu_values(samples, "power_w")
+    gpu_util_values = _idle_raw_gpu_values(samples, "gpu_util_percent")
+    gpu_temp_values = _idle_raw_gpu_values(samples, "temp_c")
+    return {
+        "sample_count": len(samples),
+        "cpu_load_percent": _summarize_numeric(cpu_load_values),
+        "cpu_load_median_percent": _median(cpu_load_values),
+        "cpu_processor_performance_percent": _summarize_numeric(cpu_perf_values),
+        "cpu_processor_performance_median_percent": _median(cpu_perf_values),
+        "cpu_processor_utility_percent": _summarize_numeric(cpu_utility_values),
+        "cpu_processor_utility_median_percent": _median(cpu_utility_values),
+        "raw_gpu_power_w": _summarize_numeric(gpu_power_values),
+        "raw_gpu_power_median_w": _median(gpu_power_values),
+        "raw_gpu_util_percent": _summarize_numeric(gpu_util_values),
+        "raw_gpu_util_median_percent": _median(gpu_util_values),
+        "raw_gpu_temp_c": _summarize_numeric(gpu_temp_values),
+    }
+
+
+def _preflight_contamination_reasons_for_idle_samples(samples: list[dict]) -> list[str]:
+    if not samples:
+        return ["idle samples unavailable"]
+
+    max_cpu_load = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_LOAD_PERCENT", 55.0)
+    max_cpu_perf = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_PERF_PERCENT", 115.0)
+    max_cpu_utility = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_UTILITY_PERCENT", 80.0)
+    max_gpu_power = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_POWER_W", 15.0)
+    max_gpu_util = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_UTIL_PERCENT", 30.0)
+    max_gpu_temp = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_TEMP_C", 85.0)
+
+    summary = _summarize_preflight_idle_samples(samples)
+    reasons: list[str] = []
+
+    cpu_load_median = summary.get("cpu_load_median_percent", None)
+    cpu_perf_median = summary.get("cpu_processor_performance_median_percent", None)
+    cpu_utility_median = summary.get("cpu_processor_utility_median_percent", None)
+    gpu_power_median = summary.get("raw_gpu_power_median_w", None)
+    gpu_util_median = summary.get("raw_gpu_util_median_percent", None)
+    gpu_temp = summary.get("raw_gpu_temp_c", {})
+    gpu_temp_max = gpu_temp.get("max", None) if isinstance(gpu_temp, dict) else None
+
+    if cpu_load_median is not None and float(cpu_load_median) > max_cpu_load:
+        reasons.append(f"median CPU load {float(cpu_load_median):.1f}% > {max_cpu_load:.1f}%")
+    if cpu_perf_median is not None and float(cpu_perf_median) > max_cpu_perf:
+        reasons.append(f"median CPU processor performance {float(cpu_perf_median):.1f}% > {max_cpu_perf:.1f}%")
+    if cpu_utility_median is not None and float(cpu_utility_median) > max_cpu_utility:
+        reasons.append(f"median CPU processor utility {float(cpu_utility_median):.1f}% > {max_cpu_utility:.1f}%")
+    if gpu_power_median is not None and float(gpu_power_median) > max_gpu_power:
+        reasons.append(f"median GPU power {float(gpu_power_median):.2f} W > {max_gpu_power:.2f} W")
+    if gpu_util_median is not None and float(gpu_util_median) > max_gpu_util:
+        reasons.append(f"median GPU utilization {float(gpu_util_median):.1f}% > {max_gpu_util:.1f}%")
+    if gpu_temp_max is not None and float(gpu_temp_max) > max_gpu_temp:
+        reasons.append(f"GPU temperature max {float(gpu_temp_max):.1f} C > {max_gpu_temp:.1f} C")
+
+    return reasons
+
+
+def _print_preflight_idle_sample_summary(summary: dict) -> None:
+    cpu_load = summary.get("cpu_load_percent", {})
+    cpu_utility = summary.get("cpu_processor_utility_percent", {})
+    gpu_power = summary.get("raw_gpu_power_w", {})
+    gpu_util = summary.get("raw_gpu_util_percent", {})
+    print(
+        "Preflight idle samples: "
+        f"count={int(summary.get('sample_count', 0) or 0)} "
+        f"cpu_load_median={summary.get('cpu_load_median_percent', 0.0)}% "
+        f"cpu_load_avg/max={cpu_load.get('avg', 0.0)}/{cpu_load.get('max', 0.0)}% "
+        f"cpu_utility_median={summary.get('cpu_processor_utility_median_percent', 0.0)}% "
+        f"cpu_utility_avg/max={cpu_utility.get('avg', 0.0)}/{cpu_utility.get('max', 0.0)}% "
+        f"gpu_power_median={summary.get('raw_gpu_power_median_w', 0.0)}W "
+        f"gpu_power_avg/max={gpu_power.get('avg', 0.0)}/{gpu_power.get('max', 0.0)}W "
+        f"gpu_util_median={summary.get('raw_gpu_util_median_percent', 0.0)}% "
+        f"gpu_util_avg/max={gpu_util.get('avg', 0.0)}/{gpu_util.get('max', 0.0)}%"
+    )
+
+
 def _write_system_sample(sample_file: Path, sample: dict) -> None:
     sample_file.parent.mkdir(parents=True, exist_ok=True)
     with sample_file.open("a", encoding="utf-8") as handle:
@@ -688,13 +802,7 @@ def _collect_idle_state_samples(delay_seconds: float, sample_count: int, interva
 
 
 def _idle_state_contamination_reasons(samples: list[dict]) -> list[str]:
-    if not samples:
-        return ["idle samples unavailable"]
-
-    last_sample = samples[-1]
-    machine_state = last_sample.get("machine", {}) if isinstance(last_sample.get("machine", {}), dict) else {}
-    raw_gpu = last_sample.get("raw_gpu", {}) if isinstance(last_sample.get("raw_gpu", {}), dict) else {}
-    return _preflight_contamination_reasons(machine_state, raw_gpu)
+    return _preflight_contamination_reasons_for_idle_samples(samples)
 
 
 def _summarize_numeric(values: list[float]) -> dict:
@@ -1137,9 +1245,6 @@ def main() -> int:
             machine_warmup_max_load_percentage,
         )
 
-    env["TOWN_STALL_MACHINE_STATE_JSON"] = json.dumps(machine_state)
-    raw_gpu_preflight = _collect_raw_gpu_state()
-
     configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
     timeout = max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0))
     system_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", 0.0)
@@ -1147,12 +1252,42 @@ def main() -> int:
     postrun_idle_delay_seconds = _float_from_env("TOWN_STALL_POSTRUN_IDLE_DELAY_SECONDS", 2.0)
     postrun_idle_sample_count = _positive_int_from_env("TOWN_STALL_POSTRUN_IDLE_SAMPLE_COUNT", 3)
     postrun_idle_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_POSTRUN_IDLE_SAMPLE_INTERVAL_SECONDS", 1.0)
+    preflight_idle_sample_count = _positive_int_from_env("TOWN_STALL_PREFLIGHT_IDLE_SAMPLE_COUNT", 3)
+    preflight_idle_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_PREFLIGHT_IDLE_SAMPLE_INTERVAL_SECONDS", 1.0)
+
+    preflight_idle_samples = _collect_idle_state_samples(
+        0.0,
+        preflight_idle_sample_count,
+        preflight_idle_sample_interval_seconds,
+    )
+    raw_gpu_preflight: dict = {}
+    preflight_idle_summary = _summarize_preflight_idle_samples(preflight_idle_samples)
+    if preflight_idle_samples:
+        last_preflight_sample = preflight_idle_samples[-1]
+        sampled_machine = last_preflight_sample.get("machine", {})
+        if isinstance(sampled_machine, dict) and sampled_machine:
+            warmup_state = machine_state.get("warmup_state", "unknown")
+            warmup_note = machine_state.get("warmup_note", "")
+            warmup_gate = machine_state.get("warmup_gate", {})
+            machine_state = sampled_machine
+            machine_state["warmup_state"] = warmup_state
+            machine_state["warmup_note"] = warmup_note
+            if warmup_gate:
+                machine_state["warmup_gate"] = warmup_gate
+        sampled_raw_gpu = last_preflight_sample.get("raw_gpu", {})
+        if isinstance(sampled_raw_gpu, dict):
+            raw_gpu_preflight = sampled_raw_gpu
+    else:
+        raw_gpu_preflight = _collect_raw_gpu_state()
+    machine_state["preflight_idle_summary"] = preflight_idle_summary
+    env["TOWN_STALL_MACHINE_STATE_JSON"] = json.dumps(machine_state)
 
     print("\nMachine state probe:")
     _print_machine_state_summary(machine_state)
     print(f"Raw GPU preflight: {_raw_gpu_state_summary(raw_gpu_preflight)}")
+    _print_preflight_idle_sample_summary(preflight_idle_summary)
 
-    preflight_reasons = _preflight_contamination_reasons(machine_state, raw_gpu_preflight)
+    preflight_reasons = _preflight_contamination_reasons_for_idle_samples(preflight_idle_samples)
     allow_contaminated_idle = os.environ.get("TOWN_STALL_ALLOW_CONTAMINATED_IDLE", "0") == "1"
     if preflight_reasons and not allow_contaminated_idle:
         print("ERROR: Preflight idle state is contaminated; refusing to launch town benchmark.")
