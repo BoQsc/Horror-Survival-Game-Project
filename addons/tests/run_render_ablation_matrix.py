@@ -39,6 +39,29 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def _pick_window_metric(stationary_hold: dict, town_window: dict, metric: str) -> float:
+    active_metric = f"{metric}_render_active"
+    for window in (stationary_hold, town_window):
+        if int(window.get("render_active_sample_count", 0) or 0) > 0:
+            return float(window.get(active_metric, window.get(metric, 0.0)) or 0.0)
+    return float(stationary_hold.get(metric, town_window.get(metric, 0.0)) or 0.0)
+
+
+def _pick_window_int_metric(stationary_hold: dict, town_window: dict, metric: str) -> int:
+    active_metric = f"{metric}_render_active"
+    for window in (stationary_hold, town_window):
+        if int(window.get("render_active_sample_count", 0) or 0) > 0:
+            return int(window.get(active_metric, window.get(metric, 0)) or 0)
+    return int(stationary_hold.get(metric, town_window.get(metric, 0)) or 0)
+
+
+def _pick_active_sample_count(stationary_hold: dict, town_window: dict) -> int:
+    stationary_active_samples = int(stationary_hold.get("render_active_sample_count", 0) or 0)
+    if stationary_active_samples > 0:
+        return stationary_active_samples
+    return int(town_window.get("render_active_sample_count", 0) or 0)
+
+
 def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
     run_start_mtime = time.time()
     env = os.environ.copy()
@@ -84,15 +107,40 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
     if not isinstance(entities, dict):
         entities = {}
 
+    active_sample_count = _pick_active_sample_count(stationary_hold, town_window)
+    sample_count = int(stationary_hold.get("sample_count", town_window.get("sample_count", 0)) or 0)
+    render_loop_suspended_samples = int(
+        stationary_hold.get(
+            "terrain_runtime_power_render_loop_suspended_samples",
+            town_window.get("terrain_runtime_power_render_loop_suspended_samples", 0),
+        )
+        or 0
+    )
+    world_work_suspended_samples = int(
+        stationary_hold.get(
+            "terrain_runtime_power_world_work_suspended_samples",
+            town_window.get("terrain_runtime_power_world_work_suspended_samples", 0),
+        )
+        or 0
+    )
+
     return {
         "case": case_name,
         "returncode": result.returncode,
         "snapshot": str(snapshot_path) if snapshot_path else "",
         "hold_complete": bool(snapshot.get("benchmark_hold_complete", False)) if snapshot else False,
-        "avg_total_ms": float(stationary_hold.get("avg_total_ms", town_window.get("avg_total_ms", 0.0)) or 0.0),
-        "avg_draw_calls": float(stationary_hold.get("avg_draw_calls", town_window.get("avg_draw_calls", 0.0)) or 0.0),
-        "avg_objects": float(stationary_hold.get("avg_objects", town_window.get("avg_objects", 0.0)) or 0.0),
-        "frames_over_budget": int(stationary_hold.get("frames_over_budget", town_window.get("frames_over_budget", 0)) or 0),
+        "metric_basis": "render_active" if active_sample_count > 0 else "all_samples",
+        "sample_count": sample_count,
+        "render_active_sample_count": active_sample_count,
+        "render_loop_suspended_samples": render_loop_suspended_samples,
+        "world_work_suspended_samples": world_work_suspended_samples,
+        "avg_total_ms": _pick_window_metric(stationary_hold, town_window, "avg_total_ms"),
+        "avg_draw_calls": _pick_window_metric(stationary_hold, town_window, "avg_draw_calls"),
+        "avg_objects": _pick_window_metric(stationary_hold, town_window, "avg_objects"),
+        "frames_over_budget": _pick_window_int_metric(stationary_hold, town_window, "frames_over_budget"),
+        "avg_total_ms_all": float(stationary_hold.get("avg_total_ms", town_window.get("avg_total_ms", 0.0)) or 0.0),
+        "avg_draw_calls_all": float(stationary_hold.get("avg_draw_calls", town_window.get("avg_draw_calls", 0.0)) or 0.0),
+        "avg_objects_all": float(stationary_hold.get("avg_objects", town_window.get("avg_objects", 0.0)) or 0.0),
         "rendered_terrain_chunks": int(terrain.get("rendered_terrain_chunk_count", 0) or 0),
         "rendered_water_chunks": int(terrain.get("rendered_water_chunk_count", 0) or 0),
         "building_visible_nodes": int(building.get("visible_world_map_baked_building_visual_nodes", 0) or 0),
@@ -124,7 +172,7 @@ def _print_results(results: list[dict]) -> None:
         print(
             "{case:>20} | ms={ms:6.2f} ({dms:+6.2f}) | draws={draws:7.1f} ({ddraws:+7.1f}) | "
             "objects={objects:7.1f} ({dobjects:+7.1f}) | terrain={terrain:4d} water={water:4d} "
-            "buildings={buildings:4d} veg_batches={veg:3d} entities={entities:3d}".format(
+            "buildings={buildings:4d} veg_batches={veg:3d} entities={entities:3d} | active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
                 case=str(result.get("case", "")),
                 ms=float(result.get("avg_total_ms", 0.0) or 0.0),
                 dms=float(result.get("delta_avg_total_ms", 0.0) or 0.0),
@@ -137,6 +185,9 @@ def _print_results(results: list[dict]) -> None:
                 buildings=int(result.get("building_visible_nodes", 0) or 0),
                 veg=int(result.get("vegetation_global_batches", 0) or 0),
                 entities=int(result.get("entity_active", 0) or 0),
+                active=int(result.get("render_active_sample_count", 0) or 0),
+                samples=int(result.get("sample_count", 0) or 0),
+                suspended=int(result.get("render_loop_suspended_samples", 0) or 0),
             )
         )
     print("=" * 50)

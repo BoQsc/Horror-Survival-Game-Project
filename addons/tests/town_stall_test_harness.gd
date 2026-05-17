@@ -365,6 +365,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var terrain_last_world_map_lod_unloads := 0
 	var terrain_last_world_map_lod_update_ms := 0.0
 	var terrain_runtime_power_world_work_suspended := false
+	var terrain_runtime_power_render_loop_suspended := false
 	var terrain_runtime_power_world_work_suspended_frame_count := 0
 	var building_dirty_visible_chunk_count := 0
 	var building_last_flush_dirty_chunks_ms := 0.0
@@ -481,6 +482,8 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		terrain_last_world_map_lod_update_ms = float(terrain_manager._last_world_map_lod_update_ms)
 		if terrain_manager.has_method("is_world_work_suspended"):
 			terrain_runtime_power_world_work_suspended = bool(terrain_manager.is_world_work_suspended())
+		if "_runtime_power_render_loop_suspended" in terrain_manager:
+			terrain_runtime_power_render_loop_suspended = bool(terrain_manager._runtime_power_render_loop_suspended)
 		if "_runtime_power_world_work_suspended_frame_count" in terrain_manager:
 			terrain_runtime_power_world_work_suspended_frame_count = int(terrain_manager._runtime_power_world_work_suspended_frame_count)
 		terrain_visual_batch_node_count = int(terrain_manager._terrain_visual_batches.size())
@@ -623,6 +626,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_last_world_map_lod_unloads": terrain_last_world_map_lod_unloads,
 		"terrain_last_world_map_lod_update_ms": terrain_last_world_map_lod_update_ms,
 		"terrain_runtime_power_world_work_suspended": terrain_runtime_power_world_work_suspended,
+		"terrain_runtime_power_render_loop_suspended": terrain_runtime_power_render_loop_suspended,
 		"terrain_runtime_power_world_work_suspended_frame_count": terrain_runtime_power_world_work_suspended_frame_count,
 		"terrain_visual_batch_node_count": terrain_visual_batch_node_count,
 		"terrain_visual_batch_dirty_count": terrain_visual_batch_dirty_count,
@@ -883,6 +887,20 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"top_bucket_counts": {},
 		"baseline_comparison": {},
 		"terrain_runtime_power_world_work_suspended_samples": 0,
+		"terrain_runtime_power_render_loop_suspended_samples": 0,
+		"render_active_sample_count": 0,
+		"avg_fps_render_active": 0.0,
+		"avg_draw_calls_render_active": 0.0,
+		"avg_objects_render_active": 0.0,
+		"avg_total_ms_render_active": 0.0,
+		"avg_physics_ms_render_active": 0.0,
+		"avg_navigation_ms_render_active": 0.0,
+		"avg_vram_mb_render_active": 0.0,
+		"avg_other_ms_render_active": 0.0,
+		"max_total_ms_render_active": 0.0,
+		"frames_over_budget_render_active": 0,
+		"frames_over_40ms_render_active": 0,
+		"frames_over_50ms_render_active": 0,
 		"latest_town_state": {},
 		"latest_entities_state": {}
 	}
@@ -929,6 +947,20 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var longest_over_40ms_streak := 0
 	var longest_over_50ms_streak := 0
 	var terrain_runtime_power_world_work_suspended_samples := 0
+	var terrain_runtime_power_render_loop_suspended_samples := 0
+	var render_active_sample_count := 0
+	var total_fps_render_active := 0.0
+	var total_draw_calls_render_active := 0.0
+	var total_objects_render_active := 0.0
+	var total_ms_render_active := 0.0
+	var total_physics_ms_render_active := 0.0
+	var total_navigation_ms_render_active := 0.0
+	var total_vram_mb_render_active := 0.0
+	var total_other_ms_render_active := 0.0
+	var max_total_ms_render_active := 0.0
+	var frames_over_budget_render_active := 0
+	var frames_over_40ms_render_active := 0
+	var frames_over_50ms_render_active := 0
 
 	for index in range(start_index, samples.size()):
 		var entry: Dictionary = samples[index]
@@ -981,6 +1013,26 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		bucket_counts[bucket] = int(bucket_counts.get(bucket, 0)) + 1
 		if bool(entry.get("terrain_runtime_power_world_work_suspended", false)):
 			terrain_runtime_power_world_work_suspended_samples += 1
+		var render_loop_suspended := bool(entry.get("terrain_runtime_power_render_loop_suspended", false))
+		if render_loop_suspended:
+			terrain_runtime_power_render_loop_suspended_samples += 1
+		else:
+			render_active_sample_count += 1
+			total_fps_render_active += float(entry.get("fps", 0.0))
+			total_draw_calls_render_active += float(entry.get("draw_calls", 0))
+			total_objects_render_active += float(entry.get("objects", 0))
+			total_ms_render_active += frame_total_ms
+			total_physics_ms_render_active += float(entry.get("physics_ms", 0.0))
+			total_navigation_ms_render_active += float(entry.get("navigation_ms", 0.0))
+			total_vram_mb_render_active += float(entry.get("vram_mb", 0.0))
+			total_other_ms_render_active += float(entry.get("other_ms", 0.0))
+			max_total_ms_render_active = maxf(max_total_ms_render_active, frame_total_ms)
+			if frame_total_ms >= FRAME_BUDGET_MS:
+				frames_over_budget_render_active += 1
+			if frame_total_ms >= 40.0:
+				frames_over_40ms_render_active += 1
+			if frame_total_ms >= 50.0:
+				frames_over_50ms_render_active += 1
 
 	longest_over_budget_streak = maxi(longest_over_budget_streak, current_over_budget_streak)
 	longest_over_40ms_streak = maxi(longest_over_40ms_streak, current_over_40ms_streak)
@@ -994,6 +1046,14 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var avg_navigation_ms := total_navigation_ms / sample_count
 	var avg_vram_mb := total_vram_mb / sample_count
 	var avg_other_ms := total_other_ms / sample_count
+	var avg_fps_render_active := total_fps_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_draw_calls_render_active := total_draw_calls_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_objects_render_active := total_objects_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_total_ms_render_active := total_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_physics_ms_render_active := total_physics_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_navigation_ms_render_active := total_navigation_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_vram_mb_render_active := total_vram_mb_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_other_ms_render_active := total_other_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var latest_vs_window: Dictionary = {}
 	if not last_entry.is_empty():
 		latest_vs_window = {
@@ -1040,6 +1100,20 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"top_bucket_counts": bucket_counts,
 		"baseline_comparison": latest_vs_window,
 		"terrain_runtime_power_world_work_suspended_samples": terrain_runtime_power_world_work_suspended_samples,
+		"terrain_runtime_power_render_loop_suspended_samples": terrain_runtime_power_render_loop_suspended_samples,
+		"render_active_sample_count": render_active_sample_count,
+		"avg_fps_render_active": avg_fps_render_active,
+		"avg_draw_calls_render_active": avg_draw_calls_render_active,
+		"avg_objects_render_active": avg_objects_render_active,
+		"avg_total_ms_render_active": avg_total_ms_render_active,
+		"avg_physics_ms_render_active": avg_physics_ms_render_active,
+		"avg_navigation_ms_render_active": avg_navigation_ms_render_active,
+		"avg_vram_mb_render_active": avg_vram_mb_render_active,
+		"avg_other_ms_render_active": avg_other_ms_render_active,
+		"max_total_ms_render_active": max_total_ms_render_active,
+		"frames_over_budget_render_active": frames_over_budget_render_active,
+		"frames_over_40ms_render_active": frames_over_40ms_render_active,
+		"frames_over_50ms_render_active": frames_over_50ms_render_active,
 		"latest_town_state": _town_entry_latest_town_state.duplicate(true),
 		"latest_entities_state": _town_entry_latest_entities_state.duplicate(true)
 	}

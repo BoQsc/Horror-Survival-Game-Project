@@ -43,6 +43,14 @@ def _validate_snapshot(snapshot: dict) -> list[str]:
     suspended_samples = int(stationary_hold.get("terrain_runtime_power_world_work_suspended_samples", 0) or 0)
     if suspended_samples <= 0:
         failures.append("stationary hold had no samples with suspended terrain world work")
+    render_loop_suspended_samples = int(
+        stationary_hold.get("terrain_runtime_power_render_loop_suspended_samples", 0) or 0
+    )
+    if render_loop_suspended_samples <= 0:
+        failures.append("stationary hold had no samples with suspended render loop")
+    render_active_samples = int(stationary_hold.get("render_active_sample_count", 0) or 0)
+    if render_active_samples <= 0:
+        failures.append("stationary hold had no render-active samples to compare against suspended idle")
 
     system_telemetry = snapshot.get("system_telemetry", {})
     terrain = system_telemetry.get("terrain_manager", {}) if isinstance(system_telemetry, dict) else {}
@@ -74,9 +82,14 @@ def _print_idle_summary(snapshot_path: Path, snapshot: dict) -> None:
     print(f"Snapshot: {snapshot_path}")
     print(f"Hold complete: {bool(snapshot.get('benchmark_hold_complete', False))}")
     print(f"Hold samples: {int(stationary_hold.get('sample_count', 0) or 0)}")
+    print(f"Render-active samples: {int(stationary_hold.get('render_active_sample_count', 0) or 0)}")
     print(
-        "Suspended samples: "
+        "World-work suspended samples: "
         f"{int(stationary_hold.get('terrain_runtime_power_world_work_suspended_samples', 0) or 0)}"
+    )
+    print(
+        "Render-loop suspended samples: "
+        f"{int(stationary_hold.get('terrain_runtime_power_render_loop_suspended_samples', 0) or 0)}"
     )
     print(
         "Terrain suspend count: "
