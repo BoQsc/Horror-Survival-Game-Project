@@ -164,6 +164,44 @@ func get_pending_chunks_count() -> int:
 	return pending_chunks.size()
 
 
+func _has_process_work_pending() -> bool:
+	return (
+		not pending_chunks.is_empty()
+		or _has_retryable_pending_placements()
+		or _has_dirty_global_vegetation_render_batch()
+	)
+
+
+func _has_retryable_pending_placements() -> bool:
+	if not terrain_manager:
+		return false
+
+	var chunk_stride = terrain_manager.CHUNK_STRIDE
+	for placement in pending_rock_placements:
+		var rock_coord = Vector2i(int(floor(placement.world_pos.x / chunk_stride)), int(floor(placement.world_pos.z / chunk_stride)))
+		if chunk_rock_data.has(rock_coord):
+			return true
+
+	for placement in pending_grass_placements:
+		var grass_coord = Vector2i(int(floor(placement.world_pos.x / chunk_stride)), int(floor(placement.world_pos.z / chunk_stride)))
+		if chunk_grass_data.has(grass_coord):
+			return true
+
+	return false
+
+
+func _wake_process_loop() -> void:
+	if not is_processing():
+		set_process(true)
+
+
+func _sync_process_loop() -> void:
+	if _has_process_work_pending():
+		_wake_process_loop()
+	else:
+		set_process(false)
+
+
 func get_telemetry_snapshot() -> Dictionary:
 	return {
 		"pending_chunks": pending_chunks.size(),
@@ -187,6 +225,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"dense_grass_mode": dense_grass_mode,
 		"initial_load_count": initial_load_count,
 		"is_initial_load_batch": is_initial_load_batch,
+		"process_loop_awake": is_processing(),
 		"last_pending_chunk_process_ms": _last_pending_chunk_process_ms,
 		"last_pending_chunk_budget_ms": _last_pending_chunk_budget_ms,
 		"last_pending_chunk_stages_processed": _last_pending_chunk_stages_processed,
@@ -495,6 +534,8 @@ func _set_global_render_dirty_flag(kind: String, dirty: bool) -> void:
 			_global_grass_render_dirty = dirty
 		"rock":
 			_global_rock_render_dirty = dirty
+	if dirty:
+		_wake_process_loop()
 
 func _vegetation_cluster_key(kind: String, coord: Vector2i) -> Vector2i:
 	var cluster_size := vegetation_grass_render_cluster_size if kind == "grass" else vegetation_render_cluster_size
@@ -527,6 +568,7 @@ func _mark_global_vegetation_render_dirty(kind: String, coord = null) -> void:
 		_set_global_render_dirty_flag(kind, true)
 	else:
 		_mark_all_global_vegetation_clusters_dirty(kind)
+	_sync_process_loop()
 
 func _remove_global_render_chunk_membership(kind: String, coord: Vector2i) -> void:
 	var chunk_clusters := _get_global_render_chunk_cluster_dictionary(kind)
@@ -1036,6 +1078,7 @@ func _build_native_vegetation_instances(
 
 
 func _ready():
+	set_process(false)
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
 	if glb_result.mesh:
@@ -1244,6 +1287,7 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 		"frames_waited": 0,
 		"stage": 0 # 0=Trees, 1=Grass, 2=Rocks
 	})
+	_wake_process_loop()
 	_mark_collider_refresh_dirty()
 
 func _cleanup_chunk_trees(coord: Vector2i, immediate_free: bool = false):
@@ -1413,12 +1457,16 @@ func _process_pending_vegetation_chunks() -> void:
 	_last_pending_chunk_process_ms = float(Time.get_ticks_usec() - pending_chunk_start_us) / 1000.0
 
 func _process(_delta):
+	if not _has_process_work_pending():
+		set_process(false)
+		return
 	var pending_placements_start_us := Time.get_ticks_usec()
 	_process_pending_vegetation_chunks()
 	_process_pending_placements()
 	if _should_flush_global_vegetation_render_batch():
 		_flush_one_global_vegetation_render_batch()
 	_last_pending_placements_ms = float(Time.get_ticks_usec() - pending_placements_start_us) / 1000.0
+	_sync_process_loop()
 
 
 func _physics_process(_delta):
@@ -2648,6 +2696,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	if not chunk_grass_data.has(coord):
 		# Chunk grass data not ready - queue for retry
 		pending_grass_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
+		_wake_process_loop()
 		return true # Stored for later
 
 	var data = chunk_grass_data[coord]
@@ -2656,6 +2705,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
 		# Chunk node not valid - queue for retry
 		pending_grass_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
+		_wake_process_loop()
 		return true # Stored for later
 
 	var chunk_node = data.chunk_node
@@ -2672,6 +2722,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	if not data.has("multimesh") or not _is_chunk_multimesh_handle_valid(data.multimesh):
 		# MultiMesh not valid - queue for retry
 		pending_grass_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
+		_wake_process_loop()
 		return true # Stored for later
 
 	var grass_entry = _make_vegetation_generated(
@@ -2992,6 +3043,7 @@ func place_rock(world_pos: Vector3) -> bool:
 	if not chunk_rock_data.has(coord):
 		# Chunk rock data not ready - queue for retry
 		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
+		_wake_process_loop()
 		return true
 
 	var data = chunk_rock_data[coord]
@@ -3000,12 +3052,14 @@ func place_rock(world_pos: Vector3) -> bool:
 	if not data.has("chunk_node") or not is_instance_valid(data.chunk_node):
 		# Chunk node not valid - queue for retry
 		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
+		_wake_process_loop()
 		return true
 
 	# Validate render data
 	if not data.has("multimesh") or not _is_chunk_multimesh_handle_valid(data.multimesh):
 		# MultiMesh not valid - queue for retry
 		pending_rock_placements.append(_make_vegetation_placement(world_pos, final_scale, rotation_angle))
+		_wake_process_loop()
 		return true
 
 	# Can place immediately
@@ -3260,7 +3314,7 @@ func _on_spawn_zones_ready(_positions: Array) -> void:
 			all_vegetation_ready.emit()
 			is_initial_load_batch = false
 		else:
-			pass
+			_wake_process_loop()
 
 func _apply_chopped_trees():
 	# Mark trees as dead based on chopped_trees dictionary
@@ -3336,6 +3390,7 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	pending_vegetation_regen = false
 	is_initial_load_batch = false
 	initial_load_count = 0
+	_sync_process_loop()
 
 
 ## Clear all internal vegetation data for a fresh start (e.g. before loading a save)
