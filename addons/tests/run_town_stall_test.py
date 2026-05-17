@@ -620,6 +620,7 @@ def _raw_gpu_state_summary(raw_gpu: dict) -> str:
 def _preflight_contamination_reasons(machine_state: dict, raw_gpu: dict) -> list[str]:
     max_cpu_load = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_LOAD_PERCENT", 55.0)
     max_cpu_perf = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_PERF_PERCENT", 115.0)
+    max_cpu_utility = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_CPU_UTILITY_PERCENT", 80.0)
     max_gpu_power = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_POWER_W", 15.0)
     max_gpu_util = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_UTIL_PERCENT", 30.0)
     max_gpu_temp = _float_from_env("TOWN_STALL_PREFLIGHT_MAX_GPU_TEMP_C", 85.0)
@@ -628,10 +629,13 @@ def _preflight_contamination_reasons(machine_state: dict, raw_gpu: dict) -> list
     if isinstance(machine_state, dict) and machine_state.get("available", False):
         cpu_load = float(machine_state.get("load_percentage", 0.0) or 0.0)
         cpu_perf = float(machine_state.get("percent_processor_performance", 0.0) or 0.0)
+        cpu_utility = float(machine_state.get("percent_processor_utility", 0.0) or 0.0)
         if cpu_load > max_cpu_load:
             reasons.append(f"CPU load {cpu_load:.1f}% > {max_cpu_load:.1f}%")
         if cpu_perf > max_cpu_perf:
             reasons.append(f"CPU processor performance {cpu_perf:.1f}% > {max_cpu_perf:.1f}%")
+        if cpu_utility > max_cpu_utility:
+            reasons.append(f"CPU processor utility {cpu_utility:.1f}% > {max_cpu_utility:.1f}%")
 
     if isinstance(raw_gpu, dict) and raw_gpu.get("available", False):
         power_w = raw_gpu.get("power_w", None)
