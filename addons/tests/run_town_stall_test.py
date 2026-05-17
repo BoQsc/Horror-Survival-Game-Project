@@ -1240,6 +1240,9 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
             render_loop_suspend_start_epoch,
             hold_complete_epoch,
         ) or hold_complete_epoch
+    render_loop_suspend_tail_start_epoch = None
+    if render_loop_suspend_start_epoch is not None and render_loop_suspend_end_epoch is not None:
+        render_loop_suspend_tail_start_epoch = max(render_loop_suspend_start_epoch, render_loop_suspend_end_epoch - 10.0)
 
     phase_windows = {
         "moving_entry": _summarize_system_samples_in_epoch_range(samples, "moving_entry", reset_epoch, hold_start_epoch),
@@ -1266,6 +1269,12 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
             samples,
             "runtime_power_render_loop_suspended",
             render_loop_suspend_start_epoch,
+            render_loop_suspend_end_epoch,
+        ),
+        "runtime_power_render_loop_suspended_tail_10s": _summarize_system_samples_in_epoch_range(
+            samples,
+            "runtime_power_render_loop_suspended_tail_10s",
+            render_loop_suspend_tail_start_epoch,
             render_loop_suspend_end_epoch,
         ),
     }
@@ -1343,6 +1352,7 @@ def _print_phase_system_sample_summary(summary: dict) -> None:
         "stationary_hold_tail_30s",
         "runtime_power_deep_idle",
         "runtime_power_render_loop_suspended",
+        "runtime_power_render_loop_suspended_tail_10s",
     ]:
         window = windows.get(key, {})
         if not isinstance(window, dict):

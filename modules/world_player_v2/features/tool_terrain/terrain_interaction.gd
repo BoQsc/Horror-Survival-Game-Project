@@ -108,9 +108,18 @@ func _create_material_target_marker() -> void:
 	mat.emission = Color.YELLOW
 	mat.emission_energy_multiplier = 1.0
 	material_target_marker.material_override = mat
-	material_target_marker.visible = false
+	_set_material_target_marker_visible(false)
 	
 	get_tree().root.add_child.call_deferred(material_target_marker)
+
+func _set_material_target_marker_visible(enabled: bool) -> void:
+	if not material_target_marker:
+		return
+
+	if material_target_marker.visible == enabled:
+		return
+
+	material_target_marker.visible = enabled
 
 func _update_terrain_targeting() -> void:
 	if not player or not hotbar or not selection_box:
@@ -145,7 +154,7 @@ func _update_terrain_targeting() -> void:
 func _update_target_material() -> void:
 	if not player or not terrain_manager:
 		if material_target_marker:
-			material_target_marker.visible = false
+			_set_material_target_marker_visible(false)
 		return
 	
 	var hit = _raycast(10.0)  # V1 uses 10.0 range for material detection
@@ -154,7 +163,7 @@ func _update_target_material() -> void:
 			last_target_material = ""
 			_emit_target_material_changed("")
 		if material_target_marker:
-			material_target_marker.visible = false
+			_set_material_target_marker_visible(false)
 		return
 	
 	var target = hit.get("collider")
@@ -168,7 +177,7 @@ func _update_target_material() -> void:
 		var show_marker = false  # Default OFF
 		if has_node("/root/DebugManager"):
 			show_marker = get_node("/root/DebugManager").should_show_terrain_marker()
-		material_target_marker.visible = show_marker
+		_set_material_target_marker_visible(show_marker)
 	
 	# Check if we hit terrain (StaticBody3D in 'terrain' group)
 	if target and target.is_in_group("terrain"):

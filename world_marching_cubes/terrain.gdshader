@@ -426,7 +426,7 @@ void fragment() {
 	
 	// === Dynamic Weather Snow ===
 	// Applies based on global_snow_amount, sticks to flat surfaces
-	if (!is_player_placed) {
+	if (!is_player_placed && global_snow_amount > 0.0) {
 		if (use_world_map && global_snow_amount > 0.0) {
 			col_snow = triplanar_texture(texture_snow, weights, uv_pos).rgb;
 		}

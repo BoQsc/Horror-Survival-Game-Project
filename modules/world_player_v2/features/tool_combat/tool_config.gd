@@ -43,12 +43,19 @@ var pistol_hit_marker_enabled: bool = true
 # TARGET VISUALIZER
 # ============================================================================
 
-var target_visualizer_enabled: bool = false
+var _target_visualizer_enabled: bool = false
+var target_visualizer_enabled: bool:
+	get:
+		return _target_visualizer_enabled
+	set(value):
+		_target_visualizer_enabled = value
+		_sync_target_visualizer_processing()
 var _target_box: MeshInstance3D = null
 var _hit_marker: MeshInstance3D = null
 
 func _ready() -> void:
 	_create_visualizer()
+	_sync_target_visualizer_processing()
 
 func _create_visualizer() -> void:
 	# Create target box (shows grid-snapped block)
@@ -89,19 +96,12 @@ func _create_visualizer() -> void:
 	get_tree().root.call_deferred("add_child", _hit_marker)
 
 func _process(_delta: float) -> void:
-	if not target_visualizer_enabled:
-		if _target_box:
-			_target_box.visible = false
-		if _hit_marker:
-			_hit_marker.visible = false
-		return
-	
 	var player = get_tree().get_first_node_in_group("player")
 	if not player or not player.has_method("raycast"):
 		if _target_box:
 			_target_box.visible = false
 		if _hit_marker:
-			_hit_marker.visible = false
+			_set_hit_marker_visible(false)
 		return
 	
 	# Check if holding a tool (pickaxe, axe, etc.)
@@ -110,7 +110,7 @@ func _process(_delta: float) -> void:
 		if _target_box:
 			_target_box.visible = false
 		if _hit_marker:
-			_hit_marker.visible = false
+			_set_hit_marker_visible(false)
 		return
 	
 	var item = hotbar.get_selected_item()
@@ -121,7 +121,7 @@ func _process(_delta: float) -> void:
 		if _target_box:
 			_target_box.visible = false
 		if _hit_marker:
-			_hit_marker.visible = false
+			_set_hit_marker_visible(false)
 		return
 	
 	# Perform raycast
@@ -130,7 +130,7 @@ func _process(_delta: float) -> void:
 		if _target_box:
 			_target_box.visible = false
 		if _hit_marker:
-			_hit_marker.visible = false
+			_set_hit_marker_visible(false)
 		return
 	
 	var position = hit.get("position", Vector3.ZERO)
@@ -139,7 +139,7 @@ func _process(_delta: float) -> void:
 	# Show hit marker at exact raycast point
 	if _hit_marker and is_instance_valid(_hit_marker) and _hit_marker.is_inside_tree():
 		_hit_marker.global_position = position
-		_hit_marker.visible = true
+		_set_hit_marker_visible(true)
 	
 	# Calculate grid-snapped block position (same logic as combat_system)
 	var snapped_pos = position - normal * 0.1
@@ -155,4 +155,28 @@ func _exit_tree() -> void:
 	if _target_box:
 		_target_box.queue_free()
 	if _hit_marker:
+		_set_hit_marker_visible(false)
 		_hit_marker.queue_free()
+
+
+func _set_hit_marker_visible(enabled: bool) -> void:
+	if not _hit_marker:
+		return
+
+	if _hit_marker.visible == enabled:
+		return
+
+	_hit_marker.visible = enabled
+
+
+func _sync_target_visualizer_processing() -> void:
+	set_process(_target_visualizer_enabled)
+	if not _target_visualizer_enabled:
+		_hide_target_visualizer()
+
+
+func _hide_target_visualizer() -> void:
+	if _target_box:
+		_target_box.visible = false
+	if _hit_marker:
+		_set_hit_marker_visible(false)
