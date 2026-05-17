@@ -669,6 +669,34 @@ def _sample_system_until(stop_event: threading.Event, pid: int, interval_seconds
         stop_event.wait(interval_seconds)
 
 
+def _collect_idle_state_samples(delay_seconds: float, sample_count: int, interval_seconds: float) -> list[dict]:
+    if delay_seconds > 0.0:
+        time.sleep(delay_seconds)
+
+    samples: list[dict] = []
+    count = max(1, sample_count)
+    interval = max(0.1, interval_seconds)
+    for index in range(count):
+        samples.append({
+            "epoch": time.time(),
+            "machine": _collect_machine_state(),
+            "raw_gpu": _collect_raw_gpu_state(),
+        })
+        if index < count - 1:
+            time.sleep(interval)
+    return samples
+
+
+def _idle_state_contamination_reasons(samples: list[dict]) -> list[str]:
+    if not samples:
+        return ["idle samples unavailable"]
+
+    last_sample = samples[-1]
+    machine_state = last_sample.get("machine", {}) if isinstance(last_sample.get("machine", {}), dict) else {}
+    raw_gpu = last_sample.get("raw_gpu", {}) if isinstance(last_sample.get("raw_gpu", {}), dict) else {}
+    return _preflight_contamination_reasons(machine_state, raw_gpu)
+
+
 def _summarize_numeric(values: list[float]) -> dict:
     if not values:
         return {"count": 0, "avg": 0.0, "max": 0.0, "min": 0.0}
@@ -1115,6 +1143,10 @@ def main() -> int:
     configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
     timeout = max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0))
     system_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", 0.0)
+    postrun_idle_check_disabled = os.environ.get("TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK", "0") == "1"
+    postrun_idle_delay_seconds = _float_from_env("TOWN_STALL_POSTRUN_IDLE_DELAY_SECONDS", 2.0)
+    postrun_idle_sample_count = _positive_int_from_env("TOWN_STALL_POSTRUN_IDLE_SAMPLE_COUNT", 3)
+    postrun_idle_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_POSTRUN_IDLE_SAMPLE_INTERVAL_SECONDS", 1.0)
 
     print("\nMachine state probe:")
     _print_machine_state_summary(machine_state)
@@ -1191,8 +1223,22 @@ def main() -> int:
     else:
         returncode = proc.returncode
 
+    postrun_idle_summary: dict = {}
+    postrun_idle_reasons: list[str] = []
+    if not postrun_idle_check_disabled:
+        postrun_idle_samples = _collect_idle_state_samples(
+            postrun_idle_delay_seconds,
+            postrun_idle_sample_count,
+            postrun_idle_sample_interval_seconds,
+        )
+        postrun_idle_summary = _summarize_system_sample_list(postrun_idle_samples)
+        postrun_idle_reasons = _idle_state_contamination_reasons(postrun_idle_samples)
+
     if system_sample_interval_seconds > 0.0:
         system_sample_summary = _summarize_system_samples(SYSTEM_SAMPLE_FILE)
+        if postrun_idle_summary:
+            system_sample_summary["postrun_idle"] = postrun_idle_summary
+            system_sample_summary["postrun_idle_reasons"] = postrun_idle_reasons
         try:
             SYSTEM_SAMPLE_SUMMARY_FILE.write_text(json.dumps(system_sample_summary, indent=2), encoding="utf-8")
         except OSError:
@@ -1219,8 +1265,17 @@ def main() -> int:
 
     if system_sample_interval_seconds > 0.0:
         _print_system_sample_summary(system_sample_summary)
+    if postrun_idle_summary:
+        print("Post-run idle check:")
+        _print_system_sample_summary(postrun_idle_summary)
+        if postrun_idle_reasons:
+            print("  Contamination:")
+            for reason in postrun_idle_reasons:
+                print(f"    - {reason}")
 
     failure_reasons = _detect_run_failure(output, returncode)
+    if postrun_idle_reasons and not allow_contaminated_idle:
+        failure_reasons.extend([f"postrun idle contaminated: {reason}" for reason in postrun_idle_reasons])
     snapshot = _latest_snapshot(run_start_mtime - 1.0)
     hold_started = "[town_stall_test] hold started" in output.lower()
     hold_completed = "[town_stall_test] hold complete, quitting" in output.lower()

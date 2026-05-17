@@ -23,6 +23,7 @@ DEFAULT_IDLE_MAX_P0_FRACTION = 0.20
 DEFAULT_IDLE_MAX_GPU_UTIL_PCT = 30.0
 DEFAULT_IDLE_MAX_CPU_LOAD_PCT = 55
 DEFAULT_IDLE_MAX_CPU_PERF_PCT = 115
+DEFAULT_IDLE_MAX_CPU_UTIL_PCT = 80
 DEFAULT_RUN_MAX_GPU_TEMP_C = 90.0
 
 GPU_QUERY_FIELDS = [
@@ -334,6 +335,7 @@ def _idle_contamination_thresholds() -> dict[str, Any]:
         "max_idle_gpu_util_pct": _float_env("TOWN_STALL_IDLE_MAX_GPU_UTIL_PCT", DEFAULT_IDLE_MAX_GPU_UTIL_PCT),
         "max_idle_cpu_load_pct": _int_env("TOWN_STALL_IDLE_MAX_CPU_LOAD_PCT", DEFAULT_IDLE_MAX_CPU_LOAD_PCT),
         "max_idle_cpu_perf_pct": _int_env("TOWN_STALL_IDLE_MAX_CPU_PERF_PCT", DEFAULT_IDLE_MAX_CPU_PERF_PCT),
+        "max_idle_cpu_util_pct": _int_env("TOWN_STALL_IDLE_MAX_CPU_UTIL_PCT", DEFAULT_IDLE_MAX_CPU_UTIL_PCT),
     }
 
 
@@ -367,6 +369,9 @@ def _idle_contamination_reasons(idle_sample: dict[str, Any], machine_state: dict
         cpu_perf = machine_state.get("percent_processor_performance")
         if isinstance(cpu_perf, (int, float)) and cpu_perf > int(thresholds["max_idle_cpu_perf_pct"]):
             reasons.append(f"idle_cpu_perf_high:{int(cpu_perf)}%>{thresholds['max_idle_cpu_perf_pct']}%")
+        cpu_util = machine_state.get("percent_processor_utility")
+        if isinstance(cpu_util, (int, float)) and cpu_util > int(thresholds["max_idle_cpu_util_pct"]):
+            reasons.append(f"idle_cpu_util_high:{int(cpu_util)}%>{thresholds['max_idle_cpu_util_pct']}%")
 
     return reasons
 
