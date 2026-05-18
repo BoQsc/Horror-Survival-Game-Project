@@ -31,6 +31,7 @@ const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 @export_range(0.1, 5.0, 0.1) var world_map_baked_object_spawn_hot_budget_ms: float = 0.35
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
 @export_range(0, 60, 1) var object_render_prewarm_frames: int = 12
+@export_range(0.025, 1.0, 0.025) var viewer_chunk_update_interval: float = 0.10
 var skip_object_collisions_for_test: bool = false
 var skip_building_chunk_collisions_for_test: bool = false
 var skip_building_chunk_mesh_render_for_test: bool = false
@@ -94,6 +95,7 @@ var _last_world_map_baked_visibility_kept_visible: int = 0
 var _last_world_map_baked_visibility_target_visible: int = 0
 var _last_world_map_baked_visibility_total_roots: int = 0
 var _last_world_map_baked_visibility_stale_roots: int = 0
+var _viewer_chunk_update_timer: Timer = null
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -145,6 +147,7 @@ func _update_building_map_pixel(global_pos: Vector3, is_set: bool) -> void:
 			hud_minimap.mark_dirty()
 
 func _ready():
+	set_process(false)
 	# Preload all object scenes for faster building spawning
 	ObjectRegistry.preload_all_scenes()
 	_start_object_render_resource_prewarm()
@@ -155,16 +158,63 @@ func _ready():
 	# Find player if not assigned
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
+	_start_viewer_chunk_update_timer()
+	_sync_viewer_chunk(true)
+	_sync_process_loop()
 
 func _process(delta):
 	_last_frame_ms = delta * 1000.0
-	if viewer:
-		var center_chunk := _get_current_building_center_chunk()
-		if center_chunk != _last_building_viewer_chunk:
-			_last_building_viewer_chunk = center_chunk
-			update_building_chunks(center_chunk)
+	if not _has_process_work_pending():
+		set_process(false)
+		return
 	_process_pending_world_map_baked_object_spawns()
 	_process_pending_object_collisions()
+	_sync_process_loop()
+
+func _start_viewer_chunk_update_timer() -> void:
+	if _viewer_chunk_update_timer and is_instance_valid(_viewer_chunk_update_timer):
+		return
+	var timer := Timer.new()
+	timer.name = "ViewerChunkUpdateTimer"
+	timer.wait_time = maxf(viewer_chunk_update_interval, 0.025)
+	timer.one_shot = false
+	timer.autostart = false
+	timer.process_callback = Timer.TIMER_PROCESS_IDLE
+	add_child(timer)
+	_viewer_chunk_update_timer = timer
+	timer.timeout.connect(_on_viewer_chunk_update_timer_timeout)
+	timer.start()
+
+func _on_viewer_chunk_update_timer_timeout() -> void:
+	_sync_viewer_chunk()
+
+func _sync_viewer_chunk(force_update: bool = false) -> void:
+	if not viewer or not is_instance_valid(viewer):
+		viewer = get_tree().get_first_node_in_group("player")
+	if not viewer:
+		return
+
+	var center_chunk := _get_current_building_center_chunk()
+	if force_update or center_chunk != _last_building_viewer_chunk:
+		_last_building_viewer_chunk = center_chunk
+		update_building_chunks(center_chunk)
+
+func _has_process_work_pending() -> bool:
+	return (
+		not _pending_world_map_baked_object_spawns.is_empty()
+		or not _pending_object_collision_tasks.is_empty()
+		or has_dirty_global_visual_batches()
+	)
+
+func _wake_process_loop() -> void:
+	if not is_processing():
+		set_process(true)
+
+func _sync_process_loop() -> void:
+	if _has_process_work_pending():
+		_wake_process_loop()
+	else:
+		set_process(false)
 
 ## Gets effective viewer position - returns vehicle position if player is driving
 func get_viewer_position() -> Vector3:
@@ -321,6 +371,7 @@ func queue_object_collision(chunk: BuildingChunk, obj: Node3D, anchor: Vector3i)
 		"obj": obj,
 		"anchor": anchor
 	})
+	_wake_process_loop()
 
 func mark_chunk_dirty(chunk_coord: Vector3i, chunk: BuildingChunk) -> void:
 	if not chunk or not is_instance_valid(chunk):
@@ -367,6 +418,7 @@ func _process_pending_object_collisions() -> void:
 
 func clear_pending_object_collision_tasks() -> void:
 	_pending_object_collision_tasks.clear()
+	_sync_process_loop()
 
 func clear_pending_world_map_baked_object_spawns() -> void:
 	_pending_world_map_baked_object_spawns.clear()
@@ -375,6 +427,7 @@ func clear_pending_world_map_baked_object_spawns() -> void:
 	_last_world_map_baked_object_spawn_queue_budget_ms = 0.0
 	_last_world_map_baked_object_spawn_queue_max_per_frame = 0
 	_last_world_map_baked_object_spawn_queue_hot_frame = false
+	_sync_process_loop()
 
 func has_pending_world_map_baked_object_spawns() -> bool:
 	return not _pending_world_map_baked_object_spawns.is_empty()
@@ -413,6 +466,8 @@ func _queue_world_map_baked_object_spawns(object_spawns: Array) -> int:
 		var spawn: Dictionary = spawn_variant
 		_pending_world_map_baked_object_spawns.append(spawn)
 		queued += 1
+	if queued > 0:
+		_wake_process_loop()
 	return queued
 
 func _process_pending_world_map_baked_object_spawns() -> void:
@@ -500,6 +555,7 @@ func register_global_visual_batch(anchor: Vector3i, object_id: int, transform: T
 		_append_global_visual_batch_instance(object_id, transform, mesh)
 	elif defer_rebuild:
 		_dirty_global_visual_batch_object_ids[object_id] = true
+		_wake_process_loop()
 	else:
 		_rebuild_global_visual_batch(object_id, mesh)
 	return true
@@ -546,6 +602,7 @@ func clear_global_visual_batches() -> void:
 	_global_visual_batch_nodes.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
+	_sync_process_loop()
 
 
 func _get_native_helper() -> Object:
@@ -1161,6 +1218,7 @@ func flush_global_visual_batches() -> void:
 		rebuilt += 1
 	_last_flush_global_visual_batches_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	_last_flush_global_visual_batches_count = rebuilt
+	_sync_process_loop()
 
 func apply_world_map_baked_building_payload(chunk_payload: Dictionary, object_spawns: Array = [], flush_now: bool = true, force_flush: bool = false, building_visual_payload: Dictionary = {}, building_key: String = "") -> void:
 	if chunk_payload.is_empty() and object_spawns.is_empty():
@@ -1710,6 +1768,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"skip_building_chunk_collisions_for_test": skip_building_chunk_collisions_for_test,
 		"skip_building_chunk_mesh_render_for_test": skip_building_chunk_mesh_render_for_test,
 		"skip_building_visual_batches_for_test": skip_building_visual_batches_for_test,
+		"process_loop_awake": is_processing(),
+		"viewer_chunk_update_interval": viewer_chunk_update_interval,
+		"viewer_chunk_update_timer_active": _viewer_chunk_update_timer != null and is_instance_valid(_viewer_chunk_update_timer) and not _viewer_chunk_update_timer.is_stopped(),
+		"last_building_viewer_chunk": _last_building_viewer_chunk,
 		"chunk_count": chunks.size(),
 		"visible_chunk_count": visible_chunks.size(),
 		"dirty_chunk_count": _dirty_chunks.size(),
