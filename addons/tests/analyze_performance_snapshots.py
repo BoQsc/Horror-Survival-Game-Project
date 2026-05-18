@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import run_town_stall_test as town_runner
 
@@ -169,6 +169,7 @@ def _summarize_render_ablation(path: Path) -> dict[str, Any]:
         compact_results.append(
             {
                 "case": str(result.get("case", "")),
+                "snapshot": str(result.get("snapshot", "")),
                 "hold_complete": bool(result.get("hold_complete", False)),
                 "avg_total_ms": _round(_float(result.get("avg_total_ms"))),
                 "avg_draw_calls": _round(_float(result.get("avg_draw_calls"))),
@@ -183,6 +184,64 @@ def _summarize_render_ablation(path: Path) -> dict[str, Any]:
     return {"path": str(path), "results": compact_results}
 
 
+def _ablation_cases_by_snapshot(render_ablation: dict[str, Any]) -> dict[str, str]:
+    cases: dict[str, str] = {}
+    results = render_ablation.get("results", [])
+    if not isinstance(results, list):
+        return cases
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        snapshot = str(result.get("snapshot", "")).strip()
+        case = str(result.get("case", "")).strip()
+        if snapshot and case:
+            cases[str(Path(snapshot))] = case
+    return cases
+
+
+def _annotate_town_runs(town: list[dict[str, Any]], render_ablation: dict[str, Any]) -> None:
+    cases_by_snapshot = _ablation_cases_by_snapshot(render_ablation)
+    for entry in town:
+        path = str(Path(str(entry.get("path", ""))))
+        ablation_case = cases_by_snapshot.get(path, "")
+        if ablation_case and ablation_case != "baseline":
+            run_role = "ablation_control"
+        elif ablation_case == "baseline":
+            run_role = "ablation_baseline"
+        else:
+            run_role = "production_like"
+        entry["ablation_case"] = ablation_case
+        entry["run_role"] = run_role
+        entry["production_candidate"] = run_role != "ablation_control"
+
+
+def _latest_production_town(town: list[dict[str, Any]]) -> dict[str, Any]:
+    for entry in town:
+        if bool(entry.get("production_candidate", True)):
+            return entry
+    return {}
+
+
+def _production_trend(town: list[dict[str, Any]]) -> dict[str, Any]:
+    production_runs = [entry for entry in town if bool(entry.get("production_candidate", True))]
+    if len(production_runs) < 2:
+        return {}
+    latest = production_runs[0]
+    previous = production_runs[1]
+    latest_hold = _dict(latest.get("stationary_hold"))
+    previous_hold = _dict(previous.get("stationary_hold"))
+    return {
+        "latest_path": str(latest.get("path", "")),
+        "previous_path": str(previous.get("path", "")),
+        "delta_avg_total_ms": _round(_float(latest_hold.get("avg_total_ms")) - _float(previous_hold.get("avg_total_ms"))),
+        "delta_frames_over_budget_pct": _round(
+            _float(latest_hold.get("frames_over_budget_pct")) - _float(previous_hold.get("frames_over_budget_pct"))
+        ),
+        "delta_avg_draw_calls": _round(_float(latest_hold.get("avg_draw_calls")) - _float(previous_hold.get("avg_draw_calls"))),
+        "delta_avg_objects": _round(_float(latest_hold.get("avg_objects")) - _float(previous_hold.get("avg_objects"))),
+    }
+
+
 def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     snapshot_dir = Path(args.snapshot_dir)
     town = [_summarize_town_snapshot(path, args.target_frame_ms) for path in _latest_files(snapshot_dir, "snapshot_*.json", args.town_count)]
@@ -190,12 +249,16 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         _summarize_procedural_snapshot(path)
         for path in _latest_files(snapshot_dir, "procedural_power_snapshot_*.json", args.procedural_count)
     ]
+    render_ablation = _summarize_render_ablation(Path(args.render_ablation_summary))
+    _annotate_town_runs(town, render_ablation)
     return {
         "snapshot_dir": str(snapshot_dir),
         "target_frame_ms": args.target_frame_ms,
         "town": town,
+        "latest_production_town": _latest_production_town(town),
+        "production_trend": _production_trend(town),
         "procedural": procedural,
-        "render_ablation": _summarize_render_ablation(Path(args.render_ablation_summary)),
+        "render_ablation": render_ablation,
     }
 
 
@@ -232,6 +295,18 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
             latest_avg = _float(latest_hold.get("avg_total_ms"))
             if latest_avg > float(args.max_latest_town_avg_ms):
                 failures.append(f"latest town stationary avg {latest_avg:.3f} ms exceeds {args.max_latest_town_avg_ms:.3f} ms")
+    if args.max_latest_production_town_avg_ms is not None:
+        latest_production = _dict(report.get("latest_production_town"))
+        if not latest_production:
+            failures.append("no production-like town snapshots found")
+        else:
+            latest_hold = _dict(latest_production.get("stationary_hold"))
+            latest_avg = _float(latest_hold.get("avg_total_ms"))
+            if latest_avg > float(args.max_latest_production_town_avg_ms):
+                failures.append(
+                    "latest production-like town stationary avg "
+                    f"{latest_avg:.3f} ms exceeds {args.max_latest_production_town_avg_ms:.3f} ms"
+                )
     return failures
 
 
@@ -246,7 +321,8 @@ def _print_report(report: dict[str, Any]) -> None:
             vegetation = _dict(_dict(entry).get("vegetation"))
             print(
                 "  {name} hold={hold_complete} avg={avg:.2f}ms over={over:.1f}% "
-                "max={max_ms:.1f}ms draws={draws:.1f} objects={objects:.1f} veg={veg_batches} profile={profile}".format(
+                "max={max_ms:.1f}ms draws={draws:.1f} objects={objects:.1f} veg={veg_batches} "
+                "profile={profile} role={role}{case}".format(
                     name=Path(str(entry.get("path", ""))).name,
                     hold_complete=bool(entry.get("hold_complete", False)),
                     avg=_float(hold.get("avg_total_ms")),
@@ -256,6 +332,29 @@ def _print_report(report: dict[str, Any]) -> None:
                     objects=_float(hold.get("avg_objects")),
                     veg_batches=_int(vegetation.get("global_render_batch_count")),
                     profile=bool(vegetation.get("world_map_vegetation_render_profile_active", False)),
+                    role=str(entry.get("run_role", "")),
+                    case=f" case={entry.get('ablation_case')}" if str(entry.get("ablation_case", "")) else "",
+                )
+            )
+        latest_production = _dict(report.get("latest_production_town"))
+        if latest_production:
+            hold = _dict(latest_production.get("stationary_hold"))
+            print(
+                "Latest production-like town: {name} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms".format(
+                    name=Path(str(latest_production.get("path", ""))).name,
+                    avg=_float(hold.get("avg_total_ms")),
+                    over=_float(hold.get("frames_over_budget_pct")),
+                    max_ms=_float(hold.get("max_total_ms")),
+                )
+            )
+        trend = _dict(report.get("production_trend"))
+        if trend:
+            print(
+                "Production trend vs previous: avg={avg:+.2f}ms over={over:+.1f}% draws={draws:+.1f} objects={objects:+.1f}".format(
+                    avg=_float(trend.get("delta_avg_total_ms")),
+                    over=_float(trend.get("delta_frames_over_budget_pct")),
+                    draws=_float(trend.get("delta_avg_draw_calls")),
+                    objects=_float(trend.get("delta_avg_objects")),
                 )
             )
     procedural = report.get("procedural", [])
@@ -306,6 +405,7 @@ def main() -> int:
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--require-latest-procedural-deep-idle", action="store_true")
     parser.add_argument("--max-latest-town-avg-ms", type=float, default=None)
+    parser.add_argument("--max-latest-production-town-avg-ms", type=float, default=None)
     args = parser.parse_args()
 
     report = _build_report(args)
