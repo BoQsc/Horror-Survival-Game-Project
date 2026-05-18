@@ -29,6 +29,9 @@ const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 @export_range(0.25, 10.0, 0.25) var world_map_baked_object_spawn_headroom_budget_ms: float = 1.5
 @export_range(1, 64, 1) var world_map_baked_object_spawn_headroom_max_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var world_map_baked_object_spawn_hot_budget_ms: float = 0.35
+@export var world_map_baked_building_visual_batching_enabled: bool = true
+@export_range(1, 16, 1) var world_map_baked_building_visual_batch_size: int = 8
+@export_range(1, 8, 1) var world_map_baked_building_visual_batch_rebuilds_per_frame: int = 2
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
 @export_range(0, 60, 1) var object_render_prewarm_frames: int = 12
 @export_range(0.025, 1.0, 0.025) var viewer_chunk_update_interval: float = 0.10
@@ -50,6 +53,15 @@ var _world_map_baked_building_visual_payloads_by_key: Dictionary = {} # String b
 var _world_map_baked_building_keys_by_chunk: Dictionary = {} # Vector3i chunk_coord -> Array[String]
 var _world_map_baked_building_chunk_coords_by_key: Dictionary = {} # String building_key -> Array[Vector3i]
 var _world_map_baked_building_edits_by_key: Dictionary = {} # String building_key -> Dictionary[voxel_key] = { value, meta }
+var _world_map_baked_building_visual_batch_root: Node3D = null
+var _world_map_baked_building_visual_batches: Dictionary = {} # Vector2i -> MeshInstance3D
+var _world_map_baked_building_visual_batch_dirty: Dictionary = {} # Vector2i -> true
+var _last_world_map_baked_building_visual_batch_rebuild_ms: float = 0.0
+var _last_world_map_baked_building_visual_batch_rebuild_count: int = 0
+var _last_world_map_baked_building_visual_batch_source_nodes: int = 0
+var _last_world_map_baked_building_visual_batch_source_surfaces: int = 0
+var _last_world_map_baked_building_visual_batch_output_surfaces: int = 0
+var _last_world_map_baked_building_visual_batch_hidden_nodes: int = 0
 var _last_global_visual_batch_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _native_helper: Object = null
 var _object_render_resource_prewarm_node: Node = null
@@ -169,6 +181,7 @@ func _process(delta):
 		return
 	_process_pending_world_map_baked_object_spawns()
 	_process_pending_object_collisions()
+	_process_world_map_baked_building_visual_batches()
 	_sync_process_loop()
 
 func _start_viewer_chunk_update_timer() -> void:
@@ -204,6 +217,7 @@ func _has_process_work_pending() -> bool:
 		not _pending_world_map_baked_object_spawns.is_empty()
 		or not _pending_object_collision_tasks.is_empty()
 		or has_dirty_global_visual_batches()
+		or not _world_map_baked_building_visual_batch_dirty.is_empty()
 	)
 
 func _wake_process_loop() -> void:
@@ -718,10 +732,319 @@ func _count_visible_world_map_baked_building_visual_surfaces() -> int:
 		if mesh_instance == null or not mesh_instance.visible or mesh_instance.mesh == null:
 			continue
 		total += mesh_instance.mesh.get_surface_count()
+	for node in _world_map_baked_building_visual_batches.values():
+		if not (node and is_instance_valid(node)):
+			continue
+		var batch_node := node as MeshInstance3D
+		if batch_node == null or not batch_node.visible or batch_node.mesh == null:
+			continue
+		total += batch_node.mesh.get_surface_count()
+	return total
+
+func _count_visible_world_map_baked_building_visual_batch_surfaces() -> int:
+	var total := 0
+	for node in _world_map_baked_building_visual_batches.values():
+		if not (node and is_instance_valid(node)):
+			continue
+		var batch_node := node as MeshInstance3D
+		if batch_node == null or not batch_node.visible or batch_node.mesh == null:
+			continue
+		total += batch_node.mesh.get_surface_count()
+	return total
+
+func _get_world_map_baked_building_visual_batch_root() -> Node3D:
+	if _world_map_baked_building_visual_batch_root and is_instance_valid(_world_map_baked_building_visual_batch_root):
+		return _world_map_baked_building_visual_batch_root
+	_world_map_baked_building_visual_batch_root = Node3D.new()
+	_world_map_baked_building_visual_batch_root.name = "BakedBuildingVisualBatches"
+	add_child(_world_map_baked_building_visual_batch_root)
+	return _world_map_baked_building_visual_batch_root
+
+func _get_world_map_baked_building_visual_mesh(root: Node3D) -> MeshInstance3D:
+	if root == null or not is_instance_valid(root):
+		return null
+	return root.get_node_or_null("Mesh") as MeshInstance3D
+
+func _world_map_baked_building_visual_batch_key_from_position(position: Vector3) -> Vector2i:
+	var batch_world_size := float(maxi(world_map_baked_building_visual_batch_size, 1) * CHUNK_SIZE)
+	return Vector2i(
+		int(floor(position.x / batch_world_size)),
+		int(floor(position.z / batch_world_size))
+	)
+
+func _world_map_baked_building_visual_batch_key_for_root(root: Node3D) -> Vector2i:
+	if root == null:
+		return Vector2i.ZERO
+	return _world_map_baked_building_visual_batch_key_from_position(root.position)
+
+func _world_map_baked_building_visual_batch_origin(key: Vector2i) -> Vector3:
+	var batch_world_size := float(maxi(world_map_baked_building_visual_batch_size, 1) * CHUNK_SIZE)
+	return Vector3(
+		(float(key.x) + 0.5) * batch_world_size,
+		0.0,
+		(float(key.y) + 0.5) * batch_world_size
+	)
+
+func _set_world_map_baked_building_visual_mesh_visible(root: Node3D, visible: bool) -> void:
+	var mesh_instance := _get_world_map_baked_building_visual_mesh(root)
+	if mesh_instance:
+		mesh_instance.visible = visible
+
+func _show_individual_world_map_baked_building_visuals_for_batch(key: Vector2i) -> void:
+	for root_variant in _world_map_baked_building_visual_nodes.values():
+		var root := root_variant as Node3D
+		if root == null or not is_instance_valid(root) or not root.is_inside_tree():
+			continue
+		if _world_map_baked_building_visual_batch_key_for_root(root) != key:
+			continue
+		_set_world_map_baked_building_visual_mesh_visible(root, true)
+
+func _mark_world_map_baked_building_visual_batch_dirty_for_root(root: Node3D, invalidate_visible_batch: bool = false) -> void:
+	if not world_map_baked_building_visual_batching_enabled or not world_map_mode:
+		return
+	if root == null or not is_instance_valid(root):
+		return
+	var key := _world_map_baked_building_visual_batch_key_for_root(root)
+	_world_map_baked_building_visual_batch_dirty[key] = true
+	if invalidate_visible_batch and _world_map_baked_building_visual_batches.has(key):
+		var batch_node := _world_map_baked_building_visual_batches[key] as MeshInstance3D
+		if batch_node and is_instance_valid(batch_node):
+			batch_node.visible = false
+		_show_individual_world_map_baked_building_visuals_for_batch(key)
+	_wake_process_loop()
+
+func _mark_all_world_map_baked_building_visual_batches_dirty(invalidate_visible_batches: bool = false) -> void:
+	if not world_map_baked_building_visual_batching_enabled or not world_map_mode:
+		return
+	for root_variant in _world_map_baked_building_visual_nodes.values():
+		var root := root_variant as Node3D
+		if root == null or not is_instance_valid(root) or not root.is_inside_tree():
+			continue
+		_mark_world_map_baked_building_visual_batch_dirty_for_root(root, invalidate_visible_batches)
+	for key_variant in _world_map_baked_building_visual_batches.keys():
+		var key: Vector2i = key_variant
+		_world_map_baked_building_visual_batch_dirty[key] = true
+		if invalidate_visible_batches:
+			var batch_node := _world_map_baked_building_visual_batches[key] as MeshInstance3D
+			if batch_node and is_instance_valid(batch_node):
+				batch_node.visible = false
+	if not _world_map_baked_building_visual_batch_dirty.is_empty():
+		_wake_process_loop()
+
+func _clear_world_map_baked_building_visual_batches(immediate: bool = false) -> void:
+	for key_variant in _world_map_baked_building_visual_batches.keys():
+		var key: Vector2i = key_variant
+		_show_individual_world_map_baked_building_visuals_for_batch(key)
+	for node in _world_map_baked_building_visual_batches.values():
+		if node and is_instance_valid(node):
+			if immediate or not node.is_inside_tree():
+				node.free()
+			else:
+				node.queue_free()
+	_world_map_baked_building_visual_batches.clear()
+	_world_map_baked_building_visual_batch_dirty.clear()
+	_last_world_map_baked_building_visual_batch_rebuild_ms = 0.0
+	_last_world_map_baked_building_visual_batch_rebuild_count = 0
+	_last_world_map_baked_building_visual_batch_source_nodes = 0
+	_last_world_map_baked_building_visual_batch_source_surfaces = 0
+	_last_world_map_baked_building_visual_batch_output_surfaces = 0
+	_last_world_map_baked_building_visual_batch_hidden_nodes = 0
+
+func _build_world_map_baked_building_visual_batch_mesh(entries: Array, batch_origin: Vector3) -> Dictionary:
+	var groups: Dictionary = {}
+	var group_order: Array[String] = []
+	var source_surfaces := 0
+
+	for entry_variant in entries:
+		if typeof(entry_variant) != TYPE_DICTIONARY:
+			continue
+		var entry: Dictionary = entry_variant
+		var root := entry.get("root", null) as Node3D
+		var mesh_instance := entry.get("mesh_instance", null) as MeshInstance3D
+		if root == null or mesh_instance == null or mesh_instance.mesh == null:
+			continue
+		var mesh := mesh_instance.mesh
+		var offset := root.position - batch_origin
+		for surface_index in range(mesh.get_surface_count()):
+			var arrays := mesh.surface_get_arrays(surface_index)
+			if arrays.size() <= Mesh.ARRAY_VERTEX:
+				continue
+			var source_vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			if source_vertices.is_empty():
+				continue
+			var material := mesh.surface_get_material(surface_index)
+			var material_key := "material_%d" % (material.get_instance_id() if material else surface_index)
+			if not groups.has(material_key):
+				groups[material_key] = {
+					"material": material,
+					"vertices": PackedVector3Array(),
+					"normals": PackedVector3Array(),
+					"colors": PackedColorArray(),
+					"uvs": PackedVector2Array(),
+					"indices": PackedInt32Array()
+				}
+				group_order.append(material_key)
+			var group: Dictionary = groups[material_key]
+			var vertices: PackedVector3Array = group["vertices"]
+			var normals: PackedVector3Array = group["normals"]
+			var colors: PackedColorArray = group["colors"]
+			var uvs: PackedVector2Array = group["uvs"]
+			var indices: PackedInt32Array = group["indices"]
+			var vertex_offset := vertices.size()
+			var source_normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL] if arrays.size() > Mesh.ARRAY_NORMAL else PackedVector3Array()
+			var source_colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR] if arrays.size() > Mesh.ARRAY_COLOR else PackedColorArray()
+			var source_uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV] if arrays.size() > Mesh.ARRAY_TEX_UV else PackedVector2Array()
+			var source_indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays.size() > Mesh.ARRAY_INDEX else PackedInt32Array()
+
+			for i in range(source_vertices.size()):
+				vertices.append(source_vertices[i] + offset)
+				normals.append(source_normals[i] if i < source_normals.size() else Vector3.UP)
+				colors.append(source_colors[i] if i < source_colors.size() else Color(1.0, 1.0, 1.0, 1.0))
+				uvs.append(source_uvs[i] if i < source_uvs.size() else Vector2.ZERO)
+
+			if source_indices.is_empty():
+				for i in range(source_vertices.size()):
+					indices.append(vertex_offset + i)
+			else:
+				for source_index in source_indices:
+					indices.append(vertex_offset + int(source_index))
+
+			group["vertices"] = vertices
+			group["normals"] = normals
+			group["colors"] = colors
+			group["uvs"] = uvs
+			group["indices"] = indices
+			groups[material_key] = group
+			source_surfaces += 1
+
+	if groups.is_empty():
+		return {}
+
+	var merged_mesh := ArrayMesh.new()
+	for material_key in group_order:
+		var group: Dictionary = groups[material_key]
+		var vertices: PackedVector3Array = group["vertices"]
+		if vertices.is_empty():
+			continue
+		var arrays: Array = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = vertices
+		arrays[Mesh.ARRAY_NORMAL] = group["normals"]
+		arrays[Mesh.ARRAY_COLOR] = group["colors"]
+		arrays[Mesh.ARRAY_TEX_UV] = group["uvs"]
+		arrays[Mesh.ARRAY_INDEX] = group["indices"]
+		merged_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var material := group.get("material", null) as Material
+		if material:
+			merged_mesh.surface_set_material(merged_mesh.get_surface_count() - 1, material)
+
+	return {
+		"mesh": merged_mesh,
+		"source_surfaces": source_surfaces,
+		"output_surfaces": merged_mesh.get_surface_count()
+	}
+
+func _collect_world_map_baked_building_visual_batch_entries(key: Vector2i) -> Array:
+	var entries: Array = []
+	for root_variant in _world_map_baked_building_visual_nodes.values():
+		var root := root_variant as Node3D
+		if root == null or not is_instance_valid(root) or not root.is_inside_tree():
+			continue
+		if _world_map_baked_building_visual_batch_key_for_root(root) != key:
+			continue
+		var mesh_instance := _get_world_map_baked_building_visual_mesh(root)
+		if mesh_instance == null or mesh_instance.mesh == null:
+			continue
+		entries.append({
+			"root": root,
+			"mesh_instance": mesh_instance
+		})
+	return entries
+
+func _apply_world_map_baked_building_visual_batch_mesh(key: Vector2i, entries: Array, merged_mesh: ArrayMesh) -> void:
+	var batch_node: MeshInstance3D = null
+	if _world_map_baked_building_visual_batches.has(key):
+		batch_node = _world_map_baked_building_visual_batches[key] as MeshInstance3D
+		if not is_instance_valid(batch_node):
+			batch_node = null
+	if batch_node == null:
+		batch_node = MeshInstance3D.new()
+		batch_node.name = "BakedBuildingVisualBatch_%d_%d" % [key.x, key.y]
+		batch_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		batch_node.add_to_group("building_chunks")
+		_get_world_map_baked_building_visual_batch_root().add_child(batch_node)
+		_world_map_baked_building_visual_batches[key] = batch_node
+
+	batch_node.position = _world_map_baked_building_visual_batch_origin(key)
+	batch_node.mesh = merged_mesh
+	batch_node.visible = true
+	for entry_variant in entries:
+		var entry: Dictionary = entry_variant
+		var root := entry.get("root", null) as Node3D
+		_set_world_map_baked_building_visual_mesh_visible(root, false)
+	_last_world_map_baked_building_visual_batch_hidden_nodes = _count_hidden_world_map_baked_building_visual_nodes()
+
+func _rebuild_world_map_baked_building_visual_batch(key: Vector2i) -> bool:
+	var entries := _collect_world_map_baked_building_visual_batch_entries(key)
+	_last_world_map_baked_building_visual_batch_source_nodes = entries.size()
+	if entries.is_empty():
+		if _world_map_baked_building_visual_batches.has(key):
+			var old_node := _world_map_baked_building_visual_batches[key] as Node
+			_world_map_baked_building_visual_batches.erase(key)
+			if old_node:
+				old_node.queue_free()
+		return true
+
+	var batch_origin := _world_map_baked_building_visual_batch_origin(key)
+	var build_result := _build_world_map_baked_building_visual_batch_mesh(entries, batch_origin)
+	var merged_mesh := build_result.get("mesh", null) as ArrayMesh
+	_last_world_map_baked_building_visual_batch_source_surfaces = int(build_result.get("source_surfaces", 0))
+	_last_world_map_baked_building_visual_batch_output_surfaces = int(build_result.get("output_surfaces", 0))
+	if merged_mesh == null:
+		_show_individual_world_map_baked_building_visuals_for_batch(key)
+		return true
+
+	_apply_world_map_baked_building_visual_batch_mesh(key, entries, merged_mesh)
+	return true
+
+func _process_world_map_baked_building_visual_batches() -> void:
+	_last_world_map_baked_building_visual_batch_rebuild_count = 0
+	_last_world_map_baked_building_visual_batch_rebuild_ms = 0.0
+	if not world_map_baked_building_visual_batching_enabled or not world_map_mode:
+		if not _world_map_baked_building_visual_batches.is_empty():
+			_clear_world_map_baked_building_visual_batches()
+		return
+	if _world_map_baked_building_visual_batch_dirty.is_empty():
+		return
+
+	var start_us := Time.get_ticks_usec()
+	var rebuilt := 0
+	var keys := _world_map_baked_building_visual_batch_dirty.keys()
+	for key_variant in keys:
+		if rebuilt >= world_map_baked_building_visual_batch_rebuilds_per_frame:
+			break
+		var key: Vector2i = key_variant
+		if _rebuild_world_map_baked_building_visual_batch(key):
+			_world_map_baked_building_visual_batch_dirty.erase(key)
+			rebuilt += 1
+
+	_last_world_map_baked_building_visual_batch_rebuild_count = rebuilt
+	_last_world_map_baked_building_visual_batch_rebuild_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+
+func _count_hidden_world_map_baked_building_visual_nodes() -> int:
+	var total := 0
+	for root_variant in _world_map_baked_building_visual_nodes.values():
+		var root := root_variant as Node3D
+		if root == null or not is_instance_valid(root) or not root.is_inside_tree():
+			continue
+		var mesh_instance := _get_world_map_baked_building_visual_mesh(root)
+		if mesh_instance and mesh_instance.mesh and not mesh_instance.visible:
+			total += 1
 	return total
 
 func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 	clear_pending_world_map_baked_object_spawns()
+	_clear_world_map_baked_building_visual_batches(immediate)
 	for node in _world_map_baked_building_visual_nodes.values():
 		if node and is_instance_valid(node):
 			if immediate or not node.is_inside_tree():
@@ -813,6 +1136,7 @@ func _remove_world_map_baked_building_visual(building_key: String) -> void:
 		return
 	var root: Node3D = _world_map_baked_building_visual_nodes.get(building_key, null)
 	if root and is_instance_valid(root):
+		_mark_world_map_baked_building_visual_batch_dirty_for_root(root, true)
 		if root.is_inside_tree():
 			root.queue_free()
 		else:
@@ -847,6 +1171,7 @@ func _set_world_map_baked_building_visual_in_tree(building_key: String, should_b
 	if root == null or not is_instance_valid(root):
 		return
 
+	var was_in_tree := root.is_inside_tree()
 	if should_be_in_tree:
 		var parent := root.get_parent()
 		if parent == self:
@@ -854,11 +1179,16 @@ func _set_world_map_baked_building_visual_in_tree(building_key: String, should_b
 		if parent:
 			parent.remove_child(root)
 		add_child(root)
+		_set_world_map_baked_building_visual_mesh_visible(root, true)
+		_mark_world_map_baked_building_visual_batch_dirty_for_root(root, true)
 		return
 
 	var existing_parent := root.get_parent()
 	if existing_parent:
+		if was_in_tree:
+			_mark_world_map_baked_building_visual_batch_dirty_for_root(root, true)
 		existing_parent.remove_child(root)
+		_set_world_map_baked_building_visual_mesh_visible(root, true)
 
 
 func _sync_world_map_baked_building_visual_visibility_for_key(building_key: String) -> void:
@@ -1616,6 +1946,7 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 
 	var visual_sync_start_us := Time.get_ticks_usec()
 	_sync_world_map_baked_building_visual_visibility_for_key(building_key)
+	_mark_world_map_baked_building_visual_batch_dirty_for_root(root, true)
 	_last_apply_world_map_baked_building_visual_sync_ms = float(Time.get_ticks_usec() - visual_sync_start_us) / 1000.0
 	return true
 
@@ -1799,6 +2130,19 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_world_map_baked_visibility_target_visible": _last_world_map_baked_visibility_target_visible,
 		"last_world_map_baked_visibility_total_roots": _last_world_map_baked_visibility_total_roots,
 		"last_world_map_baked_visibility_stale_roots": _last_world_map_baked_visibility_stale_roots,
+		"world_map_baked_building_visual_batching_enabled": world_map_baked_building_visual_batching_enabled,
+		"world_map_baked_building_visual_batch_size": world_map_baked_building_visual_batch_size,
+		"world_map_baked_building_visual_batch_rebuilds_per_frame": world_map_baked_building_visual_batch_rebuilds_per_frame,
+		"world_map_baked_building_visual_batch_node_count": _world_map_baked_building_visual_batches.size(),
+		"world_map_baked_building_visual_batch_dirty_count": _world_map_baked_building_visual_batch_dirty.size(),
+		"visible_world_map_baked_building_visual_batch_surfaces": _count_visible_world_map_baked_building_visual_batch_surfaces(),
+		"hidden_world_map_baked_building_visual_nodes": _count_hidden_world_map_baked_building_visual_nodes(),
+		"last_world_map_baked_building_visual_batch_rebuild_ms": _last_world_map_baked_building_visual_batch_rebuild_ms,
+		"last_world_map_baked_building_visual_batch_rebuild_count": _last_world_map_baked_building_visual_batch_rebuild_count,
+		"last_world_map_baked_building_visual_batch_source_nodes": _last_world_map_baked_building_visual_batch_source_nodes,
+		"last_world_map_baked_building_visual_batch_source_surfaces": _last_world_map_baked_building_visual_batch_source_surfaces,
+		"last_world_map_baked_building_visual_batch_output_surfaces": _last_world_map_baked_building_visual_batch_output_surfaces,
+		"last_world_map_baked_building_visual_batch_hidden_nodes": _last_world_map_baked_building_visual_batch_hidden_nodes,
 		"chunk_pool_size": chunk_pool.size(),
 		"total_objects": total_objects,
 		"total_object_nodes": total_object_nodes,
