@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import run_town_stall_test as town_runner
+from windows_error_dialogs import suppress_windows_error_dialogs
 
 
 PROJECT_PATH = Path(__file__).resolve().parents[2]
@@ -185,6 +186,7 @@ def _validate_runtime_power(snapshot: dict[str, Any], env: dict[str, str]) -> li
 
 
 def main() -> int:
+    suppress_windows_error_dialogs()
     run_start_mtime = time.time()
     env = os.environ.copy()
     env.setdefault("PROCEDURAL_POWER_MOVE_SECONDS", "16")

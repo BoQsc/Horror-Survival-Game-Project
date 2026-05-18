@@ -169,11 +169,11 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
     }
 
 
-def _procedural_active_window_summary(samples: list[Any]) -> dict[str, Any]:
+def _procedural_window_summary(samples: list[Any], phases: set[str]) -> dict[str, Any]:
     rows = [
         _dict(sample)
         for sample in samples
-        if str(_dict(sample).get("phase", "")) in {"move", "hold"}
+        if str(_dict(sample).get("phase", "")) in phases
     ]
     rows = [row for row in rows if row]
     sample_count = len(rows)
@@ -185,6 +185,8 @@ def _procedural_active_window_summary(samples: list[Any]) -> dict[str, Any]:
             "avg_draw_calls": 0.0,
             "avg_objects": 0.0,
             "avg_primitives": 0.0,
+            "max_terrain_visual_batch_hidden_chunk_count": 0,
+            "max_terrain_visual_batch_node_count": 0,
             "max_water_visual_batch_hidden_chunk_count": 0,
             "max_water_visual_batch_node_count": 0,
         }
@@ -197,9 +199,15 @@ def _procedural_active_window_summary(samples: list[Any]) -> dict[str, Any]:
         "avg_draw_calls": _round(sum(_int(row.get("draw_calls")) for row in rows) / float(sample_count)),
         "avg_objects": _round(sum(_int(row.get("render_objects")) for row in rows) / float(sample_count)),
         "avg_primitives": _round(sum(_int(row.get("primitives")) for row in rows) / float(sample_count)),
+        "max_terrain_visual_batch_hidden_chunk_count": max(_int(terrain.get("terrain_visual_batch_hidden_chunk_count")) for terrain in terrains),
+        "max_terrain_visual_batch_node_count": max(_int(terrain.get("terrain_visual_batch_node_count")) for terrain in terrains),
         "max_water_visual_batch_hidden_chunk_count": max(_int(terrain.get("water_visual_batch_hidden_chunk_count")) for terrain in terrains),
         "max_water_visual_batch_node_count": max(_int(terrain.get("water_visual_batch_node_count")) for terrain in terrains),
     }
+
+
+def _procedural_active_window_summary(samples: list[Any]) -> dict[str, Any]:
+    return _procedural_window_summary(samples, {"move", "hold"})
 
 
 def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
@@ -217,6 +225,8 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
         "hold_seconds": _float(snapshot.get("hold_seconds")),
         "sample_count": len(samples),
         "active_window": _procedural_active_window_summary(samples),
+        "move_window": _procedural_window_summary(samples, {"move"}),
+        "hold_window": _procedural_window_summary(samples, {"hold"}),
         "final": {
             "draw_calls": _int(final_sample.get("draw_calls")),
             "render_objects": _int(final_sample.get("render_objects")),
@@ -231,6 +241,9 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
             "runtime_power_render_loop_enabled": bool(terrain.get("runtime_power_render_loop_enabled", True)),
             "rendered_terrain_chunk_count": _int(terrain.get("rendered_terrain_chunk_count")),
             "rendered_water_chunk_count": _int(terrain.get("rendered_water_chunk_count")),
+            "terrain_visual_batch_active": bool(terrain.get("terrain_visual_batch_active", False)),
+            "terrain_visual_batch_node_count": _int(terrain.get("terrain_visual_batch_node_count")),
+            "terrain_visual_batch_hidden_chunk_count": _int(terrain.get("terrain_visual_batch_hidden_chunk_count")),
             "last_gpu_water_density_dispatched": bool(terrain.get("last_gpu_water_density_dispatched", False)),
             "gpu_water_density_skipped_count": _int(terrain.get("gpu_water_density_skipped_count")),
             "last_cpu_mesh_build_water_ms": _float(terrain.get("last_cpu_mesh_build_water_ms")),
@@ -793,12 +806,17 @@ def _print_report(report: dict[str, Any]) -> None:
         for entry in procedural:
             final = _dict(_dict(entry).get("final"))
             active = _dict(_dict(entry).get("active_window"))
+            move = _dict(_dict(entry).get("move_window"))
+            hold = _dict(_dict(entry).get("hold_window"))
             print(
                 "  {name} complete={complete} world_map={world_map} power={mode}@{fps} "
                 "external_busy={busy} dirty_visible={dirty} chunks={terrain_chunks}/{water_chunks} "
                 "active_avg={avg_fps:.1f}fps min={min_fps:.1f} "
                 "draws={draws:.1f} objects={objects:.1f} prims={prims:.1f} "
+                "move={move_draws:.1f}/{move_objects:.1f}/{move_prims:.1f} "
+                "hold={hold_draws:.1f}/{hold_objects:.1f}/{hold_prims:.1f} "
                 "water_dispatch={water_dispatch} water_skips={water_skips} water_build={water_build:.3f}ms "
+                "terrain_batches={terrain_batches} terrain_hidden={terrain_hidden} "
                 "water_batches={water_batches} hidden={hidden} dirty={water_dirty}".format(
                     name=Path(str(entry.get("path", ""))).name,
                     complete=bool(entry.get("completed", False)),
@@ -814,9 +832,17 @@ def _print_report(report: dict[str, Any]) -> None:
                     draws=_float(active.get("avg_draw_calls")),
                     objects=_float(active.get("avg_objects")),
                     prims=_float(active.get("avg_primitives")),
+                    move_draws=_float(move.get("avg_draw_calls")),
+                    move_objects=_float(move.get("avg_objects")),
+                    move_prims=_float(move.get("avg_primitives")),
+                    hold_draws=_float(hold.get("avg_draw_calls")),
+                    hold_objects=_float(hold.get("avg_objects")),
+                    hold_prims=_float(hold.get("avg_primitives")),
                     water_dispatch=bool(final.get("last_gpu_water_density_dispatched", False)),
                     water_skips=_int(final.get("gpu_water_density_skipped_count")),
                     water_build=_float(final.get("last_cpu_mesh_build_water_ms")),
+                    terrain_batches=_int(active.get("max_terrain_visual_batch_node_count")),
+                    terrain_hidden=_int(active.get("max_terrain_visual_batch_hidden_chunk_count")),
                     water_batches=_int(active.get("max_water_visual_batch_node_count")),
                     hidden=_int(active.get("max_water_visual_batch_hidden_chunk_count")),
                     water_dirty=_int(final.get("water_visual_batch_dirty_count")),

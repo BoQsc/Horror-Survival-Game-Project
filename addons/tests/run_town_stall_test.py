@@ -9,6 +9,8 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from windows_error_dialogs import suppress_windows_error_dialogs
+
 # Configuration
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
@@ -1457,6 +1459,7 @@ def _detect_run_failure(output: str, returncode: Optional[int]) -> list[str]:
 
 
 def main() -> int:
+    suppress_windows_error_dialogs()
     if not _acquire_run_lock():
         print("ERROR: Another town stall benchmark launcher is already running.")
         print("Close the existing launcher before starting a new one.")
