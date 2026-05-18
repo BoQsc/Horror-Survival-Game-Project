@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,13 @@ def _round(value: float) -> float:
 
 def _has_samples(summary: dict[str, Any]) -> bool:
     return _int(summary.get("sample_count")) > 0
+
+
+def _age_hours(modified_epoch: Any, reference_epoch: float) -> float:
+    modified = _float(modified_epoch, 0.0)
+    if modified <= 0.0:
+        return 0.0
+    return max(0.0, (reference_epoch - modified) / 3600.0)
 
 
 def _window_summary(window: dict[str, Any], target_frame_ms: float) -> dict[str, Any]:
@@ -337,6 +345,58 @@ def _gpu_thermal_threshold_requested(args: argparse.Namespace) -> bool:
     )
 
 
+def _freshness_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.max_latest_production_town_age_hours is not None
+        or args.max_latest_procedural_age_hours is not None
+        or args.max_latest_gpu_telemetry_age_hours is not None
+    )
+
+
+def _freshness_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    reference_epoch = _float(report.get("generated_at_epoch"), time.time())
+    latest_production = _dict(report.get("latest_production_town"))
+    procedural = report.get("procedural", [])
+    latest_procedural = _dict(procedural[0]) if isinstance(procedural, list) and procedural else {}
+    latest_gpu = _dict(report.get("latest_gpu_telemetry"))
+    observed = {
+        "latest_production_town_age_hours": _round(_age_hours(latest_production.get("modified_epoch"), reference_epoch)) if latest_production else None,
+        "latest_procedural_age_hours": _round(_age_hours(latest_procedural.get("modified_epoch"), reference_epoch)) if latest_procedural else None,
+        "latest_gpu_telemetry_age_hours": _round(_age_hours(latest_gpu.get("modified_epoch"), reference_epoch)) if latest_gpu else None,
+    }
+    failures: list[str] = []
+    if args.max_latest_production_town_age_hours is not None:
+        if not latest_production:
+            failures.append("no production-like town snapshots found")
+        elif float(observed["latest_production_town_age_hours"]) > args.max_latest_production_town_age_hours:
+            failures.append(
+                "latest production-like town snapshot age "
+                f"{observed['latest_production_town_age_hours']:.3f}h exceeds {args.max_latest_production_town_age_hours:.3f}h"
+            )
+    if args.max_latest_procedural_age_hours is not None:
+        if not latest_procedural:
+            failures.append("no procedural power snapshots found")
+        elif float(observed["latest_procedural_age_hours"]) > args.max_latest_procedural_age_hours:
+            failures.append(
+                "latest procedural power snapshot age "
+                f"{observed['latest_procedural_age_hours']:.3f}h exceeds {args.max_latest_procedural_age_hours:.3f}h"
+            )
+    if args.max_latest_gpu_telemetry_age_hours is not None:
+        if not latest_gpu:
+            failures.append("no raw GPU telemetry files found")
+        elif float(observed["latest_gpu_telemetry_age_hours"]) > args.max_latest_gpu_telemetry_age_hours:
+            failures.append(
+                "latest raw GPU telemetry age "
+                f"{observed['latest_gpu_telemetry_age_hours']:.3f}h exceeds {args.max_latest_gpu_telemetry_age_hours:.3f}h"
+            )
+    return {
+        "enforced": _freshness_threshold_requested(args),
+        "passed": not failures,
+        "failures": failures,
+        "observed": observed,
+    }
+
+
 def _ablation_cases_by_snapshot(render_ablation: dict[str, Any]) -> dict[str, str]:
     cases: dict[str, str] = {}
     results = render_ablation.get("results", [])
@@ -451,6 +511,7 @@ def _stable_60_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[st
 
 
 def _build_report(args: argparse.Namespace) -> dict[str, Any]:
+    generated_at_epoch = time.time()
     snapshot_dir = Path(args.snapshot_dir)
     town = [_summarize_town_snapshot(path, args.target_frame_ms) for path in _latest_files(snapshot_dir, "snapshot_*.json", args.town_count)]
     procedural = [
@@ -461,6 +522,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     gpu_telemetry = _summarize_gpu_telemetry_files(args)
     _annotate_town_runs(town, render_ablation)
     report = {
+        "generated_at_epoch": generated_at_epoch,
         "snapshot_dir": str(snapshot_dir),
         "gpu_telemetry_dir": str(Path(args.gpu_telemetry_dir)),
         "target_frame_ms": args.target_frame_ms,
@@ -474,6 +536,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     }
     report["stable_60_gate"] = _stable_60_gate(report, args)
     report["gpu_thermal_gate"] = _gpu_thermal_gate(report, args)
+    report["freshness_gate"] = _freshness_gate(report, args)
     return report
 
 
@@ -530,6 +593,10 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
         thermal_gate = _dict(report.get("gpu_thermal_gate"))
         for failure in thermal_gate.get("failures", []):
             failures.append(f"gpu thermal gate: {failure}")
+    if _freshness_threshold_requested(args):
+        freshness_gate = _dict(report.get("freshness_gate"))
+        for failure in freshness_gate.get("failures", []):
+            failures.append(f"freshness gate: {failure}")
     return failures
 
 
@@ -662,6 +729,18 @@ def _print_report(report: dict[str, Any]) -> None:
                     peak=_float(observed.get("max_hold_peak_temp_c")),
                 )
             )
+    freshness_gate = _dict(report.get("freshness_gate"))
+    if freshness_gate:
+        observed = _dict(freshness_gate.get("observed"))
+        print(
+            "Freshness gate: enforced={enforced} passed={passed} town={town}h procedural={procedural}h gpu={gpu}h".format(
+                enforced=bool(freshness_gate.get("enforced", False)),
+                passed=bool(freshness_gate.get("passed", False)),
+                town=observed.get("latest_production_town_age_hours"),
+                procedural=observed.get("latest_procedural_age_hours"),
+                gpu=observed.get("latest_gpu_telemetry_age_hours"),
+            )
+        )
     render_ablation = _dict(report.get("render_ablation"))
     results = render_ablation.get("results", [])
     if isinstance(results, list) and results:
@@ -705,6 +784,9 @@ def main() -> int:
     parser.add_argument("--max-latest-gpu-hold-avg-power-w", type=float, default=None)
     parser.add_argument("--max-latest-gpu-hold-avg-temp-c", type=float, default=None)
     parser.add_argument("--max-latest-gpu-hold-peak-temp-c", type=float, default=None)
+    parser.add_argument("--max-latest-production-town-age-hours", type=float, default=None)
+    parser.add_argument("--max-latest-procedural-age-hours", type=float, default=None)
+    parser.add_argument("--max-latest-gpu-telemetry-age-hours", type=float, default=None)
     args = parser.parse_args()
 
     report = _build_report(args)
