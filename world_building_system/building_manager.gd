@@ -182,6 +182,8 @@ func _process(delta):
 	_process_pending_world_map_baked_object_spawns()
 	_process_pending_object_collisions()
 	_process_world_map_baked_building_visual_batches()
+	if has_dirty_visible_chunks():
+		flush_dirty_chunks()
 	_sync_process_loop()
 
 func _start_viewer_chunk_update_timer() -> void:
@@ -216,6 +218,7 @@ func _has_process_work_pending() -> bool:
 	return (
 		not _pending_world_map_baked_object_spawns.is_empty()
 		or not _pending_object_collision_tasks.is_empty()
+		or has_dirty_visible_chunks()
 		or has_dirty_global_visual_batches()
 		or not _world_map_baked_building_visual_batch_dirty.is_empty()
 	)
@@ -367,10 +370,12 @@ func _load_chunk_visual(coord: Vector3i):
 		# Rebuild mesh if chunk has data
 		if not chunk.is_empty and chunk.is_mesh_dirty():
 			chunk.rebuild_mesh()
+			_clear_chunk_dirty(coord)
 	
 	visible_chunks[coord] = true
 	if not was_visible and _dirty_chunks.has(coord):
 		_dirty_visible_chunk_count += 1
+	_sync_process_loop()
 
 func queue_object_collision(chunk: BuildingChunk, obj: Node3D, anchor: Vector3i) -> void:
 	if not chunk or not obj:
@@ -395,6 +400,7 @@ func mark_chunk_dirty(chunk_coord: Vector3i, chunk: BuildingChunk) -> void:
 	_dirty_chunks[chunk_coord] = chunk
 	if not was_dirty and visible_chunks.has(chunk_coord):
 		_dirty_visible_chunk_count += 1
+		_wake_process_loop()
 
 func _clear_chunk_dirty(chunk_coord: Vector3i) -> void:
 	if not _dirty_chunks.has(chunk_coord):
