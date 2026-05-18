@@ -210,6 +210,26 @@ def _procedural_active_window_summary(samples: list[Any]) -> dict[str, Any]:
     return _procedural_window_summary(samples, {"move", "hold"})
 
 
+def _procedural_raw_gpu_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    summary = _dict(snapshot.get("raw_gpu_summary"))
+    power = _dict(summary.get("power_w"))
+    temp = _dict(summary.get("temp_c"))
+    util = _dict(summary.get("gpu_util_percent"))
+    return {
+        "sample_count": _int(summary.get("sample_count")),
+        "duration_s": _round(_float(summary.get("duration_s"))),
+        "power_sample_count": _int(power.get("count")),
+        "avg_power_w": _round(_float(power.get("avg"))),
+        "max_power_w": _round(_float(power.get("max"))),
+        "temp_sample_count": _int(temp.get("count")),
+        "avg_temp_c": _round(_float(temp.get("avg"))),
+        "max_temp_c": _round(_float(temp.get("max"))),
+        "gpu_util_sample_count": _int(util.get("count")),
+        "avg_gpu_util_pct": _round(_float(util.get("avg"))),
+        "max_gpu_util_pct": _round(_float(util.get("max"))),
+    }
+
+
 def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
     snapshot = _read_json(path)
     samples = _list(snapshot.get("samples"))
@@ -227,6 +247,7 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
         "active_window": _procedural_active_window_summary(samples),
         "move_window": _procedural_window_summary(samples, {"move"}),
         "hold_window": _procedural_window_summary(samples, {"hold"}),
+        "raw_gpu": _procedural_raw_gpu_summary(snapshot),
         "final": {
             "draw_calls": _int(final_sample.get("draw_calls")),
             "render_objects": _int(final_sample.get("render_objects")),
@@ -723,6 +744,38 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
     failures: list[str] = []
     if args.require_latest_procedural_deep_idle:
         failures.extend(_latest_procedural_failures(report))
+    if (
+        args.require_latest_procedural_gpu_samples
+        or args.max_latest_procedural_gpu_avg_power_w is not None
+        or args.max_latest_procedural_gpu_avg_temp_c is not None
+        or args.max_latest_procedural_gpu_peak_temp_c is not None
+    ):
+        procedural = report.get("procedural", [])
+        latest_procedural = _dict(procedural[0]) if isinstance(procedural, list) and procedural else {}
+        raw_gpu = _dict(latest_procedural.get("raw_gpu"))
+        if not latest_procedural:
+            failures.append("no procedural power snapshots found")
+        elif _int(raw_gpu.get("power_sample_count")) <= 0 or _int(raw_gpu.get("temp_sample_count")) <= 0:
+            failures.append("latest procedural power snapshot has no persisted raw GPU samples")
+        else:
+            avg_power = _float(raw_gpu.get("avg_power_w"))
+            avg_temp = _float(raw_gpu.get("avg_temp_c"))
+            peak_temp = _float(raw_gpu.get("max_temp_c"))
+            if args.max_latest_procedural_gpu_avg_power_w is not None and avg_power > args.max_latest_procedural_gpu_avg_power_w:
+                failures.append(
+                    "latest procedural average GPU power "
+                    f"{avg_power:.3f} W exceeds {args.max_latest_procedural_gpu_avg_power_w:.3f} W"
+                )
+            if args.max_latest_procedural_gpu_avg_temp_c is not None and avg_temp > args.max_latest_procedural_gpu_avg_temp_c:
+                failures.append(
+                    "latest procedural average GPU temp "
+                    f"{avg_temp:.3f} C exceeds {args.max_latest_procedural_gpu_avg_temp_c:.3f} C"
+                )
+            if args.max_latest_procedural_gpu_peak_temp_c is not None and peak_temp > args.max_latest_procedural_gpu_peak_temp_c:
+                failures.append(
+                    "latest procedural peak GPU temp "
+                    f"{peak_temp:.3f} C exceeds {args.max_latest_procedural_gpu_peak_temp_c:.3f} C"
+                )
     if args.require_latest_procedural_move_render_improvement:
         comparison = _dict(report.get("latest_procedural_terrain_batch_comparison"))
         if not bool(comparison.get("available", False)):
@@ -919,6 +972,7 @@ def _print_report(report: dict[str, Any]) -> None:
             active = _dict(_dict(entry).get("active_window"))
             move = _dict(_dict(entry).get("move_window"))
             hold = _dict(_dict(entry).get("hold_window"))
+            raw_gpu = _dict(_dict(entry).get("raw_gpu"))
             print(
                 "  {name} complete={complete} world_map={world_map} power={mode}@{fps} "
                 "external_busy={busy} dirty_visible={dirty} chunks={terrain_chunks}/{water_chunks} "
@@ -926,6 +980,7 @@ def _print_report(report: dict[str, Any]) -> None:
                 "draws={draws:.1f} objects={objects:.1f} prims={prims:.1f} "
                 "move={move_draws:.1f}/{move_objects:.1f}/{move_prims:.1f} "
                 "hold={hold_draws:.1f}/{hold_objects:.1f}/{hold_prims:.1f} "
+                "gpu={gpu_power:.1f}/{gpu_power_max:.1f}W {gpu_temp:.1f}/{gpu_temp_max:.1f}C "
                 "water_dispatch={water_dispatch} water_skips={water_skips} water_build={water_build:.3f}ms "
                 "terrain_batches={terrain_batches} terrain_hidden={terrain_hidden} "
                 "water_batches={water_batches} hidden={hidden} dirty={water_dirty}".format(
@@ -949,6 +1004,10 @@ def _print_report(report: dict[str, Any]) -> None:
                     hold_draws=_float(hold.get("avg_draw_calls")),
                     hold_objects=_float(hold.get("avg_objects")),
                     hold_prims=_float(hold.get("avg_primitives")),
+                    gpu_power=_float(raw_gpu.get("avg_power_w")),
+                    gpu_power_max=_float(raw_gpu.get("max_power_w")),
+                    gpu_temp=_float(raw_gpu.get("avg_temp_c")),
+                    gpu_temp_max=_float(raw_gpu.get("max_temp_c")),
                     water_dispatch=bool(final.get("last_gpu_water_density_dispatched", False)),
                     water_skips=_int(final.get("gpu_water_density_skipped_count")),
                     water_build=_float(final.get("last_cpu_mesh_build_water_ms")),
@@ -1078,6 +1137,10 @@ def main() -> int:
     parser.add_argument("--gpu-telemetry-count", type=int, default=3)
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--require-latest-procedural-deep-idle", action="store_true")
+    parser.add_argument("--require-latest-procedural-gpu-samples", action="store_true")
+    parser.add_argument("--max-latest-procedural-gpu-avg-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-procedural-gpu-avg-temp-c", type=float, default=None)
+    parser.add_argument("--max-latest-procedural-gpu-peak-temp-c", type=float, default=None)
     parser.add_argument("--require-latest-procedural-move-render-improvement", action="store_true")
     parser.add_argument("--max-latest-procedural-hold-primitive-ratio", type=float, default=None)
     parser.add_argument("--max-latest-town-avg-ms", type=float, default=None)

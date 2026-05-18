@@ -56,6 +56,37 @@ def _summary(values: list[float]) -> dict[str, float]:
     }
 
 
+def _gpu_sample_summary(gpu_samples: list[dict[str, Any]], started_at_epoch: float, ended_at_epoch: float) -> dict[str, Any]:
+    return {
+        "sample_count": len(gpu_samples),
+        "started_at_epoch": started_at_epoch,
+        "ended_at_epoch": ended_at_epoch,
+        "duration_s": round(max(0.0, ended_at_epoch - started_at_epoch), 3),
+        "power_w": _summary(_numbers(gpu_samples, "power_w")),
+        "temp_c": _summary(_numbers(gpu_samples, "temp_c")),
+        "gpu_util_percent": _summary(_numbers(gpu_samples, "gpu_util_percent")),
+    }
+
+
+def _attach_gpu_samples_to_snapshot(
+    snapshot_path: Optional[Path],
+    snapshot: dict[str, Any],
+    gpu_samples: list[dict[str, Any]],
+    started_at_epoch: float,
+    ended_at_epoch: float,
+) -> dict[str, Any]:
+    if snapshot_path is None or not snapshot or "error" in snapshot:
+        return snapshot
+
+    snapshot["raw_gpu_summary"] = _gpu_sample_summary(gpu_samples, started_at_epoch, ended_at_epoch)
+    snapshot["raw_gpu_samples"] = gpu_samples
+    try:
+        snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    except OSError as exc:
+        print(f"WARNING: failed to persist procedural raw GPU samples: {exc}")
+    return snapshot
+
+
 def _env_bool(env: dict[str, str], name: str, default: bool) -> bool:
     raw = (env.get(name, "") or "").strip().lower()
     if raw in {"1", "true", "yes", "on"}:
@@ -224,6 +255,7 @@ def main() -> int:
     )
     stop_event.set()
     sampler.join(timeout=5)
+    run_end_epoch = time.time()
 
     output = (result.stdout or "") + "\n" + (result.stderr or "")
     print("\n" + "=" * 50)
@@ -233,6 +265,7 @@ def main() -> int:
 
     snapshot_path = _latest_snapshot(_snapshot_root(env), run_start_mtime - 1.0)
     snapshot = _read_json(snapshot_path)
+    snapshot = _attach_gpu_samples_to_snapshot(snapshot_path, snapshot, gpu_samples, run_start_mtime, run_end_epoch)
     _print_summary(snapshot_path, snapshot, gpu_samples)
 
     validation_failures = _validate_runtime_power(snapshot, env)
