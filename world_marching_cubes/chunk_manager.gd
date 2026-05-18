@@ -56,13 +56,13 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(0, 8, 1) var distant_world_map_lod_overlap: int = 2
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
-@export var terrain_visual_batching_enabled: bool = false
-@export_range(1, 16, 1) var terrain_visual_batch_size: int = 4
+@export var terrain_visual_batching_enabled: bool = true
+@export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 16, 1) var terrain_visual_batch_cached_rebuilds_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_cached_rebuild_budget_ms: float = 0.75
 @export var terrain_visual_batch_async_build_enabled: bool = true
-@export var terrain_visual_batch_async_during_streaming: bool = false
+@export var terrain_visual_batch_async_during_streaming: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_async_builds_per_frame: int = 1
 @export_range(0, 8, 1) var terrain_visual_batch_streaming_async_queue_per_frame: int = 1
 @export_range(1, 64, 1) var terrain_visual_batch_async_build_queue_limit: int = 8
@@ -665,6 +665,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_mesh_cache_hits": _terrain_visual_batch_mesh_cache_hits,
 		"terrain_visual_batch_mesh_cache_misses": _terrain_visual_batch_mesh_cache_misses,
 		"terrain_visual_batch_node_count": _terrain_visual_batches.size(),
+		"terrain_visual_batch_hidden_chunk_count": _count_hidden_terrain_visual_batch_chunks(),
 		"terrain_visual_batch_dirty_count": _terrain_visual_batch_dirty.size(),
 		"last_terrain_visual_batch_rebuild_ms": _last_terrain_visual_batch_rebuild_ms,
 		"last_terrain_visual_batch_rebuild_count": _last_terrain_visual_batch_rebuild_count,
