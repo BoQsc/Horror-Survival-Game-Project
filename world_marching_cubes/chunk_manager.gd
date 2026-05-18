@@ -58,6 +58,8 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
 @export var terrain_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
+@export var world_map_visual_batch_profile_enabled: bool = true
+@export_range(1, 16, 1) var world_map_terrain_visual_batch_size: int = 3
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 16, 1) var terrain_visual_batch_cached_rebuilds_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_cached_rebuild_budget_ms: float = 0.75
@@ -71,12 +73,15 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 60, 1) var terrain_visual_batch_hot_rebuild_interval_frames: int = 2
 @export_range(1, 512, 1) var terrain_visual_batch_hot_rebuild_dirty_threshold: int = 8
 @export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 48000
+@export_range(0, 200000, 1000) var world_map_terrain_visual_batch_max_vertices: int = 200000
 @export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
 @export var terrain_visual_batch_idle_polish_enabled: bool = true
 @export var water_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var water_visual_batch_size: int = 2
+@export_range(1, 16, 1) var world_map_water_visual_batch_size: int = 3
 @export_range(1, 8, 1) var water_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 200000, 1000) var water_visual_batch_max_vertices: int = 48000
+@export_range(0, 200000, 1000) var world_map_water_visual_batch_max_vertices: int = 200000
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -399,6 +404,8 @@ var _terrain_visual_batch_total_heavy_skips: int = 0
 var _terrain_visual_batch_stream_idle_frames: int = 0
 var _terrain_visual_batch_hot_rebuild_frame_counter: int = 0
 var _last_terrain_visual_batch_hot_rebuild: bool = false
+var _last_effective_terrain_visual_batch_size: int = -1
+var _last_effective_terrain_visual_batch_max_vertices: int = -1
 var _terrain_visual_mesh_retire_queue: Array[Vector3i] = []
 var _terrain_visual_mesh_retire_queued: Dictionary = {}
 @export_range(1, 64, 1) var terrain_visual_mesh_retire_budget_per_frame: int = 16
@@ -413,6 +420,8 @@ var _last_water_visual_batch_vertex_count: int = 0
 var _last_water_visual_batch_index_count: int = 0
 var _last_water_visual_batch_skipped_heavy_count: int = 0
 var _water_visual_batch_total_heavy_skips: int = 0
+var _last_effective_water_visual_batch_size: int = -1
+var _last_effective_water_visual_batch_max_vertices: int = -1
 var _render_resource_prewarm_started: bool = false
 var _render_resource_prewarm_node: Node = null
 @export_range(1, 256, 1) var completed_generation_drain_limit_per_frame: int = 32
@@ -668,6 +677,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"active_render_chunk_count": active_render_chunk_count,
 		"terrain_visual_batching_enabled": terrain_visual_batching_enabled,
 		"terrain_visual_batch_size": terrain_visual_batch_size,
+		"world_map_visual_batch_profile_enabled": world_map_visual_batch_profile_enabled,
+		"world_map_terrain_visual_batch_size": world_map_terrain_visual_batch_size,
+		"world_map_terrain_visual_batch_max_vertices": world_map_terrain_visual_batch_max_vertices,
+		"effective_terrain_visual_batch_size": _effective_terrain_visual_batch_size(),
+		"effective_terrain_visual_batch_max_vertices": _effective_terrain_visual_batch_max_vertices(),
 		"terrain_visual_batch_cached_rebuilds_per_frame": terrain_visual_batch_cached_rebuilds_per_frame,
 		"terrain_visual_batch_cached_rebuild_budget_ms": terrain_visual_batch_cached_rebuild_budget_ms,
 		"terrain_visual_batch_async_build_enabled": terrain_visual_batch_async_build_enabled,
@@ -713,6 +727,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_mesh_retire_queue_count": _terrain_visual_mesh_retire_queue.size(),
 		"water_visual_batching_enabled": water_visual_batching_enabled,
 		"water_visual_batch_size": water_visual_batch_size,
+		"world_map_water_visual_batch_size": world_map_water_visual_batch_size,
+		"world_map_water_visual_batch_max_vertices": world_map_water_visual_batch_max_vertices,
+		"effective_water_visual_batch_size": _effective_water_visual_batch_size(),
+		"effective_water_visual_batch_max_vertices": _effective_water_visual_batch_max_vertices(),
 		"water_visual_batch_rebuilds_per_frame": water_visual_batch_rebuilds_per_frame,
 		"water_visual_batch_max_vertices": water_visual_batch_max_vertices,
 		"water_visual_batch_node_count": _water_visual_batches.size(),
@@ -1164,8 +1182,31 @@ func _get_terrain_visual_batch_builder() -> Object:
 	_terrain_visual_batch_builder = ClassDB.instantiate("MeshBuilder")
 	return _terrain_visual_batch_builder
 
+func _use_world_map_visual_batch_profile() -> bool:
+	return world_map_visual_batch_profile_enabled and world_map_active
+
+func _effective_terrain_visual_batch_size() -> int:
+	if _use_world_map_visual_batch_profile():
+		return maxi(world_map_terrain_visual_batch_size, 1)
+	return maxi(terrain_visual_batch_size, 1)
+
+func _effective_terrain_visual_batch_max_vertices() -> int:
+	if _use_world_map_visual_batch_profile():
+		return world_map_terrain_visual_batch_max_vertices
+	return terrain_visual_batch_max_vertices
+
+func _effective_water_visual_batch_size() -> int:
+	if _use_world_map_visual_batch_profile():
+		return maxi(world_map_water_visual_batch_size, 1)
+	return maxi(water_visual_batch_size, 1)
+
+func _effective_water_visual_batch_max_vertices() -> int:
+	if _use_world_map_visual_batch_profile():
+		return world_map_water_visual_batch_max_vertices
+	return water_visual_batch_max_vertices
+
 func _terrain_visual_batch_key(coord: Vector3i) -> Vector2i:
-	var batch_size := maxi(terrain_visual_batch_size, 1)
+	var batch_size := _effective_terrain_visual_batch_size()
 	return Vector2i(
 		int(floor(float(coord.x) / float(batch_size))),
 		int(floor(float(coord.z) / float(batch_size)))
@@ -1830,7 +1871,8 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object, cache_only: b
 				old_node.queue_free()
 		return true
 
-	if terrain_visual_batch_max_vertices > 0 and total_vertices > terrain_visual_batch_max_vertices:
+	var terrain_batch_max_vertices := _effective_terrain_visual_batch_max_vertices()
+	if terrain_batch_max_vertices > 0 and total_vertices > terrain_batch_max_vertices:
 		if cache_only:
 			return false
 		if _terrain_visual_batches.has(key):
@@ -1898,14 +1940,14 @@ func _get_water_visual_batch_root() -> Node3D:
 	return _water_visual_batch_root
 
 func _water_visual_batch_key(coord: Vector3i) -> Vector2i:
-	var batch_size := maxi(water_visual_batch_size, 1)
+	var batch_size := _effective_water_visual_batch_size()
 	return Vector2i(
 		int(floor(float(coord.x) / float(batch_size))),
 		int(floor(float(coord.z) / float(batch_size)))
 	)
 
 func _water_visual_batch_origin(key: Vector2i) -> Vector3:
-	var batch_size := maxi(water_visual_batch_size, 1)
+	var batch_size := _effective_water_visual_batch_size()
 	var center_x := (float(key.x * batch_size) + float(batch_size) * 0.5) * float(CHUNK_STRIDE)
 	var center_z := (float(key.y * batch_size) + float(batch_size) * 0.5) * float(CHUNK_STRIDE)
 	return Vector3(center_x, 0.0, center_z)
@@ -2023,6 +2065,89 @@ func _clear_water_visual_batches(immediate: bool = false) -> void:
 	_last_water_visual_batch_index_count = 0
 	_last_water_visual_batch_skipped_heavy_count = 0
 	_water_visual_batch_total_heavy_skips = 0
+
+func _collect_terrain_visual_batch_member_coords() -> Array[Vector3i]:
+	var coords: Array[Vector3i] = []
+	var seen := {}
+	for batch_members_variant in _terrain_visual_batch_members.values():
+		var batch_members: Dictionary = batch_members_variant
+		for coord_variant in batch_members.keys():
+			var coord: Vector3i = coord_variant
+			if seen.has(coord):
+				continue
+			seen[coord] = true
+			coords.append(coord)
+	if coords.is_empty():
+		for coord_variant in active_chunks.keys():
+			var coord: Vector3i = coord_variant
+			if coord.y == 0:
+				coords.append(coord)
+	return coords
+
+func _collect_water_visual_batch_member_coords() -> Array[Vector3i]:
+	var coords: Array[Vector3i] = []
+	var seen := {}
+	for batch_members_variant in _water_visual_batch_members.values():
+		var batch_members: Dictionary = batch_members_variant
+		for coord_variant in batch_members.keys():
+			var coord: Vector3i = coord_variant
+			if seen.has(coord):
+				continue
+			seen[coord] = true
+			coords.append(coord)
+	if coords.is_empty():
+		for coord_variant in active_chunks.keys():
+			var coord: Vector3i = coord_variant
+			if coord.y != 0:
+				continue
+			var data = active_chunks.get(coord, null)
+			if data != null and data.node_water != null and is_instance_valid(data.node_water):
+				coords.append(coord)
+	return coords
+
+func _rebuild_terrain_visual_batch_members_for_profile() -> void:
+	var coords := _collect_terrain_visual_batch_member_coords()
+	_clear_terrain_visual_batches()
+	_clear_terrain_visual_batch_mesh_cache()
+	_terrain_visual_batch_members.clear()
+	for coord in coords:
+		_register_terrain_visual_batch_member(coord)
+	for key_variant in _terrain_visual_batch_members.keys():
+		_terrain_visual_batch_dirty[key_variant] = true
+
+func _rebuild_water_visual_batch_members_for_profile() -> void:
+	var coords := _collect_water_visual_batch_member_coords()
+	_clear_water_visual_batches()
+	_water_visual_batch_members.clear()
+	for coord in coords:
+		_register_water_visual_batch_member(coord)
+	for key_variant in _water_visual_batch_members.keys():
+		_water_visual_batch_dirty[key_variant] = true
+
+func _sync_visual_batch_profile() -> void:
+	var terrain_size := _effective_terrain_visual_batch_size()
+	var terrain_max_vertices := _effective_terrain_visual_batch_max_vertices()
+	var terrain_profile_changed := _last_effective_terrain_visual_batch_size >= 0 \
+		and (
+			terrain_size != _last_effective_terrain_visual_batch_size \
+			or terrain_max_vertices != _last_effective_terrain_visual_batch_max_vertices
+		)
+	_last_effective_terrain_visual_batch_size = terrain_size
+	_last_effective_terrain_visual_batch_max_vertices = terrain_max_vertices
+	if terrain_profile_changed and terrain_visual_batching_enabled and world_map_active:
+		_rebuild_terrain_visual_batch_members_for_profile()
+
+	var water_size := _effective_water_visual_batch_size()
+	var water_max_vertices := _effective_water_visual_batch_max_vertices()
+	var water_profile_changed := _last_effective_water_visual_batch_size >= 0 \
+		and (
+			water_size != _last_effective_water_visual_batch_size \
+			or water_max_vertices != _last_effective_water_visual_batch_max_vertices
+		)
+	_last_effective_water_visual_batch_size = water_size
+	_last_effective_water_visual_batch_max_vertices = water_max_vertices
+	if water_profile_changed and water_visual_batching_enabled and water_render_enabled and world_map_active:
+		_rebuild_water_visual_batch_members_for_profile()
 
 func _has_water_visual_batch_polish_work() -> bool:
 	return water_visual_batching_enabled \
@@ -2176,7 +2301,8 @@ func _rebuild_water_visual_batch(key: Vector2i, builder: Object) -> bool:
 				old_node.queue_free()
 		return true
 
-	if water_visual_batch_max_vertices > 0 and total_vertices > water_visual_batch_max_vertices:
+	var water_batch_max_vertices := _effective_water_visual_batch_max_vertices()
+	if water_batch_max_vertices > 0 and total_vertices > water_batch_max_vertices:
 		if _water_visual_batches.has(key):
 			var heavy_old_node := _water_visual_batches[key] as Node
 			_water_visual_batches.erase(key)
@@ -2591,6 +2717,7 @@ func _process(delta):
 	_adjust_adaptive_loading()
 
 	_update_runtime_power_mode(delta)
+	_sync_visual_batch_profile()
 
 	if skip_terrain_chunk_updates_for_test:
 		return
@@ -2772,15 +2899,32 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 		water_render_enabled = false
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
 	terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_VISUAL_BATCHING", terrain_visual_batching_enabled)
+	world_map_visual_batch_profile_enabled = _get_runtime_power_env_bool("TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE", world_map_visual_batch_profile_enabled)
+	var terrain_batch_size_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE").is_empty()
+	var terrain_batch_max_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES").is_empty()
+	var water_batch_size_overridden := not OS.get_environment("TOWN_STALL_WATER_VISUAL_BATCH_SIZE").is_empty()
+	var water_batch_max_overridden := not OS.get_environment("TOWN_STALL_WATER_VISUAL_BATCH_MAX_VERTICES").is_empty()
 	terrain_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE", terrain_visual_batch_size, 1, 16)
+	world_map_terrain_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE", world_map_terrain_visual_batch_size, 1, 16)
+	if terrain_batch_size_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE").is_empty():
+		world_map_terrain_visual_batch_size = terrain_visual_batch_size
 	terrain_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES", terrain_visual_batch_max_vertices, 0, 200000)
+	world_map_terrain_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_MAX_VERTICES", world_map_terrain_visual_batch_max_vertices, 0, 200000)
+	if terrain_batch_max_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_MAX_VERTICES").is_empty():
+		world_map_terrain_visual_batch_max_vertices = terrain_visual_batch_max_vertices
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
 	terrain_visual_batch_idle_polish_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH", terrain_visual_batch_idle_polish_enabled)
 	water_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_VISUAL_BATCHING", water_visual_batching_enabled)
 	water_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_WATER_VISUAL_BATCH_SIZE", water_visual_batch_size, 1, 16)
+	world_map_water_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_SIZE", world_map_water_visual_batch_size, 1, 16)
+	if water_batch_size_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_SIZE").is_empty():
+		world_map_water_visual_batch_size = water_visual_batch_size
 	water_visual_batch_rebuilds_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_WATER_VISUAL_BATCH_REBUILDS_PER_FRAME", water_visual_batch_rebuilds_per_frame, 1, 8)
 	water_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_WATER_VISUAL_BATCH_MAX_VERTICES", water_visual_batch_max_vertices, 0, 200000)
+	world_map_water_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_MAX_VERTICES", world_map_water_visual_batch_max_vertices, 0, 200000)
+	if water_batch_max_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_MAX_VERTICES").is_empty():
+		world_map_water_visual_batch_max_vertices = water_visual_batch_max_vertices
 
 func _runtime_power_input_active() -> bool:
 	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]
