@@ -10,6 +10,8 @@ const UIInputGuard = preload("res://modules/world_player_v2/features/ui_input_gu
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 
+@export_range(0.05, 1.0, 0.05) var minimap_update_interval: float = 0.10
+
 var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
 var _border: Panel
@@ -38,6 +40,15 @@ var _last_minimap_build_ms: float = 0.0
 var _last_minimap_upload_ms: float = 0.0
 var _last_minimap_terrain_modified_ms: float = 0.0
 var _last_minimap_load_profile: Dictionary = {}
+var _minimap_update_timer: Timer = null
+var _minimap_update_timer_tick_count: int = 0
+var _minimap_process_tick_count: int = 0
+var _minimap_update_tick_count: int = 0
+var _minimap_visible_update_count: int = 0
+var _minimap_dirty_upload_count: int = 0
+var _last_minimap_update_delta: float = 0.0
+var _last_minimap_update_tick_msec: int = 0
+var _minimap_dirty_flush_deferred: bool = false
 const FULLMAP_ZOOM_MIN: float = 1.0
 const FULLMAP_ZOOM_MAX: float = 8.0
 const FULLMAP_ZOOM_STEP: float = 0.5
@@ -100,6 +111,7 @@ func _ready() -> void:
 	
 	# Deferred setup
 	call_deferred("_deferred_init")
+	_start_minimap_update_timer()
 
 func _deferred_init() -> void:
 	_terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
@@ -121,6 +133,7 @@ func _deferred_init() -> void:
 		# Connect to terrain modification signal for real-time map updates
 		if _terrain_manager.has_signal("chunk_modified"):
 			_terrain_manager.chunk_modified.connect(_on_terrain_modified)
+		_run_minimap_update_tick(0.0)
 
 
 func _connect_vehicle_signals() -> void:
@@ -139,6 +152,37 @@ func _connect_player_signals() -> void:
 		return
 	if not PlayerSignals.interaction_performed.is_connected(_on_player_interaction_performed):
 		PlayerSignals.interaction_performed.connect(_on_player_interaction_performed)
+
+
+func _exit_tree() -> void:
+	if is_instance_valid(_minimap_update_timer):
+		_minimap_update_timer.stop()
+
+
+func _start_minimap_update_timer() -> void:
+	set_process(false)
+	if not is_instance_valid(_minimap_update_timer):
+		_minimap_update_timer = Timer.new()
+		_minimap_update_timer.name = "MinimapUpdateTimer"
+		_minimap_update_timer.one_shot = false
+		_minimap_update_timer.process_callback = Timer.TIMER_PROCESS_IDLE
+		_minimap_update_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+		_minimap_update_timer.timeout.connect(_on_minimap_update_timer_timeout)
+		add_child(_minimap_update_timer)
+
+	_minimap_update_timer.wait_time = max(0.05, minimap_update_interval)
+	_last_minimap_update_tick_msec = Time.get_ticks_msec()
+	_minimap_update_timer.start()
+
+
+func _on_minimap_update_timer_timeout() -> void:
+	_minimap_update_timer_tick_count += 1
+	var now := Time.get_ticks_msec()
+	var elapsed_seconds := minimap_update_interval
+	if _last_minimap_update_tick_msec > 0:
+		elapsed_seconds = max(0.0, float(now - _last_minimap_update_tick_msec) / 1000.0)
+	_last_minimap_update_tick_msec = now
+	_run_minimap_update_tick(elapsed_seconds)
 
 
 func _refresh_player_context() -> void:
@@ -267,11 +311,13 @@ func _show_fullmap() -> void:
 	_fullmap_panel.visible = true
 	_border.visible = false  # Hide minimap while full map is open
 	_update_fullmap_hint()
+	_run_minimap_update_tick(0.0)
 
 func _hide_fullmap() -> void:
 	_fullmap_open = false
 	_fullmap_panel.visible = false
 	_border.visible = true
+	_run_minimap_update_tick(0.0)
 
 func _update_fullmap_hint() -> void:
 	if _fullmap_zoom <= 1.0:
@@ -299,10 +345,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_fullmap_zoom = min(_fullmap_zoom + FULLMAP_ZOOM_STEP, FULLMAP_ZOOM_MAX)
 			_update_fullmap_hint()
+			_run_minimap_update_tick(0.0)
 			get_viewport().set_input_as_handled()
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_fullmap_zoom = max(_fullmap_zoom - FULLMAP_ZOOM_STEP, FULLMAP_ZOOM_MIN)
 			_update_fullmap_hint()
+			_run_minimap_update_tick(0.0)
 			get_viewport().set_input_as_handled()
 
 func _build_minimap_image() -> void:
@@ -397,6 +445,7 @@ func _build_minimap_image() -> void:
 ## Mark the minimap as needing a GPU texture re-upload (called by building_manager or internally)
 func mark_dirty() -> void:
 	_minimap_dirty = true
+	_defer_minimap_dirty_flush()
 
 ## Called when terrain is modified (dig/build) — update the affected pixel on the minimap
 func _on_terrain_modified(coord: Vector3i, _chunk_node: Node3D) -> void:
@@ -433,16 +482,38 @@ func _on_terrain_modified(coord: Vector3i, _chunk_node: Node3D) -> void:
 			var b = clampf(float(rgb.z) * shade / 255.0, 0.0, 1.0)
 			_minimap_image.set_pixel(px, pz, Color(r, g, b, 1.0))
 	_minimap_dirty = true
+	_defer_minimap_dirty_flush()
 	_last_minimap_terrain_modified_ms = float(Time.get_ticks_usec() - modify_start_us) / 1000.0
 
-func _process(_delta: float) -> void:
-	# Batch texture re-upload if any pixels were modified this frame
+func _defer_minimap_dirty_flush() -> void:
+	if _minimap_dirty_flush_deferred:
+		return
+	_minimap_dirty_flush_deferred = true
+	call_deferred("_flush_minimap_dirty_texture")
+
+
+func _flush_minimap_dirty_texture() -> void:
+	_minimap_dirty_flush_deferred = false
 	if _minimap_dirty and _minimap_image and _minimap_texture:
 		var upload_start_us := Time.get_ticks_usec()
 		_minimap_texture.update(_minimap_image)
 		_minimap_dirty = false
 		_last_minimap_upload_ms = float(Time.get_ticks_usec() - upload_start_us) / 1000.0
+		_minimap_dirty_upload_count += 1
 
+
+func _process(_delta: float) -> void:
+	_minimap_process_tick_count += 1
+	if is_instance_valid(_minimap_update_timer) and not _minimap_update_timer.is_stopped():
+		set_process(false)
+		return
+	_run_minimap_update_tick(_delta)
+
+
+func _run_minimap_update_tick(_delta: float) -> void:
+	_minimap_update_tick_count += 1
+	_last_minimap_update_delta = _delta
+	_flush_minimap_dirty_texture()
 	_refresh_player_context()
 	if not _vehicle_manager or not is_instance_valid(_vehicle_manager):
 		_connect_vehicle_signals()
@@ -468,6 +539,7 @@ func _process(_delta: float) -> void:
 		return
 	
 	visible = true
+	_minimap_visible_update_count += 1
 	
 	var player_pos = focus_target.global_position
 	var map_half = _terrain_manager.world_map_half
@@ -533,8 +605,26 @@ func _process(_delta: float) -> void:
 
 
 func get_telemetry_snapshot() -> Dictionary:
+	var timer_active := false
+	var timer_time_left := 0.0
+	if is_instance_valid(_minimap_update_timer):
+		timer_active = not _minimap_update_timer.is_stopped()
+		timer_time_left = _minimap_update_timer.time_left
+
 	return {
 		"minimap_ready": _minimap_image != null,
+		"minimap_visible": visible,
+		"minimap_dirty": _minimap_dirty,
+		"minimap_update_interval": minimap_update_interval,
+		"minimap_update_timer_active": timer_active,
+		"minimap_update_timer_time_left": timer_time_left,
+		"minimap_update_timer_tick_count": _minimap_update_timer_tick_count,
+		"minimap_process_tick_count": _minimap_process_tick_count,
+		"minimap_update_tick_count": _minimap_update_tick_count,
+		"minimap_visible_update_count": _minimap_visible_update_count,
+		"minimap_dirty_upload_count": _minimap_dirty_upload_count,
+		"last_minimap_update_delta": _last_minimap_update_delta,
+		"process_enabled": is_processing(),
 		"fullmap_open": _fullmap_open,
 		"fullmap_zoom": _fullmap_zoom,
 		"last_minimap_build_ms": _last_minimap_build_ms,
