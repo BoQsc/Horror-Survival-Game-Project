@@ -6,6 +6,12 @@ GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.w
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 TIMEOUT = 120
 
+TESTS_PATH = Path(PROJECT_PATH) / "addons" / "tests"
+if str(TESTS_PATH) not in sys.path:
+    sys.path.insert(0, str(TESTS_PATH))
+
+from windows_error_dialogs import suppress_windows_error_dialogs
+
 SCRIPT_PATH = Path(PROJECT_PATH) / "_tmp_parse_check.gd"
 LOG_PATH = Path(PROJECT_PATH) / ".agent" / "godot-parse-check.log"
 
@@ -80,6 +86,7 @@ def main() -> int:
     ]
 
     try:
+        suppress_windows_error_dialogs()
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -87,6 +94,7 @@ def main() -> int:
             timeout=TIMEOUT,
             encoding="utf-8",
             errors="replace",
+            cwd=PROJECT_PATH,
         )
         output = (result.stdout or "") + "\n" + (result.stderr or "")
         safe_print(output, end="")

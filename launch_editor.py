@@ -2,6 +2,12 @@ import subprocess
 import os
 import sys
 
+TESTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "addons", "tests")
+if TESTS_PATH not in sys.path:
+    sys.path.insert(0, TESTS_PATH)
+
+from windows_error_dialogs import suppress_windows_error_dialogs
+
 # Configuration from environment
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +33,7 @@ def launch(scene_path=DEFAULT_SCENE, mode="play"):
     print(f"[Launcher] Launching {scene_path} in {mode.upper()} mode...")
     
     try:
+        suppress_windows_error_dialogs()
         # Popen to launch without blocking, detached from this script
         subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
     except Exception as e:

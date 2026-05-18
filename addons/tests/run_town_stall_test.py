@@ -1622,6 +1622,7 @@ def main() -> int:
             encoding="utf-8",
             errors="replace",
             env=env,
+            cwd=PROJECT_PATH,
         )
         if system_sample_interval_seconds > 0.0:
             system_sample_stop = threading.Event()

@@ -1,7 +1,18 @@
 import json
 import subprocess
+import sys
+from pathlib import Path
 
-with open('world_prefabs/new_wooden_house_2floor_secret_facility.json', 'r') as f:
+PROJECT_PATH = Path(__file__).resolve().parents[1]
+TESTS_PATH = PROJECT_PATH / "addons" / "tests"
+if str(TESTS_PATH) not in sys.path:
+    sys.path.insert(0, str(TESTS_PATH))
+
+from windows_error_dialogs import suppress_windows_error_dialogs
+
+prefab_path = PROJECT_PATH / 'world_prefabs' / 'new_wooden_house_2floor_secret_facility.json'
+
+with open(prefab_path, 'r') as f:
     d = json.load(f)
 
 layers = []
@@ -40,12 +51,26 @@ for i, l in enumerate(layers):
         out_layers.append("---")
         
 d['layers'] = out_layers
-with open('world_prefabs/new_wooden_house_2floor_secret_facility.json', 'w') as f:
+with open(prefab_path, 'w') as f:
     json.dump(d, f, indent='\t')
 
-subprocess.run(['C:\\Program Files (x86)\\Steam\\steamapps\\common\\Godot Engine\\godot.windows.opt.tools.64.exe', '--headless', '-s', 'scripts/test_validation.gd'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+godot_exe = 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Godot Engine\\godot.windows.opt.tools.64.exe'
+suppress_windows_error_dialogs()
+subprocess.run(
+    [
+        godot_exe,
+        '--headless',
+        '--path',
+        str(PROJECT_PATH),
+        '-s',
+        'scripts/test_validation.gd',
+    ],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    cwd=PROJECT_PATH,
+)
 
-with open('validation_output.txt', 'r') as f:
+with open(PROJECT_PATH / 'validation_output.txt', 'r') as f:
     val = json.load(f)
 
 print(f"Valid: {val['valid_for_spawn']}, Errors: {val.get('errors', [])}, Warnings: {val.get('warnings', [])}")

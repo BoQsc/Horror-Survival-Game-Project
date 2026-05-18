@@ -1,6 +1,14 @@
 import json
-import os
 import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_PATH = Path(__file__).resolve().parents[1]
+TESTS_PATH = PROJECT_PATH / "addons" / "tests"
+if str(TESTS_PATH) not in sys.path:
+    sys.path.insert(0, str(TESTS_PATH))
+
+from windows_error_dialogs import suppress_windows_error_dialogs
 
 class PrefabBuilder:
     def __init__(self, name, x_size, y_size, z_size, grade_y=0):
@@ -179,13 +187,27 @@ func _init():
     quit()
 """
         val_script = val_script.replace('{name}', self.name)
-        with open('scripts/tmp_val.gd', 'w') as f:
+        tmp_script_path = PROJECT_PATH / 'scripts' / 'tmp_val.gd'
+        with open(tmp_script_path, 'w') as f:
             f.write(val_script)
-            
-        subprocess.run([godot_exe, '--headless', '-s', 'scripts/tmp_val.gd'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        suppress_windows_error_dialogs()
+        subprocess.run(
+            [
+                godot_exe,
+                '--headless',
+                '--path',
+                str(PROJECT_PATH),
+                '-s',
+                'scripts/tmp_val.gd',
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=PROJECT_PATH,
+        )
         
         try:
-            with open('validation_output.txt', 'r') as f:
+            with open(PROJECT_PATH / 'validation_output.txt', 'r') as f:
                 val = json.load(f)
             print(f"Validation Result for '{self.name}':")
             print(f"  Valid: {val.get('valid_for_spawn', False)}")
