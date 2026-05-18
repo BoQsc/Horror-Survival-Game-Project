@@ -47,6 +47,24 @@ def _summary(values: list[float]) -> dict[str, float]:
     }
 
 
+def _env_bool(env: dict[str, str], name: str, default: bool) -> bool:
+    raw = (env.get(name, "") or "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _env_float(env: dict[str, str], name: str, default: float) -> float:
+    raw = (env.get(name, "") or "").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0.0 else default
+
+
 def _sample_gpu(stop_event: threading.Event, samples: list[dict[str, Any]], interval_s: float) -> None:
     while not stop_event.is_set():
         samples.append({"epoch": time.time(), "raw_gpu": town_runner._collect_raw_gpu_state()})
@@ -95,6 +113,63 @@ def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_
     print("=" * 50)
 
 
+def _validate_runtime_power(snapshot: dict[str, Any], env: dict[str, str]) -> list[str]:
+    if not snapshot or not bool(snapshot.get("completed", False)):
+        return ["procedural power snapshot missing or incomplete"]
+
+    final_sample = snapshot.get("final_sample", {})
+    if not isinstance(final_sample, dict):
+        return ["procedural power final_sample missing"]
+
+    terrain = final_sample.get("terrain", {})
+    building = final_sample.get("building", {})
+    if not isinstance(terrain, dict):
+        terrain = {}
+    if not isinstance(building, dict):
+        building = {}
+
+    failures: list[str] = []
+    hold_seconds = _env_float(env, "PROCEDURAL_POWER_HOLD_SECONDS", 8.0)
+    idle_delay_s = _env_float(env, "TOWN_STALL_RUNTIME_POWER_IDLE_DELAY_S", 1.25)
+    deep_idle_delay_s = _env_float(env, "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S", 10.0)
+    require_idle = _env_bool(env, "PROCEDURAL_POWER_REQUIRE_IDLE", hold_seconds >= idle_delay_s + 0.5)
+    require_deep_idle = _env_bool(env, "PROCEDURAL_POWER_REQUIRE_DEEP_IDLE", hold_seconds >= deep_idle_delay_s + 0.5)
+
+    if bool(terrain.get("world_map_active", False)):
+        failures.append("procedural scene unexpectedly ended with world_map_active=true")
+
+    dirty_visible = int(building.get("dirty_visible_chunk_count", 0) or 0)
+    if dirty_visible != 0:
+        failures.append(f"building dirty visible chunks remained queued: {dirty_visible}")
+
+    if require_idle:
+        mode = str(terrain.get("runtime_power_mode", ""))
+        if mode == "active":
+            failures.append(
+                "runtime power stayed active "
+                f"(reason={terrain.get('runtime_power_active_reason')})"
+            )
+        if bool(terrain.get("runtime_power_external_world_busy", False)):
+            failures.append("runtime power external_world_busy stayed true")
+        if not bool(terrain.get("runtime_power_world_work_suspended", False)):
+            failures.append("runtime power did not suspend background world work")
+
+    if require_deep_idle:
+        mode = str(terrain.get("runtime_power_mode", ""))
+        target_fps = int(terrain.get("runtime_power_target_fps", 0) or 0)
+        deep_idle_fps = int(terrain.get("runtime_power_deep_idle_max_fps", 30) or 30)
+        if mode != "deep_idle":
+            failures.append(f"runtime power did not reach deep_idle (mode={mode})")
+        if target_fps <= 0 or target_fps > deep_idle_fps:
+            failures.append(f"runtime power target FPS was not deep-idle capped ({target_fps}>{deep_idle_fps})")
+        if not bool(terrain.get("runtime_power_render_loop_suspended", False)):
+            failures.append("runtime power did not suspend the render loop in deep idle")
+        if bool(terrain.get("runtime_power_render_loop_enabled", True)):
+            failures.append("runtime power render loop remained enabled in deep idle")
+
+    return failures
+
+
 def main() -> int:
     run_start_mtime = time.time()
     env = os.environ.copy()
@@ -134,6 +209,13 @@ def main() -> int:
     snapshot_path = _latest_snapshot(run_start_mtime - 1.0)
     snapshot = _read_json(snapshot_path)
     _print_summary(snapshot_path, snapshot, gpu_samples)
+
+    validation_failures = _validate_runtime_power(snapshot, env)
+    if validation_failures:
+        print("ERROR: procedural power validation failed:")
+        for failure in validation_failures:
+            print(f"  - {failure}")
+        return 1
 
     completed = bool(snapshot.get("completed", False))
     if result.returncode == WINDOWS_ACCESS_VIOLATION and completed:
