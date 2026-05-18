@@ -103,6 +103,12 @@ def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_
     print(f"Raw GPU watts avg/max: {_summary(_numbers(gpu_samples, 'power_w'))}")
     print(f"Raw GPU temp avg/max: {_summary(_numbers(gpu_samples, 'temp_c'))}")
     print(f"Raw GPU util avg/max: {_summary(_numbers(gpu_samples, 'gpu_util_percent'))}")
+    print(
+        "Render: "
+        f"draws={final_sample.get('draw_calls')} "
+        f"objects={final_sample.get('render_objects')} "
+        f"primitives={final_sample.get('primitives')}"
+    )
     shadow_summary = ""
     if "terrain_shadow_lod_active" in terrain:
         shadow_summary = (

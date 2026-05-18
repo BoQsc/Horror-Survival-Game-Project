@@ -77,6 +77,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
 @export var terrain_visual_batch_idle_polish_enabled: bool = true
 @export var water_visual_batching_enabled: bool = true
+@export var procedural_water_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var water_visual_batch_size: int = 2
 @export_range(1, 16, 1) var world_map_water_visual_batch_size: int = 3
 @export_range(1, 8, 1) var water_visual_batch_rebuilds_per_frame: int = 1
@@ -726,6 +727,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_stream_idle_frames": _terrain_visual_batch_stream_idle_frames,
 		"terrain_visual_mesh_retire_queue_count": _terrain_visual_mesh_retire_queue.size(),
 		"water_visual_batching_enabled": water_visual_batching_enabled,
+		"procedural_water_visual_batching_enabled": procedural_water_visual_batching_enabled,
+		"water_visual_batch_active": _is_water_visual_batch_active(),
 		"water_visual_batch_size": water_visual_batch_size,
 		"world_map_water_visual_batch_size": world_map_water_visual_batch_size,
 		"world_map_water_visual_batch_max_vertices": world_map_water_visual_batch_max_vertices,
@@ -1204,6 +1207,11 @@ func _effective_water_visual_batch_max_vertices() -> int:
 	if _use_world_map_visual_batch_profile():
 		return world_map_water_visual_batch_max_vertices
 	return water_visual_batch_max_vertices
+
+func _is_water_visual_batch_active() -> bool:
+	return water_visual_batching_enabled \
+		and water_render_enabled \
+		and (world_map_active or procedural_water_visual_batching_enabled)
 
 func _terrain_visual_batch_key(coord: Vector3i) -> Vector2i:
 	var batch_size := _effective_terrain_visual_batch_size()
@@ -2005,11 +2013,9 @@ func _ensure_chunk_water_mesh_instance(data) -> MeshInstance3D:
 	return mesh_instance
 
 func _is_chunk_eligible_for_water_visual_batch(coord: Vector3i, data) -> bool:
-	if not water_visual_batching_enabled or not water_render_enabled or not world_map_active or coord.y != 0:
+	if not _is_water_visual_batch_active() or coord.y != 0:
 		return false
 	if data == null or data.node_water == null or not is_instance_valid(data.node_water):
-		return false
-	if data.node_water is Area3D:
 		return false
 	return _get_chunk_water_visual_mesh(data) != null
 
@@ -2036,7 +2042,7 @@ func _show_individual_water_visuals_for_batch(key: Vector2i) -> void:
 		_set_chunk_water_mesh_visible(data, true)
 
 func _mark_water_visual_batch_dirty(coord: Vector3i, invalidate_visible_batch: bool = false) -> void:
-	if not water_visual_batching_enabled or not world_map_active or coord.y != 0:
+	if not _is_water_visual_batch_active() or coord.y != 0:
 		return
 	var key := _water_visual_batch_key(coord)
 	_water_visual_batch_dirty[key] = true
@@ -2146,20 +2152,17 @@ func _sync_visual_batch_profile() -> void:
 		)
 	_last_effective_water_visual_batch_size = water_size
 	_last_effective_water_visual_batch_max_vertices = water_max_vertices
-	if water_profile_changed and water_visual_batching_enabled and water_render_enabled and world_map_active:
+	if water_profile_changed and _is_water_visual_batch_active():
 		_rebuild_water_visual_batch_members_for_profile()
 
 func _has_water_visual_batch_polish_work() -> bool:
-	return water_visual_batching_enabled \
-		and water_render_enabled \
-		and world_map_active \
-		and not _water_visual_batch_dirty.is_empty()
+	return _is_water_visual_batch_active() and not _water_visual_batch_dirty.is_empty()
 
 func _process_water_visual_batch_rebuilds() -> void:
 	_last_water_visual_batch_rebuild_count = 0
 	_last_water_visual_batch_rebuild_ms = 0.0
 	_last_water_visual_batch_skipped_heavy_count = 0
-	if not water_visual_batching_enabled or not water_render_enabled or not world_map_active:
+	if not _is_water_visual_batch_active():
 		if not _water_visual_batches.is_empty():
 			_clear_water_visual_batches()
 		return
@@ -2167,7 +2170,7 @@ func _process_water_visual_batch_rebuilds() -> void:
 		return
 	if initial_load_phase:
 		return
-	if _terrain_visual_batch_paused_for_active_gameplay():
+	if world_map_active and _terrain_visual_batch_paused_for_active_gameplay():
 		return
 	if _last_frame_ms > 1000.0 / 60.0:
 		return
@@ -2916,6 +2919,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
 	terrain_visual_batch_idle_polish_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH", terrain_visual_batch_idle_polish_enabled)
 	water_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_VISUAL_BATCHING", water_visual_batching_enabled)
+	procedural_water_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_PROCEDURAL_WATER_VISUAL_BATCHING", procedural_water_visual_batching_enabled)
 	water_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_WATER_VISUAL_BATCH_SIZE", water_visual_batch_size, 1, 16)
 	world_map_water_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_SIZE", world_map_water_visual_batch_size, 1, 16)
 	if water_batch_size_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_SIZE").is_empty():
