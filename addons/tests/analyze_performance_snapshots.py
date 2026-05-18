@@ -10,6 +10,7 @@ import run_town_stall_test as town_runner
 PROJECT_PATH = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = PROJECT_PATH / ".agent" / "performance-snapshot-analysis.json"
 DEFAULT_RENDER_ABLATION_SUMMARY = PROJECT_PATH / ".agent" / "render-ablation-summary.json"
+DEFAULT_GPU_TELEMETRY_DIR = PROJECT_PATH / ".agent" / "gpu-telemetry"
 DEFAULT_STABLE_60_MAX_OVER_BUDGET_PCT = 5.0
 DEFAULT_STABLE_60_MAX_FRAME_MS = 40.0
 DEFAULT_STABLE_60_MAX_FRAMES_OVER_40MS = 0
@@ -57,8 +58,16 @@ def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
 def _round(value: float) -> float:
     return round(value, 3)
+
+
+def _has_samples(summary: dict[str, Any]) -> bool:
+    return _int(summary.get("sample_count")) > 0
 
 
 def _window_summary(window: dict[str, Any], target_frame_ms: float) -> dict[str, Any]:
@@ -188,6 +197,146 @@ def _summarize_render_ablation(path: Path) -> dict[str, Any]:
     return {"path": str(path), "results": compact_results}
 
 
+def _gpu_window_summary(window: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "sample_count": _int(window.get("sample_count")),
+        "failed_sample_count": _int(window.get("failed_sample_count")),
+        "avg_power_w": _round(_float(window.get("avg_power_w"))),
+        "max_power_w": _round(_float(window.get("max_power_w"))),
+        "avg_temp_c": _round(_float(window.get("avg_temp_c"))),
+        "max_temp_c": _round(_float(window.get("max_temp_c"))),
+        "start_temp_c": _round(_float(window.get("start_temp_c"))),
+        "end_temp_c": _round(_float(window.get("end_temp_c"))),
+        "temp_delta_c": _round(_float(window.get("temp_delta_c"))),
+        "avg_gpu_util_pct": _round(_float(window.get("avg_gpu_util_pct"))),
+        "max_gpu_util_pct": _round(_float(window.get("max_gpu_util_pct"))),
+        "p0_fraction": _round(_float(window.get("p0_fraction"))),
+        "pstates": _dict(window.get("pstates")),
+    }
+
+
+def _summarize_gpu_run(run: dict[str, Any]) -> dict[str, Any]:
+    snapshot = _dict(run.get("snapshot"))
+    content = _dict(snapshot.get("content"))
+    town_metrics = _dict(snapshot.get("town_metrics"))
+    return {
+        "case": str(run.get("case", "")),
+        "repeat_index": _int(run.get("repeat_index")),
+        "returncode": _int(run.get("returncode"), -1),
+        "failure_reasons": [str(reason) for reason in _list(run.get("failure_reasons"))],
+        "thermal_abort_reason": str(run.get("thermal_abort_reason", "")),
+        "duration_s": _round(_float(run.get("duration_s"))),
+        "content_valid_for_power_compare": bool(content.get("content_valid_for_power_compare", False)),
+        "avg_fps": _round(_float(town_metrics.get("average_fps"))),
+        "estimated_hold_gpu": _gpu_window_summary(_dict(run.get("estimated_hold_gpu"))),
+        "stationary_hold_gpu": _gpu_window_summary(_dict(run.get("stationary_hold_gpu"))),
+        "moving_entry_gpu": _gpu_window_summary(_dict(run.get("moving_entry_gpu"))),
+        "last_20s_gpu": _gpu_window_summary(_dict(run.get("last_20s_gpu"))),
+        "last_30s_gpu": _gpu_window_summary(_dict(run.get("last_30s_gpu"))),
+        "all_run_gpu": _gpu_window_summary(_dict(run.get("all_run_gpu"))),
+    }
+
+
+def _summarize_gpu_telemetry(path: Path) -> dict[str, Any]:
+    telemetry = _read_json(path)
+    runs = [_summarize_gpu_run(run) for run in _list(telemetry.get("runs")) if isinstance(run, dict)]
+    invalid_runs = [
+        f"{run.get('case')}#{run.get('repeat_index')}"
+        for run in runs
+        if _int(run.get("returncode"), -1) != 0 or _list(run.get("failure_reasons"))
+    ]
+    return {
+        "path": str(path),
+        "modified_epoch": path.stat().st_mtime,
+        "cases": [str(case) for case in _list(telemetry.get("cases"))],
+        "hold_seconds": _round(_float(telemetry.get("hold_seconds"))),
+        "sample_interval_seconds": _round(_float(telemetry.get("sample_interval_seconds"))),
+        "run_count": len(runs),
+        "invalid_run_count": len(invalid_runs),
+        "invalid_runs": invalid_runs,
+        "initial_idle_gpu": _gpu_window_summary(_dict(_dict(telemetry.get("initial_idle")).get("gpu"))),
+        "final_idle_gpu": _gpu_window_summary(_dict(_dict(telemetry.get("final_idle")).get("gpu"))),
+        "runs": runs,
+    }
+
+
+def _summarize_gpu_telemetry_files(args: argparse.Namespace) -> list[dict[str, Any]]:
+    root = Path(args.gpu_telemetry_dir)
+    return [
+        _summarize_gpu_telemetry(path)
+        for path in _latest_files(root, "town_stall_raw_baseline_*.json", args.gpu_telemetry_count)
+    ]
+
+
+def _latest_gpu_telemetry(gpu_telemetry: list[dict[str, Any]]) -> dict[str, Any]:
+    return gpu_telemetry[0] if gpu_telemetry else {}
+
+
+def _sampled_hold_windows(latest_gpu: dict[str, Any]) -> list[dict[str, Any]]:
+    windows: list[dict[str, Any]] = []
+    for run in _list(latest_gpu.get("runs")):
+        if not isinstance(run, dict):
+            continue
+        hold = _dict(run.get("stationary_hold_gpu"))
+        if not _has_samples(hold):
+            hold = _dict(run.get("estimated_hold_gpu"))
+        if _has_samples(hold):
+            windows.append(hold)
+    return windows
+
+
+def _gpu_thermal_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_gpu = _dict(report.get("latest_gpu_telemetry"))
+    enforced = args.require_latest_gpu_telemetry_valid or _gpu_thermal_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_gpu:
+        if enforced:
+            failures.append("no raw GPU telemetry files found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    invalid_run_count = _int(latest_gpu.get("invalid_run_count"))
+    windows = _sampled_hold_windows(latest_gpu)
+    observed = {
+        "invalid_run_count": invalid_run_count,
+        "max_hold_avg_power_w": _round(max((_float(window.get("avg_power_w")) for window in windows), default=0.0)),
+        "max_hold_avg_temp_c": _round(max((_float(window.get("avg_temp_c")) for window in windows), default=0.0)),
+        "max_hold_peak_temp_c": _round(max((_float(window.get("max_temp_c")) for window in windows), default=0.0)),
+        "max_hold_temp_delta_c": _round(max((_float(window.get("temp_delta_c")) for window in windows), default=0.0)),
+    }
+
+    if args.require_latest_gpu_telemetry_valid and invalid_run_count > 0:
+        failures.append(f"latest raw GPU telemetry has {invalid_run_count} invalid run(s)")
+    if _gpu_thermal_threshold_requested(args) and not windows:
+        failures.append("latest raw GPU telemetry has no sampled hold windows")
+    if args.max_latest_gpu_hold_avg_power_w is not None and observed["max_hold_avg_power_w"] > args.max_latest_gpu_hold_avg_power_w:
+        failures.append(
+            f"hold average GPU power {observed['max_hold_avg_power_w']:.3f} W exceeds {args.max_latest_gpu_hold_avg_power_w:.3f} W"
+        )
+    if args.max_latest_gpu_hold_avg_temp_c is not None and observed["max_hold_avg_temp_c"] > args.max_latest_gpu_hold_avg_temp_c:
+        failures.append(
+            f"hold average GPU temp {observed['max_hold_avg_temp_c']:.3f} C exceeds {args.max_latest_gpu_hold_avg_temp_c:.3f} C"
+        )
+    if args.max_latest_gpu_hold_peak_temp_c is not None and observed["max_hold_peak_temp_c"] > args.max_latest_gpu_hold_peak_temp_c:
+        failures.append(
+            f"hold peak GPU temp {observed['max_hold_peak_temp_c']:.3f} C exceeds {args.max_latest_gpu_hold_peak_temp_c:.3f} C"
+        )
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_gpu.get("path", "")),
+        "observed": observed,
+    }
+
+
+def _gpu_thermal_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.max_latest_gpu_hold_avg_power_w is not None
+        or args.max_latest_gpu_hold_avg_temp_c is not None
+        or args.max_latest_gpu_hold_peak_temp_c is not None
+    )
+
+
 def _ablation_cases_by_snapshot(render_ablation: dict[str, Any]) -> dict[str, str]:
     cases: dict[str, str] = {}
     results = render_ablation.get("results", [])
@@ -309,17 +458,22 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         for path in _latest_files(snapshot_dir, "procedural_power_snapshot_*.json", args.procedural_count)
     ]
     render_ablation = _summarize_render_ablation(Path(args.render_ablation_summary))
+    gpu_telemetry = _summarize_gpu_telemetry_files(args)
     _annotate_town_runs(town, render_ablation)
     report = {
         "snapshot_dir": str(snapshot_dir),
+        "gpu_telemetry_dir": str(Path(args.gpu_telemetry_dir)),
         "target_frame_ms": args.target_frame_ms,
         "town": town,
         "latest_production_town": _latest_production_town(town),
         "production_trend": _production_trend(town),
         "procedural": procedural,
         "render_ablation": render_ablation,
+        "gpu_telemetry": gpu_telemetry,
+        "latest_gpu_telemetry": _latest_gpu_telemetry(gpu_telemetry),
     }
     report["stable_60_gate"] = _stable_60_gate(report, args)
+    report["gpu_thermal_gate"] = _gpu_thermal_gate(report, args)
     return report
 
 
@@ -372,6 +526,10 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
         stable_gate = _dict(report.get("stable_60_gate"))
         for failure in stable_gate.get("failures", []):
             failures.append(f"stable-60 gate: {failure}")
+    if args.require_latest_gpu_telemetry_valid or _gpu_thermal_threshold_requested(args):
+        thermal_gate = _dict(report.get("gpu_thermal_gate"))
+        for failure in thermal_gate.get("failures", []):
+            failures.append(f"gpu thermal gate: {failure}")
     return failures
 
 
@@ -458,6 +616,52 @@ def _print_report(report: dict[str, Any]) -> None:
                     dirty=_int(final.get("building_dirty_visible_chunk_count")),
                 )
             )
+    gpu_telemetry = report.get("gpu_telemetry", [])
+    if isinstance(gpu_telemetry, list) and gpu_telemetry:
+        print("Raw GPU telemetry:")
+        for entry in gpu_telemetry:
+            latest = _dict(entry)
+            print(
+                "  {name} cases={cases} runs={runs} invalid={invalid} hold={hold:.0f}s".format(
+                    name=Path(str(latest.get("path", ""))).name,
+                    cases=",".join(str(case) for case in _list(latest.get("cases"))),
+                    runs=_int(latest.get("run_count")),
+                    invalid=_int(latest.get("invalid_run_count")),
+                    hold=_float(latest.get("hold_seconds")),
+                )
+            )
+            for run in _list(latest.get("runs"))[:4]:
+                if not isinstance(run, dict):
+                    continue
+                hold = _dict(run.get("stationary_hold_gpu"))
+                if not _has_samples(hold):
+                    hold = _dict(run.get("estimated_hold_gpu"))
+                print(
+                    "    {case}#{repeat} rc={returncode} samples={samples} power={power:.1f}W temp={temp:.1f}/{peak:.1f}C failures={failures}".format(
+                        case=str(run.get("case", "")),
+                        repeat=_int(run.get("repeat_index")),
+                        returncode=_int(run.get("returncode"), -1),
+                        samples=_int(hold.get("sample_count")),
+                        power=_float(hold.get("avg_power_w")),
+                        temp=_float(hold.get("avg_temp_c")),
+                        peak=_float(hold.get("max_temp_c")),
+                        failures=len(_list(run.get("failure_reasons"))),
+                    )
+                )
+        thermal_gate = _dict(report.get("gpu_thermal_gate"))
+        if thermal_gate:
+            observed = _dict(thermal_gate.get("observed"))
+            print(
+                "GPU thermal gate: enforced={enforced} passed={passed} invalid={invalid} "
+                "hold_power={power:.1f}W hold_temp={temp:.1f}/{peak:.1f}C".format(
+                    enforced=bool(thermal_gate.get("enforced", False)),
+                    passed=bool(thermal_gate.get("passed", False)),
+                    invalid=_int(observed.get("invalid_run_count")),
+                    power=_float(observed.get("max_hold_avg_power_w")),
+                    temp=_float(observed.get("max_hold_avg_temp_c")),
+                    peak=_float(observed.get("max_hold_peak_temp_c")),
+                )
+            )
     render_ablation = _dict(report.get("render_ablation"))
     results = render_ablation.get("results", [])
     if isinstance(results, list) and results:
@@ -486,6 +690,8 @@ def main() -> int:
     parser.add_argument("--procedural-count", type=int, default=5)
     parser.add_argument("--target-frame-ms", type=float, default=1000.0 / 60.0)
     parser.add_argument("--render-ablation-summary", default=str(DEFAULT_RENDER_ABLATION_SUMMARY))
+    parser.add_argument("--gpu-telemetry-dir", default=str(DEFAULT_GPU_TELEMETRY_DIR))
+    parser.add_argument("--gpu-telemetry-count", type=int, default=3)
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--require-latest-procedural-deep-idle", action="store_true")
     parser.add_argument("--max-latest-town-avg-ms", type=float, default=None)
@@ -495,6 +701,10 @@ def main() -> int:
     parser.add_argument("--max-stable-60-frame-ms", type=float, default=DEFAULT_STABLE_60_MAX_FRAME_MS)
     parser.add_argument("--max-stable-60-frames-over-40ms", type=int, default=DEFAULT_STABLE_60_MAX_FRAMES_OVER_40MS)
     parser.add_argument("--max-stable-60-over-budget-streak", type=int, default=DEFAULT_STABLE_60_MAX_OVER_BUDGET_STREAK)
+    parser.add_argument("--require-latest-gpu-telemetry-valid", action="store_true")
+    parser.add_argument("--max-latest-gpu-hold-avg-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-gpu-hold-avg-temp-c", type=float, default=None)
+    parser.add_argument("--max-latest-gpu-hold-peak-temp-c", type=float, default=None)
     args = parser.parse_args()
 
     report = _build_report(args)
