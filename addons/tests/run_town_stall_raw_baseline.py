@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import run_town_stall_test as town_runner
+from windows_error_dialogs import suppress_windows_error_dialogs
 
 
 PROJECT_PATH = Path(__file__).resolve().parents[2]
@@ -1116,6 +1117,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def main() -> int:
+    suppress_windows_error_dialogs()
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
     parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_gpu_meshing,runtime_native_cpu_meshing,runtime_no_dry_water_density_skip,runtime_no_streaming_batch_async,runtime_terrain_visual_batching,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_no_shared_collision,runtime_no_glow,runtime_no_water_render,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
     parser.add_argument("--repeats", type=int, default=1)

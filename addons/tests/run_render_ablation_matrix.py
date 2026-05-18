@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import run_town_stall_test
+from windows_error_dialogs import suppress_windows_error_dialogs
 
 
 SUMMARY_FILE = Path(run_town_stall_test.PROJECT_PATH) / ".agent" / "render-ablation-summary.json"
@@ -223,6 +224,7 @@ def _print_results(results: list[dict]) -> None:
 
 
 def main() -> int:
+    suppress_windows_error_dialogs()
     selected = _selected_case_names()
     results = []
     for case_name in selected:

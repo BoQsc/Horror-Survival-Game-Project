@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+from windows_error_dialogs import suppress_windows_error_dialogs
+
 # Configuration
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
@@ -8,6 +10,7 @@ MAIN_SCENE = "res://modules/world_player_v2/world_testV2.tscn"
 TIMEOUT = 60  # 30s wait + 15s test = 45s, buffer for safety
 BOT_SCENE = "res://tests/player_bot.tscn"  # Bot scene to add
 def main():
+    suppress_windows_error_dialogs()
     print("🤖 Running Movement Bot Test...")
     print(f"   Scene: {MAIN_SCENE}")
     print("-" * 50)
