@@ -10,6 +10,10 @@ import run_town_stall_test as town_runner
 PROJECT_PATH = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = PROJECT_PATH / ".agent" / "performance-snapshot-analysis.json"
 DEFAULT_RENDER_ABLATION_SUMMARY = PROJECT_PATH / ".agent" / "render-ablation-summary.json"
+DEFAULT_STABLE_60_MAX_OVER_BUDGET_PCT = 5.0
+DEFAULT_STABLE_60_MAX_FRAME_MS = 40.0
+DEFAULT_STABLE_60_MAX_FRAMES_OVER_40MS = 0
+DEFAULT_STABLE_60_MAX_OVER_BUDGET_STREAK = 5
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -242,6 +246,61 @@ def _production_trend(town: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _stable_60_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    failures: list[str] = []
+    if not latest_production:
+        failures.append("no production-like town snapshots found")
+        return {
+            "passed": False,
+            "failures": failures,
+            "target_frame_ms": args.target_frame_ms,
+        }
+
+    hold = _dict(latest_production.get("stationary_hold"))
+    avg_ms = _float(hold.get("avg_total_ms"))
+    over_budget_pct = _float(hold.get("frames_over_budget_pct"))
+    max_ms = _float(hold.get("max_total_ms"))
+    frames_over_40ms = _int(hold.get("frames_over_40ms"))
+    longest_over_budget_streak = _int(hold.get("longest_over_budget_streak"))
+
+    if not bool(latest_production.get("hold_complete", False)):
+        failures.append("latest production-like town hold did not complete")
+    if avg_ms > args.target_frame_ms:
+        failures.append(f"avg frame time {avg_ms:.3f} ms exceeds target {args.target_frame_ms:.3f} ms")
+    if over_budget_pct > args.max_stable_60_over_budget_pct:
+        failures.append(
+            f"over-budget frames {over_budget_pct:.3f}% exceed {args.max_stable_60_over_budget_pct:.3f}%"
+        )
+    if max_ms > args.max_stable_60_frame_ms:
+        failures.append(f"max frame time {max_ms:.3f} ms exceeds {args.max_stable_60_frame_ms:.3f} ms")
+    if frames_over_40ms > args.max_stable_60_frames_over_40ms:
+        failures.append(f"frames over 40ms {frames_over_40ms} exceed {args.max_stable_60_frames_over_40ms}")
+    if longest_over_budget_streak > args.max_stable_60_over_budget_streak:
+        failures.append(
+            "longest over-budget streak "
+            f"{longest_over_budget_streak} exceeds {args.max_stable_60_over_budget_streak}"
+        )
+
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "target_frame_ms": args.target_frame_ms,
+        "max_over_budget_pct": args.max_stable_60_over_budget_pct,
+        "max_frame_ms": args.max_stable_60_frame_ms,
+        "max_frames_over_40ms": args.max_stable_60_frames_over_40ms,
+        "max_over_budget_streak": args.max_stable_60_over_budget_streak,
+        "observed": {
+            "avg_total_ms": _round(avg_ms),
+            "frames_over_budget_pct": _round(over_budget_pct),
+            "max_total_ms": _round(max_ms),
+            "frames_over_40ms": frames_over_40ms,
+            "longest_over_budget_streak": longest_over_budget_streak,
+        },
+    }
+
+
 def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     snapshot_dir = Path(args.snapshot_dir)
     town = [_summarize_town_snapshot(path, args.target_frame_ms) for path in _latest_files(snapshot_dir, "snapshot_*.json", args.town_count)]
@@ -251,7 +310,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     ]
     render_ablation = _summarize_render_ablation(Path(args.render_ablation_summary))
     _annotate_town_runs(town, render_ablation)
-    return {
+    report = {
         "snapshot_dir": str(snapshot_dir),
         "target_frame_ms": args.target_frame_ms,
         "town": town,
@@ -260,6 +319,8 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         "procedural": procedural,
         "render_ablation": render_ablation,
     }
+    report["stable_60_gate"] = _stable_60_gate(report, args)
+    return report
 
 
 def _latest_procedural_failures(report: dict[str, Any]) -> list[str]:
@@ -307,6 +368,10 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
                     "latest production-like town stationary avg "
                     f"{latest_avg:.3f} ms exceeds {args.max_latest_production_town_avg_ms:.3f} ms"
                 )
+    if args.require_latest_production_town_stable_60:
+        stable_gate = _dict(report.get("stable_60_gate"))
+        for failure in stable_gate.get("failures", []):
+            failures.append(f"stable-60 gate: {failure}")
     return failures
 
 
@@ -355,6 +420,25 @@ def _print_report(report: dict[str, Any]) -> None:
                     over=_float(trend.get("delta_frames_over_budget_pct")),
                     draws=_float(trend.get("delta_avg_draw_calls")),
                     objects=_float(trend.get("delta_avg_objects")),
+                )
+            )
+        stable_gate = _dict(report.get("stable_60_gate"))
+        if stable_gate:
+            observed = _dict(stable_gate.get("observed"))
+            print(
+                "Stable-60 gate: passed={passed} avg={avg:.2f}/{target:.2f}ms over={over:.1f}/{max_over:.1f}% "
+                "max={max_ms:.1f}/{max_allowed:.1f}ms >40ms={over40}/{max_over40} streak={streak}/{max_streak}".format(
+                    passed=bool(stable_gate.get("passed", False)),
+                    avg=_float(observed.get("avg_total_ms")),
+                    target=_float(stable_gate.get("target_frame_ms")),
+                    over=_float(observed.get("frames_over_budget_pct")),
+                    max_over=_float(stable_gate.get("max_over_budget_pct")),
+                    max_ms=_float(observed.get("max_total_ms")),
+                    max_allowed=_float(stable_gate.get("max_frame_ms")),
+                    over40=_int(observed.get("frames_over_40ms")),
+                    max_over40=_int(stable_gate.get("max_frames_over_40ms")),
+                    streak=_int(observed.get("longest_over_budget_streak")),
+                    max_streak=_int(stable_gate.get("max_over_budget_streak")),
                 )
             )
     procedural = report.get("procedural", [])
@@ -406,6 +490,11 @@ def main() -> int:
     parser.add_argument("--require-latest-procedural-deep-idle", action="store_true")
     parser.add_argument("--max-latest-town-avg-ms", type=float, default=None)
     parser.add_argument("--max-latest-production-town-avg-ms", type=float, default=None)
+    parser.add_argument("--require-latest-production-town-stable-60", action="store_true")
+    parser.add_argument("--max-stable-60-over-budget-pct", type=float, default=DEFAULT_STABLE_60_MAX_OVER_BUDGET_PCT)
+    parser.add_argument("--max-stable-60-frame-ms", type=float, default=DEFAULT_STABLE_60_MAX_FRAME_MS)
+    parser.add_argument("--max-stable-60-frames-over-40ms", type=int, default=DEFAULT_STABLE_60_MAX_FRAMES_OVER_40MS)
+    parser.add_argument("--max-stable-60-over-budget-streak", type=int, default=DEFAULT_STABLE_60_MAX_OVER_BUDGET_STREAK)
     args = parser.parse_args()
 
     report = _build_report(args)
