@@ -257,6 +257,75 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
     }
 
 
+def _procedural_window_delta(candidate: dict[str, Any], baseline: dict[str, Any], window_name: str) -> dict[str, Any]:
+    candidate_window = _dict(candidate.get(window_name))
+    baseline_window = _dict(baseline.get(window_name))
+    baseline_primitives = _float(baseline_window.get("avg_primitives"))
+    candidate_primitives = _float(candidate_window.get("avg_primitives"))
+    return {
+        "sample_count": _int(candidate_window.get("sample_count")),
+        "baseline_sample_count": _int(baseline_window.get("sample_count")),
+        "delta_min_fps": _round(_float(candidate_window.get("min_fps")) - _float(baseline_window.get("min_fps"))),
+        "delta_avg_fps": _round(_float(candidate_window.get("avg_fps")) - _float(baseline_window.get("avg_fps"))),
+        "delta_avg_draw_calls": _round(_float(candidate_window.get("avg_draw_calls")) - _float(baseline_window.get("avg_draw_calls"))),
+        "delta_avg_objects": _round(_float(candidate_window.get("avg_objects")) - _float(baseline_window.get("avg_objects"))),
+        "delta_avg_primitives": _round(candidate_primitives - baseline_primitives),
+        "primitive_ratio": _round(candidate_primitives / baseline_primitives) if baseline_primitives > 0.0 else 0.0,
+    }
+
+
+def _latest_procedural_terrain_batch_comparison(procedural: list[Any]) -> dict[str, Any]:
+    entries = [_dict(entry) for entry in procedural]
+    latest = next(
+        (
+            entry
+            for entry in entries
+            if bool(entry.get("completed", False))
+            and not bool(_dict(entry.get("final")).get("world_map_active", False))
+            and _int(_dict(entry.get("active_window")).get("max_terrain_visual_batch_node_count")) > 0
+        ),
+        {},
+    )
+    if not latest:
+        return {}
+
+    latest_final = _dict(latest.get("final"))
+    latest_active = _dict(latest.get("active_window"))
+    terrain_chunks = _int(latest_final.get("rendered_terrain_chunk_count"))
+    water_chunks = _int(latest_final.get("rendered_water_chunk_count"))
+    water_batches = _int(latest_active.get("max_water_visual_batch_node_count"))
+    baseline = next(
+        (
+            entry
+            for entry in entries
+            if entry is not latest
+            and bool(entry.get("completed", False))
+            and not bool(_dict(entry.get("final")).get("world_map_active", False))
+            and _int(_dict(entry.get("active_window")).get("max_terrain_visual_batch_node_count")) == 0
+            and _int(_dict(entry.get("final")).get("rendered_terrain_chunk_count")) == terrain_chunks
+            and _int(_dict(entry.get("final")).get("rendered_water_chunk_count")) == water_chunks
+            and _int(_dict(entry.get("active_window")).get("max_water_visual_batch_node_count")) == water_batches
+        ),
+        {},
+    )
+    if not baseline:
+        return {"available": False, "reason": "no matching unbatched procedural baseline", "candidate": latest}
+
+    return {
+        "available": True,
+        "candidate_path": str(latest.get("path", "")),
+        "baseline_path": str(baseline.get("path", "")),
+        "terrain_chunks": terrain_chunks,
+        "water_chunks": water_chunks,
+        "water_batches": water_batches,
+        "candidate_terrain_batches": _int(latest_active.get("max_terrain_visual_batch_node_count")),
+        "candidate_terrain_hidden": _int(latest_active.get("max_terrain_visual_batch_hidden_chunk_count")),
+        "move": _procedural_window_delta(latest, baseline, "move_window"),
+        "hold": _procedural_window_delta(latest, baseline, "hold_window"),
+        "active": _procedural_window_delta(latest, baseline, "active_window"),
+    }
+
+
 def _summarize_render_ablation(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -619,6 +688,7 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         "latest_production_town": _latest_production_town(town),
         "production_trend": _production_trend(town),
         "procedural": procedural,
+        "latest_procedural_terrain_batch_comparison": _latest_procedural_terrain_batch_comparison(procedural),
         "render_ablation": render_ablation,
         "gpu_telemetry": gpu_telemetry,
         "latest_gpu_telemetry": _latest_gpu_telemetry(gpu_telemetry),
@@ -653,6 +723,47 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
     failures: list[str] = []
     if args.require_latest_procedural_deep_idle:
         failures.extend(_latest_procedural_failures(report))
+    if args.require_latest_procedural_move_render_improvement:
+        comparison = _dict(report.get("latest_procedural_terrain_batch_comparison"))
+        if not bool(comparison.get("available", False)):
+            failures.append(
+                "latest procedural terrain batch comparison unavailable: "
+                f"{comparison.get('reason', 'unknown')}"
+            )
+        else:
+            move = _dict(comparison.get("move"))
+            if _float(move.get("delta_min_fps")) < 0.0:
+                failures.append(
+                    "latest procedural terrain batching reduced move min FPS "
+                    f"by {_float(move.get('delta_min_fps')):.3f}"
+                )
+            if _float(move.get("delta_avg_draw_calls")) >= 0.0:
+                draw_delta = _float(move.get("delta_avg_draw_calls"))
+                failures.append(
+                    "latest procedural terrain batching did not reduce move draw calls "
+                    f"({draw_delta:+.3f})"
+                )
+            if _float(move.get("delta_avg_objects")) >= 0.0:
+                object_delta = _float(move.get("delta_avg_objects"))
+                failures.append(
+                    "latest procedural terrain batching did not reduce move render objects "
+                    f"({object_delta:+.3f})"
+                )
+    if args.max_latest_procedural_hold_primitive_ratio is not None:
+        comparison = _dict(report.get("latest_procedural_terrain_batch_comparison"))
+        if not bool(comparison.get("available", False)):
+            failures.append(
+                "latest procedural terrain batch comparison unavailable: "
+                f"{comparison.get('reason', 'unknown')}"
+            )
+        else:
+            hold = _dict(comparison.get("hold"))
+            hold_ratio = _float(hold.get("primitive_ratio"))
+            if hold_ratio > float(args.max_latest_procedural_hold_primitive_ratio):
+                failures.append(
+                    "latest procedural terrain batching hold primitive ratio "
+                    f"{hold_ratio:.3f} exceeds {args.max_latest_procedural_hold_primitive_ratio:.3f}"
+                )
     if args.max_latest_town_avg_ms is not None:
         town = report.get("town", [])
         if not isinstance(town, list) or not town:
@@ -848,6 +959,30 @@ def _print_report(report: dict[str, Any]) -> None:
                     water_dirty=_int(final.get("water_visual_batch_dirty_count")),
                 )
             )
+        comparison = _dict(report.get("latest_procedural_terrain_batch_comparison"))
+        if comparison:
+            if bool(comparison.get("available", False)):
+                move = _dict(comparison.get("move"))
+                hold = _dict(comparison.get("hold"))
+                active = _dict(comparison.get("active"))
+                print(
+                    "Procedural terrain batch comparison: "
+                    "move d_fps={move_fps:+.1f} d_draws={move_draws:+.1f} d_objects={move_objects:+.1f} "
+                    "d_prims={move_prims:+.1f}; hold d_draws={hold_draws:+.1f} d_objects={hold_objects:+.1f} "
+                    "d_prims={hold_prims:+.1f} ratio={hold_ratio:.2f}; active d_draws={active_draws:+.1f}".format(
+                        move_fps=_float(move.get("delta_min_fps")),
+                        move_draws=_float(move.get("delta_avg_draw_calls")),
+                        move_objects=_float(move.get("delta_avg_objects")),
+                        move_prims=_float(move.get("delta_avg_primitives")),
+                        hold_draws=_float(hold.get("delta_avg_draw_calls")),
+                        hold_objects=_float(hold.get("delta_avg_objects")),
+                        hold_prims=_float(hold.get("delta_avg_primitives")),
+                        hold_ratio=_float(hold.get("primitive_ratio")),
+                        active_draws=_float(active.get("delta_avg_draw_calls")),
+                    )
+                )
+            else:
+                print(f"Procedural terrain batch comparison: unavailable ({comparison.get('reason', 'unknown')})")
     gpu_telemetry = report.get("gpu_telemetry", [])
     if isinstance(gpu_telemetry, list) and gpu_telemetry:
         print("Raw GPU telemetry:")
@@ -943,6 +1078,8 @@ def main() -> int:
     parser.add_argument("--gpu-telemetry-count", type=int, default=3)
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--require-latest-procedural-deep-idle", action="store_true")
+    parser.add_argument("--require-latest-procedural-move-render-improvement", action="store_true")
+    parser.add_argument("--max-latest-procedural-hold-primitive-ratio", type=float, default=None)
     parser.add_argument("--max-latest-town-avg-ms", type=float, default=None)
     parser.add_argument("--max-latest-production-town-avg-ms", type=float, default=None)
     parser.add_argument("--max-latest-production-town-primitives", type=float, default=None)
