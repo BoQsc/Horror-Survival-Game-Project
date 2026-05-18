@@ -138,10 +138,19 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "avg_total_ms": _pick_window_metric(stationary_hold, town_window, "avg_total_ms"),
         "avg_draw_calls": _pick_window_metric(stationary_hold, town_window, "avg_draw_calls"),
         "avg_objects": _pick_window_metric(stationary_hold, town_window, "avg_objects"),
+        "avg_primitives": _pick_window_metric(stationary_hold, town_window, "avg_primitives"),
+        "pipeline_compilations_total_delta": int(
+            stationary_hold.get(
+                "pipeline_compilations_total_delta",
+                town_window.get("pipeline_compilations_total_delta", 0),
+            )
+            or 0
+        ),
         "frames_over_budget": _pick_window_int_metric(stationary_hold, town_window, "frames_over_budget"),
         "avg_total_ms_all": float(stationary_hold.get("avg_total_ms", town_window.get("avg_total_ms", 0.0)) or 0.0),
         "avg_draw_calls_all": float(stationary_hold.get("avg_draw_calls", town_window.get("avg_draw_calls", 0.0)) or 0.0),
         "avg_objects_all": float(stationary_hold.get("avg_objects", town_window.get("avg_objects", 0.0)) or 0.0),
+        "avg_primitives_all": float(stationary_hold.get("avg_primitives", town_window.get("avg_primitives", 0.0)) or 0.0),
         "rendered_terrain_chunks": int(terrain.get("rendered_terrain_chunk_count", 0) or 0),
         "rendered_water_chunks": int(terrain.get("rendered_water_chunk_count", 0) or 0),
         "building_visible_nodes": int(building.get("visible_world_map_baked_building_visual_nodes", 0) or 0),
@@ -164,10 +173,12 @@ def _add_deltas(results: list[dict]) -> list[dict]:
     baseline_ms = float(baseline.get("avg_total_ms", 0.0) or 0.0)
     baseline_draws = float(baseline.get("avg_draw_calls", 0.0) or 0.0)
     baseline_objects = float(baseline.get("avg_objects", 0.0) or 0.0)
+    baseline_primitives = float(baseline.get("avg_primitives", 0.0) or 0.0)
     for result in results:
         result["delta_avg_total_ms"] = round(float(result.get("avg_total_ms", 0.0) or 0.0) - baseline_ms, 3)
         result["delta_avg_draw_calls"] = round(float(result.get("avg_draw_calls", 0.0) or 0.0) - baseline_draws, 3)
         result["delta_avg_objects"] = round(float(result.get("avg_objects", 0.0) or 0.0) - baseline_objects, 3)
+        result["delta_avg_primitives"] = round(float(result.get("avg_primitives", 0.0) or 0.0) - baseline_primitives, 3)
     return results
 
 
@@ -178,7 +189,8 @@ def _print_results(results: list[dict]) -> None:
     for result in results:
         print(
             "{case:>20} | ms={ms:6.2f} ({dms:+6.2f}) | draws={draws:7.1f} ({ddraws:+7.1f}) | "
-            "objects={objects:7.1f} ({dobjects:+7.1f}) | terrain={terrain:4d} water={water:4d} "
+            "objects={objects:7.1f} ({dobjects:+7.1f}) | prims={prims:9.0f} ({dprims:+9.0f}) pipes={pipes:3d} | "
+            "terrain={terrain:4d} water={water:4d} "
             "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{rock}) cluster={cluster}/{grass_cluster} "
             "profile={profile} entities={entities:3d} | active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
                 case=str(result.get("case", "")),
@@ -188,6 +200,9 @@ def _print_results(results: list[dict]) -> None:
                 ddraws=float(result.get("delta_avg_draw_calls", 0.0) or 0.0),
                 objects=float(result.get("avg_objects", 0.0) or 0.0),
                 dobjects=float(result.get("delta_avg_objects", 0.0) or 0.0),
+                prims=float(result.get("avg_primitives", 0.0) or 0.0),
+                dprims=float(result.get("delta_avg_primitives", 0.0) or 0.0),
+                pipes=int(result.get("pipeline_compilations_total_delta", 0) or 0),
                 terrain=int(result.get("rendered_terrain_chunks", 0) or 0),
                 water=int(result.get("rendered_water_chunks", 0) or 0),
                 buildings=int(result.get("building_visible_nodes", 0) or 0),

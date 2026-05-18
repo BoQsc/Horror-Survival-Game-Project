@@ -314,7 +314,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var navigation_ms := Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS) * 1000.0
 	var draw_calls := int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 	var objects := int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))
+	var primitives := int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 	var vram_mb := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / (1024.0 * 1024.0)
+	var pipeline_compilations := _collect_pipeline_compilation_monitor_snapshot()
 	var monitor_sum_ms := process_monitor_ms + physics_ms + navigation_ms
 	var other_ms := maxf(0.0, total_ms - monitor_sum_ms)
 	var top_measure := _resolve_native_top_measure(total_ms, process_monitor_ms, physics_ms, navigation_ms, other_ms, draw_calls)
@@ -575,9 +577,16 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"monitor_exceeds_frame_ms": maxf(0.0, monitor_sum_ms - total_ms),
 		"draw_calls": draw_calls,
 		"objects": objects,
+		"primitives": primitives,
 		"physics_ms": physics_ms,
 		"navigation_ms": navigation_ms,
 		"vram_mb": vram_mb,
+		"pipeline_compilations_canvas": int(pipeline_compilations.get("canvas", 0)),
+		"pipeline_compilations_mesh": int(pipeline_compilations.get("mesh", 0)),
+		"pipeline_compilations_surface": int(pipeline_compilations.get("surface", 0)),
+		"pipeline_compilations_draw": int(pipeline_compilations.get("draw", 0)),
+		"pipeline_compilations_specialization": int(pipeline_compilations.get("specialization", 0)),
+		"pipeline_compilations_total": int(pipeline_compilations.get("total", 0)),
 		"other_ms": other_ms,
 		"terrain_active_chunk_count": terrain_active_chunk_count,
 		"terrain_native_grid_active_chunk_count": terrain_native_grid_active_chunk_count,
@@ -706,14 +715,34 @@ func _enrich_sample_with_previous_delta(sample: Dictionary) -> void:
 		sample["total_ms_delta"] = 0.0
 		sample["draw_calls_delta"] = 0
 		sample["objects_delta"] = 0
+		sample["primitives_delta"] = 0
 		sample["vram_mb_delta"] = 0.0
+		sample["pipeline_compilations_total_delta"] = 0
 		return
 
 	sample["frame_delta"] = int(sample.get("frame", 0)) - int(_previous_native_town_entry_sample.get("frame", 0))
 	sample["total_ms_delta"] = float(sample.get("total_ms", 0.0)) - float(_previous_native_town_entry_sample.get("total_ms", 0.0))
 	sample["draw_calls_delta"] = int(sample.get("draw_calls", 0)) - int(_previous_native_town_entry_sample.get("draw_calls", 0))
 	sample["objects_delta"] = int(sample.get("objects", 0)) - int(_previous_native_town_entry_sample.get("objects", 0))
+	sample["primitives_delta"] = int(sample.get("primitives", 0)) - int(_previous_native_town_entry_sample.get("primitives", 0))
 	sample["vram_mb_delta"] = float(sample.get("vram_mb", 0.0)) - float(_previous_native_town_entry_sample.get("vram_mb", 0.0))
+	sample["pipeline_compilations_total_delta"] = maxi(0, int(sample.get("pipeline_compilations_total", 0)) - int(_previous_native_town_entry_sample.get("pipeline_compilations_total", 0)))
+
+
+func _collect_pipeline_compilation_monitor_snapshot() -> Dictionary:
+	var canvas := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_CANVAS))
+	var mesh := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_MESH))
+	var surface := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SURFACE))
+	var draw := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW))
+	var specialization := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SPECIALIZATION))
+	return {
+		"canvas": canvas,
+		"mesh": mesh,
+		"surface": surface,
+		"draw": draw,
+		"specialization": specialization,
+		"total": canvas + mesh + surface + draw + specialization
+	}
 
 
 func _collect_render_monitor_snapshot() -> Dictionary:
@@ -730,7 +759,8 @@ func _collect_render_monitor_snapshot() -> Dictionary:
 		"render_buffer_mem_mb": Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED) / (1024.0 * 1024.0),
 		"physics_3d_active_objects": int(Performance.get_monitor(Performance.PHYSICS_3D_ACTIVE_OBJECTS)),
 		"physics_3d_collision_pairs": int(Performance.get_monitor(Performance.PHYSICS_3D_COLLISION_PAIRS)),
-		"physics_3d_islands": int(Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT))
+		"physics_3d_islands": int(Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT)),
+		"pipeline_compilations": _collect_pipeline_compilation_monitor_snapshot()
 	}
 
 
@@ -1055,6 +1085,7 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"avg_fps": 0.0,
 		"avg_draw_calls": 0.0,
 		"avg_objects": 0.0,
+		"avg_primitives": 0.0,
 		"avg_total_ms": 0.0,
 		"avg_physics_ms": 0.0,
 		"avg_navigation_ms": 0.0,
@@ -1081,12 +1112,21 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"stable_top_bucket_count": 0,
 		"top_bucket_counts": {},
 		"baseline_comparison": {},
+		"pipeline_compilations_canvas_delta": 0,
+		"pipeline_compilations_mesh_delta": 0,
+		"pipeline_compilations_surface_delta": 0,
+		"pipeline_compilations_draw_delta": 0,
+		"pipeline_compilations_specialization_delta": 0,
+		"pipeline_compilations_total_delta": 0,
+		"pipeline_compilations_total_start": 0,
+		"pipeline_compilations_total_end": 0,
 		"terrain_runtime_power_world_work_suspended_samples": 0,
 		"terrain_runtime_power_render_loop_suspended_samples": 0,
 		"render_active_sample_count": 0,
 		"avg_fps_render_active": 0.0,
 		"avg_draw_calls_render_active": 0.0,
 		"avg_objects_render_active": 0.0,
+		"avg_primitives_render_active": 0.0,
 		"avg_total_ms_render_active": 0.0,
 		"avg_physics_ms_render_active": 0.0,
 		"avg_navigation_ms_render_active": 0.0,
@@ -1113,6 +1153,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var total_fps := 0.0
 	var total_draw_calls := 0.0
 	var total_objects := 0.0
+	var total_primitives := 0.0
 	var total_ms := 0.0
 	var total_physics_ms := 0.0
 	var total_navigation_ms := 0.0
@@ -1147,6 +1188,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var total_fps_render_active := 0.0
 	var total_draw_calls_render_active := 0.0
 	var total_objects_render_active := 0.0
+	var total_primitives_render_active := 0.0
 	var total_ms_render_active := 0.0
 	var total_physics_ms_render_active := 0.0
 	var total_navigation_ms_render_active := 0.0
@@ -1165,6 +1207,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		total_fps += float(entry.get("fps", 0.0))
 		total_draw_calls += float(entry.get("draw_calls", 0))
 		total_objects += float(entry.get("objects", 0))
+		total_primitives += float(entry.get("primitives", 0))
 		total_ms += float(entry.get("total_ms", 0.0))
 		total_physics_ms += float(entry.get("physics_ms", 0.0))
 		total_navigation_ms += float(entry.get("navigation_ms", 0.0))
@@ -1216,6 +1259,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 			total_fps_render_active += float(entry.get("fps", 0.0))
 			total_draw_calls_render_active += float(entry.get("draw_calls", 0))
 			total_objects_render_active += float(entry.get("objects", 0))
+			total_primitives_render_active += float(entry.get("primitives", 0))
 			total_ms_render_active += frame_total_ms
 			total_physics_ms_render_active += float(entry.get("physics_ms", 0.0))
 			total_navigation_ms_render_active += float(entry.get("navigation_ms", 0.0))
@@ -1237,6 +1281,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var avg_total_ms := total_ms / sample_count
 	var avg_draw_calls := total_draw_calls / sample_count
 	var avg_objects := total_objects / sample_count
+	var avg_primitives := total_primitives / sample_count
 	var avg_physics_ms := total_physics_ms / sample_count
 	var avg_navigation_ms := total_navigation_ms / sample_count
 	var avg_vram_mb := total_vram_mb / sample_count
@@ -1244,6 +1289,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var avg_fps_render_active := total_fps_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_draw_calls_render_active := total_draw_calls_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_objects_render_active := total_objects_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_primitives_render_active := total_primitives_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_total_ms_render_active := total_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_physics_ms_render_active := total_physics_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_navigation_ms_render_active := total_navigation_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
@@ -1255,6 +1301,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 			"total_ms": float(last_entry.get("total_ms", 0.0)) - avg_total_ms,
 			"draw_calls": float(last_entry.get("draw_calls", 0)) - avg_draw_calls,
 			"objects": float(last_entry.get("objects", 0)) - avg_objects,
+			"primitives": float(last_entry.get("primitives", 0)) - avg_primitives,
 			"physics_ms": float(last_entry.get("physics_ms", 0.0)) - avg_physics_ms,
 			"navigation_ms": float(last_entry.get("navigation_ms", 0.0)) - avg_navigation_ms,
 			"vram_mb": float(last_entry.get("vram_mb", 0.0)) - avg_vram_mb,
@@ -1268,6 +1315,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"avg_fps": total_fps / sample_count,
 		"avg_draw_calls": avg_draw_calls,
 		"avg_objects": avg_objects,
+		"avg_primitives": avg_primitives,
 		"avg_total_ms": avg_total_ms,
 		"avg_physics_ms": avg_physics_ms,
 		"avg_navigation_ms": avg_navigation_ms,
@@ -1294,12 +1342,21 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"stable_top_bucket_count": int(dominant_bucket.get("count", 0)),
 		"top_bucket_counts": bucket_counts,
 		"baseline_comparison": latest_vs_window,
+		"pipeline_compilations_canvas_delta": _pipeline_compilation_delta(first_entry, last_entry, "pipeline_compilations_canvas"),
+		"pipeline_compilations_mesh_delta": _pipeline_compilation_delta(first_entry, last_entry, "pipeline_compilations_mesh"),
+		"pipeline_compilations_surface_delta": _pipeline_compilation_delta(first_entry, last_entry, "pipeline_compilations_surface"),
+		"pipeline_compilations_draw_delta": _pipeline_compilation_delta(first_entry, last_entry, "pipeline_compilations_draw"),
+		"pipeline_compilations_specialization_delta": _pipeline_compilation_delta(first_entry, last_entry, "pipeline_compilations_specialization"),
+		"pipeline_compilations_total_delta": _pipeline_compilation_delta(first_entry, last_entry, "pipeline_compilations_total"),
+		"pipeline_compilations_total_start": int(first_entry.get("pipeline_compilations_total", 0)),
+		"pipeline_compilations_total_end": int(last_entry.get("pipeline_compilations_total", 0)),
 		"terrain_runtime_power_world_work_suspended_samples": terrain_runtime_power_world_work_suspended_samples,
 		"terrain_runtime_power_render_loop_suspended_samples": terrain_runtime_power_render_loop_suspended_samples,
 		"render_active_sample_count": render_active_sample_count,
 		"avg_fps_render_active": avg_fps_render_active,
 		"avg_draw_calls_render_active": avg_draw_calls_render_active,
 		"avg_objects_render_active": avg_objects_render_active,
+		"avg_primitives_render_active": avg_primitives_render_active,
 		"avg_total_ms_render_active": avg_total_ms_render_active,
 		"avg_physics_ms_render_active": avg_physics_ms_render_active,
 		"avg_navigation_ms_render_active": avg_navigation_ms_render_active,
@@ -1312,6 +1369,12 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"latest_town_state": _town_entry_latest_town_state.duplicate(true),
 		"latest_entities_state": _town_entry_latest_entities_state.duplicate(true)
 	}
+
+
+func _pipeline_compilation_delta(first_entry: Dictionary, last_entry: Dictionary, key: String) -> int:
+	if first_entry.is_empty() or last_entry.is_empty():
+		return 0
+	return maxi(0, int(last_entry.get(key, 0)) - int(first_entry.get(key, 0)))
 
 
 func _build_native_town_entry_window_range(samples: Array[Dictionary], start_index: int, end_index: int) -> Dictionary:

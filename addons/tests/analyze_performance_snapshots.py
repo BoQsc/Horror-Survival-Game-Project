@@ -67,6 +67,18 @@ def _round(value: float) -> float:
     return round(value, 3)
 
 
+def _format_optional_float(value: Any, available: bool, precision: int = 1) -> str:
+    if not available:
+        return "n/a"
+    return f"{_float(value):.{precision}f}"
+
+
+def _format_optional_int(value: Any, available: bool) -> str:
+    if not available:
+        return "n/a"
+    return str(_int(value))
+
+
 def _has_samples(summary: dict[str, Any]) -> bool:
     return _int(summary.get("sample_count")) > 0
 
@@ -95,6 +107,15 @@ def _window_summary(window: dict[str, Any], target_frame_ms: float) -> dict[str,
         "longest_over_budget_streak": _int(window.get("longest_over_budget_streak")),
         "avg_draw_calls": _round(_float(window.get("avg_draw_calls"))),
         "avg_objects": _round(_float(window.get("avg_objects"))),
+        "has_primitive_metrics": "avg_primitives" in window,
+        "avg_primitives": _round(_float(window.get("avg_primitives"))),
+        "has_pipeline_metrics": "pipeline_compilations_total_delta" in window,
+        "pipeline_compilations_canvas_delta": _int(window.get("pipeline_compilations_canvas_delta")),
+        "pipeline_compilations_mesh_delta": _int(window.get("pipeline_compilations_mesh_delta")),
+        "pipeline_compilations_surface_delta": _int(window.get("pipeline_compilations_surface_delta")),
+        "pipeline_compilations_draw_delta": _int(window.get("pipeline_compilations_draw_delta")),
+        "pipeline_compilations_specialization_delta": _int(window.get("pipeline_compilations_specialization_delta")),
+        "pipeline_compilations_total_delta": _int(window.get("pipeline_compilations_total_delta")),
         "stable_top_bucket": str(window.get("stable_top_bucket", "")),
         "peak_top_bucket": str(window.get("peak_top_bucket", "")),
         "stable_60_average": _float(window.get("avg_total_ms")) <= target_frame_ms,
@@ -195,9 +216,14 @@ def _summarize_render_ablation(path: Path) -> dict[str, Any]:
                 "avg_total_ms": _round(_float(result.get("avg_total_ms"))),
                 "avg_draw_calls": _round(_float(result.get("avg_draw_calls"))),
                 "avg_objects": _round(_float(result.get("avg_objects"))),
+                "has_primitive_metrics": "avg_primitives" in result,
+                "avg_primitives": _round(_float(result.get("avg_primitives"))),
                 "delta_avg_total_ms": _round(_float(result.get("delta_avg_total_ms"))),
                 "delta_avg_draw_calls": _round(_float(result.get("delta_avg_draw_calls"))),
                 "delta_avg_objects": _round(_float(result.get("delta_avg_objects"))),
+                "delta_avg_primitives": _round(_float(result.get("delta_avg_primitives"))),
+                "has_pipeline_metrics": "pipeline_compilations_total_delta" in result,
+                "pipeline_compilations_total_delta": _int(result.get("pipeline_compilations_total_delta")),
                 "vegetation_global_batches": _int(result.get("vegetation_global_batches")),
                 "vegetation_profile_active": bool(result.get("vegetation_profile_active", False)),
             }
@@ -443,6 +469,7 @@ def _production_trend(town: list[dict[str, Any]]) -> dict[str, Any]:
     previous = production_runs[1]
     latest_hold = _dict(latest.get("stationary_hold"))
     previous_hold = _dict(previous.get("stationary_hold"))
+    has_primitive_metrics = bool(latest_hold.get("has_primitive_metrics", False)) and bool(previous_hold.get("has_primitive_metrics", False))
     return {
         "latest_path": str(latest.get("path", "")),
         "previous_path": str(previous.get("path", "")),
@@ -452,6 +479,8 @@ def _production_trend(town: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "delta_avg_draw_calls": _round(_float(latest_hold.get("avg_draw_calls")) - _float(previous_hold.get("avg_draw_calls"))),
         "delta_avg_objects": _round(_float(latest_hold.get("avg_objects")) - _float(previous_hold.get("avg_objects"))),
+        "has_primitive_metrics": has_primitive_metrics,
+        "delta_avg_primitives": _round(_float(latest_hold.get("avg_primitives")) - _float(previous_hold.get("avg_primitives"))),
     }
 
 
@@ -585,6 +614,36 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
                     "latest production-like town stationary avg "
                     f"{latest_avg:.3f} ms exceeds {args.max_latest_production_town_avg_ms:.3f} ms"
                 )
+    if args.max_latest_production_town_primitives is not None:
+        latest_production = _dict(report.get("latest_production_town"))
+        if not latest_production:
+            failures.append("no production-like town snapshots found")
+        else:
+            latest_hold = _dict(latest_production.get("stationary_hold"))
+            if not bool(latest_hold.get("has_primitive_metrics", False)):
+                failures.append("latest production-like town snapshot has no primitive metrics")
+            else:
+                latest_primitives = _float(latest_hold.get("avg_primitives"))
+                if latest_primitives > float(args.max_latest_production_town_primitives):
+                    failures.append(
+                        "latest production-like town avg primitives "
+                        f"{latest_primitives:.3f} exceeds {args.max_latest_production_town_primitives:.3f}"
+                    )
+    if args.max_latest_production_hold_pipeline_compilations is not None:
+        latest_production = _dict(report.get("latest_production_town"))
+        if not latest_production:
+            failures.append("no production-like town snapshots found")
+        else:
+            latest_hold = _dict(latest_production.get("stationary_hold"))
+            if not bool(latest_hold.get("has_pipeline_metrics", False)):
+                failures.append("latest production-like town snapshot has no pipeline compilation metrics")
+            else:
+                latest_compilations = _int(latest_hold.get("pipeline_compilations_total_delta"))
+                if latest_compilations > int(args.max_latest_production_hold_pipeline_compilations):
+                    failures.append(
+                        "latest production-like town hold pipeline compilations "
+                        f"{latest_compilations} exceed {args.max_latest_production_hold_pipeline_compilations}"
+                    )
     if args.require_latest_production_town_stable_60:
         stable_gate = _dict(report.get("stable_60_gate"))
         for failure in stable_gate.get("failures", []):
@@ -611,7 +670,7 @@ def _print_report(report: dict[str, Any]) -> None:
             vegetation = _dict(_dict(entry).get("vegetation"))
             print(
                 "  {name} hold={hold_complete} avg={avg:.2f}ms over={over:.1f}% "
-                "max={max_ms:.1f}ms draws={draws:.1f} objects={objects:.1f} veg={veg_batches} "
+                "max={max_ms:.1f}ms draws={draws:.1f} objects={objects:.1f} prims={prims} pipes={pipes} veg={veg_batches} "
                 "profile={profile} role={role}{case}".format(
                     name=Path(str(entry.get("path", ""))).name,
                     hold_complete=bool(entry.get("hold_complete", False)),
@@ -620,6 +679,11 @@ def _print_report(report: dict[str, Any]) -> None:
                     max_ms=_float(hold.get("max_total_ms")),
                     draws=_float(hold.get("avg_draw_calls")),
                     objects=_float(hold.get("avg_objects")),
+                    prims=_format_optional_float(hold.get("avg_primitives"), bool(hold.get("has_primitive_metrics", False)), 0),
+                    pipes=_format_optional_int(
+                        hold.get("pipeline_compilations_total_delta"),
+                        bool(hold.get("has_pipeline_metrics", False)),
+                    ),
                     veg_batches=_int(vegetation.get("global_render_batch_count")),
                     profile=bool(vegetation.get("world_map_vegetation_render_profile_active", False)),
                     role=str(entry.get("run_role", "")),
@@ -630,21 +694,31 @@ def _print_report(report: dict[str, Any]) -> None:
         if latest_production:
             hold = _dict(latest_production.get("stationary_hold"))
             print(
-                "Latest production-like town: {name} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms".format(
+                "Latest production-like town: {name} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms prims={prims} pipes={pipes}".format(
                     name=Path(str(latest_production.get("path", ""))).name,
                     avg=_float(hold.get("avg_total_ms")),
                     over=_float(hold.get("frames_over_budget_pct")),
                     max_ms=_float(hold.get("max_total_ms")),
+                    prims=_format_optional_float(hold.get("avg_primitives"), bool(hold.get("has_primitive_metrics", False)), 0),
+                    pipes=_format_optional_int(
+                        hold.get("pipeline_compilations_total_delta"),
+                        bool(hold.get("has_pipeline_metrics", False)),
+                    ),
                 )
             )
         trend = _dict(report.get("production_trend"))
         if trend:
             print(
-                "Production trend vs previous: avg={avg:+.2f}ms over={over:+.1f}% draws={draws:+.1f} objects={objects:+.1f}".format(
+                "Production trend vs previous: avg={avg:+.2f}ms over={over:+.1f}% draws={draws:+.1f} objects={objects:+.1f} prims={prims}".format(
                     avg=_float(trend.get("delta_avg_total_ms")),
                     over=_float(trend.get("delta_frames_over_budget_pct")),
                     draws=_float(trend.get("delta_avg_draw_calls")),
                     objects=_float(trend.get("delta_avg_objects")),
+                    prims=(
+                        f"{_float(trend.get('delta_avg_primitives')):+.1f}"
+                        if bool(trend.get("has_primitive_metrics", False))
+                        else "n/a"
+                    ),
                 )
             )
         stable_gate = _dict(report.get("stable_60_gate"))
@@ -749,12 +823,17 @@ def _print_report(report: dict[str, Any]) -> None:
             if not isinstance(result, dict):
                 continue
             print(
-                "  {case} avg={avg:.2f}ms draws={draws:.1f} objects={objects:.1f} "
-                "veg={veg} d_draws={delta_draws:+.1f}".format(
+                "  {case} avg={avg:.2f}ms draws={draws:.1f} objects={objects:.1f} prims={prims} "
+                "pipes={pipes} veg={veg} d_draws={delta_draws:+.1f}".format(
                     case=str(result.get("case", "")),
                     avg=_float(result.get("avg_total_ms")),
                     draws=_float(result.get("avg_draw_calls")),
                     objects=_float(result.get("avg_objects")),
+                    prims=_format_optional_float(result.get("avg_primitives"), bool(result.get("has_primitive_metrics", False)), 0),
+                    pipes=_format_optional_int(
+                        result.get("pipeline_compilations_total_delta"),
+                        bool(result.get("has_pipeline_metrics", False)),
+                    ),
                     veg=_int(result.get("vegetation_global_batches")),
                     delta_draws=_float(result.get("delta_avg_draw_calls")),
                 )
@@ -775,6 +854,8 @@ def main() -> int:
     parser.add_argument("--require-latest-procedural-deep-idle", action="store_true")
     parser.add_argument("--max-latest-town-avg-ms", type=float, default=None)
     parser.add_argument("--max-latest-production-town-avg-ms", type=float, default=None)
+    parser.add_argument("--max-latest-production-town-primitives", type=float, default=None)
+    parser.add_argument("--max-latest-production-hold-pipeline-compilations", type=int, default=None)
     parser.add_argument("--require-latest-production-town-stable-60", action="store_true")
     parser.add_argument("--max-stable-60-over-budget-pct", type=float, default=DEFAULT_STABLE_60_MAX_OVER_BUDGET_PCT)
     parser.add_argument("--max-stable-60-frame-ms", type=float, default=DEFAULT_STABLE_60_MAX_FRAME_MS)

@@ -7,6 +7,7 @@ PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 TIMEOUT = 120
 
 SCRIPT_PATH = Path(PROJECT_PATH) / "_tmp_parse_check.gd"
+LOG_PATH = Path(PROJECT_PATH) / ".agent" / "godot-parse-check.log"
 
 CHECKER_SCRIPT = """@tool
 extends SceneTree
@@ -64,6 +65,7 @@ def safe_print(text: str = "", end: str = "\n") -> None:
 
 def main() -> int:
     safe_print("Running Godot parse scan for project resources...")
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCRIPT_PATH.write_text(CHECKER_SCRIPT, encoding="utf-8")
 
     cmd = [
@@ -71,6 +73,8 @@ def main() -> int:
         "--headless",
         "--path",
         PROJECT_PATH,
+        "--log-file",
+        str(LOG_PATH),
         "--script",
         str(SCRIPT_PATH),
     ]
