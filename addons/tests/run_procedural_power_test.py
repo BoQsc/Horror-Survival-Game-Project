@@ -68,6 +68,48 @@ def _gpu_sample_summary(gpu_samples: list[dict[str, Any]], started_at_epoch: flo
     }
 
 
+def _phase_epoch_ranges(snapshot: dict[str, Any], started_at_epoch: float, ended_at_epoch: float) -> dict[str, tuple[float, float]]:
+    events = [
+        event
+        for event in snapshot.get("phase_events", [])
+        if isinstance(event, dict) and isinstance(event.get("epoch"), (int, float))
+    ]
+    events.sort(key=lambda event: float(event.get("epoch", 0.0)))
+    ranges: dict[str, tuple[float, float]] = {}
+    for index, event in enumerate(events):
+        phase = str(event.get("phase", ""))
+        if not phase:
+            continue
+        start = float(event.get("epoch", started_at_epoch))
+        end = ended_at_epoch
+        if index + 1 < len(events):
+            end = float(events[index + 1].get("epoch", ended_at_epoch))
+        if end > start:
+            ranges[phase] = (start, end)
+    return ranges
+
+
+def _gpu_phase_summaries(
+    snapshot: dict[str, Any],
+    gpu_samples: list[dict[str, Any]],
+    started_at_epoch: float,
+    ended_at_epoch: float,
+) -> dict[str, Any]:
+    ranges = _phase_epoch_ranges(snapshot, started_at_epoch, ended_at_epoch)
+    phase_summaries: dict[str, Any] = {}
+    for phase in ("move", "hold"):
+        if phase not in ranges:
+            continue
+        start, end = ranges[phase]
+        window_samples = [
+            sample
+            for sample in gpu_samples
+            if start <= float(sample.get("epoch", 0.0)) <= end
+        ]
+        phase_summaries[phase] = _gpu_sample_summary(window_samples, start, end)
+    return phase_summaries
+
+
 def _attach_gpu_samples_to_snapshot(
     snapshot_path: Optional[Path],
     snapshot: dict[str, Any],
@@ -79,6 +121,7 @@ def _attach_gpu_samples_to_snapshot(
         return snapshot
 
     snapshot["raw_gpu_summary"] = _gpu_sample_summary(gpu_samples, started_at_epoch, ended_at_epoch)
+    snapshot["raw_gpu_phase_summary"] = _gpu_phase_summaries(snapshot, gpu_samples, started_at_epoch, ended_at_epoch)
     snapshot["raw_gpu_samples"] = gpu_samples
     try:
         snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
@@ -135,6 +178,18 @@ def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_
     print(f"Raw GPU watts avg/max: {_summary(_numbers(gpu_samples, 'power_w'))}")
     print(f"Raw GPU temp avg/max: {_summary(_numbers(gpu_samples, 'temp_c'))}")
     print(f"Raw GPU util avg/max: {_summary(_numbers(gpu_samples, 'gpu_util_percent'))}")
+    phase_gpu = snapshot.get("raw_gpu_phase_summary", {}) if isinstance(snapshot, dict) else {}
+    if isinstance(phase_gpu, dict):
+        for phase in ("move", "hold"):
+            summary = phase_gpu.get(phase, {})
+            if not isinstance(summary, dict):
+                continue
+            power = summary.get("power_w", {}) if isinstance(summary.get("power_w"), dict) else {}
+            temp = summary.get("temp_c", {}) if isinstance(summary.get("temp_c"), dict) else {}
+            print(
+                f"Raw GPU {phase} watts avg/max: {power.get('avg', 0.0)}/{power.get('max', 0.0)} "
+                f"temp avg/max: {temp.get('avg', 0.0)}/{temp.get('max', 0.0)}"
+            )
     print(
         "Render: "
         f"draws={final_sample.get('draw_calls')} "
@@ -142,9 +197,10 @@ def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_
         f"primitives={final_sample.get('primitives')}"
     )
     shadow_summary = ""
-    if "terrain_shadow_lod_active" in terrain:
+    if "terrain_shadow_lod_enabled" in terrain:
         shadow_summary = (
-            f"shadow_lod_active={terrain.get('terrain_shadow_lod_active')} "
+            f"shadow_lod_enabled={terrain.get('terrain_shadow_lod_enabled')} "
+            f"shadow_radius={terrain.get('terrain_shadow_lod_radius_chunks')} "
             f"shadow_on={terrain.get('last_terrain_shadow_lod_enabled_count')} "
             f"shadow_off={terrain.get('last_terrain_shadow_lod_disabled_count')} "
         )

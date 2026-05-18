@@ -189,6 +189,8 @@ def _procedural_window_summary(samples: list[Any], phases: set[str]) -> dict[str
             "max_terrain_visual_batch_node_count": 0,
             "max_water_visual_batch_hidden_chunk_count": 0,
             "max_water_visual_batch_node_count": 0,
+            "max_terrain_visual_batch_near_cull_chunk_count": 0,
+            "max_water_visual_batch_near_cull_chunk_count": 0,
         }
 
     terrains = [_dict(row.get("terrain")) for row in rows]
@@ -203,6 +205,8 @@ def _procedural_window_summary(samples: list[Any], phases: set[str]) -> dict[str
         "max_terrain_visual_batch_node_count": max(_int(terrain.get("terrain_visual_batch_node_count")) for terrain in terrains),
         "max_water_visual_batch_hidden_chunk_count": max(_int(terrain.get("water_visual_batch_hidden_chunk_count")) for terrain in terrains),
         "max_water_visual_batch_node_count": max(_int(terrain.get("water_visual_batch_node_count")) for terrain in terrains),
+        "max_terrain_visual_batch_near_cull_chunk_count": max(_int(terrain.get("terrain_visual_batch_near_cull_chunk_count")) for terrain in terrains),
+        "max_water_visual_batch_near_cull_chunk_count": max(_int(terrain.get("water_visual_batch_near_cull_chunk_count")) for terrain in terrains),
     }
 
 
@@ -230,6 +234,11 @@ def _procedural_raw_gpu_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _procedural_raw_gpu_phase_summary(snapshot: dict[str, Any], phase: str) -> dict[str, Any]:
+    phases = _dict(snapshot.get("raw_gpu_phase_summary"))
+    return _procedural_raw_gpu_summary({"raw_gpu_summary": _dict(phases.get(phase))})
+
+
 def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
     snapshot = _read_json(path)
     samples = _list(snapshot.get("samples"))
@@ -248,6 +257,8 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
         "move_window": _procedural_window_summary(samples, {"move"}),
         "hold_window": _procedural_window_summary(samples, {"hold"}),
         "raw_gpu": _procedural_raw_gpu_summary(snapshot),
+        "raw_gpu_move": _procedural_raw_gpu_phase_summary(snapshot, "move"),
+        "raw_gpu_hold": _procedural_raw_gpu_phase_summary(snapshot, "hold"),
         "final": {
             "draw_calls": _int(final_sample.get("draw_calls")),
             "render_objects": _int(final_sample.get("render_objects")),
@@ -265,12 +276,20 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
             "terrain_visual_batch_active": bool(terrain.get("terrain_visual_batch_active", False)),
             "terrain_visual_batch_node_count": _int(terrain.get("terrain_visual_batch_node_count")),
             "terrain_visual_batch_hidden_chunk_count": _int(terrain.get("terrain_visual_batch_hidden_chunk_count")),
+            "terrain_visual_batch_near_cull_chunk_count": _int(terrain.get("terrain_visual_batch_near_cull_chunk_count")),
+            "effective_terrain_visual_batch_near_cull_radius_chunks": _int(terrain.get("effective_terrain_visual_batch_near_cull_radius_chunks")),
+            "terrain_shadow_lod_enabled": bool(terrain.get("terrain_shadow_lod_enabled", False)),
+            "terrain_shadow_lod_radius_chunks": _int(terrain.get("terrain_shadow_lod_radius_chunks")),
+            "last_terrain_shadow_lod_enabled_count": _int(terrain.get("last_terrain_shadow_lod_enabled_count")),
+            "last_terrain_shadow_lod_disabled_count": _int(terrain.get("last_terrain_shadow_lod_disabled_count")),
             "last_gpu_water_density_dispatched": bool(terrain.get("last_gpu_water_density_dispatched", False)),
             "gpu_water_density_skipped_count": _int(terrain.get("gpu_water_density_skipped_count")),
             "last_cpu_mesh_build_water_ms": _float(terrain.get("last_cpu_mesh_build_water_ms")),
             "water_visual_batch_active": bool(terrain.get("water_visual_batch_active", False)),
             "water_visual_batch_node_count": _int(terrain.get("water_visual_batch_node_count")),
             "water_visual_batch_hidden_chunk_count": _int(terrain.get("water_visual_batch_hidden_chunk_count")),
+            "water_visual_batch_near_cull_chunk_count": _int(terrain.get("water_visual_batch_near_cull_chunk_count")),
+            "effective_water_visual_batch_near_cull_radius_chunks": _int(terrain.get("effective_water_visual_batch_near_cull_radius_chunks")),
             "water_visual_batch_dirty_count": _int(terrain.get("water_visual_batch_dirty_count")),
             "building_dirty_visible_chunk_count": _int(building.get("dirty_visible_chunk_count")),
             "vegetation_pending_chunks": _int(vegetation.get("pending_chunks")),
@@ -973,6 +992,8 @@ def _print_report(report: dict[str, Any]) -> None:
             move = _dict(_dict(entry).get("move_window"))
             hold = _dict(_dict(entry).get("hold_window"))
             raw_gpu = _dict(_dict(entry).get("raw_gpu"))
+            raw_gpu_move = _dict(_dict(entry).get("raw_gpu_move"))
+            raw_gpu_hold = _dict(_dict(entry).get("raw_gpu_hold"))
             print(
                 "  {name} complete={complete} world_map={world_map} power={mode}@{fps} "
                 "external_busy={busy} dirty_visible={dirty} chunks={terrain_chunks}/{water_chunks} "
@@ -981,9 +1002,11 @@ def _print_report(report: dict[str, Any]) -> None:
                 "move={move_draws:.1f}/{move_objects:.1f}/{move_prims:.1f} "
                 "hold={hold_draws:.1f}/{hold_objects:.1f}/{hold_prims:.1f} "
                 "gpu={gpu_power:.1f}/{gpu_power_max:.1f}W {gpu_temp:.1f}/{gpu_temp_max:.1f}C "
+                "gpu_move={gpu_move_power:.1f}W gpu_hold={gpu_hold_power:.1f}W "
                 "water_dispatch={water_dispatch} water_skips={water_skips} water_build={water_build:.3f}ms "
                 "terrain_batches={terrain_batches} terrain_hidden={terrain_hidden} "
-                "water_batches={water_batches} hidden={hidden} dirty={water_dirty}".format(
+                "terrain_near={terrain_near} water_batches={water_batches} hidden={hidden} "
+                "water_near={water_near} shadows={shadow_on}/{shadow_off} dirty={water_dirty}".format(
                     name=Path(str(entry.get("path", ""))).name,
                     complete=bool(entry.get("completed", False)),
                     world_map=bool(final.get("world_map_active", False)),
@@ -1008,13 +1031,19 @@ def _print_report(report: dict[str, Any]) -> None:
                     gpu_power_max=_float(raw_gpu.get("max_power_w")),
                     gpu_temp=_float(raw_gpu.get("avg_temp_c")),
                     gpu_temp_max=_float(raw_gpu.get("max_temp_c")),
+                    gpu_move_power=_float(raw_gpu_move.get("avg_power_w")),
+                    gpu_hold_power=_float(raw_gpu_hold.get("avg_power_w")),
                     water_dispatch=bool(final.get("last_gpu_water_density_dispatched", False)),
                     water_skips=_int(final.get("gpu_water_density_skipped_count")),
                     water_build=_float(final.get("last_cpu_mesh_build_water_ms")),
                     terrain_batches=_int(active.get("max_terrain_visual_batch_node_count")),
                     terrain_hidden=_int(active.get("max_terrain_visual_batch_hidden_chunk_count")),
+                    terrain_near=_int(active.get("max_terrain_visual_batch_near_cull_chunk_count")),
                     water_batches=_int(active.get("max_water_visual_batch_node_count")),
                     hidden=_int(active.get("max_water_visual_batch_hidden_chunk_count")),
+                    water_near=_int(active.get("max_water_visual_batch_near_cull_chunk_count")),
+                    shadow_on=_int(final.get("last_terrain_shadow_lod_enabled_count")),
+                    shadow_off=_int(final.get("last_terrain_shadow_lod_disabled_count")),
                     water_dirty=_int(final.get("water_visual_batch_dirty_count")),
                 )
             )

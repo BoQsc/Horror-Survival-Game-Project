@@ -75,6 +75,9 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 512, 1) var terrain_visual_batch_hot_rebuild_dirty_threshold: int = 8
 @export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 48000
 @export_range(0, 200000, 1000) var world_map_terrain_visual_batch_max_vertices: int = 200000
+@export_range(0, 8, 1) var procedural_terrain_visual_batch_near_cull_radius_chunks: int = 0
+@export var terrain_shadow_lod_enabled: bool = true
+@export_range(0, 32, 1) var terrain_shadow_lod_radius_chunks: int = 2
 @export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
 @export var terrain_visual_batch_idle_polish_enabled: bool = true
 @export var water_visual_batching_enabled: bool = true
@@ -84,6 +87,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 8, 1) var water_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 200000, 1000) var water_visual_batch_max_vertices: int = 48000
 @export_range(0, 200000, 1000) var world_map_water_visual_batch_max_vertices: int = 200000
+@export_range(0, 8, 1) var procedural_water_visual_batch_near_cull_radius_chunks: int = 0
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -408,6 +412,7 @@ var _terrain_visual_batch_hot_rebuild_frame_counter: int = 0
 var _last_terrain_visual_batch_hot_rebuild: bool = false
 var _last_effective_terrain_visual_batch_size: int = -1
 var _last_effective_terrain_visual_batch_max_vertices: int = -1
+var _last_effective_terrain_visual_batch_near_cull_radius: int = -1
 var _terrain_visual_mesh_retire_queue: Array[Vector3i] = []
 var _terrain_visual_mesh_retire_queued: Dictionary = {}
 @export_range(1, 64, 1) var terrain_visual_mesh_retire_budget_per_frame: int = 16
@@ -424,6 +429,17 @@ var _last_water_visual_batch_skipped_heavy_count: int = 0
 var _water_visual_batch_total_heavy_skips: int = 0
 var _last_effective_water_visual_batch_size: int = -1
 var _last_effective_water_visual_batch_max_vertices: int = -1
+var _last_effective_water_visual_batch_near_cull_radius: int = -1
+var _last_visual_batch_near_cull_viewer_chunk: Vector2i = Vector2i(2147483647, 2147483647)
+var _last_terrain_shadow_lod_enabled_count: int = 0
+var _last_terrain_shadow_lod_disabled_count: int = 0
+var _last_terrain_shadow_lod_update_count: int = 0
+var _last_terrain_shadow_lod_ms: float = 0.0
+var _last_terrain_shadow_lod_viewer_chunk: Vector2i = Vector2i(2147483647, 2147483647)
+var _last_terrain_shadow_lod_active_chunk_count: int = -1
+var _last_terrain_shadow_lod_batch_count: int = -1
+var _last_terrain_shadow_lod_enabled_setting: bool = true
+var _last_terrain_shadow_lod_radius_setting: int = -1
 var _render_resource_prewarm_started: bool = false
 var _render_resource_prewarm_node: Node = null
 @export_range(1, 256, 1) var completed_generation_drain_limit_per_frame: int = 32
@@ -698,6 +714,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_hot_rebuild_interval_frames": terrain_visual_batch_hot_rebuild_interval_frames,
 		"terrain_visual_batch_hot_rebuild_dirty_threshold": terrain_visual_batch_hot_rebuild_dirty_threshold,
 		"terrain_visual_batch_max_vertices": terrain_visual_batch_max_vertices,
+		"procedural_terrain_visual_batch_near_cull_radius_chunks": procedural_terrain_visual_batch_near_cull_radius_chunks,
+		"effective_terrain_visual_batch_near_cull_radius_chunks": _effective_terrain_visual_batch_near_cull_radius(),
+		"terrain_visual_batch_near_cull_chunk_count": _count_near_cull_visual_batch_chunks(_effective_terrain_visual_batch_near_cull_radius()),
+		"terrain_shadow_lod_enabled": terrain_shadow_lod_enabled,
+		"terrain_shadow_lod_radius_chunks": terrain_shadow_lod_radius_chunks,
+		"last_terrain_shadow_lod_enabled_count": _last_terrain_shadow_lod_enabled_count,
+		"last_terrain_shadow_lod_disabled_count": _last_terrain_shadow_lod_disabled_count,
+		"last_terrain_shadow_lod_update_count": _last_terrain_shadow_lod_update_count,
+		"last_terrain_shadow_lod_ms": _last_terrain_shadow_lod_ms,
 		"terrain_visual_batch_idle_polish_enabled": terrain_visual_batch_idle_polish_enabled,
 		"terrain_visual_batch_idle_polish_active": _last_terrain_visual_batch_idle_polish,
 		"terrain_visual_batch_idle_polish_frame_count": _terrain_visual_batch_idle_polish_frame_count,
@@ -739,6 +764,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"effective_water_visual_batch_max_vertices": _effective_water_visual_batch_max_vertices(),
 		"water_visual_batch_rebuilds_per_frame": water_visual_batch_rebuilds_per_frame,
 		"water_visual_batch_max_vertices": water_visual_batch_max_vertices,
+		"procedural_water_visual_batch_near_cull_radius_chunks": procedural_water_visual_batch_near_cull_radius_chunks,
+		"effective_water_visual_batch_near_cull_radius_chunks": _effective_water_visual_batch_near_cull_radius(),
+		"water_visual_batch_near_cull_chunk_count": _count_near_cull_visual_batch_chunks(_effective_water_visual_batch_near_cull_radius()),
 		"water_visual_batch_node_count": _water_visual_batches.size(),
 		"water_visual_batch_hidden_chunk_count": _count_hidden_water_visual_batch_chunks(),
 		"water_visual_batch_dirty_count": _water_visual_batch_dirty.size(),
@@ -1201,6 +1229,11 @@ func _effective_terrain_visual_batch_max_vertices() -> int:
 		return world_map_terrain_visual_batch_max_vertices
 	return terrain_visual_batch_max_vertices
 
+func _effective_terrain_visual_batch_near_cull_radius() -> int:
+	if world_map_active:
+		return 0
+	return maxi(procedural_terrain_visual_batch_near_cull_radius_chunks, 0)
+
 func _effective_water_visual_batch_size() -> int:
 	if _use_world_map_visual_batch_profile():
 		return maxi(world_map_water_visual_batch_size, 1)
@@ -1211,6 +1244,11 @@ func _effective_water_visual_batch_max_vertices() -> int:
 		return world_map_water_visual_batch_max_vertices
 	return water_visual_batch_max_vertices
 
+func _effective_water_visual_batch_near_cull_radius() -> int:
+	if world_map_active:
+		return 0
+	return maxi(procedural_water_visual_batch_near_cull_radius_chunks, 0)
+
 func _is_water_visual_batch_active() -> bool:
 	return water_visual_batching_enabled \
 		and water_render_enabled \
@@ -1219,6 +1257,110 @@ func _is_water_visual_batch_active() -> bool:
 func _is_terrain_visual_batch_active() -> bool:
 	return terrain_visual_batching_enabled \
 		and (world_map_active or procedural_terrain_visual_batching_enabled)
+
+func _viewer_visual_batch_chunk() -> Vector2i:
+	var p_pos := get_viewer_position()
+	return Vector2i(
+		int(floor(p_pos.x / CHUNK_STRIDE)),
+		int(floor(p_pos.z / CHUNK_STRIDE))
+	)
+
+func _is_chunk_near_viewer_for_visual_batch(coord: Vector3i, radius_chunks: int) -> bool:
+	if radius_chunks <= 0:
+		return false
+	var viewer_chunk := _viewer_visual_batch_chunk()
+	return maxi(absi(coord.x - viewer_chunk.x), absi(coord.z - viewer_chunk.y)) <= radius_chunks
+
+func _count_near_cull_visual_batch_chunks(radius_chunks: int) -> int:
+	if radius_chunks <= 0:
+		return 0
+	var count := 0
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		if coord.y == 0 and _is_chunk_near_viewer_for_visual_batch(coord, radius_chunks):
+			count += 1
+	return count
+
+func _should_terrain_cast_shadow(coord: Vector3i) -> bool:
+	if not terrain_shadow_lod_enabled or world_map_active:
+		return true
+	var viewer_chunk := _viewer_visual_batch_chunk()
+	return maxi(absi(coord.x - viewer_chunk.x), absi(coord.z - viewer_chunk.y)) <= terrain_shadow_lod_radius_chunks
+
+func _set_mesh_shadow_casting(mesh_instance: MeshInstance3D, enabled: bool) -> bool:
+	if mesh_instance == null or not is_instance_valid(mesh_instance):
+		return false
+	var target := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if enabled else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if mesh_instance.cast_shadow == target:
+		return false
+	mesh_instance.cast_shadow = target
+	return true
+
+func _sync_terrain_node_shadow_lod(coord: Vector3i, data) -> bool:
+	if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):
+		return false
+	var mesh_instance := _get_chunk_mesh_instance(data.node_terrain)
+	if mesh_instance == null:
+		return false
+	return _set_mesh_shadow_casting(mesh_instance, _should_terrain_cast_shadow(coord))
+
+func _terrain_batch_shadow_coord(key: Vector2i) -> Vector3i:
+	var batch_size := _effective_terrain_visual_batch_size()
+	return Vector3i(
+		key.x * batch_size + int(floor(float(batch_size) * 0.5)),
+		0,
+		key.y * batch_size + int(floor(float(batch_size) * 0.5))
+	)
+
+func _sync_terrain_shadow_lod() -> void:
+	var viewer_chunk := _viewer_visual_batch_chunk()
+	var active_chunk_count := active_chunks.size()
+	var batch_count := _terrain_visual_batches.size()
+	if viewer_chunk == _last_terrain_shadow_lod_viewer_chunk \
+		and active_chunk_count == _last_terrain_shadow_lod_active_chunk_count \
+		and batch_count == _last_terrain_shadow_lod_batch_count \
+		and terrain_shadow_lod_enabled == _last_terrain_shadow_lod_enabled_setting \
+		and terrain_shadow_lod_radius_chunks == _last_terrain_shadow_lod_radius_setting:
+		_last_terrain_shadow_lod_update_count = 0
+		_last_terrain_shadow_lod_ms = 0.0
+		return
+
+	var start_us := Time.get_ticks_usec()
+	var enabled_count := 0
+	var disabled_count := 0
+	var updated_count := 0
+
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		if coord.y != 0:
+			continue
+		var should_cast := _should_terrain_cast_shadow(coord)
+		if should_cast:
+			enabled_count += 1
+		else:
+			disabled_count += 1
+		var data = active_chunks.get(coord, null)
+		if _sync_terrain_node_shadow_lod(coord, data):
+			updated_count += 1
+
+	for key_variant in _terrain_visual_batches.keys():
+		var key: Vector2i = key_variant
+		var batch_node := _terrain_visual_batches.get(key, null) as MeshInstance3D
+		if batch_node == null or not is_instance_valid(batch_node):
+			continue
+		var should_batch_cast := _should_terrain_cast_shadow(_terrain_batch_shadow_coord(key))
+		if _set_mesh_shadow_casting(batch_node, should_batch_cast):
+			updated_count += 1
+
+	_last_terrain_shadow_lod_enabled_count = enabled_count
+	_last_terrain_shadow_lod_disabled_count = disabled_count
+	_last_terrain_shadow_lod_update_count = updated_count
+	_last_terrain_shadow_lod_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+	_last_terrain_shadow_lod_viewer_chunk = viewer_chunk
+	_last_terrain_shadow_lod_active_chunk_count = active_chunk_count
+	_last_terrain_shadow_lod_batch_count = batch_count
+	_last_terrain_shadow_lod_enabled_setting = terrain_shadow_lod_enabled
+	_last_terrain_shadow_lod_radius_setting = terrain_shadow_lod_radius_chunks
 
 func _terrain_visual_batch_key(coord: Vector3i) -> Vector2i:
 	var batch_size := _effective_terrain_visual_batch_size()
@@ -1380,6 +1522,8 @@ func _ensure_chunk_terrain_mesh_instance(data) -> MeshInstance3D:
 func _is_chunk_eligible_for_terrain_visual_batch(coord: Vector3i, data) -> bool:
 	if not _is_terrain_visual_batch_active() or coord.y != 0:
 		return false
+	if _is_chunk_near_viewer_for_visual_batch(coord, _effective_terrain_visual_batch_near_cull_radius()):
+		return false
 	if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):
 		return false
 	if data.node_terrain is StaticBody3D:
@@ -1526,6 +1670,7 @@ func _process_idle_terrain_visual_batch_polish() -> void:
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
 	_process_water_visual_batch_rebuilds()
+	_sync_terrain_shadow_lod()
 
 func _process_completed_terrain_visual_batch_builds() -> void:
 	_last_terrain_visual_batch_async_apply_count = 0
@@ -1841,6 +1986,7 @@ func _apply_terrain_visual_batch_mesh(key: Vector2i, eligible_coords: Array[Vect
 
 	batch_node.position = Vector3.ZERO
 	batch_node.mesh = merged_mesh
+	_set_mesh_shadow_casting(batch_node, _should_terrain_cast_shadow(_terrain_batch_shadow_coord(key)))
 	batch_node.visible = true
 	for coord in eligible_coords:
 		var data = active_chunks.get(coord, null)
@@ -2021,6 +2167,8 @@ func _ensure_chunk_water_mesh_instance(data) -> MeshInstance3D:
 func _is_chunk_eligible_for_water_visual_batch(coord: Vector3i, data) -> bool:
 	if not _is_water_visual_batch_active() or coord.y != 0:
 		return false
+	if _is_chunk_near_viewer_for_visual_batch(coord, _effective_water_visual_batch_near_cull_radius()):
+		return false
 	if data == null or data.node_water == null or not is_instance_valid(data.node_water):
 		return false
 	return _get_chunk_water_visual_mesh(data) != null
@@ -2139,27 +2287,91 @@ func _rebuild_water_visual_batch_members_for_profile() -> void:
 func _sync_visual_batch_profile() -> void:
 	var terrain_size := _effective_terrain_visual_batch_size()
 	var terrain_max_vertices := _effective_terrain_visual_batch_max_vertices()
+	var terrain_near_cull_radius := _effective_terrain_visual_batch_near_cull_radius()
 	var terrain_profile_changed := _last_effective_terrain_visual_batch_size >= 0 \
 		and (
 			terrain_size != _last_effective_terrain_visual_batch_size \
 			or terrain_max_vertices != _last_effective_terrain_visual_batch_max_vertices
 		)
+	var terrain_near_cull_changed := _last_effective_terrain_visual_batch_near_cull_radius >= 0 \
+		and terrain_near_cull_radius != _last_effective_terrain_visual_batch_near_cull_radius
+	var previous_terrain_near_cull_radius := _last_effective_terrain_visual_batch_near_cull_radius
 	_last_effective_terrain_visual_batch_size = terrain_size
 	_last_effective_terrain_visual_batch_max_vertices = terrain_max_vertices
+	_last_effective_terrain_visual_batch_near_cull_radius = terrain_near_cull_radius
 	if terrain_profile_changed and _is_terrain_visual_batch_active():
 		_rebuild_terrain_visual_batch_members_for_profile()
 
 	var water_size := _effective_water_visual_batch_size()
 	var water_max_vertices := _effective_water_visual_batch_max_vertices()
+	var water_near_cull_radius := _effective_water_visual_batch_near_cull_radius()
 	var water_profile_changed := _last_effective_water_visual_batch_size >= 0 \
 		and (
 			water_size != _last_effective_water_visual_batch_size \
 			or water_max_vertices != _last_effective_water_visual_batch_max_vertices
 		)
+	var water_near_cull_changed := _last_effective_water_visual_batch_near_cull_radius >= 0 \
+		and water_near_cull_radius != _last_effective_water_visual_batch_near_cull_radius
+	var previous_water_near_cull_radius := _last_effective_water_visual_batch_near_cull_radius
 	_last_effective_water_visual_batch_size = water_size
 	_last_effective_water_visual_batch_max_vertices = water_max_vertices
+	_last_effective_water_visual_batch_near_cull_radius = water_near_cull_radius
 	if water_profile_changed and _is_water_visual_batch_active():
 		_rebuild_water_visual_batch_members_for_profile()
+	_sync_visual_batch_near_cull_dirty(
+		terrain_near_cull_radius,
+		water_near_cull_radius,
+		terrain_near_cull_changed,
+		water_near_cull_changed,
+		previous_terrain_near_cull_radius,
+		previous_water_near_cull_radius
+	)
+
+func _mark_visual_batch_near_cull_dirty(center_chunk: Vector2i, terrain_radius: int, water_radius: int) -> void:
+	var radius := maxi(maxi(terrain_radius, water_radius), 0)
+	if radius <= 0 or center_chunk.x > 2000000000:
+		return
+	for x in range(center_chunk.x - radius, center_chunk.x + radius + 1):
+		for z in range(center_chunk.y - radius, center_chunk.y + radius + 1):
+			var coord := Vector3i(x, 0, z)
+			if terrain_radius > 0 and maxi(absi(coord.x - center_chunk.x), absi(coord.z - center_chunk.y)) <= terrain_radius:
+				var terrain_key := _terrain_visual_batch_key(coord)
+				if _terrain_visual_batch_members.has(terrain_key) or _terrain_visual_batches.has(terrain_key):
+					_terrain_visual_batch_dirty[terrain_key] = true
+			if water_radius > 0 and maxi(absi(coord.x - center_chunk.x), absi(coord.z - center_chunk.y)) <= water_radius:
+				var water_key := _water_visual_batch_key(coord)
+				if _water_visual_batch_members.has(water_key) or _water_visual_batches.has(water_key):
+					_water_visual_batch_dirty[water_key] = true
+
+func _sync_visual_batch_near_cull_dirty(
+	terrain_radius: int,
+	water_radius: int,
+	terrain_radius_changed: bool,
+	water_radius_changed: bool,
+	previous_terrain_radius: int,
+	previous_water_radius: int
+) -> void:
+	if not _is_terrain_visual_batch_active() and not _is_water_visual_batch_active():
+		_last_visual_batch_near_cull_viewer_chunk = Vector2i(2147483647, 2147483647)
+		return
+	var max_radius := maxi(terrain_radius, water_radius)
+	var previous_max_radius := maxi(maxi(previous_terrain_radius, previous_water_radius), 0)
+	if max_radius <= 0 and previous_max_radius <= 0:
+		_last_visual_batch_near_cull_viewer_chunk = Vector2i(2147483647, 2147483647)
+		return
+	var viewer_chunk := _viewer_visual_batch_chunk()
+	var first_sync := _last_visual_batch_near_cull_viewer_chunk.x > 2000000000
+	var viewer_changed := not first_sync and viewer_chunk != _last_visual_batch_near_cull_viewer_chunk
+	if first_sync:
+		_mark_visual_batch_near_cull_dirty(viewer_chunk, terrain_radius, water_radius)
+	elif viewer_changed or terrain_radius_changed or water_radius_changed:
+		_mark_visual_batch_near_cull_dirty(
+			_last_visual_batch_near_cull_viewer_chunk,
+			maxi(previous_terrain_radius, 0),
+			maxi(previous_water_radius, 0)
+		)
+		_mark_visual_batch_near_cull_dirty(viewer_chunk, terrain_radius, water_radius)
+	_last_visual_batch_near_cull_viewer_chunk = viewer_chunk
 
 func _has_water_visual_batch_polish_work() -> bool:
 	return _is_water_visual_batch_active() and not _water_visual_batch_dirty.is_empty()
@@ -2734,6 +2946,7 @@ func _process(delta):
 	if _runtime_power_world_work_suspended:
 		_record_runtime_power_world_work_suspended_frame()
 		_process_idle_terrain_visual_batch_polish()
+		_sync_terrain_shadow_lod()
 		return
 
 	_process_retired_chunk_node_cleanup()
@@ -2780,6 +2993,7 @@ func _process(delta):
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
 	_process_water_visual_batch_rebuilds()
+	_sync_terrain_shadow_lod()
 
 var debug_chunk_bounds: bool = false
 
@@ -2925,6 +3139,9 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
 	terrain_visual_batch_idle_polish_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH", terrain_visual_batch_idle_polish_enabled)
+	procedural_terrain_visual_batch_near_cull_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_PROCEDURAL_TERRAIN_VISUAL_BATCH_NEAR_CULL_RADIUS", procedural_terrain_visual_batch_near_cull_radius_chunks, 0, 8)
+	terrain_shadow_lod_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_SHADOW_LOD", terrain_shadow_lod_enabled)
+	terrain_shadow_lod_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_SHADOW_LOD_RADIUS", terrain_shadow_lod_radius_chunks, 0, 32)
 	water_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_VISUAL_BATCHING", water_visual_batching_enabled)
 	procedural_water_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_PROCEDURAL_WATER_VISUAL_BATCHING", procedural_water_visual_batching_enabled)
 	water_visual_batch_size = _get_runtime_power_env_int_range("TOWN_STALL_WATER_VISUAL_BATCH_SIZE", water_visual_batch_size, 1, 16)
@@ -2936,6 +3153,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	world_map_water_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_MAX_VERTICES", world_map_water_visual_batch_max_vertices, 0, 200000)
 	if water_batch_max_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_MAX_VERTICES").is_empty():
 		world_map_water_visual_batch_max_vertices = water_visual_batch_max_vertices
+	procedural_water_visual_batch_near_cull_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_PROCEDURAL_WATER_VISUAL_BATCH_NEAR_CULL_RADIUS", procedural_water_visual_batch_near_cull_radius_chunks, 0, 8)
 
 func _runtime_power_input_active() -> bool:
 	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]
@@ -7299,7 +7517,7 @@ func _finalize_chunk_creation(item: Dictionary):
 
 		# Create Node (VISUALS ONLY)
 		# Pass defer_collision=true to prevent create_chunk_node from creating a StaticBody3D/CollisionShape3D
-		var result = create_chunk_node(terrain_mesh_result.get("mesh", null), null, chunk_pos, false, chunk_material, true)
+		var result = create_chunk_node(terrain_mesh_result.get("mesh", null), null, chunk_pos, false, chunk_material, true, coord)
 
 		# Update Data
 		var data = active_chunks[coord]
@@ -7385,7 +7603,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		if create_water_node:
 			# World-map swimming/underwater checks use density sampling, not Area3D
 			# overlap state, so the water mesh can stay visual-only in that mode.
-			var result = create_chunk_node(water_mesh_result.get("mesh", null), water_mesh_result.get("shape", null), chunk_pos, true, null, world_map_active)
+			var result = create_chunk_node(water_mesh_result.get("mesh", null), water_mesh_result.get("shape", null), chunk_pos, true, null, world_map_active, coord)
 			data.node_water = result.node if not result.is_empty() else null
 		else:
 			data.node_water = null
@@ -7515,7 +7733,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			int(floor(p_pos.z / CHUNK_STRIDE))
 		)
 
-		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, false, chunk_material)
+		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, false, chunk_material, false, coord)
 		data.node_terrain = result_node.node if not result_node.is_empty() else null
 		if coord.y == 0 and data.node_terrain:
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
@@ -7545,7 +7763,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		data.water_visual_batched = false
 		if data.node_water: data.node_water.queue_free()
 		if water_render_enabled:
-			var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true, null, world_map_active)
+			var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true, null, world_map_active, coord)
 			data.node_water = result_node.node if not result_node.is_empty() else null
 		else:
 			data.node_water = null
@@ -7559,7 +7777,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			data.generated_water_density_available = false
 	_last_chunk_update_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
-func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false, custom_material: Material = null, defer_collision: bool = false) -> Dictionary:
+func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_water: bool = false, custom_material: Material = null, defer_collision: bool = false, coord: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)) -> Dictionary:
 	if mesh == null:
 		return {}
 
@@ -7598,6 +7816,8 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 	# but the material handles most transparency.
 	if is_water:
 		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	elif coord != Vector3i(2147483647, 2147483647, 2147483647):
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if _should_terrain_cast_shadow(coord) else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	node.add_child(mesh_instance)
 

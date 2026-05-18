@@ -3,10 +3,12 @@ extends Node
 const GAME_SCENE_PATH := "res://modules/world_module/world_test_world_player_v2.tscn"
 const SNAPSHOT_DIR := "user://debug/performance/"
 
-var warmup_timeout_s: float = 45.0
+var warmup_timeout_s: float = 75.0
 var move_seconds: float = 16.0
 var hold_seconds: float = 8.0
 var sample_interval_s: float = 1.0
+var require_stream_settled: bool = true
+var stream_settle_seconds: float = 1.5
 var snapshot_dir: String = SNAPSHOT_DIR
 
 var game_root: Node = null
@@ -15,8 +17,10 @@ var player: Node3D = null
 var phase: String = "load"
 var phase_time: float = 0.0
 var elapsed_time: float = 0.0
+var stream_settled_time: float = 0.0
 var next_sample_time: float = 0.0
 var samples: Array[Dictionary] = []
+var phase_events: Array[Dictionary] = []
 var active_action: String = ""
 var snapshot_path: String = ""
 
@@ -25,7 +29,10 @@ func _ready() -> void:
 	move_seconds = _env_float("PROCEDURAL_POWER_MOVE_SECONDS", move_seconds)
 	hold_seconds = _env_float("PROCEDURAL_POWER_HOLD_SECONDS", hold_seconds)
 	sample_interval_s = _env_float("PROCEDURAL_POWER_SAMPLE_INTERVAL_S", sample_interval_s)
+	require_stream_settled = _env_bool("PROCEDURAL_POWER_REQUIRE_STREAM_SETTLED", require_stream_settled)
+	stream_settle_seconds = _env_float("PROCEDURAL_POWER_STREAM_SETTLE_SECONDS", stream_settle_seconds)
 	snapshot_dir = _env_string("PROCEDURAL_POWER_SNAPSHOT_DIR", snapshot_dir)
+	_record_phase_event("start", phase)
 	print("[PROCEDURAL_POWER] Loading procedural scene: %s" % GAME_SCENE_PATH)
 	var packed := load(GAME_SCENE_PATH)
 	if packed == null:
@@ -44,7 +51,7 @@ func _process(delta: float) -> void:
 
 	match phase:
 		"load":
-			if _is_world_ready():
+			if _is_ready_for_measurement(delta):
 				_change_phase("move")
 			elif phase_time >= warmup_timeout_s:
 				_fail("initial_load_timeout")
@@ -66,6 +73,16 @@ func _env_float(name: String, default_value: float) -> float:
 	var value := float(raw)
 	return value if value > 0.0 else default_value
 
+func _env_bool(name: String, default_value: bool) -> bool:
+	var raw := OS.get_environment(name).strip_edges().to_lower()
+	if raw.is_empty():
+		return default_value
+	if raw == "1" or raw == "true" or raw == "yes" or raw == "on":
+		return true
+	if raw == "0" or raw == "false" or raw == "no" or raw == "off":
+		return false
+	return default_value
+
 func _env_string(name: String, default_value: String) -> String:
 	var raw := OS.get_environment(name).strip_edges()
 	return default_value if raw.is_empty() else raw
@@ -83,10 +100,59 @@ func _is_world_ready() -> bool:
 		return false
 	return true
 
+func _is_ready_for_measurement(delta: float) -> bool:
+	if not _is_world_ready():
+		stream_settled_time = 0.0
+		return false
+	if not require_stream_settled:
+		return true
+	if _is_stream_settled_for_measurement():
+		stream_settled_time += delta
+	else:
+		stream_settled_time = 0.0
+	return stream_settled_time >= stream_settle_seconds
+
+func _is_stream_settled_for_measurement() -> bool:
+	var terrain := _manager_snapshot("terrain_manager")
+	if terrain.is_empty():
+		return false
+	if bool(terrain.get("initial_load_phase", false)):
+		return false
+	if bool(terrain.get("terrain_stream_under_target", false)):
+		return false
+	var min_target := int(terrain.get("terrain_stream_min_chunk_target", 0))
+	if min_target > 0:
+		if int(terrain.get("active_chunk_count", 0)) < min_target:
+			return false
+		if int(terrain.get("rendered_terrain_chunk_count", 0)) < min_target:
+			return false
+	for key in [
+		"pending_node_count",
+		"task_queue_count",
+		"cpu_task_queue_count",
+		"completed_generation_queue_count",
+		"terrain_visual_batch_dirty_count",
+		"terrain_visual_batch_async_in_flight_count",
+		"terrain_visual_batch_async_completed_count",
+		"water_visual_batch_dirty_count"
+	]:
+		if int(terrain.get(key, 0)) > 0:
+			return false
+	return true
+
 func _change_phase(next_phase: String) -> void:
 	print("[PROCEDURAL_POWER] Phase: %s -> %s at %.2fs" % [phase, next_phase, elapsed_time])
 	phase = next_phase
 	phase_time = 0.0
+	_record_phase_event("change", phase)
+
+func _record_phase_event(label: String, event_phase: String) -> void:
+	phase_events.append({
+		"label": label,
+		"phase": event_phase,
+		"elapsed_time": elapsed_time,
+		"epoch": Time.get_unix_time_from_system()
+	})
 
 func _apply_movement_pattern() -> void:
 	var actions := ["move_forward", "move_left", "move_backward", "move_right"]
@@ -111,6 +177,7 @@ func _capture_sample() -> void:
 	var terrain := _manager_snapshot("terrain_manager")
 	var sample := {
 		"elapsed_time": elapsed_time,
+		"epoch": Time.get_unix_time_from_system(),
 		"phase": phase,
 		"phase_time": phase_time,
 		"fps": Engine.get_frames_per_second(),
@@ -155,6 +222,7 @@ func _ensure_snapshot_dir() -> bool:
 func _write_snapshot_and_quit() -> void:
 	_release_active_action()
 	phase = "done"
+	_record_phase_event("done", phase)
 	_capture_sample()
 	if not _ensure_snapshot_dir():
 		_fail("failed_to_create_snapshot_dir")
@@ -167,6 +235,9 @@ func _write_snapshot_and_quit() -> void:
 		"elapsed_time": elapsed_time,
 		"move_seconds": move_seconds,
 		"hold_seconds": hold_seconds,
+		"require_stream_settled": require_stream_settled,
+		"stream_settle_seconds": stream_settle_seconds,
+		"phase_events": phase_events,
 		"samples": samples,
 		"final_sample": samples[-1] if not samples.is_empty() else {}
 	}
