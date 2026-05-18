@@ -42,6 +42,17 @@ var terraformer_material: String = ""
 var notification_label: Label = null
 var notification_timer: float = 0.0
 
+# Polled HUD state does not need render-frame cadence; signal-driven UI updates
+# still apply immediately through PlayerSignals callbacks.
+@export_range(0.05, 1.0, 0.05) var hud_update_interval: float = 0.10
+
+var _hud_update_timer: Timer = null
+var _hud_update_timer_tick_count: int = 0
+var _hud_process_tick_count: int = 0
+var _hud_update_tick_count: int = 0
+var _last_hud_update_tick_msec: int = 0
+var _last_hud_update_delta: float = 0.0
+
 # UI State
 var show_terrain_info: bool = false
 var _default_canvas_layer: int = 0
@@ -214,6 +225,8 @@ func _ready() -> void:
 	_setup_visual_overlays()
 	_update_editor_catalog_visibility()
 	_sync_local_input_lock()
+	_run_hud_update_tick(0.0)
+	_start_hud_update_timer()
 
 var item_notification_container: VBoxContainer = null
 
@@ -308,7 +321,43 @@ func _on_item_added(item_data: Dictionary, amount: int) -> void:
 	tween.tween_property(label, "modulate:a", 0.0, 1.0)
 	tween.tween_callback(label.queue_free)
 
+func _exit_tree() -> void:
+	if is_instance_valid(_hud_update_timer):
+		_hud_update_timer.stop()
+
+func _start_hud_update_timer() -> void:
+	set_process(false)
+	if not is_instance_valid(_hud_update_timer):
+		_hud_update_timer = Timer.new()
+		_hud_update_timer.name = "HUDUpdateTimer"
+		_hud_update_timer.one_shot = false
+		_hud_update_timer.process_callback = Timer.TIMER_PROCESS_IDLE
+		_hud_update_timer.timeout.connect(_on_hud_update_timer_timeout)
+		add_child(_hud_update_timer)
+
+	_hud_update_timer.wait_time = max(0.05, hud_update_interval)
+	_last_hud_update_tick_msec = Time.get_ticks_msec()
+	_hud_update_timer.start()
+
+func _on_hud_update_timer_timeout() -> void:
+	_hud_update_timer_tick_count += 1
+	var now := Time.get_ticks_msec()
+	var elapsed_seconds := hud_update_interval
+	if _last_hud_update_tick_msec > 0:
+		elapsed_seconds = max(0.0, float(now - _last_hud_update_tick_msec) / 1000.0)
+	_last_hud_update_tick_msec = now
+	_run_hud_update_tick(elapsed_seconds)
+
 func _process(_delta: float) -> void:
+	_hud_process_tick_count += 1
+	if is_instance_valid(_hud_update_timer) and not _hud_update_timer.is_stopped():
+		set_process(false)
+		return
+	_run_hud_update_tick(_delta)
+
+func _run_hud_update_tick(_delta: float) -> void:
+	_hud_update_tick_count += 1
+	_last_hud_update_delta = _delta
 	_update_compass()
 	_update_status_bars()
 	_update_build_mode_info()
@@ -980,6 +1029,28 @@ func _is_editor_mode_active() -> bool:
 
 func is_game_menu_open() -> bool:
 	return game_menu != null and game_menu.visible
+
+func get_telemetry_snapshot() -> Dictionary:
+	var timer_active := false
+	var timer_time_left := 0.0
+	if is_instance_valid(_hud_update_timer):
+		timer_active = not _hud_update_timer.is_stopped()
+		timer_time_left = _hud_update_timer.time_left
+
+	return {
+		"hud_update_interval": hud_update_interval,
+		"hud_update_timer_active": timer_active,
+		"hud_update_timer_time_left": timer_time_left,
+		"hud_update_timer_tick_count": _hud_update_timer_tick_count,
+		"hud_process_tick_count": _hud_process_tick_count,
+		"hud_update_tick_count": _hud_update_tick_count,
+		"last_hud_update_delta": _last_hud_update_delta,
+		"process_enabled": is_processing(),
+		"notification_visible": notification_label != null and notification_label.visible,
+		"notification_timer": notification_timer,
+		"game_menu_open": is_game_menu_open(),
+		"durability_memory_count": durability_memory.size()
+	}
 
 func _release_ui_focus() -> void:
 	UIInputGuard.release_viewport_focus(get_viewport())

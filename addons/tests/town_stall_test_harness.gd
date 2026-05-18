@@ -1416,6 +1416,14 @@ func _collect_system_telemetry() -> Dictionary:
 	if vehicle_manager_node:
 		telemetry["vehicle_manager"] = _get_node_telemetry(vehicle_manager_node)
 
+	var player_hud_node := _find_manager_node("player_hud", "PlayerHUD")
+	if player_hud_node:
+		telemetry["player_hud"] = _get_node_telemetry(player_hud_node)
+
+	var hud_minimap_node := _find_manager_node("hud_minimap", "Minimap")
+	if hud_minimap_node:
+		telemetry["hud_minimap"] = _get_node_telemetry(hud_minimap_node)
+
 	return telemetry
 
 
