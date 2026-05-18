@@ -71,6 +71,11 @@ var _deferred_spawn_chunk_cursor: int = 0
 var _entity_render_resource_prewarm_node: Node = null
 var _entity_render_resource_prewarm_mesh_count: int = 0
 var _entity_render_resource_prewarm_started: bool = false
+var _entity_maintenance_timer: Timer = null
+var _entity_maintenance_timer_tick_count: int = 0
+var _entity_maintenance_physics_tick_count: int = 0
+var _entity_maintenance_tick_count: int = 0
+var _last_entity_maintenance_tick_msec: int = 0
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
@@ -142,9 +147,80 @@ func get_telemetry_snapshot() -> Dictionary:
 		"entity_render_prewarm_mesh_count": _entity_render_resource_prewarm_mesh_count,
 		"entity_render_prewarm_active": _is_entity_render_resource_prewarm_active(),
 		"entity_render_prewarm_frames_remaining": _get_entity_render_resource_prewarm_frames_remaining(),
+		"entity_maintenance_timer_interval": _get_entity_maintenance_timer_interval(),
+		"entity_maintenance_timer_active": _entity_maintenance_timer != null and is_instance_valid(_entity_maintenance_timer) and not _entity_maintenance_timer.is_stopped(),
+		"entity_maintenance_timer_tick_count": _entity_maintenance_timer_tick_count,
+		"entity_maintenance_physics_tick_count": _entity_maintenance_physics_tick_count,
+		"entity_maintenance_tick_count": _entity_maintenance_tick_count,
+		"physics_process_enabled": is_physics_processing(),
 		"viewer_present": is_instance_valid(viewer),
 		"player_present": is_instance_valid(player)
 	}
+
+func _get_entity_maintenance_timer_interval() -> float:
+	var interval := 999999.0
+	var found_interval := false
+	if proximity_update_interval > 0.0:
+		interval = minf(interval, proximity_update_interval)
+		found_interval = true
+	if spawn_queue_update_interval > 0.0:
+		interval = minf(interval, spawn_queue_update_interval)
+		found_interval = true
+	if dormant_respawn_update_interval > 0.0:
+		interval = minf(interval, dormant_respawn_update_interval)
+		found_interval = true
+	if not found_interval:
+		return 0.05
+	return maxf(interval, 0.05)
+
+func _entity_maintenance_requires_physics_process() -> bool:
+	return (
+		proximity_update_interval <= 0.0
+		or spawn_queue_update_interval <= 0.0
+		or dormant_respawn_update_interval <= 0.0
+	)
+
+func _sync_entity_maintenance_driver() -> void:
+	if _entity_maintenance_requires_physics_process():
+		if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
+			_entity_maintenance_timer.stop()
+		set_physics_process(true)
+		return
+	set_physics_process(false)
+	_start_entity_maintenance_timer()
+
+func _start_entity_maintenance_timer() -> void:
+	if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
+		_entity_maintenance_timer.wait_time = _get_entity_maintenance_timer_interval()
+		if _entity_maintenance_timer.is_stopped():
+			_last_entity_maintenance_tick_msec = Time.get_ticks_msec()
+			_entity_maintenance_timer.start()
+		return
+
+	var timer := Timer.new()
+	timer.name = "EntityMaintenanceTimer"
+	timer.wait_time = _get_entity_maintenance_timer_interval()
+	timer.one_shot = false
+	timer.autostart = false
+	timer.process_callback = Timer.TIMER_PROCESS_PHYSICS
+	add_child(timer)
+	_entity_maintenance_timer = timer
+	timer.timeout.connect(_on_entity_maintenance_timer_timeout)
+	_last_entity_maintenance_tick_msec = Time.get_ticks_msec()
+	timer.start()
+
+func _on_entity_maintenance_timer_timeout() -> void:
+	_entity_maintenance_timer_tick_count += 1
+	var now_msec := Time.get_ticks_msec()
+	var elapsed_seconds := _get_entity_maintenance_timer_interval()
+	if _last_entity_maintenance_tick_msec > 0:
+		elapsed_seconds = maxf(float(now_msec - _last_entity_maintenance_tick_msec) / 1000.0, 0.0)
+	_last_entity_maintenance_tick_msec = now_msec
+	_run_entity_maintenance_tick(elapsed_seconds)
+
+func _exit_tree() -> void:
+	if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
+		_entity_maintenance_timer.stop()
 
 func _ready():
 	# Register in group for lookup by other systems
@@ -152,6 +228,7 @@ func _ready():
 	
 	# Keep running even when player is disabled (e.g., in vehicle)
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	set_physics_process(false)
 	
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
@@ -161,6 +238,7 @@ func _ready():
 
 	_cache_procedural_entity_scenes()
 	_start_entity_render_resource_prewarm()
+	_sync_entity_maintenance_driver()
 	
 	# CRITICAL FIX: Check if we're in the middle of a QuickLoad
 	# If so, skip procedural spawning - load_save_data will handle entities
@@ -174,6 +252,11 @@ func _ready():
 	_start_entity_render_resource_prewarm()
 
 func _physics_process(_delta):
+	_entity_maintenance_physics_tick_count += 1
+	_run_entity_maintenance_tick(_delta)
+
+func _run_entity_maintenance_tick(_delta: float) -> void:
+	_entity_maintenance_tick_count += 1
 	if not player:
 		player = get_tree().get_first_node_in_group("player")
 		viewer = player
