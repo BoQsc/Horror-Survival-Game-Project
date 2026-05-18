@@ -72,6 +72,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 512, 1) var terrain_visual_batch_hot_rebuild_dirty_threshold: int = 8
 @export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 48000
 @export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
+@export var terrain_visual_batch_idle_polish_enabled: bool = true
 var world_map_active: bool = false
 var world_map_size: float = 2048.0
 var world_map_half: float = 1024.0
@@ -384,6 +385,8 @@ var _last_terrain_visual_batch_streaming_async_queued_count: int = 0
 var _last_terrain_visual_batch_async_apply_count: int = 0
 var _last_terrain_visual_batch_async_apply_ms: float = 0.0
 var _last_terrain_visual_batch_async_stale_count: int = 0
+var _last_terrain_visual_batch_idle_polish: bool = false
+var _terrain_visual_batch_idle_polish_frame_count: int = 0
 var _terrain_visual_batch_mesh_cache_hits: int = 0
 var _terrain_visual_batch_mesh_cache_misses: int = 0
 var _terrain_visual_batch_total_heavy_skips: int = 0
@@ -660,6 +663,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_hot_rebuild_interval_frames": terrain_visual_batch_hot_rebuild_interval_frames,
 		"terrain_visual_batch_hot_rebuild_dirty_threshold": terrain_visual_batch_hot_rebuild_dirty_threshold,
 		"terrain_visual_batch_max_vertices": terrain_visual_batch_max_vertices,
+		"terrain_visual_batch_idle_polish_enabled": terrain_visual_batch_idle_polish_enabled,
+		"terrain_visual_batch_idle_polish_active": _last_terrain_visual_batch_idle_polish,
+		"terrain_visual_batch_idle_polish_frame_count": _terrain_visual_batch_idle_polish_frame_count,
 		"terrain_visual_batch_mesh_cache_limit": terrain_visual_batch_mesh_cache_limit,
 		"terrain_visual_batch_mesh_cache_count": _terrain_visual_batch_mesh_cache.size(),
 		"terrain_visual_batch_mesh_cache_hits": _terrain_visual_batch_mesh_cache_hits,
@@ -1409,6 +1415,29 @@ func _terrain_visual_batch_rebuild_busy(_hot_frame: bool) -> bool:
 
 func _terrain_visual_batch_paused_for_active_gameplay() -> bool:
 	return runtime_power_mode_enabled and (_runtime_power_viewer_moved_last or _runtime_power_foreground_terrain_busy_last)
+
+func _has_terrain_visual_batch_polish_work() -> bool:
+	return terrain_visual_batching_enabled \
+		and world_map_active \
+		and (
+			not _terrain_visual_batch_dirty.is_empty()
+			or not _terrain_visual_batch_builds_in_flight.is_empty()
+			or not _completed_terrain_visual_batch_builds.is_empty()
+			or not _terrain_visual_mesh_retire_queue.is_empty()
+		)
+
+func _process_idle_terrain_visual_batch_polish() -> void:
+	_last_terrain_visual_batch_idle_polish = false
+	if not terrain_visual_batch_idle_polish_enabled or not _has_terrain_visual_batch_polish_work():
+		return
+	if _terrain_visual_batch_paused_for_active_gameplay():
+		return
+
+	_last_terrain_visual_batch_idle_polish = true
+	_terrain_visual_batch_idle_polish_frame_count += 1
+	_process_completed_terrain_visual_batch_builds()
+	_process_terrain_visual_batch_rebuilds()
+	_process_terrain_visual_mesh_retire_queue()
 
 func _process_completed_terrain_visual_batch_builds() -> void:
 	_last_terrain_visual_batch_async_apply_count = 0
@@ -2212,6 +2241,7 @@ func _process(delta):
 
 	if _runtime_power_world_work_suspended:
 		_record_runtime_power_world_work_suspended_frame()
+		_process_idle_terrain_visual_batch_polish()
 		return
 
 	_process_retired_chunk_node_cleanup()
@@ -2389,6 +2419,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES", terrain_visual_batch_max_vertices, 0, 200000)
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
+	terrain_visual_batch_idle_polish_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH", terrain_visual_batch_idle_polish_enabled)
 
 func _runtime_power_input_active() -> bool:
 	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]
@@ -2749,6 +2780,7 @@ func _record_runtime_power_world_work_suspended_frame() -> void:
 	_last_terrain_visual_batch_async_apply_count = 0
 	_last_terrain_visual_batch_async_apply_ms = 0.0
 	_last_terrain_visual_batch_async_stale_count = 0
+	_last_terrain_visual_batch_idle_polish = false
 
 var _last_collision_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _last_collision_active_count: int = -1
@@ -6130,6 +6162,40 @@ func run_gpu_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, m
 	rd.sync()
 	return run_gpu_meshing_readback(rd, vertex_buffer, counter_buffer, index_buffer, set_mesh)
 
+func _process_cpu_terrain_visual_batch_task(builder: Object, task: Dictionary) -> bool:
+	if str(task.get("type", "")) != "terrain_visual_batch":
+		return false
+
+	var merged_mesh = null
+	var merged_mesh_result: Dictionary = {}
+	if builder.has_method("build_merged_array_mesh_data"):
+		merged_mesh_result = builder.build_merged_array_mesh_data(task.get("merge_inputs", []))
+	elif builder.has_method("build_merged_array_mesh"):
+		merged_mesh = builder.build_merged_array_mesh(task.get("merge_inputs", []))
+	_enqueue_completed_terrain_visual_batch_build({
+		"batch_key": task.get("batch_key", Vector2i.ZERO),
+		"cache_key": str(task.get("cache_key", "")),
+		"mesh": merged_mesh,
+		"mesh_result": merged_mesh_result
+	})
+	return true
+
+func _pop_suspended_terrain_visual_batch_task() -> Dictionary:
+	var task: Dictionary = {}
+	cpu_mutex.lock()
+	for i in range(cpu_task_queue.size() - 1, -1, -1):
+		var candidate_variant: Variant = cpu_task_queue[i]
+		if typeof(candidate_variant) != TYPE_DICTIONARY:
+			continue
+		var candidate: Dictionary = candidate_variant
+		if str(candidate.get("type", "")) != "terrain_visual_batch":
+			continue
+		task = candidate
+		cpu_task_queue.remove_at(i)
+		break
+	cpu_mutex.unlock()
+	return task
+
 # CPU Worker Thread - builds meshes and collision shapes (CPU intensive, parallelized)
 func _cpu_thread_function():
 	var builder = ClassDB.instantiate("MeshBuilder")
@@ -6145,7 +6211,11 @@ func _cpu_thread_function():
 		mutex.unlock()
 
 		if _runtime_power_world_work_suspended and not should_exit:
-			_interruptible_delay(50)
+			var suspended_visual_batch_task := _pop_suspended_terrain_visual_batch_task()
+			if suspended_visual_batch_task.is_empty():
+				_interruptible_delay(50)
+				continue
+			_process_cpu_terrain_visual_batch_task(builder, suspended_visual_batch_task)
 			continue
 
 		cpu_mutex.lock()
@@ -6158,19 +6228,7 @@ func _cpu_thread_function():
 		var task = cpu_task_queue.pop_back()
 		cpu_mutex.unlock()
 
-		if str(task.get("type", "")) == "terrain_visual_batch":
-			var merged_mesh = null
-			var merged_mesh_result: Dictionary = {}
-			if builder.has_method("build_merged_array_mesh_data"):
-				merged_mesh_result = builder.build_merged_array_mesh_data(task.get("merge_inputs", []))
-			elif builder.has_method("build_merged_array_mesh"):
-				merged_mesh = builder.build_merged_array_mesh(task.get("merge_inputs", []))
-			_enqueue_completed_terrain_visual_batch_build({
-				"batch_key": task.get("batch_key", Vector2i.ZERO),
-				"cache_key": str(task.get("cache_key", "")),
-				"mesh": merged_mesh,
-				"mesh_result": merged_mesh_result
-			})
+		if _process_cpu_terrain_visual_batch_task(builder, task):
 			continue
 
 		# Build terrain mesh and collision (CPU intensive)
