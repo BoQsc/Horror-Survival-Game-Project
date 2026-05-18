@@ -29,6 +29,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(0, 8, 1) var vegetation_chunk_start_delay_frames: int = 0
 @export_range(1, 128, 1) var vegetation_max_stages_per_frame: int = 8
 @export_range(0, 120, 1) var vegetation_global_render_stream_flush_interval_frames: int = 12
+@export_range(0.05, 1.0, 0.05) var vegetation_collider_update_interval: float = 0.20
 @export var prioritize_nearby_vegetation_chunks: bool = true
 
 # Grass settings
@@ -112,6 +113,11 @@ var _last_collider_refresh_ms: float = 0.0
 var _last_queued_collider_update_ms: float = 0.0
 var _last_pending_placements_ms: float = 0.0
 var _terrain_supports_road_query: bool = false
+var _collider_update_timer: Timer = null
+var _collider_update_deferred_pending: bool = false
+var _collider_update_timer_tick_count: int = 0
+var _collider_update_deferred_tick_count: int = 0
+var _collider_refresh_tick_count: int = 0
 var _global_tree_render_mmi: MultiMeshInstance3D = null
 var _global_grass_render_mmi: MultiMeshInstance3D = null
 var _global_rock_render_mmi: MultiMeshInstance3D = null
@@ -238,6 +244,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_collider_refresh_ms": _last_collider_refresh_ms,
 		"last_queued_collider_update_ms": _last_queued_collider_update_ms,
 		"last_pending_placements_ms": _last_pending_placements_ms,
+		"vegetation_collider_update_interval": vegetation_collider_update_interval,
+		"collider_update_timer_active": _collider_update_timer != null and is_instance_valid(_collider_update_timer) and not _collider_update_timer.is_stopped(),
+		"collider_update_timer_tick_count": _collider_update_timer_tick_count,
+		"collider_update_deferred_tick_count": _collider_update_deferred_tick_count,
+		"collider_refresh_tick_count": _collider_refresh_tick_count,
+		"collider_update_deferred_pending": _collider_update_deferred_pending,
+		"physics_process_enabled": is_physics_processing(),
 		"terrain_supports_road_query": _terrain_supports_road_query,
 		"global_render_batches_enabled": global_render_batches_enabled,
 		"vegetation_render_cluster_size": vegetation_render_cluster_size,
@@ -314,10 +327,46 @@ func _get_vegetation_render_resource_prewarm_frames_remaining() -> int:
 		return 0
 	return int(_vegetation_render_resource_prewarm_node.get_frames_remaining())
 
+func _start_collider_update_timer() -> void:
+	if _collider_update_timer and is_instance_valid(_collider_update_timer):
+		_collider_update_timer.wait_time = maxf(vegetation_collider_update_interval, 0.05)
+		if _collider_update_timer.is_stopped():
+			_collider_update_timer.start()
+		return
+	var timer := Timer.new()
+	timer.name = "VegetationColliderUpdateTimer"
+	timer.wait_time = maxf(vegetation_collider_update_interval, 0.05)
+	timer.one_shot = false
+	timer.autostart = false
+	timer.process_callback = Timer.TIMER_PROCESS_PHYSICS
+	add_child(timer)
+	_collider_update_timer = timer
+	timer.timeout.connect(_on_collider_update_timer_timeout)
+	timer.start()
+
+func _on_collider_update_timer_timeout() -> void:
+	_collider_update_timer_tick_count += 1
+	_run_collider_refresh_tick()
+
+func _request_collider_update_soon() -> void:
+	if _collider_update_deferred_pending or not is_inside_tree():
+		return
+	_collider_update_deferred_pending = true
+	call_deferred("_run_deferred_collider_refresh_tick")
+
+func _run_deferred_collider_refresh_tick() -> void:
+	_collider_update_deferred_pending = false
+	if not is_inside_tree():
+		return
+	_collider_update_deferred_tick_count += 1
+	_run_collider_refresh_tick()
+
 
 func _exit_tree() -> void:
 	clear_all_data(true)
 	_vegetation_render_resource_prewarm_node = null
+	if _collider_update_timer and is_instance_valid(_collider_update_timer):
+		_collider_update_timer.stop()
 	_native_helper = null
 
 
@@ -1079,6 +1128,7 @@ func _build_native_vegetation_instances(
 
 func _ready():
 	set_process(false)
+	set_physics_process(false)
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
 	if glb_result.mesh:
@@ -1125,6 +1175,7 @@ func _ready():
 
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
+	_start_collider_update_timer()
 
 
 func get_viewer_position() -> Vector3:
@@ -1470,6 +1521,10 @@ func _process(_delta):
 
 
 func _physics_process(_delta):
+	_run_collider_refresh_tick()
+
+func _run_collider_refresh_tick() -> void:
+	_collider_refresh_tick_count += 1
 	# Refresh colliders when the active viewer actually moves far enough or the
 	# loaded vegetation set changes, instead of doing a blind timer sweep.
 	var collider_refresh_start_us := Time.get_ticks_usec()
@@ -1546,10 +1601,13 @@ func _process_queued_collider_updates():
 
 	if updates_done > 0:
 		_mark_collider_refresh_dirty()
+	if not pending_collider_adds.is_empty() or not pending_collider_removes.is_empty():
+		_request_collider_update_soon()
 
 
 func _mark_collider_refresh_dirty() -> void:
 	_collider_refresh_dirty = true
+	_request_collider_update_soon()
 
 func _is_spawn_blocked_by_road(global_x: float, global_z: float) -> bool:
 	if not terrain_manager:
