@@ -57,6 +57,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
 @export var terrain_visual_batching_enabled: bool = true
+@export var procedural_terrain_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
 @export var world_map_visual_batch_profile_enabled: bool = true
 @export_range(1, 16, 1) var world_map_terrain_visual_batch_size: int = 3
@@ -677,6 +678,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"loaded_dirty_chunk_count": dirty_loaded_chunk_count,
 		"active_render_chunk_count": active_render_chunk_count,
 		"terrain_visual_batching_enabled": terrain_visual_batching_enabled,
+		"procedural_terrain_visual_batching_enabled": procedural_terrain_visual_batching_enabled,
+		"terrain_visual_batch_active": _is_terrain_visual_batch_active(),
 		"terrain_visual_batch_size": terrain_visual_batch_size,
 		"world_map_visual_batch_profile_enabled": world_map_visual_batch_profile_enabled,
 		"world_map_terrain_visual_batch_size": world_map_terrain_visual_batch_size,
@@ -1213,6 +1216,10 @@ func _is_water_visual_batch_active() -> bool:
 		and water_render_enabled \
 		and (world_map_active or procedural_water_visual_batching_enabled)
 
+func _is_terrain_visual_batch_active() -> bool:
+	return terrain_visual_batching_enabled \
+		and (world_map_active or procedural_terrain_visual_batching_enabled)
+
 func _terrain_visual_batch_key(coord: Vector3i) -> Vector2i:
 	var batch_size := _effective_terrain_visual_batch_size()
 	return Vector2i(
@@ -1371,7 +1378,7 @@ func _ensure_chunk_terrain_mesh_instance(data) -> MeshInstance3D:
 	return mesh_instance
 
 func _is_chunk_eligible_for_terrain_visual_batch(coord: Vector3i, data) -> bool:
-	if not terrain_visual_batching_enabled or not world_map_active or coord.y != 0:
+	if not _is_terrain_visual_batch_active() or coord.y != 0:
 		return false
 	if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):
 		return false
@@ -1450,7 +1457,7 @@ func _show_individual_terrain_visuals_for_batch(key: Vector2i) -> void:
 		_set_chunk_mesh_visible(data, true, coord)
 
 func _mark_terrain_visual_batch_dirty(coord: Vector3i, invalidate_visible_batch: bool = false) -> void:
-	if not terrain_visual_batching_enabled or not world_map_active or coord.y != 0:
+	if not _is_terrain_visual_batch_active() or coord.y != 0:
 		return
 	var key := _terrain_visual_batch_key(coord)
 	_terrain_visual_batch_dirty[key] = true
@@ -1497,8 +1504,7 @@ func _terrain_visual_batch_paused_for_active_gameplay() -> bool:
 	return runtime_power_mode_enabled and (_runtime_power_viewer_moved_last or _runtime_power_foreground_terrain_busy_last)
 
 func _has_terrain_visual_batch_polish_work() -> bool:
-	var has_terrain_work := terrain_visual_batching_enabled \
-		and world_map_active \
+	var has_terrain_work := _is_terrain_visual_batch_active() \
 		and (
 			not _terrain_visual_batch_dirty.is_empty()
 			or not _terrain_visual_batch_builds_in_flight.is_empty()
@@ -1525,7 +1531,7 @@ func _process_completed_terrain_visual_batch_builds() -> void:
 	_last_terrain_visual_batch_async_apply_count = 0
 	_last_terrain_visual_batch_async_apply_ms = 0.0
 	_last_terrain_visual_batch_async_stale_count = 0
-	if not terrain_visual_batching_enabled:
+	if not _is_terrain_visual_batch_active():
 		return
 	if _terrain_visual_batch_paused_for_active_gameplay():
 		return
@@ -1587,7 +1593,7 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 	if _terrain_visual_batch_paused_for_active_gameplay():
 		_terrain_visual_batch_stream_idle_frames = 0
 		return
-	if not terrain_visual_batching_enabled or not world_map_active:
+	if not _is_terrain_visual_batch_active():
 		if not _terrain_visual_batches.is_empty():
 			_clear_terrain_visual_batches()
 		return
@@ -2140,7 +2146,7 @@ func _sync_visual_batch_profile() -> void:
 		)
 	_last_effective_terrain_visual_batch_size = terrain_size
 	_last_effective_terrain_visual_batch_max_vertices = terrain_max_vertices
-	if terrain_profile_changed and terrain_visual_batching_enabled and world_map_active:
+	if terrain_profile_changed and _is_terrain_visual_batch_active():
 		_rebuild_terrain_visual_batch_members_for_profile()
 
 	var water_size := _effective_water_visual_batch_size()
@@ -2902,6 +2908,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 		water_render_enabled = false
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
 	terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_VISUAL_BATCHING", terrain_visual_batching_enabled)
+	procedural_terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_PROCEDURAL_TERRAIN_VISUAL_BATCHING", procedural_terrain_visual_batching_enabled)
 	world_map_visual_batch_profile_enabled = _get_runtime_power_env_bool("TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE", world_map_visual_batch_profile_enabled)
 	var terrain_batch_size_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE").is_empty()
 	var terrain_batch_max_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES").is_empty()
