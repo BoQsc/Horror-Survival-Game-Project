@@ -191,6 +191,11 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
             "runtime_power_world_work_suspended": bool(terrain.get("runtime_power_world_work_suspended", False)),
             "runtime_power_render_loop_suspended": bool(terrain.get("runtime_power_render_loop_suspended", False)),
             "runtime_power_render_loop_enabled": bool(terrain.get("runtime_power_render_loop_enabled", True)),
+            "rendered_terrain_chunk_count": _int(terrain.get("rendered_terrain_chunk_count")),
+            "rendered_water_chunk_count": _int(terrain.get("rendered_water_chunk_count")),
+            "last_gpu_water_density_dispatched": bool(terrain.get("last_gpu_water_density_dispatched", False)),
+            "gpu_water_density_skipped_count": _int(terrain.get("gpu_water_density_skipped_count")),
+            "last_cpu_mesh_build_water_ms": _float(terrain.get("last_cpu_mesh_build_water_ms")),
             "building_dirty_visible_chunk_count": _int(building.get("dirty_visible_chunk_count")),
             "vegetation_pending_chunks": _int(vegetation.get("pending_chunks")),
         },
@@ -747,7 +752,8 @@ def _print_report(report: dict[str, Any]) -> None:
             final = _dict(_dict(entry).get("final"))
             print(
                 "  {name} complete={complete} world_map={world_map} power={mode}@{fps} "
-                "external_busy={busy} dirty_visible={dirty}".format(
+                "external_busy={busy} dirty_visible={dirty} chunks={terrain_chunks}/{water_chunks} "
+                "water_dispatch={water_dispatch} water_skips={water_skips} water_build={water_build:.3f}ms".format(
                     name=Path(str(entry.get("path", ""))).name,
                     complete=bool(entry.get("completed", False)),
                     world_map=bool(final.get("world_map_active", False)),
@@ -755,6 +761,11 @@ def _print_report(report: dict[str, Any]) -> None:
                     fps=_int(final.get("runtime_power_target_fps")),
                     busy=bool(final.get("runtime_power_external_world_busy", False)),
                     dirty=_int(final.get("building_dirty_visible_chunk_count")),
+                    terrain_chunks=_int(final.get("rendered_terrain_chunk_count")),
+                    water_chunks=_int(final.get("rendered_water_chunk_count")),
+                    water_dispatch=bool(final.get("last_gpu_water_density_dispatched", False)),
+                    water_skips=_int(final.get("gpu_water_density_skipped_count")),
+                    water_build=_float(final.get("last_cpu_mesh_build_water_ms")),
                 )
             )
     gpu_telemetry = report.get("gpu_telemetry", [])

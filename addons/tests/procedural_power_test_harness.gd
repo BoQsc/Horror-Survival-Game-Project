@@ -7,6 +7,7 @@ var warmup_timeout_s: float = 45.0
 var move_seconds: float = 16.0
 var hold_seconds: float = 8.0
 var sample_interval_s: float = 1.0
+var snapshot_dir: String = SNAPSHOT_DIR
 
 var game_root: Node = null
 var terrain_manager: Node = null
@@ -24,6 +25,7 @@ func _ready() -> void:
 	move_seconds = _env_float("PROCEDURAL_POWER_MOVE_SECONDS", move_seconds)
 	hold_seconds = _env_float("PROCEDURAL_POWER_HOLD_SECONDS", hold_seconds)
 	sample_interval_s = _env_float("PROCEDURAL_POWER_SAMPLE_INTERVAL_S", sample_interval_s)
+	snapshot_dir = _env_string("PROCEDURAL_POWER_SNAPSHOT_DIR", snapshot_dir)
 	print("[PROCEDURAL_POWER] Loading procedural scene: %s" % GAME_SCENE_PATH)
 	var packed := load(GAME_SCENE_PATH)
 	if packed == null:
@@ -63,6 +65,10 @@ func _env_float(name: String, default_value: float) -> float:
 		return default_value
 	var value := float(raw)
 	return value if value > 0.0 else default_value
+
+func _env_string(name: String, default_value: String) -> String:
+	var raw := OS.get_environment(name).strip_edges()
+	return default_value if raw.is_empty() else raw
 
 func _refresh_nodes() -> void:
 	if terrain_manager == null or not is_instance_valid(terrain_manager):
@@ -123,6 +129,10 @@ func _manager_snapshot(group_name: String) -> Dictionary:
 	return {}
 
 func _ensure_snapshot_dir() -> bool:
+	if not snapshot_dir.begins_with("user://"):
+		var absolute_err := DirAccess.make_dir_recursive_absolute(snapshot_dir)
+		return absolute_err == OK or absolute_err == ERR_ALREADY_EXISTS
+
 	var dir := DirAccess.open("user://")
 	if dir == null:
 		return false
@@ -147,7 +157,7 @@ func _write_snapshot_and_quit() -> void:
 		_fail("failed_to_create_snapshot_dir")
 		return
 	var stamp := Time.get_datetime_string_from_system(false, true).replace(":", "-").replace(" ", "_")
-	snapshot_path = "%sprocedural_power_snapshot_%s.json" % [SNAPSHOT_DIR, stamp]
+	snapshot_path = snapshot_dir.path_join("procedural_power_snapshot_%s.json" % stamp)
 	var payload := {
 		"benchmark": "procedural_power",
 		"completed": true,

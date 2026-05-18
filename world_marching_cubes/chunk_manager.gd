@@ -6179,7 +6179,9 @@ func _dispatch_chunk_generation(rd: RenderingDevice, task, sid_gen, sid_gen_wate
 
 	# Create density and material buffers (will persist until readback)
 	var dens_buf_terrain = rd.storage_buffer_create(density_bytes)
-	var skip_dry_water_density_dispatch := terrain_skip_dry_water_density_dispatch and world_map_active and not water_surface_possible
+	# The surface test is conservative and already gates water meshing below, so
+	# dry generated chunks do not need a water-density compute dispatch either.
+	var skip_dry_water_density_dispatch := terrain_skip_dry_water_density_dispatch and not water_surface_possible
 	var dens_buf_water = rd.storage_buffer_create(density_bytes, _get_dry_water_density_bytes()) if skip_dry_water_density_dispatch else rd.storage_buffer_create(density_bytes)
 	var mat_buf_terrain = rd.storage_buffer_create(material_bytes) # Material IDs
 

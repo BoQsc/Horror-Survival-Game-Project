@@ -12,11 +12,19 @@ import run_town_stall_test as town_runner
 
 PROJECT_PATH = Path(__file__).resolve().parents[2]
 SCENE = "res://addons/tests/procedural_power_test_harness.tscn"
+PROCEDURAL_LOG_FILE = PROJECT_PATH / ".agent" / "procedural-power-godot.log"
+PROCEDURAL_SNAPSHOT_DIR = PROJECT_PATH / ".agent" / "procedural-power"
 WINDOWS_ACCESS_VIOLATION = 3221225477
 
 
-def _latest_snapshot(since_mtime: float) -> Optional[Path]:
-    root = town_runner.SNAPSHOT_DIR
+def _snapshot_root(env: dict[str, str]) -> Path:
+    raw = (env.get("PROCEDURAL_POWER_SNAPSHOT_DIR", "") or "").strip()
+    if raw and not raw.startswith("user://"):
+        return Path(raw)
+    return town_runner.SNAPSHOT_DIR
+
+
+def _latest_snapshot(root: Path, since_mtime: float) -> Optional[Path]:
     candidates = [
         path
         for path in root.glob("procedural_power_snapshot_*.json")
@@ -176,6 +184,7 @@ def main() -> int:
     env.setdefault("PROCEDURAL_POWER_MOVE_SECONDS", "16")
     env.setdefault("PROCEDURAL_POWER_HOLD_SECONDS", "8")
     env.setdefault("PROCEDURAL_POWER_SAMPLE_INTERVAL_S", "1")
+    env.setdefault("PROCEDURAL_POWER_SNAPSHOT_DIR", str(PROCEDURAL_SNAPSHOT_DIR))
     env.setdefault("TOWN_STALL_ENABLE_RUNTIME_POWER_MODE", "1")
 
     sample_interval_s = float(env.get("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", "2") or "2")
@@ -184,7 +193,15 @@ def main() -> int:
     sampler = threading.Thread(target=_sample_gpu, args=(stop_event, gpu_samples, sample_interval_s), daemon=True)
     sampler.start()
 
-    cmd = [town_runner.GODOT_BIN, "--path", str(PROJECT_PATH), SCENE]
+    PROCEDURAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        town_runner.GODOT_BIN,
+        "--log-file",
+        str(PROCEDURAL_LOG_FILE),
+        "--path",
+        str(PROJECT_PATH),
+        SCENE,
+    ]
     print("Running procedural power test...")
     print(f"   Scene: {SCENE}")
     result = subprocess.run(
@@ -206,7 +223,7 @@ def main() -> int:
     print("=" * 50)
     print(output)
 
-    snapshot_path = _latest_snapshot(run_start_mtime - 1.0)
+    snapshot_path = _latest_snapshot(_snapshot_root(env), run_start_mtime - 1.0)
     snapshot = _read_json(snapshot_path)
     _print_summary(snapshot_path, snapshot, gpu_samples)
 
