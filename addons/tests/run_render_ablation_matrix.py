@@ -17,6 +17,7 @@ CASES = {
     "no_building_objects": {"TOWN_STALL_DISABLE_BUILDING_OBJECTS": "1"},
     "no_entities": {"TOWN_STALL_DISABLE_ENTITIES": "1"},
     "no_glow": {"TOWN_STALL_DISABLE_GLOW": "1"},
+    "no_world_map_veg_profile": {"TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_PROFILE": "0"},
 }
 
 
@@ -146,6 +147,12 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "building_visible_nodes": int(building.get("visible_world_map_baked_building_visual_nodes", 0) or 0),
         "building_visible_surfaces": int(building.get("visible_world_map_baked_building_visual_surfaces", 0) or 0),
         "vegetation_global_batches": int(vegetation.get("global_render_batch_count", 0) or 0),
+        "vegetation_profile_active": bool(vegetation.get("world_map_vegetation_render_profile_active", False)),
+        "vegetation_tree_batches": int(vegetation.get("global_tree_render_batch_count", 0) or 0),
+        "vegetation_grass_batches": int(vegetation.get("global_grass_render_batch_count", 0) or 0),
+        "vegetation_rock_batches": int(vegetation.get("global_rock_render_batch_count", 0) or 0),
+        "vegetation_cluster_size": int(vegetation.get("effective_vegetation_render_cluster_size", 0) or 0),
+        "vegetation_grass_cluster_size": int(vegetation.get("effective_vegetation_grass_render_cluster_size", 0) or 0),
         "entity_active": int(entities.get("active_entities", 0) or 0),
     }
 
@@ -172,7 +179,8 @@ def _print_results(results: list[dict]) -> None:
         print(
             "{case:>20} | ms={ms:6.2f} ({dms:+6.2f}) | draws={draws:7.1f} ({ddraws:+7.1f}) | "
             "objects={objects:7.1f} ({dobjects:+7.1f}) | terrain={terrain:4d} water={water:4d} "
-            "buildings={buildings:4d} veg_batches={veg:3d} entities={entities:3d} | active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
+            "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{rock}) cluster={cluster}/{grass_cluster} "
+            "profile={profile} entities={entities:3d} | active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
                 case=str(result.get("case", "")),
                 ms=float(result.get("avg_total_ms", 0.0) or 0.0),
                 dms=float(result.get("delta_avg_total_ms", 0.0) or 0.0),
@@ -184,6 +192,12 @@ def _print_results(results: list[dict]) -> None:
                 water=int(result.get("rendered_water_chunks", 0) or 0),
                 buildings=int(result.get("building_visible_nodes", 0) or 0),
                 veg=int(result.get("vegetation_global_batches", 0) or 0),
+                tree=int(result.get("vegetation_tree_batches", 0) or 0),
+                grass=int(result.get("vegetation_grass_batches", 0) or 0),
+                rock=int(result.get("vegetation_rock_batches", 0) or 0),
+                cluster=int(result.get("vegetation_cluster_size", 0) or 0),
+                grass_cluster=int(result.get("vegetation_grass_cluster_size", 0) or 0),
+                profile="on" if bool(result.get("vegetation_profile_active", False)) else "off",
                 entities=int(result.get("entity_active", 0) or 0),
                 active=int(result.get("render_active_sample_count", 0) or 0),
                 samples=int(result.get("sample_count", 0) or 0),

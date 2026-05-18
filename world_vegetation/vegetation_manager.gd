@@ -23,6 +23,9 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var global_render_batches_enabled: bool = true
 @export_range(1, 32, 1) var vegetation_render_cluster_size: int = 8
 @export_range(1, 32, 1) var vegetation_grass_render_cluster_size: int = 6
+@export var world_map_vegetation_render_profile_enabled: bool = true
+@export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 12
+@export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 12
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
 @export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 1.5
 @export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 3.0
@@ -153,6 +156,8 @@ var _global_render_stream_flush_counter: int = 0
 var _last_global_render_collect_ms: float = 0.0
 var _last_global_render_pack_ms: float = 0.0
 var _last_global_render_candidate_chunk_count: int = 0
+var _last_effective_vegetation_render_cluster_size: int = -1
+var _last_effective_vegetation_grass_render_cluster_size: int = -1
 var _vegetation_render_resource_prewarm_node: Node = null
 var _vegetation_render_resource_prewarm_mesh_count: int = 0
 
@@ -255,7 +260,16 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_render_batches_enabled": global_render_batches_enabled,
 		"vegetation_render_cluster_size": vegetation_render_cluster_size,
 		"vegetation_grass_render_cluster_size": vegetation_grass_render_cluster_size,
+		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
+		"world_map_vegetation_render_profile_active": _use_world_map_vegetation_render_profile(),
+		"world_map_vegetation_render_cluster_size": world_map_vegetation_render_cluster_size,
+		"world_map_vegetation_grass_render_cluster_size": world_map_vegetation_grass_render_cluster_size,
+		"effective_vegetation_render_cluster_size": _effective_vegetation_render_cluster_size("tree"),
+		"effective_vegetation_grass_render_cluster_size": _effective_vegetation_render_cluster_size("grass"),
 		"global_render_batch_count": _get_global_render_batch_count(),
+		"global_tree_render_batch_count": _get_global_render_batch_count_for_kind("tree"),
+		"global_grass_render_batch_count": _get_global_render_batch_count_for_kind("grass"),
+		"global_rock_render_batch_count": _get_global_render_batch_count_for_kind("rock"),
 		"global_tree_render_chunk_payloads": _global_tree_render_chunk_payloads.size(),
 		"global_grass_render_chunk_payloads": _global_grass_render_chunk_payloads.size(),
 		"global_rock_render_chunk_payloads": _global_rock_render_chunk_payloads.size(),
@@ -263,6 +277,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_grass_render_instances": _global_grass_render_instance_count,
 		"global_rock_render_instances": _global_rock_render_instance_count,
 		"global_render_dirty_kinds": _get_global_render_dirty_kinds(),
+		"global_tree_dirty_cluster_count": _global_tree_dirty_clusters.size(),
+		"global_grass_dirty_cluster_count": _global_grass_dirty_clusters.size(),
+		"global_rock_dirty_cluster_count": _global_rock_dirty_clusters.size(),
 		"last_global_render_sync_ms": _last_global_render_sync_ms,
 		"last_global_render_collect_ms": _last_global_render_collect_ms,
 		"last_global_render_pack_ms": _last_global_render_pack_ms,
@@ -284,6 +301,36 @@ func _get_native_helper() -> Object:
 		return null
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
+
+func _get_vegetation_env_int_range(name: String, default_value: int, min_value: int, max_value: int) -> int:
+	var raw := OS.get_environment(name).strip_edges()
+	if raw.is_empty() or not raw.is_valid_int():
+		return default_value
+	return clampi(int(raw), min_value, max_value)
+
+func _get_vegetation_env_bool(name: String, default_value: bool) -> bool:
+	var raw := OS.get_environment(name).strip_edges().to_lower()
+	if raw.is_empty():
+		return default_value
+	if raw == "1" or raw == "true" or raw == "yes" or raw == "on":
+		return true
+	if raw == "0" or raw == "false" or raw == "no" or raw == "off":
+		return false
+	return default_value
+
+func _configure_vegetation_render_profile_from_env() -> void:
+	global_render_batches_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_BATCHES", global_render_batches_enabled)
+	world_map_vegetation_render_profile_enabled = _get_vegetation_env_bool("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_PROFILE", world_map_vegetation_render_profile_enabled)
+	var render_cluster_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty()
+	var grass_cluster_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty()
+	vegetation_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE", vegetation_render_cluster_size, 1, 64)
+	vegetation_grass_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE", vegetation_grass_render_cluster_size, 1, 64)
+	world_map_vegetation_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE", world_map_vegetation_render_cluster_size, 1, 64)
+	world_map_vegetation_grass_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE", world_map_vegetation_grass_render_cluster_size, 1, 64)
+	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
+		world_map_vegetation_render_cluster_size = vegetation_render_cluster_size
+	if grass_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
+		world_map_vegetation_grass_render_cluster_size = vegetation_grass_render_cluster_size
 
 func _start_vegetation_render_resource_prewarm() -> void:
 	if vegetation_render_prewarm_frames <= 0 or _is_vegetation_render_resource_prewarm_active():
@@ -410,14 +457,13 @@ func _global_vegetation_custom_aabb(transforms: Array) -> AABB:
 	return bounds.grow(96.0)
 
 func _get_global_render_batch_count() -> int:
+	return _get_global_render_batch_count_for_kind("tree") \
+		+ _get_global_render_batch_count_for_kind("grass") \
+		+ _get_global_render_batch_count_for_kind("rock")
+
+func _get_global_render_batch_count_for_kind(kind: String) -> int:
 	var count := 0
-	for batch in _global_tree_render_clusters.values():
-		if batch and is_instance_valid(batch):
-			count += 1
-	for batch in _global_grass_render_clusters.values():
-		if batch and is_instance_valid(batch):
-			count += 1
-	for batch in _global_rock_render_clusters.values():
+	for batch in _get_global_render_cluster_dictionary(kind).values():
 		if batch and is_instance_valid(batch):
 			count += 1
 	return count
@@ -586,13 +632,72 @@ func _set_global_render_dirty_flag(kind: String, dirty: bool) -> void:
 	if dirty:
 		_wake_process_loop()
 
+func _use_world_map_vegetation_render_profile() -> bool:
+	if not world_map_vegetation_render_profile_enabled or not is_instance_valid(terrain_manager):
+		return false
+	if "world_map_active" in terrain_manager:
+		return bool(terrain_manager.world_map_active)
+	return false
+
+func _effective_vegetation_render_cluster_size(kind: String) -> int:
+	if kind == "grass":
+		if _use_world_map_vegetation_render_profile():
+			return maxi(world_map_vegetation_grass_render_cluster_size, 1)
+		return maxi(vegetation_grass_render_cluster_size, 1)
+	if _use_world_map_vegetation_render_profile():
+		return maxi(world_map_vegetation_render_cluster_size, 1)
+	return maxi(vegetation_render_cluster_size, 1)
+
 func _vegetation_cluster_key(kind: String, coord: Vector2i) -> Vector2i:
-	var cluster_size := vegetation_grass_render_cluster_size if kind == "grass" else vegetation_render_cluster_size
-	cluster_size = maxi(cluster_size, 1)
+	var cluster_size := _effective_vegetation_render_cluster_size(kind)
 	return Vector2i(
 		int(floor(float(coord.x) / float(cluster_size))),
 		int(floor(float(coord.y) / float(cluster_size)))
 	)
+
+func _sync_vegetation_render_profile() -> void:
+	var render_cluster_size := _effective_vegetation_render_cluster_size("tree")
+	var grass_cluster_size := _effective_vegetation_render_cluster_size("grass")
+	var render_profile_changed := _last_effective_vegetation_render_cluster_size >= 0 \
+		and render_cluster_size != _last_effective_vegetation_render_cluster_size
+	var grass_profile_changed := _last_effective_vegetation_grass_render_cluster_size >= 0 \
+		and grass_cluster_size != _last_effective_vegetation_grass_render_cluster_size
+	_last_effective_vegetation_render_cluster_size = render_cluster_size
+	_last_effective_vegetation_grass_render_cluster_size = grass_cluster_size
+	if not global_render_batches_enabled:
+		return
+	if render_profile_changed:
+		_rebuild_global_vegetation_render_membership_for_profile("tree")
+		_rebuild_global_vegetation_render_membership_for_profile("rock")
+	if grass_profile_changed:
+		_rebuild_global_vegetation_render_membership_for_profile("grass")
+
+func _rebuild_global_vegetation_render_membership_for_profile(kind: String) -> void:
+	var clusters := _get_global_render_cluster_dictionary(kind)
+	for batch in clusters.values():
+		if batch and is_instance_valid(batch):
+			batch.queue_free()
+	clusters.clear()
+	_get_global_render_cluster_chunk_dictionary(kind).clear()
+	_get_global_render_chunk_cluster_dictionary(kind).clear()
+	_get_global_render_cluster_instance_count_dictionary(kind).clear()
+	match kind:
+		"tree":
+			_global_tree_render_instance_count = 0
+		"grass":
+			_global_grass_render_instance_count = 0
+		"rock":
+			_global_rock_render_instance_count = 0
+
+	var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
+	dirty_clusters.clear()
+	for coord_variant in _get_global_render_chunk_payload_dictionary(kind).keys():
+		if typeof(coord_variant) != TYPE_VECTOR2I:
+			continue
+		var coord: Vector2i = coord_variant
+		dirty_clusters[_set_global_render_chunk_membership(kind, coord)] = true
+	_global_render_stream_flush_counter = 0
+	_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
 
 func _mark_all_global_vegetation_clusters_dirty(kind: String) -> void:
 	var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
@@ -611,6 +716,7 @@ func _mark_all_global_vegetation_clusters_dirty(kind: String) -> void:
 func _mark_global_vegetation_render_dirty(kind: String, coord = null) -> void:
 	if not global_render_batches_enabled:
 		return
+	_sync_vegetation_render_profile()
 	if typeof(coord) == TYPE_VECTOR2I:
 		var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
 		dirty_clusters[_vegetation_cluster_key(kind, coord)] = true
@@ -781,6 +887,7 @@ func _build_global_vegetation_chunk_render_payload(instances: Array) -> Dictiona
 func _update_global_vegetation_chunk_render_payload(kind: String, coord, instances: Array) -> void:
 	if not global_render_batches_enabled or typeof(coord) != TYPE_VECTOR2I:
 		return
+	_sync_vegetation_render_profile()
 	var payloads := _get_global_render_chunk_payload_dictionary(kind)
 	var payload := _build_global_vegetation_chunk_render_payload(instances)
 	if int(payload.get("instance_count", 0)) <= 0:
@@ -1129,6 +1236,8 @@ func _build_native_vegetation_instances(
 func _ready():
 	set_process(false)
 	set_physics_process(false)
+	_configure_vegetation_render_profile_from_env()
+	_sync_vegetation_render_profile()
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
 	if glb_result.mesh:
@@ -1508,6 +1617,7 @@ func _process_pending_vegetation_chunks() -> void:
 	_last_pending_chunk_process_ms = float(Time.get_ticks_usec() - pending_chunk_start_us) / 1000.0
 
 func _process(_delta):
+	_sync_vegetation_render_profile()
 	if not _has_process_work_pending():
 		set_process(false)
 		return
