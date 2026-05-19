@@ -191,16 +191,28 @@ func _release_active_action() -> void:
 
 func _capture_sample() -> void:
 	var terrain := _manager_snapshot("terrain_manager")
+	var pipeline_compilations := _collect_pipeline_compilation_monitor_snapshot()
 	var sample := {
 		"elapsed_time": elapsed_time,
 		"epoch": Time.get_unix_time_from_system(),
 		"phase": phase,
 		"phase_time": phase_time,
 		"fps": Engine.get_frames_per_second(),
+		"process_ms": float(Performance.get_monitor(Performance.TIME_PROCESS)) * 1000.0,
+		"physics_ms": float(Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)) * 1000.0,
 		"engine_max_fps": Engine.max_fps,
 		"draw_calls": int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 		"render_objects": int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)),
 		"primitives": int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
+		"vram_mb": float(Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED)) / (1024.0 * 1024.0),
+		"texture_mem_mb": float(Performance.get_monitor(Performance.RENDER_TEXTURE_MEM_USED)) / (1024.0 * 1024.0),
+		"buffer_mem_mb": float(Performance.get_monitor(Performance.RENDER_BUFFER_MEM_USED)) / (1024.0 * 1024.0),
+		"pipeline_compilations_canvas": int(pipeline_compilations.get("canvas", 0)),
+		"pipeline_compilations_mesh": int(pipeline_compilations.get("mesh", 0)),
+		"pipeline_compilations_surface": int(pipeline_compilations.get("surface", 0)),
+		"pipeline_compilations_draw": int(pipeline_compilations.get("draw", 0)),
+		"pipeline_compilations_specialization": int(pipeline_compilations.get("specialization", 0)),
+		"pipeline_compilations_total": int(pipeline_compilations.get("total", 0)),
 		"render_features": _render_feature_snapshot(),
 		"terrain": terrain,
 		"building": _manager_snapshot("building_manager"),
@@ -214,6 +226,21 @@ func _manager_snapshot(group_name: String) -> Dictionary:
 	if node and node.has_method("get_telemetry_snapshot"):
 		return node.get_telemetry_snapshot()
 	return {}
+
+func _collect_pipeline_compilation_monitor_snapshot() -> Dictionary:
+	var canvas := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_CANVAS))
+	var mesh := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_MESH))
+	var surface := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SURFACE))
+	var draw := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_DRAW))
+	var specialization := int(Performance.get_monitor(Performance.PIPELINE_COMPILATIONS_SPECIALIZATION))
+	return {
+		"canvas": canvas,
+		"mesh": mesh,
+		"surface": surface,
+		"draw": draw,
+		"specialization": specialization,
+		"total": canvas + mesh + surface + draw + specialization
+	}
 
 func _ensure_snapshot_dir() -> bool:
 	if not snapshot_dir.begins_with("user://"):
