@@ -15,6 +15,10 @@ var scaling_3d_scale_override: float = -1.0
 var screenshot_dir: String = ""
 var disable_entities_enabled: bool = false
 var disable_vegetation_enabled: bool = false
+var scripted_pose_path_enabled: bool = false
+var scripted_pose_origin: Vector3 = Vector3(0.0, 12.0, 0.0)
+var scripted_pose_speed: float = 2.0
+var scripted_pose_yaw_degrees: float = 0.0
 
 var game_root: Node = null
 var terrain_manager: Node = null
@@ -46,6 +50,10 @@ func _ready() -> void:
 	screenshot_dir = _env_string("PROCEDURAL_POWER_SCREENSHOT_DIR", screenshot_dir)
 	disable_entities_enabled = _env_bool("PROCEDURAL_POWER_DISABLE_ENTITIES", false)
 	disable_vegetation_enabled = _env_bool("PROCEDURAL_POWER_DISABLE_VEGETATION", false)
+	scripted_pose_path_enabled = _env_bool("PROCEDURAL_POWER_SCRIPTED_POSE_PATH", scripted_pose_path_enabled)
+	scripted_pose_origin = _env_vector3("PROCEDURAL_POWER_SCRIPTED_POSE_ORIGIN", scripted_pose_origin)
+	scripted_pose_speed = _env_float("PROCEDURAL_POWER_SCRIPTED_POSE_SPEED", scripted_pose_speed)
+	scripted_pose_yaw_degrees = _env_float("PROCEDURAL_POWER_SCRIPTED_POSE_YAW_DEGREES", scripted_pose_yaw_degrees)
 	_record_phase_event("start", phase)
 	print("[PROCEDURAL_POWER] Loading procedural scene: %s" % GAME_SCENE_PATH)
 	var packed := load(GAME_SCENE_PATH)
@@ -67,14 +75,21 @@ func _process(delta: float) -> void:
 
 	match phase:
 		"load":
+			if scripted_pose_path_enabled:
+				_apply_scripted_pose_path(0.0)
 			if _is_ready_for_measurement(delta):
 				_change_phase("move")
 			elif phase_time >= warmup_timeout_s:
 				_fail("initial_load_timeout")
 		"move":
-			_apply_movement_pattern()
+			if scripted_pose_path_enabled:
+				_apply_scripted_pose_path()
+			else:
+				_apply_movement_pattern()
 			if phase_time >= move_seconds:
 				_release_active_action()
+				if scripted_pose_path_enabled:
+					_apply_scripted_pose_path(move_seconds)
 				_change_phase("hold")
 		"hold":
 			if phase_time >= hold_seconds:
@@ -102,6 +117,22 @@ func _env_bool(name: String, default_value: bool) -> bool:
 func _env_string(name: String, default_value: String) -> String:
 	var raw := OS.get_environment(name).strip_edges()
 	return default_value if raw.is_empty() else raw
+
+func _env_vector3(name: String, default_value: Vector3) -> Vector3:
+	var raw := OS.get_environment(name).strip_edges()
+	if raw.is_empty():
+		return default_value
+	var parts := raw.split(",", false)
+	if parts.size() != 3:
+		return default_value
+	for part in parts:
+		if not String(part).strip_edges().is_valid_float():
+			return default_value
+	return Vector3(
+		float(String(parts[0]).strip_edges()),
+		float(String(parts[1]).strip_edges()),
+		float(String(parts[2]).strip_edges())
+	)
 
 func _refresh_nodes() -> void:
 	if terrain_manager == null or not is_instance_valid(terrain_manager):
@@ -188,6 +219,37 @@ func _release_active_action() -> void:
 	if not active_action.is_empty() and InputMap.has_action(active_action):
 		Input.action_release(active_action)
 	active_action = ""
+
+func _apply_scripted_pose_path(path_time: float = -1.0) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	_release_active_action()
+	_freeze_scripted_movement_component()
+	var t := clampf(path_time if path_time >= 0.0 else phase_time, 0.0, move_seconds)
+	var segment := maxf(move_seconds / 4.0, 0.1)
+	var distance := scripted_pose_speed * segment
+	var local_offset := Vector3.ZERO
+	if t < segment:
+		local_offset.z = -distance * (t / segment)
+	elif t < segment * 2.0:
+		local_offset.z = -distance
+		local_offset.x = -distance * ((t - segment) / segment)
+	elif t < segment * 3.0:
+		local_offset.x = -distance
+		local_offset.z = -distance + distance * ((t - segment * 2.0) / segment)
+	else:
+		local_offset.x = -distance + distance * ((t - segment * 3.0) / segment)
+
+	var yaw_basis := Basis(Vector3.UP, deg_to_rad(scripted_pose_yaw_degrees))
+	var transform := Transform3D(yaw_basis, scripted_pose_origin + yaw_basis * local_offset)
+	player.global_transform = transform
+	if "velocity" in player:
+		player.set("velocity", Vector3.ZERO)
+
+func _freeze_scripted_movement_component() -> void:
+	var movement := player.get_node_or_null("Components/Movement") if player else null
+	if movement and movement.is_physics_processing():
+		movement.set_physics_process(false)
 
 func _capture_sample() -> void:
 	var terrain := _manager_snapshot("terrain_manager")
@@ -406,6 +468,9 @@ func _set_glow_enabled_recursive(node: Node, enabled: bool) -> int:
 
 func _render_feature_snapshot() -> Dictionary:
 	var snapshot := render_feature_state.duplicate(true)
+	snapshot["scripted_pose_path"] = scripted_pose_path_enabled
+	snapshot["scripted_pose_origin"] = _vector3_snapshot(scripted_pose_origin)
+	snapshot["scripted_pose_speed"] = scripted_pose_speed
 	if RenderingServer.has_method("get_current_rendering_method"):
 		snapshot["rendering_method"] = str(RenderingServer.call("get_current_rendering_method"))
 	var viewport := get_viewport()

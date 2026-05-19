@@ -15,6 +15,7 @@ PROJECT_PATH = Path(__file__).resolve().parents[2]
 SCENE = "res://addons/tests/procedural_power_test_harness.tscn"
 PROCEDURAL_LOG_FILE = PROJECT_PATH / ".agent" / "procedural-power-godot.log"
 PROCEDURAL_SNAPSHOT_DIR = PROJECT_PATH / ".agent" / "procedural-power"
+PROCEDURAL_APPDATA_DIR = PROJECT_PATH / ".agent" / "procedural-power-appdata"
 WINDOWS_ACCESS_VIOLATION = 3221225477
 
 
@@ -23,6 +24,57 @@ def _snapshot_root(env: dict[str, str]) -> Path:
     if raw and not raw.startswith("user://"):
         return Path(raw)
     return town_runner.SNAPSHOT_DIR
+
+
+def _project_name() -> str:
+    project_file = PROJECT_PATH / "project.godot"
+    try:
+        for line in project_file.read_text(encoding="utf-8").splitlines():
+            if not line.startswith("config/name="):
+                continue
+            raw = line.split("=", 1)[1].strip()
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = raw.strip('"')
+            if isinstance(parsed, str) and parsed.strip():
+                return parsed.strip()
+    except OSError:
+        pass
+    return PROJECT_PATH.name
+
+
+def _configure_isolated_user_data(env: dict[str, str]) -> str:
+    if not _env_bool(env, "PROCEDURAL_POWER_ISOLATE_USER_DATA", True):
+        return ""
+
+    raw_root = (env.get("PROCEDURAL_POWER_APPDATA_DIR", "") or "").strip()
+    appdata_root = Path(raw_root) if raw_root else PROCEDURAL_APPDATA_DIR
+    project_user_root = appdata_root / "Godot" / "app_userdata" / _project_name()
+    (project_user_root / "shader_cache").mkdir(parents=True, exist_ok=True)
+    env["APPDATA"] = str(appdata_root)
+    return str(appdata_root)
+
+
+def _shader_cache_failures(output: str, env: dict[str, str]) -> list[str]:
+    if not _env_bool(env, "PROCEDURAL_POWER_FAIL_ON_SHADER_CACHE_ERROR", True):
+        return []
+
+    failures: list[str] = []
+    markers = (
+        "unable to create shader cache",
+        "can't create shader cache",
+        "cant create shader cache",
+        "no shader caching will happen",
+        "failed to write pipeline cache",
+    )
+    for line in output.splitlines():
+        lowered = line.lower()
+        if "shader cache" not in lowered and "pipeline cache" not in lowered:
+            continue
+        if any(marker in lowered for marker in markers):
+            failures.append(line.strip())
+    return failures
 
 
 def _latest_snapshot(root: Path, since_mtime: float) -> Optional[Path]:
@@ -206,6 +258,7 @@ def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_
     )
     print(
         "Render features: "
+        f"renderer={render_features.get('rendering_method', '')} "
         f"glow_off={render_features.get('disable_glow', False)} "
         f"glow_envs={render_features.get('glow_environment_count', 0)} "
         f"scale_requested={render_features.get('scaling_3d_scale_requested', -1.0)} "
@@ -287,6 +340,11 @@ def _validate_runtime_power(snapshot: dict[str, Any], env: dict[str, str]) -> li
         if not bool(render_features.get("scaling_3d_scale_applied", False)):
             failures.append("procedural 3D scaling override was requested but not applied")
 
+    if _env_bool(env, "PROCEDURAL_POWER_REQUIRE_FORWARD_PLUS", True):
+        rendering_method = str(render_features.get("rendering_method", "") or "")
+        if rendering_method != "forward_plus":
+            failures.append(f"procedural power run expected Forward+ renderer, got '{rendering_method or 'unknown'}'")
+
     if _env_bool(env, "TOWN_STALL_RUNTIME_POWER_VIEWPORT_SCALING", False):
         if not bool(terrain.get("runtime_power_viewport_scaling_enabled", False)):
             failures.append("runtime power viewport scaling was requested but not enabled")
@@ -348,6 +406,11 @@ def main() -> int:
     env.setdefault("PROCEDURAL_POWER_SAMPLE_INTERVAL_S", "1")
     env.setdefault("PROCEDURAL_POWER_SNAPSHOT_DIR", str(PROCEDURAL_SNAPSHOT_DIR))
     env.setdefault("TOWN_STALL_ENABLE_RUNTIME_POWER_MODE", "1")
+    isolated_user_data = _configure_isolated_user_data(env)
+    rendering_method = (env.get("PROCEDURAL_POWER_RENDERING_METHOD", "") or "").strip()
+    if rendering_method and rendering_method != "forward_plus":
+        print("ERROR: PROCEDURAL_POWER_RENDERING_METHOD is restricted to forward_plus for this Forward+ project.")
+        return 1
 
     sample_interval_s = float(env.get("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", "2") or "2")
     gpu_samples: list[dict[str, Any]] = []
@@ -356,7 +419,6 @@ def main() -> int:
     sampler.start()
 
     PROCEDURAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    rendering_method = (env.get("PROCEDURAL_POWER_RENDERING_METHOD", "") or "").strip()
     cmd = [
         town_runner.GODOT_BIN,
         "--log-file",
@@ -371,6 +433,8 @@ def main() -> int:
     ])
     print("Running procedural power test...")
     print(f"   Scene: {SCENE}")
+    if isolated_user_data:
+        print(f"   Godot APPDATA: {isolated_user_data}")
     if rendering_method:
         print(f"   Rendering method: {rendering_method}")
     result = subprocess.run(
@@ -397,6 +461,13 @@ def main() -> int:
     snapshot = _read_json(snapshot_path)
     snapshot = _attach_gpu_samples_to_snapshot(snapshot_path, snapshot, gpu_samples, run_start_mtime, run_end_epoch)
     _print_summary(snapshot_path, snapshot, gpu_samples)
+
+    shader_cache_failures = _shader_cache_failures(output, env)
+    if shader_cache_failures:
+        print("ERROR: procedural power run reported shader cache failures:")
+        for failure in shader_cache_failures:
+            print(f"  - {failure}")
+        return 1
 
     validation_failures = _validate_runtime_power(snapshot, env)
     if validation_failures:

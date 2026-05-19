@@ -25,7 +25,8 @@ CASES: dict[str, dict[str, str]] = {
     "no_glow": {"PROCEDURAL_POWER_DISABLE_GLOW": "1"},
     "shadow_radius_1": {"TOWN_STALL_TERRAIN_SHADOW_LOD_RADIUS": "1"},
     "shadow_radius_0": {"TOWN_STALL_TERRAIN_SHADOW_LOD_RADIUS": "0"},
-    "mobile_renderer": {"PROCEDURAL_POWER_RENDERING_METHOD": "mobile"},
+    "water_refraction": {"TOWN_STALL_WATER_SCREEN_REFRACTION": "1"},
+    "water_no_refraction": {"TOWN_STALL_WATER_SCREEN_REFRACTION": "0"},
 }
 
 
@@ -41,6 +42,9 @@ def _selected_case_names() -> list[str]:
             print(f"WARNING: Unknown procedural ablation case '{name}', skipping.")
             continue
         selected.append(name)
+    if not selected and names:
+        print("ERROR: no valid procedural ablation cases selected.")
+        return []
     return selected or ["baseline"]
 
 
@@ -162,6 +166,7 @@ def _final_sample_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "runtime_power_target_fps": int(terrain.get("runtime_power_target_fps", 0) or 0),
         "terrain_chunks": int(terrain.get("rendered_terrain_chunk_count", 0) or 0),
         "water_chunks": int(terrain.get("rendered_water_chunk_count", 0) or 0),
+        "water_screen_refraction_enabled": bool(terrain.get("water_screen_refraction_enabled", True)),
         "terrain_shadow_radius": int(terrain.get("terrain_shadow_lod_radius_chunks", 0) or 0),
         "terrain_shadow_on": int(terrain.get("last_terrain_shadow_lod_enabled_count", 0) or 0),
         "terrain_shadow_off": int(terrain.get("last_terrain_shadow_lod_disabled_count", 0) or 0),
@@ -186,6 +191,9 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict[str, Any]:
     _set_default_env(env, "PROCEDURAL_POWER_HOLD_SECONDS", "PROCEDURAL_ABLATION_HOLD_SECONDS", "2")
     _set_default_env(env, "PROCEDURAL_POWER_SAMPLE_INTERVAL_S", "PROCEDURAL_ABLATION_SAMPLE_INTERVAL_S", "1")
     _set_default_env(env, "TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", "PROCEDURAL_ABLATION_GPU_SAMPLE_INTERVAL_SECONDS", "1")
+    _set_default_env(env, "PROCEDURAL_POWER_SCRIPTED_POSE_PATH", "PROCEDURAL_ABLATION_SCRIPTED_POSE_PATH", "1")
+    _set_default_env(env, "PROCEDURAL_POWER_SCRIPTED_POSE_ORIGIN", "PROCEDURAL_ABLATION_SCRIPTED_POSE_ORIGIN", "15.5,12,15.5")
+    _set_default_env(env, "PROCEDURAL_POWER_SCRIPTED_POSE_SPEED", "PROCEDURAL_ABLATION_SCRIPTED_POSE_SPEED", "2")
     env.setdefault("PROCEDURAL_POWER_REQUIRE_IDLE", "0")
     env.setdefault("PROCEDURAL_POWER_REQUIRE_DEEP_IDLE", "0")
     env.setdefault("TOWN_STALL_ENABLE_RUNTIME_POWER_MODE", "1")
@@ -271,7 +279,7 @@ def _print_results(results: list[dict[str, Any]]) -> None:
             "watts={move_watts:6.2f} ({dmove_watts:+6.2f}) samples={move_gpu:2d} | "
             "hold prims={hold_prims:9.0f} ({dhold_prims:+9.0f}) watts={hold_watts:6.2f} ({dhold_watts:+6.2f}) "
             "samples={hold_gpu:2d} pipes={pipes:3d} | final draws={draws:4d} prims={final_prims:9d} "
-            "chunks={chunks:3d} water={water:3d} renderer={renderer} veglod={lod:5.1f} margin={margin:5.0f}".format(
+            "chunks={chunks:3d} water={water:3d} refr={refr} renderer={renderer} veglod={lod:5.1f} margin={margin:5.0f}".format(
                 case=str(result.get("case", "")),
                 move_prims=float(move.get("primitives_avg", 0.0) or 0.0),
                 dmove_prims=float(delta.get("move_primitives_avg", 0.0) or 0.0),
@@ -289,6 +297,7 @@ def _print_results(results: list[dict[str, Any]]) -> None:
                 final_prims=int(final.get("primitives", 0) or 0),
                 chunks=int(final.get("terrain_chunks", 0) or 0),
                 water=int(final.get("water_chunks", 0) or 0),
+                refr="on" if bool(final.get("water_screen_refraction_enabled", True)) else "off",
                 renderer=rendering_method,
                 lod=float(final.get("vegetation_lod_bias", 0.0) or 0.0),
                 margin=float(final.get("vegetation_extra_cull_margin", 0.0) or 0.0),
@@ -321,14 +330,17 @@ def _pose_vector_distance(first_pose: Any, second_pose: Any, key: str) -> float 
 
 def _failed_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     require_raw_gpu = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_RAW_GPU", "1") != "0"
+    require_forward_plus = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_FORWARD_PLUS", "1") != "0"
     require_comparable_chunks = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_COMPARABLE_CHUNKS", "1") != "0"
     require_comparable_pose = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_COMPARABLE_POSE", "1") != "0"
     chunk_tolerance = max(0, _env_int("PROCEDURAL_ABLATION_TERRAIN_CHUNK_TOLERANCE", 4))
+    water_chunk_tolerance = max(0, _env_int("PROCEDURAL_ABLATION_WATER_CHUNK_TOLERANCE", 4))
     pose_position_tolerance = max(0.0, _env_float("PROCEDURAL_ABLATION_POSE_POSITION_TOLERANCE", 2.0))
     pose_forward_tolerance = max(0.0, _env_float("PROCEDURAL_ABLATION_POSE_FORWARD_TOLERANCE", 0.05))
     baseline = next((result for result in results if result.get("case") == "baseline"), None)
     baseline_final = baseline.get("final", {}) if isinstance(baseline, dict) and isinstance(baseline.get("final"), dict) else {}
     baseline_chunks = int(baseline_final.get("terrain_chunks", 0) or 0)
+    baseline_water_chunks = int(baseline_final.get("water_chunks", 0) or 0)
     failed: list[dict[str, Any]] = []
     for result in results:
         move = result.get("move", {}) if isinstance(result.get("move"), dict) else {}
@@ -342,11 +354,22 @@ def _failed_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if require_raw_gpu and int(move.get("raw_gpu_sample_count", 0) or 0) <= 0:
             failed.append(result)
             continue
+        if require_forward_plus and str(final.get("rendering_method", "") or "") != "forward_plus":
+            failed.append(result)
+            continue
         if (
             require_comparable_chunks
             and baseline_chunks > 0
             and result.get("case") != "baseline"
             and abs(int(final.get("terrain_chunks", 0) or 0) - baseline_chunks) > chunk_tolerance
+        ):
+            failed.append(result)
+            continue
+        if (
+            require_comparable_chunks
+            and baseline_water_chunks > 0
+            and result.get("case") != "baseline"
+            and abs(int(final.get("water_chunks", 0) or 0) - baseline_water_chunks) > water_chunk_tolerance
         ):
             failed.append(result)
             continue
@@ -390,6 +413,8 @@ def main() -> int:
             return 1
     else:
         selected = _selected_case_names()
+        if not selected:
+            return 1
         results = [_run_case(case_name, CASES[case_name]) for case_name in selected]
         results = _add_deltas(results)
         SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -409,6 +434,7 @@ def main() -> int:
                 f"completed={result.get('completed')} move_samples={move.get('sample_count', 0)} "
                 f"gpu_samples={move.get('raw_gpu_sample_count', 0)} "
                 f"terrain_chunks={final.get('terrain_chunks', 0)}"
+                f" water_chunks={final.get('water_chunks', 0)}"
                 f"{comparability_detail}"
             )
         return 1

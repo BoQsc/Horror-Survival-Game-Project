@@ -35,6 +35,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export var water_level: float = 13.0 # Lowered to keep roads dry
 @export var water_render_enabled: bool = true
 @export var terrain_skip_dry_water_density_dispatch: bool = true
+@export var water_screen_refraction_enabled: bool = false
 @export var noise_frequency: float = 0.1
 ## World generation seed - same seed = same world
 ## Change this for different world generation
@@ -536,7 +537,8 @@ func _ready():
 
 	# Setup Water Material
 	material_water = ShaderMaterial.new()
-	material_water.shader = load("res://world_marching_cubes/water.gdshader")
+	var water_shader_path := "res://world_marching_cubes/water.gdshader" if water_screen_refraction_enabled else "res://world_marching_cubes/water_no_refraction.gdshader"
+	material_water.shader = load(water_shader_path)
 	# Dark green water colors
 	material_water.set_shader_parameter("albedo", Color(0.05, 0.18, 0.12))
 	material_water.set_shader_parameter("albedo_deep", Color(0.01, 0.06, 0.04))
@@ -837,6 +839,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_native_cpu_meshing_enabled": terrain_native_cpu_meshing_enabled,
 		"terrain_skip_dry_water_density_dispatch": terrain_skip_dry_water_density_dispatch,
 		"water_render_enabled": water_render_enabled,
+		"water_screen_refraction_enabled": water_screen_refraction_enabled,
 		"last_gpu_generation_dispatch_ms": _last_gpu_generation_dispatch_ms,
 		"last_gpu_generation_dispatch_coord": str(_last_gpu_generation_dispatch_coord),
 		"last_gpu_generation_mod_sync_ms": _last_gpu_generation_mod_sync_ms,
@@ -3140,6 +3143,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
 	terrain_native_cpu_meshing_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING", terrain_native_cpu_meshing_enabled)
 	terrain_skip_dry_water_density_dispatch = _get_runtime_power_env_bool("TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH", terrain_skip_dry_water_density_dispatch)
+	water_screen_refraction_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_SCREEN_REFRACTION", water_screen_refraction_enabled)
 	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
 		water_render_enabled = false
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
@@ -6625,7 +6629,8 @@ func _dispatch_chunk_meshing(rd: RenderingDevice, flight_data: Dictionary, sid_m
 	var dens_buf_terrain = flight_data.dens_buf_terrain
 	var dens_buf_water = flight_data.dens_buf_water
 	var mat_buf_terrain = flight_data.mat_buf_terrain
-	var skip_water_mesh := not bool(flight_data.get("water_surface_possible", true))
+	var water_surface_possible := bool(flight_data.get("water_surface_possible", true))
+	var skip_water_mesh := not water_surface_possible
 
 	if terrain_native_cpu_meshing_enabled:
 		return {
@@ -7682,7 +7687,6 @@ func _finalize_chunk_creation(item: Dictionary):
 			_queue_pending_finalization_item_free(item)
 			return
 		var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
-		var water_mesh_result := _materialize_deferred_mesh_result(item.result, material_water)
 
 		# Update Data
 		var data = active_chunks[coord]
@@ -7704,7 +7708,9 @@ func _finalize_chunk_creation(item: Dictionary):
 			data.node_water.queue_free()
 			data.node_water = null
 
+		var water_mesh_result := {}
 		if create_water_node:
+			water_mesh_result = _materialize_deferred_mesh_result(item.result, material_water)
 			# World-map swimming/underwater checks use density sampling, not Area3D
 			# overlap state, so the water mesh can stay visual-only in that mode.
 			var result = create_chunk_node(water_mesh_result.get("mesh", null), water_mesh_result.get("shape", null), chunk_pos, true, null, world_map_active, coord)
