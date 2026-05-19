@@ -43,6 +43,14 @@ def _selected_case_names() -> list[str]:
     return selected or ["baseline"]
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def _read_json(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {}
@@ -224,6 +232,8 @@ def _add_deltas(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ("hold", "raw_gpu_power_avg_w"),
         ("final", "primitives"),
         ("final", "draw_calls"),
+        ("final", "terrain_chunks"),
+        ("final", "water_chunks"),
     ]
     for result in results:
         deltas: dict[str, float] = {}
@@ -280,9 +290,15 @@ def _load_summary_results() -> list[dict[str, Any]]:
 
 def _failed_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     require_raw_gpu = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_RAW_GPU", "1") != "0"
+    require_comparable_chunks = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_COMPARABLE_CHUNKS", "1") != "0"
+    chunk_tolerance = max(0, _env_int("PROCEDURAL_ABLATION_TERRAIN_CHUNK_TOLERANCE", 4))
+    baseline = next((result for result in results if result.get("case") == "baseline"), None)
+    baseline_final = baseline.get("final", {}) if isinstance(baseline, dict) and isinstance(baseline.get("final"), dict) else {}
+    baseline_chunks = int(baseline_final.get("terrain_chunks", 0) or 0)
     failed: list[dict[str, Any]] = []
     for result in results:
         move = result.get("move", {}) if isinstance(result.get("move"), dict) else {}
+        final = result.get("final", {}) if isinstance(result.get("final"), dict) else {}
         if int(result.get("returncode", 1)) != 0 or not bool(result.get("completed", False)):
             failed.append(result)
             continue
@@ -290,6 +306,14 @@ def _failed_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             failed.append(result)
             continue
         if require_raw_gpu and int(move.get("raw_gpu_sample_count", 0) or 0) <= 0:
+            failed.append(result)
+            continue
+        if (
+            require_comparable_chunks
+            and baseline_chunks > 0
+            and result.get("case") != "baseline"
+            and abs(int(final.get("terrain_chunks", 0) or 0) - baseline_chunks) > chunk_tolerance
+        ):
             failed.append(result)
     return failed
 
@@ -314,10 +338,12 @@ def main() -> int:
         print("\nPROCEDURAL ABLATION MATRIX FAILED")
         for result in failed:
             move = result.get("move", {}) if isinstance(result.get("move"), dict) else {}
+            final = result.get("final", {}) if isinstance(result.get("final"), dict) else {}
             print(
                 f"- {result.get('case', 'unknown')} returncode={result.get('returncode')} "
                 f"completed={result.get('completed')} move_samples={move.get('sample_count', 0)} "
-                f"gpu_samples={move.get('raw_gpu_sample_count', 0)}"
+                f"gpu_samples={move.get('raw_gpu_sample_count', 0)} "
+                f"terrain_chunks={final.get('terrain_chunks', 0)}"
             )
         return 1
     return 0
