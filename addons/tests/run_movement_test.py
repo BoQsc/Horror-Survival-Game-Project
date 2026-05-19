@@ -28,7 +28,8 @@ def main():
             text=True, 
             timeout=TIMEOUT,
             encoding='utf-8',
-            errors='replace'
+            errors='replace',
+            cwd=PROJECT_PATH
         )
         output = result.stdout + "\n" + result.stderr
     except subprocess.TimeoutExpired as e:

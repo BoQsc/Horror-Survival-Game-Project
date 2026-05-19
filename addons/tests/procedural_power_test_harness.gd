@@ -10,6 +10,9 @@ var sample_interval_s: float = 1.0
 var require_stream_settled: bool = true
 var stream_settle_seconds: float = 1.5
 var snapshot_dir: String = SNAPSHOT_DIR
+var disable_glow_enabled: bool = false
+var scaling_3d_scale_override: float = -1.0
+var screenshot_dir: String = ""
 
 var game_root: Node = null
 var terrain_manager: Node = null
@@ -23,6 +26,9 @@ var samples: Array[Dictionary] = []
 var phase_events: Array[Dictionary] = []
 var active_action: String = ""
 var snapshot_path: String = ""
+var render_feature_state: Dictionary = {}
+var visual_capture_state: Dictionary = {}
+var snapshot_write_started: bool = false
 
 func _ready() -> void:
 	warmup_timeout_s = _env_float("PROCEDURAL_POWER_WARMUP_TIMEOUT_S", warmup_timeout_s)
@@ -32,6 +38,9 @@ func _ready() -> void:
 	require_stream_settled = _env_bool("PROCEDURAL_POWER_REQUIRE_STREAM_SETTLED", require_stream_settled)
 	stream_settle_seconds = _env_float("PROCEDURAL_POWER_STREAM_SETTLE_SECONDS", stream_settle_seconds)
 	snapshot_dir = _env_string("PROCEDURAL_POWER_SNAPSHOT_DIR", snapshot_dir)
+	disable_glow_enabled = _env_bool("PROCEDURAL_POWER_DISABLE_GLOW", _env_bool("TOWN_STALL_DISABLE_GLOW", false))
+	scaling_3d_scale_override = _env_float("PROCEDURAL_POWER_SCALING_3D_SCALE", scaling_3d_scale_override)
+	screenshot_dir = _env_string("PROCEDURAL_POWER_SCREENSHOT_DIR", screenshot_dir)
 	_record_phase_event("start", phase)
 	print("[PROCEDURAL_POWER] Loading procedural scene: %s" % GAME_SCENE_PATH)
 	var packed := load(GAME_SCENE_PATH)
@@ -40,6 +49,7 @@ func _ready() -> void:
 		return
 	game_root = packed.instantiate()
 	add_child(game_root)
+	_apply_render_feature_toggles()
 
 func _process(delta: float) -> void:
 	elapsed_time += delta
@@ -185,6 +195,7 @@ func _capture_sample() -> void:
 		"draw_calls": int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 		"render_objects": int(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME)),
 		"primitives": int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
+		"render_features": _render_feature_snapshot(),
 		"terrain": terrain,
 		"building": _manager_snapshot("building_manager"),
 		"vegetation": _manager_snapshot("vegetation_manager"),
@@ -220,6 +231,9 @@ func _ensure_snapshot_dir() -> bool:
 	return true
 
 func _write_snapshot_and_quit() -> void:
+	if snapshot_write_started:
+		return
+	snapshot_write_started = true
 	_release_active_action()
 	phase = "done"
 	_record_phase_event("done", phase)
@@ -227,6 +241,7 @@ func _write_snapshot_and_quit() -> void:
 	if not _ensure_snapshot_dir():
 		_fail("failed_to_create_snapshot_dir")
 		return
+	visual_capture_state = _capture_visual_snapshot()
 	var stamp := Time.get_datetime_string_from_system(false, true).replace(":", "-").replace(" ", "_")
 	snapshot_path = snapshot_dir.path_join("procedural_power_snapshot_%s.json" % stamp)
 	var payload := {
@@ -237,6 +252,8 @@ func _write_snapshot_and_quit() -> void:
 		"hold_seconds": hold_seconds,
 		"require_stream_settled": require_stream_settled,
 		"stream_settle_seconds": stream_settle_seconds,
+		"render_features": _render_feature_snapshot(),
+		"visual_capture": visual_capture_state.duplicate(true),
 		"phase_events": phase_events,
 		"samples": samples,
 		"final_sample": samples[-1] if not samples.is_empty() else {}
@@ -248,9 +265,201 @@ func _write_snapshot_and_quit() -> void:
 	file.store_string(JSON.stringify(payload, "\t"))
 	file.close()
 	print("[PROCEDURAL_POWER] Snapshot: %s" % snapshot_path)
-	get_tree().quit()
+	call_deferred("_shutdown_after_snapshot")
 
 func _fail(reason: String) -> void:
 	_release_active_action()
 	print("[PROCEDURAL_POWER] ERROR: %s" % reason)
 	get_tree().quit(1)
+
+func _apply_render_feature_toggles() -> void:
+	var glow_count := 0
+	if disable_glow_enabled and is_instance_valid(game_root):
+		glow_count = _set_glow_enabled_recursive(game_root, false)
+
+	var viewport := get_viewport()
+	var scaling_supported := viewport != null and "scaling_3d_scale" in viewport
+	var previous_scale := 0.0
+	var actual_scale := 0.0
+	var scale_applied := false
+	if scaling_supported:
+		previous_scale = float(viewport.scaling_3d_scale)
+		actual_scale = previous_scale
+		if scaling_3d_scale_override > 0.0:
+			viewport.scaling_3d_scale = clampf(scaling_3d_scale_override, 0.5, 1.0)
+			actual_scale = float(viewport.scaling_3d_scale)
+			scale_applied = true
+
+	render_feature_state = {
+		"disable_glow": disable_glow_enabled,
+		"glow_environment_count": glow_count,
+		"scaling_3d_scale_supported": scaling_supported,
+		"scaling_3d_scale_requested": scaling_3d_scale_override,
+		"scaling_3d_scale_previous": previous_scale,
+		"scaling_3d_scale_actual": actual_scale,
+		"scaling_3d_scale_applied": scale_applied
+	}
+	print(
+		"[PROCEDURAL_POWER] Render feature toggles: disable_glow=%s glow_envs=%d scale_requested=%.2f scale_actual=%.2f scale_applied=%s" % [
+			"true" if disable_glow_enabled else "false",
+			glow_count,
+			scaling_3d_scale_override,
+			actual_scale,
+			"true" if scale_applied else "false"
+		]
+	)
+
+func _set_glow_enabled_recursive(node: Node, enabled: bool) -> int:
+	var changed := 0
+	var world_environment := node as WorldEnvironment
+	if world_environment:
+		var environment := world_environment.environment
+		if environment:
+			var environment_copy := environment.duplicate() as Environment
+			environment_copy.glow_enabled = enabled
+			world_environment.environment = environment_copy
+			changed += 1
+
+	for child in node.get_children():
+		changed += _set_glow_enabled_recursive(child, enabled)
+	return changed
+
+func _render_feature_snapshot() -> Dictionary:
+	var snapshot := render_feature_state.duplicate(true)
+	var viewport := get_viewport()
+	if viewport != null and "scaling_3d_scale" in viewport:
+		var current_scale := float(viewport.scaling_3d_scale)
+		snapshot["scaling_3d_scale_current"] = current_scale
+		snapshot["scaling_3d_scale_actual"] = current_scale
+	return snapshot
+
+func _capture_visual_snapshot() -> Dictionary:
+	if screenshot_dir.strip_edges().is_empty():
+		return {}
+
+	var absolute_dir := ProjectSettings.globalize_path(screenshot_dir)
+	var make_dir_error := DirAccess.make_dir_recursive_absolute(absolute_dir)
+	if make_dir_error != OK:
+		return {
+			"requested": true,
+			"saved": false,
+			"error": "make_dir_failed_%d" % make_dir_error,
+			"path": ""
+		}
+
+	var viewport := get_viewport()
+	if viewport == null:
+		return {
+			"requested": true,
+			"saved": false,
+			"error": "missing_viewport",
+			"path": ""
+		}
+
+	var image := viewport.get_texture().get_image()
+	if image == null or image.is_empty():
+		return {
+			"requested": true,
+			"saved": false,
+			"error": "empty_image",
+			"path": ""
+		}
+
+	var timestamp := Time.get_datetime_string_from_system(false, true).replace(":", "-").replace(" ", "_")
+	var glow_label := "glow_off" if disable_glow_enabled else "glow_on"
+	var scale_value := float(_render_feature_snapshot().get("scaling_3d_scale_actual", 1.0))
+	var scale_label := ("scale_%.2f" % scale_value).replace(".", "p")
+	var path := absolute_dir.path_join("procedural_%s_%s_%s.png" % [timestamp, glow_label, scale_label])
+	var save_error := image.save_png(path)
+	return {
+		"requested": true,
+		"saved": save_error == OK,
+		"error": "" if save_error == OK else "save_png_failed_%d" % save_error,
+		"path": path,
+		"width": image.get_width(),
+		"height": image.get_height(),
+		"disable_glow": disable_glow_enabled,
+		"scaling_3d_scale_actual": scale_value
+	}
+
+func _shutdown_after_snapshot() -> void:
+	if is_instance_valid(game_root):
+		game_root.process_mode = Node.PROCESS_MODE_DISABLED
+	_cleanup_managers_before_quit()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if is_instance_valid(game_root):
+		game_root.queue_free()
+	call_deferred("_finalize_shutdown")
+
+func _finalize_shutdown() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	get_tree().quit()
+
+func _cleanup_managers_before_quit() -> void:
+	var terrain := _find_manager_node("terrain_manager", "TerrainManager")
+	if terrain:
+		_disable_node_for_shutdown(terrain)
+		if terrain.has_method("clear_all_chunks"):
+			terrain.clear_all_chunks()
+
+	var building := _find_manager_node("building_manager", "BuildingManager")
+	if building:
+		_disable_node_for_shutdown(building)
+		if building.has_method("clear_immediate_for_shutdown"):
+			building.clear_immediate_for_shutdown()
+		elif building.has_method("clear_for_shutdown"):
+			building.clear_for_shutdown()
+
+	var vegetation := _find_manager_node("vegetation_manager", "VegetationManager")
+	if vegetation:
+		_disable_node_for_shutdown(vegetation)
+		if vegetation.has_method("clear_all_data"):
+			vegetation.clear_all_data(true)
+
+	var entities := _find_manager_node("entity_manager", "EntityManager")
+	if entities:
+		_disable_node_for_shutdown(entities)
+		if entities.has_method("clear_all_entities"):
+			entities.clear_all_entities()
+		if entities.has_method("clear_spawned_chunks"):
+			entities.clear_spawned_chunks()
+
+	var vehicles := _find_manager_node("vehicle_manager", "VehicleManager")
+	if vehicles:
+		_disable_node_for_shutdown(vehicles)
+		if vehicles.has_method("clear_immediate_for_shutdown"):
+			vehicles.clear_immediate_for_shutdown()
+		elif vehicles.has_method("clear_for_shutdown"):
+			vehicles.clear_for_shutdown()
+		elif vehicles.has_method("load_save_data"):
+			vehicles.load_save_data({})
+
+	var prefab_spawner := _find_manager_node("prefab_spawner", "PrefabSpawner")
+	if prefab_spawner:
+		_disable_node_for_shutdown(prefab_spawner)
+		if prefab_spawner.has_method("clear_pending_spawn_jobs"):
+			prefab_spawner.clear_pending_spawn_jobs()
+
+	if ClassDB.class_exists("PrefabGeometry"):
+		PrefabGeometry.clear_cache()
+
+func _disable_node_for_shutdown(node: Node) -> void:
+	if not is_instance_valid(node):
+		return
+	node.process_mode = Node.PROCESS_MODE_DISABLED
+	node.set_process(false)
+	node.set_physics_process(false)
+
+func _find_manager_node(group_name: String, fallback_name: String) -> Node:
+	var node := get_tree().get_first_node_in_group(group_name)
+	if node:
+		return node
+	if is_instance_valid(game_root):
+		node = game_root.find_child(fallback_name, true, false)
+		if node:
+			return node
+	return get_tree().root.find_child(fallback_name, true, false)

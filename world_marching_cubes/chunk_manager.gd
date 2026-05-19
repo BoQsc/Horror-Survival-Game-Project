@@ -274,6 +274,10 @@ var loading_paused: bool = false
 @export_range(0.001, 0.1, 0.001) var runtime_power_orientation_epsilon: float = 0.01
 @export var runtime_power_suspend_render_loop_in_deep_idle: bool = true
 @export var runtime_power_suspend_background_world_work: bool = true
+@export var runtime_power_viewport_scaling_enabled: bool = false
+@export_range(0.5, 1.0, 0.01) var runtime_power_active_3d_scale: float = 1.0
+@export_range(0.5, 1.0, 0.01) var runtime_power_idle_3d_scale: float = 1.0
+@export_range(0.5, 1.0, 0.01) var runtime_power_deep_idle_3d_scale: float = 1.0
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
@@ -304,6 +308,10 @@ var _runtime_power_world_work_resume_count: int = 0
 var _runtime_power_world_work_suspend_reason: String = ""
 var _runtime_power_world_work_resume_reason: String = "startup"
 var _runtime_power_recent_events: Array[Dictionary] = []
+var _runtime_power_viewport_scale_supported: bool = false
+var _runtime_power_viewport_scale_original: float = 1.0
+var _runtime_power_viewport_scale_current: float = 1.0
+var _runtime_power_viewport_scale_captured: bool = false
 var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_fallback_unloads: int = 0
@@ -884,6 +892,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"runtime_power_render_loop_suspended": _runtime_power_render_loop_suspended,
 		"runtime_power_render_loop_enabled": _get_runtime_power_render_loop_enabled(),
 		"runtime_power_suspend_background_world_work": runtime_power_suspend_background_world_work,
+		"runtime_power_viewport_scaling_enabled": runtime_power_viewport_scaling_enabled,
+		"runtime_power_viewport_scale_supported": _runtime_power_viewport_scale_supported,
+		"runtime_power_viewport_scale_current": _get_runtime_power_viewport_scale(),
+		"runtime_power_active_3d_scale": runtime_power_active_3d_scale,
+		"runtime_power_idle_3d_scale": runtime_power_idle_3d_scale,
+		"runtime_power_deep_idle_3d_scale": runtime_power_deep_idle_3d_scale,
 		"runtime_power_world_work_suspended": _runtime_power_world_work_suspended,
 		"runtime_power_world_work_suspended_frame_count": _runtime_power_world_work_suspended_frame_count,
 		"runtime_power_world_work_suspend_count": _runtime_power_world_work_suspend_count,
@@ -3105,12 +3119,18 @@ func _configure_runtime_power_mode_from_env() -> void:
 	runtime_power_active_grace_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_ACTIVE_GRACE_S", runtime_power_active_grace_s)
 	runtime_power_suspend_render_loop_in_deep_idle = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP", runtime_power_suspend_render_loop_in_deep_idle)
 	runtime_power_suspend_background_world_work = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_SUSPEND_BACKGROUND_WORLD_WORK", runtime_power_suspend_background_world_work)
+	runtime_power_viewport_scaling_enabled = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_VIEWPORT_SCALING", runtime_power_viewport_scaling_enabled)
+	runtime_power_active_3d_scale = clampf(_get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_ACTIVE_3D_SCALE", runtime_power_active_3d_scale), 0.5, 1.0)
+	runtime_power_idle_3d_scale = clampf(_get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_IDLE_3D_SCALE", runtime_power_idle_3d_scale), 0.5, 1.0)
+	runtime_power_deep_idle_3d_scale = clampf(_get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_3D_SCALE", runtime_power_deep_idle_3d_scale), 0.5, 1.0)
 	runtime_power_idle_max_fps = mini(runtime_power_idle_max_fps, runtime_power_active_max_fps)
 	runtime_power_deep_idle_max_fps = mini(runtime_power_deep_idle_max_fps, runtime_power_idle_max_fps)
 	runtime_power_deep_idle_enter_delay_s = maxf(runtime_power_deep_idle_enter_delay_s, runtime_power_idle_enter_delay_s)
 
 	if runtime_power_mode_enabled:
 		_apply_runtime_power_fps("active", runtime_power_active_max_fps)
+	else:
+		_apply_runtime_power_viewport_scale("active")
 
 func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_separate_water_meshing = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_GPU_SEPARATE_WATER_MESHING", terrain_gpu_separate_water_meshing)
@@ -3280,8 +3300,68 @@ func _apply_runtime_power_fps(mode: String, target_fps_value: int) -> void:
 			"idle_seconds": _runtime_power_idle_seconds,
 			"reason": _runtime_power_active_reason
 		})
+	_apply_runtime_power_viewport_scale(mode)
 	if previous_mode != mode or _runtime_power_render_loop_suspended or mode == "deep_idle":
 		_apply_runtime_power_render_loop_mode(mode)
+
+func _get_runtime_power_viewport_scale() -> float:
+	var viewport := get_viewport()
+	_runtime_power_viewport_scale_supported = viewport != null and "scaling_3d_scale" in viewport
+	if not _runtime_power_viewport_scale_supported:
+		return 0.0
+	_runtime_power_viewport_scale_current = float(viewport.scaling_3d_scale)
+	return _runtime_power_viewport_scale_current
+
+func _runtime_power_target_viewport_scale(mode: String) -> float:
+	if mode == "deep_idle":
+		return runtime_power_deep_idle_3d_scale
+	if mode == "idle":
+		return runtime_power_idle_3d_scale
+	return runtime_power_active_3d_scale
+
+func _apply_runtime_power_viewport_scale(mode: String) -> void:
+	var viewport := get_viewport()
+	_runtime_power_viewport_scale_supported = viewport != null and "scaling_3d_scale" in viewport
+	if not _runtime_power_viewport_scale_supported:
+		return
+
+	if not _runtime_power_viewport_scale_captured:
+		_runtime_power_viewport_scale_original = float(viewport.scaling_3d_scale)
+		_runtime_power_viewport_scale_current = _runtime_power_viewport_scale_original
+		_runtime_power_viewport_scale_captured = true
+
+	if not runtime_power_viewport_scaling_enabled:
+		_restore_runtime_power_viewport_scale(mode)
+		return
+
+	var target_scale := clampf(_runtime_power_target_viewport_scale(mode), 0.5, 1.0)
+	if absf(float(viewport.scaling_3d_scale) - target_scale) <= 0.001:
+		_runtime_power_viewport_scale_current = float(viewport.scaling_3d_scale)
+		return
+
+	viewport.scaling_3d_scale = target_scale
+	_runtime_power_viewport_scale_current = float(viewport.scaling_3d_scale)
+	_record_runtime_power_event("runtime_power_viewport_scale_changed", {
+		"mode": mode,
+		"scale": _runtime_power_viewport_scale_current,
+		"idle_seconds": _runtime_power_idle_seconds
+	})
+
+func _restore_runtime_power_viewport_scale(reason: String) -> void:
+	if not _runtime_power_viewport_scale_captured:
+		return
+	var viewport := get_viewport()
+	if viewport == null or not ("scaling_3d_scale" in viewport):
+		return
+	if absf(float(viewport.scaling_3d_scale) - _runtime_power_viewport_scale_original) <= 0.001:
+		_runtime_power_viewport_scale_current = float(viewport.scaling_3d_scale)
+		return
+	viewport.scaling_3d_scale = _runtime_power_viewport_scale_original
+	_runtime_power_viewport_scale_current = float(viewport.scaling_3d_scale)
+	_record_runtime_power_event("runtime_power_viewport_scale_restored", {
+		"reason": reason,
+		"scale": _runtime_power_viewport_scale_current
+	})
 
 func _get_runtime_power_render_loop_enabled() -> bool:
 	if not RenderingServer.has_method("is_render_loop_enabled"):
@@ -3323,6 +3403,7 @@ func _apply_runtime_power_render_loop_mode(mode: String) -> void:
 func _update_runtime_power_mode(delta: float) -> void:
 	if not runtime_power_mode_enabled:
 		_set_runtime_power_world_work_suspended(false, "runtime_power_disabled")
+		_apply_runtime_power_viewport_scale("active")
 		_apply_runtime_power_render_loop_mode("active")
 		return
 
@@ -5409,6 +5490,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 
 func _exit_tree():
 	_set_runtime_power_world_work_suspended(false, "exit_tree")
+	_restore_runtime_power_viewport_scale("exit_tree")
 	_apply_runtime_power_render_loop_mode("active")
 
 	# CRITICAL: Clean up all GPU resources BEFORE terminating threads
@@ -6291,8 +6373,8 @@ func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pi
 	var generation_sync_start_us := Time.get_ticks_usec()
 	if needs_submit:
 		rd.submit()
-	rd.sync()
-	var generation_sync_ms := float(Time.get_ticks_usec() - generation_sync_start_us) / 1000.0
+		rd.sync()
+	var generation_sync_ms := float(Time.get_ticks_usec() - generation_sync_start_us) / 1000.0 if needs_submit else 0.0
 
 	var mesh_readbacks: Array[Dictionary] = []
 	var synced_mesh_readbacks: Array[Dictionary] = []

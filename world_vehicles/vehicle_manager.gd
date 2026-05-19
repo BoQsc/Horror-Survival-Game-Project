@@ -113,7 +113,7 @@ func clear_for_shutdown() -> void:
 func clear_immediate_for_shutdown() -> void:
 	for vehicle in vehicles:
 		if is_instance_valid(vehicle):
-			vehicle.free()
+			vehicle.queue_free()
 	vehicles.clear()
 	current_player_vehicle = null
 

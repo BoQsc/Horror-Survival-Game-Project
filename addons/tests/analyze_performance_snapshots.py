@@ -243,6 +243,10 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
     snapshot = _read_json(path)
     samples = _list(snapshot.get("samples"))
     final_sample = _dict(snapshot.get("final_sample"))
+    render_features = _dict(snapshot.get("render_features"))
+    if not render_features:
+        render_features = _dict(final_sample.get("render_features"))
+    visual_capture = _dict(snapshot.get("visual_capture"))
     terrain = _dict(final_sample.get("terrain"))
     building = _dict(final_sample.get("building"))
     vegetation = _dict(final_sample.get("vegetation"))
@@ -259,6 +263,21 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
         "raw_gpu": _procedural_raw_gpu_summary(snapshot),
         "raw_gpu_move": _procedural_raw_gpu_phase_summary(snapshot, "move"),
         "raw_gpu_hold": _procedural_raw_gpu_phase_summary(snapshot, "hold"),
+        "render_features": {
+            "disable_glow": bool(render_features.get("disable_glow", False)),
+            "glow_environment_count": _int(render_features.get("glow_environment_count")),
+            "scaling_3d_scale_supported": bool(render_features.get("scaling_3d_scale_supported", False)),
+            "scaling_3d_scale_requested": _float(render_features.get("scaling_3d_scale_requested"), -1.0),
+            "scaling_3d_scale_actual": _float(render_features.get("scaling_3d_scale_actual")),
+            "scaling_3d_scale_applied": bool(render_features.get("scaling_3d_scale_applied", False)),
+        },
+        "visual_capture": {
+            "requested": bool(visual_capture.get("requested", False)),
+            "saved": bool(visual_capture.get("saved", False)),
+            "path": str(visual_capture.get("path", "")),
+            "width": _int(visual_capture.get("width")),
+            "height": _int(visual_capture.get("height")),
+        },
         "final": {
             "draw_calls": _int(final_sample.get("draw_calls")),
             "render_objects": _int(final_sample.get("render_objects")),
@@ -271,6 +290,7 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
             "runtime_power_world_work_suspended": bool(terrain.get("runtime_power_world_work_suspended", False)),
             "runtime_power_render_loop_suspended": bool(terrain.get("runtime_power_render_loop_suspended", False)),
             "runtime_power_render_loop_enabled": bool(terrain.get("runtime_power_render_loop_enabled", True)),
+            "runtime_power_viewport_scale_current": _float(terrain.get("runtime_power_viewport_scale_current")),
             "rendered_terrain_chunk_count": _int(terrain.get("rendered_terrain_chunk_count")),
             "rendered_water_chunk_count": _int(terrain.get("rendered_water_chunk_count")),
             "terrain_visual_batch_active": bool(terrain.get("terrain_visual_batch_active", False)),
@@ -994,9 +1014,13 @@ def _print_report(report: dict[str, Any]) -> None:
             raw_gpu = _dict(_dict(entry).get("raw_gpu"))
             raw_gpu_move = _dict(_dict(entry).get("raw_gpu_move"))
             raw_gpu_hold = _dict(_dict(entry).get("raw_gpu_hold"))
+            render_features = _dict(_dict(entry).get("render_features"))
+            visual_capture = _dict(_dict(entry).get("visual_capture"))
             print(
                 "  {name} complete={complete} world_map={world_map} power={mode}@{fps} "
                 "external_busy={busy} dirty_visible={dirty} chunks={terrain_chunks}/{water_chunks} "
+                "glow_off={glow_off} glow_envs={glow_envs} scale={scale_actual:.2f} "
+                "viewport_scale={viewport_scale:.2f} shot={shot_saved} "
                 "active_avg={avg_fps:.1f}fps min={min_fps:.1f} "
                 "draws={draws:.1f} objects={objects:.1f} prims={prims:.1f} "
                 "move={move_draws:.1f}/{move_objects:.1f}/{move_prims:.1f} "
@@ -1016,6 +1040,11 @@ def _print_report(report: dict[str, Any]) -> None:
                     dirty=_int(final.get("building_dirty_visible_chunk_count")),
                     terrain_chunks=_int(final.get("rendered_terrain_chunk_count")),
                     water_chunks=_int(final.get("rendered_water_chunk_count")),
+                    glow_off=bool(render_features.get("disable_glow", False)),
+                    glow_envs=_int(render_features.get("glow_environment_count")),
+                    scale_actual=_float(render_features.get("scaling_3d_scale_actual"), 1.0),
+                    viewport_scale=_float(final.get("runtime_power_viewport_scale_current"), 0.0),
+                    shot_saved=bool(visual_capture.get("saved", False)),
                     avg_fps=_float(active.get("avg_fps")),
                     min_fps=_float(active.get("min_fps")),
                     draws=_float(active.get("avg_draw_calls")),

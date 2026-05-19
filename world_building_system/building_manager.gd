@@ -843,10 +843,7 @@ func _clear_world_map_baked_building_visual_batches(immediate: bool = false) -> 
 		_show_individual_world_map_baked_building_visuals_for_batch(key)
 	for node in _world_map_baked_building_visual_batches.values():
 		if node and is_instance_valid(node):
-			if immediate or not node.is_inside_tree():
-				node.free()
-			else:
-				node.queue_free()
+			_release_node_for_shutdown(node, immediate)
 	_world_map_baked_building_visual_batches.clear()
 	_world_map_baked_building_visual_batch_dirty.clear()
 	_last_world_map_baked_building_visual_batch_rebuild_ms = 0.0
@@ -1053,10 +1050,7 @@ func clear_world_map_baked_building_visuals(immediate: bool = false) -> void:
 	_clear_world_map_baked_building_visual_batches(immediate)
 	for node in _world_map_baked_building_visual_nodes.values():
 		if node and is_instance_valid(node):
-			if immediate or not node.is_inside_tree():
-				node.free()
-			else:
-				node.queue_free()
+			_release_node_for_shutdown(node, immediate)
 	_world_map_baked_building_visual_nodes.clear()
 	_world_map_baked_building_visual_payloads_by_key.clear()
 	_world_map_baked_building_keys_by_chunk.clear()
@@ -1503,14 +1497,14 @@ func clear_immediate_for_shutdown() -> void:
 	clear_pending_world_map_baked_object_spawns()
 	for node in _global_visual_batch_nodes.values():
 		if node and is_instance_valid(node):
-			node.free()
+			_release_node_for_shutdown(node, true)
 	clear_world_map_baked_building_visuals(true)
 	for chunk in chunks.values():
 		if chunk and is_instance_valid(chunk):
-			chunk.free()
+			_release_node_for_shutdown(chunk, true)
 	for chunk in chunk_pool:
 		if chunk and is_instance_valid(chunk):
-			chunk.free()
+			_release_node_for_shutdown(chunk, true)
 	chunk_pool.clear()
 	chunks.clear()
 	visible_chunks.clear()
@@ -1523,6 +1517,15 @@ func clear_immediate_for_shutdown() -> void:
 	_object_spawn_profile_cache.clear()
 	_cached_vehicle_manager = null
 	_native_helper = null
+
+
+func _release_node_for_shutdown(node: Node, immediate: bool = false) -> void:
+	if not node or not is_instance_valid(node):
+		return
+	if immediate and not node.is_inside_tree():
+		node.free()
+		return
+	node.queue_free()
 
 
 func _exit_tree() -> void:

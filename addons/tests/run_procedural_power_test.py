@@ -166,6 +166,14 @@ def _read_json(path: Optional[Path]) -> dict[str, Any]:
 def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_samples: list[dict[str, Any]]) -> None:
     final_sample = snapshot.get("final_sample", {}) if isinstance(snapshot, dict) else {}
     terrain = final_sample.get("terrain", {}) if isinstance(final_sample, dict) else {}
+    render_features = snapshot.get("render_features", {}) if isinstance(snapshot, dict) else {}
+    visual_capture = snapshot.get("visual_capture", {}) if isinstance(snapshot, dict) else {}
+    if not isinstance(render_features, dict) and isinstance(final_sample, dict):
+        render_features = final_sample.get("render_features", {})
+    if not isinstance(render_features, dict):
+        render_features = {}
+    if not isinstance(visual_capture, dict):
+        visual_capture = {}
     if not isinstance(terrain, dict):
         terrain = {}
 
@@ -196,6 +204,21 @@ def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_
         f"objects={final_sample.get('render_objects')} "
         f"primitives={final_sample.get('primitives')}"
     )
+    print(
+        "Render features: "
+        f"glow_off={render_features.get('disable_glow', False)} "
+        f"glow_envs={render_features.get('glow_environment_count', 0)} "
+        f"scale_requested={render_features.get('scaling_3d_scale_requested', -1.0)} "
+        f"scale_actual={render_features.get('scaling_3d_scale_actual', 0.0)} "
+        f"scale_applied={render_features.get('scaling_3d_scale_applied', False)}"
+    )
+    if visual_capture:
+        print(
+            "Visual capture: "
+            f"saved={visual_capture.get('saved', False)} "
+            f"size={visual_capture.get('width', 0)}x{visual_capture.get('height', 0)} "
+            f"path={visual_capture.get('path', '')}"
+        )
     shadow_summary = ""
     if "terrain_shadow_lod_enabled" in terrain:
         shadow_summary = (
@@ -210,7 +233,8 @@ def _print_summary(snapshot_path: Optional[Path], snapshot: dict[str, Any], gpu_
         f"chunks={terrain.get('rendered_terrain_chunk_count')} "
         f"{shadow_summary}"
         f"runtime_power={terrain.get('runtime_power_mode')}@{terrain.get('runtime_power_target_fps')} "
-        f"reason={terrain.get('runtime_power_active_reason')}"
+        f"reason={terrain.get('runtime_power_active_reason')} "
+        f"viewport_scale={terrain.get('runtime_power_viewport_scale_current')}"
     )
     print("=" * 50)
 
@@ -225,10 +249,18 @@ def _validate_runtime_power(snapshot: dict[str, Any], env: dict[str, str]) -> li
 
     terrain = final_sample.get("terrain", {})
     building = final_sample.get("building", {})
+    render_features = snapshot.get("render_features", {})
+    visual_capture = snapshot.get("visual_capture", {})
+    if not isinstance(render_features, dict):
+        render_features = final_sample.get("render_features", {})
     if not isinstance(terrain, dict):
         terrain = {}
     if not isinstance(building, dict):
         building = {}
+    if not isinstance(render_features, dict):
+        render_features = {}
+    if not isinstance(visual_capture, dict):
+        visual_capture = {}
 
     failures: list[str] = []
     hold_seconds = _env_float(env, "PROCEDURAL_POWER_HOLD_SECONDS", 8.0)
@@ -243,6 +275,41 @@ def _validate_runtime_power(snapshot: dict[str, Any], env: dict[str, str]) -> li
     dirty_visible = int(building.get("dirty_visible_chunk_count", 0) or 0)
     if dirty_visible != 0:
         failures.append(f"building dirty visible chunks remained queued: {dirty_visible}")
+
+    if _env_bool(env, "PROCEDURAL_POWER_DISABLE_GLOW", _env_bool(env, "TOWN_STALL_DISABLE_GLOW", False)):
+        if not bool(render_features.get("disable_glow", False)):
+            failures.append("procedural render feature snapshot did not record glow disabled")
+        if int(render_features.get("glow_environment_count", 0) or 0) <= 0:
+            failures.append("procedural glow disable requested but no WorldEnvironment was updated")
+
+    raw_scale = (env.get("PROCEDURAL_POWER_SCALING_3D_SCALE", "") or "").strip()
+    if raw_scale:
+        if not bool(render_features.get("scaling_3d_scale_applied", False)):
+            failures.append("procedural 3D scaling override was requested but not applied")
+
+    if _env_bool(env, "TOWN_STALL_RUNTIME_POWER_VIEWPORT_SCALING", False):
+        if not bool(terrain.get("runtime_power_viewport_scaling_enabled", False)):
+            failures.append("runtime power viewport scaling was requested but not enabled")
+        if not bool(terrain.get("runtime_power_viewport_scale_supported", False)):
+            failures.append("runtime power viewport scaling was requested but unsupported")
+        mode = str(terrain.get("runtime_power_mode", "active"))
+        expected_env = {
+            "deep_idle": "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_3D_SCALE",
+            "idle": "TOWN_STALL_RUNTIME_POWER_IDLE_3D_SCALE",
+        }.get(mode, "TOWN_STALL_RUNTIME_POWER_ACTIVE_3D_SCALE")
+        expected_scale = _env_float(env, expected_env, 1.0)
+        actual_scale = float(terrain.get("runtime_power_viewport_scale_current", 0.0) or 0.0)
+        if abs(actual_scale - expected_scale) > 0.02:
+            failures.append(f"runtime power viewport scale mismatch in {mode}: {actual_scale:.3f} != {expected_scale:.3f}")
+
+    raw_screenshot_dir = (env.get("PROCEDURAL_POWER_SCREENSHOT_DIR", "") or "").strip()
+    if raw_screenshot_dir:
+        if not bool(visual_capture.get("saved", False)):
+            failures.append(f"procedural screenshot capture requested but not saved ({visual_capture.get('error', 'unknown_error')})")
+        else:
+            screenshot_path = Path(str(visual_capture.get("path", "")))
+            if not screenshot_path.exists():
+                failures.append(f"procedural screenshot path was recorded but does not exist: {screenshot_path}")
 
     if require_idle:
         mode = str(terrain.get("runtime_power_mode", ""))

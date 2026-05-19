@@ -4,9 +4,9 @@ from pathlib import Path
 PROJECT_PATH = Path(__file__).resolve().parents[2]
 
 DIRECT_GODOT_LAUNCHERS = {
-    Path("launch_editor.py"): {"requires_cwd": False},
+    Path("launch_editor.py"): {"requires_cwd": True},
     Path("quick_check_project_parse_errors.py"): {"requires_cwd": True},
-    Path("addons/tests/run_movement_test.py"): {"requires_cwd": False},
+    Path("addons/tests/run_movement_test.py"): {"requires_cwd": True},
     Path("addons/tests/run_procedural_power_test.py"): {"requires_cwd": True},
     Path("addons/tests/run_town_stall_test.py"): {"requires_cwd": True},
     Path("scripts/auto_fix.py"): {"requires_cwd": True},
