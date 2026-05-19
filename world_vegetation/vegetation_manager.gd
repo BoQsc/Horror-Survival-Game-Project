@@ -3,6 +3,7 @@ class_name VegetationManager
 
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 const GLOBAL_VEGETATION_RENDER_AABB := AABB(Vector3(-4096.0, -128.0, -4096.0), Vector3(8192.0, 512.0, 8192.0))
+const GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING := 96.0
 const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 
 
@@ -27,6 +28,8 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var global_render_batches_enabled: bool = true
 @export_range(1, 32, 1) var vegetation_render_cluster_size: int = 8
 @export_range(1, 32, 1) var vegetation_grass_render_cluster_size: int = 6
+@export_range(0.0, 2048.0, 1.0) var vegetation_render_extra_cull_margin: float = 0.0
+@export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
 @export var world_map_vegetation_render_profile_enabled: bool = true
 @export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 12
 @export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 12
@@ -273,6 +276,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_render_batches_enabled": global_render_batches_enabled,
 		"vegetation_render_cluster_size": vegetation_render_cluster_size,
 		"vegetation_grass_render_cluster_size": vegetation_grass_render_cluster_size,
+		"vegetation_render_extra_cull_margin": vegetation_render_extra_cull_margin,
+		"vegetation_render_lod_bias": vegetation_render_lod_bias,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
 		"world_map_vegetation_render_profile_active": _use_world_map_vegetation_render_profile(),
 		"world_map_vegetation_render_cluster_size": world_map_vegetation_render_cluster_size,
@@ -331,6 +336,12 @@ func _get_vegetation_env_bool(name: String, default_value: bool) -> bool:
 		return false
 	return default_value
 
+func _get_vegetation_env_float_range(name: String, default_value: float, min_value: float, max_value: float) -> float:
+	var raw := OS.get_environment(name).strip_edges()
+	if raw.is_empty() or not raw.is_valid_float():
+		return default_value
+	return clampf(float(raw), min_value, max_value)
+
 func _configure_vegetation_render_profile_from_env() -> void:
 	global_render_batches_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_BATCHES", global_render_batches_enabled)
 	vegetation_colliders_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_COLLIDERS", vegetation_colliders_enabled)
@@ -344,6 +355,8 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	vegetation_grass_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE", vegetation_grass_render_cluster_size, 1, 64)
 	world_map_vegetation_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE", world_map_vegetation_render_cluster_size, 1, 64)
 	world_map_vegetation_grass_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE", world_map_vegetation_grass_render_cluster_size, 1, 64)
+	vegetation_render_extra_cull_margin = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_EXTRA_CULL_MARGIN", vegetation_render_extra_cull_margin, 0.0, 2048.0)
+	vegetation_render_lod_bias = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_LOD_BIAS", vegetation_render_lod_bias, 0.25, 100.0)
 	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
 		world_map_vegetation_render_cluster_size = vegetation_render_cluster_size
 	if grass_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
@@ -479,7 +492,7 @@ func _global_vegetation_custom_aabb(transforms: Array) -> AABB:
 	for transform_variant in transforms:
 		var transform := _get_vegetation_instance_transform(transform_variant)
 		bounds = bounds.expand(transform.origin)
-	return bounds.grow(96.0)
+	return bounds.grow(GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING)
 
 func _get_global_render_batch_count() -> int:
 	return _get_global_render_batch_count_for_kind("tree") \
@@ -866,9 +879,9 @@ func _get_global_render_multimesh(kind: String, cluster_key: Vector2i) -> MultiM
 	mmi.multimesh.use_colors = false
 	mmi.multimesh.use_custom_data = false
 	mmi.multimesh.custom_aabb = GLOBAL_VEGETATION_RENDER_AABB
-	mmi.extra_cull_margin = 1000.0
+	mmi.extra_cull_margin = vegetation_render_extra_cull_margin
 	mmi.ignore_occlusion_culling = true
-	mmi.lod_bias = 100.0
+	mmi.lod_bias = vegetation_render_lod_bias
 	mmi.visibility_range_end = 0.0
 	add_child(mmi)
 	clusters[cluster_key] = mmi
@@ -2517,9 +2530,9 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 	# Fix distance visibility issues
 	if mmi is MultiMeshInstance3D:
-		mmi.extra_cull_margin = 1000.0 # Very large margin
+		mmi.extra_cull_margin = vegetation_render_extra_cull_margin
 		mmi.ignore_occlusion_culling = true # Ignore occlusion
-		mmi.lod_bias = 100.0 # Prevent LOD from hiding mesh
+		mmi.lod_bias = vegetation_render_lod_bias
 		mmi.visibility_range_end = 0.0 # 0 = infinite visibility
 
 	var grass_list: Array = []
