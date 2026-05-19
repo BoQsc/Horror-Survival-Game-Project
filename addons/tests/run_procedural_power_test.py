@@ -400,8 +400,12 @@ def main() -> int:
 
     completed = bool(snapshot.get("completed", False))
     if result.returncode == WINDOWS_ACCESS_VIOLATION and completed:
-        print("WARNING: Godot exited with an access violation during shutdown after completing the procedural power test; treating this as non-fatal because the snapshot was written.")
-        return 0
+        if _env_bool(env, "PROCEDURAL_POWER_ALLOW_SHUTDOWN_ACCESS_VIOLATION", False):
+            print("WARNING: Godot exited with an access violation during shutdown after completing the procedural power test; allowed by PROCEDURAL_POWER_ALLOW_SHUTDOWN_ACCESS_VIOLATION=1.")
+            return 0
+        print("ERROR: Godot exited with an access violation during shutdown after completing the procedural power test.")
+        print("Set PROCEDURAL_POWER_ALLOW_SHUTDOWN_ACCESS_VIOLATION=1 only for one-off diagnostics that intentionally tolerate native shutdown crashes.")
+        return 1
     if result.returncode != 0:
         print(f"ERROR: Godot exited with code {result.returncode}")
         return result.returncode
