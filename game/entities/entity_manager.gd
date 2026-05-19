@@ -848,6 +848,24 @@ func clear_all_entities():
 	active_entities.clear()
 	frozen_entities.clear()
 
+func clear_for_shutdown() -> void:
+	if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
+		_entity_maintenance_timer.stop()
+	pending_spawns.clear()
+	_clear_deferred_spawn_chunks()
+	_pending_spawn_scan_cursor = 0
+	dormant_entities.clear()
+	_dormant_scan_cursor = 0
+
+	var zombies_cleared := 0
+	for zombie in get_tree().get_nodes_in_group("zombies").duplicate():
+		if is_instance_valid(zombie):
+			zombie.queue_free()
+			zombies_cleared += 1
+	debug_entities_cleared.emit(zombies_cleared)
+	active_entities.clear()
+	frozen_entities.clear()
+
 func load_save_data(data: Dictionary):
 	# Disable procedural spawning during load to prevent duplicates
 	is_loading_save = true

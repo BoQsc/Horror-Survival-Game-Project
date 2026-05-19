@@ -1473,6 +1473,7 @@ func _get_world_map_baked_building_edit_count() -> int:
 
 
 func clear_for_shutdown() -> void:
+	_shutdown_mesher_for_owner()
 	clear_pending_object_collision_tasks()
 	clear_pending_world_map_baked_object_spawns()
 	clear_global_visual_batches()
@@ -1493,6 +1494,7 @@ func clear_for_shutdown() -> void:
 
 
 func clear_immediate_for_shutdown() -> void:
+	_shutdown_mesher_for_owner()
 	clear_pending_object_collision_tasks()
 	clear_pending_world_map_baked_object_spawns()
 	for node in _global_visual_batch_nodes.values():
@@ -1526,6 +1528,11 @@ func _release_node_for_shutdown(node: Node, immediate: bool = false) -> void:
 		node.free()
 		return
 	node.queue_free()
+
+
+func _shutdown_mesher_for_owner() -> void:
+	if mesher and is_instance_valid(mesher) and mesher.has_method("shutdown_for_owner"):
+		mesher.shutdown_for_owner()
 
 
 func _exit_tree() -> void:

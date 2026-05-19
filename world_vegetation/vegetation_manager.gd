@@ -19,6 +19,10 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var collision_radius: float = 0.5
 @export var collision_height: float = 8.0
 @export var collider_distance: float = 30.0 # Only trees within this distance get colliders
+@export var vegetation_colliders_enabled: bool = false
+@export var tree_colliders_enabled: bool = false
+@export var grass_colliders_enabled: bool = false
+@export var rock_colliders_enabled: bool = false
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
 @export var global_render_batches_enabled: bool = true
 @export_range(1, 32, 1) var vegetation_render_cluster_size: int = 8
@@ -121,6 +125,7 @@ var _collider_update_deferred_pending: bool = false
 var _collider_update_timer_tick_count: int = 0
 var _collider_update_deferred_tick_count: int = 0
 var _collider_refresh_tick_count: int = 0
+var _shutdown_clear_started: bool = false
 var _global_tree_render_mmi: MultiMeshInstance3D = null
 var _global_grass_render_mmi: MultiMeshInstance3D = null
 var _global_rock_render_mmi: MultiMeshInstance3D = null
@@ -160,6 +165,8 @@ var _last_effective_vegetation_render_cluster_size: int = -1
 var _last_effective_vegetation_grass_render_cluster_size: int = -1
 var _vegetation_render_resource_prewarm_node: Node = null
 var _vegetation_render_resource_prewarm_mesh_count: int = 0
+var _data_ray_harvest_queries: int = 0
+var _data_ray_harvest_hits: int = 0
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
@@ -246,6 +253,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_max_stages_per_frame": vegetation_max_stages_per_frame,
 		"vegetation_global_render_stream_flush_interval_frames": vegetation_global_render_stream_flush_interval_frames,
 		"prioritize_nearby_vegetation_chunks": prioritize_nearby_vegetation_chunks,
+		"vegetation_colliders_enabled": vegetation_colliders_enabled,
+		"tree_colliders_enabled": tree_colliders_enabled,
+		"grass_colliders_enabled": grass_colliders_enabled,
+		"rock_colliders_enabled": rock_colliders_enabled,
+		"data_ray_harvest_queries": _data_ray_harvest_queries,
+		"data_ray_harvest_hits": _data_ray_harvest_hits,
 		"last_collider_refresh_ms": _last_collider_refresh_ms,
 		"last_queued_collider_update_ms": _last_queued_collider_update_ms,
 		"last_pending_placements_ms": _last_pending_placements_ms,
@@ -320,6 +333,10 @@ func _get_vegetation_env_bool(name: String, default_value: bool) -> bool:
 
 func _configure_vegetation_render_profile_from_env() -> void:
 	global_render_batches_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_BATCHES", global_render_batches_enabled)
+	vegetation_colliders_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_COLLIDERS", vegetation_colliders_enabled)
+	tree_colliders_enabled = vegetation_colliders_enabled and _get_vegetation_env_bool("TOWN_STALL_VEGETATION_TREE_COLLIDERS", tree_colliders_enabled)
+	grass_colliders_enabled = vegetation_colliders_enabled and _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GRASS_COLLIDERS", grass_colliders_enabled)
+	rock_colliders_enabled = vegetation_colliders_enabled and _get_vegetation_env_bool("TOWN_STALL_VEGETATION_ROCK_COLLIDERS", rock_colliders_enabled)
 	world_map_vegetation_render_profile_enabled = _get_vegetation_env_bool("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_PROFILE", world_map_vegetation_render_profile_enabled)
 	var render_cluster_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty()
 	var grass_cluster_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty()
@@ -375,6 +392,8 @@ func _get_vegetation_render_resource_prewarm_frames_remaining() -> int:
 	return int(_vegetation_render_resource_prewarm_node.get_frames_remaining())
 
 func _start_collider_update_timer() -> void:
+	if not vegetation_colliders_enabled:
+		return
 	if _collider_update_timer and is_instance_valid(_collider_update_timer):
 		_collider_update_timer.wait_time = maxf(vegetation_collider_update_interval, 0.05)
 		if _collider_update_timer.is_stopped():
@@ -392,10 +411,14 @@ func _start_collider_update_timer() -> void:
 	timer.start()
 
 func _on_collider_update_timer_timeout() -> void:
+	if _shutdown_clear_started:
+		return
 	_collider_update_timer_tick_count += 1
 	_run_collider_refresh_tick()
 
 func _request_collider_update_soon() -> void:
+	if _shutdown_clear_started:
+		return
 	if _collider_update_deferred_pending or not is_inside_tree():
 		return
 	_collider_update_deferred_pending = true
@@ -403,6 +426,8 @@ func _request_collider_update_soon() -> void:
 
 func _run_deferred_collider_refresh_tick() -> void:
 	_collider_update_deferred_pending = false
+	if _shutdown_clear_started:
+		return
 	if not is_inside_tree():
 		return
 	_collider_update_deferred_tick_count += 1
@@ -410,7 +435,7 @@ func _run_deferred_collider_refresh_tick() -> void:
 
 
 func _exit_tree() -> void:
-	clear_all_data(true)
+	clear_for_shutdown()
 	_vegetation_render_resource_prewarm_node = null
 	if _collider_update_timer and is_instance_valid(_collider_update_timer):
 		_collider_update_timer.stop()
@@ -1361,6 +1386,8 @@ func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
 
 ## Called when a chunk is unloaded - clean up vegetation data and colliders
 func _on_chunk_unloaded(coord: Vector3i):
+	if _shutdown_clear_started:
+		return
 	# Only handle surface chunks (Y=0)
 	if coord.y != 0:
 		return
@@ -1417,6 +1444,8 @@ func _on_chunk_unloaded(coord: Vector3i):
 	_mark_collider_refresh_dirty()
 
 func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
+	if _shutdown_clear_started:
+		return
 	if chunk_node == null:
 		return
 
@@ -1631,9 +1660,15 @@ func _process(_delta):
 
 
 func _physics_process(_delta):
+	if _shutdown_clear_started:
+		return
 	_run_collider_refresh_tick()
 
 func _run_collider_refresh_tick() -> void:
+	if _shutdown_clear_started:
+		return
+	if not vegetation_colliders_enabled:
+		return
 	_collider_refresh_tick_count += 1
 	# Refresh colliders when the active viewer actually moves far enough or the
 	# loaded vegetation set changes, instead of doing a blind timer sweep.
@@ -1667,6 +1702,8 @@ func _run_collider_refresh_tick() -> void:
 	_last_queued_collider_update_ms = float(Time.get_ticks_usec() - queued_collider_updates_start_us) / 1000.0
 
 func _process_queued_collider_updates():
+	if _shutdown_clear_started:
+		return
 	var updates_done = 0
 
 	# Prioritize removes (to free pool)
@@ -1852,7 +1889,7 @@ func _cleanup_orphan_colliders():
 				cleaned += 1
 
 func _update_proximity_colliders():
-	if not terrain_manager:
+	if not terrain_manager or not tree_colliders_enabled:
 		return
 
 	var player_pos = get_viewer_position()
@@ -1943,18 +1980,18 @@ func _get_collider_from_pool() -> StaticBody3D:
 	shape_node.shape = shape
 	body.add_child(shape_node)
 
-	# DEBUG: Add visible mesh to see collider position
-	var mesh_instance = MeshInstance3D.new()
-	var cylinder_mesh = CylinderMesh.new()
-	cylinder_mesh.top_radius = collision_radius
-	cylinder_mesh.bottom_radius = collision_radius
-	cylinder_mesh.height = collision_height
-	mesh_instance.mesh = cylinder_mesh
-	var debug_mat = StandardMaterial3D.new()
-	debug_mat.albedo_color = Color(1, 0, 0, 0.5)
-	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mesh_instance.material_override = debug_mat
-	body.add_child(mesh_instance)
+	if debug_collision:
+		var mesh_instance = MeshInstance3D.new()
+		var cylinder_mesh = CylinderMesh.new()
+		cylinder_mesh.top_radius = collision_radius
+		cylinder_mesh.bottom_radius = collision_radius
+		cylinder_mesh.height = collision_height
+		mesh_instance.mesh = cylinder_mesh
+		var debug_mat = StandardMaterial3D.new()
+		debug_mat.albedo_color = Color(1, 0, 0, 0.5)
+		debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mesh_instance.material_override = debug_mat
+		body.add_child(mesh_instance)
 
 	body.visible = debug_collision # Set initial visibility
 
@@ -2001,18 +2038,18 @@ func _get_grass_collider_from_pool() -> Area3D:
 	shape_node.shape = shape
 	body.add_child(shape_node)
 
-	# DEBUG: Add visible mesh to see collider position
-	var mesh_instance = MeshInstance3D.new()
-	var cylinder_mesh = CylinderMesh.new()
-	cylinder_mesh.top_radius = grass_collision_radius
-	cylinder_mesh.bottom_radius = grass_collision_radius
-	cylinder_mesh.height = grass_collision_height
-	mesh_instance.mesh = cylinder_mesh
-	var debug_mat = StandardMaterial3D.new()
-	debug_mat.albedo_color = Color(0, 1, 0, 0.5) # Green for grass
-	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mesh_instance.material_override = debug_mat
-	body.add_child(mesh_instance)
+	if debug_collision:
+		var mesh_instance = MeshInstance3D.new()
+		var cylinder_mesh = CylinderMesh.new()
+		cylinder_mesh.top_radius = grass_collision_radius
+		cylinder_mesh.bottom_radius = grass_collision_radius
+		cylinder_mesh.height = grass_collision_height
+		mesh_instance.mesh = cylinder_mesh
+		var debug_mat = StandardMaterial3D.new()
+		debug_mat.albedo_color = Color(0, 1, 0, 0.5)
+		debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mesh_instance.material_override = debug_mat
+		body.add_child(mesh_instance)
 
 	body.visible = debug_collision
 
@@ -2030,7 +2067,7 @@ func _return_grass_collider_to_pool(collider: Area3D):
 	grass_collider_pool.append(collider)
 
 func _update_grass_proximity_colliders():
-	if not terrain_manager:
+	if not terrain_manager or not grass_colliders_enabled:
 		return
 
 	var player_pos = get_viewer_position()
@@ -2122,18 +2159,18 @@ func _get_rock_collider_from_pool() -> Area3D:
 	shape_node.shape = shape
 	body.add_child(shape_node)
 
-	# DEBUG: Add visible mesh
-	var mesh_instance = MeshInstance3D.new()
-	var cylinder_mesh = CylinderMesh.new()
-	cylinder_mesh.top_radius = rock_collision_radius
-	cylinder_mesh.bottom_radius = rock_collision_radius
-	cylinder_mesh.height = rock_collision_height
-	mesh_instance.mesh = cylinder_mesh
-	var debug_mat = StandardMaterial3D.new()
-	debug_mat.albedo_color = Color(0.5, 0.5, 0.5, 0.5) # Gray for rocks
-	debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mesh_instance.material_override = debug_mat
-	body.add_child(mesh_instance)
+	if debug_collision:
+		var mesh_instance = MeshInstance3D.new()
+		var cylinder_mesh = CylinderMesh.new()
+		cylinder_mesh.top_radius = rock_collision_radius
+		cylinder_mesh.bottom_radius = rock_collision_radius
+		cylinder_mesh.height = rock_collision_height
+		mesh_instance.mesh = cylinder_mesh
+		var debug_mat = StandardMaterial3D.new()
+		debug_mat.albedo_color = Color(0.5, 0.5, 0.5, 0.5)
+		debug_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mesh_instance.material_override = debug_mat
+		body.add_child(mesh_instance)
 
 	body.visible = debug_collision
 
@@ -2151,7 +2188,7 @@ func _return_rock_collider_to_pool(collider: Area3D):
 	rock_collider_pool.append(collider)
 
 func _update_rock_proximity_colliders():
-	if not terrain_manager:
+	if not terrain_manager or not rock_colliders_enabled:
 		return
 
 	var player_pos = get_viewer_position()
@@ -2363,6 +2400,9 @@ func chop_tree_by_collider(collider: Node) -> bool:
 	var coord = collider.get_meta("tree_coord")
 	var tree_index = collider.get_meta("tree_index")
 
+	return chop_tree_at_index(coord, int(tree_index))
+
+func chop_tree_at_index(coord: Vector2i, tree_index: int) -> bool:
 	if not chunk_tree_data.has(coord):
 		return false
 
@@ -2376,7 +2416,7 @@ func chop_tree_by_collider(collider: Node) -> bool:
 			chopped_trees[persist_key] = true
 
 			tree.transform = _make_hidden_transform(tree.local_pos)
-			if data.has("multimesh"):
+			if data.has("multimesh") and terrain_manager:
 				_sync_multimesh_from_instances(data.multimesh, data.trees, terrain_manager.CHUNK_STRIDE)
 
 			# Remove collider
@@ -2688,6 +2728,186 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 	var coord = collider.get_meta("grass_coord")
 	var grass_index = collider.get_meta("grass_index")
 
+	return _harvest_grass_at_index(coord, int(grass_index))
+
+func harvest_grass_along_ray(origin: Vector3, direction: Vector3, max_distance: float, ray_radius: float = -1.0) -> bool:
+	var hit := _find_nearest_instance_along_ray(
+		"grass",
+		chunk_grass_data,
+		"grass_list",
+		origin,
+		direction,
+		max_distance,
+		grass_collision_radius if ray_radius <= 0.0 else ray_radius,
+		grass_collision_height
+	)
+	if hit.is_empty():
+		return false
+	return _harvest_grass_at_index(hit.get("coord", Vector2i.ZERO), int(hit.get("index", -1)))
+
+func harvest_rock_along_ray(origin: Vector3, direction: Vector3, max_distance: float, ray_radius: float = -1.0) -> bool:
+	var hit := _find_nearest_instance_along_ray(
+		"rock",
+		chunk_rock_data,
+		"rock_list",
+		origin,
+		direction,
+		max_distance,
+		rock_collision_radius if ray_radius <= 0.0 else ray_radius,
+		rock_collision_height
+	)
+	if hit.is_empty():
+		return false
+	return _harvest_rock_at_index(hit.get("coord", Vector2i.ZERO), int(hit.get("index", -1)))
+
+func harvest_data_hit(hit: Dictionary) -> bool:
+	if hit.is_empty():
+		return false
+	var coord: Vector2i = hit.get("coord", Vector2i.ZERO)
+	var index := int(hit.get("index", -1))
+	match str(hit.get("kind", "")):
+		"tree":
+			return chop_tree_at_index(coord, index)
+		"grass":
+			return _harvest_grass_at_index(coord, index)
+		"rock":
+			return _harvest_rock_at_index(coord, index)
+	return false
+
+func harvest_nearest_vegetation_along_ray(
+		origin: Vector3,
+		direction: Vector3,
+		max_distance: float,
+		include_grass: bool = true,
+		include_rocks: bool = true
+) -> Dictionary:
+	_data_ray_harvest_queries += 1
+	var best_hit := find_nearest_vegetation_along_ray(origin, direction, max_distance, false, include_grass, include_rocks)
+	if best_hit.is_empty():
+		return {}
+
+	var kind := str(best_hit.get("kind", ""))
+	var coord: Vector2i = best_hit.get("coord", Vector2i.ZERO)
+	var index := int(best_hit.get("index", -1))
+	var harvested := false
+	if kind == "grass":
+		harvested = _harvest_grass_at_index(coord, index)
+	elif kind == "rock":
+		harvested = _harvest_rock_at_index(coord, index)
+	if not harvested:
+		return {}
+
+	_data_ray_harvest_hits += 1
+	return {
+		"type": kind,
+		"position": best_hit.get("position", Vector3.ZERO),
+		"coord": coord,
+		"index": index,
+		"distance": best_hit.get("distance", 0.0)
+	}
+
+func find_nearest_vegetation_along_ray(
+		origin: Vector3,
+		direction: Vector3,
+		max_distance: float,
+		include_trees: bool = true,
+		include_grass: bool = true,
+		include_rocks: bool = true
+) -> Dictionary:
+	var best_hit: Dictionary = {}
+	if include_trees:
+		best_hit = _find_nearest_instance_along_ray(
+			"tree",
+			chunk_tree_data,
+			"trees",
+			origin,
+			direction,
+			max_distance,
+			collision_radius,
+			collision_height
+		)
+	if include_grass:
+		var grass_hit := _find_nearest_instance_along_ray(
+			"grass",
+			chunk_grass_data,
+			"grass_list",
+			origin,
+			direction,
+			max_distance,
+			grass_collision_radius,
+			grass_collision_height
+		)
+		if _is_better_data_ray_hit(grass_hit, best_hit):
+			best_hit = grass_hit
+	if include_rocks:
+		var rock_hit := _find_nearest_instance_along_ray(
+			"rock",
+			chunk_rock_data,
+			"rock_list",
+			origin,
+			direction,
+			max_distance,
+			rock_collision_radius,
+			rock_collision_height
+		)
+		if _is_better_data_ray_hit(rock_hit, best_hit):
+			best_hit = rock_hit
+	return best_hit
+
+func resolve_tree_body_collision(body_origin: Vector3, body_radius: float = 0.4, body_height: float = 1.8) -> Dictionary:
+	if not terrain_manager or chunk_tree_data.is_empty():
+		return {}
+
+	var chunk_stride: int = terrain_manager.CHUNK_STRIDE
+	var min_chunk_x := int(floor((body_origin.x - collision_radius - body_radius) / chunk_stride))
+	var max_chunk_x := int(floor((body_origin.x + collision_radius + body_radius) / chunk_stride))
+	var min_chunk_z := int(floor((body_origin.z - collision_radius - body_radius) / chunk_stride))
+	var max_chunk_z := int(floor((body_origin.z + collision_radius + body_radius) / chunk_stride))
+	var body_min_y := body_origin.y
+	var body_max_y := body_origin.y + body_height
+	var total_push := Vector3.ZERO
+	var hit_count := 0
+
+	for chunk_x in range(min_chunk_x, max_chunk_x + 1):
+		for chunk_z in range(min_chunk_z, max_chunk_z + 1):
+			var coord := Vector2i(chunk_x, chunk_z)
+			if not chunk_tree_data.has(coord):
+				continue
+			var data = chunk_tree_data[coord]
+			if not (data is Dictionary) or not data.has("trees"):
+				continue
+			for tree in data.trees:
+				if not (tree is Dictionary):
+					continue
+				if not bool(tree.get("alive", false)):
+					continue
+				var tree_scale := maxf(0.1, float(tree.get("scale", 1.0)))
+				var tree_base: Vector3 = tree.get("hit_pos", tree.get("world_pos", Vector3.ZERO))
+				var tree_min_y := tree_base.y
+				var tree_max_y := tree_base.y + collision_height * tree_scale
+				if body_max_y < tree_min_y or body_min_y > tree_max_y:
+					continue
+
+				var combined_radius := collision_radius * tree_scale + body_radius
+				var dx := body_origin.x - tree_base.x
+				var dz := body_origin.z - tree_base.z
+				var dist_sq := dx * dx + dz * dz
+				if dist_sq >= combined_radius * combined_radius:
+					continue
+
+				var dist := sqrt(maxf(dist_sq, 0.0001))
+				var penetration := combined_radius - dist
+				total_push += Vector3(dx / dist * penetration, 0.0, dz / dist * penetration)
+				hit_count += 1
+
+	if hit_count == 0:
+		return {}
+	return {
+		"push": total_push,
+		"hits": hit_count
+	}
+
+func _harvest_grass_at_index(coord: Vector2i, grass_index: int) -> bool:
 	if not chunk_grass_data.has(coord):
 		return false
 
@@ -2714,10 +2934,10 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 			removed_grass[pos_hash] = true
 
 			grass.transform = _make_hidden_transform(grass.local_pos)
-			if data.has("multimesh"):
+			if data.has("multimesh") and terrain_manager:
 				_sync_multimesh_from_instances(data.multimesh, data.grass_list, terrain_manager.CHUNK_STRIDE)
 
-			# Remove collider
+			# Remove collider if the compatibility physics path is enabled.
 			var key = _grass_key(coord, grass_index)
 			if active_grass_colliders.has(key):
 				_return_grass_collider_to_pool(active_grass_colliders[key])
@@ -2727,6 +2947,82 @@ func harvest_grass_by_collider(collider: Node) -> bool:
 			return true
 
 	return false
+
+func _find_nearest_instance_along_ray(
+		kind: String,
+		chunk_data: Dictionary,
+		list_key: String,
+		origin: Vector3,
+		direction: Vector3,
+		max_distance: float,
+		radius: float,
+		height: float
+) -> Dictionary:
+	if max_distance <= 0.0 or direction.length_squared() <= 0.000001:
+		return {}
+
+	var ray_dir := direction.normalized()
+	var best_hit: Dictionary = {}
+
+	for coord in chunk_data.keys():
+		var data = chunk_data[coord]
+		if not (data is Dictionary) or not data.has(list_key):
+			continue
+		for entry in data[list_key]:
+			if not (entry is Dictionary):
+				continue
+			if not bool(entry.get("alive", false)):
+				continue
+			var index := int(entry.get("index", -1))
+			if index < 0:
+				continue
+
+			var instance_radius := radius
+			var instance_height := height
+			if kind == "tree":
+				var instance_scale := maxf(0.1, float(entry.get("scale", 1.0)))
+				instance_radius *= instance_scale
+				instance_height *= instance_scale
+			var base_pos: Vector3 = entry.get("hit_pos", entry.get("world_pos", Vector3.ZERO))
+			var center := base_pos + Vector3(0.0, instance_height * 0.5, 0.0)
+			var to_candidate := center - origin
+			var distance_along_ray := to_candidate.dot(ray_dir)
+			if distance_along_ray < 0.0 or distance_along_ray > max_distance:
+				continue
+
+			var ray_point := origin + ray_dir * distance_along_ray
+			if ray_point.y < base_pos.y - instance_radius or ray_point.y > base_pos.y + instance_height + instance_radius:
+				continue
+			var dx := center.x - ray_point.x
+			var dz := center.z - ray_point.z
+			var distance_sq_to_ray := dx * dx + dz * dz
+			var hit_radius_sq := instance_radius * instance_radius
+			if distance_sq_to_ray > hit_radius_sq:
+				continue
+
+			var candidate := {
+				"kind": kind,
+				"coord": coord,
+				"index": index,
+				"position": center,
+				"distance": distance_along_ray,
+				"distance_sq_to_ray": distance_sq_to_ray
+			}
+			if _is_better_data_ray_hit(candidate, best_hit):
+				best_hit = candidate
+
+	return best_hit
+
+func _is_better_data_ray_hit(candidate: Dictionary, current: Dictionary) -> bool:
+	if candidate.is_empty():
+		return false
+	if current.is_empty():
+		return true
+	var candidate_distance := float(candidate.get("distance", 0.0))
+	var current_distance := float(current.get("distance", 0.0))
+	if not is_equal_approx(candidate_distance, current_distance):
+		return candidate_distance < current_distance
+	return float(candidate.get("distance_sq_to_ray", 0.0)) < float(current.get("distance_sq_to_ray", 0.0))
 
 # Helper to create position hash for persistence
 # NOTE: int() truncates toward zero, which could cause issues near coordinate 0
@@ -3156,6 +3452,9 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 	var coord = collider.get_meta("rock_coord")
 	var rock_index = collider.get_meta("rock_index")
 
+	return _harvest_rock_at_index(coord, int(rock_index))
+
+func _harvest_rock_at_index(coord: Vector2i, rock_index: int) -> bool:
 	if not chunk_rock_data.has(coord):
 		return false
 
@@ -3182,7 +3481,7 @@ func harvest_rock_by_collider(collider: Node) -> bool:
 			removed_rocks[pos_hash] = true
 
 			rock.transform = _make_hidden_transform(rock.local_pos)
-			if data.has("multimesh"):
+			if data.has("multimesh") and terrain_manager:
 				_sync_multimesh_from_instances(data.multimesh, data.rock_list, terrain_manager.CHUNK_STRIDE)
 
 			var key = _rock_key(coord, rock_index)
@@ -3571,3 +3870,64 @@ func clear_all_data(immediate_free: bool = false):
 	chopped_trees.clear()
 	placed_grass.clear()
 	placed_rocks.clear()
+
+func clear_for_shutdown() -> void:
+	if _shutdown_clear_started:
+		return
+	_shutdown_clear_started = true
+	set_process(false)
+	set_physics_process(false)
+	_collider_update_deferred_pending = false
+	if _collider_update_timer and is_instance_valid(_collider_update_timer):
+		_collider_update_timer.stop()
+	_disconnect_terrain_signals_for_shutdown()
+	clear_all_data(false)
+	_release_pooled_colliders_for_shutdown()
+	_vegetation_render_resource_prewarm_node = null
+	_native_helper = null
+
+func _disconnect_terrain_signals_for_shutdown() -> void:
+	if not terrain_manager or not is_instance_valid(terrain_manager):
+		return
+	if terrain_manager.chunk_generated.is_connected(_on_chunk_generated):
+		terrain_manager.chunk_generated.disconnect(_on_chunk_generated)
+	if terrain_manager.chunk_modified.is_connected(_on_chunk_modified):
+		terrain_manager.chunk_modified.disconnect(_on_chunk_modified)
+	if terrain_manager.has_signal("chunk_unloaded") and terrain_manager.chunk_unloaded.is_connected(_on_chunk_unloaded):
+		terrain_manager.chunk_unloaded.disconnect(_on_chunk_unloaded)
+	if terrain_manager.has_signal("spawn_zones_ready") and terrain_manager.spawn_zones_ready.is_connected(_on_spawn_zones_ready):
+		terrain_manager.spawn_zones_ready.disconnect(_on_spawn_zones_ready)
+
+func _release_pooled_colliders_for_shutdown() -> void:
+	for collider in collider_pool:
+		_release_node_for_shutdown(collider)
+	collider_pool.clear()
+	for collider in grass_collider_pool:
+		_release_node_for_shutdown(collider)
+	grass_collider_pool.clear()
+	for collider in rock_collider_pool:
+		_release_node_for_shutdown(collider)
+	rock_collider_pool.clear()
+	active_colliders.clear()
+	active_grass_colliders.clear()
+	active_rock_colliders.clear()
+
+func _release_node_for_shutdown(node: Node) -> void:
+	if not node or not is_instance_valid(node):
+		return
+	if "collision_layer" in node:
+		node.set("collision_layer", 0)
+	if "collision_mask" in node:
+		node.set("collision_mask", 0)
+	if "monitorable" in node:
+		node.set("monitorable", false)
+	if "monitoring" in node:
+		node.set("monitoring", false)
+	for child in node.get_children():
+		if child is CollisionShape3D:
+			child.disabled = true
+	if node.is_inside_tree():
+		if not node.is_queued_for_deletion():
+			node.queue_free()
+	else:
+		node.free()

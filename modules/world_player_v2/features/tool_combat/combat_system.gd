@@ -674,6 +674,8 @@ func do_punch(item: Dictionary) -> void:
 	# Try vegetation
 	if _try_harvest_vegetation(target, item, position):
 		return
+	if _try_harvest_vegetation_near_ray(item, 5.0, hit):
+		return
 	
 	# Try placed objects
 	if _try_damage_placed_object(target, item, position, hit):
@@ -746,6 +748,8 @@ func do_tool_attack(item: Dictionary) -> void:
 	
 	# Priority 2: Vegetation
 	if _try_harvest_vegetation(target, item, position):
+		return
+	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
 		return
 	
 	# Priority 3: Placed objects
@@ -882,6 +886,8 @@ func _do_axe_damage(item: Dictionary) -> void:
 	# Priority 2: Vegetation
 	if _try_harvest_vegetation(target, item, position):
 		return
+	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
+		return
 	
 	# Priority 3: Placed objects
 	if _try_damage_placed_object(target, item, position, hit):
@@ -1003,6 +1009,8 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	
 	# Priority 2: Vegetation
 	if _try_harvest_vegetation(target, item, position):
+		return
+	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
 		return
 	
 	# Priority 3: Placed objects
@@ -1339,6 +1347,99 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 		return true
 	
 	return false
+
+func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hit: Dictionary = {}) -> bool:
+	if not vegetation_manager or not vegetation_manager.has_method("find_nearest_vegetation_along_ray"):
+		return false
+
+	var aim_ray := _get_player_aim_ray()
+	if aim_ray.is_empty():
+		return false
+
+	var origin: Vector3 = aim_ray.get("origin", Vector3.ZERO)
+	var direction: Vector3 = aim_ray.get("direction", Vector3.FORWARD)
+	var limited_distance := max_distance
+	if not hit.is_empty() and hit.has("position"):
+		var hit_position: Vector3 = hit.get("position", origin + direction * max_distance)
+		var hit_distance := origin.distance_to(hit_position)
+		if hit_distance > 0.0:
+			limited_distance = minf(max_distance, hit_distance + 0.5)
+
+	var data_hit: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, true, true)
+	if data_hit.is_empty():
+		return false
+
+	var vegetation_type := str(data_hit.get("kind", ""))
+	if vegetation_type == "tree":
+		var damage = _item.get("damage", 1)
+		var item_id = _item.get("id", "")
+		var tree_dmg = 3 if "axe" in item_id else damage
+		var tree_key := _vegetation_data_target_key(data_hit)
+		tree_damage[tree_key] = tree_damage.get(tree_key, 0) + tree_dmg
+		var current_hp = TREE_HP - tree_damage[tree_key]
+		durability_target = tree_key
+
+		if tree_hit_audio_player and tree_hit_audio_player.is_inside_tree():
+			tree_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+			tree_hit_audio_player.play()
+
+		_emit_durability_hit(current_hp, TREE_HP, "Tree", durability_target)
+
+		if tree_damage[tree_key] >= TREE_HP:
+			if tree_fall_audio_player and tree_fall_audio_player.is_inside_tree():
+				tree_fall_audio_player.pitch_scale = randf_range(0.95, 1.05)
+				tree_fall_audio_player.play()
+
+			var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)
+			var index := int(data_hit.get("index", -1))
+			vegetation_manager.chop_tree_at_index(coord, index)
+			tree_damage.erase(tree_key)
+			_emit_durability_cleared()
+			_collect_vegetation_resource("wood")
+		return true
+
+	if vegetation_type == "grass":
+		if not vegetation_manager.harvest_data_hit(data_hit):
+			return false
+		if plant_hit_audio_player and plant_hit_audio_player.is_inside_tree():
+			plant_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+			plant_hit_audio_player.play()
+		_collect_vegetation_resource("fiber")
+		return true
+	if vegetation_type == "rock":
+		if not vegetation_manager.harvest_data_hit(data_hit):
+			return false
+		if rock_hit_audio_player and rock_hit_audio_player.is_inside_tree():
+			rock_hit_audio_player.pitch_scale = randf_range(0.9, 1.1)
+			rock_hit_audio_player.play()
+		_collect_vegetation_resource("rock")
+		return true
+
+	return false
+
+func _vegetation_data_target_key(data_hit: Dictionary) -> String:
+	var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)
+	return "%s:%d:%d:%d" % [
+		str(data_hit.get("kind", "")),
+		coord.x,
+		coord.y,
+		int(data_hit.get("index", -1))
+	]
+
+func _get_player_aim_ray() -> Dictionary:
+	if not player:
+		return {}
+	if not player.has_method("get_camera_position") or not player.has_method("get_look_direction"):
+		return {}
+
+	var origin: Vector3 = player.get_camera_position()
+	var direction: Vector3 = player.get_look_direction()
+	if direction.length_squared() <= 0.000001:
+		return {}
+	return {
+		"origin": origin,
+		"direction": direction.normalized()
+	}
 
 func _try_damage_placed_object(target: Node, item: Dictionary, _position: Vector3, hit: Dictionary = {}) -> bool:
 	if not target or not target.is_in_group("placed_objects") or not building_manager:

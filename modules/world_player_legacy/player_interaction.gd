@@ -913,16 +913,22 @@ func handle_playing_input(event):
 	
 	if event.button_index == MOUSE_BUTTON_LEFT:
 		# L-Click: Harvest/Chop
+		var handled_vegetation := false
 		if hit and hit.collider:
 			if hit.collider.is_in_group("trees"):
 				if vegetation_manager:
 					vegetation_manager.chop_tree_by_collider(hit.collider)
+					handled_vegetation = true
 			elif hit.collider.is_in_group("grass"):
 				if vegetation_manager:
 					vegetation_manager.harvest_grass_by_collider(hit.collider)
+					handled_vegetation = true
 			elif hit.collider.is_in_group("rocks"):
 				if vegetation_manager:
 					vegetation_manager.harvest_rock_by_collider(hit.collider)
+					handled_vegetation = true
+		if not handled_vegetation:
+			_try_harvest_vegetation_along_camera_ray(100.0, hit)
 	
 	elif event.button_index == MOUSE_BUTTON_RIGHT:
 		# R-Click: Place selected item on terrain (use normal raycast without areas)
@@ -1161,11 +1167,16 @@ func _handle_construct_vegetation_input(event):
 	
 	elif event.button_index == MOUSE_BUTTON_LEFT: # Harvest vegetation
 		var hit = raycast(100.0, true)  # Include areas for vegetation detection
+		var handled_vegetation := false
 		if hit and hit.collider and vegetation_manager:
 			if hit.collider.is_in_group("rocks"):
 				vegetation_manager.harvest_rock_by_collider(hit.collider)
+				handled_vegetation = true
 			elif hit.collider.is_in_group("grass"):
 				vegetation_manager.harvest_grass_by_collider(hit.collider)
+				handled_vegetation = true
+		if not handled_vegetation:
+			_try_harvest_vegetation_along_camera_ray(100.0, hit)
 
 ## Get human-readable name for construct item ID
 func _get_construct_item_name(id: int) -> String:
@@ -1253,6 +1264,29 @@ func raycast(length: float, collide_areas: bool = false, exclude_water: bool = f
 		return result
 	
 	return space_state.intersect_ray(query)
+
+func _try_harvest_vegetation_along_camera_ray(max_distance: float, hit = {}) -> bool:
+	if not vegetation_manager or not vegetation_manager.has_method("find_nearest_vegetation_along_ray"):
+		return false
+	if not camera:
+		return false
+
+	var origin: Vector3 = camera.global_position
+	var direction: Vector3 = -camera.global_transform.basis.z
+	if direction.length_squared() <= 0.000001:
+		return false
+
+	var limited_distance := max_distance
+	if hit and hit.has("position"):
+		var hit_position: Vector3 = hit.get("position", origin + direction.normalized() * max_distance)
+		var hit_distance := origin.distance_to(hit_position)
+		if hit_distance > 0.0:
+			limited_distance = minf(max_distance, hit_distance + 0.5)
+
+	var result: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction.normalized(), limited_distance, true, true, true)
+	if result.is_empty() or not vegetation_manager.has_method("harvest_data_hit"):
+		return false
+	return vegetation_manager.harvest_data_hit(result)
 
 ## Get terrain height at a world position (for AUTO placement mode)
 func _get_terrain_height_at(x: float, z: float) -> float:

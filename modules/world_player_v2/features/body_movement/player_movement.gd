@@ -11,6 +11,8 @@ const WALK_SPEED: float = 5.0
 const SPRINT_SPEED: float = 8.5  # ~70% faster than walking
 const SWIM_SPEED: float = 4.0
 const JUMP_VELOCITY: float = 4.5
+const BODY_RADIUS: float = 0.4
+const BODY_HEIGHT: float = 1.8
 
 # Footstep sound settings - matched to original project
 const FOOTSTEP_INTERVAL: float = 0.5  # Time between footsteps walking
@@ -95,6 +97,7 @@ func _physics_process(delta: float) -> void:
 	
 	if not is_swimming:
 		_handle_stair_stepping(delta, pre_move_pos)
+		_resolve_vegetation_tree_collision()
 	
 	# Clamp player to world map boundaries (only in world map mode)
 	if "terrain_manager" in player and player.terrain_manager \
@@ -114,6 +117,30 @@ func _physics_process(delta: float) -> void:
 	# Reset stair stepping flag for the next frame
 	is_stair_stepping = false
 	
+
+func _resolve_vegetation_tree_collision() -> void:
+	if not player or not ("vegetation_manager" in player) or not player.vegetation_manager:
+		return
+	var vegetation_manager = player.vegetation_manager
+	if not vegetation_manager.has_method("resolve_tree_body_collision"):
+		return
+
+	for _i in range(2):
+		var resolution: Dictionary = vegetation_manager.resolve_tree_body_collision(player.global_position, BODY_RADIUS, BODY_HEIGHT)
+		if resolution.is_empty():
+			return
+		var push: Vector3 = resolution.get("push", Vector3.ZERO)
+		if push.length_squared() <= 0.000001:
+			return
+		player.global_position += push
+		var normal := push.normalized()
+		var horizontal_velocity := Vector3(player.velocity.x, 0.0, player.velocity.z)
+		var into_tree := horizontal_velocity.dot(normal)
+		if into_tree < 0.0:
+			horizontal_velocity -= normal * into_tree
+			player.velocity.x = horizontal_velocity.x
+			player.velocity.z = horizontal_velocity.z
+
 
 func _update_blocked_physics(delta: float) -> void:
 	# Keep passive physics alive so menu input does not freeze the player in midair.

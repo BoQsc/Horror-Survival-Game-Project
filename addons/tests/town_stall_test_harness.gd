@@ -2854,12 +2854,17 @@ func _cleanup_managers_before_quit() -> void:
 	var vegetation_manager := _find_manager_node("vegetation_manager", "VegetationManager")
 	if vegetation_manager and vegetation_manager.has_method("clear_all_data"):
 		_disable_node_for_shutdown(vegetation_manager)
-		vegetation_manager.clear_all_data(true)
+		if vegetation_manager.has_method("clear_for_shutdown"):
+			vegetation_manager.clear_for_shutdown()
+		else:
+			vegetation_manager.clear_all_data(true)
 
 	var entity_manager := _find_manager_node("entity_manager", "EntityManager")
 	if entity_manager:
 		_disable_node_for_shutdown(entity_manager)
-		if entity_manager.has_method("clear_all_entities"):
+		if entity_manager.has_method("clear_for_shutdown"):
+			entity_manager.clear_for_shutdown()
+		elif entity_manager.has_method("clear_all_entities"):
 			entity_manager.clear_all_entities()
 		if entity_manager.has_method("clear_spawned_chunks"):
 			entity_manager.clear_spawned_chunks()

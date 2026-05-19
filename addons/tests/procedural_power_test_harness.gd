@@ -13,6 +13,8 @@ var snapshot_dir: String = SNAPSHOT_DIR
 var disable_glow_enabled: bool = false
 var scaling_3d_scale_override: float = -1.0
 var screenshot_dir: String = ""
+var disable_entities_enabled: bool = false
+var disable_vegetation_enabled: bool = false
 
 var game_root: Node = null
 var terrain_manager: Node = null
@@ -28,6 +30,7 @@ var active_action: String = ""
 var snapshot_path: String = ""
 var render_feature_state: Dictionary = {}
 var visual_capture_state: Dictionary = {}
+var manager_isolation_state: Dictionary = {}
 var snapshot_write_started: bool = false
 
 func _ready() -> void:
@@ -41,6 +44,8 @@ func _ready() -> void:
 	disable_glow_enabled = _env_bool("PROCEDURAL_POWER_DISABLE_GLOW", _env_bool("TOWN_STALL_DISABLE_GLOW", false))
 	scaling_3d_scale_override = _env_float("PROCEDURAL_POWER_SCALING_3D_SCALE", scaling_3d_scale_override)
 	screenshot_dir = _env_string("PROCEDURAL_POWER_SCREENSHOT_DIR", screenshot_dir)
+	disable_entities_enabled = _env_bool("PROCEDURAL_POWER_DISABLE_ENTITIES", false)
+	disable_vegetation_enabled = _env_bool("PROCEDURAL_POWER_DISABLE_VEGETATION", false)
 	_record_phase_event("start", phase)
 	print("[PROCEDURAL_POWER] Loading procedural scene: %s" % GAME_SCENE_PATH)
 	var packed := load(GAME_SCENE_PATH)
@@ -49,6 +54,7 @@ func _ready() -> void:
 		return
 	game_root = packed.instantiate()
 	add_child(game_root)
+	_apply_manager_isolation_toggles()
 	_apply_render_feature_toggles()
 
 func _process(delta: float) -> void:
@@ -254,6 +260,7 @@ func _write_snapshot_and_quit() -> void:
 		"stream_settle_seconds": stream_settle_seconds,
 		"render_features": _render_feature_snapshot(),
 		"visual_capture": visual_capture_state.duplicate(true),
+		"manager_isolation": manager_isolation_state.duplicate(true),
 		"phase_events": phase_events,
 		"samples": samples,
 		"final_sample": samples[-1] if not samples.is_empty() else {}
@@ -308,6 +315,31 @@ func _apply_render_feature_toggles() -> void:
 			"true" if scale_applied else "false"
 		]
 	)
+
+func _apply_manager_isolation_toggles() -> void:
+	var disabled_entities := _disable_manager_for_isolation("entity_manager", "EntityManager") if disable_entities_enabled else false
+	var disabled_vegetation := _disable_manager_for_isolation("vegetation_manager", "VegetationManager") if disable_vegetation_enabled else false
+	manager_isolation_state = {
+		"disable_entities": disable_entities_enabled,
+		"entities_disabled": disabled_entities,
+		"disable_vegetation": disable_vegetation_enabled,
+		"vegetation_disabled": disabled_vegetation
+	}
+	if disable_entities_enabled or disable_vegetation_enabled:
+		print(
+			"[PROCEDURAL_POWER] Manager isolation: entities=%s vegetation=%s" % [
+				"disabled" if disabled_entities else "not_found",
+				"disabled" if disabled_vegetation else "not_found"
+			]
+		)
+
+func _disable_manager_for_isolation(group_name: String, fallback_name: String) -> bool:
+	var node := _find_manager_node(group_name, fallback_name)
+	if not node:
+		return false
+	_disable_node_for_shutdown(node)
+	node.queue_free()
+	return true
 
 func _set_glow_enabled_recursive(node: Node, enabled: bool) -> int:
 	var changed := 0
@@ -386,18 +418,18 @@ func _shutdown_after_snapshot() -> void:
 	if is_instance_valid(game_root):
 		game_root.process_mode = Node.PROCESS_MODE_DISABLED
 	_cleanup_managers_before_quit()
-	await get_tree().process_frame
-	await get_tree().process_frame
-	await get_tree().process_frame
+	await _wait_process_frames(8)
 	if is_instance_valid(game_root):
 		game_root.queue_free()
 	call_deferred("_finalize_shutdown")
 
 func _finalize_shutdown() -> void:
-	await get_tree().process_frame
-	await get_tree().process_frame
-	await get_tree().process_frame
+	await _wait_process_frames(12)
 	get_tree().quit()
+
+func _wait_process_frames(frame_count: int) -> void:
+	for _i in range(frame_count):
+		await get_tree().process_frame
 
 func _cleanup_managers_before_quit() -> void:
 	var terrain := _find_manager_node("terrain_manager", "TerrainManager")
@@ -417,13 +449,17 @@ func _cleanup_managers_before_quit() -> void:
 	var vegetation := _find_manager_node("vegetation_manager", "VegetationManager")
 	if vegetation:
 		_disable_node_for_shutdown(vegetation)
-		if vegetation.has_method("clear_all_data"):
+		if vegetation.has_method("clear_for_shutdown"):
+			vegetation.clear_for_shutdown()
+		elif vegetation.has_method("clear_all_data"):
 			vegetation.clear_all_data(true)
 
 	var entities := _find_manager_node("entity_manager", "EntityManager")
 	if entities:
 		_disable_node_for_shutdown(entities)
-		if entities.has_method("clear_all_entities"):
+		if entities.has_method("clear_for_shutdown"):
+			entities.clear_for_shutdown()
+		elif entities.has_method("clear_all_entities"):
 			entities.clear_all_entities()
 		if entities.has_method("clear_spawned_chunks"):
 			entities.clear_spawned_chunks()

@@ -118,6 +118,8 @@ var compute_thread: Thread
 var mutex: Mutex
 var semaphore: Semaphore
 var exit_thread: bool = false
+var _shutdown_cleanup_started: bool = false
+var _shutdown_cpu_workers_finished: bool = true
 
 # CPU Worker Pool (for mesh building and collision)
 # Dynamically scale workers based on available CPU cores (leave 2 for OS/Main Thread)
@@ -5489,6 +5491,11 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 			semaphore.post()
 
 func _exit_tree():
+	if _shutdown_cleanup_started:
+		return
+	_shutdown_cleanup_started = true
+	set_process(false)
+	loading_paused = true
 	_set_runtime_power_world_work_suspended(false, "exit_tree")
 	_restore_runtime_power_viewport_scale("exit_tree")
 	_apply_runtime_power_render_loop_mode("active")
@@ -5515,22 +5522,31 @@ func _exit_tree():
 	# 3. Signal threads to exit
 	mutex.lock()
 	exit_thread = true
+	_shutdown_cpu_workers_finished = false
 	mutex.unlock()
-
-	# Signal GPU thread to exit
-	semaphore.post()
 
 	# Signal all CPU workers to exit
 	for i in range(_cpu_worker_count):
 		cpu_semaphore.post()
 
-	# 5. Wait for CPU workers first; the GPU thread drains any late CPU/completed
-	# queues during its own cleanup before freeing the local rendering device.
+	# 5. Wait for CPU workers first. They can enqueue completed payloads that
+	# still contain GPU RIDs, so the GPU thread must not free its local device
+	# until this join is complete and those late queues have been drained.
 	for i in range(cpu_threads.size()):
 		var thread = cpu_threads[i]
 		if thread:
 			thread.wait_to_finish()
 	cpu_threads.clear()
+
+	_queue_gpu_free_tasks(_drain_cpu_task_free_tasks())
+	_queue_gpu_free_tasks(_drain_completed_generation_free_tasks())
+	_queue_gpu_free_tasks(_drain_pending_finalization_free_tasks())
+	mutex.lock()
+	_shutdown_cpu_workers_finished = true
+	mutex.unlock()
+
+	# Signal GPU thread to drain remaining free tasks, then exit.
+	semaphore.post()
 
 	# 6. Wait for GPU thread to finish (processes remaining "free" tasks)
 	if compute_thread:
@@ -6278,9 +6294,15 @@ func _thread_function():
 
 		var task = _pop_next_gpu_task()
 		if task.is_empty():
+			mutex.lock()
 			var should_exit = exit_thread
+			var cpu_workers_finished := _shutdown_cpu_workers_finished
+			mutex.unlock()
 			# Only complete in-flight when no tasks pending
 			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
+			if should_exit and not cpu_workers_finished:
+				OS.delay_msec(10)
+				continue
 			if should_exit:
 				break
 			if _runtime_power_world_work_suspended:

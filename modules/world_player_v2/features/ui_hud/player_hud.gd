@@ -861,6 +861,7 @@ func _update_durability_visibility() -> void:
 	var hit_normal = hit.get("normal", Vector3.UP)
 	
 	var look_rid = target.get_rid() if target else RID()
+	var look_vegetation_key := _get_look_vegetation_key(player_node, hit)
 	
 	for key in durability_memory:
 		var entry = durability_memory[key]
@@ -880,6 +881,9 @@ func _update_durability_visibility() -> void:
 		elif remembered_target is Node:
 			if target == remembered_target or _is_child_of(target, remembered_target):
 				is_match = true
+		elif remembered_target is String:
+			if remembered_target == look_vegetation_key:
+				is_match = true
 		
 		if is_match:
 			durability_bar.value = entry.hp_percent
@@ -887,6 +891,35 @@ func _update_durability_visibility() -> void:
 			return
 	
 	durability_bar.visible = false
+
+func _get_look_vegetation_key(player_node: Node, hit: Dictionary) -> String:
+	if not player_node.has_method("get_camera_position") or not player_node.has_method("get_look_direction"):
+		return ""
+	var vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
+	if not vegetation_manager or not vegetation_manager.has_method("find_nearest_vegetation_along_ray"):
+		return ""
+
+	var origin: Vector3 = player_node.get_camera_position()
+	var direction: Vector3 = player_node.get_look_direction()
+	if direction.length_squared() <= 0.000001:
+		return ""
+	var max_distance := 5.0
+	if not hit.is_empty() and hit.has("position"):
+		var hit_position: Vector3 = hit.get("position", origin + direction.normalized() * max_distance)
+		max_distance = minf(max_distance, origin.distance_to(hit_position) + 0.5)
+	var data_hit: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction.normalized(), max_distance, true, false, false)
+	if data_hit.is_empty():
+		return ""
+	return _vegetation_data_target_key(data_hit)
+
+func _vegetation_data_target_key(data_hit: Dictionary) -> String:
+	var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)
+	return "%s:%d:%d:%d" % [
+		str(data_hit.get("kind", "")),
+		coord.x,
+		coord.y,
+		int(data_hit.get("index", -1))
+	]
 
 func _is_child_of(node: Node, potential_parent: Node) -> bool:
 	if not node or not potential_parent:

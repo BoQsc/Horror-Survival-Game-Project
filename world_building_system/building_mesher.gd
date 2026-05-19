@@ -7,6 +7,7 @@ var thread: Thread
 var mutex: Mutex
 var semaphore: Semaphore
 var exit_thread: bool = false
+var _shutdown_requested: bool = false
 
 var queue: Array = [] # Array of { chunk: BuildingChunk, chunk_id: int }
 var _queued_chunk_ids: Dictionary = {}
@@ -63,6 +64,8 @@ func _init():
 	_native_backend_ready = true
 
 func _process(_delta: float) -> void:
+	if _shutdown_requested:
+		return
 	var apply_items: Array = []
 	mutex.lock()
 	var start_us := Time.get_ticks_usec()
@@ -224,7 +227,7 @@ func build_trimesh_collision_shape_from_faces(faces: PackedVector3Array) -> Shap
 	return builder.build_trimesh_collision_shape_from_faces(faces)
 
 func request_mesh_generation(chunk: BuildingChunk):
-	if not _native_backend_ready or not chunk or not is_instance_valid(chunk):
+	if _shutdown_requested or not _native_backend_ready or not chunk or not is_instance_valid(chunk):
 		return
 	var chunk_id := chunk.get_instance_id()
 	mutex.lock()
@@ -553,13 +556,31 @@ func _generate_mesh(rd: RenderingDevice, shader: RID, pipeline: RID, v_bytes: Pa
 		"collision_shape_elapsed_ms": collision_shape_elapsed_ms
 	}
 
-func _exit_tree():
+func shutdown_for_owner() -> void:
+	if _shutdown_requested:
+		return
+	_shutdown_requested = true
+	set_process(false)
 	mutex.lock()
 	exit_thread = true
+	queue.clear()
+	_queued_chunk_ids.clear()
+	pending_apply_queue.clear()
+	pending_apply_queue_index = 0
 	mutex.unlock()
 	semaphore.post()
-	thread.wait_to_finish()
+	if thread and thread.is_started():
+		thread.wait_to_finish()
+	_native_backend_ready = false
+	_building_mesh_cache.clear()
+	_building_mesh_cache_order.clear()
+	native_builder = null
+
+func _exit_tree():
+	shutdown_for_owner()
 	mutex.lock()
 	queue.clear()
 	_queued_chunk_ids.clear()
+	pending_apply_queue.clear()
+	pending_apply_queue_index = 0
 	mutex.unlock()
