@@ -356,16 +356,23 @@ def main() -> int:
     sampler.start()
 
     PROCEDURAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    rendering_method = (env.get("PROCEDURAL_POWER_RENDERING_METHOD", "") or "").strip()
     cmd = [
         town_runner.GODOT_BIN,
         "--log-file",
         str(PROCEDURAL_LOG_FILE),
+    ]
+    if rendering_method:
+        cmd.extend(["--rendering-method", rendering_method])
+    cmd.extend([
         "--path",
         str(PROJECT_PATH),
         SCENE,
-    ]
+    ])
     print("Running procedural power test...")
     print(f"   Scene: {SCENE}")
+    if rendering_method:
+        print(f"   Rendering method: {rendering_method}")
     result = subprocess.run(
         cmd,
         cwd=PROJECT_PATH,

@@ -25,6 +25,7 @@ CASES: dict[str, dict[str, str]] = {
     "no_glow": {"PROCEDURAL_POWER_DISABLE_GLOW": "1"},
     "shadow_radius_1": {"TOWN_STALL_TERRAIN_SHADOW_LOD_RADIUS": "1"},
     "shadow_radius_0": {"TOWN_STALL_TERRAIN_SHADOW_LOD_RADIUS": "0"},
+    "mobile_renderer": {"PROCEDURAL_POWER_RENDERING_METHOD": "mobile"},
 }
 
 
@@ -47,6 +48,14 @@ def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
     try:
         return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    try:
+        return float(raw)
     except ValueError:
         return default
 
@@ -140,11 +149,15 @@ def _final_sample_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     terrain = final.get("terrain", {}) if isinstance(final.get("terrain"), dict) else {}
     vegetation = final.get("vegetation", {}) if isinstance(final.get("vegetation"), dict) else {}
     entities = final.get("entities", {}) if isinstance(final.get("entities"), dict) else {}
+    render_features = final.get("render_features", {}) if isinstance(final.get("render_features"), dict) else {}
     return {
         "draw_calls": int(final.get("draw_calls", 0) or 0),
         "objects": int(final.get("render_objects", 0) or 0),
         "primitives": int(final.get("primitives", 0) or 0),
         "fps": float(final.get("fps", 0.0) or 0.0),
+        "rendering_method": str(render_features.get("rendering_method", "")),
+        "player_pose": final.get("player_pose", {}) if isinstance(final.get("player_pose"), dict) else {},
+        "camera_pose": final.get("camera_pose", {}) if isinstance(final.get("camera_pose"), dict) else {},
         "runtime_power_mode": str(terrain.get("runtime_power_mode", "")),
         "runtime_power_target_fps": int(terrain.get("runtime_power_target_fps", 0) or 0),
         "terrain_chunks": int(terrain.get("rendered_terrain_chunk_count", 0) or 0),
@@ -252,12 +265,13 @@ def _print_results(results: list[dict[str, Any]]) -> None:
         hold = result.get("hold", {}) if isinstance(result.get("hold"), dict) else {}
         final = result.get("final", {}) if isinstance(result.get("final"), dict) else {}
         delta = result.get("delta_from_baseline", {}) if isinstance(result.get("delta_from_baseline"), dict) else {}
+        rendering_method = str(final.get("rendering_method", "") or "default")
         print(
             "{case:>22} | move prims={move_prims:9.0f} ({dmove_prims:+9.0f}) "
             "watts={move_watts:6.2f} ({dmove_watts:+6.2f}) samples={move_gpu:2d} | "
             "hold prims={hold_prims:9.0f} ({dhold_prims:+9.0f}) watts={hold_watts:6.2f} ({dhold_watts:+6.2f}) "
             "samples={hold_gpu:2d} pipes={pipes:3d} | final draws={draws:4d} prims={final_prims:9d} "
-            "chunks={chunks:3d} water={water:3d} veglod={lod:5.1f} margin={margin:5.0f}".format(
+            "chunks={chunks:3d} water={water:3d} renderer={renderer} veglod={lod:5.1f} margin={margin:5.0f}".format(
                 case=str(result.get("case", "")),
                 move_prims=float(move.get("primitives_avg", 0.0) or 0.0),
                 dmove_prims=float(delta.get("move_primitives_avg", 0.0) or 0.0),
@@ -275,6 +289,7 @@ def _print_results(results: list[dict[str, Any]]) -> None:
                 final_prims=int(final.get("primitives", 0) or 0),
                 chunks=int(final.get("terrain_chunks", 0) or 0),
                 water=int(final.get("water_chunks", 0) or 0),
+                renderer=rendering_method,
                 lod=float(final.get("vegetation_lod_bias", 0.0) or 0.0),
                 margin=float(final.get("vegetation_extra_cull_margin", 0.0) or 0.0),
             )
@@ -288,10 +303,29 @@ def _load_summary_results() -> list[dict[str, Any]]:
     return [result for result in results if isinstance(result, dict)]
 
 
+def _pose_vector_distance(first_pose: Any, second_pose: Any, key: str) -> float | None:
+    if not isinstance(first_pose, dict) or not isinstance(second_pose, dict):
+        return None
+    first = first_pose.get(key, {})
+    second = second_pose.get(key, {})
+    if not isinstance(first, dict) or not isinstance(second, dict):
+        return None
+    try:
+        dx = float(first.get("x", 0.0) or 0.0) - float(second.get("x", 0.0) or 0.0)
+        dy = float(first.get("y", 0.0) or 0.0) - float(second.get("y", 0.0) or 0.0)
+        dz = float(first.get("z", 0.0) or 0.0) - float(second.get("z", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    return (dx * dx + dy * dy + dz * dz) ** 0.5
+
+
 def _failed_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     require_raw_gpu = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_RAW_GPU", "1") != "0"
     require_comparable_chunks = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_COMPARABLE_CHUNKS", "1") != "0"
+    require_comparable_pose = os.environ.get("PROCEDURAL_ABLATION_REQUIRE_COMPARABLE_POSE", "1") != "0"
     chunk_tolerance = max(0, _env_int("PROCEDURAL_ABLATION_TERRAIN_CHUNK_TOLERANCE", 4))
+    pose_position_tolerance = max(0.0, _env_float("PROCEDURAL_ABLATION_POSE_POSITION_TOLERANCE", 2.0))
+    pose_forward_tolerance = max(0.0, _env_float("PROCEDURAL_ABLATION_POSE_FORWARD_TOLERANCE", 0.05))
     baseline = next((result for result in results if result.get("case") == "baseline"), None)
     baseline_final = baseline.get("final", {}) if isinstance(baseline, dict) and isinstance(baseline.get("final"), dict) else {}
     baseline_chunks = int(baseline_final.get("terrain_chunks", 0) or 0)
@@ -315,6 +349,35 @@ def _failed_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and abs(int(final.get("terrain_chunks", 0) or 0) - baseline_chunks) > chunk_tolerance
         ):
             failed.append(result)
+            continue
+        if require_comparable_pose and result.get("case") != "baseline":
+            player_position_delta = _pose_vector_distance(
+                baseline_final.get("player_pose", {}),
+                final.get("player_pose", {}),
+                "position",
+            )
+            camera_position_delta = _pose_vector_distance(
+                baseline_final.get("camera_pose", {}),
+                final.get("camera_pose", {}),
+                "position",
+            )
+            camera_forward_delta = _pose_vector_distance(
+                baseline_final.get("camera_pose", {}),
+                final.get("camera_pose", {}),
+                "forward",
+            )
+            pose_available = player_position_delta is not None and camera_position_delta is not None and camera_forward_delta is not None
+            if pose_available and (
+                player_position_delta > pose_position_tolerance
+                or camera_position_delta > pose_position_tolerance
+                or camera_forward_delta > pose_forward_tolerance
+            ):
+                final["comparability_failure"] = {
+                    "player_position_delta": round(player_position_delta, 3),
+                    "camera_position_delta": round(camera_position_delta, 3),
+                    "camera_forward_delta": round(camera_forward_delta, 3),
+                }
+                failed.append(result)
     return failed
 
 
@@ -339,11 +402,14 @@ def main() -> int:
         for result in failed:
             move = result.get("move", {}) if isinstance(result.get("move"), dict) else {}
             final = result.get("final", {}) if isinstance(result.get("final"), dict) else {}
+            comparability = final.get("comparability_failure", {}) if isinstance(final.get("comparability_failure"), dict) else {}
+            comparability_detail = f" comparability={comparability}" if comparability else ""
             print(
                 f"- {result.get('case', 'unknown')} returncode={result.get('returncode')} "
                 f"completed={result.get('completed')} move_samples={move.get('sample_count', 0)} "
                 f"gpu_samples={move.get('raw_gpu_sample_count', 0)} "
                 f"terrain_chunks={final.get('terrain_chunks', 0)}"
+                f"{comparability_detail}"
             )
         return 1
     return 0

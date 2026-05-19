@@ -213,6 +213,8 @@ func _capture_sample() -> void:
 		"pipeline_compilations_draw": int(pipeline_compilations.get("draw", 0)),
 		"pipeline_compilations_specialization": int(pipeline_compilations.get("specialization", 0)),
 		"pipeline_compilations_total": int(pipeline_compilations.get("total", 0)),
+		"player_pose": _node_pose_snapshot(player),
+		"camera_pose": _camera_pose_snapshot(),
 		"render_features": _render_feature_snapshot(),
 		"terrain": terrain,
 		"building": _manager_snapshot("building_manager"),
@@ -220,6 +222,25 @@ func _capture_sample() -> void:
 		"entities": _manager_snapshot("entity_manager")
 	}
 	samples.append(sample)
+
+func _vector3_snapshot(value: Vector3) -> Dictionary:
+	return {
+		"x": snappedf(value.x, 0.001),
+		"y": snappedf(value.y, 0.001),
+		"z": snappedf(value.z, 0.001)
+	}
+
+func _node_pose_snapshot(node: Node3D) -> Dictionary:
+	if node == null or not is_instance_valid(node):
+		return {}
+	return {
+		"position": _vector3_snapshot(node.global_position),
+		"forward": _vector3_snapshot((-node.global_transform.basis.z).normalized())
+	}
+
+func _camera_pose_snapshot() -> Dictionary:
+	var camera := get_viewport().get_camera_3d()
+	return _node_pose_snapshot(camera)
 
 func _manager_snapshot(group_name: String) -> Dictionary:
 	var node := get_tree().get_first_node_in_group(group_name)
@@ -385,6 +406,8 @@ func _set_glow_enabled_recursive(node: Node, enabled: bool) -> int:
 
 func _render_feature_snapshot() -> Dictionary:
 	var snapshot := render_feature_state.duplicate(true)
+	if RenderingServer.has_method("get_current_rendering_method"):
+		snapshot["rendering_method"] = str(RenderingServer.call("get_current_rendering_method"))
 	var viewport := get_viewport()
 	if viewport != null and "scaling_3d_scale" in viewport:
 		var current_scale := float(viewport.scaling_3d_scale)
