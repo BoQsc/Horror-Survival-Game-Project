@@ -55,6 +55,12 @@ def _check_policy(relative_path: Path, policy: dict[str, bool]) -> list[str]:
         failures.append(f"{relative_path}: launcher must suppress Windows crash dialogs")
     if policy.get("requires_cwd", False) and "cwd=" not in text:
         failures.append(f"{relative_path}: headless launcher must set cwd=PROJECT_PATH")
+    if "--rendering-driver" not in text or "vulkan" not in text:
+        failures.append(f"{relative_path}: Godot command must force --rendering-driver vulkan")
+    if "--rendering-method" not in text or "forward_plus" not in text:
+        failures.append(f"{relative_path}: Godot command must force --rendering-method forward_plus")
+    if "_find_running_godot_processes" not in text:
+        failures.append(f"{relative_path}: launcher must refuse to start when any Godot process is already running")
     return failures
 
 

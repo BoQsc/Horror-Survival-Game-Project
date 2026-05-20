@@ -74,6 +74,8 @@ sprint={
 
 [rendering]
 
+renderer/rendering_method="forward_plus"
+rendering_device/driver.windows="vulkan"
 rendering_device/staging_buffer/block_size_kb=256000
 rendering_device/staging_buffer/max_size_mb=1280
 rendering_device/staging_buffer/texture_upload_region_size_px=254

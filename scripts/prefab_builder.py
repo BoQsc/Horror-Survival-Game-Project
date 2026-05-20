@@ -9,6 +9,10 @@ if str(TESTS_PATH) not in sys.path:
     sys.path.insert(0, str(TESTS_PATH))
 
 from windows_error_dialogs import suppress_windows_error_dialogs
+import run_town_stall_test as town_runner
+
+GODOT_RENDERING_DRIVER = 'vulkan'
+GODOT_RENDERING_METHOD = 'forward_plus'
 
 class PrefabBuilder:
     def __init__(self, name, x_size, y_size, z_size, grade_y=0):
@@ -192,10 +196,18 @@ func _init():
             f.write(val_script)
 
         suppress_windows_error_dialogs()
+        running_processes = town_runner._find_running_godot_processes()
+        if running_processes:
+            print("ERROR: A Godot process is already running. Refusing to launch validation.")
+            return
         subprocess.run(
             [
                 godot_exe,
                 '--headless',
+                '--rendering-driver',
+                GODOT_RENDERING_DRIVER,
+                '--rendering-method',
+                GODOT_RENDERING_METHOD,
                 '--path',
                 str(PROJECT_PATH),
                 '-s',

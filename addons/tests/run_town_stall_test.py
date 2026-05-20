@@ -15,6 +15,8 @@ from windows_error_dialogs import suppress_windows_error_dialogs
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 MAIN_SCENE = "res://addons/tests/town_stall_test_harness.tscn"
+GODOT_RENDERING_DRIVER = "vulkan"
+GODOT_RENDERING_METHOD = "forward_plus"
 DEFAULT_TIMEOUT = 900
 SNAPSHOT_DIR = Path(r"C:\Users\Windows10_new\AppData\Roaming\Godot\app_userdata\Horror Survival Game Project\debug\performance")
 LOG_DIR = SNAPSHOT_DIR.parent.parent / "logs"
@@ -1468,6 +1470,7 @@ def main() -> int:
     print("Running Town Stall Automation Test...")
     print(f"   Scene: {MAIN_SCENE}")
     print(f"   Runtime mode: {_runtime_mode_label()} ({Path(GODOT_BIN).name})")
+    print(f"   Rendering: {GODOT_RENDERING_METHOD} / {GODOT_RENDERING_DRIVER}")
     print("-" * 50)
     run_start_mtime = time.time()
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1493,6 +1496,10 @@ def main() -> int:
 
     cmd = [
         GODOT_BIN,
+        "--rendering-driver",
+        GODOT_RENDERING_DRIVER,
+        "--rendering-method",
+        GODOT_RENDERING_METHOD,
         "--log-file",
         str(LOG_FILE),
         "--path",
@@ -1520,8 +1527,6 @@ def main() -> int:
     env["TOWN_STALL_MAX_FPS"] = os.environ.get("TOWN_STALL_MAX_FPS", "")
     env["TOWN_STALL_MEASURE_FULL_FLIGHT"] = os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", "0")
     env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
-    env["TOWN_STALL_DISABLE_D3D12_FALLBACK"] = "1"
-    env["GODOT_DISABLE_D3D12_FALLBACK"] = "1"
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
     machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)

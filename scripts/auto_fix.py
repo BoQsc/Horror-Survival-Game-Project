@@ -9,8 +9,11 @@ if str(TESTS_PATH) not in sys.path:
     sys.path.insert(0, str(TESTS_PATH))
 
 from windows_error_dialogs import suppress_windows_error_dialogs
+import run_town_stall_test as town_runner
 
 prefab_path = PROJECT_PATH / 'world_prefabs' / 'new_wooden_house_2floor_secret_facility.json'
+GODOT_RENDERING_DRIVER = 'vulkan'
+GODOT_RENDERING_METHOD = 'forward_plus'
 
 with open(prefab_path, 'r') as f:
     d = json.load(f)
@@ -56,10 +59,18 @@ with open(prefab_path, 'w') as f:
 
 godot_exe = 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Godot Engine\\godot.windows.opt.tools.64.exe'
 suppress_windows_error_dialogs()
+running_processes = town_runner._find_running_godot_processes()
+if running_processes:
+    print('ERROR: A Godot process is already running. Refusing to launch validation.')
+    sys.exit(2)
 subprocess.run(
     [
         godot_exe,
         '--headless',
+        '--rendering-driver',
+        GODOT_RENDERING_DRIVER,
+        '--rendering-method',
+        GODOT_RENDERING_METHOD,
         '--path',
         str(PROJECT_PATH),
         '-s',

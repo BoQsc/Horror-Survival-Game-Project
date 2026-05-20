@@ -7,11 +7,14 @@ if TESTS_PATH not in sys.path:
     sys.path.insert(0, TESTS_PATH)
 
 from windows_error_dialogs import suppress_windows_error_dialogs
+import run_town_stall_test as town_runner
 
 # Configuration from environment
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SCENE = "world_map_generator/world_map_generator_ui.tscn"
+GODOT_RENDERING_DRIVER = "vulkan"
+GODOT_RENDERING_METHOD = "forward_plus"
 
 def _low_heat_environment():
     env = os.environ.copy()
@@ -30,7 +33,12 @@ def launch(scene_path=DEFAULT_SCENE, mode="play", low_heat=False):
     - 'debug': Runs with the --debug flag (like F6 in editor).
     - 'edit': Opens the scene in the Godot Editor (-e).
     """
-    cmd = [GODOT_BIN, "--path", PROJECT_PATH]
+    cmd = [
+        GODOT_BIN,
+        "--rendering-driver", GODOT_RENDERING_DRIVER,
+        "--rendering-method", GODOT_RENDERING_METHOD,
+        "--path", PROJECT_PATH,
+    ]
     
     if mode == "edit":
         cmd.append("-e")
@@ -42,6 +50,13 @@ def launch(scene_path=DEFAULT_SCENE, mode="play", low_heat=False):
     env = _low_heat_environment() if low_heat else os.environ.copy()
     suffix = " with LOW HEAT mode" if low_heat else ""
     print(f"[Launcher] Launching {scene_path} in {mode.upper()} mode{suffix}...")
+
+    running_processes = town_runner._find_running_godot_processes()
+    if running_processes:
+        print("ERROR: A Godot process is already running. Refusing to launch another instance.")
+        for process in running_processes[:5]:
+            print(f"  PID {int(process.get('ProcessId', 0) or 0)} - {process.get('Name', 'godot')}")
+        return
     
     try:
         suppress_windows_error_dialogs()

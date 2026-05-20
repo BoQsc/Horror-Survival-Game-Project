@@ -11,9 +11,12 @@ if str(TESTS_PATH) not in sys.path:
     sys.path.insert(0, str(TESTS_PATH))
 
 from windows_error_dialogs import suppress_windows_error_dialogs
+import run_town_stall_test as town_runner
 
 SCRIPT_PATH = Path(PROJECT_PATH) / "_tmp_parse_check.gd"
 LOG_PATH = Path(PROJECT_PATH) / ".agent" / "godot-parse-check.log"
+GODOT_RENDERING_DRIVER = "vulkan"
+GODOT_RENDERING_METHOD = "forward_plus"
 
 CHECKER_SCRIPT = """@tool
 extends SceneTree
@@ -71,12 +74,23 @@ def safe_print(text: str = "", end: str = "\n") -> None:
 
 def main() -> int:
     safe_print("Running Godot parse scan for project resources...")
+    running_processes = town_runner._find_running_godot_processes()
+    if running_processes:
+        safe_print("ERROR: A Godot process is already running. Refusing to launch parse scan.")
+        for process in running_processes[:5]:
+            safe_print(f"  PID {int(process.get('ProcessId', 0) or 0)} - {process.get('Name', 'godot')}")
+        return 2
+
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCRIPT_PATH.write_text(CHECKER_SCRIPT, encoding="utf-8")
 
     cmd = [
         GODOT_BIN,
         "--headless",
+        "--rendering-driver",
+        GODOT_RENDERING_DRIVER,
+        "--rendering-method",
+        GODOT_RENDERING_METHOD,
         "--path",
         PROJECT_PATH,
         "--log-file",

@@ -17,6 +17,8 @@ PROCEDURAL_LOG_FILE = PROJECT_PATH / ".agent" / "procedural-power-godot.log"
 PROCEDURAL_SNAPSHOT_DIR = PROJECT_PATH / ".agent" / "procedural-power"
 PROCEDURAL_APPDATA_DIR = PROJECT_PATH / ".agent" / "procedural-power-appdata"
 WINDOWS_ACCESS_VIOLATION = 3221225477
+GODOT_RENDERING_DRIVER = "vulkan"
+GODOT_RENDERING_METHOD = "forward_plus"
 
 
 def _snapshot_root(env: dict[str, str]) -> Path:
@@ -411,6 +413,20 @@ def main() -> int:
     if rendering_method and rendering_method != "forward_plus":
         print("ERROR: PROCEDURAL_POWER_RENDERING_METHOD is restricted to forward_plus for this Forward+ project.")
         return 1
+    rendering_method = rendering_method or GODOT_RENDERING_METHOD
+    rendering_driver = (env.get("PROCEDURAL_POWER_RENDERING_DRIVER", "") or "").strip()
+    if rendering_driver and rendering_driver != GODOT_RENDERING_DRIVER:
+        print("ERROR: PROCEDURAL_POWER_RENDERING_DRIVER is restricted to vulkan for this Forward+ project.")
+        return 1
+    rendering_driver = rendering_driver or GODOT_RENDERING_DRIVER
+
+    running_processes = town_runner._find_running_godot_processes()
+    if running_processes:
+        print("ERROR: A Godot process is already running.")
+        print("Close the existing Godot instance before starting a new procedural power test.")
+        for process in running_processes[:5]:
+            print(f"  PID {int(process.get('ProcessId', 0) or 0)} - {process.get('Name', 'godot')}")
+        return 2
 
     sample_interval_s = float(env.get("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", "2") or "2")
     gpu_samples: list[dict[str, Any]] = []
@@ -421,11 +437,13 @@ def main() -> int:
     PROCEDURAL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         town_runner.GODOT_BIN,
+        "--rendering-driver",
+        rendering_driver,
+        "--rendering-method",
+        rendering_method,
         "--log-file",
         str(PROCEDURAL_LOG_FILE),
     ]
-    if rendering_method:
-        cmd.extend(["--rendering-method", rendering_method])
     cmd.extend([
         "--path",
         str(PROJECT_PATH),
@@ -435,8 +453,7 @@ def main() -> int:
     print(f"   Scene: {SCENE}")
     if isolated_user_data:
         print(f"   Godot APPDATA: {isolated_user_data}")
-    if rendering_method:
-        print(f"   Rendering method: {rendering_method}")
+    print(f"   Rendering: {rendering_method} / {rendering_driver}")
     result = subprocess.run(
         cmd,
         cwd=PROJECT_PATH,

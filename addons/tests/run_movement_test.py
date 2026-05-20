@@ -2,11 +2,14 @@ import subprocess
 import sys
 
 from windows_error_dialogs import suppress_windows_error_dialogs
+import run_town_stall_test as town_runner
 
 # Configuration
 GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 MAIN_SCENE = "res://modules/world_player_v2/world_testV2.tscn"
+GODOT_RENDERING_DRIVER = "vulkan"
+GODOT_RENDERING_METHOD = "forward_plus"
 TIMEOUT = 60  # 30s wait + 15s test = 45s, buffer for safety
 BOT_SCENE = "res://tests/player_bot.tscn"  # Bot scene to add
 def main():
@@ -14,9 +17,19 @@ def main():
     print("🤖 Running Movement Bot Test...")
     print(f"   Scene: {MAIN_SCENE}")
     print("-" * 50)
+
+    running_processes = town_runner._find_running_godot_processes()
+    if running_processes:
+        print("ERROR: A Godot process is already running.")
+        print("Close the existing Godot instance before starting a movement test.")
+        for process in running_processes[:5]:
+            print(f"  PID {int(process.get('ProcessId', 0) or 0)} - {process.get('Name', 'godot')}")
+        return 2
     
     cmd = [
         GODOT_BIN,
+        "--rendering-driver", GODOT_RENDERING_DRIVER,
+        "--rendering-method", GODOT_RENDERING_METHOD,
         "--path", PROJECT_PATH,
         MAIN_SCENE
     ]
