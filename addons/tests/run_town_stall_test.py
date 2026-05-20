@@ -1520,6 +1520,8 @@ def main() -> int:
     env["TOWN_STALL_MAX_FPS"] = os.environ.get("TOWN_STALL_MAX_FPS", "")
     env["TOWN_STALL_MEASURE_FULL_FLIGHT"] = os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", "0")
     env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
+    env["TOWN_STALL_DISABLE_D3D12_FALLBACK"] = "1"
+    env["GODOT_DISABLE_D3D12_FALLBACK"] = "1"
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
     machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)

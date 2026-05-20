@@ -23,6 +23,12 @@ func _using_d3d12() -> bool:
 			return true
 	return false
 
+func _d3d12_fallback_disabled() -> bool:
+	return (
+		OS.get_environment("TOWN_STALL_DISABLE_D3D12_FALLBACK") == "1"
+		or OS.get_environment("GODOT_DISABLE_D3D12_FALLBACK") == "1"
+	)
+
 func _test_vulkan_compute() -> bool:
 	"""Test if Vulkan supports compute pipelines using the ACTUAL marching_cubes shader"""
 	var rd = RenderingServer.create_local_rendering_device()
@@ -58,6 +64,10 @@ func _test_vulkan_compute() -> bool:
 
 func _restart_with_d3d12():
 	"""Restart game with D3D12 renderer"""
+	if _d3d12_fallback_disabled():
+		push_error("Vulkan compute check failed and D3D12 fallback is disabled for this run.")
+		get_tree().quit()
+		return
 	
 	# Check if running from Godot editor by looking for --path in command line args
 	var running_from_editor = false

@@ -381,6 +381,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var building_last_apply_payload_ms := 0.0
 	var building_last_apply_payload_object_ms := 0.0
 	var building_last_apply_payload_visual_ms := 0.0
+	var building_pending_baked_apply_phases := 0
+	var building_last_baked_apply_queue_ms := 0.0
+	var building_last_baked_apply_queue_count := 0
 	var building_pending_visual_batch_rebuilds := 0
 	var building_pending_baked_object_spawns := 0
 	var building_last_baked_object_spawn_queue_ms := 0.0
@@ -392,7 +395,11 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var building_last_visibility_total_roots := 0
 	var building_visible_baked_visual_nodes := 0
 	var building_visible_baked_visual_surfaces := 0
+	var prefab_pending_baked_payload_build_jobs := 0
 	var prefab_pending_baked_payload_jobs := 0
+	var prefab_last_baked_payload_build_queue_ms := 0.0
+	var prefab_last_baked_payload_build_queue_count := 0
+	var prefab_last_baked_payload_build_queue_success_count := 0
 	var prefab_last_baked_payload_apply_ms := 0.0
 	var prefab_last_baked_payload_apply_count := 0
 	var prefab_last_baked_payload_flush_ms := 0.0
@@ -526,6 +533,12 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		building_last_apply_payload_ms = float(building_manager._last_apply_world_map_baked_building_payload_ms)
 		building_last_apply_payload_object_ms = float(building_manager._last_apply_world_map_baked_building_payload_object_ms)
 		building_last_apply_payload_visual_ms = float(building_manager._last_apply_world_map_baked_building_visual_ms)
+		if "_pending_world_map_baked_building_apply_phases" in building_manager:
+			building_pending_baked_apply_phases = int(building_manager._pending_world_map_baked_building_apply_phases.size())
+		if "_last_world_map_baked_building_apply_queue_ms" in building_manager:
+			building_last_baked_apply_queue_ms = float(building_manager._last_world_map_baked_building_apply_queue_ms)
+		if "_last_world_map_baked_building_apply_queue_count" in building_manager:
+			building_last_baked_apply_queue_count = int(building_manager._last_world_map_baked_building_apply_queue_count)
 		building_pending_visual_batch_rebuilds = int(building_manager._dirty_global_visual_batch_object_ids.size())
 		building_pending_baked_object_spawns = int(building_manager._pending_world_map_baked_object_spawns.size())
 		building_last_baked_object_spawn_queue_ms = float(building_manager._last_world_map_baked_object_spawn_queue_ms)
@@ -539,7 +552,15 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		building_visible_baked_visual_surfaces = int(building_manager._count_visible_world_map_baked_building_visual_surfaces())
 	var prefab_spawner_node := _find_manager_node("prefab_spawner", "PrefabSpawner")
 	if is_instance_valid(prefab_spawner_node):
+		if "_pending_world_map_baked_building_payload_builds" in prefab_spawner_node:
+			prefab_pending_baked_payload_build_jobs = int(prefab_spawner_node._pending_world_map_baked_building_payload_builds.size())
 		prefab_pending_baked_payload_jobs = int(prefab_spawner_node._pending_world_map_baked_building_payloads.size())
+		if "_last_world_map_baked_payload_build_queue_ms" in prefab_spawner_node:
+			prefab_last_baked_payload_build_queue_ms = float(prefab_spawner_node._last_world_map_baked_payload_build_queue_ms)
+		if "_last_world_map_baked_payload_build_queue_count" in prefab_spawner_node:
+			prefab_last_baked_payload_build_queue_count = int(prefab_spawner_node._last_world_map_baked_payload_build_queue_count)
+		if "_last_world_map_baked_payload_build_queue_success_count" in prefab_spawner_node:
+			prefab_last_baked_payload_build_queue_success_count = int(prefab_spawner_node._last_world_map_baked_payload_build_queue_success_count)
 		prefab_last_baked_payload_apply_ms = float(prefab_spawner_node._last_world_map_baked_payload_apply_ms)
 		prefab_last_baked_payload_apply_count = int(prefab_spawner_node._last_world_map_baked_payload_apply_count)
 		prefab_last_baked_payload_flush_ms = float(prefab_spawner_node._last_world_map_baked_payload_flush_ms)
@@ -672,6 +693,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"building_last_apply_payload_ms": building_last_apply_payload_ms,
 		"building_last_apply_payload_object_ms": building_last_apply_payload_object_ms,
 		"building_last_apply_payload_visual_ms": building_last_apply_payload_visual_ms,
+		"building_pending_baked_apply_phases": building_pending_baked_apply_phases,
+		"building_last_baked_apply_queue_ms": building_last_baked_apply_queue_ms,
+		"building_last_baked_apply_queue_count": building_last_baked_apply_queue_count,
 		"building_pending_visual_batch_rebuilds": building_pending_visual_batch_rebuilds,
 		"building_pending_baked_object_spawns": building_pending_baked_object_spawns,
 		"building_last_baked_object_spawn_queue_ms": building_last_baked_object_spawn_queue_ms,
@@ -683,7 +707,11 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"building_last_visibility_total_roots": building_last_visibility_total_roots,
 		"building_visible_baked_visual_nodes": building_visible_baked_visual_nodes,
 		"building_visible_baked_visual_surfaces": building_visible_baked_visual_surfaces,
+		"prefab_pending_baked_payload_build_jobs": prefab_pending_baked_payload_build_jobs,
 		"prefab_pending_baked_payload_jobs": prefab_pending_baked_payload_jobs,
+		"prefab_last_baked_payload_build_queue_ms": prefab_last_baked_payload_build_queue_ms,
+		"prefab_last_baked_payload_build_queue_count": prefab_last_baked_payload_build_queue_count,
+		"prefab_last_baked_payload_build_queue_success_count": prefab_last_baked_payload_build_queue_success_count,
 		"prefab_last_baked_payload_apply_ms": prefab_last_baked_payload_apply_ms,
 		"prefab_last_baked_payload_apply_count": prefab_last_baked_payload_apply_count,
 		"prefab_last_baked_payload_flush_ms": prefab_last_baked_payload_flush_ms,
@@ -1518,6 +1546,8 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 			+ float(building.get("total_visual_batches", 0)) * 12.0 \
 			+ float(building.get("total_object_collision_nodes", 0)) * 0.5 \
 			+ float(building.get("total_collision_box_nodes", 0)) * 0.25 \
+			+ float(building.get("pending_world_map_baked_building_apply_phases", 0)) * 8.0 \
+			+ float(building.get("last_world_map_baked_building_apply_queue_ms", 0.0)) * 8.0 \
 			+ float(building.get("pending_visual_batch_rebuilds", 0)) * 10.0 \
 			+ float(building.get("pending_world_map_baked_object_spawns", 0)) * 6.0 \
 			+ float(building.get("last_world_map_baked_object_spawn_queue_ms", 0.0)) * 8.0 \
@@ -1526,13 +1556,16 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 		rankings.append(_build_pressure_entry(
 			"BuildingManager",
 			building_score,
-			"objects=%d object_nodes=%d visual_batches=%d global_instances=%d global_surfaces=%d baked_surfaces=%d baked_object_queue=%d/%d %.2fms dirty_visible=%d" % [
+			"objects=%d object_nodes=%d visual_batches=%d global_instances=%d global_surfaces=%d baked_surfaces=%d baked_apply=%d/%d %.2fms baked_object_queue=%d/%d %.2fms dirty_visible=%d" % [
 				int(building.get("total_objects", 0)),
 				int(building.get("total_object_nodes", 0)),
 				int(building.get("total_visual_batches", 0)),
 				int(building.get("total_global_visual_instances", 0)),
 				int(building.get("visible_global_visual_batch_surfaces", 0)),
 				int(building.get("visible_world_map_baked_building_visual_surfaces", 0)),
+				int(building.get("pending_world_map_baked_building_apply_phases", 0)),
+				int(building.get("last_world_map_baked_building_apply_queue_count", 0)),
+				float(building.get("last_world_map_baked_building_apply_queue_ms", 0.0)),
 				int(building.get("pending_world_map_baked_object_spawns", 0)),
 				int(building.get("last_world_map_baked_object_spawn_queue_count", 0)),
 				float(building.get("last_world_map_baked_object_spawn_queue_ms", 0.0)),
@@ -1605,6 +1638,8 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 	if not prefab_spawner.is_empty():
 		var prefab_score := float(prefab_spawner.get("pending_spawn_jobs", 0)) * 10.0 \
 			+ float(prefab_spawner.get("pending_spawn_keys", 0)) * 3.0 \
+			+ float(prefab_spawner.get("pending_world_map_baked_payload_build_jobs", 0)) * 10.0 \
+			+ float(prefab_spawner.get("last_world_map_baked_payload_build_queue_ms", 0.0)) * 8.0 \
 			+ float(prefab_spawner.get("pending_world_map_baked_payload_jobs", 0)) * 12.0 \
 			+ float(prefab_spawner.get("last_world_map_baked_payload_apply_ms", 0.0)) * 8.0 \
 			+ float(prefab_spawner.get("last_world_map_baked_payload_flush_ms", 0.0)) * 8.0 \
@@ -1613,9 +1648,12 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 		rankings.append(_build_pressure_entry(
 			"PrefabSpawner",
 			prefab_score,
-			"pending_jobs=%d pending_keys=%d baked_queue=%d baked_apply=%d/%.2fms baked_flush=%.2fms spawned=%d doors=%d" % [
+			"pending_jobs=%d pending_keys=%d baked_build=%d/%d %.2fms baked_queue=%d baked_apply=%d/%.2fms baked_flush=%.2fms spawned=%d doors=%d" % [
 				int(prefab_spawner.get("pending_spawn_jobs", 0)),
 				int(prefab_spawner.get("pending_spawn_keys", 0)),
+				int(prefab_spawner.get("pending_world_map_baked_payload_build_jobs", 0)),
+				int(prefab_spawner.get("last_world_map_baked_payload_build_queue_count", 0)),
+				float(prefab_spawner.get("last_world_map_baked_payload_build_queue_ms", 0.0)),
 				int(prefab_spawner.get("pending_world_map_baked_payload_jobs", 0)),
 				int(prefab_spawner.get("last_world_map_baked_payload_apply_count", 0)),
 				float(prefab_spawner.get("last_world_map_baked_payload_apply_ms", 0.0)),
@@ -2455,6 +2493,8 @@ func _is_town_building_stream_ready() -> bool:
 	if not is_instance_valid(building_manager):
 		building_manager = _find_manager_node("building_manager", "BuildingManager")
 	if is_instance_valid(building_manager):
+		if building_manager.has_method("has_pending_world_map_baked_building_apply_phases") and building_manager.has_pending_world_map_baked_building_apply_phases():
+			return false
 		if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
 			return false
 		if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():

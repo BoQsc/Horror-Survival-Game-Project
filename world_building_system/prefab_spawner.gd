@@ -27,6 +27,8 @@ var skip_block_placement_for_test: bool = false
 @export_range(0.5, 20.0, 0.5) var spawn_processing_budget_ms: float = 4.0
 @export_range(0.25, 10.0, 0.25) var world_map_baked_payload_budget_ms: float = 2.0
 @export_range(1, 16, 1) var world_map_baked_payload_max_per_frame: int = 1
+@export_range(0.25, 10.0, 0.25) var world_map_baked_payload_build_budget_ms: float = 2.0
+@export_range(1, 16, 1) var world_map_baked_payload_build_max_per_frame: int = 1
 @export_range(1.0, 500.0, 1.0) var chunk_flush_interval_ms: float = 250.0
 var skip_object_spawns_for_test: bool = false
 var skip_chunk_flush_for_test: bool = false
@@ -57,11 +59,16 @@ var _last_immediate_baked_building_spawn_ms: float = 0.0
 var _last_immediate_baked_building_spawn_count: int = 0
 var _spawned_world_map_baked_terrain_chunks: Dictionary = {}
 var _spawned_world_map_baked_building_keys: Dictionary = {}
+var _pending_world_map_baked_building_payload_builds: Array[Dictionary] = []
+var _pending_world_map_baked_building_payload_build_keys: Dictionary = {}
 var _pending_world_map_baked_building_payloads: Array[Dictionary] = []
 var _pending_world_map_baked_building_payload_keys: Dictionary = {}
 var _last_spawn_job_msec: int = 0
 var _last_spawn_processing_ms: float = 0.0
 var _last_spawn_jobs_processed: int = 0
+var _last_world_map_baked_payload_build_queue_ms: float = 0.0
+var _last_world_map_baked_payload_build_queue_count: int = 0
+var _last_world_map_baked_payload_build_queue_success_count: int = 0
 var _last_world_map_baked_payload_apply_ms: float = 0.0
 var _last_world_map_baked_payload_apply_count: int = 0
 var _last_world_map_baked_payload_flush_ms: float = 0.0
@@ -177,6 +184,7 @@ func _process(_delta):
 		return
 	if _needs_world_map_baked_bootstrap():
 		_apply_existing_world_map_baked_buildings()
+	_process_pending_world_map_baked_building_payload_builds()
 	_process_pending_world_map_baked_building_payloads()
 	_process_pending_spawn_jobs()
 	if not spawned_doors.is_empty():
@@ -196,6 +204,8 @@ func _needs_world_map_baked_bootstrap() -> bool:
 func _has_deferred_building_flush_work() -> bool:
 	if not building_manager:
 		return false
+	if building_manager.has_method("has_pending_world_map_baked_building_apply_phases") and building_manager.has_pending_world_map_baked_building_apply_phases():
+		return true
 	if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
 		return true
 	if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
@@ -208,6 +218,7 @@ func _has_process_work_pending() -> bool:
 	return (
 		_needs_world_map_baked_bootstrap()
 		or not pending_spawn_jobs.is_empty()
+		or not _pending_world_map_baked_building_payload_builds.is_empty()
 		or not _pending_world_map_baked_building_payloads.is_empty()
 		or _has_deferred_building_flush_work()
 		or not spawned_doors.is_empty()
@@ -233,8 +244,13 @@ func clear_pending_spawn_jobs() -> void:
 
 
 func clear_pending_world_map_baked_payload_jobs() -> void:
+	_pending_world_map_baked_building_payload_builds.clear()
+	_pending_world_map_baked_building_payload_build_keys.clear()
 	_pending_world_map_baked_building_payloads.clear()
 	_pending_world_map_baked_building_payload_keys.clear()
+	_last_world_map_baked_payload_build_queue_ms = 0.0
+	_last_world_map_baked_payload_build_queue_count = 0
+	_last_world_map_baked_payload_build_queue_success_count = 0
 	_last_world_map_baked_payload_apply_ms = 0.0
 	_last_world_map_baked_payload_apply_count = 0
 	_last_world_map_baked_payload_flush_ms = 0.0
@@ -246,7 +262,7 @@ func has_pending_spawn_jobs() -> bool:
 
 
 func has_pending_world_map_baked_payload_jobs() -> bool:
-	return not _pending_world_map_baked_building_payloads.is_empty()
+	return not _pending_world_map_baked_building_payload_builds.is_empty() or not _pending_world_map_baked_building_payloads.is_empty()
 
 func get_telemetry_snapshot() -> Dictionary:
 	return {
@@ -262,7 +278,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_spawn_jobs_processed": _last_spawn_jobs_processed,
 		"world_map_baked_payload_budget_ms": world_map_baked_payload_budget_ms,
 		"world_map_baked_payload_max_per_frame": world_map_baked_payload_max_per_frame,
+		"world_map_baked_payload_build_budget_ms": world_map_baked_payload_build_budget_ms,
+		"world_map_baked_payload_build_max_per_frame": world_map_baked_payload_build_max_per_frame,
+		"pending_world_map_baked_payload_build_jobs": _pending_world_map_baked_building_payload_builds.size(),
 		"pending_world_map_baked_payload_jobs": _pending_world_map_baked_building_payloads.size(),
+		"last_world_map_baked_payload_build_queue_ms": _last_world_map_baked_payload_build_queue_ms,
+		"last_world_map_baked_payload_build_queue_count": _last_world_map_baked_payload_build_queue_count,
+		"last_world_map_baked_payload_build_queue_success_count": _last_world_map_baked_payload_build_queue_success_count,
 		"last_world_map_baked_payload_apply_ms": _last_world_map_baked_payload_apply_ms,
 		"last_world_map_baked_payload_apply_count": _last_world_map_baked_payload_apply_count,
 		"last_world_map_baked_payload_flush_ms": _last_world_map_baked_payload_flush_ms,
@@ -350,6 +372,10 @@ func _reset_world_map_baked_building_payloads() -> void:
 	_world_map_baked_building_source_by_key.clear()
 	_world_map_baked_building_payloads_by_key.clear()
 	_world_map_baked_building_keys_by_terrain_chunk.clear()
+	_pending_world_map_baked_building_payload_builds.clear()
+	_pending_world_map_baked_building_payload_build_keys.clear()
+	_pending_world_map_baked_building_payloads.clear()
+	_pending_world_map_baked_building_payload_keys.clear()
 	_world_map_baked_building_payload_signature = ""
 	_world_map_baked_building_payload_count = 0
 	_world_map_baked_building_block_count = 0
@@ -357,6 +383,12 @@ func _reset_world_map_baked_building_payloads() -> void:
 	_world_map_baked_building_prebuilt_chunk_count = 0
 	_last_world_map_baked_building_payload_build_ms = 0.0
 	_last_world_map_baked_building_prebuild_ms = 0.0
+	_last_world_map_baked_payload_build_queue_ms = 0.0
+	_last_world_map_baked_payload_build_queue_count = 0
+	_last_world_map_baked_payload_build_queue_success_count = 0
+	_last_world_map_baked_payload_apply_ms = 0.0
+	_last_world_map_baked_payload_apply_count = 0
+	_last_world_map_baked_payload_flush_ms = 0.0
 	_world_map_baked_buildings_bootstrapped = false
 	_spawned_world_map_baked_terrain_chunks.clear()
 	_spawned_world_map_baked_building_keys.clear()
@@ -412,6 +444,10 @@ func _ensure_world_map_baked_building_payloads() -> void:
 	_world_map_baked_building_source_by_key.clear()
 	_world_map_baked_building_payloads_by_key.clear()
 	_world_map_baked_building_keys_by_terrain_chunk.clear()
+	_pending_world_map_baked_building_payload_builds.clear()
+	_pending_world_map_baked_building_payload_build_keys.clear()
+	_pending_world_map_baked_building_payloads.clear()
+	_pending_world_map_baked_building_payload_keys.clear()
 	_spawned_world_map_baked_terrain_chunks.clear()
 	_spawned_world_map_baked_building_keys.clear()
 	_world_map_baked_building_payload_signature = source_signature
@@ -421,6 +457,12 @@ func _ensure_world_map_baked_building_payloads() -> void:
 	_world_map_baked_building_prebuilt_chunk_count = 0
 	_last_world_map_baked_building_prebuild_ms = 0.0
 	_last_world_map_baked_building_payload_build_ms = 0.0
+	_last_world_map_baked_payload_build_queue_ms = 0.0
+	_last_world_map_baked_payload_build_queue_count = 0
+	_last_world_map_baked_payload_build_queue_success_count = 0
+	_last_world_map_baked_payload_apply_ms = 0.0
+	_last_world_map_baked_payload_apply_count = 0
+	_last_world_map_baked_payload_flush_ms = 0.0
 
 	if terrain_manager._world_map_buildings.is_empty():
 		_last_world_map_baked_building_payload_build_ms = float(Time.get_ticks_usec() - build_start_us) / 1000.0
@@ -625,15 +667,50 @@ func _queue_world_map_baked_building_payload(building_key: String, spawn_pos: Ve
 		return false
 	if _spawned_world_map_baked_building_keys.has(building_key):
 		return false
+	if _pending_world_map_baked_building_payload_build_keys.has(building_key):
+		return true
 	if _pending_world_map_baked_building_payload_keys.has(building_key):
-		return false
+		return true
 	if not _world_map_baked_building_payloads_by_key.has(building_key):
-		if not _ensure_world_map_baked_building_payload_for_key(building_key):
-			return false
+		return _queue_world_map_baked_building_payload_build(building_key, spawn_pos)
+
+	return _queue_world_map_baked_building_payload_apply(building_key, _get_world_map_baked_building_distance_sq(spawn_pos))
+
+func _queue_world_map_baked_building_payload_build(building_key: String, spawn_pos: Vector3) -> bool:
+	if building_key.is_empty():
+		return false
+	if _spawned_world_map_baked_building_keys.has(building_key):
+		return false
+	if _pending_world_map_baked_building_payload_build_keys.has(building_key):
+		return true
+	if not _world_map_baked_building_source_by_key.has(building_key):
+		return false
 
 	var job := {
 		"building_key": building_key,
 		"distance_sq": _get_world_map_baked_building_distance_sq(spawn_pos)
+	}
+	var insert_index := _pending_world_map_baked_building_payload_builds.size()
+	while insert_index > 0 and _sort_world_map_baked_payload_job_by_distance(job, _pending_world_map_baked_building_payload_builds[insert_index - 1]):
+		insert_index -= 1
+	_pending_world_map_baked_building_payload_builds.insert(insert_index, job)
+	_pending_world_map_baked_building_payload_build_keys[building_key] = true
+	_wake_process_loop()
+	return true
+
+func _queue_world_map_baked_building_payload_apply(building_key: String, distance_sq: float) -> bool:
+	if building_key.is_empty():
+		return false
+	if _spawned_world_map_baked_building_keys.has(building_key):
+		return false
+	if _pending_world_map_baked_building_payload_keys.has(building_key):
+		return true
+	if not _world_map_baked_building_payloads_by_key.has(building_key):
+		return false
+
+	var job := {
+		"building_key": building_key,
+		"distance_sq": distance_sq
 	}
 	var insert_index := _pending_world_map_baked_building_payloads.size()
 	while insert_index > 0 and _sort_world_map_baked_payload_job_by_distance(job, _pending_world_map_baked_building_payloads[insert_index - 1]):
@@ -642,6 +719,36 @@ func _queue_world_map_baked_building_payload(building_key: String, spawn_pos: Ve
 	_pending_world_map_baked_building_payload_keys[building_key] = true
 	_wake_process_loop()
 	return true
+
+func _process_pending_world_map_baked_building_payload_builds() -> void:
+	if _pending_world_map_baked_building_payload_builds.is_empty():
+		_last_world_map_baked_payload_build_queue_ms = 0.0
+		_last_world_map_baked_payload_build_queue_count = 0
+		_last_world_map_baked_payload_build_queue_success_count = 0
+		return
+
+	var start_time := Time.get_ticks_usec()
+	var processed := 0
+	var built := 0
+	var max_per_frame := maxi(1, world_map_baked_payload_build_max_per_frame)
+	while not _pending_world_map_baked_building_payload_builds.is_empty() and processed < max_per_frame:
+		if processed > 0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
+			if elapsed_ms >= world_map_baked_payload_build_budget_ms:
+				break
+
+		var job: Dictionary = _pending_world_map_baked_building_payload_builds.pop_back()
+		var building_key := str(job.get("building_key", ""))
+		var distance_sq := float(job.get("distance_sq", 0.0))
+		_pending_world_map_baked_building_payload_build_keys.erase(building_key)
+		processed += 1
+		if _ensure_world_map_baked_building_payload_for_key(building_key):
+			built += 1
+			_queue_world_map_baked_building_payload_apply(building_key, distance_sq)
+
+	_last_world_map_baked_payload_build_queue_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
+	_last_world_map_baked_payload_build_queue_count = processed
+	_last_world_map_baked_payload_build_queue_success_count = built
 
 func _process_pending_world_map_baked_building_payloads() -> void:
 	if _pending_world_map_baked_building_payloads.is_empty():
@@ -675,7 +782,9 @@ func _process_pending_world_map_baked_building_payloads() -> void:
 
 func _flush_world_map_baked_payload_visuals_if_ready() -> void:
 	_last_world_map_baked_payload_flush_ms = 0.0
-	if not building_manager or not _pending_world_map_baked_building_payloads.is_empty():
+	if not building_manager or not _pending_world_map_baked_building_payload_builds.is_empty() or not _pending_world_map_baked_building_payloads.is_empty():
+		return
+	if building_manager.has_method("has_pending_world_map_baked_building_apply_phases") and building_manager.has_pending_world_map_baked_building_apply_phases():
 		return
 	if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
 		return
@@ -745,7 +854,11 @@ func _apply_world_map_baked_buildings(terrain_coord: Vector3i) -> void:
 		var rotation := int(bldg.get("rotation", 0))
 		var spawn_pos := _resolve_world_map_baked_spawn_pos(prefab_name, bldg, rotation)
 		var building_key := _get_world_map_baked_building_key(bldg, spawn_pos, rotation)
-		if _spawned_world_map_baked_building_keys.has(building_key) or _pending_world_map_baked_building_payload_keys.has(building_key):
+		if (
+			_spawned_world_map_baked_building_keys.has(building_key)
+			or _pending_world_map_baked_building_payload_build_keys.has(building_key)
+			or _pending_world_map_baked_building_payload_keys.has(building_key)
+		):
 			handled_baked_buildings = true
 			continue
 		if _queue_world_map_baked_building_payload(building_key, spawn_pos):

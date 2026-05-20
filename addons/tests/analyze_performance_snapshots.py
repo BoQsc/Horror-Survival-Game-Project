@@ -131,6 +131,7 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
     telemetry = _dict(snapshot.get("system_telemetry"))
     terrain = _dict(telemetry.get("terrain_manager"))
     building = _dict(telemetry.get("building_manager"))
+    prefab = _dict(telemetry.get("prefab_spawner"))
     vegetation = _dict(telemetry.get("vegetation_manager"))
     entities = _dict(telemetry.get("entity_manager"))
     return {
@@ -149,8 +150,21 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
         },
         "building": {
             "dirty_visible_chunk_count": _int(building.get("dirty_visible_chunk_count")),
+            "pending_world_map_baked_building_apply_phases": _int(building.get("pending_world_map_baked_building_apply_phases")),
+            "last_world_map_baked_building_apply_queue_ms": _round(_float(building.get("last_world_map_baked_building_apply_queue_ms"))),
+            "last_world_map_baked_building_apply_queue_count": _int(building.get("last_world_map_baked_building_apply_queue_count")),
             "visible_world_map_baked_building_visual_nodes": _int(building.get("visible_world_map_baked_building_visual_nodes")),
             "visible_world_map_baked_building_visual_surfaces": _int(building.get("visible_world_map_baked_building_visual_surfaces")),
+        },
+        "prefab_spawner": {
+            "world_map_baked_building_payload_signature": str(prefab.get("world_map_baked_building_payload_signature", "")),
+            "pending_world_map_baked_payload_build_jobs": _int(prefab.get("pending_world_map_baked_payload_build_jobs")),
+            "pending_world_map_baked_payload_jobs": _int(prefab.get("pending_world_map_baked_payload_jobs")),
+            "last_world_map_baked_payload_build_queue_ms": _round(_float(prefab.get("last_world_map_baked_payload_build_queue_ms"))),
+            "last_world_map_baked_payload_build_queue_count": _int(prefab.get("last_world_map_baked_payload_build_queue_count")),
+            "last_world_map_baked_payload_build_queue_success_count": _int(prefab.get("last_world_map_baked_payload_build_queue_success_count")),
+            "last_world_map_baked_payload_apply_ms": _round(_float(prefab.get("last_world_map_baked_payload_apply_ms"))),
+            "last_world_map_baked_payload_apply_count": _int(prefab.get("last_world_map_baked_payload_apply_count")),
         },
         "vegetation": {
             "global_render_batch_count": _int(vegetation.get("global_render_batch_count")),
@@ -907,6 +921,34 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
                         "latest production-like town hold pipeline compilations "
                         f"{latest_compilations} exceed {args.max_latest_production_hold_pipeline_compilations}"
                     )
+    required_payload_fragment = str(args.require_latest_production_payload_signature_fragment or "").strip()
+    if required_payload_fragment:
+        latest_production = _dict(report.get("latest_production_town"))
+        if not latest_production:
+            failures.append("no production-like town snapshots found")
+        else:
+            prefab = _dict(latest_production.get("prefab_spawner"))
+            signature = str(prefab.get("world_map_baked_building_payload_signature", ""))
+            if required_payload_fragment not in signature:
+                failures.append(
+                    "latest production-like town payload signature "
+                    f"'{signature}' does not contain '{required_payload_fragment}'"
+                )
+    if args.require_latest_production_building_stream_idle:
+        latest_production = _dict(report.get("latest_production_town"))
+        if not latest_production:
+            failures.append("no production-like town snapshots found")
+        else:
+            building = _dict(latest_production.get("building"))
+            prefab = _dict(latest_production.get("prefab_spawner"))
+            pending_apply = _int(building.get("pending_world_map_baked_building_apply_phases"))
+            pending_build = _int(prefab.get("pending_world_map_baked_payload_build_jobs"))
+            pending_payload = _int(prefab.get("pending_world_map_baked_payload_jobs"))
+            if pending_apply > 0 or pending_build > 0 or pending_payload > 0:
+                failures.append(
+                    "latest production-like town building stream not idle "
+                    f"(apply={pending_apply}, payload_build={pending_build}, payload_apply={pending_payload})"
+                )
     if args.require_latest_production_town_stable_60:
         stable_gate = _dict(report.get("stable_60_gate"))
         for failure in stable_gate.get("failures", []):
@@ -956,6 +998,8 @@ def _print_report(report: dict[str, Any]) -> None:
         latest_production = _dict(report.get("latest_production_town"))
         if latest_production:
             hold = _dict(latest_production.get("stationary_hold"))
+            building = _dict(latest_production.get("building"))
+            prefab = _dict(latest_production.get("prefab_spawner"))
             print(
                 "Latest production-like town: {name} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms prims={prims} pipes={pipes}".format(
                     name=Path(str(latest_production.get("path", ""))).name,
@@ -967,6 +1011,14 @@ def _print_report(report: dict[str, Any]) -> None:
                         hold.get("pipeline_compilations_total_delta"),
                         bool(hold.get("has_pipeline_metrics", False)),
                     ),
+                )
+            )
+            print(
+                "  Building stream: payload_sig={payload_sig} prefab_build={prefab_build} prefab_apply={prefab_apply} building_apply={building_apply}".format(
+                    payload_sig=str(prefab.get("world_map_baked_building_payload_signature", "")),
+                    prefab_build=_int(prefab.get("pending_world_map_baked_payload_build_jobs")),
+                    prefab_apply=_int(prefab.get("pending_world_map_baked_payload_jobs")),
+                    building_apply=_int(building.get("pending_world_map_baked_building_apply_phases")),
                 )
             )
         trend = _dict(report.get("production_trend"))
@@ -1205,6 +1257,8 @@ def main() -> int:
     parser.add_argument("--max-latest-production-town-avg-ms", type=float, default=None)
     parser.add_argument("--max-latest-production-town-primitives", type=float, default=None)
     parser.add_argument("--max-latest-production-hold-pipeline-compilations", type=int, default=None)
+    parser.add_argument("--require-latest-production-payload-signature-fragment", default="")
+    parser.add_argument("--require-latest-production-building-stream-idle", action="store_true")
     parser.add_argument("--require-latest-production-town-stable-60", action="store_true")
     parser.add_argument("--max-stable-60-over-budget-pct", type=float, default=DEFAULT_STABLE_60_MAX_OVER_BUDGET_PCT)
     parser.add_argument("--max-stable-60-frame-ms", type=float, default=DEFAULT_STABLE_60_MAX_FRAME_MS)
