@@ -57,6 +57,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(0, 8, 1) var distant_world_map_lod_overlap: int = 2
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
+@export var distant_world_map_lod_defer_until_initial_viewer_move: bool = true
 @export var terrain_visual_batching_enabled: bool = true
 @export var procedural_terrain_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
@@ -374,6 +375,7 @@ var _last_world_map_load_profile: Dictionary = {}
 var _startup_world_map_data: Dictionary = {}
 var _startup_world_map_load_profile: Dictionary = {}
 var _world_map_lod_chunks: Dictionary = {}
+var _world_map_lod_merged_node: MeshInstance3D = null
 var _world_map_lod_builder: Object = null
 var _world_map_lod_material: ShaderMaterial = null
 var _world_map_lod_load_candidates: Array[Vector2i] = []
@@ -385,8 +387,13 @@ var _last_world_map_lod_center: Vector2i = Vector2i(2147483647, 2147483647)
 var _last_world_map_lod_inner_distance: int = -1
 var _last_world_map_lod_outer_distance: int = -1
 var _last_world_map_lod_update_ms: float = 0.0
+var _last_world_map_lod_merge_ms: float = 0.0
 var _last_world_map_lod_loads: int = 0
 var _last_world_map_lod_unloads: int = 0
+var _last_world_map_lod_deferred: bool = false
+var _last_world_map_lod_throttled_update: bool = false
+var _world_map_lod_initial_viewer_chunk: Vector2i = Vector2i(2147483647, 2147483647)
+var _world_map_lod_initial_defer_released: bool = false
 var _dry_water_density_bytes: PackedByteArray = PackedByteArray()
 var _terrain_visual_batch_root: Node3D = null
 var _terrain_visual_batches: Dictionary = {}
@@ -614,8 +621,8 @@ func _ready():
 		cpu_threads.append(thread)
 
 	# Calculate initial load target (all chunks within render distance)
-	# For ground-level players, we only load Y=0, same chunk count as before
-	initial_load_target_chunks = int(PI * render_distance * render_distance)
+	# Match TerrainGrid's integer disk exactly; PI*r^2 overestimates some radii.
+	initial_load_target_chunks = _chunk_disk_count(render_distance)
 
 
 func get_telemetry_snapshot() -> Dictionary:
@@ -915,11 +922,25 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_retired_chunk_node_cleanup_count": _last_retired_chunk_node_cleanup_count,
 		"world_map_load_profile": _last_world_map_load_profile.duplicate(true),
 		"world_map_lod_chunk_count": _world_map_lod_chunks.size(),
+		"world_map_lod_node_count": _get_world_map_lod_node_count(),
+		"world_map_lod_merged": _is_world_map_lod_merged(),
+		"distant_world_map_lod_enabled": distant_world_map_lod_enabled,
+		"distant_world_map_lod_defer_until_initial_viewer_move": distant_world_map_lod_defer_until_initial_viewer_move,
+		"distant_world_map_lod_deferred": _last_world_map_lod_deferred,
+		"distant_world_map_lod_throttled_update": _last_world_map_lod_throttled_update,
 		"last_world_map_lod_update_ms": _last_world_map_lod_update_ms,
+		"last_world_map_lod_merge_ms": _last_world_map_lod_merge_ms,
 		"last_world_map_lod_loads": _last_world_map_lod_loads,
 		"last_world_map_lod_unloads": _last_world_map_lod_unloads,
+		"world_map_lod_load_candidate_count": _world_map_lod_load_candidates.size(),
+		"world_map_lod_unload_candidate_count": _world_map_lod_unload_candidates.size(),
+		"world_map_lod_load_cursor": _world_map_lod_load_cursor,
+		"world_map_lod_unload_cursor": _world_map_lod_unload_cursor,
+		"world_map_lod_pending_candidate_count": maxi(_world_map_lod_load_candidates.size() - _world_map_lod_load_cursor, 0) + maxi(_world_map_lod_unload_candidates.size() - _world_map_lod_unload_cursor, 0),
 		"distant_world_map_lod_distance": distant_world_map_lod_distance,
 		"distant_world_map_lod_overlap": distant_world_map_lod_overlap,
+		"distant_world_map_lod_sample_step": distant_world_map_lod_sample_step,
+		"distant_world_map_lod_budget_per_frame": distant_world_map_lod_budget_per_frame,
 		"hot_frame_backoff_remaining_frames": _hot_frame_backoff_remaining_frames,
 		"world_map_building_count": _world_map_buildings.size(),
 		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
@@ -1077,6 +1098,12 @@ func _get_world_map_lod_material() -> ShaderMaterial:
 		_world_map_lod_material.set_shader_parameter("world_map_road_map", _world_map_road_texture)
 	return _world_map_lod_material
 
+func _is_world_map_lod_merged() -> bool:
+	return _world_map_lod_merged_node != null and is_instance_valid(_world_map_lod_merged_node)
+
+func _get_world_map_lod_node_count() -> int:
+	return 1 if _is_world_map_lod_merged() else _world_map_lod_chunks.size()
+
 func _reset_world_map_lod_candidates() -> void:
 	_world_map_lod_load_candidates.clear()
 	_world_map_lod_unload_candidates.clear()
@@ -1113,24 +1140,45 @@ func _rebuild_world_map_lod_candidates(center: Vector2i) -> void:
 	_world_map_lod_unload_candidates.sort_custom(_compare_world_map_lod_coord_distance)
 	_world_map_lod_load_candidates.sort_custom(_compare_world_map_lod_coord_distance)
 
-func _clear_world_map_lod_chunks(immediate: bool = false) -> void:
+func _clear_world_map_lod_chunks(immediate: bool = false, reset_initial_defer: bool = true) -> void:
+	var released_node_ids: Dictionary = {}
 	for node_variant in _world_map_lod_chunks.values():
 		var node := node_variant as Node
 		if not node:
 			continue
+		var node_id := node.get_instance_id()
+		if released_node_ids.has(node_id):
+			continue
+		released_node_ids[node_id] = true
 		if immediate:
 			node.free()
 		else:
 			node.queue_free()
+	if _world_map_lod_merged_node and is_instance_valid(_world_map_lod_merged_node):
+		var merged_node_id := _world_map_lod_merged_node.get_instance_id()
+		if not released_node_ids.has(merged_node_id):
+			if immediate:
+				_world_map_lod_merged_node.free()
+			else:
+				_world_map_lod_merged_node.queue_free()
+	_world_map_lod_merged_node = null
 	_world_map_lod_chunks.clear()
 	_reset_world_map_lod_candidates()
 	_last_world_map_lod_center = Vector2i(2147483647, 2147483647)
 	_last_world_map_lod_inner_distance = -1
 	_last_world_map_lod_outer_distance = -1
+	_last_world_map_lod_deferred = false
+	_last_world_map_lod_merge_ms = 0.0
+	if reset_initial_defer:
+		_world_map_lod_initial_viewer_chunk = Vector2i(2147483647, 2147483647)
+		_world_map_lod_initial_defer_released = false
 
 func _unload_world_map_lod_chunk(coord: Vector2i, immediate: bool = false) -> bool:
 	if not _world_map_lod_chunks.has(coord):
 		return false
+	if _is_world_map_lod_merged():
+		_clear_world_map_lod_chunks(immediate)
+		return true
 	var node := _world_map_lod_chunks[coord] as Node
 	_world_map_lod_chunks.erase(coord)
 	if node:
@@ -1177,13 +1225,137 @@ func _load_world_map_lod_chunk(coord: Vector2i) -> bool:
 	_world_map_lod_chunks[coord] = lod_node
 	return true
 
-func _update_world_map_lod_chunks() -> void:
+func _merge_world_map_lod_chunks() -> void:
+	_last_world_map_lod_merge_ms = 0.0
+	if _is_world_map_lod_merged() or _world_map_lod_chunks.size() <= 1:
+		return
+
+	var merge_start_us := Time.get_ticks_usec()
+	var merged_vertices := PackedVector3Array()
+	var merged_normals := PackedVector3Array()
+	var merged_colors := PackedColorArray()
+	var merged_uvs := PackedVector2Array()
+	var merged_indices := PackedInt32Array()
+	var loaded_coords: Array[Vector2i] = []
+	var released_node_ids: Dictionary = {}
+
+	for coord_variant in _world_map_lod_chunks.keys():
+		var coord: Vector2i = coord_variant
+		var mesh_instance := _world_map_lod_chunks[coord] as MeshInstance3D
+		if not mesh_instance or not is_instance_valid(mesh_instance):
+			continue
+		var mesh := mesh_instance.mesh as ArrayMesh
+		if mesh == null or mesh.get_surface_count() <= 0:
+			continue
+		var arrays := mesh.surface_get_arrays(0)
+		if arrays.size() <= Mesh.ARRAY_INDEX:
+			continue
+
+		var src_vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var src_normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var src_colors: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+		var src_uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+		var src_indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		if src_vertices.is_empty() or src_indices.is_empty():
+			continue
+
+		var vertex_offset := merged_vertices.size()
+		var world_offset := mesh_instance.position
+		for vertex in src_vertices:
+			merged_vertices.append(vertex + world_offset)
+		for normal in src_normals:
+			merged_normals.append(normal)
+		for color in src_colors:
+			merged_colors.append(color)
+		for uv in src_uvs:
+			merged_uvs.append(uv)
+		for index in src_indices:
+			merged_indices.append(vertex_offset + int(index))
+
+		loaded_coords.append(coord)
+		released_node_ids[mesh_instance.get_instance_id()] = mesh_instance
+
+	if loaded_coords.size() <= 1 or merged_vertices.is_empty() or merged_indices.is_empty():
+		_last_world_map_lod_merge_ms = float(Time.get_ticks_usec() - merge_start_us) / 1000.0
+		return
+
+	var merged_arrays := []
+	merged_arrays.resize(Mesh.ARRAY_MAX)
+	merged_arrays[Mesh.ARRAY_VERTEX] = merged_vertices
+	if merged_normals.size() == merged_vertices.size():
+		merged_arrays[Mesh.ARRAY_NORMAL] = merged_normals
+	if merged_colors.size() == merged_vertices.size():
+		merged_arrays[Mesh.ARRAY_COLOR] = merged_colors
+	if merged_uvs.size() == merged_vertices.size():
+		merged_arrays[Mesh.ARRAY_TEX_UV] = merged_uvs
+	merged_arrays[Mesh.ARRAY_INDEX] = merged_indices
+
+	var merged_mesh := ArrayMesh.new()
+	merged_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, merged_arrays)
+	var lod_material := _get_world_map_lod_material()
+	if lod_material:
+		merged_mesh.surface_set_material(0, lod_material)
+
+	var merged_node := MeshInstance3D.new()
+	merged_node.name = "WorldMapLOD_Merged"
+	merged_node.mesh = merged_mesh
+	merged_node.material_override = lod_material
+	merged_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	merged_node.add_to_group("world_map_lod")
+	add_child(merged_node)
+
+	for node_variant in released_node_ids.values():
+		var node := node_variant as Node
+		if node and is_instance_valid(node):
+			node.queue_free()
+
+	_world_map_lod_merged_node = merged_node
+	for coord in loaded_coords:
+		_world_map_lod_chunks[coord] = merged_node
+	_last_world_map_lod_merge_ms = float(Time.get_ticks_usec() - merge_start_us) / 1000.0
+
+func _has_world_map_lod_initial_viewer_chunk() -> bool:
+	return _world_map_lod_initial_viewer_chunk.x <= 2000000000
+
+func _release_world_map_lod_initial_defer() -> void:
+	_world_map_lod_initial_defer_released = true
+	_last_world_map_lod_deferred = false
+
+func _should_defer_world_map_lod_for_initial_viewer(center: Vector2i) -> bool:
+	_last_world_map_lod_deferred = false
+	if not distant_world_map_lod_defer_until_initial_viewer_move or _world_map_lod_initial_defer_released:
+		return false
+	if initial_load_phase:
+		if not _has_world_map_lod_initial_viewer_chunk():
+			_world_map_lod_initial_viewer_chunk = center
+		_last_world_map_lod_deferred = true
+		return true
+	if not _has_world_map_lod_initial_viewer_chunk():
+		_release_world_map_lod_initial_defer()
+		return false
+	if center == _world_map_lod_initial_viewer_chunk:
+		_last_world_map_lod_deferred = true
+		return true
+	_release_world_map_lod_initial_defer()
+	return false
+
+func _world_map_lod_background_fill_allowed() -> bool:
+	return distant_world_map_lod_enabled \
+		and world_map_active \
+		and not initial_load_phase \
+		and pending_spawn_zones.is_empty() \
+		and not _world_map_heightmap_data.is_empty()
+
+func _update_world_map_lod_chunks(throttled_background: bool = false) -> void:
 	var start_us := Time.get_ticks_usec()
 	_last_world_map_lod_loads = 0
 	_last_world_map_lod_unloads = 0
+	_last_world_map_lod_throttled_update = throttled_background
 
 	var inner_distance := _world_map_lod_inner_distance()
 	if not distant_world_map_lod_enabled or not world_map_active or _world_map_heightmap_data.is_empty() or distant_world_map_lod_distance <= inner_distance:
+		_last_world_map_lod_deferred = false
+		_last_world_map_lod_throttled_update = false
 		if not _world_map_lod_chunks.is_empty():
 			_clear_world_map_lod_chunks()
 		_last_world_map_lod_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
@@ -1191,7 +1363,13 @@ func _update_world_map_lod_chunks() -> void:
 
 	var p_pos := get_viewer_position()
 	var center := Vector2i(int(floor(p_pos.x / CHUNK_STRIDE)), int(floor(p_pos.z / CHUNK_STRIDE)))
+	if _should_defer_world_map_lod_for_initial_viewer(center):
+		_last_world_map_lod_throttled_update = false
+		_last_world_map_lod_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+		return
 	if center != _last_world_map_lod_center or inner_distance != _last_world_map_lod_inner_distance or distant_world_map_lod_distance != _last_world_map_lod_outer_distance:
+		if _is_world_map_lod_merged():
+			_clear_world_map_lod_chunks(false, false)
 		_last_world_map_lod_center = center
 		_last_world_map_lod_inner_distance = inner_distance
 		_last_world_map_lod_outer_distance = distant_world_map_lod_distance
@@ -1216,6 +1394,7 @@ func _update_world_map_lod_chunks() -> void:
 
 	if _world_map_lod_unload_cursor >= _world_map_lod_unload_candidates.size() and _world_map_lod_load_cursor >= _world_map_lod_load_candidates.size():
 		_reset_world_map_lod_candidates()
+		_merge_world_map_lod_chunks()
 
 	_last_world_map_lod_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
@@ -2964,6 +3143,8 @@ func _process(delta):
 
 	if _runtime_power_world_work_suspended:
 		_record_runtime_power_world_work_suspended_frame()
+		if _world_map_lod_background_fill_allowed():
+			_update_world_map_lod_chunks(true)
 		_process_idle_terrain_visual_batch_polish()
 		_sync_terrain_shadow_lod()
 		return
@@ -3006,8 +3187,8 @@ func _process(delta):
 	process_pending_terrain_collision_creates()
 	if not pending_spawn_zones.is_empty():
 		_check_spawn_zone_readiness(Vector3i(2147483647, 2147483647, 2147483647))
-	if not defer_terrain_finalization and not loading_paused:
-		_update_world_map_lod_chunks()
+	if not defer_terrain_finalization and (not loading_paused or _world_map_lod_background_fill_allowed()):
+		_update_world_map_lod_chunks(loading_paused)
 	_process_completed_terrain_visual_batch_builds()
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
@@ -3150,6 +3331,12 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_VISUAL_BATCHING", terrain_visual_batching_enabled)
 	procedural_terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_PROCEDURAL_TERRAIN_VISUAL_BATCHING", procedural_terrain_visual_batching_enabled)
 	world_map_visual_batch_profile_enabled = _get_runtime_power_env_bool("TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE", world_map_visual_batch_profile_enabled)
+	distant_world_map_lod_enabled = _get_runtime_power_env_bool("TOWN_STALL_DISTANT_WORLD_MAP_LOD", distant_world_map_lod_enabled)
+	distant_world_map_lod_distance = _get_runtime_power_env_int_range("TOWN_STALL_DISTANT_WORLD_MAP_LOD_DISTANCE", distant_world_map_lod_distance, 1, 64)
+	distant_world_map_lod_overlap = _get_runtime_power_env_int_range("TOWN_STALL_DISTANT_WORLD_MAP_LOD_OVERLAP", distant_world_map_lod_overlap, 0, 8)
+	distant_world_map_lod_sample_step = _get_runtime_power_env_int_range("TOWN_STALL_DISTANT_WORLD_MAP_LOD_SAMPLE_STEP", distant_world_map_lod_sample_step, 1, 16)
+	distant_world_map_lod_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_DISTANT_WORLD_MAP_LOD_BUDGET", distant_world_map_lod_budget_per_frame, 1, 16)
+	distant_world_map_lod_defer_until_initial_viewer_move = _get_runtime_power_env_bool("TOWN_STALL_DISTANT_WORLD_MAP_LOD_DEFER_INITIAL", distant_world_map_lod_defer_until_initial_viewer_move)
 	var terrain_batch_size_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE").is_empty()
 	var terrain_batch_max_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES").is_empty()
 	var water_batch_size_overridden := not OS.get_environment("TOWN_STALL_WATER_VISUAL_BATCH_SIZE").is_empty()
@@ -3474,10 +3661,21 @@ func _get_viewer_chunk_coord() -> Vector3i:
 		int(floor(p_pos.z / CHUNK_STRIDE))
 	)
 
+func _chunk_disk_count(radius: int) -> int:
+	if radius <= 0:
+		return 0
+	var radius_sq := radius * radius
+	var count := 0
+	for x in range(-radius, radius + 1):
+		for z in range(-radius, radius + 1):
+			if x * x + z * z <= radius_sq:
+				count += 1
+	return count
+
 func _get_min_loaded_stream_chunk_count() -> int:
 	if render_distance <= 0:
 		return 0
-	var render_target := int(PI * float(render_distance * render_distance))
+	var render_target := _chunk_disk_count(render_distance)
 	return maxi(initial_load_target_chunks, render_target)
 
 func _terrain_stream_update_needed() -> bool:
@@ -5806,11 +6004,11 @@ func _unload_chunk(coord: Vector3i, queue_nodes: bool = true, emit_unloaded: boo
 
 ## Atomic world reset: cancels all background work and clears active chunks
 ## Used during Save/Load to prevent "double rendering" and redundant processing
-func clear_all_chunks():
+func clear_all_chunks(preserve_world_map_lod_initial_defer: bool = false):
 
 	# 1. Clear background task queues immediately
 	_clear_gpu_task_queues()
-	_clear_world_map_lod_chunks()
+	_clear_world_map_lod_chunks(false, not preserve_world_map_lod_initial_defer)
 	_clear_terrain_visual_batches()
 	_clear_terrain_visual_batch_mesh_cache()
 	_clear_water_visual_batches()
@@ -7953,6 +8151,11 @@ func request_spawn_zone(position: Vector3, radius: int = 2):
 	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
 	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
 	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
+	if distant_world_map_lod_enabled and distant_world_map_lod_defer_until_initial_viewer_move:
+		# Spawn-zone loads can be teleports/save-loads. If a world already exists,
+		# do not let this reset become a new permanent "initial viewer" LOD defer.
+		if not active_chunks.is_empty() or _has_world_map_lod_initial_viewer_chunk():
+			_release_world_map_lod_initial_defer()
 	_reset_far_chunks_before_spawn_zone(chunk_x, chunk_y, chunk_z)
 
 	# RESET LOADING PHASE for Save/Load tracking
@@ -8041,7 +8244,7 @@ func _reset_far_chunks_before_spawn_zone(chunk_x: int, _chunk_y: int, chunk_z: i
 
 	var clear_start_us := Time.get_ticks_usec()
 	var cleared_chunks := active_chunks.size()
-	clear_all_chunks()
+	clear_all_chunks(true)
 	_spawn_zone_far_reset_count += 1
 	_last_spawn_zone_far_reset_cleared_chunks = cleared_chunks
 	_last_spawn_zone_far_reset_ms = float(Time.get_ticks_usec() - clear_start_us) / 1000.0

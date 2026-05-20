@@ -97,6 +97,7 @@ var render_diagnostics_sample_limit: int = RENDER_DIAGNOSTIC_DEFAULT_LIMIT
 var render_diagnostics_scene_detail_limit: int = RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT
 var render_diagnostics_frame_scene_scan_limit: int = RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT
 var measure_full_flight_enabled: bool = false
+var world_ready_timeout_seconds: float = WORLD_READY_TIMEOUT_SECONDS
 var configured_hold_seconds: float = HOLD_SECONDS
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
@@ -790,6 +791,23 @@ func _collect_render_monitor_snapshot() -> Dictionary:
 		"physics_3d_islands": int(Performance.get_monitor(Performance.PHYSICS_3D_ISLAND_COUNT)),
 		"pipeline_compilations": _collect_pipeline_compilation_monitor_snapshot()
 	}
+
+
+func _collect_render_features_snapshot() -> Dictionary:
+	var features := {
+		"expected_rendering_method": "forward_plus",
+		"expected_rendering_driver": "vulkan",
+		"vulkan_only_expected": true
+	}
+	if RenderingServer.has_method("get_current_rendering_method"):
+		features["rendering_method"] = str(RenderingServer.call("get_current_rendering_method"))
+	if RenderingServer.has_method("get_current_rendering_driver_name"):
+		features["rendering_driver_name"] = str(RenderingServer.call("get_current_rendering_driver_name"))
+	features["project_rendering_method"] = str(ProjectSettings.get_setting("rendering/renderer/rendering_method", ""))
+	features["project_rendering_driver_windows"] = str(ProjectSettings.get_setting("rendering/rendering_device/driver.windows", ""))
+	features["project_fallback_to_d3d12"] = bool(ProjectSettings.get_setting("rendering/rendering_device/fallback_to_d3d12", true))
+	features["project_fallback_to_opengl3"] = bool(ProjectSettings.get_setting("rendering/rendering_device/fallback_to_opengl3", true))
+	return features
 
 
 func _collect_render_scene_scan() -> Dictionary:
@@ -1588,13 +1606,15 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 		rankings.append(_build_pressure_entry(
 			"TerrainManager",
 			terrain_score,
-			"active_chunks=%d loaded=%d pending=%d rendered=%d/%d dirty=%d" % [
+			"active_chunks=%d loaded=%d pending=%d rendered=%d/%d dirty=%d world_lod=%d far_lod=%d" % [
 				int(terrain.get("active_chunk_count", 0)),
 				int(terrain.get("loaded_chunk_count", 0)),
 				int(terrain.get("pending_chunk_count", 0)),
 				int(terrain.get("rendered_terrain_chunk_count", 0)),
 				int(terrain.get("rendered_water_chunk_count", 0)),
-				int(terrain.get("loaded_dirty_chunk_count", 0))
+				int(terrain.get("loaded_dirty_chunk_count", 0)),
+				int(terrain.get("world_map_lod_chunk_count", 0)),
+				int(terrain.get("world_map_terrain_batch_far_lod_chunk_count", 0))
 			]
 		))
 
@@ -1766,6 +1786,7 @@ func _write_native_town_entry_snapshot() -> void:
 		"latest_town_state": town_window.get("latest_town_state", {}),
 		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {})),
 		"runtime_mode": runtime_mode,
+		"render_features": _collect_render_features_snapshot(),
 		"benchmark_phase": str(phase),
 		"benchmark_phase_time": phase_time,
 		"benchmark_hold_seconds": current_hold_seconds,
@@ -1844,6 +1865,7 @@ func _ready() -> void:
 	render_diagnostics_scene_detail_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_SCENE_DETAIL_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT)
 	render_diagnostics_frame_scene_scan_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_FRAME_SCENE_SCAN_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT)
 	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
+	world_ready_timeout_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_TIMEOUT_SECONDS", WORLD_READY_TIMEOUT_SECONDS)
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
@@ -2022,15 +2044,16 @@ func _start_game_scene() -> void:
 
 	# Town stall tests use a wider default render window than gameplay.
 	var render_distance_override := _get_positive_env_int("TOWN_STALL_RENDER_DISTANCE", 10)
-	if render_distance_override > 0:
-		var terrain_manager_override := game_root.find_child("TerrainManager", true, false)
-		if terrain_manager_override and "render_distance" in terrain_manager_override:
-			terrain_manager_override.render_distance = render_distance_override
-			print("[TOWN_STALL_TEST] Terrain render distance override: %d" % render_distance_override)
-		var building_manager_override := game_root.find_child("BuildingManager", true, false)
-		if building_manager_override and "render_distance" in building_manager_override:
-			building_manager_override.render_distance = render_distance_override
-			print("[TOWN_STALL_TEST] Building render distance override: %d" % render_distance_override)
+	var terrain_render_distance_override := _get_positive_env_int("TOWN_STALL_TERRAIN_RENDER_DISTANCE", render_distance_override)
+	var building_render_distance_override := _get_positive_env_int("TOWN_STALL_BUILDING_RENDER_DISTANCE", render_distance_override)
+	var terrain_manager_override := game_root.find_child("TerrainManager", true, false)
+	if terrain_render_distance_override > 0 and terrain_manager_override and "render_distance" in terrain_manager_override:
+		terrain_manager_override.render_distance = terrain_render_distance_override
+		print("[TOWN_STALL_TEST] Terrain render distance override: %d" % terrain_render_distance_override)
+	var building_manager_override := game_root.find_child("BuildingManager", true, false)
+	if building_render_distance_override > 0 and building_manager_override and "render_distance" in building_manager_override:
+		building_manager_override.render_distance = building_render_distance_override
+		print("[TOWN_STALL_TEST] Building render distance override: %d" % building_render_distance_override)
 	var keep_disabled_collision_in_space_override := OS.get_environment("TOWN_STALL_KEEP_DISABLED_TERRAIN_COLLISION_IN_SPACE").strip_edges()
 	if not keep_disabled_collision_in_space_override.is_empty():
 		var terrain_manager_collision_override := game_root.find_child("TerrainManager", true, false)
@@ -2320,7 +2343,7 @@ func _set_glow_enabled_recursive(node: Node, enabled: bool) -> int:
 
 
 func _poll_world_ready() -> void:
-	if phase_time > WORLD_READY_TIMEOUT_SECONDS:
+	if phase_time > world_ready_timeout_seconds:
 		_fail("Timed out waiting for world to become ready")
 		return
 
@@ -2453,6 +2476,16 @@ func _is_town_terrain_stream_ready() -> bool:
 	var world_work_suspended := bool(telemetry.get("runtime_power_world_work_suspended", false))
 	var terrain_busy := false
 	terrain_busy = terrain_busy or (render_distance > 0 and int(telemetry.get("loaded_chunk_count", 0)) < min_loaded_chunks)
+	if bool(telemetry.get("distant_world_map_lod_enabled", false)) and bool(telemetry.get("world_map_active", false)):
+		var lod_distance := int(telemetry.get("distant_world_map_lod_distance", 0))
+		var lod_overlap := int(telemetry.get("distant_world_map_lod_overlap", 0))
+		var lod_inner_distance := maxi(render_distance - lod_overlap, 0)
+		if lod_distance > lod_inner_distance:
+			terrain_busy = terrain_busy or bool(telemetry.get("distant_world_map_lod_deferred", false))
+			terrain_busy = terrain_busy or int(telemetry.get("world_map_lod_chunk_count", 0)) <= 0
+			terrain_busy = terrain_busy or int(telemetry.get("world_map_lod_pending_candidate_count", 0)) > 0
+			terrain_busy = terrain_busy or int(telemetry.get("last_world_map_lod_loads", 0)) > 0
+			terrain_busy = terrain_busy or int(telemetry.get("last_world_map_lod_unloads", 0)) > 0
 	if not world_work_suspended:
 		terrain_busy = terrain_busy or int(telemetry.get("pending_chunk_count", 0)) > 0
 		terrain_busy = terrain_busy or int(telemetry.get("pending_node_count", 0)) > 0
@@ -2467,13 +2500,14 @@ func _is_town_terrain_stream_ready() -> bool:
 		_reset_town_terrain_stability()
 		return false
 
-	var signature := "%d:%d:%d:%d:%d:%d" % [
+	var signature := "%d:%d:%d:%d:%d:%d:%d" % [
 		int(telemetry.get("active_chunk_count", 0)),
 		int(telemetry.get("loaded_chunk_count", 0)),
 		int(telemetry.get("rendered_terrain_chunk_count", 0)),
 		int(telemetry.get("rendered_water_chunk_count", 0)),
 		int(telemetry.get("collision_ready_chunk_count", 0)),
-		int(telemetry.get("world_map_lod_chunk_count", 0))
+		int(telemetry.get("world_map_lod_chunk_count", 0)),
+		int(telemetry.get("world_map_lod_pending_candidate_count", 0))
 	]
 	if signature != town_terrain_stability_signature:
 		town_terrain_stability_signature = signature

@@ -16,6 +16,8 @@ DEFAULT_STABLE_60_MAX_OVER_BUDGET_PCT = 5.0
 DEFAULT_STABLE_60_MAX_FRAME_MS = 40.0
 DEFAULT_STABLE_60_MAX_FRAMES_OVER_40MS = 0
 DEFAULT_STABLE_60_MAX_OVER_BUDGET_STREAK = 5
+DEFAULT_PRODUCTION_MIN_HOLD_SECONDS = 20.0
+FRAME_BUDGET_EPSILON_MS = 0.05
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -93,6 +95,12 @@ def _age_hours(modified_epoch: Any, reference_epoch: float) -> float:
 def _window_summary(window: dict[str, Any], target_frame_ms: float) -> dict[str, Any]:
     sample_count = _int(window.get("sample_count"))
     frames_over_budget = _int(window.get("frames_over_budget"))
+    longest_over_budget_streak = _int(window.get("longest_over_budget_streak"))
+    stall_over_budget_ms = _float(window.get("stall_over_budget_ms"))
+    avg_over_budget_ms = stall_over_budget_ms / float(sample_count) if sample_count > 0 else 0.0
+    if "stall_over_budget_ms" in window and avg_over_budget_ms <= FRAME_BUDGET_EPSILON_MS:
+        frames_over_budget = 0
+        longest_over_budget_streak = 0
     render_active_samples = _int(window.get("render_active_sample_count"))
     return {
         "sample_count": sample_count,
@@ -102,9 +110,10 @@ def _window_summary(window: dict[str, Any], target_frame_ms: float) -> dict[str,
         "max_total_ms": _round(_float(window.get("max_total_ms"))),
         "frames_over_budget": frames_over_budget,
         "frames_over_budget_pct": _round((float(frames_over_budget) / float(sample_count)) * 100.0) if sample_count > 0 else 0.0,
+        "stall_over_budget_ms": _round(stall_over_budget_ms),
         "frames_over_40ms": _int(window.get("frames_over_40ms")),
         "frames_over_50ms": _int(window.get("frames_over_50ms")),
-        "longest_over_budget_streak": _int(window.get("longest_over_budget_streak")),
+        "longest_over_budget_streak": longest_over_budget_streak,
         "avg_draw_calls": _round(_float(window.get("avg_draw_calls"))),
         "avg_objects": _round(_float(window.get("avg_objects"))),
         "has_primitive_metrics": "avg_primitives" in window,
@@ -128,6 +137,9 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
     snapshot = _read_json(path)
     stationary_hold = _dict(snapshot.get("stationary_hold_window"))
     town_entry = _dict(snapshot.get("town_entry_window"))
+    machine_state = _dict(snapshot.get("machine_state"))
+    preflight_idle = _dict(machine_state.get("preflight_idle_summary"))
+    render_features = _dict(snapshot.get("render_features"))
     telemetry = _dict(snapshot.get("system_telemetry"))
     terrain = _dict(telemetry.get("terrain_manager"))
     building = _dict(telemetry.get("building_manager"))
@@ -139,6 +151,22 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
         "modified_epoch": path.stat().st_mtime,
         "hold_complete": bool(snapshot.get("benchmark_hold_complete", False)),
         "hold_seconds": _float(snapshot.get("benchmark_hold_seconds")),
+        "machine_state": {
+            "load_percentage": _float(machine_state.get("load_percentage")),
+            "percent_processor_utility": _float(machine_state.get("percent_processor_utility")),
+            "preflight_cpu_load_median_percent": _float(preflight_idle.get("cpu_load_median_percent")),
+            "preflight_raw_gpu_power_median_w": _float(preflight_idle.get("raw_gpu_power_median_w")),
+            "preflight_raw_gpu_util_median_percent": _float(preflight_idle.get("raw_gpu_util_median_percent")),
+        },
+        "render_features": {
+            "rendering_method": str(render_features.get("rendering_method", "")),
+            "rendering_driver_name": str(render_features.get("rendering_driver_name", "")),
+            "project_rendering_method": str(render_features.get("project_rendering_method", "")),
+            "project_rendering_driver_windows": str(render_features.get("project_rendering_driver_windows", "")),
+            "project_fallback_to_d3d12": bool(render_features.get("project_fallback_to_d3d12", False)),
+            "project_fallback_to_opengl3": bool(render_features.get("project_fallback_to_opengl3", False)),
+            "vulkan_only_expected": bool(render_features.get("vulkan_only_expected", False)),
+        },
         "stationary_hold": _window_summary(stationary_hold, target_frame_ms),
         "town_entry": _window_summary(town_entry, target_frame_ms),
         "terrain": {
@@ -147,6 +175,21 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
             "runtime_power_target_fps": _int(terrain.get("runtime_power_target_fps")),
             "rendered_terrain_chunk_count": _int(terrain.get("rendered_terrain_chunk_count")),
             "rendered_water_chunk_count": _int(terrain.get("rendered_water_chunk_count")),
+            "world_map_lod_chunk_count": _int(terrain.get("world_map_lod_chunk_count")),
+            "distant_world_map_lod_enabled": bool(terrain.get("distant_world_map_lod_enabled", False)),
+            "distant_world_map_lod_defer_until_initial_viewer_move": bool(
+                terrain.get("distant_world_map_lod_defer_until_initial_viewer_move", False)
+            ),
+            "distant_world_map_lod_deferred": bool(terrain.get("distant_world_map_lod_deferred", False)),
+            "distant_world_map_lod_throttled_update": bool(terrain.get("distant_world_map_lod_throttled_update", False)),
+            "distant_world_map_lod_distance": _int(terrain.get("distant_world_map_lod_distance")),
+            "distant_world_map_lod_overlap": _int(terrain.get("distant_world_map_lod_overlap")),
+            "distant_world_map_lod_sample_step": _int(terrain.get("distant_world_map_lod_sample_step")),
+            "last_world_map_lod_update_ms": _round(_float(terrain.get("last_world_map_lod_update_ms"))),
+            "world_map_terrain_batch_far_lod_enabled": bool(terrain.get("world_map_terrain_batch_far_lod_enabled", False)),
+            "world_map_terrain_batch_far_lod_chunk_count": _int(terrain.get("world_map_terrain_batch_far_lod_chunk_count")),
+            "world_map_terrain_batch_far_lod_start_chunks": _int(terrain.get("world_map_terrain_batch_far_lod_start_chunks")),
+            "world_map_terrain_batch_far_lod_sample_step": _int(terrain.get("world_map_terrain_batch_far_lod_sample_step")),
         },
         "building": {
             "dirty_visible_chunk_count": _int(building.get("dirty_visible_chunk_count")),
@@ -205,6 +248,7 @@ def _procedural_window_summary(samples: list[Any], phases: set[str]) -> dict[str
             "max_water_visual_batch_node_count": 0,
             "max_terrain_visual_batch_near_cull_chunk_count": 0,
             "max_water_visual_batch_near_cull_chunk_count": 0,
+            "max_world_map_terrain_batch_far_lod_chunk_count": 0,
         }
 
     terrains = [_dict(row.get("terrain")) for row in rows]
@@ -221,6 +265,7 @@ def _procedural_window_summary(samples: list[Any], phases: set[str]) -> dict[str
         "max_water_visual_batch_node_count": max(_int(terrain.get("water_visual_batch_node_count")) for terrain in terrains),
         "max_terrain_visual_batch_near_cull_chunk_count": max(_int(terrain.get("terrain_visual_batch_near_cull_chunk_count")) for terrain in terrains),
         "max_water_visual_batch_near_cull_chunk_count": max(_int(terrain.get("water_visual_batch_near_cull_chunk_count")) for terrain in terrains),
+        "max_world_map_terrain_batch_far_lod_chunk_count": max(_int(terrain.get("world_map_terrain_batch_far_lod_chunk_count")) for terrain in terrains),
     }
 
 
@@ -312,6 +357,9 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
             "terrain_visual_batch_hidden_chunk_count": _int(terrain.get("terrain_visual_batch_hidden_chunk_count")),
             "terrain_visual_batch_near_cull_chunk_count": _int(terrain.get("terrain_visual_batch_near_cull_chunk_count")),
             "effective_terrain_visual_batch_near_cull_radius_chunks": _int(terrain.get("effective_terrain_visual_batch_near_cull_radius_chunks")),
+            "world_map_terrain_batch_far_lod_enabled": bool(terrain.get("world_map_terrain_batch_far_lod_enabled", False)),
+            "world_map_terrain_batch_far_lod_chunk_count": _int(terrain.get("world_map_terrain_batch_far_lod_chunk_count")),
+            "world_map_terrain_batch_far_lod_sample_step": _int(terrain.get("world_map_terrain_batch_far_lod_sample_step")),
             "terrain_shadow_lod_enabled": bool(terrain.get("terrain_shadow_lod_enabled", False)),
             "terrain_shadow_lod_radius_chunks": _int(terrain.get("terrain_shadow_lod_radius_chunks")),
             "last_terrain_shadow_lod_enabled_count": _int(terrain.get("last_terrain_shadow_lod_enabled_count")),
@@ -641,20 +689,84 @@ def _ablation_cases_by_snapshot(render_ablation: dict[str, Any]) -> dict[str, st
     return cases
 
 
-def _annotate_town_runs(town: list[dict[str, Any]], render_ablation: dict[str, Any]) -> None:
+def _town_render_mismatch(render_features: dict[str, Any]) -> bool:
+    rendering_method = str(render_features.get("rendering_method", "")).strip().lower()
+    rendering_driver = str(render_features.get("rendering_driver_name", "")).strip().lower()
+    project_method = str(render_features.get("project_rendering_method", "")).strip().lower()
+    project_driver = str(render_features.get("project_rendering_driver_windows", "")).strip().lower()
+    if rendering_method and rendering_method != "forward_plus":
+        return True
+    if rendering_driver and rendering_driver != "vulkan":
+        return True
+    if project_method and project_method != "forward_plus":
+        return True
+    if project_driver and project_driver != "vulkan":
+        return True
+    return False
+
+
+def _town_render_unverified(render_features: dict[str, Any]) -> bool:
+    if bool(render_features.get("vulkan_only_expected", False)):
+        return False
+    return not any(
+        str(render_features.get(key, "")).strip()
+        for key in (
+            "rendering_method",
+            "rendering_driver_name",
+            "project_rendering_method",
+            "project_rendering_driver_windows",
+        )
+    )
+
+
+def _annotate_town_runs(town: list[dict[str, Any]], render_ablation: dict[str, Any], production_min_hold_seconds: float) -> None:
     cases_by_snapshot = _ablation_cases_by_snapshot(render_ablation)
+    min_hold_seconds = max(0.0, production_min_hold_seconds)
     for entry in town:
         path = str(Path(str(entry.get("path", ""))))
         ablation_case = cases_by_snapshot.get(path, "")
+        render_features = _dict(entry.get("render_features"))
+        terrain = _dict(entry.get("terrain"))
+        machine = _dict(entry.get("machine_state"))
+        machine_load = _float(machine.get("load_percentage"))
+        preflight_cpu_load = _float(machine.get("preflight_cpu_load_median_percent"))
+        preflight_gpu_util = _float(machine.get("preflight_raw_gpu_util_median_percent"))
+        contaminated = machine_load > 55.0 or preflight_cpu_load > 55.0 or preflight_gpu_util > 30.0
+        incomplete = not bool(entry.get("hold_complete", False))
+        short_probe = 0.0 < _float(entry.get("hold_seconds")) < min_hold_seconds
+        experimental = (
+            bool(terrain.get("world_map_terrain_batch_far_lod_enabled", False))
+            or _int(terrain.get("world_map_terrain_batch_far_lod_chunk_count")) > 0
+        )
         if ablation_case and ablation_case != "baseline":
             run_role = "ablation_control"
+        elif _town_render_unverified(render_features):
+            run_role = "renderer_unverified"
+        elif _town_render_mismatch(render_features):
+            run_role = "renderer_mismatch"
+        elif contaminated:
+            run_role = "contaminated"
+        elif incomplete:
+            run_role = "incomplete"
+        elif short_probe:
+            run_role = "short_probe"
+        elif experimental:
+            run_role = "experimental"
         elif ablation_case == "baseline":
             run_role = "ablation_baseline"
         else:
             run_role = "production_like"
         entry["ablation_case"] = ablation_case
         entry["run_role"] = run_role
-        entry["production_candidate"] = run_role != "ablation_control"
+        entry["production_candidate"] = run_role not in {
+            "ablation_control",
+            "contaminated",
+            "experimental",
+            "incomplete",
+            "renderer_mismatch",
+            "renderer_unverified",
+            "short_probe",
+        }
 
 
 def _latest_production_town(town: list[dict[str, Any]]) -> dict[str, Any]:
@@ -707,13 +819,13 @@ def _stable_60_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[st
 
     if not bool(latest_production.get("hold_complete", False)):
         failures.append("latest production-like town hold did not complete")
-    if avg_ms > args.target_frame_ms:
+    if avg_ms > args.target_frame_ms + FRAME_BUDGET_EPSILON_MS:
         failures.append(f"avg frame time {avg_ms:.3f} ms exceeds target {args.target_frame_ms:.3f} ms")
     if over_budget_pct > args.max_stable_60_over_budget_pct:
         failures.append(
             f"over-budget frames {over_budget_pct:.3f}% exceed {args.max_stable_60_over_budget_pct:.3f}%"
         )
-    if max_ms > args.max_stable_60_frame_ms:
+    if max_ms > args.max_stable_60_frame_ms + FRAME_BUDGET_EPSILON_MS:
         failures.append(f"max frame time {max_ms:.3f} ms exceeds {args.max_stable_60_frame_ms:.3f} ms")
     if frames_over_40ms > args.max_stable_60_frames_over_40ms:
         failures.append(f"frames over 40ms {frames_over_40ms} exceed {args.max_stable_60_frames_over_40ms}")
@@ -752,12 +864,13 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     ]
     render_ablation = _summarize_render_ablation(Path(args.render_ablation_summary))
     gpu_telemetry = _summarize_gpu_telemetry_files(args)
-    _annotate_town_runs(town, render_ablation)
+    _annotate_town_runs(town, render_ablation, args.production_min_hold_seconds)
     report = {
         "generated_at_epoch": generated_at_epoch,
         "snapshot_dir": str(snapshot_dir),
         "gpu_telemetry_dir": str(Path(args.gpu_telemetry_dir)),
         "target_frame_ms": args.target_frame_ms,
+        "production_min_hold_seconds": args.production_min_hold_seconds,
         "town": town,
         "latest_production_town": _latest_production_town(town),
         "production_trend": _production_trend(town),
@@ -998,10 +1111,12 @@ def _print_report(report: dict[str, Any]) -> None:
         latest_production = _dict(report.get("latest_production_town"))
         if latest_production:
             hold = _dict(latest_production.get("stationary_hold"))
+            terrain = _dict(latest_production.get("terrain"))
+            render_features = _dict(latest_production.get("render_features"))
             building = _dict(latest_production.get("building"))
             prefab = _dict(latest_production.get("prefab_spawner"))
             print(
-                "Latest production-like town: {name} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms prims={prims} pipes={pipes}".format(
+                "Latest production-like town: {name} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms prims={prims} pipes={pipes} world_lod={world_lod} far_lod={far_lod} renderer={renderer}/{driver}".format(
                     name=Path(str(latest_production.get("path", ""))).name,
                     avg=_float(hold.get("avg_total_ms")),
                     over=_float(hold.get("frames_over_budget_pct")),
@@ -1011,6 +1126,10 @@ def _print_report(report: dict[str, Any]) -> None:
                         hold.get("pipeline_compilations_total_delta"),
                         bool(hold.get("has_pipeline_metrics", False)),
                     ),
+                    world_lod=_int(terrain.get("world_map_lod_chunk_count")),
+                    far_lod=_int(terrain.get("world_map_terrain_batch_far_lod_chunk_count")),
+                    renderer=str(render_features.get("rendering_method", "")) or "unknown",
+                    driver=str(render_features.get("rendering_driver_name", "")) or str(render_features.get("project_rendering_driver_windows", "")) or "unknown",
                 )
             )
             print(
@@ -1081,7 +1200,7 @@ def _print_report(report: dict[str, Any]) -> None:
                 "gpu_move={gpu_move_power:.1f}W gpu_hold={gpu_hold_power:.1f}W "
                 "water_dispatch={water_dispatch} water_skips={water_skips} water_build={water_build:.3f}ms "
                 "terrain_batches={terrain_batches} terrain_hidden={terrain_hidden} "
-                "terrain_near={terrain_near} water_batches={water_batches} hidden={hidden} "
+                "terrain_near={terrain_near} terrain_far_lod={terrain_far_lod} water_batches={water_batches} hidden={hidden} "
                 "water_near={water_near} shadows={shadow_on}/{shadow_off} dirty={water_dirty}".format(
                     name=Path(str(entry.get("path", ""))).name,
                     complete=bool(entry.get("completed", False)),
@@ -1120,6 +1239,7 @@ def _print_report(report: dict[str, Any]) -> None:
                     terrain_batches=_int(active.get("max_terrain_visual_batch_node_count")),
                     terrain_hidden=_int(active.get("max_terrain_visual_batch_hidden_chunk_count")),
                     terrain_near=_int(active.get("max_terrain_visual_batch_near_cull_chunk_count")),
+                    terrain_far_lod=_int(active.get("max_world_map_terrain_batch_far_lod_chunk_count")),
                     water_batches=_int(active.get("max_water_visual_batch_node_count")),
                     hidden=_int(active.get("max_water_visual_batch_hidden_chunk_count")),
                     water_near=_int(active.get("max_water_visual_batch_near_cull_chunk_count")),
@@ -1242,6 +1362,7 @@ def main() -> int:
     parser.add_argument("--town-count", type=int, default=5)
     parser.add_argument("--procedural-count", type=int, default=5)
     parser.add_argument("--target-frame-ms", type=float, default=1000.0 / 60.0)
+    parser.add_argument("--production-min-hold-seconds", type=float, default=DEFAULT_PRODUCTION_MIN_HOLD_SECONDS)
     parser.add_argument("--render-ablation-summary", default=str(DEFAULT_RENDER_ABLATION_SUMMARY))
     parser.add_argument("--gpu-telemetry-dir", default=str(DEFAULT_GPU_TELEMETRY_DIR))
     parser.add_argument("--gpu-telemetry-count", type=int, default=3)

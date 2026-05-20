@@ -18,7 +18,9 @@ MAIN_SCENE = "res://addons/tests/town_stall_test_harness.tscn"
 GODOT_RENDERING_DRIVER = "vulkan"
 GODOT_RENDERING_METHOD = "forward_plus"
 DEFAULT_TIMEOUT = 900
-SNAPSHOT_DIR = Path(r"C:\Users\Windows10_new\AppData\Roaming\Godot\app_userdata\Horror Survival Game Project\debug\performance")
+TOWN_STALL_APPDATA_DIR = Path(os.environ.get("TOWN_STALL_APPDATA_DIR", str(Path(PROJECT_PATH) / ".agent" / "town-stall-appdata")))
+TOWN_STALL_PROJECT_USER_DIR = TOWN_STALL_APPDATA_DIR / "Godot" / "app_userdata" / "Horror Survival Game Project"
+SNAPSHOT_DIR = TOWN_STALL_PROJECT_USER_DIR / "debug" / "performance"
 LOG_DIR = SNAPSHOT_DIR.parent.parent / "logs"
 LOG_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-godot.log"
 RUN_LOCK_FILE = Path(PROJECT_PATH) / ".agent" / "town-stall-test.lock"
@@ -1471,6 +1473,7 @@ def main() -> int:
     print(f"   Scene: {MAIN_SCENE}")
     print(f"   Runtime mode: {_runtime_mode_label()} ({Path(GODOT_BIN).name})")
     print(f"   Rendering: {GODOT_RENDERING_METHOD} / {GODOT_RENDERING_DRIVER}")
+    print(f"   Godot APPDATA: {TOWN_STALL_APPDATA_DIR}")
     print("-" * 50)
     run_start_mtime = time.time()
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1508,6 +1511,7 @@ def main() -> int:
     ]
 
     env = os.environ.copy()
+    env["APPDATA"] = str(TOWN_STALL_APPDATA_DIR)
     env["TOWN_STALL_SEED"] = os.environ.get("TOWN_STALL_SEED", "12345")
     env["TOWN_STALL_AUTO_TELEPORT"] = os.environ.get("TOWN_STALL_AUTO_TELEPORT", "0")
     env["TOWN_STALL_REPEAT_ENTRY"] = os.environ.get("TOWN_STALL_REPEAT_ENTRY", "0")
@@ -1548,7 +1552,7 @@ def main() -> int:
         )
 
     configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
-    timeout = max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0))
+    timeout = _positive_int_from_env("TOWN_STALL_TIMEOUT_SECONDS", max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0)))
     system_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", 0.0)
     postrun_idle_check_disabled = os.environ.get("TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK", "0") == "1"
     postrun_idle_delay_seconds = _float_from_env("TOWN_STALL_POSTRUN_IDLE_DELAY_SECONDS", 2.0)
