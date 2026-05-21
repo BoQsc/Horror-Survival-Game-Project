@@ -82,6 +82,8 @@ var disable_building_object_collisions_enabled: bool = false
 var disable_building_chunk_flush_enabled: bool = false
 var disable_building_chunk_collisions_enabled: bool = false
 var disable_terrain_chunk_updates_enabled: bool = false
+var disable_terrain_manager_visuals_enabled: bool = false
+var disable_vegetation_render_enabled: bool = false
 var disable_glow_enabled: bool = false
 var disable_water_render_enabled: bool = false
 var instant_baked_buildings_enabled: bool = true
@@ -2146,6 +2148,8 @@ func _ready() -> void:
 	disable_building_chunk_flush_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_FLUSH") == "1"
 	disable_building_chunk_collisions_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS") == "1"
 	disable_terrain_chunk_updates_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES") == "1"
+	disable_terrain_manager_visuals_enabled = OS.get_environment("TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS") == "1"
+	disable_vegetation_render_enabled = OS.get_environment("TOWN_STALL_DISABLE_VEGETATION_RENDER") == "1"
 	disable_glow_enabled = OS.get_environment("TOWN_STALL_DISABLE_GLOW") == "1"
 	disable_water_render_enabled = OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1"
 	instant_baked_buildings_enabled = OS.get_environment("TOWN_STALL_INSTANT_BAKED_BUILDINGS") != "0"
@@ -2183,6 +2187,8 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable building chunk flush: %s" % ("ON" if disable_building_chunk_flush_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable building chunk collisions: %s" % ("ON" if disable_building_chunk_collisions_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable terrain chunk updates: %s" % ("ON" if disable_terrain_chunk_updates_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable terrain manager visuals: %s" % ("ON" if disable_terrain_manager_visuals_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Disable vegetation render: %s" % ("ON" if disable_vegetation_render_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable glow: %s" % ("ON" if disable_glow_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable water render: %s" % ("ON" if disable_water_render_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Instant baked buildings: %s" % ("ON" if instant_baked_buildings_enabled else "OFF"))
@@ -2221,6 +2227,8 @@ func _ready() -> void:
 		"disable_building_chunk_flush": disable_building_chunk_flush_enabled,
 		"disable_building_chunk_collisions": disable_building_chunk_collisions_enabled,
 		"disable_terrain_chunk_updates": disable_terrain_chunk_updates_enabled,
+		"disable_terrain_manager_visuals": disable_terrain_manager_visuals_enabled,
+		"disable_vegetation_render": disable_vegetation_render_enabled,
 		"disable_glow": disable_glow_enabled,
 		"disable_water_render": disable_water_render_enabled,
 		"instant_baked_buildings": instant_baked_buildings_enabled,
@@ -2378,6 +2386,10 @@ func _start_game_scene() -> void:
 				"disable_water_render": true
 			})
 			print("[TOWN_STALL_TEST] Water rendering disabled for test isolation.")
+	if disable_terrain_manager_visuals_enabled:
+		_apply_terrain_manager_visuals_toggle()
+	if disable_vegetation_render_enabled:
+		_apply_vegetation_render_toggle()
 	if disable_glow_enabled:
 		_apply_render_feature_toggles()
 
@@ -2608,6 +2620,38 @@ func _apply_entities_toggle() -> void:
 		"disable_entities": true
 	})
 	print("[TOWN_STALL_TEST] Entities disabled for test isolation.")
+
+
+func _apply_terrain_manager_visuals_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var terrain_manager_node := game_root.find_child("TerrainManager", true, false)
+	var terrain_visual_root := terrain_manager_node as Node3D
+	if terrain_visual_root:
+		terrain_visual_root.visible = false
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "terrain_manager_visuals_disabled",
+		"disable_terrain_manager_visuals": true
+	})
+	print("[TOWN_STALL_TEST] Terrain manager visuals disabled for test isolation.")
+
+
+func _apply_vegetation_render_toggle() -> void:
+	if not is_instance_valid(game_root):
+		return
+
+	var vegetation_manager_node := game_root.find_child("VegetationManager", true, false)
+	var vegetation_visual_root := vegetation_manager_node as Node3D
+	if vegetation_visual_root:
+		vegetation_visual_root.visible = false
+
+	_emit_scope_state("town_stall_test", {
+		"phase": "vegetation_render_disabled",
+		"disable_vegetation_render": true
+	})
+	print("[TOWN_STALL_TEST] Vegetation rendering disabled for test isolation.")
 
 
 func _apply_render_feature_toggles() -> void:

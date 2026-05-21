@@ -63,7 +63,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export var procedural_terrain_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
 @export var world_map_visual_batch_profile_enabled: bool = true
-@export_range(1, 16, 1) var world_map_terrain_visual_batch_size: int = 3
+@export_range(1, 16, 1) var world_map_terrain_visual_batch_size: int = 2
 @export_range(1, 8, 1) var terrain_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 16, 1) var terrain_visual_batch_cached_rebuilds_per_frame: int = 4
 @export_range(0.1, 5.0, 0.1) var terrain_visual_batch_cached_rebuild_budget_ms: float = 0.75
@@ -86,7 +86,7 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export var water_visual_batching_enabled: bool = true
 @export var procedural_water_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var water_visual_batch_size: int = 2
-@export_range(1, 16, 1) var world_map_water_visual_batch_size: int = 3
+@export_range(1, 16, 1) var world_map_water_visual_batch_size: int = 2
 @export_range(1, 8, 1) var water_visual_batch_rebuilds_per_frame: int = 1
 @export_range(0, 200000, 1000) var water_visual_batch_max_vertices: int = 48000
 @export_range(0, 200000, 1000) var world_map_water_visual_batch_max_vertices: int = 200000
@@ -678,6 +678,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		native_grid_active_chunk_count = terrain_grid.get_active_chunk_count()
 		_last_native_grid_active_chunk_count = native_grid_active_chunk_count
 
+	var terrain_visual_stats := _collect_terrain_visual_telemetry()
+
 	return {
 		"active_chunk_count": active_chunks.size(),
 		"native_grid_active_chunk_count": native_grid_active_chunk_count,
@@ -758,6 +760,20 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_node_count": _terrain_visual_batches.size(),
 		"terrain_visual_batch_hidden_chunk_count": _count_hidden_terrain_visual_batch_chunks(),
 		"terrain_visual_batch_dirty_count": _terrain_visual_batch_dirty.size(),
+		"terrain_visual_chunk_mesh_count": int(terrain_visual_stats.get("chunk_mesh_count", 0)),
+		"terrain_visual_chunk_primitive_count": int(terrain_visual_stats.get("chunk_primitive_count", 0)),
+		"terrain_visual_chunk_visible_mesh_count": int(terrain_visual_stats.get("chunk_visible_mesh_count", 0)),
+		"terrain_visual_chunk_visible_primitive_count": int(terrain_visual_stats.get("chunk_visible_primitive_count", 0)),
+		"terrain_visual_chunk_batched_mesh_count": int(terrain_visual_stats.get("chunk_batched_mesh_count", 0)),
+		"terrain_visual_chunk_batched_primitive_count": int(terrain_visual_stats.get("chunk_batched_primitive_count", 0)),
+		"terrain_visual_batch_mesh_count": int(terrain_visual_stats.get("batch_mesh_count", 0)),
+		"terrain_visual_batch_primitive_count": int(terrain_visual_stats.get("batch_primitive_count", 0)),
+		"terrain_visual_visible_primitive_count": int(terrain_visual_stats.get("visible_primitive_count", 0)),
+		"terrain_visual_batch_member_count": int(terrain_visual_stats.get("batch_member_count", 0)),
+		"terrain_visual_max_chunk_primitive_count": int(terrain_visual_stats.get("max_chunk_primitive_count", 0)),
+		"terrain_visual_max_chunk_coord": str(terrain_visual_stats.get("max_chunk_coord", "")),
+		"terrain_visual_max_batch_primitive_count": int(terrain_visual_stats.get("max_batch_primitive_count", 0)),
+		"terrain_visual_max_batch_key": str(terrain_visual_stats.get("max_batch_key", "")),
 		"last_terrain_visual_batch_rebuild_ms": _last_terrain_visual_batch_rebuild_ms,
 		"last_terrain_visual_batch_rebuild_count": _last_terrain_visual_batch_rebuild_count,
 		"last_terrain_visual_batch_hot_rebuild": _last_terrain_visual_batch_hot_rebuild,
@@ -1707,6 +1723,84 @@ func _get_mesh_surface_index_count(mesh: Mesh) -> int:
 		return _get_mesh_surface_vertex_count(mesh)
 	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
 	return indices.size() if not indices.is_empty() else _get_mesh_surface_vertex_count(mesh)
+
+func _get_mesh_surface_primitive_count(mesh: Mesh) -> int:
+	var index_count := _get_mesh_surface_index_count(mesh)
+	if index_count > 0:
+		return int(index_count / 3)
+	return int(_get_mesh_surface_vertex_count(mesh) / 3)
+
+func _collect_terrain_visual_telemetry() -> Dictionary:
+	var chunk_mesh_count := 0
+	var chunk_primitive_count := 0
+	var chunk_visible_mesh_count := 0
+	var chunk_visible_primitive_count := 0
+	var chunk_batched_mesh_count := 0
+	var chunk_batched_primitive_count := 0
+	var max_chunk_primitive_count := 0
+	var max_chunk_coord := ""
+
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		var data = active_chunks.get(coord, null)
+		if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):
+			continue
+		var terrain_mesh := _get_chunk_terrain_visual_mesh(data)
+		if terrain_mesh == null:
+			continue
+		var chunk_primitives := _get_mesh_surface_primitive_count(terrain_mesh)
+		chunk_mesh_count += 1
+		chunk_primitive_count += chunk_primitives
+		if chunk_primitives > max_chunk_primitive_count:
+			max_chunk_primitive_count = chunk_primitives
+			max_chunk_coord = str(coord)
+		if bool(data.terrain_visual_batched):
+			chunk_batched_mesh_count += 1
+			chunk_batched_primitive_count += chunk_primitives
+		else:
+			chunk_visible_mesh_count += 1
+			chunk_visible_primitive_count += chunk_primitives
+
+	var batch_mesh_count := 0
+	var batch_primitive_count := 0
+	var max_batch_primitive_count := 0
+	var max_batch_key := ""
+	for key_variant in _terrain_visual_batches.keys():
+		var key: Vector2i = key_variant
+		var batch_node := _terrain_visual_batches.get(key, null) as MeshInstance3D
+		if batch_node == null or not is_instance_valid(batch_node) or not batch_node.visible:
+			continue
+		var batch_mesh := batch_node.mesh
+		if batch_mesh == null:
+			continue
+		var batch_primitives := _get_mesh_surface_primitive_count(batch_mesh)
+		batch_mesh_count += 1
+		batch_primitive_count += batch_primitives
+		if batch_primitives > max_batch_primitive_count:
+			max_batch_primitive_count = batch_primitives
+			max_batch_key = str(key)
+
+	var batch_member_count := 0
+	for batch_members_variant in _terrain_visual_batch_members.values():
+		var batch_members: Dictionary = batch_members_variant
+		batch_member_count += batch_members.size()
+
+	return {
+		"chunk_mesh_count": chunk_mesh_count,
+		"chunk_primitive_count": chunk_primitive_count,
+		"chunk_visible_mesh_count": chunk_visible_mesh_count,
+		"chunk_visible_primitive_count": chunk_visible_primitive_count,
+		"chunk_batched_mesh_count": chunk_batched_mesh_count,
+		"chunk_batched_primitive_count": chunk_batched_primitive_count,
+		"batch_mesh_count": batch_mesh_count,
+		"batch_primitive_count": batch_primitive_count,
+		"visible_primitive_count": chunk_visible_primitive_count + batch_primitive_count,
+		"batch_member_count": batch_member_count,
+		"max_chunk_primitive_count": max_chunk_primitive_count,
+		"max_chunk_coord": max_chunk_coord,
+		"max_batch_primitive_count": max_batch_primitive_count,
+		"max_batch_key": max_batch_key
+	}
 
 func _ensure_chunk_terrain_mesh_instance(data) -> MeshInstance3D:
 	if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):

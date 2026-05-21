@@ -3,7 +3,7 @@ class_name VegetationManager
 
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 const GLOBAL_VEGETATION_RENDER_AABB := AABB(Vector3(-4096.0, -128.0, -4096.0), Vector3(8192.0, 512.0, 8192.0))
-const GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING := 96.0
+const GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING := 32.0
 const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 
 
@@ -29,10 +29,12 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(1, 32, 1) var vegetation_render_cluster_size: int = 8
 @export_range(1, 32, 1) var vegetation_grass_render_cluster_size: int = 6
 @export_range(0.0, 2048.0, 1.0) var vegetation_render_extra_cull_margin: float = 0.0
+@export_range(0.0, 256.0, 1.0) var vegetation_global_render_bounds_padding: float = GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
+@export var vegetation_global_render_ignore_occlusion_culling: bool = true
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
 @export var world_map_vegetation_render_profile_enabled: bool = true
-@export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 12
-@export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 12
+@export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 4
+@export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 6
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
 @export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 1.5
 @export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 3.0
@@ -224,6 +226,13 @@ func _sync_process_loop() -> void:
 
 
 func get_telemetry_snapshot() -> Dictionary:
+	var tree_render_stats := _get_global_render_kind_telemetry("tree")
+	var grass_render_stats := _get_global_render_kind_telemetry("grass")
+	var rock_render_stats := _get_global_render_kind_telemetry("rock")
+	var vegetation_estimated_primitives := int(tree_render_stats.get("estimated_primitives", 0)) \
+		+ int(grass_render_stats.get("estimated_primitives", 0)) \
+		+ int(rock_render_stats.get("estimated_primitives", 0))
+
 	return {
 		"pending_chunks": pending_chunks.size(),
 		"tree_chunk_count": chunk_tree_data.size(),
@@ -277,6 +286,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_render_cluster_size": vegetation_render_cluster_size,
 		"vegetation_grass_render_cluster_size": vegetation_grass_render_cluster_size,
 		"vegetation_render_extra_cull_margin": vegetation_render_extra_cull_margin,
+		"vegetation_global_render_bounds_padding": vegetation_global_render_bounds_padding,
+		"vegetation_global_render_ignore_occlusion_culling": vegetation_global_render_ignore_occlusion_culling,
 		"vegetation_render_lod_bias": vegetation_render_lod_bias,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
 		"world_map_vegetation_render_profile_active": _use_world_map_vegetation_render_profile(),
@@ -294,6 +305,19 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_tree_render_instances": _global_tree_render_instance_count,
 		"global_grass_render_instances": _global_grass_render_instance_count,
 		"global_rock_render_instances": _global_rock_render_instance_count,
+		"tree_mesh_primitives": int(tree_render_stats.get("mesh_primitives", 0)),
+		"grass_mesh_primitives": int(grass_render_stats.get("mesh_primitives", 0)),
+		"rock_mesh_primitives": int(rock_render_stats.get("mesh_primitives", 0)),
+		"global_tree_render_estimated_primitives": int(tree_render_stats.get("estimated_primitives", 0)),
+		"global_grass_render_estimated_primitives": int(grass_render_stats.get("estimated_primitives", 0)),
+		"global_rock_render_estimated_primitives": int(rock_render_stats.get("estimated_primitives", 0)),
+		"global_render_estimated_primitives": vegetation_estimated_primitives,
+		"global_tree_max_batch_instances": int(tree_render_stats.get("max_batch_instances", 0)),
+		"global_grass_max_batch_instances": int(grass_render_stats.get("max_batch_instances", 0)),
+		"global_rock_max_batch_instances": int(rock_render_stats.get("max_batch_instances", 0)),
+		"global_tree_max_batch_estimated_primitives": int(tree_render_stats.get("max_batch_estimated_primitives", 0)),
+		"global_grass_max_batch_estimated_primitives": int(grass_render_stats.get("max_batch_estimated_primitives", 0)),
+		"global_rock_max_batch_estimated_primitives": int(rock_render_stats.get("max_batch_estimated_primitives", 0)),
 		"global_render_dirty_kinds": _get_global_render_dirty_kinds(),
 		"global_tree_dirty_cluster_count": _global_tree_dirty_clusters.size(),
 		"global_grass_dirty_cluster_count": _global_grass_dirty_clusters.size(),
@@ -356,6 +380,8 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	world_map_vegetation_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE", world_map_vegetation_render_cluster_size, 1, 64)
 	world_map_vegetation_grass_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE", world_map_vegetation_grass_render_cluster_size, 1, 64)
 	vegetation_render_extra_cull_margin = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_EXTRA_CULL_MARGIN", vegetation_render_extra_cull_margin, 0.0, 2048.0)
+	vegetation_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING", vegetation_global_render_bounds_padding, 0.0, 256.0)
+	vegetation_global_render_ignore_occlusion_culling = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING", vegetation_global_render_ignore_occlusion_culling)
 	vegetation_render_lod_bias = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_LOD_BIAS", vegetation_render_lod_bias, 0.25, 100.0)
 	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
 		world_map_vegetation_render_cluster_size = vegetation_render_cluster_size
@@ -492,7 +518,69 @@ func _global_vegetation_custom_aabb(transforms: Array) -> AABB:
 	for transform_variant in transforms:
 		var transform := _get_vegetation_instance_transform(transform_variant)
 		bounds = bounds.expand(transform.origin)
-	return bounds.grow(GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING)
+	return bounds.grow(vegetation_global_render_bounds_padding)
+
+func _get_mesh_surface_vertex_count(mesh: Mesh) -> int:
+	if mesh == null or mesh.get_surface_count() <= 0:
+		return 0
+	if mesh.has_method("surface_get_array_len"):
+		return int(mesh.surface_get_array_len(0))
+	var arrays := mesh.surface_get_arrays(0)
+	if arrays.size() <= Mesh.ARRAY_VERTEX:
+		return 0
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	return vertices.size()
+
+func _get_mesh_surface_index_count(mesh: Mesh) -> int:
+	if mesh == null or mesh.get_surface_count() <= 0:
+		return 0
+	if mesh.has_method("surface_get_array_index_len"):
+		return int(mesh.surface_get_array_index_len(0))
+	var arrays := mesh.surface_get_arrays(0)
+	if arrays.size() <= Mesh.ARRAY_INDEX:
+		return _get_mesh_surface_vertex_count(mesh)
+	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+	return indices.size() if not indices.is_empty() else _get_mesh_surface_vertex_count(mesh)
+
+func _get_mesh_surface_primitive_count(mesh: Mesh) -> int:
+	var index_count := _get_mesh_surface_index_count(mesh)
+	if index_count > 0:
+		return int(index_count / 3)
+	return int(_get_mesh_surface_vertex_count(mesh) / 3)
+
+func _get_vegetation_mesh_for_kind(kind: String) -> Mesh:
+	match kind:
+		"tree":
+			return tree_mesh
+		"grass":
+			return grass_mesh
+		"rock":
+			return rock_mesh
+	return null
+
+func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
+	var mesh_primitives := _get_mesh_surface_primitive_count(_get_vegetation_mesh_for_kind(kind))
+	var batch_count := 0
+	var instance_count := 0
+	var max_batch_instances := 0
+	var clusters := _get_global_render_cluster_dictionary(kind)
+	for batch_variant in clusters.values():
+		var batch := batch_variant as MultiMeshInstance3D
+		if batch == null or not is_instance_valid(batch) or batch.multimesh == null:
+			continue
+		var batch_instances := int(batch.multimesh.instance_count)
+		batch_count += 1
+		instance_count += batch_instances
+		max_batch_instances = maxi(max_batch_instances, batch_instances)
+	return {
+		"mesh_primitives": mesh_primitives,
+		"batch_count": batch_count,
+		"instance_count": instance_count,
+		"estimated_primitives": mesh_primitives * instance_count,
+		"max_batch_instances": max_batch_instances,
+		"max_batch_estimated_primitives": mesh_primitives * max_batch_instances,
+		"avg_batch_instances": float(instance_count) / float(batch_count) if batch_count > 0 else 0.0
+	}
 
 func _get_global_render_batch_count() -> int:
 	return _get_global_render_batch_count_for_kind("tree") \
@@ -880,7 +968,7 @@ func _get_global_render_multimesh(kind: String, cluster_key: Vector2i) -> MultiM
 	mmi.multimesh.use_custom_data = false
 	mmi.multimesh.custom_aabb = GLOBAL_VEGETATION_RENDER_AABB
 	mmi.extra_cull_margin = vegetation_render_extra_cull_margin
-	mmi.ignore_occlusion_culling = true
+	mmi.ignore_occlusion_culling = vegetation_global_render_ignore_occlusion_culling
 	mmi.lod_bias = vegetation_render_lod_bias
 	mmi.visibility_range_end = 0.0
 	add_child(mmi)
@@ -1003,7 +1091,7 @@ func _collect_global_vegetation_render_payload(kind: String, cluster_key = null)
 	payload.buffer = cluster_buffer
 	if bool(payload.has_bounds):
 		var payload_bounds: AABB = payload.bounds
-		payload.bounds = payload_bounds.grow(96.0)
+		payload.bounds = payload_bounds.grow(vegetation_global_render_bounds_padding)
 	return payload
 
 func _recount_global_render_instances(kind: String) -> int:
