@@ -53,6 +53,8 @@ CASES = {
     "terrain_batch_1": {"TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE": "1"},
     "terrain_batch_3": {"TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE": "3"},
     "terrain_batch_4": {"TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE": "4"},
+    "terrain_batching_off": {"TOWN_STALL_TERRAIN_VISUAL_BATCHING": "0"},
+    "terrain_unload_hysteresis_2": {"TOWN_STALL_TERRAIN_UNLOAD_HYSTERESIS_CHUNKS": "2"},
     "hide_terrain_and_vegetation": {
         "TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS": "1",
         "TOWN_STALL_DISABLE_VEGETATION_RENDER": "1",
@@ -239,12 +241,26 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "avg_draw_calls_all": float(stationary_hold.get("avg_draw_calls", town_window.get("avg_draw_calls", 0.0)) or 0.0),
         "avg_objects_all": float(stationary_hold.get("avg_objects", town_window.get("avg_objects", 0.0)) or 0.0),
         "avg_primitives_all": float(stationary_hold.get("avg_primitives", town_window.get("avg_primitives", 0.0)) or 0.0),
+        "terrain_active_chunks": int(terrain.get("active_chunk_count", 0) or 0),
+        "terrain_native_grid_active_chunks": int(terrain.get("native_grid_active_chunk_count", 0) or 0),
+        "terrain_unload_hysteresis_chunks": int(terrain.get("terrain_unload_hysteresis_chunks", 0) or 0),
+        "terrain_last_stream_bounds_unloads": int(terrain.get("last_stream_bounds_unloads", 0) or 0),
         "rendered_terrain_chunks": int(terrain.get("rendered_terrain_chunk_count", 0) or 0),
         "terrain_visual_visible_primitives": int(terrain.get("terrain_visual_visible_primitive_count", 0) or 0),
         "terrain_visual_chunk_primitives": int(terrain.get("terrain_visual_chunk_primitive_count", 0) or 0),
         "terrain_visual_batch_primitives": int(terrain.get("terrain_visual_batch_primitive_count", 0) or 0),
         "terrain_visual_max_chunk_primitives": int(terrain.get("terrain_visual_max_chunk_primitive_count", 0) or 0),
         "terrain_visual_max_batch_primitives": int(terrain.get("terrain_visual_max_batch_primitive_count", 0) or 0),
+        "terrain_visual_source_vertices": int(terrain.get("terrain_visual_source_vertex_count", 0) or 0),
+        "terrain_visual_source_indices": int(terrain.get("terrain_visual_source_index_count", 0) or 0),
+        "terrain_visual_unique_vertices": int(terrain.get("terrain_visual_unique_vertex_count", 0) or 0),
+        "terrain_visual_source_primitives": int(terrain.get("terrain_visual_source_primitive_count", 0) or 0),
+        "terrain_visual_avg_chunk_primitives": float(terrain.get("terrain_visual_avg_chunk_primitive_count", 0.0) or 0.0),
+        "terrain_visual_avg_source_primitives": float(terrain.get("terrain_visual_avg_source_primitive_count", 0.0) or 0.0),
+        "terrain_visual_unique_to_source_ratio": float(terrain.get("terrain_visual_unique_to_source_vertex_ratio", 0.0) or 0.0),
+        "terrain_visual_max_source_chunk_primitives": int(terrain.get("terrain_visual_max_source_chunk_primitive_count", 0) or 0),
+        "terrain_visual_chunk_primitive_buckets": terrain.get("terrain_visual_chunk_primitive_buckets", {}),
+        "terrain_visual_source_primitive_buckets": terrain.get("terrain_visual_source_primitive_buckets", {}),
         "rendered_water_chunks": int(terrain.get("rendered_water_chunk_count", 0) or 0),
         "building_visible_nodes": int(building.get("visible_world_map_baked_building_visual_nodes", 0) or 0),
         "building_visible_surfaces": int(building.get("visible_world_map_baked_building_visual_surfaces", 0) or 0),
@@ -356,6 +372,27 @@ def _print_results(results: list[dict]) -> None:
                 rock_max=int(result.get("vegetation_rock_max_batch_instances", 0) or 0),
                 bounds=float(result.get("vegetation_bounds_padding", 0.0) or 0.0),
                 occ="on" if bool(result.get("vegetation_ignore_occlusion_culling", False)) else "off",
+            )
+        )
+        print(
+            "                     terrainSource srcPrims={source_prims:9d} avgSrc={avg_source:7.1f} "
+            "avgMesh={avg_chunk:7.1f} maxSrc={max_source:6d} srcVerts={source_vertices:9d} "
+            "uniqVerts={unique_vertices:9d} uniq/src={unique_ratio:5.2f} "
+            "active={active}/{native_active} unloadHyst={unload_hyst} boundsUnload={bounds_unload} "
+            "meshBuckets={mesh_buckets} srcBuckets={source_buckets}".format(
+                source_prims=int(result.get("terrain_visual_source_primitives", 0) or 0),
+                avg_source=float(result.get("terrain_visual_avg_source_primitives", 0.0) or 0.0),
+                avg_chunk=float(result.get("terrain_visual_avg_chunk_primitives", 0.0) or 0.0),
+                max_source=int(result.get("terrain_visual_max_source_chunk_primitives", 0) or 0),
+                source_vertices=int(result.get("terrain_visual_source_vertices", 0) or 0),
+                unique_vertices=int(result.get("terrain_visual_unique_vertices", 0) or 0),
+                unique_ratio=float(result.get("terrain_visual_unique_to_source_ratio", 0.0) or 0.0),
+                active=int(result.get("terrain_active_chunks", 0) or 0),
+                native_active=int(result.get("terrain_native_grid_active_chunks", 0) or 0),
+                unload_hyst=int(result.get("terrain_unload_hysteresis_chunks", 0) or 0),
+                bounds_unload=int(result.get("terrain_last_stream_bounds_unloads", 0) or 0),
+                mesh_buckets=json.dumps(result.get("terrain_visual_chunk_primitive_buckets", {}), sort_keys=True),
+                source_buckets=json.dumps(result.get("terrain_visual_source_primitive_buckets", {}), sort_keys=True),
             )
         )
     print("=" * 50)

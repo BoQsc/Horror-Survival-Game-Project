@@ -180,6 +180,9 @@ class ChunkData:
 	var terrain_collision_shared_shape_index: int = -1
 	var terrain_visual_mesh: ArrayMesh = null
 	var terrain_visual_batched: bool = false
+	var terrain_source_vertex_count: int = 0
+	var terrain_source_index_count: int = 0
+	var terrain_unique_vertex_count: int = 0
 	var water_visual_mesh: ArrayMesh = null
 	var water_visual_batched: bool = false
 	# CPU mirrors for physics detection
@@ -264,6 +267,7 @@ var adaptive_frame_budget_ms: float = 1.0 # Dynamically adjusted (reduced for sm
 var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
 @export_range(1, 64, 1) var terrain_unload_budget_per_frame: int = 8
+@export_range(0, 8, 1) var terrain_unload_hysteresis_chunks: int = 0
 @export_range(0, 5, 1) var terrain_hot_frame_backoff_frames: int = 2
 @export_range(0, 60, 1) var render_resource_prewarm_frames: int = 12
 @export_range(0, 256, 1) var spawn_zone_far_reset_distance_chunks: int = 16
@@ -321,6 +325,7 @@ var _last_update_loads: int = 0
 var _last_update_unloads: int = 0
 var _last_fallback_unloads: int = 0
 var _last_fallback_unload_ms: float = 0.0
+var _last_stream_bounds_unloads: int = 0
 var _last_native_grid_active_chunk_count: int = 0
 var _last_update_backend: String = ""
 var _last_terrain_stream_update_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
@@ -774,6 +779,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_max_chunk_coord": str(terrain_visual_stats.get("max_chunk_coord", "")),
 		"terrain_visual_max_batch_primitive_count": int(terrain_visual_stats.get("max_batch_primitive_count", 0)),
 		"terrain_visual_max_batch_key": str(terrain_visual_stats.get("max_batch_key", "")),
+		"terrain_visual_source_vertex_count": int(terrain_visual_stats.get("source_vertex_count", 0)),
+		"terrain_visual_source_index_count": int(terrain_visual_stats.get("source_index_count", 0)),
+		"terrain_visual_unique_vertex_count": int(terrain_visual_stats.get("unique_vertex_count", 0)),
+		"terrain_visual_source_primitive_count": int(terrain_visual_stats.get("source_primitive_count", 0)),
+		"terrain_visual_avg_chunk_primitive_count": float(terrain_visual_stats.get("avg_chunk_primitive_count", 0.0)),
+		"terrain_visual_avg_source_primitive_count": float(terrain_visual_stats.get("avg_source_primitive_count", 0.0)),
+		"terrain_visual_unique_to_source_vertex_ratio": float(terrain_visual_stats.get("unique_to_source_vertex_ratio", 0.0)),
+		"terrain_visual_max_source_chunk_primitive_count": int(terrain_visual_stats.get("max_source_chunk_primitive_count", 0)),
+		"terrain_visual_max_source_chunk_coord": str(terrain_visual_stats.get("max_source_chunk_coord", "")),
+		"terrain_visual_chunk_primitive_buckets": terrain_visual_stats.get("chunk_primitive_buckets", {}),
+		"terrain_visual_source_primitive_buckets": terrain_visual_stats.get("source_primitive_buckets", {}),
 		"last_terrain_visual_batch_rebuild_ms": _last_terrain_visual_batch_rebuild_ms,
 		"last_terrain_visual_batch_rebuild_count": _last_terrain_visual_batch_rebuild_count,
 		"last_terrain_visual_batch_hot_rebuild": _last_terrain_visual_batch_hot_rebuild,
@@ -846,12 +862,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"current_fps": current_fps,
 		"adaptive_frame_budget_ms": adaptive_frame_budget_ms,
 		"chunks_per_frame_limit": chunks_per_frame_limit,
+		"terrain_unload_budget_per_frame": terrain_unload_budget_per_frame,
+		"terrain_unload_hysteresis_chunks": terrain_unload_hysteresis_chunks,
 		"last_update_loads": _last_update_loads,
 		"last_update_unloads": _last_update_unloads,
 		"last_terrain_stream_update_gate_reason": _last_terrain_stream_update_gate_reason,
 		"terrain_stream_update_idle_skip_count": _terrain_stream_update_idle_skip_count,
 		"terrain_stream_min_chunk_target": _get_min_loaded_stream_chunk_count(),
 		"terrain_stream_under_target": active_chunks.size() < _get_min_loaded_stream_chunk_count(),
+		"last_stream_bounds_unloads": _last_stream_bounds_unloads,
 		"last_fallback_unloads": _last_fallback_unloads,
 		"last_fallback_unload_ms": _last_fallback_unload_ms,
 		"last_update_backend": _last_update_backend,
@@ -1730,6 +1749,41 @@ func _get_mesh_surface_primitive_count(mesh: Mesh) -> int:
 		return int(index_count / 3)
 	return int(_get_mesh_surface_vertex_count(mesh) / 3)
 
+func _get_mesh_result_source_vertex_count(mesh_result: Dictionary) -> int:
+	var source_vertex_count := int(mesh_result.get("source_vertex_count", 0))
+	if source_vertex_count > 0:
+		return source_vertex_count
+	return int(mesh_result.get("vertex_count", 0))
+
+func _get_mesh_result_source_index_count(mesh_result: Dictionary) -> int:
+	var source_index_count := int(mesh_result.get("source_index_count", 0))
+	if source_index_count > 0:
+		return source_index_count
+	return int(mesh_result.get("index_count", 0))
+
+func _get_mesh_result_unique_vertex_count(mesh_result: Dictionary) -> int:
+	var unique_vertex_count := int(mesh_result.get("unique_vertex_count", 0))
+	if unique_vertex_count > 0:
+		return unique_vertex_count
+	return _get_mesh_result_source_vertex_count(mesh_result)
+
+func _terrain_primitive_bucket_key(primitive_count: int) -> String:
+	if primitive_count <= 0:
+		return "0"
+	if primitive_count < 1000:
+		return "1_999"
+	if primitive_count < 2000:
+		return "1000_1999"
+	if primitive_count < 3000:
+		return "2000_2999"
+	if primitive_count < 4000:
+		return "3000_3999"
+	return "4000_plus"
+
+func _increment_terrain_primitive_bucket(buckets: Dictionary, primitive_count: int) -> void:
+	var key := _terrain_primitive_bucket_key(primitive_count)
+	buckets[key] = int(buckets.get(key, 0)) + 1
+
 func _collect_terrain_visual_telemetry() -> Dictionary:
 	var chunk_mesh_count := 0
 	var chunk_primitive_count := 0
@@ -1739,6 +1793,14 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 	var chunk_batched_primitive_count := 0
 	var max_chunk_primitive_count := 0
 	var max_chunk_coord := ""
+	var source_vertex_count := 0
+	var source_index_count := 0
+	var unique_vertex_count := 0
+	var source_primitive_count := 0
+	var max_source_chunk_primitive_count := 0
+	var max_source_chunk_coord := ""
+	var chunk_primitive_buckets := {}
+	var source_primitive_buckets := {}
 
 	for coord_variant in active_chunks.keys():
 		var coord: Vector3i = coord_variant
@@ -1754,6 +1816,25 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 		if chunk_primitives > max_chunk_primitive_count:
 			max_chunk_primitive_count = chunk_primitives
 			max_chunk_coord = str(coord)
+		_increment_terrain_primitive_bucket(chunk_primitive_buckets, chunk_primitives)
+		var chunk_source_vertex_count := int(data.terrain_source_vertex_count)
+		var chunk_source_index_count := int(data.terrain_source_index_count)
+		var chunk_unique_vertex_count := int(data.terrain_unique_vertex_count)
+		if chunk_source_vertex_count <= 0:
+			chunk_source_vertex_count = _get_mesh_surface_vertex_count(terrain_mesh)
+		if chunk_source_index_count <= 0:
+			chunk_source_index_count = _get_mesh_surface_index_count(terrain_mesh)
+		if chunk_unique_vertex_count <= 0:
+			chunk_unique_vertex_count = _get_mesh_surface_vertex_count(terrain_mesh)
+		var chunk_source_primitives := int(chunk_source_index_count / 3) if chunk_source_index_count > 0 else int(chunk_source_vertex_count / 3)
+		source_vertex_count += chunk_source_vertex_count
+		source_index_count += chunk_source_index_count
+		unique_vertex_count += chunk_unique_vertex_count
+		source_primitive_count += chunk_source_primitives
+		_increment_terrain_primitive_bucket(source_primitive_buckets, chunk_source_primitives)
+		if chunk_source_primitives > max_source_chunk_primitive_count:
+			max_source_chunk_primitive_count = chunk_source_primitives
+			max_source_chunk_coord = str(coord)
 		if bool(data.terrain_visual_batched):
 			chunk_batched_mesh_count += 1
 			chunk_batched_primitive_count += chunk_primitives
@@ -1799,7 +1880,18 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 		"max_chunk_primitive_count": max_chunk_primitive_count,
 		"max_chunk_coord": max_chunk_coord,
 		"max_batch_primitive_count": max_batch_primitive_count,
-		"max_batch_key": max_batch_key
+		"max_batch_key": max_batch_key,
+		"source_vertex_count": source_vertex_count,
+		"source_index_count": source_index_count,
+		"unique_vertex_count": unique_vertex_count,
+		"source_primitive_count": source_primitive_count,
+		"avg_chunk_primitive_count": float(chunk_primitive_count) / float(maxi(chunk_mesh_count, 1)),
+		"avg_source_primitive_count": float(source_primitive_count) / float(maxi(chunk_mesh_count, 1)),
+		"unique_to_source_vertex_ratio": float(unique_vertex_count) / float(maxi(source_vertex_count, 1)),
+		"max_source_chunk_primitive_count": max_source_chunk_primitive_count,
+		"max_source_chunk_coord": max_source_chunk_coord,
+		"chunk_primitive_buckets": chunk_primitive_buckets,
+		"source_primitive_buckets": source_primitive_buckets
 	}
 
 func _ensure_chunk_terrain_mesh_instance(data) -> MeshInstance3D:
@@ -3423,6 +3515,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_mesh_slices_per_chunk = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICES", terrain_gpu_mesh_slices_per_chunk, 1, 8)
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
 	terrain_native_cpu_meshing_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING", terrain_native_cpu_meshing_enabled)
+	terrain_unload_hysteresis_chunks = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_UNLOAD_HYSTERESIS_CHUNKS", terrain_unload_hysteresis_chunks, 0, 8)
 	terrain_skip_dry_water_density_dispatch = _get_runtime_power_env_bool("TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH", terrain_skip_dry_water_density_dispatch)
 	water_screen_refraction_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_SCREEN_REFRACTION", water_screen_refraction_enabled)
 	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
@@ -5900,9 +5993,11 @@ func update_chunk_unloads_only():
 		unload_count += 1
 		_unload_chunk(coord)
 		terrain_grid.remove_chunk(coord)
-	var fallback_unloads := _unload_grid_mismatch_chunks(int(floor(p_pos.x / CHUNK_STRIDE)), p_chunk_y, int(floor(p_pos.z / CHUNK_STRIDE)), terrain_unload_budget_per_frame)
+	var remaining_unload_budget := maxi(terrain_unload_budget_per_frame - unload_count, 0)
+	var bounds_unloads := _enforce_terrain_stream_bounds(int(floor(p_pos.x / CHUNK_STRIDE)), p_chunk_y, int(floor(p_pos.z / CHUNK_STRIDE)), remaining_unload_budget)
+	var fallback_unloads := _unload_grid_mismatch_chunks(int(floor(p_pos.x / CHUNK_STRIDE)), p_chunk_y, int(floor(p_pos.z / CHUNK_STRIDE)), maxi(remaining_unload_budget - bounds_unloads, 0))
 	_last_update_loads = 0
-	_last_update_unloads = unload_count + fallback_unloads
+	_last_update_unloads = unload_count + bounds_unloads + fallback_unloads
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func _update_chunks_native():
@@ -5921,9 +6016,11 @@ func _update_chunks_native():
 			paused_unloads += 1
 			_unload_chunk(coord)
 			terrain_grid.remove_chunk(coord)
-		var paused_fallback_unloads := _unload_grid_mismatch_chunks(p_chunk_x, p_chunk_y, p_chunk_z, terrain_unload_budget_per_frame)
+		var paused_remaining_unload_budget := maxi(terrain_unload_budget_per_frame - paused_unloads, 0)
+		var paused_bounds_unloads := _enforce_terrain_stream_bounds(p_chunk_x, p_chunk_y, p_chunk_z, paused_remaining_unload_budget)
+		var paused_fallback_unloads := _unload_grid_mismatch_chunks(p_chunk_x, p_chunk_y, p_chunk_z, maxi(paused_remaining_unload_budget - paused_bounds_unloads, 0))
 		_last_update_loads = 0
-		_last_update_unloads = paused_unloads + paused_fallback_unloads
+		_last_update_unloads = paused_unloads + paused_bounds_unloads + paused_fallback_unloads
 		_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 		return
 
@@ -5940,6 +6037,8 @@ func _update_chunks_native():
 		unload_count += 1
 		_unload_chunk(coord)
 		terrain_grid.remove_chunk(coord)
+	var remaining_unload_budget := maxi(terrain_unload_budget_per_frame - unload_count, 0)
+	var bounds_unloads := _enforce_terrain_stream_bounds(p_chunk_x, p_chunk_y, p_chunk_z, remaining_unload_budget)
 
 	# 3. Process Loads
 	var chunks_queued = 0
@@ -5966,17 +6065,25 @@ func _update_chunks_native():
 				_load_chunk(coord)
 				chunks_queued += 1
 
-	var fallback_unloads := _unload_grid_mismatch_chunks(p_chunk_x, p_chunk_y, p_chunk_z, terrain_unload_budget_per_frame)
+	var fallback_unloads := _unload_grid_mismatch_chunks(p_chunk_x, p_chunk_y, p_chunk_z, maxi(remaining_unload_budget - bounds_unloads, 0))
 
 	_last_update_loads = chunks_queued
-	_last_update_unloads = unload_count + fallback_unloads
+	_last_update_unloads = unload_count + bounds_unloads + fallback_unloads
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
+
+func _enforce_terrain_stream_bounds(center_x: int, center_y: int, center_z: int, budget: int) -> int:
+	_last_stream_bounds_unloads = 0
+	if budget <= 0:
+		return 0
+	var unloaded := _unload_out_of_range_chunks(center_x, center_y, center_z, budget)
+	_last_stream_bounds_unloads = unloaded
+	return unloaded
 
 func _unload_out_of_range_chunks(center_x: int, center_y: int, center_z: int, budget: int) -> int:
 	if budget <= 0:
 		return 0
 
-	var unload_distance := render_distance + 2
+	var unload_distance := render_distance + maxi(terrain_unload_hysteresis_chunks, 0)
 	var unload_distance_sq := unload_distance * unload_distance
 	var coords_to_unload: Array[Vector3i] = []
 
@@ -6208,7 +6315,8 @@ func _update_chunks_legacy():
 		var dist_xz_sq = dx * dx + dz * dz
 
 		# Unload if too far horizontally
-		if dist_xz_sq > (render_distance + 2) * (render_distance + 2):
+		var unload_distance := render_distance + maxi(terrain_unload_hysteresis_chunks, 0)
+		if dist_xz_sq > unload_distance * unload_distance:
 			chunks_to_remove.append(coord)
 		# For non-terrain layers, also unload if too far vertically
 		elif not is_terrain_layer and abs(dy) > 3:
@@ -7779,7 +7887,10 @@ func run_meshing(rd: RenderingDevice, sid_mesh, pipe_mesh, density_buffer, mater
 	var built := build_packed_mesh_and_collision(mesh_data, material_instance, builder_override)
 	return {
 		"mesh": built.get("mesh", null),
-		"shape": built.get("shape", null)
+		"shape": built.get("shape", null),
+		"source_vertex_count": int(built.get("source_vertex_count", mesh_data.get("vertex_count", 0))),
+		"source_index_count": int(built.get("source_index_count", built.get("index_count", mesh_data.get("index_count", 0)))),
+		"unique_vertex_count": int(built.get("unique_vertex_count", built.get("source_vertex_count", mesh_data.get("vertex_count", 0))))
 	}
 
 func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, result_w: Dictionary, dens_w: RID, cpu_dens_w: PackedFloat32Array, cpu_dens_t: PackedFloat32Array, height_map_t: PackedFloat32Array = PackedFloat32Array(), mat_t: RID = RID(), cpu_mat_t: PackedByteArray = PackedByteArray(), stored_mod_version: int = 0):
@@ -7941,6 +8052,9 @@ func _finalize_chunk_creation(item: Dictionary):
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
 		data.terrain_visual_mesh = terrain_mesh_result.get("mesh", null)
 		data.terrain_visual_batched = false
+		data.terrain_source_vertex_count = _get_mesh_result_source_vertex_count(terrain_mesh_result)
+		data.terrain_source_index_count = _get_mesh_result_source_index_count(terrain_mesh_result)
+		data.terrain_unique_vertex_count = _get_mesh_result_unique_vertex_count(terrain_mesh_result)
 		_set_generated_mod_version(data, int(item.get("stored_mod_version", 0)))
 		_register_terrain_visual_batch_member(coord)
 
@@ -8151,6 +8265,9 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
 		data.terrain_visual_mesh = result.mesh
 		data.terrain_visual_batched = false
+		data.terrain_source_vertex_count = _get_mesh_result_source_vertex_count(result)
+		data.terrain_source_index_count = _get_mesh_result_source_index_count(result)
+		data.terrain_unique_vertex_count = _get_mesh_result_unique_vertex_count(result)
 		data.collision_shape_terrain = result_node.collision_shape if not result_node.is_empty() else null
 		data.chunk_material = chunk_material
 		if not cpu_dens.is_empty():
