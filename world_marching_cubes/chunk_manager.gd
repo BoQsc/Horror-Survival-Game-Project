@@ -17,6 +17,7 @@ const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
 const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
+const UIInputGuardScript = preload("res://modules/world_player_v2/features/ui_input_guard.gd")
 
 # Y-layer limits for vertical chunk stacking
 const MIN_Y_LAYER = -20 # How deep you can dig (in chunk layers)
@@ -3566,6 +3567,9 @@ func _get_runtime_power_render_loop_enabled() -> bool:
 		return true
 	return bool(RenderingServer.call("is_render_loop_enabled"))
 
+func _runtime_power_can_suspend_render_loop() -> bool:
+	return UIInputGuardScript.is_game_menu_open(get_tree())
+
 func _apply_runtime_power_render_loop_mode(mode: String) -> void:
 	if not RenderingServer.has_method("set_render_loop_enabled"):
 		_runtime_power_render_loop_suspended = false
@@ -3573,7 +3577,8 @@ func _apply_runtime_power_render_loop_mode(mode: String) -> void:
 
 	var should_suspend := runtime_power_mode_enabled \
 		and runtime_power_suspend_render_loop_in_deep_idle \
-		and mode == "deep_idle"
+		and mode == "deep_idle" \
+		and _runtime_power_can_suspend_render_loop()
 	if should_suspend:
 		if not _runtime_power_render_loop_restore_captured:
 			_runtime_power_render_loop_restore_enabled = _get_runtime_power_render_loop_enabled()
