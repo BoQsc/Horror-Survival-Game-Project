@@ -24,6 +24,10 @@ const RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT := 24
 const RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT := 4
 const PEAK_ENTRY_SAMPLE_LIMIT := 12
 const HOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
+const HOLD_SETTLE_STABLE_FRAMES := 30
+const HOLD_SETTLE_MAX_SECONDS := 8.0
+const HOLD_SETTLE_POSITION_EPSILON := 0.05
+const HOLD_SETTLE_VELOCITY_EPSILON := 0.15
 
 enum Phase {
 	GENERATING,
@@ -98,6 +102,8 @@ var render_diagnostics_scene_detail_limit: int = RENDER_DIAGNOSTIC_DEFAULT_SCENE
 var render_diagnostics_frame_scene_scan_limit: int = RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT
 var measure_full_flight_enabled: bool = false
 var world_ready_timeout_seconds: float = WORLD_READY_TIMEOUT_SECONDS
+var world_ready_status_log_interval_seconds: float = 5.0
+var world_ready_last_status_log_seconds: float = -1000000.0
 var configured_hold_seconds: float = HOLD_SECONDS
 var fly_stage: int = 0
 var fly_target: Vector3 = Vector3.ZERO
@@ -106,6 +112,11 @@ var return_origin: Vector3 = Vector3.ZERO
 var current_hold_seconds: float = HOLD_SECONDS
 var next_hold_snapshot_phase_time: float = -1.0
 var hold_periodic_snapshots_enabled: bool = false
+var hold_settle_elapsed_seconds: float = 0.0
+var hold_settle_stable_frames: int = 0
+var hold_settle_timed_out: bool = false
+var hold_settle_wait_logged: bool = false
+var hold_settle_last_player_position: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
 
 var game_root: Node3D = null
 var terrain_manager: Node = null
@@ -807,7 +818,50 @@ func _collect_render_features_snapshot() -> Dictionary:
 	features["project_rendering_driver_windows"] = str(ProjectSettings.get_setting("rendering/rendering_device/driver.windows", ""))
 	features["project_fallback_to_d3d12"] = bool(ProjectSettings.get_setting("rendering/rendering_device/fallback_to_d3d12", true))
 	features["project_fallback_to_opengl3"] = bool(ProjectSettings.get_setting("rendering/rendering_device/fallback_to_opengl3", true))
+	features["project_window_mode"] = int(ProjectSettings.get_setting("display/window/size/mode", -1))
+	features["project_vsync_mode"] = int(ProjectSettings.get_setting("display/window/vsync/vsync_mode", -1))
+	if DisplayServer.has_method("window_get_mode"):
+		features["runtime_window_mode"] = int(DisplayServer.window_get_mode())
+	if DisplayServer.has_method("window_get_size"):
+		var window_size := DisplayServer.window_get_size()
+		features["runtime_window_width"] = int(window_size.x)
+		features["runtime_window_height"] = int(window_size.y)
+	if DisplayServer.has_method("window_get_vsync_mode"):
+		features["runtime_vsync_mode"] = int(DisplayServer.window_get_vsync_mode())
+	if DisplayServer.has_method("window_get_current_screen") and DisplayServer.has_method("screen_get_size"):
+		var screen_index := int(DisplayServer.window_get_current_screen())
+		var screen_size := DisplayServer.screen_get_size(screen_index)
+		features["runtime_screen_index"] = screen_index
+		features["runtime_screen_width"] = int(screen_size.x)
+		features["runtime_screen_height"] = int(screen_size.y)
 	return features
+
+
+func _parse_resolution_env(value: String) -> Vector2i:
+	var text := value.strip_edges().to_lower()
+	if text.is_empty():
+		return Vector2i.ZERO
+	var parts := text.split("x")
+	if parts.size() != 2:
+		return Vector2i.ZERO
+	var width := int(parts[0])
+	var height := int(parts[1])
+	if width <= 0 or height <= 0:
+		return Vector2i.ZERO
+	return Vector2i(width, height)
+
+
+func _apply_display_mode_override_from_env() -> void:
+	var override_notes: Array[String] = []
+	if OS.get_environment("TOWN_STALL_GODOT_WINDOWED") == "1":
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		override_notes.append("windowed")
+	var resolution := _parse_resolution_env(OS.get_environment("TOWN_STALL_GODOT_RESOLUTION"))
+	if resolution.x > 0 and resolution.y > 0:
+		DisplayServer.window_set_size(resolution)
+		override_notes.append("size=%s" % str(DisplayServer.window_get_size()))
+	if not override_notes.is_empty():
+		print("[TOWN_STALL_TEST] Runtime display override: %s" % " ".join(override_notes))
 
 
 func _collect_render_scene_scan() -> Dictionary:
@@ -818,58 +872,153 @@ func _collect_render_scene_scan() -> Dictionary:
 		"visible_mesh_instances": 0,
 		"mesh_surface_count": 0,
 		"visible_mesh_surface_count": 0,
+		"mesh_vertex_count": 0,
+		"visible_mesh_vertex_count": 0,
+		"mesh_index_count": 0,
+		"visible_mesh_index_count": 0,
+		"mesh_triangle_count": 0,
+		"visible_mesh_triangle_count": 0,
 		"multimesh_instances": 0,
 		"visible_multimesh_instances": 0,
 		"multimesh_surface_count": 0,
 		"visible_multimesh_surface_count": 0,
 		"multimesh_instance_count": 0,
 		"visible_multimesh_instance_count": 0,
+		"multimesh_base_vertex_count": 0,
+		"visible_multimesh_base_vertex_count": 0,
+		"multimesh_rendered_vertex_count": 0,
+		"visible_multimesh_rendered_vertex_count": 0,
+		"multimesh_base_index_count": 0,
+		"visible_multimesh_base_index_count": 0,
+		"multimesh_rendered_index_count": 0,
+		"visible_multimesh_rendered_index_count": 0,
+		"multimesh_base_triangle_count": 0,
+		"visible_multimesh_base_triangle_count": 0,
+		"multimesh_rendered_triangle_count": 0,
+		"visible_multimesh_rendered_triangle_count": 0,
+		"frustum_geometry_instances": 0,
+		"frustum_mesh_instances": 0,
+		"frustum_mesh_triangle_count": 0,
+		"frustum_mesh_vertex_count": 0,
+		"frustum_multimesh_instances": 0,
+		"frustum_multimesh_instance_count": 0,
+		"frustum_multimesh_rendered_triangle_count": 0,
+		"frustum_multimesh_rendered_vertex_count": 0,
 		"terrain_geometry": 0,
 		"visible_terrain_geometry": 0,
+		"frustum_terrain_geometry": 0,
+		"frustum_terrain_mesh_instances": 0,
+		"frustum_terrain_mesh_triangle_count": 0,
+		"frustum_terrain_mesh_vertex_count": 0,
+		"frustum_terrain_multimesh_instances": 0,
+		"frustum_terrain_multimesh_instance_count": 0,
+		"frustum_terrain_multimesh_rendered_triangle_count": 0,
+		"frustum_terrain_multimesh_rendered_vertex_count": 0,
 		"building_geometry": 0,
 		"visible_building_geometry": 0,
+		"frustum_building_geometry": 0,
+		"frustum_building_mesh_instances": 0,
+		"frustum_building_mesh_triangle_count": 0,
+		"frustum_building_mesh_vertex_count": 0,
+		"frustum_building_multimesh_instances": 0,
+		"frustum_building_multimesh_instance_count": 0,
+		"frustum_building_multimesh_rendered_triangle_count": 0,
+		"frustum_building_multimesh_rendered_vertex_count": 0,
 		"vegetation_geometry": 0,
 		"visible_vegetation_geometry": 0,
+		"frustum_vegetation_geometry": 0,
+		"frustum_vegetation_mesh_instances": 0,
+		"frustum_vegetation_mesh_triangle_count": 0,
+		"frustum_vegetation_mesh_vertex_count": 0,
+		"frustum_vegetation_multimesh_instances": 0,
+		"frustum_vegetation_multimesh_instance_count": 0,
+		"frustum_vegetation_multimesh_rendered_triangle_count": 0,
+		"frustum_vegetation_multimesh_rendered_vertex_count": 0,
 		"entity_geometry": 0,
 		"visible_entity_geometry": 0,
+		"frustum_entity_geometry": 0,
+		"frustum_entity_mesh_instances": 0,
+		"frustum_entity_mesh_triangle_count": 0,
+		"frustum_entity_mesh_vertex_count": 0,
+		"frustum_entity_multimesh_instances": 0,
+		"frustum_entity_multimesh_instance_count": 0,
+		"frustum_entity_multimesh_rendered_triangle_count": 0,
+		"frustum_entity_multimesh_rendered_vertex_count": 0,
 		"other_geometry": 0,
-		"visible_other_geometry": 0
+		"visible_other_geometry": 0,
+		"frustum_other_geometry": 0,
+		"frustum_other_mesh_instances": 0,
+		"frustum_other_mesh_triangle_count": 0,
+		"frustum_other_mesh_vertex_count": 0,
+		"frustum_other_multimesh_instances": 0,
+		"frustum_other_multimesh_instance_count": 0,
+		"frustum_other_multimesh_rendered_triangle_count": 0,
+		"frustum_other_multimesh_rendered_vertex_count": 0
 	}
 	var visible_details: Array[Dictionary] = []
+	var frustum_details: Array[Dictionary] = []
 	var material_surface_counts := {}
+	var camera := get_viewport().get_camera_3d()
 	if not is_instance_valid(game_root):
 		return counts
 
-	_scan_render_node(game_root, counts, visible_details, material_surface_counts)
+	_scan_render_node(game_root, counts, visible_details, frustum_details, material_surface_counts, camera)
 	visible_details.sort_custom(Callable(self, "_compare_render_geometry_detail"))
 	while visible_details.size() > render_diagnostics_scene_detail_limit:
 		visible_details.remove_at(visible_details.size() - 1)
+	frustum_details.sort_custom(Callable(self, "_compare_render_geometry_detail"))
+	while frustum_details.size() > render_diagnostics_scene_detail_limit:
+		frustum_details.remove_at(frustum_details.size() - 1)
 	counts["top_visible_geometry"] = visible_details
+	counts["top_frustum_geometry"] = frustum_details
 	counts["visible_material_surface_counts"] = _sorted_render_count_entries(material_surface_counts, render_diagnostics_scene_detail_limit)
 	return counts
 
 
-func _scan_render_node(node: Node, counts: Dictionary, visible_details: Array[Dictionary], material_surface_counts: Dictionary) -> void:
+func _scan_render_node(node: Node, counts: Dictionary, visible_details: Array[Dictionary], frustum_details: Array[Dictionary], material_surface_counts: Dictionary, camera: Camera3D) -> void:
 	if node is GeometryInstance3D:
 		var geometry := node as GeometryInstance3D
 		var visible := geometry.is_visible_in_tree()
+		var in_camera_frustum := visible and _is_geometry_in_camera_frustum(geometry, camera)
 		_increment_render_count(counts, "geometry_instances")
 		if visible:
 			_increment_render_count(counts, "visible_geometry_instances")
+		if in_camera_frustum:
+			_increment_render_count(counts, "frustum_geometry_instances")
 
 		var category := _get_render_diagnostic_node_category(geometry)
 		var detail := _build_render_geometry_detail(geometry, category)
+		detail["in_camera_frustum"] = in_camera_frustum
 		if geometry is MeshInstance3D:
 			_increment_render_count(counts, "mesh_instances")
 			_increment_render_count(counts, "%s_mesh_instances" % category)
 			_increment_render_count(counts, "mesh_surface_count", int(detail.get("surface_count", 0)))
 			_increment_render_count(counts, "%s_mesh_surface_count" % category, int(detail.get("surface_count", 0)))
+			_increment_render_count(counts, "mesh_vertex_count", int(detail.get("vertex_count", 0)))
+			_increment_render_count(counts, "%s_mesh_vertex_count" % category, int(detail.get("vertex_count", 0)))
+			_increment_render_count(counts, "mesh_index_count", int(detail.get("index_count", 0)))
+			_increment_render_count(counts, "%s_mesh_index_count" % category, int(detail.get("index_count", 0)))
+			_increment_render_count(counts, "mesh_triangle_count", int(detail.get("triangle_count", 0)))
+			_increment_render_count(counts, "%s_mesh_triangle_count" % category, int(detail.get("triangle_count", 0)))
 			if visible:
 				_increment_render_count(counts, "visible_mesh_instances")
 				_increment_render_count(counts, "visible_%s_mesh_instances" % category)
 				_increment_render_count(counts, "visible_mesh_surface_count", int(detail.get("surface_count", 0)))
 				_increment_render_count(counts, "visible_%s_mesh_surface_count" % category, int(detail.get("surface_count", 0)))
+				_increment_render_count(counts, "visible_mesh_vertex_count", int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "visible_%s_mesh_vertex_count" % category, int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "visible_mesh_index_count", int(detail.get("index_count", 0)))
+				_increment_render_count(counts, "visible_%s_mesh_index_count" % category, int(detail.get("index_count", 0)))
+				_increment_render_count(counts, "visible_mesh_triangle_count", int(detail.get("triangle_count", 0)))
+				_increment_render_count(counts, "visible_%s_mesh_triangle_count" % category, int(detail.get("triangle_count", 0)))
 				_record_render_material_surfaces(geometry as MeshInstance3D, material_surface_counts)
+			if in_camera_frustum:
+				_increment_render_count(counts, "frustum_mesh_instances")
+				_increment_render_count(counts, "frustum_%s_mesh_instances" % category)
+				_increment_render_count(counts, "frustum_mesh_vertex_count", int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "frustum_%s_mesh_vertex_count" % category, int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "frustum_mesh_triangle_count", int(detail.get("triangle_count", 0)))
+				_increment_render_count(counts, "frustum_%s_mesh_triangle_count" % category, int(detail.get("triangle_count", 0)))
 		elif geometry is MultiMeshInstance3D:
 			_increment_render_count(counts, "multimesh_instances")
 			_increment_render_count(counts, "%s_multimesh_instances" % category)
@@ -877,6 +1026,18 @@ func _scan_render_node(node: Node, counts: Dictionary, visible_details: Array[Di
 			_increment_render_count(counts, "%s_multimesh_surface_count" % category, int(detail.get("surface_count", 0)))
 			_increment_render_count(counts, "multimesh_instance_count", int(detail.get("instance_count", 0)))
 			_increment_render_count(counts, "%s_multimesh_instance_count" % category, int(detail.get("instance_count", 0)))
+			_increment_render_count(counts, "multimesh_base_vertex_count", int(detail.get("base_vertex_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_base_vertex_count" % category, int(detail.get("base_vertex_count", 0)))
+			_increment_render_count(counts, "multimesh_rendered_vertex_count", int(detail.get("vertex_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_rendered_vertex_count" % category, int(detail.get("vertex_count", 0)))
+			_increment_render_count(counts, "multimesh_base_index_count", int(detail.get("base_index_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_base_index_count" % category, int(detail.get("base_index_count", 0)))
+			_increment_render_count(counts, "multimesh_rendered_index_count", int(detail.get("index_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_rendered_index_count" % category, int(detail.get("index_count", 0)))
+			_increment_render_count(counts, "multimesh_base_triangle_count", int(detail.get("base_triangle_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_base_triangle_count" % category, int(detail.get("base_triangle_count", 0)))
+			_increment_render_count(counts, "multimesh_rendered_triangle_count", int(detail.get("triangle_count", 0)))
+			_increment_render_count(counts, "%s_multimesh_rendered_triangle_count" % category, int(detail.get("triangle_count", 0)))
 			if visible:
 				_increment_render_count(counts, "visible_multimesh_instances")
 				_increment_render_count(counts, "visible_%s_multimesh_instances" % category)
@@ -884,23 +1045,106 @@ func _scan_render_node(node: Node, counts: Dictionary, visible_details: Array[Di
 				_increment_render_count(counts, "visible_%s_multimesh_surface_count" % category, int(detail.get("surface_count", 0)))
 				_increment_render_count(counts, "visible_multimesh_instance_count", int(detail.get("instance_count", 0)))
 				_increment_render_count(counts, "visible_%s_multimesh_instance_count" % category, int(detail.get("instance_count", 0)))
+				_increment_render_count(counts, "visible_multimesh_base_vertex_count", int(detail.get("base_vertex_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_base_vertex_count" % category, int(detail.get("base_vertex_count", 0)))
+				_increment_render_count(counts, "visible_multimesh_rendered_vertex_count", int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_rendered_vertex_count" % category, int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "visible_multimesh_base_index_count", int(detail.get("base_index_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_base_index_count" % category, int(detail.get("base_index_count", 0)))
+				_increment_render_count(counts, "visible_multimesh_rendered_index_count", int(detail.get("index_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_rendered_index_count" % category, int(detail.get("index_count", 0)))
+				_increment_render_count(counts, "visible_multimesh_base_triangle_count", int(detail.get("base_triangle_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_base_triangle_count" % category, int(detail.get("base_triangle_count", 0)))
+				_increment_render_count(counts, "visible_multimesh_rendered_triangle_count", int(detail.get("triangle_count", 0)))
+				_increment_render_count(counts, "visible_%s_multimesh_rendered_triangle_count" % category, int(detail.get("triangle_count", 0)))
+			if in_camera_frustum:
+				_increment_render_count(counts, "frustum_multimesh_instances")
+				_increment_render_count(counts, "frustum_%s_multimesh_instances" % category)
+				_increment_render_count(counts, "frustum_multimesh_instance_count", int(detail.get("instance_count", 0)))
+				_increment_render_count(counts, "frustum_%s_multimesh_instance_count" % category, int(detail.get("instance_count", 0)))
+				_increment_render_count(counts, "frustum_multimesh_rendered_vertex_count", int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "frustum_%s_multimesh_rendered_vertex_count" % category, int(detail.get("vertex_count", 0)))
+				_increment_render_count(counts, "frustum_multimesh_rendered_triangle_count", int(detail.get("triangle_count", 0)))
+				_increment_render_count(counts, "frustum_%s_multimesh_rendered_triangle_count" % category, int(detail.get("triangle_count", 0)))
 
 		_increment_render_count(counts, "%s_geometry" % category)
 		if visible:
 			_increment_render_count(counts, "visible_%s_geometry" % category)
 			visible_details.append(detail)
+		if in_camera_frustum:
+			_increment_render_count(counts, "frustum_%s_geometry" % category)
+			frustum_details.append(detail)
 
 	for child in node.get_children():
-		_scan_render_node(child, counts, visible_details, material_surface_counts)
+		_scan_render_node(child, counts, visible_details, frustum_details, material_surface_counts, camera)
 
 
 func _increment_render_count(counts: Dictionary, key: String, amount: int = 1) -> void:
 	counts[key] = int(counts.get(key, 0)) + amount
 
 
+func _is_geometry_in_camera_frustum(geometry: GeometryInstance3D, camera: Camera3D) -> bool:
+	if not is_instance_valid(geometry) or not geometry.is_inside_tree():
+		return false
+	if not is_instance_valid(camera) or not camera.is_inside_tree():
+		return false
+
+	var global_aabb := _get_geometry_global_aabb(geometry)
+	if global_aabb.size == Vector3.ZERO:
+		return camera.is_position_in_frustum(global_aabb.position)
+	if global_aabb.has_point(camera.global_position):
+		return true
+
+	var center := global_aabb.position + global_aabb.size * 0.5
+	if camera.is_position_in_frustum(center):
+		return true
+
+	for point in _get_aabb_sample_points(global_aabb):
+		if camera.is_position_in_frustum(point):
+			return true
+	return false
+
+
+func _get_geometry_global_aabb(geometry: GeometryInstance3D) -> AABB:
+	var local_aabb := geometry.get_aabb()
+	var transform := geometry.global_transform
+	var bounds := AABB(transform * local_aabb.get_endpoint(0), Vector3.ZERO)
+	for index in range(1, 8):
+		bounds = bounds.expand(transform * local_aabb.get_endpoint(index))
+	return bounds
+
+
+func _get_aabb_sample_points(bounds: AABB) -> Array[Vector3]:
+	var min_corner := bounds.position
+	var max_corner := bounds.position + bounds.size
+	var center := bounds.position + bounds.size * 0.5
+	return [
+		bounds.get_endpoint(0),
+		bounds.get_endpoint(1),
+		bounds.get_endpoint(2),
+		bounds.get_endpoint(3),
+		bounds.get_endpoint(4),
+		bounds.get_endpoint(5),
+		bounds.get_endpoint(6),
+		bounds.get_endpoint(7),
+		Vector3(center.x, center.y, min_corner.z),
+		Vector3(center.x, center.y, max_corner.z),
+		Vector3(center.x, min_corner.y, center.z),
+		Vector3(center.x, max_corner.y, center.z),
+		Vector3(min_corner.x, center.y, center.z),
+		Vector3(max_corner.x, center.y, center.z)
+	]
+
+
 func _build_render_geometry_detail(geometry: GeometryInstance3D, category: String) -> Dictionary:
 	var surface_count := 0
 	var instance_count := 0
+	var vertex_count := 0
+	var index_count := 0
+	var triangle_count := 0
+	var base_vertex_count := 0
+	var base_index_count := 0
+	var base_triangle_count := 0
 	var mesh_resource_path := ""
 	var material_keys: Array[String] = []
 	if geometry is MeshInstance3D:
@@ -909,6 +1153,10 @@ func _build_render_geometry_detail(geometry: GeometryInstance3D, category: Strin
 			surface_count = mesh_instance.mesh.get_surface_count()
 			mesh_resource_path = str(mesh_instance.mesh.resource_path)
 			material_keys = _collect_render_material_keys(mesh_instance)
+			var mesh_counts := _collect_mesh_geometry_counts(mesh_instance.mesh)
+			vertex_count = int(mesh_counts.get("vertex_count", 0))
+			index_count = int(mesh_counts.get("index_count", 0))
+			triangle_count = int(mesh_counts.get("triangle_count", 0))
 	elif geometry is MultiMeshInstance3D:
 		var multimesh_instance := geometry as MultiMeshInstance3D
 		if multimesh_instance.multimesh != null:
@@ -916,6 +1164,13 @@ func _build_render_geometry_detail(geometry: GeometryInstance3D, category: Strin
 			if multimesh_instance.multimesh.mesh != null:
 				surface_count = multimesh_instance.multimesh.mesh.get_surface_count()
 				mesh_resource_path = str(multimesh_instance.multimesh.mesh.resource_path)
+				var base_counts := _collect_mesh_geometry_counts(multimesh_instance.multimesh.mesh)
+				base_vertex_count = int(base_counts.get("vertex_count", 0))
+				base_index_count = int(base_counts.get("index_count", 0))
+				base_triangle_count = int(base_counts.get("triangle_count", 0))
+				vertex_count = base_vertex_count * maxi(instance_count, 1)
+				index_count = base_index_count * maxi(instance_count, 1)
+				triangle_count = base_triangle_count * maxi(instance_count, 1)
 
 	var player_distance := -1.0
 	var geometry_position := Vector3.ZERO
@@ -931,8 +1186,14 @@ func _build_render_geometry_detail(geometry: GeometryInstance3D, category: Strin
 		"category": category,
 		"surface_count": surface_count,
 		"instance_count": instance_count,
+		"vertex_count": vertex_count,
+		"index_count": index_count,
+		"triangle_count": triangle_count,
+		"base_vertex_count": base_vertex_count,
+		"base_index_count": base_index_count,
+		"base_triangle_count": base_triangle_count,
 		"draw_proxy_score": maxi(surface_count, 1),
-		"render_work_proxy_score": maxi(surface_count, 1) * maxi(instance_count, 1),
+		"render_work_proxy_score": maxi(triangle_count, maxi(vertex_count, surface_count)),
 		"distance_to_player_m": player_distance,
 		"global_position": _vector3_to_snapshot(geometry_position),
 		"mesh_resource_path": mesh_resource_path,
@@ -940,7 +1201,40 @@ func _build_render_geometry_detail(geometry: GeometryInstance3D, category: Strin
 	}
 
 
+func _collect_mesh_geometry_counts(mesh: Mesh) -> Dictionary:
+	var counts := {
+		"vertex_count": 0,
+		"index_count": 0,
+		"triangle_count": 0
+	}
+	if mesh == null:
+		return counts
+
+	for surface_index in range(mesh.get_surface_count()):
+		var surface_vertex_count := int(mesh.surface_get_array_len(surface_index))
+		var surface_index_count := int(mesh.surface_get_array_index_len(surface_index))
+		var surface_triangle_count := 0
+		if surface_index_count > 0:
+			surface_triangle_count = int(surface_index_count / 3)
+		else:
+			surface_triangle_count = int(surface_vertex_count / 3)
+		_increment_render_count(counts, "vertex_count", surface_vertex_count)
+		_increment_render_count(counts, "index_count", surface_index_count)
+		_increment_render_count(counts, "triangle_count", surface_triangle_count)
+	return counts
+
+
 func _compare_render_geometry_detail(left: Dictionary, right: Dictionary) -> bool:
+	var left_triangles := int(left.get("triangle_count", 0))
+	var right_triangles := int(right.get("triangle_count", 0))
+	if left_triangles != right_triangles:
+		return left_triangles > right_triangles
+
+	var left_vertices := int(left.get("vertex_count", 0))
+	var right_vertices := int(right.get("vertex_count", 0))
+	if left_vertices != right_vertices:
+		return left_vertices > right_vertices
+
 	var left_draw := int(left.get("draw_proxy_score", 0))
 	var right_draw := int(right.get("draw_proxy_score", 0))
 	if left_draw != right_draw:
@@ -1777,12 +2071,16 @@ func _write_native_town_entry_snapshot() -> void:
 		"stable_top_bucket": stable_bucket,
 		"stable_top_bucket_count": stable_bucket_count,
 		"top_bucket_counts": town_window.get("top_bucket_counts", {}),
+		"town_entry_capture_reason": _town_entry_capture_reason,
 		"recent_spike_window": recent_window,
 		"town_entry_window": town_window,
 		"moving_entry_window": moving_entry_window,
 		"stationary_hold_window": stationary_hold_window,
 		"hold_started_sample_index": _hold_started_sample_index,
 		"hold_completed_sample_index": _hold_completed_sample_index,
+		"hold_settle_elapsed_seconds": hold_settle_elapsed_seconds,
+		"hold_settle_stable_frames": hold_settle_stable_frames,
+		"hold_settle_timed_out": hold_settle_timed_out,
 		"latest_town_state": town_window.get("latest_town_state", {}),
 		"baseline_comparison": town_window.get("baseline_comparison", recent_window.get("baseline_comparison", {})),
 		"runtime_mode": runtime_mode,
@@ -1866,11 +2164,13 @@ func _ready() -> void:
 	render_diagnostics_frame_scene_scan_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_FRAME_SCENE_SCAN_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT)
 	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
 	world_ready_timeout_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_TIMEOUT_SECONDS", WORLD_READY_TIMEOUT_SECONDS)
+	world_ready_status_log_interval_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STATUS_LOG_INTERVAL_SECONDS", 5.0)
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
 		Engine.max_fps = max_fps_override
+	_apply_display_mode_override_from_env()
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Disable buildings: %s" % ("ON" if disable_buildings_enabled else "OFF"))
@@ -2342,8 +2642,91 @@ func _set_glow_enabled_recursive(node: Node, enabled: bool) -> int:
 	return changed
 
 
+func _collect_world_ready_status(terrain_ready: bool, loading_screen_done: bool) -> Dictionary:
+	var status := {
+		"phase_time": phase_time,
+		"terrain_ready": terrain_ready,
+		"loading_screen_done": loading_screen_done,
+		"terrain_manager_valid": is_instance_valid(terrain_manager),
+		"chunk_manager_valid": is_instance_valid(chunk_manager),
+		"player_valid": is_instance_valid(player),
+		"loading_screen_valid": is_instance_valid(loading_screen)
+	}
+
+	if is_instance_valid(loading_screen):
+		status["loading_screen_is_loading"] = bool(loading_screen.get("is_loading")) if "is_loading" in loading_screen else false
+		status["loading_screen_stage"] = int(loading_screen.get("current_stage")) if "current_stage" in loading_screen else -1
+		var status_label_variant: Variant = loading_screen.get("status_label") if "status_label" in loading_screen else null
+		var progress_bar_variant: Variant = loading_screen.get("progress_bar") if "progress_bar" in loading_screen else null
+		if status_label_variant is Label:
+			status["loading_screen_text"] = str((status_label_variant as Label).text)
+		if progress_bar_variant is ProgressBar:
+			status["loading_screen_progress"] = float((progress_bar_variant as ProgressBar).value)
+
+	if is_instance_valid(terrain_manager):
+		status["terrain_initial_load_phase"] = bool(terrain_manager.get("initial_load_phase")) if "initial_load_phase" in terrain_manager else false
+		status["terrain_chunks_loaded_initial"] = int(terrain_manager.get("chunks_loaded_initial")) if "chunks_loaded_initial" in terrain_manager else -1
+		status["terrain_initial_load_target_chunks"] = int(terrain_manager.get("initial_load_target_chunks")) if "initial_load_target_chunks" in terrain_manager else -1
+		status["terrain_active_chunk_count"] = int(terrain_manager.get("active_chunks").size()) if "active_chunks" in terrain_manager else -1
+		status["terrain_pending_node_count"] = int(terrain_manager.call("get_pending_nodes_count")) if terrain_manager.has_method("get_pending_nodes_count") else -1
+		status["terrain_loading_progress"] = float(terrain_manager.call("get_loading_progress")) if terrain_manager.has_method("get_loading_progress") else -1.0
+		status["terrain_last_update_loads"] = int(terrain_manager.get("_last_update_loads")) if "_last_update_loads" in terrain_manager else -1
+		status["terrain_last_update_backend"] = str(terrain_manager.get("_last_update_backend")) if "_last_update_backend" in terrain_manager else ""
+		status["terrain_loading_paused"] = bool(terrain_manager.get("loading_paused")) if "loading_paused" in terrain_manager else false
+		if is_instance_valid(player) and terrain_manager.has_method("ensure_collision_ready_at"):
+			status["terrain_collision_ready_at_player"] = bool(terrain_manager.call("ensure_collision_ready_at", player.global_position, 1))
+
+	var system_telemetry := _collect_system_telemetry()
+	var building_telemetry: Dictionary = system_telemetry.get("building_manager", {})
+	var prefab_telemetry: Dictionary = system_telemetry.get("prefab_spawner", {})
+	var vegetation_telemetry: Dictionary = system_telemetry.get("vegetation_manager", {})
+	status["building_pending_baked_apply_phases"] = int(building_telemetry.get("pending_world_map_baked_building_apply_phases", 0))
+	status["building_pending_baked_object_spawns"] = int(building_telemetry.get("pending_world_map_baked_object_spawns", 0))
+	status["building_dirty_visible_chunk_count"] = int(building_telemetry.get("dirty_visible_chunk_count", 0))
+	status["prefab_pending_baked_payload_build_jobs"] = int(prefab_telemetry.get("pending_world_map_baked_payload_build_jobs", 0))
+	status["prefab_pending_baked_payload_jobs"] = int(prefab_telemetry.get("pending_world_map_baked_payload_jobs", 0))
+	status["vegetation_ready"] = bool(vegetation_telemetry.get("vegetation_ready", true))
+	status["vegetation_pending_chunks"] = int(vegetation_telemetry.get("pending_chunks_count", 0))
+	return status
+
+
+func _maybe_log_world_ready_status(terrain_ready: bool, loading_screen_done: bool) -> void:
+	if world_ready_status_log_interval_seconds <= 0.0:
+		return
+	if phase_time - world_ready_last_status_log_seconds < world_ready_status_log_interval_seconds:
+		return
+
+	world_ready_last_status_log_seconds = phase_time
+	var status := _collect_world_ready_status(terrain_ready, loading_screen_done)
+	_emit_scope_state("world_ready_wait", status)
+	print("[TOWN_STALL_TEST] World wait %.1fs terrain_ready=%s loading_done=%s loading_stage=%d loading=%.1f%% '%s' terrain_initial=%s chunks=%d/%d pending_nodes=%d active=%d collision_ready=%s backend=%s loads=%d paused=%s building_apply=%d building_objects=%d prefab_build=%d prefab_apply=%d veg_ready=%s veg_pending=%d" % [
+		float(status.get("phase_time", 0.0)),
+		str(status.get("terrain_ready", false)),
+		str(status.get("loading_screen_done", false)),
+		int(status.get("loading_screen_stage", -1)),
+		float(status.get("loading_screen_progress", -1.0)),
+		str(status.get("loading_screen_text", "")),
+		str(status.get("terrain_initial_load_phase", false)),
+		int(status.get("terrain_chunks_loaded_initial", -1)),
+		int(status.get("terrain_initial_load_target_chunks", -1)),
+		int(status.get("terrain_pending_node_count", -1)),
+		int(status.get("terrain_active_chunk_count", -1)),
+		str(status.get("terrain_collision_ready_at_player", false)),
+		str(status.get("terrain_last_update_backend", "")),
+		int(status.get("terrain_last_update_loads", -1)),
+		str(status.get("terrain_loading_paused", false)),
+		int(status.get("building_pending_baked_apply_phases", 0)),
+		int(status.get("building_pending_baked_object_spawns", 0)),
+		int(status.get("prefab_pending_baked_payload_build_jobs", 0)),
+		int(status.get("prefab_pending_baked_payload_jobs", 0)),
+		str(status.get("vegetation_ready", true)),
+		int(status.get("vegetation_pending_chunks", 0))
+	])
+
+
 func _poll_world_ready() -> void:
 	if phase_time > world_ready_timeout_seconds:
+		_maybe_log_world_ready_status(false, false)
 		_fail("Timed out waiting for world to become ready")
 		return
 
@@ -2360,6 +2743,7 @@ func _poll_world_ready() -> void:
 		loading_screen = game_root.find_child("LoadingScreen", true, false)
 
 	if terrain_manager == null or chunk_manager == null or player == null:
+		_maybe_log_world_ready_status(false, false)
 		return
 
 	var terrain_ready := false
@@ -2371,6 +2755,7 @@ func _poll_world_ready() -> void:
 		loading_screen_done = not bool(loading_screen.get("is_loading"))
 
 	if not terrain_ready or not loading_screen_done:
+		_maybe_log_world_ready_status(terrain_ready, loading_screen_done)
 		return
 
 	_emit_scope_event("town_stall_test", "world_ready", {
@@ -2446,6 +2831,7 @@ func _teleport_into_town() -> void:
 	phase = Phase.HOLD_FIRST
 	phase_time = 0.0
 	hold_started_logged = false
+	_reset_hold_settle()
 
 
 func _is_town_spawn_ready(position: Vector3) -> bool:
@@ -2603,6 +2989,60 @@ func _set_player_movement_enabled(enabled: bool) -> void:
 		if movement_component.has_method("set_process"):
 			movement_component.set_process(enabled)
 	player.velocity = Vector3.ZERO
+
+
+func _reset_hold_settle() -> void:
+	hold_settle_elapsed_seconds = 0.0
+	hold_settle_stable_frames = 0
+	hold_settle_timed_out = false
+	hold_settle_wait_logged = false
+	hold_settle_last_player_position = Vector3(1.0e20, 1.0e20, 1.0e20)
+
+
+func _get_player_velocity_length() -> float:
+	if not is_instance_valid(player):
+		return 0.0
+	if "velocity" in player:
+		return player.velocity.length()
+	return 0.0
+
+
+func _is_hold_settled(delta: float) -> bool:
+	if not is_instance_valid(player):
+		return true
+
+	hold_settle_elapsed_seconds += delta
+	var player_position := player.global_position
+	var moved := false
+	if hold_settle_last_player_position.x <= 9.0e19:
+		moved = player_position.distance_to(hold_settle_last_player_position) > HOLD_SETTLE_POSITION_EPSILON
+	hold_settle_last_player_position = player_position
+
+	var velocity_len := _get_player_velocity_length()
+	if not moved and velocity_len <= HOLD_SETTLE_VELOCITY_EPSILON:
+		hold_settle_stable_frames += 1
+	else:
+		hold_settle_stable_frames = 0
+
+	if hold_settle_stable_frames >= HOLD_SETTLE_STABLE_FRAMES:
+		return true
+
+	if hold_settle_elapsed_seconds >= HOLD_SETTLE_MAX_SECONDS:
+		hold_settle_timed_out = true
+		_emit_scope_event("town_stall_test", "hold_settle_timeout", {
+			"elapsed_seconds": hold_settle_elapsed_seconds,
+			"stable_frames": hold_settle_stable_frames,
+			"velocity": velocity_len,
+			"player_x": player_position.x,
+			"player_y": player_position.y,
+			"player_z": player_position.z
+		})
+		return true
+
+	if not hold_settle_wait_logged:
+		hold_settle_wait_logged = true
+		print("[TOWN_STALL_TEST] Waiting for player settle before hold")
+	return false
 
 
 func _enter_fly_to_town() -> void:
@@ -2811,6 +3251,7 @@ func _fly_to_town(_delta: float) -> void:
 		_apply_baked_building_smoke_hold_extension()
 		phase_time = 0.0
 		hold_started_logged = false
+		_reset_hold_settle()
 		return
 
 	player.velocity = Vector3(0.0, signf(descent_delta) * AUTO_FLY_SPEED, 0.0)
@@ -2819,6 +3260,9 @@ func _fly_to_town(_delta: float) -> void:
 
 func _hold_in_town(_delta: float) -> void:
 	if not hold_started_logged:
+		if not _is_hold_settled(_delta):
+			return
+		phase_time = 0.0
 		print("[TOWN_STALL_TEST] Hold started")
 		_hold_started_sample_index = _town_entry_samples.size()
 		_emit_scope_event("town_stall_test", "hold_started", {

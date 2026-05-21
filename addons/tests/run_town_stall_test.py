@@ -12,7 +12,8 @@ from typing import Any, Optional
 from windows_error_dialogs import suppress_windows_error_dialogs
 
 # Configuration
-GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
+DEFAULT_GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
+GODOT_BIN = os.environ.get("TOWN_STALL_GODOT_BIN", DEFAULT_GODOT_BIN)
 PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 MAIN_SCENE = "res://addons/tests/town_stall_test_harness.tscn"
 GODOT_RENDERING_DRIVER = "vulkan"
@@ -44,6 +45,8 @@ RAW_GPU_QUERY_FIELDS = [
 
 
 def _runtime_mode_label() -> str:
+    if os.environ.get("TOWN_STALL_EXPORTED_RUNTIME", "0") == "1":
+        return "godot_exported_runtime"
     godot_name = Path(GODOT_BIN).name.lower()
     if ".tools." in godot_name or godot_name.endswith(".tools.exe"):
         return "godot_tools_debug_runner"
@@ -89,6 +92,27 @@ def _positive_int_from_env(name: str, default: int) -> int:
         return default
 
     return value if value > 0 else default
+
+
+def _godot_display_args_from_env() -> list[str]:
+    args: list[str] = []
+    if os.environ.get("TOWN_STALL_GODOT_WINDOWED", "0") == "1":
+        args.append("--windowed")
+
+    resolution = os.environ.get("TOWN_STALL_GODOT_RESOLUTION", "").strip().lower()
+    if resolution:
+        parts = resolution.split("x", 1)
+        if len(parts) == 2:
+            try:
+                width = int(parts[0])
+                height = int(parts[1])
+            except ValueError:
+                width = 0
+                height = 0
+            if width > 0 and height > 0:
+                args.extend(["--resolution", f"{width}x{height}"])
+
+    return args
 
 
 def _float_from_env(name: str, default: float) -> float:
@@ -1291,6 +1315,25 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
     return system_summary
 
 
+def _persist_system_sample_summary_to_snapshot(snapshot_path: Optional[Path], system_sample_summary: dict) -> None:
+    if not snapshot_path or not system_sample_summary:
+        return
+
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+
+    if not isinstance(snapshot, dict):
+        return
+
+    snapshot["system_sample_summary"] = system_sample_summary
+    try:
+        snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _print_system_sample_summary(summary: dict) -> None:
     if not summary or not bool(summary.get("available", False)):
         print("System sampling: unavailable")
@@ -1440,6 +1483,30 @@ def _print_snapshot_summary(snapshot_path: Path) -> None:
     print("=" * 50)
 
 
+def _snapshot_rendering_failures(snapshot_path: Path) -> list[str]:
+    try:
+        data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [f"could not parse snapshot render features: {exc}"]
+
+    render_features = data.get("render_features", {})
+    if not isinstance(render_features, dict):
+        return ["snapshot render features missing"]
+
+    reasons: list[str] = []
+    rendering_method = str(render_features.get("rendering_method", "")).strip().lower()
+    rendering_driver = str(render_features.get("rendering_driver_name", "")).strip().lower()
+    if rendering_method and rendering_method != GODOT_RENDERING_METHOD:
+        reasons.append(f"runtime rendering method {rendering_method!r} is not {GODOT_RENDERING_METHOD!r}")
+    if rendering_driver and rendering_driver != GODOT_RENDERING_DRIVER:
+        reasons.append(f"runtime rendering driver {rendering_driver!r} is not {GODOT_RENDERING_DRIVER!r}")
+    if not rendering_method:
+        reasons.append("runtime rendering method was not reported")
+    if not rendering_driver:
+        reasons.append("runtime rendering driver was not reported")
+    return reasons
+
+
 def _detect_run_failure(output: str, returncode: Optional[int]) -> list[str]:
     reasons: list[str] = []
     lowered = output.lower()
@@ -1474,6 +1541,12 @@ def main() -> int:
     print(f"   Runtime mode: {_runtime_mode_label()} ({Path(GODOT_BIN).name})")
     print(f"   Rendering: {GODOT_RENDERING_METHOD} / {GODOT_RENDERING_DRIVER}")
     print(f"   Godot APPDATA: {TOWN_STALL_APPDATA_DIR}")
+    exported_runtime = os.environ.get("TOWN_STALL_EXPORTED_RUNTIME", "0") == "1"
+    if exported_runtime:
+        print("   Runtime launch: embedded exported project")
+    display_args = _godot_display_args_from_env()
+    if display_args:
+        print(f"   Display args: {' '.join(display_args)}")
     print("-" * 50)
     run_start_mtime = time.time()
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1505,15 +1578,21 @@ def main() -> int:
         GODOT_RENDERING_METHOD,
         "--log-file",
         str(LOG_FILE),
-        "--path",
-        PROJECT_PATH,
-        MAIN_SCENE,
     ]
+    if not exported_runtime:
+        cmd.extend([
+            "--path",
+            PROJECT_PATH,
+            MAIN_SCENE,
+        ])
+    if display_args:
+        cmd[1:1] = display_args
 
     env = os.environ.copy()
     env["APPDATA"] = str(TOWN_STALL_APPDATA_DIR)
     env["TOWN_STALL_SEED"] = os.environ.get("TOWN_STALL_SEED", "12345")
     env["TOWN_STALL_AUTO_TELEPORT"] = os.environ.get("TOWN_STALL_AUTO_TELEPORT", "0")
+    default_measure_full_flight = "0" if env["TOWN_STALL_AUTO_TELEPORT"] != "0" else "1"
     env["TOWN_STALL_REPEAT_ENTRY"] = os.environ.get("TOWN_STALL_REPEAT_ENTRY", "0")
     env["TOWN_STALL_DISABLE_BUILDINGS"] = os.environ.get("TOWN_STALL_DISABLE_BUILDINGS", "0")
     env["TOWN_STALL_DISABLE_BUILDING_OBJECTS"] = os.environ.get("TOWN_STALL_DISABLE_BUILDING_OBJECTS", "0")
@@ -1529,7 +1608,7 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_EXIT_AUTOSAVE"] = os.environ.get("TOWN_STALL_DISABLE_EXIT_AUTOSAVE", "1")
     env["TOWN_STALL_HOLD_SECONDS"] = os.environ.get("TOWN_STALL_HOLD_SECONDS", "")
     env["TOWN_STALL_MAX_FPS"] = os.environ.get("TOWN_STALL_MAX_FPS", "")
-    env["TOWN_STALL_MEASURE_FULL_FLIGHT"] = os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", "0")
+    env["TOWN_STALL_MEASURE_FULL_FLIGHT"] = os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", default_measure_full_flight)
     env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
@@ -1646,6 +1725,7 @@ def main() -> int:
         returncode = proc.returncode
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
+            returncode = proc.returncode
         except subprocess.TimeoutExpired:
             print(f"WARNING: Timeout after {timeout}s (bot may still be running)")
             proc.kill()
@@ -1735,8 +1815,10 @@ def main() -> int:
                 SYSTEM_SAMPLE_SUMMARY_FILE.write_text(json.dumps(system_sample_summary, indent=2), encoding="utf-8")
             except OSError:
                 pass
+            _persist_system_sample_summary_to_snapshot(snapshot, system_sample_summary)
             _print_phase_system_sample_summary(system_sample_summary)
         _print_snapshot_summary(snapshot)
+        failure_reasons.extend(_snapshot_rendering_failures(snapshot))
     else:
         print("No performance snapshot found.")
         failure_reasons.append("no performance snapshot found")

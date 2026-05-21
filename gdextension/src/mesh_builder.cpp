@@ -85,6 +85,24 @@ struct TerrainPackedVertexKeyHash {
     }
 };
 
+struct TerrainCpuVertexKey {
+    std::array<uint32_t, 10> words{};
+
+    bool operator==(const TerrainCpuVertexKey &other) const noexcept {
+        return words == other.words;
+    }
+};
+
+struct TerrainCpuVertexKeyHash {
+    size_t operator()(const TerrainCpuVertexKey &key) const noexcept {
+        size_t seed = 0;
+        for (uint32_t word : key.words) {
+            seed ^= std::hash<uint32_t>{}(word) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        }
+        return seed;
+    }
+};
+
 static Dictionary make_batch_dictionary(const BlockBatchData &batch);
 
 static inline uint32_t read_u32_le(const uint8_t *src) {
@@ -98,6 +116,12 @@ static inline float u32_to_float(uint32_t bits) {
     float value;
     std::memcpy(&value, &bits, sizeof(float));
     return value;
+}
+
+static inline uint32_t float_to_u32(float value) {
+    uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(float));
+    return bits;
 }
 
 static inline float read_f32_le(const uint8_t *src) {
@@ -533,18 +557,63 @@ static Dictionary build_density_marching_cubes_mesh_data_internal(const PackedBy
         return result;
     }
 
+    std::vector<Vector3> unique_vertices;
+    std::vector<Vector3> unique_normals;
+    std::vector<Color> unique_colors;
+    std::vector<int32_t> indices;
+    unique_vertices.reserve(vertices.size());
+    unique_normals.reserve(normals.size());
+    unique_colors.reserve(colors.size());
+    indices.reserve(vertices.size());
+
+    std::unordered_map<TerrainCpuVertexKey, int32_t, TerrainCpuVertexKeyHash> unique_lookup;
+    unique_lookup.reserve(vertices.size());
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const Vector3 &vertex = vertices[i];
+        const Vector3 &normal = normals[i];
+        const Color &color = colors[i];
+
+        TerrainCpuVertexKey key;
+        key.words[0] = float_to_u32(vertex.x);
+        key.words[1] = float_to_u32(vertex.y);
+        key.words[2] = float_to_u32(vertex.z);
+        key.words[3] = float_to_u32(normal.x);
+        key.words[4] = float_to_u32(normal.y);
+        key.words[5] = float_to_u32(normal.z);
+        key.words[6] = float_to_u32(color.r);
+        key.words[7] = float_to_u32(color.g);
+        key.words[8] = float_to_u32(color.b);
+        key.words[9] = float_to_u32(color.a);
+
+        int32_t index = 0;
+        const auto found = unique_lookup.find(key);
+        if (found != unique_lookup.end()) {
+            index = found->second;
+        } else {
+            index = static_cast<int32_t>(unique_vertices.size());
+            unique_lookup.emplace(key, index);
+            unique_vertices.push_back(vertex);
+            unique_normals.push_back(normal);
+            unique_colors.push_back(color);
+        }
+        indices.push_back(index);
+    }
+
     PackedVector3Array packed_vertices;
     PackedVector3Array packed_normals;
     PackedColorArray packed_colors;
+    PackedInt32Array packed_indices;
     PackedVector3Array packed_faces;
-    packed_vertices.resize(static_cast<int>(vertices.size()));
-    packed_normals.resize(static_cast<int>(normals.size()));
-    packed_colors.resize(static_cast<int>(colors.size()));
+    packed_vertices.resize(static_cast<int>(unique_vertices.size()));
+    packed_normals.resize(static_cast<int>(unique_normals.size()));
+    packed_colors.resize(static_cast<int>(unique_colors.size()));
+    packed_indices.resize(static_cast<int>(indices.size()));
     packed_faces.resize(static_cast<int>(faces.size()));
 
-    std::copy(vertices.begin(), vertices.end(), packed_vertices.ptrw());
-    std::copy(normals.begin(), normals.end(), packed_normals.ptrw());
-    std::copy(colors.begin(), colors.end(), packed_colors.ptrw());
+    std::copy(unique_vertices.begin(), unique_vertices.end(), packed_vertices.ptrw());
+    std::copy(unique_normals.begin(), unique_normals.end(), packed_normals.ptrw());
+    std::copy(unique_colors.begin(), unique_colors.end(), packed_colors.ptrw());
+    std::copy(indices.begin(), indices.end(), packed_indices.ptrw());
     std::copy(faces.begin(), faces.end(), packed_faces.ptrw());
 
     Array arrays;
@@ -552,11 +621,15 @@ static Dictionary build_density_marching_cubes_mesh_data_internal(const PackedBy
     arrays[Mesh::ARRAY_VERTEX] = packed_vertices;
     arrays[Mesh::ARRAY_NORMAL] = packed_normals;
     arrays[Mesh::ARRAY_COLOR] = packed_colors;
+    if (unique_vertices.size() < vertices.size()) {
+        arrays[Mesh::ARRAY_INDEX] = packed_indices;
+    }
 
     result["arrays"] = arrays;
     result["faces"] = packed_faces;
     result["source_vertex_count"] = static_cast<int>(vertices.size());
-    result["unique_vertex_count"] = static_cast<int>(vertices.size());
+    result["source_index_count"] = static_cast<int>(indices.size());
+    result["unique_vertex_count"] = static_cast<int>(unique_vertices.size());
     if (include_height_map) {
         result["height_map"] = build_top_down_height_map(packed_faces, height_map_size);
     }
@@ -1670,6 +1743,7 @@ void MeshBuilder::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_collision_height_map", "density_data", "material_data", "density_size", "chunk_size", "height_map_size"), &MeshBuilder::build_density_marching_cubes_mesh_collision_height_map);
 	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_data", "density_data", "material_data", "density_size", "chunk_size"), &MeshBuilder::build_density_marching_cubes_mesh_data);
 	ClassDB::bind_method(D_METHOD("build_density_marching_cubes_mesh_data_height_map", "density_data", "material_data", "density_size", "chunk_size", "height_map_size"), &MeshBuilder::build_density_marching_cubes_mesh_data_height_map);
+	ClassDB::bind_method(D_METHOD("has_marching_cubes_tables"), &MeshBuilder::has_marching_cubes_tables);
 	ClassDB::bind_method(D_METHOD("create_material_texture", "data", "width", "height", "depth"), &MeshBuilder::create_material_texture);
 	ClassDB::bind_method(D_METHOD("has_player_material_overrides", "data", "width", "height", "depth"), &MeshBuilder::has_player_material_overrides);
     ClassDB::bind_method(D_METHOD("build_collision_shape", "data", "stride"), &MeshBuilder::build_collision_shape);
@@ -2097,6 +2171,10 @@ Dictionary MeshBuilder::build_density_marching_cubes_mesh_data(const PackedByteA
 
 Dictionary MeshBuilder::build_density_marching_cubes_mesh_data_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size) {
     return build_density_marching_cubes_mesh_data_internal(density_data, material_data, density_size, chunk_size, true, height_map_size);
+}
+
+bool MeshBuilder::has_marching_cubes_tables() const {
+    return get_marching_cubes_tables().valid;
 }
 
 

@@ -16,8 +16,16 @@ DEFAULT_STABLE_60_MAX_OVER_BUDGET_PCT = 5.0
 DEFAULT_STABLE_60_MAX_FRAME_MS = 40.0
 DEFAULT_STABLE_60_MAX_FRAMES_OVER_40MS = 0
 DEFAULT_STABLE_60_MAX_OVER_BUDGET_STREAK = 5
+DEFAULT_MOVEMENT_60_MAX_OVER_BUDGET_PCT = 10.0
+DEFAULT_MOVEMENT_60_MAX_FRAME_MS = 45.0
+DEFAULT_MOVEMENT_60_MAX_FRAMES_OVER_50MS = 0
+DEFAULT_MOVEMENT_MIN_SAMPLES = 600
+DEFAULT_MOVEMENT_MIN_GPU_SAMPLES = 5
+DEFAULT_STATIONARY_GPU_MIN_SAMPLES = 5
+DEFAULT_IDLE_GPU_MIN_SAMPLES = 3
 DEFAULT_PRODUCTION_MIN_HOLD_SECONDS = 20.0
 FRAME_BUDGET_EPSILON_MS = 0.05
+MOVEMENT_CAPTURE_REASONS = {"full_flight", "auto_fly_entry", "repeat_entry_second"}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -133,24 +141,82 @@ def _window_summary(window: dict[str, Any], target_frame_ms: float) -> dict[str,
     }
 
 
+def _phase_gpu_summary(window: dict[str, Any]) -> dict[str, Any]:
+    power = _dict(window.get("raw_gpu_power_w"))
+    temp = _dict(window.get("raw_gpu_temp_c"))
+    util = _dict(window.get("raw_gpu_util_percent"))
+    pstates = _dict(window.get("raw_gpu_pstates"))
+    raw_gpu_count = _int(window.get("raw_gpu_available_count"), _int(power.get("count")))
+    p0_count = _int(pstates.get("P0"))
+    return {
+        "available": bool(window.get("available", False)),
+        "sample_count": _int(window.get("sample_count")),
+        "raw_gpu_available_count": raw_gpu_count,
+        "power_sample_count": _int(power.get("count")),
+        "avg_power_w": _round(_float(power.get("avg"))),
+        "max_power_w": _round(_float(power.get("max"))),
+        "avg_temp_c": _round(_float(temp.get("avg"))),
+        "max_temp_c": _round(_float(temp.get("max"))),
+        "avg_gpu_util_pct": _round(_float(util.get("avg"))),
+        "max_gpu_util_pct": _round(_float(util.get("max"))),
+        "p0_count": p0_count,
+        "p0_fraction": _round(float(p0_count) / float(raw_gpu_count)) if raw_gpu_count > 0 else 0.0,
+        "pstates": pstates,
+    }
+
+
+def _town_capture_reason(snapshot: dict[str, Any]) -> str:
+    direct = str(snapshot.get("town_entry_capture_reason", "")).strip()
+    if direct:
+        return direct
+
+    for event in _list(snapshot.get("recent_scope_events")):
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("scope", "")) != "town_stall_test":
+            continue
+        if str(event.get("label", "")) != "measurement_reset":
+            continue
+        details = _dict(event.get("details"))
+        reason = str(details.get("reason", "")).strip()
+        if reason:
+            return reason
+    return ""
+
+
 def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, Any]:
     snapshot = _read_json(path)
     stationary_hold = _dict(snapshot.get("stationary_hold_window"))
+    moving_entry = _dict(snapshot.get("moving_entry_window"))
     town_entry = _dict(snapshot.get("town_entry_window"))
+    system_sample_summary = _dict(snapshot.get("system_sample_summary"))
+    phase_windows = _dict(system_sample_summary.get("phase_windows"))
     machine_state = _dict(snapshot.get("machine_state"))
     preflight_idle = _dict(machine_state.get("preflight_idle_summary"))
     render_features = _dict(snapshot.get("render_features"))
+    render_diagnostics = _dict(snapshot.get("render_diagnostics"))
+    final_scene_scan = _dict(render_diagnostics.get("final_scene_scan"))
     telemetry = _dict(snapshot.get("system_telemetry"))
     terrain = _dict(telemetry.get("terrain_manager"))
     building = _dict(telemetry.get("building_manager"))
     prefab = _dict(telemetry.get("prefab_spawner"))
     vegetation = _dict(telemetry.get("vegetation_manager"))
     entities = _dict(telemetry.get("entity_manager"))
+    render_distance = _int(terrain.get("render_distance"))
+    lod_distance = _int(terrain.get("distant_world_map_lod_distance"))
+    lod_overlap = _int(terrain.get("distant_world_map_lod_overlap"))
+    lod_inner_distance = max(render_distance - lod_overlap, 0)
     return {
         "path": str(path),
         "modified_epoch": path.stat().st_mtime,
+        "runtime_mode": str(snapshot.get("runtime_mode", "")),
         "hold_complete": bool(snapshot.get("benchmark_hold_complete", False)),
         "hold_seconds": _float(snapshot.get("benchmark_hold_seconds")),
+        "hold_settle_elapsed_seconds": _round(_float(snapshot.get("hold_settle_elapsed_seconds"))),
+        "hold_settle_stable_frames": _int(snapshot.get("hold_settle_stable_frames")),
+        "hold_settle_timed_out": bool(snapshot.get("hold_settle_timed_out", False)),
+        "town_entry_capture_reason": _town_capture_reason(snapshot),
+        "system_sample_summary_available": bool(system_sample_summary),
         "machine_state": {
             "load_percentage": _float(machine_state.get("load_percentage")),
             "percent_processor_utility": _float(machine_state.get("percent_processor_utility")),
@@ -166,28 +232,104 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
             "project_fallback_to_d3d12": bool(render_features.get("project_fallback_to_d3d12", False)),
             "project_fallback_to_opengl3": bool(render_features.get("project_fallback_to_opengl3", False)),
             "vulkan_only_expected": bool(render_features.get("vulkan_only_expected", False)),
+            "display_telemetry_available": "runtime_window_mode" in render_features,
+            "project_window_mode": _int(render_features.get("project_window_mode"), -1),
+            "runtime_window_mode": _int(render_features.get("runtime_window_mode"), -1),
+            "runtime_window_width": _int(render_features.get("runtime_window_width"), -1),
+            "runtime_window_height": _int(render_features.get("runtime_window_height"), -1),
+            "runtime_screen_width": _int(render_features.get("runtime_screen_width"), -1),
+            "runtime_screen_height": _int(render_features.get("runtime_screen_height"), -1),
+            "project_vsync_mode": _int(render_features.get("project_vsync_mode"), -1),
+            "runtime_vsync_mode": _int(render_features.get("runtime_vsync_mode"), -1),
+        },
+        "render_scene": {
+            "available": bool(final_scene_scan),
+            "visible_mesh_instances": _int(final_scene_scan.get("visible_mesh_instances")),
+            "visible_mesh_surface_count": _int(final_scene_scan.get("visible_mesh_surface_count")),
+            "visible_mesh_vertex_count": _int(final_scene_scan.get("visible_mesh_vertex_count")),
+            "visible_mesh_index_count": _int(final_scene_scan.get("visible_mesh_index_count")),
+            "visible_mesh_triangle_count": _int(final_scene_scan.get("visible_mesh_triangle_count")),
+            "visible_terrain_mesh_vertex_count": _int(final_scene_scan.get("visible_terrain_mesh_vertex_count")),
+            "visible_terrain_mesh_index_count": _int(final_scene_scan.get("visible_terrain_mesh_index_count")),
+            "visible_terrain_mesh_triangle_count": _int(final_scene_scan.get("visible_terrain_mesh_triangle_count")),
+            "visible_building_mesh_vertex_count": _int(final_scene_scan.get("visible_building_mesh_vertex_count")),
+            "visible_building_mesh_index_count": _int(final_scene_scan.get("visible_building_mesh_index_count")),
+            "visible_building_mesh_triangle_count": _int(final_scene_scan.get("visible_building_mesh_triangle_count")),
+            "visible_vegetation_mesh_vertex_count": _int(final_scene_scan.get("visible_vegetation_mesh_vertex_count")),
+            "visible_vegetation_mesh_index_count": _int(final_scene_scan.get("visible_vegetation_mesh_index_count")),
+            "visible_vegetation_mesh_triangle_count": _int(final_scene_scan.get("visible_vegetation_mesh_triangle_count")),
+            "visible_multimesh_instances": _int(final_scene_scan.get("visible_multimesh_instances")),
+            "visible_multimesh_instance_count": _int(final_scene_scan.get("visible_multimesh_instance_count")),
+            "visible_multimesh_rendered_vertex_count": _int(final_scene_scan.get("visible_multimesh_rendered_vertex_count")),
+            "visible_multimesh_rendered_index_count": _int(final_scene_scan.get("visible_multimesh_rendered_index_count")),
+            "visible_multimesh_rendered_triangle_count": _int(final_scene_scan.get("visible_multimesh_rendered_triangle_count")),
+            "frustum_mesh_instances": _int(final_scene_scan.get("frustum_mesh_instances")),
+            "frustum_mesh_vertex_count": _int(final_scene_scan.get("frustum_mesh_vertex_count")),
+            "frustum_mesh_triangle_count": _int(final_scene_scan.get("frustum_mesh_triangle_count")),
+            "frustum_terrain_mesh_vertex_count": _int(final_scene_scan.get("frustum_terrain_mesh_vertex_count")),
+            "frustum_terrain_mesh_triangle_count": _int(final_scene_scan.get("frustum_terrain_mesh_triangle_count")),
+            "frustum_building_mesh_vertex_count": _int(final_scene_scan.get("frustum_building_mesh_vertex_count")),
+            "frustum_building_mesh_triangle_count": _int(final_scene_scan.get("frustum_building_mesh_triangle_count")),
+            "frustum_vegetation_mesh_vertex_count": _int(final_scene_scan.get("frustum_vegetation_mesh_vertex_count")),
+            "frustum_vegetation_mesh_triangle_count": _int(final_scene_scan.get("frustum_vegetation_mesh_triangle_count")),
+            "frustum_multimesh_instances": _int(final_scene_scan.get("frustum_multimesh_instances")),
+            "frustum_multimesh_instance_count": _int(final_scene_scan.get("frustum_multimesh_instance_count")),
+            "frustum_multimesh_rendered_vertex_count": _int(final_scene_scan.get("frustum_multimesh_rendered_vertex_count")),
+            "frustum_multimesh_rendered_triangle_count": _int(final_scene_scan.get("frustum_multimesh_rendered_triangle_count")),
+            "frustum_vegetation_multimesh_rendered_triangle_count": _int(
+                final_scene_scan.get("frustum_vegetation_multimesh_rendered_triangle_count")
+            ),
         },
         "stationary_hold": _window_summary(stationary_hold, target_frame_ms),
+        "moving_entry": _window_summary(moving_entry, target_frame_ms),
+        "moving_entry_gpu": _phase_gpu_summary(_dict(phase_windows.get("moving_entry"))),
+        "stationary_hold_gpu": _phase_gpu_summary(_dict(phase_windows.get("stationary_hold"))),
+        "runtime_power_deep_idle_gpu": _phase_gpu_summary(_dict(phase_windows.get("runtime_power_deep_idle"))),
+        "runtime_power_render_loop_suspended_gpu": _phase_gpu_summary(
+            _dict(phase_windows.get("runtime_power_render_loop_suspended"))
+        ),
+        "runtime_power_render_loop_suspended_tail_10s_gpu": _phase_gpu_summary(
+            _dict(phase_windows.get("runtime_power_render_loop_suspended_tail_10s"))
+        ),
         "town_entry": _window_summary(town_entry, target_frame_ms),
         "terrain": {
             "world_map_active": bool(terrain.get("world_map_active", False)),
             "runtime_power_mode": str(terrain.get("runtime_power_mode", "")),
             "runtime_power_target_fps": _int(terrain.get("runtime_power_target_fps")),
+            "render_distance": render_distance,
+            "active_chunk_count": _int(terrain.get("active_chunk_count")),
+            "loaded_chunk_count": _int(terrain.get("loaded_chunk_count")),
             "rendered_terrain_chunk_count": _int(terrain.get("rendered_terrain_chunk_count")),
+            "individual_terrain_visible_chunk_count": _int(terrain.get("individual_terrain_visible_chunk_count")),
+            "full_res_terrain_drawn_chunk_count": _int(
+                terrain.get("full_res_terrain_drawn_chunk_count", terrain.get("rendered_terrain_chunk_count"))
+            ),
             "rendered_water_chunk_count": _int(terrain.get("rendered_water_chunk_count")),
             "world_map_lod_chunk_count": _int(terrain.get("world_map_lod_chunk_count")),
+            "world_map_lod_node_count": _int(terrain.get("world_map_lod_node_count")),
             "distant_world_map_lod_enabled": bool(terrain.get("distant_world_map_lod_enabled", False)),
             "distant_world_map_lod_defer_until_initial_viewer_move": bool(
                 terrain.get("distant_world_map_lod_defer_until_initial_viewer_move", False)
             ),
             "distant_world_map_lod_deferred": bool(terrain.get("distant_world_map_lod_deferred", False)),
             "distant_world_map_lod_throttled_update": bool(terrain.get("distant_world_map_lod_throttled_update", False)),
-            "distant_world_map_lod_distance": _int(terrain.get("distant_world_map_lod_distance")),
-            "distant_world_map_lod_overlap": _int(terrain.get("distant_world_map_lod_overlap")),
+            "distant_world_map_lod_distance": lod_distance,
+            "distant_world_map_lod_overlap": lod_overlap,
+            "distant_world_map_lod_inner_distance": lod_inner_distance,
+            "distant_world_map_lod_beyond_render_distance": lod_distance > render_distance,
             "distant_world_map_lod_sample_step": _int(terrain.get("distant_world_map_lod_sample_step")),
+            "world_map_lod_pending_candidate_count": _int(terrain.get("world_map_lod_pending_candidate_count")),
+            "last_world_map_lod_loads": _int(terrain.get("last_world_map_lod_loads")),
+            "last_world_map_lod_unloads": _int(terrain.get("last_world_map_lod_unloads")),
             "last_world_map_lod_update_ms": _round(_float(terrain.get("last_world_map_lod_update_ms"))),
             "world_map_terrain_batch_far_lod_enabled": bool(terrain.get("world_map_terrain_batch_far_lod_enabled", False)),
             "world_map_terrain_batch_far_lod_chunk_count": _int(terrain.get("world_map_terrain_batch_far_lod_chunk_count")),
+            "world_map_lod_replaced_terrain_chunk_count": _int(
+                terrain.get(
+                    "world_map_lod_replaced_terrain_chunk_count",
+                    terrain.get("world_map_terrain_batch_far_lod_chunk_count"),
+                )
+            ),
             "world_map_terrain_batch_far_lod_start_chunks": _int(terrain.get("world_map_terrain_batch_far_lod_start_chunks")),
             "world_map_terrain_batch_far_lod_sample_step": _int(terrain.get("world_map_terrain_batch_far_lod_sample_step")),
         },
@@ -351,6 +493,9 @@ def _summarize_procedural_snapshot(path: Path) -> dict[str, Any]:
             "runtime_power_render_loop_enabled": bool(terrain.get("runtime_power_render_loop_enabled", True)),
             "runtime_power_viewport_scale_current": _float(terrain.get("runtime_power_viewport_scale_current")),
             "rendered_terrain_chunk_count": _int(terrain.get("rendered_terrain_chunk_count")),
+            "full_res_terrain_drawn_chunk_count": _int(
+                terrain.get("full_res_terrain_drawn_chunk_count", terrain.get("rendered_terrain_chunk_count"))
+            ),
             "rendered_water_chunk_count": _int(terrain.get("rendered_water_chunk_count")),
             "terrain_visual_batch_active": bool(terrain.get("terrain_visual_batch_active", False)),
             "terrain_visual_batch_node_count": _int(terrain.get("terrain_visual_batch_node_count")),
@@ -719,6 +864,11 @@ def _town_render_unverified(render_features: dict[str, Any]) -> bool:
     )
 
 
+def _town_tools_runtime(entry: dict[str, Any]) -> bool:
+    runtime_mode = str(entry.get("runtime_mode", "")).strip().lower()
+    return runtime_mode == "godot_tools_debug_runner"
+
+
 def _annotate_town_runs(town: list[dict[str, Any]], render_ablation: dict[str, Any], production_min_hold_seconds: float) -> None:
     cases_by_snapshot = _ablation_cases_by_snapshot(render_ablation)
     min_hold_seconds = max(0.0, production_min_hold_seconds)
@@ -740,6 +890,8 @@ def _annotate_town_runs(town: list[dict[str, Any]], render_ablation: dict[str, A
         )
         if ablation_case and ablation_case != "baseline":
             run_role = "ablation_control"
+        elif _town_tools_runtime(entry):
+            run_role = "tools_runtime"
         elif _town_render_unverified(render_features):
             run_role = "renderer_unverified"
         elif _town_render_mismatch(render_features):
@@ -766,6 +918,7 @@ def _annotate_town_runs(town: list[dict[str, Any]], render_ablation: dict[str, A
             "renderer_mismatch",
             "renderer_unverified",
             "short_probe",
+            "tools_runtime",
         }
 
 
@@ -854,6 +1007,267 @@ def _stable_60_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[st
     }
 
 
+def _movement_gpu_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_production_movement_gpu_samples
+        or args.max_latest_production_movement_gpu_avg_power_w is not None
+        or args.max_latest_production_movement_gpu_peak_power_w is not None
+        or args.max_latest_production_movement_gpu_peak_temp_c is not None
+    )
+
+
+def _movement_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    enforced = args.require_latest_production_town_movement_60 or _movement_gpu_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_production:
+        if enforced:
+            failures.append("no production-like town snapshots found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    movement = _dict(latest_production.get("moving_entry"))
+    movement_gpu = _dict(latest_production.get("moving_entry_gpu"))
+    capture_reason = str(latest_production.get("town_entry_capture_reason", "")).strip()
+    sample_count = _int(movement.get("sample_count"))
+    avg_ms = _float(movement.get("avg_total_ms"))
+    over_budget_pct = _float(movement.get("frames_over_budget_pct"))
+    max_ms = _float(movement.get("max_total_ms"))
+    frames_over_50ms = _int(movement.get("frames_over_50ms"))
+    gpu_sample_count = _int(movement_gpu.get("power_sample_count"))
+    avg_power = _float(movement_gpu.get("avg_power_w"))
+    peak_power = _float(movement_gpu.get("max_power_w"))
+    peak_temp = _float(movement_gpu.get("max_temp_c"))
+
+    if enforced and capture_reason not in MOVEMENT_CAPTURE_REASONS:
+        failures.append(
+            "latest production-like town movement capture reason "
+            f"'{capture_reason or 'missing'}' is not one of {sorted(MOVEMENT_CAPTURE_REASONS)}"
+        )
+    if enforced and sample_count < args.min_latest_production_moving_samples:
+        failures.append(
+            f"movement frame samples {sample_count} below {args.min_latest_production_moving_samples}"
+        )
+
+    if args.require_latest_production_town_movement_60:
+        if avg_ms > args.target_frame_ms + FRAME_BUDGET_EPSILON_MS:
+            failures.append(f"movement avg frame time {avg_ms:.3f} ms exceeds target {args.target_frame_ms:.3f} ms")
+        if over_budget_pct > args.max_movement_60_over_budget_pct:
+            failures.append(
+                f"movement over-budget frames {over_budget_pct:.3f}% exceed {args.max_movement_60_over_budget_pct:.3f}%"
+            )
+        if max_ms > args.max_movement_60_frame_ms + FRAME_BUDGET_EPSILON_MS:
+            failures.append(f"movement max frame time {max_ms:.3f} ms exceeds {args.max_movement_60_frame_ms:.3f} ms")
+        if frames_over_50ms > args.max_movement_60_frames_over_50ms:
+            failures.append(
+                f"movement frames over 50ms {frames_over_50ms} exceed {args.max_movement_60_frames_over_50ms}"
+            )
+
+    if _movement_gpu_threshold_requested(args):
+        if gpu_sample_count < args.min_latest_production_movement_gpu_samples:
+            failures.append(
+                "movement raw GPU power samples "
+                f"{gpu_sample_count} below {args.min_latest_production_movement_gpu_samples}"
+            )
+        elif args.max_latest_production_movement_gpu_avg_power_w is not None and avg_power > args.max_latest_production_movement_gpu_avg_power_w:
+            failures.append(
+                "movement average GPU power "
+                f"{avg_power:.3f} W exceeds {args.max_latest_production_movement_gpu_avg_power_w:.3f} W"
+            )
+        if gpu_sample_count > 0 and args.max_latest_production_movement_gpu_peak_power_w is not None and peak_power > args.max_latest_production_movement_gpu_peak_power_w:
+            failures.append(
+                "movement peak GPU power "
+                f"{peak_power:.3f} W exceeds {args.max_latest_production_movement_gpu_peak_power_w:.3f} W"
+            )
+        if gpu_sample_count > 0 and args.max_latest_production_movement_gpu_peak_temp_c is not None and peak_temp > args.max_latest_production_movement_gpu_peak_temp_c:
+            failures.append(
+                "movement peak GPU temp "
+                f"{peak_temp:.3f} C exceeds {args.max_latest_production_movement_gpu_peak_temp_c:.3f} C"
+            )
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "allowed_capture_reasons": sorted(MOVEMENT_CAPTURE_REASONS),
+        "target_frame_ms": args.target_frame_ms,
+        "min_movement_samples": args.min_latest_production_moving_samples,
+        "min_gpu_samples": args.min_latest_production_movement_gpu_samples,
+        "observed": {
+            "capture_reason": capture_reason,
+            "sample_count": sample_count,
+            "avg_total_ms": _round(avg_ms),
+            "frames_over_budget_pct": _round(over_budget_pct),
+            "max_total_ms": _round(max_ms),
+            "frames_over_50ms": frames_over_50ms,
+            "gpu_power_sample_count": gpu_sample_count,
+            "avg_power_w": _round(avg_power),
+            "max_power_w": _round(peak_power),
+            "max_temp_c": _round(peak_temp),
+        },
+    }
+
+
+def _stationary_gpu_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_production_stationary_gpu_samples
+        or args.max_latest_production_stationary_gpu_avg_power_w is not None
+        or args.max_latest_production_stationary_gpu_peak_power_w is not None
+        or args.max_latest_production_stationary_gpu_peak_temp_c is not None
+        or args.max_latest_production_stationary_gpu_p0_fraction is not None
+    )
+
+
+def _stationary_gpu_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    enforced = _stationary_gpu_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_production:
+        if enforced:
+            failures.append("no production-like town snapshots found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    stationary = _dict(latest_production.get("stationary_hold"))
+    stationary_gpu = _dict(latest_production.get("stationary_hold_gpu"))
+    frame_sample_count = _int(stationary.get("sample_count"))
+    gpu_sample_count = _int(stationary_gpu.get("power_sample_count"))
+    raw_gpu_sample_count = _int(stationary_gpu.get("raw_gpu_available_count"))
+    avg_power = _float(stationary_gpu.get("avg_power_w"))
+    peak_power = _float(stationary_gpu.get("max_power_w"))
+    peak_temp = _float(stationary_gpu.get("max_temp_c"))
+    p0_fraction = _float(stationary_gpu.get("p0_fraction"))
+
+    if enforced and gpu_sample_count < args.min_latest_production_stationary_gpu_samples:
+        failures.append(
+            "stationary raw GPU power samples "
+            f"{gpu_sample_count} below {args.min_latest_production_stationary_gpu_samples}"
+        )
+    if gpu_sample_count > 0 and args.max_latest_production_stationary_gpu_avg_power_w is not None and avg_power > args.max_latest_production_stationary_gpu_avg_power_w:
+        failures.append(
+            "stationary average GPU power "
+            f"{avg_power:.3f} W exceeds {args.max_latest_production_stationary_gpu_avg_power_w:.3f} W"
+        )
+    if gpu_sample_count > 0 and args.max_latest_production_stationary_gpu_peak_power_w is not None and peak_power > args.max_latest_production_stationary_gpu_peak_power_w:
+        failures.append(
+            "stationary peak GPU power "
+            f"{peak_power:.3f} W exceeds {args.max_latest_production_stationary_gpu_peak_power_w:.3f} W"
+        )
+    if gpu_sample_count > 0 and args.max_latest_production_stationary_gpu_peak_temp_c is not None and peak_temp > args.max_latest_production_stationary_gpu_peak_temp_c:
+        failures.append(
+            "stationary peak GPU temp "
+            f"{peak_temp:.3f} C exceeds {args.max_latest_production_stationary_gpu_peak_temp_c:.3f} C"
+        )
+    if raw_gpu_sample_count > 0 and args.max_latest_production_stationary_gpu_p0_fraction is not None and p0_fraction > args.max_latest_production_stationary_gpu_p0_fraction:
+        failures.append(
+            "stationary P0 fraction "
+            f"{p0_fraction:.3f} exceeds {args.max_latest_production_stationary_gpu_p0_fraction:.3f}"
+        )
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "min_gpu_samples": args.min_latest_production_stationary_gpu_samples,
+        "observed": {
+            "frame_sample_count": frame_sample_count,
+            "gpu_power_sample_count": gpu_sample_count,
+            "raw_gpu_sample_count": raw_gpu_sample_count,
+            "avg_power_w": _round(avg_power),
+            "max_power_w": _round(peak_power),
+            "max_temp_c": _round(peak_temp),
+            "p0_fraction": _round(p0_fraction),
+        },
+    }
+
+
+def _idle_gpu_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_production_idle_gpu_samples
+        or args.max_latest_production_idle_gpu_avg_power_w is not None
+        or args.max_latest_production_idle_gpu_peak_power_w is not None
+        or args.max_latest_production_idle_gpu_peak_temp_c is not None
+        or args.max_latest_production_idle_gpu_p0_fraction is not None
+    )
+
+
+def _select_idle_gpu_phase(latest_production: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    render_loop_suspended_tail = _dict(latest_production.get("runtime_power_render_loop_suspended_tail_10s_gpu"))
+    if _int(render_loop_suspended_tail.get("power_sample_count")) > 0:
+        return "runtime_power_render_loop_suspended_tail_10s", render_loop_suspended_tail
+
+    render_loop_suspended = _dict(latest_production.get("runtime_power_render_loop_suspended_gpu"))
+    if _int(render_loop_suspended.get("power_sample_count")) > 0:
+        return "runtime_power_render_loop_suspended", render_loop_suspended
+
+    deep_idle = _dict(latest_production.get("runtime_power_deep_idle_gpu"))
+    if _int(deep_idle.get("power_sample_count")) > 0:
+        return "runtime_power_deep_idle", deep_idle
+
+    return "missing", {}
+
+
+def _idle_gpu_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    enforced = _idle_gpu_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_production:
+        if enforced:
+            failures.append("no production-like town snapshots found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    phase_name, idle_gpu = _select_idle_gpu_phase(latest_production)
+    gpu_sample_count = _int(idle_gpu.get("power_sample_count"))
+    raw_gpu_sample_count = _int(idle_gpu.get("raw_gpu_available_count"))
+    avg_power = _float(idle_gpu.get("avg_power_w"))
+    peak_power = _float(idle_gpu.get("max_power_w"))
+    peak_temp = _float(idle_gpu.get("max_temp_c"))
+    p0_fraction = _float(idle_gpu.get("p0_fraction"))
+
+    if enforced and gpu_sample_count < args.min_latest_production_idle_gpu_samples:
+        failures.append(
+            "idle raw GPU power samples "
+            f"{gpu_sample_count} below {args.min_latest_production_idle_gpu_samples}"
+        )
+    if gpu_sample_count > 0 and args.max_latest_production_idle_gpu_avg_power_w is not None and avg_power > args.max_latest_production_idle_gpu_avg_power_w:
+        failures.append(
+            "idle average GPU power "
+            f"{avg_power:.3f} W exceeds {args.max_latest_production_idle_gpu_avg_power_w:.3f} W"
+        )
+    if gpu_sample_count > 0 and args.max_latest_production_idle_gpu_peak_power_w is not None and peak_power > args.max_latest_production_idle_gpu_peak_power_w:
+        failures.append(
+            "idle peak GPU power "
+            f"{peak_power:.3f} W exceeds {args.max_latest_production_idle_gpu_peak_power_w:.3f} W"
+        )
+    if gpu_sample_count > 0 and args.max_latest_production_idle_gpu_peak_temp_c is not None and peak_temp > args.max_latest_production_idle_gpu_peak_temp_c:
+        failures.append(
+            "idle peak GPU temp "
+            f"{peak_temp:.3f} C exceeds {args.max_latest_production_idle_gpu_peak_temp_c:.3f} C"
+        )
+    if raw_gpu_sample_count > 0 and args.max_latest_production_idle_gpu_p0_fraction is not None and p0_fraction > args.max_latest_production_idle_gpu_p0_fraction:
+        failures.append(
+            "idle P0 fraction "
+            f"{p0_fraction:.3f} exceeds {args.max_latest_production_idle_gpu_p0_fraction:.3f}"
+        )
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "phase": phase_name,
+        "min_gpu_samples": args.min_latest_production_idle_gpu_samples,
+        "observed": {
+            "gpu_power_sample_count": gpu_sample_count,
+            "raw_gpu_sample_count": raw_gpu_sample_count,
+            "avg_power_w": _round(avg_power),
+            "max_power_w": _round(peak_power),
+            "max_temp_c": _round(peak_temp),
+            "p0_fraction": _round(p0_fraction),
+        },
+    }
+
+
 def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     generated_at_epoch = time.time()
     snapshot_dir = Path(args.snapshot_dir)
@@ -881,6 +1295,9 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
         "latest_gpu_telemetry": _latest_gpu_telemetry(gpu_telemetry),
     }
     report["stable_60_gate"] = _stable_60_gate(report, args)
+    report["movement_gate"] = _movement_gate(report, args)
+    report["stationary_gpu_gate"] = _stationary_gpu_gate(report, args)
+    report["idle_gpu_gate"] = _idle_gpu_gate(report, args)
     report["gpu_thermal_gate"] = _gpu_thermal_gate(report, args)
     report["freshness_gate"] = _freshness_gate(report, args)
     return report
@@ -1066,6 +1483,18 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
         stable_gate = _dict(report.get("stable_60_gate"))
         for failure in stable_gate.get("failures", []):
             failures.append(f"stable-60 gate: {failure}")
+    if args.require_latest_production_town_movement_60 or _movement_gpu_threshold_requested(args):
+        movement_gate = _dict(report.get("movement_gate"))
+        for failure in movement_gate.get("failures", []):
+            failures.append(f"movement gate: {failure}")
+    if _stationary_gpu_threshold_requested(args):
+        stationary_gpu_gate = _dict(report.get("stationary_gpu_gate"))
+        for failure in stationary_gpu_gate.get("failures", []):
+            failures.append(f"stationary GPU gate: {failure}")
+    if _idle_gpu_threshold_requested(args):
+        idle_gpu_gate = _dict(report.get("idle_gpu_gate"))
+        for failure in idle_gpu_gate.get("failures", []):
+            failures.append(f"idle GPU gate: {failure}")
     if args.require_latest_gpu_telemetry_valid or _gpu_thermal_threshold_requested(args):
         thermal_gate = _dict(report.get("gpu_thermal_gate"))
         for failure in thermal_gate.get("failures", []):
@@ -1089,7 +1518,7 @@ def _print_report(report: dict[str, Any]) -> None:
             print(
                 "  {name} hold={hold_complete} avg={avg:.2f}ms over={over:.1f}% "
                 "max={max_ms:.1f}ms draws={draws:.1f} objects={objects:.1f} prims={prims} pipes={pipes} veg={veg_batches} "
-                "profile={profile} role={role}{case}".format(
+                "profile={profile} runtime={runtime_mode} role={role}{case}".format(
                     name=Path(str(entry.get("path", ""))).name,
                     hold_complete=bool(entry.get("hold_complete", False)),
                     avg=_float(hold.get("avg_total_ms")),
@@ -1104,6 +1533,7 @@ def _print_report(report: dict[str, Any]) -> None:
                     ),
                     veg_batches=_int(vegetation.get("global_render_batch_count")),
                     profile=bool(vegetation.get("world_map_vegetation_render_profile_active", False)),
+                    runtime_mode=str(entry.get("runtime_mode", "")) or "unknown",
                     role=str(entry.get("run_role", "")),
                     case=f" case={entry.get('ablation_case')}" if str(entry.get("ablation_case", "")) else "",
                 )
@@ -1111,33 +1541,130 @@ def _print_report(report: dict[str, Any]) -> None:
         latest_production = _dict(report.get("latest_production_town"))
         if latest_production:
             hold = _dict(latest_production.get("stationary_hold"))
+            hold_gpu = _dict(latest_production.get("stationary_hold_gpu"))
+            movement = _dict(latest_production.get("moving_entry"))
+            movement_gpu = _dict(latest_production.get("moving_entry_gpu"))
+            idle_phase_name, idle_gpu = _select_idle_gpu_phase(latest_production)
             terrain = _dict(latest_production.get("terrain"))
             render_features = _dict(latest_production.get("render_features"))
+            render_scene = _dict(latest_production.get("render_scene"))
             building = _dict(latest_production.get("building"))
             prefab = _dict(latest_production.get("prefab_spawner"))
+            machine = _dict(latest_production.get("machine_state"))
+            has_display_telemetry = bool(render_features.get("display_telemetry_available", False))
             print(
-                "Latest production-like town: {name} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms prims={prims} pipes={pipes} world_lod={world_lod} far_lod={far_lod} renderer={renderer}/{driver}".format(
+                "Latest production-like town: {name} runtime={runtime_mode} avg={avg:.2f}ms over={over:.1f}% max={max_ms:.1f}ms "
+                "chunks={active}/{terrain_chunks}/{water_chunks} full_res={full_res_chunks} rd={render_distance} prims={prims} pipes={pipes} "
+                "world_lod={world_lod} nodes={world_lod_nodes} lod_dist={lod_distance} "
+                "lod_beyond_rd={lod_beyond_rd} far_lod={far_lod}/{replaced_lod} renderer={renderer}/{driver} "
+                "window={window_mode}->{runtime_window_mode} {window_w}x{window_h} vsync={vsync}->{runtime_vsync}".format(
                     name=Path(str(latest_production.get("path", ""))).name,
+                    runtime_mode=str(latest_production.get("runtime_mode", "")) or "unknown",
                     avg=_float(hold.get("avg_total_ms")),
                     over=_float(hold.get("frames_over_budget_pct")),
                     max_ms=_float(hold.get("max_total_ms")),
+                    active=_int(terrain.get("active_chunk_count")),
+                    terrain_chunks=_int(terrain.get("rendered_terrain_chunk_count")),
+                    water_chunks=_int(terrain.get("rendered_water_chunk_count")),
+                    full_res_chunks=_int(terrain.get("full_res_terrain_drawn_chunk_count")),
+                    render_distance=_int(terrain.get("render_distance")),
                     prims=_format_optional_float(hold.get("avg_primitives"), bool(hold.get("has_primitive_metrics", False)), 0),
                     pipes=_format_optional_int(
                         hold.get("pipeline_compilations_total_delta"),
                         bool(hold.get("has_pipeline_metrics", False)),
                     ),
                     world_lod=_int(terrain.get("world_map_lod_chunk_count")),
+                    world_lod_nodes=_int(terrain.get("world_map_lod_node_count")),
+                    lod_distance=_int(terrain.get("distant_world_map_lod_distance")),
+                    lod_beyond_rd=bool(terrain.get("distant_world_map_lod_beyond_render_distance", False)),
                     far_lod=_int(terrain.get("world_map_terrain_batch_far_lod_chunk_count")),
+                    replaced_lod=_int(terrain.get("world_map_lod_replaced_terrain_chunk_count")),
                     renderer=str(render_features.get("rendering_method", "")) or "unknown",
                     driver=str(render_features.get("rendering_driver_name", "")) or str(render_features.get("project_rendering_driver_windows", "")) or "unknown",
+                    window_mode=_format_optional_int(render_features.get("project_window_mode"), has_display_telemetry),
+                    runtime_window_mode=_format_optional_int(render_features.get("runtime_window_mode"), has_display_telemetry),
+                    window_w=_format_optional_int(render_features.get("runtime_window_width"), has_display_telemetry),
+                    window_h=_format_optional_int(render_features.get("runtime_window_height"), has_display_telemetry),
+                    vsync=_format_optional_int(render_features.get("project_vsync_mode"), has_display_telemetry),
+                    runtime_vsync=_format_optional_int(render_features.get("runtime_vsync_mode"), has_display_telemetry),
                 )
             )
+            print(
+                "  Stationary GPU: samples={gpu_samples} power={power:.1f}/{peak_power:.1f}W "
+                "temp_peak={temp_peak:.1f}C p0={p0:.2f}".format(
+                    gpu_samples=_int(hold_gpu.get("power_sample_count")),
+                    power=_float(hold_gpu.get("avg_power_w")),
+                    peak_power=_float(hold_gpu.get("max_power_w")),
+                    temp_peak=_float(hold_gpu.get("max_temp_c")),
+                    p0=_float(hold_gpu.get("p0_fraction")),
+                )
+            )
+            print(
+                "  Idle GPU: phase={phase} samples={gpu_samples} power={power:.1f}/{peak_power:.1f}W "
+                "temp_peak={temp_peak:.1f}C p0={p0:.2f} preflight={preflight:.1f}W".format(
+                    phase=idle_phase_name,
+                    gpu_samples=_int(idle_gpu.get("power_sample_count")),
+                    power=_float(idle_gpu.get("avg_power_w")),
+                    peak_power=_float(idle_gpu.get("max_power_w")),
+                    temp_peak=_float(idle_gpu.get("max_temp_c")),
+                    p0=_float(idle_gpu.get("p0_fraction")),
+                    preflight=_float(machine.get("preflight_raw_gpu_power_median_w")),
+                )
+            )
+            print(
+                "  Movement: reason={reason} samples={samples} avg={avg:.2f}ms max={max_ms:.1f}ms "
+                "gpu_samples={gpu_samples} power={power:.1f}/{peak_power:.1f}W temp_peak={temp_peak:.1f}C "
+                "hold_settle={settle:.1f}s timeout={settle_timeout}".format(
+                    reason=str(latest_production.get("town_entry_capture_reason", "")) or "unknown",
+                    samples=_int(movement.get("sample_count")),
+                    avg=_float(movement.get("avg_total_ms")),
+                    max_ms=_float(movement.get("max_total_ms")),
+                    gpu_samples=_int(movement_gpu.get("power_sample_count")),
+                    power=_float(movement_gpu.get("avg_power_w")),
+                    peak_power=_float(movement_gpu.get("max_power_w")),
+                    temp_peak=_float(movement_gpu.get("max_temp_c")),
+                    settle=_float(latest_production.get("hold_settle_elapsed_seconds")),
+                    settle_timeout=bool(latest_production.get("hold_settle_timed_out", False)),
+                )
+            )
+            if bool(render_scene.get("available", False)):
+                print(
+                    "  Render scene: visible_meshes={meshes} surfaces={surfaces} tris={tris} verts={verts} "
+                    "terrain_tris={terrain_tris} building_tris={building_tris} vegetation_tris={vegetation_tris} "
+                    "multimesh_instances={mm_instances} multimesh_tris={mm_tris} "
+                    "frustum_tris={frustum_tris} frustum_terrain_tris={frustum_terrain_tris} "
+                    "frustum_vegetation_mm_tris={frustum_vegetation_mm_tris}".format(
+                        meshes=_int(render_scene.get("visible_mesh_instances")),
+                        surfaces=_int(render_scene.get("visible_mesh_surface_count")),
+                        tris=_int(render_scene.get("visible_mesh_triangle_count")),
+                        verts=_int(render_scene.get("visible_mesh_vertex_count")),
+                        terrain_tris=_int(render_scene.get("visible_terrain_mesh_triangle_count")),
+                        building_tris=_int(render_scene.get("visible_building_mesh_triangle_count")),
+                        vegetation_tris=_int(render_scene.get("visible_vegetation_mesh_triangle_count")),
+                        mm_instances=_int(render_scene.get("visible_multimesh_instance_count")),
+                        mm_tris=_int(render_scene.get("visible_multimesh_rendered_triangle_count")),
+                        frustum_tris=_int(render_scene.get("frustum_mesh_triangle_count")),
+                        frustum_terrain_tris=_int(render_scene.get("frustum_terrain_mesh_triangle_count")),
+                        frustum_vegetation_mm_tris=_int(
+                            render_scene.get("frustum_vegetation_multimesh_rendered_triangle_count")
+                        ),
+                    )
+                )
             print(
                 "  Building stream: payload_sig={payload_sig} prefab_build={prefab_build} prefab_apply={prefab_apply} building_apply={building_apply}".format(
                     payload_sig=str(prefab.get("world_map_baked_building_payload_signature", "")),
                     prefab_build=_int(prefab.get("pending_world_map_baked_payload_build_jobs")),
                     prefab_apply=_int(prefab.get("pending_world_map_baked_payload_jobs")),
                     building_apply=_int(building.get("pending_world_map_baked_building_apply_phases")),
+                )
+            )
+        elif town:
+            latest_town = _dict(town[0])
+            print(
+                "No production-like town snapshot selected. Latest town snapshot {name} is role={role} runtime={runtime_mode}.".format(
+                    name=Path(str(latest_town.get("path", ""))).name,
+                    role=str(latest_town.get("run_role", "")) or "unknown",
+                    runtime_mode=str(latest_town.get("runtime_mode", "")) or "unknown",
                 )
             )
         trend = _dict(report.get("production_trend"))
@@ -1172,6 +1699,62 @@ def _print_report(report: dict[str, Any]) -> None:
                     max_over40=_int(stable_gate.get("max_frames_over_40ms")),
                     streak=_int(observed.get("longest_over_budget_streak")),
                     max_streak=_int(stable_gate.get("max_over_budget_streak")),
+                )
+            )
+        movement_gate = _dict(report.get("movement_gate"))
+        if movement_gate:
+            observed = _dict(movement_gate.get("observed"))
+            print(
+                "Movement gate: enforced={enforced} passed={passed} reason={reason} "
+                "samples={samples}/{min_samples} avg={avg:.2f}ms max={max_ms:.1f}ms "
+                "gpu_samples={gpu_samples}/{min_gpu} power={power:.1f}/{peak_power:.1f}W temp_peak={temp_peak:.1f}C".format(
+                    enforced=bool(movement_gate.get("enforced", False)),
+                    passed=bool(movement_gate.get("passed", False)),
+                    reason=str(observed.get("capture_reason", "")) or "unknown",
+                    samples=_int(observed.get("sample_count")),
+                    min_samples=_int(movement_gate.get("min_movement_samples")),
+                    avg=_float(observed.get("avg_total_ms")),
+                    max_ms=_float(observed.get("max_total_ms")),
+                    gpu_samples=_int(observed.get("gpu_power_sample_count")),
+                    min_gpu=_int(movement_gate.get("min_gpu_samples")),
+                    power=_float(observed.get("avg_power_w")),
+                    peak_power=_float(observed.get("max_power_w")),
+                    temp_peak=_float(observed.get("max_temp_c")),
+                )
+            )
+        stationary_gpu_gate = _dict(report.get("stationary_gpu_gate"))
+        if stationary_gpu_gate:
+            observed = _dict(stationary_gpu_gate.get("observed"))
+            print(
+                "Stationary GPU gate: enforced={enforced} passed={passed} "
+                "gpu_samples={gpu_samples}/{min_gpu} power={power:.1f}/{peak_power:.1f}W "
+                "temp_peak={temp_peak:.1f}C p0={p0:.2f}".format(
+                    enforced=bool(stationary_gpu_gate.get("enforced", False)),
+                    passed=bool(stationary_gpu_gate.get("passed", False)),
+                    gpu_samples=_int(observed.get("gpu_power_sample_count")),
+                    min_gpu=_int(stationary_gpu_gate.get("min_gpu_samples")),
+                    power=_float(observed.get("avg_power_w")),
+                    peak_power=_float(observed.get("max_power_w")),
+                    temp_peak=_float(observed.get("max_temp_c")),
+                    p0=_float(observed.get("p0_fraction")),
+                )
+            )
+        idle_gpu_gate = _dict(report.get("idle_gpu_gate"))
+        if idle_gpu_gate:
+            observed = _dict(idle_gpu_gate.get("observed"))
+            print(
+                "Idle GPU gate: enforced={enforced} passed={passed} phase={phase} "
+                "gpu_samples={gpu_samples}/{min_gpu} power={power:.1f}/{peak_power:.1f}W "
+                "temp_peak={temp_peak:.1f}C p0={p0:.2f}".format(
+                    enforced=bool(idle_gpu_gate.get("enforced", False)),
+                    passed=bool(idle_gpu_gate.get("passed", False)),
+                    phase=str(idle_gpu_gate.get("phase", "")) or "unknown",
+                    gpu_samples=_int(observed.get("gpu_power_sample_count")),
+                    min_gpu=_int(idle_gpu_gate.get("min_gpu_samples")),
+                    power=_float(observed.get("avg_power_w")),
+                    peak_power=_float(observed.get("max_power_w")),
+                    temp_peak=_float(observed.get("max_temp_c")),
+                    p0=_float(observed.get("p0_fraction")),
                 )
             )
     procedural = report.get("procedural", [])
@@ -1385,6 +1968,28 @@ def main() -> int:
     parser.add_argument("--max-stable-60-frame-ms", type=float, default=DEFAULT_STABLE_60_MAX_FRAME_MS)
     parser.add_argument("--max-stable-60-frames-over-40ms", type=int, default=DEFAULT_STABLE_60_MAX_FRAMES_OVER_40MS)
     parser.add_argument("--max-stable-60-over-budget-streak", type=int, default=DEFAULT_STABLE_60_MAX_OVER_BUDGET_STREAK)
+    parser.add_argument("--require-latest-production-town-movement-60", action="store_true")
+    parser.add_argument("--min-latest-production-moving-samples", type=int, default=DEFAULT_MOVEMENT_MIN_SAMPLES)
+    parser.add_argument("--max-movement-60-over-budget-pct", type=float, default=DEFAULT_MOVEMENT_60_MAX_OVER_BUDGET_PCT)
+    parser.add_argument("--max-movement-60-frame-ms", type=float, default=DEFAULT_MOVEMENT_60_MAX_FRAME_MS)
+    parser.add_argument("--max-movement-60-frames-over-50ms", type=int, default=DEFAULT_MOVEMENT_60_MAX_FRAMES_OVER_50MS)
+    parser.add_argument("--require-latest-production-movement-gpu-samples", action="store_true")
+    parser.add_argument("--min-latest-production-movement-gpu-samples", type=int, default=DEFAULT_MOVEMENT_MIN_GPU_SAMPLES)
+    parser.add_argument("--max-latest-production-movement-gpu-avg-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-production-movement-gpu-peak-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-production-movement-gpu-peak-temp-c", type=float, default=None)
+    parser.add_argument("--require-latest-production-stationary-gpu-samples", action="store_true")
+    parser.add_argument("--min-latest-production-stationary-gpu-samples", type=int, default=DEFAULT_STATIONARY_GPU_MIN_SAMPLES)
+    parser.add_argument("--max-latest-production-stationary-gpu-avg-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-production-stationary-gpu-peak-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-production-stationary-gpu-peak-temp-c", type=float, default=None)
+    parser.add_argument("--max-latest-production-stationary-gpu-p0-fraction", type=float, default=None)
+    parser.add_argument("--require-latest-production-idle-gpu-samples", action="store_true")
+    parser.add_argument("--min-latest-production-idle-gpu-samples", type=int, default=DEFAULT_IDLE_GPU_MIN_SAMPLES)
+    parser.add_argument("--max-latest-production-idle-gpu-avg-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-production-idle-gpu-peak-power-w", type=float, default=None)
+    parser.add_argument("--max-latest-production-idle-gpu-peak-temp-c", type=float, default=None)
+    parser.add_argument("--max-latest-production-idle-gpu-p0-fraction", type=float, default=None)
     parser.add_argument("--require-latest-gpu-telemetry-valid", action="store_true")
     parser.add_argument("--max-latest-gpu-hold-avg-power-w", type=float, default=None)
     parser.add_argument("--max-latest-gpu-hold-avg-temp-c", type=float, default=None)

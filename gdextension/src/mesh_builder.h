@@ -48,6 +48,7 @@ public:
     Dictionary build_density_marching_cubes_mesh_collision_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size);
     Dictionary build_density_marching_cubes_mesh_data(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size);
     Dictionary build_density_marching_cubes_mesh_data_height_map(const PackedByteArray& density_data, const PackedByteArray& material_data, int density_size, int chunk_size, int height_map_size);
+    bool has_marching_cubes_tables() const;
 
 	// Native implementation of 3D texture creation
 	// Converts raw density bytes directly to ImageTexture3D

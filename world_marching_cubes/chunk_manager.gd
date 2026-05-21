@@ -509,6 +509,11 @@ func _ready():
 	if not terrain_grid:
 		push_error("[ChunkManager] Failed to instantiate TerrainGrid GDExtension.")
 		return
+	if terrain_native_cpu_meshing_enabled:
+		var mesh_builder_probe = ClassDB.instantiate("MeshBuilder")
+		if mesh_builder_probe and mesh_builder_probe.has_method("has_marching_cubes_tables") and not mesh_builder_probe.has_marching_cubes_tables():
+			push_error("[ChunkManager] MeshBuilder cannot load marching_cubes_lookup_table.glslinc; falling back to GPU mesh readback. Export builds must include world_marching_cubes/*.glslinc to keep native CPU terrain meshing enabled.")
+			terrain_native_cpu_meshing_enabled = false
 	_native_backends_ready = true
 
 
