@@ -63,6 +63,123 @@ CASES = {
     "no_buildings": {"TOWN_STALL_DISABLE_BUILDINGS": "1"},
     "no_building_objects": {"TOWN_STALL_DISABLE_BUILDING_OBJECTS": "1"},
     "no_entities": {"TOWN_STALL_DISABLE_ENTITIES": "1"},
+    "entities_radius_10_limit_200": {
+        "TOWN_STALL_ENTITY_MAX_ENTITIES": "200",
+        "TOWN_STALL_ENTITY_SPAWN_RADIUS": "285",
+        "TOWN_STALL_ENTITY_DESPAWN_RADIUS": "360",
+        "TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK": "1.0",
+        "TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE": "12",
+        "TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK": "4",
+        "TOWN_STALL_ENTITY_BALANCE_SPAWN_DISTANCE_RINGS": "1",
+        "TOWN_STALL_ENTITY_SPAWN_DISTANCE_RING_COUNT": "10",
+        "TOWN_STALL_ENTITY_PENDING_SPAWN_CHECKS_PER_FRAME": "64",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_CHECKS_PER_FRAME": "64",
+        "TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME": "128",
+        "TOWN_STALL_ENTITY_SPAWN_QUEUE_BUDGET_MS": "2.0",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_BUDGET_MS": "2.0",
+        "TOWN_STALL_ENTITY_MAINTENANCE_BUDGET_MS": "4.0",
+    },
+    "entities_full_roam_distance_10_limit_200": {
+        "TOWN_STALL_TERRAIN_COLLISION_DISTANCE": "10",
+        "TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER": "1",
+        "TOWN_STALL_ENTITY_MAX_ENTITIES": "200",
+        "TOWN_STALL_ENTITY_SPAWN_RADIUS": "285",
+        "TOWN_STALL_ENTITY_ACTIVE_PHYSICS_RADIUS": "310",
+        "TOWN_STALL_ENTITY_FREEZE_RADIUS": "310",
+        "TOWN_STALL_ENTITY_DESPAWN_RADIUS": "360",
+        "TOWN_STALL_ENTITY_FREEZE_COLLISION_MARGIN": "0",
+        "TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK": "1.0",
+        "TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE": "12",
+        "TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK": "4",
+        "TOWN_STALL_ENTITY_BALANCE_SPAWN_DISTANCE_RINGS": "1",
+        "TOWN_STALL_ENTITY_SPAWN_DISTANCE_RING_COUNT": "10",
+        "TOWN_STALL_ENTITY_PENDING_SPAWN_CHECKS_PER_FRAME": "64",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_CHECKS_PER_FRAME": "64",
+        "TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME": "128",
+        "TOWN_STALL_ENTITY_SPAWN_QUEUE_BUDGET_MS": "2.0",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_BUDGET_MS": "2.0",
+        "TOWN_STALL_ENTITY_MAINTENANCE_BUDGET_MS": "4.0",
+    },
+    "no_veg_entities_full_roam_distance_10_limit_200": {
+        "TOWN_STALL_DISABLE_VEGETATION_RENDER": "1",
+        "TOWN_STALL_TERRAIN_COLLISION_DISTANCE": "10",
+        "TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER": "1",
+        "TOWN_STALL_ENTITY_MAX_ENTITIES": "200",
+        "TOWN_STALL_ENTITY_SPAWN_RADIUS": "310",
+        "TOWN_STALL_ENTITY_ACTIVE_PHYSICS_RADIUS": "310",
+        "TOWN_STALL_ENTITY_FREEZE_RADIUS": "310",
+        "TOWN_STALL_ENTITY_DESPAWN_RADIUS": "360",
+        "TOWN_STALL_ENTITY_FREEZE_COLLISION_MARGIN": "0",
+        "TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK": "1.0",
+        "TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE": "12",
+        "TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK": "4",
+        "TOWN_STALL_ENTITY_BALANCE_SPAWN_DISTANCE_RINGS": "1",
+        "TOWN_STALL_ENTITY_SPAWN_DISTANCE_RING_COUNT": "10",
+        "TOWN_STALL_ENTITY_PENDING_SPAWN_CHECKS_PER_FRAME": "64",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_CHECKS_PER_FRAME": "64",
+        "TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME": "128",
+        "TOWN_STALL_ENTITY_SPAWN_QUEUE_BUDGET_MS": "2.0",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_BUDGET_MS": "2.0",
+        "TOWN_STALL_ENTITY_MAINTENANCE_BUDGET_MS": "4.0",
+    },
+    "no_veg_entities_balanced_distance_10_limit_400": {
+        "TOWN_STALL_DISABLE_VEGETATION_RENDER": "1",
+        "TOWN_STALL_TERRAIN_COLLISION_DISTANCE": "10",
+        "TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER": "1",
+        "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET": "16",
+        "TOWN_STALL_ENTITY_MAX_ENTITIES": "400",
+        "TOWN_STALL_ENTITY_SPAWN_RADIUS": "285",
+        "TOWN_STALL_ENTITY_ACTIVE_PHYSICS_RADIUS": "310",
+        "TOWN_STALL_ENTITY_FREEZE_RADIUS": "310",
+        "TOWN_STALL_ENTITY_DESPAWN_RADIUS": "360",
+        "TOWN_STALL_ENTITY_FREEZE_COLLISION_MARGIN": "0",
+        "TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK": "0.0",
+        "TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE": "12",
+        "TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK": "4",
+        "TOWN_STALL_ENTITY_BALANCE_SPAWN_DISTANCE_RINGS": "1",
+        "TOWN_STALL_ENTITY_SPAWN_DISTANCE_RING_COUNT": "10",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL": "1",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_TARGET": "400",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_INTERVAL": "0.05",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_CANDIDATES_PER_TICK": "128",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_AREA_WEIGHTED": "1",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_RECENTER_DISTANCE": "64",
+        "TOWN_STALL_ENTITY_PENDING_SPAWN_CHECKS_PER_FRAME": "128",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_CHECKS_PER_FRAME": "128",
+        "TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME": "256",
+        "TOWN_STALL_ENTITY_SPAWN_QUEUE_BUDGET_MS": "4.0",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_BUDGET_MS": "4.0",
+        "TOWN_STALL_ENTITY_MAINTENANCE_BUDGET_MS": "6.0",
+    },
+    "no_veg_entities_balanced_distance_10_limit_400_active80": {
+        "TOWN_STALL_DISABLE_VEGETATION_RENDER": "1",
+        "TOWN_STALL_TERRAIN_COLLISION_DISTANCE": "10",
+        "TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER": "1",
+        "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET": "16",
+        "TOWN_STALL_ENTITY_MAX_ENTITIES": "400",
+        "TOWN_STALL_ENTITY_SPAWN_RADIUS": "285",
+        "TOWN_STALL_ENTITY_ACTIVE_PHYSICS_RADIUS": "80",
+        "TOWN_STALL_ENTITY_FREEZE_RADIUS": "310",
+        "TOWN_STALL_ENTITY_DESPAWN_RADIUS": "360",
+        "TOWN_STALL_ENTITY_FREEZE_COLLISION_MARGIN": "0",
+        "TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK": "0.0",
+        "TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE": "12",
+        "TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK": "4",
+        "TOWN_STALL_ENTITY_BALANCE_SPAWN_DISTANCE_RINGS": "1",
+        "TOWN_STALL_ENTITY_SPAWN_DISTANCE_RING_COUNT": "10",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL": "1",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_TARGET": "400",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_INTERVAL": "0.05",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_CANDIDATES_PER_TICK": "128",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_AREA_WEIGHTED": "1",
+        "TOWN_STALL_ENTITY_BALANCED_RING_FILL_RECENTER_DISTANCE": "64",
+        "TOWN_STALL_ENTITY_PENDING_SPAWN_CHECKS_PER_FRAME": "128",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_CHECKS_PER_FRAME": "128",
+        "TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME": "256",
+        "TOWN_STALL_ENTITY_SPAWN_QUEUE_BUDGET_MS": "4.0",
+        "TOWN_STALL_ENTITY_DORMANT_RESPAWN_BUDGET_MS": "4.0",
+        "TOWN_STALL_ENTITY_MAINTENANCE_BUDGET_MS": "6.0",
+    },
     "no_glow": {"TOWN_STALL_DISABLE_GLOW": "1"},
     "no_world_map_veg_profile": {"TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_PROFILE": "0"},
 }
@@ -134,6 +251,8 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
     env.setdefault("TOWN_STALL_ENABLE_RUNTIME_POWER_MODE", "1")
     env.setdefault("TOWN_STALL_RUNTIME_POWER_SUSPEND_BACKGROUND_WORLD_WORK", "1")
     env.setdefault("TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP", "1")
+    env.setdefault("TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION", "1")
+    env.setdefault("TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS", "1")
     env.setdefault("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", "1")
     env.setdefault("TOWN_STALL_SYSTEM_SAMPLE_RAW_GPU_ONLY", "1")
     env.setdefault("TOWN_STALL_ALLOW_CONTAMINATED_IDLE", "1")
@@ -245,6 +364,9 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "terrain_native_grid_active_chunks": int(terrain.get("native_grid_active_chunk_count", 0) or 0),
         "terrain_unload_hysteresis_chunks": int(terrain.get("terrain_unload_hysteresis_chunks", 0) or 0),
         "terrain_last_stream_bounds_unloads": int(terrain.get("last_stream_bounds_unloads", 0) or 0),
+        "terrain_collision_ground_center": bool(terrain.get("terrain_collision_ground_center_for_test", False)),
+        "terrain_force_pending_finalization": bool(terrain.get("terrain_force_pending_node_finalization_for_test", False)),
+        "terrain_force_stream_progress": bool(terrain.get("terrain_force_stream_progress_for_test", False)),
         "rendered_terrain_chunks": int(terrain.get("rendered_terrain_chunk_count", 0) or 0),
         "terrain_visual_visible_primitives": int(terrain.get("terrain_visual_visible_primitive_count", 0) or 0),
         "terrain_visual_chunk_primitives": int(terrain.get("terrain_visual_chunk_primitive_count", 0) or 0),
@@ -284,6 +406,30 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_cluster_size": int(vegetation.get("effective_vegetation_render_cluster_size", 0) or 0),
         "vegetation_grass_cluster_size": int(vegetation.get("effective_vegetation_grass_render_cluster_size", 0) or 0),
         "entity_active": int(entities.get("active_entities", 0) or 0),
+        "entity_active_distance_ring_counts": entities.get("active_entity_distance_ring_counts", []),
+        "entity_frozen": int(entities.get("frozen_entities", 0) or 0),
+        "entity_dormant": int(entities.get("dormant_entities", 0) or 0),
+        "entity_pending": int(entities.get("pending_spawns", 0) or 0),
+        "entity_deferred_chunks": int(entities.get("deferred_spawn_chunks", 0) or 0),
+        "entity_deferred_plans": int(entities.get("deferred_spawn_plans", 0) or 0),
+        "entity_spawned_chunks": int(entities.get("spawned_chunks", 0) or 0),
+        "entity_max": int(entities.get("max_entities", 0) or 0),
+        "entity_spawn_radius": float(entities.get("spawn_radius", 0.0) or 0.0),
+        "entity_active_physics_radius": float(entities.get("active_physics_radius", 0.0) or 0.0),
+        "entity_effective_active_physics_radius": float(entities.get("effective_active_physics_radius", 0.0) or 0.0),
+        "entity_freeze_radius": float(entities.get("freeze_radius", 0.0) or 0.0),
+        "entity_effective_freeze_radius": float(entities.get("effective_freeze_radius", 0.0) or 0.0),
+        "entity_despawn_radius": float(entities.get("despawn_radius", 0.0) or 0.0),
+        "entity_collision_range": float(entities.get("collision_range", 0.0) or 0.0),
+        "entity_spawn_chance_per_chunk": float(entities.get("spawn_chance_per_chunk", 0.0) or 0.0),
+        "entity_min_spawn_distance": float(entities.get("min_spawn_distance_from_player", 0.0) or 0.0),
+        "entity_max_spawns_per_chunk": int(entities.get("max_spawns_per_chunk", 0) or 0),
+        "entity_balance_spawn_distance_rings": bool(entities.get("balance_spawn_distance_rings", False)),
+        "entity_spawn_distance_ring_count": int(entities.get("spawn_distance_ring_count", 0) or 0),
+        "entity_pending_distance_ring_counts": entities.get("pending_spawn_distance_ring_counts", []),
+        "entity_balanced_ring_fill_enabled": bool(entities.get("balanced_ring_fill_enabled", False)),
+        "entity_balanced_ring_fill_target": int(entities.get("balanced_ring_fill_target_entities", 0) or 0),
+        "entity_last_balanced_ring_fill_queued": int(entities.get("last_balanced_ring_fill_queued", 0) or 0),
     }
 
 
@@ -318,7 +464,8 @@ def _print_results(results: list[dict]) -> None:
             "moveW={move_w:5.1f} ({dmove_w:+5.1f}) holdW={hold_w:5.1f} ({dhold_w:+5.1f}) | "
             "terrain={terrain:4d} water={water:4d} "
             "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{rock}) cluster={cluster}/{grass_cluster} "
-            "profile={profile} entities={entities:3d} | active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
+            "profile={profile} entities={entities:3d}/{entity_max:<3d} phys={physics:3d} frozen={frozen:3d} pend={pending:3d} | "
+            "active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
                 case=str(result.get("case", "")),
                 ms=float(result.get("avg_total_ms", 0.0) or 0.0),
                 dms=float(result.get("delta_avg_total_ms", 0.0) or 0.0),
@@ -344,6 +491,13 @@ def _print_results(results: list[dict]) -> None:
                 grass_cluster=int(result.get("vegetation_grass_cluster_size", 0) or 0),
                 profile="on" if bool(result.get("vegetation_profile_active", False)) else "off",
                 entities=int(result.get("entity_active", 0) or 0),
+                entity_max=int(result.get("entity_max", 0) or 0),
+                physics=max(
+                    0,
+                    int(result.get("entity_active", 0) or 0) - int(result.get("entity_frozen", 0) or 0),
+                ),
+                frozen=int(result.get("entity_frozen", 0) or 0),
+                pending=int(result.get("entity_pending", 0) or 0),
                 active=int(result.get("render_active_sample_count", 0) or 0),
                 samples=int(result.get("sample_count", 0) or 0),
                 suspended=int(result.get("render_loop_suspended_samples", 0) or 0),
@@ -354,7 +508,8 @@ def _print_results(results: list[dict]) -> None:
             "batches={terrain_batches:9d} maxChunk={terrain_max_chunk:6d} maxBatch={terrain_max_batch:6d} | "
             "vegEst={veg_est:9d} tree/grass/rock={tree_est}/{grass_est}/{rock_est} "
             "mesh={tree_mesh}/{grass_mesh}/{rock_mesh} maxInst={tree_max}/{grass_max}/{rock_max} "
-            "bounds={bounds:4.0f} occIgnore={occ}".format(
+            "bounds={bounds:4.0f} occIgnore={occ} collisionGroundCenter={ground_center} "
+            "forcePendingFinalize={force_pending} forceStream={force_stream}".format(
                 terrain_visible=int(result.get("terrain_visual_visible_primitives", 0) or 0),
                 terrain_chunks=int(result.get("terrain_visual_chunk_primitives", 0) or 0),
                 terrain_batches=int(result.get("terrain_visual_batch_primitives", 0) or 0),
@@ -372,6 +527,47 @@ def _print_results(results: list[dict]) -> None:
                 rock_max=int(result.get("vegetation_rock_max_batch_instances", 0) or 0),
                 bounds=float(result.get("vegetation_bounds_padding", 0.0) or 0.0),
                 occ="on" if bool(result.get("vegetation_ignore_occlusion_culling", False)) else "off",
+                ground_center="on" if bool(result.get("terrain_collision_ground_center", False)) else "off",
+                force_pending="on" if bool(result.get("terrain_force_pending_finalization", False)) else "off",
+                force_stream="on" if bool(result.get("terrain_force_stream_progress", False)) else "off",
+            )
+        )
+        print(
+            "                     entities radius spawn={spawn_radius:5.0f} active={active_radius:5.0f} "
+            "effectiveActive={effective_active:5.0f} freeze={freeze_radius:5.0f}/{effective_freeze:5.0f} "
+            "despawn={despawn_radius:5.0f} collision={collision_range:5.0f} chunks={spawned_chunks}/{deferred_chunks}/{deferred_plans} "
+            "dormant={dormant:3d} min={min_spawn:4.0f} chance={spawn_chance:.2f} maxPerChunk={max_per_chunk} "
+            "balanced={balanced}/{rings}".format(
+                spawn_radius=float(result.get("entity_spawn_radius", 0.0) or 0.0),
+                active_radius=float(result.get("entity_active_physics_radius", 0.0) or 0.0),
+                effective_active=float(result.get("entity_effective_active_physics_radius", 0.0) or 0.0),
+                freeze_radius=float(result.get("entity_freeze_radius", 0.0) or 0.0),
+                effective_freeze=float(result.get("entity_effective_freeze_radius", 0.0) or 0.0),
+                despawn_radius=float(result.get("entity_despawn_radius", 0.0) or 0.0),
+                collision_range=float(result.get("entity_collision_range", 0.0) or 0.0),
+                spawned_chunks=int(result.get("entity_spawned_chunks", 0) or 0),
+                deferred_chunks=int(result.get("entity_deferred_chunks", 0) or 0),
+                deferred_plans=int(result.get("entity_deferred_plans", 0) or 0),
+                dormant=int(result.get("entity_dormant", 0) or 0),
+                min_spawn=float(result.get("entity_min_spawn_distance", 0.0) or 0.0),
+                spawn_chance=float(result.get("entity_spawn_chance_per_chunk", 0.0) or 0.0),
+                max_per_chunk=int(result.get("entity_max_spawns_per_chunk", 0) or 0),
+                balanced="on" if bool(result.get("entity_balance_spawn_distance_rings", False)) else "off",
+                rings=int(result.get("entity_spawn_distance_ring_count", 0) or 0),
+            )
+        )
+        print(
+            "                     entityRings active=%s" % json.dumps(
+                result.get("entity_active_distance_ring_counts", []),
+                separators=(",", ":"),
+            )
+        )
+        print(
+            "                     entityRings pending=%s fill=%s target=%d lastQueued=%d" % (
+                json.dumps(result.get("entity_pending_distance_ring_counts", []), separators=(",", ":")),
+                "on" if bool(result.get("entity_balanced_ring_fill_enabled", False)) else "off",
+                int(result.get("entity_balanced_ring_fill_target", 0) or 0),
+                int(result.get("entity_last_balanced_ring_fill_queued", 0) or 0),
             )
         )
         print(

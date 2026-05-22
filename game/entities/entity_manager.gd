@@ -41,6 +41,15 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export var spawn_chance_per_chunk: float = 0.50 # 50% chance per surface chunk
 @export var min_spawn_distance_from_player: float = 40.0 # Don't spawn too close
 @export var max_spawns_per_chunk: int = 3
+@export var prioritize_nearby_spawns: bool = false # Test/profile mode: fill local area before distant candidates
+@export var balance_spawn_distance_rings: bool = false # Test/profile mode: distribute pending spawns across the radius
+@export_range(1, 32, 1) var spawn_distance_ring_count: int = 10
+@export var balanced_ring_fill_enabled: bool = false # Test/profile mode: explicitly request spawns across the full radius
+@export_range(0, 2000, 1) var balanced_ring_fill_target_entities: int = 0
+@export_range(0.01, 10.0, 0.01) var balanced_ring_fill_interval: float = 0.10
+@export_range(1, 512, 1) var balanced_ring_fill_candidates_per_tick: int = 64
+@export var balanced_ring_fill_area_weighted: bool = true
+@export_range(1.0, 512.0, 1.0) var balanced_ring_fill_recenter_distance: float = 64.0
 
 # Entity scene to spawn (can be overridden per entity type)
 @export var default_entity_scene: PackedScene
@@ -76,6 +85,11 @@ var _entity_maintenance_timer_tick_count: int = 0
 var _entity_maintenance_physics_tick_count: int = 0
 var _entity_maintenance_tick_count: int = 0
 var _last_entity_maintenance_tick_msec: int = 0
+var _balanced_ring_fill_accumulator: float = 0.0
+var _balanced_ring_fill_cursor: int = 0
+var _last_balanced_ring_fill_queued: int = 0
+var _balanced_ring_fill_center: Vector3 = Vector3.ZERO
+var _balanced_ring_fill_center_valid: bool = false
 
 # Deferred spawning - wait for terrain to load
 var pending_spawns: Array = []
@@ -109,9 +123,48 @@ func _capture_entity_telemetry() -> void:
 	return
 
 
+func _get_active_entity_distance_ring_counts() -> Array[int]:
+	var ring_count := maxi(spawn_distance_ring_count, 1)
+	var counts: Array[int] = []
+	for _ring in range(ring_count):
+		counts.append(0)
+	if not viewer or not is_instance_valid(viewer):
+		return counts
+
+	var max_radius := maxf(spawn_radius, 1.0)
+	for entity in active_entities:
+		if not is_instance_valid(entity):
+			continue
+		var distance := sqrt(_planar_distance_squared(entity.global_position, viewer.global_position))
+		var ring_index := clampi(int(floor((distance / max_radius) * float(ring_count))), 0, ring_count - 1)
+		counts[ring_index] += 1
+	return counts
+
+
+func _get_pending_spawn_distance_ring_counts() -> Array[int]:
+	var ring_count := maxi(spawn_distance_ring_count, 1)
+	var counts: Array[int] = []
+	for _ring in range(ring_count):
+		counts.append(0)
+	if not viewer or not is_instance_valid(viewer):
+		return counts
+
+	var max_radius := maxf(spawn_radius, 1.0)
+	for spawn_data in pending_spawns:
+		if not (spawn_data is Dictionary):
+			continue
+		var pos: Vector3 = spawn_data.get("position", Vector3.ZERO)
+		var distance := sqrt(_planar_distance_squared(pos, viewer.global_position))
+		var ring_index := clampi(int(floor((distance / max_radius) * float(ring_count))), 0, ring_count - 1)
+		counts[ring_index] += 1
+	return counts
+
+
 func get_telemetry_snapshot() -> Dictionary:
+	var effective_freeze_radius := _get_effective_freeze_radius()
 	return {
 		"active_entities": active_entities.size(),
+		"active_entity_distance_ring_counts": _get_active_entity_distance_ring_counts(),
 		"frozen_entities": frozen_entities.size(),
 		"dormant_entities": dormant_entities.size(),
 		"entity_pool_size": entity_pool.size(),
@@ -124,15 +177,36 @@ func get_telemetry_snapshot() -> Dictionary:
 		"spawn_radius": spawn_radius,
 		"active_physics_radius": active_physics_radius,
 		"freeze_radius": freeze_radius,
+		"effective_active_physics_radius": _get_effective_active_physics_radius(effective_freeze_radius),
+		"effective_freeze_radius": effective_freeze_radius,
+		"collision_range": _get_collision_range(),
 		"despawn_radius": despawn_radius,
+		"freeze_collision_margin": freeze_collision_margin,
+		"spawn_chance_per_chunk": spawn_chance_per_chunk,
+		"min_spawn_distance_from_player": min_spawn_distance_from_player,
+		"max_spawns_per_chunk": max_spawns_per_chunk,
+		"prioritize_nearby_spawns": prioritize_nearby_spawns,
+		"balance_spawn_distance_rings": balance_spawn_distance_rings,
+		"spawn_distance_ring_count": spawn_distance_ring_count,
+		"pending_spawn_distance_ring_counts": _get_pending_spawn_distance_ring_counts(),
+		"balanced_ring_fill_enabled": balanced_ring_fill_enabled,
+		"balanced_ring_fill_target_entities": _get_balanced_ring_fill_target_total(),
+		"balanced_ring_fill_interval": balanced_ring_fill_interval,
+		"balanced_ring_fill_candidates_per_tick": balanced_ring_fill_candidates_per_tick,
+		"balanced_ring_fill_area_weighted": balanced_ring_fill_area_weighted,
+		"balanced_ring_fill_recenter_distance": balanced_ring_fill_recenter_distance,
+		"last_balanced_ring_fill_queued": _last_balanced_ring_fill_queued,
 		"procedural_spawning_enabled": procedural_spawning_enabled,
 		"is_loading_save": is_loading_save,
 		"pending_spawn_checks_per_frame": pending_spawn_checks_per_frame,
 		"dormant_respawn_checks_per_frame": dormant_respawn_checks_per_frame,
 		"proximity_update_budget_ms": proximity_update_budget_ms,
+		"spawn_queue_budget_ms": spawn_queue_budget_ms,
+		"dormant_respawn_budget_ms": dormant_respawn_budget_ms,
 		"proximity_update_interval": proximity_update_interval,
 		"spawn_queue_update_interval": spawn_queue_update_interval,
 		"dormant_respawn_update_interval": dormant_respawn_update_interval,
+		"deferred_spawn_chunks_per_frame": deferred_spawn_chunks_per_frame,
 		"last_proximity_update_ms": _last_proximity_update_ms,
 		"last_proximity_processed": _last_proximity_processed,
 		"last_spawn_queue_update_ms": _last_spawn_queue_update_ms,
@@ -236,6 +310,7 @@ func _ready():
 	if not player:
 		push_warning("EntityManager: Player not found in 'player' group!")
 
+	_apply_environment_overrides()
 	_cache_procedural_entity_scenes()
 	_start_entity_render_resource_prewarm()
 	_sync_entity_maintenance_driver()
@@ -250,6 +325,68 @@ func _ready():
 	# Setup procedural spawning
 	_setup_procedural_spawning()
 	_start_entity_render_resource_prewarm()
+
+
+func _apply_environment_overrides() -> void:
+	max_entities = _get_env_int("TOWN_STALL_ENTITY_MAX_ENTITIES", max_entities, 0, 10000)
+	spawn_radius = _get_env_float("TOWN_STALL_ENTITY_SPAWN_RADIUS", spawn_radius, 0.0, 10000.0)
+	active_physics_radius = _get_env_float("TOWN_STALL_ENTITY_ACTIVE_PHYSICS_RADIUS", active_physics_radius, 0.0, 10000.0)
+	freeze_radius = _get_env_float("TOWN_STALL_ENTITY_FREEZE_RADIUS", freeze_radius, 0.0, 10000.0)
+	despawn_radius = _get_env_float("TOWN_STALL_ENTITY_DESPAWN_RADIUS", despawn_radius, 1.0, 10000.0)
+	freeze_collision_margin = _get_env_float("TOWN_STALL_ENTITY_FREEZE_COLLISION_MARGIN", freeze_collision_margin, 0.0, 31.0)
+	proximity_update_budget_ms = _get_env_float("TOWN_STALL_ENTITY_PROXIMITY_BUDGET_MS", proximity_update_budget_ms, 0.0, 100.0)
+	pending_spawn_checks_per_frame = _get_env_int("TOWN_STALL_ENTITY_PENDING_SPAWN_CHECKS_PER_FRAME", pending_spawn_checks_per_frame, 1, 4096)
+	dormant_respawn_checks_per_frame = _get_env_int("TOWN_STALL_ENTITY_DORMANT_RESPAWN_CHECKS_PER_FRAME", dormant_respawn_checks_per_frame, 1, 4096)
+	spawn_queue_budget_ms = _get_env_float("TOWN_STALL_ENTITY_SPAWN_QUEUE_BUDGET_MS", spawn_queue_budget_ms, 0.0, 100.0)
+	dormant_respawn_budget_ms = _get_env_float("TOWN_STALL_ENTITY_DORMANT_RESPAWN_BUDGET_MS", dormant_respawn_budget_ms, 0.0, 100.0)
+	entity_maintenance_budget_ms = _get_env_float("TOWN_STALL_ENTITY_MAINTENANCE_BUDGET_MS", entity_maintenance_budget_ms, 0.0, 100.0)
+	proximity_update_interval = _get_env_float("TOWN_STALL_ENTITY_PROXIMITY_UPDATE_INTERVAL", proximity_update_interval, 0.0, 10.0)
+	spawn_queue_update_interval = _get_env_float("TOWN_STALL_ENTITY_SPAWN_QUEUE_UPDATE_INTERVAL", spawn_queue_update_interval, 0.0, 10.0)
+	dormant_respawn_update_interval = _get_env_float("TOWN_STALL_ENTITY_DORMANT_RESPAWN_UPDATE_INTERVAL", dormant_respawn_update_interval, 0.0, 10.0)
+	deferred_spawn_chunks_per_frame = _get_env_int("TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME", deferred_spawn_chunks_per_frame, 1, 4096)
+	spawn_chance_per_chunk = _get_env_float("TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK", spawn_chance_per_chunk, 0.0, 1.0)
+	min_spawn_distance_from_player = _get_env_float("TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE", min_spawn_distance_from_player, 0.0, 10000.0)
+	max_spawns_per_chunk = _get_env_int("TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK", max_spawns_per_chunk, 0, 128)
+	prioritize_nearby_spawns = _get_env_bool("TOWN_STALL_ENTITY_PRIORITIZE_NEARBY_SPAWNS", prioritize_nearby_spawns)
+	balance_spawn_distance_rings = _get_env_bool("TOWN_STALL_ENTITY_BALANCE_SPAWN_DISTANCE_RINGS", balance_spawn_distance_rings)
+	spawn_distance_ring_count = _get_env_int("TOWN_STALL_ENTITY_SPAWN_DISTANCE_RING_COUNT", spawn_distance_ring_count, 1, 32)
+	balanced_ring_fill_enabled = _get_env_bool("TOWN_STALL_ENTITY_BALANCED_RING_FILL", balanced_ring_fill_enabled)
+	balanced_ring_fill_target_entities = _get_env_int("TOWN_STALL_ENTITY_BALANCED_RING_FILL_TARGET", balanced_ring_fill_target_entities, 0, 2000)
+	balanced_ring_fill_interval = _get_env_float("TOWN_STALL_ENTITY_BALANCED_RING_FILL_INTERVAL", balanced_ring_fill_interval, 0.01, 10.0)
+	balanced_ring_fill_candidates_per_tick = _get_env_int("TOWN_STALL_ENTITY_BALANCED_RING_FILL_CANDIDATES_PER_TICK", balanced_ring_fill_candidates_per_tick, 1, 512)
+	balanced_ring_fill_area_weighted = _get_env_bool("TOWN_STALL_ENTITY_BALANCED_RING_FILL_AREA_WEIGHTED", balanced_ring_fill_area_weighted)
+	balanced_ring_fill_recenter_distance = _get_env_float("TOWN_STALL_ENTITY_BALANCED_RING_FILL_RECENTER_DISTANCE", balanced_ring_fill_recenter_distance, 1.0, 512.0)
+	if despawn_radius <= spawn_radius:
+		despawn_radius = spawn_radius + TERRAIN_CHUNK_STRIDE
+	if freeze_radius >= despawn_radius:
+		freeze_radius = maxf(0.0, despawn_radius - 1.0)
+
+
+func _get_env_int(name: String, current_value: int, min_value: int, max_value: int) -> int:
+	var raw_value := OS.get_environment(name).strip_edges()
+	if raw_value.is_empty():
+		return current_value
+	if not raw_value.is_valid_int():
+		push_warning("[EntityManager] Ignoring invalid integer env %s=%s" % [name, raw_value])
+		return current_value
+	return clampi(int(raw_value), min_value, max_value)
+
+
+func _get_env_float(name: String, current_value: float, min_value: float, max_value: float) -> float:
+	var raw_value := OS.get_environment(name).strip_edges()
+	if raw_value.is_empty():
+		return current_value
+	if not raw_value.is_valid_float():
+		push_warning("[EntityManager] Ignoring invalid float env %s=%s" % [name, raw_value])
+		return current_value
+	return clampf(float(raw_value), min_value, max_value)
+
+
+func _get_env_bool(name: String, current_value: bool) -> bool:
+	var raw_value := OS.get_environment(name).strip_edges().to_lower()
+	if raw_value.is_empty():
+		return current_value
+	return raw_value != "0" and raw_value != "false" and raw_value != "off"
 
 func _physics_process(_delta):
 	_entity_maintenance_physics_tick_count += 1
@@ -279,6 +416,18 @@ func _run_entity_maintenance_tick(_delta: float) -> void:
 	elif not has_active_entities:
 		_last_proximity_update_ms = 0.0
 		_last_proximity_processed = 0
+
+	_balanced_ring_fill_accumulator += _delta
+	if not entity_maintenance_budget_hit and _should_run_interval(
+		_balanced_ring_fill_accumulator,
+		balanced_ring_fill_interval,
+		_should_run_balanced_ring_fill()
+	):
+		_balanced_ring_fill_accumulator = 0.0
+		_queue_balanced_ring_fill_spawns()
+		entity_maintenance_budget_hit = _is_entity_maintenance_budget_exhausted(entity_maintenance_start_us)
+	elif not balanced_ring_fill_enabled:
+		_last_balanced_ring_fill_queued = 0
 
 	# Process spawn queue - spawns when terrain is ready
 	var has_pending_spawns := not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()
@@ -655,16 +804,17 @@ func _process_spawn_queue():
 	var space_state = get_world_3d().direct_space_state
 	var total := pending_spawns.size()
 	var checks := mini(pending_spawn_checks_per_frame, total)
+	var candidate_indices := _get_spawn_queue_candidate_indices(total, checks, player_pos)
 	var start_index := _pending_spawn_scan_cursor % total
 	var processed := 0
 	
-	while processed < checks:
+	while processed < candidate_indices.size():
 		if processed > 0:
 			var elapsed_ms := float(Time.get_ticks_usec() - start_time) / 1000.0
 			if elapsed_ms >= spawn_queue_budget_ms:
 				break
 
-		var i := (start_index + processed) % total
+		var i: int = candidate_indices[processed]
 		var spawn_data = pending_spawns[i]
 		var pos = spawn_data.position
 		_bump_frame_entity_stat("spawn_queue_candidates")
@@ -730,7 +880,10 @@ func _process_spawn_queue():
 			# Don't mark as completed - keep trying
 				pass
 
-	_pending_spawn_scan_cursor = (start_index + processed) % max(1, pending_spawns.size())
+	if prioritize_nearby_spawns or balance_spawn_distance_rings:
+		_pending_spawn_scan_cursor = 0
+	else:
+		_pending_spawn_scan_cursor = (start_index + processed) % max(1, pending_spawns.size())
 	_last_spawn_queue_processed = processed
 	_last_spawn_queue_update_ms = float(Time.get_ticks_usec() - start_time) / 1000.0
 	completed.sort()
@@ -738,6 +891,200 @@ func _process_spawn_queue():
 	# Remove processed spawns (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
 		pending_spawns.remove_at(completed[i])
+
+
+func _should_run_balanced_ring_fill() -> bool:
+	if not balanced_ring_fill_enabled:
+		return false
+	return _get_balanced_ring_fill_remaining_request_count() > 0
+
+
+func _get_balanced_ring_fill_target_total() -> int:
+	var target := balanced_ring_fill_target_entities
+	if target <= 0:
+		target = max_entities
+	return clampi(target, 0, max_entities)
+
+
+func _get_balanced_ring_fill_remaining_request_count() -> int:
+	var target := _get_balanced_ring_fill_target_total()
+	if target <= 0:
+		return 0
+	return maxi(0, target - active_entities.size() - pending_spawns.size())
+
+
+func _queue_balanced_ring_fill_spawns() -> void:
+	_last_balanced_ring_fill_queued = 0
+	if not viewer or not is_instance_valid(viewer):
+		return
+	_sync_balanced_ring_fill_center()
+
+	var target := _get_balanced_ring_fill_target_total()
+	if target <= 0:
+		return
+	if zombie_scene == null:
+		zombie_scene = _get_cached_scene(ZOMBIE_SCENE_PATH)
+	if zombie_scene == null:
+		return
+
+	var active_counts := _get_active_entity_distance_ring_counts()
+	var pending_counts := _get_pending_spawn_distance_ring_counts()
+	var current_total := _sum_int_array(active_counts) + _sum_int_array(pending_counts)
+	var queue_limit := mini(balanced_ring_fill_candidates_per_tick, maxi(0, target - current_total))
+	while _last_balanced_ring_fill_queued < queue_limit:
+		var ring_index := _find_balanced_ring_fill_deficit_ring(active_counts, pending_counts, target)
+		if ring_index < 0:
+			return
+
+		pending_spawns.append({
+			"position": _make_balanced_ring_fill_position(ring_index),
+			"scene": zombie_scene,
+			"procedural": true,
+			"ring_fill": true
+		})
+		pending_counts[ring_index] += 1
+		_last_balanced_ring_fill_queued += 1
+
+
+func _find_balanced_ring_fill_deficit_ring(active_counts: Array[int], pending_counts: Array[int], target_total: int) -> int:
+	var ring_count := maxi(spawn_distance_ring_count, 1)
+	var best_ring := -1
+	var best_score := 0.0
+	for ring_index in range(ring_count):
+		var target := _get_balanced_ring_fill_target_for_ring(ring_index, target_total)
+		var current := int(active_counts[ring_index]) + int(pending_counts[ring_index])
+		var deficit := target - current
+		if deficit <= 0:
+			continue
+		var score := float(deficit) / float(maxi(target, 1))
+		if best_ring < 0 or score > best_score:
+			best_ring = ring_index
+			best_score = score
+	return best_ring
+
+
+func _get_balanced_ring_fill_target_for_ring(ring_index: int, target_total: int) -> int:
+	var ring_count := maxi(spawn_distance_ring_count, 1)
+	if balanced_ring_fill_area_weighted:
+		var ring_weight := float(ring_index * 2 + 1)
+		var total_weight := float(ring_count * ring_count)
+		return maxi(1, int(round(float(target_total) * ring_weight / total_weight)))
+	return maxi(1, int(round(float(target_total) / float(ring_count))))
+
+
+func _make_balanced_ring_fill_position(ring_index: int) -> Vector3:
+	var ring_count := maxi(spawn_distance_ring_count, 1)
+	var inner_radius := maxf(spawn_radius * float(ring_index) / float(ring_count), min_spawn_distance_from_player)
+	var outer_radius := spawn_radius * float(ring_index + 1) / float(ring_count)
+	if outer_radius <= inner_radius:
+		outer_radius = minf(spawn_radius, inner_radius + 1.0)
+	var inner_sq := inner_radius * inner_radius
+	var outer_sq := outer_radius * outer_radius
+	var distance := sqrt(randf_range(inner_sq, outer_sq))
+	var angle := fmod(float(_balanced_ring_fill_cursor) * 2.399963229728653, TAU)
+	_balanced_ring_fill_cursor += 1
+	var center := viewer.global_position
+	if _balanced_ring_fill_center_valid:
+		center = _balanced_ring_fill_center
+	return Vector3(center.x + cos(angle) * distance, 0.0, center.z + sin(angle) * distance)
+
+
+func _sum_int_array(values: Array[int]) -> int:
+	var total := 0
+	for value in values:
+		total += int(value)
+	return total
+
+
+func _sync_balanced_ring_fill_center() -> void:
+	var current_center := viewer.global_position
+	if not _balanced_ring_fill_center_valid:
+		_balanced_ring_fill_center = current_center
+		_balanced_ring_fill_center_valid = true
+		return
+	var recenter_dist_sq := balanced_ring_fill_recenter_distance * balanced_ring_fill_recenter_distance
+	if _planar_distance_squared(_balanced_ring_fill_center, current_center) <= recenter_dist_sq:
+		return
+	_remove_pending_ring_fill_spawns()
+	_balanced_ring_fill_center = current_center
+	_balanced_ring_fill_cursor = 0
+
+
+func _remove_pending_ring_fill_spawns() -> void:
+	for i in range(pending_spawns.size() - 1, -1, -1):
+		var spawn_data = pending_spawns[i]
+		if spawn_data is Dictionary and bool(spawn_data.get("ring_fill", false)):
+			pending_spawns.remove_at(i)
+
+
+func _get_spawn_queue_candidate_indices(total: int, checks: int, player_pos: Vector3) -> Array[int]:
+	var candidate_indices: Array[int] = []
+	if balance_spawn_distance_rings:
+		return _get_balanced_spawn_queue_candidate_indices(total, checks, player_pos)
+
+	if not prioritize_nearby_spawns:
+		var start_index := _pending_spawn_scan_cursor % total
+		for offset in range(checks):
+			candidate_indices.append((start_index + offset) % total)
+		return candidate_indices
+
+	var claimed: Dictionary = {}
+	for _slot in range(checks):
+		var best_index := -1
+		var best_dist_sq := INF
+		for candidate_index in range(total):
+			if claimed.has(candidate_index):
+				continue
+			var spawn_data = pending_spawns[candidate_index]
+			if not (spawn_data is Dictionary):
+				continue
+			var pos: Vector3 = spawn_data.get("position", Vector3.ZERO)
+			var dist_sq := _planar_distance_squared(pos, player_pos)
+			if dist_sq < best_dist_sq:
+				best_dist_sq = dist_sq
+				best_index = candidate_index
+		if best_index < 0:
+			break
+		claimed[best_index] = true
+		candidate_indices.append(best_index)
+	return candidate_indices
+
+
+func _get_balanced_spawn_queue_candidate_indices(total: int, checks: int, player_pos: Vector3) -> Array[int]:
+	var candidate_indices: Array[int] = []
+	var ring_count := maxi(spawn_distance_ring_count, 1)
+	var ring_indices: Array = []
+	for _ring in range(ring_count):
+		ring_indices.append([])
+
+	var max_radius := maxf(spawn_radius, 1.0)
+	for candidate_index in range(total):
+		var spawn_data = pending_spawns[candidate_index]
+		if not (spawn_data is Dictionary):
+			continue
+		var pos: Vector3 = spawn_data.get("position", Vector3.ZERO)
+		var distance := sqrt(_planar_distance_squared(pos, player_pos))
+		var ring_index := clampi(int(floor((distance / max_radius) * float(ring_count))), 0, ring_count - 1)
+		ring_indices[ring_index].append(candidate_index)
+
+	var picked: Dictionary = {}
+	while candidate_indices.size() < checks:
+		var added_this_round := false
+		for ring_index in range(ring_count):
+			var indices: Array = ring_indices[ring_index]
+			while not indices.is_empty():
+				var candidate_index: int = int(indices.pop_front())
+				if picked.has(candidate_index):
+					continue
+				picked[candidate_index] = true
+				candidate_indices.append(candidate_index)
+				added_this_round = true
+				break
+			if candidate_indices.size() >= checks:
+				break
+		if not added_this_round:
+			break
+	return candidate_indices
 
 ## Get all active entities
 func get_entities() -> Array[Node3D]:
@@ -1249,6 +1596,11 @@ func _build_procedural_spawn_plan(coord: Vector3i, chunk_key: Vector2i) -> Array
 		var offset_z = rng.randf_range(2.0, 29.0)
 		var spawn_x = coord.x * TERRAIN_CHUNK_STRIDE + offset_x
 		var spawn_z = coord.z * TERRAIN_CHUNK_STRIDE + offset_z
+		if min_spawn_distance_from_player > 0.0 and viewer and is_instance_valid(viewer):
+			var spawn_pos_xz := Vector3(spawn_x, 0.0, spawn_z)
+			var min_dist_sq := min_spawn_distance_from_player * min_spawn_distance_from_player
+			if _planar_distance_squared(spawn_pos_xz, viewer.global_position) < min_dist_sq:
+				continue
 		
 		spawn_plan.append({
 			"position": Vector3(spawn_x, 0, spawn_z),
@@ -1345,11 +1697,15 @@ func _get_effective_freeze_radius_squared() -> float:
 	return effective_radius * effective_radius
 
 
-func _get_effective_active_physics_radius_squared(freeze_dist_sq: float) -> float:
+func _get_effective_active_physics_radius(freeze_radius_value: float) -> float:
 	if active_physics_radius <= 0.0:
-		return freeze_dist_sq
-	var active_radius_sq := active_physics_radius * active_physics_radius
-	return minf(active_radius_sq, freeze_dist_sq)
+		return freeze_radius_value
+	return minf(active_physics_radius, freeze_radius_value)
+
+
+func _get_effective_active_physics_radius_squared(freeze_dist_sq: float) -> float:
+	var effective_radius := _get_effective_active_physics_radius(sqrt(freeze_dist_sq))
+	return effective_radius * effective_radius
 
 
 func _is_terrain_collision_ready(position: Vector3) -> bool:

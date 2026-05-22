@@ -5,8 +5,13 @@ pushd "%~dp0"
 set TOWN_STALL_SEED=12345
 set TOWN_STALL_AUTO_TELEPORT=0
 
-:: --- Performance Stripping (Disable visuals/physics for long runs) ---
+:: --- Vegetation/render heat profile ---
+set TOWN_STALL_DISABLE_VEGETATION_RENDER=0
 
+:: --- Test-only loading guards: measure full streamed terrain, not a half-loaded scene ---
+set TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER=1
+set TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION=1
+set TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS=1
 
 set TOWN_STALL_HOLD_SECONDS=9999
 set TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS=1

@@ -2358,6 +2358,10 @@ func _start_game_scene() -> void:
 	if terrain_render_distance_override > 0 and terrain_manager_override and "render_distance" in terrain_manager_override:
 		terrain_manager_override.render_distance = terrain_render_distance_override
 		print("[TOWN_STALL_TEST] Terrain render distance override: %d" % terrain_render_distance_override)
+	var terrain_collision_distance_override := _get_positive_env_int("TOWN_STALL_TERRAIN_COLLISION_DISTANCE", 0)
+	if terrain_collision_distance_override > 0 and terrain_manager_override and "collision_distance" in terrain_manager_override:
+		terrain_manager_override.collision_distance = terrain_collision_distance_override
+		print("[TOWN_STALL_TEST] Terrain collision distance override: %d" % terrain_collision_distance_override)
 	var building_manager_override := game_root.find_child("BuildingManager", true, false)
 	if building_render_distance_override > 0 and building_manager_override and "render_distance" in building_manager_override:
 		building_manager_override.render_distance = building_render_distance_override

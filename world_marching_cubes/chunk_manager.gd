@@ -290,6 +290,9 @@ var loading_paused: bool = false
 var _last_frame_ms: float = 0.0
 var _hot_frame_backoff_remaining_frames: int = 0
 var skip_terrain_chunk_updates_for_test: bool = false
+var terrain_collision_ground_center_for_test: bool = false
+var terrain_force_pending_node_finalization_for_test: bool = false
+var terrain_force_stream_progress_for_test: bool = false
 var terrain_grid = null
 var _native_backends_ready: bool = false
 var _runtime_power_mode: String = "active"
@@ -870,6 +873,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_stream_update_idle_skip_count": _terrain_stream_update_idle_skip_count,
 		"terrain_stream_min_chunk_target": _get_min_loaded_stream_chunk_count(),
 		"terrain_stream_under_target": active_chunks.size() < _get_min_loaded_stream_chunk_count(),
+		"terrain_collision_ground_center_for_test": terrain_collision_ground_center_for_test,
+		"terrain_force_pending_node_finalization_for_test": terrain_force_pending_node_finalization_for_test,
+		"terrain_force_stream_progress_for_test": terrain_force_stream_progress_for_test,
 		"last_stream_bounds_unloads": _last_stream_bounds_unloads,
 		"last_fallback_unloads": _last_fallback_unloads,
 		"last_fallback_unload_ms": _last_fallback_unload_ms,
@@ -3333,7 +3339,8 @@ func _process(delta):
 	if skip_terrain_chunk_updates_for_test:
 		return
 
-	if _runtime_power_world_work_suspended:
+	var force_stream_progress := _is_terrain_stream_progress_pending_for_test()
+	if _runtime_power_world_work_suspended and not force_stream_progress:
 		_record_runtime_power_world_work_suspended_frame()
 		if _world_map_lod_background_fill_allowed():
 			_update_world_map_lod_chunks(true)
@@ -3344,9 +3351,10 @@ func _process(delta):
 	_process_retired_chunk_node_cleanup()
 
 	var spawn_zone_work_pending := _has_pending_spawn_zone_work()
+	var force_pending_node_progress := terrain_force_pending_node_finalization_for_test and not pending_nodes.is_empty()
 	var defer_terrain_finalization := false
 	var terrain_defer_reason := ""
-	if not initial_load_phase:
+	if not initial_load_phase and not force_pending_node_progress:
 		var frame_budget_ms := 1000.0 / 60.0
 		if _last_frame_ms > frame_budget_ms:
 			_hot_frame_backoff_remaining_frames = maxi(_hot_frame_backoff_remaining_frames, terrain_hot_frame_backoff_frames)
@@ -3371,9 +3379,9 @@ func _process(delta):
 			_record_terrain_stream_update_key()
 		else:
 			_skip_terrain_stream_update()
-		if spawn_zone_work_pending:
+		if spawn_zone_work_pending or force_pending_node_progress:
 			_drain_completed_generation_queue()
-			process_pending_nodes(true)
+			process_pending_nodes(spawn_zone_work_pending)
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 	process_pending_terrain_collision_creates()
@@ -3431,6 +3439,18 @@ func _adjust_adaptive_loading():
 		loading_paused = false
 		adaptive_frame_budget_ms = 4.0 # High budget for speed
 		chunks_per_frame_limit = 4    # Force multiple chunks per frame
+		return
+
+	if terrain_force_pending_node_finalization_for_test and not pending_nodes.is_empty():
+		loading_paused = false
+		adaptive_frame_budget_ms = maxf(adaptive_frame_budget_ms, 4.0)
+		chunks_per_frame_limit = maxi(chunks_per_frame_limit, 1)
+		return
+
+	if terrain_force_stream_progress_for_test and _is_terrain_stream_progress_pending_for_test():
+		loading_paused = false
+		adaptive_frame_budget_ms = maxf(adaptive_frame_budget_ms, 4.0)
+		chunks_per_frame_limit = maxi(chunks_per_frame_limit, 4)
 		return
 
 	if current_fps < min_acceptable_fps:
@@ -3521,6 +3541,9 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
 		water_render_enabled = false
 	shared_terrain_collision_create_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET", shared_terrain_collision_create_budget_per_frame, 1, 64)
+	terrain_collision_ground_center_for_test = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER", terrain_collision_ground_center_for_test)
+	terrain_force_pending_node_finalization_for_test = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION", terrain_force_pending_node_finalization_for_test)
+	terrain_force_stream_progress_for_test = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS", terrain_force_stream_progress_for_test)
 	terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_VISUAL_BATCHING", terrain_visual_batching_enabled)
 	procedural_terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_PROCEDURAL_TERRAIN_VISUAL_BATCHING", procedural_terrain_visual_batching_enabled)
 	world_map_visual_batch_profile_enabled = _get_runtime_power_env_bool("TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE", world_map_visual_batch_profile_enabled)
@@ -3858,6 +3881,12 @@ func _get_viewer_chunk_coord() -> Vector3i:
 		int(floor(p_pos.z / CHUNK_STRIDE))
 	)
 
+func _get_terrain_collision_center_chunk() -> Vector3i:
+	var center_chunk := _get_viewer_chunk_coord()
+	if terrain_collision_ground_center_for_test:
+		center_chunk.y = 0
+	return center_chunk
+
 func _chunk_disk_count(radius: int) -> int:
 	if radius <= 0:
 		return 0
@@ -3874,6 +3903,18 @@ func _get_min_loaded_stream_chunk_count() -> int:
 		return 0
 	var render_target := _chunk_disk_count(render_distance)
 	return maxi(initial_load_target_chunks, render_target)
+
+func _is_terrain_stream_progress_pending_for_test() -> bool:
+	if not terrain_force_stream_progress_for_test:
+		return false
+	if initial_load_phase:
+		return true
+	if not pending_nodes.is_empty() or _get_completed_generation_queue_count() > 0:
+		return true
+	if _get_task_queue_count() > 0 or _get_cpu_task_queue_count() > 0:
+		return true
+	var min_loaded_chunk_count := _get_min_loaded_stream_chunk_count()
+	return min_loaded_chunk_count > 0 and active_chunks.size() < min_loaded_chunk_count
 
 func _terrain_stream_update_needed() -> bool:
 	if initial_load_phase:
@@ -4181,11 +4222,7 @@ func update_collision_proximity():
 	_last_collision_proximity_disable_count = 0
 	_last_collision_proximity_prewarm_queued = 0
 
-	var p_pos = get_viewer_position()
-	var p_chunk_x = int(floor(p_pos.x / CHUNK_STRIDE))
-	var p_chunk_y = int(floor(p_pos.y / CHUNK_STRIDE))
-	var p_chunk_z = int(floor(p_pos.z / CHUNK_STRIDE))
-	var center_chunk = Vector3i(p_chunk_x, p_chunk_y, p_chunk_z)
+	var center_chunk = _get_terrain_collision_center_chunk()
 	var active_count := active_chunks.size()
 	if center_chunk == _last_collision_center_chunk and active_count == _last_collision_active_count:
 		_last_collision_proximity_update_ms = 0.0
@@ -4501,12 +4538,7 @@ func process_pending_terrain_collision_creates():
 		return
 
 	var start_us := Time.get_ticks_usec()
-	var p_pos = get_viewer_position()
-	var center_chunk = Vector3i(
-		int(floor(p_pos.x / CHUNK_STRIDE)),
-		int(floor(p_pos.y / CHUNK_STRIDE)),
-		int(floor(p_pos.z / CHUNK_STRIDE))
-	)
+	var center_chunk = _get_terrain_collision_center_chunk()
 	var collision_distance_sq := collision_distance * collision_distance
 	var collision_prewarm_distance_sq := maxi(collision_prewarm_distance, collision_distance) * maxi(collision_prewarm_distance, collision_distance)
 	var world = get_world_3d()
@@ -4689,6 +4721,9 @@ func process_pending_nodes(force_spawn_zone_progress: bool = false):
 	var max_items := pending_node_initial_finalize_max_per_frame if initial_load_phase else pending_node_finalize_max_per_frame
 	if not initial_load_phase:
 		max_items = mini(max_items, pending_node_runtime_render_commits_per_frame)
+	if terrain_force_pending_node_finalization_for_test and not initial_load_phase:
+		max_items = maxi(max_items, pending_node_finalize_max_per_frame)
+		budget_ms = maxf(budget_ms, 4.0)
 	if use_spawn_zone_budget:
 		max_items = mini(max_items, spawn_zone_pending_node_finalize_max_per_frame)
 	var processed := 0
@@ -8072,12 +8107,7 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.chunk_material = chunk_material
 		data.cpu_material_terrain = item.get("cpu_mat", PackedByteArray())
 
-		var p_pos = get_viewer_position()
-		var center_chunk = Vector3i(
-			int(floor(p_pos.x / CHUNK_STRIDE)),
-			int(floor(p_pos.y / CHUNK_STRIDE)),
-			int(floor(p_pos.z / CHUNK_STRIDE))
-		)
+		var center_chunk = _get_terrain_collision_center_chunk()
 		var collision_distance_sq := collision_distance * collision_distance
 		var collision_prewarm_distance_sq := maxi(collision_prewarm_distance, collision_distance) * maxi(collision_prewarm_distance, collision_distance)
 		var should_have_collision := _should_have_terrain_collision(coord, center_chunk, collision_distance_sq)
@@ -8252,12 +8282,7 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 
 		# Recreate chunk material with updated 3D texture
 		var chunk_material = _create_chunk_material(chunk_pos, cpu_mat)
-		var p_pos = get_viewer_position()
-		var center_chunk = Vector3i(
-			int(floor(p_pos.x / CHUNK_STRIDE)),
-			int(floor(p_pos.y / CHUNK_STRIDE)),
-			int(floor(p_pos.z / CHUNK_STRIDE))
-		)
+		var center_chunk = _get_terrain_collision_center_chunk()
 
 		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, false, chunk_material, false, coord)
 		data.node_terrain = result_node.node if not result_node.is_empty() else null
