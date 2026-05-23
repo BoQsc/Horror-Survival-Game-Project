@@ -2,6 +2,8 @@
 #include "mesh_builder.h"
 #include "prefab_geometry_native.h"
 #include "terrain_grid.h"
+#include "vegetation_chunk_builder.h"
+#include "vegetation_spatial_grid_native.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/defs.hpp>
@@ -17,6 +19,8 @@ void initialize_high_performance_module(ModuleInitializationLevel p_level) {
     ClassDB::register_class<MeshBuilder>();
     ClassDB::register_class<PrefabGeometryNative>();
     ClassDB::register_class<TerrainGrid>();
+    ClassDB::register_class<VegetationChunkBuilder>();
+    ClassDB::register_class<VegetationSpatialGridNative>();
 }
 
 void uninitialize_high_performance_module(ModuleInitializationLevel p_level) {

@@ -4,7 +4,7 @@
 [ext_resource type="PackedScene" uid="uid://dusp0hitkv8d0" path="res://models/entities/player/node_3d_test_scene.tscn" id="2_fmx6u"]
 [ext_resource type="Script" uid="uid://d2oq01pxsr6xj" path="res://world_marching_cubes/chunk_manager.gd" id="4_terrain"]
 [ext_resource type="Script" uid="uid://bvdox6682bbj2" path="res://world_building_system/building_manager.gd" id="5_buildings"]
-[ext_resource type="Script" uid="uid://c31576os7r5vc" path="res://world_vegetation/vegetation_manager.gd" id="6_vegetation"]
+[ext_resource type="Script" path="res://world_vegetation/runtime/vegetation_manager.gd" id="6_vegetation"]
 [ext_resource type="Script" uid="uid://bnfmnblgu4i8q" path="res://world_marching_cubes/roads/road_manager.gd" id="7_roads"]
 [ext_resource type="Script" uid="uid://ds7smfcuouehv" path="res://world_building_system/prefab_spawner.gd" id="8_prefabs"]
 [ext_resource type="PackedScene" uid="uid://dxkm8p7qhwvam" path="res://game/entities/entity_manager.tscn" id="9_entities"]
@@ -82,6 +82,7 @@ mouse_filter = 2
 [node name="TerrainManager" type="Node3D" parent="." unique_id=665583371 node_paths=PackedStringArray("viewer") groups=["terrain_manager"]]
 script = ExtResource("4_terrain")
 viewer = NodePath("../WorldPlayerV2")
+render_distance = 10
 min_finalization_interval_ms = 0
 exploration_delay_ms = 0
 

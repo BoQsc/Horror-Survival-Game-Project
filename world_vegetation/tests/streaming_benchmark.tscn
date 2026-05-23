@@ -1,0 +1,11 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://world_vegetation/tests/vegetation_benchmark_scene.gd" id="1"]
+
+[node name="StreamingBenchmark" type="Node3D"]
+script = ExtResource("1")
+benchmark_profile = &"streaming"
+initial_stream_radius_chunks = 3
+active_stream_radius_chunks = 8
+camera_distance = 36.0
+camera_height = 20.0

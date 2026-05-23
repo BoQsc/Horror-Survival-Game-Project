@@ -27,6 +27,7 @@ enum Stage { TERRAIN, PREFABS, VEGETATION, COMPLETE }
 var current_stage: Stage = Stage.TERRAIN
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Start visible
 	visible = true
 	loading_start_msec = Time.get_ticks_msec()
@@ -75,7 +76,7 @@ func _start_loading_sequence() -> void:
 	if not terrain_manager:
 		# No terrain manager, hide after short delay
 		update_progress(100.0, "Ready!")
-		await get_tree().create_timer(0.5).timeout
+		await get_tree().create_timer(0.5, true).timeout
 		_start_fade_out()
 		return
 	
@@ -119,7 +120,7 @@ func _start_loading_sequence() -> void:
 				else:
 					update_progress(progress, "Loading terrain...")
 		
-		await get_tree().create_timer(0.1).timeout
+		await get_tree().create_timer(0.1, true).timeout
 	
 	# Stage 2: Prefab buildings - poll queue until empty (no timeout)
 	if is_loading and current_stage == Stage.PREFABS:
@@ -139,14 +140,14 @@ func _start_loading_sequence() -> void:
 					var percent = (float(spawned) / float(initial_queue_size)) * 100.0
 					update_progress(percent, "Spawning buildings: %d/%d" % [spawned, initial_queue_size])
 					
-					await get_tree().create_timer(0.2).timeout
+					await get_tree().create_timer(0.2, true).timeout
 
 		while is_loading:
 			var pending_world_content := _get_pending_world_content_count(prefab_spawner, building_manager)
 			if pending_world_content <= 0:
 				break
 			update_progress(100.0, "Spawning buildings: %d pending" % pending_world_content)
-			await get_tree().create_timer(0.2).timeout
+			await get_tree().create_timer(0.2, true).timeout
 		
 		current_stage = Stage.VEGETATION
 	
@@ -158,8 +159,11 @@ func _start_loading_sequence() -> void:
 				is_veg_ready = vegetation_manager.is_vegetation_ready()
 			else:
 				is_veg_ready = true # Skip if method not available
+			var pending_chunks := 0
+			if vegetation_manager.has_method("get_pending_chunks_count"):
+				pending_chunks = vegetation_manager.get_pending_chunks_count()
 			
-			if not is_veg_ready:
+			if not is_veg_ready and pending_chunks > 0:
 				update_progress(50.0, "Placing vegetation...")
 				while is_loading:
 					if vegetation_manager.has_method("is_vegetation_ready"):
@@ -167,19 +171,22 @@ func _start_loading_sequence() -> void:
 							break
 					else:
 						break
-					
-					var pending = 0
+
+					var loop_pending := 0
 					if vegetation_manager.has_method("get_pending_chunks_count"):
-						pending = vegetation_manager.get_pending_chunks_count()
-					update_progress(50.0, "Placing vegetation... (%d chunks)" % pending)
+						loop_pending = vegetation_manager.get_pending_chunks_count()
+					if loop_pending <= 0:
+						break
 					
-					await get_tree().create_timer(0.2).timeout
+					update_progress(50.0, "Placing vegetation... (%d chunks)" % loop_pending)
+					
+					await get_tree().create_timer(0.2, true).timeout
 		
 		current_stage = Stage.COMPLETE
 	
 	# Complete
 	update_progress(100.0, "World ready!")
-	await get_tree().create_timer(0.3).timeout
+	await get_tree().create_timer(0.3, true).timeout
 	_start_fade_out()
 
 func update_progress(percent: float, message: String) -> void:

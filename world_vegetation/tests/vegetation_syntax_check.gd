@@ -1,0 +1,15 @@
+extends RefCounted
+
+const _VEGETATION_TYPE = preload("res://world_vegetation/types/vegetation_type.gd")
+const _VEGETATION_REGISTRY = preload("res://world_vegetation/types/vegetation_registry.gd")
+const _VEGETATION_CHUNK = preload("res://world_vegetation/runtime/vegetation_chunk.gd")
+const _VEGETATION_GRID = preload("res://world_vegetation/runtime/vegetation_spatial_grid.gd")
+const _VEGETATION_RENDERER = preload("res://world_vegetation/runtime/vegetation_renderer_rs.gd")
+const _VEGETATION_RUNTIME = preload("res://world_vegetation/runtime/vegetation_runtime.gd")
+const _VEGETATION_MANAGER = preload("res://world_vegetation/runtime/vegetation_manager.gd")
+const _VEGETATION_OVERLAY = preload("res://world_vegetation/debug/vegetation_debug_overlay.gd")
+const _GRASS_SCENE = preload("res://world_vegetation/tests/grass_field_benchmark.tscn")
+const _FOREST_SCENE = preload("res://world_vegetation/tests/forest_benchmark.tscn")
+const _HARVEST_SCENE = preload("res://world_vegetation/tests/harvest_benchmark.tscn")
+const _DIGGING_SCENE = preload("res://world_vegetation/tests/digging_support_benchmark.tscn")
+const _STREAMING_SCENE = preload("res://world_vegetation/tests/streaming_benchmark.tscn")

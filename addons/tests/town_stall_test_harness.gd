@@ -119,6 +119,15 @@ var hold_settle_stable_frames: int = 0
 var hold_settle_timed_out: bool = false
 var hold_settle_wait_logged: bool = false
 var hold_settle_last_player_position: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var low_fps_abort_enabled: bool = false
+var low_fps_abort_fps_threshold: float = 20.0
+var low_fps_abort_seconds: float = 10.0
+var low_fps_abort_start_after_seconds: float = 30.0
+var low_fps_abort_elapsed_seconds: float = 0.0
+var world_ready_stall_abort_enabled: bool = false
+var world_ready_stall_abort_seconds: float = 30.0
+var world_ready_stall_signature: String = ""
+var world_ready_stall_last_progress_phase_time: float = 0.0
 
 var game_root: Node3D = null
 var terrain_manager: Node = null
@@ -2171,6 +2180,12 @@ func _ready() -> void:
 	world_ready_status_log_interval_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STATUS_LOG_INTERVAL_SECONDS", 5.0)
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
+	low_fps_abort_enabled = OS.get_environment("TOWN_STALL_LOW_FPS_ABORT") == "1"
+	low_fps_abort_fps_threshold = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_FPS", 20.0)
+	low_fps_abort_seconds = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_SECONDS", 10.0)
+	low_fps_abort_start_after_seconds = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_START_AFTER_SECONDS", 30.0)
+	world_ready_stall_abort_enabled = OS.get_environment("TOWN_STALL_WORLD_READY_STALL_ABORT") == "1"
+	world_ready_stall_abort_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STALL_SECONDS", 30.0)
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
 		Engine.max_fps = max_fps_override
@@ -2207,6 +2222,10 @@ func _ready() -> void:
 		render_diagnostics_scene_detail_limit,
 		render_diagnostics_frame_scene_scan_limit
 	])
+	if low_fps_abort_enabled:
+		print("[TOWN_STALL_TEST] Low FPS abort: ON threshold=%.1f duration=%.1fs start_after=%.1fs" % [low_fps_abort_fps_threshold, low_fps_abort_seconds, low_fps_abort_start_after_seconds])
+	if world_ready_stall_abort_enabled:
+		print("[TOWN_STALL_TEST] World-ready stall abort: ON timeout=%.1fs" % world_ready_stall_abort_seconds)
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
 	_machine_state = _parse_machine_state_env()
 	if not _machine_state.is_empty():
@@ -2254,6 +2273,7 @@ func _process(delta: float) -> void:
 	phase_time += delta
 	if town_entry_capture_started and phase != Phase.DONE and phase != Phase.FAILED and not pending_quit:
 		_capture_native_town_entry_sample(delta)
+		_update_low_fps_abort(delta)
 
 	match phase:
 		Phase.WAIT_WORLD_READY:
@@ -2735,6 +2755,31 @@ func _collect_world_ready_status(terrain_ready: bool, loading_screen_done: bool)
 	status["prefab_pending_baked_payload_jobs"] = int(prefab_telemetry.get("pending_world_map_baked_payload_jobs", 0))
 	status["vegetation_ready"] = bool(vegetation_telemetry.get("vegetation_ready", true))
 	status["vegetation_pending_chunks"] = int(vegetation_telemetry.get("pending_chunks_count", 0))
+	status["vegetation_telemetry_available"] = not vegetation_telemetry.is_empty()
+	status["vegetation_profile"] = str(vegetation_telemetry.get("profile", ""))
+	status["vegetation_terrain_manager_valid"] = bool(vegetation_telemetry.get("terrain_manager_valid", false))
+	status["vegetation_terrain_streaming_ready"] = bool(vegetation_telemetry.get("terrain_streaming_ready", false))
+	status["vegetation_chunk_count"] = int(vegetation_telemetry.get("chunk_count", 0))
+	status["vegetation_live_chunk_count"] = int(vegetation_telemetry.get("live_chunk_count", 0))
+	status["vegetation_grass_chunk_count"] = int(vegetation_telemetry.get("grass_chunk_count", 0))
+	status["vegetation_grass_cell_count"] = int(vegetation_telemetry.get("grass_cell_count", 0))
+	status["vegetation_visible_grass_count"] = int(vegetation_telemetry.get("global_grass_render_instances", 0))
+	status["vegetation_grass_batch_count"] = int(vegetation_telemetry.get("global_grass_render_batch_count", 0))
+	status["vegetation_chunk_mesh_batch_count"] = int(vegetation_telemetry.get("global_chunk_mesh_render_batch_count", 0))
+	status["vegetation_tree_count"] = int(vegetation_telemetry.get("tree_record_count", 0))
+	status["vegetation_visible_tree_count"] = int(vegetation_telemetry.get("global_tree_render_instances", 0))
+	status["vegetation_bush_count"] = int(vegetation_telemetry.get("bush_record_count", 0))
+	status["vegetation_visible_bush_count"] = int(vegetation_telemetry.get("global_bush_render_instances", 0))
+	status["vegetation_rock_count"] = int(vegetation_telemetry.get("rock_record_count", 0))
+	status["vegetation_visible_rock_count"] = int(vegetation_telemetry.get("global_rock_render_instances", 0))
+	status["vegetation_last_focus_chunk"] = str(vegetation_telemetry.get("last_focus_chunk", ""))
+	status["vegetation_last_generation_ms"] = float(vegetation_telemetry.get("last_generation_time_ms", 0.0))
+	status["vegetation_last_rebuild_ms"] = float(vegetation_telemetry.get("last_rebuild_time_ms", 0.0))
+	status["vegetation_coverage_radius_world"] = float(vegetation_telemetry.get("vegetation_coverage_radius_world", 0.0))
+	status["vegetation_coverage_render_distance_equivalent"] = float(vegetation_telemetry.get("vegetation_coverage_render_distance_equivalent", 0.0))
+	var vegetation_renderer: Dictionary = vegetation_telemetry.get("renderer", {})
+	status["vegetation_render_rid_count"] = int(vegetation_renderer.get("render_rid_count", 0))
+	status["vegetation_renderer_scenario_bound"] = bool(vegetation_renderer.get("scenario_bound", false))
 	return status
 
 
@@ -2770,6 +2815,31 @@ func _maybe_log_world_ready_status(terrain_ready: bool, loading_screen_done: boo
 		str(status.get("vegetation_ready", true)),
 		int(status.get("vegetation_pending_chunks", 0))
 	])
+	if bool(status.get("vegetation_telemetry_available", false)):
+		print("[TOWN_STALL_TEST] Vegetation wait profile=%s terrain_ref=%s stream=%s coverage=%.0fm(%.1frd) chunks=%d live=%d grass=%d/%d chunk_batches=%d grass_chunks=%d trees=%d/%d bushes=%d/%d rocks=%d/%d rids=%d focus=%s gen=%.2fms rebuild=%.2fms scenario=%s" % [
+			str(status.get("vegetation_profile", "")),
+			str(status.get("vegetation_terrain_manager_valid", false)),
+			str(status.get("vegetation_terrain_streaming_ready", false)),
+			float(status.get("vegetation_coverage_radius_world", 0.0)),
+			float(status.get("vegetation_coverage_render_distance_equivalent", 0.0)),
+			int(status.get("vegetation_chunk_count", 0)),
+			int(status.get("vegetation_live_chunk_count", 0)),
+			int(status.get("vegetation_visible_grass_count", 0)),
+			int(status.get("vegetation_grass_cell_count", 0)),
+			int(status.get("vegetation_chunk_mesh_batch_count", 0)),
+			int(status.get("vegetation_grass_batch_count", 0)),
+			int(status.get("vegetation_visible_tree_count", 0)),
+			int(status.get("vegetation_tree_count", 0)),
+			int(status.get("vegetation_visible_bush_count", 0)),
+			int(status.get("vegetation_bush_count", 0)),
+			int(status.get("vegetation_visible_rock_count", 0)),
+			int(status.get("vegetation_rock_count", 0)),
+			int(status.get("vegetation_render_rid_count", 0)),
+			str(status.get("vegetation_last_focus_chunk", "")),
+			float(status.get("vegetation_last_generation_ms", 0.0)),
+			float(status.get("vegetation_last_rebuild_ms", 0.0)),
+			str(status.get("vegetation_renderer_scenario_bound", false))
+		])
 
 
 func _poll_world_ready() -> void:
@@ -2802,9 +2872,13 @@ func _poll_world_ready() -> void:
 	if loading_screen and ("is_loading" in loading_screen):
 		loading_screen_done = not bool(loading_screen.get("is_loading"))
 
+	var status := _collect_world_ready_status(terrain_ready, loading_screen_done)
 	if not terrain_ready or not loading_screen_done:
 		_maybe_log_world_ready_status(terrain_ready, loading_screen_done)
+		_update_world_ready_stall(status)
 		return
+	world_ready_stall_signature = ""
+	world_ready_stall_last_progress_phase_time = phase_time
 
 	_emit_scope_event("town_stall_test", "world_ready", {
 		"phase_time": phase_time,
@@ -2911,9 +2985,9 @@ func _is_town_terrain_stream_ready() -> bool:
 	var terrain_busy := false
 	terrain_busy = terrain_busy or (render_distance > 0 and int(telemetry.get("loaded_chunk_count", 0)) < min_loaded_chunks)
 	if bool(telemetry.get("distant_world_map_lod_enabled", false)) and bool(telemetry.get("world_map_active", false)):
-		var lod_distance := int(telemetry.get("distant_world_map_lod_distance", 0))
+		var lod_distance := int(telemetry.get("world_map_lod_effective_outer_distance", telemetry.get("distant_world_map_lod_distance", 0)))
 		var lod_overlap := int(telemetry.get("distant_world_map_lod_overlap", 0))
-		var lod_inner_distance := maxi(render_distance - lod_overlap, 0)
+		var lod_inner_distance := int(telemetry.get("world_map_lod_effective_inner_distance", maxi(render_distance - lod_overlap, 0)))
 		if lod_distance > lod_inner_distance:
 			terrain_busy = terrain_busy or bool(telemetry.get("distant_world_map_lod_deferred", false))
 			terrain_busy = terrain_busy or int(telemetry.get("world_map_lod_chunk_count", 0)) <= 0
@@ -3373,6 +3447,54 @@ func _hold_in_town(_delta: float) -> void:
 
 		print("[TOWN_STALL_TEST] Hold complete, quitting")
 		_begin_shutdown()
+
+
+func _update_low_fps_abort(delta: float) -> void:
+	if not low_fps_abort_enabled or pending_quit or phase == Phase.DONE or phase == Phase.FAILED:
+		low_fps_abort_elapsed_seconds = 0.0
+		return
+	if phase_time < low_fps_abort_start_after_seconds:
+		low_fps_abort_elapsed_seconds = 0.0
+		return
+	var current_fps := float(Performance.get_monitor(Performance.TIME_FPS))
+	if current_fps < low_fps_abort_fps_threshold:
+		low_fps_abort_elapsed_seconds += delta
+		if low_fps_abort_elapsed_seconds >= low_fps_abort_seconds:
+			_fail("Sustained low FPS: %.1f FPS below %.1f FPS for %.1f seconds" % [
+				current_fps,
+				low_fps_abort_fps_threshold,
+				low_fps_abort_seconds
+			])
+	else:
+		low_fps_abort_elapsed_seconds = 0.0
+
+
+func _update_world_ready_stall(status: Dictionary) -> void:
+	if not world_ready_stall_abort_enabled or pending_quit or phase == Phase.DONE or phase == Phase.FAILED:
+		world_ready_stall_signature = ""
+		world_ready_stall_last_progress_phase_time = phase_time
+		return
+	if bool(status.get("terrain_ready", false)) and bool(status.get("loading_screen_done", false)):
+		world_ready_stall_signature = ""
+		world_ready_stall_last_progress_phase_time = phase_time
+		return
+	var signature := "%s|%s|%s|%s|%s|%s|%s|%s|%s" % [
+		str(status.get("loading_screen_stage", -1)),
+		str(status.get("loading_screen_progress", -1.0)),
+		str(status.get("terrain_pending_node_count", -1)),
+		str(status.get("terrain_active_chunk_count", -1)),
+		str(status.get("terrain_last_update_loads", -1)),
+		str(status.get("terrain_last_update_backend", "")),
+		str(status.get("terrain_loading_paused", false)),
+		str(status.get("building_pending_baked_apply_phases", 0)),
+		str(status.get("prefab_pending_baked_payload_jobs", 0))
+	]
+	if signature != world_ready_stall_signature:
+		world_ready_stall_signature = signature
+		world_ready_stall_last_progress_phase_time = phase_time
+		return
+	if phase_time - world_ready_stall_last_progress_phase_time >= world_ready_stall_abort_seconds:
+		_fail("World loading stalled: %s" % signature)
 
 
 func _begin_shutdown() -> void:

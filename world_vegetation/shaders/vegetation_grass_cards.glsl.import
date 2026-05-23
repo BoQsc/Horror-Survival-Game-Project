@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b53wl8yf1nviu"
+path="res://.godot/imported/vegetation_grass_cards.glsl-071e480453b3d061bf3ae77db1735f13.res"
+
+[deps]
+
+source_file="res://world_vegetation/shaders/vegetation_grass_cards.glsl"
+dest_files=["res://.godot/imported/vegetation_grass_cards.glsl-071e480453b3d061bf3ae77db1735f13.res"]
+
+[params]
+

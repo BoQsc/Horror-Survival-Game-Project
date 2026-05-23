@@ -43,6 +43,26 @@ RAW_GPU_QUERY_FIELDS = [
     "memory.total",
 ]
 
+DEFAULT_TERRAIN_TEST_FLAGS = {
+    "TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER": "1",
+    "TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION": "1",
+    "TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS": "1",
+}
+
+DEFAULT_ABORT_GUARDS = {
+    "TOWN_STALL_LOW_FPS_ABORT": "1",
+    "TOWN_STALL_LOW_FPS_ABORT_FPS": "50",
+    "TOWN_STALL_LOW_FPS_ABORT_SECONDS": "10",
+    "TOWN_STALL_LOW_FPS_ABORT_START_AFTER_SECONDS": "20",
+    "TOWN_STALL_WORLD_READY_STALL_ABORT": "1",
+    "TOWN_STALL_WORLD_READY_STALL_SECONDS": "30",
+}
+
+
+def _effective_terrain_test_flag(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return value if value else DEFAULT_TERRAIN_TEST_FLAGS.get(name, "0")
+
 
 def _runtime_mode_label() -> str:
     if os.environ.get("TOWN_STALL_EXPORTED_RUNTIME", "0") == "1":
@@ -1541,6 +1561,13 @@ def main() -> int:
     print(f"   Runtime mode: {_runtime_mode_label()} ({Path(GODOT_BIN).name})")
     print(f"   Rendering: {GODOT_RENDERING_METHOD} / {GODOT_RENDERING_DRIVER}")
     print(f"   Godot APPDATA: {TOWN_STALL_APPDATA_DIR}")
+    print(
+        "   Terrain flags: collision_ground_center={collision} force_pending={pending} force_stream={stream}".format(
+            collision=_effective_terrain_test_flag("TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER"),
+            pending=_effective_terrain_test_flag("TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION"),
+            stream=_effective_terrain_test_flag("TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS"),
+        )
+    )
     exported_runtime = os.environ.get("TOWN_STALL_EXPORTED_RUNTIME", "0") == "1"
     if exported_runtime:
         print("   Runtime launch: embedded exported project")
@@ -1612,6 +1639,23 @@ def main() -> int:
     env["TOWN_STALL_MAX_FPS"] = os.environ.get("TOWN_STALL_MAX_FPS", "")
     env["TOWN_STALL_MEASURE_FULL_FLIGHT"] = os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", default_measure_full_flight)
     env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
+    for key, value in DEFAULT_TERRAIN_TEST_FLAGS.items():
+        if not env.get(key, "").strip():
+            env[key] = value
+    for key, value in DEFAULT_ABORT_GUARDS.items():
+        if not env.get(key, "").strip():
+            env[key] = value
+    for key, value in os.environ.items():
+        if key.startswith("TOWN_STALL_TERRAIN_") or key.startswith("TOWN_STALL_WATER_") or key.startswith("TOWN_STALL_WORLD_MAP_"):
+            env[key] = value
+    for key in [
+        "TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH",
+        "TOWN_STALL_SHARED_TERRAIN_COLLISION_CREATE_BUDGET",
+        "TOWN_STALL_KEEP_DISABLED_TERRAIN_COLLISION_IN_SPACE",
+        "TOWN_STALL_SHARED_TERRAIN_COLLISION_BODY",
+    ]:
+        if key in os.environ:
+            env[key] = os.environ[key]
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
     machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)

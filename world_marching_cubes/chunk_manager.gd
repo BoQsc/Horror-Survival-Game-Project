@@ -5692,6 +5692,12 @@ func get_terrain_height(global_x: float, global_z: float) -> float:
 
 	return best_height # Return -1000.0 if no terrain found
 
+
+func get_surface_height_at_world_position(global_x: float, global_z: float) -> float:
+	# Return the topmost loaded terrain surface for this X/Z column.
+	# Vegetation placement depends on the actual visible surface, not layer 0.
+	return get_terrain_height(global_x, global_z)
+
 # Optimized height lookup that only checks a specific chunk (much faster for vegetation placement)
 func get_chunk_surface_height(coord: Vector3i, local_x: int, local_z: int) -> float:
 	if not active_chunks.has(coord):

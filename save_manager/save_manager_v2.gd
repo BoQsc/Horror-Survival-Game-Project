@@ -70,6 +70,7 @@ var _save_threads: Array[Thread] = []
 var _is_saving: bool = false # Prevent concurrent saves to avoid file corruption
 
 func _ready():
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	# Add to group for dynamic lookup by HUD
 	add_to_group("save_manager")
 	
@@ -92,6 +93,7 @@ func _setup_autosave():
 	_autosave_timer.one_shot = false
 	_autosave_timer.wait_time = autosave_interval_seconds
 	_autosave_timer.autostart = autosave_enabled
+	_autosave_timer.process_mode = Node.PROCESS_MODE_ALWAYS
 	_autosave_timer.timeout.connect(_on_autosave_timeout)
 	add_child(_autosave_timer)
 	
@@ -150,9 +152,13 @@ func _find_managers():
 			chunk_manager.connect("spawn_zones_ready", _on_spawn_zones_ready)
 	
 	# Connect to vegetation_manager's all_vegetation_ready signal
-	if vegetation_manager and vegetation_manager.has_signal("all_vegetation_ready"):
-		if not vegetation_manager.is_connected("all_vegetation_ready", _on_all_vegetation_ready):
-			vegetation_manager.connect("all_vegetation_ready", _on_all_vegetation_ready)
+	if vegetation_manager:
+		if vegetation_manager.has_signal("all_vegetation_ready"):
+			if not vegetation_manager.is_connected("all_vegetation_ready", _on_all_vegetation_ready):
+				vegetation_manager.connect("all_vegetation_ready", _on_all_vegetation_ready)
+		elif vegetation_manager.has_signal("vegetation_ready_changed"):
+			if not vegetation_manager.is_connected("vegetation_ready_changed", _on_vegetation_ready_changed):
+				vegetation_manager.connect("vegetation_ready_changed", _on_vegetation_ready_changed)
 	
 	# V2: Find player components
 	if player:
@@ -224,6 +230,9 @@ func _process(_delta):
 	# Only clear _is_saving when ALL threads are done
 	if _save_threads.is_empty():
 		_is_saving = false
+
+	if is_loading_game:
+		_poll_load_readiness()
 
 ## Quick save to default slot
 func quick_save():
@@ -504,6 +513,7 @@ func load_game(path: String) -> bool:
 	# This MUST be last because it triggers signals that managers above react to
 	load_step.emit("Generating terrain", 8, 10)
 	_load_player_data(save_data.get("player", {}))
+	_poll_load_readiness()
 	
 	# V2 FIX: DON'T emit load_completed or print "Game loaded" here!
 	# We are still waiting for terrain and vegetation.
@@ -532,6 +542,7 @@ func _start_load_safety_timeout(seconds: float):
 	load_safety_timer = Timer.new()
 	load_safety_timer.one_shot = true
 	load_safety_timer.wait_time = seconds
+	load_safety_timer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(load_safety_timer)
 	load_safety_timer.timeout.connect(_on_load_timeout)
 	load_safety_timer.start()
@@ -574,8 +585,22 @@ func _on_all_vegetation_ready():
 	_capture_load_telemetry("vegetation_ready")
 	_check_world_readiness()
 
+## Called when a vegetation manager exposes a bool-ready signal instead of the
+## legacy one-shot all_vegetation_ready signal.
+func _on_vegetation_ready_changed(ready: bool):
+	if not ready or not is_loading_game or not awaiting_vegetation_ready:
+		return
+
+	awaiting_vegetation_ready = false
+	_capture_load_telemetry("vegetation_ready", {
+		"signal": "vegetation_ready_changed"
+	})
+	_check_world_readiness()
+
 ## Finalize loading when all systems are ready
 func _check_world_readiness():
+	if not is_loading_game:
+		return
 	if awaiting_terrain_ready or awaiting_vegetation_ready:
 		_capture_load_telemetry("still_waiting", {
 			"terrain": awaiting_terrain_ready,
@@ -644,6 +669,47 @@ func _check_world_readiness():
 	load_step.emit("Complete", 10, 10)
 	load_completed.emit(true, current_save_path)
 	is_quickloading = false  # Clear the flag now that load is complete
+
+## Poll manager state during the loading window so missed one-shot signals do
+## not strand the world in a half-loaded state.
+func _poll_load_readiness() -> void:
+	var changed := false
+
+	if awaiting_terrain_ready and _is_terrain_ready_now():
+		awaiting_terrain_ready = false
+		_capture_load_telemetry("terrain_ready", {
+			"polled": true
+		})
+		changed = true
+
+	if awaiting_vegetation_ready and _is_vegetation_ready_now():
+		awaiting_vegetation_ready = false
+		_capture_load_telemetry("vegetation_ready", {
+			"polled": true
+		})
+		changed = true
+
+	if changed:
+		_check_world_readiness()
+
+func _is_terrain_ready_now() -> bool:
+	if not chunk_manager:
+		return false
+	if chunk_manager.has_method("is_initial_load_complete"):
+		return bool(chunk_manager.is_initial_load_complete())
+	if "initial_load_phase" in chunk_manager:
+		return not bool(chunk_manager.initial_load_phase)
+	return false
+
+func _is_vegetation_ready_now() -> bool:
+	if not vegetation_manager:
+		return false
+	if vegetation_manager.has_method("is_vegetation_ready"):
+		if bool(vegetation_manager.is_vegetation_ready()):
+			return true
+	if vegetation_manager.has_method("get_pending_chunks_count"):
+		return int(vegetation_manager.get_pending_chunks_count()) <= 0
+	return false
 
 ## Get list of available save files
 func get_save_files() -> Array[String]:
