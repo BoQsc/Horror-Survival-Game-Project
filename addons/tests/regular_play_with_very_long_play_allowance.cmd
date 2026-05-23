@@ -32,5 +32,14 @@ set TOWN_STALL_RENDER_DISTANCE=10
 
 :: --- Execution ---
 echo Starting long-duration test...
+echo Checking for existing Godot/town-stall process...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process | Where-Object { $_.ProcessName -match 'godot|town-stall' } | Select-Object Id,ProcessName,StartTime,Path; if ($p) { $p | Format-Table -AutoSize; exit 1 }"
+if errorlevel 1 (
+    echo Existing Godot/town-stall process found. Close it before launching this test.
+    pause
+    popd
+    exit /b 1
+)
 python -u run_town_stall_test.py
 pause
+popd

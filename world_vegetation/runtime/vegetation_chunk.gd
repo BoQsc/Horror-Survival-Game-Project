@@ -35,6 +35,8 @@ var grass_instance_rid: RID = RID()
 var individual_instance_rids: Dictionary = {}
 var visible_grass_cell_count: int = 0
 var visible_tree_record_count: int = 0
+var visible_individual_tree_record_count: int = 0
+var visible_chunked_tree_record_count: int = 0
 var visible_bush_record_count: int = 0
 var visible_rock_record_count: int = 0
 var grass_mesh_primitive_count: int = 0
@@ -46,6 +48,7 @@ var tree_estimated_primitive_count: int = 0
 var bush_estimated_primitive_count: int = 0
 var rock_estimated_primitive_count: int = 0
 var support_points_total: int = 0
+var terrain_support_missing: bool = false
 var last_rebuild_time_ms: float = 0.0
 var last_support_refresh_time_ms: float = 0.0
 var last_generated_frame: int = -1
@@ -68,6 +71,8 @@ func reset() -> void:
 	individual_instance_rids.clear()
 	visible_grass_cell_count = 0
 	visible_tree_record_count = 0
+	visible_individual_tree_record_count = 0
+	visible_chunked_tree_record_count = 0
 	visible_bush_record_count = 0
 	visible_rock_record_count = 0
 	grass_mesh_primitive_count = 0
@@ -79,6 +84,7 @@ func reset() -> void:
 	bush_estimated_primitive_count = 0
 	rock_estimated_primitive_count = 0
 	support_points_total = 0
+	terrain_support_missing = false
 	last_rebuild_time_ms = 0.0
 	last_support_refresh_time_ms = 0.0
 	last_generated_frame = -1

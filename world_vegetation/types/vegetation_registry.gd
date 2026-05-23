@@ -187,21 +187,37 @@ static func _make_foliage_material(albedo_color: Color) -> Material:
 
 
 static func _make_grounded_source_transform(source_path: String, center_xz: bool = true) -> Transform3D:
+	return _make_grounded_source_transform_impl(source_path, center_xz, false)
+
+
+static func _make_imported_grounded_source_transform(source_path: String, center_xz: bool = true) -> Transform3D:
+	return _make_grounded_source_transform_impl(source_path, center_xz, true)
+
+
+static func _make_imported_source_transform(source_path: String) -> Transform3D:
+	var probe := VegetationType.new()
+	probe.source_path = source_path
+	var geometry := probe.get_source_geometry()
+	return geometry.get("transform", Transform3D.IDENTITY)
+
+
+static func _make_grounded_source_transform_impl(source_path: String, center_xz: bool, use_imported_transform: bool) -> Transform3D:
 	var probe := VegetationType.new()
 	probe.source_path = source_path
 	var geometry := probe.get_source_geometry()
 	var mesh: Mesh = geometry.get("mesh", null)
 	if mesh == null:
 		return Transform3D.IDENTITY
+	var source_transform: Transform3D = geometry.get("transform", Transform3D.IDENTITY) if use_imported_transform else Transform3D.IDENTITY
 	var source_aabb := mesh.get_aabb()
-	var transformed_aabb := _transform_aabb(source_aabb, Transform3D.IDENTITY)
+	var transformed_aabb := _transform_aabb(source_aabb, source_transform)
 	var min_v := transformed_aabb.position
 	var max_v := transformed_aabb.position + transformed_aabb.size
 	var offset := Vector3(0.0, -min_v.y, 0.0)
 	if center_xz:
 		offset.x = -((min_v.x + max_v.x) * 0.5)
 		offset.z = -((min_v.z + max_v.z) * 0.5)
-	return Transform3D.IDENTITY.translated(offset)
+	return Transform3D.IDENTITY.translated(offset) * source_transform
 
 
 static func _make_fast_source_material(source_path: String, alpha_scissor_threshold: float, double_sided: bool) -> Material:
@@ -295,8 +311,10 @@ static func create_default():
 	var grass_source := "res://models/grass/2/grass_lowpoly.glb"
 	var rock_source := "res://models/small_rock/simple_rock_-_ps1_low_poly.glb"
 	var grass_source_transform := _make_grounded_source_transform(grass_source, true)
-	var tree_source_transform := _make_grounded_source_transform(tree_source, true)
-	var rock_source_transform := _make_grounded_source_transform(rock_source, true)
+	# Preserve the authored tree scene transform. AABB-grounding this GLB lifts
+	# the visible trunk several meters above the sampled terrain surface.
+	var tree_source_transform := _make_imported_source_transform(tree_source)
+	var rock_source_transform := _make_imported_grounded_source_transform(rock_source, true)
 	var grass_source_material := _make_fast_source_material(grass_source, 0.45, true)
 	var tree_source_material := _make_fast_source_material(tree_source, 0.48, true)
 	var rock_source_material := _make_fast_source_material(rock_source, 0.0, false)
@@ -512,7 +530,7 @@ static func create_default():
 		true,
 		false
 	)
-	pine_tree.instance_scale = 0.18
+	pine_tree.instance_scale = 1.0
 	pine_tree.support_radius = 1.1
 	pine_tree.support_height = 8.0
 	pine_tree.mesh_source_transform = tree_source_transform
@@ -543,7 +561,7 @@ static func create_default():
 		true,
 		false
 	)
-	dead_tree.instance_scale = 0.16
+	dead_tree.instance_scale = 0.9
 	dead_tree.support_radius = 1.1
 	dead_tree.support_height = 7.0
 	dead_tree.mesh_source_transform = tree_source_transform

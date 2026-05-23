@@ -243,6 +243,8 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     if (visible_count <= 0) {
         return result;
     }
+    const bool use_fallback_colors = type_colors.has(first_type_id);
+    const bool write_colors = use_colors || use_fallback_colors;
 
     const int total_vertices = visible_count * source_vertex_count;
     const int total_indices = visible_count * source_index_count;
@@ -254,13 +256,15 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     vertices.resize(total_vertices);
     normals.resize(total_vertices);
     uvs.resize(total_vertices);
-    colors.resize(total_vertices);
+    if (write_colors) {
+        colors.resize(total_vertices);
+    }
     indices.resize(total_indices);
 
     Vector3 *vertex_ptr = vertices.ptrw();
     Vector3 *normal_ptr = normals.ptrw();
     Vector2 *uv_ptr = uvs.ptrw();
-    Color *color_ptr = colors.ptrw();
+    Color *color_ptr = write_colors ? colors.ptrw() : nullptr;
     int32_t *index_ptr = indices.ptrw();
     const Vector3 *source_vertex_ptr = source_vertices.ptr();
     const Vector3 *source_normal_ptr = use_normals ? source_normals.ptr() : nullptr;
@@ -281,13 +285,8 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
             continue;
         }
 
-        Vector3 local_position;
-        if (record.has("local_position")) {
-            local_position = record.get("local_position", Vector3());
-        } else {
-            const Vector3 world_position = record.get("position", Vector3());
-            local_position = world_position - chunk_origin;
-        }
+        const Vector3 world_position = record.get("position", Vector3());
+        const Vector3 local_position = world_position - chunk_origin;
         double rotation = static_cast<double>(record.get("rotation", 0.0));
         if (rotation_is_turns) {
             rotation *= TAU_D;
@@ -295,7 +294,7 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
         const double scale = std::max(0.0001, static_cast<double>(record.get("scale", 1.0)));
         const float maturity = static_cast<float>(record.get("maturity", 1.0));
         const StringName type_id = record.get("type_id", StringName());
-        const Color fallback_color = color_for_type(type_colors, type_id, maturity);
+        const Color fallback_color = write_colors ? color_for_type(type_colors, type_id, maturity) : Color();
 
         Transform3D transform;
         transform = transform.rotated(Vector3(0.0, 1.0, 0.0), rotation);
@@ -309,7 +308,9 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
             vertex_ptr[vertex_write] = transformed_vertex;
             normal_ptr[vertex_write] = source_normal_ptr ? source_normal_ptr[i] : Vector3(0.0, 1.0, 0.0);
             uv_ptr[vertex_write] = source_uv_ptr ? source_uv_ptr[i] : Vector2();
-            color_ptr[vertex_write] = source_color_ptr ? source_color_ptr[i] : fallback_color;
+            if (write_colors) {
+                color_ptr[vertex_write] = source_color_ptr ? source_color_ptr[i] : fallback_color;
+            }
 
             if (!has_bounds) {
                 bounds_min = transformed_vertex;
@@ -342,7 +343,9 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     arrays[Mesh::ARRAY_VERTEX] = vertices;
     arrays[Mesh::ARRAY_NORMAL] = normals;
     arrays[Mesh::ARRAY_TEX_UV] = uvs;
-    arrays[Mesh::ARRAY_COLOR] = colors;
+    if (write_colors) {
+        arrays[Mesh::ARRAY_COLOR] = colors;
+    }
     arrays[Mesh::ARRAY_INDEX] = indices;
 
     result["arrays"] = arrays;

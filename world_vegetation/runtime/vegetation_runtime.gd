@@ -26,9 +26,9 @@ var native_chunk_builder: Object = null
 var native_spatial_grid: Object = null
 
 var world_seed: int = 12345
-var chunk_size: int = 128
-var initial_stream_radius_chunks: int = 3
-var active_stream_radius_chunks: int = 3
+var chunk_size: int = 32
+var initial_stream_radius_chunks: int = 10
+var active_stream_radius_chunks: int = 10
 var profile: StringName = &"grass_field"
 var use_mock_terrain: bool = false
 var auto_spawn_benchmark_content: bool = true
@@ -46,6 +46,8 @@ var use_native_spatial_grid: bool = true
 var use_grass_source_meshes: bool = true
 var allow_debug_grass_cards: bool = false
 var road_clearance: float = 2.0
+var individual_tree_radius_chunks: int = 0
+var render_cluster_size_chunks: int = 2
 var grass_scale_multiplier: float = 1.0
 var grass_y_offset: float = 0.0
 var tree_y_offset: float = 0.0
@@ -58,6 +60,10 @@ var _pending_generation_queue: Array[Vector2i] = []
 var _pending_generation_reasons: Dictionary = {}
 var _pending_generation_retry_after_frames: Dictionary = {}
 var _pending_rebuilds: Array[Vector2i] = []
+var _pending_render_cluster_rebuilds: Array[Vector2i] = []
+var _pending_render_cluster_lookup: Dictionary = {}
+var _pending_render_cluster_retry_after_frames: Dictionary = {}
+var _render_cluster_surface_counts: Dictionary = {}
 var _regrowth_chunk_coords: Dictionary = {}
 var _last_ready_state: bool = false
 var _last_rebuild_time_ms: float = 0.0
@@ -128,6 +134,10 @@ func configure(options: Dictionary) -> void:
 		allow_debug_grass_cards = bool(options.get("allow_debug_grass_cards", allow_debug_grass_cards))
 	if options.has("road_clearance"):
 		road_clearance = maxf(0.0, float(options.get("road_clearance", road_clearance)))
+	if options.has("individual_tree_radius_chunks"):
+		individual_tree_radius_chunks = maxi(0, int(options.get("individual_tree_radius_chunks", individual_tree_radius_chunks)))
+	if options.has("render_cluster_size_chunks"):
+		render_cluster_size_chunks = maxi(1, int(options.get("render_cluster_size_chunks", render_cluster_size_chunks)))
 	if options.has("grass_scale_multiplier"):
 		grass_scale_multiplier = maxf(0.001, float(options.get("grass_scale_multiplier", grass_scale_multiplier)))
 	if options.has("grass_y_offset"):
@@ -174,11 +184,14 @@ func _ensure_native_backends() -> void:
 func is_vegetation_ready() -> bool:
 	if not _terrain_streaming_ready and not use_mock_terrain:
 		return false
-	return _pending_generation_queue.is_empty() and _pending_rebuilds.is_empty() and not _has_dirty_chunks()
+	return _pending_generation_queue.is_empty() \
+		and _pending_rebuilds.is_empty() \
+		and _pending_render_cluster_rebuilds.is_empty() \
+		and not _has_dirty_chunks()
 
 
 func get_pending_chunks_count() -> int:
-	return _pending_generation_queue.size() + _pending_rebuilds.size()
+	return _pending_generation_queue.size() + _pending_rebuilds.size() + _pending_render_cluster_rebuilds.size()
 
 
 func clear_all_data(immediate_free: bool = false) -> void:
@@ -187,6 +200,10 @@ func clear_all_data(immediate_free: bool = false) -> void:
 	_pending_generation_reasons.clear()
 	_pending_generation_retry_after_frames.clear()
 	_regrowth_chunk_coords.clear()
+	_pending_render_cluster_rebuilds.clear()
+	_pending_render_cluster_lookup.clear()
+	_pending_render_cluster_retry_after_frames.clear()
+	_render_cluster_surface_counts.clear()
 	if native_spatial_grid != null:
 		native_spatial_grid.clear()
 	for chunk_coord_variant in chunks.keys():
@@ -242,6 +259,9 @@ func get_telemetry_snapshot() -> Dictionary:
 	var global_rock_estimated_primitives := 0
 	var global_grass_max_batch_instances := 0
 	var support_points_total := 0
+	var renderer_stats: Dictionary = renderer.get_stats() if renderer else {}
+	for surface_count_variant in _render_cluster_surface_counts.values():
+		global_chunk_mesh_render_batches += int(surface_count_variant)
 	for chunk_variant in chunks.values():
 		var chunk: VegetationChunk = chunk_variant as VegetationChunk
 		if chunk == null:
@@ -273,16 +293,19 @@ func get_telemetry_snapshot() -> Dictionary:
 		global_bush_estimated_primitives += chunk.bush_estimated_primitive_count
 		global_rock_estimated_primitives += chunk.rock_estimated_primitive_count
 		support_points_total += chunk.support_points_total
-		var chunk_mesh_visible := chunk.grass_instance_rid.is_valid() \
-			and (chunk.visible_grass_cell_count + chunk.visible_bush_record_count + chunk.visible_rock_record_count) > 0
+		var chunk_mesh_visible := (chunk.visible_grass_cell_count \
+			+ chunk.visible_bush_record_count \
+			+ chunk.visible_rock_record_count \
+			+ chunk.visible_chunked_tree_record_count) > 0
 		if chunk_mesh_visible:
-			global_chunk_mesh_render_batches += 1
 			global_grass_max_batch_instances = maxi(global_grass_max_batch_instances, chunk.visible_grass_cell_count)
 		if chunk_mesh_visible and chunk.visible_grass_cell_count > 0:
 			global_grass_render_batches += 1
 			global_grass_render_chunk_payloads += 1
-		if chunk.visible_tree_record_count > 0:
-			global_tree_render_batches += chunk.visible_tree_record_count
+		if chunk.visible_individual_tree_record_count > 0:
+			global_tree_render_batches += chunk.visible_individual_tree_record_count
+			global_tree_render_chunk_payloads += 1
+		if chunk.visible_chunked_tree_record_count > 0:
 			global_tree_render_chunk_payloads += 1
 		if chunk_mesh_visible and chunk.visible_bush_record_count > 0:
 			global_bush_render_batches += 1
@@ -290,7 +313,6 @@ func get_telemetry_snapshot() -> Dictionary:
 		if chunk_mesh_visible and chunk.visible_rock_record_count > 0:
 			global_rock_render_batches += 1
 			global_rock_render_chunk_payloads += 1
-	var renderer_stats: Dictionary = renderer.get_stats() if renderer else {}
 	var global_render_batch_count := global_chunk_mesh_render_batches + global_tree_render_batches
 	var pending_chunk_count := get_pending_chunks_count()
 	var render_dirty_kinds: Array[String] = []
@@ -342,12 +364,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_global_render_candidate_chunk_count": chunks.size(),
 		"world_map_vegetation_render_profile_enabled": true,
 		"world_map_vegetation_render_profile_active": not String(profile).is_empty(),
-		"world_map_vegetation_render_cluster_size": 1,
-		"world_map_vegetation_grass_render_cluster_size": 1,
-		"effective_vegetation_render_cluster_size": 1,
-		"effective_vegetation_grass_render_cluster_size": 1,
-		"vegetation_render_cluster_size": 1,
-		"vegetation_grass_render_cluster_size": 1,
+		"world_map_vegetation_render_cluster_size": render_cluster_size_chunks,
+		"world_map_vegetation_grass_render_cluster_size": render_cluster_size_chunks,
+		"effective_vegetation_render_cluster_size": render_cluster_size_chunks,
+		"effective_vegetation_grass_render_cluster_size": render_cluster_size_chunks,
+		"vegetation_render_cluster_size": render_cluster_size_chunks,
+		"vegetation_grass_render_cluster_size": render_cluster_size_chunks,
 		"vegetation_coverage_radius_world": float(active_stream_radius_chunks * chunk_size),
 		"vegetation_coverage_render_distance_equivalent": float(active_stream_radius_chunks * chunk_size) / 31.0,
 		"vegetation_render_lod_bias": 1.0,
@@ -624,7 +646,7 @@ func resolve_tree_body_collision(body_origin: Vector3, body_radius: float = 0.4,
 
 
 func place_grass(position: Vector3) -> bool:
-	var support_height := _try_get_support_height(position)
+	var support_height := _try_get_precise_support_height(position)
 	if support_height <= -100.0:
 		return false
 	position.y = support_height + grass_y_offset
@@ -643,7 +665,7 @@ func place_grass(position: Vector3) -> bool:
 
 
 func place_rock(position: Vector3) -> bool:
-	var support_height := _try_get_support_height(position)
+	var support_height := _try_get_precise_support_height(position)
 	if support_height <= -100.0:
 		return false
 	position.y = support_height + rock_y_offset
@@ -703,6 +725,7 @@ func _process(delta: float) -> void:
 	_process_streaming()
 	_process_pending_generations()
 	_process_pending_rebuilds()
+	_process_pending_render_cluster_rebuilds()
 	_update_ready_state()
 
 
@@ -716,9 +739,10 @@ func _refresh_streaming_request() -> void:
 	var focus_chunk := _get_focus_chunk()
 	if focus_chunk == _last_focus_chunk:
 		return
+	var previous_focus_chunk := _last_focus_chunk
 	_last_focus_chunk = focus_chunk
 	var radius := active_stream_radius_chunks if active_stream_radius_chunks > 0 else initial_stream_radius_chunks
-	_evict_far_chunks(focus_chunk, radius + 1)
+	_evict_far_chunks(focus_chunk, radius)
 	var requested_coords: Array[Vector2i] = []
 	for x in range(focus_chunk.x - radius, focus_chunk.x + radius + 1):
 		for z in range(focus_chunk.y - radius, focus_chunk.y + radius + 1):
@@ -730,6 +754,7 @@ func _refresh_streaming_request() -> void:
 	requested_coords.sort_custom(_compare_pending_chunk_distance)
 	for chunk_coord in requested_coords:
 		_queue_chunk_generation(chunk_coord, VegetationChunk.DirtyReason.STREAMED_IN)
+	_queue_tree_render_mode_rebuilds(previous_focus_chunk, focus_chunk)
 	_sort_pending_generation_queue_by_focus()
 
 
@@ -759,6 +784,29 @@ func _process_pending_rebuilds() -> void:
 		if chunk == null:
 			continue
 		_rebuild_chunk(chunk)
+		rebuild_count += 1
+
+
+func _process_pending_render_cluster_rebuilds() -> void:
+	if not render_enabled or renderer == null:
+		_pending_render_cluster_rebuilds.clear()
+		_pending_render_cluster_lookup.clear()
+		_pending_render_cluster_retry_after_frames.clear()
+		return
+	var rebuild_count := 0
+	var current_frame := Engine.get_process_frames()
+	var inspected_count := 0
+	var max_inspections := _pending_render_cluster_rebuilds.size()
+	while rebuild_count < max_rebuilds_per_frame and inspected_count < max_inspections and not _pending_render_cluster_rebuilds.is_empty():
+		inspected_count += 1
+		var cluster_coord: Vector2i = _pending_render_cluster_rebuilds.pop_front()
+		var retry_after_frame := int(_pending_render_cluster_retry_after_frames.get(cluster_coord, 0))
+		if retry_after_frame > current_frame:
+			_pending_render_cluster_rebuilds.append(cluster_coord)
+			continue
+		_rebuild_render_cluster(cluster_coord)
+		_pending_render_cluster_lookup.erase(cluster_coord)
+		_pending_render_cluster_retry_after_frames.erase(cluster_coord)
 		rebuild_count += 1
 
 
@@ -863,6 +911,60 @@ func _chunk_distance_sq_from_focus(chunk_coord: Vector2i) -> int:
 	return dx * dx + dz * dz
 
 
+func _render_cluster_coord_for_chunk(chunk_coord: Vector2i) -> Vector2i:
+	var size := maxi(1, render_cluster_size_chunks)
+	return Vector2i(
+		int(floor(float(chunk_coord.x) / float(size))),
+		int(floor(float(chunk_coord.y) / float(size)))
+	)
+
+
+func _render_cluster_origin(cluster_coord: Vector2i) -> Vector3:
+	var size := maxi(1, render_cluster_size_chunks)
+	return Vector3(
+		float(cluster_coord.x * size * chunk_size),
+		0.0,
+		float(cluster_coord.y * size * chunk_size)
+	)
+
+
+func _render_cluster_key(cluster_coord: Vector2i) -> String:
+	return "vegetation_cluster_%d_%d" % [cluster_coord.x, cluster_coord.y]
+
+
+func _get_chunks_in_render_cluster(cluster_coord: Vector2i) -> Array[VegetationChunk]:
+	var result: Array[VegetationChunk] = []
+	var size := maxi(1, render_cluster_size_chunks)
+	var start_x := cluster_coord.x * size
+	var start_z := cluster_coord.y * size
+	for x in range(start_x, start_x + size):
+		for z in range(start_z, start_z + size):
+			var chunk: VegetationChunk = chunks.get(Vector2i(x, z), null) as VegetationChunk
+			if chunk != null and chunk.state != VegetationChunk.State.UNLOADED and _is_chunk_inside_stream_radius(chunk.chunk_coord):
+				result.append(chunk)
+	return result
+
+
+func _queue_tree_render_mode_rebuilds(previous_focus_chunk: Vector2i, current_focus_chunk: Vector2i) -> void:
+	if previous_focus_chunk.x == 2147483647:
+		return
+	for chunk_coord_variant in chunks.keys():
+		var chunk_coord: Vector2i = chunk_coord_variant
+		var chunk: VegetationChunk = chunks.get(chunk_coord, null) as VegetationChunk
+		if chunk == null or chunk.tree_records.is_empty():
+			continue
+		var was_individual := _is_chunk_within_individual_tree_radius(chunk_coord, previous_focus_chunk)
+		var is_individual := _is_chunk_within_individual_tree_radius(chunk_coord, current_focus_chunk)
+		if was_individual != is_individual:
+			_queue_chunk_rebuild(chunk_coord, VegetationChunk.DirtyReason.STREAMED_IN)
+
+
+func _is_chunk_within_individual_tree_radius(chunk_coord: Vector2i, focus_chunk: Vector2i) -> bool:
+	var dx := chunk_coord.x - focus_chunk.x
+	var dz := chunk_coord.y - focus_chunk.y
+	return dx * dx + dz * dz <= individual_tree_radius_chunks * individual_tree_radius_chunks
+
+
 func _queue_chunk_rebuild(chunk_coord: Vector2i, reason: int) -> void:
 	var chunk := _ensure_chunk(chunk_coord, reason)
 	if chunk == null:
@@ -870,6 +972,16 @@ func _queue_chunk_rebuild(chunk_coord: Vector2i, reason: int) -> void:
 	if not _pending_rebuilds.has(chunk_coord):
 		_pending_rebuilds.append(chunk_coord)
 	chunk.set_dirty(reason, Engine.get_process_frames())
+
+
+func _queue_render_cluster_rebuild(cluster_coord: Vector2i) -> void:
+	if not render_enabled or renderer == null:
+		return
+	_pending_render_cluster_retry_after_frames[cluster_coord] = Engine.get_process_frames() + 8
+	if _pending_render_cluster_lookup.has(cluster_coord):
+		return
+	_pending_render_cluster_lookup[cluster_coord] = true
+	_pending_render_cluster_rebuilds.append(cluster_coord)
 
 
 func _track_regrowth_if_needed(chunk_coord: Vector2i, regrow_time: float) -> void:
@@ -929,9 +1041,16 @@ func _defer_chunk_generation(chunk_coord: Vector2i, reason: int) -> void:
 func _is_vegetation_chunk_support_ready(chunk_coord: Vector2i) -> bool:
 	if use_mock_terrain:
 		return true
+	if _chunk_has_surface_support_samples(chunk_coord):
+		return true
+	if terrain_manager and is_instance_valid(terrain_manager) and terrain_manager.has_method("get_pending_nodes_count"):
+		return int(terrain_manager.get_pending_nodes_count()) <= 0
+	return false
+
+
+func _chunk_has_surface_support_samples(chunk_coord: Vector2i) -> bool:
 	var origin_x := float(chunk_coord.x * chunk_size)
 	var origin_z := float(chunk_coord.y * chunk_size)
-	var support_hits := 0
 	var sample_fracs := [0.2, 0.5, 0.8]
 	for fx in sample_fracs:
 		for fz in sample_fracs:
@@ -941,11 +1060,7 @@ func _is_vegetation_chunk_support_ready(chunk_coord: Vector2i) -> bool:
 				origin_z + float(fz) * float(chunk_size)
 			)
 			if _try_get_support_height(sample_pos) > -100.0:
-				support_hits += 1
-	if support_hits > 0:
-		return true
-	if terrain_manager and is_instance_valid(terrain_manager) and terrain_manager.has_method("get_pending_nodes_count"):
-		return int(terrain_manager.get_pending_nodes_count()) <= 0
+				return true
 	return false
 
 
@@ -959,22 +1074,14 @@ func _rebuild_chunk(chunk: VegetationChunk) -> void:
 	else:
 		chunk.last_support_refresh_time_ms = 0.0
 		_last_support_refresh_time_ms = 0.0
-	var payload: Dictionary = {}
 	if render_enabled and renderer != null:
 		_sync_individual_instances(chunk)
-		payload = _build_chunk_mesh_payload(chunk)
-		chunk.visible_grass_cell_count = int(payload.get("visible_grass_cell_count", 0))
-		chunk.visible_bush_record_count = int(payload.get("visible_bush_record_count", 0))
-		chunk.visible_rock_record_count = int(payload.get("visible_rock_record_count", 0))
-		chunk.grass_mesh_primitive_count = int(payload.get("grass_mesh_primitive_count", 0))
-		chunk.bush_mesh_primitive_count = int(payload.get("bush_mesh_primitive_count", 0))
-		chunk.rock_mesh_primitive_count = int(payload.get("rock_mesh_primitive_count", 0))
-		chunk.grass_estimated_primitive_count = int(payload.get("grass_estimated_primitives", 0))
-		chunk.bush_estimated_primitive_count = int(payload.get("bush_estimated_primitives", 0))
-		chunk.rock_estimated_primitive_count = int(payload.get("rock_estimated_primitives", 0))
+		_queue_render_cluster_rebuild(_render_cluster_coord_for_chunk(chunk.chunk_coord))
 	else:
 		chunk.visible_grass_cell_count = 0
 		chunk.visible_tree_record_count = 0
+		chunk.visible_individual_tree_record_count = 0
+		chunk.visible_chunked_tree_record_count = 0
 		chunk.visible_bush_record_count = 0
 		chunk.visible_rock_record_count = 0
 		chunk.grass_mesh_primitive_count = 0
@@ -986,29 +1093,213 @@ func _rebuild_chunk(chunk: VegetationChunk) -> void:
 		chunk.bush_estimated_primitive_count = 0
 		chunk.rock_estimated_primitive_count = 0
 		chunk.support_points_total = 0
-	_destroy_grass_render(chunk)
+	chunk.mark_live(Engine.get_process_frames())
+	chunk.last_rebuild_time_ms = float(Time.get_ticks_msec() - start_ms)
+	_last_rebuild_time_ms = chunk.last_rebuild_time_ms
+	chunk_rebuilt.emit(chunk.chunk_coord)
+
+
+func _rebuild_render_cluster(cluster_coord: Vector2i) -> void:
+	if renderer == null:
+		return
+	var start_ms := Time.get_ticks_msec()
+	var cluster_chunks := _get_chunks_in_render_cluster(cluster_coord)
+	var cluster_key := _render_cluster_key(cluster_coord)
+	if cluster_chunks.is_empty():
+		_destroy_render_cluster(cluster_coord)
+		_last_rebuild_time_ms = float(Time.get_ticks_msec() - start_ms)
+		return
+	var cluster_origin := _render_cluster_origin(cluster_coord)
+	var payload := _build_render_cluster_mesh_payload(cluster_chunks, cluster_origin)
+	_destroy_render_cluster(cluster_coord)
 	var surface_arrays: Array = payload.get("surface_arrays", [])
-	if render_enabled and renderer != null and not surface_arrays.is_empty():
-		var chunk_key := _chunk_key(chunk.chunk_coord)
-		var chunk_world_origin := Vector3(chunk.chunk_coord.x * chunk_size, 0.0, chunk.chunk_coord.y * chunk_size)
+	if not surface_arrays.is_empty():
 		var mesh_rid := renderer.create_chunk_mesh_surfaces(
-			chunk_key,
+			cluster_key,
 			surface_arrays,
 			payload.get("surface_materials", []),
 			payload.get("bounds", AABB())
 		)
 		var instance_rid := renderer.create_chunk_instance(
-			chunk_key,
+			cluster_key,
 			mesh_rid,
-			Transform3D.IDENTITY.translated(chunk_world_origin)
+			Transform3D.IDENTITY.translated(cluster_origin)
 		)
-		chunk.grass_mesh_rid = mesh_rid
-		chunk.grass_instance_rid = instance_rid
-		chunk.render_chunk_key = chunk_key
-	chunk.mark_live(Engine.get_process_frames())
-	chunk.last_rebuild_time_ms = float(Time.get_ticks_msec() - start_ms)
-	_last_rebuild_time_ms = chunk.last_rebuild_time_ms
-	chunk_rebuilt.emit(chunk.chunk_coord)
+		if mesh_rid.is_valid() and instance_rid.is_valid():
+			_render_cluster_surface_counts[cluster_coord] = surface_arrays.size()
+	_last_rebuild_time_ms = float(Time.get_ticks_msec() - start_ms)
+
+
+func _destroy_render_cluster(cluster_coord: Vector2i) -> void:
+	if renderer != null:
+		renderer.destroy_chunk(_render_cluster_key(cluster_coord))
+	_render_cluster_surface_counts.erase(cluster_coord)
+
+
+func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], cluster_origin: Vector3) -> Dictionary:
+	var surface_arrays: Array = []
+	var surface_materials: Array = []
+	var bounds := AABB()
+	var has_bounds := false
+	var grass_cells: Array = []
+	var grass_type: VegetationType = null
+	var record_groups: Dictionary = {}
+	var record_group_types: Dictionary = {}
+
+	for chunk in cluster_chunks:
+		if chunk == null:
+			continue
+		_sync_individual_instances(chunk)
+		chunk.visible_grass_cell_count = 0
+		chunk.visible_bush_record_count = 0
+		chunk.visible_rock_record_count = 0
+		chunk.visible_chunked_tree_record_count = 0
+		chunk.visible_tree_record_count = chunk.visible_individual_tree_record_count
+		chunk.grass_mesh_primitive_count = 0
+		chunk.bush_mesh_primitive_count = 0
+		chunk.rock_mesh_primitive_count = 0
+		chunk.grass_estimated_primitive_count = 0
+		chunk.bush_estimated_primitive_count = 0
+		chunk.rock_estimated_primitive_count = 0
+
+		for cell_variant in chunk.grass_cells:
+			var cell: Dictionary = cell_variant
+			if bool(cell.get("harvested", false)):
+				continue
+			var cell_type := _get_type(StringName(str(cell.get("type_id", ""))))
+			if cell_type == null or not cell_type.is_chunk_mesh():
+				continue
+			if grass_type == null:
+				grass_type = cell_type
+			grass_cells.append(cell)
+			chunk.visible_grass_cell_count += 1
+			var grass_primitives := _get_type_mesh_primitive_count(cell_type)
+			chunk.grass_mesh_primitive_count = maxi(chunk.grass_mesh_primitive_count, grass_primitives)
+			chunk.grass_estimated_primitive_count += grass_primitives
+
+		for bush_variant in chunk.cosmetic_bushes:
+			var bush: Dictionary = bush_variant
+			var bush_type := _get_type(StringName(str(bush.get("type_id", ""))))
+			if not _is_chunk_mesh_record_visible(bush, bush_type):
+				continue
+			_destroy_record_instance_if_any(chunk, bush)
+			_append_record_group(record_groups, record_group_types, bush_type, bush)
+			chunk.visible_bush_record_count += 1
+			var bush_primitives := _get_type_mesh_primitive_count(bush_type)
+			chunk.bush_mesh_primitive_count = maxi(chunk.bush_mesh_primitive_count, bush_primitives)
+			chunk.bush_estimated_primitive_count += bush_primitives
+
+		for rock_variant in chunk.rock_records:
+			var rock: Dictionary = rock_variant
+			var rock_type := _get_type(StringName(str(rock.get("type_id", ""))))
+			if not _is_chunk_mesh_record_visible(rock, rock_type):
+				continue
+			_destroy_record_instance_if_any(chunk, rock)
+			_append_record_group(record_groups, record_group_types, rock_type, rock)
+			chunk.visible_rock_record_count += 1
+			var rock_primitives := _get_type_mesh_primitive_count(rock_type)
+			chunk.rock_mesh_primitive_count = maxi(chunk.rock_mesh_primitive_count, rock_primitives)
+			chunk.rock_estimated_primitive_count += rock_primitives
+
+		for tree_variant in chunk.tree_records:
+			var tree: Dictionary = tree_variant
+			var tree_type := _get_type(StringName(str(tree.get("type_id", ""))))
+			if not _should_chunk_render_record(chunk, tree, tree_type):
+				continue
+			if not _is_render_record_visible(tree, tree_type):
+				continue
+			_append_record_group(record_groups, record_group_types, tree_type, tree)
+			chunk.visible_chunked_tree_record_count += 1
+			chunk.visible_tree_record_count += 1
+			var tree_primitives := _get_type_mesh_primitive_count(tree_type)
+			chunk.tree_mesh_primitive_count = maxi(chunk.tree_mesh_primitive_count, tree_primitives)
+			chunk.tree_estimated_primitive_count += tree_primitives
+
+	if grass_type != null and not grass_cells.is_empty():
+		var grass_result := _build_native_source_records_surface(grass_type, grass_cells, cluster_origin, false)
+		if not grass_result.is_empty():
+			surface_arrays.append(grass_result.get("arrays", []))
+			surface_materials.append(_get_grass_material(grass_type))
+			var grass_bounds: AABB = grass_result.get("bounds", AABB())
+			bounds = grass_bounds if not has_bounds else _merge_aabb(bounds, grass_bounds)
+			has_bounds = true
+
+	for group_key_variant in record_groups.keys():
+		var group_key := str(group_key_variant)
+		var type: VegetationType = record_group_types.get(group_key, null)
+		var records: Array = record_groups.get(group_key, [])
+		if type == null or records.is_empty():
+			continue
+		var group_result := _build_native_source_records_surface(type, records, cluster_origin, true)
+		if not group_result.is_empty():
+			surface_arrays.append(group_result.get("arrays", []))
+			surface_materials.append(type.get_material_for_surface(0))
+			var group_bounds: AABB = group_result.get("bounds", AABB())
+			bounds = group_bounds if not has_bounds else _merge_aabb(bounds, group_bounds)
+			has_bounds = true
+
+	return {
+		"surface_arrays": surface_arrays,
+		"surface_materials": surface_materials,
+		"bounds": bounds
+	}
+
+
+func _append_record_group(record_groups: Dictionary, record_group_types: Dictionary, type: VegetationType, record: Dictionary) -> void:
+	if type == null:
+		return
+	var group_key := String(type.id)
+	if not record_groups.has(group_key):
+		record_groups[group_key] = []
+		record_group_types[group_key] = type
+	var records: Array = record_groups[group_key]
+	records.append(record)
+	record_groups[group_key] = records
+
+
+func _build_native_source_records_surface(type: VegetationType, records: Array, render_origin: Vector3, rotation_is_turns: bool) -> Dictionary:
+	if type == null or records.is_empty():
+		return {}
+	if native_chunk_builder == null:
+		_ensure_native_backends()
+	if native_chunk_builder == null:
+		return _build_gdscript_source_records_surface(type, records, render_origin)
+	var source_mesh := type.source_mesh if type.source_mesh != null else type.get_source_mesh()
+	if source_mesh == null or source_mesh.get_surface_count() <= 0:
+		return {}
+	var source_arrays := _get_cached_source_surface_arrays(source_mesh, 0)
+	if source_arrays.is_empty():
+		return {}
+	var source_transform := type.mesh_source_transform if type.source_mesh != null else type.get_source_transform()
+	var result: Dictionary = native_chunk_builder.build_source_mesh_instances(
+		records,
+		source_arrays,
+		source_transform,
+		render_origin,
+		_get_native_grass_type_colors(),
+		rotation_is_turns
+	)
+	if result.is_empty() or int(result.get("visible_count", 0)) <= 0:
+		return {}
+	var arrays: Array = result.get("arrays", [])
+	return result if not arrays.is_empty() else {}
+
+
+func _build_gdscript_source_records_surface(type: VegetationType, records: Array, render_origin: Vector3) -> Dictionary:
+	var source_mesh := type.source_mesh if type.source_mesh != null else type.get_source_mesh()
+	if source_mesh == null or source_mesh.get_surface_count() <= 0:
+		return {}
+	var payload := _make_mesh_payload()
+	var source_cache: Dictionary = {}
+	for record_variant in records:
+		var record: Dictionary = record_variant
+		if not _is_render_record_visible(record, type):
+			continue
+		var transform := _build_record_transform_for_origin(type, record, render_origin)
+		_append_chunk_mesh_source(type, source_mesh, transform, payload, source_cache)
+	if int(payload.get("vertex_count", 0)) <= 0:
+		return {}
+	return payload
 
 
 func _refresh_chunk_support(chunk: VegetationChunk) -> void:
@@ -1054,6 +1345,8 @@ func _refresh_chunk_support(chunk: VegetationChunk) -> void:
 func _sync_individual_instances(chunk: VegetationChunk) -> void:
 	var tree_stats := _sync_record_list_instances(chunk, chunk.tree_records)
 	chunk.visible_tree_record_count = int(tree_stats.get("visible_count", 0))
+	chunk.visible_individual_tree_record_count = chunk.visible_tree_record_count
+	chunk.visible_chunked_tree_record_count = 0
 	chunk.tree_mesh_primitive_count = int(tree_stats.get("max_mesh_primitives", 0))
 	chunk.tree_estimated_primitive_count = int(tree_stats.get("estimated_primitives", 0))
 	chunk.support_points_total = int(tree_stats.get("support_points_total", 0))
@@ -1073,6 +1366,13 @@ func _sync_record_list_instances(chunk: VegetationChunk, records: Array) -> Dict
 			continue
 		var record_id := int(record.get("id", 0))
 		var instance_rid: RID = record.get("instance_rid", RID())
+		if _should_chunk_render_record(chunk, record, type):
+			if instance_rid.is_valid():
+				renderer.destroy_instance(instance_rid)
+				record["instance_rid"] = RID()
+			chunk.individual_instance_rids.erase(record_id)
+			spatial_grid.register_record(type.id, record_id, chunk.chunk_coord, record)
+			continue
 		if not type.is_individual_instance():
 			if instance_rid.is_valid():
 				renderer.destroy_instance(instance_rid)
@@ -1125,17 +1425,22 @@ func _build_chunk_mesh_payload(chunk: VegetationChunk) -> Dictionary:
 	var grass_payload := _make_mesh_payload()
 	var bush_payload := _make_mesh_payload()
 	var rock_payload := _make_mesh_payload()
+	var tree_payload := _make_mesh_payload()
 	var bush_source_cache: Dictionary = {}
 	var rock_source_cache: Dictionary = {}
+	var tree_source_cache: Dictionary = {}
 	var grass_material: Material = null
 	var bush_material: Material = null
 	var rock_material: Material = null
+	var tree_material: Material = null
 	var visible_grass_cell_count := 0
 	var visible_bush_record_count := 0
 	var visible_rock_record_count := 0
+	var chunked_tree_record_count := 0
 	var grass_estimated_primitives := 0
 	var bush_estimated_primitives := 0
 	var rock_estimated_primitives := 0
+	var chunked_tree_estimated_primitives := 0
 	var grass_mesh_primitives := 0
 	var bush_mesh_primitives := 0
 	var rock_mesh_primitives := 0
@@ -1205,11 +1510,31 @@ func _build_chunk_mesh_payload(chunk: VegetationChunk) -> Dictionary:
 		rock_mesh_primitives = maxi(rock_mesh_primitives, rock_primitive_count)
 		rock_estimated_primitives += rock_primitive_count
 
+	for tree_variant in chunk.tree_records:
+		var tree: Dictionary = tree_variant
+		var tree_type := _get_type(StringName(str(tree.get("type_id", ""))))
+		if not _should_chunk_render_record(chunk, tree, tree_type):
+			continue
+		if not _is_render_record_visible(tree, tree_type):
+			continue
+		var tree_mesh := tree_type.source_mesh if tree_type.source_mesh != null else tree_type.get_source_mesh()
+		if tree_mesh == null or tree_mesh.get_surface_count() <= 0:
+			continue
+		if tree_material == null:
+			tree_material = tree_type.get_material_for_surface(0)
+		var tree_transform := _build_chunk_record_transform(tree_type, tree, chunk)
+		if not _append_chunk_mesh_source(tree_type, tree_mesh, tree_transform, tree_payload, tree_source_cache):
+			continue
+		chunked_tree_record_count += 1
+		var tree_primitive_count := _get_type_mesh_primitive_count(tree_type)
+		chunked_tree_estimated_primitives += tree_primitive_count
+
 	var surface_arrays: Array = []
 	var surface_materials: Array = []
 	_append_payload_surface(grass_payload, grass_material, surface_arrays, surface_materials)
 	_append_payload_surface(bush_payload, bush_material, surface_arrays, surface_materials)
 	_append_payload_surface(rock_payload, rock_material, surface_arrays, surface_materials)
+	_append_payload_surface(tree_payload, tree_material, surface_arrays, surface_materials)
 	if surface_arrays.is_empty():
 		return {
 			"visible_grass_cell_count": 0,
@@ -1227,13 +1552,15 @@ func _build_chunk_mesh_payload(chunk: VegetationChunk) -> Dictionary:
 	return {
 		"surface_arrays": surface_arrays,
 		"surface_materials": surface_materials,
-		"bounds": _merge_aabb(_merge_aabb(grass_payload.get("bounds", AABB()), bush_payload.get("bounds", AABB())), rock_payload.get("bounds", AABB())),
+		"bounds": _merge_aabb(_merge_aabb(_merge_aabb(grass_payload.get("bounds", AABB()), bush_payload.get("bounds", AABB())), rock_payload.get("bounds", AABB())), tree_payload.get("bounds", AABB())),
 		"visible_grass_cell_count": visible_grass_cell_count,
 		"visible_bush_record_count": visible_bush_record_count,
 		"visible_rock_record_count": visible_rock_record_count,
 		"grass_estimated_primitives": grass_estimated_primitives,
 		"bush_estimated_primitives": bush_estimated_primitives,
 		"rock_estimated_primitives": rock_estimated_primitives,
+		"chunked_tree_record_count": chunked_tree_record_count,
+		"chunked_tree_estimated_primitives": chunked_tree_estimated_primitives,
 		"grass_mesh_primitive_count": grass_mesh_primitives,
 		"bush_mesh_primitive_count": bush_mesh_primitives,
 		"rock_mesh_primitive_count": rock_mesh_primitives,
@@ -1494,10 +1821,30 @@ func _get_prepared_source_surface_data(source_mesh: Mesh, surface_index: int = 0
 func _is_chunk_mesh_record_visible(record: Dictionary, type: VegetationType) -> bool:
 	if type == null or not type.is_chunk_mesh():
 		return false
+	return _is_render_record_visible(record, type)
+
+
+func _is_render_record_visible(record: Dictionary, type: VegetationType) -> bool:
+	if type == null:
+		return false
 	if bool(record.get("harvested", false)):
+		return false
+	if bool(record.get("chopped", false)) and type.category != VegetationType.Category.STUMP:
 		return false
 	var health := float(record.get("health", type.health))
 	return health > 0.0
+
+
+func _should_chunk_render_record(chunk: VegetationChunk, record: Dictionary, type: VegetationType) -> bool:
+	if chunk == null or type == null:
+		return false
+	if type.category != VegetationType.Category.TREE:
+		return false
+	if not type.is_individual_instance():
+		return false
+	if bool(record.get("chopped", false)) or bool(record.get("harvested", false)):
+		return false
+	return _chunk_distance_sq_from_focus(chunk.chunk_coord) > individual_tree_radius_chunks * individual_tree_radius_chunks
 
 
 func _destroy_record_instance_if_any(chunk: VegetationChunk, record: Dictionary) -> void:
@@ -1512,14 +1859,18 @@ func _destroy_record_instance_if_any(chunk: VegetationChunk, record: Dictionary)
 
 
 func _build_chunk_record_transform(type: VegetationType, record: Dictionary, chunk: VegetationChunk) -> Transform3D:
+	var chunk_origin := Vector3(chunk.chunk_coord.x * chunk_size, 0.0, chunk.chunk_coord.y * chunk_size)
+	return _build_record_transform_for_origin(type, record, chunk_origin)
+
+
+func _build_record_transform_for_origin(type: VegetationType, record: Dictionary, render_origin: Vector3) -> Transform3D:
 	var rotation := float(record.get("rotation", 0.0)) * TAU
 	var scale := maxf(0.05, float(record.get("scale", type.instance_scale)))
-	var chunk_origin := Vector3(chunk.chunk_coord.x * chunk_size, 0.0, chunk.chunk_coord.y * chunk_size)
 	var world_position: Vector3 = record.get("position", Vector3.ZERO)
 	var transform := Transform3D.IDENTITY
 	transform = transform.rotated(Vector3.UP, rotation)
 	transform = transform.scaled(Vector3.ONE * scale)
-	transform.origin = world_position - chunk_origin
+	transform.origin = world_position - render_origin
 	var source_transform := type.mesh_source_transform if type.source_mesh != null else type.get_source_transform()
 	return transform * source_transform
 
@@ -1769,6 +2120,7 @@ func _remove_chunk(chunk_coord: Vector2i, immediate_free: bool = false) -> void:
 	var chunk: VegetationChunk = chunks.get(chunk_coord, null) as VegetationChunk
 	if chunk == null:
 		return
+	var render_cluster_coord := _render_cluster_coord_for_chunk(chunk_coord)
 	_destroy_chunk_render_state(chunk, immediate_free)
 	for tree in chunk.tree_records:
 		spatial_grid.unregister_record(int(tree.get("id", 0)))
@@ -1780,6 +2132,10 @@ func _remove_chunk(chunk_coord: Vector2i, immediate_free: bool = false) -> void:
 		native_spatial_grid.remove_chunk(chunk_coord)
 	spatial_grid.remove_chunk(chunk_coord)
 	chunks.erase(chunk_coord)
+	if _get_chunks_in_render_cluster(render_cluster_coord).is_empty():
+		_destroy_render_cluster(render_cluster_coord)
+	else:
+		_queue_render_cluster_rebuild(render_cluster_coord)
 
 
 func _remove_pending_generation(chunk_coord: Vector2i) -> void:
@@ -1815,7 +2171,10 @@ func _on_terrain_chunk_generated(coord: Vector3i, _chunk_node: Node3D) -> void:
 	if coord.y != 0:
 		return
 	for chunk_coord in _vegetation_chunk_coords_for_terrain_chunk(coord):
-		if _is_chunk_inside_stream_radius(chunk_coord, 1):
+		if _is_chunk_inside_stream_radius(chunk_coord):
+			var existing: VegetationChunk = chunks.get(chunk_coord, null) as VegetationChunk
+			if existing != null and existing.terrain_support_missing:
+				_remove_chunk(chunk_coord, false)
 			_queue_chunk_generation(chunk_coord, VegetationChunk.DirtyReason.STREAMED_IN)
 
 
@@ -1829,7 +2188,7 @@ func _on_terrain_chunk_unloaded(coord: Vector3i) -> void:
 	if coord.y != 0:
 		return
 	for chunk_coord in _vegetation_chunk_coords_for_terrain_chunk(coord):
-		if chunks.has(chunk_coord) and not _is_chunk_inside_stream_radius(chunk_coord, 1):
+		if chunks.has(chunk_coord) and not _is_chunk_inside_stream_radius(chunk_coord):
 			_remove_chunk(chunk_coord, false)
 
 
@@ -1945,14 +2304,11 @@ func _is_spawn_rejected(global_x: float, terrain_y: float, global_z: float, wate
 	return false
 
 
-func _is_spawn_blocked_by_modified_terrain(global_x: float, global_z: float) -> bool:
-	if terrain_manager == null or not is_instance_valid(terrain_manager):
-		return false
-	if not terrain_manager.has_method("has_modifications_at_xz"):
-		return false
-	var terrain_chunk_x := int(floor(global_x / TERRAIN_CHUNK_STRIDE))
-	var terrain_chunk_z := int(floor(global_z / TERRAIN_CHUNK_STRIDE))
-	return bool(terrain_manager.has_modifications_at_xz(terrain_chunk_x, terrain_chunk_z))
+func _is_spawn_blocked_by_modified_terrain(_global_x: float, _global_z: float) -> bool:
+	# Terrain modification flags are chunk-wide. Rejecting an entire terrain
+	# chunk here erased vegetation around roads and towns. Actual holes/removals
+	# are handled by support-height checks and terrain_changed refresh.
+	return false
 
 
 func _is_spawn_blocked_by_road(global_x: float, global_z: float) -> bool:
@@ -1991,12 +2347,12 @@ func _profile_settings() -> Dictionary:
 				"grass_step": 2,
 				"grass_density": 0.84,
 				"grass_maturity": 0.86,
-				"bush_density": 0.40,
-				"tree_density": 0.46,
-				"rock_density": 0.34,
-				"tree_spacing": 24,
-				"bush_spacing": 16,
-				"rock_spacing": 16
+				"bush_density": 0.46,
+				"tree_density": 0.62,
+				"rock_density": 0.42,
+				"tree_spacing": 10,
+				"bush_spacing": 14,
+				"rock_spacing": 12
 			}
 		"grass_field":
 			return {
@@ -2015,12 +2371,12 @@ func _profile_settings() -> Dictionary:
 				"grass_step": 3,
 				"grass_density": 0.80,
 				"grass_maturity": 0.88,
-				"bush_density": 0.34,
-				"tree_density": 0.62,
-				"rock_density": 0.26,
-				"tree_spacing": 20,
-				"bush_spacing": 16,
-				"rock_spacing": 18
+				"bush_density": 0.40,
+				"tree_density": 0.68,
+				"rock_density": 0.32,
+				"tree_spacing": 10,
+				"bush_spacing": 14,
+				"rock_spacing": 14
 			}
 		"harvest":
 			return {
@@ -2063,17 +2419,17 @@ func _profile_settings() -> Dictionary:
 				"grass_step": 2,
 				"grass_density": 0.84,
 				"grass_maturity": 0.86,
-				"bush_density": 0.40,
-				"tree_density": 0.46,
-				"rock_density": 0.34,
-				"tree_spacing": 24,
-				"bush_spacing": 16,
-				"rock_spacing": 16
+				"bush_density": 0.46,
+				"tree_density": 0.62,
+				"rock_density": 0.42,
+				"tree_spacing": 10,
+				"bush_spacing": 14,
+				"rock_spacing": 12
 			}
 
 
-func _chunk_seed(chunk_coord: Vector2i, reason: int) -> int:
-	return int(world_seed) ^ (chunk_coord.x * 73856093) ^ (chunk_coord.y * 19349663) ^ (reason * 83492791) ^ int(String(profile).hash())
+func _chunk_seed(chunk_coord: Vector2i) -> int:
+	return int(world_seed) ^ (chunk_coord.x * 73856093) ^ (chunk_coord.y * 19349663) ^ int(String(profile).hash())
 
 
 func _category_to_kind_name(category: int) -> String:
@@ -2148,10 +2504,55 @@ func _get_fallback_grass_mesh() -> Mesh:
 
 
 func _get_support_height(world_position: Vector3) -> float:
-	var height := _try_get_support_height(world_position)
+	var height := _try_get_precise_support_height(world_position)
 	if height > -100.0:
 		return height
 	return maxf(world_position.y, mock_terrain_base_height)
+
+
+func _try_get_precise_support_height(world_position: Vector3) -> float:
+	if not use_mock_terrain and terrain_manager and is_instance_valid(terrain_manager):
+		var x0 := floorf(world_position.x)
+		var z0 := floorf(world_position.z)
+		var x1 := x0 + 1.0
+		var z1 := z0 + 1.0
+		if terrain_manager.has_method("get_chunk_surface_height"):
+			var fast_h00 := _try_get_fast_chunk_surface_height(x0, z0)
+			var fast_h10 := _try_get_fast_chunk_surface_height(x1, z0)
+			var fast_h01 := _try_get_fast_chunk_surface_height(x0, z1)
+			var fast_h11 := _try_get_fast_chunk_surface_height(x1, z1)
+			if fast_h00 > -100.0 and fast_h10 > -100.0 and fast_h01 > -100.0 and fast_h11 > -100.0:
+				return _interpolate_height(world_position, x0, z0, fast_h00, fast_h10, fast_h01, fast_h11)
+		if terrain_manager.has_method("get_terrain_height"):
+			var h00 := float(terrain_manager.get_terrain_height(x0, z0))
+			var h10 := float(terrain_manager.get_terrain_height(x1, z0))
+			var h01 := float(terrain_manager.get_terrain_height(x0, z1))
+			var h11 := float(terrain_manager.get_terrain_height(x1, z1))
+			if h00 > -100.0 and h10 > -100.0 and h01 > -100.0 and h11 > -100.0:
+				return _interpolate_height(world_position, x0, z0, h00, h10, h01, h11)
+		if terrain_manager.has_method("get_surface_height_at_world_position"):
+			var surface_height := float(terrain_manager.get_surface_height_at_world_position(world_position.x, world_position.z))
+			if surface_height > -100.0:
+				return surface_height
+	return _try_get_support_height(world_position)
+
+
+func _try_get_fast_chunk_surface_height(global_x: float, global_z: float) -> float:
+	if terrain_manager == null or not is_instance_valid(terrain_manager):
+		return -1000.0
+	var chunk_x := int(floor(global_x / TERRAIN_CHUNK_STRIDE))
+	var chunk_z := int(floor(global_z / TERRAIN_CHUNK_STRIDE))
+	var local_x := int(round(global_x - float(chunk_x) * TERRAIN_CHUNK_STRIDE))
+	var local_z := int(round(global_z - float(chunk_z) * TERRAIN_CHUNK_STRIDE))
+	return float(terrain_manager.get_chunk_surface_height(Vector3i(chunk_x, 0, chunk_z), local_x, local_z))
+
+
+func _interpolate_height(world_position: Vector3, x0: float, z0: float, h00: float, h10: float, h01: float, h11: float) -> float:
+	var tx := clampf(world_position.x - x0, 0.0, 1.0)
+	var tz := clampf(world_position.z - z0, 0.0, 1.0)
+	var hx0 := lerpf(h00, h10, tx)
+	var hx1 := lerpf(h01, h11, tx)
+	return lerpf(hx0, hx1, tz)
 
 
 func _try_get_support_height(world_position: Vector3) -> float:
@@ -2534,7 +2935,7 @@ func _has_dirty_chunks() -> bool:
 	return false
 
 
-func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
+func _populate_chunk(chunk: VegetationChunk, _reason: int) -> void:
 	if chunk == null:
 		return
 	var start_ms := Time.get_ticks_msec()
@@ -2547,9 +2948,10 @@ func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
 	chunk.grass_mesh_rid = RID()
 	chunk.grass_instance_rid = RID()
 	var rng := RandomNumberGenerator.new()
-	rng.seed = _chunk_seed(chunk.chunk_coord, reason)
+	rng.seed = _chunk_seed(chunk.chunk_coord)
 	var settings := _profile_settings()
 	var chunk_origin := Vector3(chunk.chunk_coord.x * chunk_size, 0.0, chunk.chunk_coord.y * chunk_size)
+	var had_surface_support := _chunk_has_surface_support_samples(chunk.chunk_coord)
 
 	var grass_step := maxi(1, int(settings.get("grass_step", 4)))
 	var grass_density := float(settings.get("grass_density", 0.65))
@@ -2562,11 +2964,10 @@ func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
 	var rock_spacing := maxi(4, int(settings.get("rock_spacing", 12)))
 	var focus_distance_sq := _chunk_distance_sq_from_focus(chunk.chunk_coord)
 	if focus_distance_sq > 16:
-		grass_step = maxi(grass_step, 4)
-		grass_density *= 0.45
-	elif focus_distance_sq > 4:
 		grass_step = maxi(grass_step, 3)
-		grass_density *= 0.65
+		grass_density *= 0.78
+	elif focus_distance_sq > 4:
+		grass_density *= 0.9
 
 	for x in range(0, chunk_size, grass_step):
 		for z in range(0, chunk_size, grass_step):
@@ -2577,7 +2978,7 @@ func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
 				continue
 			var world_x := chunk_origin.x + float(x) + rng.randf_range(-0.35, 0.35)
 			var world_z := chunk_origin.z + float(z) + rng.randf_range(-0.35, 0.35)
-			var support_height := _try_get_support_height(Vector3(world_x, 0.0, world_z))
+			var support_height := _try_get_precise_support_height(Vector3(world_x, 0.0, world_z))
 			if support_height <= -100.0:
 				continue
 			if _is_spawn_rejected(world_x, support_height, world_z, 0.5):
@@ -2593,7 +2994,7 @@ func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
 			if tree_type == null:
 				continue
 			var tree_pos := _jittered_grid_point(rng, chunk_origin, x, z, tree_spacing)
-			var tree_support_height := _try_get_support_height(tree_pos)
+			var tree_support_height := _try_get_precise_support_height(tree_pos)
 			if tree_support_height <= -100.0:
 				continue
 			if _is_spawn_rejected(tree_pos.x, tree_support_height, tree_pos.z, 1.0):
@@ -2609,7 +3010,7 @@ func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
 			if bush_type == null:
 				continue
 			var bush_pos := _jittered_grid_point(rng, chunk_origin, x, z, bush_spacing)
-			var bush_support_height := _try_get_support_height(bush_pos)
+			var bush_support_height := _try_get_precise_support_height(bush_pos)
 			if bush_support_height <= -100.0:
 				continue
 			if _is_spawn_rejected(bush_pos.x, bush_support_height, bush_pos.z, 0.5):
@@ -2625,7 +3026,7 @@ func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
 			if rock_type == null:
 				continue
 			var rock_pos := _jittered_grid_point(rng, chunk_origin, x, z, rock_spacing)
-			var rock_support_height := _try_get_support_height(rock_pos)
+			var rock_support_height := _try_get_precise_support_height(rock_pos)
 			if rock_support_height <= -100.0:
 				continue
 			if _is_spawn_rejected(rock_pos.x, rock_support_height, rock_pos.z, 0.5):
@@ -2634,6 +3035,11 @@ func _populate_chunk(chunk: VegetationChunk, reason: int) -> void:
 			chunk.rock_records.append(_make_individual_record(rock_type, chunk.chunk_coord, rock_pos, false, rng))
 
 	chunk.state = VegetationChunk.State.DATA_READY
+	chunk.terrain_support_missing = not had_surface_support \
+		and chunk.grass_cells.is_empty() \
+		and chunk.cosmetic_bushes.is_empty() \
+		and chunk.tree_records.is_empty() \
+		and chunk.rock_records.is_empty()
 	chunk.last_generated_frame = Engine.get_process_frames()
 	_last_generation_time_ms = float(Time.get_ticks_msec() - start_ms)
 

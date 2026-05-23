@@ -11,9 +11,9 @@ signal all_vegetation_ready
 @export var terrain_manager: NodePath
 @export var registry: VegetationRegistry
 @export var world_seed: int = 12345
-@export var chunk_size: int = 64
-@export var initial_stream_radius_chunks: int = 5
-@export var active_stream_radius_chunks: int = 5
+@export var chunk_size: int = 32
+@export var initial_stream_radius_chunks: int = 10
+@export var active_stream_radius_chunks: int = 10
 @export var benchmark_profile: StringName = &"world_dense"
 @export var use_mock_terrain: bool = false
 @export var auto_spawn_benchmark_content: bool = true
@@ -32,13 +32,15 @@ signal all_vegetation_ready
 @export var use_grass_source_meshes: bool = true
 @export var allow_debug_grass_cards: bool = false
 @export var road_clearance: float = 2.0
+@export var individual_tree_radius_chunks: int = 0
+@export_range(1, 8, 1) var render_cluster_size_chunks: int = 2
 
 # Legacy scene compatibility fields. The old node used imported GLB-local
 # scale/offset values; the runtime uses normalized meter-ish source meshes.
 # Keep these exports loadable, but normalize them before configuring runtime.
 @export var tree_y_offset: float = 0.0
 @export var grass_scale: float = 0.5
-@export var grass_y_offset: float = 0.06
+@export var grass_y_offset: float = 0.0
 @export var grass_collision_radius: float = 0.3
 @export var rock_scale: float = 0.3
 @export var rock_y_offset: float = 0.0
@@ -121,7 +123,9 @@ func _bootstrap_impl() -> void:
 		"use_native_spatial_grid": use_native_spatial_grid,
 		"use_grass_source_meshes": use_grass_source_meshes,
 		"allow_debug_grass_cards": allow_debug_grass_cards,
-		"road_clearance": road_clearance
+		"road_clearance": road_clearance,
+		"individual_tree_radius_chunks": individual_tree_radius_chunks,
+		"render_cluster_size_chunks": render_cluster_size_chunks
 	})
 	runtime.bootstrap()
 	_bootstrapped = true
