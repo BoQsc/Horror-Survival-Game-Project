@@ -131,6 +131,12 @@ func destroy_chunk_instance(chunk_key: String) -> void:
 	free_rid_safely(instance_rid)
 
 
+func set_chunk_visible(chunk_key: String, visible: bool) -> void:
+	var instance_rid: RID = _chunk_instance_rids.get(chunk_key, RID())
+	if instance_rid.is_valid():
+		RenderingServer.instance_set_visible(instance_rid, visible)
+
+
 func rebind_instance(chunk_key: String, transform: Transform3D) -> void:
 	var instance_rid: RID = _chunk_instance_rids.get(chunk_key, RID())
 	if instance_rid.is_valid():

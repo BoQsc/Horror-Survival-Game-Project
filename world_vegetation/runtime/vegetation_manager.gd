@@ -27,6 +27,7 @@ signal all_vegetation_ready
 @export var mock_terrain_wave_frequency: float = 0.05
 @export var max_rebuilds_per_frame: int = 1
 @export var max_generations_per_frame: int = 1
+@export_range(1, 16, 1) var max_render_cluster_rebuilds_per_frame: int = 3
 @export var use_native_chunk_builder: bool = true
 @export var use_native_spatial_grid: bool = true
 @export var use_grass_source_meshes: bool = true
@@ -34,11 +35,20 @@ signal all_vegetation_ready
 @export var road_clearance: float = 2.0
 @export var individual_tree_radius_chunks: int = 0
 @export_range(1, 8, 1) var render_cluster_size_chunks: int = 2
+@export var batch_individual_records_in_render_clusters: bool = true
+@export_range(0, 10, 1) var individual_record_radius_chunks: int = 1
+@export var camera_cull_chunk_mesh_records: bool = false
 @export_range(0, 10, 1) var camera_full_detail_radius_chunks: int = 2
 @export_range(0.0, 90.0, 1.0) var camera_cone_margin_degrees: float = 10.0
 @export_range(0.0, 90.0, 1.0) var zoom_cone_margin_degrees: float = 5.0
+@export_range(0.0, 120.0, 1.0) var camera_prefetch_margin_degrees: float = 12.0
+@export_range(0.0, 120.0, 1.0) var zoom_prefetch_margin_degrees: float = 8.0
+@export_range(0, 600, 1) var visibility_hide_grace_frames: int = 180
 @export_range(1.0, 90.0, 1.0) var zoom_fov_threshold_degrees: float = 42.0
 @export_range(1, 128, 1) var max_visibility_sync_chunks_per_frame: int = 8
+@export_range(0, 600, 1) var hidden_instance_grace_frames: int = 180
+@export_range(1, 128, 1) var max_hidden_instance_frees_per_frame: int = 16
+@export_range(1, 128, 1) var max_hidden_instance_eviction_chunks_per_frame: int = 16
 
 # Legacy scene compatibility fields. The old node used imported GLB-local
 # scale/offset values; the runtime uses normalized meter-ish source meshes.
@@ -130,6 +140,7 @@ func _bootstrap_impl() -> void:
 		"rock_y_offset": _runtime_rock_y_offset(),
 		"max_rebuilds_per_frame": max_rebuilds_per_frame,
 		"max_generations_per_frame": max_generations_per_frame,
+		"max_render_cluster_rebuilds_per_frame": max_render_cluster_rebuilds_per_frame,
 		"use_native_chunk_builder": use_native_chunk_builder,
 		"use_native_spatial_grid": use_native_spatial_grid,
 		"use_grass_source_meshes": use_grass_source_meshes,
@@ -137,11 +148,20 @@ func _bootstrap_impl() -> void:
 		"road_clearance": road_clearance,
 		"individual_tree_radius_chunks": individual_tree_radius_chunks,
 		"render_cluster_size_chunks": render_cluster_size_chunks,
+		"batch_individual_records_in_render_clusters": batch_individual_records_in_render_clusters,
+		"individual_record_radius_chunks": individual_record_radius_chunks,
+		"camera_cull_chunk_mesh_records": camera_cull_chunk_mesh_records,
 		"camera_full_detail_radius_chunks": camera_full_detail_radius_chunks,
 		"camera_cone_margin_degrees": camera_cone_margin_degrees,
 		"zoom_cone_margin_degrees": zoom_cone_margin_degrees,
+		"camera_prefetch_margin_degrees": camera_prefetch_margin_degrees,
+		"zoom_prefetch_margin_degrees": zoom_prefetch_margin_degrees,
+		"visibility_hide_grace_frames": visibility_hide_grace_frames,
 		"zoom_fov_threshold_degrees": zoom_fov_threshold_degrees,
-		"max_visibility_sync_chunks_per_frame": max_visibility_sync_chunks_per_frame
+		"max_visibility_sync_chunks_per_frame": max_visibility_sync_chunks_per_frame,
+		"hidden_instance_grace_frames": hidden_instance_grace_frames,
+		"max_hidden_instance_frees_per_frame": max_hidden_instance_frees_per_frame,
+		"max_hidden_instance_eviction_chunks_per_frame": max_hidden_instance_eviction_chunks_per_frame
 	})
 	runtime.bootstrap()
 	_bootstrapped = true
