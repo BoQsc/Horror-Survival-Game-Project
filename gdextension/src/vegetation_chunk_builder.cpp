@@ -8,6 +8,7 @@
 #include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/packed_color_array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
@@ -206,11 +207,15 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     }
 
     PackedVector3Array source_normals;
+    PackedFloat32Array source_tangents;
     PackedVector2Array source_uvs;
     PackedColorArray source_colors;
     PackedInt32Array source_indices;
     if (source_arrays.size() > Mesh::ARRAY_NORMAL) {
         source_normals = source_arrays[Mesh::ARRAY_NORMAL];
+    }
+    if (source_arrays.size() > Mesh::ARRAY_TANGENT) {
+        source_tangents = source_arrays[Mesh::ARRAY_TANGENT];
     }
     if (source_arrays.size() > Mesh::ARRAY_TEX_UV) {
         source_uvs = source_arrays[Mesh::ARRAY_TEX_UV];
@@ -222,10 +227,11 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
         source_indices = source_arrays[Mesh::ARRAY_INDEX];
     }
 
-    const bool use_normals = source_normals.size() == source_vertices.size();
-    const bool use_uvs = source_uvs.size() == source_vertices.size();
-    const bool use_colors = source_colors.size() == source_vertices.size();
     const int source_vertex_count = source_vertices.size();
+    const bool use_normals = source_normals.size() == source_vertex_count;
+    const bool use_tangents = use_normals && source_tangents.size() == source_vertex_count * 4;
+    const bool use_uvs = source_uvs.size() == source_vertex_count;
+    const bool use_colors = source_colors.size() == source_vertex_count;
     const int source_index_count = source_indices.is_empty() ? source_vertex_count : source_indices.size();
 
     int visible_count = 0;
@@ -250,11 +256,17 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     const int total_indices = visible_count * source_index_count;
     PackedVector3Array vertices;
     PackedVector3Array normals;
+    PackedFloat32Array tangents;
     PackedVector2Array uvs;
     PackedColorArray colors;
     PackedInt32Array indices;
     vertices.resize(total_vertices);
-    normals.resize(total_vertices);
+    if (use_normals) {
+        normals.resize(total_vertices);
+    }
+    if (use_tangents) {
+        tangents.resize(total_vertices * 4);
+    }
     uvs.resize(total_vertices);
     if (write_colors) {
         colors.resize(total_vertices);
@@ -262,12 +274,14 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     indices.resize(total_indices);
 
     Vector3 *vertex_ptr = vertices.ptrw();
-    Vector3 *normal_ptr = normals.ptrw();
+    Vector3 *normal_ptr = use_normals ? normals.ptrw() : nullptr;
+    float *tangent_ptr = use_tangents ? tangents.ptrw() : nullptr;
     Vector2 *uv_ptr = uvs.ptrw();
     Color *color_ptr = write_colors ? colors.ptrw() : nullptr;
     int32_t *index_ptr = indices.ptrw();
     const Vector3 *source_vertex_ptr = source_vertices.ptr();
     const Vector3 *source_normal_ptr = use_normals ? source_normals.ptr() : nullptr;
+    const float *source_tangent_ptr = use_tangents ? source_tangents.ptr() : nullptr;
     const Vector2 *source_uv_ptr = use_uvs ? source_uvs.ptr() : nullptr;
     const Color *source_color_ptr = use_colors ? source_colors.ptr() : nullptr;
     const int32_t *source_index_ptr = source_indices.is_empty() ? nullptr : source_indices.ptr();
@@ -306,7 +320,22 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
         for (int i = 0; i < source_vertex_count; ++i) {
             const Vector3 transformed_vertex = full_transform.xform(source_vertex_ptr[i]);
             vertex_ptr[vertex_write] = transformed_vertex;
-            normal_ptr[vertex_write] = source_normal_ptr ? source_normal_ptr[i] : Vector3(0.0, 1.0, 0.0);
+            if (normal_ptr) {
+                normal_ptr[vertex_write] = full_transform.basis.xform(source_normal_ptr[i]).normalized();
+            }
+            if (tangent_ptr) {
+                const int source_tangent_index = i * 4;
+                const Vector3 source_tangent(
+                        source_tangent_ptr[source_tangent_index],
+                        source_tangent_ptr[source_tangent_index + 1],
+                        source_tangent_ptr[source_tangent_index + 2]);
+                const Vector3 transformed_tangent = full_transform.basis.xform(source_tangent).normalized();
+                const int tangent_index = vertex_write * 4;
+                tangent_ptr[tangent_index] = transformed_tangent.x;
+                tangent_ptr[tangent_index + 1] = transformed_tangent.y;
+                tangent_ptr[tangent_index + 2] = transformed_tangent.z;
+                tangent_ptr[tangent_index + 3] = source_tangent_ptr[source_tangent_index + 3];
+            }
             uv_ptr[vertex_write] = source_uv_ptr ? source_uv_ptr[i] : Vector2();
             if (write_colors) {
                 color_ptr[vertex_write] = source_color_ptr ? source_color_ptr[i] : fallback_color;
@@ -341,7 +370,12 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     Array arrays;
     arrays.resize(Mesh::ARRAY_MAX);
     arrays[Mesh::ARRAY_VERTEX] = vertices;
-    arrays[Mesh::ARRAY_NORMAL] = normals;
+    if (use_normals) {
+        arrays[Mesh::ARRAY_NORMAL] = normals;
+    }
+    if (use_tangents) {
+        arrays[Mesh::ARRAY_TANGENT] = tangents;
+    }
     arrays[Mesh::ARRAY_TEX_UV] = uvs;
     if (write_colors) {
         arrays[Mesh::ARRAY_COLOR] = colors;

@@ -34,6 +34,11 @@ signal all_vegetation_ready
 @export var road_clearance: float = 2.0
 @export var individual_tree_radius_chunks: int = 0
 @export_range(1, 8, 1) var render_cluster_size_chunks: int = 2
+@export_range(0, 10, 1) var camera_full_detail_radius_chunks: int = 2
+@export_range(0.0, 90.0, 1.0) var camera_cone_margin_degrees: float = 10.0
+@export_range(0.0, 90.0, 1.0) var zoom_cone_margin_degrees: float = 5.0
+@export_range(1.0, 90.0, 1.0) var zoom_fov_threshold_degrees: float = 42.0
+@export_range(1, 128, 1) var max_visibility_sync_chunks_per_frame: int = 8
 
 # Legacy scene compatibility fields. The old node used imported GLB-local
 # scale/offset values; the runtime uses normalized meter-ish source meshes.
@@ -72,6 +77,7 @@ func _process(_delta: float) -> void:
 			focus_position = bootstrap_focus
 		return
 
+	_sync_render_camera()
 	var focus := _get_focus_position()
 	if focus.distance_squared_to(_last_focus_position) <= 0.25:
 		return
@@ -87,6 +93,11 @@ func _bootstrap_impl() -> void:
 		registry = VegetationRegistry.create_default() as VegetationRegistry
 	if OS.get_environment("TOWN_STALL_DISABLE_VEGETATION_RENDER").strip_edges() == "1":
 		render_enabled = false
+	var profile_override := OS.get_environment("TOWN_STALL_VEGETATION_PROFILE").strip_edges()
+	if not profile_override.is_empty():
+		benchmark_profile = StringName(profile_override)
+	elif OS.get_environment("TOWN_STALL_VEGETATION_MAX_TREES").strip_edges() == "1":
+		benchmark_profile = &"world_dense_max_trees"
 	_terrain_manager = _resolve_terrain_manager()
 	var initial_focus := _get_focus_position()
 	focus_position = initial_focus
@@ -125,13 +136,19 @@ func _bootstrap_impl() -> void:
 		"allow_debug_grass_cards": allow_debug_grass_cards,
 		"road_clearance": road_clearance,
 		"individual_tree_radius_chunks": individual_tree_radius_chunks,
-		"render_cluster_size_chunks": render_cluster_size_chunks
+		"render_cluster_size_chunks": render_cluster_size_chunks,
+		"camera_full_detail_radius_chunks": camera_full_detail_radius_chunks,
+		"camera_cone_margin_degrees": camera_cone_margin_degrees,
+		"zoom_cone_margin_degrees": zoom_cone_margin_degrees,
+		"zoom_fov_threshold_degrees": zoom_fov_threshold_degrees,
+		"max_visibility_sync_chunks_per_frame": max_visibility_sync_chunks_per_frame
 	})
 	runtime.bootstrap()
 	_bootstrapped = true
 	_last_focus_position = initial_focus
 	focus_position = initial_focus
 	runtime.set_focus_position(initial_focus)
+	_sync_render_camera()
 
 
 func is_vegetation_ready() -> bool:
@@ -196,6 +213,16 @@ func set_focus_position(position: Vector3) -> void:
 	focus_position = position
 	if runtime:
 		runtime.set_focus_position(position)
+
+
+func _sync_render_camera() -> void:
+	if runtime == null:
+		return
+	var camera := get_viewport().get_camera_3d()
+	if camera == null or not is_instance_valid(camera):
+		return
+	var forward := -camera.global_transform.basis.z
+	runtime.set_render_camera(camera.global_position, forward, camera.fov)
 
 
 func harvest_area(position: Vector3, radius: float, tool: StringName = &"hand") -> Dictionary:

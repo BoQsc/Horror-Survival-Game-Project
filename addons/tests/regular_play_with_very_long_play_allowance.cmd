@@ -7,6 +7,9 @@ set TOWN_STALL_AUTO_TELEPORT=0
 
 :: --- Vegetation/render heat profile ---
 set TOWN_STALL_DISABLE_VEGETATION_RENDER=0
+:: Default runtime profile uses the safer half-tree-density world_dense.
+:: To stress the previously tested maximum tree count, uncomment:
+:: set TOWN_STALL_VEGETATION_PROFILE=world_dense_max_trees
 
 :: --- Test-only loading guards: measure full streamed terrain, not a half-loaded scene ---
 set TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER=1

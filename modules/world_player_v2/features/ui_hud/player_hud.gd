@@ -860,7 +860,7 @@ func _update_durability_visibility() -> void:
 	var position = hit.get("position", Vector3.ZERO)
 	var hit_normal = hit.get("normal", Vector3.UP)
 	
-	var look_rid = target.get_rid() if target else RID()
+	var look_rid = target.get_rid() if target and target.has_method("get_rid") else RID()
 	var look_vegetation_key := _get_look_vegetation_key(player_node, hit)
 	
 	for key in durability_memory:

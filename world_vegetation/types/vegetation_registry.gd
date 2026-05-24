@@ -172,15 +172,14 @@ static func _make_simple_grass_material(albedo_color: Color = Color(0.28, 0.48, 
 
 
 static func _make_foliage_material(albedo_color: Color) -> Material:
-	var shader := load("res://world_vegetation/shaders/vegetation_chunk.gdshader") as Shader
-	if shader != null:
-		var shader_material := ShaderMaterial.new()
-		shader_material.shader = shader
-		shader_material.set_shader_parameter("alpha_scissor_threshold", 0.35)
-		return shader_material
+	return _make_opaque_vertex_material(albedo_color)
+
+
+static func _make_opaque_vertex_material(albedo_color: Color) -> Material:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 	material.albedo_color = albedo_color
 	material.vertex_color_use_as_albedo = true
 	return material
@@ -220,7 +219,7 @@ static func _make_grounded_source_transform_impl(source_path: String, center_xz:
 	return Transform3D.IDENTITY.translated(offset) * source_transform
 
 
-static func _make_fast_source_material(source_path: String, alpha_scissor_threshold: float, double_sided: bool) -> Material:
+static func _make_fast_source_material(source_path: String, alpha_scissor_threshold: float, double_sided: bool, force_unshaded: bool = true) -> Material:
 	var probe := VegetationType.new()
 	probe.source_path = source_path
 	var source_material := probe.get_material_for_surface(0)
@@ -229,7 +228,8 @@ static func _make_fast_source_material(source_path: String, alpha_scissor_thresh
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR if alpha_scissor_threshold > 0.0 else BaseMaterial3D.TRANSPARENCY_DISABLED
 		material.alpha_scissor_threshold = clampf(alpha_scissor_threshold, 0.0, 1.0)
 		material.cull_mode = BaseMaterial3D.CULL_DISABLED if double_sided else BaseMaterial3D.CULL_BACK
-		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		if force_unshaded:
+			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		return material
 	if source_material != null:
 		return source_material
@@ -315,10 +315,10 @@ static func create_default():
 	# the visible trunk several meters above the sampled terrain surface.
 	var tree_source_transform := _make_imported_source_transform(tree_source)
 	var rock_source_transform := _make_imported_grounded_source_transform(rock_source, true)
-	var grass_source_material := _make_fast_source_material(grass_source, 0.45, true)
-	var tree_source_material := _make_fast_source_material(tree_source, 0.48, true)
-	var rock_source_material := _make_fast_source_material(rock_source, 0.0, false)
-	var vegetation_chunk_material := _make_simple_grass_material(Color(1.0, 1.0, 1.0, 1.0))
+	var grass_source_material := _make_fast_source_material(grass_source, 0.45, true, true)
+	var tree_source_material := _make_fast_source_material(tree_source, 0.48, true, false)
+	var rock_source_material := _make_fast_source_material(rock_source, 0.0, false, false)
+	var vegetation_chunk_material := _make_opaque_vertex_material(Color(1.0, 1.0, 1.0, 1.0))
 
 	var grass_green: VegetationType = registry._make_type(
 		&"grass_green",
@@ -417,7 +417,7 @@ static func create_default():
 		"Small Rock",
 		VegetationType.Category.ROCK,
 		rock_source,
-		VegetationType.RenderMode.CHUNK_MESH,
+		VegetationType.RenderMode.INDIVIDUAL_INSTANCE,
 		VegetationType.HarvestMode.HAND,
 		&"hand",
 		5.0,
@@ -442,7 +442,7 @@ static func create_default():
 		"Fiber Bush",
 		VegetationType.Category.BUSH,
 		"",
-		VegetationType.RenderMode.CHUNK_MESH,
+		VegetationType.RenderMode.INDIVIDUAL_INSTANCE,
 		VegetationType.HarvestMode.HAND,
 		&"hand",
 		3.0,
@@ -468,7 +468,7 @@ static func create_default():
 		"Berry Bush",
 		VegetationType.Category.BUSH,
 		"",
-		VegetationType.RenderMode.CHUNK_MESH,
+		VegetationType.RenderMode.INDIVIDUAL_INSTANCE,
 		VegetationType.HarvestMode.HAND,
 		&"hand",
 		4.0,
@@ -495,7 +495,7 @@ static func create_default():
 		"Stick Bush",
 		VegetationType.Category.BUSH,
 		"",
-		VegetationType.RenderMode.CHUNK_MESH,
+		VegetationType.RenderMode.INDIVIDUAL_INSTANCE,
 		VegetationType.HarvestMode.AXE,
 		&"axe",
 		3.0,
