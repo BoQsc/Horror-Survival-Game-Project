@@ -25,8 +25,8 @@ signal all_vegetation_ready
 @export var mock_terrain_base_height: float = 0.0
 @export var mock_terrain_wave_amplitude: float = 1.5
 @export var mock_terrain_wave_frequency: float = 0.05
-@export var max_rebuilds_per_frame: int = 1
-@export var max_generations_per_frame: int = 1
+@export var max_rebuilds_per_frame: int = 2
+@export var max_generations_per_frame: int = 2
 @export_range(1, 16, 1) var max_render_cluster_rebuilds_per_frame: int = 3
 @export var use_native_chunk_builder: bool = true
 @export var use_native_spatial_grid: bool = true
@@ -36,9 +36,9 @@ signal all_vegetation_ready
 @export var individual_tree_radius_chunks: int = 0
 @export_range(1, 8, 1) var render_cluster_size_chunks: int = 2
 @export var batch_individual_records_in_render_clusters: bool = true
-@export_range(0, 10, 1) var individual_record_radius_chunks: int = 1
-@export var camera_cull_chunk_mesh_records: bool = false
-@export_range(0, 10, 1) var camera_full_detail_radius_chunks: int = 2
+@export_range(0, 10, 1) var individual_record_radius_chunks: int = 0
+@export var camera_cull_chunk_mesh_records: bool = true
+@export_range(0, 10, 1) var camera_full_detail_radius_chunks: int = 3
 @export_range(0.0, 90.0, 1.0) var camera_cone_margin_degrees: float = 10.0
 @export_range(0.0, 90.0, 1.0) var zoom_cone_margin_degrees: float = 5.0
 @export_range(0.0, 120.0, 1.0) var camera_prefetch_margin_degrees: float = 12.0

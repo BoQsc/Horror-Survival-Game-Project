@@ -52,9 +52,9 @@ var road_clearance: float = 2.0
 var individual_tree_radius_chunks: int = 0
 var render_cluster_size_chunks: int = 2
 var batch_individual_records_in_render_clusters: bool = true
-var individual_record_radius_chunks: int = 1
-var camera_cull_chunk_mesh_records: bool = false
-var camera_full_detail_radius_chunks: int = 2
+var individual_record_radius_chunks: int = 0
+var camera_cull_chunk_mesh_records: bool = true
+var camera_full_detail_radius_chunks: int = 3
 var camera_cone_margin_degrees: float = 10.0
 var zoom_cone_margin_degrees: float = 5.0
 var camera_prefetch_margin_degrees: float = 12.0
@@ -937,6 +937,7 @@ func _refresh_streaming_request() -> void:
 		_queue_chunk_generation(chunk_coord, VegetationChunk.DirtyReason.STREAMED_IN)
 	_queue_tree_render_mode_rebuilds(previous_focus_chunk, focus_chunk)
 	_sort_pending_generation_queue_by_focus()
+	_sort_pending_render_work_by_focus()
 	_queue_changed_visibility_syncs()
 
 
@@ -1106,9 +1107,28 @@ func _sort_pending_generation_queue_by_focus() -> void:
 	_pending_generation_queue.sort_custom(_compare_pending_chunk_distance)
 
 
+func _sort_pending_render_work_by_focus() -> void:
+	if _pending_rebuilds.size() > 1:
+		_pending_rebuilds.sort_custom(_compare_pending_chunk_distance)
+	if _pending_render_cluster_rebuilds.size() > 1:
+		_pending_render_cluster_rebuilds.sort_custom(_compare_pending_render_cluster_distance)
+	if _pending_visibility_sync_chunks.size() > 1:
+		_pending_visibility_sync_chunks.sort_custom(_compare_visibility_chunk_priority)
+
+
 func _compare_pending_chunk_distance(a: Vector2i, b: Vector2i) -> bool:
 	var a_distance := _chunk_distance_sq_from_focus(a)
 	var b_distance := _chunk_distance_sq_from_focus(b)
+	if a_distance == b_distance:
+		if a.x == b.x:
+			return a.y < b.y
+		return a.x < b.x
+	return a_distance < b_distance
+
+
+func _compare_pending_render_cluster_distance(a: Vector2i, b: Vector2i) -> bool:
+	var a_distance := _render_cluster_distance_sq_from_focus(a)
+	var b_distance := _render_cluster_distance_sq_from_focus(b)
 	if a_distance == b_distance:
 		if a.x == b.x:
 			return a.y < b.y
@@ -1144,6 +1164,25 @@ func _visibility_chunk_priority_score(chunk_coord: Vector2i) -> float:
 func _chunk_distance_sq_from_focus(chunk_coord: Vector2i) -> int:
 	var dx := chunk_coord.x - _last_focus_chunk.x
 	var dz := chunk_coord.y - _last_focus_chunk.y
+	return dx * dx + dz * dz
+
+
+func _render_cluster_distance_sq_from_focus(cluster_coord: Vector2i) -> int:
+	var size := maxi(1, render_cluster_size_chunks)
+	var min_x := cluster_coord.x * size
+	var min_z := cluster_coord.y * size
+	var max_x := min_x + size - 1
+	var max_z := min_z + size - 1
+	var dx := 0
+	if _last_focus_chunk.x < min_x:
+		dx = min_x - _last_focus_chunk.x
+	elif _last_focus_chunk.x > max_x:
+		dx = _last_focus_chunk.x - max_x
+	var dz := 0
+	if _last_focus_chunk.y < min_z:
+		dz = min_z - _last_focus_chunk.y
+	elif _last_focus_chunk.y > max_z:
+		dz = _last_focus_chunk.y - max_z
 	return dx * dx + dz * dz
 
 
@@ -1184,7 +1223,7 @@ func _get_chunks_in_render_cluster(cluster_coord: Vector2i) -> Array[VegetationC
 func _queue_tree_render_mode_rebuilds(previous_focus_chunk: Vector2i, current_focus_chunk: Vector2i) -> void:
 	if previous_focus_chunk.x == 2147483647:
 		return
-	if not batch_individual_records_in_render_clusters:
+	if not batch_individual_records_in_render_clusters or individual_record_radius_chunks <= 0:
 		return
 	for chunk_coord_variant in chunks.keys():
 		var chunk_coord: Vector2i = chunk_coord_variant
@@ -1209,7 +1248,9 @@ func _is_chunk_within_individual_tree_radius(chunk_coord: Vector2i, focus_chunk:
 
 
 func _is_chunk_within_individual_record_radius(chunk_coord: Vector2i, focus_chunk: Vector2i) -> bool:
-	var radius := maxi(0, individual_record_radius_chunks)
+	if individual_record_radius_chunks <= 0:
+		return false
+	var radius := individual_record_radius_chunks
 	var dx := chunk_coord.x - focus_chunk.x
 	var dz := chunk_coord.y - focus_chunk.y
 	return dx * dx + dz * dz <= radius * radius
@@ -2330,7 +2371,9 @@ func _should_keep_record_individual(chunk: VegetationChunk, _record: Dictionary,
 		return false
 	if not batch_individual_records_in_render_clusters:
 		return true
-	var radius := maxi(0, individual_record_radius_chunks)
+	if individual_record_radius_chunks <= 0:
+		return false
+	var radius := individual_record_radius_chunks
 	return _chunk_distance_sq_from_focus(chunk.chunk_coord) <= radius * radius
 
 
