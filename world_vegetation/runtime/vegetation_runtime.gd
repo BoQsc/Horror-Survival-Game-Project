@@ -11,7 +11,7 @@ signal vegetation_ready_changed(ready: bool)
 signal chunk_rebuilt(chunk_coord: Vector2i)
 signal terrain_changed(bounds: AABB)
 
-const DEFAULT_CHUNK_SIZE := 32
+const DEFAULT_CHUNK_SIZE := 31
 const TERRAIN_CHUNK_STRIDE := 31.0
 const GRASS_CARD_HALF_WIDTH := 0.055
 const GRASS_CARD_HEIGHT := 0.48
@@ -28,7 +28,7 @@ var native_chunk_builder: Object = null
 var native_spatial_grid: Object = null
 
 var world_seed: int = 12345
-var chunk_size: int = 32
+var chunk_size: int = DEFAULT_CHUNK_SIZE
 var initial_stream_radius_chunks: int = 10
 var active_stream_radius_chunks: int = 10
 var profile: StringName = &"grass_field"
@@ -41,27 +41,43 @@ var mock_terrain_base_height: float = 0.0
 var mock_terrain_wave_amplitude: float = 1.5
 var mock_terrain_wave_frequency: float = 0.05
 var mock_terrain_carves: Array[Dictionary] = []
-var max_rebuilds_per_frame: int = 2
-var max_generations_per_frame: int = 4
-var max_render_cluster_rebuilds_per_frame: int = 3
+var max_rebuilds_per_frame: int = 16
+var max_generations_per_frame: int = 24
+var max_render_cluster_rebuilds_per_frame: int = 8
+var initial_generation_budget_ms: float = 6.0
+var stream_generation_budget_ms: float = 1.5
+var initial_rebuild_budget_ms: float = 5.0
+var stream_rebuild_budget_ms: float = 1.5
+var initial_render_upload_budget_ms: float = 5.0
+var stream_render_upload_budget_ms: float = 1.5
 var use_native_chunk_builder: bool = true
 var use_native_spatial_grid: bool = true
 var use_grass_source_meshes: bool = true
 var allow_debug_grass_cards: bool = false
 var road_clearance: float = 2.0
 var individual_tree_radius_chunks: int = 0
-var render_cluster_size_chunks: int = 2
+var render_cluster_size_chunks: int = 4
 var batch_individual_records_in_render_clusters: bool = true
+var use_instanced_render_clusters: bool = false
+var use_instanced_grass_clusters: bool = false
 var individual_record_radius_chunks: int = 0
 var camera_cull_chunk_mesh_records: bool = true
+var camera_cull_instanced_records: bool = true
 var camera_full_detail_radius_chunks: int = 3
 var camera_cone_margin_degrees: float = 10.0
 var zoom_cone_margin_degrees: float = 5.0
 var camera_prefetch_margin_degrees: float = 12.0
 var zoom_prefetch_margin_degrees: float = 8.0
+var instanced_record_cone_margin_degrees: float = 6.0
+var instanced_record_prefetch_margin_degrees: float = 5.0
+var zoom_instanced_record_cone_margin_degrees: float = 4.0
+var zoom_instanced_record_prefetch_margin_degrees: float = 3.0
+var screen_occlusion_cull_tree_records: bool = true
+var screen_occlusion_grid_columns: int = 96
+var screen_occlusion_grid_rows: int = 54
 var visibility_hide_grace_frames: int = 180
 var zoom_fov_threshold_degrees: float = 42.0
-var max_visibility_sync_chunks_per_frame: int = 8
+var max_visibility_sync_chunks_per_frame: int = 96
 var hidden_instance_grace_frames: int = 180
 var max_hidden_instance_frees_per_frame: int = 16
 var max_hidden_instance_eviction_chunks_per_frame: int = 16
@@ -73,7 +89,10 @@ var rock_y_offset: float = 0.0
 var has_render_camera: bool = false
 var render_camera_position: Vector3 = Vector3.ZERO
 var render_camera_forward: Vector3 = Vector3.FORWARD
+var render_camera_right: Vector3 = Vector3.RIGHT
+var render_camera_up: Vector3 = Vector3.UP
 var render_camera_fov_degrees: float = 75.0
+var render_camera_aspect: float = 1.777778
 var _has_visibility_request_state: bool = false
 var _last_visibility_request_position: Vector3 = Vector3.ZERO
 var _last_visibility_request_forward: Vector3 = Vector3.FORWARD
@@ -94,6 +113,14 @@ var _pending_visibility_sync_lookup: Dictionary = {}
 var _chunk_visibility_class: Dictionary = {}
 var _chunk_last_visible_frame: Dictionary = {}
 var _render_cluster_surface_counts: Dictionary = {}
+var _render_cluster_chunk_surface_counts: Dictionary = {}
+var _render_cluster_instanced_keys: Dictionary = {}
+var _render_cluster_instanced_counts: Dictionary = {}
+var _render_cluster_instanced_batch_counts: Dictionary = {}
+var _render_cluster_instanced_batch_counts_by_kind: Dictionary = {}
+var _render_cluster_instanced_instance_counts_by_kind: Dictionary = {}
+var _render_cluster_instanced_max_instances_by_kind: Dictionary = {}
+var _render_cluster_camera_culled_counts_by_kind: Dictionary = {}
 var _render_cluster_visibility: Dictionary = {}
 var _regrowth_chunk_coords: Dictionary = {}
 var _last_ready_state: bool = false
@@ -112,7 +139,12 @@ var _hidden_instance_eviction_cursor: int = 0
 var _last_focus_chunk: Vector2i = Vector2i(2147483647, 2147483647)
 var _last_support_refresh_count: int = 0
 var _terrain_streaming_ready: bool = false
+var _initial_stream_complete: bool = false
+var _last_generation_processed_count: int = 0
+var _last_rebuild_processed_count: int = 0
+var _last_render_cluster_rebuild_processed_count: int = 0
 var _type_mesh_primitive_count_cache: Dictionary = {}
+var _type_visual_bounds_cache: Dictionary = {}
 var _types_by_category_cache: Dictionary = {}
 var _native_grass_type_colors_cache: Dictionary = {}
 var _source_surface_arrays_cache: Dictionary = {}
@@ -122,6 +154,7 @@ const VISIBILITY_CLASS_NONE := 0
 const VISIBILITY_CLASS_FULL := 1
 const VISIBILITY_CLASS_CONE := 2
 const RECORD_HIDDEN_FRAME_KEY := "render_hidden_frame"
+const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 
 
 func _ready() -> void:
@@ -132,6 +165,7 @@ func configure(options: Dictionary) -> void:
 	if options.has("registry"):
 		registry = options.get("registry", registry) as VegetationRegistry
 		_type_mesh_primitive_count_cache.clear()
+		_type_visual_bounds_cache.clear()
 		_types_by_category_cache.clear()
 		_native_grass_type_colors_cache.clear()
 		_source_surface_arrays_cache.clear()
@@ -172,6 +206,18 @@ func configure(options: Dictionary) -> void:
 		max_generations_per_frame = maxi(1, int(options.get("max_generations_per_frame", max_generations_per_frame)))
 	if options.has("max_render_cluster_rebuilds_per_frame"):
 		max_render_cluster_rebuilds_per_frame = maxi(1, int(options.get("max_render_cluster_rebuilds_per_frame", max_render_cluster_rebuilds_per_frame)))
+	if options.has("initial_generation_budget_ms"):
+		initial_generation_budget_ms = maxf(0.0, float(options.get("initial_generation_budget_ms", initial_generation_budget_ms)))
+	if options.has("stream_generation_budget_ms"):
+		stream_generation_budget_ms = maxf(0.0, float(options.get("stream_generation_budget_ms", stream_generation_budget_ms)))
+	if options.has("initial_rebuild_budget_ms"):
+		initial_rebuild_budget_ms = maxf(0.0, float(options.get("initial_rebuild_budget_ms", initial_rebuild_budget_ms)))
+	if options.has("stream_rebuild_budget_ms"):
+		stream_rebuild_budget_ms = maxf(0.0, float(options.get("stream_rebuild_budget_ms", stream_rebuild_budget_ms)))
+	if options.has("initial_render_upload_budget_ms"):
+		initial_render_upload_budget_ms = maxf(0.0, float(options.get("initial_render_upload_budget_ms", initial_render_upload_budget_ms)))
+	if options.has("stream_render_upload_budget_ms"):
+		stream_render_upload_budget_ms = maxf(0.0, float(options.get("stream_render_upload_budget_ms", stream_render_upload_budget_ms)))
 	if options.has("use_native_chunk_builder"):
 		use_native_chunk_builder = bool(options.get("use_native_chunk_builder", use_native_chunk_builder))
 	if options.has("use_native_spatial_grid"):
@@ -188,10 +234,16 @@ func configure(options: Dictionary) -> void:
 		render_cluster_size_chunks = maxi(1, int(options.get("render_cluster_size_chunks", render_cluster_size_chunks)))
 	if options.has("batch_individual_records_in_render_clusters"):
 		batch_individual_records_in_render_clusters = bool(options.get("batch_individual_records_in_render_clusters", batch_individual_records_in_render_clusters))
+	if options.has("use_instanced_render_clusters"):
+		use_instanced_render_clusters = bool(options.get("use_instanced_render_clusters", use_instanced_render_clusters))
+	if options.has("use_instanced_grass_clusters"):
+		use_instanced_grass_clusters = bool(options.get("use_instanced_grass_clusters", use_instanced_grass_clusters))
 	if options.has("individual_record_radius_chunks"):
 		individual_record_radius_chunks = maxi(0, int(options.get("individual_record_radius_chunks", individual_record_radius_chunks)))
 	if options.has("camera_cull_chunk_mesh_records"):
 		camera_cull_chunk_mesh_records = bool(options.get("camera_cull_chunk_mesh_records", camera_cull_chunk_mesh_records))
+	if options.has("camera_cull_instanced_records"):
+		camera_cull_instanced_records = bool(options.get("camera_cull_instanced_records", camera_cull_instanced_records))
 	if options.has("camera_full_detail_radius_chunks"):
 		camera_full_detail_radius_chunks = maxi(0, int(options.get("camera_full_detail_radius_chunks", camera_full_detail_radius_chunks)))
 	if options.has("camera_cone_margin_degrees"):
@@ -202,6 +254,20 @@ func configure(options: Dictionary) -> void:
 		camera_prefetch_margin_degrees = clampf(float(options.get("camera_prefetch_margin_degrees", camera_prefetch_margin_degrees)), 0.0, 120.0)
 	if options.has("zoom_prefetch_margin_degrees"):
 		zoom_prefetch_margin_degrees = clampf(float(options.get("zoom_prefetch_margin_degrees", zoom_prefetch_margin_degrees)), 0.0, 120.0)
+	if options.has("instanced_record_cone_margin_degrees"):
+		instanced_record_cone_margin_degrees = clampf(float(options.get("instanced_record_cone_margin_degrees", instanced_record_cone_margin_degrees)), 0.0, 90.0)
+	if options.has("instanced_record_prefetch_margin_degrees"):
+		instanced_record_prefetch_margin_degrees = clampf(float(options.get("instanced_record_prefetch_margin_degrees", instanced_record_prefetch_margin_degrees)), 0.0, 90.0)
+	if options.has("zoom_instanced_record_cone_margin_degrees"):
+		zoom_instanced_record_cone_margin_degrees = clampf(float(options.get("zoom_instanced_record_cone_margin_degrees", zoom_instanced_record_cone_margin_degrees)), 0.0, 90.0)
+	if options.has("zoom_instanced_record_prefetch_margin_degrees"):
+		zoom_instanced_record_prefetch_margin_degrees = clampf(float(options.get("zoom_instanced_record_prefetch_margin_degrees", zoom_instanced_record_prefetch_margin_degrees)), 0.0, 90.0)
+	if options.has("screen_occlusion_cull_tree_records"):
+		screen_occlusion_cull_tree_records = bool(options.get("screen_occlusion_cull_tree_records", screen_occlusion_cull_tree_records))
+	if options.has("screen_occlusion_grid_columns"):
+		screen_occlusion_grid_columns = clampi(int(options.get("screen_occlusion_grid_columns", screen_occlusion_grid_columns)), 16, 256)
+	if options.has("screen_occlusion_grid_rows"):
+		screen_occlusion_grid_rows = clampi(int(options.get("screen_occlusion_grid_rows", screen_occlusion_grid_rows)), 9, 144)
 	if options.has("visibility_hide_grace_frames"):
 		visibility_hide_grace_frames = maxi(0, int(options.get("visibility_hide_grace_frames", visibility_hide_grace_frames)))
 	if options.has("zoom_fov_threshold_degrees"):
@@ -263,11 +329,15 @@ func is_vegetation_ready() -> bool:
 	return _pending_generation_queue.is_empty() \
 		and _pending_rebuilds.is_empty() \
 		and _pending_render_cluster_rebuilds.is_empty() \
+		and _pending_visibility_sync_chunks.is_empty() \
 		and not _has_dirty_chunks()
 
 
 func get_pending_chunks_count() -> int:
-	return _pending_generation_queue.size() + _pending_rebuilds.size() + _pending_render_cluster_rebuilds.size()
+	return _pending_generation_queue.size() \
+		+ _pending_rebuilds.size() \
+		+ _pending_render_cluster_rebuilds.size() \
+		+ _pending_visibility_sync_chunks.size()
 
 
 func clear_all_data(immediate_free: bool = false) -> void:
@@ -289,7 +359,16 @@ func clear_all_data(immediate_free: bool = false) -> void:
 	_last_hidden_instance_eviction_count = 0
 	_last_hidden_instance_eviction_ms = 0.0
 	_hidden_instance_eviction_cursor = 0
+	_initial_stream_complete = false
 	_render_cluster_surface_counts.clear()
+	_render_cluster_chunk_surface_counts.clear()
+	_render_cluster_instanced_keys.clear()
+	_render_cluster_instanced_counts.clear()
+	_render_cluster_instanced_batch_counts.clear()
+	_render_cluster_instanced_batch_counts_by_kind.clear()
+	_render_cluster_instanced_instance_counts_by_kind.clear()
+	_render_cluster_instanced_max_instances_by_kind.clear()
+	_render_cluster_camera_culled_counts_by_kind.clear()
 	_render_cluster_visibility.clear()
 	if native_spatial_grid != null:
 		native_spatial_grid.clear()
@@ -333,8 +412,12 @@ func get_telemetry_snapshot() -> Dictionary:
 	var global_bush_render_batches := 0
 	var global_chunk_mesh_render_batches := 0
 	var global_built_chunk_mesh_render_batches := 0
+	var global_instanced_render_batches := 0
+	var global_built_instanced_render_batches := 0
 	var global_visible_render_cluster_count := 0
 	var global_built_render_cluster_count := 0
+	var global_instanced_render_instances := 0
+	var global_built_instanced_render_instances := 0
 	var global_tree_render_chunk_payloads := 0
 	var global_grass_render_chunk_payloads := 0
 	var global_rock_render_chunk_payloads := 0
@@ -342,6 +425,17 @@ func get_telemetry_snapshot() -> Dictionary:
 	var global_chunked_tree_render_instances := 0
 	var global_chunked_bush_render_instances := 0
 	var global_chunked_rock_render_instances := 0
+	var global_grass_instanced_render_batches := 0
+	var global_tree_instanced_render_batches := 0
+	var global_bush_instanced_render_batches := 0
+	var global_rock_instanced_render_batches := 0
+	var global_grass_instanced_render_instances := 0
+	var global_tree_instanced_render_instances := 0
+	var global_bush_instanced_render_instances := 0
+	var global_rock_instanced_render_instances := 0
+	var global_tree_camera_culled_records := 0
+	var global_bush_camera_culled_records := 0
+	var global_rock_camera_culled_records := 0
 	var tree_mesh_primitives := 0
 	var grass_mesh_primitives := 0
 	var bush_mesh_primitives := 0
@@ -351,15 +445,53 @@ func get_telemetry_snapshot() -> Dictionary:
 	var global_bush_estimated_primitives := 0
 	var global_rock_estimated_primitives := 0
 	var global_grass_max_batch_instances := 0
+	var global_tree_max_batch_instances := 0
+	var global_bush_max_batch_instances := 0
+	var global_rock_max_batch_instances := 0
 	var support_points_total := 0
 	var renderer_stats: Dictionary = renderer.get_stats() if renderer else {}
 	for cluster_coord_variant in _render_cluster_surface_counts.keys():
+		var cluster_coord: Vector2i = cluster_coord_variant
 		var surface_count := int(_render_cluster_surface_counts[cluster_coord_variant])
+		var instanced_batch_count := int(_render_cluster_instanced_batch_counts.get(cluster_coord, 0))
+		var chunk_surface_count := int(_render_cluster_chunk_surface_counts.get(cluster_coord, maxi(0, surface_count - instanced_batch_count)))
+		var instanced_instance_count := int(_render_cluster_instanced_counts.get(cluster_coord, 0))
 		global_built_render_cluster_count += 1
-		global_built_chunk_mesh_render_batches += surface_count
-		if bool(_render_cluster_visibility.get(cluster_coord_variant, true)):
+		global_built_chunk_mesh_render_batches += chunk_surface_count
+		global_built_instanced_render_batches += instanced_batch_count
+		global_built_instanced_render_instances += instanced_instance_count
+		if bool(_render_cluster_visibility.get(cluster_coord, true)):
 			global_visible_render_cluster_count += 1
-			global_chunk_mesh_render_batches += surface_count
+			global_chunk_mesh_render_batches += chunk_surface_count
+			global_instanced_render_batches += instanced_batch_count
+			global_instanced_render_instances += instanced_instance_count
+			var batch_counts_by_kind: Dictionary = _render_cluster_instanced_batch_counts_by_kind.get(cluster_coord, {})
+			var instance_counts_by_kind: Dictionary = _render_cluster_instanced_instance_counts_by_kind.get(cluster_coord, {})
+			var max_instances_by_kind: Dictionary = _render_cluster_instanced_max_instances_by_kind.get(cluster_coord, {})
+			var grass_instanced_batches := int(batch_counts_by_kind.get("grass", 0))
+			var tree_instanced_batches := int(batch_counts_by_kind.get("tree", 0))
+			var bush_instanced_batches := int(batch_counts_by_kind.get("bush", 0))
+			var rock_instanced_batches := int(batch_counts_by_kind.get("rock", 0))
+			global_grass_instanced_render_batches += grass_instanced_batches
+			global_tree_instanced_render_batches += tree_instanced_batches
+			global_bush_instanced_render_batches += bush_instanced_batches
+			global_rock_instanced_render_batches += rock_instanced_batches
+			global_grass_render_batches += grass_instanced_batches
+			global_tree_render_batches += tree_instanced_batches
+			global_bush_render_batches += bush_instanced_batches
+			global_rock_render_batches += rock_instanced_batches
+			global_grass_instanced_render_instances += int(instance_counts_by_kind.get("grass", 0))
+			global_tree_instanced_render_instances += int(instance_counts_by_kind.get("tree", 0))
+			global_bush_instanced_render_instances += int(instance_counts_by_kind.get("bush", 0))
+			global_rock_instanced_render_instances += int(instance_counts_by_kind.get("rock", 0))
+			global_grass_max_batch_instances = maxi(global_grass_max_batch_instances, int(max_instances_by_kind.get("grass", 0)))
+			global_tree_max_batch_instances = maxi(global_tree_max_batch_instances, int(max_instances_by_kind.get("tree", 0)))
+			global_bush_max_batch_instances = maxi(global_bush_max_batch_instances, int(max_instances_by_kind.get("bush", 0)))
+			global_rock_max_batch_instances = maxi(global_rock_max_batch_instances, int(max_instances_by_kind.get("rock", 0)))
+			var camera_culled_counts_by_kind: Dictionary = _render_cluster_camera_culled_counts_by_kind.get(cluster_coord, {})
+			global_tree_camera_culled_records += int(camera_culled_counts_by_kind.get("tree", 0))
+			global_bush_camera_culled_records += int(camera_culled_counts_by_kind.get("bush", 0))
+			global_rock_camera_culled_records += int(camera_culled_counts_by_kind.get("rock", 0))
 	for chunk_variant in chunks.values():
 		var chunk: VegetationChunk = chunk_variant as VegetationChunk
 		if chunk == null:
@@ -405,7 +537,7 @@ func get_telemetry_snapshot() -> Dictionary:
 			global_bush_estimated_primitives += chunk.chunked_bush_estimated_primitive_count
 			global_rock_estimated_primitives += chunk.chunked_rock_estimated_primitive_count
 		support_points_total += chunk.support_points_total
-		var grass_chunk_mesh_visible := visible_grass_cell_count > 0
+		var grass_chunk_mesh_visible := visible_grass_cell_count > 0 and not use_instanced_grass_clusters
 		if grass_chunk_mesh_visible:
 			global_grass_max_batch_instances = maxi(global_grass_max_batch_instances, visible_grass_cell_count)
 		if grass_chunk_mesh_visible:
@@ -413,21 +545,24 @@ func get_telemetry_snapshot() -> Dictionary:
 			global_grass_render_chunk_payloads += 1
 		if chunk.visible_individual_tree_record_count > 0:
 			global_tree_render_batches += chunk.visible_individual_tree_record_count
+			global_tree_max_batch_instances = maxi(global_tree_max_batch_instances, 1)
 			global_tree_render_chunk_payloads += 1
 		if visible_chunked_tree_count > 0:
 			global_tree_render_chunk_payloads += 1
 		if chunk.visible_individual_bush_record_count > 0:
 			global_bush_render_batches += chunk.visible_individual_bush_record_count
+			global_bush_max_batch_instances = maxi(global_bush_max_batch_instances, 1)
 			global_bush_render_chunk_payloads += 1
 		if visible_chunked_bush_count > 0:
 			global_bush_render_chunk_payloads += 1
 		if chunk.visible_individual_rock_record_count > 0:
 			global_rock_render_batches += chunk.visible_individual_rock_record_count
+			global_rock_max_batch_instances = maxi(global_rock_max_batch_instances, 1)
 			global_rock_render_chunk_payloads += 1
 		if visible_chunked_rock_count > 0:
 			global_rock_render_chunk_payloads += 1
-	var global_render_batch_count := global_chunk_mesh_render_batches \
-		+ global_tree_render_batches \
+	var global_render_batch_count := global_tree_render_batches \
+		+ global_grass_render_batches \
 		+ global_bush_render_batches \
 		+ global_rock_render_batches
 	var pending_chunk_count := get_pending_chunks_count()
@@ -443,6 +578,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"visible_chunk_count": live_chunk_count,
 		"dirty_chunk_count": dirty_chunk_count,
 		"pending_generation_count": _pending_generation_queue.size(),
+		"pending_rebuild_count": _pending_rebuilds.size(),
+		"pending_render_cluster_rebuild_count": _pending_render_cluster_rebuilds.size(),
+		"pending_visibility_sync_count": _pending_visibility_sync_chunks.size(),
 		"pending_chunk_count": pending_chunk_count,
 		"pending_chunks_count": pending_chunk_count,
 		"pending_chunks": pending_chunk_count,
@@ -460,8 +598,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_render_batch_count": global_render_batch_count,
 		"global_chunk_mesh_render_batch_count": global_chunk_mesh_render_batches,
 		"global_built_chunk_mesh_render_batch_count": global_built_chunk_mesh_render_batches,
+		"global_instanced_render_batch_count": global_instanced_render_batches,
+		"global_built_instanced_render_batch_count": global_built_instanced_render_batches,
 		"global_visible_render_cluster_count": global_visible_render_cluster_count,
 		"global_built_render_cluster_count": global_built_render_cluster_count,
+		"global_instanced_render_instances": global_instanced_render_instances,
+		"global_built_instanced_render_instances": global_built_instanced_render_instances,
 		"global_tree_render_instances": global_tree_render_instances,
 		"global_grass_render_instances": global_grass_render_instances,
 		"global_rock_render_instances": global_rock_render_instances,
@@ -469,6 +611,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_chunked_tree_render_instances": global_chunked_tree_render_instances,
 		"global_chunked_bush_render_instances": global_chunked_bush_render_instances,
 		"global_chunked_rock_render_instances": global_chunked_rock_render_instances,
+		"global_grass_instanced_render_batch_count": global_grass_instanced_render_batches,
+		"global_tree_instanced_render_batch_count": global_tree_instanced_render_batches,
+		"global_bush_instanced_render_batch_count": global_bush_instanced_render_batches,
+		"global_rock_instanced_render_batch_count": global_rock_instanced_render_batches,
+		"global_grass_instanced_render_instances": global_grass_instanced_render_instances,
+		"global_tree_instanced_render_instances": global_tree_instanced_render_instances,
+		"global_bush_instanced_render_instances": global_bush_instanced_render_instances,
+		"global_rock_instanced_render_instances": global_rock_instanced_render_instances,
+		"global_tree_camera_culled_records": global_tree_camera_culled_records,
+		"global_bush_camera_culled_records": global_bush_camera_culled_records,
+		"global_rock_camera_culled_records": global_rock_camera_culled_records,
 		"global_tree_render_batch_count": global_tree_render_batches,
 		"global_grass_render_batch_count": global_grass_render_batches,
 		"global_rock_render_batch_count": global_rock_render_batches,
@@ -496,8 +649,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_coverage_render_distance_equivalent": float(active_stream_radius_chunks * chunk_size) / 31.0,
 		"vegetation_render_lod_bias": 1.0,
 		"vegetation_batch_individual_records_in_render_clusters": batch_individual_records_in_render_clusters,
+		"vegetation_use_instanced_render_clusters": use_instanced_render_clusters,
+		"vegetation_use_instanced_grass_clusters": use_instanced_grass_clusters,
 		"vegetation_individual_record_radius_chunks": individual_record_radius_chunks,
 		"vegetation_camera_cull_chunk_mesh_records": camera_cull_chunk_mesh_records,
+		"vegetation_camera_cull_instanced_records": camera_cull_instanced_records,
+		"vegetation_stable_render_membership": not _record_camera_culling_active(),
 		"vegetation_global_render_bounds_padding": float(chunk_size),
 		"vegetation_global_render_ignore_occlusion_culling": false,
 		"vegetation_render_prewarm_frames": 0,
@@ -510,10 +667,26 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_zoom_cone_margin_degrees": zoom_cone_margin_degrees,
 		"vegetation_camera_prefetch_margin_degrees": camera_prefetch_margin_degrees,
 		"vegetation_zoom_prefetch_margin_degrees": zoom_prefetch_margin_degrees,
+		"vegetation_instanced_record_cone_margin_degrees": instanced_record_cone_margin_degrees,
+		"vegetation_instanced_record_prefetch_margin_degrees": instanced_record_prefetch_margin_degrees,
+		"vegetation_zoom_instanced_record_cone_margin_degrees": zoom_instanced_record_cone_margin_degrees,
+		"vegetation_zoom_instanced_record_prefetch_margin_degrees": zoom_instanced_record_prefetch_margin_degrees,
 		"vegetation_visibility_hide_grace_frames": visibility_hide_grace_frames,
 		"vegetation_zoom_fov_threshold_degrees": zoom_fov_threshold_degrees,
 		"vegetation_render_camera_fov_degrees": render_camera_fov_degrees,
+		"vegetation_max_generations_per_frame": max_generations_per_frame,
+		"vegetation_max_rebuilds_per_frame": max_rebuilds_per_frame,
 		"vegetation_max_render_cluster_rebuilds_per_frame": max_render_cluster_rebuilds_per_frame,
+		"vegetation_initial_generation_budget_ms": initial_generation_budget_ms,
+		"vegetation_stream_generation_budget_ms": stream_generation_budget_ms,
+		"vegetation_initial_rebuild_budget_ms": initial_rebuild_budget_ms,
+		"vegetation_stream_rebuild_budget_ms": stream_rebuild_budget_ms,
+		"vegetation_initial_render_upload_budget_ms": initial_render_upload_budget_ms,
+		"vegetation_stream_render_upload_budget_ms": stream_render_upload_budget_ms,
+		"vegetation_initial_stream_complete": _initial_stream_complete,
+		"vegetation_last_generation_processed_count": _last_generation_processed_count,
+		"vegetation_last_rebuild_processed_count": _last_rebuild_processed_count,
+		"vegetation_last_render_cluster_rebuild_processed_count": _last_render_cluster_rebuild_processed_count,
 		"vegetation_pending_visibility_sync_chunks": _pending_visibility_sync_chunks.size(),
 		"vegetation_last_visibility_sync_ms": _last_visibility_sync_time_ms,
 		"vegetation_last_visibility_sync_chunk_count": _last_visibility_sync_chunk_count,
@@ -536,14 +709,14 @@ func get_telemetry_snapshot() -> Dictionary:
 			+ global_grass_estimated_primitives \
 			+ global_rock_estimated_primitives \
 			+ global_bush_estimated_primitives,
-		"global_tree_max_batch_instances": 1 if global_tree_render_instances > 0 else 0,
+		"global_tree_max_batch_instances": global_tree_max_batch_instances,
 		"global_grass_max_batch_instances": global_grass_max_batch_instances,
-		"global_rock_max_batch_instances": 1 if global_rock_render_instances > 0 else 0,
-		"global_bush_max_batch_instances": 1 if global_bush_render_instances > 0 else 0,
-		"global_tree_max_batch_estimated_primitives": tree_mesh_primitives,
+		"global_rock_max_batch_instances": global_rock_max_batch_instances,
+		"global_bush_max_batch_instances": global_bush_max_batch_instances,
+		"global_tree_max_batch_estimated_primitives": tree_mesh_primitives * global_tree_max_batch_instances,
 		"global_grass_max_batch_estimated_primitives": grass_mesh_primitives * global_grass_max_batch_instances,
-		"global_rock_max_batch_estimated_primitives": rock_mesh_primitives,
-		"global_bush_max_batch_estimated_primitives": bush_mesh_primitives,
+		"global_rock_max_batch_estimated_primitives": rock_mesh_primitives * global_rock_max_batch_instances,
+		"global_bush_max_batch_estimated_primitives": bush_mesh_primitives * global_bush_max_batch_instances,
 		"support_points_total": support_points_total,
 		"renderer": renderer_stats,
 		"last_rebuild_time_ms": _last_rebuild_time_ms,
@@ -570,11 +743,25 @@ func set_focus_position(position: Vector3) -> void:
 		_refresh_streaming_request()
 
 
-func set_render_camera(position: Vector3, forward: Vector3, fov_degrees: float) -> void:
+func set_render_camera(
+		position: Vector3,
+		forward: Vector3,
+		fov_degrees: float,
+		right: Vector3 = Vector3.RIGHT,
+		up: Vector3 = Vector3.UP,
+		aspect: float = 1.777778
+) -> void:
 	var normalized_forward := forward.normalized()
 	if normalized_forward.length_squared() <= 0.0001:
 		normalized_forward = Vector3.FORWARD
+	var normalized_right := right.normalized()
+	if normalized_right.length_squared() <= 0.0001:
+		normalized_right = Vector3.RIGHT
+	var normalized_up := up.normalized()
+	if normalized_up.length_squared() <= 0.0001:
+		normalized_up = Vector3.UP
 	var clamped_fov := clampf(fov_degrees, 1.0, 120.0)
+	var clamped_aspect := clampf(aspect, 0.25, 4.0)
 	var visibility_forward := normalized_forward
 	visibility_forward.y = 0.0
 	if visibility_forward.length_squared() > 0.0001:
@@ -584,11 +771,16 @@ func set_render_camera(position: Vector3, forward: Vector3, fov_degrees: float) 
 	has_render_camera = true
 	render_camera_position = position
 	render_camera_forward = normalized_forward
+	render_camera_right = normalized_right
+	render_camera_up = normalized_up
 	render_camera_fov_degrees = clamped_fov
+	render_camera_aspect = clamped_aspect
 	var move_threshold := maxf(float(chunk_size) * 0.5, 8.0)
-	var angular_threshold_degrees := 3.0 if clamped_fov <= zoom_fov_threshold_degrees else 10.0
+	var angular_threshold_degrees := 1.5 if clamped_fov <= zoom_fov_threshold_degrees else 4.0
 	var min_forward_dot := cos(deg_to_rad(angular_threshold_degrees))
 	var rotation_visibility_active := camera_cull_chunk_mesh_records \
+		or _record_camera_culling_active() \
+		or _individual_record_visibility_sync_active() \
 		or individual_record_radius_chunks > camera_full_detail_radius_chunks
 	var should_resync := not _has_visibility_request_state \
 		or position.distance_squared_to(_last_visibility_request_position) > move_threshold * move_threshold
@@ -959,15 +1151,38 @@ func _evict_far_chunks(center: Vector2i, radius: int) -> void:
 		_remove_chunk(chunk_coord, true)
 
 
+func _current_generation_budget_ms() -> float:
+	return initial_generation_budget_ms if not _initial_stream_complete else stream_generation_budget_ms
+
+
+func _current_rebuild_budget_ms() -> float:
+	return initial_rebuild_budget_ms if not _initial_stream_complete else stream_rebuild_budget_ms
+
+
+func _current_render_upload_budget_ms() -> float:
+	return initial_render_upload_budget_ms if not _initial_stream_complete else stream_render_upload_budget_ms
+
+
+func _budget_exhausted(start_us: int, budget_ms: float, processed_count: int) -> bool:
+	if processed_count <= 0 or budget_ms <= 0.0:
+		return false
+	return float(Time.get_ticks_usec() - start_us) / 1000.0 >= budget_ms
+
+
 func _process_pending_rebuilds() -> void:
+	var start_us := Time.get_ticks_usec()
+	var budget_ms := _current_rebuild_budget_ms()
 	var rebuild_count := 0
-	while rebuild_count < max_rebuilds_per_frame and not _pending_rebuilds.is_empty():
+	while rebuild_count < max_rebuilds_per_frame \
+			and not _pending_rebuilds.is_empty() \
+			and not _budget_exhausted(start_us, budget_ms, rebuild_count):
 		var chunk_coord: Vector2i = _pending_rebuilds.pop_front()
 		var chunk: VegetationChunk = chunks.get(chunk_coord, null) as VegetationChunk
 		if chunk == null:
 			continue
 		_rebuild_chunk(chunk)
 		rebuild_count += 1
+	_last_rebuild_processed_count = rebuild_count
 
 
 func _process_pending_visibility_syncs() -> void:
@@ -1000,11 +1215,16 @@ func _process_pending_render_cluster_rebuilds() -> void:
 		_pending_render_cluster_lookup.clear()
 		_pending_render_cluster_retry_after_frames.clear()
 		return
+	var start_us := Time.get_ticks_usec()
+	var budget_ms := _current_render_upload_budget_ms()
 	var rebuild_count := 0
 	var current_frame := Engine.get_process_frames()
 	var inspected_count := 0
 	var max_inspections := _pending_render_cluster_rebuilds.size()
-	while rebuild_count < max_render_cluster_rebuilds_per_frame and inspected_count < max_inspections and not _pending_render_cluster_rebuilds.is_empty():
+	while rebuild_count < max_render_cluster_rebuilds_per_frame \
+			and inspected_count < max_inspections \
+			and not _pending_render_cluster_rebuilds.is_empty() \
+			and not _budget_exhausted(start_us, budget_ms, rebuild_count):
 		inspected_count += 1
 		var cluster_coord: Vector2i = _pending_render_cluster_rebuilds.pop_front()
 		var retry_after_frame := int(_pending_render_cluster_retry_after_frames.get(cluster_coord, 0))
@@ -1020,6 +1240,7 @@ func _process_pending_render_cluster_rebuilds() -> void:
 		_pending_render_cluster_retry_after_frames.erase(cluster_coord)
 		_render_cluster_first_request_frames.erase(cluster_coord)
 		rebuild_count += 1
+	_last_render_cluster_rebuild_processed_count = rebuild_count
 
 
 func _process_regrowth(delta: float) -> void:
@@ -1289,6 +1510,8 @@ func _queue_changed_visibility_syncs() -> void:
 	if not render_enabled or renderer == null:
 		return
 	var changed_count := 0
+	var record_culling_active := _record_camera_culling_active()
+	var individual_visibility_active := _individual_record_visibility_sync_active()
 	for chunk_coord_variant in chunks.keys():
 		var chunk_coord: Vector2i = chunk_coord_variant
 		var chunk: VegetationChunk = chunks.get(chunk_coord, null) as VegetationChunk
@@ -1297,10 +1520,16 @@ func _queue_changed_visibility_syncs() -> void:
 		var new_class := _chunk_visibility_class_for_camera(chunk_coord)
 		var old_class := int(_chunk_visibility_class.get(chunk_coord, -1))
 		if old_class == new_class:
+			if individual_visibility_active and new_class == VISIBILITY_CLASS_CONE:
+				_queue_visibility_sync(chunk_coord)
+			if record_culling_active and new_class == VISIBILITY_CLASS_CONE:
+				_queue_render_cluster_rebuild(_render_cluster_coord_for_chunk(chunk_coord))
 			continue
 		_chunk_visibility_class[chunk_coord] = new_class
 		_queue_visibility_sync(chunk_coord)
 		_sync_render_cluster_visibility(_render_cluster_coord_for_chunk(chunk_coord))
+		if record_culling_active and (old_class == VISIBILITY_CLASS_CONE or new_class == VISIBILITY_CLASS_CONE):
+			_queue_render_cluster_rebuild(_render_cluster_coord_for_chunk(chunk_coord))
 		changed_count += 1
 	if changed_count > 1:
 		_pending_visibility_sync_chunks.sort_custom(_compare_visibility_chunk_priority)
@@ -1318,33 +1547,45 @@ func _chunk_visibility_class_for_camera(chunk_coord: Vector2i) -> int:
 		return VISIBILITY_CLASS_FULL
 	var chunk_center := Vector3(
 		(float(chunk_coord.x) + 0.5) * float(chunk_size),
-		render_camera_position.y,
+		focus_position.y + 4.0,
 		(float(chunk_coord.y) + 0.5) * float(chunk_size)
 	)
 	var to_chunk := chunk_center - render_camera_position
-	to_chunk.y = 0.0
-	var chunk_radius := float(chunk_size) * 0.70710678
+	var chunk_radius := float(chunk_size) * 0.70710678 + 18.0
 	var max_distance := float(maxi(active_stream_radius_chunks, initial_stream_radius_chunks) * chunk_size) + float(chunk_size) + chunk_radius
 	if to_chunk.length_squared() > max_distance * max_distance:
 		return _visibility_class_after_grace(chunk_coord)
 	if to_chunk.length_squared() <= 0.0001:
 		_chunk_last_visible_frame[chunk_coord] = Engine.get_process_frames()
 		return VISIBILITY_CLASS_FULL
-	var flat_forward := render_camera_forward
-	flat_forward.y = 0.0
-	if flat_forward.length_squared() <= 0.0001:
-		return _visibility_class_after_grace(chunk_coord)
-	flat_forward = flat_forward.normalized()
 	var margin := zoom_cone_margin_degrees if render_camera_fov_degrees <= zoom_fov_threshold_degrees else camera_cone_margin_degrees
 	var prefetch_margin := zoom_prefetch_margin_degrees if render_camera_fov_degrees <= zoom_fov_threshold_degrees else camera_prefetch_margin_degrees
-	var distance := sqrt(to_chunk.length_squared())
-	var chunk_edge_angle := rad_to_deg(asin(clampf(chunk_radius / maxf(distance, 0.001), 0.0, 0.95)))
-	var half_angle := clampf(render_camera_fov_degrees * 0.5 + margin + prefetch_margin + chunk_edge_angle, 1.0, 170.0)
-	var min_dot := cos(deg_to_rad(half_angle))
-	if flat_forward.dot(to_chunk.normalized()) >= min_dot:
+	if _is_sphere_in_camera_view(chunk_center, chunk_radius, margin, prefetch_margin):
 		_chunk_last_visible_frame[chunk_coord] = Engine.get_process_frames()
 		return VISIBILITY_CLASS_CONE
 	return _visibility_class_after_grace(chunk_coord)
+
+
+func _is_sphere_in_camera_view(center: Vector3, radius: float, margin_degrees: float, prefetch_degrees: float = 0.0) -> bool:
+	if not has_render_camera:
+		return true
+	var to_center := center - render_camera_position
+	var distance_sq := to_center.length_squared()
+	var safe_radius := maxf(radius, 0.1)
+	if distance_sq <= safe_radius * safe_radius:
+		return true
+	var forward_distance := render_camera_forward.dot(to_center)
+	if forward_distance < -safe_radius:
+		return false
+	var distance := sqrt(distance_sq)
+	var edge_angle := asin(clampf(safe_radius / maxf(distance, 0.001), 0.0, 0.95))
+	var margin_radians := deg_to_rad(maxf(0.0, margin_degrees + prefetch_degrees))
+	var vertical_half := deg_to_rad(render_camera_fov_degrees * 0.5) + margin_radians + edge_angle
+	var horizontal_half := atan(tan(deg_to_rad(render_camera_fov_degrees * 0.5)) * render_camera_aspect) + margin_radians + edge_angle
+	var safe_forward := maxf(forward_distance, 0.001)
+	var horizontal_angle := absf(atan2(render_camera_right.dot(to_center), safe_forward))
+	var vertical_angle := absf(atan2(render_camera_up.dot(to_center), safe_forward))
+	return horizontal_angle <= horizontal_half and vertical_angle <= vertical_half
 
 
 func _visibility_class_after_grace(chunk_coord: Vector2i) -> int:
@@ -1405,11 +1646,16 @@ func _ensure_chunk(chunk_coord: Vector2i, reason: int) -> VegetationChunk:
 
 
 func _process_pending_generations() -> void:
+	var start_us := Time.get_ticks_usec()
+	var budget_ms := _current_generation_budget_ms()
 	var generation_count := 0
 	var inspected_count := 0
 	var max_inspections := _pending_generation_queue.size()
 	var current_frame := Engine.get_process_frames()
-	while generation_count < max_generations_per_frame and inspected_count < max_inspections and not _pending_generation_queue.is_empty():
+	while generation_count < max_generations_per_frame \
+			and inspected_count < max_inspections \
+			and not _pending_generation_queue.is_empty() \
+			and not _budget_exhausted(start_us, budget_ms, generation_count):
 		inspected_count += 1
 		var chunk_coord: Vector2i = _pending_generation_queue.pop_front()
 		var reason := int(_pending_generation_reasons.get(chunk_coord, VegetationChunk.DirtyReason.STREAMED_IN))
@@ -1430,6 +1676,7 @@ func _process_pending_generations() -> void:
 		_populate_chunk(chunk, reason)
 		_queue_chunk_rebuild(chunk_coord, reason)
 		generation_count += 1
+	_last_generation_processed_count = generation_count
 
 
 func _defer_chunk_generation(chunk_coord: Vector2i, reason: int) -> void:
@@ -1522,9 +1769,12 @@ func _rebuild_render_cluster(cluster_coord: Vector2i) -> void:
 		_last_rebuild_time_ms = float(Time.get_ticks_msec() - start_ms)
 		return
 	var cluster_origin := _render_cluster_origin(cluster_coord)
+	var previous_instanced_keys: Array = _render_cluster_instanced_keys.get(cluster_coord, []).duplicate()
 	var payload := _build_render_cluster_mesh_payload(cluster_chunks, cluster_origin)
-	_destroy_render_cluster(cluster_coord)
+	_clear_render_cluster_tracking(cluster_coord)
 	var surface_arrays: Array = payload.get("surface_arrays", [])
+	var render_batch_count := 0
+	var chunk_surface_count := 0
 	if not surface_arrays.is_empty():
 		var mesh_rid := renderer.create_chunk_mesh_surfaces(
 			cluster_key,
@@ -1538,15 +1788,88 @@ func _rebuild_render_cluster(cluster_coord: Vector2i) -> void:
 			Transform3D.IDENTITY.translated(cluster_origin)
 		)
 		if mesh_rid.is_valid() and instance_rid.is_valid():
-			_render_cluster_surface_counts[cluster_coord] = surface_arrays.size()
-			_sync_render_cluster_visibility(cluster_coord)
+			chunk_surface_count = surface_arrays.size()
+			render_batch_count += chunk_surface_count
+	else:
+		renderer.destroy_chunk(cluster_key)
+	var instanced_keys: Array[String] = []
+	var instanced_key_lookup: Dictionary = {}
+	var instanced_instance_count := 0
+	var instanced_batch_counts_by_kind: Dictionary = {}
+	var instanced_instance_counts_by_kind: Dictionary = {}
+	var instanced_max_instances_by_kind: Dictionary = {}
+	var camera_culled_counts_by_kind: Dictionary = payload.get("camera_culled_counts_by_kind", {})
+	for instance_payload_variant in payload.get("instance_payloads", []):
+		var instance_payload: Dictionary = instance_payload_variant
+		var instance_key := str(instance_payload.get("key", ""))
+		var mesh_rid: RID = instance_payload.get("mesh_rid", RID())
+		var instance_count := int(instance_payload.get("instance_count", 0))
+		var instance_kind := str(instance_payload.get("kind", "unknown"))
+		var buffer: PackedFloat32Array = instance_payload.get("buffer", PackedFloat32Array())
+		if instance_key.is_empty() or not mesh_rid.is_valid() or instance_count <= 0 or buffer.is_empty():
+			continue
+		var instance_rid := renderer.create_or_update_multimesh_instance(
+			instance_key,
+			mesh_rid,
+			buffer,
+			instance_count,
+			instance_payload.get("bounds", AABB()),
+			instance_payload.get("material", null),
+			{
+				"kind": instance_kind,
+				"type_id": str(instance_payload.get("type_id", "")),
+				"instance_count": instance_count
+			}
+		)
+		if instance_rid.is_valid():
+			instanced_keys.append(instance_key)
+			instanced_key_lookup[instance_key] = true
+			instanced_instance_count += instance_count
+			render_batch_count += 1
+			_increment_int_dict(instanced_batch_counts_by_kind, instance_kind, 1)
+			_increment_int_dict(instanced_instance_counts_by_kind, instance_kind, instance_count)
+			_max_int_dict(instanced_max_instances_by_kind, instance_kind, instance_count)
+	for previous_key_variant in previous_instanced_keys:
+		var previous_key := str(previous_key_variant)
+		if not instanced_key_lookup.has(previous_key):
+			renderer.destroy_multimesh_instance(previous_key)
+	if render_batch_count > 0:
+		_render_cluster_surface_counts[cluster_coord] = render_batch_count
+		if chunk_surface_count > 0:
+			_render_cluster_chunk_surface_counts[cluster_coord] = chunk_surface_count
+		if not instanced_keys.is_empty():
+			_render_cluster_instanced_keys[cluster_coord] = instanced_keys
+			_render_cluster_instanced_counts[cluster_coord] = instanced_instance_count
+			_render_cluster_instanced_batch_counts[cluster_coord] = instanced_keys.size()
+			_render_cluster_instanced_batch_counts_by_kind[cluster_coord] = instanced_batch_counts_by_kind
+			_render_cluster_instanced_instance_counts_by_kind[cluster_coord] = instanced_instance_counts_by_kind
+			_render_cluster_instanced_max_instances_by_kind[cluster_coord] = instanced_max_instances_by_kind
+		if not camera_culled_counts_by_kind.is_empty():
+			_render_cluster_camera_culled_counts_by_kind[cluster_coord] = camera_culled_counts_by_kind
+		_sync_render_cluster_visibility(cluster_coord)
+	else:
+		_render_cluster_visibility.erase(cluster_coord)
 	_last_rebuild_time_ms = float(Time.get_ticks_msec() - start_ms)
+
+
+func _clear_render_cluster_tracking(cluster_coord: Vector2i) -> void:
+	_render_cluster_surface_counts.erase(cluster_coord)
+	_render_cluster_chunk_surface_counts.erase(cluster_coord)
+	_render_cluster_instanced_keys.erase(cluster_coord)
+	_render_cluster_instanced_counts.erase(cluster_coord)
+	_render_cluster_instanced_batch_counts.erase(cluster_coord)
+	_render_cluster_instanced_batch_counts_by_kind.erase(cluster_coord)
+	_render_cluster_instanced_instance_counts_by_kind.erase(cluster_coord)
+	_render_cluster_instanced_max_instances_by_kind.erase(cluster_coord)
+	_render_cluster_camera_culled_counts_by_kind.erase(cluster_coord)
 
 
 func _destroy_render_cluster(cluster_coord: Vector2i) -> void:
 	if renderer != null:
 		renderer.destroy_chunk(_render_cluster_key(cluster_coord))
-	_render_cluster_surface_counts.erase(cluster_coord)
+		for key_variant in _render_cluster_instanced_keys.get(cluster_coord, []):
+			renderer.destroy_multimesh_instance(str(key_variant))
+	_clear_render_cluster_tracking(cluster_coord)
 	_render_cluster_visibility.erase(cluster_coord)
 	_render_cluster_first_request_frames.erase(cluster_coord)
 
@@ -1557,6 +1880,8 @@ func _sync_render_cluster_visibility(cluster_coord: Vector2i) -> void:
 	var visible := _should_render_cluster_visible(cluster_coord)
 	_render_cluster_visibility[cluster_coord] = visible
 	renderer.set_chunk_visible(_render_cluster_key(cluster_coord), visible)
+	for key_variant in _render_cluster_instanced_keys.get(cluster_coord, []):
+		renderer.set_multimesh_visible(str(key_variant), visible)
 
 
 func _should_render_cluster_visible(cluster_coord: Vector2i) -> bool:
@@ -1576,17 +1901,68 @@ func _should_render_cluster_visible(cluster_coord: Vector2i) -> bool:
 	return false
 
 
+func _record_camera_culling_active() -> bool:
+	return camera_cull_instanced_records and camera_cull_chunk_mesh_records and batch_individual_records_in_render_clusters
+
+
+func _individual_record_visibility_sync_active() -> bool:
+	return camera_cull_chunk_mesh_records and (not batch_individual_records_in_render_clusters or individual_record_radius_chunks > 0)
+
+
+func _is_instanced_record_camera_visible(chunk: VegetationChunk, record: Dictionary, type: VegetationType) -> bool:
+	if chunk == null or type == null:
+		return false
+	if not _record_camera_culling_active():
+		return true
+	if not has_render_camera:
+		return true
+	var full_radius := maxi(0, camera_full_detail_radius_chunks)
+	if full_radius > 0 and _chunk_distance_sq_from_focus(chunk.chunk_coord) <= full_radius * full_radius:
+		return true
+	var visibility_class := VISIBILITY_CLASS_FULL
+	if _chunk_visibility_class.has(chunk.chunk_coord):
+		visibility_class = int(_chunk_visibility_class[chunk.chunk_coord])
+	else:
+		visibility_class = _chunk_visibility_class_for_camera(chunk.chunk_coord)
+		_chunk_visibility_class[chunk.chunk_coord] = visibility_class
+	if visibility_class == VISIBILITY_CLASS_NONE:
+		return false
+	var world_position: Vector3 = record.get("position", Vector3.ZERO)
+	var max_distance := float(maxi(active_stream_radius_chunks, initial_stream_radius_chunks) * chunk_size) + float(chunk_size)
+	var record_scale := maxf(0.05, float(record.get("scale", type.instance_scale)))
+	var record_radius := maxf(maxf(type.support_radius, _get_type_visual_radius(type)) * record_scale, 0.5)
+	if world_position.distance_squared_to(render_camera_position) > (max_distance + record_radius) * (max_distance + record_radius):
+		return false
+	var margin := zoom_instanced_record_cone_margin_degrees if render_camera_fov_degrees <= zoom_fov_threshold_degrees else instanced_record_cone_margin_degrees
+	var prefetch_margin := zoom_instanced_record_prefetch_margin_degrees if render_camera_fov_degrees <= zoom_fov_threshold_degrees else instanced_record_prefetch_margin_degrees
+	var sphere := _record_camera_sphere(type, record)
+	return _is_sphere_in_camera_view(
+		sphere.get("center", world_position),
+		float(sphere.get("radius", record_radius)),
+		margin,
+		prefetch_margin
+	)
+
+
 func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], cluster_origin: Vector3) -> Dictionary:
 	var surface_arrays: Array = []
 	var surface_materials: Array = []
+	var instance_payloads: Array = []
 	var bounds := AABB()
 	var has_bounds := false
 	var grass_cells: Array = []
 	var grass_type: VegetationType = null
+	var grass_groups: Dictionary = {}
+	var grass_group_types: Dictionary = {}
 	var record_groups: Dictionary = {}
 	var record_group_types: Dictionary = {}
+	var camera_culled_counts_by_kind: Dictionary = {}
+	var screen_occlusion_grid: Dictionary = {}
+	var ordered_cluster_chunks := cluster_chunks.duplicate()
+	if _screen_occlusion_culling_active():
+		ordered_cluster_chunks.sort_custom(_compare_chunk_camera_distance)
 
-	for chunk in cluster_chunks:
+	for chunk in ordered_cluster_chunks:
 		if chunk == null:
 			continue
 		chunk.visible_grass_cell_count = 0
@@ -1615,7 +1991,10 @@ func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], 
 					continue
 				if grass_type == null:
 					grass_type = cell_type
-				grass_cells.append(cell)
+				if use_instanced_grass_clusters:
+					_append_source_record_group(grass_groups, grass_group_types, "grass", cell_type, cell)
+				else:
+					grass_cells.append(cell)
 				chunk.visible_grass_cell_count += 1
 				var grass_primitives := _get_type_mesh_primitive_count(cell_type)
 				chunk.grass_mesh_primitive_count = maxi(chunk.grass_mesh_primitive_count, grass_primitives)
@@ -1625,7 +2004,17 @@ func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], 
 			var tree_type := _get_type(StringName(str(tree.get("type_id", ""))))
 			if not _should_chunk_render_record(chunk, tree, tree_type):
 				continue
-			_append_record_group(record_groups, record_group_types, tree_type, tree)
+			if not _is_instanced_record_camera_visible(chunk, tree, tree_type):
+				_increment_int_dict(camera_culled_counts_by_kind, _type_render_kind(tree_type), 1)
+				continue
+			if _is_record_screen_occluded(tree_type, tree, screen_occlusion_grid):
+				_increment_int_dict(camera_culled_counts_by_kind, _type_render_kind(tree_type), 1)
+				continue
+			if use_instanced_render_clusters:
+				_append_source_record_group(record_groups, record_group_types, "record", tree_type, tree)
+			else:
+				_append_source_record_group(record_groups, record_group_types, "record_mesh", tree_type, tree)
+			_mark_record_screen_occluder(tree_type, tree, screen_occlusion_grid)
 			chunk.visible_chunked_tree_record_count += 1
 			var tree_primitives := _get_type_mesh_primitive_count(tree_type)
 			chunk.tree_mesh_primitive_count = maxi(chunk.tree_mesh_primitive_count, tree_primitives)
@@ -1635,7 +2024,13 @@ func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], 
 			var bush_type := _get_type(StringName(str(bush.get("type_id", ""))))
 			if not _should_chunk_render_record(chunk, bush, bush_type):
 				continue
-			_append_record_group(record_groups, record_group_types, bush_type, bush)
+			if not _is_instanced_record_camera_visible(chunk, bush, bush_type):
+				_increment_int_dict(camera_culled_counts_by_kind, _type_render_kind(bush_type), 1)
+				continue
+			if use_instanced_render_clusters:
+				_append_source_record_group(record_groups, record_group_types, "record", bush_type, bush)
+			else:
+				_append_source_record_group(record_groups, record_group_types, "record_mesh", bush_type, bush)
 			chunk.visible_chunked_bush_record_count += 1
 			var bush_primitives := _get_type_mesh_primitive_count(bush_type)
 			chunk.bush_mesh_primitive_count = maxi(chunk.bush_mesh_primitive_count, bush_primitives)
@@ -1645,7 +2040,13 @@ func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], 
 			var rock_type := _get_type(StringName(str(rock.get("type_id", ""))))
 			if not _should_chunk_render_record(chunk, rock, rock_type):
 				continue
-			_append_record_group(record_groups, record_group_types, rock_type, rock)
+			if not _is_instanced_record_camera_visible(chunk, rock, rock_type):
+				_increment_int_dict(camera_culled_counts_by_kind, _type_render_kind(rock_type), 1)
+				continue
+			if use_instanced_render_clusters:
+				_append_source_record_group(record_groups, record_group_types, "record", rock_type, rock)
+			else:
+				_append_source_record_group(record_groups, record_group_types, "record_mesh", rock_type, rock)
 			chunk.visible_chunked_rock_record_count += 1
 			var rock_primitives := _get_type_mesh_primitive_count(rock_type)
 			chunk.rock_mesh_primitive_count = maxi(chunk.rock_mesh_primitive_count, rock_primitives)
@@ -1658,7 +2059,17 @@ func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], 
 		chunk.bush_estimated_primitive_count = chunk.individual_bush_estimated_primitive_count + chunk.chunked_bush_estimated_primitive_count
 		chunk.rock_estimated_primitive_count = chunk.individual_rock_estimated_primitive_count + chunk.chunked_rock_estimated_primitive_count
 
-	if grass_type != null and not grass_cells.is_empty():
+	if use_instanced_grass_clusters:
+		for grass_group_key_variant in grass_groups.keys():
+			var grass_group_key := str(grass_group_key_variant)
+			var grouped_grass_type: VegetationType = grass_group_types.get(grass_group_key, null) as VegetationType
+			var grouped_grass_records: Array = grass_groups.get(grass_group_key, [])
+			if grouped_grass_type == null or grouped_grass_records.is_empty():
+				continue
+			var grass_instance_payload := _build_render_cluster_multimesh_payload(cluster_origin, grass_group_key, grouped_grass_type, grouped_grass_records, false, true)
+			if not grass_instance_payload.is_empty():
+				instance_payloads.append(grass_instance_payload)
+	elif grass_type != null and not grass_cells.is_empty():
 		var grass_result := _build_native_source_records_surface(grass_type, grass_cells, cluster_origin, false)
 		if not grass_result.is_empty():
 			surface_arrays.append(grass_result.get("arrays", []))
@@ -1672,6 +2083,11 @@ func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], 
 		var records: Array = record_groups.get(group_key, [])
 		if group_type == null or records.is_empty():
 			continue
+		if use_instanced_render_clusters:
+			var instance_payload := _build_render_cluster_multimesh_payload(cluster_origin, group_key, group_type, records, true, true)
+			if not instance_payload.is_empty():
+				instance_payloads.append(instance_payload)
+			continue
 		var record_result := _build_native_source_records_surface(group_type, records, cluster_origin, true)
 		if record_result.is_empty():
 			continue
@@ -1684,8 +2100,260 @@ func _build_render_cluster_mesh_payload(cluster_chunks: Array[VegetationChunk], 
 	return {
 		"surface_arrays": surface_arrays,
 		"surface_materials": surface_materials,
+		"instance_payloads": instance_payloads,
+		"camera_culled_counts_by_kind": camera_culled_counts_by_kind,
 		"bounds": bounds
 	}
+
+
+func _build_render_cluster_multimesh_payload(
+		cluster_origin: Vector3,
+		group_key: String,
+		type: VegetationType,
+		records: Array,
+		rotation_is_turns: bool = true,
+		resolve_record_type: bool = false
+) -> Dictionary:
+	if type == null or records.is_empty():
+		return {}
+	var source_mesh := type.source_mesh if type.source_mesh != null else type.get_source_mesh()
+	if source_mesh == null:
+		return {}
+	var visible_records: Array = []
+	for record_variant in records:
+		var record: Dictionary = record_variant
+		var record_type := type
+		if resolve_record_type:
+			record_type = _get_type(StringName(str(record.get("type_id", type.id))))
+			if record_type == null:
+				continue
+			var record_source_mesh := record_type.source_mesh if record_type.source_mesh != null else record_type.get_source_mesh()
+			if record_source_mesh != source_mesh:
+				continue
+		if not _is_render_record_visible(record, record_type):
+			continue
+		visible_records.append(record)
+	if visible_records.is_empty():
+		return {}
+	var buffer := PackedFloat32Array()
+	var bounds := AABB()
+	var native_payload := _try_build_multimesh_transform_payload(type, source_mesh, visible_records, rotation_is_turns)
+	if not native_payload.is_empty():
+		buffer = native_payload.get("buffer", PackedFloat32Array())
+		bounds = native_payload.get("bounds", AABB())
+	else:
+		var fallback := _build_gdscript_multimesh_transform_payload(type, visible_records, rotation_is_turns)
+		if fallback.is_empty():
+			return {}
+		buffer = fallback.get("buffer", PackedFloat32Array())
+		bounds = fallback.get("bounds", AABB())
+	if buffer.is_empty():
+		return {}
+	var cluster_coord := _render_cluster_coord_for_origin(cluster_origin)
+	return {
+		"key": "%s_%s" % [_render_cluster_key(cluster_coord), group_key],
+		"kind": _type_render_kind(type),
+		"type_id": String(type.id),
+		"mesh_rid": source_mesh.get_rid(),
+		"buffer": buffer,
+		"instance_count": int(buffer.size() / MULTIMESH_FLOATS_PER_INSTANCE_3D),
+		"bounds": bounds,
+		"material": type.get_material_for_surface(0)
+	}
+
+
+func _try_build_multimesh_transform_payload(type: VegetationType, source_mesh: Mesh, records: Array, rotation_is_turns: bool) -> Dictionary:
+	if native_chunk_builder == null:
+		_ensure_native_backends()
+	if native_chunk_builder == null or not native_chunk_builder.has_method("build_multimesh_transform_buffer"):
+		return {}
+	if type == null or source_mesh == null or records.is_empty():
+		return {}
+	var source_transform := type.mesh_source_transform if type.source_mesh != null else type.get_source_transform()
+	var result: Dictionary = native_chunk_builder.build_multimesh_transform_buffer(
+		records,
+		source_transform,
+		source_mesh.get_aabb(),
+		rotation_is_turns
+	)
+	if result.is_empty() or int(result.get("visible_count", 0)) <= 0:
+		return {}
+	var buffer: PackedFloat32Array = result.get("buffer", PackedFloat32Array())
+	return result if not buffer.is_empty() else {}
+
+
+func _build_gdscript_multimesh_transform_payload(type: VegetationType, records: Array, rotation_is_turns: bool) -> Dictionary:
+	var transforms: Array[Transform3D] = []
+	var bounds := AABB()
+	var has_bounds := false
+	for record_variant in records:
+		var record: Dictionary = record_variant
+		var transform := _build_render_record_world_transform(type, record, rotation_is_turns)
+		transforms.append(transform)
+		var record_bounds := _record_render_bounds(type, record, rotation_is_turns)
+		bounds = bounds.merge(record_bounds) if has_bounds else record_bounds
+		has_bounds = true
+	if transforms.is_empty():
+		return {}
+	return {
+		"buffer": _pack_transform_buffer(transforms),
+		"bounds": bounds
+	}
+
+
+func _type_render_kind(type: VegetationType) -> String:
+	if type == null:
+		return "unknown"
+	match type.category:
+		VegetationType.Category.GRASS, VegetationType.Category.WEED, VegetationType.Category.FLOWER:
+			return "grass"
+		VegetationType.Category.TREE, VegetationType.Category.STUMP, VegetationType.Category.LOG:
+			return "tree"
+		VegetationType.Category.BUSH:
+			return "bush"
+		VegetationType.Category.ROCK:
+			return "rock"
+		_:
+			return "unknown"
+
+
+func _build_render_record_world_transform(type: VegetationType, record: Dictionary, rotation_is_turns: bool = true) -> Transform3D:
+	var rotation := float(record.get("rotation", 0.0))
+	if rotation_is_turns:
+		rotation *= TAU
+	var scale := maxf(0.01, float(record.get("scale", type.instance_scale)))
+	var transform := Transform3D.IDENTITY
+	transform = transform.rotated(Vector3.UP, rotation)
+	transform = transform.scaled(Vector3.ONE * scale)
+	transform.origin = record.get("position", Vector3.ZERO)
+	var source_transform := type.mesh_source_transform if type.source_mesh != null else type.get_source_transform()
+	return transform * source_transform
+
+
+func _render_cluster_coord_for_origin(cluster_origin: Vector3) -> Vector2i:
+	var size := maxi(1, render_cluster_size_chunks * chunk_size)
+	return Vector2i(
+		int(floor(cluster_origin.x / float(size))),
+		int(floor(cluster_origin.z / float(size)))
+	)
+
+
+func _record_render_bounds(type: VegetationType, record: Dictionary, rotation_is_turns: bool = true) -> AABB:
+	var position: Vector3 = record.get("position", Vector3.ZERO)
+	var scale := maxf(0.05, float(record.get("scale", type.instance_scale)))
+	if type.category != VegetationType.Category.GRASS \
+			and type.category != VegetationType.Category.WEED \
+			and type.category != VegetationType.Category.FLOWER:
+		var local_bounds := _get_type_visual_bounds(type)
+		if local_bounds.size != Vector3.ZERO:
+			var rotation := float(record.get("rotation", 0.0))
+			if rotation_is_turns:
+				rotation *= TAU
+			var transform := Transform3D.IDENTITY
+			transform = transform.rotated(Vector3.UP, rotation)
+			transform = transform.scaled(Vector3.ONE * scale)
+			transform.origin = position
+			return _transform_aabb(local_bounds, transform)
+	var radius := maxf(type.support_radius * scale, 0.5)
+	var height := maxf(type.support_height * scale, radius * 2.0)
+	if type.category == VegetationType.Category.GRASS or type.category == VegetationType.Category.WEED or type.category == VegetationType.Category.FLOWER:
+		height = maxf(height, 1.25 * scale)
+	return AABB(
+		Vector3(position.x - radius, position.y - radius, position.z - radius),
+		Vector3(radius * 2.0, height + radius * 2.0, radius * 2.0)
+	)
+
+
+func _get_type_visual_bounds(type: VegetationType) -> AABB:
+	if type == null:
+		return AABB()
+	var cache_key := String(type.id)
+	if _type_visual_bounds_cache.has(cache_key):
+		return _type_visual_bounds_cache[cache_key]
+	var source_mesh := type.source_mesh if type.source_mesh != null else type.get_source_mesh()
+	if source_mesh == null:
+		_type_visual_bounds_cache[cache_key] = AABB()
+		return AABB()
+	var source_transform := type.mesh_source_transform if type.source_mesh != null else type.get_source_transform()
+	var bounds := _transform_aabb(source_mesh.get_aabb(), source_transform)
+	_type_visual_bounds_cache[cache_key] = bounds
+	return bounds
+
+
+func _get_type_visual_radius(type: VegetationType) -> float:
+	var bounds := _get_type_visual_bounds(type)
+	if bounds.size == Vector3.ZERO:
+		return 0.0
+	var min_v := bounds.position
+	var max_v := bounds.position + bounds.size
+	return maxf(maxf(absf(min_v.x), absf(max_v.x)), maxf(absf(min_v.z), absf(max_v.z)))
+
+
+func _transform_aabb(aabb: AABB, transform: Transform3D) -> AABB:
+	if aabb.size == Vector3.ZERO:
+		return aabb
+	var min_v := aabb.position
+	var max_v := aabb.position + aabb.size
+	var points := [
+		Vector3(min_v.x, min_v.y, min_v.z),
+		Vector3(max_v.x, min_v.y, min_v.z),
+		Vector3(min_v.x, max_v.y, min_v.z),
+		Vector3(max_v.x, max_v.y, min_v.z),
+		Vector3(min_v.x, min_v.y, max_v.z),
+		Vector3(max_v.x, min_v.y, max_v.z),
+		Vector3(min_v.x, max_v.y, max_v.z),
+		Vector3(max_v.x, max_v.y, max_v.z)
+	]
+	var transformed := AABB(transform * points[0], Vector3.ZERO)
+	for i in range(1, points.size()):
+		transformed = transformed.expand(transform * points[i])
+	return transformed
+
+
+func _pack_transform_buffer(transforms: Array[Transform3D]) -> PackedFloat32Array:
+	var buffer := PackedFloat32Array()
+	buffer.resize(transforms.size() * MULTIMESH_FLOATS_PER_INSTANCE_3D)
+	var write_index := 0
+	for transform in transforms:
+		buffer[write_index + 0] = transform.basis.x.x
+		buffer[write_index + 1] = transform.basis.y.x
+		buffer[write_index + 2] = transform.basis.z.x
+		buffer[write_index + 3] = transform.origin.x
+		buffer[write_index + 4] = transform.basis.x.y
+		buffer[write_index + 5] = transform.basis.y.y
+		buffer[write_index + 6] = transform.basis.z.y
+		buffer[write_index + 7] = transform.origin.y
+		buffer[write_index + 8] = transform.basis.x.z
+		buffer[write_index + 9] = transform.basis.y.z
+		buffer[write_index + 10] = transform.basis.z.z
+		buffer[write_index + 11] = transform.origin.z
+		write_index += MULTIMESH_FLOATS_PER_INSTANCE_3D
+	return buffer
+
+
+func _append_source_record_group(record_groups: Dictionary, record_group_types: Dictionary, prefix: String, type: VegetationType, record: Dictionary) -> void:
+	if type == null or record.is_empty():
+		return
+	var source_mesh := type.source_mesh if type.source_mesh != null else type.get_source_mesh()
+	if source_mesh == null:
+		return
+	var material := type.get_material_for_surface(0)
+	var material_id := material.get_instance_id() if material != null else 0
+	var group_key := "%s_%s_%d_%d" % [prefix, _type_render_kind(type), source_mesh.get_instance_id(), material_id]
+	if not record_groups.has(group_key):
+		record_groups[group_key] = []
+		record_group_types[group_key] = type
+	var records: Array = record_groups[group_key]
+	records.append(record)
+	record_groups[group_key] = records
+
+
+func _increment_int_dict(counts: Dictionary, key: String, amount: int) -> void:
+	counts[key] = int(counts.get(key, 0)) + amount
+
+
+func _max_int_dict(counts: Dictionary, key: String, value: int) -> void:
+	counts[key] = maxi(int(counts.get(key, 0)), value)
 
 
 func _append_record_group(record_groups: Dictionary, record_group_types: Dictionary, type: VegetationType, record: Dictionary) -> void:
@@ -1716,7 +2384,7 @@ func _build_native_source_records_surface(type: VegetationType, records: Array, 
 	var source_mesh := type.source_mesh if type.source_mesh != null else type.get_source_mesh()
 	if source_mesh == null or source_mesh.get_surface_count() <= 0:
 		return {}
-	var source_arrays := _get_cached_source_surface_arrays(source_mesh, 0)
+	var source_arrays := _get_cached_minimal_source_surface_arrays(source_mesh, 0) if _type_uses_minimal_chunk_arrays(type) else _get_cached_source_surface_arrays(source_mesh, 0)
 	if source_arrays.is_empty():
 		return {}
 	var source_transform := type.mesh_source_transform if type.source_mesh != null else type.get_source_transform()
@@ -2109,7 +2777,7 @@ func _try_build_native_grass_source_payload(chunk: VegetationChunk, payload: Dic
 	var source_mesh := source_type.source_mesh if source_type.source_mesh != null else source_type.get_source_mesh()
 	if source_mesh == null or source_mesh.get_surface_count() <= 0:
 		return {}
-	var source_arrays := _get_cached_source_surface_arrays(source_mesh, 0)
+	var source_arrays := _get_cached_minimal_source_surface_arrays(source_mesh, 0)
 	if source_arrays.is_empty():
 		return {}
 	var source_transform := source_type.mesh_source_transform if source_type.source_mesh != null else source_type.get_source_transform()
@@ -2174,6 +2842,34 @@ func _get_cached_source_surface_arrays(source_mesh: Mesh, surface_index: int = 0
 	var arrays := source_mesh.surface_get_arrays(surface_index)
 	if not arrays.is_empty():
 		_source_surface_arrays_cache[cache_key] = arrays
+	return arrays
+
+
+func _type_uses_minimal_chunk_arrays(type: VegetationType) -> bool:
+	if type == null:
+		return false
+	return type.category == VegetationType.Category.GRASS \
+		or type.category == VegetationType.Category.WEED \
+		or type.category == VegetationType.Category.FLOWER
+
+
+func _get_cached_minimal_source_surface_arrays(source_mesh: Mesh, surface_index: int = 0) -> Array:
+	if source_mesh == null or source_mesh.get_surface_count() <= surface_index:
+		return []
+	var cache_key := "minimal:%d:%d" % [source_mesh.get_instance_id(), surface_index]
+	if _source_surface_arrays_cache.has(cache_key):
+		return _source_surface_arrays_cache[cache_key]
+	var source_arrays := source_mesh.surface_get_arrays(surface_index)
+	if source_arrays.is_empty() or source_arrays.size() <= Mesh.ARRAY_VERTEX or source_arrays[Mesh.ARRAY_VERTEX] == null:
+		return []
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = source_arrays[Mesh.ARRAY_VERTEX]
+	if source_arrays.size() > Mesh.ARRAY_TEX_UV and source_arrays[Mesh.ARRAY_TEX_UV] != null:
+		arrays[Mesh.ARRAY_TEX_UV] = source_arrays[Mesh.ARRAY_TEX_UV]
+	if source_arrays.size() > Mesh.ARRAY_INDEX and source_arrays[Mesh.ARRAY_INDEX] != null:
+		arrays[Mesh.ARRAY_INDEX] = source_arrays[Mesh.ARRAY_INDEX]
+	_source_surface_arrays_cache[cache_key] = arrays
 	return arrays
 
 
@@ -2332,6 +3028,8 @@ func _is_record_rendered_by_camera(chunk: VegetationChunk, record: Dictionary, t
 		return false
 	if not _is_render_record_visible(record, type):
 		return false
+	if not camera_cull_chunk_mesh_records:
+		return true
 	var visibility_class := VISIBILITY_CLASS_FULL
 	if _chunk_visibility_class.has(chunk.chunk_coord):
 		visibility_class = int(_chunk_visibility_class[chunk.chunk_coord])
@@ -2348,22 +3046,147 @@ func _is_record_rendered_by_camera(chunk: VegetationChunk, record: Dictionary, t
 	if not has_render_camera:
 		return true
 	var world_position: Vector3 = record.get("position", Vector3.ZERO)
-	var to_record := world_position - render_camera_position
-	to_record.y = 0.0
 	var max_distance := float(maxi(active_stream_radius_chunks, initial_stream_radius_chunks) * chunk_size) + float(chunk_size)
-	if to_record.length_squared() > max_distance * max_distance:
+	if world_position.distance_squared_to(render_camera_position) > max_distance * max_distance:
 		return false
-	if to_record.length_squared() <= 0.0001:
-		return true
-	var flat_forward := render_camera_forward
-	flat_forward.y = 0.0
-	if flat_forward.length_squared() <= 0.0001:
-		return false
-	flat_forward = flat_forward.normalized()
 	var margin := zoom_cone_margin_degrees if render_camera_fov_degrees <= zoom_fov_threshold_degrees else camera_cone_margin_degrees
-	var half_angle := clampf(render_camera_fov_degrees * 0.5 + margin, 1.0, 110.0)
-	var min_dot := cos(deg_to_rad(half_angle))
-	return flat_forward.dot(to_record.normalized()) >= min_dot
+	var prefetch_margin := zoom_prefetch_margin_degrees if render_camera_fov_degrees <= zoom_fov_threshold_degrees else camera_prefetch_margin_degrees
+	var sphere := _record_camera_sphere(type, record)
+	return _is_sphere_in_camera_view(
+		sphere.get("center", world_position),
+		float(sphere.get("radius", maxf(type.support_radius, 0.5))),
+		margin,
+		prefetch_margin
+	)
+
+
+func _record_camera_sphere(type: VegetationType, record: Dictionary) -> Dictionary:
+	var scale := maxf(0.05, float(record.get("scale", type.instance_scale if type != null else 1.0)))
+	var position: Vector3 = record.get("position", Vector3.ZERO)
+	if type == null:
+		return {
+			"center": position,
+			"radius": 0.75 * scale
+		}
+	var visual_radius := maxf(maxf(type.support_radius, _get_type_visual_radius(type)) * scale, 0.5)
+	var visual_height := maxf(type.support_height * scale, visual_radius * 2.0)
+	var center := position + Vector3(0.0, visual_height * 0.5, 0.0)
+	return {
+		"center": center,
+		"radius": maxf(visual_radius, visual_height * 0.5)
+	}
+
+
+func _screen_occlusion_culling_active() -> bool:
+	return screen_occlusion_cull_tree_records \
+		and has_render_camera \
+		and batch_individual_records_in_render_clusters \
+		and camera_cull_instanced_records \
+		and camera_cull_chunk_mesh_records
+
+
+func _compare_chunk_camera_distance(a: VegetationChunk, b: VegetationChunk) -> bool:
+	if a == null or b == null:
+		return a != null
+	var a_center := Vector3(
+		(float(a.chunk_coord.x) + 0.5) * float(chunk_size),
+		focus_position.y,
+		(float(a.chunk_coord.y) + 0.5) * float(chunk_size)
+	)
+	var b_center := Vector3(
+		(float(b.chunk_coord.x) + 0.5) * float(chunk_size),
+		focus_position.y,
+		(float(b.chunk_coord.y) + 0.5) * float(chunk_size)
+	)
+	return a_center.distance_squared_to(render_camera_position) < b_center.distance_squared_to(render_camera_position)
+
+
+func _is_record_screen_occluded(type: VegetationType, record: Dictionary, screen_grid: Dictionary) -> bool:
+	if not _screen_occlusion_culling_active() or screen_grid.is_empty():
+		return false
+	if type == null or type.category != VegetationType.Category.TREE:
+		return false
+	var position: Vector3 = record.get("position", Vector3.ZERO)
+	var full_radius_world := float(camera_full_detail_radius_chunks * chunk_size)
+	if position.distance_squared_to(focus_position) <= full_radius_world * full_radius_world:
+		return false
+	var rect := _record_screen_rect(type, record, 0.85)
+	if rect.is_empty():
+		return false
+	var min_x := int(rect.get("min_x", 0))
+	var max_x := int(rect.get("max_x", -1))
+	var min_y := int(rect.get("min_y", 0))
+	var max_y := int(rect.get("max_y", -1))
+	if max_x < min_x or max_y < min_y:
+		return false
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			if not screen_grid.has(_screen_grid_key(x, y)):
+				return false
+	return true
+
+
+func _mark_record_screen_occluder(type: VegetationType, record: Dictionary, screen_grid: Dictionary) -> void:
+	if not _screen_occlusion_culling_active():
+		return
+	if type == null or type.category != VegetationType.Category.TREE:
+		return
+	var rect := _record_screen_rect(type, record, 0.72)
+	if rect.is_empty():
+		return
+	var min_x := int(rect.get("min_x", 0))
+	var max_x := int(rect.get("max_x", -1))
+	var min_y := int(rect.get("min_y", 0))
+	var max_y := int(rect.get("max_y", -1))
+	if max_x - min_x >= 2:
+		min_x += 1
+		max_x -= 1
+	if max_y - min_y >= 2:
+		min_y += 1
+		max_y -= 1
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			screen_grid[_screen_grid_key(x, y)] = true
+
+
+func _record_screen_rect(type: VegetationType, record: Dictionary, radius_scale: float) -> Dictionary:
+	if not has_render_camera:
+		return {}
+	var sphere := _record_camera_sphere(type, record)
+	var center: Vector3 = sphere.get("center", Vector3.ZERO)
+	var radius := maxf(0.1, float(sphere.get("radius", 0.5)) * maxf(0.1, radius_scale))
+	var to_center := center - render_camera_position
+	var forward_distance := render_camera_forward.dot(to_center)
+	if forward_distance <= radius:
+		return {}
+	var half_vertical_tan := tan(deg_to_rad(render_camera_fov_degrees * 0.5))
+	var half_horizontal_tan := half_vertical_tan * render_camera_aspect
+	if half_vertical_tan <= 0.0001 or half_horizontal_tan <= 0.0001:
+		return {}
+	var ndc_x := render_camera_right.dot(to_center) / (forward_distance * half_horizontal_tan)
+	var ndc_y := render_camera_up.dot(to_center) / (forward_distance * half_vertical_tan)
+	var ndc_radius_x := radius / (forward_distance * half_horizontal_tan)
+	var ndc_radius_y := radius / (forward_distance * half_vertical_tan)
+	if ndc_x + ndc_radius_x < -1.0 or ndc_x - ndc_radius_x > 1.0:
+		return {}
+	if ndc_y + ndc_radius_y < -1.0 or ndc_y - ndc_radius_y > 1.0:
+		return {}
+	var columns := maxi(1, screen_occlusion_grid_columns)
+	var rows := maxi(1, screen_occlusion_grid_rows)
+	var min_x := clampi(int(floor(((ndc_x - ndc_radius_x) * 0.5 + 0.5) * float(columns))), 0, columns - 1)
+	var max_x := clampi(int(floor(((ndc_x + ndc_radius_x) * 0.5 + 0.5) * float(columns))), 0, columns - 1)
+	var min_y := clampi(int(floor(((ndc_y - ndc_radius_y) * 0.5 + 0.5) * float(rows))), 0, rows - 1)
+	var max_y := clampi(int(floor(((ndc_y + ndc_radius_y) * 0.5 + 0.5) * float(rows))), 0, rows - 1)
+	return {
+		"min_x": min_x,
+		"max_x": max_x,
+		"min_y": min_y,
+		"max_y": max_y
+	}
+
+
+func _screen_grid_key(x: int, y: int) -> int:
+	return y * maxi(1, screen_occlusion_grid_columns) + x
 
 
 func _should_keep_record_individual(chunk: VegetationChunk, _record: Dictionary, type: VegetationType) -> bool:
@@ -3173,6 +3996,9 @@ func _try_get_precise_support_height(world_position: Vector3) -> float:
 
 
 func _try_get_precise_support_height_cached(world_position: Vector3, height_cache: Dictionary) -> float:
+	var height_map_height := _try_get_chunk_height_map_support(world_position, height_cache)
+	if height_map_height > -100.0:
+		return height_map_height
 	if not use_mock_terrain and terrain_manager and is_instance_valid(terrain_manager) and terrain_manager.has_method("get_chunk_surface_height"):
 		var x0 := floorf(world_position.x)
 		var z0 := floorf(world_position.z)
@@ -3185,6 +4011,59 @@ func _try_get_precise_support_height_cached(world_position: Vector3, height_cach
 		if fast_h00 > -100.0 and fast_h10 > -100.0 and fast_h01 > -100.0 and fast_h11 > -100.0:
 			return _interpolate_height(world_position, x0, z0, fast_h00, fast_h10, fast_h01, fast_h11)
 	return _try_get_precise_support_height(world_position)
+
+
+func _try_get_chunk_height_map_support(world_position: Vector3, height_cache: Dictionary) -> float:
+	if use_mock_terrain or terrain_manager == null or not is_instance_valid(terrain_manager):
+		return -1000.0
+	if not terrain_manager.has_method("get_cached_chunk_height_map"):
+		return -1000.0
+	var terrain_stride := int(TERRAIN_CHUNK_STRIDE)
+	if chunk_size != terrain_stride:
+		return -1000.0
+	var chunk_coord := Vector2i(
+		int(floor(world_position.x / float(terrain_stride))),
+		int(floor(world_position.z / float(terrain_stride)))
+	)
+	var cache_key := "height_map:%d,%d" % [chunk_coord.x, chunk_coord.y]
+	var height_map: PackedFloat32Array = height_cache.get(cache_key, PackedFloat32Array())
+	if height_map.is_empty():
+		height_map = terrain_manager.get_cached_chunk_height_map(chunk_coord, terrain_stride, 1)
+		if height_map.is_empty():
+			height_cache[cache_key] = height_map
+			return -1000.0
+		height_cache[cache_key] = height_map
+	return _sample_height_map_world(height_map, chunk_coord, world_position, terrain_stride)
+
+
+func _sample_height_map_world(height_map: PackedFloat32Array, chunk_coord: Vector2i, world_position: Vector3, terrain_stride: int) -> float:
+	if height_map.is_empty() or terrain_stride <= 0:
+		return -1000.0
+	var map_size := int(round(sqrt(float(height_map.size()))))
+	if map_size <= 0:
+		map_size = terrain_stride
+	var local_xf := clampf(world_position.x - float(chunk_coord.x * terrain_stride), 0.0, float(map_size - 1))
+	var local_zf := clampf(world_position.z - float(chunk_coord.y * terrain_stride), 0.0, float(map_size - 1))
+	var x0 := clampi(int(floorf(local_xf)), 0, map_size - 1)
+	var z0 := clampi(int(floorf(local_zf)), 0, map_size - 1)
+	var x1 := mini(x0 + 1, map_size - 1)
+	var z1 := mini(z0 + 1, map_size - 1)
+	var h00 := _sample_height_map_index(height_map, map_size, x0, z0)
+	var h10 := _sample_height_map_index(height_map, map_size, x1, z0)
+	var h01 := _sample_height_map_index(height_map, map_size, x0, z1)
+	var h11 := _sample_height_map_index(height_map, map_size, x1, z1)
+	if h00 <= -100.0 or h10 <= -100.0 or h01 <= -100.0 or h11 <= -100.0:
+		return -1000.0
+	var tx := local_xf - float(x0)
+	var tz := local_zf - float(z0)
+	return lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
+
+
+func _sample_height_map_index(height_map: PackedFloat32Array, map_size: int, local_x: int, local_z: int) -> float:
+	var index := local_x * map_size + local_z
+	if index < 0 or index >= height_map.size():
+		return -1000.0
+	return float(height_map[index])
 
 
 func _try_get_cached_fast_chunk_surface_height(global_x: float, global_z: float, height_cache: Dictionary) -> float:
@@ -3549,6 +4428,8 @@ func _accumulate_drops(drops: Dictionary, type: VegetationType) -> void:
 
 func _update_ready_state() -> void:
 	var ready := is_vegetation_ready()
+	if ready and not _initial_stream_complete:
+		_initial_stream_complete = true
 	if ready != _last_ready_state:
 		_last_ready_state = ready
 		vegetation_ready_changed.emit(ready)

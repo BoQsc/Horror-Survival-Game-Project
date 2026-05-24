@@ -387,9 +387,14 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "building_visible_nodes": int(building.get("visible_world_map_baked_building_visual_nodes", 0) or 0),
         "building_visible_surfaces": int(building.get("visible_world_map_baked_building_visual_surfaces", 0) or 0),
         "vegetation_global_batches": int(vegetation.get("global_render_batch_count", 0) or 0),
+        "vegetation_instanced_batches": int(vegetation.get("global_instanced_render_batch_count", 0) or 0),
+        "vegetation_instanced_instances": int(vegetation.get("global_instanced_render_instances", 0) or 0),
+        "vegetation_built_instanced_batches": int(vegetation.get("global_built_instanced_render_batch_count", 0) or 0),
+        "vegetation_built_instanced_instances": int(vegetation.get("global_built_instanced_render_instances", 0) or 0),
         "vegetation_profile_active": bool(vegetation.get("world_map_vegetation_render_profile_active", False)),
         "vegetation_bounds_padding": float(vegetation.get("vegetation_global_render_bounds_padding", 0.0) or 0.0),
         "vegetation_ignore_occlusion_culling": bool(vegetation.get("vegetation_global_render_ignore_occlusion_culling", False)),
+        "vegetation_stable_render_membership": bool(vegetation.get("vegetation_stable_render_membership", False)),
         "vegetation_estimated_primitives": int(vegetation.get("global_render_estimated_primitives", 0) or 0),
         "tree_mesh_primitives": int(vegetation.get("tree_mesh_primitives", 0) or 0),
         "grass_mesh_primitives": int(vegetation.get("grass_mesh_primitives", 0) or 0),
@@ -403,6 +408,18 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_tree_batches": int(vegetation.get("global_tree_render_batch_count", 0) or 0),
         "vegetation_grass_batches": int(vegetation.get("global_grass_render_batch_count", 0) or 0),
         "vegetation_rock_batches": int(vegetation.get("global_rock_render_batch_count", 0) or 0),
+        "vegetation_bush_batches": int(vegetation.get("global_bush_render_batch_count", 0) or 0),
+        "vegetation_tree_instanced_batches": int(vegetation.get("global_tree_instanced_render_batch_count", 0) or 0),
+        "vegetation_grass_instanced_batches": int(vegetation.get("global_grass_instanced_render_batch_count", 0) or 0),
+        "vegetation_rock_instanced_batches": int(vegetation.get("global_rock_instanced_render_batch_count", 0) or 0),
+        "vegetation_bush_instanced_batches": int(vegetation.get("global_bush_instanced_render_batch_count", 0) or 0),
+        "vegetation_tree_instanced_instances": int(vegetation.get("global_tree_instanced_render_instances", 0) or 0),
+        "vegetation_grass_instanced_instances": int(vegetation.get("global_grass_instanced_render_instances", 0) or 0),
+        "vegetation_rock_instanced_instances": int(vegetation.get("global_rock_instanced_render_instances", 0) or 0),
+        "vegetation_bush_instanced_instances": int(vegetation.get("global_bush_instanced_render_instances", 0) or 0),
+        "vegetation_tree_camera_culled": int(vegetation.get("global_tree_camera_culled_records", 0) or 0),
+        "vegetation_bush_camera_culled": int(vegetation.get("global_bush_camera_culled_records", 0) or 0),
+        "vegetation_rock_camera_culled": int(vegetation.get("global_rock_camera_culled_records", 0) or 0),
         "vegetation_cluster_size": int(vegetation.get("effective_vegetation_render_cluster_size", 0) or 0),
         "vegetation_grass_cluster_size": int(vegetation.get("effective_vegetation_grass_render_cluster_size", 0) or 0),
         "entity_active": int(entities.get("active_entities", 0) or 0),
@@ -463,7 +480,7 @@ def _print_results(results: list[dict]) -> None:
             "objects={objects:7.1f} ({dobjects:+7.1f}) | prims={prims:9.0f} ({dprims:+9.0f}) pipes={pipes:3d} | "
             "moveW={move_w:5.1f} ({dmove_w:+5.1f}) holdW={hold_w:5.1f} ({dhold_w:+5.1f}) | "
             "terrain={terrain:4d} water={water:4d} "
-            "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{rock}) cluster={cluster}/{grass_cluster} "
+            "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{bush}/{rock}) rs={rs_batches}/{rs_instances} cluster={cluster}/{grass_cluster} "
             "profile={profile} entities={entities:3d}/{entity_max:<3d} phys={physics:3d} frozen={frozen:3d} pend={pending:3d} | "
             "active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
                 case=str(result.get("case", "")),
@@ -486,7 +503,10 @@ def _print_results(results: list[dict]) -> None:
                 veg=int(result.get("vegetation_global_batches", 0) or 0),
                 tree=int(result.get("vegetation_tree_batches", 0) or 0),
                 grass=int(result.get("vegetation_grass_batches", 0) or 0),
+                bush=int(result.get("vegetation_bush_batches", 0) or 0),
                 rock=int(result.get("vegetation_rock_batches", 0) or 0),
+                rs_batches=int(result.get("vegetation_instanced_batches", 0) or 0),
+                rs_instances=int(result.get("vegetation_instanced_instances", 0) or 0),
                 cluster=int(result.get("vegetation_cluster_size", 0) or 0),
                 grass_cluster=int(result.get("vegetation_grass_cluster_size", 0) or 0),
                 profile="on" if bool(result.get("vegetation_profile_active", False)) else "off",
@@ -530,6 +550,31 @@ def _print_results(results: list[dict]) -> None:
                 ground_center="on" if bool(result.get("terrain_collision_ground_center", False)) else "off",
                 force_pending="on" if bool(result.get("terrain_force_pending_finalization", False)) else "off",
                 force_stream="on" if bool(result.get("terrain_force_stream_progress", False)) else "off",
+            )
+        )
+        print(
+            "                     vegRS batches built/visible={built_batches}/{visible_batches} "
+            "instances built/visible={built_instances}/{visible_instances} "
+            "typedBatches tree/grass/bush/rock={tree_batches}/{grass_batches}/{bush_batches}/{rock_batches} "
+            "typedInstances tree/grass/bush/rock={tree_instances}/{grass_instances}/{bush_instances}/{rock_instances} "
+            "cameraCulled tree/bush/rock={tree_culled}/{bush_culled}/{rock_culled} "
+            "stableMembership={stable}".format(
+                built_batches=int(result.get("vegetation_built_instanced_batches", 0) or 0),
+                visible_batches=int(result.get("vegetation_instanced_batches", 0) or 0),
+                built_instances=int(result.get("vegetation_built_instanced_instances", 0) or 0),
+                visible_instances=int(result.get("vegetation_instanced_instances", 0) or 0),
+                tree_batches=int(result.get("vegetation_tree_instanced_batches", 0) or 0),
+                grass_batches=int(result.get("vegetation_grass_instanced_batches", 0) or 0),
+                bush_batches=int(result.get("vegetation_bush_instanced_batches", 0) or 0),
+                rock_batches=int(result.get("vegetation_rock_instanced_batches", 0) or 0),
+                tree_instances=int(result.get("vegetation_tree_instanced_instances", 0) or 0),
+                grass_instances=int(result.get("vegetation_grass_instanced_instances", 0) or 0),
+                bush_instances=int(result.get("vegetation_bush_instanced_instances", 0) or 0),
+                rock_instances=int(result.get("vegetation_rock_instanced_instances", 0) or 0),
+                tree_culled=int(result.get("vegetation_tree_camera_culled", 0) or 0),
+                bush_culled=int(result.get("vegetation_bush_camera_culled", 0) or 0),
+                rock_culled=int(result.get("vegetation_rock_camera_culled", 0) or 0),
+                stable="on" if bool(result.get("vegetation_stable_render_membership", False)) else "off",
             )
         )
         print(

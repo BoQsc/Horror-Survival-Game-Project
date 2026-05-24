@@ -11,7 +11,7 @@ signal all_vegetation_ready
 @export var terrain_manager: NodePath
 @export var registry: VegetationRegistry
 @export var world_seed: int = 12345
-@export var chunk_size: int = 32
+@export var chunk_size: int = 31
 @export var initial_stream_radius_chunks: int = 10
 @export var active_stream_radius_chunks: int = 10
 @export var benchmark_profile: StringName = &"world_dense"
@@ -25,27 +25,43 @@ signal all_vegetation_ready
 @export var mock_terrain_base_height: float = 0.0
 @export var mock_terrain_wave_amplitude: float = 1.5
 @export var mock_terrain_wave_frequency: float = 0.05
-@export var max_rebuilds_per_frame: int = 2
-@export var max_generations_per_frame: int = 2
-@export_range(1, 16, 1) var max_render_cluster_rebuilds_per_frame: int = 3
+@export var max_rebuilds_per_frame: int = 16
+@export var max_generations_per_frame: int = 24
+@export_range(1, 32, 1) var max_render_cluster_rebuilds_per_frame: int = 8
+@export_range(0.0, 20.0, 0.1) var initial_generation_budget_ms: float = 6.0
+@export_range(0.0, 20.0, 0.1) var stream_generation_budget_ms: float = 1.5
+@export_range(0.0, 20.0, 0.1) var initial_rebuild_budget_ms: float = 5.0
+@export_range(0.0, 20.0, 0.1) var stream_rebuild_budget_ms: float = 1.5
+@export_range(0.0, 20.0, 0.1) var initial_render_upload_budget_ms: float = 5.0
+@export_range(0.0, 20.0, 0.1) var stream_render_upload_budget_ms: float = 1.5
 @export var use_native_chunk_builder: bool = true
 @export var use_native_spatial_grid: bool = true
 @export var use_grass_source_meshes: bool = true
 @export var allow_debug_grass_cards: bool = false
 @export var road_clearance: float = 2.0
 @export var individual_tree_radius_chunks: int = 0
-@export_range(1, 8, 1) var render_cluster_size_chunks: int = 2
+@export_range(1, 16, 1) var render_cluster_size_chunks: int = 4
 @export var batch_individual_records_in_render_clusters: bool = true
+@export var use_instanced_render_clusters: bool = false
+@export var use_instanced_grass_clusters: bool = false
 @export_range(0, 10, 1) var individual_record_radius_chunks: int = 0
 @export var camera_cull_chunk_mesh_records: bool = true
+@export var camera_cull_instanced_records: bool = true
 @export_range(0, 10, 1) var camera_full_detail_radius_chunks: int = 3
 @export_range(0.0, 90.0, 1.0) var camera_cone_margin_degrees: float = 10.0
 @export_range(0.0, 90.0, 1.0) var zoom_cone_margin_degrees: float = 5.0
 @export_range(0.0, 120.0, 1.0) var camera_prefetch_margin_degrees: float = 12.0
 @export_range(0.0, 120.0, 1.0) var zoom_prefetch_margin_degrees: float = 8.0
+@export_range(0.0, 90.0, 1.0) var instanced_record_cone_margin_degrees: float = 6.0
+@export_range(0.0, 90.0, 1.0) var instanced_record_prefetch_margin_degrees: float = 5.0
+@export_range(0.0, 90.0, 1.0) var zoom_instanced_record_cone_margin_degrees: float = 4.0
+@export_range(0.0, 90.0, 1.0) var zoom_instanced_record_prefetch_margin_degrees: float = 3.0
+@export var screen_occlusion_cull_tree_records: bool = true
+@export_range(16, 256, 1) var screen_occlusion_grid_columns: int = 96
+@export_range(9, 144, 1) var screen_occlusion_grid_rows: int = 54
 @export_range(0, 600, 1) var visibility_hide_grace_frames: int = 180
 @export_range(1.0, 90.0, 1.0) var zoom_fov_threshold_degrees: float = 42.0
-@export_range(1, 128, 1) var max_visibility_sync_chunks_per_frame: int = 8
+@export_range(1, 128, 1) var max_visibility_sync_chunks_per_frame: int = 96
 @export_range(0, 600, 1) var hidden_instance_grace_frames: int = 180
 @export_range(1, 128, 1) var max_hidden_instance_frees_per_frame: int = 16
 @export_range(1, 128, 1) var max_hidden_instance_eviction_chunks_per_frame: int = 16
@@ -108,6 +124,7 @@ func _bootstrap_impl() -> void:
 		benchmark_profile = StringName(profile_override)
 	elif OS.get_environment("TOWN_STALL_VEGETATION_MAX_TREES").strip_edges() == "1":
 		benchmark_profile = &"world_dense_max_trees"
+	_apply_env_overrides()
 	_terrain_manager = _resolve_terrain_manager()
 	var initial_focus := _get_focus_position()
 	focus_position = initial_focus
@@ -141,6 +158,12 @@ func _bootstrap_impl() -> void:
 		"max_rebuilds_per_frame": max_rebuilds_per_frame,
 		"max_generations_per_frame": max_generations_per_frame,
 		"max_render_cluster_rebuilds_per_frame": max_render_cluster_rebuilds_per_frame,
+		"initial_generation_budget_ms": initial_generation_budget_ms,
+		"stream_generation_budget_ms": stream_generation_budget_ms,
+		"initial_rebuild_budget_ms": initial_rebuild_budget_ms,
+		"stream_rebuild_budget_ms": stream_rebuild_budget_ms,
+		"initial_render_upload_budget_ms": initial_render_upload_budget_ms,
+		"stream_render_upload_budget_ms": stream_render_upload_budget_ms,
 		"use_native_chunk_builder": use_native_chunk_builder,
 		"use_native_spatial_grid": use_native_spatial_grid,
 		"use_grass_source_meshes": use_grass_source_meshes,
@@ -149,13 +172,23 @@ func _bootstrap_impl() -> void:
 		"individual_tree_radius_chunks": individual_tree_radius_chunks,
 		"render_cluster_size_chunks": render_cluster_size_chunks,
 		"batch_individual_records_in_render_clusters": batch_individual_records_in_render_clusters,
+		"use_instanced_render_clusters": use_instanced_render_clusters,
+		"use_instanced_grass_clusters": use_instanced_grass_clusters,
 		"individual_record_radius_chunks": individual_record_radius_chunks,
 		"camera_cull_chunk_mesh_records": camera_cull_chunk_mesh_records,
+		"camera_cull_instanced_records": camera_cull_instanced_records,
 		"camera_full_detail_radius_chunks": camera_full_detail_radius_chunks,
 		"camera_cone_margin_degrees": camera_cone_margin_degrees,
 		"zoom_cone_margin_degrees": zoom_cone_margin_degrees,
 		"camera_prefetch_margin_degrees": camera_prefetch_margin_degrees,
 		"zoom_prefetch_margin_degrees": zoom_prefetch_margin_degrees,
+		"instanced_record_cone_margin_degrees": instanced_record_cone_margin_degrees,
+		"instanced_record_prefetch_margin_degrees": instanced_record_prefetch_margin_degrees,
+		"zoom_instanced_record_cone_margin_degrees": zoom_instanced_record_cone_margin_degrees,
+		"zoom_instanced_record_prefetch_margin_degrees": zoom_instanced_record_prefetch_margin_degrees,
+		"screen_occlusion_cull_tree_records": screen_occlusion_cull_tree_records,
+		"screen_occlusion_grid_columns": screen_occlusion_grid_columns,
+		"screen_occlusion_grid_rows": screen_occlusion_grid_rows,
 		"visibility_hide_grace_frames": visibility_hide_grace_frames,
 		"zoom_fov_threshold_degrees": zoom_fov_threshold_degrees,
 		"max_visibility_sync_chunks_per_frame": max_visibility_sync_chunks_per_frame,
@@ -242,7 +275,18 @@ func _sync_render_camera() -> void:
 	if camera == null or not is_instance_valid(camera):
 		return
 	var forward := -camera.global_transform.basis.z
-	runtime.set_render_camera(camera.global_position, forward, camera.fov)
+	var viewport_size := get_viewport().get_visible_rect().size
+	var aspect := 1.777778
+	if viewport_size.y > 0.0:
+		aspect = viewport_size.x / viewport_size.y
+	runtime.set_render_camera(
+		camera.global_position,
+		forward,
+		camera.fov,
+		camera.global_transform.basis.x,
+		camera.global_transform.basis.y,
+		aspect
+	)
 
 
 func harvest_area(position: Vector3, radius: float, tool: StringName = &"hand") -> Dictionary:
@@ -332,6 +376,54 @@ func _runtime_rock_y_offset() -> float:
 	if use_grass_source_meshes and absf(rock_y_offset) >= 0.2:
 		return 0.0
 	return rock_y_offset
+
+
+func _apply_env_overrides() -> void:
+	render_cluster_size_chunks = _get_env_int_range("TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE", render_cluster_size_chunks, 1, 16)
+	render_cluster_size_chunks = _get_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE", render_cluster_size_chunks, 1, 16)
+	max_generations_per_frame = _get_env_int_range("TOWN_STALL_VEGETATION_MAX_GENERATIONS_PER_FRAME", max_generations_per_frame, 1, 128)
+	max_rebuilds_per_frame = _get_env_int_range("TOWN_STALL_VEGETATION_MAX_REBUILDS_PER_FRAME", max_rebuilds_per_frame, 1, 128)
+	max_render_cluster_rebuilds_per_frame = _get_env_int_range("TOWN_STALL_VEGETATION_MAX_RENDER_CLUSTER_REBUILDS_PER_FRAME", max_render_cluster_rebuilds_per_frame, 1, 128)
+	max_visibility_sync_chunks_per_frame = _get_env_int_range("TOWN_STALL_VEGETATION_MAX_VISIBILITY_SYNCS_PER_FRAME", max_visibility_sync_chunks_per_frame, 1, 128)
+	camera_full_detail_radius_chunks = _get_env_int_range("TOWN_STALL_VEGETATION_FULL_DETAIL_RADIUS_CHUNKS", camera_full_detail_radius_chunks, 0, 10)
+	batch_individual_records_in_render_clusters = _get_env_bool("TOWN_STALL_VEGETATION_BATCH_RECORDS_IN_CHUNKS", batch_individual_records_in_render_clusters)
+	camera_cull_instanced_records = _get_env_bool("TOWN_STALL_VEGETATION_CAMERA_CULL_RECORDS", camera_cull_instanced_records)
+	screen_occlusion_cull_tree_records = _get_env_bool("TOWN_STALL_VEGETATION_SCREEN_OCCLUSION_CULL_TREES", screen_occlusion_cull_tree_records)
+	use_instanced_render_clusters = _get_env_bool("TOWN_STALL_VEGETATION_USE_RS_MULTIMESH", use_instanced_render_clusters)
+	use_instanced_grass_clusters = _get_env_bool("TOWN_STALL_VEGETATION_USE_GRASS_RS_MULTIMESH", use_instanced_grass_clusters)
+	initial_generation_budget_ms = _get_env_float_range("TOWN_STALL_VEGETATION_INITIAL_GENERATION_BUDGET_MS", initial_generation_budget_ms, 0.0, 20.0)
+	stream_generation_budget_ms = _get_env_float_range("TOWN_STALL_VEGETATION_STREAM_GENERATION_BUDGET_MS", stream_generation_budget_ms, 0.0, 20.0)
+	initial_rebuild_budget_ms = _get_env_float_range("TOWN_STALL_VEGETATION_INITIAL_REBUILD_BUDGET_MS", initial_rebuild_budget_ms, 0.0, 20.0)
+	stream_rebuild_budget_ms = _get_env_float_range("TOWN_STALL_VEGETATION_STREAM_REBUILD_BUDGET_MS", stream_rebuild_budget_ms, 0.0, 20.0)
+	initial_render_upload_budget_ms = _get_env_float_range("TOWN_STALL_VEGETATION_INITIAL_UPLOAD_BUDGET_MS", initial_render_upload_budget_ms, 0.0, 20.0)
+	stream_render_upload_budget_ms = _get_env_float_range("TOWN_STALL_VEGETATION_STREAM_UPLOAD_BUDGET_MS", stream_render_upload_budget_ms, 0.0, 20.0)
+
+
+func _get_env_int_range(name: String, fallback: int, min_value: int, max_value: int) -> int:
+	var value := OS.get_environment(name).strip_edges()
+	if value.is_empty():
+		return fallback
+	if not value.is_valid_int():
+		push_warning("Ignoring invalid %s=%s" % [name, value])
+		return fallback
+	return clampi(int(value), min_value, max_value)
+
+
+func _get_env_float_range(name: String, fallback: float, min_value: float, max_value: float) -> float:
+	var value := OS.get_environment(name).strip_edges()
+	if value.is_empty():
+		return fallback
+	if not value.is_valid_float():
+		push_warning("Ignoring invalid %s=%s" % [name, value])
+		return fallback
+	return clampf(float(value), min_value, max_value)
+
+
+func _get_env_bool(name: String, fallback: bool) -> bool:
+	var value := OS.get_environment(name).strip_edges().to_lower()
+	if value.is_empty():
+		return fallback
+	return value == "1" or value == "true" or value == "yes" or value == "on"
 
 
 func _on_runtime_vegetation_ready_changed(ready: bool) -> void:

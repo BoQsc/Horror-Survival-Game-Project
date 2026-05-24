@@ -32,11 +32,65 @@ static inline Color color_for_type(const Dictionary &type_colors, const StringNa
     return Color(base.r * maturity_scale, base.g * maturity_scale, base.b * maturity_scale, base.a);
 }
 
+static inline void pack_transform_to_multimesh_buffer(const Transform3D &transform, float *write_ptr) {
+    const Vector3 basis_x = transform.basis.get_column(0);
+    const Vector3 basis_y = transform.basis.get_column(1);
+    const Vector3 basis_z = transform.basis.get_column(2);
+
+    write_ptr[0] = static_cast<float>(basis_x.x);
+    write_ptr[1] = static_cast<float>(basis_y.x);
+    write_ptr[2] = static_cast<float>(basis_z.x);
+    write_ptr[3] = static_cast<float>(transform.origin.x);
+    write_ptr[4] = static_cast<float>(basis_x.y);
+    write_ptr[5] = static_cast<float>(basis_y.y);
+    write_ptr[6] = static_cast<float>(basis_z.y);
+    write_ptr[7] = static_cast<float>(transform.origin.y);
+    write_ptr[8] = static_cast<float>(basis_x.z);
+    write_ptr[9] = static_cast<float>(basis_y.z);
+    write_ptr[10] = static_cast<float>(basis_z.z);
+    write_ptr[11] = static_cast<float>(transform.origin.z);
+}
+
+static inline void expand_bounds(Vector3 &bounds_min, Vector3 &bounds_max, bool &has_bounds, const Vector3 &point) {
+    if (!has_bounds) {
+        bounds_min = point;
+        bounds_max = point;
+        has_bounds = true;
+        return;
+    }
+    bounds_min.x = std::min(bounds_min.x, point.x);
+    bounds_min.y = std::min(bounds_min.y, point.y);
+    bounds_min.z = std::min(bounds_min.z, point.z);
+    bounds_max.x = std::max(bounds_max.x, point.x);
+    bounds_max.y = std::max(bounds_max.y, point.y);
+    bounds_max.z = std::max(bounds_max.z, point.z);
+}
+
+static inline void expand_transformed_aabb(Vector3 &bounds_min, Vector3 &bounds_max, bool &has_bounds, const AABB &source_bounds, const Transform3D &transform) {
+    const Vector3 min_v = source_bounds.position;
+    const Vector3 max_v = source_bounds.position + source_bounds.size;
+    const Vector3 points[8] = {
+            Vector3(min_v.x, min_v.y, min_v.z),
+            Vector3(max_v.x, min_v.y, min_v.z),
+            Vector3(min_v.x, max_v.y, min_v.z),
+            Vector3(max_v.x, max_v.y, min_v.z),
+            Vector3(min_v.x, min_v.y, max_v.z),
+            Vector3(max_v.x, min_v.y, max_v.z),
+            Vector3(min_v.x, max_v.y, max_v.z),
+            Vector3(max_v.x, max_v.y, max_v.z),
+    };
+
+    for (const Vector3 &point : points) {
+        expand_bounds(bounds_min, bounds_max, has_bounds, transform.xform(point));
+    }
+}
+
 } // namespace
 
 void VegetationChunkBuilder::_bind_methods() {
     ClassDB::bind_method(D_METHOD("build_grass_card_mesh", "cells", "type_colors", "half_width", "height"), &VegetationChunkBuilder::build_grass_card_mesh);
     ClassDB::bind_method(D_METHOD("build_source_mesh_instances", "records", "source_arrays", "source_transform", "chunk_origin", "type_colors", "rotation_is_turns"), &VegetationChunkBuilder::build_source_mesh_instances);
+    ClassDB::bind_method(D_METHOD("build_multimesh_transform_buffer", "records", "source_transform", "source_bounds", "rotation_is_turns"), &VegetationChunkBuilder::build_multimesh_transform_buffer);
 }
 
 VegetationChunkBuilder::VegetationChunkBuilder() {}
@@ -389,6 +443,71 @@ Dictionary VegetationChunkBuilder::build_source_mesh_instances(const Array &reco
     result["primitive_count"] = total_indices / 3;
     result["vertex_count"] = total_vertices;
     result["first_type_id"] = first_type_id;
+    return result;
+}
+
+Dictionary VegetationChunkBuilder::build_multimesh_transform_buffer(const Array &records, const Transform3D &source_transform, const AABB &source_bounds, bool rotation_is_turns) {
+    Dictionary result;
+    result["visible_count"] = 0;
+
+    if (records.is_empty()) {
+        return result;
+    }
+
+    int visible_count = 0;
+    for (int i = 0; i < records.size(); ++i) {
+        Dictionary record = records[i];
+        if (static_cast<bool>(record.get("harvested", false))) {
+            continue;
+        }
+        ++visible_count;
+    }
+    if (visible_count <= 0) {
+        return result;
+    }
+
+    PackedFloat32Array buffer;
+    buffer.resize(visible_count * 12);
+    float *write_ptr = buffer.ptrw();
+    int write_offset = 0;
+    bool has_bounds = false;
+    Vector3 bounds_min;
+    Vector3 bounds_max;
+    constexpr double TAU_D = 6.28318530717958647692;
+
+    for (int i = 0; i < records.size(); ++i) {
+        Dictionary record = records[i];
+        if (static_cast<bool>(record.get("harvested", false))) {
+            continue;
+        }
+
+        const Vector3 world_position = record.get("position", Vector3());
+        double rotation = static_cast<double>(record.get("rotation", 0.0));
+        if (rotation_is_turns) {
+            rotation *= TAU_D;
+        }
+        const double scale = std::max(0.0001, static_cast<double>(record.get("scale", 1.0)));
+
+        Transform3D transform;
+        transform = transform.rotated(Vector3(0.0, 1.0, 0.0), rotation);
+        transform = transform.scaled(Vector3(scale, scale, scale));
+        transform.origin = world_position;
+        const Transform3D full_transform = transform * source_transform;
+
+        pack_transform_to_multimesh_buffer(full_transform, write_ptr + write_offset);
+        write_offset += 12;
+
+        if (source_bounds.size == Vector3()) {
+            expand_bounds(bounds_min, bounds_max, has_bounds, full_transform.origin);
+        } else {
+            expand_transformed_aabb(bounds_min, bounds_max, has_bounds, source_bounds, full_transform);
+        }
+    }
+
+    result["buffer"] = buffer;
+    result["bounds"] = has_bounds ? AABB(bounds_min, bounds_max - bounds_min) : AABB();
+    result["has_bounds"] = has_bounds;
+    result["visible_count"] = visible_count;
     return result;
 }
 

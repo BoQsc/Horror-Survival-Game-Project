@@ -228,12 +228,194 @@ static func _make_fast_source_material(source_path: String, alpha_scissor_thresh
 		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR if alpha_scissor_threshold > 0.0 else BaseMaterial3D.TRANSPARENCY_DISABLED
 		material.alpha_scissor_threshold = clampf(alpha_scissor_threshold, 0.0, 1.0)
 		material.cull_mode = BaseMaterial3D.CULL_DISABLED if double_sided else BaseMaterial3D.CULL_BACK
+		material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
+		material.roughness = 1.0
+		material.metallic = 0.0
+		material.metallic_specular = 0.0
+		material.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+		material.disable_specular_occlusion = true
 		if force_unshaded:
 			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			material.normal_enabled = false
 		return material
 	if source_material != null:
 		return source_material
 	return null
+
+
+static func _make_textured_cutout_material(source_path: String, alpha_scissor_threshold: float) -> Material:
+	var shader := load("res://world_vegetation/shaders/vegetation_textured_cutout.gdshader") as Shader
+	if shader == null:
+		return _make_fast_source_material(source_path, alpha_scissor_threshold, true, true)
+	var probe := VegetationType.new()
+	probe.source_path = source_path
+	var source_material := probe.get_material_for_surface(0)
+	var texture: Texture2D = null
+	if source_material is BaseMaterial3D:
+		texture = (source_material as BaseMaterial3D).albedo_texture
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("alpha_scissor_threshold", clampf(alpha_scissor_threshold, 0.0, 1.0))
+	if texture != null:
+		material.set_shader_parameter("albedo_texture", texture)
+	return material
+
+
+static func _make_alpha_scissor_pruned_source_mesh(source_path: String, alpha_scissor_threshold: float) -> Mesh:
+	var probe := VegetationType.new()
+	probe.source_path = source_path
+	var source_mesh := probe.get_source_mesh()
+	if source_mesh == null or source_mesh.get_surface_count() <= 0:
+		return source_mesh
+	var source_material := probe.get_material_for_surface(0)
+	if not (source_material is BaseMaterial3D):
+		return source_mesh
+	var texture := (source_material as BaseMaterial3D).albedo_texture
+	if texture == null:
+		return source_mesh
+	var image := texture.get_image()
+	if image == null or image.is_empty():
+		return source_mesh
+	if image.is_compressed():
+		var err := image.decompress()
+		if err != OK:
+			return source_mesh
+	var optimized_mesh := ArrayMesh.new()
+	var removed_any := false
+	for surface_index in range(source_mesh.get_surface_count()):
+		var source_arrays := source_mesh.surface_get_arrays(surface_index)
+		var optimized_arrays := _prune_alpha_scissor_surface_arrays(source_arrays, image, alpha_scissor_threshold)
+		if optimized_arrays.is_empty():
+			optimized_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, source_arrays)
+		else:
+			removed_any = true
+			optimized_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, optimized_arrays)
+		var material := source_mesh.surface_get_material(surface_index)
+		if material != null:
+			optimized_mesh.surface_set_material(surface_index, material)
+	return optimized_mesh if removed_any else source_mesh
+
+
+static func _prune_alpha_scissor_surface_arrays(source_arrays: Array, image: Image, alpha_scissor_threshold: float) -> Array:
+	if source_arrays.size() <= Mesh.ARRAY_TEX_UV:
+		return []
+	var vertices: PackedVector3Array = source_arrays[Mesh.ARRAY_VERTEX]
+	var uvs: PackedVector2Array = source_arrays[Mesh.ARRAY_TEX_UV]
+	if vertices.is_empty() or uvs.size() != vertices.size():
+		return []
+	var source_indices := PackedInt32Array()
+	if source_arrays.size() > Mesh.ARRAY_INDEX and source_arrays[Mesh.ARRAY_INDEX] != null:
+		source_indices = source_arrays[Mesh.ARRAY_INDEX]
+	if source_indices.is_empty():
+		source_indices.resize(vertices.size())
+		for i in range(vertices.size()):
+			source_indices[i] = i
+	var new_arrays: Array = []
+	new_arrays.resize(Mesh.ARRAY_MAX)
+	var new_vertices := PackedVector3Array()
+	var new_normals := PackedVector3Array()
+	var new_tangents := PackedFloat32Array()
+	var new_uvs := PackedVector2Array()
+	var new_colors := PackedColorArray()
+	var new_indices := PackedInt32Array()
+	var source_normals: PackedVector3Array = source_arrays[Mesh.ARRAY_NORMAL] if source_arrays.size() > Mesh.ARRAY_NORMAL and source_arrays[Mesh.ARRAY_NORMAL] != null else PackedVector3Array()
+	var source_tangents: PackedFloat32Array = source_arrays[Mesh.ARRAY_TANGENT] if source_arrays.size() > Mesh.ARRAY_TANGENT and source_arrays[Mesh.ARRAY_TANGENT] != null else PackedFloat32Array()
+	var source_colors: PackedColorArray = source_arrays[Mesh.ARRAY_COLOR] if source_arrays.size() > Mesh.ARRAY_COLOR and source_arrays[Mesh.ARRAY_COLOR] != null else PackedColorArray()
+	var use_normals := source_normals.size() == vertices.size()
+	var use_tangents := source_tangents.size() == vertices.size() * 4
+	var use_colors := source_colors.size() == vertices.size()
+	var remap := {}
+	var removed_count := 0
+	for index in range(0, source_indices.size() - 2, 3):
+		var a := int(source_indices[index])
+		var b := int(source_indices[index + 1])
+		var c := int(source_indices[index + 2])
+		if a < 0 or b < 0 or c < 0 or a >= vertices.size() or b >= vertices.size() or c >= vertices.size():
+			continue
+		if _triangle_fully_alpha_rejected(uvs[a], uvs[b], uvs[c], image, alpha_scissor_threshold):
+			removed_count += 1
+			continue
+		new_indices.append(_remap_source_vertex(a, remap, vertices, source_normals, source_tangents, uvs, source_colors, use_normals, use_tangents, use_colors, new_vertices, new_normals, new_tangents, new_uvs, new_colors))
+		new_indices.append(_remap_source_vertex(b, remap, vertices, source_normals, source_tangents, uvs, source_colors, use_normals, use_tangents, use_colors, new_vertices, new_normals, new_tangents, new_uvs, new_colors))
+		new_indices.append(_remap_source_vertex(c, remap, vertices, source_normals, source_tangents, uvs, source_colors, use_normals, use_tangents, use_colors, new_vertices, new_normals, new_tangents, new_uvs, new_colors))
+	if removed_count <= 0 or new_vertices.is_empty() or new_indices.is_empty():
+		return []
+	new_arrays[Mesh.ARRAY_VERTEX] = new_vertices
+	if use_normals:
+		new_arrays[Mesh.ARRAY_NORMAL] = new_normals
+	if use_tangents:
+		new_arrays[Mesh.ARRAY_TANGENT] = new_tangents
+	new_arrays[Mesh.ARRAY_TEX_UV] = new_uvs
+	if use_colors:
+		new_arrays[Mesh.ARRAY_COLOR] = new_colors
+	new_arrays[Mesh.ARRAY_INDEX] = new_indices
+	return new_arrays
+
+
+static func _triangle_fully_alpha_rejected(a: Vector2, b: Vector2, c: Vector2, image: Image, alpha_scissor_threshold: float) -> bool:
+	var samples := [
+		a,
+		b,
+		c,
+		(a + b + c) / 3.0,
+		(a + b) * 0.5,
+		(b + c) * 0.5,
+		(c + a) * 0.5
+	]
+	for uv_variant in samples:
+		var uv: Vector2 = uv_variant
+		if _sample_alpha_scissor_uv(image, uv, false) > alpha_scissor_threshold:
+			return false
+		if _sample_alpha_scissor_uv(image, uv, true) > alpha_scissor_threshold:
+			return false
+	return true
+
+
+static func _sample_alpha_scissor_uv(image: Image, uv: Vector2, flip_v: bool) -> float:
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return 1.0
+	var sample_v := 1.0 - uv.y if flip_v else uv.y
+	var x := clampi(int(fposmod(uv.x, 1.0) * float(width - 1) + 0.5), 0, width - 1)
+	var y := clampi(int(fposmod(sample_v, 1.0) * float(height - 1) + 0.5), 0, height - 1)
+	return image.get_pixel(x, y).a
+
+
+static func _remap_source_vertex(
+		source_index: int,
+		remap: Dictionary,
+		source_vertices: PackedVector3Array,
+		source_normals: PackedVector3Array,
+		source_tangents: PackedFloat32Array,
+		source_uvs: PackedVector2Array,
+		source_colors: PackedColorArray,
+		use_normals: bool,
+		use_tangents: bool,
+		use_colors: bool,
+		new_vertices: PackedVector3Array,
+		new_normals: PackedVector3Array,
+		new_tangents: PackedFloat32Array,
+		new_uvs: PackedVector2Array,
+		new_colors: PackedColorArray
+) -> int:
+	if remap.has(source_index):
+		return int(remap[source_index])
+	var new_index := new_vertices.size()
+	remap[source_index] = new_index
+	new_vertices.append(source_vertices[source_index])
+	if use_normals:
+		new_normals.append(source_normals[source_index])
+	if use_tangents:
+		var tangent_index := source_index * 4
+		new_tangents.append(source_tangents[tangent_index])
+		new_tangents.append(source_tangents[tangent_index + 1])
+		new_tangents.append(source_tangents[tangent_index + 2])
+		new_tangents.append(source_tangents[tangent_index + 3])
+	new_uvs.append(source_uvs[source_index])
+	if use_colors:
+		new_colors.append(source_colors[source_index])
+	return new_index
 
 
 static func _transform_aabb(aabb: AABB, transform: Transform3D) -> AABB:
@@ -310,12 +492,13 @@ static func create_default():
 	var tree_source := "res://models/tree/1/pine_tree_-_ps1_low_poly.glb"
 	var grass_source := "res://models/grass/2/grass_lowpoly.glb"
 	var rock_source := "res://models/small_rock/simple_rock_-_ps1_low_poly.glb"
+	var tree_source_mesh := _make_alpha_scissor_pruned_source_mesh(tree_source, 0.48)
 	var grass_source_transform := _make_grounded_source_transform(grass_source, true)
 	# Preserve the authored tree scene transform. AABB-grounding this GLB lifts
 	# the visible trunk several meters above the sampled terrain surface.
 	var tree_source_transform := _make_imported_source_transform(tree_source)
 	var rock_source_transform := _make_imported_grounded_source_transform(rock_source, true)
-	var grass_source_material := _make_fast_source_material(grass_source, 0.45, true, true)
+	var grass_source_material := _make_textured_cutout_material(grass_source, 0.45)
 	var tree_source_material := _make_fast_source_material(tree_source, 0.48, true, false)
 	var rock_source_material := _make_fast_source_material(rock_source, 0.0, false, false)
 	var vegetation_chunk_material := _make_opaque_vertex_material(Color(1.0, 1.0, 1.0, 1.0))
@@ -533,6 +716,7 @@ static func create_default():
 	pine_tree.instance_scale = 1.0
 	pine_tree.support_radius = 1.1
 	pine_tree.support_height = 8.0
+	pine_tree.source_mesh = tree_source_mesh
 	pine_tree.mesh_source_transform = tree_source_transform
 	pine_tree.material = tree_source_material
 	pine_tree.support_points = [
@@ -564,6 +748,7 @@ static func create_default():
 	dead_tree.instance_scale = 0.9
 	dead_tree.support_radius = 1.1
 	dead_tree.support_height = 7.0
+	dead_tree.source_mesh = tree_source_mesh
 	dead_tree.mesh_source_transform = tree_source_transform
 	dead_tree.material = tree_source_material
 	dead_tree.support_points = [

@@ -2766,6 +2766,10 @@ func _collect_world_ready_status(terrain_ready: bool, loading_screen_done: bool)
 	status["vegetation_visible_grass_count"] = int(vegetation_telemetry.get("global_grass_render_instances", 0))
 	status["vegetation_grass_batch_count"] = int(vegetation_telemetry.get("global_grass_render_batch_count", 0))
 	status["vegetation_chunk_mesh_batch_count"] = int(vegetation_telemetry.get("global_chunk_mesh_render_batch_count", 0))
+	status["vegetation_instanced_batch_count"] = int(vegetation_telemetry.get("global_instanced_render_batch_count", 0))
+	status["vegetation_instanced_instance_count"] = int(vegetation_telemetry.get("global_instanced_render_instances", 0))
+	status["vegetation_built_instanced_batch_count"] = int(vegetation_telemetry.get("global_built_instanced_render_batch_count", 0))
+	status["vegetation_built_instanced_instance_count"] = int(vegetation_telemetry.get("global_built_instanced_render_instances", 0))
 	status["vegetation_tree_count"] = int(vegetation_telemetry.get("tree_record_count", 0))
 	status["vegetation_visible_tree_count"] = int(vegetation_telemetry.get("global_tree_render_instances", 0))
 	status["vegetation_bush_count"] = int(vegetation_telemetry.get("bush_record_count", 0))
@@ -2816,7 +2820,7 @@ func _maybe_log_world_ready_status(terrain_ready: bool, loading_screen_done: boo
 		int(status.get("vegetation_pending_chunks", 0))
 	])
 	if bool(status.get("vegetation_telemetry_available", false)):
-		print("[TOWN_STALL_TEST] Vegetation wait profile=%s terrain_ref=%s stream=%s coverage=%.0fm(%.1frd) chunks=%d live=%d grass=%d/%d chunk_batches=%d grass_chunks=%d trees=%d/%d bushes=%d/%d rocks=%d/%d rids=%d focus=%s gen=%.2fms rebuild=%.2fms scenario=%s" % [
+		print("[TOWN_STALL_TEST] Vegetation wait profile=%s terrain_ref=%s stream=%s coverage=%.0fm(%.1frd) chunks=%d live=%d grass=%d/%d chunk_batches=%d grass_batches=%d rs=%d/%d built_rs=%d/%d trees=%d/%d bushes=%d/%d rocks=%d/%d rids=%d focus=%s gen=%.2fms rebuild=%.2fms scenario=%s" % [
 			str(status.get("vegetation_profile", "")),
 			str(status.get("vegetation_terrain_manager_valid", false)),
 			str(status.get("vegetation_terrain_streaming_ready", false)),
@@ -2828,6 +2832,10 @@ func _maybe_log_world_ready_status(terrain_ready: bool, loading_screen_done: boo
 			int(status.get("vegetation_grass_cell_count", 0)),
 			int(status.get("vegetation_chunk_mesh_batch_count", 0)),
 			int(status.get("vegetation_grass_batch_count", 0)),
+			int(status.get("vegetation_instanced_batch_count", 0)),
+			int(status.get("vegetation_instanced_instance_count", 0)),
+			int(status.get("vegetation_built_instanced_batch_count", 0)),
+			int(status.get("vegetation_built_instanced_instance_count", 0)),
 			int(status.get("vegetation_visible_tree_count", 0)),
 			int(status.get("vegetation_tree_count", 0)),
 			int(status.get("vegetation_visible_bush_count", 0)),
@@ -2873,7 +2881,9 @@ func _poll_world_ready() -> void:
 		loading_screen_done = not bool(loading_screen.get("is_loading"))
 
 	var status := _collect_world_ready_status(terrain_ready, loading_screen_done)
-	if not terrain_ready or not loading_screen_done:
+	var vegetation_ready := _is_town_vegetation_stream_ready()
+	status["vegetation_ready"] = vegetation_ready
+	if not terrain_ready or not loading_screen_done or not vegetation_ready:
 		_maybe_log_world_ready_status(terrain_ready, loading_screen_done)
 		_update_world_ready_stall(status)
 		return
@@ -3474,11 +3484,13 @@ func _update_world_ready_stall(status: Dictionary) -> void:
 		world_ready_stall_signature = ""
 		world_ready_stall_last_progress_phase_time = phase_time
 		return
-	if bool(status.get("terrain_ready", false)) and bool(status.get("loading_screen_done", false)):
+	if bool(status.get("terrain_ready", false)) \
+			and bool(status.get("loading_screen_done", false)) \
+			and bool(status.get("vegetation_ready", true)):
 		world_ready_stall_signature = ""
 		world_ready_stall_last_progress_phase_time = phase_time
 		return
-	var signature := "%s|%s|%s|%s|%s|%s|%s|%s|%s" % [
+	var signature := "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" % [
 		str(status.get("loading_screen_stage", -1)),
 		str(status.get("loading_screen_progress", -1.0)),
 		str(status.get("terrain_pending_node_count", -1)),
@@ -3487,7 +3499,9 @@ func _update_world_ready_stall(status: Dictionary) -> void:
 		str(status.get("terrain_last_update_backend", "")),
 		str(status.get("terrain_loading_paused", false)),
 		str(status.get("building_pending_baked_apply_phases", 0)),
-		str(status.get("prefab_pending_baked_payload_jobs", 0))
+		str(status.get("prefab_pending_baked_payload_jobs", 0)),
+		str(status.get("vegetation_ready", true)),
+		str(status.get("vegetation_pending_chunks", 0))
 	]
 	if signature != world_ready_stall_signature:
 		world_ready_stall_signature = signature

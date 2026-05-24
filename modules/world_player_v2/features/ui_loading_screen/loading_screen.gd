@@ -153,17 +153,16 @@ func _start_loading_sequence() -> void:
 	
 	# Stage 3: Vegetation - wait for trees/grass/rocks to spawn
 	if is_loading and current_stage == Stage.VEGETATION:
+		if not vegetation_manager or not is_instance_valid(vegetation_manager):
+			vegetation_manager = get_tree().get_first_node_in_group("vegetation_manager")
 		if vegetation_manager and is_instance_valid(vegetation_manager):
 			var is_veg_ready = false
 			if vegetation_manager.has_method("is_vegetation_ready"):
 				is_veg_ready = vegetation_manager.is_vegetation_ready()
 			else:
 				is_veg_ready = true # Skip if method not available
-			var pending_chunks := 0
-			if vegetation_manager.has_method("get_pending_chunks_count"):
-				pending_chunks = vegetation_manager.get_pending_chunks_count()
 			
-			if not is_veg_ready and pending_chunks > 0:
+			if not is_veg_ready:
 				update_progress(50.0, "Placing vegetation...")
 				while is_loading:
 					if vegetation_manager.has_method("is_vegetation_ready"):
@@ -175,8 +174,6 @@ func _start_loading_sequence() -> void:
 					var loop_pending := 0
 					if vegetation_manager.has_method("get_pending_chunks_count"):
 						loop_pending = vegetation_manager.get_pending_chunks_count()
-					if loop_pending <= 0:
-						break
 					
 					update_progress(50.0, "Placing vegetation... (%d chunks)" % loop_pending)
 					

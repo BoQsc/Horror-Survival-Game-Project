@@ -29,6 +29,10 @@ public:
     // each chunk-local record. This keeps GLBs as the authoring source while
     // moving the expensive transform/array construction out of GDScript.
     Dictionary build_source_mesh_instances(const Array &records, const Array &source_arrays, const Transform3D &source_transform, const Vector3 &chunk_origin, const Dictionary &type_colors, bool rotation_is_turns);
+
+    // Packs RenderingServer MultiMesh transform buffers directly from record
+    // dictionaries and computes a tight custom AABB for the whole batch.
+    Dictionary build_multimesh_transform_buffer(const Array &records, const Transform3D &source_transform, const AABB &source_bounds, bool rotation_is_turns);
 };
 
 }
