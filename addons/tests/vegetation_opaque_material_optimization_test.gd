@@ -25,6 +25,12 @@ func _run() -> int:
 		return 1
 
 	var telemetry := manager.get_telemetry_snapshot()
+	if not _expect(telemetry.has("last_global_render_upload_bytes"), "telemetry should expose last render upload bytes"):
+		manager.free()
+		return 1
+	if not _expect(int(telemetry.get("tree_mesh_primitives", 0)) > 0, "telemetry should report cached tree mesh primitive count"):
+		manager.free()
+		return 1
 	var counts: Dictionary = telemetry.get("vegetation_opaque_material_optimization_counts", {})
 	if not _expect(int(counts.get("tree_scanned_surfaces", 0)) == 1, "tree scanned surface count mismatch"):
 		manager.free()

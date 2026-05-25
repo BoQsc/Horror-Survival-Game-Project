@@ -495,6 +495,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var vegetation_last_global_render_sync_kind := ""
 	var vegetation_last_global_render_sync_chunk_count := 0
 	var vegetation_last_global_render_candidate_chunk_count := 0
+	var vegetation_last_global_render_sync_instance_count := 0
+	var vegetation_last_global_render_upload_bytes := 0
+	var vegetation_max_global_render_upload_bytes := 0
 	var vegetation_global_render_dirty_kind_count := 0
 	if is_instance_valid(terrain_manager):
 		terrain_active_chunk_count = int(terrain_manager.active_chunks.size())
@@ -628,6 +631,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		vegetation_last_global_render_sync_kind = str(vegetation_manager._last_global_render_sync_kind)
 		vegetation_last_global_render_sync_chunk_count = int(vegetation_manager._last_global_render_sync_chunk_count)
 		vegetation_last_global_render_candidate_chunk_count = int(vegetation_manager._last_global_render_candidate_chunk_count)
+		vegetation_last_global_render_sync_instance_count = int(vegetation_manager._last_global_render_sync_instance_count)
+		vegetation_last_global_render_upload_bytes = int(vegetation_manager._last_global_render_upload_bytes)
+		vegetation_max_global_render_upload_bytes = int(vegetation_manager._max_global_render_upload_bytes)
 		vegetation_global_render_dirty_kind_count = int(vegetation_manager._get_global_render_dirty_kinds().size())
 	if not is_instance_valid(entity_manager):
 		entity_manager = _find_manager_node("entity_manager", "EntityManager")
@@ -776,6 +782,9 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"vegetation_last_global_render_sync_kind": vegetation_last_global_render_sync_kind,
 		"vegetation_last_global_render_sync_chunk_count": vegetation_last_global_render_sync_chunk_count,
 		"vegetation_last_global_render_candidate_chunk_count": vegetation_last_global_render_candidate_chunk_count,
+		"vegetation_last_global_render_sync_instance_count": vegetation_last_global_render_sync_instance_count,
+		"vegetation_last_global_render_upload_bytes": vegetation_last_global_render_upload_bytes,
+		"vegetation_max_global_render_upload_bytes": vegetation_max_global_render_upload_bytes,
 		"vegetation_global_render_dirty_kind_count": vegetation_global_render_dirty_kind_count,
 		"entity_active_entities": entity_active_entities,
 		"entity_frozen_entities": entity_frozen_entities,

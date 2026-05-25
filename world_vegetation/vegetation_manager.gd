@@ -183,6 +183,10 @@ var _global_render_stream_flush_counter: int = 0
 var _last_global_render_collect_ms: float = 0.0
 var _last_global_render_pack_ms: float = 0.0
 var _last_global_render_candidate_chunk_count: int = 0
+var _last_global_render_sync_instance_count: int = 0
+var _last_global_render_upload_float_count: int = 0
+var _last_global_render_upload_bytes: int = 0
+var _max_global_render_upload_bytes: int = 0
 var _last_effective_vegetation_render_cluster_size: int = -1
 var _last_effective_vegetation_grass_render_cluster_size: int = -1
 var _vegetation_render_resource_prewarm_node: Node = null
@@ -196,6 +200,7 @@ var _vegetation_render_payload_backend_counts: Dictionary = {}
 var _vegetation_render_cluster_payload_backend_counts: Dictionary = {}
 var _vegetation_opaque_material_optimization_counts: Dictionary = {}
 var _vegetation_texture_opaque_cache: Dictionary = {}
+var _vegetation_mesh_stats_cache: Dictionary = {}
 var _vegetation_collider_candidate_backend_counts: Dictionary = {}
 var _vegetation_ray_query_backend_counts: Dictionary = {}
 var _vegetation_body_collision_backend_counts: Dictionary = {}
@@ -378,6 +383,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_global_render_sync_cluster": str(_last_global_render_sync_cluster),
 		"last_global_render_sync_chunk_count": _last_global_render_sync_chunk_count,
 		"last_global_render_candidate_chunk_count": _last_global_render_candidate_chunk_count,
+		"last_global_render_sync_instance_count": _last_global_render_sync_instance_count,
+		"last_global_render_upload_float_count": _last_global_render_upload_float_count,
+		"last_global_render_upload_bytes": _last_global_render_upload_bytes,
+		"max_global_render_upload_bytes": _max_global_render_upload_bytes,
 		"vegetation_render_prewarm_frames": vegetation_render_prewarm_frames,
 		"vegetation_render_prewarm_mesh_count": _vegetation_render_resource_prewarm_mesh_count,
 		"vegetation_render_prewarm_active": _is_vegetation_render_resource_prewarm_active(),
@@ -713,6 +722,22 @@ func _get_mesh_total_primitive_count(mesh: Mesh) -> int:
 func _get_mesh_surface_count(mesh: Mesh) -> int:
 	return mesh.get_surface_count() if mesh != null else 0
 
+func _get_mesh_render_stats(mesh: Mesh) -> Dictionary:
+	if mesh == null:
+		return {
+			"mesh_primitives": 0,
+			"mesh_surfaces": 0
+		}
+	var cache_key := mesh.get_instance_id()
+	if _vegetation_mesh_stats_cache.has(cache_key):
+		return _vegetation_mesh_stats_cache[cache_key]
+	var stats := {
+		"mesh_primitives": _get_mesh_total_primitive_count(mesh),
+		"mesh_surfaces": _get_mesh_surface_count(mesh)
+	}
+	_vegetation_mesh_stats_cache[cache_key] = stats
+	return stats
+
 func _get_vegetation_mesh_for_kind(kind: String) -> Mesh:
 	match kind:
 		"tree":
@@ -725,8 +750,9 @@ func _get_vegetation_mesh_for_kind(kind: String) -> Mesh:
 
 func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 	var mesh := _get_vegetation_mesh_for_kind(kind)
-	var mesh_primitives := _get_mesh_total_primitive_count(mesh)
-	var mesh_surfaces := _get_mesh_surface_count(mesh)
+	var mesh_stats := _get_mesh_render_stats(mesh)
+	var mesh_primitives := int(mesh_stats.get("mesh_primitives", 0))
+	var mesh_surfaces := int(mesh_stats.get("mesh_surfaces", 0))
 	var batch_count := 0
 	var instance_count := 0
 	var max_batch_instances := 0
@@ -1131,6 +1157,9 @@ func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> vo
 	_global_tree_render_instance_count = 0
 	_global_grass_render_instance_count = 0
 	_global_rock_render_instance_count = 0
+	_last_global_render_sync_instance_count = 0
+	_last_global_render_upload_float_count = 0
+	_last_global_render_upload_bytes = 0
 
 func _clear_global_vegetation_render_kind(kind: String, immediate_free: bool = false) -> void:
 	var nodes: Array = []
@@ -1414,6 +1443,9 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 		_last_global_render_sync_kind = kind
 		_last_global_render_sync_cluster = cluster_key
 		_last_global_render_sync_chunk_count = int(payload.get("chunk_count", 0))
+		_last_global_render_sync_instance_count = 0
+		_last_global_render_upload_float_count = 0
+		_last_global_render_upload_bytes = 0
 		_last_global_render_sync_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 		return
 
@@ -1425,6 +1457,10 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 	mmi.multimesh.buffer = buffer
 	mmi.multimesh.custom_aabb = payload.get("bounds", GLOBAL_VEGETATION_RENDER_AABB)
 	_last_global_render_pack_ms = float(Time.get_ticks_usec() - pack_start_us) / 1000.0
+	_last_global_render_sync_instance_count = instance_count
+	_last_global_render_upload_float_count = buffer.size()
+	_last_global_render_upload_bytes = _last_global_render_upload_float_count * 4
+	_max_global_render_upload_bytes = maxi(_max_global_render_upload_bytes, _last_global_render_upload_bytes)
 	dirty_clusters.erase(cluster_key)
 	_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
 	_set_global_render_cluster_instance_count(kind, cluster_key, instance_count)

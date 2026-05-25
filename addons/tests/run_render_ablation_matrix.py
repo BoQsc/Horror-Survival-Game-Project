@@ -542,6 +542,11 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_render_cluster_payload_backend_counts": vegetation.get(
             "vegetation_render_cluster_payload_backend_counts", {}
         ),
+        "vegetation_last_global_render_sync_instance_count": int(
+            vegetation.get("last_global_render_sync_instance_count", 0) or 0
+        ),
+        "vegetation_last_global_render_upload_bytes": int(vegetation.get("last_global_render_upload_bytes", 0) or 0),
+        "vegetation_max_global_render_upload_bytes": int(vegetation.get("max_global_render_upload_bytes", 0) or 0),
         "last_vegetation_generation_kind": str(vegetation.get("last_vegetation_generation_kind", "")),
         "last_vegetation_generation_backend": str(vegetation.get("last_vegetation_generation_backend", "")),
         "last_vegetation_generation_reason": str(vegetation.get("last_vegetation_generation_reason", "")),
@@ -700,6 +705,7 @@ def _print_results(results: list[dict]) -> None:
             "vegEst={veg_est:9d} tree/grass/rock={tree_est}/{grass_est}/{rock_est} "
             "mesh={tree_mesh}/{grass_mesh}/{rock_mesh} surfaces={tree_surfaces}/{grass_surfaces}/{rock_surfaces} "
             "estSurfDraws={surface_draws} maxInst={tree_max}/{grass_max}/{rock_max} "
+            "uploadLast={upload_last:.2f}MB/{upload_instances}inst uploadMax={upload_max:.2f}MB "
             "bounds={bounds:4.0f} kindBounds={tree_bounds:.0f}/{grass_bounds:.0f}/{rock_bounds:.0f} occIgnore={occ} collisionGroundCenter={ground_center} "
             "exactBounds={exact_bounds}@{exact_padding:.1f} forcePendingFinalize={force_pending} forceStream={force_stream}".format(
                 terrain_visible=int(result.get("terrain_visual_visible_primitives", 0) or 0),
@@ -721,6 +727,9 @@ def _print_results(results: list[dict]) -> None:
                 tree_max=int(result.get("vegetation_tree_max_batch_instances", 0) or 0),
                 grass_max=int(result.get("vegetation_grass_max_batch_instances", 0) or 0),
                 rock_max=int(result.get("vegetation_rock_max_batch_instances", 0) or 0),
+                upload_last=float(result.get("vegetation_last_global_render_upload_bytes", 0) or 0) / (1024.0 * 1024.0),
+                upload_instances=int(result.get("vegetation_last_global_render_sync_instance_count", 0) or 0),
+                upload_max=float(result.get("vegetation_max_global_render_upload_bytes", 0) or 0) / (1024.0 * 1024.0),
                 bounds=float(result.get("vegetation_bounds_padding", 0.0) or 0.0),
                 tree_bounds=float(result.get("vegetation_tree_bounds_padding", 0.0) or 0.0),
                 grass_bounds=float(result.get("vegetation_grass_bounds_padding", 0.0) or 0.0),
