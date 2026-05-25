@@ -4,6 +4,9 @@ class_name VegetationManager
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 const GLOBAL_VEGETATION_RENDER_AABB := AABB(Vector3(-4096.0, -128.0, -4096.0), Vector3(8192.0, 512.0, 8192.0))
 const GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING := 32.0
+const GLOBAL_TREE_RENDER_BOUNDS_PADDING := 24.0
+const GLOBAL_GRASS_RENDER_BOUNDS_PADDING := 4.0
+const GLOBAL_ROCK_RENDER_BOUNDS_PADDING := 4.0
 const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 
 
@@ -26,11 +29,17 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var rock_colliders_enabled: bool = false
 @export var road_clearance: float = 2.0 # Extra gap beyond road surface before vegetation can spawn
 @export var global_render_batches_enabled: bool = true
+@export var tree_render_enabled: bool = true
+@export var grass_render_enabled: bool = true
+@export var rock_render_enabled: bool = true
 @export_range(1, 32, 1) var vegetation_render_cluster_size: int = 8
 @export_range(1, 32, 1) var vegetation_grass_render_cluster_size: int = 6
 @export_range(0.0, 2048.0, 1.0) var vegetation_render_extra_cull_margin: float = 0.0
 @export_range(0.0, 256.0, 1.0) var vegetation_global_render_bounds_padding: float = GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
-@export var vegetation_global_render_ignore_occlusion_culling: bool = true
+@export_range(0.0, 256.0, 1.0) var tree_global_render_bounds_padding: float = GLOBAL_TREE_RENDER_BOUNDS_PADDING
+@export_range(0.0, 256.0, 1.0) var grass_global_render_bounds_padding: float = GLOBAL_GRASS_RENDER_BOUNDS_PADDING
+@export_range(0.0, 256.0, 1.0) var rock_global_render_bounds_padding: float = GLOBAL_ROCK_RENDER_BOUNDS_PADDING
+@export var vegetation_global_render_ignore_occlusion_culling: bool = false
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
 @export var world_map_vegetation_render_profile_enabled: bool = true
 @export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 4
@@ -283,10 +292,16 @@ func get_telemetry_snapshot() -> Dictionary:
 		"physics_process_enabled": is_physics_processing(),
 		"terrain_supports_road_query": _terrain_supports_road_query,
 		"global_render_batches_enabled": global_render_batches_enabled,
+		"tree_render_enabled": tree_render_enabled,
+		"grass_render_enabled": grass_render_enabled,
+		"rock_render_enabled": rock_render_enabled,
 		"vegetation_render_cluster_size": vegetation_render_cluster_size,
 		"vegetation_grass_render_cluster_size": vegetation_grass_render_cluster_size,
 		"vegetation_render_extra_cull_margin": vegetation_render_extra_cull_margin,
 		"vegetation_global_render_bounds_padding": vegetation_global_render_bounds_padding,
+		"tree_global_render_bounds_padding": tree_global_render_bounds_padding,
+		"grass_global_render_bounds_padding": grass_global_render_bounds_padding,
+		"rock_global_render_bounds_padding": rock_global_render_bounds_padding,
 		"vegetation_global_render_ignore_occlusion_culling": vegetation_global_render_ignore_occlusion_culling,
 		"vegetation_render_lod_bias": vegetation_render_lod_bias,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
@@ -368,6 +383,9 @@ func _get_vegetation_env_float_range(name: String, default_value: float, min_val
 
 func _configure_vegetation_render_profile_from_env() -> void:
 	global_render_batches_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_BATCHES", global_render_batches_enabled)
+	tree_render_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_RENDER_TREES", tree_render_enabled)
+	grass_render_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_RENDER_GRASS", grass_render_enabled)
+	rock_render_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_RENDER_ROCKS", rock_render_enabled)
 	vegetation_colliders_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_COLLIDERS", vegetation_colliders_enabled)
 	tree_colliders_enabled = vegetation_colliders_enabled and _get_vegetation_env_bool("TOWN_STALL_VEGETATION_TREE_COLLIDERS", tree_colliders_enabled)
 	grass_colliders_enabled = vegetation_colliders_enabled and _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GRASS_COLLIDERS", grass_colliders_enabled)
@@ -375,12 +393,26 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	world_map_vegetation_render_profile_enabled = _get_vegetation_env_bool("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_PROFILE", world_map_vegetation_render_profile_enabled)
 	var render_cluster_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty()
 	var grass_cluster_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty()
+	var global_bounds_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING").strip_edges().is_empty()
+	var tree_bounds_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_TREE_GLOBAL_RENDER_BOUNDS_PADDING").strip_edges().is_empty()
+	var grass_bounds_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_GRASS_GLOBAL_RENDER_BOUNDS_PADDING").strip_edges().is_empty()
+	var rock_bounds_overridden := not OS.get_environment("TOWN_STALL_VEGETATION_ROCK_GLOBAL_RENDER_BOUNDS_PADDING").strip_edges().is_empty()
 	vegetation_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE", vegetation_render_cluster_size, 1, 64)
 	vegetation_grass_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE", vegetation_grass_render_cluster_size, 1, 64)
 	world_map_vegetation_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE", world_map_vegetation_render_cluster_size, 1, 64)
 	world_map_vegetation_grass_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE", world_map_vegetation_grass_render_cluster_size, 1, 64)
 	vegetation_render_extra_cull_margin = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_EXTRA_CULL_MARGIN", vegetation_render_extra_cull_margin, 0.0, 2048.0)
 	vegetation_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING", vegetation_global_render_bounds_padding, 0.0, 256.0)
+	tree_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_TREE_GLOBAL_RENDER_BOUNDS_PADDING", tree_global_render_bounds_padding, 0.0, 256.0)
+	grass_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GRASS_GLOBAL_RENDER_BOUNDS_PADDING", grass_global_render_bounds_padding, 0.0, 256.0)
+	rock_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_ROCK_GLOBAL_RENDER_BOUNDS_PADDING", rock_global_render_bounds_padding, 0.0, 256.0)
+	if global_bounds_overridden:
+		if not tree_bounds_overridden:
+			tree_global_render_bounds_padding = vegetation_global_render_bounds_padding
+		if not grass_bounds_overridden:
+			grass_global_render_bounds_padding = vegetation_global_render_bounds_padding
+		if not rock_bounds_overridden:
+			rock_global_render_bounds_padding = vegetation_global_render_bounds_padding
 	vegetation_global_render_ignore_occlusion_culling = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING", vegetation_global_render_ignore_occlusion_culling)
 	vegetation_render_lod_bias = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_LOD_BIAS", vegetation_render_lod_bias, 0.25, 100.0)
 	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
@@ -603,6 +635,26 @@ func _get_global_render_dirty_kinds() -> Array[String]:
 	if _global_rock_render_dirty:
 		kinds.append("rock")
 	return kinds
+
+func _is_vegetation_render_kind_enabled(kind: String) -> bool:
+	match kind:
+		"tree":
+			return tree_render_enabled
+		"grass":
+			return grass_render_enabled
+		"rock":
+			return rock_render_enabled
+	return true
+
+func _global_render_bounds_padding_for_kind(kind: String) -> float:
+	match kind:
+		"tree":
+			return tree_global_render_bounds_padding
+		"grass":
+			return grass_global_render_bounds_padding
+		"rock":
+			return rock_global_render_bounds_padding
+	return vegetation_global_render_bounds_padding
 
 func _create_chunk_multimesh_handle(kind: String, coord: Vector2i, mesh: Mesh):
 	if global_render_batches_enabled:
@@ -941,7 +993,42 @@ func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> vo
 	_global_grass_render_instance_count = 0
 	_global_rock_render_instance_count = 0
 
+func _clear_global_vegetation_render_kind(kind: String, immediate_free: bool = false) -> void:
+	var nodes: Array = []
+	match kind:
+		"tree":
+			nodes.append(_global_tree_render_mmi)
+			_global_tree_render_mmi = null
+			_global_tree_render_instance_count = 0
+		"grass":
+			nodes.append(_global_grass_render_mmi)
+			_global_grass_render_mmi = null
+			_global_grass_render_instance_count = 0
+		"rock":
+			nodes.append(_global_rock_render_mmi)
+			_global_rock_render_mmi = null
+			_global_rock_render_instance_count = 0
+		_:
+			return
+	var clusters := _get_global_render_cluster_dictionary(kind)
+	nodes.append_array(clusters.values())
+	for node in nodes:
+		if node and is_instance_valid(node):
+			if immediate_free:
+				node.free()
+			else:
+				node.queue_free()
+	clusters.clear()
+	_get_global_render_chunk_payload_dictionary(kind).clear()
+	_get_global_render_cluster_chunk_dictionary(kind).clear()
+	_get_global_render_chunk_cluster_dictionary(kind).clear()
+	_get_global_render_cluster_instance_count_dictionary(kind).clear()
+	_get_global_render_dirty_cluster_dictionary(kind).clear()
+	_set_global_render_dirty_flag(kind, false)
+
 func _get_global_render_multimesh(kind: String, cluster_key: Vector2i) -> MultiMeshInstance3D:
+	if not _is_vegetation_render_kind_enabled(kind):
+		return null
 	var clusters := _get_global_render_cluster_dictionary(kind)
 	var existing: MultiMeshInstance3D = clusters.get(cluster_key, null)
 	var mesh: Mesh = null
@@ -1014,6 +1101,9 @@ func _update_global_vegetation_chunk_render_payload(kind: String, coord, instanc
 	if not global_render_batches_enabled or typeof(coord) != TYPE_VECTOR2I:
 		return
 	_sync_vegetation_render_profile()
+	if not _is_vegetation_render_kind_enabled(kind):
+		_clear_global_vegetation_chunk_render_payload(kind, coord)
+		return
 	var payloads := _get_global_render_chunk_payload_dictionary(kind)
 	var payload := _build_global_vegetation_chunk_render_payload(instances)
 	if int(payload.get("instance_count", 0)) <= 0:
@@ -1091,7 +1181,7 @@ func _collect_global_vegetation_render_payload(kind: String, cluster_key = null)
 	payload.buffer = cluster_buffer
 	if bool(payload.has_bounds):
 		var payload_bounds: AABB = payload.bounds
-		payload.bounds = payload_bounds.grow(vegetation_global_render_bounds_padding)
+		payload.bounds = payload_bounds.grow(_global_render_bounds_padding_for_kind(kind))
 	return payload
 
 func _recount_global_render_instances(kind: String) -> int:
@@ -1112,6 +1202,9 @@ func _recount_global_render_instances(kind: String) -> int:
 
 func _sync_global_vegetation_render_batch(kind: String) -> void:
 	if not global_render_batches_enabled:
+		return
+	if not _is_vegetation_render_kind_enabled(kind):
+		_clear_global_vegetation_render_kind(kind)
 		return
 	var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
 	if dirty_clusters.is_empty():
@@ -1246,6 +1339,11 @@ func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int) ->
 		if mmi is MultiMeshInstance3D:
 			mmi.visible = false
 		var coord = _chunk_multimesh_handle_coord(mmi)
+		if not _is_vegetation_render_kind_enabled(kind):
+			if typeof(coord) == TYPE_VECTOR2I:
+				_clear_global_vegetation_chunk_render_payload(kind, coord)
+				_mark_global_vegetation_render_dirty(kind, coord)
+			return
 		_update_global_vegetation_chunk_render_payload(kind, coord, instances)
 		_mark_global_vegetation_render_dirty(kind, coord)
 		return
@@ -2619,7 +2717,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	# Fix distance visibility issues
 	if mmi is MultiMeshInstance3D:
 		mmi.extra_cull_margin = vegetation_render_extra_cull_margin
-		mmi.ignore_occlusion_culling = true # Ignore occlusion
+		mmi.ignore_occlusion_culling = vegetation_global_render_ignore_occlusion_culling
 		mmi.lod_bias = vegetation_render_lod_bias
 		mmi.visibility_range_end = 0.0 # 0 = infinite visibility
 

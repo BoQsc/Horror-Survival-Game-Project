@@ -83,11 +83,15 @@ const PACKED_INDEXED_OUTPUT_MAGIC = 0x58444950 # "PIDX"
 @export_range(0, 32, 1) var terrain_shadow_lod_radius_chunks: int = 2
 @export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
 @export var terrain_visual_batch_idle_polish_enabled: bool = true
+@export var terrain_visual_batch_idle_polish_ignore_hot_frame: bool = true
+@export_range(0, 60, 1) var terrain_visual_batch_idle_polish_min_idle_frames: int = 2
 @export var water_visual_batching_enabled: bool = true
 @export var procedural_water_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var water_visual_batch_size: int = 2
 @export_range(1, 16, 1) var world_map_water_visual_batch_size: int = 2
 @export_range(1, 8, 1) var water_visual_batch_rebuilds_per_frame: int = 1
+@export var water_visual_batch_idle_polish_ignore_hot_frame: bool = true
+@export_range(1, 8, 1) var water_visual_batch_idle_polish_rebuilds_per_frame: int = 2
 @export_range(0, 200000, 1000) var water_visual_batch_max_vertices: int = 48000
 @export_range(0, 200000, 1000) var world_map_water_visual_batch_max_vertices: int = 200000
 @export_range(0, 8, 1) var procedural_water_visual_batch_near_cull_radius_chunks: int = 0
@@ -277,7 +281,7 @@ var loading_paused: bool = false
 @export_range(1, 128, 1) var retired_chunk_node_cleanup_budget_per_frame: int = 24
 @export var runtime_power_mode_enabled: bool = true
 @export_range(30, 240, 1) var runtime_power_active_max_fps: int = 60
-@export_range(30, 120, 1) var runtime_power_idle_max_fps: int = 30
+@export_range(30, 120, 1) var runtime_power_idle_max_fps: int = 60
 @export_range(30, 120, 1) var runtime_power_deep_idle_max_fps: int = 30
 @export_range(0.1, 10.0, 0.1) var runtime_power_idle_enter_delay_s: float = 1.25
 @export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 10.0
@@ -434,6 +438,7 @@ var _last_terrain_visual_batch_async_apply_ms: float = 0.0
 var _last_terrain_visual_batch_async_stale_count: int = 0
 var _last_terrain_visual_batch_idle_polish: bool = false
 var _terrain_visual_batch_idle_polish_frame_count: int = 0
+var _terrain_visual_batch_idle_polish_processing: bool = false
 var _terrain_visual_batch_mesh_cache_hits: int = 0
 var _terrain_visual_batch_mesh_cache_misses: int = 0
 var _terrain_visual_batch_total_heavy_skips: int = 0
@@ -818,6 +823,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_batch_total_heavy_skips": _terrain_visual_batch_total_heavy_skips,
 		"terrain_visual_batch_stream_idle_frames": _terrain_visual_batch_stream_idle_frames,
 		"terrain_visual_mesh_retire_queue_count": _terrain_visual_mesh_retire_queue.size(),
+		"terrain_visual_batch_idle_polish_ignore_hot_frame": terrain_visual_batch_idle_polish_ignore_hot_frame,
+		"terrain_visual_batch_idle_polish_min_idle_frames": terrain_visual_batch_idle_polish_min_idle_frames,
 		"water_visual_batching_enabled": water_visual_batching_enabled,
 		"procedural_water_visual_batching_enabled": procedural_water_visual_batching_enabled,
 		"water_visual_batch_active": _is_water_visual_batch_active(),
@@ -834,6 +841,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"water_visual_batch_node_count": _water_visual_batches.size(),
 		"water_visual_batch_hidden_chunk_count": _count_hidden_water_visual_batch_chunks(),
 		"water_visual_batch_dirty_count": _water_visual_batch_dirty.size(),
+		"water_visual_batch_idle_polish_ignore_hot_frame": water_visual_batch_idle_polish_ignore_hot_frame,
+		"water_visual_batch_idle_polish_rebuilds_per_frame": water_visual_batch_idle_polish_rebuilds_per_frame,
 		"last_water_visual_batch_rebuild_ms": _last_water_visual_batch_rebuild_ms,
 		"last_water_visual_batch_rebuild_count": _last_water_visual_batch_rebuild_count,
 		"last_water_visual_batch_hidden_chunk_count": _last_water_visual_batch_hidden_chunk_count,
@@ -1964,7 +1973,8 @@ func _process_terrain_visual_mesh_retire_queue() -> void:
 		return
 	if initial_load_phase or _visual_batch_streaming_busy():
 		return
-	if _last_frame_ms > 1000.0 / 60.0:
+	var idle_polish_active := _terrain_visual_batch_idle_polish_processing
+	if _last_frame_ms > 1000.0 / 60.0 and not (idle_polish_active and terrain_visual_batch_idle_polish_ignore_hot_frame):
 		return
 
 	var retired := 0
@@ -2069,11 +2079,13 @@ func _process_idle_terrain_visual_batch_polish() -> void:
 
 	_last_terrain_visual_batch_idle_polish = true
 	_terrain_visual_batch_idle_polish_frame_count += 1
+	_terrain_visual_batch_idle_polish_processing = true
 	_process_completed_terrain_visual_batch_builds()
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
 	_process_water_visual_batch_rebuilds()
 	_sync_terrain_shadow_lod()
+	_terrain_visual_batch_idle_polish_processing = false
 
 func _process_completed_terrain_visual_batch_builds() -> void:
 	_last_terrain_visual_batch_async_apply_count = 0
@@ -2150,8 +2162,10 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 		return
 	if initial_load_phase:
 		return
+	var idle_polish_active := _terrain_visual_batch_idle_polish_processing
 	var hot_frame := _last_frame_ms > 1000.0 / 60.0
-	if hot_frame:
+	var ignore_hot_frame_for_idle_polish := idle_polish_active and terrain_visual_batch_idle_polish_ignore_hot_frame
+	if hot_frame and not ignore_hot_frame_for_idle_polish:
 		if _terrain_visual_batch_dirty.size() < terrain_visual_batch_hot_rebuild_dirty_threshold:
 			return
 		_terrain_visual_batch_hot_rebuild_frame_counter += 1
@@ -2169,10 +2183,17 @@ func _process_terrain_visual_batch_rebuilds() -> void:
 				_queue_streaming_terrain_visual_batch_builds(streaming_builder)
 		return
 	if hot_frame:
+		if idle_polish_active and terrain_visual_batch_idle_polish_min_idle_frames > 0:
+			_terrain_visual_batch_stream_idle_frames += 1
+			if _terrain_visual_batch_stream_idle_frames < terrain_visual_batch_idle_polish_min_idle_frames:
+				return
 		_last_terrain_visual_batch_hot_rebuild = true
 	else:
 		_terrain_visual_batch_stream_idle_frames += 1
-		if _terrain_visual_batch_stream_idle_frames < 20:
+		var min_idle_frames := 20
+		if idle_polish_active:
+			min_idle_frames = terrain_visual_batch_idle_polish_min_idle_frames
+		if _terrain_visual_batch_stream_idle_frames < min_idle_frames:
 			return
 
 	var builder := _get_terrain_visual_batch_builder()
@@ -2793,7 +2814,8 @@ func _process_water_visual_batch_rebuilds() -> void:
 		return
 	if world_map_active and _terrain_visual_batch_paused_for_active_gameplay():
 		return
-	if _last_frame_ms > 1000.0 / 60.0:
+	var idle_polish_active := _terrain_visual_batch_idle_polish_processing
+	if _last_frame_ms > 1000.0 / 60.0 and not (idle_polish_active and water_visual_batch_idle_polish_ignore_hot_frame):
 		return
 	if _visual_batch_streaming_busy():
 		return
@@ -2804,9 +2826,12 @@ func _process_water_visual_batch_rebuilds() -> void:
 
 	var start_us := Time.get_ticks_usec()
 	var rebuilt := 0
+	var rebuild_budget := water_visual_batch_rebuilds_per_frame
+	if idle_polish_active:
+		rebuild_budget = maxi(rebuild_budget, water_visual_batch_idle_polish_rebuilds_per_frame)
 	var keys := _get_water_visual_batch_keys_sorted_by_viewer()
 	for key_variant in keys:
-		if rebuilt >= water_visual_batch_rebuilds_per_frame:
+		if rebuilt >= rebuild_budget:
 			break
 		var key: Vector2i = key_variant
 		if _rebuild_water_visual_batch(key, builder):
@@ -3590,6 +3615,8 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
 	terrain_visual_batch_idle_polish_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH", terrain_visual_batch_idle_polish_enabled)
+	terrain_visual_batch_idle_polish_ignore_hot_frame = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH_IGNORE_HOT_FRAME", terrain_visual_batch_idle_polish_ignore_hot_frame)
+	terrain_visual_batch_idle_polish_min_idle_frames = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH_MIN_IDLE_FRAMES", terrain_visual_batch_idle_polish_min_idle_frames, 0, 60)
 	procedural_terrain_visual_batch_near_cull_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_PROCEDURAL_TERRAIN_VISUAL_BATCH_NEAR_CULL_RADIUS", procedural_terrain_visual_batch_near_cull_radius_chunks, 0, 8)
 	terrain_shadow_lod_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_SHADOW_LOD", terrain_shadow_lod_enabled)
 	terrain_shadow_lod_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_SHADOW_LOD_RADIUS", terrain_shadow_lod_radius_chunks, 0, 32)
@@ -3600,6 +3627,8 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	if water_batch_size_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_SIZE").is_empty():
 		world_map_water_visual_batch_size = water_visual_batch_size
 	water_visual_batch_rebuilds_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_WATER_VISUAL_BATCH_REBUILDS_PER_FRAME", water_visual_batch_rebuilds_per_frame, 1, 8)
+	water_visual_batch_idle_polish_ignore_hot_frame = _get_runtime_power_env_bool("TOWN_STALL_WATER_BATCH_IDLE_POLISH_IGNORE_HOT_FRAME", water_visual_batch_idle_polish_ignore_hot_frame)
+	water_visual_batch_idle_polish_rebuilds_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_WATER_BATCH_IDLE_POLISH_REBUILDS_PER_FRAME", water_visual_batch_idle_polish_rebuilds_per_frame, 1, 8)
 	water_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_WATER_VISUAL_BATCH_MAX_VERTICES", water_visual_batch_max_vertices, 0, 200000)
 	world_map_water_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_MAX_VERTICES", world_map_water_visual_batch_max_vertices, 0, 200000)
 	if water_batch_max_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_MAX_VERTICES").is_empty():

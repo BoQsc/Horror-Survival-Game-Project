@@ -15,6 +15,24 @@ CASES = {
     "baseline": {},
     "hide_terrain_manager_visuals": {"TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS": "1"},
     "hide_vegetation_render": {"TOWN_STALL_DISABLE_VEGETATION_RENDER": "1"},
+    "no_trees": {"TOWN_STALL_VEGETATION_RENDER_TREES": "0"},
+    "no_grass": {"TOWN_STALL_VEGETATION_RENDER_GRASS": "0"},
+    "no_rocks": {"TOWN_STALL_VEGETATION_RENDER_ROCKS": "0"},
+    "vegetation_trees_only": {
+        "TOWN_STALL_VEGETATION_RENDER_TREES": "1",
+        "TOWN_STALL_VEGETATION_RENDER_GRASS": "0",
+        "TOWN_STALL_VEGETATION_RENDER_ROCKS": "0",
+    },
+    "vegetation_grass_only": {
+        "TOWN_STALL_VEGETATION_RENDER_TREES": "0",
+        "TOWN_STALL_VEGETATION_RENDER_GRASS": "1",
+        "TOWN_STALL_VEGETATION_RENDER_ROCKS": "0",
+    },
+    "vegetation_rocks_only": {
+        "TOWN_STALL_VEGETATION_RENDER_TREES": "0",
+        "TOWN_STALL_VEGETATION_RENDER_GRASS": "0",
+        "TOWN_STALL_VEGETATION_RENDER_ROCKS": "1",
+    },
     "vegetation_lod_bias_0_5": {"TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.5"},
     "vegetation_lod_bias_0_25": {"TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.25"},
     "vegetation_cluster_3": {
@@ -63,6 +81,10 @@ CASES = {
     "no_buildings": {"TOWN_STALL_DISABLE_BUILDINGS": "1"},
     "no_building_objects": {"TOWN_STALL_DISABLE_BUILDING_OBJECTS": "1"},
     "no_entities": {"TOWN_STALL_DISABLE_ENTITIES": "1"},
+    "runtime_power_idle30": {
+        "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "30",
+        "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "30",
+    },
     "entities_radius_10_limit_200": {
         "TOWN_STALL_ENTITY_MAX_ENTITIES": "200",
         "TOWN_STALL_ENTITY_SPAWN_RADIUS": "285",
@@ -249,6 +271,11 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
     env.setdefault("TOWN_STALL_HOLD_SECONDS", "12")
     env.setdefault("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1")
     env.setdefault("TOWN_STALL_ENABLE_RUNTIME_POWER_MODE", "1")
+    # Render ablations measure active 60 FPS gameplay cost. Idle/deep-idle
+    # throttling has its own case because it intentionally lowers frame rate.
+    env.setdefault("TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS", "60")
+    env.setdefault("TOWN_STALL_RUNTIME_POWER_IDLE_FPS", "60")
+    env.setdefault("TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS", "60")
     env.setdefault("TOWN_STALL_RUNTIME_POWER_SUSPEND_BACKGROUND_WORLD_WORK", "1")
     env.setdefault("TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP", "1")
     env.setdefault("TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION", "1")
@@ -330,6 +357,10 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "render_active_sample_count": active_sample_count,
         "render_loop_suspended_samples": render_loop_suspended_samples,
         "world_work_suspended_samples": world_work_suspended_samples,
+        "runtime_power_mode": str(terrain.get("runtime_power_mode", "")),
+        "runtime_power_active_max_fps": int(terrain.get("runtime_power_active_max_fps", 0) or 0),
+        "runtime_power_idle_max_fps": int(terrain.get("runtime_power_idle_max_fps", 0) or 0),
+        "runtime_power_deep_idle_max_fps": int(terrain.get("runtime_power_deep_idle_max_fps", 0) or 0),
         "avg_total_ms": _pick_window_metric(stationary_hold, town_window, "avg_total_ms"),
         "avg_draw_calls": _pick_window_metric(stationary_hold, town_window, "avg_draw_calls"),
         "avg_objects": _pick_window_metric(stationary_hold, town_window, "avg_objects"),
@@ -389,7 +420,13 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_global_batches": int(vegetation.get("global_render_batch_count", 0) or 0),
         "vegetation_profile_active": bool(vegetation.get("world_map_vegetation_render_profile_active", False)),
         "vegetation_bounds_padding": float(vegetation.get("vegetation_global_render_bounds_padding", 0.0) or 0.0),
+        "vegetation_tree_bounds_padding": float(vegetation.get("tree_global_render_bounds_padding", 0.0) or 0.0),
+        "vegetation_grass_bounds_padding": float(vegetation.get("grass_global_render_bounds_padding", 0.0) or 0.0),
+        "vegetation_rock_bounds_padding": float(vegetation.get("rock_global_render_bounds_padding", 0.0) or 0.0),
         "vegetation_ignore_occlusion_culling": bool(vegetation.get("vegetation_global_render_ignore_occlusion_culling", False)),
+        "vegetation_tree_render_enabled": bool(vegetation.get("tree_render_enabled", True)),
+        "vegetation_grass_render_enabled": bool(vegetation.get("grass_render_enabled", True)),
+        "vegetation_rock_render_enabled": bool(vegetation.get("rock_render_enabled", True)),
         "vegetation_estimated_primitives": int(vegetation.get("global_render_estimated_primitives", 0) or 0),
         "tree_mesh_primitives": int(vegetation.get("tree_mesh_primitives", 0) or 0),
         "grass_mesh_primitives": int(vegetation.get("grass_mesh_primitives", 0) or 0),
@@ -465,7 +502,7 @@ def _print_results(results: list[dict]) -> None:
             "terrain={terrain:4d} water={water:4d} "
             "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{rock}) cluster={cluster}/{grass_cluster} "
             "profile={profile} entities={entities:3d}/{entity_max:<3d} phys={physics:3d} frozen={frozen:3d} pend={pending:3d} | "
-            "active={active:4d}/{samples:4d} suspended={suspended:4d}".format(
+            "active={active:4d}/{samples:4d} suspended={suspended:4d} rpmode={rpmode} fps={active_fps}/{idle_fps}/{deep_fps}".format(
                 case=str(result.get("case", "")),
                 ms=float(result.get("avg_total_ms", 0.0) or 0.0),
                 dms=float(result.get("delta_avg_total_ms", 0.0) or 0.0),
@@ -501,6 +538,10 @@ def _print_results(results: list[dict]) -> None:
                 active=int(result.get("render_active_sample_count", 0) or 0),
                 samples=int(result.get("sample_count", 0) or 0),
                 suspended=int(result.get("render_loop_suspended_samples", 0) or 0),
+                rpmode=str(result.get("runtime_power_mode", "")),
+                active_fps=int(result.get("runtime_power_active_max_fps", 0) or 0),
+                idle_fps=int(result.get("runtime_power_idle_max_fps", 0) or 0),
+                deep_fps=int(result.get("runtime_power_deep_idle_max_fps", 0) or 0),
             )
         )
         print(
@@ -508,7 +549,7 @@ def _print_results(results: list[dict]) -> None:
             "batches={terrain_batches:9d} maxChunk={terrain_max_chunk:6d} maxBatch={terrain_max_batch:6d} | "
             "vegEst={veg_est:9d} tree/grass/rock={tree_est}/{grass_est}/{rock_est} "
             "mesh={tree_mesh}/{grass_mesh}/{rock_mesh} maxInst={tree_max}/{grass_max}/{rock_max} "
-            "bounds={bounds:4.0f} occIgnore={occ} collisionGroundCenter={ground_center} "
+            "bounds={bounds:4.0f} kindBounds={tree_bounds:.0f}/{grass_bounds:.0f}/{rock_bounds:.0f} occIgnore={occ} collisionGroundCenter={ground_center} "
             "forcePendingFinalize={force_pending} forceStream={force_stream}".format(
                 terrain_visible=int(result.get("terrain_visual_visible_primitives", 0) or 0),
                 terrain_chunks=int(result.get("terrain_visual_chunk_primitives", 0) or 0),
@@ -526,6 +567,9 @@ def _print_results(results: list[dict]) -> None:
                 grass_max=int(result.get("vegetation_grass_max_batch_instances", 0) or 0),
                 rock_max=int(result.get("vegetation_rock_max_batch_instances", 0) or 0),
                 bounds=float(result.get("vegetation_bounds_padding", 0.0) or 0.0),
+                tree_bounds=float(result.get("vegetation_tree_bounds_padding", 0.0) or 0.0),
+                grass_bounds=float(result.get("vegetation_grass_bounds_padding", 0.0) or 0.0),
+                rock_bounds=float(result.get("vegetation_rock_bounds_padding", 0.0) or 0.0),
                 occ="on" if bool(result.get("vegetation_ignore_occlusion_culling", False)) else "off",
                 ground_center="on" if bool(result.get("terrain_collision_ground_center", False)) else "off",
                 force_pending="on" if bool(result.get("terrain_force_pending_finalization", False)) else "off",
