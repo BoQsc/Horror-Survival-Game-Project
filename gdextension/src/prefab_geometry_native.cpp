@@ -1170,6 +1170,7 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 			record["local_pos"] = local_pos;
 			record["hit_pos"] = hit_pos;
 			record["rotation_angle"] = rotation_angle;
+			record["rotation"] = rotation_angle;
 			record["random_scale_factor"] = record_random_scale_factor ? random_scale : 0.0;
 			record["index"] = instances.size();
 			record["alive"] = true;

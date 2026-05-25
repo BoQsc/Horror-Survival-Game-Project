@@ -202,6 +202,7 @@ var _vegetation_road_block_sample_backend_counts: Dictionary = {}
 var _vegetation_water_block_sample_backend_counts: Dictionary = {}
 var _vegetation_render_payload_backend_counts: Dictionary = {}
 var _vegetation_render_cluster_payload_backend_counts: Dictionary = {}
+var _vegetation_native_record_append_counts: Dictionary = {}
 var _vegetation_opaque_material_optimization_counts: Dictionary = {}
 var _vegetation_texture_opaque_cache: Dictionary = {}
 var _vegetation_mesh_stats_cache: Dictionary = {}
@@ -407,6 +408,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_water_block_sample_backend_counts": _vegetation_water_block_sample_backend_counts.duplicate(true),
 		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
 		"vegetation_render_cluster_payload_backend_counts": _vegetation_render_cluster_payload_backend_counts.duplicate(true),
+		"vegetation_native_record_append_counts": _vegetation_native_record_append_counts.duplicate(true),
 		"vegetation_opaque_material_optimization_counts": _vegetation_opaque_material_optimization_counts.duplicate(true),
 		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
 		"vegetation_ray_query_backend_counts": _vegetation_ray_query_backend_counts.duplicate(true),
@@ -1587,21 +1589,20 @@ func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int) ->
 
 
 func _append_native_generated_instances(target: Array, records: Array) -> void:
+	if records.is_empty():
+		return
+	if target.is_empty():
+		target.append_array(records)
+		_vegetation_native_record_append_counts["bulk_calls"] = int(_vegetation_native_record_append_counts.get("bulk_calls", 0)) + 1
+		_vegetation_native_record_append_counts["bulk_records"] = int(_vegetation_native_record_append_counts.get("bulk_records", 0)) + records.size()
+		return
+
 	for record_variant in records:
 		var record: Dictionary = record_variant
-		var item = _make_vegetation_generated(
-			record.get("world_pos", Vector3.ZERO),
-			record.get("local_pos", Vector3.ZERO),
-			record.get("hit_pos", Vector3.ZERO),
-			float(record.get("rotation_angle", 0.0)),
-			float(record.get("random_scale_factor", 1.0)),
-			int(record.get("index", target.size())),
-			float(record.get("scale", 1.0)),
-			bool(record.get("placed_by_player", false)),
-			record.get("transform", Transform3D.IDENTITY)
-		)
-		item.alive = bool(record.get("alive", true))
-		target.append(item)
+		record["index"] = target.size()
+		target.append(record)
+	_vegetation_native_record_append_counts["reindex_calls"] = int(_vegetation_native_record_append_counts.get("reindex_calls", 0)) + 1
+	_vegetation_native_record_append_counts["reindex_records"] = int(_vegetation_native_record_append_counts.get("reindex_records", 0)) + records.size()
 
 
 func _remove_persistently_removed_entries(entries: Array, removed_lookup: Dictionary) -> void:
@@ -4568,6 +4569,7 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_vegetation_water_block_sample_backend_counts.clear()
 	_vegetation_render_payload_backend_counts.clear()
 	_vegetation_render_cluster_payload_backend_counts.clear()
+	_vegetation_native_record_append_counts.clear()
 	_last_pending_chunk_selection_backend = ""
 	_last_pending_chunk_selection_scan_count = 0
 	_pending_chunk_selection_native_calls = 0
