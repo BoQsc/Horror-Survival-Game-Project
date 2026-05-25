@@ -4,9 +4,11 @@ class_name VegetationManager
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 const GLOBAL_VEGETATION_RENDER_AABB := AABB(Vector3(-4096.0, -128.0, -4096.0), Vector3(8192.0, 512.0, 8192.0))
 const GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING := 32.0
-const GLOBAL_TREE_RENDER_BOUNDS_PADDING := 24.0
-const GLOBAL_GRASS_RENDER_BOUNDS_PADDING := 4.0
-const GLOBAL_ROCK_RENDER_BOUNDS_PADDING := 4.0
+# Keep per-kind bounds conservative by default. Tighter bounds/occlusion can
+# improve some counters, but they risk vegetation popping or missing batches.
+const GLOBAL_TREE_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
+const GLOBAL_GRASS_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
+const GLOBAL_ROCK_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
 const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 
 
@@ -39,7 +41,9 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(0.0, 256.0, 1.0) var tree_global_render_bounds_padding: float = GLOBAL_TREE_RENDER_BOUNDS_PADDING
 @export_range(0.0, 256.0, 1.0) var grass_global_render_bounds_padding: float = GLOBAL_GRASS_RENDER_BOUNDS_PADDING
 @export_range(0.0, 256.0, 1.0) var rock_global_render_bounds_padding: float = GLOBAL_ROCK_RENDER_BOUNDS_PADDING
-@export var vegetation_global_render_ignore_occlusion_culling: bool = false
+# Do not enable vegetation occlusion culling by default until an A/B run proves
+# it improves FPS/watts without visible popping in wide town/terrain views.
+@export var vegetation_global_render_ignore_occlusion_culling: bool = true
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
 @export var world_map_vegetation_render_profile_enabled: bool = true
 @export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 4

@@ -213,10 +213,16 @@ def _selected_case_names() -> list[str]:
         "baseline,hide_terrain_manager_visuals,hide_vegetation_render,hide_terrain_and_vegetation,no_water",
     )
     names = [name.strip() for name in raw.split(",") if name.strip()]
+    # Vegetation LOD is intentionally future work; keep these cases opt-in so
+    # routine render tests cannot accidentally validate a visual shortcut.
+    allow_vegetation_lod_cases = os.environ.get("TOWN_STALL_ALLOW_VEGETATION_LOD_CASES", "").strip() == "1"
     selected: list[str] = []
     for name in names:
         if name not in CASES:
             print(f"WARNING: Unknown ablation case '{name}', skipping.")
+            continue
+        if "vegetation" in name and "lod" in name and not allow_vegetation_lod_cases:
+            print(f"WARNING: Vegetation LOD ablation case '{name}' requires TOWN_STALL_ALLOW_VEGETATION_LOD_CASES=1; skipping.")
             continue
         selected.append(name)
     return selected or ["baseline"]
