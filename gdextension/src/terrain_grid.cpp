@@ -1,8 +1,19 @@
 #include "terrain_grid.h"
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/core/math.hpp>
+#include <algorithm>
+#include <vector>
 
 namespace godot {
+
+namespace {
+
+struct TerrainCandidate {
+    Vector3i coord;
+    int dist_sq = 0;
+};
+
+} // namespace
 
 void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("add_chunk", "coord"), &TerrainGrid::add_chunk);
@@ -142,6 +153,8 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
 
     if (unload_chunks_per_frame_limit > 0 && !cached_unload_candidates_valid) {
         double unload_distance_sq = (double)(render_distance + 2) * (double)(render_distance + 2);
+        std::vector<TerrainCandidate> unload_candidates;
+        unload_candidates.reserve(active_chunks.size());
 
         // Calculate unloads from the current active set.
         for (const Vector3i &coord : active_chunks) {
@@ -160,8 +173,28 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
             }
 
             if (should_unload) {
-                cached_unload_candidates.append(coord);
+                TerrainCandidate candidate;
+                candidate.coord = coord;
+                candidate.dist_sq = (int)dist_xz_sq;
+                unload_candidates.push_back(candidate);
             }
+        }
+
+        std::stable_sort(unload_candidates.begin(), unload_candidates.end(), [](const TerrainCandidate &a, const TerrainCandidate &b) {
+            if (a.dist_sq != b.dist_sq) {
+                return a.dist_sq > b.dist_sq;
+            }
+            if (a.coord.y != b.coord.y) {
+                return a.coord.y > b.coord.y;
+            }
+            if (a.coord.x != b.coord.x) {
+                return a.coord.x > b.coord.x;
+            }
+            return a.coord.z > b.coord.z;
+        });
+
+        for (const TerrainCandidate &candidate : unload_candidates) {
+            cached_unload_candidates.append(candidate.coord);
         }
 
         cached_unload_candidates_valid = true;
@@ -183,6 +216,7 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
 
         int r = render_distance;
         int r_sq = r * r;
+        std::vector<TerrainCandidate> load_candidates;
         for (int x = center_x - r; x <= center_x + r; ++x) {
             for (int z = center_z - r; z <= center_z + r; ++z) {
                 double dist_sq = (double)((x - center_x) * (x - center_x) + (z - center_z) * (z - center_z));
@@ -197,10 +231,30 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
 
                     Vector3i coord(x, y, z);
                     if (!active_chunks.has(coord)) {
-                        cached_load_candidates.append(coord);
+                        TerrainCandidate candidate;
+                        candidate.coord = coord;
+                        candidate.dist_sq = (int)dist_sq;
+                        load_candidates.push_back(candidate);
                     }
                 }
             }
+        }
+
+        std::stable_sort(load_candidates.begin(), load_candidates.end(), [](const TerrainCandidate &a, const TerrainCandidate &b) {
+            if (a.dist_sq != b.dist_sq) {
+                return a.dist_sq < b.dist_sq;
+            }
+            if (a.coord.y != b.coord.y) {
+                return a.coord.y < b.coord.y;
+            }
+            if (a.coord.x != b.coord.x) {
+                return a.coord.x < b.coord.x;
+            }
+            return a.coord.z < b.coord.z;
+        });
+
+        for (const TerrainCandidate &candidate : load_candidates) {
+            cached_load_candidates.append(candidate.coord);
         }
 
         cached_load_candidates_valid = true;
