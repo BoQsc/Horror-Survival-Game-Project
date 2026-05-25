@@ -138,6 +138,10 @@ var _last_collider_update_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
 var _last_pending_chunk_process_ms: float = 0.0
 var _last_pending_chunk_budget_ms: float = 0.0
 var _last_pending_chunk_stages_processed: int = 0
+var _last_pending_chunk_selection_backend: String = ""
+var _last_pending_chunk_selection_scan_count: int = 0
+var _pending_chunk_selection_native_calls: int = 0
+var _pending_chunk_selection_gdscript_calls: int = 0
 var _last_collider_refresh_ms: float = 0.0
 var _last_queued_collider_update_ms: float = 0.0
 var _last_pending_placements_ms: float = 0.0
@@ -297,6 +301,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_pending_chunk_process_ms": _last_pending_chunk_process_ms,
 		"last_pending_chunk_budget_ms": _last_pending_chunk_budget_ms,
 		"last_pending_chunk_stages_processed": _last_pending_chunk_stages_processed,
+		"last_pending_chunk_selection_backend": _last_pending_chunk_selection_backend,
+		"last_pending_chunk_selection_scan_count": _last_pending_chunk_selection_scan_count,
+		"pending_chunk_selection_native_calls": _pending_chunk_selection_native_calls,
+		"pending_chunk_selection_gdscript_calls": _pending_chunk_selection_gdscript_calls,
 		"vegetation_stream_budget_ms": vegetation_stream_budget_ms,
 		"vegetation_initial_load_budget_ms": vegetation_initial_load_budget_ms,
 		"vegetation_chunk_start_delay_frames": vegetation_chunk_start_delay_frames,
@@ -2074,6 +2082,18 @@ func _get_next_pending_chunk_index() -> int:
 
 	var viewer_pos := get_viewer_position()
 	var chunk_stride := int(terrain_manager.CHUNK_STRIDE)
+	_last_pending_chunk_selection_scan_count = pending_chunks.size()
+
+	var native := _get_native_helper()
+	if native and native.has_method("pick_nearest_pending_vegetation_chunk"):
+		var native_index := int(native.pick_nearest_pending_vegetation_chunk(pending_chunks, viewer_pos, chunk_stride))
+		if native_index >= 0 and native_index < pending_chunks.size():
+			_last_pending_chunk_selection_backend = "native"
+			_pending_chunk_selection_native_calls += 1
+			return native_index
+
+	_last_pending_chunk_selection_backend = "gdscript"
+	_pending_chunk_selection_gdscript_calls += 1
 	var best_index := 0
 	var best_distance_sq := 1.0e30
 	for i in range(pending_chunks.size()):
@@ -4548,6 +4568,10 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_vegetation_water_block_sample_backend_counts.clear()
 	_vegetation_render_payload_backend_counts.clear()
 	_vegetation_render_cluster_payload_backend_counts.clear()
+	_last_pending_chunk_selection_backend = ""
+	_last_pending_chunk_selection_scan_count = 0
+	_pending_chunk_selection_native_calls = 0
+	_pending_chunk_selection_gdscript_calls = 0
 	_vegetation_collider_candidate_backend_counts.clear()
 	_vegetation_ray_query_backend_counts.clear()
 	_vegetation_body_collision_backend_counts.clear()

@@ -421,6 +421,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("parse_local_rect_2d", "raw_rect", "fallback_rect", "declared_size"), &PrefabGeometryNative::parse_local_rect_2d);
 	ClassDB::bind_method(D_METHOD("parse_local_volumes", "raw_volumes", "declared_size", "min_y", "max_y"), &PrefabGeometryNative::parse_local_volumes);
 	ClassDB::bind_method(D_METHOD("pick_nearest_candidates", "candidates", "max_count"), &PrefabGeometryNative::pick_nearest_candidates);
+	ClassDB::bind_method(D_METHOD("pick_nearest_pending_vegetation_chunk", "pending_chunks", "viewer_pos", "chunk_stride"), &PrefabGeometryNative::pick_nearest_pending_vegetation_chunk);
 	ClassDB::bind_method(D_METHOD("pick_nearby_vegetation_candidates", "chunk_data", "list_key", "item_key", "player_pos", "chunk_stride", "collider_distance", "max_count"), &PrefabGeometryNative::pick_nearby_vegetation_candidates);
 	ClassDB::bind_method(D_METHOD("find_nearest_vegetation_ray_hit", "chunk_data", "list_key", "kind", "origin", "direction", "max_distance", "radius", "height", "scale_by_entry"), &PrefabGeometryNative::find_nearest_vegetation_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
@@ -782,6 +783,40 @@ Array PrefabGeometryNative::pick_nearest_candidates(const Array &candidates, int
 	}
 
 	return result;
+}
+
+int PrefabGeometryNative::pick_nearest_pending_vegetation_chunk(const Array &pending_chunks, const Vector3 &viewer_pos, int chunk_stride) const {
+	if (pending_chunks.is_empty()) {
+		return -1;
+	}
+	if (chunk_stride <= 0) {
+		return 0;
+	}
+
+	int best_index = 0;
+	double best_distance_sq = std::numeric_limits<double>::infinity();
+	const double stride = double(chunk_stride);
+	for (int i = 0; i < pending_chunks.size(); ++i) {
+		Vector2i coord;
+		if (pending_chunks[i].get_type() == Variant::DICTIONARY) {
+			const Dictionary item = pending_chunks[i];
+			const Variant coord_variant = item.get("coord", Vector2i());
+			if (coord_variant.get_type() == Variant::VECTOR2I) {
+				coord = coord_variant;
+			}
+		}
+
+		const double center_x = (double(coord.x) + 0.5) * stride;
+		const double center_z = (double(coord.y) + 0.5) * stride;
+		const double dx = double(viewer_pos.x) - center_x;
+		const double dz = double(viewer_pos.z) - center_z;
+		const double distance_sq = dx * dx + dz * dz;
+		if (distance_sq < best_distance_sq) {
+			best_distance_sq = distance_sq;
+			best_index = i;
+		}
+	}
+	return best_index;
 }
 
 Array PrefabGeometryNative::pick_nearby_vegetation_candidates(const Dictionary &chunk_data, const String &list_key, const String &item_key, const Vector3 &player_pos, int chunk_stride, double collider_distance, int max_count) const {

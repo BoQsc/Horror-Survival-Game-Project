@@ -542,6 +542,18 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_render_cluster_payload_backend_counts": vegetation.get(
             "vegetation_render_cluster_payload_backend_counts", {}
         ),
+        "vegetation_pending_chunk_selection_backend": str(
+            vegetation.get("last_pending_chunk_selection_backend", "")
+        ),
+        "vegetation_pending_chunk_selection_scan_count": int(
+            vegetation.get("last_pending_chunk_selection_scan_count", 0) or 0
+        ),
+        "vegetation_pending_chunk_selection_native_calls": int(
+            vegetation.get("pending_chunk_selection_native_calls", 0) or 0
+        ),
+        "vegetation_pending_chunk_selection_gdscript_calls": int(
+            vegetation.get("pending_chunk_selection_gdscript_calls", 0) or 0
+        ),
         "vegetation_last_global_render_sync_instance_count": int(
             vegetation.get("last_global_render_sync_instance_count", 0) or 0
         ),
@@ -665,7 +677,8 @@ def _print_results(results: list[dict]) -> None:
             "                     efficiency holdWPF60/Mprim={hold_mprim:6.1f} /100draw={hold_draw:5.1f} /100obj={hold_obj:5.1f} "
             "moveWPF60/Mprim={move_mprim:6.1f} /100draw={move_draw:5.1f} /100obj={move_obj:5.1f} | "
             "nativeVeg={native} worldMapBlock={blocked} roadMask={road_mask} lastGen={last_kind}/{last_backend}/{last_reason} "
-            "counts={counts} roadSamples={road_samples} waterSamples={water_samples} payloads={payloads} clusterPayloads={cluster_payloads}".format(
+            "counts={counts} pendingPick={pending_backend}:{pending_native}/{pending_gdscript}@{pending_scan} "
+            "roadSamples={road_samples} waterSamples={water_samples} payloads={payloads} clusterPayloads={cluster_payloads}".format(
                 hold_mprim=float(result.get("hold_wpf60_per_million_primitives", 0.0) or 0.0),
                 hold_draw=float(result.get("hold_wpf60_per_100_draw_calls", 0.0) or 0.0),
                 hold_obj=float(result.get("hold_wpf60_per_100_objects", 0.0) or 0.0),
@@ -679,6 +692,10 @@ def _print_results(results: list[dict]) -> None:
                 last_backend=str(result.get("last_vegetation_generation_backend", "")),
                 last_reason=str(result.get("last_vegetation_generation_reason", "")),
                 counts=json.dumps(result.get("vegetation_generation_backend_counts", {}), sort_keys=True, separators=(",", ":")),
+                pending_backend=str(result.get("vegetation_pending_chunk_selection_backend", "")),
+                pending_native=int(result.get("vegetation_pending_chunk_selection_native_calls", 0) or 0),
+                pending_gdscript=int(result.get("vegetation_pending_chunk_selection_gdscript_calls", 0) or 0),
+                pending_scan=int(result.get("vegetation_pending_chunk_selection_scan_count", 0) or 0),
                 road_samples=json.dumps(result.get("vegetation_road_block_sample_backend_counts", {}), sort_keys=True, separators=(",", ":")),
                 water_samples=json.dumps(result.get("vegetation_water_block_sample_backend_counts", {}), sort_keys=True, separators=(",", ":")),
                 payloads=json.dumps(result.get("vegetation_render_payload_backend_counts", {}), sort_keys=True, separators=(",", ":")),
