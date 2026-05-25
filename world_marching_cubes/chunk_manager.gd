@@ -110,6 +110,7 @@ var _world_map_heightmap_height: int = 0
 var _world_map_biome_image: Image = null
 var _world_map_biome_texture: ImageTexture = null
 var _world_map_road_image: Image = null
+var _world_map_road_data: PackedByteArray = PackedByteArray()
 var _world_map_road_texture: ImageTexture = null
 var _world_map_water_image: Image = null
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
@@ -626,6 +627,7 @@ func _ready():
 		if loaded.has("roads"):
 			var rmap: Image = loaded.roads
 			_world_map_road_image = rmap
+			_world_map_road_data = rmap.get_data()
 			_world_map_road_texture = ImageTexture.create_from_image(rmap)
 			material_terrain.set_shader_parameter("world_map_road_map", _world_map_road_texture)
 		if loaded.has("water"):
@@ -5139,7 +5141,21 @@ func _is_world_map_road_pixel(pixel: Vector2i) -> bool:
 	var road_height := _world_map_road_image.get_height()
 	if pixel.x >= road_width or pixel.y >= road_height:
 		return false
+	if not _world_map_road_data.is_empty():
+		return _read_world_map_road_byte_pixel(pixel.x, pixel.y, road_width, road_height)
 	return _world_map_road_image.get_pixel(pixel.x, pixel.y).r > 0.5
+
+func _read_world_map_road_byte_pixel(pixel_x: int, pixel_y: int, road_width: int, road_height: int) -> bool:
+	if _world_map_road_data.is_empty() or road_width <= 0 or road_height <= 0:
+		return false
+	var pixel_count := road_width * road_height
+	if pixel_count <= 0:
+		return false
+	var bytes_per_pixel := maxi(int(_world_map_road_data.size() / pixel_count), 1)
+	var byte_index := (pixel_y * road_width + pixel_x) * bytes_per_pixel
+	if byte_index < 0 or byte_index >= _world_map_road_data.size():
+		return false
+	return int(_world_map_road_data[byte_index]) >= 128
 
 func _sample_world_map_height(global_x: float, global_z: float) -> float:
 	if _world_map_heightmap_data.is_empty() or _world_map_heightmap_width <= 0 or _world_map_heightmap_height <= 0:
@@ -5352,8 +5368,36 @@ func _is_world_map_road_at_position(global_x: float, global_z: float) -> bool:
 
 	var px := clampi(int(floor(u * float(road_width))), 0, road_width - 1)
 	var py := clampi(int(floor(v * float(road_height))), 0, road_height - 1)
+	if not _world_map_road_data.is_empty():
+		return _read_world_map_road_byte_pixel(px, py, road_width, road_height)
 	var road_pixel := _world_map_road_image.get_pixel(px, py)
 	return road_pixel.r > 0.5
+
+func get_world_map_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int) -> PackedFloat32Array:
+	var samples := PackedFloat32Array()
+	if _world_map_road_image == null or _world_map_road_data.is_empty() or world_map_size <= 0.0:
+		return samples
+
+	var road_width := _world_map_road_image.get_width()
+	var road_height := _world_map_road_image.get_height()
+	if road_width <= 0 or road_height <= 0:
+		return samples
+
+	for x in range(0, chunk_stride, step):
+		var global_x := float(chunk_origin_x + x)
+		var u := (global_x + world_map_half) / world_map_size
+		for z in range(0, chunk_stride, step):
+			var global_z := float(chunk_origin_z + z)
+			var v := (global_z + world_map_half) / world_map_size
+			if u < 0.0 or u > 1.0 or v < 0.0 or v > 1.0:
+				samples.append(0.0)
+				continue
+
+			var px := clampi(int(floor(u * float(road_width))), 0, road_width - 1)
+			var py := clampi(int(floor(v * float(road_height))), 0, road_height - 1)
+			samples.append(1.0 if _read_world_map_road_byte_pixel(px, py, road_width, road_height) else 0.0)
+
+	return samples
 
 func _get_all_modification_coords() -> Array:
 	if _modification_coord_cache_dirty:
@@ -6638,6 +6682,8 @@ func _thread_function():
 	# === World Map Buffers (uploaded from editor PNGs) ===
 
 	_world_map_buildings = []
+	_world_map_road_image = null
+	_world_map_road_data = PackedByteArray()
 	_world_map_water_image = null
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
@@ -6671,6 +6717,7 @@ func _thread_function():
 			var rmap: Image = loaded.roads
 			_world_map_biome_image = bmap
 			_world_map_road_image = rmap
+			_world_map_road_data = rmap.get_data()
 			gpu_biome_map = bmap.get_data()
 
 			# Upload raw bytes as storage buffers

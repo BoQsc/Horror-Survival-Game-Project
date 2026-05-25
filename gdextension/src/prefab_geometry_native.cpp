@@ -688,10 +688,14 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	const double procedural_road_spacing = double(config.get("procedural_road_spacing", 100.0));
 	const double procedural_road_width = double(config.get("procedural_road_width", 8.0));
 	const bool world_map_active = bool(config.get("world_map_active", false));
+	const PackedFloat32Array road_block_values = config.get("road_block_values", PackedFloat32Array());
+	const bool use_road_block_values = bool(config.get("use_road_block_values", false));
 	const PackedFloat32Array noise_values = config.get("noise_values", PackedFloat32Array());
 	const double noise_threshold = double(config.get("noise_threshold", 0.0));
 	const bool use_noise = bool(config.get("use_noise", true));
 	const bool use_water_density = bool(config.get("use_water_density", false));
+	const PackedFloat32Array water_block_values = config.get("water_block_values", PackedFloat32Array());
+	const bool use_water_block_values = bool(config.get("use_water_block_values", false));
 	const double water_level = double(config.get("water_level", 13.0));
 	const double scale_min = std::min(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
 	const double scale_max = std::max(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
@@ -715,7 +719,12 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 			const double global_x = double(chunk_origin_x + x);
 			const double global_z = double(chunk_origin_z + z);
 			bool road_is_blocked = false;
-			if (!world_map_active && procedural_roads_enabled) {
+			if (use_road_block_values) {
+				if (current_sample >= road_block_values.size()) {
+					continue;
+				}
+				road_is_blocked = road_block_values[current_sample] >= 0.5f;
+			} else if (!world_map_active && procedural_roads_enabled) {
 				road_is_blocked = is_procedural_road_blocked(global_x, global_z, procedural_road_spacing, procedural_road_width, road_clearance);
 			}
 			if (road_is_blocked) {
@@ -733,7 +742,12 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 			}
 
 			bool water_is_blocked = false;
-			if (use_water_density) {
+			if (use_water_block_values) {
+				if (current_sample >= water_block_values.size()) {
+					continue;
+				}
+				water_is_blocked = water_block_values[current_sample] >= 0.5f;
+			} else if (use_water_density) {
 				water_is_blocked = double(terrain_y) + 1.0 < water_level;
 			} else {
 				water_is_blocked = double(terrain_y) + 1.0 < water_level;

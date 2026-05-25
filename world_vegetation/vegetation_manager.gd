@@ -185,6 +185,11 @@ var _vegetation_render_resource_prewarm_node: Node = null
 var _vegetation_render_resource_prewarm_mesh_count: int = 0
 var _data_ray_harvest_queries: int = 0
 var _data_ray_harvest_hits: int = 0
+var _vegetation_generation_backend_counts: Dictionary = {}
+var _vegetation_road_block_sample_backend_counts: Dictionary = {}
+var _last_vegetation_generation_kind: String = ""
+var _last_vegetation_generation_backend: String = ""
+var _last_vegetation_generation_reason: String = ""
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
@@ -351,7 +356,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_render_prewarm_frames": vegetation_render_prewarm_frames,
 		"vegetation_render_prewarm_mesh_count": _vegetation_render_resource_prewarm_mesh_count,
 		"vegetation_render_prewarm_active": _is_vegetation_render_resource_prewarm_active(),
-		"vegetation_render_prewarm_frames_remaining": _get_vegetation_render_resource_prewarm_frames_remaining()
+		"vegetation_render_prewarm_frames_remaining": _get_vegetation_render_resource_prewarm_frames_remaining(),
+		"native_vegetation_generation_available": ClassDB.class_exists("PrefabGeometryNative"),
+		"native_vegetation_generation_blocked_by_world_map": false,
+		"native_vegetation_generation_world_map_road_mask_supported": true,
+		"vegetation_generation_backend_counts": _vegetation_generation_backend_counts.duplicate(true),
+		"vegetation_road_block_sample_backend_counts": _vegetation_road_block_sample_backend_counts.duplicate(true),
+		"last_vegetation_generation_kind": _last_vegetation_generation_kind,
+		"last_vegetation_generation_backend": _last_vegetation_generation_backend,
+		"last_vegetation_generation_reason": _last_vegetation_generation_reason
 	}
 
 
@@ -362,6 +375,38 @@ func _get_native_helper() -> Object:
 		return null
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
+
+func _native_vegetation_generation_skip_reason(
+		batch_heights: PackedFloat32Array,
+		road_block_values: PackedFloat32Array = PackedFloat32Array(),
+		water_block_values: PackedFloat32Array = PackedFloat32Array(),
+		needs_world_map_water_mask: bool = false
+) -> String:
+	if batch_heights.is_empty():
+		return "empty_height_map"
+	if not ClassDB.class_exists("PrefabGeometryNative"):
+		return "native_helper_missing"
+	if is_instance_valid(terrain_manager) and "world_map_active" in terrain_manager and bool(terrain_manager.world_map_active):
+		if road_block_values.is_empty():
+			return "world_map_road_mask_missing"
+		if needs_world_map_water_mask and water_block_values.is_empty():
+			return "world_map_water_mask_missing"
+	return "fallback"
+
+func _record_vegetation_generation_backend(kind: String, backend: String, reason: String, instance_count: int) -> void:
+	var chunk_key := "%s_%s_chunks" % [kind, backend]
+	var instance_key := "%s_%s_instances" % [kind, backend]
+	_vegetation_generation_backend_counts[chunk_key] = int(_vegetation_generation_backend_counts.get(chunk_key, 0)) + 1
+	_vegetation_generation_backend_counts[instance_key] = int(_vegetation_generation_backend_counts.get(instance_key, 0)) + instance_count
+	_last_vegetation_generation_kind = kind
+	_last_vegetation_generation_backend = backend
+	_last_vegetation_generation_reason = reason
+
+func _record_vegetation_road_block_samples_backend(backend: String, sample_count: int) -> void:
+	var chunk_key := "%s_chunks" % backend
+	var sample_key := "%s_samples" % backend
+	_vegetation_road_block_sample_backend_counts[chunk_key] = int(_vegetation_road_block_sample_backend_counts.get(chunk_key, 0)) + 1
+	_vegetation_road_block_sample_backend_counts[sample_key] = int(_vegetation_road_block_sample_backend_counts.get(sample_key, 0)) + sample_count
 
 func _get_vegetation_env_int_range(name: String, default_value: int, min_value: int, max_value: int) -> int:
 	var raw := OS.get_environment(name).strip_edges()
@@ -1381,6 +1426,18 @@ func _append_native_generated_instances(target: Array, records: Array) -> void:
 		target.append(item)
 
 
+func _remove_persistently_removed_entries(entries: Array, removed_lookup: Dictionary) -> void:
+	if removed_lookup.is_empty():
+		return
+	for index in range(entries.size() - 1, -1, -1):
+		var entry = entries[index]
+		if entry is Dictionary and removed_lookup.has(_position_hash(entry.get("hit_pos", entry.get("world_pos", Vector3.ZERO)))):
+			entries.remove_at(index)
+	for index in range(entries.size()):
+		if entries[index] is Dictionary:
+			entries[index]["index"] = index
+
+
 func _build_vegetation_native_config(
 		chunk_stride: int,
 		step: int,
@@ -1394,6 +1451,8 @@ func _build_vegetation_native_config(
 		procedural_road_spacing: float,
 		procedural_road_width: float,
 		world_map_active: bool,
+		road_block_values: PackedFloat32Array,
+		water_block_values: PackedFloat32Array,
 		water_level: float,
 		noise_values: PackedFloat32Array,
 		noise_seed: int,
@@ -1420,6 +1479,10 @@ func _build_vegetation_native_config(
 		"procedural_road_spacing": procedural_road_spacing,
 		"procedural_road_width": procedural_road_width,
 		"world_map_active": world_map_active,
+		"road_block_values": road_block_values,
+		"use_road_block_values": not road_block_values.is_empty(),
+		"water_block_values": water_block_values,
+		"use_water_block_values": not water_block_values.is_empty(),
 		"water_level": water_level,
 		"noise_values": noise_values,
 		"noise_seed": noise_seed,
@@ -1445,6 +1508,73 @@ func _build_vegetation_noise_samples(noise_source: FastNoiseLite, chunk_origin_x
 			samples.append(noise_source.get_noise_2d(chunk_origin_x + x, chunk_origin_z + z))
 
 	return samples
+
+
+func _build_vegetation_water_block_samples(
+		chunk_origin_x: int,
+		chunk_origin_z: int,
+		chunk_stride: int,
+		step: int,
+		batch_heights: PackedFloat32Array,
+		use_exact_water_density: bool
+) -> PackedFloat32Array:
+	var samples := PackedFloat32Array()
+	if not use_exact_water_density:
+		return samples
+	if not is_instance_valid(terrain_manager) or not ("world_map_active" in terrain_manager) or not bool(terrain_manager.world_map_active):
+		return samples
+	if batch_heights.is_empty():
+		return samples
+
+	var sample_index := 0
+	for x in range(0, chunk_stride, step):
+		for z in range(0, chunk_stride, step):
+			if sample_index >= batch_heights.size():
+				return samples
+			var terrain_y := batch_heights[sample_index]
+			sample_index += 1
+			if terrain_y < -100.0:
+				samples.append(0.0)
+				continue
+			var water_density: float = terrain_manager.get_water_density(Vector3(chunk_origin_x + x, terrain_y + 0.5, chunk_origin_z + z))
+			samples.append(1.0 if water_density < 0.0 else 0.0)
+
+	return samples
+
+
+func _build_vegetation_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int) -> PackedFloat32Array:
+	var samples := PackedFloat32Array()
+	if not is_instance_valid(terrain_manager) or not ("world_map_active" in terrain_manager) or not bool(terrain_manager.world_map_active):
+		return samples
+
+	if terrain_manager.has_method("get_world_map_road_block_samples"):
+		var batched_samples: PackedFloat32Array = terrain_manager.get_world_map_road_block_samples(chunk_origin_x, chunk_origin_z, chunk_stride, step)
+		if not batched_samples.is_empty():
+			_record_vegetation_road_block_samples_backend("terrain_batched", batched_samples.size())
+			return batched_samples
+
+	for x in range(0, chunk_stride, step):
+		for z in range(0, chunk_stride, step):
+			samples.append(1.0 if _is_spawn_blocked_by_road(chunk_origin_x + x, chunk_origin_z + z) else 0.0)
+
+	_record_vegetation_road_block_samples_backend("vegetation_fallback", samples.size())
+	return samples
+
+
+func _can_use_native_vegetation_generation(
+		batch_heights: PackedFloat32Array,
+		road_block_values: PackedFloat32Array,
+		water_block_values: PackedFloat32Array,
+		needs_world_map_water_mask: bool
+) -> bool:
+	if batch_heights.is_empty():
+		return false
+	if is_instance_valid(terrain_manager) and "world_map_active" in terrain_manager and bool(terrain_manager.world_map_active):
+		if road_block_values.is_empty():
+			return false
+		if needs_world_map_water_mask and water_block_values.is_empty():
+			return false
+	return true
 
 
 func _build_native_vegetation_instances(
@@ -2463,7 +2593,12 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
 	var native := _get_native_helper()
-	if native and native.has_method("build_vegetation_instances") and not batch_heights.is_empty() and not terrain_manager.world_map_active:
+	var native_can_build: bool = native != null and native.has_method("build_vegetation_instances")
+	var road_block_values := PackedFloat32Array()
+	var water_block_values := PackedFloat32Array()
+	if native_can_build:
+		road_block_values = _build_vegetation_road_block_samples(chunk_origin_x, chunk_origin_z, chunk_stride, step)
+	if native_can_build and _can_use_native_vegetation_generation(batch_heights, road_block_values, water_block_values, false):
 		var native_config := _build_vegetation_native_config(
 			chunk_stride,
 			step,
@@ -2477,6 +2612,8 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			terrain_manager.procedural_road_spacing,
 			terrain_manager.procedural_road_width,
 			terrain_manager.world_map_active,
+			road_block_values,
+			water_block_values,
 			terrain_manager.water_level,
 			_build_vegetation_noise_samples(forest_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, true),
 			int(forest_noise.seed),
@@ -2510,6 +2647,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 		if tree_list.size() > 0:
 			_sync_multimesh_from_instances(mmi, tree_list, chunk_stride)
+		_record_vegetation_generation_backend("tree", "native", "height_map", tree_list.size())
 		return
 
 	var batch_idx = 0
@@ -2591,6 +2729,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 	if tree_list.size() > 0:
 		_sync_multimesh_from_instances(mmi, tree_list, chunk_stride)
+	_record_vegetation_generation_backend("tree", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, false), tree_list.size())
 
 func chop_tree_by_collider(collider: Node) -> bool:
 	# Check if collider is still valid (not freed)
@@ -2739,7 +2878,13 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
 	var native := _get_native_helper()
-	if native and native.has_method("build_vegetation_instances") and not batch_heights.is_empty() and not terrain_manager.world_map_active:
+	var native_can_build: bool = native != null and native.has_method("build_vegetation_instances")
+	var road_block_values := PackedFloat32Array()
+	var water_block_values := PackedFloat32Array()
+	if native_can_build:
+		road_block_values = _build_vegetation_road_block_samples(chunk_origin_x, chunk_origin_z, chunk_stride, step)
+		water_block_values = _build_vegetation_water_block_samples(chunk_origin_x, chunk_origin_z, chunk_stride, step, batch_heights, true)
+	if native_can_build and _can_use_native_vegetation_generation(batch_heights, road_block_values, water_block_values, true):
 		var native_config := _build_vegetation_native_config(
 			chunk_stride,
 			step,
@@ -2753,6 +2898,8 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			terrain_manager.procedural_road_spacing,
 			terrain_manager.procedural_road_width,
 			terrain_manager.world_map_active,
+			road_block_values,
+			water_block_values,
 			terrain_manager.water_level,
 			_build_vegetation_noise_samples(grass_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, not dense_grass_mode),
 			int(grass_noise.seed),
@@ -2768,6 +2915,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		)
 		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
 		_append_native_generated_instances(grass_list, native_records)
+		_remove_persistently_removed_entries(grass_list, removed_grass)
 
 		# Add player-placed grass for this chunk
 		for placed in placed_grass:
@@ -2804,6 +2952,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			"grass_list": grass_list,
 			"chunk_node": chunk_node
 		}
+		_record_vegetation_generation_backend("grass", "native", "height_map", grass_list.size())
 		return
 
 	var batch_idx = 0
@@ -2919,6 +3068,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"grass_list": grass_list,
 		"chunk_node": chunk_node
 	}
+	_record_vegetation_generation_backend("grass", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, true), grass_list.size())
 
 func harvest_grass_by_collider(collider: Node) -> bool:
 	# Check if collider is still valid (not freed)
@@ -3465,7 +3615,13 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var step = 7
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
 	var native := _get_native_helper()
-	if native and native.has_method("build_vegetation_instances") and not batch_heights.is_empty() and not terrain_manager.world_map_active:
+	var native_can_build: bool = native != null and native.has_method("build_vegetation_instances")
+	var road_block_values := PackedFloat32Array()
+	var water_block_values := PackedFloat32Array()
+	if native_can_build:
+		road_block_values = _build_vegetation_road_block_samples(chunk_origin_x, chunk_origin_z, chunk_stride, step)
+		water_block_values = _build_vegetation_water_block_samples(chunk_origin_x, chunk_origin_z, chunk_stride, step, batch_heights, true)
+	if native_can_build and _can_use_native_vegetation_generation(batch_heights, road_block_values, water_block_values, true):
 		var native_config := _build_vegetation_native_config(
 			chunk_stride,
 			step,
@@ -3479,6 +3635,8 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			terrain_manager.procedural_road_spacing,
 			terrain_manager.procedural_road_width,
 			terrain_manager.world_map_active,
+			road_block_values,
+			water_block_values,
 			terrain_manager.water_level,
 			_build_vegetation_noise_samples(rock_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, true),
 			int(rock_noise.seed),
@@ -3494,6 +3652,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		)
 		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
 		_append_native_generated_instances(rock_list, native_records)
+		_remove_persistently_removed_entries(rock_list, removed_rocks)
 
 		# Add player-placed rocks for this chunk
 		for placed in placed_rocks:
@@ -3530,6 +3689,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			"rock_list": rock_list,
 			"chunk_node": chunk_node
 		}
+		_record_vegetation_generation_backend("rock", "native", "height_map", rock_list.size())
 		return
 
 	var batch_idx = 0
@@ -3644,6 +3804,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"rock_list": rock_list,
 		"chunk_node": chunk_node
 	}
+	_record_vegetation_generation_backend("rock", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, true), rock_list.size())
 
 func harvest_rock_by_collider(collider: Node) -> bool:
 	if not is_instance_valid(collider):
@@ -4060,6 +4221,11 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	pending_vegetation_regen = false
 	is_initial_load_batch = false
 	initial_load_count = 0
+	_vegetation_generation_backend_counts.clear()
+	_vegetation_road_block_sample_backend_counts.clear()
+	_last_vegetation_generation_kind = ""
+	_last_vegetation_generation_backend = ""
+	_last_vegetation_generation_reason = ""
 	_sync_process_loop()
 
 

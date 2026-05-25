@@ -272,6 +272,12 @@ def _wpf60(power_w: float, frame_ms: float) -> float:
     return power_w * frame_ms / FPS_60_FRAME_MS
 
 
+def _per_scaled_unit(value: float, denominator: float, scale: float) -> float:
+    if value <= 0.0 or denominator <= 0.0 or scale <= 0.0:
+        return 0.0
+    return value / (denominator / scale)
+
+
 def _phase_window(system_summary: dict, phase: str) -> dict:
     windows = system_summary.get("phase_windows", {}) if isinstance(system_summary, dict) else {}
     window = windows.get(phase, {}) if isinstance(windows, dict) else {}
@@ -360,9 +366,17 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         or 0
     )
     avg_total_ms = _pick_window_metric(stationary_hold, town_window, "avg_total_ms")
+    avg_draw_calls = _pick_window_metric(stationary_hold, town_window, "avg_draw_calls")
+    avg_objects = _pick_window_metric(stationary_hold, town_window, "avg_objects")
+    avg_primitives = _pick_window_metric(stationary_hold, town_window, "avg_primitives")
     moving_avg_total_ms = float(moving_entry.get("avg_total_ms", 0.0) or 0.0)
+    moving_avg_draw_calls = float(moving_entry.get("avg_draw_calls", 0.0) or 0.0)
+    moving_avg_objects = float(moving_entry.get("avg_objects", 0.0) or 0.0)
+    moving_avg_primitives = float(moving_entry.get("avg_primitives", 0.0) or 0.0)
     moving_raw_gpu_power_avg_w = _summary_avg(moving_system, "raw_gpu_power_w")
     hold_raw_gpu_power_avg_w = _summary_avg(hold_system, "raw_gpu_power_w")
+    moving_wpf60 = _wpf60(moving_raw_gpu_power_avg_w, moving_avg_total_ms)
+    hold_wpf60 = _wpf60(hold_raw_gpu_power_avg_w, avg_total_ms)
 
     return {
         "case": case_name,
@@ -379,21 +393,27 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "runtime_power_idle_max_fps": int(terrain.get("runtime_power_idle_max_fps", 0) or 0),
         "runtime_power_deep_idle_max_fps": int(terrain.get("runtime_power_deep_idle_max_fps", 0) or 0),
         "avg_total_ms": avg_total_ms,
-        "avg_draw_calls": _pick_window_metric(stationary_hold, town_window, "avg_draw_calls"),
-        "avg_objects": _pick_window_metric(stationary_hold, town_window, "avg_objects"),
-        "avg_primitives": _pick_window_metric(stationary_hold, town_window, "avg_primitives"),
+        "avg_draw_calls": avg_draw_calls,
+        "avg_objects": avg_objects,
+        "avg_primitives": avg_primitives,
         "moving_avg_total_ms": moving_avg_total_ms,
-        "moving_avg_draw_calls": float(moving_entry.get("avg_draw_calls", 0.0) or 0.0),
-        "moving_avg_objects": float(moving_entry.get("avg_objects", 0.0) or 0.0),
-        "moving_avg_primitives": float(moving_entry.get("avg_primitives", 0.0) or 0.0),
+        "moving_avg_draw_calls": moving_avg_draw_calls,
+        "moving_avg_objects": moving_avg_objects,
+        "moving_avg_primitives": moving_avg_primitives,
         "moving_raw_gpu_power_avg_w": moving_raw_gpu_power_avg_w,
-        "moving_wpf60": _wpf60(moving_raw_gpu_power_avg_w, moving_avg_total_ms),
+        "moving_wpf60": moving_wpf60,
+        "moving_wpf60_per_million_primitives": _per_scaled_unit(moving_wpf60, moving_avg_primitives, 1_000_000.0),
+        "moving_wpf60_per_100_draw_calls": _per_scaled_unit(moving_wpf60, moving_avg_draw_calls, 100.0),
+        "moving_wpf60_per_100_objects": _per_scaled_unit(moving_wpf60, moving_avg_objects, 100.0),
         "moving_raw_gpu_temp_max_c": float(
             (moving_system.get("raw_gpu_temp_c", {}) if isinstance(moving_system.get("raw_gpu_temp_c", {}), dict) else {}).get("max", 0.0)
             or 0.0
         ),
         "hold_raw_gpu_power_avg_w": hold_raw_gpu_power_avg_w,
-        "hold_wpf60": _wpf60(hold_raw_gpu_power_avg_w, avg_total_ms),
+        "hold_wpf60": hold_wpf60,
+        "hold_wpf60_per_million_primitives": _per_scaled_unit(hold_wpf60, avg_primitives, 1_000_000.0),
+        "hold_wpf60_per_100_draw_calls": _per_scaled_unit(hold_wpf60, avg_draw_calls, 100.0),
+        "hold_wpf60_per_100_objects": _per_scaled_unit(hold_wpf60, avg_objects, 100.0),
         "hold_raw_gpu_temp_max_c": float(
             (hold_system.get("raw_gpu_temp_c", {}) if isinstance(hold_system.get("raw_gpu_temp_c", {}), dict) else {}).get("max", 0.0)
             or 0.0
@@ -461,6 +481,14 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_rock_batches": int(vegetation.get("global_rock_render_batch_count", 0) or 0),
         "vegetation_cluster_size": int(vegetation.get("effective_vegetation_render_cluster_size", 0) or 0),
         "vegetation_grass_cluster_size": int(vegetation.get("effective_vegetation_grass_render_cluster_size", 0) or 0),
+        "native_vegetation_generation_available": bool(vegetation.get("native_vegetation_generation_available", False)),
+        "native_vegetation_generation_blocked_by_world_map": bool(vegetation.get("native_vegetation_generation_blocked_by_world_map", False)),
+        "native_vegetation_generation_world_map_road_mask_supported": bool(vegetation.get("native_vegetation_generation_world_map_road_mask_supported", False)),
+        "vegetation_generation_backend_counts": vegetation.get("vegetation_generation_backend_counts", {}),
+        "vegetation_road_block_sample_backend_counts": vegetation.get("vegetation_road_block_sample_backend_counts", {}),
+        "last_vegetation_generation_kind": str(vegetation.get("last_vegetation_generation_kind", "")),
+        "last_vegetation_generation_backend": str(vegetation.get("last_vegetation_generation_backend", "")),
+        "last_vegetation_generation_reason": str(vegetation.get("last_vegetation_generation_reason", "")),
         "entity_active": int(entities.get("active_entities", 0) or 0),
         "entity_active_distance_ring_counts": entities.get("active_entity_distance_ring_counts", []),
         "entity_frozen": int(entities.get("frozen_entities", 0) or 0),
@@ -570,6 +598,26 @@ def _print_results(results: list[dict]) -> None:
                 active_fps=int(result.get("runtime_power_active_max_fps", 0) or 0),
                 idle_fps=int(result.get("runtime_power_idle_max_fps", 0) or 0),
                 deep_fps=int(result.get("runtime_power_deep_idle_max_fps", 0) or 0),
+            )
+        )
+        print(
+            "                     efficiency holdWPF60/Mprim={hold_mprim:6.1f} /100draw={hold_draw:5.1f} /100obj={hold_obj:5.1f} "
+            "moveWPF60/Mprim={move_mprim:6.1f} /100draw={move_draw:5.1f} /100obj={move_obj:5.1f} | "
+            "nativeVeg={native} worldMapBlock={blocked} roadMask={road_mask} lastGen={last_kind}/{last_backend}/{last_reason} counts={counts} roadSamples={road_samples}".format(
+                hold_mprim=float(result.get("hold_wpf60_per_million_primitives", 0.0) or 0.0),
+                hold_draw=float(result.get("hold_wpf60_per_100_draw_calls", 0.0) or 0.0),
+                hold_obj=float(result.get("hold_wpf60_per_100_objects", 0.0) or 0.0),
+                move_mprim=float(result.get("moving_wpf60_per_million_primitives", 0.0) or 0.0),
+                move_draw=float(result.get("moving_wpf60_per_100_draw_calls", 0.0) or 0.0),
+                move_obj=float(result.get("moving_wpf60_per_100_objects", 0.0) or 0.0),
+                native="yes" if bool(result.get("native_vegetation_generation_available", False)) else "no",
+                blocked="yes" if bool(result.get("native_vegetation_generation_blocked_by_world_map", False)) else "no",
+                road_mask="yes" if bool(result.get("native_vegetation_generation_world_map_road_mask_supported", False)) else "no",
+                last_kind=str(result.get("last_vegetation_generation_kind", "")),
+                last_backend=str(result.get("last_vegetation_generation_backend", "")),
+                last_reason=str(result.get("last_vegetation_generation_reason", "")),
+                counts=json.dumps(result.get("vegetation_generation_backend_counts", {}), sort_keys=True, separators=(",", ":")),
+                road_samples=json.dumps(result.get("vegetation_road_block_sample_backend_counts", {}), sort_keys=True, separators=(",", ":")),
             )
         )
         print(
