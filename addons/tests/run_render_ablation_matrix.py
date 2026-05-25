@@ -522,6 +522,11 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "native_vegetation_generation_world_map_road_mask_supported": bool(vegetation.get("native_vegetation_generation_world_map_road_mask_supported", False)),
         "vegetation_generation_backend_counts": vegetation.get("vegetation_generation_backend_counts", {}),
         "vegetation_road_block_sample_backend_counts": vegetation.get("vegetation_road_block_sample_backend_counts", {}),
+        "vegetation_water_block_sample_backend_counts": vegetation.get("vegetation_water_block_sample_backend_counts", {}),
+        "vegetation_render_payload_backend_counts": vegetation.get("vegetation_render_payload_backend_counts", {}),
+        "vegetation_render_cluster_payload_backend_counts": vegetation.get(
+            "vegetation_render_cluster_payload_backend_counts", {}
+        ),
         "last_vegetation_generation_kind": str(vegetation.get("last_vegetation_generation_kind", "")),
         "last_vegetation_generation_backend": str(vegetation.get("last_vegetation_generation_backend", "")),
         "last_vegetation_generation_reason": str(vegetation.get("last_vegetation_generation_reason", "")),
@@ -639,7 +644,8 @@ def _print_results(results: list[dict]) -> None:
         print(
             "                     efficiency holdWPF60/Mprim={hold_mprim:6.1f} /100draw={hold_draw:5.1f} /100obj={hold_obj:5.1f} "
             "moveWPF60/Mprim={move_mprim:6.1f} /100draw={move_draw:5.1f} /100obj={move_obj:5.1f} | "
-            "nativeVeg={native} worldMapBlock={blocked} roadMask={road_mask} lastGen={last_kind}/{last_backend}/{last_reason} counts={counts} roadSamples={road_samples}".format(
+            "nativeVeg={native} worldMapBlock={blocked} roadMask={road_mask} lastGen={last_kind}/{last_backend}/{last_reason} "
+            "counts={counts} roadSamples={road_samples} waterSamples={water_samples} payloads={payloads} clusterPayloads={cluster_payloads}".format(
                 hold_mprim=float(result.get("hold_wpf60_per_million_primitives", 0.0) or 0.0),
                 hold_draw=float(result.get("hold_wpf60_per_100_draw_calls", 0.0) or 0.0),
                 hold_obj=float(result.get("hold_wpf60_per_100_objects", 0.0) or 0.0),
@@ -654,6 +660,13 @@ def _print_results(results: list[dict]) -> None:
                 last_reason=str(result.get("last_vegetation_generation_reason", "")),
                 counts=json.dumps(result.get("vegetation_generation_backend_counts", {}), sort_keys=True, separators=(",", ":")),
                 road_samples=json.dumps(result.get("vegetation_road_block_sample_backend_counts", {}), sort_keys=True, separators=(",", ":")),
+                water_samples=json.dumps(result.get("vegetation_water_block_sample_backend_counts", {}), sort_keys=True, separators=(",", ":")),
+                payloads=json.dumps(result.get("vegetation_render_payload_backend_counts", {}), sort_keys=True, separators=(",", ":")),
+                cluster_payloads=json.dumps(
+                    result.get("vegetation_render_cluster_payload_backend_counts", {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
             )
         )
         print(

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <unordered_map>
@@ -71,6 +72,11 @@ struct RayHitCandidate {
 	double distance_sq_to_ray = 0.0;
 	Dictionary data;
 	bool valid = false;
+};
+
+struct VegetationClusterPayloadChunk {
+	PackedFloat32Array buffer;
+	int float_count = 0;
 };
 
 static int normalize_rotation(int rotation) {
@@ -348,6 +354,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse"), &PrefabGeometryNative::build_global_vegetation_render_payload);
+	ClassDB::bind_method(D_METHOD("build_global_vegetation_cluster_render_payload", "payloads", "coord_keys", "bounds_padding"), &PrefabGeometryNative::build_global_vegetation_cluster_render_payload);
 	ClassDB::bind_method(D_METHOD("pack_multimesh_buffer_from_instances", "instances"), &PrefabGeometryNative::pack_multimesh_buffer_from_instances);
 }
 
@@ -1150,6 +1157,102 @@ Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Ar
 	result["instance_count"] = static_cast<int>(transforms.size());
 	result["bounds"] = bounds;
 	result["has_bounds"] = has_bounds;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::build_global_vegetation_cluster_render_payload(const Dictionary &payloads, const Array &coord_keys, double bounds_padding) const {
+	Dictionary result;
+	result["buffer"] = PackedFloat32Array();
+	result["bounds"] = AABB();
+	result["has_bounds"] = false;
+	result["chunk_count"] = 0;
+	result["instance_count"] = 0;
+
+	if (payloads.is_empty() || coord_keys.is_empty()) {
+		return result;
+	}
+
+	std::vector<VegetationClusterPayloadChunk> chunks;
+	chunks.reserve(coord_keys.size());
+
+	int total_float_count = 0;
+	int total_instance_count = 0;
+	int chunk_count = 0;
+	AABB bounds;
+	bool has_bounds = false;
+
+	for (int i = 0; i < coord_keys.size(); ++i) {
+		const Variant coord_key = coord_keys[i];
+		const Variant chunk_payload_variant = payloads.get(coord_key, Variant());
+		if (chunk_payload_variant.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+
+		Dictionary chunk_payload = chunk_payload_variant;
+		const int instance_count = int(chunk_payload.get("instance_count", 0));
+		if (instance_count <= 0) {
+			continue;
+		}
+
+		const Variant chunk_buffer_variant = chunk_payload.get("buffer", PackedFloat32Array());
+		if (chunk_buffer_variant.get_type() != Variant::PACKED_FLOAT32_ARRAY) {
+			continue;
+		}
+
+		PackedFloat32Array chunk_buffer = chunk_buffer_variant;
+		const int required_float_count = instance_count * 12;
+		if (chunk_buffer.size() < required_float_count) {
+			continue;
+		}
+
+		VegetationClusterPayloadChunk chunk;
+		chunk.buffer = chunk_buffer;
+		chunk.float_count = required_float_count;
+		chunks.push_back(chunk);
+
+		total_float_count += required_float_count;
+		total_instance_count += instance_count;
+		chunk_count += 1;
+
+		if (bool(chunk_payload.get("has_bounds", false))) {
+			const Variant bounds_variant = chunk_payload.get("bounds", AABB());
+			if (bounds_variant.get_type() == Variant::AABB) {
+				const AABB chunk_bounds = bounds_variant;
+				if (has_bounds) {
+					bounds.merge_with(chunk_bounds);
+				} else {
+					bounds = chunk_bounds;
+					has_bounds = true;
+				}
+			}
+		}
+	}
+
+	if (total_float_count <= 0 || total_instance_count <= 0) {
+		return result;
+	}
+
+	PackedFloat32Array buffer;
+	buffer.resize(total_float_count);
+	float *write_ptr = buffer.ptrw();
+	int write_offset = 0;
+	for (const VegetationClusterPayloadChunk &chunk : chunks) {
+		const float *read_ptr = chunk.buffer.ptr();
+		std::memcpy(write_ptr + write_offset, read_ptr, sizeof(float) * chunk.float_count);
+		write_offset += chunk.float_count;
+	}
+
+	if (has_bounds && bounds_padding > 0.0) {
+		const Vector3 padding(bounds_padding, bounds_padding, bounds_padding);
+		bounds.position -= padding;
+		bounds.size += padding * 2.0;
+	}
+
+	result["buffer"] = buffer;
+	result["bounds"] = bounds;
+	result["has_bounds"] = has_bounds;
+	result["chunk_count"] = chunk_count;
+	result["instance_count"] = total_instance_count;
 	return result;
 }
 

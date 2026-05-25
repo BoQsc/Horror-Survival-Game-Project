@@ -50,6 +50,7 @@ public:
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
 	Dictionary build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse) const;
+	Dictionary build_global_vegetation_cluster_render_payload(const Dictionary &payloads, const Array &coord_keys, double bounds_padding) const;
 	PackedFloat32Array pack_multimesh_buffer_from_instances(const Array &instances) const;
 
     Array get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const;

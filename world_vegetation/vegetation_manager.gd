@@ -190,6 +190,7 @@ var _vegetation_generation_backend_counts: Dictionary = {}
 var _vegetation_road_block_sample_backend_counts: Dictionary = {}
 var _vegetation_water_block_sample_backend_counts: Dictionary = {}
 var _vegetation_render_payload_backend_counts: Dictionary = {}
+var _vegetation_render_cluster_payload_backend_counts: Dictionary = {}
 var _vegetation_collider_candidate_backend_counts: Dictionary = {}
 var _vegetation_ray_query_backend_counts: Dictionary = {}
 var _vegetation_body_collision_backend_counts: Dictionary = {}
@@ -370,6 +371,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_road_block_sample_backend_counts": _vegetation_road_block_sample_backend_counts.duplicate(true),
 		"vegetation_water_block_sample_backend_counts": _vegetation_water_block_sample_backend_counts.duplicate(true),
 		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
+		"vegetation_render_cluster_payload_backend_counts": _vegetation_render_cluster_payload_backend_counts.duplicate(true),
 		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
 		"vegetation_ray_query_backend_counts": _vegetation_ray_query_backend_counts.duplicate(true),
 		"vegetation_body_collision_backend_counts": _vegetation_body_collision_backend_counts.duplicate(true),
@@ -430,6 +432,14 @@ func _record_vegetation_render_payload_backend(backend: String, instance_count: 
 	var instance_key := "%s_instances" % backend
 	_vegetation_render_payload_backend_counts[chunk_key] = int(_vegetation_render_payload_backend_counts.get(chunk_key, 0)) + 1
 	_vegetation_render_payload_backend_counts[instance_key] = int(_vegetation_render_payload_backend_counts.get(instance_key, 0)) + instance_count
+
+func _record_vegetation_render_cluster_payload_backend(backend: String, chunk_count: int, instance_count: int) -> void:
+	var call_key := "%s_calls" % backend
+	var chunk_key := "%s_chunks" % backend
+	var instance_key := "%s_instances" % backend
+	_vegetation_render_cluster_payload_backend_counts[call_key] = int(_vegetation_render_cluster_payload_backend_counts.get(call_key, 0)) + 1
+	_vegetation_render_cluster_payload_backend_counts[chunk_key] = int(_vegetation_render_cluster_payload_backend_counts.get(chunk_key, 0)) + chunk_count
+	_vegetation_render_cluster_payload_backend_counts[instance_key] = int(_vegetation_render_cluster_payload_backend_counts.get(instance_key, 0)) + instance_count
 
 func _record_vegetation_collider_candidate_backend(kind: String, backend: String, candidate_count: int) -> void:
 	var call_key := "%s_%s_calls" % [kind, backend]
@@ -1257,6 +1267,20 @@ func _collect_global_vegetation_render_payload(kind: String, cluster_key = null)
 	else:
 		coord_keys = payloads.keys()
 	_last_global_render_candidate_chunk_count = coord_keys.size()
+	var native := _get_native_helper()
+	if native and native.has_method("build_global_vegetation_cluster_render_payload"):
+		var native_payload: Dictionary = native.build_global_vegetation_cluster_render_payload(
+			payloads,
+			coord_keys,
+			_global_render_bounds_padding_for_kind(kind)
+		)
+		_record_vegetation_render_cluster_payload_backend(
+			"native",
+			int(native_payload.get("chunk_count", 0)),
+			int(native_payload.get("instance_count", 0))
+		)
+		return native_payload
+
 	for coord_variant in coord_keys:
 		var coord: Vector2i = coord_variant
 		var chunk_payload: Dictionary = payloads.get(coord, {})
@@ -1281,6 +1305,11 @@ func _collect_global_vegetation_render_payload(kind: String, cluster_key = null)
 	if bool(payload.has_bounds):
 		var payload_bounds: AABB = payload.bounds
 		payload.bounds = payload_bounds.grow(_global_render_bounds_padding_for_kind(kind))
+	_record_vegetation_render_cluster_payload_backend(
+		"gdscript",
+		int(payload.get("chunk_count", 0)),
+		int(payload.get("instance_count", 0))
+	)
 	return payload
 
 func _recount_global_render_instances(kind: String) -> int:
@@ -4293,6 +4322,7 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_vegetation_road_block_sample_backend_counts.clear()
 	_vegetation_water_block_sample_backend_counts.clear()
 	_vegetation_render_payload_backend_counts.clear()
+	_vegetation_render_cluster_payload_backend_counts.clear()
 	_vegetation_collider_candidate_backend_counts.clear()
 	_vegetation_ray_query_backend_counts.clear()
 	_vegetation_body_collision_backend_counts.clear()
