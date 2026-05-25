@@ -1522,8 +1522,10 @@ def _detect_run_failure(output: str, returncode: Optional[int]) -> list[str]:
     for marker in crash_markers:
         if marker in lowered:
             reasons.append(f"matched crash marker: {marker}")
-    if "low-fps safety abort" in lowered:
-        reasons.append("low-FPS safety abort triggered")
+    for line in lowered.splitlines():
+        if "low-fps safety abort:" in line and " over " in line and "ms/frame" in line:
+            reasons.append("low-FPS safety abort triggered")
+            break
     if "[town_stall_test] hold started" not in lowered:
         reasons.append("town hold never started")
     if returncode is not None and returncode != 0:

@@ -126,11 +126,12 @@ func _ready() -> void:
 	call_deferred("_setup_audio")
 	
 	# Connect to weapon ready signals (backward compat)
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.punch_ready.connect(_on_punch_ready)
-		PlayerSignals.pistol_fire_ready.connect(_on_pistol_fire_ready)
-		PlayerSignals.axe_ready.connect(_on_axe_ready)
-		PlayerSignals.item_changed.connect(_on_item_changed)
+	var player_signals := _get_player_signals()
+	if player_signals:
+		player_signals.punch_ready.connect(_on_punch_ready)
+		player_signals.pistol_fire_ready.connect(_on_pistol_fire_ready)
+		player_signals.axe_ready.connect(_on_axe_ready)
+		player_signals.item_changed.connect(_on_item_changed)
 	
 
 func _on_item_changed(_slot: int, _item: Dictionary) -> void:
@@ -657,6 +658,8 @@ func do_punch(item: Dictionary) -> void:
 	
 	var hit = _raycast(5.0, true, true)
 	if hit.is_empty():
+		if _try_harvest_vegetation_near_ray(item, 5.0):
+			return
 		return
 	
 	var damage = item.get("damage", 1)
@@ -729,6 +732,8 @@ func do_tool_attack(item: Dictionary) -> void:
 	
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
+		if _try_harvest_vegetation_near_ray(item, 3.5):
+			return
 		return
 	
 	var damage = item.get("damage", 1)
@@ -865,6 +870,8 @@ func _do_axe_damage(item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
+		if _try_harvest_vegetation_near_ray(item, 3.5):
+			return
 		return
 	
 	var damage = item.get("damage", 1)
@@ -984,6 +991,8 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	var hit = _raycast(3.5, true, true)
 	
 	if hit.is_empty():
+		if _try_harvest_vegetation_near_ray(item, 3.5):
+			return
 		return
 	
 	var item_id = item.get("id", "")
@@ -1775,43 +1784,54 @@ func _collect_building_resource(voxel_id: int) -> void:
 # SIGNAL EMISSION (Local + Backward Compat)
 # ============================================================================
 
+func _get_player_signals() -> Node:
+	if not is_inside_tree():
+		return null
+	return get_node_or_null("/root/PlayerSignals")
+
 func _emit_punch_triggered() -> void:
 	if signals and signals.has_signal("punch_triggered"):
 		signals.punch_triggered.emit()
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.punch_triggered.emit()
+	var player_signals := _get_player_signals()
+	if player_signals:
+		player_signals.punch_triggered.emit()
 
 func _emit_pistol_fired() -> void:
 	if signals and signals.has_signal("pistol_fired"):
 		signals.pistol_fired.emit()
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.pistol_fired.emit()
+	var player_signals := _get_player_signals()
+	if player_signals:
+		player_signals.pistol_fired.emit()
 
 func _emit_axe_fired() -> void:
 	if signals and signals.has_signal("axe_fired"):
 		signals.axe_fired.emit()
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.axe_fired.emit()
+	var player_signals := _get_player_signals()
+	if player_signals:
+		player_signals.axe_fired.emit()
 
 func _emit_damage_dealt(target: Node, amount: int) -> void:
 	_wake_process_loop()
 	if signals and signals.has_signal("damage_dealt"):
 		signals.damage_dealt.emit(target, amount)
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.damage_dealt.emit(target, amount)
+	var player_signals := _get_player_signals()
+	if player_signals:
+		player_signals.damage_dealt.emit(target, amount)
 
 func _emit_durability_hit(current_hp: int, max_hp: int, target_name: String, target_ref: Variant) -> void:
 	_wake_process_loop()
 	if signals and signals.has_signal("durability_hit"):
 		signals.durability_hit.emit(current_hp, max_hp, target_name, target_ref)
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.durability_hit.emit(current_hp, max_hp, target_name, target_ref)
+	var player_signals := _get_player_signals()
+	if player_signals:
+		player_signals.durability_hit.emit(current_hp, max_hp, target_name, target_ref)
 
 func _emit_durability_cleared() -> void:
 	if signals and signals.has_signal("durability_cleared"):
 		signals.durability_cleared.emit()
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.durability_cleared.emit()
+	var player_signals := _get_player_signals()
+	if player_signals:
+		player_signals.durability_cleared.emit()
 	_sync_process_loop()
 
 ## Spawn a visual debug marker at hit position
