@@ -278,6 +278,15 @@ static bool is_procedural_road_blocked(double global_x, double global_z, double 
 	return std::min(dist_x, dist_z) <= road_half_width;
 }
 
+static bool chunk_overlaps_radius(const Vector2i &coord, const Vector3 &center, double radius, int chunk_stride) {
+	const double chunk_center_x = (double(coord.x) + 0.5) * double(chunk_stride);
+	const double chunk_center_z = (double(coord.y) + 0.5) * double(chunk_stride);
+	const double dx = double(center.x) - chunk_center_x;
+	const double dz = double(center.z) - chunk_center_z;
+	const double max_dist = radius + (double(chunk_stride) * 0.70710678);
+	return dx * dx + dz * dz <= max_dist * max_dist;
+}
+
 static bool extract_transform_from_variant(const Variant &value, Transform3D &out) {
 	switch (value.get_type()) {
 		case Variant::TRANSFORM3D:
@@ -309,6 +318,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("parse_local_rect_2d", "raw_rect", "fallback_rect", "declared_size"), &PrefabGeometryNative::parse_local_rect_2d);
 	ClassDB::bind_method(D_METHOD("parse_local_volumes", "raw_volumes", "declared_size", "min_y", "max_y"), &PrefabGeometryNative::parse_local_volumes);
 	ClassDB::bind_method(D_METHOD("pick_nearest_candidates", "candidates", "max_count"), &PrefabGeometryNative::pick_nearest_candidates);
+	ClassDB::bind_method(D_METHOD("pick_nearby_vegetation_candidates", "chunk_data", "list_key", "item_key", "player_pos", "chunk_stride", "collider_distance", "max_count"), &PrefabGeometryNative::pick_nearby_vegetation_candidates);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse"), &PrefabGeometryNative::build_global_vegetation_render_payload);
 	ClassDB::bind_method(D_METHOD("pack_multimesh_buffer_from_instances", "instances"), &PrefabGeometryNative::pack_multimesh_buffer_from_instances);
@@ -665,6 +675,99 @@ Array PrefabGeometryNative::pick_nearest_candidates(const Array &candidates, int
 		result[i] = heap[i].data;
 	}
 
+	return result;
+}
+
+Array PrefabGeometryNative::pick_nearby_vegetation_candidates(const Dictionary &chunk_data, const String &list_key, const String &item_key, const Vector3 &player_pos, int chunk_stride, double collider_distance, int max_count) const {
+	Array result;
+	if (chunk_data.is_empty() || list_key.is_empty() || item_key.is_empty() || chunk_stride <= 0 || collider_distance <= 0.0 || max_count <= 0) {
+		return result;
+	}
+
+	const int player_chunk_x = int(std::floor(double(player_pos.x) / double(chunk_stride)));
+	const int player_chunk_z = int(std::floor(double(player_pos.z) / double(chunk_stride)));
+	const double max_dist_sq = collider_distance * collider_distance;
+
+	const auto heap_comp = [](const NearestCandidate &a, const NearestCandidate &b) {
+		return a.dist_sq < b.dist_sq;
+	};
+	std::vector<NearestCandidate> heap;
+	heap.reserve(std::min<int>(max_count, 9));
+
+	for (int dx = -1; dx <= 1; ++dx) {
+		for (int dz = -1; dz <= 1; ++dz) {
+			const Vector2i coord(player_chunk_x + dx, player_chunk_z + dz);
+			if (!chunk_data.has(coord)) {
+				continue;
+			}
+			if (!chunk_overlaps_radius(coord, player_pos, collider_distance, chunk_stride)) {
+				continue;
+			}
+
+			const Variant data_variant = chunk_data.get(coord, Dictionary());
+			if (data_variant.get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary data = data_variant;
+			const Variant entries_variant = data.get(list_key, Array());
+			if (entries_variant.get_type() != Variant::ARRAY) {
+				continue;
+			}
+			Array entries = entries_variant;
+
+			for (int i = 0; i < entries.size(); ++i) {
+				if (entries[i].get_type() != Variant::DICTIONARY) {
+					continue;
+				}
+				Dictionary entry = entries[i];
+				if (!bool(entry.get("alive", false))) {
+					continue;
+				}
+
+				const Variant world_pos_variant = entry.get("world_pos", Vector3());
+				if (world_pos_variant.get_type() != Variant::VECTOR3) {
+					continue;
+				}
+				const Vector3 world_pos = world_pos_variant;
+				const double dist_sq = double(player_pos.distance_squared_to(world_pos));
+				if (dist_sq >= max_dist_sq) {
+					continue;
+				}
+
+				Dictionary candidate;
+				candidate["coord"] = coord;
+				candidate[item_key] = entry;
+				candidate["dist_sq"] = dist_sq;
+
+				NearestCandidate nearest;
+				nearest.dist_sq = dist_sq;
+				nearest.data = candidate;
+
+				if (static_cast<int>(heap.size()) < max_count) {
+					heap.push_back(std::move(nearest));
+					std::push_heap(heap.begin(), heap.end(), heap_comp);
+					continue;
+				}
+
+				if (!heap.empty() && dist_sq >= heap.front().dist_sq) {
+					continue;
+				}
+
+				std::pop_heap(heap.begin(), heap.end(), heap_comp);
+				heap.back() = std::move(nearest);
+				std::push_heap(heap.begin(), heap.end(), heap_comp);
+			}
+		}
+	}
+
+	std::sort(heap.begin(), heap.end(), [](const NearestCandidate &a, const NearestCandidate &b) {
+		return a.dist_sq < b.dist_sq;
+	});
+
+	result.resize(static_cast<int>(heap.size()));
+	for (int i = 0; i < static_cast<int>(heap.size()); ++i) {
+		result[i] = heap[i].data;
+	}
 	return result;
 }
 

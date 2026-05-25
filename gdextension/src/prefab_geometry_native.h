@@ -6,6 +6,7 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/vector2i.hpp>
@@ -43,6 +44,7 @@ public:
 	Array build_rotated_carve_segments(const Array &local_cells, int rotation) const;
     Array build_rotated_segments_from_volumes(const Array &volumes, int rotation) const;
     Array pick_nearest_candidates(const Array &candidates, int max_count) const;
+	Array pick_nearby_vegetation_candidates(const Dictionary &chunk_data, const String &list_key, const String &item_key, const Vector3 &player_pos, int chunk_stride, double collider_distance, int max_count) const;
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
 	Dictionary build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse) const;

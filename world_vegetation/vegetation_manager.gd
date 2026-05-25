@@ -190,6 +190,7 @@ var _vegetation_generation_backend_counts: Dictionary = {}
 var _vegetation_road_block_sample_backend_counts: Dictionary = {}
 var _vegetation_water_block_sample_backend_counts: Dictionary = {}
 var _vegetation_render_payload_backend_counts: Dictionary = {}
+var _vegetation_collider_candidate_backend_counts: Dictionary = {}
 var _last_vegetation_generation_kind: String = ""
 var _last_vegetation_generation_backend: String = ""
 var _last_vegetation_generation_reason: String = ""
@@ -367,6 +368,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_road_block_sample_backend_counts": _vegetation_road_block_sample_backend_counts.duplicate(true),
 		"vegetation_water_block_sample_backend_counts": _vegetation_water_block_sample_backend_counts.duplicate(true),
 		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
+		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
 		"last_vegetation_generation_kind": _last_vegetation_generation_kind,
 		"last_vegetation_generation_backend": _last_vegetation_generation_backend,
 		"last_vegetation_generation_reason": _last_vegetation_generation_reason
@@ -424,6 +426,12 @@ func _record_vegetation_render_payload_backend(backend: String, instance_count: 
 	var instance_key := "%s_instances" % backend
 	_vegetation_render_payload_backend_counts[chunk_key] = int(_vegetation_render_payload_backend_counts.get(chunk_key, 0)) + 1
 	_vegetation_render_payload_backend_counts[instance_key] = int(_vegetation_render_payload_backend_counts.get(instance_key, 0)) + instance_count
+
+func _record_vegetation_collider_candidate_backend(kind: String, backend: String, candidate_count: int) -> void:
+	var call_key := "%s_%s_calls" % [kind, backend]
+	var candidate_key := "%s_%s_candidates" % [kind, backend]
+	_vegetation_collider_candidate_backend_counts[call_key] = int(_vegetation_collider_candidate_backend_counts.get(call_key, 0)) + 1
+	_vegetation_collider_candidate_backend_counts[candidate_key] = int(_vegetation_collider_candidate_backend_counts.get(candidate_key, 0)) + candidate_count
 
 func _get_vegetation_env_int_range(name: String, default_value: int, min_value: int, max_value: int) -> int:
 	var raw := OS.get_environment(name).strip_edges()
@@ -2254,48 +2262,79 @@ func _cleanup_orphan_colliders():
 						grandchild.disabled = true
 				cleaned += 1
 
-func _update_proximity_colliders():
-	if not terrain_manager or not tree_colliders_enabled:
-		return
+func _collect_nearby_vegetation_collider_candidates(
+		kind: String,
+		chunk_data: Dictionary,
+		list_key: String,
+		item_key: String,
+		player_pos: Vector3,
+		chunk_stride: int,
+		max_count: int
+) -> Array:
+	var native := _get_native_helper()
+	if native and native.has_method("pick_nearby_vegetation_candidates"):
+		var native_candidates: Array = native.pick_nearby_vegetation_candidates(
+			chunk_data,
+			list_key,
+			item_key,
+			player_pos,
+			chunk_stride,
+			collider_distance,
+			max_count
+		)
+		_record_vegetation_collider_candidate_backend(kind, "native", native_candidates.size())
+		return native_candidates
 
-	var player_pos = get_viewer_position()
+	var candidates: Array[Dictionary] = []
 	var dist_sq = collider_distance * collider_distance
-	var chunk_stride = terrain_manager.CHUNK_STRIDE
-
-	# Collect trees that need colliders (only from nearby chunks)
-	var trees_needing_colliders: Array[Dictionary] = []
-
-	# Optimized: Check only 3x3 chunks around the active viewer instead of iterating all loaded chunks
 	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
 	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
 
 	for dx in range(-1, 2):
 		for dz in range(-1, 2):
 			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
-
-			if not chunk_tree_data.has(coord):
+			if not chunk_data.has(coord):
 				continue
-
 			if not _chunk_overlaps_radius(coord, player_pos, collider_distance, chunk_stride):
 				continue
 
-			var data = chunk_tree_data[coord]
-			for tree in data.trees:
-				if not tree.alive:
+			var data = chunk_data[coord]
+			if not (data is Dictionary) or not data.has(list_key):
+				continue
+			for entry in data[list_key]:
+				if not (entry is Dictionary):
+					continue
+				if not bool(entry.get("alive", false)):
 					continue
 
-				var tree_dist_sq = player_pos.distance_squared_to(tree.world_pos)
-				if tree_dist_sq < dist_sq:
-					trees_needing_colliders.append({
+				var entry_dist_sq = player_pos.distance_squared_to(entry.get("world_pos", Vector3.ZERO))
+				if entry_dist_sq < dist_sq:
+					var candidate := {
 						"coord": coord,
-						"tree": tree,
-						"dist_sq": tree_dist_sq
-					})
+						"dist_sq": entry_dist_sq
+					}
+					candidate[item_key] = entry
+					candidates.append(candidate)
+
+	var selected: Array = _pick_nearest_candidates(candidates, max_count)
+	_record_vegetation_collider_candidate_backend(kind, "gdscript", selected.size())
+	return selected
+
+func _update_proximity_colliders():
+	if not terrain_manager or not tree_colliders_enabled:
+		return
+
+	var player_pos = get_viewer_position()
+	var chunk_stride = terrain_manager.CHUNK_STRIDE
 
 	# Limit to MAX_ACTIVE_COLLIDERS
 	var wanted_keys: Dictionary = {}
-	for item in _pick_nearest_candidates(trees_needing_colliders, MAX_ACTIVE_COLLIDERS):
-		var key = _tree_key(item.coord, item.tree.index)
+	for item in _collect_nearby_vegetation_collider_candidates("tree", chunk_tree_data, "trees", "tree", player_pos, chunk_stride, MAX_ACTIVE_COLLIDERS):
+		var tree: Dictionary = item.get("tree", {})
+		var tree_index := int(tree.get("index", -1))
+		if tree_index < 0:
+			continue
+		var key = _tree_key(item.get("coord", Vector2i.ZERO), tree_index)
 		wanted_keys[key] = item
 
 	# Remove colliders that are no longer needed
@@ -2437,43 +2476,16 @@ func _update_grass_proximity_colliders():
 		return
 
 	var player_pos = get_viewer_position()
-	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
-
-	# Collect grass that needs colliders
-	var grass_needing_colliders: Array[Dictionary] = []
-
-	# Optimized: Check only 3x3 chunks around the active viewer
-	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
-	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
-
-	for dx in range(-1, 2):
-		for dz in range(-1, 2):
-			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
-
-			if not chunk_grass_data.has(coord):
-				continue
-
-			if not _chunk_overlaps_radius(coord, player_pos, collider_distance, chunk_stride):
-				continue
-
-			var data = chunk_grass_data[coord]
-			for grass in data.grass_list:
-				if not grass.alive:
-					continue
-
-				var grass_dist_sq = player_pos.distance_squared_to(grass.world_pos)
-				if grass_dist_sq < dist_sq:
-					grass_needing_colliders.append({
-						"coord": coord,
-						"grass": grass,
-						"dist_sq": grass_dist_sq
-					})
 
 	# Limit to MAX_ACTIVE_GRASS_COLLIDERS
 	var wanted_keys: Dictionary = {}
-	for item in _pick_nearest_candidates(grass_needing_colliders, MAX_ACTIVE_GRASS_COLLIDERS):
-		var key = _grass_key(item.coord, item.grass.index)
+	for item in _collect_nearby_vegetation_collider_candidates("grass", chunk_grass_data, "grass_list", "grass", player_pos, chunk_stride, MAX_ACTIVE_GRASS_COLLIDERS):
+		var grass: Dictionary = item.get("grass", {})
+		var grass_index := int(grass.get("index", -1))
+		if grass_index < 0:
+			continue
+		var key = _grass_key(item.get("coord", Vector2i.ZERO), grass_index)
 		wanted_keys[key] = item
 
 	# Remove colliders that are no longer needed
@@ -2558,41 +2570,15 @@ func _update_rock_proximity_colliders():
 		return
 
 	var player_pos = get_viewer_position()
-	var dist_sq = collider_distance * collider_distance
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 
-	var rocks_needing_colliders: Array[Dictionary] = []
-
-	# Optimized: Check only 3x3 chunks around the active viewer
-	var player_chunk_x = int(floor(player_pos.x / chunk_stride))
-	var player_chunk_z = int(floor(player_pos.z / chunk_stride))
-
-	for dx in range(-1, 2):
-		for dz in range(-1, 2):
-			var coord = Vector2i(player_chunk_x + dx, player_chunk_z + dz)
-
-			if not chunk_rock_data.has(coord):
-				continue
-
-			if not _chunk_overlaps_radius(coord, player_pos, collider_distance, chunk_stride):
-				continue
-
-			var data = chunk_rock_data[coord]
-			for rock in data.rock_list:
-				if not rock.alive:
-					continue
-
-				var rock_dist_sq = player_pos.distance_squared_to(rock.world_pos)
-				if rock_dist_sq < dist_sq:
-					rocks_needing_colliders.append({
-						"coord": coord,
-						"rock": rock,
-						"dist_sq": rock_dist_sq
-					})
-
 	var wanted_keys: Dictionary = {}
-	for item in _pick_nearest_candidates(rocks_needing_colliders, MAX_ACTIVE_ROCK_COLLIDERS):
-		var key = _rock_key(item.coord, item.rock.index)
+	for item in _collect_nearby_vegetation_collider_candidates("rock", chunk_rock_data, "rock_list", "rock", player_pos, chunk_stride, MAX_ACTIVE_ROCK_COLLIDERS):
+		var rock: Dictionary = item.get("rock", {})
+		var rock_index := int(rock.get("index", -1))
+		if rock_index < 0:
+			continue
+		var key = _rock_key(item.get("coord", Vector2i.ZERO), rock_index)
 		wanted_keys[key] = item
 
 	var keys_to_remove = []
@@ -4258,6 +4244,7 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_vegetation_road_block_sample_backend_counts.clear()
 	_vegetation_water_block_sample_backend_counts.clear()
 	_vegetation_render_payload_backend_counts.clear()
+	_vegetation_collider_candidate_backend_counts.clear()
 	_last_vegetation_generation_kind = ""
 	_last_vegetation_generation_backend = ""
 	_last_vegetation_generation_reason = ""
