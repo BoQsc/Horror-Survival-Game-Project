@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <godot_cpp/classes/object.hpp>
+#include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
@@ -309,6 +310,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("parse_local_volumes", "raw_volumes", "declared_size", "min_y", "max_y"), &PrefabGeometryNative::parse_local_volumes);
 	ClassDB::bind_method(D_METHOD("pick_nearest_candidates", "candidates", "max_count"), &PrefabGeometryNative::pick_nearest_candidates);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
+	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse"), &PrefabGeometryNative::build_global_vegetation_render_payload);
 	ClassDB::bind_method(D_METHOD("pack_multimesh_buffer_from_instances", "instances"), &PrefabGeometryNative::pack_multimesh_buffer_from_instances);
 }
 
@@ -788,6 +790,74 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	}
 
 	return instances;
+}
+
+Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse) const {
+	Dictionary result;
+	result["buffer"] = PackedFloat32Array();
+	result["instance_count"] = 0;
+	result["bounds"] = AABB();
+	result["has_bounds"] = false;
+
+	if (instances.is_empty()) {
+		return result;
+	}
+
+	std::vector<Transform3D> transforms;
+	transforms.reserve(instances.size());
+
+	AABB bounds;
+	bool has_bounds = false;
+
+	for (int i = 0; i < instances.size(); ++i) {
+		const Variant item = instances[i];
+		Transform3D transform;
+		if (!extract_transform_from_variant(item, transform)) {
+			transform = Transform3D();
+		}
+
+		if (item.get_type() == Variant::DICTIONARY) {
+			Dictionary dict = item;
+			if (!bool(dict.get("alive", true))) {
+				continue;
+			}
+
+			Variant world_pos_variant = dict.get("world_pos", transform.origin);
+			Vector3 world_pos = transform.origin;
+			if (world_pos_variant.get_type() == Variant::VECTOR3) {
+				world_pos = world_pos_variant;
+			}
+			transform.origin = render_space_inverse.xform(world_pos);
+		}
+
+		if (has_bounds) {
+			bounds.expand_to(transform.origin);
+		} else {
+			bounds = AABB(transform.origin, Vector3());
+			has_bounds = true;
+		}
+		transforms.push_back(transform);
+	}
+
+	if (transforms.empty()) {
+		return result;
+	}
+
+	PackedFloat32Array buffer;
+	buffer.resize(static_cast<int>(transforms.size()) * 12);
+	float *write_ptr = buffer.ptrw();
+	int write_offset = 0;
+
+	for (const Transform3D &transform : transforms) {
+		pack_transform_to_buffer(transform, write_ptr + write_offset);
+		write_offset += 12;
+	}
+
+	result["buffer"] = buffer;
+	result["instance_count"] = static_cast<int>(transforms.size());
+	result["bounds"] = bounds;
+	result["has_bounds"] = has_bounds;
+	return result;
 }
 
 PackedFloat32Array PrefabGeometryNative::pack_multimesh_buffer_from_instances(const Array &instances) const {

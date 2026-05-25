@@ -26,8 +26,9 @@ func _ready() -> void:
 		container_inventory.container_id = str(get_meta("container_id"))
 	add_child(container_inventory)
 
-	if has_node("/root/ContainerSignals"):
-		ContainerSignals.container_closed.connect(_on_container_closed)
+	var container_signals := get_node_or_null("/root/ContainerSignals")
+	if container_signals:
+		container_signals.container_closed.connect(_on_container_closed)
 
 	if should_populate_loot or (has_meta("should_populate_loot") and get_meta("should_populate_loot")):
 		populate_loot()
@@ -38,18 +39,19 @@ func get_interaction_prompt() -> String:
 	return "Open %s [E]" % container_name
 
 func interact() -> void:
+	var container_signals := get_node_or_null("/root/ContainerSignals")
 	if is_open:
 		if _ensure_close_audio():
 			container_close_audio.play()
-		if has_node("/root/ContainerSignals"):
-			ContainerSignals.container_closed.emit()
+		if container_signals:
+			container_signals.container_closed.emit()
 		is_open = false
 	else:
 		if _ensure_open_audio():
 			container_open_audio.play()
 		is_open = true
-		if has_node("/root/ContainerSignals"):
-			ContainerSignals.container_opened.emit(self)
+		if container_signals:
+			container_signals.container_opened.emit(self)
 		else:
 			var hud = get_tree().get_first_node_in_group("player_hud")
 			if hud and hud.has_method("open_container"):

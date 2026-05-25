@@ -113,6 +113,7 @@ var _world_map_road_image: Image = null
 var _world_map_road_data: PackedByteArray = PackedByteArray()
 var _world_map_road_texture: ImageTexture = null
 var _world_map_water_image: Image = null
+var _world_map_water_data: PackedByteArray = PackedByteArray()
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
@@ -631,7 +632,9 @@ func _ready():
 			_world_map_road_texture = ImageTexture.create_from_image(rmap)
 			material_terrain.set_shader_parameter("world_map_road_map", _world_map_road_texture)
 		if loaded.has("water"):
-			_world_map_water_image = loaded.water
+			var startup_wmap: Image = loaded.water
+			_world_map_water_image = startup_wmap
+			_world_map_water_data = startup_wmap.get_data()
 
 	_start_render_resource_prewarm()
 
@@ -5016,8 +5019,12 @@ func _get_generated_water_density(world_pos: Vector3) -> float:
 			return 1.0
 		var px := clampi(int(world_pos.x + world_map_half), 0, water_width - 1)
 		var pz := clampi(int(world_pos.z + world_map_half), 0, water_height - 1)
-		var water_pixel := _world_map_water_image.get_pixel(px, pz)
-		if water_pixel.r > 0.5019608:
+		var water_pixel_active := false
+		if not _world_map_water_data.is_empty():
+			water_pixel_active = _read_world_map_water_byte_pixel(px, pz, water_width, water_height)
+		else:
+			water_pixel_active = _world_map_water_image.get_pixel(px, pz).r > 0.5019608
+		if water_pixel_active:
 			return world_pos.y - water_level
 		return 100.0
 
@@ -5048,8 +5055,12 @@ func _get_generated_water_surface_height(global_x: float, global_z: float) -> fl
 			return -INF
 		var px := clampi(int(global_x + world_map_half), 0, water_width - 1)
 		var pz := clampi(int(global_z + world_map_half), 0, water_height - 1)
-		var water_pixel := _world_map_water_image.get_pixel(px, pz)
-		return water_level if water_pixel.r > 0.5019608 else -INF
+		var water_pixel_active := false
+		if not _world_map_water_data.is_empty():
+			water_pixel_active = _read_world_map_water_byte_pixel(px, pz, water_width, water_height)
+		else:
+			water_pixel_active = _world_map_water_image.get_pixel(px, pz).r > 0.5019608
+		return water_level if water_pixel_active else -INF
 
 	var mask_value := _shader_water_noise(Vector3(global_x, 0.0, global_z) * (noise_frequency * 0.1))
 	mask_value = (mask_value * 2.0) - 1.0
@@ -5156,6 +5167,18 @@ func _read_world_map_road_byte_pixel(pixel_x: int, pixel_y: int, road_width: int
 	if byte_index < 0 or byte_index >= _world_map_road_data.size():
 		return false
 	return int(_world_map_road_data[byte_index]) >= 128
+
+func _read_world_map_water_byte_pixel(pixel_x: int, pixel_y: int, water_width: int, water_height: int) -> bool:
+	if _world_map_water_data.is_empty() or water_width <= 0 or water_height <= 0:
+		return false
+	var pixel_count := water_width * water_height
+	if pixel_count <= 0:
+		return false
+	var bytes_per_pixel := maxi(int(_world_map_water_data.size() / pixel_count), 1)
+	var byte_index := (pixel_y * water_width + pixel_x) * bytes_per_pixel
+	if byte_index < 0 or byte_index >= _world_map_water_data.size():
+		return false
+	return int(_world_map_water_data[byte_index]) >= 128
 
 func _sample_world_map_height(global_x: float, global_z: float) -> float:
 	if _world_map_heightmap_data.is_empty() or _world_map_heightmap_width <= 0 or _world_map_heightmap_height <= 0:
@@ -5396,6 +5419,49 @@ func get_world_map_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, 
 			var px := clampi(int(floor(u * float(road_width))), 0, road_width - 1)
 			var py := clampi(int(floor(v * float(road_height))), 0, road_height - 1)
 			samples.append(1.0 if _read_world_map_road_byte_pixel(px, py, road_width, road_height) else 0.0)
+
+	return samples
+
+func get_world_map_water_block_samples(chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int, terrain_heights: PackedFloat32Array) -> PackedFloat32Array:
+	var samples := PackedFloat32Array()
+	if not world_map_active or _world_map_water_image == null or _world_map_water_data.is_empty() or world_map_size <= 0.0:
+		return samples
+	if terrain_heights.is_empty():
+		return samples
+
+	var coord := Vector3i(int(floor(float(chunk_origin_x) / float(CHUNK_STRIDE))), 0, int(floor(float(chunk_origin_z) / float(CHUNK_STRIDE))))
+	if not active_chunks.has(coord):
+		return samples
+	var data = active_chunks[coord]
+	if data == null:
+		return samples
+	# If a real water density mirror exists, keep the exact density path so
+	# terrain/water edits keep affecting vegetation placement correctly.
+	if not data.cpu_density_water.is_empty() or not bool(data.generated_water_density_available):
+		return samples
+
+	var water_width := _world_map_water_image.get_width()
+	var water_height := _world_map_water_image.get_height()
+	if water_width <= 0 or water_height <= 0:
+		return samples
+
+	var sample_index := 0
+	for x in range(0, chunk_stride, step):
+		var global_x := float(chunk_origin_x + x)
+		for z in range(0, chunk_stride, step):
+			if sample_index >= terrain_heights.size():
+				return samples
+			var terrain_y := terrain_heights[sample_index]
+			sample_index += 1
+			if terrain_y < -100.0:
+				samples.append(0.0)
+				continue
+
+			var global_z := float(chunk_origin_z + z)
+			var px := clampi(int(global_x + world_map_half), 0, water_width - 1)
+			var py := clampi(int(global_z + world_map_half), 0, water_height - 1)
+			var water_blocks := _read_world_map_water_byte_pixel(px, py, water_width, water_height) and (terrain_y + 0.5 < water_level)
+			samples.append(1.0 if water_blocks else 0.0)
 
 	return samples
 
@@ -6685,6 +6751,7 @@ func _thread_function():
 	_world_map_road_image = null
 	_world_map_road_data = PackedByteArray()
 	_world_map_water_image = null
+	_world_map_water_data = PackedByteArray()
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
 	_mark_modification_coord_cache_dirty()
@@ -6739,7 +6806,8 @@ func _thread_function():
 			if loaded.has("water"):
 				var wmap: Image = loaded.water
 				_world_map_water_image = wmap
-				var w_bytes = wmap.get_data()
+				_world_map_water_data = wmap.get_data()
+				var w_bytes = _world_map_water_data.duplicate()
 				while w_bytes.size() % 4 != 0: w_bytes.append(0)
 				_world_map_water_buf = rd.storage_buffer_create(w_bytes.size(), w_bytes)
 

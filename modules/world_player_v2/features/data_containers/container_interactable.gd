@@ -42,8 +42,9 @@ func _ready() -> void:
 	_setup_audio()
 	
 	# Connect to container closed signal
-	if has_node("/root/ContainerSignals"):
-		ContainerSignals.container_closed.connect(_on_container_closed)
+	var container_signals := get_node_or_null("/root/ContainerSignals")
+	if container_signals:
+		container_signals.container_closed.connect(_on_container_closed)
 	
 	# Auto-populate loot if marked by building system (procedural spawn)
 	if has_meta("should_populate_loot") and get_meta("should_populate_loot"):
@@ -73,20 +74,21 @@ func get_interaction_prompt() -> String:
 
 ## Called when player presses E on this container
 func interact() -> void:
+	var container_signals := get_node_or_null("/root/ContainerSignals")
 	if is_open:
 		# Close the container
 		if container_close_audio:
 			container_close_audio.play()
-		if has_node("/root/ContainerSignals"):
-			ContainerSignals.container_closed.emit()
+		if container_signals:
+			container_signals.container_closed.emit()
 		is_open = false
 	else:
 		# Open the container
 		if container_open_audio:
 			container_open_audio.play()
 		is_open = true
-		if has_node("/root/ContainerSignals"):
-			ContainerSignals.container_opened.emit(self)
+		if container_signals:
+			container_signals.container_opened.emit(self)
 		else:
 			# Fallback: try to find HUD directly
 			var hud = get_tree().get_first_node_in_group("player_hud")

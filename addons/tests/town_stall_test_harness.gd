@@ -102,6 +102,12 @@ var render_diagnostics_threshold_ms: float = FRAME_BUDGET_MS
 var render_diagnostics_sample_limit: int = RENDER_DIAGNOSTIC_DEFAULT_LIMIT
 var render_diagnostics_scene_detail_limit: int = RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT
 var render_diagnostics_frame_scene_scan_limit: int = RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT
+var low_fps_abort_enabled: bool = true
+var low_fps_abort_frame_ms: float = 120.0
+var low_fps_abort_seconds: float = 8.0
+var low_fps_abort_elapsed_seconds: float = 0.0
+var low_fps_abort_sample_count: int = 0
+var low_fps_abort_peak_ms: float = 0.0
 var measure_full_flight_enabled: bool = false
 var world_ready_timeout_seconds: float = WORLD_READY_TIMEOUT_SECONDS
 var world_ready_status_log_interval_seconds: float = 5.0
@@ -317,6 +323,40 @@ func _capture_native_town_entry_sample(delta: float) -> void:
 	_town_entry_samples.append(sample)
 	_capture_render_diagnostic_sample(sample)
 	_previous_native_town_entry_sample = sample.duplicate(false)
+	_check_low_fps_abort(sample)
+
+
+func _check_low_fps_abort(sample: Dictionary) -> void:
+	if not low_fps_abort_enabled or pending_quit:
+		return
+
+	var total_ms := float(sample.get("total_ms", 0.0))
+	if total_ms >= low_fps_abort_frame_ms:
+		low_fps_abort_elapsed_seconds += total_ms / 1000.0
+		low_fps_abort_sample_count += 1
+		low_fps_abort_peak_ms = maxf(low_fps_abort_peak_ms, total_ms)
+	else:
+		low_fps_abort_elapsed_seconds = 0.0
+		low_fps_abort_sample_count = 0
+		low_fps_abort_peak_ms = 0.0
+		return
+
+	if low_fps_abort_elapsed_seconds < low_fps_abort_seconds:
+		return
+
+	print("[TOWN_STALL_TEST] Low-FPS safety abort: %.1fs over %.1fms/frame, peak %.1fms" % [
+		low_fps_abort_elapsed_seconds,
+		low_fps_abort_frame_ms,
+		low_fps_abort_peak_ms
+	])
+	_emit_scope_event("town_stall_test", "low_fps_safety_abort", {
+		"elapsed_seconds": low_fps_abort_elapsed_seconds,
+		"sample_count": low_fps_abort_sample_count,
+		"threshold_ms": low_fps_abort_frame_ms,
+		"peak_ms": low_fps_abort_peak_ms,
+		"phase": str(phase)
+	})
+	_begin_shutdown()
 
 
 func _build_native_town_entry_sample(delta: float) -> Dictionary:
@@ -2185,6 +2225,9 @@ func _ready() -> void:
 	render_diagnostics_sample_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_LIMIT)
 	render_diagnostics_scene_detail_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_SCENE_DETAIL_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT)
 	render_diagnostics_frame_scene_scan_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_FRAME_SCENE_SCAN_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT)
+	low_fps_abort_enabled = OS.get_environment("TOWN_STALL_LOW_FPS_ABORT") != "0"
+	low_fps_abort_frame_ms = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_FRAME_MS", 120.0)
+	low_fps_abort_seconds = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_SECONDS", 8.0)
 	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
 	world_ready_timeout_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_TIMEOUT_SECONDS", WORLD_READY_TIMEOUT_SECONDS)
 	world_ready_status_log_interval_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STATUS_LOG_INTERVAL_SECONDS", 5.0)
@@ -2226,6 +2269,11 @@ func _ready() -> void:
 		render_diagnostics_scene_detail_limit,
 		render_diagnostics_frame_scene_scan_limit
 	])
+	print("[TOWN_STALL_TEST] Low-FPS safety abort: %s threshold=%.1fms seconds=%.1f" % [
+		"ON" if low_fps_abort_enabled else "OFF",
+		low_fps_abort_frame_ms,
+		low_fps_abort_seconds
+	])
 	print("[TOWN_STALL_TEST] Hold seconds: %.1f" % configured_hold_seconds)
 	_machine_state = _parse_machine_state_env()
 	if not _machine_state.is_empty():
@@ -2261,6 +2309,9 @@ func _ready() -> void:
 		"render_diagnostics_sample_limit": render_diagnostics_sample_limit,
 		"render_diagnostics_scene_detail_limit": render_diagnostics_scene_detail_limit,
 		"render_diagnostics_frame_scene_scan_limit": render_diagnostics_frame_scene_scan_limit,
+		"low_fps_abort_enabled": low_fps_abort_enabled,
+		"low_fps_abort_frame_ms": low_fps_abort_frame_ms,
+		"low_fps_abort_seconds": low_fps_abort_seconds,
 		"measure_full_flight": measure_full_flight_enabled,
 		"hold_seconds": configured_hold_seconds,
 		"machine_state_available": not _machine_state.is_empty(),

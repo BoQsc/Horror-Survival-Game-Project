@@ -188,6 +188,8 @@ var _data_ray_harvest_queries: int = 0
 var _data_ray_harvest_hits: int = 0
 var _vegetation_generation_backend_counts: Dictionary = {}
 var _vegetation_road_block_sample_backend_counts: Dictionary = {}
+var _vegetation_water_block_sample_backend_counts: Dictionary = {}
+var _vegetation_render_payload_backend_counts: Dictionary = {}
 var _last_vegetation_generation_kind: String = ""
 var _last_vegetation_generation_backend: String = ""
 var _last_vegetation_generation_reason: String = ""
@@ -363,6 +365,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"native_vegetation_generation_world_map_road_mask_supported": true,
 		"vegetation_generation_backend_counts": _vegetation_generation_backend_counts.duplicate(true),
 		"vegetation_road_block_sample_backend_counts": _vegetation_road_block_sample_backend_counts.duplicate(true),
+		"vegetation_water_block_sample_backend_counts": _vegetation_water_block_sample_backend_counts.duplicate(true),
+		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
 		"last_vegetation_generation_kind": _last_vegetation_generation_kind,
 		"last_vegetation_generation_backend": _last_vegetation_generation_backend,
 		"last_vegetation_generation_reason": _last_vegetation_generation_reason
@@ -408,6 +412,18 @@ func _record_vegetation_road_block_samples_backend(backend: String, sample_count
 	var sample_key := "%s_samples" % backend
 	_vegetation_road_block_sample_backend_counts[chunk_key] = int(_vegetation_road_block_sample_backend_counts.get(chunk_key, 0)) + 1
 	_vegetation_road_block_sample_backend_counts[sample_key] = int(_vegetation_road_block_sample_backend_counts.get(sample_key, 0)) + sample_count
+
+func _record_vegetation_water_block_samples_backend(backend: String, sample_count: int) -> void:
+	var chunk_key := "%s_chunks" % backend
+	var sample_key := "%s_samples" % backend
+	_vegetation_water_block_sample_backend_counts[chunk_key] = int(_vegetation_water_block_sample_backend_counts.get(chunk_key, 0)) + 1
+	_vegetation_water_block_sample_backend_counts[sample_key] = int(_vegetation_water_block_sample_backend_counts.get(sample_key, 0)) + sample_count
+
+func _record_vegetation_render_payload_backend(backend: String, instance_count: int) -> void:
+	var chunk_key := "%s_chunks" % backend
+	var instance_key := "%s_instances" % backend
+	_vegetation_render_payload_backend_counts[chunk_key] = int(_vegetation_render_payload_backend_counts.get(chunk_key, 0)) + 1
+	_vegetation_render_payload_backend_counts[instance_key] = int(_vegetation_render_payload_backend_counts.get(instance_key, 0)) + instance_count
 
 func _get_vegetation_env_int_range(name: String, default_value: int, min_value: int, max_value: int) -> int:
 	var raw := OS.get_environment(name).strip_edges()
@@ -1126,6 +1142,13 @@ func _append_alive_global_vegetation_transforms(target: Array, entries: Array) -
 		target.append(_get_global_vegetation_instance_transform(item))
 
 func _build_global_vegetation_chunk_render_payload(instances: Array) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("build_global_vegetation_render_payload"):
+		var render_space_inverse := global_transform.affine_inverse() if is_inside_tree() else Transform3D.IDENTITY
+		var native_payload: Dictionary = native.build_global_vegetation_render_payload(instances, render_space_inverse)
+		_record_vegetation_render_payload_backend("native", int(native_payload.get("instance_count", 0)))
+		return native_payload
+
 	var transforms: Array = []
 	var bounds := GLOBAL_VEGETATION_RENDER_AABB
 	var has_bounds := false
@@ -1140,12 +1163,14 @@ func _build_global_vegetation_chunk_render_payload(instances: Array) -> Dictiona
 			bounds = AABB(transform.origin, Vector3.ZERO)
 			has_bounds = true
 
-	return {
+	var payload := {
 		"buffer": _pack_multimesh_buffer_from_instances(transforms, true),
 		"instance_count": transforms.size(),
 		"bounds": bounds,
 		"has_bounds": has_bounds
 	}
+	_record_vegetation_render_payload_backend("gdscript", transforms.size())
+	return payload
 
 func _update_global_vegetation_chunk_render_payload(kind: String, coord, instances: Array) -> void:
 	if not global_render_batches_enabled or typeof(coord) != TYPE_VECTOR2I:
@@ -1527,6 +1552,12 @@ func _build_vegetation_water_block_samples(
 	if batch_heights.is_empty():
 		return samples
 
+	if terrain_manager.has_method("get_world_map_water_block_samples"):
+		var batched_samples: PackedFloat32Array = terrain_manager.get_world_map_water_block_samples(chunk_origin_x, chunk_origin_z, chunk_stride, step, batch_heights)
+		if not batched_samples.is_empty():
+			_record_vegetation_water_block_samples_backend("terrain_batched", batched_samples.size())
+			return batched_samples
+
 	var sample_index := 0
 	for x in range(0, chunk_stride, step):
 		for z in range(0, chunk_stride, step):
@@ -1540,6 +1571,7 @@ func _build_vegetation_water_block_samples(
 			var water_density: float = terrain_manager.get_water_density(Vector3(chunk_origin_x + x, terrain_y + 0.5, chunk_origin_z + z))
 			samples.append(1.0 if water_density < 0.0 else 0.0)
 
+	_record_vegetation_water_block_samples_backend("vegetation_fallback", samples.size())
 	return samples
 
 
@@ -4224,6 +4256,8 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	initial_load_count = 0
 	_vegetation_generation_backend_counts.clear()
 	_vegetation_road_block_sample_backend_counts.clear()
+	_vegetation_water_block_sample_backend_counts.clear()
+	_vegetation_render_payload_backend_counts.clear()
 	_last_vegetation_generation_kind = ""
 	_last_vegetation_generation_backend = ""
 	_last_vegetation_generation_reason = ""

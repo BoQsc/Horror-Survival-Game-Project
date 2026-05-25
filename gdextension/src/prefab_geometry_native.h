@@ -6,6 +6,7 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/vector2i.hpp>
 #include <godot_cpp/variant/vector3.hpp>
@@ -44,6 +45,7 @@ public:
     Array pick_nearest_candidates(const Array &candidates, int max_count) const;
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
+	Dictionary build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse) const;
 	PackedFloat32Array pack_multimesh_buffer_from_instances(const Array &instances) const;
 
     Array get_enclosed_below_grade_empty_cells(const Dictionary &solid_cells, const Vector3i &declared_size, int min_y, int grade_y) const;
