@@ -259,6 +259,9 @@ func get_telemetry_snapshot() -> Dictionary:
 	var vegetation_estimated_primitives := int(tree_render_stats.get("estimated_primitives", 0)) \
 		+ int(grass_render_stats.get("estimated_primitives", 0)) \
 		+ int(rock_render_stats.get("estimated_primitives", 0))
+	var vegetation_estimated_surface_draws := int(tree_render_stats.get("estimated_surface_draws", 0)) \
+		+ int(grass_render_stats.get("estimated_surface_draws", 0)) \
+		+ int(rock_render_stats.get("estimated_surface_draws", 0))
 
 	return {
 		"pending_chunks": pending_chunks.size(),
@@ -343,10 +346,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"tree_mesh_primitives": int(tree_render_stats.get("mesh_primitives", 0)),
 		"grass_mesh_primitives": int(grass_render_stats.get("mesh_primitives", 0)),
 		"rock_mesh_primitives": int(rock_render_stats.get("mesh_primitives", 0)),
+		"tree_mesh_surfaces": int(tree_render_stats.get("mesh_surfaces", 0)),
+		"grass_mesh_surfaces": int(grass_render_stats.get("mesh_surfaces", 0)),
+		"rock_mesh_surfaces": int(rock_render_stats.get("mesh_surfaces", 0)),
 		"global_tree_render_estimated_primitives": int(tree_render_stats.get("estimated_primitives", 0)),
 		"global_grass_render_estimated_primitives": int(grass_render_stats.get("estimated_primitives", 0)),
 		"global_rock_render_estimated_primitives": int(rock_render_stats.get("estimated_primitives", 0)),
 		"global_render_estimated_primitives": vegetation_estimated_primitives,
+		"global_tree_estimated_surface_draws": int(tree_render_stats.get("estimated_surface_draws", 0)),
+		"global_grass_estimated_surface_draws": int(grass_render_stats.get("estimated_surface_draws", 0)),
+		"global_rock_estimated_surface_draws": int(rock_render_stats.get("estimated_surface_draws", 0)),
+		"global_render_estimated_surface_draws": vegetation_estimated_surface_draws,
 		"global_tree_max_batch_instances": int(tree_render_stats.get("max_batch_instances", 0)),
 		"global_grass_max_batch_instances": int(grass_render_stats.get("max_batch_instances", 0)),
 		"global_rock_max_batch_instances": int(rock_render_stats.get("max_batch_instances", 0)),
@@ -658,33 +668,44 @@ func _global_vegetation_custom_aabb(transforms: Array) -> AABB:
 		bounds = bounds.expand(transform.origin)
 	return bounds.grow(vegetation_global_render_bounds_padding)
 
-func _get_mesh_surface_vertex_count(mesh: Mesh) -> int:
-	if mesh == null or mesh.get_surface_count() <= 0:
+func _get_mesh_surface_vertex_count(mesh: Mesh, surface_index: int = 0) -> int:
+	if mesh == null or surface_index < 0 or surface_index >= mesh.get_surface_count():
 		return 0
 	if mesh.has_method("surface_get_array_len"):
-		return int(mesh.surface_get_array_len(0))
-	var arrays := mesh.surface_get_arrays(0)
+		return int(mesh.surface_get_array_len(surface_index))
+	var arrays := mesh.surface_get_arrays(surface_index)
 	if arrays.size() <= Mesh.ARRAY_VERTEX:
 		return 0
 	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 	return vertices.size()
 
-func _get_mesh_surface_index_count(mesh: Mesh) -> int:
-	if mesh == null or mesh.get_surface_count() <= 0:
+func _get_mesh_surface_index_count(mesh: Mesh, surface_index: int = 0) -> int:
+	if mesh == null or surface_index < 0 or surface_index >= mesh.get_surface_count():
 		return 0
 	if mesh.has_method("surface_get_array_index_len"):
-		return int(mesh.surface_get_array_index_len(0))
-	var arrays := mesh.surface_get_arrays(0)
+		return int(mesh.surface_get_array_index_len(surface_index))
+	var arrays := mesh.surface_get_arrays(surface_index)
 	if arrays.size() <= Mesh.ARRAY_INDEX:
-		return _get_mesh_surface_vertex_count(mesh)
+		return _get_mesh_surface_vertex_count(mesh, surface_index)
 	var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-	return indices.size() if not indices.is_empty() else _get_mesh_surface_vertex_count(mesh)
+	return indices.size() if not indices.is_empty() else _get_mesh_surface_vertex_count(mesh, surface_index)
 
-func _get_mesh_surface_primitive_count(mesh: Mesh) -> int:
-	var index_count := _get_mesh_surface_index_count(mesh)
+func _get_mesh_surface_primitive_count(mesh: Mesh, surface_index: int = 0) -> int:
+	var index_count := _get_mesh_surface_index_count(mesh, surface_index)
 	if index_count > 0:
 		return int(index_count / 3)
-	return int(_get_mesh_surface_vertex_count(mesh) / 3)
+	return int(_get_mesh_surface_vertex_count(mesh, surface_index) / 3)
+
+func _get_mesh_total_primitive_count(mesh: Mesh) -> int:
+	if mesh == null:
+		return 0
+	var total := 0
+	for surface_index in range(mesh.get_surface_count()):
+		total += _get_mesh_surface_primitive_count(mesh, surface_index)
+	return total
+
+func _get_mesh_surface_count(mesh: Mesh) -> int:
+	return mesh.get_surface_count() if mesh != null else 0
 
 func _get_vegetation_mesh_for_kind(kind: String) -> Mesh:
 	match kind:
@@ -697,7 +718,9 @@ func _get_vegetation_mesh_for_kind(kind: String) -> Mesh:
 	return null
 
 func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
-	var mesh_primitives := _get_mesh_surface_primitive_count(_get_vegetation_mesh_for_kind(kind))
+	var mesh := _get_vegetation_mesh_for_kind(kind)
+	var mesh_primitives := _get_mesh_total_primitive_count(mesh)
+	var mesh_surfaces := _get_mesh_surface_count(mesh)
 	var batch_count := 0
 	var instance_count := 0
 	var max_batch_instances := 0
@@ -712,9 +735,11 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 		max_batch_instances = maxi(max_batch_instances, batch_instances)
 	return {
 		"mesh_primitives": mesh_primitives,
+		"mesh_surfaces": mesh_surfaces,
 		"batch_count": batch_count,
 		"instance_count": instance_count,
 		"estimated_primitives": mesh_primitives * instance_count,
+		"estimated_surface_draws": mesh_surfaces * batch_count,
 		"max_batch_instances": max_batch_instances,
 		"max_batch_estimated_primitives": mesh_primitives * max_batch_instances,
 		"avg_batch_instances": float(instance_count) / float(batch_count) if batch_count > 0 else 0.0

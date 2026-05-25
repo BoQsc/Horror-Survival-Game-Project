@@ -507,9 +507,13 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_grass_render_enabled": bool(vegetation.get("grass_render_enabled", True)),
         "vegetation_rock_render_enabled": bool(vegetation.get("rock_render_enabled", True)),
         "vegetation_estimated_primitives": int(vegetation.get("global_render_estimated_primitives", 0) or 0),
+        "vegetation_estimated_surface_draws": int(vegetation.get("global_render_estimated_surface_draws", 0) or 0),
         "tree_mesh_primitives": int(vegetation.get("tree_mesh_primitives", 0) or 0),
         "grass_mesh_primitives": int(vegetation.get("grass_mesh_primitives", 0) or 0),
         "rock_mesh_primitives": int(vegetation.get("rock_mesh_primitives", 0) or 0),
+        "tree_mesh_surfaces": int(vegetation.get("tree_mesh_surfaces", 0) or 0),
+        "grass_mesh_surfaces": int(vegetation.get("grass_mesh_surfaces", 0) or 0),
+        "rock_mesh_surfaces": int(vegetation.get("rock_mesh_surfaces", 0) or 0),
         "vegetation_tree_estimated_primitives": int(vegetation.get("global_tree_render_estimated_primitives", 0) or 0),
         "vegetation_grass_estimated_primitives": int(vegetation.get("global_grass_render_estimated_primitives", 0) or 0),
         "vegetation_rock_estimated_primitives": int(vegetation.get("global_rock_render_estimated_primitives", 0) or 0),
@@ -677,7 +681,8 @@ def _print_results(results: list[dict]) -> None:
             "                     terrainPrims visible={terrain_visible:9d} chunks={terrain_chunks:9d} "
             "batches={terrain_batches:9d} maxChunk={terrain_max_chunk:6d} maxBatch={terrain_max_batch:6d} | "
             "vegEst={veg_est:9d} tree/grass/rock={tree_est}/{grass_est}/{rock_est} "
-            "mesh={tree_mesh}/{grass_mesh}/{rock_mesh} maxInst={tree_max}/{grass_max}/{rock_max} "
+            "mesh={tree_mesh}/{grass_mesh}/{rock_mesh} surfaces={tree_surfaces}/{grass_surfaces}/{rock_surfaces} "
+            "estSurfDraws={surface_draws} maxInst={tree_max}/{grass_max}/{rock_max} "
             "bounds={bounds:4.0f} kindBounds={tree_bounds:.0f}/{grass_bounds:.0f}/{rock_bounds:.0f} occIgnore={occ} collisionGroundCenter={ground_center} "
             "exactBounds={exact_bounds}@{exact_padding:.1f} forcePendingFinalize={force_pending} forceStream={force_stream}".format(
                 terrain_visible=int(result.get("terrain_visual_visible_primitives", 0) or 0),
@@ -692,6 +697,10 @@ def _print_results(results: list[dict]) -> None:
                 tree_mesh=int(result.get("tree_mesh_primitives", 0) or 0),
                 grass_mesh=int(result.get("grass_mesh_primitives", 0) or 0),
                 rock_mesh=int(result.get("rock_mesh_primitives", 0) or 0),
+                tree_surfaces=int(result.get("tree_mesh_surfaces", 0) or 0),
+                grass_surfaces=int(result.get("grass_mesh_surfaces", 0) or 0),
+                rock_surfaces=int(result.get("rock_mesh_surfaces", 0) or 0),
+                surface_draws=int(result.get("vegetation_estimated_surface_draws", 0) or 0),
                 tree_max=int(result.get("vegetation_tree_max_batch_instances", 0) or 0),
                 grass_max=int(result.get("vegetation_grass_max_batch_instances", 0) or 0),
                 rock_max=int(result.get("vegetation_rock_max_batch_instances", 0) or 0),
