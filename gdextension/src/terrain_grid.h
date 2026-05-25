@@ -24,6 +24,8 @@ private:
     int cached_render_distance = -1;
     bool cached_is_above_ground = false;
     int cached_chunk_stride = -1;
+    int unload_hysteresis_chunks = 0;
+    bool prioritize_stream_candidates = true;
     Array cached_load_candidates;
     Array cached_unload_candidates;
     int cached_load_cursor = 0;
@@ -56,6 +58,10 @@ public:
     int get_active_collision_chunk_count();
     // Count chunks tracked by the native terrain grid.
     int get_active_chunk_count();
+    void set_unload_hysteresis_chunks(int p_hysteresis_chunks);
+    int get_unload_hysteresis_chunks() const;
+    void set_prioritize_stream_candidates(bool p_prioritize);
+    bool get_prioritize_stream_candidates() const;
     // Clear all tracking
     void clear();
 

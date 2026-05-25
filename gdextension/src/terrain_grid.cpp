@@ -25,6 +25,10 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_collision_ready_chunk_count"), &TerrainGrid::get_collision_ready_chunk_count);
     ClassDB::bind_method(D_METHOD("get_active_collision_chunk_count"), &TerrainGrid::get_active_collision_chunk_count);
     ClassDB::bind_method(D_METHOD("get_active_chunk_count"), &TerrainGrid::get_active_chunk_count);
+    ClassDB::bind_method(D_METHOD("set_unload_hysteresis_chunks", "hysteresis_chunks"), &TerrainGrid::set_unload_hysteresis_chunks);
+    ClassDB::bind_method(D_METHOD("get_unload_hysteresis_chunks"), &TerrainGrid::get_unload_hysteresis_chunks);
+    ClassDB::bind_method(D_METHOD("set_prioritize_stream_candidates", "prioritize"), &TerrainGrid::set_prioritize_stream_candidates);
+    ClassDB::bind_method(D_METHOD("get_prioritize_stream_candidates"), &TerrainGrid::get_prioritize_stream_candidates);
     ClassDB::bind_method(D_METHOD("clear"), &TerrainGrid::clear);
     ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "load_chunks_per_frame_limit", "unload_chunks_per_frame_limit"), &TerrainGrid::update);
     ClassDB::bind_method(D_METHOD("get_collision_proximity_update", "center_chunk", "collision_distance", "collision_prewarm_distance", "min_y_layer", "max_y_layer", "shared_collision_body_enabled"), &TerrainGrid::get_collision_proximity_update);
@@ -102,6 +106,34 @@ int TerrainGrid::get_active_chunk_count() {
     return active_chunks.size();
 }
 
+void TerrainGrid::set_unload_hysteresis_chunks(int p_hysteresis_chunks) {
+    const int clamped = p_hysteresis_chunks > 0 ? p_hysteresis_chunks : 0;
+    if (unload_hysteresis_chunks == clamped) {
+        return;
+    }
+    unload_hysteresis_chunks = clamped;
+    update_cache_valid = false;
+    cached_unload_candidates_valid = false;
+}
+
+int TerrainGrid::get_unload_hysteresis_chunks() const {
+    return unload_hysteresis_chunks;
+}
+
+void TerrainGrid::set_prioritize_stream_candidates(bool p_prioritize) {
+    if (prioritize_stream_candidates == p_prioritize) {
+        return;
+    }
+    prioritize_stream_candidates = p_prioritize;
+    update_cache_valid = false;
+    cached_load_candidates_valid = false;
+    cached_unload_candidates_valid = false;
+}
+
+bool TerrainGrid::get_prioritize_stream_candidates() const {
+    return prioritize_stream_candidates;
+}
+
 void TerrainGrid::clear() {
     active_chunks.clear();
     collision_ready_chunks.clear();
@@ -152,7 +184,8 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
     }
 
     if (unload_chunks_per_frame_limit > 0 && !cached_unload_candidates_valid) {
-        double unload_distance_sq = (double)(render_distance + 2) * (double)(render_distance + 2);
+        const int unload_distance = render_distance + unload_hysteresis_chunks;
+        double unload_distance_sq = (double)unload_distance * (double)unload_distance;
         std::vector<TerrainCandidate> unload_candidates;
         unload_candidates.reserve(active_chunks.size());
 
@@ -180,18 +213,20 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
             }
         }
 
-        std::stable_sort(unload_candidates.begin(), unload_candidates.end(), [](const TerrainCandidate &a, const TerrainCandidate &b) {
-            if (a.dist_sq != b.dist_sq) {
-                return a.dist_sq > b.dist_sq;
-            }
-            if (a.coord.y != b.coord.y) {
-                return a.coord.y > b.coord.y;
-            }
-            if (a.coord.x != b.coord.x) {
-                return a.coord.x > b.coord.x;
-            }
-            return a.coord.z > b.coord.z;
-        });
+        if (prioritize_stream_candidates) {
+            std::stable_sort(unload_candidates.begin(), unload_candidates.end(), [](const TerrainCandidate &a, const TerrainCandidate &b) {
+                if (a.dist_sq != b.dist_sq) {
+                    return a.dist_sq > b.dist_sq;
+                }
+                if (a.coord.y != b.coord.y) {
+                    return a.coord.y > b.coord.y;
+                }
+                if (a.coord.x != b.coord.x) {
+                    return a.coord.x > b.coord.x;
+                }
+                return a.coord.z > b.coord.z;
+            });
+        }
 
         for (const TerrainCandidate &candidate : unload_candidates) {
             cached_unload_candidates.append(candidate.coord);
@@ -240,18 +275,20 @@ Dictionary TerrainGrid::update(Vector3 viewer_pos, int render_distance, bool is_
             }
         }
 
-        std::stable_sort(load_candidates.begin(), load_candidates.end(), [](const TerrainCandidate &a, const TerrainCandidate &b) {
-            if (a.dist_sq != b.dist_sq) {
-                return a.dist_sq < b.dist_sq;
-            }
-            if (a.coord.y != b.coord.y) {
-                return a.coord.y < b.coord.y;
-            }
-            if (a.coord.x != b.coord.x) {
-                return a.coord.x < b.coord.x;
-            }
-            return a.coord.z < b.coord.z;
-        });
+        if (prioritize_stream_candidates) {
+            std::stable_sort(load_candidates.begin(), load_candidates.end(), [](const TerrainCandidate &a, const TerrainCandidate &b) {
+                if (a.dist_sq != b.dist_sq) {
+                    return a.dist_sq < b.dist_sq;
+                }
+                if (a.coord.y != b.coord.y) {
+                    return a.coord.y < b.coord.y;
+                }
+                if (a.coord.x != b.coord.x) {
+                    return a.coord.x < b.coord.x;
+                }
+                return a.coord.z < b.coord.z;
+            });
+        }
 
         for (const TerrainCandidate &candidate : load_candidates) {
             cached_load_candidates.append(candidate.coord);

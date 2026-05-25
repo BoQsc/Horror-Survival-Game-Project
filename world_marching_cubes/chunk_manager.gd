@@ -268,6 +268,9 @@ var chunks_per_frame_limit: int = 2 # Dynamically adjusted
 var loading_paused: bool = false
 @export_range(1, 64, 1) var terrain_unload_budget_per_frame: int = 8
 @export_range(0, 8, 1) var terrain_unload_hysteresis_chunks: int = 0
+@export_range(1, 8, 1) var terrain_stream_movement_chunk_limit: int = 2
+@export var terrain_stream_loads_before_unloads: bool = true
+@export var terrain_stream_prioritize_candidates: bool = true
 @export_range(0, 5, 1) var terrain_hot_frame_backoff_frames: int = 2
 @export_range(0, 60, 1) var render_resource_prewarm_frames: int = 12
 @export_range(0, 256, 1) var spawn_zone_far_reset_distance_chunks: int = 16
@@ -518,6 +521,7 @@ func _ready():
 	if not terrain_grid:
 		push_error("[ChunkManager] Failed to instantiate TerrainGrid GDExtension.")
 		return
+	_sync_terrain_grid_options()
 	if terrain_native_cpu_meshing_enabled:
 		var mesh_builder_probe = ClassDB.instantiate("MeshBuilder")
 		if mesh_builder_probe and mesh_builder_probe.has_method("has_marching_cubes_tables") and not mesh_builder_probe.has_marching_cubes_tables():
@@ -867,6 +871,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"chunks_per_frame_limit": chunks_per_frame_limit,
 		"terrain_unload_budget_per_frame": terrain_unload_budget_per_frame,
 		"terrain_unload_hysteresis_chunks": terrain_unload_hysteresis_chunks,
+		"terrain_stream_movement_chunk_limit": terrain_stream_movement_chunk_limit,
+		"terrain_stream_loads_before_unloads": terrain_stream_loads_before_unloads,
+		"terrain_stream_prioritize_candidates": terrain_stream_prioritize_candidates,
 		"last_update_loads": _last_update_loads,
 		"last_update_unloads": _last_update_unloads,
 		"last_terrain_stream_update_gate_reason": _last_terrain_stream_update_gate_reason,
@@ -3453,6 +3460,10 @@ func _adjust_adaptive_loading():
 		chunks_per_frame_limit = maxi(chunks_per_frame_limit, 4)
 		return
 
+	var movement_chunk_limit := 1
+	if _should_use_movement_stream_chunk_limit():
+		movement_chunk_limit = maxi(terrain_stream_movement_chunk_limit, 1)
+
 	if current_fps < min_acceptable_fps:
 		# FPS is too low - pause loading completely
 		loading_paused = true
@@ -3463,12 +3474,19 @@ func _adjust_adaptive_loading():
 		loading_paused = false
 		var fps_ratio = current_fps / target_fps
 		adaptive_frame_budget_ms = lerp(0.25, 1.0, fps_ratio) # Tighter range
-		chunks_per_frame_limit = 1
+		chunks_per_frame_limit = movement_chunk_limit
 	else:
 		# FPS is good - still limit to prevent stutters
 		loading_paused = false
 		adaptive_frame_budget_ms = 1.5 # Max 1.5ms (reduced from 3ms)
-		chunks_per_frame_limit = 1
+		chunks_per_frame_limit = movement_chunk_limit
+
+func _should_use_movement_stream_chunk_limit() -> bool:
+	if _last_update_loads > 0:
+		return true
+	if active_chunks.size() < _get_min_loaded_stream_chunk_count():
+		return true
+	return _get_viewer_chunk_coord() != _last_terrain_stream_update_center_chunk
 
 func _get_runtime_power_env_int(name: String, default_value: int) -> int:
 	var raw := OS.get_environment(name).strip_edges()
@@ -3536,6 +3554,9 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_gpu_mesh_slice_delay_ms = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_GPU_MESH_SLICE_DELAY_MS", terrain_gpu_mesh_slice_delay_ms, 0, 20)
 	terrain_native_cpu_meshing_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_NATIVE_CPU_MESHING", terrain_native_cpu_meshing_enabled)
 	terrain_unload_hysteresis_chunks = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_UNLOAD_HYSTERESIS_CHUNKS", terrain_unload_hysteresis_chunks, 0, 8)
+	terrain_stream_movement_chunk_limit = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_STREAM_MOVEMENT_CHUNK_LIMIT", terrain_stream_movement_chunk_limit, 1, 8)
+	terrain_stream_loads_before_unloads = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_STREAM_LOADS_BEFORE_UNLOADS", terrain_stream_loads_before_unloads)
+	terrain_stream_prioritize_candidates = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_PRIORITIZE_STREAM_CANDIDATES", terrain_stream_prioritize_candidates)
 	terrain_skip_dry_water_density_dispatch = _get_runtime_power_env_bool("TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH", terrain_skip_dry_water_density_dispatch)
 	water_screen_refraction_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_SCREEN_REFRACTION", water_screen_refraction_enabled)
 	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
@@ -3546,6 +3567,7 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_force_stream_progress_for_test = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS", terrain_force_stream_progress_for_test)
 	terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_VISUAL_BATCHING", terrain_visual_batching_enabled)
 	procedural_terrain_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_PROCEDURAL_TERRAIN_VISUAL_BATCHING", procedural_terrain_visual_batching_enabled)
+
 	world_map_visual_batch_profile_enabled = _get_runtime_power_env_bool("TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE", world_map_visual_batch_profile_enabled)
 	distant_world_map_lod_enabled = _get_runtime_power_env_bool("TOWN_STALL_DISTANT_WORLD_MAP_LOD", distant_world_map_lod_enabled)
 	distant_world_map_lod_distance = _get_runtime_power_env_int_range("TOWN_STALL_DISTANT_WORLD_MAP_LOD_DISTANCE", distant_world_map_lod_distance, 1, 64)
@@ -3583,6 +3605,12 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	if water_batch_max_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_WATER_VISUAL_BATCH_MAX_VERTICES").is_empty():
 		world_map_water_visual_batch_max_vertices = water_visual_batch_max_vertices
 	procedural_water_visual_batch_near_cull_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_PROCEDURAL_WATER_VISUAL_BATCH_NEAR_CULL_RADIUS", procedural_water_visual_batch_near_cull_radius_chunks, 0, 8)
+
+func _sync_terrain_grid_options() -> void:
+	if terrain_grid and is_instance_valid(terrain_grid) and terrain_grid.has_method("set_unload_hysteresis_chunks"):
+		terrain_grid.set_unload_hysteresis_chunks(terrain_unload_hysteresis_chunks)
+	if terrain_grid and is_instance_valid(terrain_grid) and terrain_grid.has_method("set_prioritize_stream_candidates"):
+		terrain_grid.set_prioritize_stream_candidates(terrain_stream_prioritize_candidates)
 
 func _runtime_power_input_active() -> bool:
 	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]
@@ -6066,16 +6094,12 @@ func _update_chunks_native():
 	# Returns { "load": [Vector3i], "unload": [Vector3i] }
 	var result = terrain_grid.update(p_pos, render_distance, is_above_ground, CHUNK_STRIDE, chunks_per_frame_limit, terrain_unload_budget_per_frame)
 
-	# 2. Process Unloads
-	var unload_count := 0
-	for coord in result["unload"]:
-		unload_count += 1
-		_unload_chunk(coord)
-		terrain_grid.remove_chunk(coord)
-	var remaining_unload_budget := maxi(terrain_unload_budget_per_frame - unload_count, 0)
-	var bounds_unloads := _enforce_terrain_stream_bounds(p_chunk_x, p_chunk_y, p_chunk_z, remaining_unload_budget)
+	var total_unloads := 0
+	if not terrain_stream_loads_before_unloads:
+		total_unloads = _process_native_stream_unloads(result["unload"], p_chunk_x, p_chunk_y, p_chunk_z)
 
-	# 3. Process Loads
+	# 2. Queue load work. In the default profile this happens before trailing-edge
+	# unloads so incoming chunks get generation priority.
 	var chunks_queued = 0
 	for coord in result["load"]:
 		if chunks_queued >= chunks_per_frame_limit:
@@ -6088,7 +6112,7 @@ func _update_chunks_native():
 		_load_chunk(coord)
 		chunks_queued += 1
 
-	# 4. Special Case: Stored Modifications (Force load if nearby)
+	# 3. Special Case: Stored Modifications (Force load if nearby)
 	if chunks_queued < chunks_per_frame_limit and not initial_load_phase:
 		for coord in _get_all_modification_coords():
 			if chunks_queued >= chunks_per_frame_limit: break
@@ -6100,10 +6124,13 @@ func _update_chunks_native():
 				_load_chunk(coord)
 				chunks_queued += 1
 
-	var fallback_unloads := _unload_grid_mismatch_chunks(p_chunk_x, p_chunk_y, p_chunk_z, maxi(remaining_unload_budget - bounds_unloads, 0))
+	if terrain_stream_loads_before_unloads:
+		# Keeping extra active chunks rendered is too expensive without a separate
+		# hidden resident-cache path, so this still retires trailing chunks in-frame.
+		total_unloads = _process_native_stream_unloads(result["unload"], p_chunk_x, p_chunk_y, p_chunk_z)
 
 	_last_update_loads = chunks_queued
-	_last_update_unloads = unload_count + bounds_unloads + fallback_unloads
+	_last_update_unloads = total_unloads
 	_last_update_duration_ms = float(Time.get_ticks_usec() - update_start_us) / 1000.0
 
 func _enforce_terrain_stream_bounds(center_x: int, center_y: int, center_z: int, budget: int) -> int:
@@ -6163,6 +6190,17 @@ func _unload_grid_mismatch_chunks(center_x: int, center_y: int, center_z: int, b
 	if unloaded > 0:
 		_last_fallback_unload_ms = float(Time.get_ticks_usec() - unload_start_us) / 1000.0
 	return unloaded
+
+func _process_native_stream_unloads(unload_coords: Array, center_x: int, center_y: int, center_z: int) -> int:
+	var unload_count := 0
+	for coord in unload_coords:
+		unload_count += 1
+		_unload_chunk(coord)
+		terrain_grid.remove_chunk(coord)
+	var remaining_unload_budget := maxi(terrain_unload_budget_per_frame - unload_count, 0)
+	var bounds_unloads := _enforce_terrain_stream_bounds(center_x, center_y, center_z, remaining_unload_budget)
+	var fallback_unloads := _unload_grid_mismatch_chunks(center_x, center_y, center_z, maxi(remaining_unload_budget - bounds_unloads, 0))
+	return unload_count + bounds_unloads + fallback_unloads
 
 func _load_chunk(coord: Vector3i):
 	active_chunks[coord] = null
