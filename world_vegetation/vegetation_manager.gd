@@ -46,8 +46,9 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var vegetation_global_render_ignore_occlusion_culling: bool = true
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
 @export var world_map_vegetation_render_profile_enabled: bool = true
-@export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 4
-@export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 6
+# Smaller world-map clusters cost more draw calls but reduce off-frustum tree work.
+@export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 3
+@export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 3
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
 @export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 1.5
 @export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 3.0
