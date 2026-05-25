@@ -42,9 +42,11 @@ public:
 	Dictionary inflate_local_cell_set(const Dictionary &cell_set, int padding) const;
 
 	Array build_rotated_carve_segments(const Array &local_cells, int rotation) const;
-    Array build_rotated_segments_from_volumes(const Array &volumes, int rotation) const;
+	Array build_rotated_segments_from_volumes(const Array &volumes, int rotation) const;
     Array pick_nearest_candidates(const Array &candidates, int max_count) const;
 	Array pick_nearby_vegetation_candidates(const Dictionary &chunk_data, const String &list_key, const String &item_key, const Vector3 &player_pos, int chunk_stride, double collider_distance, int max_count) const;
+	Dictionary find_nearest_vegetation_ray_hit(const Dictionary &chunk_data, const String &list_key, const String &kind, const Vector3 &origin, const Vector3 &direction, double max_distance, double radius, double height, bool scale_by_entry) const;
+	Dictionary resolve_tree_body_collision(const Dictionary &chunk_tree_data, const Vector3 &body_origin, double body_radius, double body_height, int chunk_stride, double collision_radius, double collision_height) const;
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
 	Dictionary build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse) const;

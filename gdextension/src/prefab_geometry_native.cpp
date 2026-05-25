@@ -66,6 +66,13 @@ struct NearestCandidate {
 	Dictionary data;
 };
 
+struct RayHitCandidate {
+	double distance = 0.0;
+	double distance_sq_to_ray = 0.0;
+	Dictionary data;
+	bool valid = false;
+};
+
 static int normalize_rotation(int rotation) {
 	int normalized = rotation % 4;
 	if (normalized < 0) {
@@ -287,6 +294,24 @@ static bool chunk_overlaps_radius(const Vector2i &coord, const Vector3 &center, 
 	return dx * dx + dz * dz <= max_dist * max_dist;
 }
 
+static Vector3 dictionary_get_vector3(const Dictionary &dict, const String &key, const Vector3 &fallback = Vector3()) {
+	const Variant value = dict.get(key, fallback);
+	if (value.get_type() == Variant::VECTOR3) {
+		return value;
+	}
+	return fallback;
+}
+
+static bool is_better_ray_hit(double candidate_distance, double candidate_distance_sq_to_ray, const RayHitCandidate &current) {
+	if (!current.valid) {
+		return true;
+	}
+	if (std::abs(candidate_distance - current.distance) > 0.00001) {
+		return candidate_distance < current.distance;
+	}
+	return candidate_distance_sq_to_ray < current.distance_sq_to_ray;
+}
+
 static bool extract_transform_from_variant(const Variant &value, Transform3D &out) {
 	switch (value.get_type()) {
 		case Variant::TRANSFORM3D:
@@ -319,6 +344,8 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("parse_local_volumes", "raw_volumes", "declared_size", "min_y", "max_y"), &PrefabGeometryNative::parse_local_volumes);
 	ClassDB::bind_method(D_METHOD("pick_nearest_candidates", "candidates", "max_count"), &PrefabGeometryNative::pick_nearest_candidates);
 	ClassDB::bind_method(D_METHOD("pick_nearby_vegetation_candidates", "chunk_data", "list_key", "item_key", "player_pos", "chunk_stride", "collider_distance", "max_count"), &PrefabGeometryNative::pick_nearby_vegetation_candidates);
+	ClassDB::bind_method(D_METHOD("find_nearest_vegetation_ray_hit", "chunk_data", "list_key", "kind", "origin", "direction", "max_distance", "radius", "height", "scale_by_entry"), &PrefabGeometryNative::find_nearest_vegetation_ray_hit);
+	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse"), &PrefabGeometryNative::build_global_vegetation_render_payload);
 	ClassDB::bind_method(D_METHOD("pack_multimesh_buffer_from_instances", "instances"), &PrefabGeometryNative::pack_multimesh_buffer_from_instances);
@@ -768,6 +795,169 @@ Array PrefabGeometryNative::pick_nearby_vegetation_candidates(const Dictionary &
 	for (int i = 0; i < static_cast<int>(heap.size()); ++i) {
 		result[i] = heap[i].data;
 	}
+	return result;
+}
+
+Dictionary PrefabGeometryNative::find_nearest_vegetation_ray_hit(const Dictionary &chunk_data, const String &list_key, const String &kind, const Vector3 &origin, const Vector3 &direction, double max_distance, double radius, double height, bool scale_by_entry) const {
+	Dictionary empty;
+	if (chunk_data.is_empty() || list_key.is_empty() || kind.is_empty() || max_distance <= 0.0 || direction.length_squared() <= 0.000001) {
+		return empty;
+	}
+
+	const Vector3 ray_dir = direction.normalized();
+	RayHitCandidate best;
+
+	Array coord_keys = chunk_data.keys();
+	for (int coord_index = 0; coord_index < coord_keys.size(); ++coord_index) {
+		const Variant coord_variant = coord_keys[coord_index];
+		const Variant data_variant = chunk_data.get(coord_variant, Dictionary());
+		if (data_variant.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary data = data_variant;
+		const Variant entries_variant = data.get(list_key, Array());
+		if (entries_variant.get_type() != Variant::ARRAY) {
+			continue;
+		}
+		Array entries = entries_variant;
+
+		for (int i = 0; i < entries.size(); ++i) {
+			if (entries[i].get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary entry = entries[i];
+			if (!bool(entry.get("alive", false))) {
+				continue;
+			}
+
+			const int index = int(entry.get("index", -1));
+			if (index < 0) {
+				continue;
+			}
+
+			double instance_radius = radius;
+			double instance_height = height;
+			if (scale_by_entry) {
+				const double instance_scale = std::max(0.1, double(entry.get("scale", 1.0)));
+				instance_radius *= instance_scale;
+				instance_height *= instance_scale;
+			}
+
+			const Vector3 fallback_world_pos = dictionary_get_vector3(entry, "world_pos");
+			const Vector3 base_pos = dictionary_get_vector3(entry, "hit_pos", fallback_world_pos);
+			const Vector3 center = base_pos + Vector3(0.0, instance_height * 0.5, 0.0);
+			const Vector3 to_candidate = center - origin;
+			const double distance_along_ray = double(to_candidate.dot(ray_dir));
+			if (distance_along_ray < 0.0 || distance_along_ray > max_distance) {
+				continue;
+			}
+
+			const Vector3 ray_point = origin + ray_dir * distance_along_ray;
+			if (ray_point.y < base_pos.y - instance_radius || ray_point.y > base_pos.y + instance_height + instance_radius) {
+				continue;
+			}
+			const double dx = double(center.x - ray_point.x);
+			const double dz = double(center.z - ray_point.z);
+			const double distance_sq_to_ray = dx * dx + dz * dz;
+			const double hit_radius_sq = instance_radius * instance_radius;
+			if (distance_sq_to_ray > hit_radius_sq) {
+				continue;
+			}
+
+			if (!is_better_ray_hit(distance_along_ray, distance_sq_to_ray, best)) {
+				continue;
+			}
+
+			Dictionary candidate;
+			candidate["kind"] = kind;
+			candidate["coord"] = coord_variant;
+			candidate["index"] = index;
+			candidate["position"] = center;
+			candidate["distance"] = distance_along_ray;
+			candidate["distance_sq_to_ray"] = distance_sq_to_ray;
+			best.distance = distance_along_ray;
+			best.distance_sq_to_ray = distance_sq_to_ray;
+			best.data = candidate;
+			best.valid = true;
+		}
+	}
+
+	return best.valid ? best.data : empty;
+}
+
+Dictionary PrefabGeometryNative::resolve_tree_body_collision(const Dictionary &chunk_tree_data, const Vector3 &body_origin, double body_radius, double body_height, int chunk_stride, double collision_radius, double collision_height) const {
+	Dictionary empty;
+	if (chunk_tree_data.is_empty() || chunk_stride <= 0 || body_radius <= 0.0 || body_height <= 0.0 || collision_radius <= 0.0 || collision_height <= 0.0) {
+		return empty;
+	}
+
+	const int min_chunk_x = int(std::floor((double(body_origin.x) - collision_radius - body_radius) / double(chunk_stride)));
+	const int max_chunk_x = int(std::floor((double(body_origin.x) + collision_radius + body_radius) / double(chunk_stride)));
+	const int min_chunk_z = int(std::floor((double(body_origin.z) - collision_radius - body_radius) / double(chunk_stride)));
+	const int max_chunk_z = int(std::floor((double(body_origin.z) + collision_radius + body_radius) / double(chunk_stride)));
+	const double body_min_y = double(body_origin.y);
+	const double body_max_y = double(body_origin.y) + body_height;
+	Vector3 total_push;
+	int hit_count = 0;
+
+	for (int chunk_x = min_chunk_x; chunk_x <= max_chunk_x; ++chunk_x) {
+		for (int chunk_z = min_chunk_z; chunk_z <= max_chunk_z; ++chunk_z) {
+			const Vector2i coord(chunk_x, chunk_z);
+			if (!chunk_tree_data.has(coord)) {
+				continue;
+			}
+			const Variant data_variant = chunk_tree_data.get(coord, Dictionary());
+			if (data_variant.get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary data = data_variant;
+			const Variant trees_variant = data.get("trees", Array());
+			if (trees_variant.get_type() != Variant::ARRAY) {
+				continue;
+			}
+			Array trees = trees_variant;
+
+			for (int i = 0; i < trees.size(); ++i) {
+				if (trees[i].get_type() != Variant::DICTIONARY) {
+					continue;
+				}
+				Dictionary tree = trees[i];
+				if (!bool(tree.get("alive", false))) {
+					continue;
+				}
+
+				const double tree_scale = std::max(0.1, double(tree.get("scale", 1.0)));
+				const Vector3 fallback_world_pos = dictionary_get_vector3(tree, "world_pos");
+				const Vector3 tree_base = dictionary_get_vector3(tree, "hit_pos", fallback_world_pos);
+				const double tree_min_y = double(tree_base.y);
+				const double tree_max_y = double(tree_base.y) + collision_height * tree_scale;
+				if (body_max_y < tree_min_y || body_min_y > tree_max_y) {
+					continue;
+				}
+
+				const double combined_radius = collision_radius * tree_scale + body_radius;
+				const double dx = double(body_origin.x - tree_base.x);
+				const double dz = double(body_origin.z - tree_base.z);
+				const double dist_sq = dx * dx + dz * dz;
+				if (dist_sq >= combined_radius * combined_radius) {
+					continue;
+				}
+
+				const double dist = std::sqrt(std::max(dist_sq, 0.0001));
+				const double penetration = combined_radius - dist;
+				total_push += Vector3(dx / dist * penetration, 0.0, dz / dist * penetration);
+				++hit_count;
+			}
+		}
+	}
+
+	if (hit_count == 0) {
+		return empty;
+	}
+
+	Dictionary result;
+	result["push"] = total_push;
+	result["hits"] = hit_count;
 	return result;
 }
 

@@ -191,6 +191,8 @@ var _vegetation_road_block_sample_backend_counts: Dictionary = {}
 var _vegetation_water_block_sample_backend_counts: Dictionary = {}
 var _vegetation_render_payload_backend_counts: Dictionary = {}
 var _vegetation_collider_candidate_backend_counts: Dictionary = {}
+var _vegetation_ray_query_backend_counts: Dictionary = {}
+var _vegetation_body_collision_backend_counts: Dictionary = {}
 var _last_vegetation_generation_kind: String = ""
 var _last_vegetation_generation_backend: String = ""
 var _last_vegetation_generation_reason: String = ""
@@ -369,6 +371,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_water_block_sample_backend_counts": _vegetation_water_block_sample_backend_counts.duplicate(true),
 		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
 		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
+		"vegetation_ray_query_backend_counts": _vegetation_ray_query_backend_counts.duplicate(true),
+		"vegetation_body_collision_backend_counts": _vegetation_body_collision_backend_counts.duplicate(true),
 		"last_vegetation_generation_kind": _last_vegetation_generation_kind,
 		"last_vegetation_generation_backend": _last_vegetation_generation_backend,
 		"last_vegetation_generation_reason": _last_vegetation_generation_reason
@@ -432,6 +436,18 @@ func _record_vegetation_collider_candidate_backend(kind: String, backend: String
 	var candidate_key := "%s_%s_candidates" % [kind, backend]
 	_vegetation_collider_candidate_backend_counts[call_key] = int(_vegetation_collider_candidate_backend_counts.get(call_key, 0)) + 1
 	_vegetation_collider_candidate_backend_counts[candidate_key] = int(_vegetation_collider_candidate_backend_counts.get(candidate_key, 0)) + candidate_count
+
+func _record_vegetation_ray_query_backend(kind: String, backend: String, hit_count: int) -> void:
+	var call_key := "%s_%s_calls" % [kind, backend]
+	var hit_key := "%s_%s_hits" % [kind, backend]
+	_vegetation_ray_query_backend_counts[call_key] = int(_vegetation_ray_query_backend_counts.get(call_key, 0)) + 1
+	_vegetation_ray_query_backend_counts[hit_key] = int(_vegetation_ray_query_backend_counts.get(hit_key, 0)) + hit_count
+
+func _record_vegetation_body_collision_backend(backend: String, hit_count: int) -> void:
+	var call_key := "%s_calls" % backend
+	var hit_key := "%s_hits" % backend
+	_vegetation_body_collision_backend_counts[call_key] = int(_vegetation_body_collision_backend_counts.get(call_key, 0)) + 1
+	_vegetation_body_collision_backend_counts[hit_key] = int(_vegetation_body_collision_backend_counts.get(hit_key, 0)) + hit_count
 
 func _get_vegetation_env_int_range(name: String, default_value: int, min_value: int, max_value: int) -> int:
 	var raw := OS.get_environment(name).strip_edges()
@@ -3231,6 +3247,20 @@ func resolve_tree_body_collision(body_origin: Vector3, body_radius: float = 0.4,
 		return {}
 
 	var chunk_stride: int = terrain_manager.CHUNK_STRIDE
+	var native := _get_native_helper()
+	if native and native.has_method("resolve_tree_body_collision"):
+		var native_result: Dictionary = native.resolve_tree_body_collision(
+			chunk_tree_data,
+			body_origin,
+			body_radius,
+			body_height,
+			chunk_stride,
+			collision_radius,
+			collision_height
+		)
+		_record_vegetation_body_collision_backend("native", int(native_result.get("hits", 0)))
+		return native_result
+
 	var min_chunk_x := int(floor((body_origin.x - collision_radius - body_radius) / chunk_stride))
 	var max_chunk_x := int(floor((body_origin.x + collision_radius + body_radius) / chunk_stride))
 	var min_chunk_z := int(floor((body_origin.z - collision_radius - body_radius) / chunk_stride))
@@ -3273,7 +3303,9 @@ func resolve_tree_body_collision(body_origin: Vector3, body_radius: float = 0.4,
 				hit_count += 1
 
 	if hit_count == 0:
+		_record_vegetation_body_collision_backend("gdscript", 0)
 		return {}
+	_record_vegetation_body_collision_backend("gdscript", hit_count)
 	return {
 		"push": total_push,
 		"hits": hit_count
@@ -3333,6 +3365,22 @@ func _find_nearest_instance_along_ray(
 	if max_distance <= 0.0 or direction.length_squared() <= 0.000001:
 		return {}
 
+	var native := _get_native_helper()
+	if native and native.has_method("find_nearest_vegetation_ray_hit"):
+		var native_hit: Dictionary = native.find_nearest_vegetation_ray_hit(
+			chunk_data,
+			list_key,
+			kind,
+			origin,
+			direction,
+			max_distance,
+			radius,
+			height,
+			kind == "tree"
+		)
+		_record_vegetation_ray_query_backend(kind, "native", 0 if native_hit.is_empty() else 1)
+		return native_hit
+
 	var ray_dir := direction.normalized()
 	var best_hit: Dictionary = {}
 
@@ -3383,6 +3431,7 @@ func _find_nearest_instance_along_ray(
 			if _is_better_data_ray_hit(candidate, best_hit):
 				best_hit = candidate
 
+	_record_vegetation_ray_query_backend(kind, "gdscript", 0 if best_hit.is_empty() else 1)
 	return best_hit
 
 func _is_better_data_ray_hit(candidate: Dictionary, current: Dictionary) -> bool:
@@ -4245,6 +4294,8 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_vegetation_water_block_sample_backend_counts.clear()
 	_vegetation_render_payload_backend_counts.clear()
 	_vegetation_collider_candidate_backend_counts.clear()
+	_vegetation_ray_query_backend_counts.clear()
+	_vegetation_body_collision_backend_counts.clear()
 	_last_vegetation_generation_kind = ""
 	_last_vegetation_generation_backend = ""
 	_last_vegetation_generation_reason = ""
