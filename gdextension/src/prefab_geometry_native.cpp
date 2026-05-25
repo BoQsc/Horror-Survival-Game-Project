@@ -353,7 +353,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_nearest_vegetation_ray_hit", "chunk_data", "list_key", "kind", "origin", "direction", "max_distance", "radius", "height", "scale_by_entry"), &PrefabGeometryNative::find_nearest_vegetation_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
-	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse"), &PrefabGeometryNative::build_global_vegetation_render_payload);
+	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse", "mesh_bounds"), &PrefabGeometryNative::build_global_vegetation_render_payload);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_cluster_render_payload", "payloads", "coord_keys", "bounds_padding"), &PrefabGeometryNative::build_global_vegetation_cluster_render_payload);
 	ClassDB::bind_method(D_METHOD("pack_multimesh_buffer_from_instances", "instances"), &PrefabGeometryNative::pack_multimesh_buffer_from_instances);
 }
@@ -1092,7 +1092,7 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	return instances;
 }
 
-Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse) const {
+Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse, const AABB &mesh_bounds) const {
 	Dictionary result;
 	result["buffer"] = PackedFloat32Array();
 	result["instance_count"] = 0;
@@ -1130,10 +1130,11 @@ Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Ar
 			transform.origin = render_space_inverse.xform(world_pos);
 		}
 
+		const AABB instance_bounds = transform.xform(mesh_bounds);
 		if (has_bounds) {
-			bounds.expand_to(transform.origin);
+			bounds.merge_with(instance_bounds);
 		} else {
-			bounds = AABB(transform.origin, Vector3());
+			bounds = instance_bounds;
 			has_bounds = true;
 		}
 		transforms.push_back(transform);

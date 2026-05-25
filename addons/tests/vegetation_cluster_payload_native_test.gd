@@ -1,6 +1,9 @@
 extends SceneTree
 
 func _init() -> void:
+	call_deferred("_run_and_quit")
+
+func _run_and_quit() -> void:
 	var exit_code := _run()
 	quit(exit_code)
 
@@ -11,6 +14,27 @@ func _run() -> int:
 	var native := PrefabGeometryNative.new()
 	if native == null or not native.has_method("build_global_vegetation_cluster_render_payload"):
 		return _fail("native cluster payload merge method is missing")
+	if not native.has_method("build_global_vegetation_render_payload"):
+		return _fail("native chunk payload method is missing")
+
+	var chunk_result: Dictionary = native.build_global_vegetation_render_payload(
+		[
+			{
+				"alive": true,
+				"world_pos": Vector3(10.0, 20.0, 30.0),
+				"transform": Transform3D(Basis.IDENTITY.scaled(Vector3(2.0, 3.0, 4.0)), Vector3.ZERO)
+			}
+		],
+		Transform3D.IDENTITY,
+		AABB(Vector3(-1.0, 0.0, -0.5), Vector3(2.0, 2.0, 1.0))
+	)
+	if not _expect(int(chunk_result.get("instance_count", 0)) == 1, "expected one chunk payload instance"):
+		return 1
+	var chunk_bounds: AABB = chunk_result.get("bounds", AABB())
+	if not _expect(_vec_equal(chunk_bounds.position, Vector3(8.0, 20.0, 28.0)), "chunk payload exact bounds position mismatch"):
+		return 1
+	if not _expect(_vec_equal(chunk_bounds.size, Vector3(4.0, 6.0, 4.0)), "chunk payload exact bounds size mismatch"):
+		return 1
 
 	var payloads := {}
 	payloads[Vector2i(0, 0)] = {
@@ -56,6 +80,7 @@ func _run() -> int:
 	if not _expect(_vec_equal(bounds.size, Vector3(5.0, 5.0, 5.0)), "merged bounds size mismatch"):
 		return 1
 
+	chunk_result.clear()
 	result.clear()
 	payloads.clear()
 	native = null

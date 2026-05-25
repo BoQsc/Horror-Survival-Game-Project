@@ -51,6 +51,8 @@ CASES = {
     },
     "vegetation_bounds_padding_48": {"TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING": "48"},
     "vegetation_bounds_padding_32": {"TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING": "32"},
+    "vegetation_exact_bounds_off": {"TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS": "0"},
+    "vegetation_exact_bounds_padding_0": {"TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS_PADDING": "0"},
     "vegetation_bounds_32_lod_0_5": {
         "TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING": "32",
         "TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.5",
@@ -498,6 +500,8 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_tree_bounds_padding": float(vegetation.get("tree_global_render_bounds_padding", 0.0) or 0.0),
         "vegetation_grass_bounds_padding": float(vegetation.get("grass_global_render_bounds_padding", 0.0) or 0.0),
         "vegetation_rock_bounds_padding": float(vegetation.get("rock_global_render_bounds_padding", 0.0) or 0.0),
+        "vegetation_exact_render_bounds_enabled": bool(vegetation.get("vegetation_exact_render_bounds_enabled", False)),
+        "vegetation_exact_render_bounds_padding": float(vegetation.get("vegetation_exact_render_bounds_padding", 0.0) or 0.0),
         "vegetation_ignore_occlusion_culling": bool(vegetation.get("vegetation_global_render_ignore_occlusion_culling", False)),
         "vegetation_tree_render_enabled": bool(vegetation.get("tree_render_enabled", True)),
         "vegetation_grass_render_enabled": bool(vegetation.get("grass_render_enabled", True)),
@@ -675,7 +679,7 @@ def _print_results(results: list[dict]) -> None:
             "vegEst={veg_est:9d} tree/grass/rock={tree_est}/{grass_est}/{rock_est} "
             "mesh={tree_mesh}/{grass_mesh}/{rock_mesh} maxInst={tree_max}/{grass_max}/{rock_max} "
             "bounds={bounds:4.0f} kindBounds={tree_bounds:.0f}/{grass_bounds:.0f}/{rock_bounds:.0f} occIgnore={occ} collisionGroundCenter={ground_center} "
-            "forcePendingFinalize={force_pending} forceStream={force_stream}".format(
+            "exactBounds={exact_bounds}@{exact_padding:.1f} forcePendingFinalize={force_pending} forceStream={force_stream}".format(
                 terrain_visible=int(result.get("terrain_visual_visible_primitives", 0) or 0),
                 terrain_chunks=int(result.get("terrain_visual_chunk_primitives", 0) or 0),
                 terrain_batches=int(result.get("terrain_visual_batch_primitives", 0) or 0),
@@ -696,6 +700,8 @@ def _print_results(results: list[dict]) -> None:
                 grass_bounds=float(result.get("vegetation_grass_bounds_padding", 0.0) or 0.0),
                 rock_bounds=float(result.get("vegetation_rock_bounds_padding", 0.0) or 0.0),
                 occ="on" if bool(result.get("vegetation_ignore_occlusion_culling", False)) else "off",
+                exact_bounds="on" if bool(result.get("vegetation_exact_render_bounds_enabled", False)) else "off",
+                exact_padding=float(result.get("vegetation_exact_render_bounds_padding", 0.0) or 0.0),
                 ground_center="on" if bool(result.get("terrain_collision_ground_center", False)) else "off",
                 force_pending="on" if bool(result.get("terrain_force_pending_finalization", False)) else "off",
                 force_stream="on" if bool(result.get("terrain_force_stream_progress", False)) else "off",

@@ -41,6 +41,8 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(0.0, 256.0, 1.0) var tree_global_render_bounds_padding: float = GLOBAL_TREE_RENDER_BOUNDS_PADDING
 @export_range(0.0, 256.0, 1.0) var grass_global_render_bounds_padding: float = GLOBAL_GRASS_RENDER_BOUNDS_PADDING
 @export_range(0.0, 256.0, 1.0) var rock_global_render_bounds_padding: float = GLOBAL_ROCK_RENDER_BOUNDS_PADDING
+@export var vegetation_exact_render_bounds_enabled: bool = true
+@export_range(0.0, 16.0, 0.25) var vegetation_exact_render_bounds_padding: float = 1.0
 # Do not enable vegetation occlusion culling by default until an A/B run proves
 # it improves FPS/watts without visible popping in wide town/terrain views.
 @export var vegetation_global_render_ignore_occlusion_culling: bool = true
@@ -318,6 +320,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"tree_global_render_bounds_padding": tree_global_render_bounds_padding,
 		"grass_global_render_bounds_padding": grass_global_render_bounds_padding,
 		"rock_global_render_bounds_padding": rock_global_render_bounds_padding,
+		"vegetation_exact_render_bounds_enabled": vegetation_exact_render_bounds_enabled,
+		"vegetation_exact_render_bounds_padding": vegetation_exact_render_bounds_padding,
 		"vegetation_global_render_ignore_occlusion_culling": vegetation_global_render_ignore_occlusion_culling,
 		"vegetation_render_lod_bias": vegetation_render_lod_bias,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
@@ -506,6 +510,8 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	tree_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_TREE_GLOBAL_RENDER_BOUNDS_PADDING", tree_global_render_bounds_padding, 0.0, 256.0)
 	grass_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GRASS_GLOBAL_RENDER_BOUNDS_PADDING", grass_global_render_bounds_padding, 0.0, 256.0)
 	rock_global_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_ROCK_GLOBAL_RENDER_BOUNDS_PADDING", rock_global_render_bounds_padding, 0.0, 256.0)
+	vegetation_exact_render_bounds_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS", vegetation_exact_render_bounds_enabled)
+	vegetation_exact_render_bounds_padding = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS_PADDING", vegetation_exact_render_bounds_padding, 0.0, 16.0)
 	if global_bounds_overridden:
 		if not tree_bounds_overridden:
 			tree_global_render_bounds_padding = vegetation_global_render_bounds_padding
@@ -747,6 +753,8 @@ func _is_vegetation_render_kind_enabled(kind: String) -> bool:
 	return true
 
 func _global_render_bounds_padding_for_kind(kind: String) -> float:
+	if vegetation_exact_render_bounds_enabled:
+		return vegetation_exact_render_bounds_padding
 	match kind:
 		"tree":
 			return tree_global_render_bounds_padding
@@ -1169,32 +1177,48 @@ func _get_global_vegetation_instance_transform(item) -> Transform3D:
 		transform.origin = to_local(world_pos) if is_inside_tree() else world_pos
 	return transform
 
+func _transform_vegetation_aabb(transform: Transform3D, bounds: AABB) -> AABB:
+	var transformed := AABB(transform * bounds.position, Vector3.ZERO)
+	transformed = transformed.expand(transform * Vector3(bounds.position.x + bounds.size.x, bounds.position.y, bounds.position.z))
+	transformed = transformed.expand(transform * Vector3(bounds.position.x, bounds.position.y + bounds.size.y, bounds.position.z))
+	transformed = transformed.expand(transform * Vector3(bounds.position.x, bounds.position.y, bounds.position.z + bounds.size.z))
+	transformed = transformed.expand(transform * Vector3(bounds.position.x + bounds.size.x, bounds.position.y + bounds.size.y, bounds.position.z))
+	transformed = transformed.expand(transform * Vector3(bounds.position.x + bounds.size.x, bounds.position.y, bounds.position.z + bounds.size.z))
+	transformed = transformed.expand(transform * Vector3(bounds.position.x, bounds.position.y + bounds.size.y, bounds.position.z + bounds.size.z))
+	transformed = transformed.expand(transform * (bounds.position + bounds.size))
+	return transformed
+
 func _append_alive_global_vegetation_transforms(target: Array, entries: Array) -> void:
 	for item in entries:
 		if item is Dictionary and not bool(item.get("alive", true)):
 			continue
 		target.append(_get_global_vegetation_instance_transform(item))
 
-func _build_global_vegetation_chunk_render_payload(instances: Array) -> Dictionary:
+func _build_global_vegetation_chunk_render_payload(kind: String, instances: Array) -> Dictionary:
 	var native := _get_native_helper()
 	if native and native.has_method("build_global_vegetation_render_payload"):
 		var render_space_inverse := global_transform.affine_inverse() if is_inside_tree() else Transform3D.IDENTITY
-		var native_payload: Dictionary = native.build_global_vegetation_render_payload(instances, render_space_inverse)
+		var mesh := _get_vegetation_mesh_for_kind(kind)
+		var mesh_bounds := mesh.get_aabb() if vegetation_exact_render_bounds_enabled and mesh else AABB()
+		var native_payload: Dictionary = native.build_global_vegetation_render_payload(instances, render_space_inverse, mesh_bounds)
 		_record_vegetation_render_payload_backend("native", int(native_payload.get("instance_count", 0)))
 		return native_payload
 
 	var transforms: Array = []
 	var bounds := GLOBAL_VEGETATION_RENDER_AABB
 	var has_bounds := false
+	var mesh := _get_vegetation_mesh_for_kind(kind)
+	var mesh_bounds := mesh.get_aabb() if vegetation_exact_render_bounds_enabled and mesh else AABB()
 	for item in instances:
 		if item is Dictionary and not bool(item.get("alive", true)):
 			continue
 		var transform := _get_global_vegetation_instance_transform(item)
 		transforms.append(transform)
+		var instance_bounds := _transform_vegetation_aabb(transform, mesh_bounds)
 		if has_bounds:
-			bounds = bounds.expand(transform.origin)
+			bounds = bounds.merge(instance_bounds)
 		else:
-			bounds = AABB(transform.origin, Vector3.ZERO)
+			bounds = instance_bounds
 			has_bounds = true
 
 	var payload := {
@@ -1214,7 +1238,7 @@ func _update_global_vegetation_chunk_render_payload(kind: String, coord, instanc
 		_clear_global_vegetation_chunk_render_payload(kind, coord)
 		return
 	var payloads := _get_global_render_chunk_payload_dictionary(kind)
-	var payload := _build_global_vegetation_chunk_render_payload(instances)
+	var payload := _build_global_vegetation_chunk_render_payload(kind, instances)
 	if int(payload.get("instance_count", 0)) <= 0:
 		_clear_global_vegetation_chunk_render_payload(kind, coord)
 		return
