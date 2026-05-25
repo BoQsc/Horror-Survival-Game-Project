@@ -318,6 +318,78 @@ static bool is_better_ray_hit(double candidate_distance, double candidate_distan
 	return candidate_distance_sq_to_ray < current.distance_sq_to_ray;
 }
 
+static bool intersect_vertical_vegetation_cylinder(const Vector3 &origin, const Vector3 &ray_dir, const Vector3 &base_pos, double radius, double height, double max_distance, double &out_distance, double &out_axis_distance_sq) {
+	if (radius <= 0.0 || height <= 0.0 || max_distance <= 0.0) {
+		return false;
+	}
+
+	double t_min = 0.0;
+	double t_max = max_distance;
+
+	const double ox = double(origin.x) - double(base_pos.x);
+	const double oz = double(origin.z) - double(base_pos.z);
+	const double dx = double(ray_dir.x);
+	const double dz = double(ray_dir.z);
+	const double a = dx * dx + dz * dz;
+	const double c = ox * ox + oz * oz - radius * radius;
+	constexpr double EPSILON = 0.0000001;
+
+	if (a <= EPSILON) {
+		if (c > 0.0) {
+			return false;
+		}
+	} else {
+		const double b = 2.0 * (ox * dx + oz * dz);
+		const double discriminant = b * b - 4.0 * a * c;
+		if (discriminant < 0.0) {
+			return false;
+		}
+		const double sqrt_discriminant = std::sqrt(std::max(0.0, discriminant));
+		double t0 = (-b - sqrt_discriminant) / (2.0 * a);
+		double t1 = (-b + sqrt_discriminant) / (2.0 * a);
+		if (t0 > t1) {
+			std::swap(t0, t1);
+		}
+		t_min = std::max(t_min, t0);
+		t_max = std::min(t_max, t1);
+		if (t_min > t_max) {
+			return false;
+		}
+	}
+
+	const double min_y = double(base_pos.y) - radius;
+	const double max_y = double(base_pos.y) + height + radius;
+	const double dy = double(ray_dir.y);
+	if (std::abs(dy) <= EPSILON) {
+		if (double(origin.y) < min_y || double(origin.y) > max_y) {
+			return false;
+		}
+	} else {
+		double ty0 = (min_y - double(origin.y)) / dy;
+		double ty1 = (max_y - double(origin.y)) / dy;
+		if (ty0 > ty1) {
+			std::swap(ty0, ty1);
+		}
+		t_min = std::max(t_min, ty0);
+		t_max = std::min(t_max, ty1);
+		if (t_min > t_max) {
+			return false;
+		}
+	}
+
+	const double hit_distance = std::max(0.0, t_min);
+	if (hit_distance > max_distance) {
+		return false;
+	}
+
+	const Vector3 hit_point = origin + ray_dir * hit_distance;
+	const double axis_dx = double(hit_point.x) - double(base_pos.x);
+	const double axis_dz = double(hit_point.z) - double(base_pos.z);
+	out_distance = hit_distance;
+	out_axis_distance_sq = axis_dx * axis_dx + axis_dz * axis_dz;
+	return true;
+}
+
 static bool extract_transform_from_variant(const Variant &value, Transform3D &out) {
 	switch (value.get_type()) {
 		case Variant::TRANSFORM3D:
@@ -852,38 +924,26 @@ Dictionary PrefabGeometryNative::find_nearest_vegetation_ray_hit(const Dictionar
 
 			const Vector3 fallback_world_pos = dictionary_get_vector3(entry, "world_pos");
 			const Vector3 base_pos = dictionary_get_vector3(entry, "hit_pos", fallback_world_pos);
-			const Vector3 center = base_pos + Vector3(0.0, instance_height * 0.5, 0.0);
-			const Vector3 to_candidate = center - origin;
-			const double distance_along_ray = double(to_candidate.dot(ray_dir));
-			if (distance_along_ray < 0.0 || distance_along_ray > max_distance) {
+			double hit_distance = 0.0;
+			double axis_distance_sq = 0.0;
+			if (!intersect_vertical_vegetation_cylinder(origin, ray_dir, base_pos, instance_radius, instance_height, max_distance, hit_distance, axis_distance_sq)) {
 				continue;
 			}
 
-			const Vector3 ray_point = origin + ray_dir * distance_along_ray;
-			if (ray_point.y < base_pos.y - instance_radius || ray_point.y > base_pos.y + instance_height + instance_radius) {
-				continue;
-			}
-			const double dx = double(center.x - ray_point.x);
-			const double dz = double(center.z - ray_point.z);
-			const double distance_sq_to_ray = dx * dx + dz * dz;
-			const double hit_radius_sq = instance_radius * instance_radius;
-			if (distance_sq_to_ray > hit_radius_sq) {
+			if (!is_better_ray_hit(hit_distance, axis_distance_sq, best)) {
 				continue;
 			}
 
-			if (!is_better_ray_hit(distance_along_ray, distance_sq_to_ray, best)) {
-				continue;
-			}
-
+			const Vector3 hit_point = origin + ray_dir * hit_distance;
 			Dictionary candidate;
 			candidate["kind"] = kind;
 			candidate["coord"] = coord_variant;
 			candidate["index"] = index;
-			candidate["position"] = center;
-			candidate["distance"] = distance_along_ray;
-			candidate["distance_sq_to_ray"] = distance_sq_to_ray;
-			best.distance = distance_along_ray;
-			best.distance_sq_to_ray = distance_sq_to_ray;
+			candidate["position"] = hit_point;
+			candidate["distance"] = hit_distance;
+			candidate["distance_sq_to_ray"] = axis_distance_sq;
+			best.distance = hit_distance;
+			best.distance_sq_to_ray = axis_distance_sq;
 			best.data = candidate;
 			best.valid = true;
 		}

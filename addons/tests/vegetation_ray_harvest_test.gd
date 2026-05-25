@@ -55,6 +55,12 @@ func _run() -> int:
 		]
 	}
 
+	var low_trunk_origin := Vector3(0.0, 1.6, 0.0)
+	var low_trunk_direction := (Vector3(0.0, 0.2, 7.0) - low_trunk_origin).normalized()
+	var low_trunk_hit := manager.find_nearest_vegetation_along_ray(low_trunk_origin, low_trunk_direction, 10.0, true, false, false)
+	if not _expect(low_trunk_hit.get("kind", "") == "tree", "data ray should hit low trunk cylinder, not only tree center"):
+		return 1
+
 	var origin := Vector3(0.0, 0.25, 0.0)
 	var direction := Vector3(0.0, 0.0, 1.0)
 	var result := manager.harvest_nearest_vegetation_along_ray(origin, direction, 10.0, true, true)

@@ -47,6 +47,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 # it improves FPS/watts without visible popping in wide town/terrain views.
 @export var vegetation_global_render_ignore_occlusion_culling: bool = true
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
+@export var vegetation_opaque_material_optimization_enabled: bool = true
 @export var world_map_vegetation_render_profile_enabled: bool = true
 # Smaller world-map clusters cost more draw calls but reduce off-frustum tree work.
 @export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 3
@@ -193,6 +194,8 @@ var _vegetation_road_block_sample_backend_counts: Dictionary = {}
 var _vegetation_water_block_sample_backend_counts: Dictionary = {}
 var _vegetation_render_payload_backend_counts: Dictionary = {}
 var _vegetation_render_cluster_payload_backend_counts: Dictionary = {}
+var _vegetation_opaque_material_optimization_counts: Dictionary = {}
+var _vegetation_texture_opaque_cache: Dictionary = {}
 var _vegetation_collider_candidate_backend_counts: Dictionary = {}
 var _vegetation_ray_query_backend_counts: Dictionary = {}
 var _vegetation_body_collision_backend_counts: Dictionary = {}
@@ -327,6 +330,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_exact_render_bounds_padding": vegetation_exact_render_bounds_padding,
 		"vegetation_global_render_ignore_occlusion_culling": vegetation_global_render_ignore_occlusion_culling,
 		"vegetation_render_lod_bias": vegetation_render_lod_bias,
+		"vegetation_opaque_material_optimization_enabled": vegetation_opaque_material_optimization_enabled,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
 		"world_map_vegetation_render_profile_active": _use_world_map_vegetation_render_profile(),
 		"world_map_vegetation_render_cluster_size": world_map_vegetation_render_cluster_size,
@@ -386,6 +390,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_water_block_sample_backend_counts": _vegetation_water_block_sample_backend_counts.duplicate(true),
 		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
 		"vegetation_render_cluster_payload_backend_counts": _vegetation_render_cluster_payload_backend_counts.duplicate(true),
+		"vegetation_opaque_material_optimization_counts": _vegetation_opaque_material_optimization_counts.duplicate(true),
 		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
 		"vegetation_ray_query_backend_counts": _vegetation_ray_query_backend_counts.duplicate(true),
 		"vegetation_body_collision_backend_counts": _vegetation_body_collision_backend_counts.duplicate(true),
@@ -531,6 +536,7 @@ func _configure_vegetation_render_profile_from_env() -> void:
 			rock_global_render_bounds_padding = vegetation_global_render_bounds_padding
 	vegetation_global_render_ignore_occlusion_culling = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING", vegetation_global_render_ignore_occlusion_culling)
 	vegetation_render_lod_bias = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_LOD_BIAS", vegetation_render_lod_bias, 0.25, 100.0)
+	vegetation_opaque_material_optimization_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION", vegetation_opaque_material_optimization_enabled)
 	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
 		world_map_vegetation_render_cluster_size = vegetation_render_cluster_size
 	if grass_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
@@ -1734,32 +1740,32 @@ func _ready():
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
 	if glb_result.mesh:
-		tree_mesh = glb_result.mesh
+		tree_mesh = _optimize_opaque_vegetation_mesh_materials("tree", glb_result.mesh)
 		tree_base_transform = glb_result.transform
 		tree_base_transform.origin = Vector3.ZERO # Remove position, keep rotation/scale
 	else:
 		push_warning("Failed to load tree model, falling back to basic mesh")
-		tree_mesh = create_basic_tree_mesh()
+		tree_mesh = _optimize_opaque_vegetation_mesh_materials("tree", create_basic_tree_mesh())
 
 	# Load grass mesh
 	var grass_result = load_tree_mesh_from_glb(grass_model_path)
 	if grass_result.mesh:
-		grass_mesh = grass_result.mesh
+		grass_mesh = _optimize_opaque_vegetation_mesh_materials("grass", grass_result.mesh)
 		grass_base_transform = grass_result.transform
 		grass_base_transform.origin = Vector3.ZERO
 	else:
 		push_warning("Failed to load grass model, using basic mesh")
-		grass_mesh = create_basic_grass_mesh()
+		grass_mesh = _optimize_opaque_vegetation_mesh_materials("grass", create_basic_grass_mesh())
 
 	# Load rock mesh
 	var rock_result = load_tree_mesh_from_glb(rock_model_path)
 	if rock_result.mesh:
-		rock_mesh = rock_result.mesh
+		rock_mesh = _optimize_opaque_vegetation_mesh_materials("rock", rock_result.mesh)
 		rock_base_transform = rock_result.transform
 		rock_base_transform.origin = Vector3.ZERO
 	else:
 		push_warning("Failed to load rock model, using basic mesh")
-		rock_mesh = create_basic_rock_mesh()
+		rock_mesh = _optimize_opaque_vegetation_mesh_materials("rock", create_basic_rock_mesh())
 
 	_start_vegetation_render_resource_prewarm()
 
@@ -3482,35 +3488,101 @@ func _find_nearest_instance_along_ray(
 				instance_radius *= instance_scale
 				instance_height *= instance_scale
 			var base_pos: Vector3 = entry.get("hit_pos", entry.get("world_pos", Vector3.ZERO))
-			var center := base_pos + Vector3(0.0, instance_height * 0.5, 0.0)
-			var to_candidate := center - origin
-			var distance_along_ray := to_candidate.dot(ray_dir)
-			if distance_along_ray < 0.0 or distance_along_ray > max_distance:
-				continue
-
-			var ray_point := origin + ray_dir * distance_along_ray
-			if ray_point.y < base_pos.y - instance_radius or ray_point.y > base_pos.y + instance_height + instance_radius:
-				continue
-			var dx := center.x - ray_point.x
-			var dz := center.z - ray_point.z
-			var distance_sq_to_ray := dx * dx + dz * dz
-			var hit_radius_sq := instance_radius * instance_radius
-			if distance_sq_to_ray > hit_radius_sq:
+			var cylinder_hit := _intersect_vertical_vegetation_cylinder(
+				origin,
+				ray_dir,
+				base_pos,
+				instance_radius,
+				instance_height,
+				max_distance
+			)
+			if cylinder_hit.is_empty():
 				continue
 
 			var candidate := {
 				"kind": kind,
 				"coord": coord,
 				"index": index,
-				"position": center,
-				"distance": distance_along_ray,
-				"distance_sq_to_ray": distance_sq_to_ray
+				"position": cylinder_hit.get("position", base_pos),
+				"distance": cylinder_hit.get("distance", 0.0),
+				"distance_sq_to_ray": cylinder_hit.get("distance_sq_to_ray", 0.0)
 			}
 			if _is_better_data_ray_hit(candidate, best_hit):
 				best_hit = candidate
 
 	_record_vegetation_ray_query_backend(kind, "gdscript", 0 if best_hit.is_empty() else 1)
 	return best_hit
+
+func _intersect_vertical_vegetation_cylinder(
+		origin: Vector3,
+		ray_dir: Vector3,
+		base_pos: Vector3,
+		radius: float,
+		height: float,
+		max_distance: float
+) -> Dictionary:
+	if radius <= 0.0 or height <= 0.0 or max_distance <= 0.0:
+		return {}
+
+	var t_min := 0.0
+	var t_max := max_distance
+	var ox := origin.x - base_pos.x
+	var oz := origin.z - base_pos.z
+	var dx := ray_dir.x
+	var dz := ray_dir.z
+	var a := dx * dx + dz * dz
+	var c := ox * ox + oz * oz - radius * radius
+	const EPSILON := 0.0000001
+
+	if a <= EPSILON:
+		if c > 0.0:
+			return {}
+	else:
+		var b := 2.0 * (ox * dx + oz * dz)
+		var discriminant := b * b - 4.0 * a * c
+		if discriminant < 0.0:
+			return {}
+		var sqrt_discriminant := sqrt(maxf(0.0, discriminant))
+		var t0 := (-b - sqrt_discriminant) / (2.0 * a)
+		var t1 := (-b + sqrt_discriminant) / (2.0 * a)
+		if t0 > t1:
+			var temp_t := t0
+			t0 = t1
+			t1 = temp_t
+		t_min = maxf(t_min, t0)
+		t_max = minf(t_max, t1)
+		if t_min > t_max:
+			return {}
+
+	var min_y := base_pos.y - radius
+	var max_y := base_pos.y + height + radius
+	var dy := ray_dir.y
+	if absf(dy) <= EPSILON:
+		if origin.y < min_y or origin.y > max_y:
+			return {}
+	else:
+		var ty0 := (min_y - origin.y) / dy
+		var ty1 := (max_y - origin.y) / dy
+		if ty0 > ty1:
+			var temp_y := ty0
+			ty0 = ty1
+			ty1 = temp_y
+		t_min = maxf(t_min, ty0)
+		t_max = minf(t_max, ty1)
+		if t_min > t_max:
+			return {}
+
+	var hit_distance := maxf(0.0, t_min)
+	if hit_distance > max_distance:
+		return {}
+	var hit_point := origin + ray_dir * hit_distance
+	var axis_dx := hit_point.x - base_pos.x
+	var axis_dz := hit_point.z - base_pos.z
+	return {
+		"position": hit_point,
+		"distance": hit_distance,
+		"distance_sq_to_ray": axis_dx * axis_dx + axis_dz * axis_dz
+	}
 
 func _is_better_data_ray_hit(candidate: Dictionary, current: Dictionary) -> bool:
 	if candidate.is_empty():
@@ -4116,6 +4188,74 @@ func find_mesh_and_transform_in_node(node: Node, parent_transform: Transform3D =
 			return result
 
 	return {"mesh": null, "transform": Transform3D()}
+
+func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mesh:
+	if not vegetation_opaque_material_optimization_enabled or mesh == null:
+		return mesh
+
+	var optimized_mesh: Mesh = null
+	var optimized_surfaces := 0
+	var scanned_surfaces := 0
+	for surface_index in range(mesh.get_surface_count()):
+		var material := mesh.surface_get_material(surface_index)
+		scanned_surfaces += 1
+		if material is not BaseMaterial3D:
+			continue
+		var base := material as BaseMaterial3D
+		if base.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED:
+			continue
+		if not _is_vegetation_material_effectively_opaque(base):
+			continue
+		if optimized_mesh == null:
+			optimized_mesh = mesh.duplicate(true) as Mesh
+			if optimized_mesh == null:
+				return mesh
+		var optimized_material := base.duplicate(true) as BaseMaterial3D
+		optimized_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+		optimized_material.alpha_scissor_threshold = 0.0
+		optimized_mesh.surface_set_material(surface_index, optimized_material)
+		optimized_surfaces += 1
+
+	_vegetation_opaque_material_optimization_counts["%s_scanned_surfaces" % kind] = scanned_surfaces
+	_vegetation_opaque_material_optimization_counts["%s_optimized_surfaces" % kind] = optimized_surfaces
+	_vegetation_opaque_material_optimization_counts["total_scanned_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_scanned_surfaces", 0)) + scanned_surfaces
+	_vegetation_opaque_material_optimization_counts["total_optimized_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_optimized_surfaces", 0)) + optimized_surfaces
+	return optimized_mesh if optimized_mesh != null else mesh
+
+func _is_vegetation_material_effectively_opaque(material: BaseMaterial3D) -> bool:
+	if material.albedo_color.a < 0.999:
+		return false
+	if material.albedo_texture == null:
+		return true
+	return _is_vegetation_texture_fully_opaque(material.albedo_texture)
+
+func _is_vegetation_texture_fully_opaque(texture: Texture2D) -> bool:
+	if texture == null:
+		return true
+	var path := texture.resource_path
+	if not path.is_empty() and _vegetation_texture_opaque_cache.has(path):
+		return bool(_vegetation_texture_opaque_cache[path])
+	if path.is_empty():
+		return false
+
+	var image := texture.get_image()
+	if image == null:
+		_vegetation_texture_opaque_cache[path] = false
+		return false
+	if image.is_empty():
+		_vegetation_texture_opaque_cache[path] = false
+		return false
+	if image.is_compressed() and image.decompress() != OK:
+		_vegetation_texture_opaque_cache[path] = false
+		return false
+
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			if image.get_pixel(x, y).a < 0.999:
+				_vegetation_texture_opaque_cache[path] = false
+				return false
+	_vegetation_texture_opaque_cache[path] = true
+	return true
 
 func create_basic_tree_mesh() -> Mesh:
 	var st = SurfaceTool.new()

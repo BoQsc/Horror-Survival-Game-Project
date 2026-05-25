@@ -25,10 +25,26 @@ class FakeVegetationManager:
 			_direction: Vector3,
 			_max_distance: float,
 			include_trees: bool = true,
-			_include_grass: bool = true,
-			_include_rocks: bool = true
+			include_grass: bool = true,
+			include_rocks: bool = true
 	) -> Dictionary:
 		query_count += 1
+		if include_trees and not include_grass and not include_rocks:
+			return {
+				"kind": "tree",
+				"coord": Vector2i.ZERO,
+				"index": 0,
+				"position": Vector3(0.0, 1.0, 2.0),
+				"distance": 2.0
+			}
+		if include_grass:
+			return {
+				"kind": "grass",
+				"coord": Vector2i.ZERO,
+				"index": 0,
+				"position": Vector3(0.0, 0.2, 1.0),
+				"distance": 1.0
+			}
 		if not include_trees:
 			return {}
 		return {
@@ -41,6 +57,9 @@ class FakeVegetationManager:
 
 	func chop_tree_at_index(_coord: Vector2i, _index: int) -> bool:
 		chopped_count += 1
+		return true
+
+	func harvest_data_hit(_hit: Dictionary) -> bool:
 		return true
 
 func _init() -> void:

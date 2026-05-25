@@ -53,6 +53,7 @@ CASES = {
     "vegetation_bounds_padding_32": {"TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING": "32"},
     "vegetation_exact_bounds_off": {"TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS": "0"},
     "vegetation_exact_bounds_padding_0": {"TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS_PADDING": "0"},
+    "vegetation_opaque_material_opt_off": {"TOWN_STALL_VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION": "0"},
     "vegetation_bounds_32_lod_0_5": {
         "TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING": "32",
         "TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.5",
@@ -503,6 +504,12 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_exact_render_bounds_enabled": bool(vegetation.get("vegetation_exact_render_bounds_enabled", False)),
         "vegetation_exact_render_bounds_padding": float(vegetation.get("vegetation_exact_render_bounds_padding", 0.0) or 0.0),
         "vegetation_ignore_occlusion_culling": bool(vegetation.get("vegetation_global_render_ignore_occlusion_culling", False)),
+        "vegetation_opaque_material_optimization_enabled": bool(
+            vegetation.get("vegetation_opaque_material_optimization_enabled", False)
+        ),
+        "vegetation_opaque_material_optimization_counts": vegetation.get(
+            "vegetation_opaque_material_optimization_counts", {}
+        ),
         "vegetation_tree_render_enabled": bool(vegetation.get("tree_render_enabled", True)),
         "vegetation_grass_render_enabled": bool(vegetation.get("grass_render_enabled", True)),
         "vegetation_rock_render_enabled": bool(vegetation.get("rock_render_enabled", True)),
@@ -672,6 +679,16 @@ def _print_results(results: list[dict]) -> None:
                 payloads=json.dumps(result.get("vegetation_render_payload_backend_counts", {}), sort_keys=True, separators=(",", ":")),
                 cluster_payloads=json.dumps(
                     result.get("vegetation_render_cluster_payload_backend_counts", {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+        )
+        print(
+            "                     materials opaqueOpt={opaque_opt} opaqueCounts={opaque_counts}".format(
+                opaque_opt="on" if bool(result.get("vegetation_opaque_material_optimization_enabled", False)) else "off",
+                opaque_counts=json.dumps(
+                    result.get("vegetation_opaque_material_optimization_counts", {}),
                     sort_keys=True,
                     separators=(",", ":"),
                 ),

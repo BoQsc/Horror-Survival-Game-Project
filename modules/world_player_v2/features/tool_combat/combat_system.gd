@@ -1374,14 +1374,18 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 		if hit_distance > 0.0:
 			limited_distance = minf(max_distance, hit_distance + 0.5)
 
-	var data_hit: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, true, true)
+	var item_id := str(_item.get("id", ""))
+	var data_hit: Dictionary = {}
+	if "axe" in item_id:
+		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, false, false)
+	if data_hit.is_empty():
+		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, true, true)
 	if data_hit.is_empty():
 		return false
 
 	var vegetation_type := str(data_hit.get("kind", ""))
 	if vegetation_type == "tree":
 		var damage = _item.get("damage", 1)
-		var item_id = _item.get("id", "")
 		var tree_dmg = 3 if "axe" in item_id else damage
 		var tree_key := _vegetation_data_target_key(data_hit)
 		tree_damage[tree_key] = tree_damage.get(tree_key, 0) + tree_dmg
