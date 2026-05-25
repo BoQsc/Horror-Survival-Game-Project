@@ -284,6 +284,14 @@ def _phase_window(system_summary: dict, phase: str) -> dict:
     return window if isinstance(window, dict) else {}
 
 
+def _final_scene_scan(snapshot: dict) -> dict:
+    diagnostics = snapshot.get("render_diagnostics", {}) if isinstance(snapshot, dict) else {}
+    if not isinstance(diagnostics, dict):
+        return {}
+    scene_scan = diagnostics.get("final_scene_scan", {})
+    return scene_scan if isinstance(scene_scan, dict) else {}
+
+
 def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
     run_start_mtime = time.time()
     env = os.environ.copy()
@@ -343,6 +351,7 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         entities = {}
     if not isinstance(system_summary, dict):
         system_summary = {}
+    scene_scan = _final_scene_scan(snapshot)
 
     active_sample_count = _pick_active_sample_count(stationary_hold, town_window)
     moving_entry = snapshot.get("moving_entry_window", {}) if isinstance(snapshot, dict) else {}
@@ -430,6 +439,29 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "avg_draw_calls_all": float(stationary_hold.get("avg_draw_calls", town_window.get("avg_draw_calls", 0.0)) or 0.0),
         "avg_objects_all": float(stationary_hold.get("avg_objects", town_window.get("avg_objects", 0.0)) or 0.0),
         "avg_primitives_all": float(stationary_hold.get("avg_primitives", town_window.get("avg_primitives", 0.0)) or 0.0),
+        "scene_scan_available": bool(scene_scan),
+        "scene_scan_visible_geometry_instances": int(scene_scan.get("visible_geometry_instances", 0) or 0),
+        "scene_scan_frustum_geometry_instances": int(scene_scan.get("frustum_geometry_instances", 0) or 0),
+        "scene_scan_visible_multimesh_triangles": int(scene_scan.get("visible_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_frustum_multimesh_triangles": int(scene_scan.get("frustum_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_visible_terrain_triangles": int(scene_scan.get("visible_terrain_mesh_triangle_count", 0) or 0)
+        + int(scene_scan.get("visible_terrain_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_frustum_terrain_triangles": int(scene_scan.get("frustum_terrain_mesh_triangle_count", 0) or 0)
+        + int(scene_scan.get("frustum_terrain_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_visible_vegetation_batches": int(scene_scan.get("visible_vegetation_multimesh_instances", 0) or 0),
+        "scene_scan_frustum_vegetation_batches": int(scene_scan.get("frustum_vegetation_multimesh_instances", 0) or 0),
+        "scene_scan_visible_vegetation_instances": int(scene_scan.get("visible_vegetation_multimesh_instance_count", 0) or 0),
+        "scene_scan_frustum_vegetation_instances": int(scene_scan.get("frustum_vegetation_multimesh_instance_count", 0) or 0),
+        "scene_scan_visible_vegetation_triangles": int(scene_scan.get("visible_vegetation_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_frustum_vegetation_triangles": int(scene_scan.get("frustum_vegetation_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_visible_building_triangles": int(scene_scan.get("visible_building_mesh_triangle_count", 0) or 0)
+        + int(scene_scan.get("visible_building_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_frustum_building_triangles": int(scene_scan.get("frustum_building_mesh_triangle_count", 0) or 0)
+        + int(scene_scan.get("frustum_building_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_visible_entity_triangles": int(scene_scan.get("visible_entity_mesh_triangle_count", 0) or 0)
+        + int(scene_scan.get("visible_entity_multimesh_rendered_triangle_count", 0) or 0),
+        "scene_scan_frustum_entity_triangles": int(scene_scan.get("frustum_entity_mesh_triangle_count", 0) or 0)
+        + int(scene_scan.get("frustum_entity_multimesh_rendered_triangle_count", 0) or 0),
         "terrain_active_chunks": int(terrain.get("active_chunk_count", 0) or 0),
         "terrain_native_grid_active_chunks": int(terrain.get("native_grid_active_chunk_count", 0) or 0),
         "terrain_unload_hysteresis_chunks": int(terrain.get("terrain_unload_hysteresis_chunks", 0) or 0),
@@ -652,6 +684,25 @@ def _print_results(results: list[dict]) -> None:
                 force_stream="on" if bool(result.get("terrain_force_stream_progress", False)) else "off",
             )
         )
+        if bool(result.get("scene_scan_available", False)):
+            print(
+                "                     sceneScan visible/frustum geom={visible_geom}/{frustum_geom} "
+                "vegBatch={veg_visible_batches}/{veg_frustum_batches} vegInst={veg_visible_instances}/{veg_frustum_instances} "
+                "tri frustum terrain/veg/build/entity={terrain_tri}/{veg_tri}/{building_tri}/{entity_tri} "
+                "visibleVegTri={visible_veg_tri}".format(
+                    visible_geom=int(result.get("scene_scan_visible_geometry_instances", 0) or 0),
+                    frustum_geom=int(result.get("scene_scan_frustum_geometry_instances", 0) or 0),
+                    veg_visible_batches=int(result.get("scene_scan_visible_vegetation_batches", 0) or 0),
+                    veg_frustum_batches=int(result.get("scene_scan_frustum_vegetation_batches", 0) or 0),
+                    veg_visible_instances=int(result.get("scene_scan_visible_vegetation_instances", 0) or 0),
+                    veg_frustum_instances=int(result.get("scene_scan_frustum_vegetation_instances", 0) or 0),
+                    terrain_tri=int(result.get("scene_scan_frustum_terrain_triangles", 0) or 0),
+                    veg_tri=int(result.get("scene_scan_frustum_vegetation_triangles", 0) or 0),
+                    building_tri=int(result.get("scene_scan_frustum_building_triangles", 0) or 0),
+                    entity_tri=int(result.get("scene_scan_frustum_entity_triangles", 0) or 0),
+                    visible_veg_tri=int(result.get("scene_scan_visible_vegetation_triangles", 0) or 0),
+                )
+            )
         print(
             "                     entities radius spawn={spawn_radius:5.0f} active={active_radius:5.0f} "
             "effectiveActive={effective_active:5.0f} freeze={freeze_radius:5.0f}/{effective_freeze:5.0f} "

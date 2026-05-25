@@ -1176,10 +1176,15 @@ func _build_render_geometry_detail(geometry: GeometryInstance3D, category: Strin
 
 	var player_distance := -1.0
 	var geometry_position := Vector3.ZERO
+	var geometry_bounds_center := Vector3.ZERO
+	var geometry_bounds_size := Vector3.ZERO
 	if geometry.is_inside_tree():
 		geometry_position = geometry.global_position
+		var geometry_bounds := _get_geometry_global_aabb(geometry)
+		geometry_bounds_center = geometry_bounds.position + geometry_bounds.size * 0.5
+		geometry_bounds_size = geometry_bounds.size
 	if is_instance_valid(player) and player.is_inside_tree() and geometry.is_inside_tree():
-		player_distance = geometry_position.distance_to(player.global_position)
+		player_distance = geometry_bounds_center.distance_to(player.global_position)
 
 	return {
 		"path": _get_render_node_path_text(geometry),
@@ -1198,6 +1203,8 @@ func _build_render_geometry_detail(geometry: GeometryInstance3D, category: Strin
 		"render_work_proxy_score": maxi(triangle_count, maxi(vertex_count, surface_count)),
 		"distance_to_player_m": player_distance,
 		"global_position": _vector3_to_snapshot(geometry_position),
+		"bounds_center": _vector3_to_snapshot(geometry_bounds_center),
+		"bounds_size": _vector3_to_snapshot(geometry_bounds_size),
 		"mesh_resource_path": mesh_resource_path,
 		"material_keys": material_keys
 	}
@@ -1213,8 +1220,20 @@ func _collect_mesh_geometry_counts(mesh: Mesh) -> Dictionary:
 		return counts
 
 	for surface_index in range(mesh.get_surface_count()):
-		var surface_vertex_count := int(mesh.surface_get_array_len(surface_index))
-		var surface_index_count := int(mesh.surface_get_array_index_len(surface_index))
+		var surface_vertex_count := 0
+		var surface_index_count := 0
+		var array_mesh := mesh as ArrayMesh
+		if array_mesh != null:
+			surface_vertex_count = int(array_mesh.surface_get_array_len(surface_index))
+			surface_index_count = int(array_mesh.surface_get_array_index_len(surface_index))
+		else:
+			var arrays := mesh.surface_get_arrays(surface_index)
+			if arrays.size() > Mesh.ARRAY_VERTEX:
+				var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				surface_vertex_count = vertices.size()
+			if arrays.size() > Mesh.ARRAY_INDEX:
+				var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+				surface_index_count = indices.size()
 		var surface_triangle_count := 0
 		if surface_index_count > 0:
 			surface_triangle_count = int(surface_index_count / 3)
