@@ -10,6 +10,7 @@ from windows_error_dialogs import suppress_windows_error_dialogs
 
 
 SUMMARY_FILE = Path(run_town_stall_test.PROJECT_PATH) / ".agent" / "render-ablation-summary.json"
+FPS_60_FRAME_MS = 1000.0 / 60.0
 
 CASES = {
     "baseline": {},
@@ -265,6 +266,12 @@ def _summary_avg(summary: dict, key: str) -> float:
     return float(value.get("avg", 0.0) or 0.0)
 
 
+def _wpf60(power_w: float, frame_ms: float) -> float:
+    if power_w <= 0.0 or frame_ms <= 0.0:
+        return 0.0
+    return power_w * frame_ms / FPS_60_FRAME_MS
+
+
 def _phase_window(system_summary: dict, phase: str) -> dict:
     windows = system_summary.get("phase_windows", {}) if isinstance(system_summary, dict) else {}
     window = windows.get(phase, {}) if isinstance(windows, dict) else {}
@@ -352,6 +359,10 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         )
         or 0
     )
+    avg_total_ms = _pick_window_metric(stationary_hold, town_window, "avg_total_ms")
+    moving_avg_total_ms = float(moving_entry.get("avg_total_ms", 0.0) or 0.0)
+    moving_raw_gpu_power_avg_w = _summary_avg(moving_system, "raw_gpu_power_w")
+    hold_raw_gpu_power_avg_w = _summary_avg(hold_system, "raw_gpu_power_w")
 
     return {
         "case": case_name,
@@ -367,20 +378,22 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "runtime_power_active_max_fps": int(terrain.get("runtime_power_active_max_fps", 0) or 0),
         "runtime_power_idle_max_fps": int(terrain.get("runtime_power_idle_max_fps", 0) or 0),
         "runtime_power_deep_idle_max_fps": int(terrain.get("runtime_power_deep_idle_max_fps", 0) or 0),
-        "avg_total_ms": _pick_window_metric(stationary_hold, town_window, "avg_total_ms"),
+        "avg_total_ms": avg_total_ms,
         "avg_draw_calls": _pick_window_metric(stationary_hold, town_window, "avg_draw_calls"),
         "avg_objects": _pick_window_metric(stationary_hold, town_window, "avg_objects"),
         "avg_primitives": _pick_window_metric(stationary_hold, town_window, "avg_primitives"),
-        "moving_avg_total_ms": float(moving_entry.get("avg_total_ms", 0.0) or 0.0),
+        "moving_avg_total_ms": moving_avg_total_ms,
         "moving_avg_draw_calls": float(moving_entry.get("avg_draw_calls", 0.0) or 0.0),
         "moving_avg_objects": float(moving_entry.get("avg_objects", 0.0) or 0.0),
         "moving_avg_primitives": float(moving_entry.get("avg_primitives", 0.0) or 0.0),
-        "moving_raw_gpu_power_avg_w": _summary_avg(moving_system, "raw_gpu_power_w"),
+        "moving_raw_gpu_power_avg_w": moving_raw_gpu_power_avg_w,
+        "moving_wpf60": _wpf60(moving_raw_gpu_power_avg_w, moving_avg_total_ms),
         "moving_raw_gpu_temp_max_c": float(
             (moving_system.get("raw_gpu_temp_c", {}) if isinstance(moving_system.get("raw_gpu_temp_c", {}), dict) else {}).get("max", 0.0)
             or 0.0
         ),
-        "hold_raw_gpu_power_avg_w": _summary_avg(hold_system, "raw_gpu_power_w"),
+        "hold_raw_gpu_power_avg_w": hold_raw_gpu_power_avg_w,
+        "hold_wpf60": _wpf60(hold_raw_gpu_power_avg_w, avg_total_ms),
         "hold_raw_gpu_temp_max_c": float(
             (hold_system.get("raw_gpu_temp_c", {}) if isinstance(hold_system.get("raw_gpu_temp_c", {}), dict) else {}).get("max", 0.0)
             or 0.0
@@ -486,6 +499,8 @@ def _add_deltas(results: list[dict]) -> list[dict]:
     baseline_primitives = float(baseline.get("avg_primitives", 0.0) or 0.0)
     baseline_moving_power = float(baseline.get("moving_raw_gpu_power_avg_w", 0.0) or 0.0)
     baseline_hold_power = float(baseline.get("hold_raw_gpu_power_avg_w", 0.0) or 0.0)
+    baseline_moving_wpf60 = float(baseline.get("moving_wpf60", 0.0) or 0.0)
+    baseline_hold_wpf60 = float(baseline.get("hold_wpf60", 0.0) or 0.0)
     for result in results:
         result["delta_avg_total_ms"] = round(float(result.get("avg_total_ms", 0.0) or 0.0) - baseline_ms, 3)
         result["delta_avg_draw_calls"] = round(float(result.get("avg_draw_calls", 0.0) or 0.0) - baseline_draws, 3)
@@ -493,6 +508,8 @@ def _add_deltas(results: list[dict]) -> list[dict]:
         result["delta_avg_primitives"] = round(float(result.get("avg_primitives", 0.0) or 0.0) - baseline_primitives, 3)
         result["delta_moving_raw_gpu_power_avg_w"] = round(float(result.get("moving_raw_gpu_power_avg_w", 0.0) or 0.0) - baseline_moving_power, 3)
         result["delta_hold_raw_gpu_power_avg_w"] = round(float(result.get("hold_raw_gpu_power_avg_w", 0.0) or 0.0) - baseline_hold_power, 3)
+        result["delta_moving_wpf60"] = round(float(result.get("moving_wpf60", 0.0) or 0.0) - baseline_moving_wpf60, 3)
+        result["delta_hold_wpf60"] = round(float(result.get("hold_wpf60", 0.0) or 0.0) - baseline_hold_wpf60, 3)
     return results
 
 
@@ -504,7 +521,8 @@ def _print_results(results: list[dict]) -> None:
         print(
             "{case:>20} | ms={ms:6.2f} ({dms:+6.2f}) | draws={draws:7.1f} ({ddraws:+7.1f}) | "
             "objects={objects:7.1f} ({dobjects:+7.1f}) | prims={prims:9.0f} ({dprims:+9.0f}) pipes={pipes:3d} | "
-            "moveW={move_w:5.1f} ({dmove_w:+5.1f}) holdW={hold_w:5.1f} ({dhold_w:+5.1f}) | "
+            "holdWPF60={hold_wpf60:5.1f} ({dhold_wpf60:+5.1f}) moveWPF60={move_wpf60:5.1f} ({dmove_wpf60:+5.1f}) "
+            "holdW={hold_w:5.1f} ({dhold_w:+5.1f}) moveW={move_w:5.1f} ({dmove_w:+5.1f}) | "
             "terrain={terrain:4d} water={water:4d} "
             "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{rock}) cluster={cluster}/{grass_cluster} "
             "profile={profile} entities={entities:3d}/{entity_max:<3d} phys={physics:3d} frozen={frozen:3d} pend={pending:3d} | "
@@ -519,6 +537,10 @@ def _print_results(results: list[dict]) -> None:
                 prims=float(result.get("avg_primitives", 0.0) or 0.0),
                 dprims=float(result.get("delta_avg_primitives", 0.0) or 0.0),
                 pipes=int(result.get("pipeline_compilations_total_delta", 0) or 0),
+                hold_wpf60=float(result.get("hold_wpf60", 0.0) or 0.0),
+                dhold_wpf60=float(result.get("delta_hold_wpf60", 0.0) or 0.0),
+                move_wpf60=float(result.get("moving_wpf60", 0.0) or 0.0),
+                dmove_wpf60=float(result.get("delta_moving_wpf60", 0.0) or 0.0),
                 move_w=float(result.get("moving_raw_gpu_power_avg_w", 0.0) or 0.0),
                 dmove_w=float(result.get("delta_moving_raw_gpu_power_avg_w", 0.0) or 0.0),
                 hold_w=float(result.get("hold_raw_gpu_power_avg_w", 0.0) or 0.0),
