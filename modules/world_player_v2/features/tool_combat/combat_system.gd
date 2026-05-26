@@ -30,6 +30,7 @@ const BLOCK_HP: int = 10  # Building blocks take 10 damage to destroy
 const OBJECT_HP: int = 5   # Placed objects take 5 damage to destroy
 const TREE_HP: int = 8     # Trees take 8 damage to chop
 const TERRAIN_HP: int = 5  # Terrain takes 5 punches to break a grid cube
+const AXE_REACH_DISTANCE: float = 5.0 # Must match HUD/data vegetation targeting.
 
 var block_damage: Dictionary = {}    # Vector3i -> accumulated damage
 var object_damage: Dictionary = {}   # RID -> accumulated damage
@@ -868,9 +869,9 @@ func _do_axe_damage(item: Dictionary) -> void:
 		return
 	
 	var item_id = item.get("id", "")
-	var hit = _raycast(3.5, true, true)
+	var hit = _raycast(AXE_REACH_DISTANCE, true, true)
 	if hit.is_empty():
-		if _try_harvest_vegetation_near_ray(item, 3.5):
+		if _try_harvest_vegetation_near_ray(item, AXE_REACH_DISTANCE):
 			return
 		return
 	
@@ -893,7 +894,7 @@ func _do_axe_damage(item: Dictionary) -> void:
 	# Priority 2: Vegetation
 	if _try_harvest_vegetation(target, item, position):
 		return
-	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
+	if _try_harvest_vegetation_near_ray(item, AXE_REACH_DISTANCE, hit):
 		return
 	
 	# Priority 3: Placed objects
@@ -1652,6 +1653,13 @@ func _do_terrain_punch(item: Dictionary, position: Vector3) -> void:
 func _check_durability_target() -> void:
 	if durability_target == null or not player:
 		return
+
+	if durability_target is String:
+		var vegetation_key := _get_current_vegetation_target_key(AXE_REACH_DISTANCE)
+		if vegetation_key == durability_target:
+			return
+		durability_target = null
+		return
 	
 	var hit = _raycast(5.0, true, true)
 	if hit.is_empty():
@@ -1674,6 +1682,28 @@ func _check_durability_target() -> void:
 			return
 	
 	durability_target = null
+
+func _get_current_vegetation_target_key(max_distance: float, hit: Dictionary = {}) -> String:
+	if not vegetation_manager or not vegetation_manager.has_method("find_nearest_vegetation_along_ray"):
+		return ""
+
+	var aim_ray := _get_player_aim_ray()
+	if aim_ray.is_empty():
+		return ""
+
+	var origin: Vector3 = aim_ray.get("origin", Vector3.ZERO)
+	var direction: Vector3 = aim_ray.get("direction", Vector3.FORWARD)
+	var limited_distance := max_distance
+	if not hit.is_empty() and hit.has("position"):
+		var hit_position: Vector3 = hit.get("position", origin + direction * max_distance)
+		var hit_distance := origin.distance_to(hit_position)
+		if hit_distance > 0.0:
+			limited_distance = minf(max_distance, hit_distance + 0.5)
+
+	var data_hit: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, false, false)
+	if data_hit.is_empty():
+		return ""
+	return _vegetation_data_target_key(data_hit)
 
 func _spawn_pistol_hit_effect(pos: Vector3) -> void:
 	# Check if markers are enabled

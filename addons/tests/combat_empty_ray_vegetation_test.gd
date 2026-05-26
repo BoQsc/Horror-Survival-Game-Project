@@ -19,6 +19,7 @@ class FakeVegetationManager:
 
 	var query_count: int = 0
 	var chopped_count: int = 0
+	var tree_distance: float = 2.0
 
 	func find_nearest_vegetation_along_ray(
 			_origin: Vector3,
@@ -29,13 +30,15 @@ class FakeVegetationManager:
 			include_rocks: bool = true
 	) -> Dictionary:
 		query_count += 1
+		if _max_distance < tree_distance:
+			return {}
 		if include_trees and not include_grass and not include_rocks:
 			return {
 				"kind": "tree",
 				"coord": Vector2i.ZERO,
 				"index": 0,
-				"position": Vector3(0.0, 1.0, 2.0),
-				"distance": 2.0
+				"position": Vector3(0.0, 1.0, tree_distance),
+				"distance": tree_distance
 			}
 		if include_grass:
 			return {
@@ -51,8 +54,8 @@ class FakeVegetationManager:
 			"kind": "tree",
 			"coord": Vector2i.ZERO,
 			"index": 0,
-			"position": Vector3(0.0, 1.0, 2.0),
-			"distance": 2.0
+			"position": Vector3(0.0, 1.0, tree_distance),
+			"distance": tree_distance
 		}
 
 	func chop_tree_at_index(_coord: Vector2i, _index: int) -> bool:
@@ -92,6 +95,16 @@ func _run() -> int:
 	if not _expect(vegetation.chopped_count == 1, "repeated empty-ray axe hits should chop tree"):
 		return 1
 	if not _expect(not combat.tree_damage.has("tree:0:0:0"), "tree damage should clear after chop"):
+		return 1
+
+	vegetation.tree_distance = 4.5
+	combat._do_axe_damage(axe_item)
+	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "axe data-ray tree damage should reach HUD-range trees"):
+		return 1
+	if not _expect(combat.durability_target == "tree:0:0:0", "data-ray tree durability target should be stored as stable vegetation key"):
+		return 1
+	combat._check_durability_target()
+	if not _expect(combat.durability_target == "tree:0:0:0", "data-ray tree durability target should stay valid without a physics collider"):
 		return 1
 
 	combat.free()
