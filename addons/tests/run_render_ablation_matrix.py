@@ -593,6 +593,9 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "tree_alpha_mesh_surfaces": int(vegetation.get("tree_alpha_mesh_surfaces", 0) or 0),
         "grass_alpha_mesh_surfaces": int(vegetation.get("grass_alpha_mesh_surfaces", 0) or 0),
         "rock_alpha_mesh_surfaces": int(vegetation.get("rock_alpha_mesh_surfaces", 0) or 0),
+        "tree_material_pipeline_counts": vegetation.get("tree_material_pipeline_counts", {}),
+        "grass_material_pipeline_counts": vegetation.get("grass_material_pipeline_counts", {}),
+        "rock_material_pipeline_counts": vegetation.get("rock_material_pipeline_counts", {}),
         "tree_alpha_texture_coverage_ratio": float(vegetation.get("tree_alpha_texture_coverage_ratio", 1.0) or 0.0),
         "grass_alpha_texture_coverage_ratio": float(vegetation.get("grass_alpha_texture_coverage_ratio", 1.0) or 0.0),
         "rock_alpha_texture_coverage_ratio": float(vegetation.get("rock_alpha_texture_coverage_ratio", 1.0) or 0.0),
@@ -912,6 +915,7 @@ def _print_results(results: list[dict]) -> None:
         )
         print(
             "                     materials opaqueOpt={opaque_opt} opaqueCounts={opaque_counts} "
+            "pipeTree={tree_pipeline} pipeGrass={grass_pipeline} pipeRock={rock_pipeline} "
             "alphaMesh={tree_alpha_mesh}/{grass_alpha_mesh}/{rock_alpha_mesh} "
             "alphaSurf={tree_alpha_surfaces}/{grass_alpha_surfaces}/{rock_alpha_surfaces} "
             "alphaCoverage={tree_coverage:.2f}/{grass_coverage:.2f}/{rock_coverage:.2f} "
@@ -919,6 +923,21 @@ def _print_results(results: list[dict]) -> None:
                 opaque_opt="on" if bool(result.get("vegetation_opaque_material_optimization_enabled", False)) else "off",
                 opaque_counts=json.dumps(
                     result.get("vegetation_opaque_material_optimization_counts", {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                tree_pipeline=json.dumps(
+                    result.get("tree_material_pipeline_counts", {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                grass_pipeline=json.dumps(
+                    result.get("grass_material_pipeline_counts", {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                rock_pipeline=json.dumps(
+                    result.get("rock_material_pipeline_counts", {}),
                     sort_keys=True,
                     separators=(",", ":"),
                 ),

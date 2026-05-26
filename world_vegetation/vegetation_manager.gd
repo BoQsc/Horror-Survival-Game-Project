@@ -218,6 +218,7 @@ var _vegetation_generation_time_backend_counts: Dictionary = {}
 var _vegetation_opaque_material_optimization_counts: Dictionary = {}
 var _vegetation_texture_opaque_cache: Dictionary = {}
 var _vegetation_texture_alpha_coverage_cache: Dictionary = {}
+var _vegetation_texture_binary_alpha_cache: Dictionary = {}
 var _vegetation_mesh_stats_cache: Dictionary = {}
 var _vegetation_collider_candidate_backend_counts: Dictionary = {}
 var _vegetation_ray_query_backend_counts: Dictionary = {}
@@ -402,6 +403,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"tree_alpha_mesh_surfaces": int(tree_render_stats.get("alpha_mesh_surfaces", 0)),
 		"grass_alpha_mesh_surfaces": int(grass_render_stats.get("alpha_mesh_surfaces", 0)),
 		"rock_alpha_mesh_surfaces": int(rock_render_stats.get("alpha_mesh_surfaces", 0)),
+		"tree_material_pipeline_counts": tree_render_stats.get("material_pipeline_counts", {}),
+		"grass_material_pipeline_counts": grass_render_stats.get("material_pipeline_counts", {}),
+		"rock_material_pipeline_counts": rock_render_stats.get("material_pipeline_counts", {}),
 		"tree_alpha_texture_coverage_ratio": float(tree_render_stats.get("alpha_texture_coverage_ratio", 1.0)),
 		"grass_alpha_texture_coverage_ratio": float(grass_render_stats.get("alpha_texture_coverage_ratio", 1.0)),
 		"rock_alpha_texture_coverage_ratio": float(rock_render_stats.get("alpha_texture_coverage_ratio", 1.0)),
@@ -813,7 +817,8 @@ func _get_mesh_render_stats(mesh: Mesh) -> Dictionary:
 			"mesh_surfaces": 0,
 			"alpha_mesh_primitives": 0,
 			"alpha_mesh_surfaces": 0,
-			"alpha_texture_coverage_ratio": 1.0
+			"alpha_texture_coverage_ratio": 1.0,
+			"material_pipeline_counts": {}
 		}
 	var cache_key := mesh.get_instance_id()
 	if _vegetation_mesh_stats_cache.has(cache_key):
@@ -822,10 +827,13 @@ func _get_mesh_render_stats(mesh: Mesh) -> Dictionary:
 	var alpha_mesh_primitives := 0
 	var alpha_mesh_surfaces := 0
 	var alpha_coverage_weighted := 0.0
+	var material_pipeline_counts: Dictionary = {}
 	for surface_index in range(mesh.get_surface_count()):
 		var surface_primitives := _get_mesh_surface_primitive_count(mesh, surface_index)
 		mesh_primitives += surface_primitives
 		var material := mesh.surface_get_material(surface_index)
+		var pipeline_key := _get_material_pipeline_key(material)
+		_count_vegetation_material_pipeline(material_pipeline_counts, pipeline_key, surface_primitives)
 		if not _is_material_alpha_pipeline(material):
 			continue
 		alpha_mesh_primitives += surface_primitives
@@ -837,10 +845,33 @@ func _get_mesh_render_stats(mesh: Mesh) -> Dictionary:
 		"mesh_surfaces": _get_mesh_surface_count(mesh),
 		"alpha_mesh_primitives": alpha_mesh_primitives,
 		"alpha_mesh_surfaces": alpha_mesh_surfaces,
-		"alpha_texture_coverage_ratio": alpha_coverage_ratio
+		"alpha_texture_coverage_ratio": alpha_coverage_ratio,
+		"material_pipeline_counts": material_pipeline_counts
 	}
 	_vegetation_mesh_stats_cache[cache_key] = stats
 	return stats
+
+func _count_vegetation_material_pipeline(counts: Dictionary, pipeline_key: String, surface_primitives: int) -> void:
+	counts["%s_surfaces" % pipeline_key] = int(counts.get("%s_surfaces" % pipeline_key, 0)) + 1
+	counts["%s_primitives" % pipeline_key] = int(counts.get("%s_primitives" % pipeline_key, 0)) + surface_primitives
+
+func _get_material_pipeline_key(material: Material) -> String:
+	if not (material is BaseMaterial3D):
+		return "non_base"
+	var base := material as BaseMaterial3D
+	match base.transparency:
+		BaseMaterial3D.TRANSPARENCY_DISABLED:
+			return "opaque" if base.albedo_color.a >= 0.999 else "opaque_color_alpha"
+		BaseMaterial3D.TRANSPARENCY_ALPHA:
+			return "alpha_blend"
+		BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
+			return "alpha_scissor"
+		BaseMaterial3D.TRANSPARENCY_ALPHA_HASH:
+			return "alpha_hash"
+		BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS:
+			return "alpha_depth_prepass"
+		_:
+			return "alpha_other"
 
 func _is_material_alpha_pipeline(material: Material) -> bool:
 	if not (material is BaseMaterial3D):
@@ -921,6 +952,7 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 		"alpha_mesh_primitives": alpha_mesh_primitives,
 		"alpha_mesh_surfaces": alpha_mesh_surfaces,
 		"alpha_texture_coverage_ratio": alpha_texture_coverage_ratio,
+		"material_pipeline_counts": mesh_stats.get("material_pipeline_counts", {}),
 		"batch_count": batch_count,
 		"instance_count": instance_count,
 		"estimated_primitives": mesh_primitives * instance_count,
@@ -4631,6 +4663,8 @@ func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mes
 
 	var optimized_mesh: Mesh = null
 	var optimized_surfaces := 0
+	var alpha_scissor_surfaces := 0
+	var alpha_scissor_skipped_non_binary_surfaces := 0
 	var scanned_surfaces := 0
 	for surface_index in range(mesh.get_surface_count()):
 		var material := mesh.surface_get_material(surface_index)
@@ -4640,6 +4674,20 @@ func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mes
 		var base := material as BaseMaterial3D
 		if base.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED:
 			continue
+		if _can_convert_vegetation_alpha_blend_to_scissor(base):
+			if optimized_mesh == null:
+				optimized_mesh = mesh.duplicate(true) as Mesh
+				if optimized_mesh == null:
+					return mesh
+			var scissor_material := base.duplicate(true) as BaseMaterial3D
+			scissor_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+			if scissor_material.alpha_scissor_threshold <= 0.0:
+				scissor_material.alpha_scissor_threshold = 0.5
+			optimized_mesh.surface_set_material(surface_index, scissor_material)
+			alpha_scissor_surfaces += 1
+			continue
+		if base.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA and base.albedo_texture != null:
+			alpha_scissor_skipped_non_binary_surfaces += 1
 		if not _is_vegetation_material_effectively_opaque(base):
 			continue
 		if optimized_mesh == null:
@@ -4654,9 +4702,24 @@ func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mes
 
 	_vegetation_opaque_material_optimization_counts["%s_scanned_surfaces" % kind] = scanned_surfaces
 	_vegetation_opaque_material_optimization_counts["%s_optimized_surfaces" % kind] = optimized_surfaces
+	_vegetation_opaque_material_optimization_counts["%s_alpha_scissor_surfaces" % kind] = alpha_scissor_surfaces
+	_vegetation_opaque_material_optimization_counts["%s_alpha_scissor_skipped_non_binary_surfaces" % kind] = alpha_scissor_skipped_non_binary_surfaces
 	_vegetation_opaque_material_optimization_counts["total_scanned_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_scanned_surfaces", 0)) + scanned_surfaces
 	_vegetation_opaque_material_optimization_counts["total_optimized_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_optimized_surfaces", 0)) + optimized_surfaces
+	_vegetation_opaque_material_optimization_counts["total_alpha_scissor_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_scissor_surfaces", 0)) + alpha_scissor_surfaces
+	_vegetation_opaque_material_optimization_counts["total_alpha_scissor_skipped_non_binary_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_scissor_skipped_non_binary_surfaces", 0)) + alpha_scissor_skipped_non_binary_surfaces
 	return optimized_mesh if optimized_mesh != null else mesh
+
+func _can_convert_vegetation_alpha_blend_to_scissor(material: BaseMaterial3D) -> bool:
+	if material.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA:
+		return false
+	if material.albedo_color.a < 0.999:
+		return false
+	if material.albedo_texture == null:
+		return false
+	if material.blend_mode != BaseMaterial3D.BLEND_MODE_MIX:
+		return false
+	return _is_vegetation_texture_binary_alpha(material.albedo_texture)
 
 func _is_vegetation_material_effectively_opaque(material: BaseMaterial3D) -> bool:
 	if material.albedo_color.a < 0.999:
@@ -4691,6 +4754,32 @@ func _is_vegetation_texture_fully_opaque(texture: Texture2D) -> bool:
 				_vegetation_texture_opaque_cache[path] = false
 				return false
 	_vegetation_texture_opaque_cache[path] = true
+	return true
+
+func _is_vegetation_texture_binary_alpha(texture: Texture2D) -> bool:
+	if texture == null:
+		return true
+	var cache_key := texture.resource_path
+	if cache_key.is_empty():
+		cache_key = str(texture.get_instance_id())
+	if _vegetation_texture_binary_alpha_cache.has(cache_key):
+		return bool(_vegetation_texture_binary_alpha_cache[cache_key])
+
+	var image := texture.get_image()
+	if image == null or image.is_empty():
+		_vegetation_texture_binary_alpha_cache[cache_key] = false
+		return false
+	if image.is_compressed() and image.decompress() != OK:
+		_vegetation_texture_binary_alpha_cache[cache_key] = false
+		return false
+
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			var alpha := image.get_pixel(x, y).a
+			if alpha > 0.001 and alpha < 0.999:
+				_vegetation_texture_binary_alpha_cache[cache_key] = false
+				return false
+	_vegetation_texture_binary_alpha_cache[cache_key] = true
 	return true
 
 func create_basic_tree_mesh() -> Mesh:
