@@ -72,6 +72,8 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 ## Dense grass mode: even distribution everywhere (GPU intensive)
 ## Default (false): patchy distribution using noise (better performance)
 @export var dense_grass_mode: bool = false
+@export_range(1, 16, 1) var grass_sample_step: int = 2
+@export_range(-1.0, 1.0, 0.01) var grass_noise_threshold: float = 0.3
 
 # Rock settings
 @export var rock_model_path: String = "res://models/small_rock/simple_rock_-_ps1_low_poly.glb"
@@ -79,6 +81,8 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var rock_y_offset: float = 0.0
 @export var rock_collision_radius: float = 0.4
 @export var rock_collision_height: float = 0.4
+@export_range(1, 16, 1) var rock_sample_step: int = 7
+@export_range(-1.0, 1.0, 0.01) var rock_noise_threshold: float = 0.35
 
 var tree_mesh: Mesh
 var tree_base_transform: Transform3D = Transform3D() # Orientation fix from GLB
@@ -307,6 +311,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"placed_rocks_count": placed_rocks.size(),
 		"collider_refresh_dirty": _collider_refresh_dirty,
 		"dense_grass_mode": dense_grass_mode,
+		"grass_sample_step": grass_sample_step,
+		"grass_noise_threshold": grass_noise_threshold,
+		"rock_sample_step": rock_sample_step,
+		"rock_noise_threshold": rock_noise_threshold,
 		"initial_load_count": initial_load_count,
 		"is_initial_load_batch": is_initial_load_batch,
 		"process_loop_awake": is_processing(),
@@ -560,6 +568,11 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	tree_render_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_RENDER_TREES", tree_render_enabled)
 	grass_render_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_RENDER_GRASS", grass_render_enabled)
 	rock_render_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_RENDER_ROCKS", rock_render_enabled)
+	dense_grass_mode = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_DENSE_GRASS", dense_grass_mode)
+	grass_sample_step = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GRASS_STEP", grass_sample_step, 1, 16)
+	rock_sample_step = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_ROCK_STEP", rock_sample_step, 1, 16)
+	grass_noise_threshold = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GRASS_NOISE_THRESHOLD", grass_noise_threshold, -1.0, 1.0)
+	rock_noise_threshold = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_ROCK_NOISE_THRESHOLD", rock_noise_threshold, -1.0, 1.0)
 	vegetation_colliders_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_COLLIDERS", vegetation_colliders_enabled)
 	tree_colliders_enabled = vegetation_colliders_enabled and _get_vegetation_env_bool("TOWN_STALL_VEGETATION_TREE_COLLIDERS", tree_colliders_enabled)
 	grass_colliders_enabled = vegetation_colliders_enabled and _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GRASS_COLLIDERS", grass_colliders_enabled)
@@ -3200,9 +3213,9 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
 
-	# Grass placement - mode determines density and distribution
-	# Optimized: step 2 reduces checks by 4x (256 vs 1024) - acceptable for grass
-	var step = 2
+	# Grass placement - mode determines density and distribution.
+	# Test env can lower this to stress high-density vegetation without changing defaults.
+	var step = maxi(grass_sample_step, 1)
 	if dense_grass_mode: step = 1 # Use stride 1 for dense mode if requested
 
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
@@ -3233,7 +3246,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			_build_vegetation_noise_samples(grass_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, not dense_grass_mode),
 			int(grass_noise.seed),
 			float(grass_noise.frequency),
-			0.3,
+			grass_noise_threshold,
 			0.8,
 			1.2,
 			grass_scale,
@@ -3300,7 +3313,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			# Dense mode: skip noise check for even distribution everywhere
 			if not dense_grass_mode:
 				var noise_val = grass_noise.get_noise_2d(gx, gz)
-				if noise_val < 0.3:
+				if noise_val < grass_noise_threshold:
 					# Skip index if using batch (sync index)
 					if not batch_heights.is_empty(): batch_idx += 1
 					continue
@@ -4176,9 +4189,8 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var chunk_origin_z = coord.y * chunk_stride
 	var chunk_world_pos = chunk_node.global_position
 
-	# Use density lookup instead of physics raycasting (much faster)
-	# Sparse rocks - every 7 meters (less frequent than grass)
-	var step = 7
+	# Sparse rocks by default. Test env can lower this for density stress runs.
+	var step = maxi(rock_sample_step, 1)
 	var batch_heights = _get_chunk_height_map(coord, chunk_stride, step)
 	var native := _get_native_helper()
 	var native_can_build: bool = native != null and native.has_method("build_vegetation_instances")
@@ -4207,7 +4219,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			_build_vegetation_noise_samples(rock_noise, chunk_origin_x, chunk_origin_z, chunk_stride, step, true),
 			int(rock_noise.seed),
 			float(rock_noise.frequency),
-			0.35,
+			rock_noise_threshold,
 			0.6,
 			1.4,
 			rock_scale,
@@ -4271,7 +4283,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				continue
 
 			var noise_val = rock_noise.get_noise_2d(gx, gz)
-			if noise_val < 0.35: # Slightly higher threshold than grass
+			if noise_val < rock_noise_threshold: # Slightly higher threshold than grass by default
 				if not batch_heights.is_empty():
 					batch_idx += 1
 				continue

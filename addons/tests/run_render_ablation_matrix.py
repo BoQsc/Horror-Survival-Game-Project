@@ -34,6 +34,13 @@ CASES = {
         "TOWN_STALL_VEGETATION_RENDER_GRASS": "0",
         "TOWN_STALL_VEGETATION_RENDER_ROCKS": "1",
     },
+    "vegetation_grass_rock_20x_stress": {
+        "TOWN_STALL_VEGETATION_DENSE_GRASS": "1",
+        "TOWN_STALL_VEGETATION_GRASS_STEP": "1",
+        "TOWN_STALL_VEGETATION_GRASS_NOISE_THRESHOLD": "-1",
+        "TOWN_STALL_VEGETATION_ROCK_STEP": "2",
+        "TOWN_STALL_VEGETATION_ROCK_NOISE_THRESHOLD": "-1",
+    },
     "vegetation_lod_bias_0_5": {"TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.5"},
     "vegetation_lod_bias_0_25": {"TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.25"},
     "vegetation_cluster_3": {
@@ -564,6 +571,11 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "vegetation_rock_batches": int(vegetation.get("global_rock_render_batch_count", 0) or 0),
         "vegetation_cluster_size": int(vegetation.get("effective_vegetation_render_cluster_size", 0) or 0),
         "vegetation_grass_cluster_size": int(vegetation.get("effective_vegetation_grass_render_cluster_size", 0) or 0),
+        "vegetation_dense_grass_mode": bool(vegetation.get("dense_grass_mode", False)),
+        "vegetation_grass_sample_step": int(vegetation.get("grass_sample_step", 0) or 0),
+        "vegetation_grass_noise_threshold": float(vegetation.get("grass_noise_threshold", 0.0) or 0.0),
+        "vegetation_rock_sample_step": int(vegetation.get("rock_sample_step", 0) or 0),
+        "vegetation_rock_noise_threshold": float(vegetation.get("rock_noise_threshold", 0.0) or 0.0),
         "native_vegetation_generation_available": bool(vegetation.get("native_vegetation_generation_available", False)),
         "native_vegetation_generation_blocked_by_world_map": bool(vegetation.get("native_vegetation_generation_blocked_by_world_map", False)),
         "native_vegetation_generation_world_map_road_mask_supported": bool(vegetation.get("native_vegetation_generation_world_map_road_mask_supported", False)),
@@ -661,7 +673,8 @@ def _print_results(results: list[dict]) -> None:
             "holdW={hold_w:5.1f} ({dhold_w:+5.1f}) moveW={move_w:5.1f} ({dmove_w:+5.1f}) | "
             "terrain={terrain:4d} water={water:4d} "
             "buildings={buildings:4d} veg={veg:3d}({tree}/{grass}/{rock}) cluster={cluster}/{grass_cluster} "
-            "profile={profile} entities={entities:3d}/{entity_max:<3d} phys={physics:3d} frozen={frozen:3d} pend={pending:3d} | "
+            "profile={profile} gStep={gstep} gThr={gthr:.2f} dense={dense_grass} rStep={rstep} rThr={rthr:.2f} "
+            "entities={entities:3d}/{entity_max:<3d} phys={physics:3d} frozen={frozen:3d} pend={pending:3d} | "
             "active={active:4d}/{samples:4d} suspended={suspended:4d} rpmode={rpmode} fps={active_fps}/{idle_fps}/{deep_fps}".format(
                 case=str(result.get("case", "")),
                 ms=float(result.get("avg_total_ms", 0.0) or 0.0),
@@ -691,6 +704,11 @@ def _print_results(results: list[dict]) -> None:
                 cluster=int(result.get("vegetation_cluster_size", 0) or 0),
                 grass_cluster=int(result.get("vegetation_grass_cluster_size", 0) or 0),
                 profile="on" if bool(result.get("vegetation_profile_active", False)) else "off",
+                gstep=int(result.get("vegetation_grass_sample_step", 0) or 0),
+                gthr=float(result.get("vegetation_grass_noise_threshold", 0.0) or 0.0),
+                dense_grass="on" if bool(result.get("vegetation_dense_grass_mode", False)) else "off",
+                rstep=int(result.get("vegetation_rock_sample_step", 0) or 0),
+                rthr=float(result.get("vegetation_rock_noise_threshold", 0.0) or 0.0),
                 entities=int(result.get("entity_active", 0) or 0),
                 entity_max=int(result.get("entity_max", 0) or 0),
                 physics=max(
