@@ -31,7 +31,7 @@ const OBJECT_HP: int = 5   # Placed objects take 5 damage to destroy
 const TREE_HP: int = 8     # Trees take 8 damage to chop
 const TERRAIN_HP: int = 5  # Terrain takes 5 punches to break a grid cube
 const AXE_REACH_DISTANCE: float = 5.0 # Must match HUD/data vegetation targeting.
-const TREE_DATA_HIT_BLOCKER_MARGIN: float = 1.25 # Keep colliderless trees targetable when terrain ray hits just before the trunk.
+const VEGETATION_DATA_HIT_SOFT_BLOCKER_MARGIN: float = 1.25 # Keep surface vegetation targetable when terrain ray hits just before colliderless data.
 
 var block_damage: Dictionary = {}    # Vector3i -> accumulated damage
 var object_damage: Dictionary = {}   # RID -> accumulated damage
@@ -1377,17 +1377,12 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 		var hit_distance := origin.distance_to(hit_position)
 		if hit_distance > 0.0:
 			physics_hit_distance = hit_distance
-			limited_distance = max_distance if _is_soft_vegetation_physics_hit(hit) else minf(max_distance, hit_distance + 0.5)
+			var blocker_margin := VEGETATION_DATA_HIT_SOFT_BLOCKER_MARGIN if _is_soft_vegetation_physics_hit(hit) else 0.5
+			limited_distance = minf(max_distance, hit_distance + blocker_margin)
 
 	var item_id := str(_item.get("id", ""))
 	var is_axe_tool := _is_axe_tool_item_id(item_id)
-	var data_hit: Dictionary = {}
-	if is_axe_tool:
-		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, max_distance, true, false, false)
-		if _is_data_tree_hit_blocked_by_physics(data_hit, physics_hit_distance, hit):
-			data_hit = {}
-	if data_hit.is_empty():
-		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, true, true)
+	var data_hit: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, true, true)
 	if data_hit.is_empty():
 		return false
 
@@ -1440,14 +1435,6 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 
 func _is_axe_tool_item_id(item_id: String) -> bool:
 	return item_id.contains("axe") and not item_id.contains("pickaxe")
-
-func _is_data_tree_hit_blocked_by_physics(data_hit: Dictionary, physics_hit_distance: float, physics_hit: Dictionary = {}) -> bool:
-	if data_hit.is_empty() or not is_finite(physics_hit_distance):
-		return false
-	if _is_soft_vegetation_physics_hit(physics_hit):
-		return false
-	var data_distance := float(data_hit.get("distance", physics_hit_distance))
-	return data_distance > physics_hit_distance + TREE_DATA_HIT_BLOCKER_MARGIN
 
 func _is_soft_vegetation_physics_hit(hit: Dictionary) -> bool:
 	if hit.is_empty():

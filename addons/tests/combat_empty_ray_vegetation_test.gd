@@ -22,7 +22,7 @@ class FakeVegetationManager:
 	var query_count: int = 0
 	var chopped_count: int = 0
 	var tree_distance: float = 2.0
-	var grass_distance: float = 1.0
+	var grass_distance: float = INF
 	var harvested_kind: String = ""
 
 	func find_nearest_vegetation_along_ray(
@@ -34,35 +34,26 @@ class FakeVegetationManager:
 			include_rocks: bool = true
 	) -> Dictionary:
 		query_count += 1
-		if _max_distance < tree_distance:
-			return {}
-		if include_trees and not include_grass and not include_rocks:
-			return {
+		var best_hit: Dictionary = {}
+		if include_trees and tree_distance <= _max_distance:
+			best_hit = {
 				"kind": "tree",
 				"coord": Vector2i.ZERO,
 				"index": 0,
 				"position": Vector3(0.0, 1.0, tree_distance),
 				"distance": tree_distance
 			}
-		if include_grass:
-			if _max_distance < grass_distance:
-				return {}
-			return {
+		if include_grass and is_finite(grass_distance) and grass_distance <= _max_distance:
+			var grass_hit := {
 				"kind": "grass",
 				"coord": Vector2i.ZERO,
 				"index": 0,
-				"position": Vector3(0.0, 0.2, 1.0),
+				"position": Vector3(0.0, 0.2, grass_distance),
 				"distance": grass_distance
 			}
-		if not include_trees:
-			return {}
-		return {
-			"kind": "tree",
-			"coord": Vector2i.ZERO,
-			"index": 0,
-			"position": Vector3(0.0, 1.0, tree_distance),
-			"distance": tree_distance
-		}
+			if best_hit.is_empty() or grass_distance < float(best_hit.get("distance", INF)):
+				best_hit = grass_hit
+		return best_hit
 
 	func chop_tree_at_index(_coord: Vector2i, _index: int) -> bool:
 		chopped_count += 1
@@ -110,20 +101,21 @@ func _run() -> int:
 	if not _expect(not combat.tree_damage.has("tree:0:0:0"), "tree damage should clear after chop"):
 		return 1
 
-	var blocker := Node.new()
-	root.add_child(blocker)
-	vegetation.tree_distance = 2.75
+	var soft_tree_blocker := Node.new()
+	soft_tree_blocker.add_to_group("terrain")
+	root.add_child(soft_tree_blocker)
+	vegetation.tree_distance = 2.0
 	player.ray_hit = {
-		"collider": blocker,
-		"position": Vector3(0.0, 0.0, 2.0),
+		"collider": soft_tree_blocker,
+		"position": Vector3(0.0, 0.0, 1.0),
 		"normal": Vector3.UP
 	}
 	combat._do_axe_damage(axe_item)
-	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "near terrain physics hit should not clamp out a valid colliderless tree hit"):
+	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "soft terrain physics hit should allow a nearby colliderless tree hit"):
 		return 1
 	combat.tree_damage.clear()
 	player.ray_hit = {}
-	blocker.free()
+	soft_tree_blocker.free()
 
 	var terrain_blocker := Node.new()
 	terrain_blocker.add_to_group("terrain")
@@ -135,7 +127,7 @@ func _run() -> int:
 		"normal": Vector3.UP
 	}
 	combat._do_axe_damage(axe_item)
-	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "terrain physics hit should not block a valid full-reach tree data hit"):
+	if not _expect(not combat.tree_damage.has("tree:0:0:0"), "soft terrain physics hit should still block vegetation far behind the aimed surface"):
 		return 1
 	combat.tree_damage.clear()
 	terrain_blocker.free()
@@ -146,7 +138,7 @@ func _run() -> int:
 		"normal": Vector3.UP
 	}
 	combat._do_axe_damage(axe_item)
-	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "server-side terrain physics hit without collider should not block a valid tree data hit"):
+	if not _expect(not combat.tree_damage.has("tree:0:0:0"), "server-side terrain physics hit should still block vegetation far behind the aimed surface"):
 		return 1
 	combat.tree_damage.clear()
 	player.ray_hit = {}
