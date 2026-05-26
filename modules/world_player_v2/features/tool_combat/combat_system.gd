@@ -1382,7 +1382,7 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 	var data_hit: Dictionary = {}
 	if "axe" in item_id:
 		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, max_distance, true, false, false)
-		if _is_data_tree_hit_blocked_by_physics(data_hit, physics_hit_distance):
+		if _is_data_tree_hit_blocked_by_physics(data_hit, physics_hit_distance, hit):
 			data_hit = {}
 	if data_hit.is_empty():
 		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, true, true)
@@ -1436,11 +1436,41 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 
 	return false
 
-func _is_data_tree_hit_blocked_by_physics(data_hit: Dictionary, physics_hit_distance: float) -> bool:
+func _is_data_tree_hit_blocked_by_physics(data_hit: Dictionary, physics_hit_distance: float, physics_hit: Dictionary = {}) -> bool:
 	if data_hit.is_empty() or not is_finite(physics_hit_distance):
+		return false
+	if _is_soft_vegetation_physics_hit(physics_hit):
 		return false
 	var data_distance := float(data_hit.get("distance", physics_hit_distance))
 	return data_distance > physics_hit_distance + TREE_DATA_HIT_BLOCKER_MARGIN
+
+func _is_soft_vegetation_physics_hit(hit: Dictionary) -> bool:
+	if hit.is_empty():
+		return false
+	var collider = hit.get("collider", null)
+	if collider == null:
+		# Terrain collision can be PhysicsServer-only with no backing Node.
+		return true
+	if collider is Node:
+		return _is_terrain_or_water_collider(collider)
+	return false
+
+func _is_terrain_or_water_collider(collider: Node) -> bool:
+	if not collider:
+		return false
+	if collider.is_in_group("terrain") or collider.is_in_group("water"):
+		return true
+	if collider.is_in_group("terrain_visual_batch") or collider.is_in_group("world_map_lod"):
+		return true
+	var node := collider
+	while node:
+		var node_name := node.name.to_lower()
+		if node_name.contains("terrain") or node_name.contains("chunkmanager") or node_name.contains("chunk_manager"):
+			return true
+		if node.is_in_group("terrain") or node.is_in_group("water"):
+			return true
+		node = node.get_parent()
+	return false
 
 func _vegetation_data_target_key(data_hit: Dictionary) -> String:
 	var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)

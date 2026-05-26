@@ -114,6 +114,46 @@ func _run() -> int:
 	player.ray_hit = {}
 	blocker.free()
 
+	var terrain_blocker := Node.new()
+	terrain_blocker.add_to_group("terrain")
+	root.add_child(terrain_blocker)
+	vegetation.tree_distance = 4.5
+	player.ray_hit = {
+		"collider": terrain_blocker,
+		"position": Vector3(0.0, 0.0, 1.0),
+		"normal": Vector3.UP
+	}
+	combat._do_axe_damage(axe_item)
+	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "terrain physics hit should not block a valid full-reach tree data hit"):
+		return 1
+	combat.tree_damage.clear()
+	terrain_blocker.free()
+
+	vegetation.tree_distance = 4.5
+	player.ray_hit = {
+		"position": Vector3(0.0, 0.0, 1.0),
+		"normal": Vector3.UP
+	}
+	combat._do_axe_damage(axe_item)
+	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "server-side terrain physics hit without collider should not block a valid tree data hit"):
+		return 1
+	combat.tree_damage.clear()
+	player.ray_hit = {}
+
+	var hard_blocker := Node.new()
+	root.add_child(hard_blocker)
+	vegetation.tree_distance = 4.5
+	player.ray_hit = {
+		"collider": hard_blocker,
+		"position": Vector3(0.0, 0.0, 1.0),
+		"normal": Vector3.UP
+	}
+	combat._do_axe_damage(axe_item)
+	if not _expect(not combat.tree_damage.has("tree:0:0:0"), "non-terrain physics blocker should still block a tree behind it"):
+		return 1
+	hard_blocker.free()
+	player.ray_hit = {}
+
 	vegetation.tree_distance = 4.5
 	combat._do_axe_damage(axe_item)
 	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "axe data-ray tree damage should reach HUD-range trees"):

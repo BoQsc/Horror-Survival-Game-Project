@@ -913,9 +913,41 @@ func _get_look_vegetation_key(player_node: Node, hit: Dictionary) -> String:
 	var data_hit: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction.normalized(), max_distance, true, false, false)
 	if data_hit.is_empty():
 		return ""
-	if is_finite(physics_hit_distance) and float(data_hit.get("distance", physics_hit_distance)) > physics_hit_distance + 1.25:
+	if (
+			is_finite(physics_hit_distance)
+			and not _is_soft_vegetation_physics_hit(hit)
+			and float(data_hit.get("distance", physics_hit_distance)) > physics_hit_distance + 1.25
+	):
 		return ""
 	return _vegetation_data_target_key(data_hit)
+
+func _is_soft_vegetation_physics_hit(hit: Dictionary) -> bool:
+	if hit.is_empty():
+		return false
+	var collider = hit.get("collider", null)
+	if collider == null:
+		# Terrain collision can be PhysicsServer-only with no backing Node.
+		return true
+	if collider is Node:
+		return _is_terrain_or_water_collider(collider)
+	return false
+
+func _is_terrain_or_water_collider(collider: Node) -> bool:
+	if not collider:
+		return false
+	if collider.is_in_group("terrain") or collider.is_in_group("water"):
+		return true
+	if collider.is_in_group("terrain_visual_batch") or collider.is_in_group("world_map_lod"):
+		return true
+	var node := collider
+	while node:
+		var node_name := node.name.to_lower()
+		if node_name.contains("terrain") or node_name.contains("chunkmanager") or node_name.contains("chunk_manager"):
+			return true
+		if node.is_in_group("terrain") or node.is_in_group("water"):
+			return true
+		node = node.get_parent()
+	return false
 
 func _vegetation_data_target_key(data_hit: Dictionary) -> String:
 	var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)
