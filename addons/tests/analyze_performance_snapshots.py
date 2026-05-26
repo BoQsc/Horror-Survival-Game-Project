@@ -340,6 +340,12 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
             "last_world_map_baked_building_apply_queue_count": _int(building.get("last_world_map_baked_building_apply_queue_count")),
             "visible_world_map_baked_building_visual_nodes": _int(building.get("visible_world_map_baked_building_visual_nodes")),
             "visible_world_map_baked_building_visual_surfaces": _int(building.get("visible_world_map_baked_building_visual_surfaces")),
+            "last_world_map_baked_building_visual_batch_backend": str(building.get("last_world_map_baked_building_visual_batch_backend", "")),
+            "last_world_map_baked_building_visual_batch_rebuild_ms": _round(_float(building.get("last_world_map_baked_building_visual_batch_rebuild_ms"))),
+            "last_world_map_baked_building_visual_batch_source_surfaces": _int(building.get("last_world_map_baked_building_visual_batch_source_surfaces")),
+            "last_world_map_baked_building_visual_batch_output_surfaces": _int(building.get("last_world_map_baked_building_visual_batch_output_surfaces")),
+            "last_world_map_baked_building_visual_batch_output_vertices": _int(building.get("last_world_map_baked_building_visual_batch_output_vertices")),
+            "last_world_map_baked_building_visual_batch_output_indices": _int(building.get("last_world_map_baked_building_visual_batch_output_indices")),
         },
         "prefab_spawner": {
             "world_map_baked_building_payload_signature": str(prefab.get("world_map_baked_building_payload_signature", "")),

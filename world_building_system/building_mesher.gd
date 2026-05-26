@@ -189,6 +189,12 @@ func build_world_map_baked_building_payload(prefab_blocks: Array, rotation: int,
 		return {}
 	return builder.build_world_map_baked_building_payload(prefab_blocks, rotation, spawn_pos, chunk_size, chunk_stride)
 
+func build_grouped_merged_array_mesh(chunks: Array) -> Dictionary:
+	var builder := _get_native_builder()
+	if not builder or not builder.has_method("build_grouped_merged_array_mesh"):
+		return {}
+	return builder.build_grouped_merged_array_mesh(chunks)
+
 func voxels_need_detailed_collision(voxel_bytes: PackedByteArray) -> bool:
 	return _voxels_need_detailed_collision(voxel_bytes)
 

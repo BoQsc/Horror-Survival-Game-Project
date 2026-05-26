@@ -67,6 +67,9 @@ var _last_world_map_baked_building_visual_batch_source_nodes: int = 0
 var _last_world_map_baked_building_visual_batch_source_surfaces: int = 0
 var _last_world_map_baked_building_visual_batch_output_surfaces: int = 0
 var _last_world_map_baked_building_visual_batch_hidden_nodes: int = 0
+var _last_world_map_baked_building_visual_batch_backend: String = ""
+var _last_world_map_baked_building_visual_batch_output_vertices: int = 0
+var _last_world_map_baked_building_visual_batch_output_indices: int = 0
 var _last_global_visual_batch_center_chunk: Vector3i = Vector3i(2147483647, 2147483647, 2147483647)
 var _native_helper: Object = null
 var _object_render_resource_prewarm_node: Node = null
@@ -877,8 +880,55 @@ func _clear_world_map_baked_building_visual_batches(immediate: bool = false) -> 
 	_last_world_map_baked_building_visual_batch_source_surfaces = 0
 	_last_world_map_baked_building_visual_batch_output_surfaces = 0
 	_last_world_map_baked_building_visual_batch_hidden_nodes = 0
+	_last_world_map_baked_building_visual_batch_backend = ""
+	_last_world_map_baked_building_visual_batch_output_vertices = 0
+	_last_world_map_baked_building_visual_batch_output_indices = 0
 
 func _build_world_map_baked_building_visual_batch_mesh(entries: Array, batch_origin: Vector3) -> Dictionary:
+	if mesher and mesher.has_method("build_grouped_merged_array_mesh"):
+		var native_chunks: Array = []
+		var native_materials: Dictionary = {}
+		var native_material_order: Array[String] = []
+		for entry_variant in entries:
+			if typeof(entry_variant) != TYPE_DICTIONARY:
+				continue
+			var entry: Dictionary = entry_variant
+			var root := entry.get("root", null) as Node3D
+			var mesh_instance := entry.get("mesh_instance", null) as MeshInstance3D
+			if root == null or mesh_instance == null or mesh_instance.mesh == null:
+				continue
+			var mesh := mesh_instance.mesh
+			var offset := root.position - batch_origin
+			for surface_index in range(mesh.get_surface_count()):
+				var arrays := mesh.surface_get_arrays(surface_index)
+				if arrays.size() <= Mesh.ARRAY_VERTEX:
+					continue
+				var source_vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				if source_vertices.is_empty():
+					continue
+				var material := mesh.surface_get_material(surface_index)
+				var material_key := "material_%d" % (material.get_instance_id() if material else surface_index)
+				if not native_materials.has(material_key):
+					native_materials[material_key] = material
+					native_material_order.append(material_key)
+				native_chunks.append({
+					"arrays": arrays,
+					"offset": offset,
+					"material_key": material_key
+				})
+		if not native_chunks.is_empty():
+			var native_result: Dictionary = mesher.build_grouped_merged_array_mesh(native_chunks)
+			var native_mesh := native_result.get("mesh", null) as ArrayMesh
+			if native_mesh:
+				var material_keys: Array = native_result.get("material_keys", native_material_order)
+				for surface_index in range(mini(native_mesh.get_surface_count(), material_keys.size())):
+					var material_key := str(material_keys[surface_index])
+					var material := native_materials.get(material_key, null) as Material
+					if material:
+						native_mesh.surface_set_material(surface_index, material)
+				native_result["backend"] = "native"
+				return native_result
+
 	var groups: Dictionary = {}
 	var group_order: Array[String] = []
 	var source_surfaces := 0
@@ -969,7 +1019,8 @@ func _build_world_map_baked_building_visual_batch_mesh(entries: Array, batch_ori
 	return {
 		"mesh": merged_mesh,
 		"source_surfaces": source_surfaces,
-		"output_surfaces": merged_mesh.get_surface_count()
+		"output_surfaces": merged_mesh.get_surface_count(),
+		"backend": "gdscript"
 	}
 
 func _collect_world_map_baked_building_visual_batch_entries(key: Vector2i) -> Array:
@@ -1016,6 +1067,11 @@ func _rebuild_world_map_baked_building_visual_batch(key: Vector2i) -> bool:
 	var entries := _collect_world_map_baked_building_visual_batch_entries(key)
 	_last_world_map_baked_building_visual_batch_source_nodes = entries.size()
 	if entries.is_empty():
+		_last_world_map_baked_building_visual_batch_source_surfaces = 0
+		_last_world_map_baked_building_visual_batch_output_surfaces = 0
+		_last_world_map_baked_building_visual_batch_backend = ""
+		_last_world_map_baked_building_visual_batch_output_vertices = 0
+		_last_world_map_baked_building_visual_batch_output_indices = 0
 		if _world_map_baked_building_visual_batches.has(key):
 			var old_node := _world_map_baked_building_visual_batches[key] as Node
 			_world_map_baked_building_visual_batches.erase(key)
@@ -1028,6 +1084,9 @@ func _rebuild_world_map_baked_building_visual_batch(key: Vector2i) -> bool:
 	var merged_mesh := build_result.get("mesh", null) as ArrayMesh
 	_last_world_map_baked_building_visual_batch_source_surfaces = int(build_result.get("source_surfaces", 0))
 	_last_world_map_baked_building_visual_batch_output_surfaces = int(build_result.get("output_surfaces", 0))
+	_last_world_map_baked_building_visual_batch_backend = str(build_result.get("backend", ""))
+	_last_world_map_baked_building_visual_batch_output_vertices = int(build_result.get("output_vertex_count", 0))
+	_last_world_map_baked_building_visual_batch_output_indices = int(build_result.get("output_index_count", 0))
 	if merged_mesh == null:
 		_show_individual_world_map_baked_building_visuals_for_batch(key)
 		return true
@@ -2462,6 +2521,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_world_map_baked_building_visual_batch_source_surfaces": _last_world_map_baked_building_visual_batch_source_surfaces,
 		"last_world_map_baked_building_visual_batch_output_surfaces": _last_world_map_baked_building_visual_batch_output_surfaces,
 		"last_world_map_baked_building_visual_batch_hidden_nodes": _last_world_map_baked_building_visual_batch_hidden_nodes,
+		"last_world_map_baked_building_visual_batch_backend": _last_world_map_baked_building_visual_batch_backend,
+		"last_world_map_baked_building_visual_batch_output_vertices": _last_world_map_baked_building_visual_batch_output_vertices,
+		"last_world_map_baked_building_visual_batch_output_indices": _last_world_map_baked_building_visual_batch_output_indices,
 		"chunk_pool_size": chunk_pool.size(),
 		"total_objects": total_objects,
 		"total_object_nodes": total_object_nodes,

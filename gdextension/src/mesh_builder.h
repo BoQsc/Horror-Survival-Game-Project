@@ -101,6 +101,10 @@ public:
 	// Each Array entry is a Dictionary with { mesh: ArrayMesh, offset: Vector3 }.
 	Ref<ArrayMesh> build_merged_array_mesh(const Array& chunks);
 	Dictionary build_merged_array_mesh_data(const Array& chunks);
+
+	// Merges pre-collected mesh surfaces while preserving material groups and UVs.
+	// Each Array entry is a Dictionary with { arrays: Array, offset: Vector3, material_key: String }.
+	Dictionary build_grouped_merged_array_mesh(const Array& chunks);
 };
 
 }
