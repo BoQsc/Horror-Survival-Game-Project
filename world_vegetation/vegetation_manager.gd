@@ -24,6 +24,8 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var tree_rotation_fix: Vector3 = Vector3.ZERO
 @export var collision_radius: float = 0.5
 @export var collision_height: float = 8.0
+@export var tree_visual_targeting_enabled: bool = true
+@export_range(0.0, 4.0, 0.05) var tree_visual_targeting_aabb_padding: float = 0.35
 @export var collider_distance: float = 30.0 # Only trees within this distance get colliders
 @export var vegetation_colliders_enabled: bool = false
 @export var tree_colliders_enabled: bool = false
@@ -203,6 +205,7 @@ var _vegetation_water_block_sample_backend_counts: Dictionary = {}
 var _vegetation_render_payload_backend_counts: Dictionary = {}
 var _vegetation_render_cluster_payload_backend_counts: Dictionary = {}
 var _vegetation_native_record_append_counts: Dictionary = {}
+var _vegetation_removed_filter_backend_counts: Dictionary = {}
 var _vegetation_opaque_material_optimization_counts: Dictionary = {}
 var _vegetation_texture_opaque_cache: Dictionary = {}
 var _vegetation_texture_alpha_coverage_cache: Dictionary = {}
@@ -433,6 +436,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
 		"vegetation_render_cluster_payload_backend_counts": _vegetation_render_cluster_payload_backend_counts.duplicate(true),
 		"vegetation_native_record_append_counts": _vegetation_native_record_append_counts.duplicate(true),
+		"vegetation_removed_filter_backend_counts": _vegetation_removed_filter_backend_counts.duplicate(true),
 		"vegetation_opaque_material_optimization_counts": _vegetation_opaque_material_optimization_counts.duplicate(true),
 		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
 		"vegetation_ray_query_backend_counts": _vegetation_ray_query_backend_counts.duplicate(true),
@@ -1700,9 +1704,24 @@ func _append_native_generated_instances(target: Array, records: Array) -> void:
 	_vegetation_native_record_append_counts["reindex_records"] = int(_vegetation_native_record_append_counts.get("reindex_records", 0)) + records.size()
 
 
+func _record_vegetation_removed_filter_backend(backend: String, input_count: int, output_count: int) -> void:
+	_vegetation_removed_filter_backend_counts["%s_calls" % backend] = int(_vegetation_removed_filter_backend_counts.get("%s_calls" % backend, 0)) + 1
+	_vegetation_removed_filter_backend_counts["%s_input_records" % backend] = int(_vegetation_removed_filter_backend_counts.get("%s_input_records" % backend, 0)) + input_count
+	_vegetation_removed_filter_backend_counts["%s_output_records" % backend] = int(_vegetation_removed_filter_backend_counts.get("%s_output_records" % backend, 0)) + output_count
+
+
 func _remove_persistently_removed_entries(entries: Array, removed_lookup: Dictionary) -> void:
 	if removed_lookup.is_empty():
 		return
+	var native := _get_native_helper()
+	if native and native.has_method("filter_removed_vegetation_entries"):
+		var input_count := entries.size()
+		var filtered: Array = native.filter_removed_vegetation_entries(entries, removed_lookup)
+		entries.clear()
+		entries.append_array(filtered)
+		_record_vegetation_removed_filter_backend("native", input_count, entries.size())
+		return
+	var input_count := entries.size()
 	for index in range(entries.size() - 1, -1, -1):
 		var entry = entries[index]
 		if entry is Dictionary and removed_lookup.has(_position_hash(entry.get("hit_pos", entry.get("world_pos", Vector3.ZERO)))):
@@ -1710,6 +1729,7 @@ func _remove_persistently_removed_entries(entries: Array, removed_lookup: Dictio
 	for index in range(entries.size()):
 		if entries[index] is Dictionary:
 			entries[index]["index"] = index
+	_record_vegetation_removed_filter_backend("gdscript", input_count, entries.size())
 
 
 func _build_vegetation_native_config(
@@ -3601,6 +3621,15 @@ func _find_nearest_instance_along_ray(
 	if max_distance <= 0.0 or direction.length_squared() <= 0.000001:
 		return {}
 
+	if kind == "tree" and tree_visual_targeting_enabled:
+		return _find_nearest_tree_visual_bounds_along_ray(
+			chunk_data,
+			list_key,
+			origin,
+			direction,
+			max_distance
+		)
+
 	var native := _get_native_helper()
 	if native and native.has_method("find_nearest_vegetation_ray_hit"):
 		var native_hit: Dictionary = native.find_nearest_vegetation_ray_hit(
@@ -3664,6 +3693,117 @@ func _find_nearest_instance_along_ray(
 
 	_record_vegetation_ray_query_backend(kind, "gdscript", 0 if best_hit.is_empty() else 1)
 	return best_hit
+
+func _find_nearest_tree_visual_bounds_along_ray(
+		chunk_data: Dictionary,
+		list_key: String,
+		origin: Vector3,
+		direction: Vector3,
+		max_distance: float
+) -> Dictionary:
+	var ray_dir := direction.normalized()
+	var best_hit: Dictionary = {}
+
+	for coord in chunk_data.keys():
+		var data = chunk_data[coord]
+		if not (data is Dictionary) or not data.has(list_key):
+			continue
+		for entry in data[list_key]:
+			if not (entry is Dictionary):
+				continue
+			if not bool(entry.get("alive", false)):
+				continue
+			var index := int(entry.get("index", -1))
+			if index < 0:
+				continue
+
+			var scale := maxf(0.1, float(entry.get("scale", 1.0)))
+			var rotation_angle := float(entry.get("rotation_angle", entry.get("rotation", 0.0)))
+			var base_pos: Vector3 = entry.get("world_pos", entry.get("hit_pos", Vector3.ZERO))
+			var tree_transform := _build_vegetation_transform(
+				tree_base_transform,
+				tree_rotation_fix,
+				rotation_angle,
+				scale,
+				base_pos
+			)
+			var visual_bounds := _get_tree_visual_interaction_aabb(scale, tree_transform)
+			var bounds_hit := _intersect_ray_aabb(origin, ray_dir, visual_bounds, max_distance)
+			if bounds_hit.is_empty():
+				continue
+
+			var hit_position: Vector3 = bounds_hit.get("position", base_pos)
+			var candidate := {
+				"kind": "tree",
+				"coord": coord,
+				"index": index,
+				"position": hit_position,
+				"distance": bounds_hit.get("distance", 0.0),
+				"distance_sq_to_ray": hit_position.distance_squared_to(base_pos)
+			}
+			if _is_better_data_ray_hit(candidate, best_hit):
+				best_hit = candidate
+
+	_record_vegetation_ray_query_backend("tree", "gdscript_visual_bounds", 0 if best_hit.is_empty() else 1)
+	return best_hit
+
+func _get_tree_visual_interaction_aabb(scale: float = 1.0, world_transform: Transform3D = Transform3D.IDENTITY) -> AABB:
+	if tree_mesh == null:
+		var fallback_radius := maxf(0.1, collision_radius * scale)
+		var fallback_height := maxf(0.1, collision_height * scale)
+		return AABB(
+			Vector3(-fallback_radius, 0.0, -fallback_radius),
+			Vector3(fallback_radius * 2.0, fallback_height, fallback_radius * 2.0)
+		).grow(tree_visual_targeting_aabb_padding)
+
+	var transform := world_transform
+	if transform == Transform3D.IDENTITY:
+		transform = _build_vegetation_transform(
+			tree_base_transform,
+			tree_rotation_fix,
+			0.0,
+			maxf(0.1, scale),
+			Vector3.ZERO
+		)
+	return (transform * tree_mesh.get_aabb()).grow(tree_visual_targeting_aabb_padding)
+
+func _intersect_ray_aabb(origin: Vector3, ray_dir: Vector3, bounds: AABB, max_distance: float) -> Dictionary:
+	if bounds.size.x <= 0.0 or bounds.size.y <= 0.0 or bounds.size.z <= 0.0 or max_distance <= 0.0:
+		return {}
+
+	var t_min := 0.0
+	var t_max := max_distance
+	var min_pos := bounds.position
+	var max_pos := bounds.position + bounds.size
+	const EPSILON := 0.0000001
+
+	for axis in range(3):
+		var axis_origin := origin[axis]
+		var axis_dir := ray_dir[axis]
+		var axis_min := min_pos[axis]
+		var axis_max := max_pos[axis]
+		if absf(axis_dir) <= EPSILON:
+			if axis_origin < axis_min or axis_origin > axis_max:
+				return {}
+			continue
+		var t0 := (axis_min - axis_origin) / axis_dir
+		var t1 := (axis_max - axis_origin) / axis_dir
+		if t0 > t1:
+			var temp := t0
+			t0 = t1
+			t1 = temp
+		t_min = maxf(t_min, t0)
+		t_max = minf(t_max, t1)
+		if t_min > t_max:
+			return {}
+
+	var distance := maxf(0.0, t_min)
+	if distance > max_distance:
+		return {}
+	return {
+		"distance": distance,
+		"position": origin + ray_dir * distance
+	}
 
 func _intersect_vertical_vegetation_cylinder(
 		origin: Vector3,
@@ -4665,6 +4805,7 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_vegetation_render_payload_backend_counts.clear()
 	_vegetation_render_cluster_payload_backend_counts.clear()
 	_vegetation_native_record_append_counts.clear()
+	_vegetation_removed_filter_backend_counts.clear()
 	_last_pending_chunk_selection_backend = ""
 	_last_pending_chunk_selection_scan_count = 0
 	_pending_chunk_selection_native_calls = 0

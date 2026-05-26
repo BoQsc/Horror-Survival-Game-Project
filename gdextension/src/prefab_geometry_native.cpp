@@ -308,6 +308,12 @@ static Vector3 dictionary_get_vector3(const Dictionary &dict, const String &key,
 	return fallback;
 }
 
+static String vegetation_position_hash(const Vector3 &pos) {
+	const int64_t hash_x = static_cast<int64_t>(std::floor(double(pos.x)));
+	const int64_t hash_z = static_cast<int64_t>(std::floor(double(pos.z)));
+	return String::num_int64(hash_x) + "_" + String::num_int64(hash_z);
+}
+
 static bool is_better_ray_hit(double candidate_distance, double candidate_distance_sq_to_ray, const RayHitCandidate &current) {
 	if (!current.valid) {
 		return true;
@@ -426,6 +432,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_nearest_vegetation_ray_hit", "chunk_data", "list_key", "kind", "origin", "direction", "max_distance", "radius", "height", "scale_by_entry"), &PrefabGeometryNative::find_nearest_vegetation_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
+	ClassDB::bind_method(D_METHOD("filter_removed_vegetation_entries", "entries", "removed_lookup"), &PrefabGeometryNative::filter_removed_vegetation_entries);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse", "mesh_bounds"), &PrefabGeometryNative::build_global_vegetation_render_payload);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_cluster_render_payload", "payloads", "coord_keys", "bounds_padding"), &PrefabGeometryNative::build_global_vegetation_cluster_render_payload);
 	ClassDB::bind_method(D_METHOD("pack_multimesh_buffer_from_instances", "instances"), &PrefabGeometryNative::pack_multimesh_buffer_from_instances);
@@ -1186,6 +1193,38 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	}
 
 	return instances;
+}
+
+Array PrefabGeometryNative::filter_removed_vegetation_entries(const Array &entries, const Dictionary &removed_lookup) const {
+	if (entries.is_empty() || removed_lookup.is_empty()) {
+		return entries.duplicate(false);
+	}
+
+	Array filtered;
+	filtered.resize(0);
+	for (int i = 0; i < entries.size(); ++i) {
+		const Variant item = entries[i];
+		if (item.get_type() == Variant::DICTIONARY) {
+			Dictionary entry = item;
+			const Vector3 fallback_world_pos = dictionary_get_vector3(entry, "world_pos");
+			const Vector3 hash_pos = dictionary_get_vector3(entry, "hit_pos", fallback_world_pos);
+			if (removed_lookup.has(vegetation_position_hash(hash_pos))) {
+				continue;
+			}
+		}
+		filtered.append(item);
+	}
+
+	for (int i = 0; i < filtered.size(); ++i) {
+		Variant item = filtered[i];
+		if (item.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary entry = item;
+		entry["index"] = i;
+		filtered[i] = entry;
+	}
+	return filtered;
 }
 
 Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse, const AABB &mesh_bounds) const {
