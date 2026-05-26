@@ -56,6 +56,7 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "load_chunks_per_frame_limit", "unload_chunks_per_frame_limit"), &TerrainGrid::update);
     ClassDB::bind_method(D_METHOD("get_collision_proximity_update", "center_chunk", "collision_distance", "collision_prewarm_distance", "min_y_layer", "max_y_layer", "shared_collision_body_enabled"), &TerrainGrid::get_collision_proximity_update);
     ClassDB::bind_method(D_METHOD("get_chunk_height_map", "density", "size", "step"), &TerrainGrid::get_chunk_height_map);
+    ClassDB::bind_method(D_METHOD("sample_cached_height_map", "height_map", "map_size", "chunk_stride", "step", "chunk_base_y"), &TerrainGrid::sample_cached_height_map);
     ClassDB::bind_method(D_METHOD("get_world_map_road_block_samples", "road_data", "road_width", "road_height", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "world_map_half", "world_map_size"), &TerrainGrid::get_world_map_road_block_samples);
     ClassDB::bind_method(D_METHOD("get_world_map_water_block_samples", "water_data", "water_width", "water_height", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "terrain_heights", "world_map_half", "water_level"), &TerrainGrid::get_world_map_water_block_samples);
 }
@@ -465,6 +466,55 @@ PackedFloat32Array TerrainGrid::get_chunk_height_map(const PackedFloat32Array &d
         }
     }
     
+    return heights;
+}
+
+PackedFloat32Array TerrainGrid::sample_cached_height_map(const PackedFloat32Array &height_map, int map_size, int chunk_stride, int step, double chunk_base_y) {
+    PackedFloat32Array heights;
+    if (height_map.is_empty() || chunk_stride <= 0 || step <= 0) {
+        return heights;
+    }
+
+    if (map_size <= 0) {
+        map_size = chunk_stride;
+    }
+    if (map_size <= 0) {
+        return heights;
+    }
+
+    const int axis_count = sample_axis_count(chunk_stride, step);
+    const int sample_count = axis_count * axis_count;
+    if (sample_count <= 0) {
+        return heights;
+    }
+
+    heights.resize(sample_count);
+    const float *height_ptr = height_map.ptr();
+    float *write_ptr = heights.ptrw();
+    int write_index = 0;
+
+    for (int x = 0; x < chunk_stride; x += step) {
+        int sample_x = x;
+        if (sample_x >= map_size) {
+            sample_x = map_size - 1;
+        }
+        for (int z = 0; z < chunk_stride; z += step) {
+            int sample_z = z;
+            if (sample_z >= map_size) {
+                sample_z = map_size - 1;
+            }
+            const int source_index = sample_x * map_size + sample_z;
+            float local_height = -1000.0f;
+            if (source_index >= 0 && source_index < height_map.size()) {
+                local_height = height_ptr[source_index];
+            }
+            write_ptr[write_index++] = local_height > -100.0f ? local_height + float(chunk_base_y) : local_height;
+        }
+    }
+
+    if (write_index != sample_count) {
+        heights.resize(write_index);
+    }
     return heights;
 }
 

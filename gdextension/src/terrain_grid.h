@@ -78,6 +78,7 @@ public:
     // Returns PackedFloat32Array of heights. If not found, returns -1000.0.
     // Order: x + z * (size / step)
     PackedFloat32Array get_chunk_height_map(const PackedFloat32Array &density, int size, int step);
+    PackedFloat32Array sample_cached_height_map(const PackedFloat32Array &height_map, int map_size, int chunk_stride, int step, double chunk_base_y);
     PackedFloat32Array get_world_map_road_block_samples(const PackedByteArray &road_data, int road_width, int road_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, double world_map_half, double world_map_size);
     PackedFloat32Array get_world_map_water_block_samples(const PackedByteArray &water_data, int water_width, int water_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, const PackedFloat32Array &terrain_heights, double world_map_half, double water_level);
 };

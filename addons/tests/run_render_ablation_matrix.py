@@ -482,6 +482,7 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "terrain_world_map_water_block_sample_backend_counts": terrain.get(
             "world_map_water_block_sample_backend_counts", {}
         ),
+        "terrain_height_map_sample_backend_counts": terrain.get("height_map_sample_backend_counts", {}),
         "rendered_terrain_chunks": int(terrain.get("rendered_terrain_chunk_count", 0) or 0),
         "terrain_visual_visible_primitives": int(terrain.get("terrain_visual_visible_primitive_count", 0) or 0),
         "terrain_visual_chunk_primitives": int(terrain.get("terrain_visual_chunk_primitive_count", 0) or 0),
@@ -714,7 +715,7 @@ def _print_results(results: list[dict]) -> None:
             "counts={counts} noiseSamples={noise_samples} pendingPick={pending_backend}:{pending_native}/{pending_gdscript}@{pending_scan} "
             "roadSamples={road_samples} waterSamples={water_samples} payloads={payloads} "
             "clusterPayloads={cluster_payloads} removedFilter={removed_filter} rayQueries={ray_queries} "
-            "terrainMaskRoad={terrain_road_mask} terrainMaskWater={terrain_water_mask}".format(
+            "terrainMaskRoad={terrain_road_mask} terrainMaskWater={terrain_water_mask} heightSamples={height_samples}".format(
                 hold_mprim=float(result.get("hold_wpf60_per_million_primitives", 0.0) or 0.0),
                 hold_draw=float(result.get("hold_wpf60_per_100_draw_calls", 0.0) or 0.0),
                 hold_obj=float(result.get("hold_wpf60_per_100_objects", 0.0) or 0.0),
@@ -758,6 +759,11 @@ def _print_results(results: list[dict]) -> None:
                 ),
                 terrain_water_mask=json.dumps(
                     result.get("terrain_world_map_water_block_sample_backend_counts", {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                height_samples=json.dumps(
+                    result.get("terrain_height_map_sample_backend_counts", {}),
                     sort_keys=True,
                     separators=(",", ":"),
                 ),

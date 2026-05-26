@@ -116,6 +116,7 @@ var _world_map_water_image: Image = null
 var _world_map_water_data: PackedByteArray = PackedByteArray()
 var _world_map_road_block_sample_backend_counts: Dictionary = {}
 var _world_map_water_block_sample_backend_counts: Dictionary = {}
+var _height_map_sample_backend_counts: Dictionary = {}
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
@@ -1015,6 +1016,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"world_map_building_count": _world_map_buildings.size(),
 		"world_map_road_block_sample_backend_counts": _world_map_road_block_sample_backend_counts.duplicate(true),
 		"world_map_water_block_sample_backend_counts": _world_map_water_block_sample_backend_counts.duplicate(true),
+		"height_map_sample_backend_counts": _height_map_sample_backend_counts.duplicate(true),
 		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
 		"world_map_excavation_buffer_count": _world_map_excavation_buffers.size(),
 		"render_resource_prewarm_started": _render_resource_prewarm_started,
@@ -5406,6 +5408,11 @@ func _record_world_map_mask_sample_backend(kind: String, backend: String, sample
 	counts["%s_samples" % backend] = int(counts.get("%s_samples" % backend, 0)) + sample_count
 	counts["%s_us" % backend] = int(counts.get("%s_us" % backend, 0)) + elapsed_us
 
+func _record_height_map_sample_backend(backend: String, sample_count: int, elapsed_us: int) -> void:
+	_height_map_sample_backend_counts["%s_calls" % backend] = int(_height_map_sample_backend_counts.get("%s_calls" % backend, 0)) + 1
+	_height_map_sample_backend_counts["%s_samples" % backend] = int(_height_map_sample_backend_counts.get("%s_samples" % backend, 0)) + sample_count
+	_height_map_sample_backend_counts["%s_us" % backend] = int(_height_map_sample_backend_counts.get("%s_us" % backend, 0)) + elapsed_us
+
 func get_world_map_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int) -> PackedFloat32Array:
 	var start_us := Time.get_ticks_usec()
 	var samples := PackedFloat32Array()
@@ -5827,6 +5834,7 @@ func _sample_height_map_local(data, local_x: int, local_z: int) -> float:
 	return data.cpu_height_map_terrain[index]
 
 func get_cached_chunk_height_map(coord: Vector2i, chunk_stride: int, step: int) -> PackedFloat32Array:
+	var start_us := Time.get_ticks_usec()
 	var chunk_key = Vector3i(coord.x, 0, coord.y)
 	if not active_chunks.has(chunk_key):
 		return PackedFloat32Array()
@@ -5842,6 +5850,16 @@ func get_cached_chunk_height_map(coord: Vector2i, chunk_stride: int, step: int) 
 	if data.cpu_height_map_terrain.is_empty():
 		return PackedFloat32Array()
 
+	var map_size: int = int(data.cpu_height_map_size)
+	if map_size <= 0:
+		map_size = CHUNK_STRIDE
+	var chunk_base_y = float(chunk_key.y * CHUNK_STRIDE)
+	if terrain_grid and is_instance_valid(terrain_grid) and terrain_grid.has_method("sample_cached_height_map"):
+		var native_heights: PackedFloat32Array = terrain_grid.sample_cached_height_map(data.cpu_height_map_terrain, map_size, chunk_stride, step, chunk_base_y)
+		if not native_heights.is_empty():
+			_record_height_map_sample_backend("native", native_heights.size(), Time.get_ticks_usec() - start_us)
+			return native_heights
+
 	var heights := PackedFloat32Array()
 	var count := 0
 	for _x in range(0, chunk_stride, step):
@@ -5849,13 +5867,13 @@ func get_cached_chunk_height_map(coord: Vector2i, chunk_stride: int, step: int) 
 	heights.resize(count * count)
 
 	var write_idx := 0
-	var chunk_base_y = float(chunk_key.y * CHUNK_STRIDE)
 	for x in range(0, chunk_stride, step):
 		for z in range(0, chunk_stride, step):
 			var local_height = _sample_height_map_local(data, x, z)
 			heights[write_idx] = local_height + chunk_base_y if local_height > -100.0 else local_height
 			write_idx += 1
 
+	_record_height_map_sample_backend("gdscript", heights.size(), Time.get_ticks_usec() - start_us)
 	return heights
 
 func get_terrain_height(global_x: float, global_z: float) -> float:
@@ -6541,6 +6559,7 @@ func clear_all_chunks(preserve_world_map_lod_initial_defer: bool = false):
 	pending_batches.clear()
 	_world_map_road_block_sample_backend_counts.clear()
 	_world_map_water_block_sample_backend_counts.clear()
+	_height_map_sample_backend_counts.clear()
 	_last_terrain_stream_update_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
 	_last_terrain_stream_update_render_distance = -1
 	_terrain_stream_update_idle_skip_count = 0
@@ -6801,6 +6820,7 @@ func _thread_function():
 	_world_map_water_data = PackedByteArray()
 	_world_map_road_block_sample_backend_counts.clear()
 	_world_map_water_block_sample_backend_counts.clear()
+	_height_map_sample_backend_counts.clear()
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
 	_mark_modification_coord_cache_dirty()
