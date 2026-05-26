@@ -200,6 +200,7 @@ var _vegetation_render_resource_prewarm_mesh_count: int = 0
 var _data_ray_harvest_queries: int = 0
 var _data_ray_harvest_hits: int = 0
 var _vegetation_generation_backend_counts: Dictionary = {}
+var _vegetation_noise_sample_backend_counts: Dictionary = {}
 var _vegetation_road_block_sample_backend_counts: Dictionary = {}
 var _vegetation_water_block_sample_backend_counts: Dictionary = {}
 var _vegetation_render_payload_backend_counts: Dictionary = {}
@@ -431,6 +432,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"native_vegetation_generation_blocked_by_world_map": false,
 		"native_vegetation_generation_world_map_road_mask_supported": true,
 		"vegetation_generation_backend_counts": _vegetation_generation_backend_counts.duplicate(true),
+		"vegetation_noise_sample_backend_counts": _vegetation_noise_sample_backend_counts.duplicate(true),
 		"vegetation_road_block_sample_backend_counts": _vegetation_road_block_sample_backend_counts.duplicate(true),
 		"vegetation_water_block_sample_backend_counts": _vegetation_water_block_sample_backend_counts.duplicate(true),
 		"vegetation_render_payload_backend_counts": _vegetation_render_payload_backend_counts.duplicate(true),
@@ -480,6 +482,12 @@ func _record_vegetation_generation_backend(kind: String, backend: String, reason
 	_last_vegetation_generation_kind = kind
 	_last_vegetation_generation_backend = backend
 	_last_vegetation_generation_reason = reason
+
+func _record_vegetation_noise_sample_backend(backend: String, sample_count: int) -> void:
+	var call_key := "%s_calls" % backend
+	var sample_key := "%s_samples" % backend
+	_vegetation_noise_sample_backend_counts[call_key] = int(_vegetation_noise_sample_backend_counts.get(call_key, 0)) + 1
+	_vegetation_noise_sample_backend_counts[sample_key] = int(_vegetation_noise_sample_backend_counts.get(sample_key, 0)) + sample_count
 
 func _record_vegetation_road_block_samples_backend(backend: String, sample_count: int) -> void:
 	var chunk_key := "%s_chunks" % backend
@@ -1816,12 +1824,20 @@ func _build_vegetation_native_config(
 func _build_vegetation_noise_samples(noise_source: FastNoiseLite, chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int, use_noise: bool) -> PackedFloat32Array:
 	var samples := PackedFloat32Array()
 	if not use_noise or noise_source == null:
+		_record_vegetation_noise_sample_backend("disabled", 0)
+		return samples
+
+	var native := _get_native_helper()
+	if native and native.has_method("build_noise_samples"):
+		samples = native.build_noise_samples(Callable(noise_source, "get_noise_2d"), chunk_origin_x, chunk_origin_z, chunk_stride, step, use_noise)
+		_record_vegetation_noise_sample_backend("native", samples.size())
 		return samples
 
 	for x in range(0, chunk_stride, step):
 		for z in range(0, chunk_stride, step):
 			samples.append(noise_source.get_noise_2d(chunk_origin_x + x, chunk_origin_z + z))
 
+	_record_vegetation_noise_sample_backend("gdscript", samples.size())
 	return samples
 
 
@@ -4840,6 +4856,7 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	is_initial_load_batch = false
 	initial_load_count = 0
 	_vegetation_generation_backend_counts.clear()
+	_vegetation_noise_sample_backend_counts.clear()
 	_vegetation_road_block_sample_backend_counts.clear()
 	_vegetation_water_block_sample_backend_counts.clear()
 	_vegetation_render_payload_backend_counts.clear()

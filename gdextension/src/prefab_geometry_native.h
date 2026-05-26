@@ -5,6 +5,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -15,8 +16,6 @@
 #include <godot_cpp/variant/vector3i.hpp>
 
 namespace godot {
-
-class Object;
 
 class PrefabGeometryNative : public RefCounted {
 	GDCLASS(PrefabGeometryNative, RefCounted)
@@ -52,6 +51,7 @@ public:
 	Dictionary resolve_tree_body_collision(const Dictionary &chunk_tree_data, const Vector3 &body_origin, double body_radius, double body_height, int chunk_stride, double collision_radius, double collision_height) const;
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
+	PackedFloat32Array build_noise_samples(const Callable &noise_sampler, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, bool use_noise) const;
 	Array filter_removed_vegetation_entries(const Array &entries, const Dictionary &removed_lookup) const;
 	Dictionary build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse, const AABB &mesh_bounds) const;
 	Dictionary build_global_vegetation_cluster_render_payload(const Dictionary &payloads, const Array &coord_keys, double bounds_padding) const;

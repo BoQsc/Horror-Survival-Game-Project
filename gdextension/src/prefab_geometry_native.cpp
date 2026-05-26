@@ -11,9 +11,9 @@
 #include <utility>
 #include <vector>
 
-#include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/basis.hpp>
+#include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -479,6 +479,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_nearest_tree_visual_bounds_ray_hit", "chunk_data", "list_key", "origin", "direction", "max_distance", "mesh_bounds", "base_transform", "rotation_fix", "bounds_padding"), &PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
+	ClassDB::bind_method(D_METHOD("build_noise_samples", "noise_sampler", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "use_noise"), &PrefabGeometryNative::build_noise_samples);
 	ClassDB::bind_method(D_METHOD("filter_removed_vegetation_entries", "entries", "removed_lookup"), &PrefabGeometryNative::filter_removed_vegetation_entries);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse", "mesh_bounds"), &PrefabGeometryNative::build_global_vegetation_render_payload);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_cluster_render_payload", "payloads", "coord_keys", "bounds_padding"), &PrefabGeometryNative::build_global_vegetation_cluster_render_payload);
@@ -1312,6 +1313,30 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	}
 
 	return instances;
+}
+
+PackedFloat32Array PrefabGeometryNative::build_noise_samples(const Callable &noise_sampler, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, bool use_noise) const {
+	PackedFloat32Array samples;
+	if (!use_noise || !noise_sampler.is_valid() || chunk_stride <= 0 || step <= 0) {
+		return samples;
+	}
+
+	int sample_count = 0;
+	for (int x = 0; x < chunk_stride; x += step) {
+		for (int z = 0; z < chunk_stride; z += step) {
+			++sample_count;
+		}
+	}
+	samples.resize(sample_count);
+
+	int write_index = 0;
+	for (int x = 0; x < chunk_stride; x += step) {
+		for (int z = 0; z < chunk_stride; z += step) {
+			const Variant value = noise_sampler.call(float(chunk_origin_x + x), float(chunk_origin_z + z));
+			samples.set(write_index++, float(value));
+		}
+	}
+	return samples;
 }
 
 Array PrefabGeometryNative::filter_removed_vegetation_entries(const Array &entries, const Dictionary &removed_lookup) const {

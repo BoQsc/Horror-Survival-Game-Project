@@ -567,6 +567,7 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "native_vegetation_generation_blocked_by_world_map": bool(vegetation.get("native_vegetation_generation_blocked_by_world_map", False)),
         "native_vegetation_generation_world_map_road_mask_supported": bool(vegetation.get("native_vegetation_generation_world_map_road_mask_supported", False)),
         "vegetation_generation_backend_counts": vegetation.get("vegetation_generation_backend_counts", {}),
+        "vegetation_noise_sample_backend_counts": vegetation.get("vegetation_noise_sample_backend_counts", {}),
         "vegetation_road_block_sample_backend_counts": vegetation.get("vegetation_road_block_sample_backend_counts", {}),
         "vegetation_water_block_sample_backend_counts": vegetation.get("vegetation_water_block_sample_backend_counts", {}),
         "vegetation_render_payload_backend_counts": vegetation.get("vegetation_render_payload_backend_counts", {}),
@@ -710,7 +711,7 @@ def _print_results(results: list[dict]) -> None:
             "                     efficiency holdWPF60/Mprim={hold_mprim:6.1f} /100draw={hold_draw:5.1f} /100obj={hold_obj:5.1f} "
             "moveWPF60/Mprim={move_mprim:6.1f} /100draw={move_draw:5.1f} /100obj={move_obj:5.1f} | "
             "nativeVeg={native} worldMapBlock={blocked} roadMask={road_mask} lastGen={last_kind}/{last_backend}/{last_reason} "
-            "counts={counts} pendingPick={pending_backend}:{pending_native}/{pending_gdscript}@{pending_scan} "
+            "counts={counts} noiseSamples={noise_samples} pendingPick={pending_backend}:{pending_native}/{pending_gdscript}@{pending_scan} "
             "roadSamples={road_samples} waterSamples={water_samples} payloads={payloads} "
             "clusterPayloads={cluster_payloads} removedFilter={removed_filter} rayQueries={ray_queries} "
             "terrainMaskRoad={terrain_road_mask} terrainMaskWater={terrain_water_mask}".format(
@@ -727,6 +728,7 @@ def _print_results(results: list[dict]) -> None:
                 last_backend=str(result.get("last_vegetation_generation_backend", "")),
                 last_reason=str(result.get("last_vegetation_generation_reason", "")),
                 counts=json.dumps(result.get("vegetation_generation_backend_counts", {}), sort_keys=True, separators=(",", ":")),
+                noise_samples=json.dumps(result.get("vegetation_noise_sample_backend_counts", {}), sort_keys=True, separators=(",", ":")),
                 pending_backend=str(result.get("vegetation_pending_chunk_selection_backend", "")),
                 pending_native=int(result.get("vegetation_pending_chunk_selection_native_calls", 0) or 0),
                 pending_gdscript=int(result.get("vegetation_pending_chunk_selection_gdscript_calls", 0) or 0),
