@@ -568,6 +568,7 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
             "vegetation_render_cluster_payload_backend_counts", {}
         ),
         "vegetation_removed_filter_backend_counts": vegetation.get("vegetation_removed_filter_backend_counts", {}),
+        "vegetation_ray_query_backend_counts": vegetation.get("vegetation_ray_query_backend_counts", {}),
         "vegetation_pending_chunk_selection_backend": str(
             vegetation.get("last_pending_chunk_selection_backend", "")
         ),
@@ -705,7 +706,7 @@ def _print_results(results: list[dict]) -> None:
             "nativeVeg={native} worldMapBlock={blocked} roadMask={road_mask} lastGen={last_kind}/{last_backend}/{last_reason} "
             "counts={counts} pendingPick={pending_backend}:{pending_native}/{pending_gdscript}@{pending_scan} "
             "roadSamples={road_samples} waterSamples={water_samples} payloads={payloads} "
-            "clusterPayloads={cluster_payloads} removedFilter={removed_filter}".format(
+            "clusterPayloads={cluster_payloads} removedFilter={removed_filter} rayQueries={ray_queries}".format(
                 hold_mprim=float(result.get("hold_wpf60_per_million_primitives", 0.0) or 0.0),
                 hold_draw=float(result.get("hold_wpf60_per_100_draw_calls", 0.0) or 0.0),
                 hold_obj=float(result.get("hold_wpf60_per_100_objects", 0.0) or 0.0),
@@ -733,6 +734,11 @@ def _print_results(results: list[dict]) -> None:
                 ),
                 removed_filter=json.dumps(
                     result.get("vegetation_removed_filter_backend_counts", {}),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                ray_queries=json.dumps(
+                    result.get("vegetation_ray_query_backend_counts", {}),
                     sort_keys=True,
                     separators=(",", ":"),
                 ),

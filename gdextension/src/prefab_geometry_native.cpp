@@ -396,6 +396,52 @@ static bool intersect_vertical_vegetation_cylinder(const Vector3 &origin, const 
 	return true;
 }
 
+static bool intersect_ray_aabb_bounds(const Vector3 &origin, const Vector3 &ray_dir, const AABB &bounds, double max_distance, double &out_distance) {
+	if (bounds.size.x <= 0.0 || bounds.size.y <= 0.0 || bounds.size.z <= 0.0 || max_distance <= 0.0) {
+		return false;
+	}
+
+	double t_min = 0.0;
+	double t_max = max_distance;
+	const Vector3 min_pos = bounds.position;
+	const Vector3 max_pos = bounds.position + bounds.size;
+	constexpr double EPSILON = 0.0000001;
+
+	for (int axis = 0; axis < 3; ++axis) {
+		const double axis_origin = double(origin[axis]);
+		const double axis_dir = double(ray_dir[axis]);
+		const double axis_min = double(min_pos[axis]);
+		const double axis_max = double(max_pos[axis]);
+		if (std::abs(axis_dir) <= EPSILON) {
+			if (axis_origin < axis_min || axis_origin > axis_max) {
+				return false;
+			}
+			continue;
+		}
+		double t0 = (axis_min - axis_origin) / axis_dir;
+		double t1 = (axis_max - axis_origin) / axis_dir;
+		if (t0 > t1) {
+			std::swap(t0, t1);
+		}
+		t_min = std::max(t_min, t0);
+		t_max = std::min(t_max, t1);
+		if (t_min > t_max) {
+			return false;
+		}
+	}
+
+	out_distance = std::max(0.0, t_min);
+	return out_distance <= max_distance;
+}
+
+static AABB grow_aabb(const AABB &bounds, double padding) {
+	if (padding <= 0.0) {
+		return bounds;
+	}
+	const Vector3 grow_by(static_cast<float>(padding), static_cast<float>(padding), static_cast<float>(padding));
+	return AABB(bounds.position - grow_by, bounds.size + grow_by * 2.0f);
+}
+
 static bool extract_transform_from_variant(const Variant &value, Transform3D &out) {
 	switch (value.get_type()) {
 		case Variant::TRANSFORM3D:
@@ -430,6 +476,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("pick_nearest_pending_vegetation_chunk", "pending_chunks", "viewer_pos", "chunk_stride"), &PrefabGeometryNative::pick_nearest_pending_vegetation_chunk);
 	ClassDB::bind_method(D_METHOD("pick_nearby_vegetation_candidates", "chunk_data", "list_key", "item_key", "player_pos", "chunk_stride", "collider_distance", "max_count"), &PrefabGeometryNative::pick_nearby_vegetation_candidates);
 	ClassDB::bind_method(D_METHOD("find_nearest_vegetation_ray_hit", "chunk_data", "list_key", "kind", "origin", "direction", "max_distance", "radius", "height", "scale_by_entry"), &PrefabGeometryNative::find_nearest_vegetation_ray_hit);
+	ClassDB::bind_method(D_METHOD("find_nearest_tree_visual_bounds_ray_hit", "chunk_data", "list_key", "origin", "direction", "max_distance", "mesh_bounds", "base_transform", "rotation_fix", "bounds_padding"), &PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
 	ClassDB::bind_method(D_METHOD("filter_removed_vegetation_entries", "entries", "removed_lookup"), &PrefabGeometryNative::filter_removed_vegetation_entries);
@@ -986,6 +1033,78 @@ Dictionary PrefabGeometryNative::find_nearest_vegetation_ray_hit(const Dictionar
 			candidate["distance_sq_to_ray"] = axis_distance_sq;
 			best.distance = hit_distance;
 			best.distance_sq_to_ray = axis_distance_sq;
+			best.data = candidate;
+			best.valid = true;
+		}
+	}
+
+	return best.valid ? best.data : empty;
+}
+
+Dictionary PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit(const Dictionary &chunk_data, const String &list_key, const Vector3 &origin, const Vector3 &direction, double max_distance, const AABB &mesh_bounds, const Transform3D &base_transform, const Vector3 &rotation_fix, double bounds_padding) const {
+	Dictionary empty;
+	if (chunk_data.is_empty() || list_key.is_empty() || max_distance <= 0.0 || direction.length_squared() <= 0.000001) {
+		return empty;
+	}
+
+	const Vector3 ray_dir = direction.normalized();
+	RayHitCandidate best;
+
+	Array coord_keys = chunk_data.keys();
+	for (int coord_index = 0; coord_index < coord_keys.size(); ++coord_index) {
+		const Variant coord_variant = coord_keys[coord_index];
+		const Variant data_variant = chunk_data.get(coord_variant, Dictionary());
+		if (data_variant.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		Dictionary data = data_variant;
+		const Variant entries_variant = data.get(list_key, Array());
+		if (entries_variant.get_type() != Variant::ARRAY) {
+			continue;
+		}
+		Array entries = entries_variant;
+
+		for (int i = 0; i < entries.size(); ++i) {
+			if (entries[i].get_type() != Variant::DICTIONARY) {
+				continue;
+			}
+			Dictionary entry = entries[i];
+			if (!bool(entry.get("alive", false))) {
+				continue;
+			}
+
+			const int index = int(entry.get("index", -1));
+			if (index < 0) {
+				continue;
+			}
+
+			const double instance_scale = std::max(0.1, double(entry.get("scale", 1.0)));
+			const double rotation_angle = double(entry.get("rotation_angle", entry.get("rotation", 0.0)));
+			const Vector3 fallback_hit_pos = dictionary_get_vector3(entry, "hit_pos");
+			const Vector3 base_pos = dictionary_get_vector3(entry, "world_pos", fallback_hit_pos);
+			const Transform3D transform = build_vegetation_transform(base_transform, rotation_fix, rotation_angle, instance_scale, base_pos);
+			const AABB visual_bounds = grow_aabb(transform.xform(mesh_bounds), bounds_padding);
+
+			double hit_distance = 0.0;
+			if (!intersect_ray_aabb_bounds(origin, ray_dir, visual_bounds, max_distance, hit_distance)) {
+				continue;
+			}
+
+			const Vector3 hit_point = origin + ray_dir * hit_distance;
+			const double distance_sq_to_ray = double(hit_point.distance_squared_to(base_pos));
+			if (!is_better_ray_hit(hit_distance, distance_sq_to_ray, best)) {
+				continue;
+			}
+
+			Dictionary candidate;
+			candidate["kind"] = "tree";
+			candidate["coord"] = coord_variant;
+			candidate["index"] = index;
+			candidate["position"] = hit_point;
+			candidate["distance"] = hit_distance;
+			candidate["distance_sq_to_ray"] = distance_sq_to_ray;
+			best.distance = hit_distance;
+			best.distance_sq_to_ray = distance_sq_to_ray;
 			best.data = candidate;
 			best.valid = true;
 		}

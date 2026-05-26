@@ -3701,6 +3701,22 @@ func _find_nearest_tree_visual_bounds_along_ray(
 		direction: Vector3,
 		max_distance: float
 ) -> Dictionary:
+	var native := _get_native_helper()
+	if native and native.has_method("find_nearest_tree_visual_bounds_ray_hit"):
+		var native_hit: Dictionary = native.find_nearest_tree_visual_bounds_ray_hit(
+			chunk_data,
+			list_key,
+			origin,
+			direction,
+			max_distance,
+			_get_tree_mesh_interaction_aabb(),
+			tree_base_transform,
+			tree_rotation_fix,
+			tree_visual_targeting_aabb_padding
+		)
+		_record_vegetation_ray_query_backend("tree", "native_visual_bounds", 0 if native_hit.is_empty() else 1)
+		return native_hit
+
 	var ray_dir := direction.normalized()
 	var best_hit: Dictionary = {}
 
@@ -3747,15 +3763,17 @@ func _find_nearest_tree_visual_bounds_along_ray(
 	_record_vegetation_ray_query_backend("tree", "gdscript_visual_bounds", 0 if best_hit.is_empty() else 1)
 	return best_hit
 
-func _get_tree_visual_interaction_aabb(scale: float = 1.0, world_transform: Transform3D = Transform3D.IDENTITY) -> AABB:
-	if tree_mesh == null:
-		var fallback_radius := maxf(0.1, collision_radius * scale)
-		var fallback_height := maxf(0.1, collision_height * scale)
-		return AABB(
-			Vector3(-fallback_radius, 0.0, -fallback_radius),
-			Vector3(fallback_radius * 2.0, fallback_height, fallback_radius * 2.0)
-		).grow(tree_visual_targeting_aabb_padding)
+func _get_tree_mesh_interaction_aabb() -> AABB:
+	if tree_mesh != null:
+		return tree_mesh.get_aabb()
+	var fallback_radius := maxf(0.1, collision_radius)
+	var fallback_height := maxf(0.1, collision_height)
+	return AABB(
+		Vector3(-fallback_radius, 0.0, -fallback_radius),
+		Vector3(fallback_radius * 2.0, fallback_height, fallback_radius * 2.0)
+	)
 
+func _get_tree_visual_interaction_aabb(scale: float = 1.0, world_transform: Transform3D = Transform3D.IDENTITY) -> AABB:
 	var transform := world_transform
 	if transform == Transform3D.IDENTITY:
 		transform = _build_vegetation_transform(
@@ -3765,7 +3783,7 @@ func _get_tree_visual_interaction_aabb(scale: float = 1.0, world_transform: Tran
 			maxf(0.1, scale),
 			Vector3.ZERO
 		)
-	return (transform * tree_mesh.get_aabb()).grow(tree_visual_targeting_aabb_padding)
+	return (transform * _get_tree_mesh_interaction_aabb()).grow(tree_visual_targeting_aabb_padding)
 
 func _intersect_ray_aabb(origin: Vector3, ray_dir: Vector3, bounds: AABB, max_distance: float) -> Dictionary:
 	if bounds.size.x <= 0.0 or bounds.size.y <= 0.0 or bounds.size.z <= 0.0 or max_distance <= 0.0:

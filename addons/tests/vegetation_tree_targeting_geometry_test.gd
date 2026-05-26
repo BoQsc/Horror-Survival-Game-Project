@@ -70,6 +70,10 @@ func _run() -> int:
 	var hit := manager.find_nearest_vegetation_along_ray(origin, direction, 12.0, true, false, false)
 	if not _expect(hit.get("kind", "") == "tree", "data ray should hit the real visual tree footprint, not only a tiny center cylinder"):
 		return 1
+	var telemetry := manager.get_telemetry_snapshot()
+	var ray_counts: Dictionary = telemetry.get("vegetation_ray_query_backend_counts", {})
+	if not _expect(int(ray_counts.get("tree_native_visual_bounds_calls", 0)) >= 1, "tree visual bounds targeting should use the native backend when available"):
+		return 1
 
 	var player := FakePlayer.new()
 	var combat: CombatSystemFeature = CombatSystemScript.new()
