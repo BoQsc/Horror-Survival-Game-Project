@@ -21,6 +21,7 @@
 #include <godot_cpp/variant/rid.hpp>
 #include <cstdlib>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 using namespace godot;
@@ -95,6 +96,26 @@ struct TerrainCpuVertexKey {
 
 struct TerrainCpuVertexKeyHash {
     size_t operator()(const TerrainCpuVertexKey &key) const noexcept {
+        size_t seed = 0;
+        for (uint32_t word : key.words) {
+            seed ^= std::hash<uint32_t>{}(word) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        }
+        return seed;
+    }
+};
+
+template <size_t N>
+struct TerrainWordKey {
+    std::array<uint32_t, N> words{};
+
+    bool operator==(const TerrainWordKey<N> &other) const noexcept {
+        return words == other.words;
+    }
+};
+
+template <size_t N>
+struct TerrainWordKeyHash {
+    size_t operator()(const TerrainWordKey<N> &key) const noexcept {
         size_t seed = 0;
         for (uint32_t word : key.words) {
             seed ^= std::hash<uint32_t>{}(word) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
@@ -568,6 +589,10 @@ static Dictionary build_density_marching_cubes_mesh_data_internal(const PackedBy
 
     std::unordered_map<TerrainCpuVertexKey, int32_t, TerrainCpuVertexKeyHash> unique_lookup;
     unique_lookup.reserve(vertices.size());
+    std::unordered_set<TerrainWordKey<3>, TerrainWordKeyHash<3>> position_lookup;
+    std::unordered_set<TerrainWordKey<7>, TerrainWordKeyHash<7>> position_material_lookup;
+    position_lookup.reserve(vertices.size());
+    position_material_lookup.reserve(vertices.size());
     for (size_t i = 0; i < vertices.size(); ++i) {
         const Vector3 &vertex = vertices[i];
         const Vector3 &normal = normals[i];
@@ -584,6 +609,22 @@ static Dictionary build_density_marching_cubes_mesh_data_internal(const PackedBy
         key.words[7] = float_to_u32(color.g);
         key.words[8] = float_to_u32(color.b);
         key.words[9] = float_to_u32(color.a);
+
+        TerrainWordKey<3> position_key;
+        position_key.words[0] = key.words[0];
+        position_key.words[1] = key.words[1];
+        position_key.words[2] = key.words[2];
+        position_lookup.insert(position_key);
+
+        TerrainWordKey<7> position_material_key;
+        position_material_key.words[0] = key.words[0];
+        position_material_key.words[1] = key.words[1];
+        position_material_key.words[2] = key.words[2];
+        position_material_key.words[3] = key.words[6];
+        position_material_key.words[4] = key.words[7];
+        position_material_key.words[5] = key.words[8];
+        position_material_key.words[6] = key.words[9];
+        position_material_lookup.insert(position_material_key);
 
         int32_t index = 0;
         const auto found = unique_lookup.find(key);
@@ -630,6 +671,8 @@ static Dictionary build_density_marching_cubes_mesh_data_internal(const PackedBy
     result["source_vertex_count"] = static_cast<int>(vertices.size());
     result["source_index_count"] = static_cast<int>(indices.size());
     result["unique_vertex_count"] = static_cast<int>(unique_vertices.size());
+    result["position_unique_vertex_count"] = static_cast<int>(position_lookup.size());
+    result["position_material_unique_vertex_count"] = static_cast<int>(position_material_lookup.size());
     if (include_height_map) {
         result["height_map"] = build_top_down_height_map(packed_faces, height_map_size);
     }
@@ -705,6 +748,10 @@ static Dictionary build_indexed_packed_terrain_mesh(const PackedByteArray &data,
 
     std::unordered_map<TerrainPackedVertexKey, int32_t, TerrainPackedVertexKeyHash> unique_lookup;
     unique_lookup.reserve(static_cast<size_t>(vertex_count));
+    std::unordered_set<TerrainWordKey<3>, TerrainWordKeyHash<3>> position_lookup;
+    std::unordered_set<TerrainWordKey<4>, TerrainWordKeyHash<4>> position_material_lookup;
+    position_lookup.reserve(static_cast<size_t>(vertex_count));
+    position_material_lookup.reserve(static_cast<size_t>(vertex_count));
 
     int32_t unique_count = 0;
     for (int i = 0; i < vertex_count; ++i) {
@@ -716,6 +763,19 @@ static Dictionary build_indexed_packed_terrain_mesh(const PackedByteArray &data,
         key.words[3] = read_u32_le(vertex_src + 12);
         key.words[4] = read_u32_le(vertex_src + 16);
         key.words[5] = read_u32_le(vertex_src + 20);
+
+        TerrainWordKey<3> position_key;
+        position_key.words[0] = key.words[0];
+        position_key.words[1] = key.words[1];
+        position_key.words[2] = key.words[2];
+        position_lookup.insert(position_key);
+
+        TerrainWordKey<4> position_material_key;
+        position_material_key.words[0] = key.words[0];
+        position_material_key.words[1] = key.words[1];
+        position_material_key.words[2] = key.words[2];
+        position_material_key.words[3] = key.words[5];
+        position_material_lookup.insert(position_material_key);
 
         int32_t index = 0;
         const auto found = unique_lookup.find(key);
@@ -777,6 +837,8 @@ static Dictionary build_indexed_packed_terrain_mesh(const PackedByteArray &data,
     result["shape"] = shape;
     result["unique_vertex_count"] = unique_count;
     result["source_vertex_count"] = vertex_count;
+    result["position_unique_vertex_count"] = static_cast<int>(position_lookup.size());
+    result["position_material_unique_vertex_count"] = static_cast<int>(position_material_lookup.size());
     if (include_height_map) {
         result["height_map"] = build_top_down_height_map(faces, height_map_size);
     }
@@ -823,6 +885,10 @@ static Dictionary build_shader_indexed_packed_terrain_mesh(const PackedByteArray
 
     std::unordered_map<TerrainPackedVertexKey, int32_t, TerrainPackedVertexKeyHash> unique_lookup;
     unique_lookup.reserve(static_cast<size_t>(vertex_count));
+    std::unordered_set<TerrainWordKey<3>, TerrainWordKeyHash<3>> position_lookup;
+    std::unordered_set<TerrainWordKey<4>, TerrainWordKeyHash<4>> position_material_lookup;
+    position_lookup.reserve(static_cast<size_t>(vertex_count));
+    position_material_lookup.reserve(static_cast<size_t>(vertex_count));
     std::vector<int32_t> remapped_vertices(static_cast<size_t>(vertex_count), -1);
     int32_t unique_count = 0;
 
@@ -835,6 +901,19 @@ static Dictionary build_shader_indexed_packed_terrain_mesh(const PackedByteArray
         key.words[3] = read_u32_le(src + 12);
         key.words[4] = read_u32_le(src + 16);
         key.words[5] = read_u32_le(src + 20);
+
+        TerrainWordKey<3> position_key;
+        position_key.words[0] = key.words[0];
+        position_key.words[1] = key.words[1];
+        position_key.words[2] = key.words[2];
+        position_lookup.insert(position_key);
+
+        TerrainWordKey<4> position_material_key;
+        position_material_key.words[0] = key.words[0];
+        position_material_key.words[1] = key.words[1];
+        position_material_key.words[2] = key.words[2];
+        position_material_key.words[3] = key.words[5];
+        position_material_lookup.insert(position_material_key);
 
         int32_t index = 0;
         const auto found = unique_lookup.find(key);
@@ -908,6 +987,8 @@ static Dictionary build_shader_indexed_packed_terrain_mesh(const PackedByteArray
     result["shape"] = shape;
     result["unique_vertex_count"] = unique_count;
     result["source_vertex_count"] = vertex_count;
+    result["position_unique_vertex_count"] = static_cast<int>(position_lookup.size());
+    result["position_material_unique_vertex_count"] = static_cast<int>(position_material_lookup.size());
     result["index_count"] = index_count;
     if (include_height_map) {
         result["height_map"] = build_top_down_height_map(faces, height_map_size);

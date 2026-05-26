@@ -192,6 +192,8 @@ class ChunkData:
 	var terrain_source_vertex_count: int = 0
 	var terrain_source_index_count: int = 0
 	var terrain_unique_vertex_count: int = 0
+	var terrain_position_unique_vertex_count: int = 0
+	var terrain_position_material_unique_vertex_count: int = 0
 	var water_visual_mesh: ArrayMesh = null
 	var water_visual_batched: bool = false
 	# CPU mirrors for physics detection
@@ -802,10 +804,14 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_source_vertex_count": int(terrain_visual_stats.get("source_vertex_count", 0)),
 		"terrain_visual_source_index_count": int(terrain_visual_stats.get("source_index_count", 0)),
 		"terrain_visual_unique_vertex_count": int(terrain_visual_stats.get("unique_vertex_count", 0)),
+		"terrain_visual_position_unique_vertex_count": int(terrain_visual_stats.get("position_unique_vertex_count", 0)),
+		"terrain_visual_position_material_unique_vertex_count": int(terrain_visual_stats.get("position_material_unique_vertex_count", 0)),
 		"terrain_visual_source_primitive_count": int(terrain_visual_stats.get("source_primitive_count", 0)),
 		"terrain_visual_avg_chunk_primitive_count": float(terrain_visual_stats.get("avg_chunk_primitive_count", 0.0)),
 		"terrain_visual_avg_source_primitive_count": float(terrain_visual_stats.get("avg_source_primitive_count", 0.0)),
 		"terrain_visual_unique_to_source_vertex_ratio": float(terrain_visual_stats.get("unique_to_source_vertex_ratio", 0.0)),
+		"terrain_visual_position_unique_to_source_vertex_ratio": float(terrain_visual_stats.get("position_unique_to_source_vertex_ratio", 0.0)),
+		"terrain_visual_position_material_unique_to_source_vertex_ratio": float(terrain_visual_stats.get("position_material_unique_to_source_vertex_ratio", 0.0)),
 		"terrain_visual_max_source_chunk_primitive_count": int(terrain_visual_stats.get("max_source_chunk_primitive_count", 0)),
 		"terrain_visual_max_source_chunk_coord": str(terrain_visual_stats.get("max_source_chunk_coord", "")),
 		"terrain_visual_chunk_primitive_buckets": terrain_visual_stats.get("chunk_primitive_buckets", {}),
@@ -1800,6 +1806,18 @@ func _get_mesh_result_unique_vertex_count(mesh_result: Dictionary) -> int:
 		return unique_vertex_count
 	return _get_mesh_result_source_vertex_count(mesh_result)
 
+func _get_mesh_result_position_unique_vertex_count(mesh_result: Dictionary) -> int:
+	var position_unique_vertex_count := int(mesh_result.get("position_unique_vertex_count", 0))
+	if position_unique_vertex_count > 0:
+		return position_unique_vertex_count
+	return _get_mesh_result_unique_vertex_count(mesh_result)
+
+func _get_mesh_result_position_material_unique_vertex_count(mesh_result: Dictionary) -> int:
+	var position_material_unique_vertex_count := int(mesh_result.get("position_material_unique_vertex_count", 0))
+	if position_material_unique_vertex_count > 0:
+		return position_material_unique_vertex_count
+	return _get_mesh_result_unique_vertex_count(mesh_result)
+
 func _terrain_primitive_bucket_key(primitive_count: int) -> String:
 	if primitive_count <= 0:
 		return "0"
@@ -1829,6 +1847,8 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 	var source_vertex_count := 0
 	var source_index_count := 0
 	var unique_vertex_count := 0
+	var position_unique_vertex_count := 0
+	var position_material_unique_vertex_count := 0
 	var source_primitive_count := 0
 	var max_source_chunk_primitive_count := 0
 	var max_source_chunk_coord := ""
@@ -1853,16 +1873,24 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 		var chunk_source_vertex_count := int(data.terrain_source_vertex_count)
 		var chunk_source_index_count := int(data.terrain_source_index_count)
 		var chunk_unique_vertex_count := int(data.terrain_unique_vertex_count)
+		var chunk_position_unique_vertex_count := int(data.terrain_position_unique_vertex_count)
+		var chunk_position_material_unique_vertex_count := int(data.terrain_position_material_unique_vertex_count)
 		if chunk_source_vertex_count <= 0:
 			chunk_source_vertex_count = _get_mesh_surface_vertex_count(terrain_mesh)
 		if chunk_source_index_count <= 0:
 			chunk_source_index_count = _get_mesh_surface_index_count(terrain_mesh)
 		if chunk_unique_vertex_count <= 0:
 			chunk_unique_vertex_count = _get_mesh_surface_vertex_count(terrain_mesh)
+		if chunk_position_unique_vertex_count <= 0:
+			chunk_position_unique_vertex_count = chunk_unique_vertex_count
+		if chunk_position_material_unique_vertex_count <= 0:
+			chunk_position_material_unique_vertex_count = chunk_unique_vertex_count
 		var chunk_source_primitives := int(chunk_source_index_count / 3) if chunk_source_index_count > 0 else int(chunk_source_vertex_count / 3)
 		source_vertex_count += chunk_source_vertex_count
 		source_index_count += chunk_source_index_count
 		unique_vertex_count += chunk_unique_vertex_count
+		position_unique_vertex_count += chunk_position_unique_vertex_count
+		position_material_unique_vertex_count += chunk_position_material_unique_vertex_count
 		source_primitive_count += chunk_source_primitives
 		_increment_terrain_primitive_bucket(source_primitive_buckets, chunk_source_primitives)
 		if chunk_source_primitives > max_source_chunk_primitive_count:
@@ -1917,10 +1945,14 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 		"source_vertex_count": source_vertex_count,
 		"source_index_count": source_index_count,
 		"unique_vertex_count": unique_vertex_count,
+		"position_unique_vertex_count": position_unique_vertex_count,
+		"position_material_unique_vertex_count": position_material_unique_vertex_count,
 		"source_primitive_count": source_primitive_count,
 		"avg_chunk_primitive_count": float(chunk_primitive_count) / float(maxi(chunk_mesh_count, 1)),
 		"avg_source_primitive_count": float(source_primitive_count) / float(maxi(chunk_mesh_count, 1)),
 		"unique_to_source_vertex_ratio": float(unique_vertex_count) / float(maxi(source_vertex_count, 1)),
+		"position_unique_to_source_vertex_ratio": float(position_unique_vertex_count) / float(maxi(source_vertex_count, 1)),
+		"position_material_unique_to_source_vertex_ratio": float(position_material_unique_vertex_count) / float(maxi(source_vertex_count, 1)),
 		"max_source_chunk_primitive_count": max_source_chunk_primitive_count,
 		"max_source_chunk_coord": max_source_chunk_coord,
 		"chunk_primitive_buckets": chunk_primitive_buckets,
@@ -8341,6 +8373,8 @@ func _finalize_chunk_creation(item: Dictionary):
 		data.terrain_source_vertex_count = _get_mesh_result_source_vertex_count(terrain_mesh_result)
 		data.terrain_source_index_count = _get_mesh_result_source_index_count(terrain_mesh_result)
 		data.terrain_unique_vertex_count = _get_mesh_result_unique_vertex_count(terrain_mesh_result)
+		data.terrain_position_unique_vertex_count = _get_mesh_result_position_unique_vertex_count(terrain_mesh_result)
+		data.terrain_position_material_unique_vertex_count = _get_mesh_result_position_material_unique_vertex_count(terrain_mesh_result)
 		_set_generated_mod_version(data, int(item.get("stored_mod_version", 0)))
 		_register_terrain_visual_batch_member(coord)
 
@@ -8544,6 +8578,8 @@ func _apply_chunk_update(coord: Vector3i, result: Dictionary, layer: int, cpu_de
 		data.terrain_source_vertex_count = _get_mesh_result_source_vertex_count(result)
 		data.terrain_source_index_count = _get_mesh_result_source_index_count(result)
 		data.terrain_unique_vertex_count = _get_mesh_result_unique_vertex_count(result)
+		data.terrain_position_unique_vertex_count = _get_mesh_result_position_unique_vertex_count(result)
+		data.terrain_position_material_unique_vertex_count = _get_mesh_result_position_material_unique_vertex_count(result)
 		data.collision_shape_terrain = result_node.collision_shape if not result_node.is_empty() else null
 		data.chunk_material = chunk_material
 		if not cpu_dens.is_empty():

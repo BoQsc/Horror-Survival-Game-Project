@@ -533,10 +533,22 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "terrain_visual_source_vertices": int(terrain.get("terrain_visual_source_vertex_count", 0) or 0),
         "terrain_visual_source_indices": int(terrain.get("terrain_visual_source_index_count", 0) or 0),
         "terrain_visual_unique_vertices": int(terrain.get("terrain_visual_unique_vertex_count", 0) or 0),
+        "terrain_visual_position_unique_vertices": int(
+            terrain.get("terrain_visual_position_unique_vertex_count", 0) or 0
+        ),
+        "terrain_visual_position_material_unique_vertices": int(
+            terrain.get("terrain_visual_position_material_unique_vertex_count", 0) or 0
+        ),
         "terrain_visual_source_primitives": int(terrain.get("terrain_visual_source_primitive_count", 0) or 0),
         "terrain_visual_avg_chunk_primitives": float(terrain.get("terrain_visual_avg_chunk_primitive_count", 0.0) or 0.0),
         "terrain_visual_avg_source_primitives": float(terrain.get("terrain_visual_avg_source_primitive_count", 0.0) or 0.0),
         "terrain_visual_unique_to_source_ratio": float(terrain.get("terrain_visual_unique_to_source_vertex_ratio", 0.0) or 0.0),
+        "terrain_visual_position_unique_to_source_ratio": float(
+            terrain.get("terrain_visual_position_unique_to_source_vertex_ratio", 0.0) or 0.0
+        ),
+        "terrain_visual_position_material_unique_to_source_ratio": float(
+            terrain.get("terrain_visual_position_material_unique_to_source_vertex_ratio", 0.0) or 0.0
+        ),
         "terrain_visual_max_source_chunk_primitives": int(terrain.get("terrain_visual_max_source_chunk_primitive_count", 0) or 0),
         "terrain_visual_chunk_primitive_buckets": terrain.get("terrain_visual_chunk_primitive_buckets", {}),
         "terrain_visual_source_primitive_buckets": terrain.get("terrain_visual_source_primitive_buckets", {}),
@@ -1020,7 +1032,8 @@ def _print_results(results: list[dict]) -> None:
         print(
             "                     terrainSource srcPrims={source_prims:9d} avgSrc={avg_source:7.1f} "
             "avgMesh={avg_chunk:7.1f} maxSrc={max_source:6d} srcVerts={source_vertices:9d} "
-            "uniqVerts={unique_vertices:9d} uniq/src={unique_ratio:5.2f} "
+            "uniqVerts={unique_vertices:9d} posUniq={position_unique_vertices:9d} posMatUniq={position_material_unique_vertices:9d} "
+            "uniq/src={unique_ratio:5.2f} pos/src={position_unique_ratio:5.2f} posMat/src={position_material_unique_ratio:5.2f} "
             "active={active}/{native_active} unloadHyst={unload_hyst} boundsUnload={bounds_unload} "
             "meshBuckets={mesh_buckets} srcBuckets={source_buckets}".format(
                 source_prims=int(result.get("terrain_visual_source_primitives", 0) or 0),
@@ -1029,7 +1042,11 @@ def _print_results(results: list[dict]) -> None:
                 max_source=int(result.get("terrain_visual_max_source_chunk_primitives", 0) or 0),
                 source_vertices=int(result.get("terrain_visual_source_vertices", 0) or 0),
                 unique_vertices=int(result.get("terrain_visual_unique_vertices", 0) or 0),
+                position_unique_vertices=int(result.get("terrain_visual_position_unique_vertices", 0) or 0),
+                position_material_unique_vertices=int(result.get("terrain_visual_position_material_unique_vertices", 0) or 0),
                 unique_ratio=float(result.get("terrain_visual_unique_to_source_ratio", 0.0) or 0.0),
+                position_unique_ratio=float(result.get("terrain_visual_position_unique_to_source_ratio", 0.0) or 0.0),
+                position_material_unique_ratio=float(result.get("terrain_visual_position_material_unique_to_source_ratio", 0.0) or 0.0),
                 active=int(result.get("terrain_active_chunks", 0) or 0),
                 native_active=int(result.get("terrain_native_grid_active_chunks", 0) or 0),
                 unload_hyst=int(result.get("terrain_unload_hysteresis_chunks", 0) or 0),
