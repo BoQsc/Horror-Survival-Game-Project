@@ -5405,6 +5405,20 @@ func get_world_map_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, 
 	var road_height := _world_map_road_image.get_height()
 	if road_width <= 0 or road_height <= 0:
 		return samples
+	if terrain_grid and is_instance_valid(terrain_grid) and terrain_grid.has_method("get_world_map_road_block_samples"):
+		var native_samples: PackedFloat32Array = terrain_grid.get_world_map_road_block_samples(
+			_world_map_road_data,
+			road_width,
+			road_height,
+			chunk_origin_x,
+			chunk_origin_z,
+			chunk_stride,
+			step,
+			world_map_half,
+			world_map_size
+		)
+		if not native_samples.is_empty():
+			return native_samples
 
 	for x in range(0, chunk_stride, step):
 		var global_x := float(chunk_origin_x + x)
@@ -5444,6 +5458,21 @@ func get_world_map_water_block_samples(chunk_origin_x: int, chunk_origin_z: int,
 	var water_height := _world_map_water_image.get_height()
 	if water_width <= 0 or water_height <= 0:
 		return samples
+	if terrain_grid and is_instance_valid(terrain_grid) and terrain_grid.has_method("get_world_map_water_block_samples"):
+		var native_samples: PackedFloat32Array = terrain_grid.get_world_map_water_block_samples(
+			_world_map_water_data,
+			water_width,
+			water_height,
+			chunk_origin_x,
+			chunk_origin_z,
+			chunk_stride,
+			step,
+			terrain_heights,
+			world_map_half,
+			water_level
+		)
+		if not native_samples.is_empty():
+			return native_samples
 
 	var sample_index := 0
 	for x in range(0, chunk_stride, step):

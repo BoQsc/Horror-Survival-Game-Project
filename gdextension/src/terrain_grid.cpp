@@ -13,6 +13,29 @@ struct TerrainCandidate {
     int dist_sq = 0;
 };
 
+static bool read_mask_byte_pixel(const PackedByteArray &data, int pixel_x, int pixel_y, int width, int height) {
+    if (data.is_empty() || width <= 0 || height <= 0) {
+        return false;
+    }
+    const int64_t pixel_count = int64_t(width) * int64_t(height);
+    if (pixel_count <= 0) {
+        return false;
+    }
+    const int bytes_per_pixel = std::max(int(data.size() / pixel_count), 1);
+    const int64_t byte_index = (int64_t(pixel_y) * int64_t(width) + int64_t(pixel_x)) * int64_t(bytes_per_pixel);
+    if (byte_index < 0 || byte_index >= data.size()) {
+        return false;
+    }
+    return int(data[int(byte_index)]) >= 128;
+}
+
+static int sample_axis_count(int chunk_stride, int step) {
+    if (chunk_stride <= 0 || step <= 0) {
+        return 0;
+    }
+    return (chunk_stride + step - 1) / step;
+}
+
 } // namespace
 
 void TerrainGrid::_bind_methods() {
@@ -33,6 +56,8 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("update", "viewer_pos", "render_distance", "is_above_ground", "chunk_stride", "load_chunks_per_frame_limit", "unload_chunks_per_frame_limit"), &TerrainGrid::update);
     ClassDB::bind_method(D_METHOD("get_collision_proximity_update", "center_chunk", "collision_distance", "collision_prewarm_distance", "min_y_layer", "max_y_layer", "shared_collision_body_enabled"), &TerrainGrid::get_collision_proximity_update);
     ClassDB::bind_method(D_METHOD("get_chunk_height_map", "density", "size", "step"), &TerrainGrid::get_chunk_height_map);
+    ClassDB::bind_method(D_METHOD("get_world_map_road_block_samples", "road_data", "road_width", "road_height", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "world_map_half", "world_map_size"), &TerrainGrid::get_world_map_road_block_samples);
+    ClassDB::bind_method(D_METHOD("get_world_map_water_block_samples", "water_data", "water_width", "water_height", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "terrain_heights", "world_map_half", "water_level"), &TerrainGrid::get_world_map_water_block_samples);
 }
 
 TerrainGrid::TerrainGrid() {}
@@ -443,5 +468,88 @@ PackedFloat32Array TerrainGrid::get_chunk_height_map(const PackedFloat32Array &d
     return heights;
 }
 
+PackedFloat32Array TerrainGrid::get_world_map_road_block_samples(const PackedByteArray &road_data, int road_width, int road_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, double world_map_half, double world_map_size) {
+    PackedFloat32Array samples;
+    if (road_data.is_empty() || road_width <= 0 || road_height <= 0 || chunk_stride <= 0 || step <= 0 || world_map_size <= 0.0) {
+        return samples;
+    }
+
+    const int axis_count = sample_axis_count(chunk_stride, step);
+    const int sample_count = axis_count * axis_count;
+    if (sample_count <= 0) {
+        return samples;
+    }
+
+    samples.resize(sample_count);
+    float *write_ptr = samples.ptrw();
+    int write_index = 0;
+
+    for (int x = 0; x < chunk_stride; x += step) {
+        const double global_x = double(chunk_origin_x + x);
+        const double u = (global_x + world_map_half) / world_map_size;
+        for (int z = 0; z < chunk_stride; z += step) {
+            const double global_z = double(chunk_origin_z + z);
+            const double v = (global_z + world_map_half) / world_map_size;
+            if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
+                write_ptr[write_index++] = 0.0f;
+                continue;
+            }
+
+            const int px = std::clamp(int(Math::floor(u * double(road_width))), 0, road_width - 1);
+            const int py = std::clamp(int(Math::floor(v * double(road_height))), 0, road_height - 1);
+            write_ptr[write_index++] = read_mask_byte_pixel(road_data, px, py, road_width, road_height) ? 1.0f : 0.0f;
+        }
+    }
+
+    if (write_index != sample_count) {
+        samples.resize(write_index);
+    }
+    return samples;
+}
+
+PackedFloat32Array TerrainGrid::get_world_map_water_block_samples(const PackedByteArray &water_data, int water_width, int water_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, const PackedFloat32Array &terrain_heights, double world_map_half, double water_level) {
+    PackedFloat32Array samples;
+    if (water_data.is_empty() || water_width <= 0 || water_height <= 0 || chunk_stride <= 0 || step <= 0 || terrain_heights.is_empty()) {
+        return samples;
+    }
+
+    const int axis_count = sample_axis_count(chunk_stride, step);
+    const int sample_count = axis_count * axis_count;
+    if (sample_count <= 0) {
+        return samples;
+    }
+
+    samples.resize(sample_count);
+    float *write_ptr = samples.ptrw();
+    const float *height_ptr = terrain_heights.ptr();
+    int write_index = 0;
+    int sample_index = 0;
+
+    for (int x = 0; x < chunk_stride; x += step) {
+        const double global_x = double(chunk_origin_x + x);
+        for (int z = 0; z < chunk_stride; z += step) {
+            if (sample_index >= terrain_heights.size()) {
+                samples.resize(write_index);
+                return samples;
+            }
+            const double terrain_y = double(height_ptr[sample_index++]);
+            if (terrain_y < -100.0) {
+                write_ptr[write_index++] = 0.0f;
+                continue;
+            }
+
+            const double global_z = double(chunk_origin_z + z);
+            const int px = std::clamp(int(global_x + world_map_half), 0, water_width - 1);
+            const int py = std::clamp(int(global_z + world_map_half), 0, water_height - 1);
+            const bool water_blocks = read_mask_byte_pixel(water_data, px, py, water_width, water_height) && (terrain_y + 0.5 < water_level);
+            write_ptr[write_index++] = water_blocks ? 1.0f : 0.0f;
+        }
+    }
+
+    if (write_index != sample_count) {
+        samples.resize(write_index);
+    }
+    return samples;
+}
 
 } // namespace godot

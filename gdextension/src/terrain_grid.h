@@ -4,6 +4,8 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/node3d.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector3i.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -76,6 +78,8 @@ public:
     // Returns PackedFloat32Array of heights. If not found, returns -1000.0.
     // Order: x + z * (size / step)
     PackedFloat32Array get_chunk_height_map(const PackedFloat32Array &density, int size, int step);
+    PackedFloat32Array get_world_map_road_block_samples(const PackedByteArray &road_data, int road_width, int road_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, double world_map_half, double world_map_size);
+    PackedFloat32Array get_world_map_water_block_samples(const PackedByteArray &water_data, int water_width, int water_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, const PackedFloat32Array &terrain_heights, double world_map_half, double water_level);
 };
 
 }
