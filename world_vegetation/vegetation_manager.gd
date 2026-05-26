@@ -60,6 +60,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(0, 8, 1) var vegetation_chunk_start_delay_frames: int = 0
 @export_range(1, 128, 1) var vegetation_max_stages_per_frame: int = 8
 @export_range(0, 120, 1) var vegetation_global_render_stream_flush_interval_frames: int = 12
+@export var vegetation_defer_initial_global_render_flush: bool = true
 @export_range(0.05, 1.0, 0.05) var vegetation_collider_update_interval: float = 0.20
 @export var prioritize_nearby_vegetation_chunks: bool = true
 
@@ -197,6 +198,8 @@ var _last_global_render_sync_instance_count: int = 0
 var _last_global_render_upload_float_count: int = 0
 var _last_global_render_upload_bytes: int = 0
 var _max_global_render_upload_bytes: int = 0
+var _initial_global_render_flush_deferred_count: int = 0
+var _initial_chunk_stream_defer_active: bool = false
 var _last_effective_vegetation_render_cluster_size: int = -1
 var _last_effective_vegetation_grass_render_cluster_size: int = -1
 var _vegetation_render_resource_prewarm_node: Node = null
@@ -334,6 +337,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_chunk_start_delay_frames": vegetation_chunk_start_delay_frames,
 		"vegetation_max_stages_per_frame": vegetation_max_stages_per_frame,
 		"vegetation_global_render_stream_flush_interval_frames": vegetation_global_render_stream_flush_interval_frames,
+		"vegetation_defer_initial_global_render_flush": vegetation_defer_initial_global_render_flush,
+		"initial_global_render_flush_deferred_count": _initial_global_render_flush_deferred_count,
+		"initial_chunk_stream_defer_active": _initial_chunk_stream_defer_active,
 		"prioritize_nearby_vegetation_chunks": prioritize_nearby_vegetation_chunks,
 		"vegetation_colliders_enabled": vegetation_colliders_enabled,
 		"tree_colliders_enabled": tree_colliders_enabled,
@@ -623,6 +629,7 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	vegetation_global_render_ignore_occlusion_culling = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING", vegetation_global_render_ignore_occlusion_culling)
 	vegetation_render_lod_bias = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_LOD_BIAS", vegetation_render_lod_bias, 0.25, 100.0)
 	vegetation_opaque_material_optimization_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION", vegetation_opaque_material_optimization_enabled)
+	vegetation_defer_initial_global_render_flush = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_DEFER_INITIAL_GLOBAL_RENDER_FLUSH", vegetation_defer_initial_global_render_flush)
 	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
 		world_map_vegetation_render_cluster_size = vegetation_render_cluster_size
 	if grass_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
@@ -1663,14 +1670,26 @@ func _should_flush_global_vegetation_render_batch() -> bool:
 		_global_render_stream_flush_counter = 0
 		return false
 	if pending_chunks.is_empty():
+		_initial_chunk_stream_defer_active = false
 		_global_render_stream_flush_counter = 0
 		return true
+	if vegetation_defer_initial_global_render_flush and _is_initial_global_render_flush_defer_active():
+		_initial_global_render_flush_deferred_count += 1
+		_global_render_stream_flush_counter = 0
+		return false
 	if vegetation_global_render_stream_flush_interval_frames <= 0:
 		return false
 	_global_render_stream_flush_counter += 1
 	if _global_render_stream_flush_counter >= vegetation_global_render_stream_flush_interval_frames:
 		_global_render_stream_flush_counter = 0
 		return true
+	return false
+
+func _is_initial_global_render_flush_defer_active() -> bool:
+	if is_initial_load_batch or _initial_chunk_stream_defer_active:
+		return true
+	if is_instance_valid(terrain_manager) and "initial_load_phase" in terrain_manager:
+		return bool(terrain_manager.initial_load_phase)
 	return false
 
 
@@ -2179,6 +2198,9 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	# Underground chunks (Y=-1, -2, etc.) and sky chunks (Y=1+) don't need vegetation
 	if coord.y != 0:
 		return
+
+	if is_instance_valid(terrain_manager) and "initial_load_phase" in terrain_manager and bool(terrain_manager.initial_load_phase):
+		_initial_chunk_stream_defer_active = true
 
 	# Skip vegetation for modified chunks (player-built structures)
 	# Check all Y layers at this X,Z for modifications
@@ -4943,6 +4965,8 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_last_vegetation_generation_ms = 0.0
 	_last_vegetation_generation_instance_count = 0
 	_max_vegetation_generation_ms = 0.0
+	_initial_global_render_flush_deferred_count = 0
+	_initial_chunk_stream_defer_active = false
 	_sync_process_loop()
 
 

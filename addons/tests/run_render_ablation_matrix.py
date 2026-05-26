@@ -557,6 +557,12 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "building_visible_surfaces": int(building.get("visible_world_map_baked_building_visual_surfaces", 0) or 0),
         "vegetation_global_batches": int(vegetation.get("global_render_batch_count", 0) or 0),
         "vegetation_profile_active": bool(vegetation.get("world_map_vegetation_render_profile_active", False)),
+        "vegetation_defer_initial_global_render_flush": bool(
+            vegetation.get("vegetation_defer_initial_global_render_flush", False)
+        ),
+        "vegetation_initial_global_render_flush_deferred_count": int(
+            vegetation.get("initial_global_render_flush_deferred_count", 0) or 0
+        ),
         "vegetation_bounds_padding": float(vegetation.get("vegetation_global_render_bounds_padding", 0.0) or 0.0),
         "vegetation_tree_bounds_padding": float(vegetation.get("tree_global_render_bounds_padding", 0.0) or 0.0),
         "vegetation_grass_bounds_padding": float(vegetation.get("grass_global_render_bounds_padding", 0.0) or 0.0),
@@ -836,6 +842,7 @@ def _print_results(results: list[dict]) -> None:
             "moveWPF60/Mprim={move_mprim:6.1f} /100draw={move_draw:5.1f} /100obj={move_obj:5.1f} | "
             "nativeVeg={native} worldMapBlock={blocked} roadMask={road_mask} "
             "lastGen={last_kind}/{last_backend}/{last_reason}/{last_ms:.2f}ms/{last_instances}inst maxGen={max_ms:.2f}ms "
+            "deferInitFlush={defer_flush}:{deferred_flushes} "
             "counts={counts} genTime={generation_time} noiseSamples={noise_samples} pendingPick={pending_backend}:{pending_native}/{pending_gdscript}@{pending_scan} "
             "roadSamples={road_samples} waterSamples={water_samples} payloads={payloads} "
             "clusterPayloads={cluster_payloads} removedFilter={removed_filter} rayQueries={ray_queries} "
@@ -855,6 +862,8 @@ def _print_results(results: list[dict]) -> None:
                 last_ms=float(result.get("last_vegetation_generation_ms", 0.0) or 0.0),
                 last_instances=int(result.get("last_vegetation_generation_instance_count", 0) or 0),
                 max_ms=float(result.get("max_vegetation_generation_ms", 0.0) or 0.0),
+                defer_flush="on" if bool(result.get("vegetation_defer_initial_global_render_flush", False)) else "off",
+                deferred_flushes=int(result.get("vegetation_initial_global_render_flush_deferred_count", 0) or 0),
                 counts=json.dumps(result.get("vegetation_generation_backend_counts", {}), sort_keys=True, separators=(",", ":")),
                 generation_time=json.dumps(
                     result.get("vegetation_generation_time_backend_counts", {}),
