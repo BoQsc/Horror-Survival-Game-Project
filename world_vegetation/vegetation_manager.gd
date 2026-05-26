@@ -211,6 +211,7 @@ var _vegetation_render_payload_backend_counts: Dictionary = {}
 var _vegetation_render_cluster_payload_backend_counts: Dictionary = {}
 var _vegetation_native_record_append_counts: Dictionary = {}
 var _vegetation_removed_filter_backend_counts: Dictionary = {}
+var _vegetation_generation_time_backend_counts: Dictionary = {}
 var _vegetation_opaque_material_optimization_counts: Dictionary = {}
 var _vegetation_texture_opaque_cache: Dictionary = {}
 var _vegetation_texture_alpha_coverage_cache: Dictionary = {}
@@ -221,6 +222,9 @@ var _vegetation_body_collision_backend_counts: Dictionary = {}
 var _last_vegetation_generation_kind: String = ""
 var _last_vegetation_generation_backend: String = ""
 var _last_vegetation_generation_reason: String = ""
+var _last_vegetation_generation_ms: float = 0.0
+var _last_vegetation_generation_instance_count: int = 0
+var _max_vegetation_generation_ms: float = 0.0
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
@@ -447,13 +451,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_render_cluster_payload_backend_counts": _vegetation_render_cluster_payload_backend_counts.duplicate(true),
 		"vegetation_native_record_append_counts": _vegetation_native_record_append_counts.duplicate(true),
 		"vegetation_removed_filter_backend_counts": _vegetation_removed_filter_backend_counts.duplicate(true),
+		"vegetation_generation_time_backend_counts": _vegetation_generation_time_backend_counts.duplicate(true),
 		"vegetation_opaque_material_optimization_counts": _vegetation_opaque_material_optimization_counts.duplicate(true),
 		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
 		"vegetation_ray_query_backend_counts": _vegetation_ray_query_backend_counts.duplicate(true),
 		"vegetation_body_collision_backend_counts": _vegetation_body_collision_backend_counts.duplicate(true),
 		"last_vegetation_generation_kind": _last_vegetation_generation_kind,
 		"last_vegetation_generation_backend": _last_vegetation_generation_backend,
-		"last_vegetation_generation_reason": _last_vegetation_generation_reason
+		"last_vegetation_generation_reason": _last_vegetation_generation_reason,
+		"last_vegetation_generation_ms": _last_vegetation_generation_ms,
+		"last_vegetation_generation_instance_count": _last_vegetation_generation_instance_count,
+		"max_vegetation_generation_ms": _max_vegetation_generation_ms
 	}
 
 
@@ -482,7 +490,7 @@ func _native_vegetation_generation_skip_reason(
 			return "world_map_water_mask_missing"
 	return "fallback"
 
-func _record_vegetation_generation_backend(kind: String, backend: String, reason: String, instance_count: int) -> void:
+func _record_vegetation_generation_backend(kind: String, backend: String, reason: String, instance_count: int, elapsed_us: int = -1) -> void:
 	var chunk_key := "%s_%s_chunks" % [kind, backend]
 	var instance_key := "%s_%s_instances" % [kind, backend]
 	_vegetation_generation_backend_counts[chunk_key] = int(_vegetation_generation_backend_counts.get(chunk_key, 0)) + 1
@@ -490,6 +498,16 @@ func _record_vegetation_generation_backend(kind: String, backend: String, reason
 	_last_vegetation_generation_kind = kind
 	_last_vegetation_generation_backend = backend
 	_last_vegetation_generation_reason = reason
+	_last_vegetation_generation_instance_count = instance_count
+	if elapsed_us >= 0:
+		var time_key := "%s_%s_us" % [kind, backend]
+		var max_key := "%s_%s_max_us" % [kind, backend]
+		var call_key := "%s_%s_timed_calls" % [kind, backend]
+		_vegetation_generation_time_backend_counts[time_key] = int(_vegetation_generation_time_backend_counts.get(time_key, 0)) + elapsed_us
+		_vegetation_generation_time_backend_counts[max_key] = maxi(int(_vegetation_generation_time_backend_counts.get(max_key, 0)), elapsed_us)
+		_vegetation_generation_time_backend_counts[call_key] = int(_vegetation_generation_time_backend_counts.get(call_key, 0)) + 1
+		_last_vegetation_generation_ms = float(elapsed_us) / 1000.0
+		_max_vegetation_generation_ms = maxf(_max_vegetation_generation_ms, _last_vegetation_generation_ms)
 
 func _record_vegetation_noise_sample_backend(backend: String, sample_count: int) -> void:
 	var call_key := "%s_calls" % backend
@@ -2920,6 +2938,7 @@ func _update_rock_proximity_colliders():
 			keys_pending_add[key] = true
 
 func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
+	var generation_start_us := Time.get_ticks_usec()
 	var mmi = _create_chunk_multimesh_handle("tree", coord, tree_mesh)
 
 	var tree_list: Array = []
@@ -2988,7 +3007,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 		if tree_list.size() > 0:
 			_sync_multimesh_from_instances(mmi, tree_list, chunk_stride)
-		_record_vegetation_generation_backend("tree", "native", "height_map", tree_list.size())
+		_record_vegetation_generation_backend("tree", "native", "height_map", tree_list.size(), Time.get_ticks_usec() - generation_start_us)
 		return
 
 	var batch_idx = 0
@@ -3070,7 +3089,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 
 	if tree_list.size() > 0:
 		_sync_multimesh_from_instances(mmi, tree_list, chunk_stride)
-	_record_vegetation_generation_backend("tree", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, false), tree_list.size())
+	_record_vegetation_generation_backend("tree", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, false), tree_list.size(), Time.get_ticks_usec() - generation_start_us)
 
 func chop_tree_by_collider(collider: Node) -> bool:
 	# Check if collider is still valid (not freed)
@@ -3196,6 +3215,7 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	if not grass_mesh:
 		return
+	var generation_start_us := Time.get_ticks_usec()
 
 	var mmi = _create_chunk_multimesh_handle("grass", coord, grass_mesh)
 
@@ -3294,7 +3314,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			"grass_list": grass_list,
 			"chunk_node": chunk_node
 		}
-		_record_vegetation_generation_backend("grass", "native", "height_map", grass_list.size())
+		_record_vegetation_generation_backend("grass", "native", "height_map", grass_list.size(), Time.get_ticks_usec() - generation_start_us)
 		return
 
 	var batch_idx = 0
@@ -3410,7 +3430,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"grass_list": grass_list,
 		"chunk_node": chunk_node
 	}
-	_record_vegetation_generation_backend("grass", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, true), grass_list.size())
+	_record_vegetation_generation_backend("grass", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, true), grass_list.size(), Time.get_ticks_usec() - generation_start_us)
 
 func harvest_grass_by_collider(collider: Node) -> bool:
 	# Check if collider is still valid (not freed)
@@ -4179,6 +4199,7 @@ func _add_grass_to_chunk(world_pos: Vector3, final_scale: float, rotation_angle:
 func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	if not rock_mesh:
 		return
+	var generation_start_us := Time.get_ticks_usec()
 
 	var mmi = _create_chunk_multimesh_handle("rock", coord, rock_mesh)
 
@@ -4267,7 +4288,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			"rock_list": rock_list,
 			"chunk_node": chunk_node
 		}
-		_record_vegetation_generation_backend("rock", "native", "height_map", rock_list.size())
+		_record_vegetation_generation_backend("rock", "native", "height_map", rock_list.size(), Time.get_ticks_usec() - generation_start_us)
 		return
 
 	var batch_idx = 0
@@ -4382,7 +4403,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		"rock_list": rock_list,
 		"chunk_node": chunk_node
 	}
-	_record_vegetation_generation_backend("rock", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, true), rock_list.size())
+	_record_vegetation_generation_backend("rock", "gdscript", _native_vegetation_generation_skip_reason(batch_heights, road_block_values, water_block_values, true), rock_list.size(), Time.get_ticks_usec() - generation_start_us)
 
 func harvest_rock_by_collider(collider: Node) -> bool:
 	if not is_instance_valid(collider):
@@ -4875,6 +4896,7 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_vegetation_render_cluster_payload_backend_counts.clear()
 	_vegetation_native_record_append_counts.clear()
 	_vegetation_removed_filter_backend_counts.clear()
+	_vegetation_generation_time_backend_counts.clear()
 	_last_pending_chunk_selection_backend = ""
 	_last_pending_chunk_selection_scan_count = 0
 	_pending_chunk_selection_native_calls = 0
@@ -4885,6 +4907,9 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_last_vegetation_generation_kind = ""
 	_last_vegetation_generation_backend = ""
 	_last_vegetation_generation_reason = ""
+	_last_vegetation_generation_ms = 0.0
+	_last_vegetation_generation_instance_count = 0
+	_max_vegetation_generation_ms = 0.0
 	_sync_process_loop()
 
 
