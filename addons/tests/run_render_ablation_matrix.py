@@ -12,6 +12,34 @@ from windows_error_dialogs import suppress_windows_error_dialogs
 SUMMARY_FILE = Path(run_town_stall_test.PROJECT_PATH) / ".agent" / "render-ablation-summary.json"
 FPS_60_FRAME_MS = 1000.0 / 60.0
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "off", "no"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 CASES = {
     "baseline": {},
     "hide_terrain_manager_visuals": {"TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS": "1"},
@@ -449,6 +477,12 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
             or 0
         ),
         "frames_over_budget": _pick_window_int_metric(stationary_hold, town_window, "frames_over_budget"),
+        "frames_over_40ms": _pick_window_int_metric(stationary_hold, town_window, "frames_over_40ms"),
+        "frames_over_50ms": _pick_window_int_metric(stationary_hold, town_window, "frames_over_50ms"),
+        "stall_over_budget_ms": _pick_window_metric(stationary_hold, town_window, "stall_over_budget_ms"),
+        "longest_over_budget_streak": _pick_window_int_metric(stationary_hold, town_window, "longest_over_budget_streak"),
+        "longest_over_40ms_streak": _pick_window_int_metric(stationary_hold, town_window, "longest_over_40ms_streak"),
+        "longest_over_50ms_streak": _pick_window_int_metric(stationary_hold, town_window, "longest_over_50ms_streak"),
         "avg_total_ms_all": float(stationary_hold.get("avg_total_ms", town_window.get("avg_total_ms", 0.0)) or 0.0),
         "avg_draw_calls_all": float(stationary_hold.get("avg_draw_calls", town_window.get("avg_draw_calls", 0.0)) or 0.0),
         "avg_objects_all": float(stationary_hold.get("avg_objects", town_window.get("avg_objects", 0.0)) or 0.0),
@@ -667,13 +701,62 @@ def _add_deltas(results: list[dict]) -> list[dict]:
     return results
 
 
+def _performance_gate_failures(result: dict) -> list[str]:
+    failures: list[str] = []
+    require_60fps = _env_bool("TOWN_STALL_REQUIRE_60FPS", False)
+    wpf60_cap_raw = os.environ.get("TOWN_STALL_MAX_HOLD_WPF60", "").strip()
+    wpf60_cap_enabled = bool(wpf60_cap_raw)
+    if not require_60fps and not wpf60_cap_enabled:
+        return failures
+
+    case_name = str(result.get("case", "unknown"))
+    if require_60fps:
+        max_avg_frame_ms = _env_float("TOWN_STALL_MAX_AVG_FRAME_MS", FPS_60_FRAME_MS)
+        max_over_budget_ratio = _env_float("TOWN_STALL_MAX_FRAMES_OVER_BUDGET_RATIO", 0.05)
+        max_over_budget_streak = _env_int("TOWN_STALL_MAX_LONGEST_OVER_BUDGET_STREAK", 60)
+        max_frames_over_40ms = _env_int("TOWN_STALL_MAX_FRAMES_OVER_40MS", 0)
+        sample_count = max(1, int(result.get("sample_count", 0) or 0))
+        frames_over_budget = int(result.get("frames_over_budget", 0) or 0)
+        over_budget_ratio = float(frames_over_budget) / float(sample_count)
+        avg_total_ms = float(result.get("avg_total_ms", 0.0) or 0.0)
+        longest_streak = int(result.get("longest_over_budget_streak", 0) or 0)
+        frames_over_40ms = int(result.get("frames_over_40ms", 0) or 0)
+
+        if avg_total_ms > max_avg_frame_ms:
+            failures.append(
+                f"{case_name}: avg frame {avg_total_ms:.2f}ms > {max_avg_frame_ms:.2f}ms"
+            )
+        if over_budget_ratio > max_over_budget_ratio:
+            failures.append(
+                f"{case_name}: over-budget frames {frames_over_budget}/{sample_count} "
+                f"({over_budget_ratio:.1%}) > {max_over_budget_ratio:.1%}"
+            )
+        if longest_streak > max_over_budget_streak:
+            failures.append(
+                f"{case_name}: longest over-budget streak {longest_streak} > {max_over_budget_streak}"
+            )
+        if frames_over_40ms > max_frames_over_40ms:
+            failures.append(
+                f"{case_name}: frames over 40ms {frames_over_40ms} > {max_frames_over_40ms}"
+            )
+
+    if wpf60_cap_enabled:
+        max_hold_wpf60 = _env_float("TOWN_STALL_MAX_HOLD_WPF60", 0.0)
+        hold_wpf60 = float(result.get("hold_wpf60", 0.0) or 0.0)
+        if max_hold_wpf60 > 0.0 and hold_wpf60 > max_hold_wpf60:
+            failures.append(f"{case_name}: hold WPF60 {hold_wpf60:.1f} > {max_hold_wpf60:.1f}")
+
+    return failures
+
+
 def _print_results(results: list[dict]) -> None:
     print("\n" + "=" * 50)
     print("RENDER ABLATION SUMMARY")
     print("=" * 50)
     for result in results:
         print(
-            "{case:>20} | ms={ms:6.2f} ({dms:+6.2f}) | draws={draws:7.1f} ({ddraws:+7.1f}) | "
+            "{case:>20} | ms={ms:6.2f} ({dms:+6.2f}) | over={over:4d}/{total_samples:<4d} streak={streak:4d} >40={over40:3d} | "
+            "draws={draws:7.1f} ({ddraws:+7.1f}) | "
             "objects={objects:7.1f} ({dobjects:+7.1f}) | prims={prims:9.0f} ({dprims:+9.0f}) pipes={pipes:3d} | "
             "holdWPF60={hold_wpf60:5.1f} ({dhold_wpf60:+5.1f}) moveWPF60={move_wpf60:5.1f} ({dmove_wpf60:+5.1f}) "
             "holdW={hold_w:5.1f} ({dhold_w:+5.1f}) moveW={move_w:5.1f} ({dmove_w:+5.1f}) | "
@@ -685,6 +768,10 @@ def _print_results(results: list[dict]) -> None:
                 case=str(result.get("case", "")),
                 ms=float(result.get("avg_total_ms", 0.0) or 0.0),
                 dms=float(result.get("delta_avg_total_ms", 0.0) or 0.0),
+                over=int(result.get("frames_over_budget", 0) or 0),
+                total_samples=int(result.get("sample_count", 0) or 0),
+                streak=int(result.get("longest_over_budget_streak", 0) or 0),
+                over40=int(result.get("frames_over_40ms", 0) or 0),
                 draws=float(result.get("avg_draw_calls", 0.0) or 0.0),
                 ddraws=float(result.get("delta_avg_draw_calls", 0.0) or 0.0),
                 objects=float(result.get("avg_objects", 0.0) or 0.0),
@@ -970,10 +1057,16 @@ def main() -> int:
         for result in results
         if int(result.get("returncode", 1)) != 0 or not bool(result.get("hold_complete", False))
     ]
+    performance_failures = [failure for result in results for failure in _performance_gate_failures(result)]
     if failed:
         print("\nABLATION MATRIX FAILED")
         for result in failed:
             print(f"- {result.get('case', 'unknown')} returncode={result.get('returncode')} hold_complete={result.get('hold_complete')}")
+        return 1
+    if performance_failures:
+        print("\nABLATION MATRIX PERFORMANCE GATE FAILED")
+        for failure in performance_failures:
+            print(f"- {failure}")
         return 1
     return 0
 
