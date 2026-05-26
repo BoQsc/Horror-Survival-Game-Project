@@ -148,10 +148,11 @@ func _connect_vehicle_signals() -> void:
 
 
 func _connect_player_signals() -> void:
-	if not has_node("/root/PlayerSignals"):
+	var player_signals := get_node_or_null("/root/PlayerSignals")
+	if not player_signals:
 		return
-	if not PlayerSignals.interaction_performed.is_connected(_on_player_interaction_performed):
-		PlayerSignals.interaction_performed.connect(_on_player_interaction_performed)
+	if not player_signals.interaction_performed.is_connected(_on_player_interaction_performed):
+		player_signals.interaction_performed.connect(_on_player_interaction_performed)
 
 
 func _exit_tree() -> void:

@@ -1532,6 +1532,27 @@ func _sync_global_vegetation_render_batch(kind: String) -> void:
 		_set_global_render_dirty_flag(kind, false)
 		return
 	var cluster_key: Vector2i = dirty_clusters.keys()[0]
+	_sync_global_vegetation_render_cluster(kind, cluster_key)
+
+func _sync_global_vegetation_render_coord_now(kind: String, coord: Vector2i) -> void:
+	if not global_render_batches_enabled:
+		return
+	var cluster_key := _vegetation_cluster_key(kind, coord)
+	var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
+	if not dirty_clusters.has(cluster_key):
+		return
+	_sync_global_vegetation_render_cluster(kind, cluster_key)
+
+func _sync_global_vegetation_render_cluster(kind: String, cluster_key: Vector2i) -> void:
+	if not global_render_batches_enabled:
+		return
+	if not _is_vegetation_render_kind_enabled(kind):
+		_clear_global_vegetation_render_kind(kind)
+		return
+	var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
+	if not dirty_clusters.has(cluster_key):
+		_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
+		return
 	var start_us := Time.get_ticks_usec()
 
 	var collect_start_us := Time.get_ticks_usec()
@@ -3051,6 +3072,7 @@ func chop_tree_at_index(coord: Vector2i, tree_index: int) -> bool:
 			tree.transform = _make_hidden_transform(tree.local_pos)
 			if data.has("multimesh") and terrain_manager:
 				_sync_multimesh_from_instances(data.multimesh, data.trees, terrain_manager.CHUNK_STRIDE)
+				_sync_global_vegetation_render_coord_now("tree", coord)
 
 			# Remove collider
 			var key = _tree_key(coord, tree_index)

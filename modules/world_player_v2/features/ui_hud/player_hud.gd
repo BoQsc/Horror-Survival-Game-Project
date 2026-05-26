@@ -4,21 +4,21 @@ class_name PlayerHUDV2
 ## Displays mode, hotbar, health, stamina, crosshair, interaction prompts
 
 # References
-@onready var mode_label: Label = $ModeIndicator
-@onready var build_info_label: Label = $BuildInfoLabel
-@onready var hotbar_container: HBoxContainer = $HotbarPanel/HotbarContainer
-@onready var crosshair: TextureRect = $Crosshair
-@onready var interaction_prompt: Label = $InteractionPrompt
-@onready var durability_bar: ProgressBar = $DurabilityBar
-@onready var health_bar: ProgressBar = $StatusBars/HealthBar
-@onready var stamina_bar: ProgressBar = $StatusBars/StaminaBar
-@onready var compass: Label = $Compass
-@onready var game_menu: Control = $GameMenu
-@onready var game_menu_settings: Control = $GameMenu/CenterContainer
-@onready var creative_catalog_button: Button = $GameMenu/ActionButtons/CreativeCatalogButton
-@onready var creative_catalog_panel: CreativeCatalogPanelV2 = $CreativeCatalogPanel
-@onready var selected_item_label: Label = $SelectedItemLabel
-@onready var target_material_label: Label = $TargetMaterial
+@onready var mode_label: Label = get_node_or_null("ModeIndicator") as Label
+@onready var build_info_label: Label = get_node_or_null("BuildInfoLabel") as Label
+@onready var hotbar_container: HBoxContainer = get_node_or_null("HotbarPanel/HotbarContainer") as HBoxContainer
+@onready var crosshair: TextureRect = get_node_or_null("Crosshair") as TextureRect
+@onready var interaction_prompt: Label = get_node_or_null("InteractionPrompt") as Label
+@onready var durability_bar: ProgressBar = get_node_or_null("DurabilityBar") as ProgressBar
+@onready var health_bar: ProgressBar = get_node_or_null("StatusBars/HealthBar") as ProgressBar
+@onready var stamina_bar: ProgressBar = get_node_or_null("StatusBars/StaminaBar") as ProgressBar
+@onready var compass: Label = get_node_or_null("Compass") as Label
+@onready var game_menu: Control = get_node_or_null("GameMenu") as Control
+@onready var game_menu_settings: Control = get_node_or_null("GameMenu/CenterContainer") as Control
+@onready var creative_catalog_button: Button = get_node_or_null("GameMenu/ActionButtons/CreativeCatalogButton") as Button
+@onready var creative_catalog_panel: CreativeCatalogPanelV2 = get_node_or_null("CreativeCatalogPanel") as CreativeCatalogPanelV2
+@onready var selected_item_label: Label = get_node_or_null("SelectedItemLabel") as Label
+@onready var target_material_label: Label = get_node_or_null("TargetMaterial") as Label
 
 var underwater_overlay: ColorRect = null
 var hotbar_slots: Array = []
@@ -65,22 +65,23 @@ func _ready() -> void:
 	if input_lock:
 		input_lock.clear()
 
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.mode_changed.connect(_on_mode_changed)
-		PlayerSignals.item_changed.connect(_on_item_changed)
-		PlayerSignals.hotbar_slot_selected.connect(_on_hotbar_slot_selected)
-		PlayerSignals.interaction_available.connect(_on_interaction_available)
-		PlayerSignals.interaction_unavailable.connect(_on_interaction_unavailable)
-		PlayerSignals.inventory_toggled.connect(_on_inventory_toggled)
-		PlayerSignals.game_menu_toggled.connect(_on_game_menu_toggled)
-		PlayerSignals.editor_submode_changed.connect(_on_editor_submode_changed)
-		PlayerSignals.inventory_changed.connect(_on_inventory_changed)
-		PlayerSignals.durability_hit.connect(_on_durability_hit)
-		PlayerSignals.durability_cleared.connect(_on_durability_cleared)
-		PlayerSignals.target_material_changed.connect(_on_target_material_changed)
-		PlayerSignals.camera_underwater_toggled.connect(_on_camera_underwater_toggled)
-		PlayerSignals.terraformer_material_changed.connect(_on_terraformer_material_changed)
-		PlayerSignals.item_added.connect(_on_item_added)
+	var player_signals := get_node_or_null("/root/PlayerSignals")
+	if player_signals:
+		player_signals.mode_changed.connect(_on_mode_changed)
+		player_signals.item_changed.connect(_on_item_changed)
+		player_signals.hotbar_slot_selected.connect(_on_hotbar_slot_selected)
+		player_signals.interaction_available.connect(_on_interaction_available)
+		player_signals.interaction_unavailable.connect(_on_interaction_unavailable)
+		player_signals.inventory_toggled.connect(_on_inventory_toggled)
+		player_signals.game_menu_toggled.connect(_on_game_menu_toggled)
+		player_signals.editor_submode_changed.connect(_on_editor_submode_changed)
+		player_signals.inventory_changed.connect(_on_inventory_changed)
+		player_signals.durability_hit.connect(_on_durability_hit)
+		player_signals.durability_cleared.connect(_on_durability_cleared)
+		player_signals.target_material_changed.connect(_on_target_material_changed)
+		player_signals.camera_underwater_toggled.connect(_on_camera_underwater_toggled)
+		player_signals.terraformer_material_changed.connect(_on_terraformer_material_changed)
+		player_signals.item_added.connect(_on_item_added)
 	
 	_setup_hotbar()
 	
@@ -531,11 +532,12 @@ func _update_compass() -> void:
 		compass.text = direction
 
 func _update_status_bars() -> void:
-	if has_node("/root/PlayerStats"):
-		health_bar.value = PlayerStats.health
-		health_bar.max_value = PlayerStats.max_health
-		stamina_bar.value = PlayerStats.stamina
-		stamina_bar.max_value = PlayerStats.max_stamina
+	var player_stats := get_node_or_null("/root/PlayerStats")
+	if player_stats and health_bar and stamina_bar:
+		health_bar.value = player_stats.health
+		health_bar.max_value = player_stats.max_health
+		stamina_bar.value = player_stats.stamina
+		stamina_bar.max_value = player_stats.max_stamina
 
 func _on_mode_changed(_old_mode: String, new_mode: String) -> void:
 	mode_label.text = new_mode
@@ -701,8 +703,9 @@ func _on_spawn_zombie_pressed() -> void:
 func _on_capture_prefab_pressed() -> void:
 	# 1. Close menu
 	_on_game_menu_toggled(false)
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.game_menu_toggled.emit(false)
+	var player_signals := get_node_or_null("/root/PlayerSignals")
+	if player_signals:
+		player_signals.game_menu_toggled.emit(false)
 	
 	# 2. Capture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
@@ -852,16 +855,15 @@ func _update_durability_visibility() -> void:
 		return
 	
 	var hit = player_node.raycast(5.0, 0xFFFFFFFF, true, true)
-	if hit.is_empty():
+	var look_vegetation_key := _get_look_vegetation_key(player_node, hit)
+	if hit.is_empty() and look_vegetation_key == "":
 		durability_bar.visible = false
 		return
 	
-	var target = hit.get("collider")
+	var target = hit.get("collider", null)
 	var position = hit.get("position", Vector3.ZERO)
 	var hit_normal = hit.get("normal", Vector3.UP)
-	
-	var look_rid = target.get_rid() if target else RID()
-	var look_vegetation_key := _get_look_vegetation_key(player_node, hit)
+	var look_rid = target.get_rid() if target and target.has_method("get_rid") else RID()
 	
 	for key in durability_memory:
 		var entry = durability_memory[key]
@@ -904,11 +906,14 @@ func _get_look_vegetation_key(player_node: Node, hit: Dictionary) -> String:
 	if direction.length_squared() <= 0.000001:
 		return ""
 	var max_distance := 5.0
+	var physics_hit_distance := INF
 	if not hit.is_empty() and hit.has("position"):
 		var hit_position: Vector3 = hit.get("position", origin + direction.normalized() * max_distance)
-		max_distance = minf(max_distance, origin.distance_to(hit_position) + 0.5)
+		physics_hit_distance = origin.distance_to(hit_position)
 	var data_hit: Dictionary = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction.normalized(), max_distance, true, false, false)
 	if data_hit.is_empty():
+		return ""
+	if is_finite(physics_hit_distance) and float(data_hit.get("distance", physics_hit_distance)) > physics_hit_distance + 1.25:
 		return ""
 	return _vegetation_data_target_key(data_hit)
 

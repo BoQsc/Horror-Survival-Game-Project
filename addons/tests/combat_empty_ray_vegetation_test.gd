@@ -5,8 +5,10 @@ const CombatSystemScript = preload("res://modules/world_player_v2/features/tool_
 class FakePlayer:
 	extends Node
 
+	var ray_hit: Dictionary = {}
+
 	func raycast(_distance: float, _mask: int, _collide_with_areas: bool, _exclude_water: bool) -> Dictionary:
-		return {}
+		return ray_hit
 
 	func get_camera_position() -> Vector3:
 		return Vector3.ZERO
@@ -96,6 +98,21 @@ func _run() -> int:
 		return 1
 	if not _expect(not combat.tree_damage.has("tree:0:0:0"), "tree damage should clear after chop"):
 		return 1
+
+	var blocker := Node.new()
+	root.add_child(blocker)
+	vegetation.tree_distance = 2.75
+	player.ray_hit = {
+		"collider": blocker,
+		"position": Vector3(0.0, 0.0, 2.0),
+		"normal": Vector3.UP
+	}
+	combat._do_axe_damage(axe_item)
+	if not _expect(int(combat.tree_damage.get("tree:0:0:0", 0)) == 3, "near terrain physics hit should not clamp out a valid colliderless tree hit"):
+		return 1
+	combat.tree_damage.clear()
+	player.ray_hit = {}
+	blocker.free()
 
 	vegetation.tree_distance = 4.5
 	combat._do_axe_damage(axe_item)

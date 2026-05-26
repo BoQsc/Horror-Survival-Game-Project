@@ -31,6 +31,7 @@ const OBJECT_HP: int = 5   # Placed objects take 5 damage to destroy
 const TREE_HP: int = 8     # Trees take 8 damage to chop
 const TERRAIN_HP: int = 5  # Terrain takes 5 punches to break a grid cube
 const AXE_REACH_DISTANCE: float = 5.0 # Must match HUD/data vegetation targeting.
+const TREE_DATA_HIT_BLOCKER_MARGIN: float = 1.25 # Keep colliderless trees targetable when terrain ray hits just before the trunk.
 
 var block_damage: Dictionary = {}    # Vector3i -> accumulated damage
 var object_damage: Dictionary = {}   # RID -> accumulated damage
@@ -1332,10 +1333,10 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 				tree_fall_audio_player.pitch_scale = randf_range(0.95, 1.05)
 				tree_fall_audio_player.play()
 			
-			vegetation_manager.chop_tree_by_collider(target)
-			tree_damage.erase(tree_rid)
-			_emit_durability_cleared()
-			_collect_vegetation_resource("wood")
+			if vegetation_manager.chop_tree_by_collider(target):
+				tree_damage.erase(tree_rid)
+				_emit_durability_cleared()
+				_collect_vegetation_resource("wood")
 		return true
 	
 	elif target.is_in_group("grass"):
@@ -1369,16 +1370,20 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 	var origin: Vector3 = aim_ray.get("origin", Vector3.ZERO)
 	var direction: Vector3 = aim_ray.get("direction", Vector3.FORWARD)
 	var limited_distance := max_distance
+	var physics_hit_distance := INF
 	if not hit.is_empty() and hit.has("position"):
 		var hit_position: Vector3 = hit.get("position", origin + direction * max_distance)
 		var hit_distance := origin.distance_to(hit_position)
 		if hit_distance > 0.0:
+			physics_hit_distance = hit_distance
 			limited_distance = minf(max_distance, hit_distance + 0.5)
 
 	var item_id := str(_item.get("id", ""))
 	var data_hit: Dictionary = {}
 	if "axe" in item_id:
-		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, false, false)
+		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, max_distance, true, false, false)
+		if _is_data_tree_hit_blocked_by_physics(data_hit, physics_hit_distance):
+			data_hit = {}
 	if data_hit.is_empty():
 		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, limited_distance, true, true, true)
 	if data_hit.is_empty():
@@ -1406,10 +1411,10 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 
 			var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)
 			var index := int(data_hit.get("index", -1))
-			vegetation_manager.chop_tree_at_index(coord, index)
-			tree_damage.erase(tree_key)
-			_emit_durability_cleared()
-			_collect_vegetation_resource("wood")
+			if vegetation_manager.chop_tree_at_index(coord, index):
+				tree_damage.erase(tree_key)
+				_emit_durability_cleared()
+				_collect_vegetation_resource("wood")
 		return true
 
 	if vegetation_type == "grass":
@@ -1430,6 +1435,12 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 		return true
 
 	return false
+
+func _is_data_tree_hit_blocked_by_physics(data_hit: Dictionary, physics_hit_distance: float) -> bool:
+	if data_hit.is_empty() or not is_finite(physics_hit_distance):
+		return false
+	var data_distance := float(data_hit.get("distance", physics_hit_distance))
+	return data_distance > physics_hit_distance + TREE_DATA_HIT_BLOCKER_MARGIN
 
 func _vegetation_data_target_key(data_hit: Dictionary) -> String:
 	var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)
