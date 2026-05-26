@@ -1438,7 +1438,7 @@ func _build_global_vegetation_chunk_render_payload(kind: String, instances: Arra
 	_record_vegetation_render_payload_backend("gdscript", transforms.size())
 	return payload
 
-func _update_global_vegetation_chunk_render_payload(kind: String, coord, instances: Array) -> void:
+func _update_global_vegetation_chunk_render_payload(kind: String, coord, instances: Array, prebuilt_payload: Dictionary = {}) -> void:
 	if not global_render_batches_enabled or typeof(coord) != TYPE_VECTOR2I:
 		return
 	_sync_vegetation_render_profile()
@@ -1446,7 +1446,12 @@ func _update_global_vegetation_chunk_render_payload(kind: String, coord, instanc
 		_clear_global_vegetation_chunk_render_payload(kind, coord)
 		return
 	var payloads := _get_global_render_chunk_payload_dictionary(kind)
-	var payload := _build_global_vegetation_chunk_render_payload(kind, instances)
+	var payload := prebuilt_payload
+	var payload_buffer: PackedFloat32Array = payload.get("buffer", PackedFloat32Array())
+	if int(payload.get("instance_count", 0)) > 0 and not payload_buffer.is_empty():
+		_record_vegetation_render_payload_backend("native_prebuilt", int(payload.get("instance_count", 0)))
+	else:
+		payload = _build_global_vegetation_chunk_render_payload(kind, instances)
 	if int(payload.get("instance_count", 0)) <= 0:
 		_clear_global_vegetation_chunk_render_payload(kind, coord)
 		return
@@ -1718,7 +1723,7 @@ func _get_vegetation_instance_transform(item) -> Transform3D:
 	return Transform3D.IDENTITY
 
 
-func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int) -> void:
+func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int, prebuilt_global_payload: Dictionary = {}) -> void:
 	if not _is_chunk_multimesh_handle_valid(mmi):
 		return
 
@@ -1732,7 +1737,7 @@ func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int) ->
 				_clear_global_vegetation_chunk_render_payload(kind, coord)
 				_mark_global_vegetation_render_dirty(kind, coord)
 			return
-		_update_global_vegetation_chunk_render_payload(kind, coord, instances)
+		_update_global_vegetation_chunk_render_payload(kind, coord, instances, prebuilt_global_payload)
 		_mark_global_vegetation_render_dirty(kind, coord)
 		return
 	elif mmi is MultiMeshInstance3D and mmi.has_meta("vegetation_kind"):
@@ -1958,6 +1963,25 @@ func _build_native_vegetation_instances(
 
 	var native_records: Array = native.build_vegetation_instances(config, batch_heights)
 	return native_records
+
+func _build_native_vegetation_instances_with_render_payload(
+		kind: String,
+		batch_heights: PackedFloat32Array,
+		config: Dictionary
+) -> Dictionary:
+	var native := _get_native_helper()
+	if not native:
+		return {"instances": [], "render_payload": {}}
+	if batch_heights.is_empty():
+		return {"instances": [], "render_payload": {}}
+	if native.has_method("build_vegetation_instances_with_render_payload"):
+		var render_space_inverse := global_transform.affine_inverse() if is_inside_tree() else Transform3D.IDENTITY
+		var mesh := _get_vegetation_mesh_for_kind(kind)
+		var mesh_bounds := mesh.get_aabb() if vegetation_exact_render_bounds_enabled and mesh else AABB()
+		return native.build_vegetation_instances_with_render_payload(config, batch_heights, render_space_inverse, mesh_bounds)
+	if native.has_method("build_vegetation_instances"):
+		return {"instances": native.build_vegetation_instances(config, batch_heights), "render_payload": {}}
+	return {"instances": [], "render_payload": {}}
 
 
 func _ready():
@@ -2987,7 +3011,10 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			false,
 			true
 		)
-		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
+		var native_result := _build_native_vegetation_instances_with_render_payload("tree", batch_heights, native_config)
+		var native_records: Array = native_result.get("instances", [])
+		var prebuilt_render_payload: Dictionary = native_result.get("render_payload", {})
+		var can_use_prebuilt_render_payload := chopped_trees.is_empty()
 		_append_native_generated_instances(tree_list, native_records)
 
 		if tree_list.size() > 0:
@@ -3006,7 +3033,7 @@ func _place_vegetation_for_chunk(coord: Vector2i, chunk_node: Node3D):
 				tree.transform = _make_hidden_transform(tree.local_pos)
 
 		if tree_list.size() > 0:
-			_sync_multimesh_from_instances(mmi, tree_list, chunk_stride)
+			_sync_multimesh_from_instances(mmi, tree_list, chunk_stride, prebuilt_render_payload if can_use_prebuilt_render_payload else {})
 		_record_vegetation_generation_backend("tree", "native", "height_map", tree_list.size(), Time.get_ticks_usec() - generation_start_us)
 		return
 
@@ -3275,7 +3302,10 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			true,
 			false
 		)
-		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
+		var native_result := _build_native_vegetation_instances_with_render_payload("grass", batch_heights, native_config)
+		var native_records: Array = native_result.get("instances", [])
+		var prebuilt_render_payload: Dictionary = native_result.get("render_payload", {})
+		var can_use_prebuilt_render_payload := removed_grass.is_empty() and placed_grass.is_empty()
 		_append_native_generated_instances(grass_list, native_records)
 		_remove_persistently_removed_entries(grass_list, removed_grass)
 
@@ -3304,7 +3334,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 					t
 				))
 
-		_sync_multimesh_from_instances(mmi, grass_list, chunk_stride)
+		_sync_multimesh_from_instances(mmi, grass_list, chunk_stride, prebuilt_render_payload if can_use_prebuilt_render_payload else {})
 
 		# Store data even when the render node is data-only under global batching.
 		_attach_chunk_multimesh(mmi, chunk_node)
@@ -4249,7 +4279,10 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			true,
 			false
 		)
-		var native_records: Array = _build_native_vegetation_instances(batch_heights, native_config)
+		var native_result := _build_native_vegetation_instances_with_render_payload("rock", batch_heights, native_config)
+		var native_records: Array = native_result.get("instances", [])
+		var prebuilt_render_payload: Dictionary = native_result.get("render_payload", {})
+		var can_use_prebuilt_render_payload := removed_rocks.is_empty() and placed_rocks.is_empty()
 		_append_native_generated_instances(rock_list, native_records)
 		_remove_persistently_removed_entries(rock_list, removed_rocks)
 
@@ -4278,7 +4311,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 					t
 				))
 
-		_sync_multimesh_from_instances(mmi, rock_list, chunk_stride)
+		_sync_multimesh_from_instances(mmi, rock_list, chunk_stride, prebuilt_render_payload if can_use_prebuilt_render_payload else {})
 
 		# Store data even when the render node is data-only under global batching.
 		_attach_chunk_multimesh(mmi, chunk_node)

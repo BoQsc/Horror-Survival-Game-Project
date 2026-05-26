@@ -51,6 +51,7 @@ public:
 	Dictionary resolve_tree_body_collision(const Dictionary &chunk_tree_data, const Vector3 &body_origin, double body_radius, double body_height, int chunk_stride, double collision_radius, double collision_height) const;
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
+	Dictionary build_vegetation_instances_with_render_payload(const Dictionary &config, const PackedFloat32Array &height_map, const Transform3D &render_space_inverse, const AABB &mesh_bounds) const;
 	PackedFloat32Array build_noise_samples(const Callable &noise_sampler, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, bool use_noise) const;
 	Array filter_removed_vegetation_entries(const Array &entries, const Dictionary &removed_lookup) const;
 	Dictionary build_global_vegetation_render_payload(const Array &instances, const Transform3D &render_space_inverse, const AABB &mesh_bounds) const;

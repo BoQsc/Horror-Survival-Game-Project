@@ -49,6 +49,26 @@ func _run() -> int:
 	var records: Array = native.build_vegetation_instances(config, height_map)
 	if not _expect(records.size() == 1, "native builder should create one record"):
 		return 1
+	if not native.has_method("build_vegetation_instances_with_render_payload"):
+		return _fail("native builder should expose combined record/render payload method")
+
+	var combined_result: Dictionary = native.build_vegetation_instances_with_render_payload(
+		config,
+		height_map,
+		Transform3D.IDENTITY,
+		AABB(Vector3(-0.5, 0.0, -0.5), Vector3(1.0, 1.0, 1.0))
+	)
+	var combined_records: Array = combined_result.get("instances", [])
+	var combined_payload: Dictionary = combined_result.get("render_payload", {})
+	if not _expect(combined_records.size() == records.size(), "combined native builder should preserve record count"):
+		return 1
+	if not _expect(int(combined_payload.get("instance_count", 0)) == records.size(), "combined native builder should produce matching payload count"):
+		return 1
+	var combined_buffer: PackedFloat32Array = combined_payload.get("buffer", PackedFloat32Array())
+	if not _expect(combined_buffer.size() == records.size() * 12, "combined native builder should pack one 3D transform per record"):
+		return 1
+	if not _expect(bool(combined_payload.get("has_bounds", false)), "combined native builder should return render bounds"):
+		return 1
 
 	var record: Dictionary = records[0]
 	for key in ["world_pos", "local_pos", "hit_pos", "rotation_angle", "rotation", "random_scale_factor", "index", "alive", "scale", "placed_by_player", "transform"]:

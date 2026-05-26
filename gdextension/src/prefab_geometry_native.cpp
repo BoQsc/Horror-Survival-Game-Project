@@ -457,6 +457,188 @@ static bool extract_transform_from_variant(const Variant &value, Transform3D &ou
 	}
 }
 
+static Dictionary make_empty_vegetation_render_payload() {
+	Dictionary payload;
+	payload["buffer"] = PackedFloat32Array();
+	payload["instance_count"] = 0;
+	payload["bounds"] = AABB();
+	payload["has_bounds"] = false;
+	return payload;
+}
+
+static Dictionary build_vegetation_instances_result(
+		const Dictionary &config,
+		const PackedFloat32Array &height_map,
+		bool include_render_payload,
+		const Transform3D &render_space_inverse,
+		const AABB &mesh_bounds) {
+	Dictionary result;
+	Array instances;
+	Dictionary render_payload = make_empty_vegetation_render_payload();
+	result["instances"] = instances;
+	result["render_payload"] = render_payload;
+
+	if (height_map.is_empty()) {
+		return result;
+	}
+
+	const int chunk_stride = int(config.get("chunk_stride", 0));
+	const int step = std::max(1, int(config.get("step", 1)));
+	if (chunk_stride <= 0) {
+		return result;
+	}
+
+	const int chunk_origin_x = int(config.get("chunk_origin_x", 0));
+	const int chunk_origin_z = int(config.get("chunk_origin_z", 0));
+	const Vector3 chunk_world_pos = config.get("chunk_world_pos", Vector3());
+	const Transform3D base_transform = config.get("base_transform", Transform3D());
+	const Vector3 rotation_fix = config.get("rotation_fix", Vector3());
+	const double road_clearance = double(config.get("road_clearance", 0.0));
+	const bool procedural_roads_enabled = bool(config.get("procedural_roads_enabled", false));
+	const double procedural_road_spacing = double(config.get("procedural_road_spacing", 100.0));
+	const double procedural_road_width = double(config.get("procedural_road_width", 8.0));
+	const bool world_map_active = bool(config.get("world_map_active", false));
+	const PackedFloat32Array road_block_values = config.get("road_block_values", PackedFloat32Array());
+	const bool use_road_block_values = bool(config.get("use_road_block_values", false));
+	const PackedFloat32Array noise_values = config.get("noise_values", PackedFloat32Array());
+	const double noise_threshold = double(config.get("noise_threshold", 0.0));
+	const bool use_noise = bool(config.get("use_noise", true));
+	const bool use_water_density = bool(config.get("use_water_density", false));
+	const PackedFloat32Array water_block_values = config.get("water_block_values", PackedFloat32Array());
+	const bool use_water_block_values = bool(config.get("use_water_block_values", false));
+	const double water_level = double(config.get("water_level", 13.0));
+	const double scale_min = std::min(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
+	const double scale_max = std::max(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
+	const double scale_multiplier = double(config.get("scale_multiplier", 1.0));
+	const double y_offset = double(config.get("y_offset", 0.0));
+	const bool record_random_scale_factor = bool(config.get("record_random_scale_factor", true));
+
+	instances.resize(height_map.size());
+	PackedFloat32Array render_buffer;
+	float *render_write_ptr = nullptr;
+	if (include_render_payload) {
+		render_buffer.resize(height_map.size() * 12);
+		render_write_ptr = render_buffer.ptrw();
+	}
+
+	int instance_write_index = 0;
+	int sample_index = 0;
+	AABB bounds;
+	bool has_bounds = false;
+	for (int x = 0; x < chunk_stride; x += step) {
+		for (int z = 0; z < chunk_stride; z += step) {
+			if (sample_index >= height_map.size()) {
+				break;
+			}
+
+			const int current_sample = sample_index++;
+			const float terrain_y = height_map[current_sample];
+			if (terrain_y < -100.0f) {
+				continue;
+			}
+
+			const double global_x = double(chunk_origin_x + x);
+			const double global_z = double(chunk_origin_z + z);
+			bool road_is_blocked = false;
+			if (use_road_block_values) {
+				if (current_sample >= road_block_values.size()) {
+					continue;
+				}
+				road_is_blocked = road_block_values[current_sample] >= 0.5f;
+			} else if (!world_map_active && procedural_roads_enabled) {
+				road_is_blocked = is_procedural_road_blocked(global_x, global_z, procedural_road_spacing, procedural_road_width, road_clearance);
+			}
+			if (road_is_blocked) {
+				continue;
+			}
+
+			if (use_noise) {
+				if (current_sample >= noise_values.size()) {
+					continue;
+				}
+				const double noise_value = noise_values[current_sample];
+				if (noise_value < noise_threshold) {
+					continue;
+				}
+			}
+
+			bool water_is_blocked = false;
+			if (use_water_block_values) {
+				if (current_sample >= water_block_values.size()) {
+					continue;
+				}
+				water_is_blocked = water_block_values[current_sample] >= 0.5f;
+			} else if (use_water_density) {
+				water_is_blocked = double(terrain_y) + 1.0 < water_level;
+			} else {
+				water_is_blocked = double(terrain_y) + 1.0 < water_level;
+			}
+			if (water_is_blocked) {
+				continue;
+			}
+
+			const Vector3 hit_pos(global_x, terrain_y, global_z);
+			Vector3 local_pos = hit_pos - chunk_world_pos;
+			local_pos.y += y_offset;
+
+			Vector3 world_pos = hit_pos;
+			world_pos.y += y_offset;
+
+			const double random_scale = UtilityFunctions::randf_range(scale_min, scale_max);
+			const double final_scale = scale_multiplier * random_scale;
+			const double rotation_angle = UtilityFunctions::randf() * 6.28318530717958647692;
+			const Transform3D transform = build_vegetation_transform(base_transform, rotation_fix, rotation_angle, final_scale, local_pos);
+
+			Dictionary record;
+			record["world_pos"] = world_pos;
+			record["local_pos"] = local_pos;
+			record["hit_pos"] = hit_pos;
+			record["rotation_angle"] = rotation_angle;
+			record["rotation"] = rotation_angle;
+			record["random_scale_factor"] = record_random_scale_factor ? random_scale : 0.0;
+			record["index"] = instance_write_index;
+			record["alive"] = true;
+			record["scale"] = final_scale;
+			record["placed_by_player"] = false;
+			record["transform"] = transform;
+			instances[instance_write_index] = record;
+
+			if (include_render_payload && render_write_ptr != nullptr) {
+				Transform3D render_transform = transform;
+				render_transform.origin = render_space_inverse.xform(world_pos);
+				const AABB instance_bounds = render_transform.xform(mesh_bounds);
+				if (has_bounds) {
+					bounds.merge_with(instance_bounds);
+				} else {
+					bounds = instance_bounds;
+					has_bounds = true;
+				}
+				pack_transform_to_buffer(render_transform, render_write_ptr + instance_write_index * 12);
+			}
+
+			instance_write_index += 1;
+		}
+
+		if (sample_index >= height_map.size()) {
+			break;
+		}
+	}
+
+	instances.resize(instance_write_index);
+	result["instances"] = instances;
+
+	if (include_render_payload && instance_write_index > 0) {
+		render_buffer.resize(instance_write_index * 12);
+		render_payload["buffer"] = render_buffer;
+		render_payload["instance_count"] = instance_write_index;
+		render_payload["bounds"] = bounds;
+		render_payload["has_bounds"] = has_bounds;
+		result["render_payload"] = render_payload;
+	}
+
+	return result;
+}
+
 } // namespace
 
 PrefabGeometryNative::PrefabGeometryNative() {}
@@ -479,6 +661,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_nearest_tree_visual_bounds_ray_hit", "chunk_data", "list_key", "origin", "direction", "max_distance", "mesh_bounds", "base_transform", "rotation_fix", "bounds_padding"), &PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
+	ClassDB::bind_method(D_METHOD("build_vegetation_instances_with_render_payload", "config", "height_map", "render_space_inverse", "mesh_bounds"), &PrefabGeometryNative::build_vegetation_instances_with_render_payload);
 	ClassDB::bind_method(D_METHOD("build_noise_samples", "noise_sampler", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "use_noise"), &PrefabGeometryNative::build_noise_samples);
 	ClassDB::bind_method(D_METHOD("filter_removed_vegetation_entries", "entries", "removed_lookup"), &PrefabGeometryNative::filter_removed_vegetation_entries);
 	ClassDB::bind_method(D_METHOD("build_global_vegetation_render_payload", "instances", "render_space_inverse", "mesh_bounds"), &PrefabGeometryNative::build_global_vegetation_render_payload);
@@ -1191,131 +1374,16 @@ Dictionary PrefabGeometryNative::resolve_tree_body_collision(const Dictionary &c
 }
 
 Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const {
-	Array instances;
-	if (height_map.is_empty()) {
-		return instances;
-	}
+	const Dictionary result = build_vegetation_instances_result(config, height_map, false, Transform3D(), AABB());
+	return result.get("instances", Array());
+}
 
-	const int chunk_stride = int(config.get("chunk_stride", 0));
-	const int step = std::max(1, int(config.get("step", 1)));
-	if (chunk_stride <= 0) {
-		return instances;
-	}
-
-	const int chunk_origin_x = int(config.get("chunk_origin_x", 0));
-	const int chunk_origin_z = int(config.get("chunk_origin_z", 0));
-	const Vector3 chunk_world_pos = config.get("chunk_world_pos", Vector3());
-	const Transform3D base_transform = config.get("base_transform", Transform3D());
-	const Vector3 rotation_fix = config.get("rotation_fix", Vector3());
-	const double road_clearance = double(config.get("road_clearance", 0.0));
-	const bool procedural_roads_enabled = bool(config.get("procedural_roads_enabled", false));
-	const double procedural_road_spacing = double(config.get("procedural_road_spacing", 100.0));
-	const double procedural_road_width = double(config.get("procedural_road_width", 8.0));
-	const bool world_map_active = bool(config.get("world_map_active", false));
-	const PackedFloat32Array road_block_values = config.get("road_block_values", PackedFloat32Array());
-	const bool use_road_block_values = bool(config.get("use_road_block_values", false));
-	const PackedFloat32Array noise_values = config.get("noise_values", PackedFloat32Array());
-	const double noise_threshold = double(config.get("noise_threshold", 0.0));
-	const bool use_noise = bool(config.get("use_noise", true));
-	const bool use_water_density = bool(config.get("use_water_density", false));
-	const PackedFloat32Array water_block_values = config.get("water_block_values", PackedFloat32Array());
-	const bool use_water_block_values = bool(config.get("use_water_block_values", false));
-	const double water_level = double(config.get("water_level", 13.0));
-	const double scale_min = std::min(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
-	const double scale_max = std::max(double(config.get("scale_min", 1.0)), double(config.get("scale_max", 1.0)));
-	const double scale_multiplier = double(config.get("scale_multiplier", 1.0));
-	const double y_offset = double(config.get("y_offset", 0.0));
-	const bool record_random_scale_factor = bool(config.get("record_random_scale_factor", true));
-
-	instances.resize(height_map.size());
-	int instance_write_index = 0;
-	int sample_index = 0;
-	for (int x = 0; x < chunk_stride; x += step) {
-		for (int z = 0; z < chunk_stride; z += step) {
-			if (sample_index >= height_map.size()) {
-				break;
-			}
-
-			const int current_sample = sample_index++;
-			const float terrain_y = height_map[current_sample];
-			if (terrain_y < -100.0f) {
-				continue;
-			}
-
-			const double global_x = double(chunk_origin_x + x);
-			const double global_z = double(chunk_origin_z + z);
-			bool road_is_blocked = false;
-			if (use_road_block_values) {
-				if (current_sample >= road_block_values.size()) {
-					continue;
-				}
-				road_is_blocked = road_block_values[current_sample] >= 0.5f;
-			} else if (!world_map_active && procedural_roads_enabled) {
-				road_is_blocked = is_procedural_road_blocked(global_x, global_z, procedural_road_spacing, procedural_road_width, road_clearance);
-			}
-			if (road_is_blocked) {
-				continue;
-			}
-
-			if (use_noise) {
-				if (current_sample >= noise_values.size()) {
-					continue;
-				}
-				const double noise_value = noise_values[current_sample];
-				if (noise_value < noise_threshold) {
-					continue;
-				}
-			}
-
-			bool water_is_blocked = false;
-			if (use_water_block_values) {
-				if (current_sample >= water_block_values.size()) {
-					continue;
-				}
-				water_is_blocked = water_block_values[current_sample] >= 0.5f;
-			} else if (use_water_density) {
-				water_is_blocked = double(terrain_y) + 1.0 < water_level;
-			} else {
-				water_is_blocked = double(terrain_y) + 1.0 < water_level;
-			}
-			if (water_is_blocked) {
-				continue;
-			}
-
-			const Vector3 hit_pos(global_x, terrain_y, global_z);
-			Vector3 local_pos = hit_pos - chunk_world_pos;
-			local_pos.y += y_offset;
-
-			Vector3 world_pos = hit_pos;
-			world_pos.y += y_offset;
-
-			const double random_scale = UtilityFunctions::randf_range(scale_min, scale_max);
-			const double final_scale = scale_multiplier * random_scale;
-			const double rotation_angle = UtilityFunctions::randf() * 6.28318530717958647692;
-			const Transform3D transform = build_vegetation_transform(base_transform, rotation_fix, rotation_angle, final_scale, local_pos);
-
-			Dictionary record;
-			record["world_pos"] = world_pos;
-			record["local_pos"] = local_pos;
-			record["hit_pos"] = hit_pos;
-			record["rotation_angle"] = rotation_angle;
-			record["rotation"] = rotation_angle;
-			record["random_scale_factor"] = record_random_scale_factor ? random_scale : 0.0;
-			record["index"] = instance_write_index;
-			record["alive"] = true;
-			record["scale"] = final_scale;
-			record["placed_by_player"] = false;
-			record["transform"] = transform;
-			instances[instance_write_index++] = record;
-		}
-
-		if (sample_index >= height_map.size()) {
-			break;
-		}
-	}
-
-	instances.resize(instance_write_index);
-	return instances;
+Dictionary PrefabGeometryNative::build_vegetation_instances_with_render_payload(
+		const Dictionary &config,
+		const PackedFloat32Array &height_map,
+		const Transform3D &render_space_inverse,
+		const AABB &mesh_bounds) const {
+	return build_vegetation_instances_result(config, height_map, true, render_space_inverse, mesh_bounds);
 }
 
 PackedFloat32Array PrefabGeometryNative::build_noise_samples(const Callable &noise_sampler, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, bool use_noise) const {
