@@ -114,6 +114,8 @@ var _world_map_road_data: PackedByteArray = PackedByteArray()
 var _world_map_road_texture: ImageTexture = null
 var _world_map_water_image: Image = null
 var _world_map_water_data: PackedByteArray = PackedByteArray()
+var _world_map_road_block_sample_backend_counts: Dictionary = {}
+var _world_map_water_block_sample_backend_counts: Dictionary = {}
 var _world_map_set1: RID = RID()  # Uniform set 1 for terrain shader world map bindings
 var _world_map_water_set1: RID = RID()  # Uniform set 1 for water shader
 var _world_map_buildings: Array = []  # Baked building positions from world_meta.json
@@ -1011,6 +1013,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"distant_world_map_lod_budget_per_frame": distant_world_map_lod_budget_per_frame,
 		"hot_frame_backoff_remaining_frames": _hot_frame_backoff_remaining_frames,
 		"world_map_building_count": _world_map_buildings.size(),
+		"world_map_road_block_sample_backend_counts": _world_map_road_block_sample_backend_counts.duplicate(true),
+		"world_map_water_block_sample_backend_counts": _world_map_water_block_sample_backend_counts.duplicate(true),
 		"world_map_excavation_mask_count": _world_map_excavation_masks.size(),
 		"world_map_excavation_buffer_count": _world_map_excavation_buffers.size(),
 		"render_resource_prewarm_started": _render_resource_prewarm_started,
@@ -5396,7 +5400,14 @@ func _is_world_map_road_at_position(global_x: float, global_z: float) -> bool:
 	var road_pixel := _world_map_road_image.get_pixel(px, py)
 	return road_pixel.r > 0.5
 
+func _record_world_map_mask_sample_backend(kind: String, backend: String, sample_count: int, elapsed_us: int) -> void:
+	var counts := _world_map_road_block_sample_backend_counts if kind == "road" else _world_map_water_block_sample_backend_counts
+	counts["%s_calls" % backend] = int(counts.get("%s_calls" % backend, 0)) + 1
+	counts["%s_samples" % backend] = int(counts.get("%s_samples" % backend, 0)) + sample_count
+	counts["%s_us" % backend] = int(counts.get("%s_us" % backend, 0)) + elapsed_us
+
 func get_world_map_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int) -> PackedFloat32Array:
+	var start_us := Time.get_ticks_usec()
 	var samples := PackedFloat32Array()
 	if _world_map_road_image == null or _world_map_road_data.is_empty() or world_map_size <= 0.0:
 		return samples
@@ -5418,6 +5429,7 @@ func get_world_map_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, 
 			world_map_size
 		)
 		if not native_samples.is_empty():
+			_record_world_map_mask_sample_backend("road", "native", native_samples.size(), Time.get_ticks_usec() - start_us)
 			return native_samples
 
 	for x in range(0, chunk_stride, step):
@@ -5434,9 +5446,11 @@ func get_world_map_road_block_samples(chunk_origin_x: int, chunk_origin_z: int, 
 			var py := clampi(int(floor(v * float(road_height))), 0, road_height - 1)
 			samples.append(1.0 if _read_world_map_road_byte_pixel(px, py, road_width, road_height) else 0.0)
 
+	_record_world_map_mask_sample_backend("road", "gdscript", samples.size(), Time.get_ticks_usec() - start_us)
 	return samples
 
 func get_world_map_water_block_samples(chunk_origin_x: int, chunk_origin_z: int, chunk_stride: int, step: int, terrain_heights: PackedFloat32Array) -> PackedFloat32Array:
+	var start_us := Time.get_ticks_usec()
 	var samples := PackedFloat32Array()
 	if not world_map_active or _world_map_water_image == null or _world_map_water_data.is_empty() or world_map_size <= 0.0:
 		return samples
@@ -5472,6 +5486,7 @@ func get_world_map_water_block_samples(chunk_origin_x: int, chunk_origin_z: int,
 			water_level
 		)
 		if not native_samples.is_empty():
+			_record_world_map_mask_sample_backend("water", "native", native_samples.size(), Time.get_ticks_usec() - start_us)
 			return native_samples
 
 	var sample_index := 0
@@ -5492,6 +5507,7 @@ func get_world_map_water_block_samples(chunk_origin_x: int, chunk_origin_z: int,
 			var water_blocks := _read_world_map_water_byte_pixel(px, py, water_width, water_height) and (terrain_y + 0.5 < water_level)
 			samples.append(1.0 if water_blocks else 0.0)
 
+	_record_world_map_mask_sample_backend("water", "gdscript", samples.size(), Time.get_ticks_usec() - start_us)
 	return samples
 
 func _get_all_modification_coords() -> Array:
@@ -6523,6 +6539,8 @@ func clear_all_chunks(preserve_world_map_lod_initial_defer: bool = false):
 	pending_spawn_zones.clear()
 	modification_batch_id = 0
 	pending_batches.clear()
+	_world_map_road_block_sample_backend_counts.clear()
+	_world_map_water_block_sample_backend_counts.clear()
 	_last_terrain_stream_update_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
 	_last_terrain_stream_update_render_distance = -1
 	_terrain_stream_update_idle_skip_count = 0
@@ -6781,6 +6799,8 @@ func _thread_function():
 	_world_map_road_data = PackedByteArray()
 	_world_map_water_image = null
 	_world_map_water_data = PackedByteArray()
+	_world_map_road_block_sample_backend_counts.clear()
+	_world_map_water_block_sample_backend_counts.clear()
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
 	_mark_modification_coord_cache_dirty()
