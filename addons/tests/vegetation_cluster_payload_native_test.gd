@@ -20,6 +20,11 @@ func _run() -> int:
 	var chunk_result: Dictionary = native.build_global_vegetation_render_payload(
 		[
 			{
+				"alive": false,
+				"world_pos": Vector3(-100.0, -100.0, -100.0),
+				"transform": Transform3D(Basis.IDENTITY.scaled(Vector3(9.0, 9.0, 9.0)), Vector3.ZERO)
+			},
+			{
 				"alive": true,
 				"world_pos": Vector3(10.0, 20.0, 30.0),
 				"transform": Transform3D(Basis.IDENTITY.scaled(Vector3(2.0, 3.0, 4.0)), Vector3.ZERO)
@@ -29,6 +34,9 @@ func _run() -> int:
 		AABB(Vector3(-1.0, 0.0, -0.5), Vector3(2.0, 2.0, 1.0))
 	)
 	if not _expect(int(chunk_result.get("instance_count", 0)) == 1, "expected one chunk payload instance"):
+		return 1
+	var chunk_buffer: PackedFloat32Array = chunk_result.get("buffer", PackedFloat32Array())
+	if not _expect(chunk_buffer.size() == 12, "chunk payload should compact dead entries out of packed buffer"):
 		return 1
 	var chunk_bounds: AABB = chunk_result.get("bounds", AABB())
 	if not _expect(_vec_equal(chunk_bounds.position, Vector3(8.0, 20.0, 28.0)), "chunk payload exact bounds position mismatch"):

@@ -1384,9 +1384,10 @@ Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Ar
 		return result;
 	}
 
-	std::vector<Transform3D> transforms;
-	transforms.reserve(instances.size());
-
+	PackedFloat32Array buffer;
+	buffer.resize(instances.size() * 12);
+	float *write_ptr = buffer.ptrw();
+	int instance_count = 0;
 	AABB bounds;
 	bool has_bounds = false;
 
@@ -1418,25 +1419,18 @@ Dictionary PrefabGeometryNative::build_global_vegetation_render_payload(const Ar
 			bounds = instance_bounds;
 			has_bounds = true;
 		}
-		transforms.push_back(transform);
+		pack_transform_to_buffer(transform, write_ptr + instance_count * 12);
+		instance_count += 1;
 	}
 
-	if (transforms.empty()) {
+	if (instance_count <= 0) {
 		return result;
 	}
 
-	PackedFloat32Array buffer;
-	buffer.resize(static_cast<int>(transforms.size()) * 12);
-	float *write_ptr = buffer.ptrw();
-	int write_offset = 0;
-
-	for (const Transform3D &transform : transforms) {
-		pack_transform_to_buffer(transform, write_ptr + write_offset);
-		write_offset += 12;
-	}
+	buffer.resize(instance_count * 12);
 
 	result["buffer"] = buffer;
-	result["instance_count"] = static_cast<int>(transforms.size());
+	result["instance_count"] = instance_count;
 	result["bounds"] = bounds;
 	result["has_bounds"] = has_bounds;
 	return result;
