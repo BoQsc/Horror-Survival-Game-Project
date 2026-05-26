@@ -205,6 +205,7 @@ var _vegetation_render_cluster_payload_backend_counts: Dictionary = {}
 var _vegetation_native_record_append_counts: Dictionary = {}
 var _vegetation_opaque_material_optimization_counts: Dictionary = {}
 var _vegetation_texture_opaque_cache: Dictionary = {}
+var _vegetation_texture_alpha_coverage_cache: Dictionary = {}
 var _vegetation_mesh_stats_cache: Dictionary = {}
 var _vegetation_collider_candidate_backend_counts: Dictionary = {}
 var _vegetation_ray_query_backend_counts: Dictionary = {}
@@ -275,6 +276,12 @@ func get_telemetry_snapshot() -> Dictionary:
 	var vegetation_estimated_surface_draws := int(tree_render_stats.get("estimated_surface_draws", 0)) \
 		+ int(grass_render_stats.get("estimated_surface_draws", 0)) \
 		+ int(rock_render_stats.get("estimated_surface_draws", 0))
+	var vegetation_estimated_alpha_primitives := int(tree_render_stats.get("estimated_alpha_primitives", 0)) \
+		+ int(grass_render_stats.get("estimated_alpha_primitives", 0)) \
+		+ int(rock_render_stats.get("estimated_alpha_primitives", 0))
+	var vegetation_estimated_alpha_empty_primitives := float(tree_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)) \
+		+ float(grass_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)) \
+		+ float(rock_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0))
 
 	return {
 		"pending_chunks": pending_chunks.size(),
@@ -367,10 +374,27 @@ func get_telemetry_snapshot() -> Dictionary:
 		"tree_mesh_surfaces": int(tree_render_stats.get("mesh_surfaces", 0)),
 		"grass_mesh_surfaces": int(grass_render_stats.get("mesh_surfaces", 0)),
 		"rock_mesh_surfaces": int(rock_render_stats.get("mesh_surfaces", 0)),
+		"tree_alpha_mesh_primitives": int(tree_render_stats.get("alpha_mesh_primitives", 0)),
+		"grass_alpha_mesh_primitives": int(grass_render_stats.get("alpha_mesh_primitives", 0)),
+		"rock_alpha_mesh_primitives": int(rock_render_stats.get("alpha_mesh_primitives", 0)),
+		"tree_alpha_mesh_surfaces": int(tree_render_stats.get("alpha_mesh_surfaces", 0)),
+		"grass_alpha_mesh_surfaces": int(grass_render_stats.get("alpha_mesh_surfaces", 0)),
+		"rock_alpha_mesh_surfaces": int(rock_render_stats.get("alpha_mesh_surfaces", 0)),
+		"tree_alpha_texture_coverage_ratio": float(tree_render_stats.get("alpha_texture_coverage_ratio", 1.0)),
+		"grass_alpha_texture_coverage_ratio": float(grass_render_stats.get("alpha_texture_coverage_ratio", 1.0)),
+		"rock_alpha_texture_coverage_ratio": float(rock_render_stats.get("alpha_texture_coverage_ratio", 1.0)),
 		"global_tree_render_estimated_primitives": int(tree_render_stats.get("estimated_primitives", 0)),
 		"global_grass_render_estimated_primitives": int(grass_render_stats.get("estimated_primitives", 0)),
 		"global_rock_render_estimated_primitives": int(rock_render_stats.get("estimated_primitives", 0)),
 		"global_render_estimated_primitives": vegetation_estimated_primitives,
+		"global_tree_estimated_alpha_primitives": int(tree_render_stats.get("estimated_alpha_primitives", 0)),
+		"global_grass_estimated_alpha_primitives": int(grass_render_stats.get("estimated_alpha_primitives", 0)),
+		"global_rock_estimated_alpha_primitives": int(rock_render_stats.get("estimated_alpha_primitives", 0)),
+		"global_render_estimated_alpha_primitives": vegetation_estimated_alpha_primitives,
+		"global_tree_estimated_alpha_empty_primitive_equivalent": float(tree_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)),
+		"global_grass_estimated_alpha_empty_primitive_equivalent": float(grass_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)),
+		"global_rock_estimated_alpha_empty_primitive_equivalent": float(rock_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)),
+		"global_render_estimated_alpha_empty_primitive_equivalent": vegetation_estimated_alpha_empty_primitives,
 		"global_tree_estimated_surface_draws": int(tree_render_stats.get("estimated_surface_draws", 0)),
 		"global_grass_estimated_surface_draws": int(grass_render_stats.get("estimated_surface_draws", 0)),
 		"global_rock_estimated_surface_draws": int(rock_render_stats.get("estimated_surface_draws", 0)),
@@ -736,17 +760,80 @@ func _get_mesh_render_stats(mesh: Mesh) -> Dictionary:
 	if mesh == null:
 		return {
 			"mesh_primitives": 0,
-			"mesh_surfaces": 0
+			"mesh_surfaces": 0,
+			"alpha_mesh_primitives": 0,
+			"alpha_mesh_surfaces": 0,
+			"alpha_texture_coverage_ratio": 1.0
 		}
 	var cache_key := mesh.get_instance_id()
 	if _vegetation_mesh_stats_cache.has(cache_key):
 		return _vegetation_mesh_stats_cache[cache_key]
+	var mesh_primitives := 0
+	var alpha_mesh_primitives := 0
+	var alpha_mesh_surfaces := 0
+	var alpha_coverage_weighted := 0.0
+	for surface_index in range(mesh.get_surface_count()):
+		var surface_primitives := _get_mesh_surface_primitive_count(mesh, surface_index)
+		mesh_primitives += surface_primitives
+		var material := mesh.surface_get_material(surface_index)
+		if not _is_material_alpha_pipeline(material):
+			continue
+		alpha_mesh_primitives += surface_primitives
+		alpha_mesh_surfaces += 1
+		alpha_coverage_weighted += float(surface_primitives) * _get_material_alpha_coverage_ratio(material)
+	var alpha_coverage_ratio := alpha_coverage_weighted / float(alpha_mesh_primitives) if alpha_mesh_primitives > 0 else 1.0
 	var stats := {
-		"mesh_primitives": _get_mesh_total_primitive_count(mesh),
-		"mesh_surfaces": _get_mesh_surface_count(mesh)
+		"mesh_primitives": mesh_primitives,
+		"mesh_surfaces": _get_mesh_surface_count(mesh),
+		"alpha_mesh_primitives": alpha_mesh_primitives,
+		"alpha_mesh_surfaces": alpha_mesh_surfaces,
+		"alpha_texture_coverage_ratio": alpha_coverage_ratio
 	}
 	_vegetation_mesh_stats_cache[cache_key] = stats
 	return stats
+
+func _is_material_alpha_pipeline(material: Material) -> bool:
+	if not (material is BaseMaterial3D):
+		return false
+	var base := material as BaseMaterial3D
+	return base.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED or base.albedo_color.a < 0.999
+
+func _get_material_alpha_coverage_ratio(material: Material) -> float:
+	if not (material is BaseMaterial3D):
+		return 1.0
+	var base := material as BaseMaterial3D
+	if base.albedo_texture == null:
+		return 1.0
+	var threshold := base.alpha_scissor_threshold
+	if threshold <= 0.0:
+		threshold = 0.5
+	var cache_key := "%s|%.4f|%.4f" % [base.albedo_texture.resource_path, threshold, base.albedo_color.a]
+	if _vegetation_texture_alpha_coverage_cache.has(cache_key):
+		return float(_vegetation_texture_alpha_coverage_cache[cache_key])
+
+	var image := base.albedo_texture.get_image()
+	if image == null or image.is_empty():
+		_vegetation_texture_alpha_coverage_cache[cache_key] = 1.0
+		return 1.0
+	if image.is_compressed() and image.decompress() != OK:
+		_vegetation_texture_alpha_coverage_cache[cache_key] = 1.0
+		return 1.0
+
+	var width := image.get_width()
+	var height := image.get_height()
+	var pixel_count := width * height
+	if pixel_count <= 0:
+		_vegetation_texture_alpha_coverage_cache[cache_key] = 1.0
+		return 1.0
+
+	var covered_pixels := 0
+	for y in range(height):
+		for x in range(width):
+			if image.get_pixel(x, y).a * base.albedo_color.a >= threshold:
+				covered_pixels += 1
+	var coverage_ratio := float(covered_pixels) / float(pixel_count)
+	_vegetation_texture_alpha_coverage_cache[cache_key] = coverage_ratio
+	return coverage_ratio
 
 func _get_vegetation_mesh_for_kind(kind: String) -> Mesh:
 	match kind:
@@ -763,6 +850,9 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 	var mesh_stats := _get_mesh_render_stats(mesh)
 	var mesh_primitives := int(mesh_stats.get("mesh_primitives", 0))
 	var mesh_surfaces := int(mesh_stats.get("mesh_surfaces", 0))
+	var alpha_mesh_primitives := int(mesh_stats.get("alpha_mesh_primitives", 0))
+	var alpha_mesh_surfaces := int(mesh_stats.get("alpha_mesh_surfaces", 0))
+	var alpha_texture_coverage_ratio := float(mesh_stats.get("alpha_texture_coverage_ratio", 1.0))
 	var batch_count := 0
 	var instance_count := 0
 	var max_batch_instances := 0
@@ -778,9 +868,14 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 	return {
 		"mesh_primitives": mesh_primitives,
 		"mesh_surfaces": mesh_surfaces,
+		"alpha_mesh_primitives": alpha_mesh_primitives,
+		"alpha_mesh_surfaces": alpha_mesh_surfaces,
+		"alpha_texture_coverage_ratio": alpha_texture_coverage_ratio,
 		"batch_count": batch_count,
 		"instance_count": instance_count,
 		"estimated_primitives": mesh_primitives * instance_count,
+		"estimated_alpha_primitives": alpha_mesh_primitives * instance_count,
+		"estimated_alpha_empty_primitive_equivalent": float(alpha_mesh_primitives * instance_count) * (1.0 - alpha_texture_coverage_ratio),
 		"estimated_surface_draws": mesh_surfaces * batch_count,
 		"max_batch_instances": max_batch_instances,
 		"max_batch_estimated_primitives": mesh_primitives * max_batch_instances,

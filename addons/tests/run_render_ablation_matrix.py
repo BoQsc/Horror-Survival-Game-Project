@@ -521,9 +521,34 @@ def _run_case(case_name: str, case_env: dict[str, str]) -> dict:
         "tree_mesh_surfaces": int(vegetation.get("tree_mesh_surfaces", 0) or 0),
         "grass_mesh_surfaces": int(vegetation.get("grass_mesh_surfaces", 0) or 0),
         "rock_mesh_surfaces": int(vegetation.get("rock_mesh_surfaces", 0) or 0),
+        "tree_alpha_mesh_primitives": int(vegetation.get("tree_alpha_mesh_primitives", 0) or 0),
+        "grass_alpha_mesh_primitives": int(vegetation.get("grass_alpha_mesh_primitives", 0) or 0),
+        "rock_alpha_mesh_primitives": int(vegetation.get("rock_alpha_mesh_primitives", 0) or 0),
+        "tree_alpha_mesh_surfaces": int(vegetation.get("tree_alpha_mesh_surfaces", 0) or 0),
+        "grass_alpha_mesh_surfaces": int(vegetation.get("grass_alpha_mesh_surfaces", 0) or 0),
+        "rock_alpha_mesh_surfaces": int(vegetation.get("rock_alpha_mesh_surfaces", 0) or 0),
+        "tree_alpha_texture_coverage_ratio": float(vegetation.get("tree_alpha_texture_coverage_ratio", 1.0) or 0.0),
+        "grass_alpha_texture_coverage_ratio": float(vegetation.get("grass_alpha_texture_coverage_ratio", 1.0) or 0.0),
+        "rock_alpha_texture_coverage_ratio": float(vegetation.get("rock_alpha_texture_coverage_ratio", 1.0) or 0.0),
         "vegetation_tree_estimated_primitives": int(vegetation.get("global_tree_render_estimated_primitives", 0) or 0),
         "vegetation_grass_estimated_primitives": int(vegetation.get("global_grass_render_estimated_primitives", 0) or 0),
         "vegetation_rock_estimated_primitives": int(vegetation.get("global_rock_render_estimated_primitives", 0) or 0),
+        "vegetation_estimated_alpha_primitives": int(vegetation.get("global_render_estimated_alpha_primitives", 0) or 0),
+        "vegetation_tree_estimated_alpha_primitives": int(vegetation.get("global_tree_estimated_alpha_primitives", 0) or 0),
+        "vegetation_grass_estimated_alpha_primitives": int(vegetation.get("global_grass_estimated_alpha_primitives", 0) or 0),
+        "vegetation_rock_estimated_alpha_primitives": int(vegetation.get("global_rock_estimated_alpha_primitives", 0) or 0),
+        "vegetation_estimated_alpha_empty_primitive_equivalent": float(
+            vegetation.get("global_render_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0
+        ),
+        "vegetation_tree_estimated_alpha_empty_primitive_equivalent": float(
+            vegetation.get("global_tree_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0
+        ),
+        "vegetation_grass_estimated_alpha_empty_primitive_equivalent": float(
+            vegetation.get("global_grass_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0
+        ),
+        "vegetation_rock_estimated_alpha_empty_primitive_equivalent": float(
+            vegetation.get("global_rock_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0
+        ),
         "vegetation_tree_max_batch_instances": int(vegetation.get("global_tree_max_batch_instances", 0) or 0),
         "vegetation_grass_max_batch_instances": int(vegetation.get("global_grass_max_batch_instances", 0) or 0),
         "vegetation_rock_max_batch_instances": int(vegetation.get("global_rock_max_batch_instances", 0) or 0),
@@ -707,13 +732,31 @@ def _print_results(results: list[dict]) -> None:
             )
         )
         print(
-            "                     materials opaqueOpt={opaque_opt} opaqueCounts={opaque_counts}".format(
+            "                     materials opaqueOpt={opaque_opt} opaqueCounts={opaque_counts} "
+            "alphaMesh={tree_alpha_mesh}/{grass_alpha_mesh}/{rock_alpha_mesh} "
+            "alphaSurf={tree_alpha_surfaces}/{grass_alpha_surfaces}/{rock_alpha_surfaces} "
+            "alphaCoverage={tree_coverage:.2f}/{grass_coverage:.2f}/{rock_coverage:.2f} "
+            "alphaEst={alpha_est} emptyEq={empty_eq:.0f} tree/grass/rockEmpty={tree_empty:.0f}/{grass_empty:.0f}/{rock_empty:.0f}".format(
                 opaque_opt="on" if bool(result.get("vegetation_opaque_material_optimization_enabled", False)) else "off",
                 opaque_counts=json.dumps(
                     result.get("vegetation_opaque_material_optimization_counts", {}),
                     sort_keys=True,
                     separators=(",", ":"),
                 ),
+                tree_alpha_mesh=int(result.get("tree_alpha_mesh_primitives", 0) or 0),
+                grass_alpha_mesh=int(result.get("grass_alpha_mesh_primitives", 0) or 0),
+                rock_alpha_mesh=int(result.get("rock_alpha_mesh_primitives", 0) or 0),
+                tree_alpha_surfaces=int(result.get("tree_alpha_mesh_surfaces", 0) or 0),
+                grass_alpha_surfaces=int(result.get("grass_alpha_mesh_surfaces", 0) or 0),
+                rock_alpha_surfaces=int(result.get("rock_alpha_mesh_surfaces", 0) or 0),
+                tree_coverage=float(result.get("tree_alpha_texture_coverage_ratio", 1.0) or 0.0),
+                grass_coverage=float(result.get("grass_alpha_texture_coverage_ratio", 1.0) or 0.0),
+                rock_coverage=float(result.get("rock_alpha_texture_coverage_ratio", 1.0) or 0.0),
+                alpha_est=int(result.get("vegetation_estimated_alpha_primitives", 0) or 0),
+                empty_eq=float(result.get("vegetation_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0),
+                tree_empty=float(result.get("vegetation_tree_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0),
+                grass_empty=float(result.get("vegetation_grass_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0),
+                rock_empty=float(result.get("vegetation_rock_estimated_alpha_empty_primitive_equivalent", 0.0) or 0.0),
             )
         )
         print(
