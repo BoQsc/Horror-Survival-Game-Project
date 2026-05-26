@@ -1227,6 +1227,8 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 	const double y_offset = double(config.get("y_offset", 0.0));
 	const bool record_random_scale_factor = bool(config.get("record_random_scale_factor", true));
 
+	instances.resize(height_map.size());
+	int instance_write_index = 0;
 	int sample_index = 0;
 	for (int x = 0; x < chunk_stride; x += step) {
 		for (int z = 0; z < chunk_stride; z += step) {
@@ -1299,12 +1301,12 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 			record["rotation_angle"] = rotation_angle;
 			record["rotation"] = rotation_angle;
 			record["random_scale_factor"] = record_random_scale_factor ? random_scale : 0.0;
-			record["index"] = instances.size();
+			record["index"] = instance_write_index;
 			record["alive"] = true;
 			record["scale"] = final_scale;
 			record["placed_by_player"] = false;
 			record["transform"] = transform;
-			instances.append(record);
+			instances[instance_write_index++] = record;
 		}
 
 		if (sample_index >= height_map.size()) {
@@ -1312,6 +1314,7 @@ Array PrefabGeometryNative::build_vegetation_instances(const Dictionary &config,
 		}
 	}
 
+	instances.resize(instance_write_index);
 	return instances;
 }
 
@@ -1321,19 +1324,16 @@ PackedFloat32Array PrefabGeometryNative::build_noise_samples(const Callable &noi
 		return samples;
 	}
 
-	int sample_count = 0;
-	for (int x = 0; x < chunk_stride; x += step) {
-		for (int z = 0; z < chunk_stride; z += step) {
-			++sample_count;
-		}
-	}
+	const int samples_per_axis = (chunk_stride + step - 1) / step;
+	const int sample_count = samples_per_axis * samples_per_axis;
 	samples.resize(sample_count);
 
+	float *write_ptr = samples.ptrw();
 	int write_index = 0;
 	for (int x = 0; x < chunk_stride; x += step) {
 		for (int z = 0; z < chunk_stride; z += step) {
 			const Variant value = noise_sampler.call(float(chunk_origin_x + x), float(chunk_origin_z + z));
-			samples.set(write_index++, float(value));
+			write_ptr[write_index++] = float(value);
 		}
 	}
 	return samples;
@@ -1345,7 +1345,8 @@ Array PrefabGeometryNative::filter_removed_vegetation_entries(const Array &entri
 	}
 
 	Array filtered;
-	filtered.resize(0);
+	filtered.resize(entries.size());
+	int write_index = 0;
 	for (int i = 0; i < entries.size(); ++i) {
 		const Variant item = entries[i];
 		if (item.get_type() == Variant::DICTIONARY) {
@@ -1356,9 +1357,10 @@ Array PrefabGeometryNative::filter_removed_vegetation_entries(const Array &entri
 				continue;
 			}
 		}
-		filtered.append(item);
+		filtered[write_index++] = item;
 	}
 
+	filtered.resize(write_index);
 	for (int i = 0; i < filtered.size(); ++i) {
 		Variant item = filtered[i];
 		if (item.get_type() != Variant::DICTIONARY) {

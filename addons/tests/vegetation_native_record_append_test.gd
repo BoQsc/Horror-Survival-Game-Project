@@ -57,6 +57,18 @@ func _run() -> int:
 	if not _expect(is_equal_approx(float(record.get("rotation", 0.0)), float(record.get("rotation_angle", 1.0))), "rotation aliases should match"):
 		return 1
 
+	var sparse_config := config.duplicate(true)
+	sparse_config["chunk_stride"] = 8
+	sparse_config["step"] = 4
+	sparse_config["use_noise"] = true
+	sparse_config["noise_threshold"] = 0.5
+	sparse_config["noise_values"] = PackedFloat32Array([1.0, 1.0, 0.0, 1.0])
+	var sparse_records: Array = native.build_vegetation_instances(sparse_config, PackedFloat32Array([2.0, -1000.0, 4.0, 5.0]))
+	if not _expect(sparse_records.size() == 2, "native builder should compact skipped samples"):
+		return 1
+	if not _expect(int(sparse_records[0].get("index", -1)) == 0 and int(sparse_records[1].get("index", -1)) == 1, "native builder should keep contiguous record indices"):
+		return 1
+
 	var manager: VegetationManager = VegetationManagerScript.new()
 	var target: Array = []
 	manager._append_native_generated_instances(target, records)
