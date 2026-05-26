@@ -22,6 +22,8 @@ class FakeVegetationManager:
 	var query_count: int = 0
 	var chopped_count: int = 0
 	var tree_distance: float = 2.0
+	var grass_distance: float = 1.0
+	var harvested_kind: String = ""
 
 	func find_nearest_vegetation_along_ray(
 			_origin: Vector3,
@@ -43,12 +45,14 @@ class FakeVegetationManager:
 				"distance": tree_distance
 			}
 		if include_grass:
+			if _max_distance < grass_distance:
+				return {}
 			return {
 				"kind": "grass",
 				"coord": Vector2i.ZERO,
 				"index": 0,
 				"position": Vector3(0.0, 0.2, 1.0),
-				"distance": 1.0
+				"distance": grass_distance
 			}
 		if not include_trees:
 			return {}
@@ -65,9 +69,13 @@ class FakeVegetationManager:
 		return true
 
 	func harvest_data_hit(_hit: Dictionary) -> bool:
+		harvested_kind = str(_hit.get("kind", ""))
 		return true
 
 func _init() -> void:
+	call_deferred("_run_and_quit")
+
+func _run_and_quit() -> void:
 	var exit_code := _run()
 	quit(exit_code)
 
@@ -75,11 +83,14 @@ func _run() -> int:
 	var combat: CombatSystemFeature = CombatSystemScript.new()
 	var player := FakePlayer.new()
 	var vegetation := FakeVegetationManager.new()
+	var terrain_manager := Node.new()
 	root.add_child(player)
 	root.add_child(vegetation)
+	root.add_child(terrain_manager)
 	root.add_child(combat)
 	combat.player = player
 	combat.vegetation_manager = vegetation
+	combat.terrain_manager = terrain_manager
 
 	var axe_item := {
 		"id": "axe_stone",
@@ -164,7 +175,45 @@ func _run() -> int:
 	if not _expect(combat.durability_target == "tree:0:0:0", "data-ray tree durability target should stay valid without a physics collider"):
 		return 1
 
+	combat.tree_damage.clear()
+	vegetation.harvested_kind = ""
+	vegetation.tree_distance = 3.0
+	vegetation.grass_distance = 2.0
+	var pickaxe_item := {
+		"id": "pickaxe_stone",
+		"damage": 1
+	}
+	var pickaxe_terrain_blocker := Node.new()
+	pickaxe_terrain_blocker.add_to_group("terrain")
+	root.add_child(pickaxe_terrain_blocker)
+	player.ray_hit = {
+		"collider": pickaxe_terrain_blocker,
+		"position": Vector3(0.0, 0.0, 1.0),
+		"normal": Vector3.UP
+	}
+	combat._do_pickaxe_damage_delayed({"item": pickaxe_item})
+	if not _expect(vegetation.harvested_kind == "grass", "pickaxe should not be classified as axe-only tree targeting"):
+		return 1
+	if not _expect(combat.tree_damage.is_empty(), "pickaxe grass targeting should not apply tree damage"):
+		return 1
+	pickaxe_terrain_blocker.free()
+
+	vegetation.harvested_kind = ""
+	var pickaxe_hard_blocker := Node.new()
+	root.add_child(pickaxe_hard_blocker)
+	player.ray_hit = {
+		"collider": pickaxe_hard_blocker,
+		"position": Vector3(0.0, 0.0, 1.0),
+		"normal": Vector3.UP
+	}
+	if not _expect(not combat._try_harvest_vegetation_near_ray(pickaxe_item, 3.5, player.ray_hit), "hard non-terrain physics blockers should still block grass behind them"):
+		return 1
+	if not _expect(vegetation.harvested_kind == "", "hard blocker should prevent grass data harvest"):
+		return 1
+	pickaxe_hard_blocker.free()
+
 	combat.free()
+	terrain_manager.free()
 	player.free()
 	vegetation.free()
 	print("[COMBAT_EMPTY_RAY_VEGETATION_TEST] PASS")

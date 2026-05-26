@@ -1308,11 +1308,12 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 		return false
 	
 	var damage = item.get("damage", 1)
-	var item_id = item.get("id", "")
+	var item_id := str(item.get("id", ""))
+	var is_axe_tool := _is_axe_tool_item_id(item_id)
 	
 	if target.is_in_group("trees"):
 		var tree_dmg = damage
-		if "axe" in item_id:
+		if is_axe_tool:
 			tree_dmg = 3
 		
 		var tree_rid = target.get_rid()
@@ -1376,11 +1377,12 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 		var hit_distance := origin.distance_to(hit_position)
 		if hit_distance > 0.0:
 			physics_hit_distance = hit_distance
-			limited_distance = minf(max_distance, hit_distance + 0.5)
+			limited_distance = max_distance if _is_soft_vegetation_physics_hit(hit) else minf(max_distance, hit_distance + 0.5)
 
 	var item_id := str(_item.get("id", ""))
+	var is_axe_tool := _is_axe_tool_item_id(item_id)
 	var data_hit: Dictionary = {}
-	if "axe" in item_id:
+	if is_axe_tool:
 		data_hit = vegetation_manager.find_nearest_vegetation_along_ray(origin, direction, max_distance, true, false, false)
 		if _is_data_tree_hit_blocked_by_physics(data_hit, physics_hit_distance, hit):
 			data_hit = {}
@@ -1392,7 +1394,7 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 	var vegetation_type := str(data_hit.get("kind", ""))
 	if vegetation_type == "tree":
 		var damage = _item.get("damage", 1)
-		var tree_dmg = 3 if "axe" in item_id else damage
+		var tree_dmg = 3 if is_axe_tool else damage
 		var tree_key := _vegetation_data_target_key(data_hit)
 		tree_damage[tree_key] = tree_damage.get(tree_key, 0) + tree_dmg
 		var current_hp = TREE_HP - tree_damage[tree_key]
@@ -1435,6 +1437,9 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 		return true
 
 	return false
+
+func _is_axe_tool_item_id(item_id: String) -> bool:
+	return item_id.contains("axe") and not item_id.contains("pickaxe")
 
 func _is_data_tree_hit_blocked_by_physics(data_hit: Dictionary, physics_hit_distance: float, physics_hit: Dictionary = {}) -> bool:
 	if data_hit.is_empty() or not is_finite(physics_hit_distance):
