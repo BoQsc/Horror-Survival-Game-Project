@@ -120,6 +120,8 @@ var return_origin: Vector3 = Vector3.ZERO
 var current_hold_seconds: float = HOLD_SECONDS
 var next_hold_snapshot_phase_time: float = -1.0
 var hold_periodic_snapshots_enabled: bool = false
+var hold_wait_stream_ready_enabled: bool = true
+var hold_stream_ready_wait_logged: bool = false
 var hold_settle_elapsed_seconds: float = 0.0
 var hold_settle_stable_frames: int = 0
 var hold_settle_timed_out: bool = false
@@ -2241,6 +2243,7 @@ func _ready() -> void:
 	world_ready_timeout_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_TIMEOUT_SECONDS", WORLD_READY_TIMEOUT_SECONDS)
 	world_ready_status_log_interval_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STATUS_LOG_INTERVAL_SECONDS", 5.0)
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
+	hold_wait_stream_ready_enabled = OS.get_environment("TOWN_STALL_WAIT_STREAM_READY_BEFORE_HOLD") != "0"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
@@ -2268,6 +2271,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Measure full flight: %s" % ("ON" if measure_full_flight_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Periodic hold snapshots: %s" % ("ON" if hold_periodic_snapshots_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Wait stream ready before hold: %s" % ("ON" if hold_wait_stream_ready_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
 	print("[TOWN_STALL_TEST] Engine max FPS: %d" % Engine.max_fps)
 	print("[TOWN_STALL_TEST] Render diagnostics: %s threshold=%.2f scene_scan=%s limit=%d scene_detail_limit=%d frame_scene_scan_limit=%d" % [
@@ -2322,6 +2326,8 @@ func _ready() -> void:
 		"low_fps_abort_frame_ms": low_fps_abort_frame_ms,
 		"low_fps_abort_seconds": low_fps_abort_seconds,
 		"measure_full_flight": measure_full_flight_enabled,
+		"hold_periodic_snapshots": hold_periodic_snapshots_enabled,
+		"hold_wait_stream_ready": hold_wait_stream_ready_enabled,
 		"hold_seconds": configured_hold_seconds,
 		"machine_state_available": not _machine_state.is_empty(),
 		"warmup_note": str(_machine_state.get("warmup_note", ""))
@@ -2813,7 +2819,7 @@ func _collect_world_ready_status(terrain_ready: bool, loading_screen_done: bool)
 	status["prefab_pending_baked_payload_build_jobs"] = int(prefab_telemetry.get("pending_world_map_baked_payload_build_jobs", 0))
 	status["prefab_pending_baked_payload_jobs"] = int(prefab_telemetry.get("pending_world_map_baked_payload_jobs", 0))
 	status["vegetation_ready"] = bool(vegetation_telemetry.get("vegetation_ready", true))
-	status["vegetation_pending_chunks"] = int(vegetation_telemetry.get("pending_chunks_count", 0))
+	status["vegetation_pending_chunks"] = int(vegetation_telemetry.get("pending_chunks_count", vegetation_telemetry.get("pending_chunks", 0)))
 	return status
 
 
@@ -2986,7 +2992,6 @@ func _is_town_terrain_stream_ready() -> bool:
 	var telemetry: Dictionary = chunk_manager.get_telemetry_snapshot()
 	var render_distance := int(telemetry.get("render_distance", 0))
 	var min_loaded_chunks := int(ceil(PI * float(render_distance * render_distance)))
-	var world_work_suspended := bool(telemetry.get("runtime_power_world_work_suspended", false))
 	var terrain_busy := false
 	terrain_busy = terrain_busy or (render_distance > 0 and int(telemetry.get("loaded_chunk_count", 0)) < min_loaded_chunks)
 	if bool(telemetry.get("distant_world_map_lod_enabled", false)) and bool(telemetry.get("world_map_active", false)):
@@ -2999,13 +3004,16 @@ func _is_town_terrain_stream_ready() -> bool:
 			terrain_busy = terrain_busy or int(telemetry.get("world_map_lod_pending_candidate_count", 0)) > 0
 			terrain_busy = terrain_busy or int(telemetry.get("last_world_map_lod_loads", 0)) > 0
 			terrain_busy = terrain_busy or int(telemetry.get("last_world_map_lod_unloads", 0)) > 0
-	if not world_work_suspended:
-		terrain_busy = terrain_busy or int(telemetry.get("pending_chunk_count", 0)) > 0
-		terrain_busy = terrain_busy or int(telemetry.get("pending_node_count", 0)) > 0
-		terrain_busy = terrain_busy or int(telemetry.get("task_queue_count", 0)) > 0
-		terrain_busy = terrain_busy or int(telemetry.get("cpu_task_queue_count", 0)) > 0
-		terrain_busy = terrain_busy or int(telemetry.get("completed_generation_queue_count", 0)) > 0
-		terrain_busy = terrain_busy or int(telemetry.get("pending_terrain_collision_create_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("pending_chunk_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("pending_node_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("task_queue_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("cpu_task_queue_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("completed_generation_queue_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("pending_terrain_collision_create_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("terrain_visual_batch_dirty_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("terrain_visual_batch_async_in_flight_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("terrain_visual_batch_async_completed_count", 0)) > 0
+	terrain_busy = terrain_busy or int(telemetry.get("water_visual_batch_dirty_count", 0)) > 0
 	terrain_busy = terrain_busy or int(telemetry.get("last_update_loads", 0)) > 0
 	terrain_busy = terrain_busy or int(telemetry.get("last_update_unloads", 0)) > 0
 	terrain_busy = terrain_busy or bool(telemetry.get("render_resource_prewarm_active", false))
@@ -3013,14 +3021,16 @@ func _is_town_terrain_stream_ready() -> bool:
 		_reset_town_terrain_stability()
 		return false
 
-	var signature := "%d:%d:%d:%d:%d:%d:%d" % [
+	var signature := "%d:%d:%d:%d:%d:%d:%d:%d:%d" % [
 		int(telemetry.get("active_chunk_count", 0)),
 		int(telemetry.get("loaded_chunk_count", 0)),
 		int(telemetry.get("rendered_terrain_chunk_count", 0)),
 		int(telemetry.get("rendered_water_chunk_count", 0)),
 		int(telemetry.get("collision_ready_chunk_count", 0)),
 		int(telemetry.get("world_map_lod_chunk_count", 0)),
-		int(telemetry.get("world_map_lod_pending_candidate_count", 0))
+		int(telemetry.get("world_map_lod_pending_candidate_count", 0)),
+		int(telemetry.get("terrain_visual_batch_dirty_count", 0)),
+		int(telemetry.get("water_visual_batch_dirty_count", 0))
 	]
 	if signature != town_terrain_stability_signature:
 		town_terrain_stability_signature = signature
@@ -3040,6 +3050,8 @@ func _is_town_building_stream_ready() -> bool:
 	if not is_instance_valid(building_manager):
 		building_manager = _find_manager_node("building_manager", "BuildingManager")
 	if is_instance_valid(building_manager):
+		if building_manager.has_method("is_object_render_prewarm_active") and building_manager.is_object_render_prewarm_active():
+			return false
 		if building_manager.has_method("has_pending_world_map_baked_building_apply_phases") and building_manager.has_pending_world_map_baked_building_apply_phases():
 			return false
 		if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
@@ -3048,6 +3060,14 @@ func _is_town_building_stream_ready() -> bool:
 			return false
 		if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
 			return false
+		if building_manager.has_method("get_telemetry_snapshot"):
+			var telemetry: Dictionary = building_manager.get_telemetry_snapshot()
+			if bool(telemetry.get("object_render_prewarm_active", false)):
+				return false
+			if int(telemetry.get("pending_visual_batch_rebuilds", 0)) > 0:
+				return false
+			if int(telemetry.get("world_map_baked_building_visual_batch_dirty_count", 0)) > 0:
+				return false
 	return true
 
 
@@ -3119,6 +3139,11 @@ func _set_player_movement_enabled(enabled: bool) -> void:
 
 
 func _reset_hold_settle() -> void:
+	_reset_hold_settle_progress()
+	hold_stream_ready_wait_logged = false
+
+
+func _reset_hold_settle_progress() -> void:
 	hold_settle_elapsed_seconds = 0.0
 	hold_settle_stable_frames = 0
 	hold_settle_timed_out = false
@@ -3385,8 +3410,26 @@ func _fly_to_town(_delta: float) -> void:
 	player.move_and_slide()
 
 
+func _should_wait_for_hold_stream_ready() -> bool:
+	return hold_wait_stream_ready_enabled and (phase == Phase.HOLD_FIRST or phase == Phase.HOLD_SECOND)
+
+
+func _is_hold_stream_ready() -> bool:
+	if not _should_wait_for_hold_stream_ready():
+		return true
+	if not is_instance_valid(player):
+		return true
+	return _is_town_spawn_ready(player.global_position)
+
+
 func _hold_in_town(_delta: float) -> void:
 	if not hold_started_logged:
+		if not _is_hold_stream_ready():
+			_reset_hold_settle_progress()
+			if not hold_stream_ready_wait_logged:
+				hold_stream_ready_wait_logged = true
+				print("[TOWN_STALL_TEST] Waiting for stream/prewarm stability before hold")
+			return
 		if not _is_hold_settled(_delta):
 			return
 		phase_time = 0.0

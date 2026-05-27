@@ -4822,8 +4822,9 @@ func process_pending_nodes(force_spawn_zone_progress: bool = false):
 	if not initial_load_phase:
 		max_items = mini(max_items, pending_node_runtime_render_commits_per_frame)
 	if terrain_force_pending_node_finalization_for_test and not initial_load_phase:
-		max_items = maxi(max_items, pending_node_finalize_max_per_frame)
-		budget_ms = maxf(budget_ms, 4.0)
+		# This test guard exists to prevent starvation at 100% terrain loading,
+		# not to burst-commit many chunks during gameplay measurements.
+		max_items = maxi(max_items, 1)
 	if use_spawn_zone_budget:
 		max_items = mini(max_items, spawn_zone_pending_node_finalize_max_per_frame)
 	var processed := 0

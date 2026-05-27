@@ -240,7 +240,9 @@ var initial_load_count: int = 0 # Specifically track chunks from the load regene
 
 ## Returns true when all queued vegetation has been placed (for loading screen)
 func is_vegetation_ready() -> bool:
-	return pending_chunks.is_empty() and not _has_dirty_global_vegetation_render_batch()
+	return pending_chunks.is_empty() \
+		and not _has_dirty_global_vegetation_render_batch() \
+		and not _is_vegetation_render_resource_prewarm_active()
 
 ## Get count of pending vegetation chunks (for loading screen progress)
 func get_pending_chunks_count() -> int:
@@ -303,7 +305,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		+ float(rock_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0))
 
 	return {
+		"vegetation_ready": is_vegetation_ready(),
 		"pending_chunks": pending_chunks.size(),
+		"pending_chunks_count": pending_chunks.size(),
 		"tree_chunk_count": chunk_tree_data.size(),
 		"grass_chunk_count": chunk_grass_data.size(),
 		"rock_chunk_count": chunk_rock_data.size(),

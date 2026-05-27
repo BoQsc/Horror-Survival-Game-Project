@@ -2778,7 +2778,11 @@ func has_pending_building_work() -> bool:
 	return _dirty_visible_chunk_count > 0
 
 func has_pending_visual_batch_work() -> bool:
-	return not _dirty_global_visual_batch_object_ids.is_empty()
+	return not _dirty_global_visual_batch_object_ids.is_empty() \
+		or not _world_map_baked_building_visual_batch_dirty.is_empty()
+
+func is_object_render_prewarm_active() -> bool:
+	return _is_object_render_resource_prewarm_active()
 
 func get_voxel(global_pos: Vector3) -> int:
 	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
