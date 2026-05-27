@@ -18,6 +18,8 @@ PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
 MAIN_SCENE = "res://addons/tests/town_stall_test_harness.tscn"
 GODOT_RENDERING_DRIVER = "vulkan"
 GODOT_RENDERING_METHOD = "forward_plus"
+FPS_60_FRAME_MS = 1000.0 / 60.0
+TARGET_WPF60_BASELINE = 16.0
 DEFAULT_TIMEOUT = 900
 TOWN_STALL_APPDATA_DIR = Path(os.environ.get("TOWN_STALL_APPDATA_DIR", str(Path(PROJECT_PATH) / ".agent" / "town-stall-appdata")))
 TOWN_STALL_PROJECT_USER_DIR = TOWN_STALL_APPDATA_DIR / "Godot" / "app_userdata" / "Horror Survival Game Project"
@@ -1237,12 +1239,31 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
     hold_complete_epoch = epochs.get("hold_complete")
     shutdown_epoch = epochs.get("shutdown_requested")
     last_sample_epoch = max(float(sample.get("epoch", 0.0) or 0.0) for sample in samples)
+    last_process_sample_epoch = max(
+        (
+            float(sample.get("epoch", 0.0) or 0.0)
+            for sample in samples
+            if isinstance(sample.get("process"), dict)
+            and bool(sample.get("process", {}).get("available", False))
+        ),
+        default=last_sample_epoch,
+    )
+    hold_measure_end_epoch = hold_complete_epoch
+    hold_measure_end_source = "hold_complete"
+    if hold_measure_end_epoch is None:
+        hold_measure_end_epoch = shutdown_epoch
+        hold_measure_end_source = "shutdown_requested"
+    if hold_measure_end_epoch is None:
+        # Manual long-play runs can be closed before the harness emits hold_complete.
+        # Use the last live process sample so power attribution excludes post-exit idle.
+        hold_measure_end_epoch = last_process_sample_epoch
+        hold_measure_end_source = "last_process_sample"
     runtime_power_events = _extract_terrain_runtime_power_events(snapshot_path)
     deep_idle_start_epoch = _find_runtime_power_event_epoch(
         runtime_power_events,
         "runtime_power_mode_changed",
         hold_start_epoch,
-        hold_complete_epoch,
+        hold_measure_end_epoch,
         "to",
         "deep_idle",
     )
@@ -1252,15 +1273,15 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
             runtime_power_events,
             "runtime_power_mode_changed",
             deep_idle_start_epoch,
-            hold_complete_epoch,
+            hold_measure_end_epoch,
             "from",
             "deep_idle",
-        ) or hold_complete_epoch
+        ) or hold_measure_end_epoch
     render_loop_suspend_start_epoch = _find_runtime_power_event_epoch(
         runtime_power_events,
         "runtime_power_render_loop_suspended",
         hold_start_epoch,
-        hold_complete_epoch,
+        hold_measure_end_epoch,
     )
     render_loop_suspend_end_epoch = None
     if render_loop_suspend_start_epoch is not None:
@@ -1268,20 +1289,20 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
             runtime_power_events,
             "runtime_power_render_loop_resumed",
             render_loop_suspend_start_epoch,
-            hold_complete_epoch,
-        ) or hold_complete_epoch
+            hold_measure_end_epoch,
+        ) or hold_measure_end_epoch
     render_loop_suspend_tail_start_epoch = None
     if render_loop_suspend_start_epoch is not None and render_loop_suspend_end_epoch is not None:
         render_loop_suspend_tail_start_epoch = max(render_loop_suspend_start_epoch, render_loop_suspend_end_epoch - 10.0)
 
     phase_windows = {
         "moving_entry": _summarize_system_samples_in_epoch_range(samples, "moving_entry", reset_epoch, hold_start_epoch),
-        "stationary_hold": _summarize_system_samples_in_epoch_range(samples, "stationary_hold", hold_start_epoch, hold_complete_epoch),
+        "stationary_hold": _summarize_system_samples_in_epoch_range(samples, "stationary_hold", hold_start_epoch, hold_measure_end_epoch),
         "stationary_hold_tail_30s": _summarize_system_samples_in_epoch_range(
             samples,
             "stationary_hold_tail_30s",
-            max(hold_start_epoch, hold_complete_epoch - 30.0) if hold_start_epoch is not None and hold_complete_epoch is not None else None,
-            hold_complete_epoch,
+            max(hold_start_epoch, hold_measure_end_epoch - 30.0) if hold_start_epoch is not None and hold_measure_end_epoch is not None else None,
+            hold_measure_end_epoch,
         ),
         "measurement_to_shutdown": _summarize_system_samples_in_epoch_range(
             samples,
@@ -1309,6 +1330,7 @@ def _attach_phase_system_sample_summary(system_summary: dict, sample_file: Path,
         ),
     }
     system_summary["phase_event_epochs"] = epochs
+    system_summary["stationary_hold_end_source"] = hold_measure_end_source
     if runtime_power_events:
         system_summary["runtime_power_events"] = runtime_power_events
     system_summary["phase_windows"] = phase_windows
@@ -1328,10 +1350,66 @@ def _persist_system_sample_summary_to_snapshot(snapshot_path: Optional[Path], sy
         return
 
     snapshot["system_sample_summary"] = system_sample_summary
+    snapshot["efficiency_metrics"] = _build_efficiency_metrics(snapshot, system_sample_summary)
     try:
         snapshot_path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def _metric_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _metric_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _wpf60(power_w: float, frame_ms: float) -> float:
+    if power_w <= 0.0 or frame_ms <= 0.0:
+        return 0.0
+    return power_w * frame_ms / FPS_60_FRAME_MS
+
+
+def _phase_avg_power_w(system_sample_summary: dict, phase_name: str) -> float:
+    phase_windows = _metric_dict(system_sample_summary.get("phase_windows"))
+    phase = _metric_dict(phase_windows.get(phase_name))
+    power = _metric_dict(phase.get("raw_gpu_power_w"))
+    return _metric_float(power.get("avg"))
+
+
+def _build_efficiency_metric_entry(frame_window: dict, avg_power_w: float) -> dict:
+    avg_frame_ms = _metric_float(frame_window.get("avg_total_ms"))
+    metric = _wpf60(avg_power_w, avg_frame_ms)
+    return {
+        "avg_frame_ms": round(avg_frame_ms, 3),
+        "avg_fps_estimate": round(1000.0 / avg_frame_ms, 3) if avg_frame_ms > 0.0 else 0.0,
+        "avg_power_w": round(avg_power_w, 3),
+        "wpf60": round(metric, 3),
+        "target_wpf60": TARGET_WPF60_BASELINE,
+        "over_target_wpf60": round(metric - TARGET_WPF60_BASELINE, 3) if metric > 0.0 else 0.0,
+    }
+
+
+def _build_efficiency_metrics(snapshot: dict, system_sample_summary: dict) -> dict:
+    town_window = _metric_dict(snapshot.get("town_entry_window"))
+    moving_window = _metric_dict(snapshot.get("moving_entry_window"))
+    stationary_window = _metric_dict(snapshot.get("stationary_hold_window"))
+    overall_power = _metric_float(_metric_dict(system_sample_summary.get("raw_gpu_power_w")).get("avg"))
+    moving_power = _phase_avg_power_w(system_sample_summary, "moving_entry")
+    stationary_power = _phase_avg_power_w(system_sample_summary, "stationary_hold")
+    return {
+        "unit": "WPF60",
+        "target_baseline_wpf60": TARGET_WPF60_BASELINE,
+        "formula": "avg_gpu_watts * avg_frame_ms / 16.6667ms",
+        "stationary_hold_end_source": str(system_sample_summary.get("stationary_hold_end_source", "")),
+        "town_total": _build_efficiency_metric_entry(town_window, overall_power),
+        "moving_entry": _build_efficiency_metric_entry(moving_window, moving_power),
+        "stationary_hold": _build_efficiency_metric_entry(stationary_window, stationary_power),
+    }
 
 
 def _print_system_sample_summary(summary: dict) -> None:
@@ -1479,6 +1557,23 @@ def _print_snapshot_summary(snapshot_path: Path) -> None:
                 f"  {index}. {entry.get('name', 'Unknown')} "
                 f"score={float(entry.get('pressure_score', 0.0)):.1f} "
                 f"{entry.get('summary', '')}"
+            )
+    efficiency_metrics = data.get("efficiency_metrics", {})
+    if isinstance(efficiency_metrics, dict) and efficiency_metrics:
+        print("Efficiency metrics:")
+        print(f"  Unit: {efficiency_metrics.get('unit', 'WPF60')} target={efficiency_metrics.get('target_baseline_wpf60', TARGET_WPF60_BASELINE)}")
+        for key in ("moving_entry", "stationary_hold", "town_total"):
+            entry = efficiency_metrics.get(key, {})
+            if not isinstance(entry, dict) or float(entry.get("wpf60", 0.0) or 0.0) <= 0.0:
+                continue
+            print(
+                "  {key}: WPF60={wpf60} avg_ms={avg_ms} fps~{fps} watts={watts}".format(
+                    key=key,
+                    wpf60=entry.get("wpf60", 0.0),
+                    avg_ms=entry.get("avg_frame_ms", 0.0),
+                    fps=entry.get("avg_fps_estimate", 0.0),
+                    watts=entry.get("avg_power_w", 0.0),
+                )
             )
     print("=" * 50)
 

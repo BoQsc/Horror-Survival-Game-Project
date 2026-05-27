@@ -25,6 +25,11 @@ set TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS=1
 set TOWN_STALL_HOLD_SECONDS=9999
 set TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS=1
 set TOWN_STALL_SYSTEM_SAMPLE_RAW_GPU_ONLY=0
+:: Keep 1s GPU watt samples, but avoid expensive full Windows process probes every second.
+set TOWN_STALL_SYSTEM_SAMPLE_FULL_EVERY=5
+:: Manual long-play runs are often closed before the 9999s hold completes.
+:: Periodic snapshots preserve FPS/content telemetry from the current hold.
+set TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS=1
 set TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1
 set TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK=1
 set TOWN_STALL_LOW_FPS_ABORT=1

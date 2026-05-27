@@ -2402,6 +2402,7 @@ func _process_pending_vegetation_chunks() -> void:
 	var pending_chunk_start_us := Time.get_ticks_usec()
 	_last_pending_chunk_stages_processed = 0
 	_last_pending_chunk_budget_ms = _get_pending_vegetation_budget_ms()
+	var preferred_item_index := -1
 
 	while not pending_chunks.is_empty():
 		if _last_pending_chunk_stages_processed >= vegetation_max_stages_per_frame:
@@ -2411,7 +2412,8 @@ func _process_pending_vegetation_chunks() -> void:
 		if _last_pending_chunk_stages_processed > 0 and elapsed_ms >= _last_pending_chunk_budget_ms:
 			break
 
-		var item_index := _get_next_pending_chunk_index()
+		var item_index := preferred_item_index if preferred_item_index >= 0 and preferred_item_index < pending_chunks.size() else _get_next_pending_chunk_index()
+		preferred_item_index = -1
 		if item_index < 0:
 			break
 
@@ -2440,10 +2442,12 @@ func _process_pending_vegetation_chunks() -> void:
 				_place_vegetation_for_chunk(coord, chunk_node)
 				item["stage"] = 1
 				pending_chunks[item_index] = item
+				preferred_item_index = item_index
 			1:
 				_place_grass_for_chunk(coord, chunk_node)
 				item["stage"] = 2
 				pending_chunks[item_index] = item
+				preferred_item_index = item_index
 			2:
 				_place_rocks_for_chunk(coord, chunk_node)
 				pending_chunks.remove_at(item_index)
