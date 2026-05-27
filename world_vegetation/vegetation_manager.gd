@@ -61,6 +61,10 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 # it improves FPS/watts without visible popping in wide town/terrain views.
 @export var vegetation_global_render_ignore_occlusion_culling: bool = true
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
+@export var vegetation_preserve_imported_mesh_lods_enabled: bool = true
+@export var vegetation_generate_missing_mesh_lods_enabled: bool = true
+@export_range(0, 10000, 1) var vegetation_mesh_lod_min_primitives: int = 128
+@export_range(1.0, 180.0, 1.0) var vegetation_mesh_lod_normal_merge_angle: float = 25.0
 @export var vegetation_opaque_material_optimization_enabled: bool = true
 @export var vegetation_split_alpha_scissor_opaque_surfaces_enabled: bool = true
 @export var world_map_vegetation_render_profile_enabled: bool = true
@@ -246,6 +250,7 @@ var _vegetation_native_record_append_counts: Dictionary = {}
 var _vegetation_removed_filter_backend_counts: Dictionary = {}
 var _vegetation_generation_time_backend_counts: Dictionary = {}
 var _vegetation_opaque_material_optimization_counts: Dictionary = {}
+var _vegetation_mesh_lod_counts: Dictionary = {}
 var _vegetation_texture_opaque_cache: Dictionary = {}
 var _vegetation_texture_alpha_coverage_cache: Dictionary = {}
 var _vegetation_texture_binary_alpha_cache: Dictionary = {}
@@ -408,6 +413,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_exact_render_bounds_padding": vegetation_exact_render_bounds_padding,
 		"vegetation_global_render_ignore_occlusion_culling": vegetation_global_render_ignore_occlusion_culling,
 		"vegetation_render_lod_bias": vegetation_render_lod_bias,
+		"vegetation_preserve_imported_mesh_lods_enabled": vegetation_preserve_imported_mesh_lods_enabled,
+		"vegetation_generate_missing_mesh_lods_enabled": vegetation_generate_missing_mesh_lods_enabled,
+		"vegetation_mesh_lod_min_primitives": vegetation_mesh_lod_min_primitives,
+		"vegetation_mesh_lod_normal_merge_angle": vegetation_mesh_lod_normal_merge_angle,
 		"vegetation_opaque_material_optimization_enabled": vegetation_opaque_material_optimization_enabled,
 		"vegetation_split_alpha_scissor_opaque_surfaces_enabled": vegetation_split_alpha_scissor_opaque_surfaces_enabled,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
@@ -434,6 +443,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"tree_mesh_surfaces": int(tree_render_stats.get("mesh_surfaces", 0)),
 		"grass_mesh_surfaces": int(grass_render_stats.get("mesh_surfaces", 0)),
 		"rock_mesh_surfaces": int(rock_render_stats.get("mesh_surfaces", 0)),
+		"tree_mesh_lod_surfaces": int(tree_render_stats.get("mesh_lod_surfaces", 0)),
+		"grass_mesh_lod_surfaces": int(grass_render_stats.get("mesh_lod_surfaces", 0)),
+		"rock_mesh_lod_surfaces": int(rock_render_stats.get("mesh_lod_surfaces", 0)),
+		"tree_mesh_lod_levels": int(tree_render_stats.get("mesh_lod_levels", 0)),
+		"grass_mesh_lod_levels": int(grass_render_stats.get("mesh_lod_levels", 0)),
+		"rock_mesh_lod_levels": int(rock_render_stats.get("mesh_lod_levels", 0)),
+		"tree_mesh_has_lods": int(tree_render_stats.get("mesh_lod_levels", 0)) > 0,
+		"grass_mesh_has_lods": int(grass_render_stats.get("mesh_lod_levels", 0)) > 0,
+		"rock_mesh_has_lods": int(rock_render_stats.get("mesh_lod_levels", 0)) > 0,
 		"tree_alpha_mesh_primitives": int(tree_render_stats.get("alpha_mesh_primitives", 0)),
 		"grass_alpha_mesh_primitives": int(grass_render_stats.get("alpha_mesh_primitives", 0)),
 		"rock_alpha_mesh_primitives": int(rock_render_stats.get("alpha_mesh_primitives", 0)),
@@ -525,6 +543,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_removed_filter_backend_counts": _vegetation_removed_filter_backend_counts.duplicate(true),
 		"vegetation_generation_time_backend_counts": _vegetation_generation_time_backend_counts.duplicate(true),
 		"vegetation_opaque_material_optimization_counts": _vegetation_opaque_material_optimization_counts.duplicate(true),
+		"vegetation_mesh_lod_counts": _vegetation_mesh_lod_counts.duplicate(true),
 		"vegetation_collider_candidate_backend_counts": _vegetation_collider_candidate_backend_counts.duplicate(true),
 		"vegetation_ray_query_backend_counts": _vegetation_ray_query_backend_counts.duplicate(true),
 		"vegetation_body_collision_backend_counts": _vegetation_body_collision_backend_counts.duplicate(true),
@@ -694,6 +713,10 @@ func _configure_vegetation_render_profile_from_env() -> void:
 			rock_global_render_bounds_padding = vegetation_global_render_bounds_padding
 	vegetation_global_render_ignore_occlusion_culling = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING", vegetation_global_render_ignore_occlusion_culling)
 	vegetation_render_lod_bias = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_LOD_BIAS", vegetation_render_lod_bias, 0.25, 100.0)
+	vegetation_preserve_imported_mesh_lods_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_PRESERVE_IMPORTED_MESH_LODS", vegetation_preserve_imported_mesh_lods_enabled)
+	vegetation_generate_missing_mesh_lods_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GENERATE_MESH_LODS", vegetation_generate_missing_mesh_lods_enabled)
+	vegetation_mesh_lod_min_primitives = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_MESH_LOD_MIN_PRIMITIVES", vegetation_mesh_lod_min_primitives, 0, 10000)
+	vegetation_mesh_lod_normal_merge_angle = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_MESH_LOD_NORMAL_MERGE_ANGLE", vegetation_mesh_lod_normal_merge_angle, 1.0, 180.0)
 	vegetation_opaque_material_optimization_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION", vegetation_opaque_material_optimization_enabled)
 	vegetation_split_alpha_scissor_opaque_surfaces_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES", vegetation_split_alpha_scissor_opaque_surfaces_enabled)
 	vegetation_global_render_flushes_per_frame = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_FLUSHES_PER_FRAME", vegetation_global_render_flushes_per_frame, 1, 32)
@@ -878,11 +901,65 @@ func _get_mesh_total_primitive_count(mesh: Mesh) -> int:
 func _get_mesh_surface_count(mesh: Mesh) -> int:
 	return mesh.get_surface_count() if mesh != null else 0
 
+func _get_mesh_surface_lods(mesh: Mesh, surface_index: int) -> Dictionary:
+	if mesh == null or surface_index < 0 or surface_index >= mesh.get_surface_count():
+		return {}
+	var lods_value = null
+	if mesh.has_method("surface_get_lods"):
+		lods_value = mesh.call("surface_get_lods", surface_index)
+	elif mesh.has_method("_surface_get_lods"):
+		lods_value = mesh.call("_surface_get_lods", surface_index)
+	if lods_value is not Dictionary:
+		return {}
+	var source_lods: Dictionary = lods_value
+	var copied_lods: Dictionary = {}
+	for key in source_lods.keys():
+		var indices = source_lods[key]
+		if indices is PackedInt32Array and not (indices as PackedInt32Array).is_empty():
+			copied_lods[key] = indices
+	return copied_lods
+
+func _get_mesh_surface_blend_shape_arrays(mesh: Mesh, surface_index: int) -> Array:
+	if mesh == null or surface_index < 0 or surface_index >= mesh.get_surface_count():
+		return []
+	var blend_shape_value = null
+	if mesh.has_method("surface_get_blend_shape_arrays"):
+		blend_shape_value = mesh.call("surface_get_blend_shape_arrays", surface_index)
+	elif mesh.has_method("_surface_get_blend_shape_arrays"):
+		blend_shape_value = mesh.call("_surface_get_blend_shape_arrays", surface_index)
+	return blend_shape_value if blend_shape_value is Array else []
+
+func _get_mesh_lod_summary(mesh: Mesh) -> Dictionary:
+	var summary := {
+		"mesh_lod_surfaces": 0,
+		"mesh_lod_levels": 0,
+		"mesh_lod_index_count": 0
+	}
+	if mesh == null:
+		return summary
+	if mesh.has_meta("vegetation_mesh_lod_summary"):
+		var meta_summary = mesh.get_meta("vegetation_mesh_lod_summary")
+		if meta_summary is Dictionary:
+			return (meta_summary as Dictionary).duplicate(true)
+	for surface_index in range(mesh.get_surface_count()):
+		var lods := _get_mesh_surface_lods(mesh, surface_index)
+		if lods.is_empty():
+			continue
+		summary["mesh_lod_surfaces"] = int(summary["mesh_lod_surfaces"]) + 1
+		summary["mesh_lod_levels"] = int(summary["mesh_lod_levels"]) + lods.size()
+		for indices in lods.values():
+			if indices is PackedInt32Array:
+				summary["mesh_lod_index_count"] = int(summary["mesh_lod_index_count"]) + (indices as PackedInt32Array).size()
+	return summary
+
 func _get_mesh_render_stats(mesh: Mesh) -> Dictionary:
 	if mesh == null:
 		return {
 			"mesh_primitives": 0,
 			"mesh_surfaces": 0,
+			"mesh_lod_surfaces": 0,
+			"mesh_lod_levels": 0,
+			"mesh_lod_index_count": 0,
 			"alpha_mesh_primitives": 0,
 			"alpha_mesh_surfaces": 0,
 			"alpha_texture_coverage_ratio": 1.0,
@@ -908,9 +985,13 @@ func _get_mesh_render_stats(mesh: Mesh) -> Dictionary:
 		alpha_mesh_surfaces += 1
 		alpha_coverage_weighted += float(surface_primitives) * _get_material_alpha_coverage_ratio(material)
 	var alpha_coverage_ratio := alpha_coverage_weighted / float(alpha_mesh_primitives) if alpha_mesh_primitives > 0 else 1.0
+	var lod_summary := _get_mesh_lod_summary(mesh)
 	var stats := {
 		"mesh_primitives": mesh_primitives,
 		"mesh_surfaces": _get_mesh_surface_count(mesh),
+		"mesh_lod_surfaces": int(lod_summary.get("mesh_lod_surfaces", 0)),
+		"mesh_lod_levels": int(lod_summary.get("mesh_lod_levels", 0)),
+		"mesh_lod_index_count": int(lod_summary.get("mesh_lod_index_count", 0)),
 		"alpha_mesh_primitives": alpha_mesh_primitives,
 		"alpha_mesh_surfaces": alpha_mesh_surfaces,
 		"alpha_texture_coverage_ratio": alpha_coverage_ratio,
@@ -999,6 +1080,9 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 	var mesh_stats := _get_mesh_render_stats(mesh)
 	var mesh_primitives := int(mesh_stats.get("mesh_primitives", 0))
 	var mesh_surfaces := int(mesh_stats.get("mesh_surfaces", 0))
+	var mesh_lod_surfaces := int(mesh_stats.get("mesh_lod_surfaces", 0))
+	var mesh_lod_levels := int(mesh_stats.get("mesh_lod_levels", 0))
+	var mesh_lod_index_count := int(mesh_stats.get("mesh_lod_index_count", 0))
 	var alpha_mesh_primitives := int(mesh_stats.get("alpha_mesh_primitives", 0))
 	var alpha_mesh_surfaces := int(mesh_stats.get("alpha_mesh_surfaces", 0))
 	var opaque_mesh_primitives := maxi(mesh_primitives - alpha_mesh_primitives, 0)
@@ -1019,6 +1103,9 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 	return {
 		"mesh_primitives": mesh_primitives,
 		"mesh_surfaces": mesh_surfaces,
+		"mesh_lod_surfaces": mesh_lod_surfaces,
+		"mesh_lod_levels": mesh_lod_levels,
+		"mesh_lod_index_count": mesh_lod_index_count,
 		"alpha_mesh_primitives": alpha_mesh_primitives,
 		"alpha_mesh_surfaces": alpha_mesh_surfaces,
 		"opaque_mesh_primitives": opaque_mesh_primitives,
@@ -4968,10 +5055,96 @@ func find_mesh_and_transform_in_node(node: Node, parent_transform: Transform3D =
 func _prepare_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mesh:
 	if mesh == null:
 		return mesh
-	var prepared_mesh := _optimize_opaque_vegetation_mesh_materials(kind, mesh)
-	prepared_mesh = _split_alpha_scissor_opaque_surfaces(kind, prepared_mesh)
+	_record_vegetation_mesh_lod_stage(kind, "source", mesh)
+	var prepared_mesh := _generate_missing_vegetation_mesh_lods(kind, mesh)
+	_record_vegetation_mesh_lod_stage(kind, "generated", prepared_mesh)
+	var preserve_lod_candidate := vegetation_preserve_imported_mesh_lods_enabled and _is_mesh_lod_preservation_candidate(prepared_mesh)
+	prepared_mesh = _optimize_opaque_vegetation_mesh_materials(kind, prepared_mesh)
+	prepared_mesh = _split_alpha_scissor_opaque_surfaces(kind, prepared_mesh, preserve_lod_candidate)
+	_record_vegetation_mesh_lod_stage(kind, "prepared", prepared_mesh)
 	_vegetation_mesh_stats_cache.clear()
 	return prepared_mesh
+
+func _generate_missing_vegetation_mesh_lods(kind: String, mesh: Mesh) -> Mesh:
+	if not vegetation_generate_missing_mesh_lods_enabled or mesh == null:
+		return mesh
+	var existing_summary := _get_mesh_lod_summary(mesh)
+	if int(existing_summary.get("mesh_lod_levels", 0)) > 0:
+		_vegetation_mesh_lod_counts["%s_generate_skipped_existing_lod_levels" % kind] = int(existing_summary.get("mesh_lod_levels", 0))
+		return mesh
+	if not ClassDB.class_exists("ImporterMesh"):
+		_vegetation_mesh_lod_counts["%s_generate_available" % kind] = false
+		return mesh
+	var primitive_count := _get_mesh_total_primitive_count(mesh)
+	_vegetation_mesh_lod_counts["%s_generate_source_primitives" % kind] = primitive_count
+	if primitive_count < vegetation_mesh_lod_min_primitives:
+		_vegetation_mesh_lod_counts["%s_generate_skipped_below_min_primitives" % kind] = true
+		return mesh
+
+	var start_ticks := Time.get_ticks_usec()
+	var importer_mesh := ImporterMesh.from_mesh(mesh)
+	if importer_mesh == null:
+		_vegetation_mesh_lod_counts["%s_generate_available" % kind] = false
+		return mesh
+	importer_mesh.generate_lods(vegetation_mesh_lod_normal_merge_angle, 60.0, [])
+	var generated_summary := _get_importer_mesh_lod_summary(importer_mesh)
+	var elapsed_us := Time.get_ticks_usec() - start_ticks
+	_vegetation_mesh_lod_counts["%s_generate_available" % kind] = true
+	_vegetation_mesh_lod_counts["%s_generate_us" % kind] = elapsed_us
+	_vegetation_mesh_lod_counts["%s_generated_lod_surfaces" % kind] = int(generated_summary.get("mesh_lod_surfaces", 0))
+	_vegetation_mesh_lod_counts["%s_generated_lod_levels" % kind] = int(generated_summary.get("mesh_lod_levels", 0))
+	_vegetation_mesh_lod_counts["%s_generated_lod_index_count" % kind] = int(generated_summary.get("mesh_lod_index_count", 0))
+	if int(generated_summary.get("mesh_lod_levels", 0)) <= 0:
+		return mesh
+
+	var generated_mesh := importer_mesh.get_mesh()
+	if generated_mesh == null:
+		return mesh
+	generated_mesh.resource_name = mesh.resource_name
+	generated_mesh.set_meta("vegetation_mesh_lod_summary", generated_summary.duplicate(true))
+	generated_mesh.set_meta("vegetation_generated_mesh_lods", true)
+	generated_mesh.set_meta("vegetation_generated_mesh_lod_source_path", mesh.resource_path)
+	return generated_mesh
+
+func _get_importer_mesh_lod_summary(importer_mesh: ImporterMesh) -> Dictionary:
+	var summary := {
+		"mesh_lod_surfaces": 0,
+		"mesh_lod_levels": 0,
+		"mesh_lod_index_count": 0
+	}
+	if importer_mesh == null:
+		return summary
+	for surface_index in range(importer_mesh.get_surface_count()):
+		var lod_count := importer_mesh.get_surface_lod_count(surface_index)
+		if lod_count <= 0:
+			continue
+		summary["mesh_lod_surfaces"] = int(summary["mesh_lod_surfaces"]) + 1
+		summary["mesh_lod_levels"] = int(summary["mesh_lod_levels"]) + lod_count
+		for lod_index in range(lod_count):
+			summary["mesh_lod_index_count"] = int(summary["mesh_lod_index_count"]) + importer_mesh.get_surface_lod_indices(surface_index, lod_index).size()
+	return summary
+
+func _record_vegetation_mesh_lod_stage(kind: String, stage: String, mesh: Mesh) -> void:
+	var summary := _get_mesh_lod_summary(mesh)
+	_vegetation_mesh_lod_counts["%s_%s_lod_surfaces" % [kind, stage]] = int(summary.get("mesh_lod_surfaces", 0))
+	_vegetation_mesh_lod_counts["%s_%s_lod_levels" % [kind, stage]] = int(summary.get("mesh_lod_levels", 0))
+	_vegetation_mesh_lod_counts["%s_%s_lod_index_count" % [kind, stage]] = int(summary.get("mesh_lod_index_count", 0))
+	_vegetation_mesh_lod_counts["%s_%s_imported_mesh_lod_candidate" % [kind, stage]] = _is_imported_mesh_lod_candidate(mesh)
+	_vegetation_mesh_lod_counts["%s_%s_generated_mesh_lod_candidate" % [kind, stage]] = _is_generated_mesh_lod_candidate(mesh)
+
+func _is_imported_mesh_lod_candidate(mesh: Mesh) -> bool:
+	if mesh == null:
+		return false
+	# Imported scene subresources can keep engine-side LOD data that is not
+	# reliably exposed through GDScript. Treat any non-empty resource path as
+	# source-authored geometry and avoid rebuilding it when preserving LODs.
+	return not mesh.resource_path.strip_edges().is_empty()
+
+func _is_generated_mesh_lod_candidate(mesh: Mesh) -> bool:
+	return mesh != null and mesh.has_meta("vegetation_generated_mesh_lods") and bool(mesh.get_meta("vegetation_generated_mesh_lods"))
+
+func _is_mesh_lod_preservation_candidate(mesh: Mesh) -> bool:
+	return _is_imported_mesh_lod_candidate(mesh) or _is_generated_mesh_lod_candidate(mesh)
 
 func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mesh:
 	if not vegetation_opaque_material_optimization_enabled or mesh == null:
@@ -5026,10 +5199,17 @@ func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mes
 	_vegetation_opaque_material_optimization_counts["total_alpha_scissor_skipped_non_binary_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_scissor_skipped_non_binary_surfaces", 0)) + alpha_scissor_skipped_non_binary_surfaces
 	return optimized_mesh if optimized_mesh != null else mesh
 
-func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh) -> Mesh:
+func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh, preserve_source_imported_lods: bool = false) -> Mesh:
 	if not vegetation_split_alpha_scissor_opaque_surfaces_enabled or mesh == null:
 		return mesh
 	if mesh.get_surface_count() <= 0:
+		return mesh
+	if vegetation_preserve_imported_mesh_lods_enabled and preserve_source_imported_lods:
+		var skipped_alpha_surfaces := 0
+		for surface_index in range(mesh.get_surface_count()):
+			if _is_material_alpha_pipeline(mesh.surface_get_material(surface_index)):
+				skipped_alpha_surfaces += 1
+		_record_alpha_split_counts(kind, 0, 0, 0, skipped_alpha_surfaces, mesh.get_surface_count())
 		return mesh
 
 	var split_mesh := ArrayMesh.new()
@@ -5038,9 +5218,16 @@ func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh) -> Mesh:
 	var split_opaque_triangles := 0
 	var split_alpha_triangles := 0
 	var skipped_surfaces := 0
+	var lod_preserved_surfaces := 0
 	for surface_index in range(mesh.get_surface_count()):
 		var arrays := mesh.surface_get_arrays(surface_index)
 		var material := mesh.surface_get_material(surface_index)
+		if vegetation_preserve_imported_mesh_lods_enabled and not _get_mesh_surface_lods(mesh, surface_index).is_empty():
+			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			lod_preserved_surfaces += 1
+			if _is_material_alpha_pipeline(material):
+				skipped_surfaces += 1
+			continue
 		if not _can_split_alpha_scissor_surface(mesh, surface_index, arrays, material):
 			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
 			if _is_material_alpha_pipeline(material):
@@ -5066,23 +5253,29 @@ func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh) -> Mesh:
 		split_opaque_triangles += opaque_triangles
 		split_alpha_triangles += alpha_triangles
 
+	_record_alpha_split_counts(kind, split_surface_count, split_opaque_triangles, split_alpha_triangles, skipped_surfaces, lod_preserved_surfaces)
 	if not changed:
 		return mesh
+	return split_mesh
 
+func _record_alpha_split_counts(kind: String, split_surface_count: int, split_opaque_triangles: int, split_alpha_triangles: int, skipped_surfaces: int, lod_preserved_surfaces: int) -> void:
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_surfaces" % kind] = split_surface_count
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_opaque_triangles" % kind] = split_opaque_triangles
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_alpha_triangles" % kind] = split_alpha_triangles
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_skipped_surfaces" % kind] = skipped_surfaces
+	_vegetation_opaque_material_optimization_counts["%s_alpha_split_lod_preserved_surfaces" % kind] = lod_preserved_surfaces
 	_vegetation_opaque_material_optimization_counts["total_alpha_split_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_surfaces", 0)) + split_surface_count
 	_vegetation_opaque_material_optimization_counts["total_alpha_split_opaque_triangles"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_opaque_triangles", 0)) + split_opaque_triangles
 	_vegetation_opaque_material_optimization_counts["total_alpha_split_alpha_triangles"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_alpha_triangles", 0)) + split_alpha_triangles
-	return split_mesh
+	_vegetation_opaque_material_optimization_counts["total_alpha_split_lod_preserved_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_lod_preserved_surfaces", 0)) + lod_preserved_surfaces
 
 func _add_surface_copy_to_mesh(target: ArrayMesh, source: Mesh, surface_index: int, arrays: Array, material: Material) -> void:
 	var primitive_type := Mesh.PRIMITIVE_TRIANGLES
 	if source.has_method("surface_get_primitive_type"):
 		primitive_type = source.surface_get_primitive_type(surface_index)
-	target.add_surface_from_arrays(primitive_type, arrays)
+	var blend_shapes := _get_mesh_surface_blend_shape_arrays(source, surface_index)
+	var lods := _get_mesh_surface_lods(source, surface_index) if vegetation_preserve_imported_mesh_lods_enabled else {}
+	target.add_surface_from_arrays(primitive_type, arrays, blend_shapes, lods)
 	target.surface_set_material(target.get_surface_count() - 1, material)
 
 func _can_split_alpha_scissor_surface(source: Mesh, surface_index: int, arrays: Array, material: Material) -> bool:

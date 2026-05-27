@@ -71,6 +71,14 @@ CASES = {
     },
     "vegetation_lod_bias_0_5": {"TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.5"},
     "vegetation_lod_bias_0_25": {"TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.25"},
+    # Godot mesh LOD cases are opt-in. They test GLB-sourced meshes using
+    # Godot-generated mesh LOD data, not custom vegetation impostors/HLOD.
+    "godot_mesh_lod_threshold_2": {"TOWN_STALL_MESH_LOD_THRESHOLD": "2.0"},
+    "godot_mesh_lod_threshold_4": {"TOWN_STALL_MESH_LOD_THRESHOLD": "4.0"},
+    "godot_mesh_lod_threshold_4_lod_bias_0_5": {
+        "TOWN_STALL_MESH_LOD_THRESHOLD": "4.0",
+        "TOWN_STALL_VEGETATION_RENDER_LOD_BIAS": "0.5",
+    },
     "vegetation_cluster_3": {
         "TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE": "3",
         "TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE": "3",
@@ -256,16 +264,16 @@ def _selected_case_names() -> list[str]:
         "baseline,hide_terrain_manager_visuals,hide_vegetation_render,hide_terrain_and_vegetation,no_water",
     )
     names = [name.strip() for name in raw.split(",") if name.strip()]
-    # Vegetation LOD is intentionally future work; keep these cases opt-in so
-    # routine render tests cannot accidentally validate a visual shortcut.
+    # Vegetation/Godot mesh LOD is intentionally opt-in so routine render tests
+    # cannot accidentally validate a visual shortcut.
     allow_vegetation_lod_cases = os.environ.get("TOWN_STALL_ALLOW_VEGETATION_LOD_CASES", "").strip() == "1"
     selected: list[str] = []
     for name in names:
         if name not in CASES:
             print(f"WARNING: Unknown ablation case '{name}', skipping.")
             continue
-        if "vegetation" in name and "lod" in name and not allow_vegetation_lod_cases:
-            print(f"WARNING: Vegetation LOD ablation case '{name}' requires TOWN_STALL_ALLOW_VEGETATION_LOD_CASES=1; skipping.")
+        if (("vegetation" in name or "godot_mesh" in name) and "lod" in name) and not allow_vegetation_lod_cases:
+            print(f"WARNING: Vegetation/Godot mesh LOD ablation case '{name}' requires TOWN_STALL_ALLOW_VEGETATION_LOD_CASES=1; skipping.")
             continue
         selected.append(name)
     return selected or ["baseline"]

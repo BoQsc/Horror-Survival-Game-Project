@@ -2251,6 +2251,9 @@ func _ready() -> void:
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
 		Engine.max_fps = max_fps_override
+	var mesh_lod_threshold_override := _get_positive_env_float("TOWN_STALL_MESH_LOD_THRESHOLD", 0.0)
+	if mesh_lod_threshold_override > 0.0:
+		get_tree().root.mesh_lod_threshold = mesh_lod_threshold_override
 	_apply_display_mode_override_from_env()
 	print("[TOWN_STALL_TEST] Harness starting")
 	print("[TOWN_STALL_TEST] Auto teleport: %s" % ("ON" if auto_teleport_enabled else "OFF"))
@@ -2277,6 +2280,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Wait stream ready before hold: %s" % ("ON" if hold_wait_stream_ready_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
 	print("[TOWN_STALL_TEST] Engine max FPS: %d" % Engine.max_fps)
+	print("[TOWN_STALL_TEST] Mesh LOD threshold: %.2f" % get_tree().root.mesh_lod_threshold)
 	print("[TOWN_STALL_TEST] Render diagnostics: %s threshold=%.2f scene_scan=%s limit=%d scene_detail_limit=%d frame_scene_scan_limit=%d" % [
 		"ON" if render_diagnostics_enabled else "OFF",
 		render_diagnostics_threshold_ms,
