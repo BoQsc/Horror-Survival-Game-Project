@@ -1728,22 +1728,10 @@ func _is_initial_global_render_flush_defer_active() -> bool:
 	return false
 
 
-func _pack_multimesh_buffer_from_instances(instances: Array, instances_are_transforms: bool = false) -> PackedFloat32Array:
+func _pack_multimesh_buffer_from_instances(instances: Array, _instances_are_transforms: bool = false) -> PackedFloat32Array:
 	var native := _get_native_helper()
 	if native and native.has_method("pack_multimesh_buffer_from_instances"):
-		if instances_are_transforms:
-			var native_transform_buffer: PackedFloat32Array = native.pack_multimesh_buffer_from_instances(instances)
-			return native_transform_buffer
-
-		var transforms: Array = []
-		transforms.resize(instances.size())
-		var write_index := 0
-		for item in instances:
-			transforms[write_index] = _get_vegetation_instance_transform(item)
-			write_index += 1
-
-		var native_buffer: PackedFloat32Array = native.pack_multimesh_buffer_from_instances(transforms)
-		return native_buffer
+		return native.pack_multimesh_buffer_from_instances(instances)
 
 	var buffer := PackedFloat32Array()
 	buffer.resize(instances.size() * MULTIMESH_FLOATS_PER_INSTANCE_3D)
@@ -3330,7 +3318,6 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 		mmi.visibility_range_end = 0.0 # 0 = infinite visibility
 
 	var grass_list: Array = []
-	var valid_transforms = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
@@ -3484,9 +3471,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
 			t.origin = local_pos
 
-			valid_transforms.append(t)
-
-			var grass_index = valid_transforms.size() - 1
+			var grass_index = grass_list.size()
 			grass_list.append(_make_vegetation_generated(
 				world_pos,
 				local_pos,
@@ -3511,9 +3496,7 @@ func _place_grass_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			t = t.scaled(Vector3(placed.scale, placed.scale, placed.scale))
 			t.origin = local_pos
 
-			valid_transforms.append(t)
-
-			var grass_index = valid_transforms.size() - 1
+			var grass_index = grass_list.size()
 			grass_list.append(_make_vegetation_generated(
 				placed.world_pos,
 				local_pos,
@@ -4404,7 +4387,6 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 	var mmi = _create_chunk_multimesh_handle("rock", coord, rock_mesh)
 
 	var rock_list: Array = []
-	var valid_transforms = []
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var chunk_origin_x = coord.x * chunk_stride
 	var chunk_origin_z = coord.y * chunk_stride
@@ -4553,9 +4535,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			t = t.scaled(Vector3(final_scale, final_scale, final_scale))
 			t.origin = local_pos
 
-			valid_transforms.append(t)
-
-			var rock_index = valid_transforms.size() - 1
+			var rock_index = rock_list.size()
 			rock_list.append(_make_vegetation_generated(
 				world_pos,
 				local_pos,
@@ -4580,9 +4560,7 @@ func _place_rocks_for_chunk(coord: Vector2i, chunk_node: Node3D):
 			t = t.scaled(Vector3(placed.scale, placed.scale, placed.scale))
 			t.origin = local_pos
 
-			valid_transforms.append(t)
-
-			var rock_index = valid_transforms.size() - 1
+			var rock_index = rock_list.size()
 			rock_list.append(_make_vegetation_generated(
 				placed.world_pos,
 				local_pos,
