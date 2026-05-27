@@ -70,6 +70,9 @@ func _run() -> int:
 	var hit := manager.find_nearest_vegetation_along_ray(origin, direction, 12.0, true, false, false)
 	if not _expect(hit.get("kind", "") == "tree", "data ray should hit the real visual tree footprint, not only a tiny center cylinder"):
 		return 1
+	var debug_base: Vector3 = hit.get("base_position", Vector3.INF)
+	if not _expect(absf(debug_base.y) <= 0.001, "tree debug interaction volume should be anchored to terrain hit_pos, not the GLB visual origin"):
+		return 1
 	var telemetry := manager.get_telemetry_snapshot()
 	var ray_counts: Dictionary = telemetry.get("vegetation_ray_query_backend_counts", {})
 	if not _expect(int(ray_counts.get("tree_native_visual_bounds_calls", 0)) >= 1, "tree visual bounds targeting should use the native backend when available"):

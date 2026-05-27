@@ -120,6 +120,12 @@ func _ready() -> void:
 		# Sync with current state
 		if has_node("/root/ToolConfig"):
 			visualizer_toggle.button_pressed = get_node("/root/ToolConfig").target_visualizer_enabled
+
+	var vegetation_visualizer_toggle = game_menu.find_child("VegetationInteractionVisualizerToggle", true, false)
+	if vegetation_visualizer_toggle:
+		vegetation_visualizer_toggle.toggled.connect(_on_vegetation_interaction_visualizer_toggled)
+		if has_node("/root/ToolConfig"):
+			vegetation_visualizer_toggle.button_pressed = get_node("/root/ToolConfig").vegetation_interaction_visualizer_enabled
 	
 	# Connect hit marker toggle
 	var hit_marker_toggle = game_menu.find_child("HitMarkerToggle", true, false)
@@ -621,6 +627,10 @@ func _on_pickaxe_durability_toggled(is_enabled: bool) -> void:
 func _on_target_visualizer_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):
 		get_node("/root/ToolConfig").target_visualizer_enabled = is_enabled
+
+func _on_vegetation_interaction_visualizer_toggled(is_enabled: bool) -> void:
+	if has_node("/root/ToolConfig"):
+		get_node("/root/ToolConfig").vegetation_interaction_visualizer_enabled = is_enabled
 
 func _on_hit_marker_toggled(is_enabled: bool) -> void:
 	if has_node("/root/ToolConfig"):

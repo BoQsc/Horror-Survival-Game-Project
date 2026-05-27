@@ -676,10 +676,10 @@ func do_punch(item: Dictionary) -> void:
 		_emit_damage_dealt(damageable, damage)
 		return
 	
-	# Try vegetation
-	if _try_harvest_vegetation(target, item, position):
-		return
+	# Prefer data-ray vegetation targeting over compatibility physics colliders.
 	if _try_harvest_vegetation_near_ray(item, 5.0, hit):
+		return
+	if _try_harvest_vegetation(target, item, position):
 		return
 	
 	# Try placed objects
@@ -754,9 +754,9 @@ func do_tool_attack(item: Dictionary) -> void:
 		return
 	
 	# Priority 2: Vegetation
-	if _try_harvest_vegetation(target, item, position):
-		return
 	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
+		return
+	if _try_harvest_vegetation(target, item, position):
 		return
 	
 	# Priority 3: Placed objects
@@ -893,9 +893,9 @@ func _do_axe_damage(item: Dictionary) -> void:
 		return
 	
 	# Priority 2: Vegetation
-	if _try_harvest_vegetation(target, item, position):
-		return
 	if _try_harvest_vegetation_near_ray(item, AXE_REACH_DISTANCE, hit):
+		return
+	if _try_harvest_vegetation(target, item, position):
 		return
 	
 	# Priority 3: Placed objects
@@ -1019,9 +1019,9 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		return
 	
 	# Priority 2: Vegetation
-	if _try_harvest_vegetation(target, item, position):
-		return
 	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
+		return
+	if _try_harvest_vegetation(target, item, position):
 		return
 	
 	# Priority 3: Placed objects
@@ -1444,7 +1444,21 @@ func _is_soft_vegetation_physics_hit(hit: Dictionary) -> bool:
 		# Terrain collision can be PhysicsServer-only with no backing Node.
 		return true
 	if collider is Node:
+		if _is_vegetation_collider(collider):
+			return true
 		return _is_terrain_or_water_collider(collider)
+	return false
+
+func _is_vegetation_collider(collider: Node) -> bool:
+	if not collider:
+		return false
+	if collider.is_in_group("trees") or collider.is_in_group("grass") or collider.is_in_group("rocks"):
+		return true
+	var node := collider
+	while node:
+		if node.is_in_group("trees") or node.is_in_group("grass") or node.is_in_group("rocks"):
+			return true
+		node = node.get_parent()
 	return false
 
 func _is_terrain_or_water_collider(collider: Node) -> bool:

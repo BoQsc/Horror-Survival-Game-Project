@@ -258,6 +258,10 @@ text = "Collision Debugger"
 layout_mode = 2
 text = "Target Visualizer"
 
+[node name="VegetationInteractionVisualizerToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=123456796]
+layout_mode = 2
+text = "Vegetation Target Debug"
+
 [node name="TerrainInfoToggle" type="CheckButton" parent="GameMenu/CenterContainer/SettingsHBox/DebugPanel" unique_id=814410833]
 layout_mode = 2
 text = "Show Terrain Info"

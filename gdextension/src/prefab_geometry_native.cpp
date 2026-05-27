@@ -79,6 +79,8 @@ struct VegetationClusterPayloadChunk {
 	int float_count = 0;
 };
 
+static constexpr double VEGETATION_DATA_RAY_AIM_PRIORITY_DELTA_SQ = 0.01;
+
 static int normalize_rotation(int rotation) {
 	int normalized = rotation % 4;
 	if (normalized < 0) {
@@ -314,9 +316,33 @@ static String vegetation_position_hash(const Vector3 &pos) {
 	return String::num_int64(hash_x) + "_" + String::num_int64(hash_z);
 }
 
+static double ray_axis_distance_sq_xz(const Vector3 &origin, const Vector3 &ray_dir, const Vector3 &axis_pos, double max_distance) {
+	const double dx = double(ray_dir.x);
+	const double dz = double(ray_dir.z);
+	const double horizontal_len_sq = dx * dx + dz * dz;
+	if (horizontal_len_sq <= 0.0000001) {
+		const double ox = double(origin.x) - double(axis_pos.x);
+		const double oz = double(origin.z) - double(axis_pos.z);
+		return ox * ox + oz * oz;
+	}
+	const double to_axis_x = double(axis_pos.x) - double(origin.x);
+	const double to_axis_z = double(axis_pos.z) - double(origin.z);
+	const double projected = (to_axis_x * dx + to_axis_z * dz) / horizontal_len_sq;
+	const double t = std::clamp(projected, 0.0, max_distance);
+	const double closest_x = double(origin.x) + dx * t;
+	const double closest_z = double(origin.z) + dz * t;
+	const double off_x = closest_x - double(axis_pos.x);
+	const double off_z = closest_z - double(axis_pos.z);
+	return off_x * off_x + off_z * off_z;
+}
+
 static bool is_better_ray_hit(double candidate_distance, double candidate_distance_sq_to_ray, const RayHitCandidate &current) {
 	if (!current.valid) {
 		return true;
+	}
+	const double aim_delta_sq = candidate_distance_sq_to_ray - current.distance_sq_to_ray;
+	if (std::abs(aim_delta_sq) > VEGETATION_DATA_RAY_AIM_PRIORITY_DELTA_SQ) {
+		return aim_delta_sq < 0.0;
 	}
 	if (std::abs(candidate_distance - current.distance) > 0.00001) {
 		return candidate_distance < current.distance;
@@ -388,11 +414,8 @@ static bool intersect_vertical_vegetation_cylinder(const Vector3 &origin, const 
 		return false;
 	}
 
-	const Vector3 hit_point = origin + ray_dir * hit_distance;
-	const double axis_dx = double(hit_point.x) - double(base_pos.x);
-	const double axis_dz = double(hit_point.z) - double(base_pos.z);
 	out_distance = hit_distance;
-	out_axis_distance_sq = axis_dx * axis_dx + axis_dz * axis_dz;
+	out_axis_distance_sq = ray_axis_distance_sq_xz(origin, ray_dir, base_pos, max_distance);
 	return true;
 }
 
@@ -1266,6 +1289,7 @@ Dictionary PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit(const D
 			const double rotation_angle = double(entry.get("rotation_angle", entry.get("rotation", 0.0)));
 			const Vector3 fallback_hit_pos = dictionary_get_vector3(entry, "hit_pos");
 			const Vector3 base_pos = dictionary_get_vector3(entry, "world_pos", fallback_hit_pos);
+			const Vector3 ground_pos = dictionary_get_vector3(entry, "hit_pos", base_pos);
 			const Transform3D transform = build_vegetation_transform(base_transform, rotation_fix, rotation_angle, instance_scale, base_pos);
 			const AABB visual_bounds = grow_aabb(transform.xform(mesh_bounds), bounds_padding);
 
@@ -1275,7 +1299,7 @@ Dictionary PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit(const D
 			}
 
 			const Vector3 hit_point = origin + ray_dir * hit_distance;
-			const double distance_sq_to_ray = double(hit_point.distance_squared_to(base_pos));
+			const double distance_sq_to_ray = ray_axis_distance_sq_xz(origin, ray_dir, ground_pos, max_distance);
 			if (!is_better_ray_hit(hit_distance, distance_sq_to_ray, best)) {
 				continue;
 			}

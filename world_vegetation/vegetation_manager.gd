@@ -9,6 +9,9 @@ const GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING := 32.0
 const GLOBAL_TREE_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
 const GLOBAL_GRASS_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
 const GLOBAL_ROCK_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
+# Data-ray targeting must pick the object closest to the center aim ray.
+# Nearest-distance only breaks ties after aim closeness is effectively equal.
+const VEGETATION_DATA_RAY_AIM_PRIORITY_DELTA_SQ := 0.01
 const RenderResourcePrewarm = preload("res://world_render_prewarm/render_resource_prewarm.gd")
 
 
@@ -1801,6 +1804,21 @@ func _sync_multimesh_from_instances(mmi, instances: Array, chunk_stride: int, pr
 	mmi_node.multimesh.instance_count = instances.size()
 	mmi_node.multimesh.buffer = _pack_multimesh_buffer_from_instances(instances)
 	mmi_node.multimesh.custom_aabb = _vegetation_custom_aabb(chunk_stride)
+
+
+func _sync_harvested_vegetation_render_now(kind: String, coord: Vector2i, data: Dictionary, list_key: String) -> void:
+	var instances: Array = []
+	var list_variant = data.get(list_key, [])
+	if list_variant is Array:
+		instances = list_variant
+
+	if data.has("multimesh") and terrain_manager:
+		_sync_multimesh_from_instances(data.multimesh, instances, terrain_manager.CHUNK_STRIDE)
+	elif global_render_batches_enabled:
+		_update_global_vegetation_chunk_render_payload(kind, coord, instances)
+		_mark_global_vegetation_render_dirty(kind, coord)
+
+	_sync_global_vegetation_render_coord_now(kind, coord)
 
 
 func _append_native_generated_instances(target: Array, records: Array) -> void:
@@ -3736,6 +3754,7 @@ func _harvest_grass_at_index(coord: Vector2i, grass_index: int) -> bool:
 				grass.alive = false
 				var pos_hash = _position_hash(grass.world_pos)
 				removed_grass[pos_hash] = true
+				_sync_harvested_vegetation_render_now("grass", coord, data, "grass_list")
 				grass_harvested.emit(grass.world_pos)
 				return true
 		return false
@@ -3749,8 +3768,7 @@ func _harvest_grass_at_index(coord: Vector2i, grass_index: int) -> bool:
 			removed_grass[pos_hash] = true
 
 			grass.transform = _make_hidden_transform(grass.local_pos)
-			if data.has("multimesh") and terrain_manager:
-				_sync_multimesh_from_instances(data.multimesh, data.grass_list, terrain_manager.CHUNK_STRIDE)
+			_sync_harvested_vegetation_render_now("grass", coord, data, "grass_list")
 
 			# Remove collider if the compatibility physics path is enabled.
 			var key = _grass_key(coord, grass_index)
@@ -3798,6 +3816,7 @@ func _find_nearest_instance_along_ray(
 			height,
 			kind == "tree"
 		)
+		native_hit = _apply_instance_axis_aim_distance(native_hit, chunk_data, list_key, kind, origin, direction, max_distance)
 		_record_vegetation_ray_query_backend(kind, "native", 0 if native_hit.is_empty() else 1)
 		return native_hit
 
@@ -3841,7 +3860,11 @@ func _find_nearest_instance_along_ray(
 				"index": index,
 				"position": cylinder_hit.get("position", base_pos),
 				"distance": cylinder_hit.get("distance", 0.0),
-				"distance_sq_to_ray": cylinder_hit.get("distance_sq_to_ray", 0.0)
+				"distance_sq_to_ray": _ray_axis_distance_sq_xz(origin, ray_dir, base_pos, max_distance),
+				"base_position": base_pos,
+				"interaction_radius": instance_radius,
+				"interaction_height": instance_height,
+				"debug_position": _vegetation_debug_target_position(kind, base_pos, instance_height)
 			}
 			if _is_better_data_ray_hit(candidate, best_hit):
 				best_hit = candidate
@@ -3869,6 +3892,7 @@ func _find_nearest_tree_visual_bounds_along_ray(
 			tree_rotation_fix,
 			tree_visual_targeting_aabb_padding
 		)
+		native_hit = _apply_instance_axis_aim_distance(native_hit, chunk_data, list_key, "tree", origin, direction, max_distance)
 		_record_vegetation_ray_query_backend("tree", "native_visual_bounds", 0 if native_hit.is_empty() else 1)
 		return native_hit
 
@@ -3891,6 +3915,7 @@ func _find_nearest_tree_visual_bounds_along_ray(
 			var scale := maxf(0.1, float(entry.get("scale", 1.0)))
 			var rotation_angle := float(entry.get("rotation_angle", entry.get("rotation", 0.0)))
 			var base_pos: Vector3 = entry.get("world_pos", entry.get("hit_pos", Vector3.ZERO))
+			var ground_pos: Vector3 = entry.get("hit_pos", base_pos)
 			var tree_transform := _build_vegetation_transform(
 				tree_base_transform,
 				tree_rotation_fix,
@@ -3910,7 +3935,11 @@ func _find_nearest_tree_visual_bounds_along_ray(
 				"index": index,
 				"position": hit_position,
 				"distance": bounds_hit.get("distance", 0.0),
-				"distance_sq_to_ray": hit_position.distance_squared_to(base_pos)
+				"distance_sq_to_ray": _ray_axis_distance_sq_xz(origin, ray_dir, ground_pos, max_distance),
+				"base_position": ground_pos,
+				"interaction_radius": collision_radius * scale,
+				"interaction_height": collision_height * scale,
+				"debug_position": _vegetation_debug_target_position("tree", ground_pos, collision_height * scale)
 			}
 			if _is_better_data_ray_hit(candidate, best_hit):
 				best_hit = candidate
@@ -4041,24 +4070,93 @@ func _intersect_vertical_vegetation_cylinder(
 	if hit_distance > max_distance:
 		return {}
 	var hit_point := origin + ray_dir * hit_distance
-	var axis_dx := hit_point.x - base_pos.x
-	var axis_dz := hit_point.z - base_pos.z
 	return {
 		"position": hit_point,
 		"distance": hit_distance,
-		"distance_sq_to_ray": axis_dx * axis_dx + axis_dz * axis_dz
+		"distance_sq_to_ray": _ray_axis_distance_sq_xz(origin, ray_dir, base_pos, max_distance)
 	}
+
+func _apply_instance_axis_aim_distance(
+		hit: Dictionary,
+		chunk_data: Dictionary,
+		list_key: String,
+		kind: String,
+		origin: Vector3,
+		direction: Vector3,
+		max_distance: float
+) -> Dictionary:
+	if hit.is_empty():
+		return hit
+	var coord: Vector2i = hit.get("coord", Vector2i.ZERO)
+	if not chunk_data.has(coord):
+		return hit
+	var data = chunk_data[coord]
+	if not (data is Dictionary) or not data.has(list_key):
+		return hit
+	var index := int(hit.get("index", -1))
+	for entry in data[list_key]:
+		if not (entry is Dictionary):
+			continue
+		if int(entry.get("index", -2)) != index:
+			continue
+		var base_pos: Vector3
+		if kind == "tree":
+			base_pos = entry.get("hit_pos", entry.get("world_pos", hit.get("position", Vector3.ZERO)))
+		else:
+			base_pos = entry.get("hit_pos", entry.get("world_pos", hit.get("position", Vector3.ZERO)))
+		var scale := maxf(0.1, float(entry.get("scale", 1.0)))
+		hit["distance_sq_to_ray"] = _ray_axis_distance_sq_xz(origin, direction.normalized(), base_pos, max_distance)
+		hit["base_position"] = base_pos
+		match kind:
+			"tree":
+				hit["interaction_radius"] = collision_radius * scale
+				hit["interaction_height"] = collision_height * scale
+			"grass":
+				hit["interaction_radius"] = grass_collision_radius
+				hit["interaction_height"] = grass_collision_height
+			"rock":
+				hit["interaction_radius"] = rock_collision_radius
+				hit["interaction_height"] = rock_collision_height
+		hit["debug_position"] = _vegetation_debug_target_position(kind, base_pos, float(hit.get("interaction_height", 1.0)))
+		return hit
+	return hit
+
+func _vegetation_debug_target_position(kind: String, base_pos: Vector3, height: float) -> Vector3:
+	var max_marker_height := 1.5 if kind == "tree" else 0.75
+	return base_pos + Vector3.UP * minf(maxf(height, 0.0) * 0.5, max_marker_height)
+
+func _ray_axis_distance_sq_xz(origin: Vector3, ray_dir: Vector3, axis_pos: Vector3, max_distance: float) -> float:
+	var dx := ray_dir.x
+	var dz := ray_dir.z
+	var horizontal_len_sq := dx * dx + dz * dz
+	if horizontal_len_sq <= 0.0000001:
+		var ox := origin.x - axis_pos.x
+		var oz := origin.z - axis_pos.z
+		return ox * ox + oz * oz
+	var to_axis_x := axis_pos.x - origin.x
+	var to_axis_z := axis_pos.z - origin.z
+	var t := clampf((to_axis_x * dx + to_axis_z * dz) / horizontal_len_sq, 0.0, max_distance)
+	var closest_x := origin.x + dx * t
+	var closest_z := origin.z + dz * t
+	var off_x := closest_x - axis_pos.x
+	var off_z := closest_z - axis_pos.z
+	return off_x * off_x + off_z * off_z
 
 func _is_better_data_ray_hit(candidate: Dictionary, current: Dictionary) -> bool:
 	if candidate.is_empty():
 		return false
 	if current.is_empty():
 		return true
+	var candidate_aim_sq := float(candidate.get("distance_sq_to_ray", 0.0))
+	var current_aim_sq := float(current.get("distance_sq_to_ray", 0.0))
+	var aim_delta_sq := candidate_aim_sq - current_aim_sq
+	if absf(aim_delta_sq) > VEGETATION_DATA_RAY_AIM_PRIORITY_DELTA_SQ:
+		return aim_delta_sq < 0.0
 	var candidate_distance := float(candidate.get("distance", 0.0))
 	var current_distance := float(current.get("distance", 0.0))
 	if not is_equal_approx(candidate_distance, current_distance):
 		return candidate_distance < current_distance
-	return float(candidate.get("distance_sq_to_ray", 0.0)) < float(current.get("distance_sq_to_ray", 0.0))
+	return candidate_aim_sq < current_aim_sq
 
 # Helper to create position hash for persistence
 # NOTE: int() truncates toward zero, which could cause issues near coordinate 0
@@ -4518,6 +4616,7 @@ func _harvest_rock_at_index(coord: Vector2i, rock_index: int) -> bool:
 				rock.alive = false
 				var pos_hash = _position_hash(rock.world_pos)
 				removed_rocks[pos_hash] = true
+				_sync_harvested_vegetation_render_now("rock", coord, data, "rock_list")
 				rock_harvested.emit(rock.world_pos)
 				return true
 		return false
@@ -4531,8 +4630,7 @@ func _harvest_rock_at_index(coord: Vector2i, rock_index: int) -> bool:
 			removed_rocks[pos_hash] = true
 
 			rock.transform = _make_hidden_transform(rock.local_pos)
-			if data.has("multimesh") and terrain_manager:
-				_sync_multimesh_from_instances(data.multimesh, data.rock_list, terrain_manager.CHUNK_STRIDE)
+			_sync_harvested_vegetation_render_now("rock", coord, data, "rock_list")
 
 			var key = _rock_key(coord, rock_index)
 			if active_rock_colliders.has(key):
