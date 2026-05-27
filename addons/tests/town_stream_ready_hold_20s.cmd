@@ -35,6 +35,11 @@ set TOWN_STALL_MACHINE_WARMUP_DISABLED=1
 set TOWN_STALL_LOW_FPS_ABORT=1
 set TOWN_STALL_LOW_FPS_ABORT_FRAME_MS=80
 set TOWN_STALL_LOW_FPS_ABORT_SECONDS=4
+:: Keep this benchmark at a 60 FPS target; runtime-power deep idle otherwise
+:: creates a false 30 FPS stationary hold result.
+set TOWN_STALL_RUNTIME_POWER_IDLE_FPS=60
+set TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS=60
+set TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP=0
 
 echo Starting stream-ready 20s town hold test at normal process priority...
 python -u run_town_stall_test.py

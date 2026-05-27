@@ -24,6 +24,7 @@ const RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT := 24
 const RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT := 4
 const PEAK_ENTRY_SAMPLE_LIMIT := 12
 const HOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
+const HOLD_STREAM_READY_LOG_INTERVAL_SECONDS := 5.0
 const HOLD_SETTLE_STABLE_FRAMES := 30
 const HOLD_SETTLE_MAX_SECONDS := 8.0
 const HOLD_SETTLE_POSITION_EPSILON := 0.05
@@ -122,6 +123,8 @@ var next_hold_snapshot_phase_time: float = -1.0
 var hold_periodic_snapshots_enabled: bool = false
 var hold_wait_stream_ready_enabled: bool = true
 var hold_stream_ready_wait_logged: bool = false
+var hold_stream_ready_last_log_seconds: float = -1000000.0
+var hold_stream_ready_last_blockers: String = ""
 var hold_settle_elapsed_seconds: float = 0.0
 var hold_settle_stable_frames: int = 0
 var hold_settle_timed_out: bool = false
@@ -2968,130 +2971,189 @@ func _teleport_into_town() -> void:
 
 
 func _is_town_spawn_ready(position: Vector3) -> bool:
-	if chunk_manager.has_method("is_spawn_zone_ready"):
+	return _get_town_spawn_ready_blockers(position).is_empty()
+
+
+func _get_town_spawn_ready_blockers(position: Vector3) -> Array[String]:
+	var blockers: Array[String] = []
+	if pending_town_spawn_requested and chunk_manager.has_method("is_spawn_zone_ready"):
 		if not bool(chunk_manager.is_spawn_zone_ready(position, 2)):
-			return false
-	elif chunk_manager.has_method("are_chunks_ready_around") and not bool(chunk_manager.are_chunks_ready_around(position, 2)):
-		return false
+			blockers.append("spawn_zone_not_ready")
 	elif chunk_manager.has_method("ensure_collision_ready_at") and not bool(chunk_manager.ensure_collision_ready_at(position, 1)):
-		return false
-	if not _is_town_terrain_stream_ready():
-		return false
-	if not _is_town_building_stream_ready():
-		return false
-	if not _is_town_vegetation_stream_ready():
-		return false
-	if not _is_town_entity_stream_ready():
-		return false
-	return true
+		blockers.append("spawn_collision_not_ready")
+	blockers.append_array(_get_town_terrain_stream_blockers())
+	blockers.append_array(_get_town_building_stream_blockers())
+	blockers.append_array(_get_town_vegetation_stream_blockers())
+	blockers.append_array(_get_town_entity_stream_blockers())
+	return blockers
 
 
 func _is_town_terrain_stream_ready() -> bool:
+	return _get_town_terrain_stream_blockers().is_empty()
+
+
+func _get_town_terrain_stream_blockers() -> Array[String]:
+	var blockers: Array[String] = []
 	if not chunk_manager.has_method("get_telemetry_snapshot"):
-		return true
+		return blockers
 	var telemetry: Dictionary = chunk_manager.get_telemetry_snapshot()
 	var render_distance := int(telemetry.get("render_distance", 0))
 	var min_loaded_chunks := int(ceil(PI * float(render_distance * render_distance)))
-	var terrain_busy := false
-	terrain_busy = terrain_busy or (render_distance > 0 and int(telemetry.get("loaded_chunk_count", 0)) < min_loaded_chunks)
+	var loaded_chunk_count := int(telemetry.get("loaded_chunk_count", 0))
+	if render_distance > 0 and loaded_chunk_count < min_loaded_chunks:
+		blockers.append("terrain_loaded_chunks=%d/%d" % [loaded_chunk_count, min_loaded_chunks])
 	if bool(telemetry.get("distant_world_map_lod_enabled", false)) and bool(telemetry.get("world_map_active", false)):
 		var lod_distance := int(telemetry.get("distant_world_map_lod_distance", 0))
 		var lod_overlap := int(telemetry.get("distant_world_map_lod_overlap", 0))
 		var lod_inner_distance := maxi(render_distance - lod_overlap, 0)
 		if lod_distance > lod_inner_distance:
-			terrain_busy = terrain_busy or bool(telemetry.get("distant_world_map_lod_deferred", false))
-			terrain_busy = terrain_busy or int(telemetry.get("world_map_lod_chunk_count", 0)) <= 0
-			terrain_busy = terrain_busy or int(telemetry.get("world_map_lod_pending_candidate_count", 0)) > 0
-			terrain_busy = terrain_busy or int(telemetry.get("last_world_map_lod_loads", 0)) > 0
-			terrain_busy = terrain_busy or int(telemetry.get("last_world_map_lod_unloads", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("pending_chunk_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("pending_node_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("task_queue_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("cpu_task_queue_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("completed_generation_queue_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("pending_terrain_collision_create_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("terrain_visual_batch_dirty_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("terrain_visual_batch_async_in_flight_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("terrain_visual_batch_async_completed_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("water_visual_batch_dirty_count", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("last_update_loads", 0)) > 0
-	terrain_busy = terrain_busy or int(telemetry.get("last_update_unloads", 0)) > 0
-	terrain_busy = terrain_busy or bool(telemetry.get("render_resource_prewarm_active", false))
-	if terrain_busy:
+			if bool(telemetry.get("distant_world_map_lod_deferred", false)):
+				blockers.append("terrain_world_lod_deferred")
+			if int(telemetry.get("world_map_lod_chunk_count", 0)) <= 0:
+				blockers.append("terrain_world_lod_empty")
+			var world_lod_pending := int(telemetry.get("world_map_lod_pending_candidate_count", 0))
+			if world_lod_pending > 0:
+				blockers.append("terrain_world_lod_pending=%d" % world_lod_pending)
+			var world_lod_loads := int(telemetry.get("last_world_map_lod_loads", 0))
+			if world_lod_loads > 0:
+				blockers.append("terrain_world_lod_loads=%d" % world_lod_loads)
+			var world_lod_unloads := int(telemetry.get("last_world_map_lod_unloads", 0))
+			if world_lod_unloads > 0:
+				blockers.append("terrain_world_lod_unloads=%d" % world_lod_unloads)
+	var pending_chunks := int(telemetry.get("pending_chunk_count", 0))
+	if pending_chunks > 0:
+		blockers.append("terrain_pending_chunks=%d" % pending_chunks)
+	var pending_nodes := int(telemetry.get("pending_node_count", 0))
+	if pending_nodes > 0:
+		blockers.append("terrain_pending_nodes=%d" % pending_nodes)
+	var task_queue := int(telemetry.get("task_queue_count", 0))
+	if task_queue > 0:
+		blockers.append("terrain_gpu_tasks=%d" % task_queue)
+	var cpu_task_queue := int(telemetry.get("cpu_task_queue_count", 0))
+	if cpu_task_queue > 0:
+		blockers.append("terrain_cpu_tasks=%d" % cpu_task_queue)
+	var completed_queue := int(telemetry.get("completed_generation_queue_count", 0))
+	if completed_queue > 0:
+		blockers.append("terrain_completed_queue=%d" % completed_queue)
+	var pending_collision := int(telemetry.get("pending_terrain_collision_create_count", 0))
+	if pending_collision > 0:
+		blockers.append("terrain_pending_collision=%d" % pending_collision)
+	var last_update_loads := int(telemetry.get("last_update_loads", 0))
+	if last_update_loads > 0:
+		blockers.append("terrain_last_loads=%d" % last_update_loads)
+	var last_update_unloads := int(telemetry.get("last_update_unloads", 0))
+	if last_update_unloads > 0:
+		blockers.append("terrain_last_unloads=%d" % last_update_unloads)
+	if bool(telemetry.get("render_resource_prewarm_active", false)):
+		blockers.append("terrain_render_prewarm=%d" % int(telemetry.get("render_resource_prewarm_frames_remaining", 0)))
+	if not blockers.is_empty():
 		_reset_town_terrain_stability()
-		return false
+		return blockers
 
-	var signature := "%d:%d:%d:%d:%d:%d:%d:%d:%d" % [
+	var signature := "%d:%d:%d:%d:%d:%d:%d" % [
 		int(telemetry.get("active_chunk_count", 0)),
-		int(telemetry.get("loaded_chunk_count", 0)),
+		loaded_chunk_count,
 		int(telemetry.get("rendered_terrain_chunk_count", 0)),
 		int(telemetry.get("rendered_water_chunk_count", 0)),
 		int(telemetry.get("collision_ready_chunk_count", 0)),
 		int(telemetry.get("world_map_lod_chunk_count", 0)),
-		int(telemetry.get("world_map_lod_pending_candidate_count", 0)),
-		int(telemetry.get("terrain_visual_batch_dirty_count", 0)),
-		int(telemetry.get("water_visual_batch_dirty_count", 0))
+		int(telemetry.get("world_map_lod_pending_candidate_count", 0))
 	]
 	if signature != town_terrain_stability_signature:
 		town_terrain_stability_signature = signature
 		town_terrain_stable_frames = 0
-		return false
+		blockers.append("terrain_stabilizing=0/12")
+		return blockers
 	town_terrain_stable_frames += 1
-	return town_terrain_stable_frames >= 12
+	if town_terrain_stable_frames < 12:
+		blockers.append("terrain_stabilizing=%d/12" % town_terrain_stable_frames)
+	return blockers
 
 
 func _is_town_building_stream_ready() -> bool:
+	return _get_town_building_stream_blockers().is_empty()
+
+
+func _get_town_building_stream_blockers() -> Array[String]:
+	var blockers: Array[String] = []
 	var prefab_spawner := _find_manager_node("prefab_spawner", "PrefabSpawner")
 	if is_instance_valid(prefab_spawner):
 		if prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs():
-			return false
+			blockers.append("prefab_spawn_jobs")
 		if prefab_spawner.has_method("has_pending_world_map_baked_payload_jobs") and prefab_spawner.has_pending_world_map_baked_payload_jobs():
-			return false
+			blockers.append("prefab_baked_payload_jobs")
 	if not is_instance_valid(building_manager):
 		building_manager = _find_manager_node("building_manager", "BuildingManager")
 	if is_instance_valid(building_manager):
 		if building_manager.has_method("is_object_render_prewarm_active") and building_manager.is_object_render_prewarm_active():
-			return false
+			blockers.append("building_object_prewarm")
 		if building_manager.has_method("has_pending_world_map_baked_building_apply_phases") and building_manager.has_pending_world_map_baked_building_apply_phases():
-			return false
+			blockers.append("building_baked_apply")
 		if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
-			return false
+			blockers.append("building_object_spawns")
 		if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
-			return false
+			blockers.append("building_global_visual_batches")
 		if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
-			return false
+			blockers.append("building_dirty_visible_chunks")
 		if building_manager.has_method("get_telemetry_snapshot"):
 			var telemetry: Dictionary = building_manager.get_telemetry_snapshot()
 			if bool(telemetry.get("object_render_prewarm_active", false)):
-				return false
-			if int(telemetry.get("pending_visual_batch_rebuilds", 0)) > 0:
-				return false
-			if int(telemetry.get("world_map_baked_building_visual_batch_dirty_count", 0)) > 0:
-				return false
-	return true
+				blockers.append("building_object_prewarm=%d" % int(telemetry.get("object_render_prewarm_frames_remaining", 0)))
+			var visual_rebuilds := int(telemetry.get("pending_visual_batch_rebuilds", 0))
+			if visual_rebuilds > 0:
+				blockers.append("building_visual_rebuilds=%d" % visual_rebuilds)
+			var baked_visual_dirty := int(telemetry.get("world_map_baked_building_visual_batch_dirty_count", 0))
+			if baked_visual_dirty > 0:
+				blockers.append("building_baked_visual_dirty=%d" % baked_visual_dirty)
+	return blockers
 
 
 func _is_town_vegetation_stream_ready() -> bool:
+	return _get_town_vegetation_stream_blockers().is_empty()
+
+
+func _get_town_vegetation_stream_blockers() -> Array[String]:
+	var blockers: Array[String] = []
 	if not is_instance_valid(vegetation_manager):
 		vegetation_manager = _find_manager_node("vegetation_manager", "VegetationManager")
-	if is_instance_valid(vegetation_manager) and vegetation_manager.has_method("is_vegetation_ready"):
-		return bool(vegetation_manager.is_vegetation_ready())
-	return true
+	if is_instance_valid(vegetation_manager):
+		if vegetation_manager.has_method("get_telemetry_snapshot"):
+			var telemetry: Dictionary = vegetation_manager.get_telemetry_snapshot()
+			var pending_chunks := int(telemetry.get("pending_chunks_count", telemetry.get("pending_chunks", 0)))
+			if pending_chunks > 0:
+				blockers.append("vegetation_pending_chunks=%d" % pending_chunks)
+			var dirty_kinds: Array = telemetry.get("global_render_dirty_kinds", [])
+			if not dirty_kinds.is_empty():
+				blockers.append("vegetation_dirty=%s" % str(dirty_kinds))
+			if bool(telemetry.get("vegetation_render_prewarm_active", false)):
+				blockers.append("vegetation_prewarm=%d" % int(telemetry.get("vegetation_render_prewarm_frames_remaining", 0)))
+		elif vegetation_manager.has_method("is_vegetation_ready") and not bool(vegetation_manager.is_vegetation_ready()):
+			blockers.append("vegetation_not_ready")
+	return blockers
 
 
 func _is_town_entity_stream_ready() -> bool:
+	return _get_town_entity_stream_blockers().is_empty()
+
+
+func _get_town_entity_stream_blockers() -> Array[String]:
+	var blockers: Array[String] = []
 	if not is_instance_valid(entity_manager):
 		entity_manager = _find_manager_node("entity_manager", "EntityManager")
 	if not is_instance_valid(entity_manager) or not entity_manager.has_method("get_telemetry_snapshot"):
-		return true
+		return blockers
 	var telemetry: Dictionary = entity_manager.get_telemetry_snapshot()
-	var entity_busy := false
-	entity_busy = entity_busy or bool(telemetry.get("entity_render_prewarm_active", false))
-	entity_busy = entity_busy or int(telemetry.get("last_spawn_queue_spawned", 0)) > 0
-	entity_busy = entity_busy or int(telemetry.get("last_dormant_respawn_spawned", 0)) > 0
-	if entity_busy:
+	if bool(telemetry.get("entity_render_prewarm_active", false)):
+		blockers.append("entity_prewarm=%d" % int(telemetry.get("entity_render_prewarm_frames_remaining", 0)))
+	var spawned := int(telemetry.get("last_spawn_queue_spawned", 0))
+	if spawned > 0:
+		blockers.append("entity_spawned=%d" % spawned)
+	var dormant_spawned := int(telemetry.get("last_dormant_respawn_spawned", 0))
+	if dormant_spawned > 0:
+		blockers.append("entity_dormant_spawned=%d" % dormant_spawned)
+	if not blockers.is_empty():
 		_reset_town_entity_stability()
-		return false
+		return blockers
 
 	var signature := "%d:%d:%d:%d:%d:%d:%d" % [
 		int(telemetry.get("active_entities", 0)),
@@ -3105,9 +3167,12 @@ func _is_town_entity_stream_ready() -> bool:
 	if signature != town_entity_stability_signature:
 		town_entity_stability_signature = signature
 		town_entity_stable_frames = 0
-		return false
+		blockers.append("entity_stabilizing=0/20")
+		return blockers
 	town_entity_stable_frames += 1
-	return town_entity_stable_frames >= 20
+	if town_entity_stable_frames < 20:
+		blockers.append("entity_stabilizing=%d/20" % town_entity_stable_frames)
+	return blockers
 
 
 func _reset_town_stream_stability() -> void:
@@ -3141,6 +3206,8 @@ func _set_player_movement_enabled(enabled: bool) -> void:
 func _reset_hold_settle() -> void:
 	_reset_hold_settle_progress()
 	hold_stream_ready_wait_logged = false
+	hold_stream_ready_last_log_seconds = -1000000.0
+	hold_stream_ready_last_blockers = ""
 
 
 func _reset_hold_settle_progress() -> void:
@@ -3419,16 +3486,39 @@ func _is_hold_stream_ready() -> bool:
 		return true
 	if not is_instance_valid(player):
 		return true
-	return _is_town_spawn_ready(player.global_position)
+	var blockers := _get_town_spawn_ready_blockers(player.global_position)
+	if blockers.is_empty():
+		hold_stream_ready_last_blockers = ""
+		return true
+	_maybe_log_hold_stream_blockers(blockers)
+	return false
+
+
+func _maybe_log_hold_stream_blockers(blockers: Array[String]) -> void:
+	var blocker_text := ""
+	for blocker in blockers:
+		if not blocker_text.is_empty():
+			blocker_text += ", "
+		blocker_text += blocker
+	var should_log := not hold_stream_ready_wait_logged \
+		or blocker_text != hold_stream_ready_last_blockers \
+		or phase_time - hold_stream_ready_last_log_seconds >= HOLD_STREAM_READY_LOG_INTERVAL_SECONDS
+	if not should_log:
+		return
+	hold_stream_ready_wait_logged = true
+	hold_stream_ready_last_log_seconds = phase_time
+	hold_stream_ready_last_blockers = blocker_text
+	print("[TOWN_STALL_TEST] Waiting for stream/prewarm stability before hold: %s" % blocker_text)
+	_emit_scope_event("town_stall_test", "hold_stream_wait", {
+		"blockers": blockers,
+		"phase_time": phase_time
+	})
 
 
 func _hold_in_town(_delta: float) -> void:
 	if not hold_started_logged:
 		if not _is_hold_stream_ready():
 			_reset_hold_settle_progress()
-			if not hold_stream_ready_wait_logged:
-				hold_stream_ready_wait_logged = true
-				print("[TOWN_STALL_TEST] Waiting for stream/prewarm stability before hold")
 			return
 		if not _is_hold_settled(_delta):
 			return
