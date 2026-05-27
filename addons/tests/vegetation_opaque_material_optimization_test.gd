@@ -14,10 +14,10 @@ func _run() -> int:
 	manager.vegetation_render_prewarm_frames = 0
 	root.add_child(manager)
 
-	if not _expect(not _mesh_surface_is_opaque(manager.tree_mesh), "tree alpha-cutout material must not be forced opaque"):
+	if not _expect(_mesh_has_alpha_surface(manager.tree_mesh), "tree alpha-cutout surface must be preserved"):
 		manager.free()
 		return 1
-	if not _expect(not _mesh_surface_is_opaque(manager.grass_mesh), "grass alpha-cutout material must not be forced opaque"):
+	if not _expect(_mesh_has_alpha_surface(manager.grass_mesh), "grass alpha-cutout surface must be preserved"):
 		manager.free()
 		return 1
 	if not _expect(_mesh_surface_is_opaque(manager.rock_mesh), "rock material should remain opaque"):
@@ -50,6 +50,9 @@ func _run() -> int:
 	if not _expect(int(counts.get("rock_optimized_surfaces", 0)) == 0, "rock should not need optimization"):
 		manager.free()
 		return 1
+	if not _expect(counts.has("tree_alpha_split_surfaces"), "tree alpha split telemetry should be present"):
+		manager.free()
+		return 1
 
 	manager.free()
 	print("[VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION_TEST] PASS")
@@ -62,6 +65,17 @@ func _mesh_surface_is_opaque(mesh: Mesh) -> bool:
 	if material is not BaseMaterial3D:
 		return false
 	return (material as BaseMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED
+
+func _mesh_has_alpha_surface(mesh: Mesh) -> bool:
+	if mesh == null:
+		return false
+	for surface_index in range(mesh.get_surface_count()):
+		var material := mesh.surface_get_material(surface_index)
+		if material is not BaseMaterial3D:
+			continue
+		if (material as BaseMaterial3D).transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+			return true
+	return false
 
 func _expect(condition: bool, message: String) -> bool:
 	if condition:

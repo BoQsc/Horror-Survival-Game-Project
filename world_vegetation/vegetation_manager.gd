@@ -4,6 +4,15 @@ class_name VegetationManager
 const MULTIMESH_FLOATS_PER_INSTANCE_3D := 12
 const GLOBAL_VEGETATION_RENDER_AABB := AABB(Vector3(-4096.0, -128.0, -4096.0), Vector3(8192.0, 512.0, 8192.0))
 const GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING := 32.0
+const VEGETATION_ALPHA_TRIANGLE_OPAQUE_SAMPLE_POINTS := [
+	Vector3(1.0, 0.0, 0.0),
+	Vector3(0.0, 1.0, 0.0),
+	Vector3(0.0, 0.0, 1.0),
+	Vector3(0.5, 0.5, 0.0),
+	Vector3(0.5, 0.0, 0.5),
+	Vector3(0.0, 0.5, 0.5),
+	Vector3(0.3333333, 0.3333333, 0.3333333)
+]
 # Keep per-kind bounds conservative by default. Tighter bounds/occlusion can
 # improve some counters, but they risk vegetation popping or missing batches.
 const GLOBAL_TREE_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
@@ -53,15 +62,19 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var vegetation_global_render_ignore_occlusion_culling: bool = true
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
 @export var vegetation_opaque_material_optimization_enabled: bool = true
+@export var vegetation_split_alpha_scissor_opaque_surfaces_enabled: bool = true
 @export var world_map_vegetation_render_profile_enabled: bool = true
 # Smaller world-map clusters cost more draw calls but reduce off-frustum tree work.
 @export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 3
-@export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 3
+@export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 6
+@export_range(1, 64, 1) var world_map_vegetation_rock_render_cluster_size: int = 6
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
 @export_range(0.0, 32.0, 0.1) var vegetation_stream_budget_ms: float = 1.5
 @export_range(0.0, 64.0, 0.1) var vegetation_initial_load_budget_ms: float = 3.0
 @export_range(0, 8, 1) var vegetation_chunk_start_delay_frames: int = 0
 @export_range(1, 128, 1) var vegetation_max_stages_per_frame: int = 8
+@export_range(1, 32, 1) var vegetation_global_render_flushes_per_frame: int = 4
+@export_range(0.0, 16.0, 0.1) var vegetation_global_render_flush_budget_ms: float = 1.25
 @export_range(0, 120, 1) var vegetation_global_render_stream_flush_interval_frames: int = 12
 @export var vegetation_defer_initial_global_render_flush: bool = true
 @export_range(0.05, 1.0, 0.05) var vegetation_collider_update_interval: float = 0.20
@@ -186,6 +199,15 @@ var _global_rock_dirty_clusters: Dictionary = {}
 var _global_tree_render_dirty: bool = false
 var _global_grass_render_dirty: bool = false
 var _global_rock_render_dirty: bool = false
+var _global_tree_dirty_since_msec: int = 0
+var _global_grass_dirty_since_msec: int = 0
+var _global_rock_dirty_since_msec: int = 0
+var _global_tree_dirty_mark_count: int = 0
+var _global_grass_dirty_mark_count: int = 0
+var _global_rock_dirty_mark_count: int = 0
+var _global_tree_flush_count: int = 0
+var _global_grass_flush_count: int = 0
+var _global_rock_flush_count: int = 0
 var _last_global_render_sync_ms: float = 0.0
 var _last_global_render_sync_kind: String = ""
 var _last_global_render_sync_cluster: Vector2i = Vector2i.ZERO
@@ -201,10 +223,15 @@ var _last_global_render_sync_instance_count: int = 0
 var _last_global_render_upload_float_count: int = 0
 var _last_global_render_upload_bytes: int = 0
 var _max_global_render_upload_bytes: int = 0
+var _last_global_render_flush_count: int = 0
+var _last_global_render_flush_ms: float = 0.0
+var _last_global_render_flush_budget_hit: bool = false
+var _max_global_render_dirty_age_ms: int = 0
 var _initial_global_render_flush_deferred_count: int = 0
 var _initial_chunk_stream_defer_active: bool = false
 var _last_effective_vegetation_render_cluster_size: int = -1
 var _last_effective_vegetation_grass_render_cluster_size: int = -1
+var _last_effective_vegetation_rock_render_cluster_size: int = -1
 var _vegetation_render_resource_prewarm_node: Node = null
 var _vegetation_render_resource_prewarm_mesh_count: int = 0
 var _data_ray_harvest_queries: int = 0
@@ -382,12 +409,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_global_render_ignore_occlusion_culling": vegetation_global_render_ignore_occlusion_culling,
 		"vegetation_render_lod_bias": vegetation_render_lod_bias,
 		"vegetation_opaque_material_optimization_enabled": vegetation_opaque_material_optimization_enabled,
+		"vegetation_split_alpha_scissor_opaque_surfaces_enabled": vegetation_split_alpha_scissor_opaque_surfaces_enabled,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
 		"world_map_vegetation_render_profile_active": _use_world_map_vegetation_render_profile(),
 		"world_map_vegetation_render_cluster_size": world_map_vegetation_render_cluster_size,
 		"world_map_vegetation_grass_render_cluster_size": world_map_vegetation_grass_render_cluster_size,
+		"world_map_vegetation_rock_render_cluster_size": world_map_vegetation_rock_render_cluster_size,
 		"effective_vegetation_render_cluster_size": _effective_vegetation_render_cluster_size("tree"),
 		"effective_vegetation_grass_render_cluster_size": _effective_vegetation_render_cluster_size("grass"),
+		"effective_vegetation_rock_render_cluster_size": _effective_vegetation_render_cluster_size("rock"),
 		"global_render_batch_count": _get_global_render_batch_count(),
 		"global_tree_render_batch_count": _get_global_render_batch_count_for_kind("tree"),
 		"global_grass_render_batch_count": _get_global_render_batch_count_for_kind("grass"),
@@ -410,6 +440,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"tree_alpha_mesh_surfaces": int(tree_render_stats.get("alpha_mesh_surfaces", 0)),
 		"grass_alpha_mesh_surfaces": int(grass_render_stats.get("alpha_mesh_surfaces", 0)),
 		"rock_alpha_mesh_surfaces": int(rock_render_stats.get("alpha_mesh_surfaces", 0)),
+		"tree_opaque_mesh_primitives": int(tree_render_stats.get("opaque_mesh_primitives", 0)),
+		"grass_opaque_mesh_primitives": int(grass_render_stats.get("opaque_mesh_primitives", 0)),
+		"rock_opaque_mesh_primitives": int(rock_render_stats.get("opaque_mesh_primitives", 0)),
+		"tree_opaque_mesh_surfaces": int(tree_render_stats.get("opaque_mesh_surfaces", 0)),
+		"grass_opaque_mesh_surfaces": int(grass_render_stats.get("opaque_mesh_surfaces", 0)),
+		"rock_opaque_mesh_surfaces": int(rock_render_stats.get("opaque_mesh_surfaces", 0)),
 		"tree_material_pipeline_counts": tree_render_stats.get("material_pipeline_counts", {}),
 		"grass_material_pipeline_counts": grass_render_stats.get("material_pipeline_counts", {}),
 		"rock_material_pipeline_counts": rock_render_stats.get("material_pipeline_counts", {}),
@@ -424,6 +460,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_grass_estimated_alpha_primitives": int(grass_render_stats.get("estimated_alpha_primitives", 0)),
 		"global_rock_estimated_alpha_primitives": int(rock_render_stats.get("estimated_alpha_primitives", 0)),
 		"global_render_estimated_alpha_primitives": vegetation_estimated_alpha_primitives,
+		"global_tree_estimated_opaque_primitives": int(tree_render_stats.get("estimated_opaque_primitives", 0)),
+		"global_grass_estimated_opaque_primitives": int(grass_render_stats.get("estimated_opaque_primitives", 0)),
+		"global_rock_estimated_opaque_primitives": int(rock_render_stats.get("estimated_opaque_primitives", 0)),
 		"global_tree_estimated_alpha_empty_primitive_equivalent": float(tree_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)),
 		"global_grass_estimated_alpha_empty_primitive_equivalent": float(grass_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)),
 		"global_rock_estimated_alpha_empty_primitive_equivalent": float(rock_render_stats.get("estimated_alpha_empty_primitive_equivalent", 0.0)),
@@ -439,9 +478,25 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_grass_max_batch_estimated_primitives": int(grass_render_stats.get("max_batch_estimated_primitives", 0)),
 		"global_rock_max_batch_estimated_primitives": int(rock_render_stats.get("max_batch_estimated_primitives", 0)),
 		"global_render_dirty_kinds": _get_global_render_dirty_kinds(),
+		"global_render_dirty_cluster_count": _global_tree_dirty_clusters.size() + _global_grass_dirty_clusters.size() + _global_rock_dirty_clusters.size(),
 		"global_tree_dirty_cluster_count": _global_tree_dirty_clusters.size(),
 		"global_grass_dirty_cluster_count": _global_grass_dirty_clusters.size(),
 		"global_rock_dirty_cluster_count": _global_rock_dirty_clusters.size(),
+		"global_tree_dirty_age_ms": _get_global_render_dirty_age_ms("tree"),
+		"global_grass_dirty_age_ms": _get_global_render_dirty_age_ms("grass"),
+		"global_rock_dirty_age_ms": _get_global_render_dirty_age_ms("rock"),
+		"global_max_dirty_age_ms": _max_global_render_dirty_age_ms,
+		"global_tree_dirty_mark_count": _get_global_render_dirty_mark_count("tree"),
+		"global_grass_dirty_mark_count": _get_global_render_dirty_mark_count("grass"),
+		"global_rock_dirty_mark_count": _get_global_render_dirty_mark_count("rock"),
+		"global_tree_flush_count": _get_global_render_flush_count("tree"),
+		"global_grass_flush_count": _get_global_render_flush_count("grass"),
+		"global_rock_flush_count": _get_global_render_flush_count("rock"),
+		"vegetation_global_render_flushes_per_frame": vegetation_global_render_flushes_per_frame,
+		"vegetation_global_render_flush_budget_ms": vegetation_global_render_flush_budget_ms,
+		"last_global_render_flush_count": _last_global_render_flush_count,
+		"last_global_render_flush_ms": _last_global_render_flush_ms,
+		"last_global_render_flush_budget_hit": _last_global_render_flush_budget_hit,
 		"last_global_render_sync_ms": _last_global_render_sync_ms,
 		"last_global_render_collect_ms": _last_global_render_collect_ms,
 		"last_global_render_pack_ms": _last_global_render_pack_ms,
@@ -640,11 +695,17 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	vegetation_global_render_ignore_occlusion_culling = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING", vegetation_global_render_ignore_occlusion_culling)
 	vegetation_render_lod_bias = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_RENDER_LOD_BIAS", vegetation_render_lod_bias, 0.25, 100.0)
 	vegetation_opaque_material_optimization_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION", vegetation_opaque_material_optimization_enabled)
+	vegetation_split_alpha_scissor_opaque_surfaces_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES", vegetation_split_alpha_scissor_opaque_surfaces_enabled)
+	vegetation_global_render_flushes_per_frame = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_FLUSHES_PER_FRAME", vegetation_global_render_flushes_per_frame, 1, 32)
+	vegetation_global_render_flush_budget_ms = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_FLUSH_BUDGET_MS", vegetation_global_render_flush_budget_ms, 0.0, 16.0)
 	vegetation_defer_initial_global_render_flush = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_DEFER_INITIAL_GLOBAL_RENDER_FLUSH", vegetation_defer_initial_global_render_flush)
 	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
 		world_map_vegetation_render_cluster_size = vegetation_render_cluster_size
 	if grass_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
 		world_map_vegetation_grass_render_cluster_size = vegetation_grass_render_cluster_size
+	if render_cluster_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_VEGETATION_ROCK_RENDER_CLUSTER_SIZE").strip_edges().is_empty():
+		world_map_vegetation_rock_render_cluster_size = vegetation_render_cluster_size
+	world_map_vegetation_rock_render_cluster_size = _get_vegetation_env_int_range("TOWN_STALL_WORLD_MAP_VEGETATION_ROCK_RENDER_CLUSTER_SIZE", world_map_vegetation_rock_render_cluster_size, 1, 64)
 
 func _start_vegetation_render_resource_prewarm() -> void:
 	if vegetation_render_prewarm_frames <= 0 or _is_vegetation_render_resource_prewarm_active():
@@ -940,6 +1001,8 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 	var mesh_surfaces := int(mesh_stats.get("mesh_surfaces", 0))
 	var alpha_mesh_primitives := int(mesh_stats.get("alpha_mesh_primitives", 0))
 	var alpha_mesh_surfaces := int(mesh_stats.get("alpha_mesh_surfaces", 0))
+	var opaque_mesh_primitives := maxi(mesh_primitives - alpha_mesh_primitives, 0)
+	var opaque_mesh_surfaces := maxi(mesh_surfaces - alpha_mesh_surfaces, 0)
 	var alpha_texture_coverage_ratio := float(mesh_stats.get("alpha_texture_coverage_ratio", 1.0))
 	var batch_count := 0
 	var instance_count := 0
@@ -958,12 +1021,15 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 		"mesh_surfaces": mesh_surfaces,
 		"alpha_mesh_primitives": alpha_mesh_primitives,
 		"alpha_mesh_surfaces": alpha_mesh_surfaces,
+		"opaque_mesh_primitives": opaque_mesh_primitives,
+		"opaque_mesh_surfaces": opaque_mesh_surfaces,
 		"alpha_texture_coverage_ratio": alpha_texture_coverage_ratio,
 		"material_pipeline_counts": mesh_stats.get("material_pipeline_counts", {}),
 		"batch_count": batch_count,
 		"instance_count": instance_count,
 		"estimated_primitives": mesh_primitives * instance_count,
 		"estimated_alpha_primitives": alpha_mesh_primitives * instance_count,
+		"estimated_opaque_primitives": opaque_mesh_primitives * instance_count,
 		"estimated_alpha_empty_primitive_equivalent": float(alpha_mesh_primitives * instance_count) * (1.0 - alpha_texture_coverage_ratio),
 		"estimated_surface_draws": mesh_surfaces * batch_count,
 		"max_batch_instances": max_batch_instances,
@@ -1159,15 +1225,79 @@ func _get_global_render_cluster_instance_count_dictionary(kind: String) -> Dicti
 	return {}
 
 func _set_global_render_dirty_flag(kind: String, dirty: bool) -> void:
+	var was_dirty := false
 	match kind:
 		"tree":
+			was_dirty = _global_tree_render_dirty
 			_global_tree_render_dirty = dirty
+			if dirty:
+				_global_tree_dirty_mark_count += 1
+				if not was_dirty:
+					_global_tree_dirty_since_msec = Time.get_ticks_msec()
+			else:
+				_global_tree_dirty_since_msec = 0
 		"grass":
+			was_dirty = _global_grass_render_dirty
 			_global_grass_render_dirty = dirty
+			if dirty:
+				_global_grass_dirty_mark_count += 1
+				if not was_dirty:
+					_global_grass_dirty_since_msec = Time.get_ticks_msec()
+			else:
+				_global_grass_dirty_since_msec = 0
 		"rock":
+			was_dirty = _global_rock_render_dirty
 			_global_rock_render_dirty = dirty
+			if dirty:
+				_global_rock_dirty_mark_count += 1
+				if not was_dirty:
+					_global_rock_dirty_since_msec = Time.get_ticks_msec()
+			else:
+				_global_rock_dirty_since_msec = 0
 	if dirty:
 		_wake_process_loop()
+
+func _get_global_render_dirty_age_ms(kind: String) -> int:
+	var since_msec := 0
+	match kind:
+		"tree":
+			since_msec = _global_tree_dirty_since_msec
+		"grass":
+			since_msec = _global_grass_dirty_since_msec
+		"rock":
+			since_msec = _global_rock_dirty_since_msec
+	if since_msec <= 0:
+		return 0
+	return maxi(Time.get_ticks_msec() - since_msec, 0)
+
+func _get_global_render_dirty_mark_count(kind: String) -> int:
+	match kind:
+		"tree":
+			return _global_tree_dirty_mark_count
+		"grass":
+			return _global_grass_dirty_mark_count
+		"rock":
+			return _global_rock_dirty_mark_count
+	return 0
+
+func _increment_global_render_flush_count(kind: String) -> void:
+	match kind:
+		"tree":
+			_global_tree_flush_count += 1
+		"grass":
+			_global_grass_flush_count += 1
+		"rock":
+			_global_rock_flush_count += 1
+
+func _get_global_render_flush_count(kind: String) -> int:
+	match kind:
+		"tree":
+			return _global_tree_flush_count
+		"grass":
+			return _global_grass_flush_count
+		"rock":
+			return _global_rock_flush_count
+	return 0
 
 func _use_world_map_vegetation_render_profile() -> bool:
 	if not world_map_vegetation_render_profile_enabled or not is_instance_valid(terrain_manager):
@@ -1181,6 +1311,8 @@ func _effective_vegetation_render_cluster_size(kind: String) -> int:
 		if _use_world_map_vegetation_render_profile():
 			return maxi(world_map_vegetation_grass_render_cluster_size, 1)
 		return maxi(vegetation_grass_render_cluster_size, 1)
+	if kind == "rock" and _use_world_map_vegetation_render_profile():
+		return maxi(world_map_vegetation_rock_render_cluster_size, 1)
 	if _use_world_map_vegetation_render_profile():
 		return maxi(world_map_vegetation_render_cluster_size, 1)
 	return maxi(vegetation_render_cluster_size, 1)
@@ -1195,19 +1327,24 @@ func _vegetation_cluster_key(kind: String, coord: Vector2i) -> Vector2i:
 func _sync_vegetation_render_profile() -> void:
 	var render_cluster_size := _effective_vegetation_render_cluster_size("tree")
 	var grass_cluster_size := _effective_vegetation_render_cluster_size("grass")
+	var rock_cluster_size := _effective_vegetation_render_cluster_size("rock")
 	var render_profile_changed := _last_effective_vegetation_render_cluster_size >= 0 \
 		and render_cluster_size != _last_effective_vegetation_render_cluster_size
 	var grass_profile_changed := _last_effective_vegetation_grass_render_cluster_size >= 0 \
 		and grass_cluster_size != _last_effective_vegetation_grass_render_cluster_size
+	var rock_profile_changed := _last_effective_vegetation_rock_render_cluster_size >= 0 \
+		and rock_cluster_size != _last_effective_vegetation_rock_render_cluster_size
 	_last_effective_vegetation_render_cluster_size = render_cluster_size
 	_last_effective_vegetation_grass_render_cluster_size = grass_cluster_size
+	_last_effective_vegetation_rock_render_cluster_size = rock_cluster_size
 	if not global_render_batches_enabled:
 		return
 	if render_profile_changed:
 		_rebuild_global_vegetation_render_membership_for_profile("tree")
-		_rebuild_global_vegetation_render_membership_for_profile("rock")
 	if grass_profile_changed:
 		_rebuild_global_vegetation_render_membership_for_profile("grass")
+	if rock_profile_changed:
+		_rebuild_global_vegetation_render_membership_for_profile("rock")
 
 func _rebuild_global_vegetation_render_membership_for_profile(kind: String) -> void:
 	var clusters := _get_global_render_cluster_dictionary(kind)
@@ -1348,12 +1485,18 @@ func _clear_global_vegetation_render_batches(immediate_free: bool = false) -> vo
 	_global_tree_render_dirty = false
 	_global_grass_render_dirty = false
 	_global_rock_render_dirty = false
+	_global_tree_dirty_since_msec = 0
+	_global_grass_dirty_since_msec = 0
+	_global_rock_dirty_since_msec = 0
 	_global_tree_render_instance_count = 0
 	_global_grass_render_instance_count = 0
 	_global_rock_render_instance_count = 0
 	_last_global_render_sync_instance_count = 0
 	_last_global_render_upload_float_count = 0
 	_last_global_render_upload_bytes = 0
+	_last_global_render_flush_count = 0
+	_last_global_render_flush_ms = 0.0
+	_last_global_render_flush_budget_hit = false
 
 func _clear_global_vegetation_render_kind(kind: String, immediate_free: bool = false) -> void:
 	var nodes: Array = []
@@ -1671,6 +1814,16 @@ func _sync_global_vegetation_render_cluster(kind: String, cluster_key: Vector2i)
 
 	var mmi := _get_global_render_multimesh(kind, cluster_key)
 	if not mmi or not mmi.multimesh:
+		dirty_clusters.erase(cluster_key)
+		_set_global_render_dirty_flag(kind, not dirty_clusters.is_empty())
+		_set_global_render_cluster_instance_count(kind, cluster_key, 0)
+		_last_global_render_sync_kind = kind
+		_last_global_render_sync_cluster = cluster_key
+		_last_global_render_sync_chunk_count = int(payload.get("chunk_count", 0))
+		_last_global_render_sync_instance_count = 0
+		_last_global_render_upload_float_count = 0
+		_last_global_render_upload_bytes = 0
+		_last_global_render_sync_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 		return
 	var pack_start_us := Time.get_ticks_usec()
 	mmi.multimesh.instance_count = instance_count
@@ -1689,15 +1842,72 @@ func _sync_global_vegetation_render_cluster(kind: String, cluster_key: Vector2i)
 	_last_global_render_sync_chunk_count = int(payload.get("chunk_count", 0))
 	_last_global_render_sync_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 
-func _flush_one_global_vegetation_render_batch() -> void:
+func _is_global_render_kind_dirty(kind: String) -> bool:
+	match kind:
+		"tree":
+			return _global_tree_render_dirty
+		"grass":
+			return _global_grass_render_dirty
+		"rock":
+			return _global_rock_render_dirty
+	return false
+
+func _pick_next_dirty_global_vegetation_kind() -> String:
+	var best_kind := ""
+	var best_age := -1
+	var best_dirty_count := -1
+	for kind in ["tree", "grass", "rock"]:
+		if not _is_global_render_kind_dirty(kind):
+			continue
+		var dirty_clusters := _get_global_render_dirty_cluster_dictionary(kind)
+		if dirty_clusters.is_empty():
+			_set_global_render_dirty_flag(kind, false)
+			continue
+		var dirty_age := _get_global_render_dirty_age_ms(kind)
+		var dirty_count := dirty_clusters.size()
+		if dirty_age > best_age or (dirty_age == best_age and dirty_count > best_dirty_count):
+			best_kind = kind
+			best_age = dirty_age
+			best_dirty_count = dirty_count
+	return best_kind
+
+func _flush_one_global_vegetation_render_batch() -> bool:
 	if not global_render_batches_enabled:
+		return false
+	var kind := _pick_next_dirty_global_vegetation_kind()
+	if kind.is_empty():
+		return false
+	_sync_global_vegetation_render_batch(kind)
+	_increment_global_render_flush_count(kind)
+	return true
+
+func _flush_global_vegetation_render_batches() -> void:
+	_last_global_render_flush_count = 0
+	_last_global_render_flush_ms = 0.0
+	_last_global_render_flush_budget_hit = false
+	if not global_render_batches_enabled or not _has_dirty_global_vegetation_render_batch():
 		return
-	if _global_tree_render_dirty:
-		_sync_global_vegetation_render_batch("tree")
-	elif _global_grass_render_dirty:
-		_sync_global_vegetation_render_batch("grass")
-	elif _global_rock_render_dirty:
-		_sync_global_vegetation_render_batch("rock")
+
+	var start_us := Time.get_ticks_usec()
+	var max_flushes := maxi(vegetation_global_render_flushes_per_frame, 1)
+	while _last_global_render_flush_count < max_flushes and _has_dirty_global_vegetation_render_batch():
+		if _last_global_render_flush_count > 0 and vegetation_global_render_flush_budget_ms > 0.0:
+			var elapsed_ms := float(Time.get_ticks_usec() - start_us) / 1000.0
+			if elapsed_ms >= vegetation_global_render_flush_budget_ms:
+				_last_global_render_flush_budget_hit = true
+				break
+		if not _flush_one_global_vegetation_render_batch():
+			break
+		_last_global_render_flush_count += 1
+
+	_last_global_render_flush_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+	_max_global_render_dirty_age_ms = maxi(
+		_max_global_render_dirty_age_ms,
+		maxi(
+			_get_global_render_dirty_age_ms("tree"),
+			maxi(_get_global_render_dirty_age_ms("grass"), _get_global_render_dirty_age_ms("rock"))
+		)
+	)
 
 
 func _has_dirty_global_vegetation_render_batch() -> bool:
@@ -2053,32 +2263,32 @@ func _ready():
 	# Load tree mesh from GLB model with its orientation transform
 	var glb_result = load_tree_mesh_from_glb(tree_model_path)
 	if glb_result.mesh:
-		tree_mesh = _optimize_opaque_vegetation_mesh_materials("tree", glb_result.mesh)
+		tree_mesh = _prepare_vegetation_mesh_materials("tree", glb_result.mesh)
 		tree_base_transform = glb_result.transform
 		tree_base_transform.origin = Vector3.ZERO # Remove position, keep rotation/scale
 	else:
 		push_warning("Failed to load tree model, falling back to basic mesh")
-		tree_mesh = _optimize_opaque_vegetation_mesh_materials("tree", create_basic_tree_mesh())
+		tree_mesh = _prepare_vegetation_mesh_materials("tree", create_basic_tree_mesh())
 
 	# Load grass mesh
 	var grass_result = load_tree_mesh_from_glb(grass_model_path)
 	if grass_result.mesh:
-		grass_mesh = _optimize_opaque_vegetation_mesh_materials("grass", grass_result.mesh)
+		grass_mesh = _prepare_vegetation_mesh_materials("grass", grass_result.mesh)
 		grass_base_transform = grass_result.transform
 		grass_base_transform.origin = Vector3.ZERO
 	else:
 		push_warning("Failed to load grass model, using basic mesh")
-		grass_mesh = _optimize_opaque_vegetation_mesh_materials("grass", create_basic_grass_mesh())
+		grass_mesh = _prepare_vegetation_mesh_materials("grass", create_basic_grass_mesh())
 
 	# Load rock mesh
 	var rock_result = load_tree_mesh_from_glb(rock_model_path)
 	if rock_result.mesh:
-		rock_mesh = _optimize_opaque_vegetation_mesh_materials("rock", rock_result.mesh)
+		rock_mesh = _prepare_vegetation_mesh_materials("rock", rock_result.mesh)
 		rock_base_transform = rock_result.transform
 		rock_base_transform.origin = Vector3.ZERO
 	else:
 		push_warning("Failed to load rock model, using basic mesh")
-		rock_mesh = _optimize_opaque_vegetation_mesh_materials("rock", create_basic_rock_mesh())
+		rock_mesh = _prepare_vegetation_mesh_materials("rock", create_basic_rock_mesh())
 
 	_start_vegetation_render_resource_prewarm()
 
@@ -2460,7 +2670,7 @@ func _process(_delta):
 	_process_pending_vegetation_chunks()
 	_process_pending_placements()
 	if _should_flush_global_vegetation_render_batch():
-		_flush_one_global_vegetation_render_batch()
+		_flush_global_vegetation_render_batches()
 	_last_pending_placements_ms = float(Time.get_ticks_usec() - pending_placements_start_us) / 1000.0
 	_sync_process_loop()
 
@@ -4755,6 +4965,14 @@ func find_mesh_and_transform_in_node(node: Node, parent_transform: Transform3D =
 
 	return {"mesh": null, "transform": Transform3D()}
 
+func _prepare_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mesh:
+	if mesh == null:
+		return mesh
+	var prepared_mesh := _optimize_opaque_vegetation_mesh_materials(kind, mesh)
+	prepared_mesh = _split_alpha_scissor_opaque_surfaces(kind, prepared_mesh)
+	_vegetation_mesh_stats_cache.clear()
+	return prepared_mesh
+
 func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mesh:
 	if not vegetation_opaque_material_optimization_enabled or mesh == null:
 		return mesh
@@ -4772,7 +4990,7 @@ func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mes
 		var base := material as BaseMaterial3D
 		if base.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED:
 			continue
-		if _can_convert_vegetation_alpha_blend_to_scissor(base):
+		if _can_convert_vegetation_alpha_to_scissor(base):
 			if optimized_mesh == null:
 				optimized_mesh = mesh.duplicate(true) as Mesh
 				if optimized_mesh == null:
@@ -4784,7 +5002,7 @@ func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mes
 			optimized_mesh.surface_set_material(surface_index, scissor_material)
 			alpha_scissor_surfaces += 1
 			continue
-		if base.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA and base.albedo_texture != null:
+		if (base.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA or base.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS) and base.albedo_texture != null:
 			alpha_scissor_skipped_non_binary_surfaces += 1
 		if not _is_vegetation_material_effectively_opaque(base):
 			continue
@@ -4808,8 +5026,244 @@ func _optimize_opaque_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mes
 	_vegetation_opaque_material_optimization_counts["total_alpha_scissor_skipped_non_binary_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_scissor_skipped_non_binary_surfaces", 0)) + alpha_scissor_skipped_non_binary_surfaces
 	return optimized_mesh if optimized_mesh != null else mesh
 
-func _can_convert_vegetation_alpha_blend_to_scissor(material: BaseMaterial3D) -> bool:
-	if material.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA:
+func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh) -> Mesh:
+	if not vegetation_split_alpha_scissor_opaque_surfaces_enabled or mesh == null:
+		return mesh
+	if mesh.get_surface_count() <= 0:
+		return mesh
+
+	var split_mesh := ArrayMesh.new()
+	var changed := false
+	var split_surface_count := 0
+	var split_opaque_triangles := 0
+	var split_alpha_triangles := 0
+	var skipped_surfaces := 0
+	for surface_index in range(mesh.get_surface_count()):
+		var arrays := mesh.surface_get_arrays(surface_index)
+		var material := mesh.surface_get_material(surface_index)
+		if not _can_split_alpha_scissor_surface(mesh, surface_index, arrays, material):
+			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			if _is_material_alpha_pipeline(material):
+				skipped_surfaces += 1
+			continue
+
+		var split := _split_alpha_scissor_surface_arrays(material as BaseMaterial3D, arrays)
+		var opaque_triangles := int(split.get("opaque_triangles", 0))
+		var alpha_triangles := int(split.get("alpha_triangles", 0))
+		if opaque_triangles <= 0 or alpha_triangles <= 0:
+			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			continue
+
+		var opaque_arrays: Array = split.get("opaque_arrays", [])
+		var alpha_arrays: Array = split.get("alpha_arrays", [])
+		var opaque_material := _make_opaque_vegetation_material_copy(material as BaseMaterial3D)
+		split_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, opaque_arrays)
+		split_mesh.surface_set_material(split_mesh.get_surface_count() - 1, opaque_material)
+		split_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, alpha_arrays)
+		split_mesh.surface_set_material(split_mesh.get_surface_count() - 1, material)
+		changed = true
+		split_surface_count += 1
+		split_opaque_triangles += opaque_triangles
+		split_alpha_triangles += alpha_triangles
+
+	if not changed:
+		return mesh
+
+	_vegetation_opaque_material_optimization_counts["%s_alpha_split_surfaces" % kind] = split_surface_count
+	_vegetation_opaque_material_optimization_counts["%s_alpha_split_opaque_triangles" % kind] = split_opaque_triangles
+	_vegetation_opaque_material_optimization_counts["%s_alpha_split_alpha_triangles" % kind] = split_alpha_triangles
+	_vegetation_opaque_material_optimization_counts["%s_alpha_split_skipped_surfaces" % kind] = skipped_surfaces
+	_vegetation_opaque_material_optimization_counts["total_alpha_split_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_surfaces", 0)) + split_surface_count
+	_vegetation_opaque_material_optimization_counts["total_alpha_split_opaque_triangles"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_opaque_triangles", 0)) + split_opaque_triangles
+	_vegetation_opaque_material_optimization_counts["total_alpha_split_alpha_triangles"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_alpha_triangles", 0)) + split_alpha_triangles
+	return split_mesh
+
+func _add_surface_copy_to_mesh(target: ArrayMesh, source: Mesh, surface_index: int, arrays: Array, material: Material) -> void:
+	var primitive_type := Mesh.PRIMITIVE_TRIANGLES
+	if source.has_method("surface_get_primitive_type"):
+		primitive_type = source.surface_get_primitive_type(surface_index)
+	target.add_surface_from_arrays(primitive_type, arrays)
+	target.surface_set_material(target.get_surface_count() - 1, material)
+
+func _can_split_alpha_scissor_surface(source: Mesh, surface_index: int, arrays: Array, material: Material) -> bool:
+	if not (material is BaseMaterial3D):
+		return false
+	var base := material as BaseMaterial3D
+	if base.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
+		return false
+	if base.albedo_texture == null:
+		return false
+	var primitive_type := Mesh.PRIMITIVE_TRIANGLES
+	if source.has_method("surface_get_primitive_type"):
+		primitive_type = source.surface_get_primitive_type(surface_index)
+	if primitive_type != Mesh.PRIMITIVE_TRIANGLES:
+		return false
+	if arrays.size() <= Mesh.ARRAY_TEX_UV or arrays[Mesh.ARRAY_VERTEX] == null or arrays[Mesh.ARRAY_TEX_UV] == null:
+		return false
+	var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+	if vertices.is_empty() or uvs.size() < vertices.size():
+		return false
+	if arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] != null:
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		return not indices.is_empty() and indices.size() >= 3 and indices.size() % 3 == 0
+	return vertices.size() >= 3 and vertices.size() % 3 == 0
+
+func _split_alpha_scissor_surface_arrays(material: BaseMaterial3D, arrays: Array) -> Dictionary:
+	var result := {
+		"opaque_arrays": _make_empty_split_surface_arrays(arrays),
+		"alpha_arrays": _make_empty_split_surface_arrays(arrays),
+		"opaque_triangles": 0,
+		"alpha_triangles": 0
+	}
+	var image := material.albedo_texture.get_image() if material.albedo_texture != null else null
+	if image == null or image.is_empty():
+		return result
+	if image.is_compressed() and image.decompress() != OK:
+		return result
+
+	var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+	if arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] != null:
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		for i in range(0, indices.size(), 3):
+			var ia := int(indices[i])
+			var ib := int(indices[i + 1])
+			var ic := int(indices[i + 2])
+			if ia < 0 or ib < 0 or ic < 0 or ia >= uvs.size() or ib >= uvs.size() or ic >= uvs.size():
+				continue
+			if _is_alpha_triangle_fully_opaque(material, image, uvs[ia], uvs[ib], uvs[ic]):
+				_append_triangle_to_split_arrays(arrays, result["opaque_arrays"], ia, ib, ic)
+				result["opaque_triangles"] = int(result["opaque_triangles"]) + 1
+			else:
+				_append_triangle_to_split_arrays(arrays, result["alpha_arrays"], ia, ib, ic)
+				result["alpha_triangles"] = int(result["alpha_triangles"]) + 1
+	else:
+		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		for i in range(0, vertices.size(), 3):
+			if _is_alpha_triangle_fully_opaque(material, image, uvs[i], uvs[i + 1], uvs[i + 2]):
+				_append_triangle_to_split_arrays(arrays, result["opaque_arrays"], i, i + 1, i + 2)
+				result["opaque_triangles"] = int(result["opaque_triangles"]) + 1
+			else:
+				_append_triangle_to_split_arrays(arrays, result["alpha_arrays"], i, i + 1, i + 2)
+				result["alpha_triangles"] = int(result["alpha_triangles"]) + 1
+	return result
+
+func _make_empty_split_surface_arrays(source_arrays: Array) -> Array:
+	var target: Array = []
+	target.resize(Mesh.ARRAY_MAX)
+	target[Mesh.ARRAY_VERTEX] = PackedVector3Array()
+	if _has_source_array(source_arrays, Mesh.ARRAY_NORMAL):
+		target[Mesh.ARRAY_NORMAL] = PackedVector3Array()
+	if _has_source_array(source_arrays, Mesh.ARRAY_TANGENT):
+		target[Mesh.ARRAY_TANGENT] = PackedFloat32Array()
+	if _has_source_array(source_arrays, Mesh.ARRAY_COLOR):
+		target[Mesh.ARRAY_COLOR] = PackedColorArray()
+	if _has_source_array(source_arrays, Mesh.ARRAY_TEX_UV):
+		target[Mesh.ARRAY_TEX_UV] = PackedVector2Array()
+	if _has_source_array(source_arrays, Mesh.ARRAY_TEX_UV2):
+		target[Mesh.ARRAY_TEX_UV2] = PackedVector2Array()
+	return target
+
+func _has_source_array(source_arrays: Array, array_index: int) -> bool:
+	if source_arrays.size() <= array_index or source_arrays[array_index] == null:
+		return false
+	var value = source_arrays[array_index]
+	var value_type := typeof(value)
+	if value_type == TYPE_PACKED_BYTE_ARRAY \
+			or value_type == TYPE_PACKED_INT32_ARRAY \
+			or value_type == TYPE_PACKED_INT64_ARRAY \
+			or value_type == TYPE_PACKED_FLOAT32_ARRAY \
+			or value_type == TYPE_PACKED_FLOAT64_ARRAY \
+			or value_type == TYPE_PACKED_VECTOR2_ARRAY \
+			or value_type == TYPE_PACKED_VECTOR3_ARRAY \
+			or value_type == TYPE_PACKED_COLOR_ARRAY:
+		return int(value.size()) > 0
+	return false
+
+func _append_triangle_to_split_arrays(source_arrays: Array, target_arrays: Array, ia: int, ib: int, ic: int) -> void:
+	_append_vertex_to_split_arrays(source_arrays, target_arrays, ia)
+	_append_vertex_to_split_arrays(source_arrays, target_arrays, ib)
+	_append_vertex_to_split_arrays(source_arrays, target_arrays, ic)
+
+func _append_vertex_to_split_arrays(source_arrays: Array, target_arrays: Array, source_index: int) -> void:
+	var source_vertices: PackedVector3Array = source_arrays[Mesh.ARRAY_VERTEX]
+	var target_vertices: PackedVector3Array = target_arrays[Mesh.ARRAY_VERTEX]
+	target_vertices.append(source_vertices[source_index])
+	target_arrays[Mesh.ARRAY_VERTEX] = target_vertices
+
+	if target_arrays[Mesh.ARRAY_NORMAL] != null:
+		var source_normals: PackedVector3Array = source_arrays[Mesh.ARRAY_NORMAL]
+		var target_normals: PackedVector3Array = target_arrays[Mesh.ARRAY_NORMAL]
+		if source_index < source_normals.size():
+			target_normals.append(source_normals[source_index])
+			target_arrays[Mesh.ARRAY_NORMAL] = target_normals
+
+	if target_arrays[Mesh.ARRAY_TANGENT] != null:
+		var source_tangents: PackedFloat32Array = source_arrays[Mesh.ARRAY_TANGENT]
+		var target_tangents: PackedFloat32Array = target_arrays[Mesh.ARRAY_TANGENT]
+		var tangent_offset := source_index * 4
+		if tangent_offset + 3 < source_tangents.size():
+			target_tangents.append(source_tangents[tangent_offset])
+			target_tangents.append(source_tangents[tangent_offset + 1])
+			target_tangents.append(source_tangents[tangent_offset + 2])
+			target_tangents.append(source_tangents[tangent_offset + 3])
+			target_arrays[Mesh.ARRAY_TANGENT] = target_tangents
+
+	if target_arrays[Mesh.ARRAY_COLOR] != null:
+		var source_colors: PackedColorArray = source_arrays[Mesh.ARRAY_COLOR]
+		var target_colors: PackedColorArray = target_arrays[Mesh.ARRAY_COLOR]
+		if source_index < source_colors.size():
+			target_colors.append(source_colors[source_index])
+			target_arrays[Mesh.ARRAY_COLOR] = target_colors
+
+	if target_arrays[Mesh.ARRAY_TEX_UV] != null:
+		var source_uvs: PackedVector2Array = source_arrays[Mesh.ARRAY_TEX_UV]
+		var target_uvs: PackedVector2Array = target_arrays[Mesh.ARRAY_TEX_UV]
+		if source_index < source_uvs.size():
+			target_uvs.append(source_uvs[source_index])
+			target_arrays[Mesh.ARRAY_TEX_UV] = target_uvs
+
+	if target_arrays[Mesh.ARRAY_TEX_UV2] != null:
+		var source_uv2s: PackedVector2Array = source_arrays[Mesh.ARRAY_TEX_UV2]
+		var target_uv2s: PackedVector2Array = target_arrays[Mesh.ARRAY_TEX_UV2]
+		if source_index < source_uv2s.size():
+			target_uv2s.append(source_uv2s[source_index])
+			target_arrays[Mesh.ARRAY_TEX_UV2] = target_uv2s
+
+func _is_alpha_triangle_fully_opaque(material: BaseMaterial3D, image: Image, uv0: Vector2, uv1: Vector2, uv2: Vector2) -> bool:
+	var threshold := material.alpha_scissor_threshold
+	if threshold <= 0.0:
+		threshold = 0.5
+	var color_alpha := material.albedo_color.a
+	for sample in VEGETATION_ALPHA_TRIANGLE_OPAQUE_SAMPLE_POINTS:
+		var weight: Vector3 = sample
+		var uv: Vector2 = uv0 * weight.x + uv1 * weight.y + uv2 * weight.z
+		if _sample_alpha_texture(image, uv) * color_alpha < threshold:
+			return false
+	return true
+
+func _sample_alpha_texture(image: Image, uv: Vector2) -> float:
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return 0.0
+	var u := fposmod(uv.x, 1.0)
+	var v := fposmod(uv.y, 1.0)
+	var x := clampi(int(floor(u * float(width))), 0, width - 1)
+	var y := clampi(int(floor(v * float(height))), 0, height - 1)
+	return image.get_pixel(x, y).a
+
+func _make_opaque_vegetation_material_copy(material: BaseMaterial3D) -> BaseMaterial3D:
+	var opaque_material := material.duplicate(true) as BaseMaterial3D
+	if opaque_material == null:
+		return material
+	opaque_material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+	opaque_material.alpha_scissor_threshold = 0.0
+	return opaque_material
+
+func _can_convert_vegetation_alpha_to_scissor(material: BaseMaterial3D) -> bool:
+	if material.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA \
+			and material.transparency != BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS:
 		return false
 	if material.albedo_color.a < 0.999:
 		return false
@@ -5154,6 +5608,13 @@ func clear_loaded_chunk_data(immediate_free: bool = false):
 	_max_vegetation_generation_ms = 0.0
 	_initial_global_render_flush_deferred_count = 0
 	_initial_chunk_stream_defer_active = false
+	_global_tree_dirty_mark_count = 0
+	_global_grass_dirty_mark_count = 0
+	_global_rock_dirty_mark_count = 0
+	_global_tree_flush_count = 0
+	_global_grass_flush_count = 0
+	_global_rock_flush_count = 0
+	_max_global_render_dirty_age_ms = 0
 	_sync_process_loop()
 
 
