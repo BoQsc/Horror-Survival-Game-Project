@@ -336,6 +336,26 @@ static double ray_axis_distance_sq_xz(const Vector3 &origin, const Vector3 &ray_
 	return off_x * off_x + off_z * off_z;
 }
 
+static double ray_point_distance_sq(const Vector3 &origin, const Vector3 &ray_dir, const Vector3 &point, double max_distance) {
+	const double len_sq = double(ray_dir.length_squared());
+	if (len_sq <= 0.0000001) {
+		return double(origin.distance_squared_to(point));
+	}
+	const Vector3 to_point = point - origin;
+	const double projected = double(to_point.dot(ray_dir)) / len_sq;
+	const double t = std::clamp(projected, 0.0, max_distance);
+	const Vector3 closest = origin + ray_dir * t;
+	return double(closest.distance_squared_to(point));
+}
+
+static double vegetation_aim_distance_sq(const String &kind, const Vector3 &origin, const Vector3 &ray_dir, const Vector3 &base_pos, double height, double max_distance) {
+	if (kind == String("tree")) {
+		return ray_axis_distance_sq_xz(origin, ray_dir, base_pos, max_distance);
+	}
+	const Vector3 target_pos = base_pos + Vector3(0.0, std::max(height, 0.0) * 0.5, 0.0);
+	return ray_point_distance_sq(origin, ray_dir, target_pos, max_distance);
+}
+
 static bool is_better_ray_hit(double candidate_distance, double candidate_distance_sq_to_ray, const RayHitCandidate &current) {
 	if (!current.valid) {
 		return true;
@@ -1226,7 +1246,8 @@ Dictionary PrefabGeometryNative::find_nearest_vegetation_ray_hit(const Dictionar
 				continue;
 			}
 
-			if (!is_better_ray_hit(hit_distance, axis_distance_sq, best)) {
+			const double aim_distance_sq = vegetation_aim_distance_sq(kind, origin, ray_dir, base_pos, instance_height, max_distance);
+			if (!is_better_ray_hit(hit_distance, aim_distance_sq, best)) {
 				continue;
 			}
 
@@ -1237,9 +1258,9 @@ Dictionary PrefabGeometryNative::find_nearest_vegetation_ray_hit(const Dictionar
 			candidate["index"] = index;
 			candidate["position"] = hit_point;
 			candidate["distance"] = hit_distance;
-			candidate["distance_sq_to_ray"] = axis_distance_sq;
+			candidate["distance_sq_to_ray"] = aim_distance_sq;
 			best.distance = hit_distance;
-			best.distance_sq_to_ray = axis_distance_sq;
+			best.distance_sq_to_ray = aim_distance_sq;
 			best.data = candidate;
 			best.valid = true;
 		}
@@ -1299,7 +1320,7 @@ Dictionary PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit(const D
 			}
 
 			const Vector3 hit_point = origin + ray_dir * hit_distance;
-			const double distance_sq_to_ray = ray_axis_distance_sq_xz(origin, ray_dir, ground_pos, max_distance);
+			const double distance_sq_to_ray = vegetation_aim_distance_sq(String("tree"), origin, ray_dir, ground_pos, 0.0, max_distance);
 			if (!is_better_ray_hit(hit_distance, distance_sq_to_ray, best)) {
 				continue;
 			}

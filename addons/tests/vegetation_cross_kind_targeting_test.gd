@@ -116,6 +116,36 @@ func _run() -> int:
 	if not _expect(int(same_kind_hit.get("index", -1)) == 5, "same-kind data ray should prefer centered aimed grass over closer off-axis grass"):
 		return 1
 
+	manager.chunk_grass_data[coord]["grass_list"] = [
+		manager._make_vegetation_generated(
+			Vector3(0.0, 1.0, 0.2),
+			Vector3(0.0, 1.0, 0.2),
+			Vector3(0.0, 1.0, 0.2),
+			0.0,
+			1.0,
+			6,
+			1.0,
+			false,
+			Transform3D.IDENTITY
+		),
+		manager._make_vegetation_generated(
+			Vector3(0.0, 1.0, 2.8),
+			Vector3(0.0, 1.0, 2.8),
+			Vector3(0.0, 1.0, 2.8),
+			0.0,
+			1.0,
+			7,
+			1.0,
+			false,
+			Transform3D.IDENTITY
+		)
+	]
+	var downward_origin := Vector3(0.0, 1.6, 0.0)
+	var downward_direction := (Vector3(0.0, 1.25, 2.8) - downward_origin).normalized()
+	var over_near_grass_hit := manager.find_nearest_vegetation_along_ray(downward_origin, downward_direction, 5.0, true, true, true)
+	if not _expect(int(over_near_grass_hit.get("index", -1)) == 7, "grass under/near the camera should not steal a ray aimed at farther grass"):
+		return 1
+
 	manager.free()
 	print("[VEGETATION_CROSS_KIND_TARGETING_TEST] PASS")
 	return 0

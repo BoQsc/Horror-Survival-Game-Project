@@ -26,6 +26,7 @@ func _init() -> void:
 func _run() -> int:
 	var manager: VegetationManager = VegetationManagerScript.new()
 	root.add_child(manager)
+	manager.tree_visual_targeting_enabled = false
 	manager.tree_y_offset = 9.5
 	manager.tree_mesh = manager.create_basic_tree_mesh()
 	var glb_result: Dictionary = manager.load_tree_mesh_from_glb(manager.tree_model_path)
@@ -67,15 +68,21 @@ func _run() -> int:
 	var left_edge_x := visual_aabb.position.x + maxf(0.2, visual_aabb.size.x * 0.15)
 	var origin := Vector3(left_edge_x, visual_aabb.position.y + visual_aabb.size.y * 0.5, visual_aabb.position.z + visual_aabb.size.z + 4.0)
 	var direction := Vector3.FORWARD
+	var broad_visual_hit := manager.find_nearest_vegetation_along_ray(origin, direction, 12.0, true, false, false)
+	if not _expect(broad_visual_hit.is_empty(), "tree gameplay targeting should not use broad visual AABB hits beside the trunk"):
+		return 1
+
+	origin = Vector3(0.0, manager.collision_height * 0.5, 4.0)
+	direction = Vector3.FORWARD
 	var hit := manager.find_nearest_vegetation_along_ray(origin, direction, 12.0, true, false, false)
-	if not _expect(hit.get("kind", "") == "tree", "data ray should hit the real visual tree footprint, not only a tiny center cylinder"):
+	if not _expect(hit.get("kind", "") == "tree", "tree gameplay targeting should still hit the direct trunk/root interaction cylinder"):
 		return 1
 	var debug_base: Vector3 = hit.get("base_position", Vector3.INF)
 	if not _expect(absf(debug_base.y) <= 0.001, "tree debug interaction volume should be anchored to terrain hit_pos, not the GLB visual origin"):
 		return 1
 	var telemetry := manager.get_telemetry_snapshot()
 	var ray_counts: Dictionary = telemetry.get("vegetation_ray_query_backend_counts", {})
-	if not _expect(int(ray_counts.get("tree_native_visual_bounds_calls", 0)) >= 1, "tree visual bounds targeting should use the native backend when available"):
+	if not _expect(int(ray_counts.get("tree_native_calls", 0)) >= 1, "tree cylinder targeting should use the native backend when available"):
 		return 1
 
 	var player := FakePlayer.new()

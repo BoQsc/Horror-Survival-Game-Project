@@ -215,19 +215,33 @@ func _run() -> int:
 	}
 	combat.do_tool_attack(pickaxe_item)
 	combat._on_pickaxe_hit_moment()
-	if not _expect(vegetation.harvested_kind == "grass", "compatibility tree collider should not steal the aimed data vegetation target"):
+	if not _expect(int(combat.tree_damage.get(tree_collider.get_rid(), 0)) == 2, "direct tree collider hit should affect the tree collider instead of vegetation behind it"):
 		return 1
-	if not _expect(int(combat.tree_damage.get(tree_collider.get_rid(), 0)) == 0, "compatibility tree collider should only be fallback when data targeting finds nothing"):
-		return 1
-
-	combat._on_axe_ready()
-	vegetation.set_entries([])
-	vegetation.harvested_kind = ""
-	combat.do_tool_attack(pickaxe_item)
-	combat._on_pickaxe_hit_moment()
-	if not _expect(int(combat.tree_damage.get(tree_collider.get_rid(), 0)) == 2, "direct tree collider should remain a fallback when no data vegetation target exists"):
+	if not _expect(vegetation.harvested_kind != "grass", "data vegetation behind a direct tree collider hit should not be harvested"):
 		return 1
 	tree_collider.free()
+	player.ray_hit = {}
+	combat.tree_damage.clear()
+
+	combat._on_axe_ready()
+	var terrain_collider := Node.new()
+	terrain_collider.add_to_group("terrain")
+	root.add_child(terrain_collider)
+	vegetation.set_entries([
+		{"kind": "tree", "index": 8, "position": Vector3(0.0, 1.3, 2.8), "radius": 1.0, "alive": true}
+	])
+	vegetation.harvested_kind = ""
+	player.aim_at(Vector3(0.0, 1.3, 2.8))
+	player.ray_hit = {
+		"collider": terrain_collider,
+		"position": Vector3(0.0, 1.3, 1.2),
+		"normal": Vector3.UP
+	}
+	combat.do_tool_attack(pickaxe_item)
+	combat._on_pickaxe_hit_moment()
+	if not _expect(combat.tree_damage.is_empty() and vegetation.chopped_count == 0, "terrain hit should block data vegetation behind it instead of chopping a nearby tree"):
+		return 1
+	terrain_collider.free()
 	player.ray_hit = {}
 	combat.tree_damage.clear()
 	combat._on_axe_ready()

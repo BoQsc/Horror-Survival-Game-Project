@@ -31,7 +31,6 @@ const OBJECT_HP: int = 5   # Placed objects take 5 damage to destroy
 const TREE_HP: int = 8     # Trees take 8 damage to chop
 const TERRAIN_HP: int = 5  # Terrain takes 5 punches to break a grid cube
 const AXE_REACH_DISTANCE: float = 5.0 # Must match HUD/data vegetation targeting.
-const VEGETATION_DATA_HIT_SOFT_BLOCKER_MARGIN: float = 1.25 # Keep surface vegetation targetable when terrain ray hits just before colliderless data.
 
 var block_damage: Dictionary = {}    # Vector3i -> accumulated damage
 var object_damage: Dictionary = {}   # RID -> accumulated damage
@@ -660,7 +659,7 @@ func do_punch(item: Dictionary) -> void:
 	
 	var hit = _raycast(5.0, true, true)
 	if hit.is_empty():
-		if _try_harvest_vegetation_near_ray(item, 5.0):
+		if _try_harvest_vegetation_direct_ray(item, 5.0):
 			return
 		return
 	
@@ -677,7 +676,7 @@ func do_punch(item: Dictionary) -> void:
 		return
 	
 	# Prefer data-ray vegetation targeting over compatibility physics colliders.
-	if _try_harvest_vegetation_near_ray(item, 5.0, hit):
+	if _try_harvest_vegetation_direct_ray(item, 5.0, hit):
 		return
 	if _try_harvest_vegetation(target, item, position):
 		return
@@ -734,7 +733,7 @@ func do_tool_attack(item: Dictionary) -> void:
 	
 	var hit = _raycast(3.5, true, true)
 	if hit.is_empty():
-		if _try_harvest_vegetation_near_ray(item, 3.5):
+		if _try_harvest_vegetation_direct_ray(item, 3.5):
 			return
 		return
 	
@@ -754,7 +753,7 @@ func do_tool_attack(item: Dictionary) -> void:
 		return
 	
 	# Priority 2: Vegetation
-	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
+	if _try_harvest_vegetation_direct_ray(item, 3.5, hit):
 		return
 	if _try_harvest_vegetation(target, item, position):
 		return
@@ -872,7 +871,7 @@ func _do_axe_damage(item: Dictionary) -> void:
 	var item_id = item.get("id", "")
 	var hit = _raycast(AXE_REACH_DISTANCE, true, true)
 	if hit.is_empty():
-		if _try_harvest_vegetation_near_ray(item, AXE_REACH_DISTANCE):
+		if _try_harvest_vegetation_direct_ray(item, AXE_REACH_DISTANCE):
 			return
 		return
 	
@@ -893,7 +892,7 @@ func _do_axe_damage(item: Dictionary) -> void:
 		return
 	
 	# Priority 2: Vegetation
-	if _try_harvest_vegetation_near_ray(item, AXE_REACH_DISTANCE, hit):
+	if _try_harvest_vegetation_direct_ray(item, AXE_REACH_DISTANCE, hit):
 		return
 	if _try_harvest_vegetation(target, item, position):
 		return
@@ -993,7 +992,7 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 	var hit = _raycast(3.5, true, true)
 	
 	if hit.is_empty():
-		if _try_harvest_vegetation_near_ray(item, 3.5):
+		if _try_harvest_vegetation_direct_ray(item, 3.5):
 			return
 		return
 	
@@ -1019,7 +1018,7 @@ func _do_pickaxe_damage_delayed(pending_data: Dictionary) -> void:
 		return
 	
 	# Priority 2: Vegetation
-	if _try_harvest_vegetation_near_ray(item, 3.5, hit):
+	if _try_harvest_vegetation_direct_ray(item, 3.5, hit):
 		return
 	if _try_harvest_vegetation(target, item, position):
 		return
@@ -1360,7 +1359,7 @@ func _try_harvest_vegetation(target: Node, item: Dictionary, _position: Vector3)
 	
 	return false
 
-func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hit: Dictionary = {}) -> bool:
+func _try_harvest_vegetation_direct_ray(_item: Dictionary, max_distance: float, hit: Dictionary = {}) -> bool:
 	if not vegetation_manager or not vegetation_manager.has_method("find_nearest_vegetation_along_ray"):
 		return false
 
@@ -1371,14 +1370,11 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 	var origin: Vector3 = aim_ray.get("origin", Vector3.ZERO)
 	var direction: Vector3 = aim_ray.get("direction", Vector3.FORWARD)
 	var limited_distance := max_distance
-	var physics_hit_distance := INF
 	if not hit.is_empty() and hit.has("position"):
 		var hit_position: Vector3 = hit.get("position", origin + direction * max_distance)
 		var hit_distance := origin.distance_to(hit_position)
 		if hit_distance > 0.0:
-			physics_hit_distance = hit_distance
-			var blocker_margin := VEGETATION_DATA_HIT_SOFT_BLOCKER_MARGIN if _is_soft_vegetation_physics_hit(hit) else 0.5
-			limited_distance = minf(max_distance, hit_distance + blocker_margin)
+			limited_distance = minf(max_distance, hit_distance)
 
 	var item_id := str(_item.get("id", ""))
 	var is_axe_tool := _is_axe_tool_item_id(item_id)
@@ -1435,48 +1431,6 @@ func _try_harvest_vegetation_near_ray(_item: Dictionary, max_distance: float, hi
 
 func _is_axe_tool_item_id(item_id: String) -> bool:
 	return item_id.contains("axe") and not item_id.contains("pickaxe")
-
-func _is_soft_vegetation_physics_hit(hit: Dictionary) -> bool:
-	if hit.is_empty():
-		return false
-	var collider = hit.get("collider", null)
-	if collider == null:
-		# Terrain collision can be PhysicsServer-only with no backing Node.
-		return true
-	if collider is Node:
-		if _is_vegetation_collider(collider):
-			return true
-		return _is_terrain_or_water_collider(collider)
-	return false
-
-func _is_vegetation_collider(collider: Node) -> bool:
-	if not collider:
-		return false
-	if collider.is_in_group("trees") or collider.is_in_group("grass") or collider.is_in_group("rocks"):
-		return true
-	var node := collider
-	while node:
-		if node.is_in_group("trees") or node.is_in_group("grass") or node.is_in_group("rocks"):
-			return true
-		node = node.get_parent()
-	return false
-
-func _is_terrain_or_water_collider(collider: Node) -> bool:
-	if not collider:
-		return false
-	if collider.is_in_group("terrain") or collider.is_in_group("water"):
-		return true
-	if collider.is_in_group("terrain_visual_batch") or collider.is_in_group("world_map_lod"):
-		return true
-	var node := collider
-	while node:
-		var node_name := node.name.to_lower()
-		if node_name.contains("terrain") or node_name.contains("chunkmanager") or node_name.contains("chunk_manager"):
-			return true
-		if node.is_in_group("terrain") or node.is_in_group("water"):
-			return true
-		node = node.get_parent()
-	return false
 
 func _vegetation_data_target_key(data_hit: Dictionary) -> String:
 	var coord: Vector2i = data_hit.get("coord", Vector2i.ZERO)

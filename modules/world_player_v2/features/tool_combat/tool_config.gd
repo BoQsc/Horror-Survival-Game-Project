@@ -67,7 +67,6 @@ var _vegetation_marker_materials: Dictionary = {}
 var _vegetation_volume_materials: Dictionary = {}
 
 const VEGETATION_VISUALIZER_REACH_DISTANCE: float = 5.0
-const VEGETATION_VISUALIZER_SOFT_BLOCKER_MARGIN: float = 1.25
 
 func _ready() -> void:
 	_create_visualizer()
@@ -246,8 +245,7 @@ func _update_vegetation_interaction_visualizer(player: Node) -> void:
 		var hit_position: Vector3 = physics_hit.get("position", origin + direction * max_distance)
 		var hit_distance := origin.distance_to(hit_position)
 		if hit_distance > 0.0:
-			var blocker_margin := VEGETATION_VISUALIZER_SOFT_BLOCKER_MARGIN if _is_soft_vegetation_physics_hit(physics_hit) else 0.5
-			limited_distance = minf(max_distance, hit_distance + blocker_margin)
+			limited_distance = minf(max_distance, hit_distance)
 
 	var end_point := origin + direction * limited_distance
 	_update_vegetation_ray_mesh(origin, end_point)
@@ -407,47 +405,3 @@ func _make_debug_material(color: Color) -> StandardMaterial3D:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.disable_receive_shadows = true
 	return mat
-
-
-func _is_soft_vegetation_physics_hit(hit: Dictionary) -> bool:
-	if hit.is_empty():
-		return false
-	var collider = hit.get("collider", null)
-	if collider == null:
-		return true
-	if collider is Node:
-		if _is_vegetation_collider(collider):
-			return true
-		return _is_terrain_or_water_collider(collider)
-	return false
-
-
-func _is_vegetation_collider(collider: Node) -> bool:
-	if not collider:
-		return false
-	if collider.is_in_group("trees") or collider.is_in_group("grass") or collider.is_in_group("rocks"):
-		return true
-	var node := collider
-	while node:
-		if node.is_in_group("trees") or node.is_in_group("grass") or node.is_in_group("rocks"):
-			return true
-		node = node.get_parent()
-	return false
-
-
-func _is_terrain_or_water_collider(collider: Node) -> bool:
-	if not collider:
-		return false
-	if collider.is_in_group("terrain") or collider.is_in_group("water"):
-		return true
-	if collider.is_in_group("terrain_visual_batch") or collider.is_in_group("world_map_lod"):
-		return true
-	var node := collider
-	while node:
-		var node_name := node.name.to_lower()
-		if node_name.contains("terrain") or node_name.contains("chunkmanager") or node_name.contains("chunk_manager"):
-			return true
-		if node.is_in_group("terrain") or node.is_in_group("water"):
-			return true
-		node = node.get_parent()
-	return false

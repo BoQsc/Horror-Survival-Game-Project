@@ -27,7 +27,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var tree_rotation_fix: Vector3 = Vector3.ZERO
 @export var collision_radius: float = 0.5
 @export var collision_height: float = 8.0
-@export var tree_visual_targeting_enabled: bool = true
+@export var tree_visual_targeting_enabled: bool = false
 @export_range(0.0, 4.0, 0.05) var tree_visual_targeting_aabb_padding: float = 0.35
 @export var collider_distance: float = 30.0 # Only trees within this distance get colliders
 @export var vegetation_colliders_enabled: bool = false
@@ -3860,7 +3860,7 @@ func _find_nearest_instance_along_ray(
 				"index": index,
 				"position": cylinder_hit.get("position", base_pos),
 				"distance": cylinder_hit.get("distance", 0.0),
-				"distance_sq_to_ray": _ray_axis_distance_sq_xz(origin, ray_dir, base_pos, max_distance),
+				"distance_sq_to_ray": _vegetation_aim_distance_sq(kind, origin, ray_dir, base_pos, instance_height, max_distance),
 				"base_position": base_pos,
 				"interaction_radius": instance_radius,
 				"interaction_height": instance_height,
@@ -3935,7 +3935,7 @@ func _find_nearest_tree_visual_bounds_along_ray(
 				"index": index,
 				"position": hit_position,
 				"distance": bounds_hit.get("distance", 0.0),
-				"distance_sq_to_ray": _ray_axis_distance_sq_xz(origin, ray_dir, ground_pos, max_distance),
+				"distance_sq_to_ray": _vegetation_aim_distance_sq("tree", origin, ray_dir, ground_pos, collision_height * scale, max_distance),
 				"base_position": ground_pos,
 				"interaction_radius": collision_radius * scale,
 				"interaction_height": collision_height * scale,
@@ -4105,7 +4105,6 @@ func _apply_instance_axis_aim_distance(
 		else:
 			base_pos = entry.get("hit_pos", entry.get("world_pos", hit.get("position", Vector3.ZERO)))
 		var scale := maxf(0.1, float(entry.get("scale", 1.0)))
-		hit["distance_sq_to_ray"] = _ray_axis_distance_sq_xz(origin, direction.normalized(), base_pos, max_distance)
 		hit["base_position"] = base_pos
 		match kind:
 			"tree":
@@ -4117,6 +4116,7 @@ func _apply_instance_axis_aim_distance(
 			"rock":
 				hit["interaction_radius"] = rock_collision_radius
 				hit["interaction_height"] = rock_collision_height
+		hit["distance_sq_to_ray"] = _vegetation_aim_distance_sq(kind, origin, direction.normalized(), base_pos, float(hit.get("interaction_height", 1.0)), max_distance)
 		hit["debug_position"] = _vegetation_debug_target_position(kind, base_pos, float(hit.get("interaction_height", 1.0)))
 		return hit
 	return hit
@@ -4124,6 +4124,20 @@ func _apply_instance_axis_aim_distance(
 func _vegetation_debug_target_position(kind: String, base_pos: Vector3, height: float) -> Vector3:
 	var max_marker_height := 1.5 if kind == "tree" else 0.75
 	return base_pos + Vector3.UP * minf(maxf(height, 0.0) * 0.5, max_marker_height)
+
+func _vegetation_aim_distance_sq(kind: String, origin: Vector3, ray_dir: Vector3, base_pos: Vector3, height: float, max_distance: float) -> float:
+	if kind == "tree":
+		return _ray_axis_distance_sq_xz(origin, ray_dir, base_pos, max_distance)
+	var target_pos := base_pos + Vector3.UP * (maxf(height, 0.0) * 0.5)
+	return _ray_point_distance_sq(origin, ray_dir, target_pos, max_distance)
+
+func _ray_point_distance_sq(origin: Vector3, ray_dir: Vector3, point: Vector3, max_distance: float) -> float:
+	var len_sq := ray_dir.length_squared()
+	if len_sq <= 0.0000001:
+		return origin.distance_squared_to(point)
+	var t := clampf((point - origin).dot(ray_dir) / len_sq, 0.0, max_distance)
+	var closest := origin + ray_dir * t
+	return closest.distance_squared_to(point)
 
 func _ray_axis_distance_sq_xz(origin: Vector3, ray_dir: Vector3, axis_pos: Vector3, max_distance: float) -> float:
 	var dx := ray_dir.x
