@@ -166,6 +166,34 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_TERRAIN_GPU_MESH_SLICES": "2",
         },
     },
+    "runtime_veg_occlusion_culling": {
+        "description": "Runtime defaults with vegetation batches allowed to participate in Godot occlusion culling.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING": "0",
+        },
+    },
+    "runtime_veg_tree_clusters_1": {
+        "description": "Runtime defaults with 1x1 tree render clusters for tighter frustum culling without changing density.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE": "1",
+        },
+    },
+    "runtime_veg_tree_clusters_4": {
+        "description": "Runtime defaults with 4x4 tree render clusters for lower draw-call overhead without changing density.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE": "4",
+        },
+    },
+    "runtime_veg_no_mesh_lods": {
+        "description": "Runtime defaults with generated vegetation mesh LODs disabled for visual/perf A/B isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_VEGETATION_GENERATE_MESH_LODS": "0",
+        },
+    },
 }
 
 RESET_ENV_KEYS = [
@@ -194,6 +222,55 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_SHARED_TERRAIN_COLLISION_BODY",
     "TOWN_STALL_DISABLE_GLOW",
     "TOWN_STALL_DISABLE_WATER_RENDER",
+    "TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING",
+    "TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE",
+    "TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE",
+    "TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE",
+    "TOWN_STALL_WORLD_MAP_VEGETATION_GRASS_RENDER_CLUSTER_SIZE",
+    "TOWN_STALL_WORLD_MAP_VEGETATION_ROCK_RENDER_CLUSTER_SIZE",
+    "TOWN_STALL_VEGETATION_RENDER_EXTRA_CULL_MARGIN",
+    "TOWN_STALL_VEGETATION_GLOBAL_RENDER_BOUNDS_PADDING",
+    "TOWN_STALL_VEGETATION_TREE_GLOBAL_RENDER_BOUNDS_PADDING",
+    "TOWN_STALL_VEGETATION_GRASS_GLOBAL_RENDER_BOUNDS_PADDING",
+    "TOWN_STALL_VEGETATION_ROCK_GLOBAL_RENDER_BOUNDS_PADDING",
+    "TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS",
+    "TOWN_STALL_VEGETATION_EXACT_RENDER_BOUNDS_PADDING",
+    "TOWN_STALL_VEGETATION_RENDER_LOD_BIAS",
+    "TOWN_STALL_VEGETATION_PRESERVE_IMPORTED_MESH_LODS",
+    "TOWN_STALL_VEGETATION_GENERATE_MESH_LODS",
+    "TOWN_STALL_VEGETATION_MESH_LOD_MIN_PRIMITIVES",
+    "TOWN_STALL_VEGETATION_MESH_LOD_NORMAL_MERGE_ANGLE",
+    "TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES",
+    "TOWN_STALL_VEGETATION_CULL_ALPHA_TRANSPARENT_TRIANGLES",
+    "TOWN_STALL_VEGETATION_ALPHA_SPLIT_MIN_OPAQUE_FRACTION",
+    "TOWN_STALL_ENTITY_MAX_ENTITIES",
+    "TOWN_STALL_ENTITY_SPAWN_RADIUS",
+    "TOWN_STALL_ENTITY_ACTIVE_PHYSICS_RADIUS",
+    "TOWN_STALL_ENTITY_FREEZE_RADIUS",
+    "TOWN_STALL_ENTITY_DESPAWN_RADIUS",
+    "TOWN_STALL_ENTITY_FREEZE_COLLISION_MARGIN",
+    "TOWN_STALL_ENTITY_PROXIMITY_BUDGET_MS",
+    "TOWN_STALL_ENTITY_PENDING_SPAWN_CHECKS_PER_FRAME",
+    "TOWN_STALL_ENTITY_DORMANT_RESPAWN_CHECKS_PER_FRAME",
+    "TOWN_STALL_ENTITY_SPAWN_QUEUE_BUDGET_MS",
+    "TOWN_STALL_ENTITY_DORMANT_RESPAWN_BUDGET_MS",
+    "TOWN_STALL_ENTITY_MAINTENANCE_BUDGET_MS",
+    "TOWN_STALL_ENTITY_PROXIMITY_UPDATE_INTERVAL",
+    "TOWN_STALL_ENTITY_SPAWN_QUEUE_UPDATE_INTERVAL",
+    "TOWN_STALL_ENTITY_DORMANT_RESPAWN_UPDATE_INTERVAL",
+    "TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME",
+    "TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK",
+    "TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE",
+    "TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK",
+    "TOWN_STALL_ENTITY_PRIORITIZE_NEARBY_SPAWNS",
+    "TOWN_STALL_ENTITY_BALANCE_SPAWN_DISTANCE_RINGS",
+    "TOWN_STALL_ENTITY_SPAWN_DISTANCE_RING_COUNT",
+    "TOWN_STALL_ENTITY_BALANCED_RING_FILL",
+    "TOWN_STALL_ENTITY_BALANCED_RING_FILL_TARGET",
+    "TOWN_STALL_ENTITY_BALANCED_RING_FILL_INTERVAL",
+    "TOWN_STALL_ENTITY_BALANCED_RING_FILL_CANDIDATES_PER_TICK",
+    "TOWN_STALL_ENTITY_BALANCED_RING_FILL_AREA_WEIGHTED",
+    "TOWN_STALL_ENTITY_BALANCED_RING_FILL_RECENTER_DISTANCE",
 ]
 
 
@@ -518,6 +595,12 @@ def _summarize_time_range(
 
 def _extract_town_phase_epochs(snapshot: dict[str, Any]) -> dict[str, float]:
     phase_epochs: dict[str, float] = {}
+    explicit_epochs = snapshot.get("phase_epochs", {})
+    if isinstance(explicit_epochs, dict):
+        for label in ("measurement_reset", "hold_started", "hold_complete", "shutdown_requested"):
+            epoch = explicit_epochs.get(label)
+            if isinstance(epoch, (int, float)) and float(epoch) >= 0.0:
+                phase_epochs[label] = float(epoch)
     for event in snapshot.get("recent_scope_events", []):
         if not isinstance(event, dict):
             continue
@@ -626,6 +709,27 @@ def _as_int(value: Any) -> Optional[int]:
     return None
 
 
+def _as_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _sum_numeric(values: list[Any]) -> float:
+    return sum(float(value) for value in values if isinstance(value, (int, float)) and not isinstance(value, bool))
+
+
+def _wpf60(power_w: Any, fps: Any) -> Optional[float]:
+    """60 FPS equivalent watts; lower is better, target is <= 16 at sustained 60 FPS."""
+    if not isinstance(power_w, (int, float)) or isinstance(power_w, bool):
+        return None
+    if not isinstance(fps, (int, float)) or isinstance(fps, bool) or float(fps) <= 0.0:
+        return None
+    return float(power_w) * (60.0 / float(fps))
+
+
 def _validate_content_for_power_compare(
     content: dict[str, Any],
     stream_gate: dict[str, Any],
@@ -703,6 +807,117 @@ def _validate_content_for_power_compare(
     return content
 
 
+def _build_render_pressure_summary(
+    town_window: dict[str, Any],
+    runtime_power: dict[str, Any],
+    content: dict[str, Any],
+    terrain_batch: dict[str, Any],
+    vegetation_render: dict[str, Any],
+) -> dict[str, Any]:
+    sample_count = int(town_window.get("sample_count", 0) or 0)
+    avg_fps = _as_float(town_window.get("avg_fps"))
+    avg_total_ms = _as_float(town_window.get("avg_total_ms"))
+    avg_process_ms = _as_float(town_window.get("avg_process_ms"))
+    avg_physics_ms = _as_float(town_window.get("avg_physics_ms"))
+    avg_other_ms = _as_float(town_window.get("avg_other_ms"))
+    avg_draw_calls = _as_float(town_window.get("avg_draw_calls"))
+    avg_primitives = _as_float(town_window.get("avg_primitives"))
+    end_engine_max_fps = _as_float(town_window.get("end_engine_max_fps"))
+
+    terrain_primitives = _as_float(terrain_batch.get("terrain_visual_batch_primitive_count"))
+    vegetation_primitives = _as_float(vegetation_render.get("global_render_estimated_primitives"))
+    tree_primitives = _as_float(vegetation_render.get("global_tree_render_estimated_primitives"))
+    grass_primitives = _as_float(vegetation_render.get("global_grass_render_estimated_primitives"))
+    rock_primitives = _as_float(vegetation_render.get("global_rock_render_estimated_primitives"))
+    alpha_empty_primitives = _as_float(vegetation_render.get("global_render_estimated_alpha_empty_primitive_equivalent"))
+    known_primitives = _sum_numeric([terrain_primitives, vegetation_primitives])
+
+    world_work_suspended_samples = int(town_window.get("terrain_runtime_power_world_work_suspended_samples", 0) or 0)
+    render_loop_suspended_samples = int(town_window.get("terrain_runtime_power_render_loop_suspended_samples", 0) or 0)
+    world_work_suspended_fraction = float(world_work_suspended_samples) / float(sample_count) if sample_count > 0 else 0.0
+    render_loop_suspended_fraction = float(render_loop_suspended_samples) / float(sample_count) if sample_count > 0 else 0.0
+    pending_work_count = int(_sum_numeric([
+        content.get("pending_node_count"),
+        content.get("task_queue_count"),
+        content.get("cpu_task_queue_count"),
+        terrain_batch.get("terrain_visual_batch_dirty_count"),
+        terrain_batch.get("terrain_visual_batch_async_in_flight_count"),
+        terrain_batch.get("terrain_visual_batch_async_completed_count"),
+        vegetation_render.get("global_render_dirty_cluster_count"),
+    ]))
+
+    runtime_target_fps = _as_float(runtime_power.get("runtime_power_target_fps"))
+    runtime_mode = str(runtime_power.get("runtime_power_mode", ""))
+    render_loop_suspended = bool(runtime_power.get("runtime_power_render_loop_suspended", False))
+    render_loop_active_above_target = (
+        avg_fps is not None
+        and runtime_target_fps is not None
+        and runtime_target_fps > 0
+        and avg_fps > runtime_target_fps + 5.0
+        and not render_loop_suspended
+    )
+    engine_cap_above_target = (
+        end_engine_max_fps is not None
+        and runtime_target_fps is not None
+        and runtime_target_fps > 0
+        and end_engine_max_fps > runtime_target_fps + 5.0
+    )
+    background_queues_idle = pending_work_count == 0 \
+        and not bool(runtime_power.get("runtime_power_terrain_busy", False)) \
+        and not bool(runtime_power.get("runtime_power_foreground_terrain_busy", False)) \
+        and not bool(runtime_power.get("runtime_power_external_world_busy", False))
+
+    contributors: list[str] = []
+    if render_loop_active_above_target:
+        contributors.append("render_loop_active_above_runtime_target")
+    if engine_cap_above_target:
+        contributors.append("engine_max_fps_above_runtime_target")
+    if avg_primitives is not None and avg_primitives >= 1_000_000:
+        contributors.append("high_submitted_primitives")
+    if terrain_primitives is not None and terrain_primitives >= 500_000:
+        contributors.append("high_terrain_primitives")
+    if tree_primitives is not None and tree_primitives >= 500_000:
+        contributors.append("high_tree_primitives")
+    if alpha_empty_primitives is not None and alpha_empty_primitives >= 250_000:
+        contributors.append("high_alpha_empty_primitives")
+    if background_queues_idle:
+        contributors.append("background_work_not_primary")
+
+    return {
+        "sample_count": sample_count,
+        "avg_fps": avg_fps,
+        "avg_total_ms": avg_total_ms,
+        "avg_process_ms": avg_process_ms,
+        "avg_physics_ms": avg_physics_ms,
+        "avg_other_ms": avg_other_ms,
+        "avg_draw_calls": avg_draw_calls,
+        "avg_primitives": avg_primitives,
+        "end_engine_max_fps": end_engine_max_fps,
+        "known_render_primitives": known_primitives,
+        "terrain_visual_primitives": terrain_primitives,
+        "vegetation_primitives": vegetation_primitives,
+        "tree_primitives": tree_primitives,
+        "grass_primitives": grass_primitives,
+        "rock_primitives": rock_primitives,
+        "alpha_empty_primitive_equivalent": alpha_empty_primitives,
+        "terrain_primitive_share": terrain_primitives / known_primitives if terrain_primitives is not None and known_primitives > 0 else None,
+        "vegetation_primitive_share": vegetation_primitives / known_primitives if vegetation_primitives is not None and known_primitives > 0 else None,
+        "tree_primitive_share_of_vegetation": tree_primitives / vegetation_primitives if tree_primitives is not None and vegetation_primitives is not None and vegetation_primitives > 0 else None,
+        "alpha_empty_share_of_vegetation": alpha_empty_primitives / vegetation_primitives if alpha_empty_primitives is not None and vegetation_primitives is not None and vegetation_primitives > 0 else None,
+        "runtime_power_mode": runtime_mode,
+        "runtime_power_target_fps": runtime_target_fps,
+        "render_loop_suspended": render_loop_suspended,
+        "render_loop_suspend_gate": runtime_power.get("runtime_power_render_loop_suspend_gate"),
+        "render_loop_active_above_target": render_loop_active_above_target,
+        "engine_cap_above_target": engine_cap_above_target,
+        "world_work_suspended_fraction": world_work_suspended_fraction,
+        "render_loop_suspended_fraction": render_loop_suspended_fraction,
+        "pending_background_work_count": pending_work_count,
+        "background_queues_idle": background_queues_idle,
+        "contributors": contributors,
+    }
+
+
 def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     if path is None:
         return {}
@@ -732,6 +947,8 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "runtime_power_active_reason",
             "runtime_power_terrain_busy",
             "runtime_power_foreground_terrain_busy",
+            "runtime_power_external_world_busy",
+            "runtime_power_world_work_suspended",
             "runtime_power_disabled_reason",
             "runtime_power_suspend_render_loop_in_deep_idle",
             "runtime_power_allow_unattended_render_suspend",
@@ -836,6 +1053,9 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "terrain_visual_batch_mesh_cache_misses",
             "terrain_visual_batch_async_in_flight_count",
             "terrain_visual_batch_async_completed_count",
+            "terrain_visual_batch_primitive_count",
+            "terrain_visual_visible_primitive_count",
+            "terrain_visual_batch_member_count",
             "last_terrain_visual_batch_hidden_chunk_count",
             "last_terrain_visual_batch_rebuild_count",
             "last_terrain_visual_batch_rebuild_ms",
@@ -869,6 +1089,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "global_rock_render_estimated_primitives",
             "global_render_estimated_alpha_primitives",
             "global_render_estimated_alpha_empty_primitive_equivalent",
+            "tree_alpha_texture_coverage_ratio",
             "tree_global_render_bounds_padding",
             "grass_global_render_bounds_padding",
             "rock_global_render_bounds_padding",
@@ -879,9 +1100,17 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "global_tree_max_batch_bounds_horizontal_area",
             "global_tree_max_batch_bounds_height",
             "global_tree_max_batch_bounds_diagonal",
+            "global_render_dirty_cluster_count",
         ]
         if key in vegetation_telemetry
     }
+    render_pressure = _build_render_pressure_summary(
+        town_window,
+        runtime_power,
+        content,
+        terrain_batch,
+        vegetation_render,
+    )
     return {
         "snapshot_path": str(path),
         "benchmark": {
@@ -895,6 +1124,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         "town_metrics": {
             "average_fps": snapshot.get("average_fps", town_window.get("average_fps")),
             "avg_total_ms": snapshot.get("avg_total_ms", town_window.get("avg_total_ms")),
+            "avg_process_ms": snapshot.get("avg_process_ms", town_window.get("avg_process_ms")),
             "avg_draw_calls": snapshot.get("avg_draw_calls", town_window.get("avg_draw_calls")),
             "avg_objects": snapshot.get("avg_objects", town_window.get("avg_objects")),
             "frames_over_budget": snapshot.get("frames_over_budget", town_window.get("frames_over_budget")),
@@ -906,6 +1136,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "sample_count": moving_entry_window.get("sample_count"),
             "average_fps": moving_entry_window.get("avg_fps"),
             "avg_total_ms": moving_entry_window.get("avg_total_ms"),
+            "avg_process_ms": moving_entry_window.get("avg_process_ms"),
             "frames_over_budget": moving_entry_window.get("frames_over_budget"),
             "frames_over_40ms": moving_entry_window.get("frames_over_40ms"),
             "frames_over_50ms": moving_entry_window.get("frames_over_50ms"),
@@ -918,6 +1149,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "sample_count": stationary_hold_window.get("sample_count"),
             "average_fps": stationary_hold_window.get("avg_fps"),
             "avg_total_ms": stationary_hold_window.get("avg_total_ms"),
+            "avg_process_ms": stationary_hold_window.get("avg_process_ms"),
             "frames_over_budget": stationary_hold_window.get("frames_over_budget"),
             "frames_over_40ms": stationary_hold_window.get("frames_over_40ms"),
             "frames_over_50ms": stationary_hold_window.get("frames_over_50ms"),
@@ -933,6 +1165,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         "content": content,
         "terrain_batch": terrain_batch,
         "vegetation_render": vegetation_render,
+        "render_pressure": render_pressure,
         "directional_render_sampling": snapshot.get("directional_render_sampling", {}),
     }
 
@@ -1206,6 +1439,17 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
     directional_render_sampling = snapshot.get("directional_render_sampling", {}) if isinstance(snapshot, dict) else {}
     if isinstance(directional_render_sampling, dict) and directional_render_sampling.get("enabled"):
         result["directional_render_gpu"] = _summarize_directional_render_gpu(sampler.samples, directional_render_sampling)
+    town_metrics = snapshot.get("town_metrics", {}) if isinstance(snapshot, dict) else {}
+    moving_metrics = snapshot.get("moving_entry_metrics", {}) if isinstance(snapshot, dict) else {}
+    stationary_metrics = snapshot.get("stationary_hold_metrics", {}) if isinstance(snapshot, dict) else {}
+    result["efficiency"] = {
+        "metric": "wpf60",
+        "target_wpf60": 16.0,
+        "hold_wpf60": _wpf60(result.get("estimated_hold_gpu", {}).get("avg_power_w"), town_metrics.get("average_fps")),
+        "moving_wpf60": _wpf60(result.get("moving_entry_gpu", {}).get("avg_power_w"), moving_metrics.get("average_fps")),
+        "stationary_hold_wpf60": _wpf60(result.get("stationary_hold_gpu", {}).get("avg_power_w"), stationary_metrics.get("average_fps")),
+        "last20_wpf60": _wpf60(result.get("last_20s_gpu", {}).get("avg_power_w"), town_metrics.get("average_fps")),
+    }
     if failure_reasons:
         result["stdout_tail"] = "\n".join((stdout or "").splitlines()[-120:])
         result["stderr_tail"] = "\n".join((stderr or "").splitlines()[-120:])
@@ -1221,10 +1465,14 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     content = run.get("snapshot", {}).get("content", {})
     stream = run.get("snapshot", {}).get("stream_gate", {})
     vegetation = run.get("snapshot", {}).get("vegetation_render", {})
+    render_pressure = run.get("snapshot", {}).get("render_pressure", {})
     power = hold.get("avg_power_w")
     last20_power = last20.get("avg_power_w")
     moving_power = moving_gpu.get("avg_power_w") if isinstance(moving_gpu, dict) else None
     stationary_power = stationary_gpu.get("avg_power_w") if isinstance(stationary_gpu, dict) else None
+    efficiency = run.get("efficiency", {})
+    moving_wpf60 = efficiency.get("moving_wpf60") if isinstance(efficiency, dict) else None
+    hold_wpf60 = efficiency.get("hold_wpf60") if isinstance(efficiency, dict) else None
     pstate = hold.get("pstates", {})
     fps = town_metrics.get("average_fps")
     moving = run.get("snapshot", {}).get("moving_entry_metrics", {})
@@ -1234,6 +1482,12 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     water = content.get("rendered_water_chunk_count")
     tree_primitives = vegetation.get("global_tree_render_estimated_primitives")
     tree_bounds = vegetation.get("global_tree_avg_batch_bounds_horizontal_area")
+    terrain_primitives = render_pressure.get("terrain_visual_primitives")
+    alpha_empty = render_pressure.get("alpha_empty_primitive_equivalent")
+    pressure_contributors = render_pressure.get("contributors", [])
+    pressure_text = ""
+    if isinstance(pressure_contributors, list) and pressure_contributors:
+        pressure_text = " pressure=" + ",".join(str(value) for value in pressure_contributors[:4])
     valid = content.get("content_valid_for_power_compare")
     reasons = content.get("content_validation_reasons")
     gate = stream.get("last_terrain_stream_update_gate_reason")
@@ -1251,10 +1505,15 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     ) + (
         f"hold_segment={stationary_power:.2f}W " if isinstance(stationary_power, (int, float)) else "hold_segment=? "
     ) + (
+        f"wpf60={hold_wpf60:.2f} moving_wpf60={moving_wpf60:.2f} "
+        if isinstance(hold_wpf60, (int, float)) and isinstance(moving_wpf60, (int, float))
+        else "wpf60=? moving_wpf60=? "
+    ) + (
         f"pstates={pstate} fps={fps} moving_fps={moving_fps} "
         f"moving_over40={moving_over_40} terrain={terrain} water={water} "
-        f"tree_prims={tree_primitives} tree_avg_bounds_area={tree_bounds} "
-        f"valid={valid} gate={gate}{directional_text}{reason_text}"
+        f"terrain_prims={terrain_primitives} tree_prims={tree_primitives} "
+        f"alpha_empty={alpha_empty} tree_avg_bounds_area={tree_bounds} "
+        f"valid={valid} gate={gate}{directional_text}{pressure_text}{reason_text}"
     )
 
 
@@ -1301,6 +1560,21 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             for run in comparison_runs
             if isinstance(run.get("snapshot", {}).get("town_metrics", {}).get("average_fps"), (int, float))
         ]
+        hold_wpf60_values = [
+            float(run["efficiency"]["hold_wpf60"])
+            for run in comparison_runs
+            if isinstance(run.get("efficiency", {}).get("hold_wpf60"), (int, float))
+        ]
+        moving_wpf60_values = [
+            float(run["efficiency"]["moving_wpf60"])
+            for run in comparison_runs
+            if isinstance(run.get("efficiency", {}).get("moving_wpf60"), (int, float))
+        ]
+        stationary_hold_wpf60_values = [
+            float(run["efficiency"]["stationary_hold_wpf60"])
+            for run in comparison_runs
+            if isinstance(run.get("efficiency", {}).get("stationary_hold_wpf60"), (int, float))
+        ]
         aggregate[case] = {
             "run_count": len(case_runs),
             "valid_run_count": len(comparison_runs),
@@ -1318,6 +1592,9 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "avg_stationary_hold_power_w": _avg(stationary_hold_powers),
             "avg_hold_p0_fraction": _avg(p0_fractions),
             "avg_fps": _avg(fps_values),
+            "avg_hold_wpf60": _avg(hold_wpf60_values),
+            "avg_moving_wpf60": _avg(moving_wpf60_values),
+            "avg_stationary_hold_wpf60": _avg(stationary_hold_wpf60_values),
         }
     return aggregate
 
@@ -1325,7 +1602,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 def main() -> int:
     suppress_windows_error_dialogs()
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases: fixed60,fixed70,runtime_default,runtime_gpu_meshing,runtime_native_cpu_meshing,runtime_no_dry_water_density_skip,runtime_no_streaming_batch_async,runtime_terrain_visual_batching,runtime_no_render_suspend,runtime_fast_deep_idle,runtime_no_terrain_stream,runtime_no_shared_collision,runtime_no_glow,runtime_no_water_render,runtime_joined_water_submit,runtime_separate_water_submit,runtime_mesh_slices_1,runtime_mesh_slices_2")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases; use --cases runtime_default,runtime_veg_occlusion_culling,runtime_veg_tree_clusters_1,runtime_veg_tree_clusters_4 for vegetation render A/B.")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)
@@ -1410,6 +1687,7 @@ def main() -> int:
             "initial_idle_reasons": initial_contamination_reasons,
             "initial_idle_clean": not initial_contamination_reasons,
         },
+        "between_case_cooldowns": [],
         "runs": [],
     }
 
@@ -1423,16 +1701,47 @@ def main() -> int:
         return 3
 
     exit_code = 0
+    matrix_aborted_reason: Optional[str] = None
+    case_run_index = 0
     for repeat_index in range(1, args.repeats + 1):
         for case_name in case_names:
-            payload["runs"].append(_run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight, args.max_gpu_temp_c))
-            print(_case_summary_line(payload["runs"][-1]))
-            if payload["runs"][-1].get("failure_reasons"):
+            if case_run_index > 0 and args.preflight_max_gpu_temp_c > 0:
+                cooldown = _wait_for_preflight_gpu_temperature(
+                    args.preflight_max_gpu_temp_c,
+                    args.preflight_cooldown_timeout_seconds,
+                    args.preflight_cooldown_poll_seconds,
+                )
+                cooldown["before_case"] = case_name
+                cooldown["repeat_index"] = repeat_index
+                payload["between_case_cooldowns"].append(cooldown)
+                if not cooldown.get("reached", False):
+                    matrix_aborted_reason = "between_case_gpu_temp_not_cooled"
+                    payload["aborted_reason"] = matrix_aborted_reason
+                    payload["aborted_before_case"] = case_name
+                    exit_code = 1
+                    _write_payload(output_path, payload)
+                    print(f"Stopping matrix before {case_name}: GPU did not cool to <= {args.preflight_max_gpu_temp_c:.1f}C")
+                    break
+            run = _run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight, args.max_gpu_temp_c)
+            case_run_index += 1
+            payload["runs"].append(run)
+            print(_case_summary_line(run))
+            if run.get("failure_reasons"):
                 exit_code = 1
             payload["ended_at_epoch"] = time.time()
             payload["duration_s"] = payload["ended_at_epoch"] - started
             payload["aggregate"] = _aggregate_case_runs(payload["runs"])
+            if run.get("thermal_abort_reason"):
+                matrix_aborted_reason = f"thermal_abort:{run.get('thermal_abort_reason')}"
+                payload["aborted_reason"] = matrix_aborted_reason
+                payload["aborted_after_case"] = run.get("case")
+                exit_code = 1
             _write_payload(output_path, payload)
+            if matrix_aborted_reason:
+                print(f"Stopping matrix after {matrix_aborted_reason}")
+                break
+        if matrix_aborted_reason:
+            break
 
     final_contamination_reasons: list[str] = []
     try:

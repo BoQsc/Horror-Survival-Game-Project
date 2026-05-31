@@ -22,6 +22,7 @@ var center_label: Label = null
 
 
 func _ready() -> void:
+	set_process(false)
 	visible = false
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -127,6 +128,7 @@ func show_menu(opts: Array[String], target: Node = null) -> void:
 	selected_index = -1
 	is_active = true
 	visible = true
+	set_process(true)
 	
 	# Display mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -147,6 +149,7 @@ func show_menu(opts: Array[String], target: Node = null) -> void:
 func hide_menu(emit_selection: bool = true) -> void:
 	is_active = false
 	visible = false
+	set_process(false)
 	
 	# Recapture mouse
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)

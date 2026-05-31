@@ -53,6 +53,18 @@ func _run() -> int:
 	if not _expect(counts.has("tree_alpha_split_surfaces"), "tree alpha split telemetry should be present"):
 		manager.free()
 		return 1
+	if not _expect(
+			int(counts.get("tree_alpha_split_surfaces", 0)) > 0,
+			"tree alpha split should move the opaque subset out of alpha scissor; counts=%s" % str(counts)
+	):
+		manager.free()
+		return 1
+	if not _expect(
+			int(counts.get("tree_alpha_split_opaque_triangles", 0)) > 0,
+			"tree alpha split should find opaque tree triangles; counts=%s" % str(counts)
+	):
+		manager.free()
+		return 1
 
 	manager.free()
 	print("[VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION_TEST] PASS")

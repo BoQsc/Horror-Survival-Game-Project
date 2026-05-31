@@ -74,6 +74,9 @@ var _render_diagnostic_skipped_count: int = 0
 var _render_diagnostic_scene_scan_count: int = 0
 var _hold_started_sample_index: int = -1
 var _hold_completed_sample_index: int = -1
+var _measurement_reset_epoch: float = -1.0
+var _hold_started_epoch: float = -1.0
+var _hold_completed_epoch: float = -1.0
 var runtime_mode: String = "unknown"
 var auto_teleport_enabled: bool = true
 var disable_buildings_enabled: bool = false
@@ -308,6 +311,9 @@ func _reset_town_measurement_window(reason: String) -> void:
 	_render_diagnostic_samples.clear()
 	_hold_started_sample_index = -1
 	_hold_completed_sample_index = -1
+	_measurement_reset_epoch = Time.get_unix_time_from_system()
+	_hold_started_epoch = -1.0
+	_hold_completed_epoch = -1.0
 	_reset_directional_render_sampling_state()
 	_scope_states.clear()
 	_recent_scope_events.clear()
@@ -678,6 +684,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	return {
 		"frame": frame_number,
 		"epoch": Time.get_unix_time_from_system(),
+		"engine_max_fps": Engine.max_fps,
 		"directional_render_label": directional_render_current_label if directional_render_sampling_enabled else "",
 		"directional_render_segment_index": directional_render_current_segment_index if directional_render_sampling_enabled else -1,
 		"fps": fps,
@@ -901,6 +908,7 @@ func _collect_render_features_snapshot() -> Dictionary:
 	features["project_fallback_to_opengl3"] = bool(ProjectSettings.get_setting("rendering/rendering_device/fallback_to_opengl3", true))
 	features["project_window_mode"] = int(ProjectSettings.get_setting("display/window/size/mode", -1))
 	features["project_vsync_mode"] = int(ProjectSettings.get_setting("display/window/vsync/vsync_mode", -1))
+	features["engine_max_fps"] = Engine.max_fps
 	if DisplayServer.has_method("window_get_mode"):
 		features["runtime_window_mode"] = int(DisplayServer.window_get_mode())
 	if DisplayServer.has_method("window_get_size"):
@@ -1522,11 +1530,14 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"sample_count": 0,
 		"start_frame": -1,
 		"end_frame": -1,
+		"start_engine_max_fps": 0,
+		"end_engine_max_fps": 0,
 		"avg_fps": 0.0,
 		"avg_draw_calls": 0.0,
 		"avg_objects": 0.0,
 		"avg_primitives": 0.0,
 		"avg_total_ms": 0.0,
+		"avg_process_ms": 0.0,
 		"avg_physics_ms": 0.0,
 		"avg_navigation_ms": 0.0,
 		"avg_vram_mb": 0.0,
@@ -1568,6 +1579,7 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"avg_objects_render_active": 0.0,
 		"avg_primitives_render_active": 0.0,
 		"avg_total_ms_render_active": 0.0,
+		"avg_process_ms_render_active": 0.0,
 		"avg_physics_ms_render_active": 0.0,
 		"avg_navigation_ms_render_active": 0.0,
 		"avg_vram_mb_render_active": 0.0,
@@ -1595,6 +1607,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var total_objects := 0.0
 	var total_primitives := 0.0
 	var total_ms := 0.0
+	var total_process_ms := 0.0
 	var total_physics_ms := 0.0
 	var total_navigation_ms := 0.0
 	var total_vram_mb := 0.0
@@ -1630,6 +1643,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var total_objects_render_active := 0.0
 	var total_primitives_render_active := 0.0
 	var total_ms_render_active := 0.0
+	var total_process_ms_render_active := 0.0
 	var total_physics_ms_render_active := 0.0
 	var total_navigation_ms_render_active := 0.0
 	var total_vram_mb_render_active := 0.0
@@ -1649,6 +1663,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		total_objects += float(entry.get("objects", 0))
 		total_primitives += float(entry.get("primitives", 0))
 		total_ms += float(entry.get("total_ms", 0.0))
+		total_process_ms += float(entry.get("process_monitor_ms", 0.0))
 		total_physics_ms += float(entry.get("physics_ms", 0.0))
 		total_navigation_ms += float(entry.get("navigation_ms", 0.0))
 		total_vram_mb += float(entry.get("vram_mb", 0.0))
@@ -1701,6 +1716,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 			total_objects_render_active += float(entry.get("objects", 0))
 			total_primitives_render_active += float(entry.get("primitives", 0))
 			total_ms_render_active += frame_total_ms
+			total_process_ms_render_active += float(entry.get("process_monitor_ms", 0.0))
 			total_physics_ms_render_active += float(entry.get("physics_ms", 0.0))
 			total_navigation_ms_render_active += float(entry.get("navigation_ms", 0.0))
 			total_vram_mb_render_active += float(entry.get("vram_mb", 0.0))
@@ -1722,6 +1738,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var avg_draw_calls := total_draw_calls / sample_count
 	var avg_objects := total_objects / sample_count
 	var avg_primitives := total_primitives / sample_count
+	var avg_process_ms := total_process_ms / sample_count
 	var avg_physics_ms := total_physics_ms / sample_count
 	var avg_navigation_ms := total_navigation_ms / sample_count
 	var avg_vram_mb := total_vram_mb / sample_count
@@ -1731,6 +1748,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var avg_objects_render_active := total_objects_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_primitives_render_active := total_primitives_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_total_ms_render_active := total_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
+	var avg_process_ms_render_active := total_process_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_physics_ms_render_active := total_physics_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_navigation_ms_render_active := total_navigation_ms_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
 	var avg_vram_mb_render_active := total_vram_mb_render_active / render_active_sample_count if render_active_sample_count > 0 else 0.0
@@ -1742,6 +1760,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 			"draw_calls": float(last_entry.get("draw_calls", 0)) - avg_draw_calls,
 			"objects": float(last_entry.get("objects", 0)) - avg_objects,
 			"primitives": float(last_entry.get("primitives", 0)) - avg_primitives,
+			"process_ms": float(last_entry.get("process_monitor_ms", 0.0)) - avg_process_ms,
 			"physics_ms": float(last_entry.get("physics_ms", 0.0)) - avg_physics_ms,
 			"navigation_ms": float(last_entry.get("navigation_ms", 0.0)) - avg_navigation_ms,
 			"vram_mb": float(last_entry.get("vram_mb", 0.0)) - avg_vram_mb,
@@ -1752,11 +1771,14 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"sample_count": sample_count,
 		"start_frame": int(first_entry.get("frame", -1)),
 		"end_frame": int(last_entry.get("frame", -1)),
+		"start_engine_max_fps": int(first_entry.get("engine_max_fps", 0)),
+		"end_engine_max_fps": int(last_entry.get("engine_max_fps", 0)),
 		"avg_fps": total_fps / sample_count,
 		"avg_draw_calls": avg_draw_calls,
 		"avg_objects": avg_objects,
 		"avg_primitives": avg_primitives,
 		"avg_total_ms": avg_total_ms,
+		"avg_process_ms": avg_process_ms,
 		"avg_physics_ms": avg_physics_ms,
 		"avg_navigation_ms": avg_navigation_ms,
 		"avg_vram_mb": avg_vram_mb,
@@ -1798,6 +1820,7 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"avg_objects_render_active": avg_objects_render_active,
 		"avg_primitives_render_active": avg_primitives_render_active,
 		"avg_total_ms_render_active": avg_total_ms_render_active,
+		"avg_process_ms_render_active": avg_process_ms_render_active,
 		"avg_physics_ms_render_active": avg_physics_ms_render_active,
 		"avg_navigation_ms_render_active": avg_navigation_ms_render_active,
 		"avg_vram_mb_render_active": avg_vram_mb_render_active,
@@ -2153,6 +2176,7 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 	if not terrain.is_empty():
 		var terrain_score := float(terrain.get("rendered_terrain_chunk_count", 0)) * 6.0 \
 			+ float(terrain.get("rendered_water_chunk_count", 0)) * 3.0 \
+			+ float(terrain.get("terrain_visual_batch_primitive_count", 0)) / 1000.0 \
 			+ float(terrain.get("active_chunk_count", 0)) * 2.0 \
 			+ float(terrain.get("pending_chunk_count", 0)) * 8.0 \
 			+ float(terrain.get("pending_node_count", 0)) * 5.0 \
@@ -2164,12 +2188,13 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 		rankings.append(_build_pressure_entry(
 			"TerrainManager",
 			terrain_score,
-			"active_chunks=%d loaded=%d pending=%d rendered=%d/%d dirty=%d world_lod=%d far_lod=%d" % [
+			"active_chunks=%d loaded=%d pending=%d rendered=%d/%d terrain_prims=%d dirty=%d world_lod=%d far_lod=%d" % [
 				int(terrain.get("active_chunk_count", 0)),
 				int(terrain.get("loaded_chunk_count", 0)),
 				int(terrain.get("pending_chunk_count", 0)),
 				int(terrain.get("rendered_terrain_chunk_count", 0)),
 				int(terrain.get("rendered_water_chunk_count", 0)),
+				int(terrain.get("terrain_visual_batch_primitive_count", 0)),
 				int(terrain.get("loaded_dirty_chunk_count", 0)),
 				int(terrain.get("world_map_lod_chunk_count", 0)),
 				int(terrain.get("world_map_terrain_batch_far_lod_chunk_count", 0))
@@ -2190,12 +2215,14 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 			+ float(vegetation.get("pending_chunks", 0)) * 4.0 \
 			+ float(vegetation.get("pending_collider_adds", 0)) * 1.0 \
 			+ float(vegetation.get("pending_collider_removes", 0)) * 1.0 \
+			+ float(vegetation.get("global_render_estimated_primitives", 0)) / 1000.0 \
+			+ float(vegetation.get("global_render_estimated_alpha_empty_primitive_equivalent", 0.0)) / 1000.0 \
 			+ float(global_render_dirty_kinds.size()) * 20.0 \
 			+ float(vegetation.get("last_global_render_sync_ms", 0.0)) * 8.0
 		rankings.append(_build_pressure_entry(
 			"VegetationManager",
 			vegetation_score,
-			"trees=%d grass=%d rocks=%d colliders=%d/%d/%d pending=%d global_batches=%d instances=%d/%d/%d dirty=%d last_global_sync=%.2fms" % [
+			"trees=%d grass=%d rocks=%d colliders=%d/%d/%d pending=%d global_batches=%d instances=%d/%d/%d prims=%d alpha_empty=%.0f dirty=%d last_global_sync=%.2fms" % [
 				int(vegetation.get("tree_chunk_count", 0)),
 				int(vegetation.get("grass_chunk_count", 0)),
 				int(vegetation.get("rock_chunk_count", 0)),
@@ -2207,6 +2234,8 @@ func _build_system_pressure_ranking(system_telemetry: Dictionary, _town_window: 
 				int(vegetation.get("global_tree_render_instances", 0)),
 				int(vegetation.get("global_grass_render_instances", 0)),
 				int(vegetation.get("global_rock_render_instances", 0)),
+				int(vegetation.get("global_render_estimated_primitives", 0)),
+				float(vegetation.get("global_render_estimated_alpha_empty_primitive_equivalent", 0.0)),
 				global_render_dirty_kinds.size(),
 				float(vegetation.get("last_global_render_sync_ms", 0.0))
 			]
@@ -2342,6 +2371,11 @@ func _write_native_town_entry_snapshot() -> void:
 		"stationary_hold_window": stationary_hold_window,
 		"hold_started_sample_index": _hold_started_sample_index,
 		"hold_completed_sample_index": _hold_completed_sample_index,
+		"phase_epochs": {
+			"measurement_reset": _measurement_reset_epoch,
+			"hold_started": _hold_started_epoch,
+			"hold_complete": _hold_completed_epoch
+		},
 		"hold_settle_elapsed_seconds": hold_settle_elapsed_seconds,
 		"hold_settle_stable_frames": hold_settle_stable_frames,
 		"hold_settle_timed_out": hold_settle_timed_out,
@@ -3746,6 +3780,7 @@ func _hold_in_town(_delta: float) -> void:
 		phase_time = 0.0
 		print("[TOWN_STALL_TEST] Hold started")
 		_hold_started_sample_index = _town_entry_samples.size()
+		_hold_started_epoch = Time.get_unix_time_from_system()
 		_emit_scope_event("town_stall_test", "hold_started", {
 			"phase": str(phase),
 			"hold_seconds": current_hold_seconds
@@ -3772,6 +3807,7 @@ func _hold_in_town(_delta: float) -> void:
 
 	if phase_time >= current_hold_seconds:
 		_hold_completed_sample_index = _town_entry_samples.size()
+		_hold_completed_epoch = Time.get_unix_time_from_system()
 		_emit_scope_event("town_stall_test", "hold_complete", {
 			"hold_seconds": current_hold_seconds,
 			"phase": str(phase)
@@ -4093,6 +4129,7 @@ func _run_baked_building_persistence_smoke_test() -> void:
 		"phase": str(phase),
 		"smoke_test": true
 	})
+	_hold_completed_epoch = Time.get_unix_time_from_system()
 	_begin_shutdown()
 
 

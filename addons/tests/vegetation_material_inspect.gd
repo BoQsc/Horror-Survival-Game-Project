@@ -40,16 +40,25 @@ func _run() -> int:
 			var arrays := mesh.surface_get_arrays(surface_index)
 			var vertex_count := 0
 			var index_count := 0
+			var uv_count := 0
+			var primitive_type := Mesh.PRIMITIVE_TRIANGLES
+			if mesh.has_method("surface_get_primitive_type"):
+				primitive_type = mesh.surface_get_primitive_type(surface_index)
 			if arrays.size() > Mesh.ARRAY_VERTEX:
 				var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 				vertex_count = vertices.size()
+			if arrays.size() > Mesh.ARRAY_TEX_UV:
+				var uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+				uv_count = uvs.size()
 			if arrays.size() > Mesh.ARRAY_INDEX:
 				var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
 				index_count = indices.size()
-			print("[VEGETATION_MATERIAL_INSPECT] %s surface=%d vertices=%d indices=%d primitives=%d material=%s" % [
+			print("[VEGETATION_MATERIAL_INSPECT] %s surface=%d primitive_type=%d vertices=%d uvs=%d indices=%d primitives=%d material=%s" % [
 				kind,
 				surface_index,
+				primitive_type,
 				vertex_count,
+				uv_count,
 				index_count,
 				(index_count if index_count > 0 else vertex_count) / 3,
 				_describe_material(material)

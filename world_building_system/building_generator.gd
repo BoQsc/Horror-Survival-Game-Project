@@ -63,6 +63,7 @@ func load_save_data(data: Dictionary) -> void:
 				global_building_positions.append(pos)
 
 func _ready():
+	set_process(false)
 	# Connect to terrain manager signals
 	if terrain_manager and terrain_manager.has_signal("chunk_generated"):
 		terrain_manager.chunk_generated.connect(_on_chunk_generated)
@@ -81,12 +82,15 @@ func _ready():
 
 func _process(delta):
 	if not enabled or spawn_queue.is_empty():
+		set_process(false)
 		return
 	
 	spawn_timer += delta
 	if spawn_timer >= spawn_interval:
 		spawn_timer = 0.0
 		_process_spawn_queue()
+	if spawn_queue.is_empty():
+		set_process(false)
 
 ## Process one building from the queue
 func _process_spawn_queue() -> void:
@@ -155,7 +159,7 @@ func _queue_buildings_for_chunk(chunk_coord: Vector3i, chunk_world_pos: Vector3)
 		global_building_positions.append(spot.position)
 	
 	if spawn_queue.size() > 0:
-		pass
+		set_process(true)
 
 ## Find spots adjacent to roads within this chunk
 func _find_road_adjacent_spots(chunk_pos: Vector3, chunk_size: int) -> Array:

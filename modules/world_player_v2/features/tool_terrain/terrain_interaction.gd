@@ -108,8 +108,6 @@ func _run_target_refresh_tick(delta: float, force: bool = false) -> void:
 	var material_due := _target_material_update_elapsed >= target_material_update_interval
 	if not force and not material_due and not _should_refresh_target_raycast():
 		return
-	if not force and not _should_refresh_target_raycast():
-		return
 	_record_target_raycast_state()
 	if _is_selection_targeting_active():
 		_update_terrain_targeting()

@@ -13,6 +13,7 @@ const VEGETATION_ALPHA_TRIANGLE_OPAQUE_SAMPLE_POINTS := [
 	Vector3(0.0, 0.5, 0.5),
 	Vector3(0.3333333, 0.3333333, 0.3333333)
 ]
+const VEGETATION_ALPHA_TRANSPARENT_SAMPLE_STEPS := 12
 # Tree meshes dominate vegetation primitive cost. Keep tree batch bounds tight
 # so frustum culling can discard off-camera tree batches without changing density.
 const GLOBAL_TREE_RENDER_BOUNDS_PADDING := 6.0
@@ -67,7 +68,10 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(1.0, 180.0, 1.0) var vegetation_mesh_lod_normal_merge_angle: float = 25.0
 @export var vegetation_opaque_material_optimization_enabled: bool = true
 @export var vegetation_split_alpha_scissor_opaque_surfaces_enabled: bool = true
-@export_range(0.0, 1.0, 0.01) var vegetation_alpha_split_min_opaque_fraction: float = 0.25
+@export var vegetation_cull_alpha_scissor_transparent_triangles_enabled: bool = true
+# Tree leaves have a small but meaningful opaque subset. Splitting at 5% keeps
+# visuals identical while moving those triangles out of the alpha-scissor path.
+@export_range(0.0, 1.0, 0.01) var vegetation_alpha_split_min_opaque_fraction: float = 0.05
 @export var world_map_vegetation_render_profile_enabled: bool = true
 # Smaller world-map clusters cost more draw calls but reduce off-frustum tree work.
 @export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 2
@@ -420,6 +424,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_mesh_lod_normal_merge_angle": vegetation_mesh_lod_normal_merge_angle,
 		"vegetation_opaque_material_optimization_enabled": vegetation_opaque_material_optimization_enabled,
 		"vegetation_split_alpha_scissor_opaque_surfaces_enabled": vegetation_split_alpha_scissor_opaque_surfaces_enabled,
+		"vegetation_cull_alpha_scissor_transparent_triangles_enabled": vegetation_cull_alpha_scissor_transparent_triangles_enabled,
 		"vegetation_alpha_split_min_opaque_fraction": vegetation_alpha_split_min_opaque_fraction,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
 		"world_map_vegetation_render_profile_active": _use_world_map_vegetation_render_profile(),
@@ -733,6 +738,7 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	vegetation_mesh_lod_normal_merge_angle = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_MESH_LOD_NORMAL_MERGE_ANGLE", vegetation_mesh_lod_normal_merge_angle, 1.0, 180.0)
 	vegetation_opaque_material_optimization_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION", vegetation_opaque_material_optimization_enabled)
 	vegetation_split_alpha_scissor_opaque_surfaces_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES", vegetation_split_alpha_scissor_opaque_surfaces_enabled)
+	vegetation_cull_alpha_scissor_transparent_triangles_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_CULL_ALPHA_TRANSPARENT_TRIANGLES", vegetation_cull_alpha_scissor_transparent_triangles_enabled)
 	vegetation_alpha_split_min_opaque_fraction = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_ALPHA_SPLIT_MIN_OPAQUE_FRACTION", vegetation_alpha_split_min_opaque_fraction, 0.0, 1.0)
 	vegetation_global_render_flushes_per_frame = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_FLUSHES_PER_FRAME", vegetation_global_render_flushes_per_frame, 1, 32)
 	vegetation_global_render_flush_budget_ms = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_FLUSH_BUDGET_MS", vegetation_global_render_flush_budget_ms, 0.0, 16.0)
@@ -815,6 +821,8 @@ func _on_collider_update_timer_timeout() -> void:
 func _request_collider_update_soon() -> void:
 	if _shutdown_clear_started:
 		return
+	if not vegetation_colliders_enabled:
+		return
 	if _collider_update_deferred_pending or not is_inside_tree():
 		return
 	_collider_update_deferred_pending = true
@@ -823,6 +831,8 @@ func _request_collider_update_soon() -> void:
 func _run_deferred_collider_refresh_tick() -> void:
 	_collider_update_deferred_pending = false
 	if _shutdown_clear_started:
+		return
+	if not vegetation_colliders_enabled:
 		return
 	if not is_inside_tree():
 		return
@@ -2885,6 +2895,9 @@ func _process_queued_collider_updates():
 
 
 func _mark_collider_refresh_dirty() -> void:
+	if not vegetation_colliders_enabled:
+		_collider_refresh_dirty = false
+		return
 	_collider_refresh_dirty = true
 	_request_collider_update_soon()
 
@@ -5241,7 +5254,7 @@ func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh, preserve_sou
 		for surface_index in range(mesh.get_surface_count()):
 			if _is_material_alpha_pipeline(mesh.surface_get_material(surface_index)):
 				skipped_alpha_surfaces += 1
-		_record_alpha_split_counts(kind, 0, 0, 0, skipped_alpha_surfaces, mesh.get_surface_count())
+		_record_alpha_split_counts(kind, 0, 0, 0, 0, skipped_alpha_surfaces, mesh.get_surface_count())
 		return mesh
 
 	var split_mesh := ArrayMesh.new()
@@ -5249,6 +5262,7 @@ func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh, preserve_sou
 	var split_surface_count := 0
 	var split_opaque_triangles := 0
 	var split_alpha_triangles := 0
+	var culled_transparent_triangles := 0
 	var skipped_surfaces := 0
 	var lod_preserved_surfaces := 0
 	for surface_index in range(mesh.get_surface_count()):
@@ -5269,13 +5283,51 @@ func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh, preserve_sou
 		var split := _split_alpha_scissor_surface_arrays(material as BaseMaterial3D, arrays)
 		var opaque_triangles := int(split.get("opaque_triangles", 0))
 		var alpha_triangles := int(split.get("alpha_triangles", 0))
-		if opaque_triangles <= 0 or alpha_triangles <= 0:
+		var transparent_triangles := int(split.get("transparent_triangles", 0))
+		var visible_triangles := opaque_triangles + alpha_triangles
+		if visible_triangles <= 0:
+			if transparent_triangles > 0:
+				changed = true
+				culled_transparent_triangles += transparent_triangles
+				continue
 			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			continue
+		if alpha_triangles <= 0:
+			if transparent_triangles > 0:
+				var opaque_only_arrays: Array = split.get("opaque_arrays", [])
+				var opaque_only_material := _make_opaque_vegetation_material_copy(material as BaseMaterial3D)
+				split_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, opaque_only_arrays)
+				split_mesh.surface_set_material(split_mesh.get_surface_count() - 1, opaque_only_material)
+				changed = true
+				split_surface_count += 1
+				split_opaque_triangles += opaque_triangles
+				culled_transparent_triangles += transparent_triangles
+			else:
+				_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			continue
+		if opaque_triangles <= 0:
+			if transparent_triangles > 0:
+				var alpha_only_arrays: Array = split.get("alpha_arrays", [])
+				split_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, alpha_only_arrays)
+				split_mesh.surface_set_material(split_mesh.get_surface_count() - 1, material)
+				changed = true
+				split_alpha_triangles += alpha_triangles
+				culled_transparent_triangles += transparent_triangles
+			else:
+				_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
 			continue
 		var total_split_triangles := opaque_triangles + alpha_triangles
 		var opaque_fraction := float(opaque_triangles) / float(maxi(total_split_triangles, 1))
 		if opaque_fraction < vegetation_alpha_split_min_opaque_fraction:
-			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			if transparent_triangles > 0:
+				var visible_arrays: Array = split.get("visible_arrays", [])
+				split_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, visible_arrays)
+				split_mesh.surface_set_material(split_mesh.get_surface_count() - 1, material)
+				changed = true
+				split_alpha_triangles += total_split_triangles
+				culled_transparent_triangles += transparent_triangles
+			else:
+				_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
 			if _is_material_alpha_pipeline(material):
 				skipped_surfaces += 1
 			continue
@@ -5291,21 +5343,24 @@ func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh, preserve_sou
 		split_surface_count += 1
 		split_opaque_triangles += opaque_triangles
 		split_alpha_triangles += alpha_triangles
+		culled_transparent_triangles += transparent_triangles
 
-	_record_alpha_split_counts(kind, split_surface_count, split_opaque_triangles, split_alpha_triangles, skipped_surfaces, lod_preserved_surfaces)
+	_record_alpha_split_counts(kind, split_surface_count, split_opaque_triangles, split_alpha_triangles, culled_transparent_triangles, skipped_surfaces, lod_preserved_surfaces)
 	if not changed:
 		return mesh
 	return split_mesh
 
-func _record_alpha_split_counts(kind: String, split_surface_count: int, split_opaque_triangles: int, split_alpha_triangles: int, skipped_surfaces: int, lod_preserved_surfaces: int) -> void:
+func _record_alpha_split_counts(kind: String, split_surface_count: int, split_opaque_triangles: int, split_alpha_triangles: int, culled_transparent_triangles: int, skipped_surfaces: int, lod_preserved_surfaces: int) -> void:
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_surfaces" % kind] = split_surface_count
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_opaque_triangles" % kind] = split_opaque_triangles
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_alpha_triangles" % kind] = split_alpha_triangles
+	_vegetation_opaque_material_optimization_counts["%s_alpha_split_culled_transparent_triangles" % kind] = culled_transparent_triangles
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_skipped_surfaces" % kind] = skipped_surfaces
 	_vegetation_opaque_material_optimization_counts["%s_alpha_split_lod_preserved_surfaces" % kind] = lod_preserved_surfaces
 	_vegetation_opaque_material_optimization_counts["total_alpha_split_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_surfaces", 0)) + split_surface_count
 	_vegetation_opaque_material_optimization_counts["total_alpha_split_opaque_triangles"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_opaque_triangles", 0)) + split_opaque_triangles
 	_vegetation_opaque_material_optimization_counts["total_alpha_split_alpha_triangles"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_alpha_triangles", 0)) + split_alpha_triangles
+	_vegetation_opaque_material_optimization_counts["total_alpha_split_culled_transparent_triangles"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_culled_transparent_triangles", 0)) + culled_transparent_triangles
 	_vegetation_opaque_material_optimization_counts["total_alpha_split_lod_preserved_surfaces"] = int(_vegetation_opaque_material_optimization_counts.get("total_alpha_split_lod_preserved_surfaces", 0)) + lod_preserved_surfaces
 
 func _add_surface_copy_to_mesh(target: ArrayMesh, source: Mesh, surface_index: int, arrays: Array, material: Material) -> void:
@@ -5345,8 +5400,10 @@ func _split_alpha_scissor_surface_arrays(material: BaseMaterial3D, arrays: Array
 	var result := {
 		"opaque_arrays": _make_empty_split_surface_arrays(arrays),
 		"alpha_arrays": _make_empty_split_surface_arrays(arrays),
+		"visible_arrays": _make_empty_split_surface_arrays(arrays),
 		"opaque_triangles": 0,
-		"alpha_triangles": 0
+		"alpha_triangles": 0,
+		"transparent_triangles": 0
 	}
 	var image := material.albedo_texture.get_image() if material.albedo_texture != null else null
 	if image == null or image.is_empty():
@@ -5363,20 +5420,28 @@ func _split_alpha_scissor_surface_arrays(material: BaseMaterial3D, arrays: Array
 			var ic := int(indices[i + 2])
 			if ia < 0 or ib < 0 or ic < 0 or ia >= uvs.size() or ib >= uvs.size() or ic >= uvs.size():
 				continue
-			if _is_alpha_triangle_fully_opaque(material, image, uvs[ia], uvs[ib], uvs[ic]):
+			if _is_alpha_triangle_fully_transparent(material, image, uvs[ia], uvs[ib], uvs[ic]):
+				result["transparent_triangles"] = int(result["transparent_triangles"]) + 1
+			elif _is_alpha_triangle_fully_opaque(material, image, uvs[ia], uvs[ib], uvs[ic]):
 				_append_triangle_to_split_arrays(arrays, result["opaque_arrays"], ia, ib, ic)
+				_append_triangle_to_split_arrays(arrays, result["visible_arrays"], ia, ib, ic)
 				result["opaque_triangles"] = int(result["opaque_triangles"]) + 1
 			else:
 				_append_triangle_to_split_arrays(arrays, result["alpha_arrays"], ia, ib, ic)
+				_append_triangle_to_split_arrays(arrays, result["visible_arrays"], ia, ib, ic)
 				result["alpha_triangles"] = int(result["alpha_triangles"]) + 1
 	else:
 		var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		for i in range(0, vertices.size(), 3):
-			if _is_alpha_triangle_fully_opaque(material, image, uvs[i], uvs[i + 1], uvs[i + 2]):
+			if _is_alpha_triangle_fully_transparent(material, image, uvs[i], uvs[i + 1], uvs[i + 2]):
+				result["transparent_triangles"] = int(result["transparent_triangles"]) + 1
+			elif _is_alpha_triangle_fully_opaque(material, image, uvs[i], uvs[i + 1], uvs[i + 2]):
 				_append_triangle_to_split_arrays(arrays, result["opaque_arrays"], i, i + 1, i + 2)
+				_append_triangle_to_split_arrays(arrays, result["visible_arrays"], i, i + 1, i + 2)
 				result["opaque_triangles"] = int(result["opaque_triangles"]) + 1
 			else:
 				_append_triangle_to_split_arrays(arrays, result["alpha_arrays"], i, i + 1, i + 2)
+				_append_triangle_to_split_arrays(arrays, result["visible_arrays"], i, i + 1, i + 2)
 				result["alpha_triangles"] = int(result["alpha_triangles"]) + 1
 	return result
 
@@ -5482,13 +5547,102 @@ func _is_alpha_triangle_fully_opaque(material: BaseMaterial3D, image: Image, uv0
 			return false
 	return true
 
-func _sample_alpha_texture(image: Image, uv: Vector2) -> float:
+func _is_alpha_triangle_fully_transparent(material: BaseMaterial3D, image: Image, uv0: Vector2, uv1: Vector2, uv2: Vector2) -> bool:
+	if not vegetation_cull_alpha_scissor_transparent_triangles_enabled:
+		return false
+	if not _can_cull_alpha_transparent_uv_triangle(uv0, uv1, uv2):
+		return false
+	var threshold := material.alpha_scissor_threshold
+	if threshold <= 0.0:
+		threshold = 0.5
+	var color_alpha := material.albedo_color.a
+	if _alpha_triangle_has_visible_sample_grid(image, uv0, uv1, uv2, threshold, color_alpha, false):
+		return false
+	if _alpha_triangle_has_visible_sample_grid(image, uv0, uv1, uv2, threshold, color_alpha, true):
+		return false
+	if _alpha_triangle_has_visible_texel(image, uv0, uv1, uv2, threshold, color_alpha, false):
+		return false
+	if _alpha_triangle_has_visible_texel(image, uv0, uv1, uv2, threshold, color_alpha, true):
+		return false
+	return true
+
+func _can_cull_alpha_transparent_uv_triangle(uv0: Vector2, uv1: Vector2, uv2: Vector2) -> bool:
+	var min_u := minf(uv0.x, minf(uv1.x, uv2.x))
+	var max_u := maxf(uv0.x, maxf(uv1.x, uv2.x))
+	var min_v := minf(uv0.y, minf(uv1.y, uv2.y))
+	var max_v := maxf(uv0.y, maxf(uv1.y, uv2.y))
+	# GLB UVs may be offset outside 0..1 while still sampling the same texture
+	# island. Only reject large tiled spans; seam-crossing normalized triangles
+	# are rejected later by the texel coverage check.
+	return max_u - min_u <= 1.0 and max_v - min_v <= 1.0
+
+func _alpha_triangle_has_visible_sample_grid(image: Image, uv0: Vector2, uv1: Vector2, uv2: Vector2, threshold: float, color_alpha: float, flip_v: bool) -> bool:
+	var steps := maxi(VEGETATION_ALPHA_TRANSPARENT_SAMPLE_STEPS, 1)
+	for a in range(steps + 1):
+		for b in range(steps + 1 - a):
+			var weight0 := float(a) / float(steps)
+			var weight1 := float(b) / float(steps)
+			var weight2 := 1.0 - weight0 - weight1
+			var uv := uv0 * weight0 + uv1 * weight1 + uv2 * weight2
+			if _sample_alpha_texture(image, uv, flip_v) * color_alpha >= threshold:
+				return true
+	return false
+
+func _alpha_triangle_has_visible_texel(image: Image, uv0: Vector2, uv1: Vector2, uv2: Vector2, threshold: float, color_alpha: float, flip_v: bool) -> bool:
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return true
+	uv0 = _wrap_uv_for_alpha_cull(uv0)
+	uv1 = _wrap_uv_for_alpha_cull(uv1)
+	uv2 = _wrap_uv_for_alpha_cull(uv2)
+	if flip_v:
+		uv0 = Vector2(uv0.x, 1.0 - uv0.y)
+		uv1 = Vector2(uv1.x, 1.0 - uv1.y)
+		uv2 = Vector2(uv2.x, 1.0 - uv2.y)
+	var min_u := minf(uv0.x, minf(uv1.x, uv2.x))
+	var max_u := maxf(uv0.x, maxf(uv1.x, uv2.x))
+	var min_v := minf(uv0.y, minf(uv1.y, uv2.y))
+	var max_v := maxf(uv0.y, maxf(uv1.y, uv2.y))
+	if max_u - min_u > 0.75 or max_v - min_v > 0.75:
+		return true
+	var x0 := clampi(int(floor(min_u * float(width))) - 1, 0, width - 1)
+	var x1 := clampi(int(ceil(max_u * float(width))) + 1, 0, width - 1)
+	var y0 := clampi(int(floor(min_v * float(height))) - 1, 0, height - 1)
+	var y1 := clampi(int(ceil(max_v * float(height))) + 1, 0, height - 1)
+	var uv_epsilon := 1.5 / float(maxi(mini(width, height), 1))
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			var texel_uv := Vector2((float(x) + 0.5) / float(width), (float(y) + 0.5) / float(height))
+			if not _is_point_in_uv_triangle(texel_uv, uv0, uv1, uv2, uv_epsilon):
+				continue
+			if image.get_pixel(x, y).a * color_alpha >= threshold:
+				return true
+	return false
+
+func _wrap_uv_for_alpha_cull(uv: Vector2) -> Vector2:
+	return Vector2(fposmod(uv.x, 1.0), fposmod(uv.y, 1.0))
+
+func _is_point_in_uv_triangle(point: Vector2, uv0: Vector2, uv1: Vector2, uv2: Vector2, epsilon: float) -> bool:
+	var d0 := _uv_edge_sign(point, uv0, uv1)
+	var d1 := _uv_edge_sign(point, uv1, uv2)
+	var d2 := _uv_edge_sign(point, uv2, uv0)
+	var has_negative := d0 < -epsilon or d1 < -epsilon or d2 < -epsilon
+	var has_positive := d0 > epsilon or d1 > epsilon or d2 > epsilon
+	return not (has_negative and has_positive)
+
+func _uv_edge_sign(point: Vector2, edge_a: Vector2, edge_b: Vector2) -> float:
+	return (point.x - edge_b.x) * (edge_a.y - edge_b.y) - (edge_a.x - edge_b.x) * (point.y - edge_b.y)
+
+func _sample_alpha_texture(image: Image, uv: Vector2, flip_v: bool = false) -> float:
 	var width := image.get_width()
 	var height := image.get_height()
 	if width <= 0 or height <= 0:
 		return 0.0
 	var u := fposmod(uv.x, 1.0)
 	var v := fposmod(uv.y, 1.0)
+	if flip_v:
+		v = 1.0 - v
 	var x := clampi(int(floor(u * float(width))), 0, width - 1)
 	var y := clampi(int(floor(v * float(height))), 0, height - 1)
 	return image.get_pixel(x, y).a

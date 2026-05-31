@@ -8,6 +8,7 @@ var current_target_ref: Variant = null
 var enabled: bool = true  # Can be toggled via debug menu
 
 func _ready() -> void:
+	set_process(false)
 	_create_target_box()
 	
 	if has_node("/root/PlayerSignals"):
@@ -37,11 +38,13 @@ func _on_durability_hit(_current_hp: int, _max_hp: int, _target_name: String, ta
 	
 	current_target_ref = target_ref
 	_update_box_position()
+	set_process(true)
 
 func _on_durability_cleared() -> void:
 	if target_box:
 		target_box.visible = false
 	current_target_ref = null
+	set_process(false)
 
 func _process(_delta: float) -> void:
 	if current_target_ref != null and enabled:
@@ -49,6 +52,7 @@ func _process(_delta: float) -> void:
 	else:
 		if target_box:
 			target_box.visible = false
+		set_process(false)
 
 func _update_box_position() -> void:
 	if not target_box:

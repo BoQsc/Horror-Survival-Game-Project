@@ -2,11 +2,21 @@ extends Node
 ## Collision Debugger - Shows collision info when holding a key
 ## Toggle with F10, shows info when holding Left Alt
 
-var enabled: bool = false
+var _enabled: bool = false
+var enabled: bool:
+	get:
+		return _enabled
+	set(value):
+		_enabled = value
+		if is_inside_tree():
+			set_process(_enabled)
+		if not _enabled and label:
+			label.visible = false
 var label: Label = null
 var last_collider_info: String = ""
 
 func _ready():
+	set_process(_enabled)
 	# Create on-screen label
 	label = Label.new()
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT

@@ -51,7 +51,7 @@ const ENABLE_GPU_CLEANUP: bool = true
 func _init():
 	mutex = Mutex.new()
 	semaphore = Semaphore.new()
-	set_process(true)
+	set_process(false)
 
 	if not ClassDB.class_exists("MeshBuilder"):
 		push_error("[BuildingMesher] MeshBuilder GDExtension is required.")
@@ -65,6 +65,7 @@ func _init():
 
 func _process(_delta: float) -> void:
 	if _shutdown_requested:
+		set_process(false)
 		return
 	var apply_items: Array = []
 	mutex.lock()
@@ -83,6 +84,7 @@ func _process(_delta: float) -> void:
 	if pending_apply_queue_index >= pending_apply_queue.size():
 		pending_apply_queue.clear()
 		pending_apply_queue_index = 0
+	var has_more_apply_work := pending_apply_queue_index < pending_apply_queue.size()
 	mutex.unlock()
 
 	for item_variant in apply_items:
@@ -98,6 +100,13 @@ func _process(_delta: float) -> void:
 			item.get("mesh", null),
 			item.get("collision_boxes", [])
 		)
+	set_process(has_more_apply_work)
+
+func _wake_apply_process() -> void:
+	if _shutdown_requested:
+		return
+	if not is_processing():
+		set_process(true)
 
 func _get_native_builder() -> Object:
 	if native_builder and is_instance_valid(native_builder):
@@ -348,6 +357,7 @@ func _thread_loop():
 				"collision_boxes": collision_boxes
 			})
 			mutex.unlock()
+			call_deferred("_wake_apply_process")
 	
 	# Cleanup persistent resources
 	rd.free_rid(vertex_buffer)
