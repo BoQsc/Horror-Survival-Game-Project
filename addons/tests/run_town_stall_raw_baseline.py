@@ -426,6 +426,49 @@ def _summarize_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
+def _wait_for_preflight_gpu_temperature(
+    max_temp_c: float,
+    timeout_seconds: float,
+    poll_seconds: float,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "enabled": max_temp_c > 0,
+        "max_temp_c": max_temp_c,
+        "timeout_seconds": timeout_seconds,
+        "poll_seconds": poll_seconds,
+        "samples": [],
+        "reached": True,
+    }
+    if max_temp_c <= 0:
+        return result
+
+    deadline = time.time() + max(0.0, timeout_seconds)
+    poll_seconds = max(1.0, poll_seconds)
+    print(f"Preflight GPU cooldown gate: waiting for temp <= {max_temp_c:.1f}C")
+    while True:
+        sample = _query_gpu_sample("preflight_cooldown")
+        result["samples"].append(sample)
+        temp_c = sample.get("temp_c")
+        if isinstance(temp_c, (int, float)):
+            power_w = sample.get("power_w")
+            pstate = sample.get("pstate", "?")
+            power_text = f", {float(power_w):.2f}W" if isinstance(power_w, (int, float)) else ""
+            print(f"  GPU temp {float(temp_c):.1f}C{power_text}, {pstate}")
+            if float(temp_c) <= max_temp_c:
+                break
+        elif sample.get("error"):
+            print(f"  GPU sample unavailable: {sample.get('error')}")
+
+        if time.time() >= deadline:
+            result["reached"] = False
+            break
+        time.sleep(min(poll_seconds, max(0.0, deadline - time.time())))
+
+    result["summary"] = _summarize_samples(result["samples"])
+    result["duration_s"] = max(0.0, time.time() - (deadline - max(0.0, timeout_seconds)))
+    return result
+
+
 def _summarize_time_window(
     samples: list[dict[str, Any]],
     end_epoch: float,
@@ -487,6 +530,57 @@ def _extract_town_phase_epochs(snapshot: dict[str, Any]) -> dict[str, float]:
         if isinstance(epoch, (int, float)):
             phase_epochs[label] = float(epoch)
     return phase_epochs
+
+
+def _summarize_directional_render_gpu(
+    samples: list[dict[str, Any]],
+    directional_render_sampling: dict[str, Any],
+) -> dict[str, Any]:
+    windows = directional_render_sampling.get("windows", {})
+    if not isinstance(windows, dict):
+        return {}
+    gpu_windows: dict[str, Any] = {}
+    for label, window in windows.items():
+        if not isinstance(window, dict):
+            continue
+        start_epoch = window.get("start_epoch")
+        end_epoch = window.get("end_epoch")
+        if not isinstance(start_epoch, (int, float)) or not isinstance(end_epoch, (int, float)):
+            continue
+        gpu_windows[str(label)] = _summarize_time_range(
+            samples,
+            float(start_epoch),
+            float(end_epoch),
+            trim_start_seconds=0.0,
+            trim_end_seconds=0.0,
+        )
+    return gpu_windows
+
+
+def _directional_render_summary_text(snapshot: dict[str, Any]) -> str:
+    directional = snapshot.get("directional_render_sampling", {})
+    if not isinstance(directional, dict) or not directional.get("enabled"):
+        return ""
+    windows = directional.get("windows", {})
+    if not isinstance(windows, dict):
+        return ""
+    primitive_values: list[float] = []
+    fps_values: list[float] = []
+    for window in windows.values():
+        if not isinstance(window, dict) or int(window.get("sample_count", 0) or 0) <= 0:
+            continue
+        primitives = window.get("avg_primitives")
+        fps = window.get("avg_fps")
+        if isinstance(primitives, (int, float)):
+            primitive_values.append(float(primitives))
+        if isinstance(fps, (int, float)):
+            fps_values.append(float(fps))
+    if not primitive_values:
+        return " directional=enabled_no_samples"
+    text = f" directional_primitives={min(primitive_values):.0f}-{max(primitive_values):.0f}"
+    if fps_values:
+        text += f" directional_fps={min(fps_values):.1f}-{max(fps_values):.1f}"
+    return text
 
 
 def _latest_snapshot(since_mtime: float) -> Optional[Path]:
@@ -624,6 +718,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     moving_peak_sample = moving_entry_window.get("peak_entry_sample", {})
     stationary_peak_sample = stationary_hold_window.get("peak_entry_sample", {})
     telemetry = snapshot.get("system_telemetry", {}).get("terrain_manager", {})
+    vegetation_telemetry = snapshot.get("system_telemetry", {}).get("vegetation_manager", {})
     runtime_power = {
         key: telemetry.get(key)
         for key in [
@@ -758,6 +853,35 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         ]
         if key in telemetry
     }
+    vegetation_render = {
+        key: vegetation_telemetry.get(key)
+        for key in [
+            "global_render_batch_count",
+            "global_tree_render_batch_count",
+            "global_grass_render_batch_count",
+            "global_rock_render_batch_count",
+            "global_tree_render_instances",
+            "global_grass_render_instances",
+            "global_rock_render_instances",
+            "global_render_estimated_primitives",
+            "global_tree_render_estimated_primitives",
+            "global_grass_render_estimated_primitives",
+            "global_rock_render_estimated_primitives",
+            "global_render_estimated_alpha_primitives",
+            "global_render_estimated_alpha_empty_primitive_equivalent",
+            "tree_global_render_bounds_padding",
+            "grass_global_render_bounds_padding",
+            "rock_global_render_bounds_padding",
+            "effective_vegetation_render_cluster_size",
+            "effective_vegetation_grass_render_cluster_size",
+            "effective_vegetation_rock_render_cluster_size",
+            "global_tree_avg_batch_bounds_horizontal_area",
+            "global_tree_max_batch_bounds_horizontal_area",
+            "global_tree_max_batch_bounds_height",
+            "global_tree_max_batch_bounds_diagonal",
+        ]
+        if key in vegetation_telemetry
+    }
     return {
         "snapshot_path": str(path),
         "benchmark": {
@@ -808,6 +932,8 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         "stream_gate": stream_gate,
         "content": content,
         "terrain_batch": terrain_batch,
+        "vegetation_render": vegetation_render,
+        "directional_render_sampling": snapshot.get("directional_render_sampling", {}),
     }
 
 
@@ -878,6 +1004,10 @@ def _run_idle_sample(label: str, seconds: float, interval_seconds: float) -> dic
     }
 
 
+def _write_payload(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bool) -> dict[str, str]:
     env = os.environ.copy()
     for key in RESET_ENV_KEYS:
@@ -892,7 +1022,7 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
             "TOWN_STALL_TIMEOUT_SECONDS": os.environ.get("TOWN_STALL_TIMEOUT_SECONDS", str(default_timeout_seconds)),
             "TOWN_STALL_MACHINE_WARMUP_DISABLED": os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1"),
             "TOWN_STALL_DISABLE_BUILDINGS": "0",
-            "TOWN_STALL_DISABLE_ENTITIES": "0",
+            "TOWN_STALL_DISABLE_ENTITIES": os.environ.get("TOWN_STALL_DISABLE_ENTITIES", "0"),
             "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES": "0",
             "TOWN_STALL_DISABLE_EXIT_AUTOSAVE": "1",
             "TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK": os.environ.get("TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK", "1"),
@@ -998,13 +1128,21 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
     stderr = "".join(stderr_lines)
     ended = time.time()
     sampler.stop()
-    _assert_no_godot_processes()
+    orphaned_godot_processes: list[dict[str, Any]] = []
+    orphaned_godot_reason = ""
+    try:
+        _assert_no_godot_processes()
+    except RuntimeError as exc:
+        orphaned_godot_reason = repr(exc)
+        orphaned_godot_processes = _terminate_godot_processes_for_thermal_abort()
 
     snapshot_path = _latest_snapshot(run_start_mtime - 1.0)
     snapshot = _load_snapshot_summary(snapshot_path)
     returncode = proc.returncode if proc.returncode is not None else -1
     output = (stdout or "") + "\n" + (stderr or "")
     failure_reasons = town_runner._detect_run_failure(output, returncode)
+    if orphaned_godot_reason:
+        failure_reasons.append("orphaned_godot_after_run")
     if thermal_abort_reason:
         failure_reasons.append(f"thermal_abort:{thermal_abort_reason}")
     if timeout_reason:
@@ -1018,7 +1156,16 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
         "case": case_name,
         "repeat_index": repeat_index,
         "description": CASE_DEFINITIONS[case_name]["description"],
-        "env_overrides": {key: env.get(key, "") for key in sorted(set(RESET_ENV_KEYS + ["TOWN_STALL_HOLD_SECONDS", "TOWN_STALL_MEASURE_FULL_FLIGHT", "TOWN_STALL_REPEAT_ENTRY"]))},
+        "env_overrides": {key: env.get(key, "") for key in sorted(set(RESET_ENV_KEYS + [
+            "TOWN_STALL_HOLD_SECONDS",
+            "TOWN_STALL_MEASURE_FULL_FLIGHT",
+            "TOWN_STALL_REPEAT_ENTRY",
+            "TOWN_STALL_DIRECTIONAL_RENDER_SAMPLING",
+            "TOWN_STALL_DIRECTIONAL_RENDER_SAMPLE_SECONDS",
+            "TOWN_STALL_DIRECTIONAL_RENDER_SETTLE_SECONDS",
+            "TOWN_STALL_PERIODIC_PREHOLD_SNAPSHOTS",
+            "TOWN_STALL_PREHOLD_SNAPSHOT_INTERVAL_SECONDS",
+        ]))},
         "started_at_epoch": started,
         "ended_at_epoch": ended,
         "duration_s": ended - started,
@@ -1028,6 +1175,8 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
         "thermal_abort_reason": thermal_abort_reason,
         "thermal_abort_sample": sampler.thermal_abort_sample,
         "terminated_godot_processes": terminated_godot_processes,
+        "orphaned_godot_reason": orphaned_godot_reason,
+        "orphaned_godot_processes": orphaned_godot_processes,
         "all_run_gpu": _summarize_samples(sampler.samples),
         "estimated_hold_gpu": _summarize_time_window(sampler.samples, ended, hold_seconds, trim_end_seconds=1.0),
         "last_30s_gpu": _summarize_time_window(sampler.samples, ended, 30.0, trim_end_seconds=1.0),
@@ -1054,6 +1203,9 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
             trim_start_seconds=2.0,
             trim_end_seconds=1.0,
         )
+    directional_render_sampling = snapshot.get("directional_render_sampling", {}) if isinstance(snapshot, dict) else {}
+    if isinstance(directional_render_sampling, dict) and directional_render_sampling.get("enabled"):
+        result["directional_render_gpu"] = _summarize_directional_render_gpu(sampler.samples, directional_render_sampling)
     if failure_reasons:
         result["stdout_tail"] = "\n".join((stdout or "").splitlines()[-120:])
         result["stderr_tail"] = "\n".join((stderr or "").splitlines()[-120:])
@@ -1068,6 +1220,7 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     town_metrics = run.get("snapshot", {}).get("town_metrics", {})
     content = run.get("snapshot", {}).get("content", {})
     stream = run.get("snapshot", {}).get("stream_gate", {})
+    vegetation = run.get("snapshot", {}).get("vegetation_render", {})
     power = hold.get("avg_power_w")
     last20_power = last20.get("avg_power_w")
     moving_power = moving_gpu.get("avg_power_w") if isinstance(moving_gpu, dict) else None
@@ -1079,9 +1232,12 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     moving_over_40 = moving.get("frames_over_40ms")
     terrain = content.get("rendered_terrain_chunk_count")
     water = content.get("rendered_water_chunk_count")
+    tree_primitives = vegetation.get("global_tree_render_estimated_primitives")
+    tree_bounds = vegetation.get("global_tree_avg_batch_bounds_horizontal_area")
     valid = content.get("content_valid_for_power_compare")
     reasons = content.get("content_validation_reasons")
     gate = stream.get("last_terrain_stream_update_gate_reason")
+    directional_text = _directional_render_summary_text(run.get("snapshot", {}))
     reason_text = ""
     if isinstance(reasons, list) and reasons:
         reason_text = " reasons=" + ";".join(str(reason) for reason in reasons[:4])
@@ -1096,7 +1252,9 @@ def _case_summary_line(run: dict[str, Any]) -> str:
         f"hold_segment={stationary_power:.2f}W " if isinstance(stationary_power, (int, float)) else "hold_segment=? "
     ) + (
         f"pstates={pstate} fps={fps} moving_fps={moving_fps} "
-        f"moving_over40={moving_over_40} terrain={terrain} water={water} valid={valid} gate={gate}{reason_text}"
+        f"moving_over40={moving_over_40} terrain={terrain} water={water} "
+        f"tree_prims={tree_primitives} tree_avg_bounds_area={tree_bounds} "
+        f"valid={valid} gate={gate}{directional_text}{reason_text}"
     )
 
 
@@ -1175,6 +1333,9 @@ def main() -> int:
     parser.add_argument("--measure-full-flight", action="store_true")
     parser.add_argument("--allow-contaminated-idle", action="store_true", help="Run even when raw idle telemetry indicates external CPU/GPU load.")
     parser.add_argument("--max-gpu-temp-c", type=float, default=_float_env("TOWN_STALL_MAX_GPU_TEMP_C", DEFAULT_RUN_MAX_GPU_TEMP_C), help="Abort the active run and terminate Godot if raw nvidia-smi temperature reaches this value. Use 0 to disable.")
+    parser.add_argument("--preflight-max-gpu-temp-c", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_MAX_GPU_TEMP_C", 0.0), help="Wait before launching until raw nvidia-smi GPU temperature is at or below this value. Use 0 to disable.")
+    parser.add_argument("--preflight-cooldown-timeout-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_COOLDOWN_TIMEOUT_SECONDS", 0.0), help="Maximum seconds to wait for the preflight GPU cooldown gate.")
+    parser.add_argument("--preflight-cooldown-poll-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_COOLDOWN_POLL_SECONDS", 10.0), help="Polling interval for the preflight GPU cooldown gate.")
     args = parser.parse_args()
 
     case_names = [case.strip() for case in args.cases.split(",") if case.strip()]
@@ -1195,6 +1356,35 @@ def main() -> int:
     print(f"Raw baseline output: {output_path}")
     _assert_no_godot_processes()
 
+    preflight_cooldown = _wait_for_preflight_gpu_temperature(
+        args.preflight_max_gpu_temp_c,
+        args.preflight_cooldown_timeout_seconds,
+        args.preflight_cooldown_poll_seconds,
+    )
+    if preflight_cooldown.get("enabled") and not preflight_cooldown.get("reached", False):
+        payload = {
+            "started_at_epoch": started,
+            "ended_at_epoch": time.time(),
+            "duration_s": time.time() - started,
+            "project_path": str(PROJECT_PATH),
+            "cases": case_names,
+            "repeats": args.repeats,
+            "hold_seconds": args.hold_seconds,
+            "idle_seconds": args.idle_seconds,
+            "sample_interval_seconds": args.sample_interval,
+            "measure_full_flight": args.measure_full_flight,
+            "allow_contaminated_idle": args.allow_contaminated_idle,
+            "max_gpu_temp_c": args.max_gpu_temp_c,
+            "preflight_max_gpu_temp_c": args.preflight_max_gpu_temp_c,
+            "preflight_cooldown": preflight_cooldown,
+            "aborted_reason": "preflight_gpu_temp_not_cooled",
+            "runs": [],
+        }
+        _write_payload(output_path, payload)
+        print(f"Preflight GPU temperature did not cool to <= {args.preflight_max_gpu_temp_c:.1f}C; refusing to launch.")
+        print(f"Wrote {output_path}")
+        return 4
+
     preflight_machine_state = town_runner._collect_machine_state()
     initial_idle = _run_idle_sample("initial_idle", args.idle_seconds, args.sample_interval)
     contamination_thresholds = _idle_contamination_thresholds()
@@ -1211,6 +1401,8 @@ def main() -> int:
         "measure_full_flight": args.measure_full_flight,
         "allow_contaminated_idle": args.allow_contaminated_idle,
         "max_gpu_temp_c": args.max_gpu_temp_c,
+        "preflight_max_gpu_temp_c": args.preflight_max_gpu_temp_c,
+        "preflight_cooldown": preflight_cooldown,
         "preflight_machine_state": preflight_machine_state,
         "initial_idle": initial_idle,
         "contamination": {
@@ -1225,7 +1417,7 @@ def main() -> int:
         payload["ended_at_epoch"] = time.time()
         payload["duration_s"] = payload["ended_at_epoch"] - started
         payload["aborted_reason"] = "initial_idle_contaminated"
-        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _write_payload(output_path, payload)
         print(f"Initial idle contaminated: {', '.join(initial_contamination_reasons)}")
         print(f"Wrote {output_path}")
         return 3
@@ -1237,9 +1429,23 @@ def main() -> int:
             print(_case_summary_line(payload["runs"][-1]))
             if payload["runs"][-1].get("failure_reasons"):
                 exit_code = 1
+            payload["ended_at_epoch"] = time.time()
+            payload["duration_s"] = payload["ended_at_epoch"] - started
+            payload["aggregate"] = _aggregate_case_runs(payload["runs"])
+            _write_payload(output_path, payload)
 
-    payload["final_idle"] = _run_idle_sample("final_idle", args.idle_seconds, args.sample_interval)
-    final_contamination_reasons = _idle_contamination_reasons(payload["final_idle"], town_runner._collect_machine_state(), contamination_thresholds)
+    final_contamination_reasons: list[str] = []
+    try:
+        payload["final_idle"] = _run_idle_sample("final_idle", args.idle_seconds, args.sample_interval)
+        final_contamination_reasons = _idle_contamination_reasons(payload["final_idle"], town_runner._collect_machine_state(), contamination_thresholds)
+    except RuntimeError as exc:
+        final_contamination_reasons = ["final_idle_orphaned_godot"]
+        payload["final_idle"] = {
+            "label": "final_idle",
+            "error": repr(exc),
+            "terminated_godot_processes": _terminate_godot_processes_for_thermal_abort(),
+        }
+        exit_code = 1
     payload["contamination"]["final_idle_reasons"] = final_contamination_reasons
     payload["contamination"]["final_idle_clean"] = not final_contamination_reasons
     payload["contamination"]["comparison_clean"] = not initial_contamination_reasons and not final_contamination_reasons
@@ -1250,7 +1456,7 @@ def main() -> int:
     payload["ended_at_epoch"] = time.time()
     payload["duration_s"] = payload["ended_at_epoch"] - started
     payload["aggregate"] = _aggregate_case_runs(payload["runs"])
-    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _write_payload(output_path, payload)
 
     print("Aggregate:")
     print(json.dumps(payload["aggregate"], indent=2))

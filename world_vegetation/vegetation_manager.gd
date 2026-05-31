@@ -13,9 +13,9 @@ const VEGETATION_ALPHA_TRIANGLE_OPAQUE_SAMPLE_POINTS := [
 	Vector3(0.0, 0.5, 0.5),
 	Vector3(0.3333333, 0.3333333, 0.3333333)
 ]
-# Keep per-kind bounds conservative by default. Tighter bounds/occlusion can
-# improve some counters, but they risk vegetation popping or missing batches.
-const GLOBAL_TREE_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
+# Tree meshes dominate vegetation primitive cost. Keep tree batch bounds tight
+# so frustum culling can discard off-camera tree batches without changing density.
+const GLOBAL_TREE_RENDER_BOUNDS_PADDING := 6.0
 const GLOBAL_GRASS_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
 const GLOBAL_ROCK_RENDER_BOUNDS_PADDING := GLOBAL_VEGETATION_RENDER_BOUNDS_PADDING
 # Data-ray targeting must pick the object closest to the center aim ray.
@@ -67,6 +67,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(1.0, 180.0, 1.0) var vegetation_mesh_lod_normal_merge_angle: float = 25.0
 @export var vegetation_opaque_material_optimization_enabled: bool = true
 @export var vegetation_split_alpha_scissor_opaque_surfaces_enabled: bool = true
+@export_range(0.0, 1.0, 0.01) var vegetation_alpha_split_min_opaque_fraction: float = 0.25
 @export var world_map_vegetation_render_profile_enabled: bool = true
 # Smaller world-map clusters cost more draw calls but reduce off-frustum tree work.
 @export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 2
@@ -419,6 +420,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"vegetation_mesh_lod_normal_merge_angle": vegetation_mesh_lod_normal_merge_angle,
 		"vegetation_opaque_material_optimization_enabled": vegetation_opaque_material_optimization_enabled,
 		"vegetation_split_alpha_scissor_opaque_surfaces_enabled": vegetation_split_alpha_scissor_opaque_surfaces_enabled,
+		"vegetation_alpha_split_min_opaque_fraction": vegetation_alpha_split_min_opaque_fraction,
 		"world_map_vegetation_render_profile_enabled": world_map_vegetation_render_profile_enabled,
 		"world_map_vegetation_render_profile_active": _use_world_map_vegetation_render_profile(),
 		"world_map_vegetation_render_cluster_size": world_map_vegetation_render_cluster_size,
@@ -495,6 +497,18 @@ func get_telemetry_snapshot() -> Dictionary:
 		"global_tree_max_batch_estimated_primitives": int(tree_render_stats.get("max_batch_estimated_primitives", 0)),
 		"global_grass_max_batch_estimated_primitives": int(grass_render_stats.get("max_batch_estimated_primitives", 0)),
 		"global_rock_max_batch_estimated_primitives": int(rock_render_stats.get("max_batch_estimated_primitives", 0)),
+		"global_tree_avg_batch_bounds_horizontal_area": float(tree_render_stats.get("avg_batch_bounds_horizontal_area", 0.0)),
+		"global_grass_avg_batch_bounds_horizontal_area": float(grass_render_stats.get("avg_batch_bounds_horizontal_area", 0.0)),
+		"global_rock_avg_batch_bounds_horizontal_area": float(rock_render_stats.get("avg_batch_bounds_horizontal_area", 0.0)),
+		"global_tree_max_batch_bounds_horizontal_area": float(tree_render_stats.get("max_batch_bounds_horizontal_area", 0.0)),
+		"global_grass_max_batch_bounds_horizontal_area": float(grass_render_stats.get("max_batch_bounds_horizontal_area", 0.0)),
+		"global_rock_max_batch_bounds_horizontal_area": float(rock_render_stats.get("max_batch_bounds_horizontal_area", 0.0)),
+		"global_tree_max_batch_bounds_height": float(tree_render_stats.get("max_batch_bounds_height", 0.0)),
+		"global_grass_max_batch_bounds_height": float(grass_render_stats.get("max_batch_bounds_height", 0.0)),
+		"global_rock_max_batch_bounds_height": float(rock_render_stats.get("max_batch_bounds_height", 0.0)),
+		"global_tree_max_batch_bounds_diagonal": float(tree_render_stats.get("max_batch_bounds_diagonal", 0.0)),
+		"global_grass_max_batch_bounds_diagonal": float(grass_render_stats.get("max_batch_bounds_diagonal", 0.0)),
+		"global_rock_max_batch_bounds_diagonal": float(rock_render_stats.get("max_batch_bounds_diagonal", 0.0)),
 		"global_render_dirty_kinds": _get_global_render_dirty_kinds(),
 		"global_render_dirty_cluster_count": _global_tree_dirty_clusters.size() + _global_grass_dirty_clusters.size() + _global_rock_dirty_clusters.size(),
 		"global_tree_dirty_cluster_count": _global_tree_dirty_clusters.size(),
@@ -719,6 +733,7 @@ func _configure_vegetation_render_profile_from_env() -> void:
 	vegetation_mesh_lod_normal_merge_angle = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_MESH_LOD_NORMAL_MERGE_ANGLE", vegetation_mesh_lod_normal_merge_angle, 1.0, 180.0)
 	vegetation_opaque_material_optimization_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION", vegetation_opaque_material_optimization_enabled)
 	vegetation_split_alpha_scissor_opaque_surfaces_enabled = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES", vegetation_split_alpha_scissor_opaque_surfaces_enabled)
+	vegetation_alpha_split_min_opaque_fraction = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_ALPHA_SPLIT_MIN_OPAQUE_FRACTION", vegetation_alpha_split_min_opaque_fraction, 0.0, 1.0)
 	vegetation_global_render_flushes_per_frame = _get_vegetation_env_int_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_FLUSHES_PER_FRAME", vegetation_global_render_flushes_per_frame, 1, 32)
 	vegetation_global_render_flush_budget_ms = _get_vegetation_env_float_range("TOWN_STALL_VEGETATION_GLOBAL_RENDER_FLUSH_BUDGET_MS", vegetation_global_render_flush_budget_ms, 0.0, 16.0)
 	vegetation_defer_initial_global_render_flush = _get_vegetation_env_bool("TOWN_STALL_VEGETATION_DEFER_INITIAL_GLOBAL_RENDER_FLUSH", vegetation_defer_initial_global_render_flush)
@@ -1091,6 +1106,10 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 	var batch_count := 0
 	var instance_count := 0
 	var max_batch_instances := 0
+	var total_batch_bounds_horizontal_area := 0.0
+	var max_batch_bounds_horizontal_area := 0.0
+	var max_batch_bounds_height := 0.0
+	var max_batch_bounds_diagonal := 0.0
 	var clusters := _get_global_render_cluster_dictionary(kind)
 	for batch_variant in clusters.values():
 		var batch := batch_variant as MultiMeshInstance3D
@@ -1100,6 +1119,12 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 		batch_count += 1
 		instance_count += batch_instances
 		max_batch_instances = maxi(max_batch_instances, batch_instances)
+		var batch_bounds := batch.multimesh.custom_aabb
+		var horizontal_area := maxf(batch_bounds.size.x, 0.0) * maxf(batch_bounds.size.z, 0.0)
+		total_batch_bounds_horizontal_area += horizontal_area
+		max_batch_bounds_horizontal_area = maxf(max_batch_bounds_horizontal_area, horizontal_area)
+		max_batch_bounds_height = maxf(max_batch_bounds_height, maxf(batch_bounds.size.y, 0.0))
+		max_batch_bounds_diagonal = maxf(max_batch_bounds_diagonal, batch_bounds.size.length())
 	return {
 		"mesh_primitives": mesh_primitives,
 		"mesh_surfaces": mesh_surfaces,
@@ -1121,7 +1146,11 @@ func _get_global_render_kind_telemetry(kind: String) -> Dictionary:
 		"estimated_surface_draws": mesh_surfaces * batch_count,
 		"max_batch_instances": max_batch_instances,
 		"max_batch_estimated_primitives": mesh_primitives * max_batch_instances,
-		"avg_batch_instances": float(instance_count) / float(batch_count) if batch_count > 0 else 0.0
+		"avg_batch_instances": float(instance_count) / float(batch_count) if batch_count > 0 else 0.0,
+		"avg_batch_bounds_horizontal_area": total_batch_bounds_horizontal_area / float(batch_count) if batch_count > 0 else 0.0,
+		"max_batch_bounds_horizontal_area": max_batch_bounds_horizontal_area,
+		"max_batch_bounds_height": max_batch_bounds_height,
+		"max_batch_bounds_diagonal": max_batch_bounds_diagonal
 	}
 
 func _get_global_render_batch_count() -> int:
@@ -5056,11 +5085,14 @@ func _prepare_vegetation_mesh_materials(kind: String, mesh: Mesh) -> Mesh:
 	if mesh == null:
 		return mesh
 	_record_vegetation_mesh_lod_stage(kind, "source", mesh)
-	var prepared_mesh := _generate_missing_vegetation_mesh_lods(kind, mesh)
-	_record_vegetation_mesh_lod_stage(kind, "generated", prepared_mesh)
-	var preserve_lod_candidate := vegetation_preserve_imported_mesh_lods_enabled and _is_mesh_lod_preservation_candidate(prepared_mesh)
-	prepared_mesh = _optimize_opaque_vegetation_mesh_materials(kind, prepared_mesh)
+	var source_lod_summary := _get_mesh_lod_summary(mesh)
+	var source_has_exposed_lods := int(source_lod_summary.get("mesh_lod_levels", 0)) > 0
+	var preserve_lod_candidate := vegetation_preserve_imported_mesh_lods_enabled and source_has_exposed_lods
+	var prepared_mesh := _optimize_opaque_vegetation_mesh_materials(kind, mesh)
 	prepared_mesh = _split_alpha_scissor_opaque_surfaces(kind, prepared_mesh, preserve_lod_candidate)
+	_record_vegetation_mesh_lod_stage(kind, "split", prepared_mesh)
+	prepared_mesh = _generate_missing_vegetation_mesh_lods(kind, prepared_mesh)
+	_record_vegetation_mesh_lod_stage(kind, "generated", prepared_mesh)
 	_record_vegetation_mesh_lod_stage(kind, "prepared", prepared_mesh)
 	_vegetation_mesh_stats_cache.clear()
 	return prepared_mesh
@@ -5239,6 +5271,13 @@ func _split_alpha_scissor_opaque_surfaces(kind: String, mesh: Mesh, preserve_sou
 		var alpha_triangles := int(split.get("alpha_triangles", 0))
 		if opaque_triangles <= 0 or alpha_triangles <= 0:
 			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			continue
+		var total_split_triangles := opaque_triangles + alpha_triangles
+		var opaque_fraction := float(opaque_triangles) / float(maxi(total_split_triangles, 1))
+		if opaque_fraction < vegetation_alpha_split_min_opaque_fraction:
+			_add_surface_copy_to_mesh(split_mesh, mesh, surface_index, arrays, material)
+			if _is_material_alpha_pipeline(material):
+				skipped_surfaces += 1
 			continue
 
 		var opaque_arrays: Array = split.get("opaque_arrays", [])

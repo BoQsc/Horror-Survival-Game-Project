@@ -24,11 +24,14 @@ const RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT := 24
 const RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT := 4
 const PEAK_ENTRY_SAMPLE_LIMIT := 12
 const HOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
+const PREHOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
 const HOLD_STREAM_READY_LOG_INTERVAL_SECONDS := 5.0
 const HOLD_SETTLE_STABLE_FRAMES := 30
 const HOLD_SETTLE_MAX_SECONDS := 8.0
 const HOLD_SETTLE_POSITION_EPSILON := 0.05
 const HOLD_SETTLE_VELOCITY_EPSILON := 0.15
+const DIRECTIONAL_RENDER_SAMPLE_SECONDS := 4.0
+const DIRECTIONAL_RENDER_SETTLE_SECONDS := 0.75
 
 enum Phase {
 	GENERATING,
@@ -103,6 +106,13 @@ var render_diagnostics_threshold_ms: float = FRAME_BUDGET_MS
 var render_diagnostics_sample_limit: int = RENDER_DIAGNOSTIC_DEFAULT_LIMIT
 var render_diagnostics_scene_detail_limit: int = RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT
 var render_diagnostics_frame_scene_scan_limit: int = RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT
+var directional_render_sampling_enabled: bool = false
+var directional_render_sample_seconds: float = DIRECTIONAL_RENDER_SAMPLE_SECONDS
+var directional_render_settle_seconds: float = DIRECTIONAL_RENDER_SETTLE_SECONDS
+var directional_render_current_label: String = ""
+var directional_render_current_segment_index: int = -1
+var directional_render_started: bool = false
+var directional_render_base_yaw: float = 0.0
 var low_fps_abort_enabled: bool = true
 var low_fps_abort_frame_ms: float = 120.0
 var low_fps_abort_seconds: float = 8.0
@@ -121,6 +131,12 @@ var return_origin: Vector3 = Vector3.ZERO
 var current_hold_seconds: float = HOLD_SECONDS
 var next_hold_snapshot_phase_time: float = -1.0
 var hold_periodic_snapshots_enabled: bool = false
+var prehold_periodic_snapshots_enabled: bool = false
+var prehold_snapshot_interval_seconds: float = PREHOLD_SNAPSHOT_INTERVAL_SECONDS
+var next_prehold_snapshot_elapsed_seconds: float = -1.0
+var town_entry_capture_elapsed_seconds: float = 0.0
+var prehold_snapshot_write_count: int = 0
+var last_prehold_snapshot_elapsed_seconds: float = -1.0
 var hold_wait_stream_ready_enabled: bool = true
 var hold_stream_ready_wait_logged: bool = false
 var hold_stream_ready_last_log_seconds: float = -1000000.0
@@ -292,11 +308,16 @@ func _reset_town_measurement_window(reason: String) -> void:
 	_render_diagnostic_samples.clear()
 	_hold_started_sample_index = -1
 	_hold_completed_sample_index = -1
+	_reset_directional_render_sampling_state()
 	_scope_states.clear()
 	_recent_scope_events.clear()
 	_town_entry_snapshot_stamp = ""
 	_town_entry_capture_reason = reason
 	town_entry_capture_started = true
+	town_entry_capture_elapsed_seconds = 0.0
+	prehold_snapshot_write_count = 0
+	last_prehold_snapshot_elapsed_seconds = -1.0
+	next_prehold_snapshot_elapsed_seconds = prehold_snapshot_interval_seconds if prehold_periodic_snapshots_enabled else -1.0
 	_town_entry_latest_town_state.clear()
 	_town_entry_latest_entities_state.clear()
 	_emit_scope_state("town_stall_test", {
@@ -328,6 +349,8 @@ func _capture_native_town_entry_sample(delta: float) -> void:
 	_town_entry_samples.append(sample)
 	_capture_render_diagnostic_sample(sample)
 	_previous_native_town_entry_sample = sample.duplicate(false)
+	town_entry_capture_elapsed_seconds += maxf(delta, 0.0)
+	_maybe_write_prehold_snapshot()
 	_check_low_fps_abort(sample)
 
 
@@ -655,6 +678,8 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	return {
 		"frame": frame_number,
 		"epoch": Time.get_unix_time_from_system(),
+		"directional_render_label": directional_render_current_label if directional_render_sampling_enabled else "",
+		"directional_render_segment_index": directional_render_current_segment_index if directional_render_sampling_enabled else -1,
 		"fps": fps,
 		"total_ms": total_ms,
 		"frame_delta_ms": total_ms,
@@ -1807,6 +1832,153 @@ func _build_native_town_entry_window_range(samples: Array[Dictionary], start_ind
 	return _build_native_town_entry_window(sliced, sliced.size())
 
 
+func _maybe_write_prehold_snapshot() -> void:
+	if not prehold_periodic_snapshots_enabled:
+		return
+	if _hold_started_sample_index >= 0 or pending_quit:
+		return
+	if next_prehold_snapshot_elapsed_seconds < 0.0:
+		return
+	if town_entry_capture_elapsed_seconds < next_prehold_snapshot_elapsed_seconds:
+		return
+
+	prehold_snapshot_write_count += 1
+	last_prehold_snapshot_elapsed_seconds = town_entry_capture_elapsed_seconds
+	_emit_scope_event("town_stall_test", "prehold_snapshot_written", {
+		"capture_elapsed_seconds": town_entry_capture_elapsed_seconds,
+		"write_count": prehold_snapshot_write_count,
+		"phase": str(phase)
+	})
+	_write_native_town_entry_snapshot()
+	next_prehold_snapshot_elapsed_seconds += prehold_snapshot_interval_seconds
+
+
+func _get_directional_render_sequence() -> Array[Dictionary]:
+	return [
+		{"label": "forward", "yaw_degrees": 0.0, "pitch_degrees": 0.0},
+		{"label": "right", "yaw_degrees": 90.0, "pitch_degrees": 0.0},
+		{"label": "back", "yaw_degrees": 180.0, "pitch_degrees": 0.0},
+		{"label": "left", "yaw_degrees": -90.0, "pitch_degrees": 0.0},
+		{"label": "sky", "yaw_degrees": 0.0, "pitch_degrees": -55.0},
+		{"label": "ground", "yaw_degrees": 0.0, "pitch_degrees": 35.0}
+	]
+
+
+func _reset_directional_render_sampling_state() -> void:
+	directional_render_current_label = ""
+	directional_render_current_segment_index = -1
+	directional_render_started = false
+	directional_render_base_yaw = 0.0
+
+
+func _begin_directional_render_sampling() -> void:
+	if not directional_render_sampling_enabled:
+		return
+	if is_instance_valid(player):
+		directional_render_base_yaw = player.rotation.y
+	else:
+		directional_render_base_yaw = 0.0
+	directional_render_started = true
+	directional_render_current_label = ""
+	directional_render_current_segment_index = -1
+	_emit_scope_event("town_stall_test", "directional_render_sampling_started", {
+		"sample_seconds": directional_render_sample_seconds,
+		"settle_seconds": directional_render_settle_seconds,
+		"sequence_count": _get_directional_render_sequence().size()
+	})
+
+
+func _update_directional_render_sampling() -> void:
+	if not directional_render_sampling_enabled or not directional_render_started:
+		return
+
+	var sequence := _get_directional_render_sequence()
+	if sequence.is_empty() or directional_render_sample_seconds <= 0.0:
+		directional_render_current_label = ""
+		directional_render_current_segment_index = -1
+		return
+
+	var segment_index := int(floor(phase_time / directional_render_sample_seconds))
+	if segment_index < 0 or segment_index >= sequence.size():
+		directional_render_current_label = ""
+		directional_render_current_segment_index = -1
+		return
+
+	var segment: Dictionary = sequence[segment_index]
+	var label := str(segment.get("label", ""))
+	var yaw_degrees := float(segment.get("yaw_degrees", 0.0))
+	var pitch_degrees := float(segment.get("pitch_degrees", 0.0))
+	var segment_elapsed := phase_time - float(segment_index) * directional_render_sample_seconds
+
+	if segment_index != directional_render_current_segment_index:
+		directional_render_current_segment_index = segment_index
+		_emit_scope_event("town_stall_test", "directional_render_segment_started", {
+			"label": label,
+			"segment_index": segment_index,
+			"yaw_degrees": yaw_degrees,
+			"pitch_degrees": pitch_degrees,
+			"phase_time": phase_time
+		})
+
+	_set_directional_render_view(yaw_degrees, pitch_degrees)
+	directional_render_current_label = label if segment_elapsed >= directional_render_settle_seconds else ""
+
+
+func _set_directional_render_view(yaw_degrees: float, pitch_degrees: float) -> void:
+	if not is_instance_valid(player):
+		return
+
+	var camera := player.get_node_or_null("Camera3D") as Camera3D
+	if not is_instance_valid(camera):
+		camera = get_viewport().get_camera_3d()
+	if not is_instance_valid(camera):
+		return
+
+	player.rotation.y = directional_render_base_yaw + deg_to_rad(yaw_degrees)
+	camera.rotation.x = clampf(deg_to_rad(pitch_degrees), deg_to_rad(-85.0), deg_to_rad(85.0))
+
+
+func _build_directional_render_sampling_snapshot() -> Dictionary:
+	var sequence := _get_directional_render_sequence()
+	var windows: Dictionary = {}
+	var completed_labels: Array[String] = []
+
+	for segment in sequence:
+		var segment_dict: Dictionary = segment
+		var label := str(segment_dict.get("label", ""))
+		if label.is_empty():
+			continue
+		var label_samples: Array[Dictionary] = []
+		for sample in _town_entry_samples:
+			var sample_dict: Dictionary = sample
+			if str(sample_dict.get("directional_render_label", "")) == label:
+				label_samples.append(sample_dict)
+		if label_samples.is_empty():
+			windows[label] = _build_empty_native_town_entry_window()
+			continue
+		var window := _build_native_town_entry_window(label_samples, label_samples.size())
+		var first_sample: Dictionary = label_samples.front()
+		var last_sample: Dictionary = label_samples.back()
+		var start_epoch := float(first_sample.get("epoch", 0.0))
+		var end_epoch := float(last_sample.get("epoch", 0.0))
+		window["start_epoch"] = start_epoch
+		window["end_epoch"] = end_epoch
+		window["duration_seconds"] = maxf(0.0, end_epoch - start_epoch)
+		window["yaw_degrees"] = float(segment_dict.get("yaw_degrees", 0.0))
+		window["pitch_degrees"] = float(segment_dict.get("pitch_degrees", 0.0))
+		windows[label] = window
+		completed_labels.append(label)
+
+	return {
+		"enabled": true,
+		"sample_seconds": directional_render_sample_seconds,
+		"settle_seconds": directional_render_settle_seconds,
+		"sequence": sequence,
+		"completed_labels": completed_labels,
+		"windows": windows
+	}
+
+
 func _insert_peak_entry_sample(peak_entries: Array[Dictionary], entry: Dictionary) -> void:
 	if entry.is_empty():
 		return
@@ -2182,6 +2354,11 @@ func _write_native_town_entry_snapshot() -> void:
 		"benchmark_hold_seconds": current_hold_seconds,
 		"benchmark_pending_quit": pending_quit,
 		"benchmark_hold_complete": _hold_completed_sample_index >= 0,
+		"town_entry_capture_elapsed_seconds": town_entry_capture_elapsed_seconds,
+		"prehold_periodic_snapshots": prehold_periodic_snapshots_enabled,
+		"prehold_snapshot_interval_seconds": prehold_snapshot_interval_seconds,
+		"prehold_snapshot_write_count": prehold_snapshot_write_count,
+		"last_prehold_snapshot_elapsed_seconds": last_prehold_snapshot_elapsed_seconds,
 		"machine_state": _machine_state.duplicate(true) if not _machine_state.is_empty() else {},
 		"warmup_note": str(_machine_state.get("warmup_note", "")),
 		"system_telemetry": system_telemetry,
@@ -2192,6 +2369,8 @@ func _write_native_town_entry_snapshot() -> void:
 		snapshot["scope_states"] = _scope_states.duplicate(true)
 	if not _recent_scope_events.is_empty():
 		snapshot["recent_scope_events"] = _recent_scope_events.duplicate(true)
+	if directional_render_sampling_enabled:
+		snapshot["directional_render_sampling"] = _build_directional_render_sampling_snapshot()
 	if render_diagnostics_enabled:
 		var render_diagnostics := {
 			"enabled": true,
@@ -2256,6 +2435,9 @@ func _ready() -> void:
 	render_diagnostics_sample_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_LIMIT)
 	render_diagnostics_scene_detail_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_SCENE_DETAIL_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT)
 	render_diagnostics_frame_scene_scan_limit = _get_positive_env_int("TOWN_STALL_RENDER_DIAGNOSTIC_FRAME_SCENE_SCAN_LIMIT", RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT)
+	directional_render_sampling_enabled = OS.get_environment("TOWN_STALL_DIRECTIONAL_RENDER_SAMPLING") == "1"
+	directional_render_sample_seconds = _get_positive_env_float("TOWN_STALL_DIRECTIONAL_RENDER_SAMPLE_SECONDS", DIRECTIONAL_RENDER_SAMPLE_SECONDS)
+	directional_render_settle_seconds = _get_positive_env_float("TOWN_STALL_DIRECTIONAL_RENDER_SETTLE_SECONDS", DIRECTIONAL_RENDER_SETTLE_SECONDS)
 	low_fps_abort_enabled = OS.get_environment("TOWN_STALL_LOW_FPS_ABORT") != "0"
 	low_fps_abort_frame_ms = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_FRAME_MS", 120.0)
 	low_fps_abort_seconds = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_SECONDS", 8.0)
@@ -2263,6 +2445,8 @@ func _ready() -> void:
 	world_ready_timeout_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_TIMEOUT_SECONDS", WORLD_READY_TIMEOUT_SECONDS)
 	world_ready_status_log_interval_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STATUS_LOG_INTERVAL_SECONDS", 5.0)
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
+	prehold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_PREHOLD_SNAPSHOTS") == "1"
+	prehold_snapshot_interval_seconds = _get_positive_env_float("TOWN_STALL_PREHOLD_SNAPSHOT_INTERVAL_SECONDS", PREHOLD_SNAPSHOT_INTERVAL_SECONDS)
 	hold_wait_stream_ready_enabled = OS.get_environment("TOWN_STALL_WAIT_STREAM_READY_BEFORE_HOLD") != "0"
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
@@ -2294,6 +2478,10 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Measure full flight: %s" % ("ON" if measure_full_flight_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Periodic hold snapshots: %s" % ("ON" if hold_periodic_snapshots_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Periodic pre-hold snapshots: %s interval=%.1fs" % [
+		"ON" if prehold_periodic_snapshots_enabled else "OFF",
+		prehold_snapshot_interval_seconds
+	])
 	print("[TOWN_STALL_TEST] Wait stream ready before hold: %s" % ("ON" if hold_wait_stream_ready_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
 	print("[TOWN_STALL_TEST] Engine max FPS: %d" % Engine.max_fps)
@@ -2305,6 +2493,11 @@ func _ready() -> void:
 		render_diagnostics_sample_limit,
 		render_diagnostics_scene_detail_limit,
 		render_diagnostics_frame_scene_scan_limit
+	])
+	print("[TOWN_STALL_TEST] Directional render sampling: %s sample=%.2fs settle=%.2fs" % [
+		"ON" if directional_render_sampling_enabled else "OFF",
+		directional_render_sample_seconds,
+		directional_render_settle_seconds
 	])
 	print("[TOWN_STALL_TEST] Low-FPS safety abort: %s threshold=%.1fms seconds=%.1f" % [
 		"ON" if low_fps_abort_enabled else "OFF",
@@ -2346,11 +2539,16 @@ func _ready() -> void:
 		"render_diagnostics_sample_limit": render_diagnostics_sample_limit,
 		"render_diagnostics_scene_detail_limit": render_diagnostics_scene_detail_limit,
 		"render_diagnostics_frame_scene_scan_limit": render_diagnostics_frame_scene_scan_limit,
+		"directional_render_sampling": directional_render_sampling_enabled,
+		"directional_render_sample_seconds": directional_render_sample_seconds,
+		"directional_render_settle_seconds": directional_render_settle_seconds,
 		"low_fps_abort_enabled": low_fps_abort_enabled,
 		"low_fps_abort_frame_ms": low_fps_abort_frame_ms,
 		"low_fps_abort_seconds": low_fps_abort_seconds,
 		"measure_full_flight": measure_full_flight_enabled,
 		"hold_periodic_snapshots": hold_periodic_snapshots_enabled,
+		"prehold_periodic_snapshots": prehold_periodic_snapshots_enabled,
+		"prehold_snapshot_interval_seconds": prehold_snapshot_interval_seconds,
 		"hold_wait_stream_ready": hold_wait_stream_ready_enabled,
 		"hold_seconds": configured_hold_seconds,
 		"machine_state_available": not _machine_state.is_empty(),
@@ -2361,6 +2559,8 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	phase_time += delta
+	if directional_render_sampling_enabled and hold_started_logged and (phase == Phase.HOLD_FIRST or phase == Phase.HOLD_RETURN or phase == Phase.HOLD_SECOND):
+		_update_directional_render_sampling()
 	if town_entry_capture_started and phase != Phase.DONE and phase != Phase.FAILED and not pending_quit:
 		_capture_native_town_entry_sample(delta)
 
@@ -3551,6 +3751,8 @@ func _hold_in_town(_delta: float) -> void:
 			"hold_seconds": current_hold_seconds
 		})
 		hold_started_logged = true
+		_begin_directional_render_sampling()
+		_update_directional_render_sampling()
 		next_hold_snapshot_phase_time = HOLD_SNAPSHOT_INTERVAL_SECONDS if hold_periodic_snapshots_enabled else -1.0
 
 	if next_hold_snapshot_phase_time >= 0.0 and phase_time >= next_hold_snapshot_phase_time:
