@@ -78,6 +78,36 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES": "0",
         },
     },
+    "runtime_deepidle60_tree_clusters_1": {
+        "description": "Runtime 60 FPS power profile with 1x1 tree render clusters for tighter frustum culling.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE": "1",
+        },
+    },
+    "runtime_deepidle60_tree_clusters_4": {
+        "description": "Runtime 60 FPS power profile with 4x4 tree render clusters for lower draw-call overhead.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE": "4",
+        },
+    },
+    "runtime_deepidle60_tree_bounds_2": {
+        "description": "Runtime 60 FPS power profile with current tree clusters and tighter exact tree render bounds padding.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_VEGETATION_TREE_GLOBAL_RENDER_BOUNDS_PADDING": "2",
+        },
+    },
     "runtime_gpu_meshing": {
         "description": "Runtime power manager with legacy GPU terrain meshing.",
         "env": {

@@ -167,8 +167,6 @@ var pending_town_teleport_pos: Vector3 = Vector3.ZERO
 var town_spawn_ready_settle_frames: int = 0
 var town_terrain_stable_frames: int = 0
 var town_terrain_stability_signature: String = ""
-var town_entity_stable_frames: int = 0
-var town_entity_stability_signature: String = ""
 
 func _get_town_stall_seed() -> int:
 	var seed_text := OS.get_environment("TOWN_STALL_SEED")
@@ -3400,49 +3398,16 @@ func _get_town_entity_stream_blockers() -> Array[String]:
 	var telemetry: Dictionary = entity_manager.get_telemetry_snapshot()
 	if bool(telemetry.get("entity_render_prewarm_active", false)):
 		blockers.append("entity_prewarm=%d" % int(telemetry.get("entity_render_prewarm_frames_remaining", 0)))
-	var spawned := int(telemetry.get("last_spawn_queue_spawned", 0))
-	if spawned > 0:
-		blockers.append("entity_spawned=%d" % spawned)
-	var dormant_spawned := int(telemetry.get("last_dormant_respawn_spawned", 0))
-	if dormant_spawned > 0:
-		blockers.append("entity_dormant_spawned=%d" % dormant_spawned)
-	if not blockers.is_empty():
-		_reset_town_entity_stability()
-		return blockers
-
-	var signature := "%d:%d:%d:%d:%d:%d:%d" % [
-		int(telemetry.get("active_entities", 0)),
-		int(telemetry.get("frozen_entities", 0)),
-		int(telemetry.get("dormant_entities", 0)),
-		int(telemetry.get("pending_spawns", 0)),
-		int(telemetry.get("deferred_spawn_chunks", 0)),
-		int(telemetry.get("deferred_spawn_plans", 0)),
-		int(telemetry.get("spawned_chunks", 0))
-	]
-	if signature != town_entity_stability_signature:
-		town_entity_stability_signature = signature
-		town_entity_stable_frames = 0
-		blockers.append("entity_stabilizing=0/20")
-		return blockers
-	town_entity_stable_frames += 1
-	if town_entity_stable_frames < 20:
-		blockers.append("entity_stabilizing=%d/20" % town_entity_stable_frames)
 	return blockers
 
 
 func _reset_town_stream_stability() -> void:
 	_reset_town_terrain_stability()
-	_reset_town_entity_stability()
 
 
 func _reset_town_terrain_stability() -> void:
 	town_terrain_stable_frames = 0
 	town_terrain_stability_signature = ""
-
-
-func _reset_town_entity_stability() -> void:
-	town_entity_stable_frames = 0
-	town_entity_stability_signature = ""
 
 
 func _set_player_movement_enabled(enabled: bool) -> void:
