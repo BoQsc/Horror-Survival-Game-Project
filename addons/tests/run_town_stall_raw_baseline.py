@@ -59,6 +59,25 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
         },
     },
+    "runtime_deepidle60": {
+        "description": "Runtime power manager with active/idle/deep-idle all capped at 60 FPS for clean gameplay render A/B.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+        },
+    },
+    "runtime_deepidle60_no_alpha_split": {
+        "description": "Runtime 60 FPS power profile with vegetation alpha-scissor surface splitting disabled.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES": "0",
+        },
+    },
     "runtime_gpu_meshing": {
         "description": "Runtime power manager with legacy GPU terrain meshing.",
         "env": {
