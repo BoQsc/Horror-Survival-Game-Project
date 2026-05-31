@@ -18,6 +18,17 @@ var is_holding_e: bool = false
 var hold_time: float = 0.0
 const BARRICADE_HOLD_TIME: float = 1.0
 const VEHICLE_RADIAL_HOLD_TIME: float = 0.3  # Time to hold E to open radial menu
+const TARGET_REFRESH_INTERVAL: float = 0.05
+const TARGET_KEEPALIVE_INTERVAL_MSEC: int = 500
+const TARGET_POSITION_EPSILON_SQ: float = 0.0004
+const TARGET_FORWARD_DOT_MIN: float = 0.9995
+var _target_refresh_timer: Timer = null
+var _target_refresh_tick_count: int = 0
+var _target_raycast_count: int = 0
+var _process_tick_count: int = 0
+var _last_target_origin: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _last_target_forward: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _last_target_refresh_msec: int = 0
 
 var is_in_vehicle: bool = false
 var current_vehicle: Node3D = null
@@ -51,6 +62,8 @@ func _ready() -> void:
 	
 	# Create radial menu
 	_setup_radial_menu()
+	_start_target_refresh_timer()
+	set_process(false)
 
 func _setup_radial_menu() -> void:
 	radial_menu = RadialMenuScript.new()
@@ -70,20 +83,73 @@ func _setup_radial_menu() -> void:
 	radial_menu.option_selected.connect(_on_radial_option_selected)
 	radial_menu.menu_cancelled.connect(_on_radial_menu_cancelled)
 
-func _process(delta: float) -> void:
+func _start_target_refresh_timer() -> void:
+	if is_instance_valid(_target_refresh_timer):
+		return
+	_target_refresh_timer = Timer.new()
+	_target_refresh_timer.name = "InteractionTargetRefreshTimer"
+	_target_refresh_timer.one_shot = false
+	_target_refresh_timer.wait_time = TARGET_REFRESH_INTERVAL
+	_target_refresh_timer.process_callback = Timer.TIMER_PROCESS_IDLE
+	_target_refresh_timer.timeout.connect(_on_target_refresh_timer_timeout)
+	add_child(_target_refresh_timer)
+	_target_refresh_timer.start()
+
+func _on_target_refresh_timer_timeout() -> void:
+	_target_refresh_tick_count += 1
+	_refresh_interaction_target_if_allowed()
+
+func _refresh_interaction_target_if_allowed(force: bool = false) -> void:
 	if radial_menu_open:
+		return
+	if UIInputGuard.is_gameplay_input_blocked(self):
+		_clear_target()
+		return
+	if not force and not _should_refresh_target_raycast():
+		return
+	_update_interaction_target()
+
+func _sync_process_loop() -> void:
+	set_process(is_holding_e or is_in_vehicle)
+
+func _should_refresh_target_raycast() -> bool:
+	if not player:
+		return false
+	if current_target and not is_instance_valid(current_target):
+		return true
+	if not player.has_method("get_camera_position") or not player.has_method("get_look_direction"):
+		return true
+	var origin: Vector3 = player.get_camera_position()
+	var forward: Vector3 = player.get_look_direction().normalized()
+	var now := Time.get_ticks_msec()
+	if origin.distance_squared_to(_last_target_origin) > TARGET_POSITION_EPSILON_SQ:
+		return true
+	if forward.dot(_last_target_forward) < TARGET_FORWARD_DOT_MIN:
+		return true
+	return now - _last_target_refresh_msec >= TARGET_KEEPALIVE_INTERVAL_MSEC
+
+func _record_target_raycast_state() -> void:
+	_target_raycast_count += 1
+	_last_target_refresh_msec = Time.get_ticks_msec()
+	if player and player.has_method("get_camera_position") and player.has_method("get_look_direction"):
+		_last_target_origin = player.get_camera_position()
+		_last_target_forward = player.get_look_direction().normalized()
+
+func _process(delta: float) -> void:
+	_process_tick_count += 1
+	if radial_menu_open:
+		_sync_process_loop()
 		return  # Don't update targets while radial menu is open
 
 	if UIInputGuard.is_gameplay_input_blocked(self):
 		is_holding_e = false
 		hold_time = 0.0
+		_sync_process_loop()
 		return
 	
 	# Sync player position to vehicle while inside (so zombies track correctly)
 	if is_in_vehicle and current_vehicle and player:
 		player.global_position = current_vehicle.global_position
-	
-	_update_interaction_target()
 	
 	if is_holding_e:
 		hold_time += delta
@@ -99,6 +165,7 @@ func _process(delta: float) -> void:
 			_do_barricade()
 			is_holding_e = false
 			hold_time = 0.0
+	_sync_process_loop()
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Handle radial menu exit
@@ -124,9 +191,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey:
 		if event.keycode == KEY_E:
 			if event.pressed and not event.echo:
+				_refresh_interaction_target_if_allowed(true)
 				is_holding_e = true
 				hold_time = 0.0
+				_sync_process_loop()
 			elif not event.pressed:
+				_refresh_interaction_target_if_allowed(true)
 				# On release: if short tap on vehicle, enter directly
 				if current_target and current_target.is_in_group("vehicle"):
 					if hold_time < VEHICLE_RADIAL_HOLD_TIME:
@@ -135,11 +205,13 @@ func _unhandled_input(event: InputEvent) -> void:
 					_do_interaction()
 				is_holding_e = false
 				hold_time = 0.0
+				_sync_process_loop()
 
 func _update_interaction_target() -> void:
 	if not player or not player.has_method("raycast"):
 		return
 	
+	_record_target_raycast_state()
 	var hit = player.raycast(5.0)
 	
 	if hit.is_empty():
@@ -355,6 +427,7 @@ func _enter_vehicle(vehicle: Node3D) -> void:
 	player.visible = false
 	
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_sync_process_loop()
 	
 	if vehicle.has_method("set_camera_active"):
 		vehicle.set_camera_active(true)
@@ -381,6 +454,8 @@ func _exit_vehicle() -> void:
 	var exiting_vehicle = current_vehicle
 	is_in_vehicle = false
 	current_vehicle = null
+	process_mode = Node.PROCESS_MODE_INHERIT
+	_sync_process_loop()
 	
 	# === BULLETPROOF COLLISION PREVENTION ===
 	# Add collision exception BEFORE enabling player physics
@@ -481,6 +556,24 @@ func _on_radial_option_selected(option: String) -> void:
 ## Handle radial menu cancel
 func _on_radial_menu_cancelled() -> void:
 	radial_menu_open = false
+
+func get_activity_snapshot() -> Dictionary:
+	var reason := "idle"
+	if is_in_vehicle:
+		reason = "vehicle_sync"
+	elif is_holding_e:
+		reason = "hold_action"
+	return {
+		"awake": is_processing(),
+		"driver": "timer+process" if is_processing() else "timer",
+		"reason": reason,
+		"pending_count": 1 if is_holding_e else 0,
+		"target_refresh_interval": TARGET_REFRESH_INTERVAL,
+		"target_refresh_ticks": _target_refresh_tick_count,
+		"target_raycast_count": _target_raycast_count,
+		"process_ticks": _process_tick_count,
+		"has_target": current_target != null,
+	}
 
 ## Pick up a vehicle (despawn and return Car Keys)
 func _pickup_vehicle(vehicle: Node3D) -> void:

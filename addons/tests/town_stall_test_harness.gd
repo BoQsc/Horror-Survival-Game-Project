@@ -1845,12 +1845,16 @@ func _duplicate_peak_entry_samples(peak_entries: Array[Dictionary]) -> Array:
 func _get_node_telemetry(node: Node) -> Dictionary:
 	if not is_instance_valid(node):
 		return {}
-	if not node.has_method("get_telemetry_snapshot"):
-		return {}
 
-	var telemetry: Variant = node.call("get_telemetry_snapshot")
-	if typeof(telemetry) != TYPE_DICTIONARY:
-		return {}
+	var telemetry: Dictionary = {}
+	if node.has_method("get_telemetry_snapshot"):
+		var telemetry_snapshot: Variant = node.call("get_telemetry_snapshot")
+		if typeof(telemetry_snapshot) == TYPE_DICTIONARY:
+			telemetry = telemetry_snapshot
+	if node.has_method("get_activity_snapshot"):
+		var activity_snapshot: Variant = node.call("get_activity_snapshot")
+		if typeof(activity_snapshot) == TYPE_DICTIONARY:
+			telemetry["activity"] = activity_snapshot
 	return telemetry
 
 
@@ -1901,6 +1905,19 @@ func _collect_system_telemetry() -> Dictionary:
 	var hud_minimap_node := _find_manager_node("hud_minimap", "Minimap")
 	if hud_minimap_node:
 		telemetry["hud_minimap"] = _get_node_telemetry(hud_minimap_node)
+
+	var save_manager_node := get_node_or_null("/root/SaveManager")
+	if save_manager_node:
+		telemetry["save_manager"] = _get_node_telemetry(save_manager_node)
+
+	var player_node := get_tree().get_first_node_in_group("player")
+	if is_instance_valid(player_node):
+		var player_interaction_node := player_node.get_node_or_null("Components/Interaction")
+		if player_interaction_node:
+			telemetry["player_interaction"] = _get_node_telemetry(player_interaction_node)
+		var terrain_interaction_node := player_node.get_node_or_null("Modes/TerrainInteraction")
+		if terrain_interaction_node:
+			telemetry["terrain_interaction"] = _get_node_telemetry(terrain_interaction_node)
 
 	return telemetry
 

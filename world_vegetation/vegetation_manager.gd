@@ -69,7 +69,7 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export var vegetation_split_alpha_scissor_opaque_surfaces_enabled: bool = true
 @export var world_map_vegetation_render_profile_enabled: bool = true
 # Smaller world-map clusters cost more draw calls but reduce off-frustum tree work.
-@export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 3
+@export_range(1, 64, 1) var world_map_vegetation_render_cluster_size: int = 2
 @export_range(1, 64, 1) var world_map_vegetation_grass_render_cluster_size: int = 6
 @export_range(1, 64, 1) var world_map_vegetation_rock_render_cluster_size: int = 6
 @export_range(0, 60, 1) var vegetation_render_prewarm_frames: int = 12
@@ -5355,6 +5355,7 @@ func _make_empty_split_surface_arrays(source_arrays: Array) -> Array:
 		target[Mesh.ARRAY_TEX_UV] = PackedVector2Array()
 	if _has_source_array(source_arrays, Mesh.ARRAY_TEX_UV2):
 		target[Mesh.ARRAY_TEX_UV2] = PackedVector2Array()
+	target[Mesh.ARRAY_INDEX] = PackedInt32Array()
 	return target
 
 func _has_source_array(source_arrays: Array, array_index: int) -> bool:
@@ -5374,9 +5375,16 @@ func _has_source_array(source_arrays: Array, array_index: int) -> bool:
 	return false
 
 func _append_triangle_to_split_arrays(source_arrays: Array, target_arrays: Array, ia: int, ib: int, ic: int) -> void:
+	var target_vertices: PackedVector3Array = target_arrays[Mesh.ARRAY_VERTEX]
+	var base_index := target_vertices.size()
 	_append_vertex_to_split_arrays(source_arrays, target_arrays, ia)
 	_append_vertex_to_split_arrays(source_arrays, target_arrays, ib)
 	_append_vertex_to_split_arrays(source_arrays, target_arrays, ic)
+	var target_indices: PackedInt32Array = target_arrays[Mesh.ARRAY_INDEX]
+	target_indices.append(base_index)
+	target_indices.append(base_index + 1)
+	target_indices.append(base_index + 2)
+	target_arrays[Mesh.ARRAY_INDEX] = target_indices
 
 func _append_vertex_to_split_arrays(source_arrays: Array, target_arrays: Array, source_index: int) -> void:
 	var source_vertices: PackedVector3Array = source_arrays[Mesh.ARRAY_VERTEX]

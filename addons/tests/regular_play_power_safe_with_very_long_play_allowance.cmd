@@ -10,14 +10,15 @@ if errorlevel 1 (
     exit /b 2
 )
 
-:: --- Environment Configuration ---
+:: Power-safe manual long-play run.
+:: Active gameplay still targets 60 FPS with Vulkan/Forward+ and render distance 10.
+:: If the player leaves the game unattended, runtime power mode can drop to
+:: deep idle and suspend rendering instead of redrawing the static scene forever.
 set TOWN_STALL_SEED=12345
 set TOWN_STALL_AUTO_TELEPORT=0
-
-:: --- Vegetation/render heat profile ---
 set TOWN_STALL_DISABLE_VEGETATION_RENDER=0
 
-:: --- Test-only loading guards: measure full streamed terrain, not a half-loaded scene ---
+:: Test-only loading guards: measure full streamed terrain, not a half-loaded scene.
 set TOWN_STALL_TERRAIN_COLLISION_GROUND_CENTER=1
 set TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION=1
 set TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS=1
@@ -25,33 +26,31 @@ set TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS=1
 set TOWN_STALL_HOLD_SECONDS=9999
 set TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS=1
 set TOWN_STALL_SYSTEM_SAMPLE_RAW_GPU_ONLY=0
-:: Keep 1s GPU watt samples, but avoid expensive full Windows process probes every second.
 set TOWN_STALL_SYSTEM_SAMPLE_FULL_EVERY=5
-:: Manual long-play runs are often closed before the 9999s hold completes.
-:: Periodic snapshots preserve FPS/content telemetry from the current hold.
 set TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS=1
-:: Do not measure stationary hold while terrain/building/vegetation stream work is still draining.
 set TOWN_STALL_WAIT_STREAM_READY_BEFORE_HOLD=1
 set TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1
 set TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK=1
 set TOWN_STALL_LOW_FPS_ABORT=1
 set TOWN_STALL_LOW_FPS_ABORT_FRAME_MS=80
 set TOWN_STALL_LOW_FPS_ABORT_SECONDS=4
-:: Keep benchmark/manual profiling at a 60 FPS target; do not let idle power
-:: mode contaminate the run with a 30 FPS cap. This launcher intentionally
-:: keeps rendering active while stationary, so use the power-safe long-play
-:: launcher when leaving the game unattended for thermal/endurance checks.
-set TOWN_STALL_RUNTIME_POWER_IDLE_FPS=60
-set TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS=60
-set TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP=0
 
-:: --- Warmup Logic ---
+:: Thermal safety for unattended idle. This is not a substitute for active
+:: 60 FPS render optimization; it only prevents idle burn while nothing moves.
+set TOWN_STALL_ENABLE_RUNTIME_POWER_MODE=1
+set TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS=60
+set TOWN_STALL_RUNTIME_POWER_IDLE_FPS=60
+set TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS=30
+set TOWN_STALL_RUNTIME_POWER_IDLE_DELAY_S=1.25
+set TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S=10
+set TOWN_STALL_RUNTIME_POWER_SUSPEND_BACKGROUND_WORLD_WORK=1
+set TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP=1
+set TOWN_STALL_RUNTIME_POWER_ALLOW_UNATTENDED_RENDER_SUSPEND=1
+
 set TOWN_STALL_MACHINE_WARMUP_DISABLED=1
 set TOWN_STALL_RENDER_DISTANCE=10
 
-
-:: --- Execution ---
-echo Starting long-duration test at normal process priority...
+echo Starting power-safe long-duration test at normal process priority...
 python -u run_town_stall_test.py
 set EXIT_CODE=%ERRORLEVEL%
 popd

@@ -72,6 +72,7 @@ var _is_saving: bool = false # Prevent concurrent saves to avoid file corruption
 func _ready():
 	# Add to group for dynamic lookup by HUD
 	add_to_group("save_manager")
+	set_process(false)
 	
 	# Create saves directory if it doesn't exist
 	if not DirAccess.dir_exists_absolute(SAVE_DIR):
@@ -224,6 +225,16 @@ func _process(_delta):
 	# Only clear _is_saving when ALL threads are done
 	if _save_threads.is_empty():
 		_is_saving = false
+		set_process(false)
+
+func get_activity_snapshot() -> Dictionary:
+	return {
+		"awake": is_processing(),
+		"driver": "process" if is_processing() else "sleep",
+		"reason": "save_threads" if not _save_threads.is_empty() else "idle",
+		"pending_count": _save_threads.size(),
+		"is_saving": _is_saving,
+	}
 
 ## Quick save to default slot
 func quick_save():
@@ -261,6 +272,7 @@ func save_game(path: String) -> bool:
 		return false
 	
 	_save_threads.append(thread)
+	set_process(true)
 	return true
 
 ## Internal synchronous save for critical moments (e.g. exit)

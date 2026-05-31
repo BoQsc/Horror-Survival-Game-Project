@@ -23,6 +23,17 @@ var last_target_material: String = ""
 var material_target_marker: MeshInstance3D = null
 var target_material_update_interval: float = 0.1
 var _target_material_update_elapsed: float = 0.1
+const TARGET_REFRESH_INTERVAL: float = 0.05
+const TARGET_KEEPALIVE_INTERVAL_MSEC: int = 500
+const TARGET_POSITION_EPSILON_SQ: float = 0.0004
+const TARGET_FORWARD_DOT_MIN: float = 0.9995
+var _target_refresh_timer: Timer = null
+var _target_refresh_tick_count: int = 0
+var _target_raycast_tick_count: int = 0
+var _process_tick_count: int = 0
+var _last_target_origin: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _last_target_forward: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _last_target_refresh_msec: int = 0
 
 # Preload item definitions
 const ItemDefs = preload("res://modules/world_player_v2/features/data_inventory/item_definitions.gd")
@@ -39,7 +50,9 @@ func _ready() -> void:
 	
 	_create_selection_box()
 	_create_material_target_marker()
-	
+	_connect_player_signals()
+	_start_target_refresh_timer()
+	set_process(false)
 
 func _find_managers() -> void:
 	if not terrain_manager:
@@ -52,17 +65,99 @@ func _find_managers() -> void:
 		brush_registry = get_tree().get_first_node_in_group("brush_registry")
 
 func _process(delta: float) -> void:
-	_update_terrain_targeting()
+	_process_tick_count += 1
+	if is_instance_valid(_target_refresh_timer) and not _target_refresh_timer.is_stopped():
+		set_process(false)
+		return
+	_run_target_refresh_tick(delta)
+
+func _connect_player_signals() -> void:
+	if not has_node("/root/PlayerSignals"):
+		return
+	if not PlayerSignals.item_changed.is_connected(_on_selected_item_changed):
+		PlayerSignals.item_changed.connect(_on_selected_item_changed)
+	if not PlayerSignals.hotbar_slot_selected.is_connected(_on_hotbar_slot_selected):
+		PlayerSignals.hotbar_slot_selected.connect(_on_hotbar_slot_selected)
+
+func _start_target_refresh_timer() -> void:
+	if is_instance_valid(_target_refresh_timer):
+		return
+	_target_refresh_timer = Timer.new()
+	_target_refresh_timer.name = "TerrainTargetRefreshTimer"
+	_target_refresh_timer.one_shot = false
+	_target_refresh_timer.wait_time = TARGET_REFRESH_INTERVAL
+	_target_refresh_timer.process_callback = Timer.TIMER_PROCESS_IDLE
+	_target_refresh_timer.timeout.connect(_on_target_refresh_timer_timeout)
+	add_child(_target_refresh_timer)
+	_target_refresh_timer.start()
+
+func _on_target_refresh_timer_timeout() -> void:
+	_target_refresh_tick_count += 1
+	_run_target_refresh_tick(TARGET_REFRESH_INTERVAL)
+
+func _on_selected_item_changed(_slot: int, _item: Dictionary) -> void:
+	_run_target_refresh_tick(target_material_update_interval, true)
+
+func _on_hotbar_slot_selected(_slot: int) -> void:
+	_run_target_refresh_tick(target_material_update_interval, true)
+
+func _run_target_refresh_tick(delta: float, force: bool = false) -> void:
+	if not terrain_manager or not hotbar or not player:
+		_find_managers()
 	_target_material_update_elapsed += delta
-	if _target_material_update_elapsed >= target_material_update_interval:
+	var material_due := _target_material_update_elapsed >= target_material_update_interval
+	if not force and not material_due and not _should_refresh_target_raycast():
+		return
+	if not force and not _should_refresh_target_raycast():
+		return
+	_record_target_raycast_state()
+	if _is_selection_targeting_active():
+		_update_terrain_targeting()
+	else:
+		_clear_selection_target()
+	if material_due:
 		_target_material_update_elapsed = 0.0
 		_update_target_material()
+
+func _should_refresh_target_raycast() -> bool:
+	if not player:
+		return false
+	if not player.has_method("get_camera_position") or not player.has_method("get_look_direction"):
+		return true
+	var origin: Vector3 = player.get_camera_position()
+	var forward: Vector3 = player.get_look_direction().normalized()
+	var now := Time.get_ticks_msec()
+	if origin.distance_squared_to(_last_target_origin) > TARGET_POSITION_EPSILON_SQ:
+		return true
+	if forward.dot(_last_target_forward) < TARGET_FORWARD_DOT_MIN:
+		return true
+	return now - _last_target_refresh_msec >= TARGET_KEEPALIVE_INTERVAL_MSEC
+
+func _record_target_raycast_state() -> void:
+	_target_raycast_tick_count += 1
+	_last_target_refresh_msec = Time.get_ticks_msec()
+	if player and player.has_method("get_camera_position") and player.has_method("get_look_direction"):
+		_last_target_origin = player.get_camera_position()
+		_last_target_forward = player.get_look_direction().normalized()
+
+func _is_selection_targeting_active() -> bool:
+	if not hotbar or not hotbar.has_method("get_selected_item"):
+		return false
+	var item = hotbar.get_selected_item()
+	var category = item.get("category", 0)
+	return category == 2 or category == 3
+
+func _clear_selection_target() -> void:
+	if selection_box:
+		selection_box.visible = false
+	has_target = false
 
 ## Initialize references (called by parent after scene ready)
 func initialize(p_player: Node, p_terrain: Node, p_hotbar: Node) -> void:
 	player = p_player
 	terrain_manager = p_terrain
 	hotbar = p_hotbar
+	_run_target_refresh_tick(target_material_update_interval, true)
 
 # ============================================================================
 # MODE INTERFACE (called by ItemUseRouter)
@@ -130,15 +225,13 @@ func _update_terrain_targeting() -> void:
 	
 	# Categories: 2=BUCKET, 3=RESOURCE
 	if category != 2 and category != 3:
-		selection_box.visible = false
-		has_target = false
+		_clear_selection_target()
 		return
 	
 	# Raycast to find target
 	var hit = _raycast(5.0)
 	if hit.is_empty():
-		selection_box.visible = false
-		has_target = false
+		_clear_selection_target()
 		return
 	
 	has_target = true
@@ -517,3 +610,17 @@ func is_targeting() -> bool:
 
 func get_current_material_name() -> String:
 	return last_target_material
+
+func get_activity_snapshot() -> Dictionary:
+	return {
+		"awake": is_processing(),
+		"driver": "timer+process" if is_processing() else "timer",
+		"reason": "selection_targeting" if _is_selection_targeting_active() else "material_probe",
+		"pending_count": 1 if has_target else 0,
+		"target_refresh_interval": TARGET_REFRESH_INTERVAL,
+		"target_refresh_ticks": _target_refresh_tick_count,
+		"target_raycast_ticks": _target_raycast_tick_count,
+		"process_ticks": _process_tick_count,
+		"has_target": has_target,
+		"target_material": last_target_material,
+	}

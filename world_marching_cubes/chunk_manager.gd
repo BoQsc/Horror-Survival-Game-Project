@@ -296,6 +296,7 @@ var loading_paused: bool = false
 @export_range(0.001, 1.0, 0.001) var runtime_power_position_epsilon: float = 0.10
 @export_range(0.001, 0.1, 0.001) var runtime_power_orientation_epsilon: float = 0.01
 @export var runtime_power_suspend_render_loop_in_deep_idle: bool = true
+@export var runtime_power_allow_unattended_render_suspend: bool = false
 @export var runtime_power_suspend_background_world_work: bool = true
 @export var runtime_power_viewport_scaling_enabled: bool = false
 @export_range(0.5, 1.0, 0.01) var runtime_power_active_3d_scale: float = 1.0
@@ -327,6 +328,7 @@ var _runtime_power_disabled_reason: String = ""
 var _runtime_power_render_loop_suspended: bool = false
 var _runtime_power_render_loop_restore_enabled: bool = true
 var _runtime_power_render_loop_restore_captured: bool = false
+var _runtime_power_render_loop_suspend_gate: String = "not_evaluated"
 var _runtime_power_world_work_suspended: bool = false
 var _runtime_power_world_work_suspended_frame_count: int = 0
 var _runtime_power_world_work_suspend_count: int = 0
@@ -978,6 +980,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"runtime_power_external_world_busy": _runtime_power_external_world_busy_last,
 		"runtime_power_disabled_reason": _runtime_power_disabled_reason,
 		"runtime_power_suspend_render_loop_in_deep_idle": runtime_power_suspend_render_loop_in_deep_idle,
+		"runtime_power_allow_unattended_render_suspend": runtime_power_allow_unattended_render_suspend,
+		"runtime_power_render_loop_suspend_gate": _runtime_power_render_loop_suspend_gate,
 		"runtime_power_render_loop_suspended": _runtime_power_render_loop_suspended,
 		"runtime_power_render_loop_enabled": _get_runtime_power_render_loop_enabled(),
 		"runtime_power_suspend_background_world_work": runtime_power_suspend_background_world_work,
@@ -3602,6 +3606,7 @@ func _configure_runtime_power_mode_from_env() -> void:
 	runtime_power_deep_idle_enter_delay_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_DELAY_S", runtime_power_deep_idle_enter_delay_s)
 	runtime_power_active_grace_s = _get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_ACTIVE_GRACE_S", runtime_power_active_grace_s)
 	runtime_power_suspend_render_loop_in_deep_idle = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_SUSPEND_RENDER_LOOP", runtime_power_suspend_render_loop_in_deep_idle)
+	runtime_power_allow_unattended_render_suspend = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_ALLOW_UNATTENDED_RENDER_SUSPEND", runtime_power_allow_unattended_render_suspend)
 	runtime_power_suspend_background_world_work = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_SUSPEND_BACKGROUND_WORLD_WORK", runtime_power_suspend_background_world_work)
 	runtime_power_viewport_scaling_enabled = _get_runtime_power_env_bool("TOWN_STALL_RUNTIME_POWER_VIEWPORT_SCALING", runtime_power_viewport_scaling_enabled)
 	runtime_power_active_3d_scale = clampf(_get_runtime_power_env_float("TOWN_STALL_RUNTIME_POWER_ACTIVE_3D_SCALE", runtime_power_active_3d_scale), 0.5, 1.0)
@@ -3877,18 +3882,28 @@ func _get_runtime_power_render_loop_enabled() -> bool:
 		return true
 	return bool(RenderingServer.call("is_render_loop_enabled"))
 
+func _runtime_power_render_suspend_gate() -> String:
+	if UIInputGuardScript.is_game_menu_open(get_tree()):
+		return "game_menu"
+	if runtime_power_allow_unattended_render_suspend:
+		return "unattended_deep_idle"
+	return "blocked_requires_menu_or_unattended_env"
+
 func _runtime_power_can_suspend_render_loop() -> bool:
-	return UIInputGuardScript.is_game_menu_open(get_tree())
+	_runtime_power_render_loop_suspend_gate = _runtime_power_render_suspend_gate()
+	return _runtime_power_render_loop_suspend_gate == "game_menu" or _runtime_power_render_loop_suspend_gate == "unattended_deep_idle"
 
 func _apply_runtime_power_render_loop_mode(mode: String) -> void:
 	if not RenderingServer.has_method("set_render_loop_enabled"):
 		_runtime_power_render_loop_suspended = false
+		_runtime_power_render_loop_suspend_gate = "unsupported"
 		return
 
+	var can_suspend_render_loop := _runtime_power_can_suspend_render_loop()
 	var should_suspend := runtime_power_mode_enabled \
 		and runtime_power_suspend_render_loop_in_deep_idle \
 		and mode == "deep_idle" \
-		and _runtime_power_can_suspend_render_loop()
+		and can_suspend_render_loop
 	if should_suspend:
 		if not _runtime_power_render_loop_restore_captured:
 			_runtime_power_render_loop_restore_enabled = _get_runtime_power_render_loop_enabled()
@@ -3899,6 +3914,7 @@ func _apply_runtime_power_render_loop_mode(mode: String) -> void:
 			_record_runtime_power_event("runtime_power_render_loop_suspended", {
 				"mode": mode,
 				"target_fps": _runtime_power_target_fps,
+				"gate": _runtime_power_render_loop_suspend_gate,
 				"idle_seconds": _runtime_power_idle_seconds
 			})
 		return

@@ -20,7 +20,7 @@ GODOT_RENDERING_DRIVER = "vulkan"
 GODOT_RENDERING_METHOD = "forward_plus"
 FPS_60_FRAME_MS = 1000.0 / 60.0
 TARGET_WPF60_BASELINE = 16.0
-DEFAULT_TIMEOUT = 900
+DEFAULT_TIMEOUT = 420
 TOWN_STALL_APPDATA_DIR = Path(os.environ.get("TOWN_STALL_APPDATA_DIR", str(Path(PROJECT_PATH) / ".agent" / "town-stall-appdata")))
 TOWN_STALL_PROJECT_USER_DIR = TOWN_STALL_APPDATA_DIR / "Godot" / "app_userdata" / "Horror Survival Game Project"
 SNAPSHOT_DIR = TOWN_STALL_PROJECT_USER_DIR / "debug" / "performance"
@@ -1732,7 +1732,7 @@ def main() -> int:
         )
 
     configured_hold_seconds = _positive_float_from_env("TOWN_STALL_HOLD_SECONDS", 40.0)
-    timeout = _positive_int_from_env("TOWN_STALL_TIMEOUT_SECONDS", max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 900.0)))
+    timeout = _positive_int_from_env("TOWN_STALL_TIMEOUT_SECONDS", max(DEFAULT_TIMEOUT, int(configured_hold_seconds + 300.0)))
     system_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", 0.0)
     postrun_idle_check_disabled = os.environ.get("TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK", "0") == "1"
     postrun_idle_delay_seconds = _float_from_env("TOWN_STALL_POSTRUN_IDLE_DELAY_SECONDS", 2.0)

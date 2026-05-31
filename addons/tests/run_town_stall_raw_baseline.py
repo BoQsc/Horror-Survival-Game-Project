@@ -639,6 +639,8 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "runtime_power_foreground_terrain_busy",
             "runtime_power_disabled_reason",
             "runtime_power_suspend_render_loop_in_deep_idle",
+            "runtime_power_allow_unattended_render_suspend",
+            "runtime_power_render_loop_suspend_gate",
             "runtime_power_render_loop_suspended",
             "runtime_power_render_loop_enabled",
         ]
@@ -880,22 +882,39 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
     env = os.environ.copy()
     for key in RESET_ENV_KEYS:
         env.pop(key, None)
+    default_timeout_seconds = max(420, int(hold_seconds + 300.0))
     env.update(
         {
             "TOWN_STALL_SEED": os.environ.get("TOWN_STALL_SEED", "12345"),
             "TOWN_STALL_AUTO_TELEPORT": os.environ.get("TOWN_STALL_AUTO_TELEPORT", "0"),
             "TOWN_STALL_REPEAT_ENTRY": os.environ.get("TOWN_STALL_REPEAT_ENTRY", "0"),
             "TOWN_STALL_HOLD_SECONDS": f"{hold_seconds:.3f}",
+            "TOWN_STALL_TIMEOUT_SECONDS": os.environ.get("TOWN_STALL_TIMEOUT_SECONDS", str(default_timeout_seconds)),
             "TOWN_STALL_MACHINE_WARMUP_DISABLED": os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1"),
             "TOWN_STALL_DISABLE_BUILDINGS": "0",
             "TOWN_STALL_DISABLE_ENTITIES": "0",
             "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES": "0",
             "TOWN_STALL_DISABLE_EXIT_AUTOSAVE": "1",
+            "TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK": os.environ.get("TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK", "1"),
             "TOWN_STALL_MEASURE_FULL_FLIGHT": "1" if measure_full_flight else os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", "0"),
         }
     )
     env.update(CASE_DEFINITIONS[case_name]["env"])
     return env
+
+
+def _drain_process_stream(stream: Any, sink: list[str], echo_town_progress: bool) -> None:
+    if stream is None:
+        return
+    try:
+        for line in stream:
+            sink.append(line)
+            if echo_town_progress and "[TOWN_STALL_TEST]" in line:
+                text = line.strip()
+                if text:
+                    print(f"  {text}", flush=True)
+    except Exception as exc:
+        sink.append(f"\n[stream-drain-error] {exc}\n")
 
 
 def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, interval_seconds: float, measure_full_flight: bool, max_gpu_temp_c: Optional[float]) -> dict[str, Any]:
@@ -907,7 +926,7 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
     cmd = [PYTHON_BIN, str(Path(__file__).with_name("run_town_stall_test.py"))]
     started = time.time()
     sampler.start()
-    timeout_seconds = max(1200, int(hold_seconds + 900))
+    timeout_seconds = _int_env("TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS", max(420, int(hold_seconds + 300.0)))
     proc = subprocess.Popen(
         cmd,
         cwd=str(PROJECT_PATH),
@@ -918,11 +937,26 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
         encoding="utf-8",
         errors="replace",
     )
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    stdout_thread = threading.Thread(
+        target=_drain_process_stream,
+        args=(proc.stdout, stdout_lines, True),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_drain_process_stream,
+        args=(proc.stderr, stderr_lines, False),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
 
     thermal_abort_reason: Optional[str] = None
     timeout_reason: Optional[str] = None
     terminated_godot_processes: list[dict[str, Any]] = []
     poll_sleep = min(0.25, max(0.05, interval_seconds / 4.0))
+    last_progress_print = started
     while proc.poll() is None:
         if sampler.thermal_abort_event.is_set():
             sample = sampler.thermal_abort_sample or {}
@@ -941,13 +975,27 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
             proc.kill()
             terminated_godot_processes = _terminate_godot_processes_for_thermal_abort()
             break
+        if time.time() - last_progress_print >= 15.0:
+            last_progress_print = time.time()
+            latest_sample = sampler.samples[-1] if sampler.samples else {}
+            temp_c = latest_sample.get("temp_c", "?") if isinstance(latest_sample, dict) else "?"
+            power_w = latest_sample.get("power_w", "?") if isinstance(latest_sample, dict) else "?"
+            print(
+                f"  [raw-baseline] running {last_progress_print - started:.0f}s "
+                f"gpu_power={power_w}W temp={temp_c}C",
+                flush=True,
+            )
         time.sleep(poll_sleep)
 
     try:
-        stdout, stderr = proc.communicate(timeout=10)
+        proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
-        stdout, stderr = proc.communicate(timeout=10)
+        proc.wait(timeout=10)
+    stdout_thread.join(timeout=5)
+    stderr_thread.join(timeout=5)
+    stdout = "".join(stdout_lines)
+    stderr = "".join(stderr_lines)
     ended = time.time()
     sampler.stop()
     _assert_no_godot_processes()
@@ -1137,6 +1185,8 @@ def main() -> int:
     if args.repeats <= 0:
         print("--repeats must be positive")
         return 2
+    if args.allow_contaminated_idle:
+        os.environ["TOWN_STALL_ALLOW_CONTAMINATED_IDLE"] = "1"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     started = time.time()
