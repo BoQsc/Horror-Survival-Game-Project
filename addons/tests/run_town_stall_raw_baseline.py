@@ -78,6 +78,56 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_VEGETATION_SPLIT_ALPHA_SCISSOR_OPAQUE_SURFACES": "0",
         },
     },
+    "runtime_deepidle60_no_vegetation": {
+        "description": "Runtime 60 FPS power profile with vegetation render disabled for full vegetation cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_DISABLE_VEGETATION_RENDER": "1",
+        },
+    },
+    "runtime_deepidle60_no_trees": {
+        "description": "Runtime 60 FPS power profile with tree render disabled for tree cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_VEGETATION_RENDER_TREES": "0",
+        },
+    },
+    "runtime_deepidle60_no_grass": {
+        "description": "Runtime 60 FPS power profile with grass render disabled for grass cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_VEGETATION_RENDER_GRASS": "0",
+        },
+    },
+    "runtime_deepidle60_no_rocks": {
+        "description": "Runtime 60 FPS power profile with rock render disabled for rock cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_VEGETATION_RENDER_ROCKS": "0",
+        },
+    },
+    "runtime_deepidle60_no_water": {
+        "description": "Runtime 60 FPS power profile with water render disabled for water cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_DISABLE_WATER_RENDER": "1",
+        },
+    },
     "runtime_deepidle60_tree_clusters_1": {
         "description": "Runtime 60 FPS power profile with 1x1 tree render clusters for tighter frustum culling.",
         "env": {
@@ -1309,6 +1359,7 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
             "TOWN_STALL_DISABLE_EXIT_AUTOSAVE": "1",
             "TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK": os.environ.get("TOWN_STALL_DISABLE_POSTRUN_IDLE_CHECK", "1"),
             "TOWN_STALL_MEASURE_FULL_FLIGHT": "1" if measure_full_flight else os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", "0"),
+            "TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS": os.environ.get("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS", "1"),
         }
     )
     env.update(CASE_DEFINITIONS[case_name]["env"])
@@ -1430,6 +1481,11 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
     if timeout_reason:
         failure_reasons.append(timeout_reason)
     hold_completed = "[town_stall_test] hold complete, quitting" in output.lower()
+    hold_started = "[town_stall_test] hold started" in output.lower()
+    if hold_started:
+        failure_reasons = [reason for reason in failure_reasons if reason != "town hold never started"]
+        if not snapshot:
+            failure_reasons.append("snapshot_missing_after_hold_started")
     shutdown_av = returncode == 3221225477
     if shutdown_av and snapshot_path and hold_completed:
         failure_reasons = [reason for reason in failure_reasons if reason != f"process exited with code {returncode}"]
@@ -1445,6 +1501,7 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
             "TOWN_STALL_DIRECTIONAL_RENDER_SAMPLING",
             "TOWN_STALL_DIRECTIONAL_RENDER_SAMPLE_SECONDS",
             "TOWN_STALL_DIRECTIONAL_RENDER_SETTLE_SECONDS",
+            "TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS",
             "TOWN_STALL_PERIODIC_PREHOLD_SNAPSHOTS",
             "TOWN_STALL_PREHOLD_SNAPSHOT_INTERVAL_SECONDS",
         ]))},
