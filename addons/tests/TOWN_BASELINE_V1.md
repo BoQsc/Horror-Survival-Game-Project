@@ -83,6 +83,20 @@ Close the Godot window when finished. Manual runs can fail the automated runner
 summary if the window is closed before a final snapshot is written; use their
 watt logs and play feel as supporting evidence, not as the locked baseline.
 
+## Render Culling Audit
+
+Use this only to answer render attribution questions. It is not the official
+FPS/watt comparison baseline because it enables the final render scene scan:
+
+```powershell
+addons\tests\run_town_render_culling_audit.cmd
+python -B addons\tests\analyze_render_culling_snapshot.py --latest-raw
+```
+
+The audit keeps the locked runtime rendering settings, disables periodic
+snapshots, and writes one final scene scan showing which visible/frustum terrain
+and vegetation batches account for submitted triangle work.
+
 ## Legacy Launchers
 
 Older shortcuts that predate this baseline live in:
