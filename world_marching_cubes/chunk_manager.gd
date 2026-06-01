@@ -3423,7 +3423,9 @@ func _process(delta):
 		_record_runtime_power_world_work_suspended_frame()
 		if _world_map_lod_background_fill_allowed():
 			_update_world_map_lod_chunks(true)
-		_process_idle_terrain_visual_batch_polish()
+		# Runtime power suspension means no optional mesh rebuild/upload polish.
+		# Dirty batches stay queued and resume when world work is active again.
+		_last_terrain_visual_batch_idle_polish = false
 		_sync_terrain_shadow_lod()
 		return
 

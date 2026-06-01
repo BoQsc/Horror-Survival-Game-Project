@@ -65,12 +65,18 @@ var _vegetation_target_volume: MeshInstance3D = null
 var _vegetation_ray_material: StandardMaterial3D = null
 var _vegetation_marker_materials: Dictionary = {}
 var _vegetation_volume_materials: Dictionary = {}
+var _visualizer_nodes_created: bool = false
 
 const VEGETATION_VISUALIZER_REACH_DISTANCE: float = 5.0
 
 func _ready() -> void:
-	_create_visualizer()
 	_sync_target_visualizer_processing()
+
+func _ensure_visualizer_nodes() -> void:
+	if _visualizer_nodes_created or not is_inside_tree():
+		return
+	_create_visualizer()
+	_visualizer_nodes_created = true
 
 func _create_visualizer() -> void:
 	# Create target box (shows grid-snapped block)
@@ -140,6 +146,7 @@ func _create_visualizer() -> void:
 	get_tree().root.call_deferred("add_child", _vegetation_target_marker)
 
 func _process(_delta: float) -> void:
+	_ensure_visualizer_nodes()
 	var player = get_tree().get_first_node_in_group("player")
 	if not player or not player.has_method("raycast"):
 		_hide_target_visualizer()
@@ -169,15 +176,21 @@ func _process(_delta: float) -> void:
 func _exit_tree() -> void:
 	if _target_box:
 		_target_box.queue_free()
+		_target_box = null
 	if _hit_marker:
 		_set_hit_marker_visible(false)
 		_hit_marker.queue_free()
+		_hit_marker = null
 	if _vegetation_ray:
 		_vegetation_ray.queue_free()
+		_vegetation_ray = null
 	if _vegetation_target_volume:
 		_vegetation_target_volume.queue_free()
+		_vegetation_target_volume = null
 	if _vegetation_target_marker:
 		_vegetation_target_marker.queue_free()
+		_vegetation_target_marker = null
+	_visualizer_nodes_created = false
 
 
 func _set_hit_marker_visible(enabled: bool) -> void:
@@ -191,7 +204,10 @@ func _set_hit_marker_visible(enabled: bool) -> void:
 
 
 func _sync_target_visualizer_processing() -> void:
-	set_process(_target_visualizer_enabled or _vegetation_interaction_visualizer_enabled)
+	var should_process := _target_visualizer_enabled or _vegetation_interaction_visualizer_enabled
+	if should_process:
+		_ensure_visualizer_nodes()
+	set_process(should_process)
 	if not _target_visualizer_enabled:
 		_hide_target_visualizer()
 	if not _vegetation_interaction_visualizer_enabled:

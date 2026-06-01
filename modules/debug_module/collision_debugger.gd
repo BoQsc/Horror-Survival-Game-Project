@@ -8,16 +8,26 @@ var enabled: bool:
 		return _enabled
 	set(value):
 		_enabled = value
+		if _enabled:
+			_ensure_label()
 		if is_inside_tree():
 			set_process(_enabled)
 		if not _enabled and label:
 			label.visible = false
 var label: Label = null
+var _canvas_layer: CanvasLayer = null
 var last_collider_info: String = ""
 
 func _ready():
 	set_process(_enabled)
-	# Create on-screen label
+	if _enabled:
+		_ensure_label()
+
+
+func _ensure_label() -> void:
+	if label or not is_inside_tree():
+		return
+
 	label = Label.new()
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
@@ -30,10 +40,10 @@ func _ready():
 	label.visible = false
 	
 	# Add to CanvasLayer so it's always on top
-	var canvas = CanvasLayer.new()
-	canvas.layer = 100
-	add_child(canvas)
-	canvas.add_child(label)
+	_canvas_layer = CanvasLayer.new()
+	_canvas_layer.layer = 100
+	add_child(_canvas_layer)
+	_canvas_layer.add_child(label)
 	
 
 
@@ -45,6 +55,9 @@ func _unhandled_input(_event):
 func _process(_delta):
 	if not enabled:
 		return
+	_ensure_label()
+	if not label:
+		return
 	
 	# Only show info when holding Left Alt
 	if Input.is_key_pressed(KEY_ALT):
@@ -55,6 +68,8 @@ func _process(_delta):
 
 
 func _update_collision_info():
+	if not label:
+		return
 	var camera = get_viewport().get_camera_3d()
 	if not camera:
 		label.text = "No camera found"
