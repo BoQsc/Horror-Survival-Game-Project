@@ -158,6 +158,26 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_VEGETATION_TREE_GLOBAL_RENDER_BOUNDS_PADDING": "2",
         },
     },
+    "runtime_deepidle60_veg_occlusion_culling": {
+        "description": "Runtime 60 FPS power profile with vegetation batches allowed to participate in Godot occlusion culling.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING": "0",
+        },
+    },
+    "runtime_deepidle60_terrain_batch_1": {
+        "description": "Runtime 60 FPS power profile with 1x1 world-map terrain visual batches for tighter frustum culling.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE": "1",
+        },
+    },
     "runtime_gpu_meshing": {
         "description": "Runtime power manager with legacy GPU terrain meshing.",
         "env": {
@@ -322,6 +342,8 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_DISABLE_GLOW",
     "TOWN_STALL_DISABLE_WATER_RENDER",
     "TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING",
+    "TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE",
+    "TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_MAX_VERTICES",
     "TOWN_STALL_VEGETATION_RENDER_CLUSTER_SIZE",
     "TOWN_STALL_WORLD_MAP_VEGETATION_RENDER_CLUSTER_SIZE",
     "TOWN_STALL_VEGETATION_GRASS_RENDER_CLUSTER_SIZE",
@@ -1136,6 +1158,11 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         for key in [
             "terrain_visual_batching_enabled",
             "terrain_visual_batch_size",
+            "world_map_terrain_visual_batch_size",
+            "effective_terrain_visual_batch_size",
+            "terrain_visual_batch_max_vertices",
+            "world_map_terrain_visual_batch_max_vertices",
+            "effective_terrain_visual_batch_max_vertices",
             "terrain_visual_batch_cached_rebuilds_per_frame",
             "terrain_visual_batch_cached_rebuild_budget_ms",
             "terrain_visual_batch_async_build_enabled",
@@ -1195,6 +1222,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "effective_vegetation_render_cluster_size",
             "effective_vegetation_grass_render_cluster_size",
             "effective_vegetation_rock_render_cluster_size",
+            "vegetation_global_render_ignore_occlusion_culling",
             "global_tree_avg_batch_bounds_horizontal_area",
             "global_tree_max_batch_bounds_horizontal_area",
             "global_tree_max_batch_bounds_height",
@@ -1708,7 +1736,7 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 def main() -> int:
     suppress_windows_error_dialogs()
     parser = argparse.ArgumentParser(description="Run repeated raw nvidia-smi town-stall baselines.")
-    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases; use --cases runtime_default,runtime_veg_occlusion_culling,runtime_veg_tree_clusters_1,runtime_veg_tree_clusters_4 for vegetation render A/B.")
+    parser.add_argument("--cases", default="fixed60,runtime_default", help="Comma-separated cases; use --cases runtime_deepidle60,runtime_deepidle60_tree_clusters_1,runtime_deepidle60_tree_clusters_4,runtime_deepidle60_veg_occlusion_culling,runtime_deepidle60_terrain_batch_1 for 60 FPS render A/B.")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--hold-seconds", type=float, default=40.0)
     parser.add_argument("--idle-seconds", type=float, default=20.0)
