@@ -24,6 +24,7 @@ var selection_box: MeshInstance3D = null  # Transparent box showing selection re
 const PREFAB_DIR = "user://world_prefabs/"
 
 func _ready():
+	set_process(false)
 	add_to_group("prefab_capture")
 	# Create prefabs directory
 	if not DirAccess.dir_exists_absolute(PREFAB_DIR):
@@ -120,12 +121,14 @@ func _input(event):
 
 func _enter_selection_mode():
 	state = State.SELECTING_CORNER_A
+	set_process(false)
 
 func _cancel_selection():
 	state = State.IDLE
 	marker_a.visible = false
 	marker_b.visible = false
 	selection_box.visible = false
+	set_process(false)
 
 func _handle_click():
 	var hit = _raycast()
@@ -137,6 +140,7 @@ func _handle_click():
 		marker_a.global_position = corner_a + Vector3(0.5, 0.5, 0.5)
 		marker_a.visible = true
 		state = State.SELECTING_CORNER_B
+		set_process(true)
 	
 	elif state == State.SELECTING_CORNER_B:
 		corner_b = Vector3(floor(hit.position.x), floor(hit.position.y), floor(hit.position.z))

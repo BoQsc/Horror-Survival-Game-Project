@@ -25,6 +25,7 @@ var current_rotation: int = 0
 var grid_snap_props: bool = false # Toggle for prop placement
 
 func _ready() -> void:
+	set_process(false)
 	# Find player
 	player = get_parent().get_parent()
 	
@@ -40,27 +41,61 @@ func _ready() -> void:
 	building_api = BuildingAPIScript.new()
 	add_child(building_api)
 	building_api.initialize(player)
-	
+	_connect_player_signals()
+	_sync_process_loop()
+
+
+func _connect_player_signals() -> void:
+	if not has_node("/root/PlayerSignals"):
+		return
+	if not PlayerSignals.mode_changed.is_connected(_on_mode_changed):
+		PlayerSignals.mode_changed.connect(_on_mode_changed)
+	if not PlayerSignals.item_changed.is_connected(_on_selected_item_changed):
+		PlayerSignals.item_changed.connect(_on_selected_item_changed)
+
+
+func _on_mode_changed(_old_mode: String, _new_mode: String) -> void:
+	_sync_process_loop()
+
+
+func _on_selected_item_changed(_slot: int, _item: Dictionary) -> void:
+	call_deferred("_sync_process_loop")
+
+
+func _hide_building_visuals() -> void:
+	if building_api:
+		building_api.hide_visuals()
+		building_api.destroy_preview()
+
+
+func _should_show_building_visuals() -> bool:
+	if not mode_manager or not building_api:
+		return false
+	if mode_manager.is_build_mode():
+		return true
+	if mode_manager.is_editor_mode():
+		var item_data = _get_current_item_data()
+		var category = item_data.get("category", 0) if item_data else 0
+		return category in [ItemCategory.BLOCK, ItemCategory.OBJECT, ItemCategory.PROP]
+	return false
+
+
+func _sync_process_loop() -> void:
+	if _should_show_building_visuals():
+		set_process(true)
+	else:
+		_hide_building_visuals()
+		set_process(false)
+
 
 func _process(_delta: float) -> void:
 	if UIInputGuard.is_gameplay_input_blocked(self):
-		if building_api:
-			building_api.hide_visuals()
-			building_api.destroy_preview()
+		_hide_building_visuals()
 		return
 
 	# Check if we should show building visuals
 	# Either in BUILD mode, or in EDITOR mode with a building item selected
-	var should_show_visuals = false
-	if mode_manager and building_api:
-		if mode_manager.is_build_mode():
-			should_show_visuals = true
-		elif mode_manager.is_editor_mode():
-			# In editor mode, show visuals if current item is a building item
-			var item_data = _get_current_item_data()
-			var category = item_data.get("category", 0) if item_data else 0
-			if category in [ItemCategory.BLOCK, ItemCategory.OBJECT, ItemCategory.PROP]:
-				should_show_visuals = true
+	var should_show_visuals := _should_show_building_visuals()
 	
 	if should_show_visuals:
 		# Update targeting from player raycast
@@ -95,9 +130,7 @@ func _process(_delta: float) -> void:
 			building_api.destroy_preview()
 	else:
 		# Hide when not showing visuals
-		if building_api:
-			building_api.hide_visuals()
-			building_api.destroy_preview()
+		_sync_process_loop()
 
 func _input(event: InputEvent) -> void:
 	# Handle input in BUILD mode, or in EDITOR mode with building item

@@ -108,6 +108,7 @@ func _ready():
 	# Safety start - wait for physics to settle
 	# Pause animation during this time to prevent drift
 	set_physics_process(false)
+	set_process(false)
 	if anim_player:
 		anim_player.pause()
 	_start_timer(0.3, Callable(self, "_on_spawn_settle_timeout"))
@@ -447,6 +448,7 @@ func die():
 	change_state("DEAD")
 	zombie_died.emit(self)
 	velocity = Vector3.ZERO
+	set_process(false)
 	
 	# Disable collision
 	var col = get_node_or_null("CollisionShape3D")
@@ -487,11 +489,13 @@ func _on_spawn_settle_timeout(timer: Timer) -> void:
 	# terrain collision and explicitly unfreezes them.
 	if entity_manager and entity_manager.has_method("is_entity_frozen") and entity_manager.is_entity_frozen(self):
 		set_physics_process(false)
+		set_process(false)
 		if anim_player:
 			anim_player.pause()
 		return
 
 	set_physics_process(true)
+	set_process(true)
 	if anim_player:
 		anim_player.play("Take 001")
 	change_state("IDLE")
@@ -535,6 +539,7 @@ func on_despawn():
 
 func on_frozen() -> void:
 	_simulation_sleep_accumulator = 0.0
+	set_process(false)
 	if wall_detector:
 		wall_detector.enabled = false
 	if anim_player and anim_player.is_playing():
@@ -547,6 +552,7 @@ func on_unfrozen() -> void:
 	if current_state == "DEAD":
 		return
 	_simulation_sleep_accumulator = 0.0
+	set_process(true)
 	if anim_player and not anim_player.is_playing():
 		anim_player.play("Take 001")
 	_sync_runtime_components()

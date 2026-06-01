@@ -42,6 +42,8 @@ var current_prefab_index: int = 0
 var prefab_rotation: int = 0
 
 func _ready() -> void:
+	set_process(false)
+	set_physics_process(false)
 	# Find player
 	player = get_parent().get_parent()
 	
@@ -70,27 +72,63 @@ func _ready() -> void:
 	terrain_api = TerrainAPIScript.new()
 	add_child(terrain_api)
 	terrain_api.initialize(player)
-	
+	_connect_player_signals()
+	_sync_process_loops()
+
+
+func _connect_player_signals() -> void:
+	if not has_node("/root/PlayerSignals"):
+		return
+	if not PlayerSignals.mode_changed.is_connected(_on_mode_changed):
+		PlayerSignals.mode_changed.connect(_on_mode_changed)
+	if not PlayerSignals.editor_submode_changed.is_connected(_on_editor_submode_changed):
+		PlayerSignals.editor_submode_changed.connect(_on_editor_submode_changed)
+
+
+func _on_mode_changed(_old_mode: String, _new_mode: String) -> void:
+	_sync_process_loops()
+
+
+func _on_editor_submode_changed(_submode: int, _submode_name: String) -> void:
+	call_deferred("_sync_process_loops")
+
+
+func _hide_editor_visuals() -> void:
+	if terrain_api:
+		terrain_api.hide_visuals()
+
+
+func _should_update_terrain_visuals() -> bool:
+	if not mode_manager or not terrain_api:
+		return false
+	if not mode_manager.is_editor_mode():
+		return false
+	var submode = mode_manager.editor_submode
+	return submode == 0 or submode == 1
+
+
+func _sync_process_loops() -> void:
+	if _should_update_terrain_visuals():
+		set_process(true)
+	else:
+		_hide_editor_visuals()
+		set_process(false)
+	set_physics_process(mode_manager != null and mode_manager.is_editor_mode())
+
 
 func _process(_delta: float) -> void:
 	if UIInputGuard.is_gameplay_input_blocked(self):
-		if terrain_api:
-			terrain_api.hide_visuals()
+		_hide_editor_visuals()
 		return
 
 	# Update selection box when in editor terrain/water mode
-	if mode_manager and mode_manager.is_editor_mode() and terrain_api:
-		var submode = mode_manager.editor_submode
-		if submode == 0 or submode == 1: # TERRAIN or WATER
-			terrain_api.blocky_mode = blocky_mode
-			if player and player.has_method("raycast"):
-				var hit = player.raycast(100.0)
-				terrain_api.update_targeting(hit)
-		else:
-			terrain_api.hide_visuals()
+	if _should_update_terrain_visuals():
+		terrain_api.blocky_mode = blocky_mode
+		if player and player.has_method("raycast"):
+			var hit = player.raycast(100.0)
+			terrain_api.update_targeting(hit)
 	else:
-		if terrain_api:
-			terrain_api.hide_visuals()
+		_sync_process_loops()
 
 func _physics_process(delta: float) -> void:
 	if UIInputGuard.is_gameplay_input_blocked(self):
@@ -98,6 +136,8 @@ func _physics_process(delta: float) -> void:
 
 	if mode_manager and mode_manager.is_fly_active():
 		_process_fly_movement(delta)
+	elif not mode_manager or not mode_manager.is_editor_mode():
+		set_physics_process(false)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not mode_manager or not mode_manager.is_editor_mode():

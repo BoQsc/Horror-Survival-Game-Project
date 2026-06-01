@@ -254,7 +254,22 @@ func _entity_maintenance_requires_physics_process() -> bool:
 		or dormant_respawn_update_interval <= 0.0
 	)
 
+func _has_entity_maintenance_work() -> bool:
+	return (
+		not active_entities.is_empty()
+		or not pending_spawns.is_empty()
+		or not deferred_spawn_chunks.is_empty()
+		or not dormant_entities.is_empty()
+		or _should_run_balanced_ring_fill()
+	)
+
 func _sync_entity_maintenance_driver() -> void:
+	if not _has_entity_maintenance_work():
+		if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
+			_entity_maintenance_timer.stop()
+		set_physics_process(false)
+		_last_entity_maintenance_tick_msec = 0
+		return
 	if _entity_maintenance_requires_physics_process():
 		if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
 			_entity_maintenance_timer.stop()
@@ -454,6 +469,8 @@ func _run_entity_maintenance_tick(_delta: float) -> void:
 		_last_dormant_respawn_processed = 0
 		_last_dormant_respawn_raycasts = 0
 		_last_dormant_respawn_spawned = 0
+
+	_sync_entity_maintenance_driver()
 
 
 func _should_run_interval(elapsed: float, interval: float, has_work: bool) -> bool:
@@ -685,6 +702,7 @@ func _check_dormant_respawns():
 	# Remove respawned entities from dormant list (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
 		dormant_entities.remove_at(completed[i])
+	_sync_entity_maintenance_driver()
 
 ## Spawn an entity at a world position
 func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3D:
@@ -730,6 +748,7 @@ func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3
 		entity.on_spawn(self)
 	
 	entity_spawned.emit(entity)
+	_sync_entity_maintenance_driver()
 	return entity
 
 ## Despawn an entity - store for later respawn
@@ -737,6 +756,7 @@ func despawn_entity(entity: Node3D, permanent: bool = false):
 	if not is_instance_valid(entity):
 		active_entities.erase(entity)
 		frozen_entities.erase(entity)
+		_sync_entity_maintenance_driver()
 		return
 	
 	# Store entity data for respawning (unless permanent despawn like death)
@@ -761,6 +781,7 @@ func despawn_entity(entity: Node3D, permanent: bool = false):
 	entity.queue_free()
 	
 	entity_despawned.emit(entity)
+	_sync_entity_maintenance_driver()
 
 ## Spawn an entity at a random position around the player on terrain surface
 ## Adds to spawn queue - actual spawning happens in _process_spawn_queue
@@ -782,6 +803,7 @@ func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 		"position": Vector3(spawn_x, 0, spawn_z),
 		"scene": entity_scene
 	})
+	_sync_entity_maintenance_driver()
 	
 	# Return null - entity will spawn later via queue processing
 	return null
@@ -891,6 +913,7 @@ func _process_spawn_queue():
 	# Remove processed spawns (reverse order)
 	for i in range(completed.size() - 1, -1, -1):
 		pending_spawns.remove_at(completed[i])
+	_sync_entity_maintenance_driver()
 
 
 func _should_run_balanced_ring_fill() -> bool:
@@ -1194,6 +1217,7 @@ func clear_all_entities():
 	# Clear tracking arrays since we already freed the entities
 	active_entities.clear()
 	frozen_entities.clear()
+	_sync_entity_maintenance_driver()
 
 func clear_for_shutdown() -> void:
 	if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
@@ -1212,6 +1236,7 @@ func clear_for_shutdown() -> void:
 	debug_entities_cleared.emit(zombies_cleared)
 	active_entities.clear()
 	frozen_entities.clear()
+	_sync_entity_maintenance_driver()
 
 func load_save_data(data: Dictionary):
 	# Disable procedural spawning during load to prevent duplicates
@@ -1271,6 +1296,7 @@ func load_save_data(data: Dictionary):
 				"health": d.get("health", -1),
 				"state": d.get("state", "")
 			})
+	_sync_entity_maintenance_driver()
 	
 	# Re-enable procedural spawning after load completes
 	call_deferred("_finish_load")
@@ -1283,6 +1309,7 @@ func _finish_load():
 	# Setup procedural spawning now (we skipped it in _ready during QuickLoad)
 	if procedural_spawning_enabled and zombie_scene == null:
 		_setup_procedural_spawning()
+	_sync_entity_maintenance_driver()
 
 
 func _get_cached_scene(scene_path: String) -> PackedScene:
@@ -1505,12 +1532,14 @@ func _defer_spawn_chunk(chunk_key: Vector2i, coord: Vector3i, spawns: Array) -> 
 		"spawns": spawns
 	}
 	deferred_spawn_chunk_keys.append(chunk_key)
+	_sync_entity_maintenance_driver()
 
 
 func _clear_deferred_spawn_chunks() -> void:
 	deferred_spawn_chunks.clear()
 	deferred_spawn_chunk_keys.clear()
 	_deferred_spawn_chunk_cursor = 0
+	_sync_entity_maintenance_driver()
 
 
 func _rebuild_deferred_spawn_chunk_keys() -> void:
@@ -1617,6 +1646,7 @@ func _enqueue_procedural_spawn_plan(spawn_plan: Array) -> void:
 	for spawn_data in spawn_plan:
 		if spawn_data is Dictionary:
 			pending_spawns.append(spawn_data)
+	_sync_entity_maintenance_driver()
 
 
 func _activate_procedural_spawn_plan(chunk_key: Vector2i, spawn_plan: Array) -> void:
@@ -1663,6 +1693,7 @@ func _get_biome_at(world_x: float, world_z: float) -> int:
 func clear_spawned_chunks():
 	spawned_chunks.clear()
 	_clear_deferred_spawn_chunks()
+	_sync_entity_maintenance_driver()
 
 
 func is_entity_frozen(entity: Node3D) -> bool:
