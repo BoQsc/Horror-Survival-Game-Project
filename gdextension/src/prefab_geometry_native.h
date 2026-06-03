@@ -7,6 +7,7 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
@@ -49,6 +50,7 @@ public:
 	Dictionary find_nearest_vegetation_ray_hit(const Dictionary &chunk_data, const String &list_key, const String &kind, const Vector3 &origin, const Vector3 &direction, double max_distance, double radius, double height, bool scale_by_entry) const;
 	Dictionary find_nearest_tree_visual_bounds_ray_hit(const Dictionary &chunk_data, const String &list_key, const Vector3 &origin, const Vector3 &direction, double max_distance, const AABB &mesh_bounds, const Transform3D &base_transform, const Vector3 &rotation_fix, double bounds_padding) const;
 	Dictionary resolve_tree_body_collision(const Dictionary &chunk_tree_data, const Vector3 &body_origin, double body_radius, double body_height, int chunk_stride, double collision_radius, double collision_height) const;
+	Dictionary build_world_map_height_biome_bytes(int map_size, int world_size, int world_seed, double noise_frequency, double terrain_height, double max_height, int grass_material_id, int sand_material_id, int snow_material_id, int gravel_material_id) const;
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
 	Dictionary build_vegetation_instances_with_render_payload(const Dictionary &config, const PackedFloat32Array &height_map, const Transform3D &render_space_inverse, const AABB &mesh_bounds) const;

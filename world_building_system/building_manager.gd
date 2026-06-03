@@ -38,6 +38,8 @@ const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
 @export_range(0, 60, 1) var object_render_prewarm_frames: int = 12
 @export_range(0.025, 1.0, 0.025) var viewer_chunk_update_interval: float = 0.10
+@export var viewer_position_signal_enabled: bool = true
+@export_range(0.1, 5.0, 0.1) var viewer_position_signal_fallback_interval: float = 0.5
 var skip_object_collisions_for_test: bool = false
 var skip_building_chunk_collisions_for_test: bool = false
 var skip_building_chunk_mesh_render_for_test: bool = false
@@ -121,6 +123,11 @@ var _last_world_map_baked_visibility_target_visible: int = 0
 var _last_world_map_baked_visibility_total_roots: int = 0
 var _last_world_map_baked_visibility_stale_roots: int = 0
 var _viewer_chunk_update_timer: Timer = null
+var _viewer_position_signal_source: Node = null
+var _viewer_position_signal_connected: bool = false
+var _viewer_position_signal_count: int = 0
+var _viewer_position_signal_chunk_change_count: int = 0
+var _viewer_chunk_fallback_poll_count: int = 0
 
 const CHUNK_SIZE = 16 # Must match BuildingChunk.SIZE
 
@@ -183,6 +190,7 @@ func _ready():
 	# Find player if not assigned
 	if not viewer:
 		viewer = get_tree().get_first_node_in_group("player")
+	_connect_viewer_position_signal()
 	_start_viewer_chunk_update_timer()
 	_sync_viewer_chunk(true)
 	_sync_process_loop()
@@ -202,10 +210,11 @@ func _process(delta):
 
 func _start_viewer_chunk_update_timer() -> void:
 	if _viewer_chunk_update_timer and is_instance_valid(_viewer_chunk_update_timer):
+		_viewer_chunk_update_timer.wait_time = _get_viewer_chunk_update_timer_interval()
 		return
 	var timer := Timer.new()
 	timer.name = "ViewerChunkUpdateTimer"
-	timer.wait_time = maxf(viewer_chunk_update_interval, 0.025)
+	timer.wait_time = _get_viewer_chunk_update_timer_interval()
 	timer.one_shot = false
 	timer.autostart = false
 	timer.process_callback = Timer.TIMER_PROCESS_IDLE
@@ -215,13 +224,51 @@ func _start_viewer_chunk_update_timer() -> void:
 	timer.start()
 
 func _on_viewer_chunk_update_timer_timeout() -> void:
+	_viewer_chunk_fallback_poll_count += 1
 	_sync_viewer_chunk()
+
+
+func _get_viewer_chunk_update_timer_interval() -> float:
+	if _viewer_position_signal_connected:
+		return maxf(viewer_position_signal_fallback_interval, 0.1)
+	return maxf(viewer_chunk_update_interval, 0.025)
+
+
+func _connect_viewer_position_signal() -> void:
+	var callback := Callable(self, "_on_viewer_position_changed")
+	if _viewer_position_signal_source and is_instance_valid(_viewer_position_signal_source):
+		if _viewer_position_signal_source.has_signal("viewer_position_changed"):
+			if _viewer_position_signal_source.is_connected("viewer_position_changed", callback):
+				_viewer_position_signal_source.disconnect("viewer_position_changed", callback)
+	_viewer_position_signal_source = null
+	_viewer_position_signal_connected = false
+	if not viewer_position_signal_enabled or not viewer or not is_instance_valid(viewer):
+		return
+	_viewer_position_signal_source = viewer
+	if not viewer.has_signal("viewer_position_changed"):
+		return
+	viewer.connect("viewer_position_changed", callback)
+	_viewer_position_signal_connected = true
+	if _viewer_chunk_update_timer and is_instance_valid(_viewer_chunk_update_timer):
+		_viewer_chunk_update_timer.wait_time = _get_viewer_chunk_update_timer_interval()
+
+
+func _on_viewer_position_changed(_previous_position: Vector3, _current_position: Vector3) -> void:
+	_viewer_position_signal_count += 1
+	var previous_chunk := _last_building_viewer_chunk
+	_sync_viewer_chunk()
+	if _last_building_viewer_chunk != previous_chunk:
+		_viewer_position_signal_chunk_change_count += 1
+
 
 func _sync_viewer_chunk(force_update: bool = false) -> void:
 	if not viewer or not is_instance_valid(viewer):
 		viewer = get_tree().get_first_node_in_group("player")
+		_connect_viewer_position_signal()
 	if not viewer:
 		return
+	if viewer_position_signal_enabled and viewer != _viewer_position_signal_source:
+		_connect_viewer_position_signal()
 
 	var center_chunk := _get_current_building_center_chunk()
 	if force_update or center_chunk != _last_building_viewer_chunk:
@@ -1628,6 +1675,15 @@ func _shutdown_mesher_for_owner() -> void:
 
 
 func _exit_tree() -> void:
+	if _viewer_chunk_update_timer and is_instance_valid(_viewer_chunk_update_timer):
+		_viewer_chunk_update_timer.stop()
+	if _viewer_position_signal_source and is_instance_valid(_viewer_position_signal_source):
+		var callback := Callable(self, "_on_viewer_position_changed")
+		if _viewer_position_signal_source.has_signal("viewer_position_changed"):
+			if _viewer_position_signal_source.is_connected("viewer_position_changed", callback):
+				_viewer_position_signal_source.disconnect("viewer_position_changed", callback)
+	_viewer_position_signal_source = null
+	_viewer_position_signal_connected = false
 	clear_immediate_for_shutdown()
 
 func flush_global_visual_batches() -> void:
@@ -2470,6 +2526,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"skip_building_visual_batches_for_test": skip_building_visual_batches_for_test,
 		"process_loop_awake": is_processing(),
 		"viewer_chunk_update_interval": viewer_chunk_update_interval,
+		"viewer_position_signal_enabled": viewer_position_signal_enabled,
+		"viewer_position_signal_fallback_interval": viewer_position_signal_fallback_interval,
+		"viewer_position_signal_connected": _viewer_position_signal_connected,
+		"viewer_position_signal_count": _viewer_position_signal_count,
+		"viewer_position_signal_chunk_change_count": _viewer_position_signal_chunk_change_count,
+		"viewer_chunk_fallback_poll_count": _viewer_chunk_fallback_poll_count,
 		"viewer_chunk_update_timer_active": _viewer_chunk_update_timer != null and is_instance_valid(_viewer_chunk_update_timer) and not _viewer_chunk_update_timer.is_stopped(),
 		"last_building_viewer_chunk": _last_building_viewer_chunk,
 		"chunk_count": chunks.size(),

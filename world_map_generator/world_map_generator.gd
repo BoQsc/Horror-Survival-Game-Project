@@ -69,7 +69,10 @@ const LAKE_ROAD_BLOCK_THRESHOLD: int = 240
 # Progress callback
 var progress_callback: Callable = Callable()
 var last_generation_profile: Dictionary = {}
+var last_preview_generation_profile: Dictionary = {}
 var last_save_profile: Dictionary = {}
+var native_height_biome_enabled: bool = true
+var _native_helper: Object = null
 
 # Noise instances
 var _height_noise: FastNoiseLite
@@ -102,6 +105,133 @@ func _init_noise() -> void:
 	_lake_noise.frequency = 0.0008
 	_lake_noise.fractal_type = FastNoiseLite.FRACTAL_NONE
 
+
+func _get_native_helper() -> Object:
+	if _native_helper and is_instance_valid(_native_helper):
+		return _native_helper
+	if not ClassDB.class_exists("PrefabGeometryNative"):
+		return null
+	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
+	return _native_helper
+
+
+func _native_height_biome_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("build_world_map_height_biome_bytes")
+
+
+func _generate_height_biome_bytes(map_size: int, max_h: float, report_progress: bool = false, world_size: int = -1) -> Dictionary:
+	if map_size <= 0 or max_h <= 0.0:
+		return {}
+	var sample_world_size := map_size if world_size <= 0 else world_size
+	var native := _get_native_helper()
+	if native_height_biome_enabled and native and native.has_method("build_world_map_height_biome_bytes"):
+		var native_result: Dictionary = native.build_world_map_height_biome_bytes(
+			map_size,
+			sample_world_size,
+			world_seed,
+			noise_freq,
+			terrain_height,
+			max_h,
+			MaterialRegistry.GRASS,
+			MaterialRegistry.SAND,
+			MaterialRegistry.SNOW,
+			MaterialRegistry.GRAVEL
+		)
+		var expected_size := map_size * map_size
+		var native_height_bytes: PackedByteArray = native_result.get("height_bytes", PackedByteArray())
+		var native_biome_bytes: PackedByteArray = native_result.get("biome_bytes", PackedByteArray())
+		if native_height_bytes.size() == expected_size and native_biome_bytes.size() == expected_size:
+			if report_progress and progress_callback.is_valid():
+				progress_callback.call(30.0, "Height + biomes")
+			return {
+				"height_bytes": native_height_bytes,
+				"biome_bytes": native_biome_bytes,
+				"backend": "native",
+				"pixel_count": expected_size
+			}
+	return _generate_height_biome_bytes_gdscript(map_size, max_h, report_progress, sample_world_size)
+
+
+func _generate_height_biome_bytes_gdscript(map_size: int, max_h: float, report_progress: bool = false, world_size: int = -1) -> Dictionary:
+	if map_size <= 0 or max_h <= 0.0:
+		return {}
+	var sample_world_size := map_size if world_size <= 0 else world_size
+	var total := map_size * map_size
+	var half_world_size := float(sample_world_size) * 0.5
+	var sample_scale := float(sample_world_size) / float(map_size)
+	var height_bytes := PackedByteArray()
+	height_bytes.resize(total)
+	var biome_bytes := PackedByteArray()
+	biome_bytes.resize(total)
+
+	for z in map_size:
+		if report_progress and z % 256 == 0 and progress_callback.is_valid():
+			progress_callback.call(float(z) / float(map_size) * 30.0, "Height + biomes")
+		var wz := float(z) * sample_scale - half_world_size
+		var row_offset := z * map_size
+		for x in map_size:
+			var wx := float(x) * sample_scale - half_world_size
+			var idx := row_offset + x
+			var h_raw := _height_noise.get_noise_2d(wx, wz)
+			var h := terrain_height + (h_raw * 0.5 + 0.5) * terrain_height
+			height_bytes[idx] = _encode_height_byte(h, max_h)
+			var bv := _biome_noise.get_noise_2d(wx, wz)
+			var biome: int = MaterialRegistry.GRASS
+			if bv < -0.2:
+				biome = MaterialRegistry.SAND
+			elif bv > 0.6:
+				biome = MaterialRegistry.SNOW
+			elif bv > 0.2:
+				biome = MaterialRegistry.GRAVEL
+			biome_bytes[idx] = biome
+
+	if report_progress and progress_callback.is_valid():
+		progress_callback.call(30.0, "Height + biomes")
+	return {
+		"height_bytes": height_bytes,
+		"biome_bytes": biome_bytes,
+		"backend": "gdscript",
+		"pixel_count": total
+	}
+
+
+func generate_preview(preview_size: int = 512) -> Dictionary:
+	var preview_start_us := Time.get_ticks_usec()
+	var output_size := clampi(preview_size, 16, MAP_SIZE)
+	var effective_terrain_height := minf(terrain_height, 15.0)
+	var max_h := effective_terrain_height * 2.5
+	_init_noise()
+	var original_terrain_height := terrain_height
+	terrain_height = effective_terrain_height
+	var result := _generate_height_biome_bytes(output_size, max_h, false, MAP_SIZE)
+	terrain_height = original_terrain_height
+	if result.is_empty():
+		last_preview_generation_profile = {
+			"success": false,
+			"output_size": output_size,
+			"total_ms": float(Time.get_ticks_usec() - preview_start_us) / 1000.0
+		}
+		return {}
+
+	var height_bytes: PackedByteArray = result.get("height_bytes", PackedByteArray())
+	var biome_bytes: PackedByteArray = result.get("biome_bytes", PackedByteArray())
+	var heightmap := Image.create_from_data(output_size, output_size, false, Image.FORMAT_R8, height_bytes)
+	var biome_map := Image.create_from_data(output_size, output_size, false, Image.FORMAT_R8, biome_bytes)
+	last_preview_generation_profile = {
+		"success": true,
+		"output_size": output_size,
+		"world_size": MAP_SIZE,
+		"backend": str(result.get("backend", "unknown")),
+		"pixel_count": int(result.get("pixel_count", output_size * output_size)),
+		"total_ms": float(Time.get_ticks_usec() - preview_start_us) / 1000.0
+	}
+	return {
+		"heightmap": heightmap,
+		"biomes": biome_map,
+		"preview_generation_profile": last_preview_generation_profile.duplicate(true)
+	}
+
 # ============================================================================
 # MAIN GENERATION
 # ============================================================================
@@ -112,6 +242,7 @@ func generate_world() -> Dictionary:
 		"world_seed": world_seed,
 		"map_size": MAP_SIZE,
 		"layout_mode": "grid" if use_grid_roads else "town",
+		"height_biome_backend": "",
 		"height_biome_ms": 0.0,
 		"layout_ms": 0.0,
 		"lakes_ms": 0.0,
@@ -129,10 +260,6 @@ func generate_world() -> Dictionary:
 	var half = MAP_SIZE / 2
 	var total = MAP_SIZE * MAP_SIZE
 	
-	var height_bytes = PackedByteArray()
-	height_bytes.resize(total)
-	var biome_bytes = PackedByteArray()
-	biome_bytes.resize(total)
 	var road_bytes = PackedByteArray()
 	road_bytes.resize(total * 2)
 	var water_bytes = PackedByteArray()
@@ -144,24 +271,10 @@ func generate_world() -> Dictionary:
 	var height_biome_start_us := Time.get_ticks_usec()
 	if progress_callback.is_valid():
 		progress_callback.call(0.0, "Generating height + biomes")
-	
-	for z in MAP_SIZE:
-		if z % 256 == 0 and progress_callback.is_valid():
-			progress_callback.call(float(z) / MAP_SIZE * 30.0, "Height + biomes")
-		var wz = float(z - half)
-		var row_offset = z * MAP_SIZE
-		for x in MAP_SIZE:
-			var wx = float(x - half)
-			var idx = row_offset + x
-			var h_raw = _height_noise.get_noise_2d(wx, wz)
-			var h = terrain_height + (h_raw * 0.5 + 0.5) * terrain_height
-			height_bytes[idx] = _encode_height_byte(h, max_h)
-			var bv = _biome_noise.get_noise_2d(wx, wz)
-			var biome: int = MaterialRegistry.GRASS
-			if bv < -0.2: biome = MaterialRegistry.SAND
-			elif bv > 0.6: biome = MaterialRegistry.SNOW
-			elif bv > 0.2: biome = MaterialRegistry.GRAVEL
-			biome_bytes[idx] = biome
+	var height_biome_result := _generate_height_biome_bytes(MAP_SIZE, max_h, true)
+	var height_bytes: PackedByteArray = height_biome_result.get("height_bytes", PackedByteArray())
+	var biome_bytes: PackedByteArray = height_biome_result.get("biome_bytes", PackedByteArray())
+	generation_profile["height_biome_backend"] = str(height_biome_result.get("backend", "unknown"))
 	generation_profile["height_biome_ms"] = float(Time.get_ticks_usec() - height_biome_start_us) / 1000.0
 
 	# Branch: TOWN mode or GRID mode
@@ -2976,7 +3089,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"road_width": road_width,
 		"use_grid_roads": use_grid_roads,
 		"deep_lakes_enabled": deep_lakes_enabled,
+		"native_height_biome_enabled": native_height_biome_enabled,
+		"native_height_biome_available": _native_height_biome_available(),
 		"last_generation_profile": last_generation_profile.duplicate(true),
+		"last_preview_generation_profile": last_preview_generation_profile.duplicate(true),
 		"last_save_profile": last_save_profile.duplicate(true)
 	}
 

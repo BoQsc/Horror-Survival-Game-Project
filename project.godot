@@ -21,6 +21,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 DebugManager="*res://modules/debug_module/debug_manager.gd"
+WorldStartupCoordinator="*res://world_performance/world_startup_coordinator.gd"
 SaveManager="*res://save_manager/save_manager_v2.gd"
 ContainerRegistry="*res://save_manager/container_registry.gd"
 PlayerSignals="*res://modules/world_player_v2/autoload/player_signals.gd"

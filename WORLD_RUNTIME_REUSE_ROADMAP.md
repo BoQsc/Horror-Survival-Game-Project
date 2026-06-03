@@ -80,14 +80,36 @@ Out of scope:
 | Stage | Status | What we will do | Exit criteria |
 |---|---|---|---|
 | 0. Baseline | done | Keep the current render-distance proof, the `WorldMapData` cache baseline, and the chunk-cleanup race fix as the known starting point. | We can reproduce the current numbers and compare later runs against them. |
-| 1. Terrain reuse | pending | Cache generated terrain chunk meshes, collision, and worker output per chunk so unchanged terrain can be restored instead of rebuilt. | A revisited terrain chunk comes back from cache without a full rebuild. |
-| 2. Vegetation reuse | pending | Cache vegetation placement, instances, and colliders per chunk or region, and invalidate only the dirty area when terrain changes. | Unchanged vegetation restores from cache and dirty terrain only refreshes its own vegetation. |
-| 3. Entity reuse | pending | Add chunk-aware entity pooling or persistent spawn records so the same area does not repeatedly respawn the same expensive entity setup. | Entity pressure drops on revisits and only dirty spawn regions regenerate. |
-| 4. Building and block reuse | pending | Cache building prefab output, building blocks, meshes, collision, and visual batches per chunk or settlement region. Keep interactive state separate from static build output. | Buildings and blocks in unchanged areas return from cache instead of being rebuilt. |
-| 5. Cache rules | pending | Define exactly what invalidates each cache: terrain edits, building edits, world switches, save/load, memory pressure, and settings changes. Decide which caches survive scene transitions and which are session-only. | Cache invalidation is predictable and documented for every subsystem. |
+| 1. Terrain reuse | in progress | Continue the implemented bounded terrain artifact caches so unchanged terrain can be restored instead of rebuilt. | A revisited terrain chunk comes back from cache without a full rebuild. |
+| 2. Vegetation reuse | in progress | Continue the implemented bounded vegetation placement cache, existing collider pools, and dirty terrain invalidation. | Unchanged vegetation restores from cache and dirty terrain only refreshes its own vegetation. |
+| 3. Entity reuse | in progress | Continue the implemented bounded scene-keyed entity pool and add persistent spawn records only where measurements justify them. | Entity pressure drops on revisits and only dirty spawn regions regenerate. |
+| 4. Building and block reuse | in progress | Continue existing persistent building chunk data, prefab rotated-block cache, baked payload cache, and visual payload cache. Keep interactive state separate from static build output. | Buildings and blocks in unchanged areas return from cache instead of being rebuilt. |
+| 5. Cache rules | in progress | Complete and prove invalidation rules for terrain edits, building edits, world switches, save/load, memory pressure, and settings changes. | Cache invalidation is predictable and documented for every subsystem. |
 | 6. Proof sweeps | pending | Repeat the render-distance sweep with cached and uncached paths, starting at 5, 10, and 15, and extend only if needed. Measure terrain, vegetation, entity, and building costs separately. | We can point to the exact subsystem that improves. |
 | 7. Hot-path follow-up | pending | If a specific hotspot still dominates after reuse, move only that measured hot path to C++/GDExtension or another lower-level implementation. | Native work is justified by measured need, not by guesswork. |
 | 8. Cleanup | pending | Remove temporary hooks and test-only toggles that were only needed during rollout. | One stable runtime-reuse path remains. |
+
+## Current Implementation Evidence
+
+- Terrain session artifacts restore unchanged revisits through the existing
+  finalization path, and eligible base-world artifacts can restore from disk.
+- Successful edited-terrain rebuilds refresh their session artifact so later
+  unchanged revisits can reuse the new result.
+- Vegetation placement artifacts are bounded by chunk and instance budgets,
+  signed by relevant generation settings, and invalidated by dirty terrain.
+- Entity pooling is bounded, keyed by packed-scene resource path, and used for
+  eligible non-permanent despawns.
+- Entity maintenance selects timer and physics-process rates only from work
+  categories that are currently present.
+- Building chunk data remains resident across visual unloads, while existing
+  prefab, baked building payload, and visual payload caches avoid substantial
+  repeated static work.
+- Terrain, building, and vegetation viewer refresh paths consume explicit player
+  movement signals and retain slower fallback polling for alternate viewers.
+
+The next requirement is runtime proof: revisit, memory-pressure, render-distance,
+and dirty-edit sweeps must show the work-count and frame-time effect for each
+subsystem separately.
 
 ## Decision Rules
 

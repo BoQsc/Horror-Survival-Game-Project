@@ -11,9 +11,11 @@
 #include <utility>
 #include <vector>
 
+#include <godot_cpp/classes/fast_noise_lite.hpp>
 #include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/callable.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -703,6 +705,7 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_nearest_vegetation_ray_hit", "chunk_data", "list_key", "kind", "origin", "direction", "max_distance", "radius", "height", "scale_by_entry"), &PrefabGeometryNative::find_nearest_vegetation_ray_hit);
 	ClassDB::bind_method(D_METHOD("find_nearest_tree_visual_bounds_ray_hit", "chunk_data", "list_key", "origin", "direction", "max_distance", "mesh_bounds", "base_transform", "rotation_fix", "bounds_padding"), &PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
+	ClassDB::bind_method(D_METHOD("build_world_map_height_biome_bytes", "map_size", "world_size", "world_seed", "noise_frequency", "terrain_height", "max_height", "grass_material_id", "sand_material_id", "snow_material_id", "gravel_material_id"), &PrefabGeometryNative::build_world_map_height_biome_bytes);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances_with_render_payload", "config", "height_map", "render_space_inverse", "mesh_bounds"), &PrefabGeometryNative::build_vegetation_instances_with_render_payload);
 	ClassDB::bind_method(D_METHOD("build_noise_samples", "noise_sampler", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "use_noise"), &PrefabGeometryNative::build_noise_samples);
@@ -1415,6 +1418,82 @@ Dictionary PrefabGeometryNative::resolve_tree_body_collision(const Dictionary &c
 	Dictionary result;
 	result["push"] = total_push;
 	result["hits"] = hit_count;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::build_world_map_height_biome_bytes(
+		int map_size,
+		int world_size,
+		int world_seed,
+		double noise_frequency,
+		double terrain_height,
+		double max_height,
+		int grass_material_id,
+		int sand_material_id,
+		int snow_material_id,
+		int gravel_material_id) const {
+	Dictionary result;
+	if (map_size <= 0 || world_size <= 0 || max_height <= 0.0) {
+		return result;
+	}
+
+	const int64_t total = static_cast<int64_t>(map_size) * static_cast<int64_t>(map_size);
+	if (total <= 0 || total > std::numeric_limits<int32_t>::max()) {
+		return result;
+	}
+
+	Ref<FastNoiseLite> height_noise;
+	height_noise.instantiate();
+	height_noise->set_seed(world_seed);
+	height_noise->set_noise_type(FastNoiseLite::TYPE_VALUE);
+	height_noise->set_frequency(static_cast<float>(noise_frequency));
+
+	Ref<FastNoiseLite> biome_noise;
+	biome_noise.instantiate();
+	biome_noise->set_seed(world_seed + 100);
+	biome_noise->set_noise_type(FastNoiseLite::TYPE_SIMPLEX);
+	biome_noise->set_frequency(0.002f);
+	biome_noise->set_fractal_type(FastNoiseLite::FRACTAL_FBM);
+	biome_noise->set_fractal_octaves(3);
+	biome_noise->set_fractal_gain(0.5f);
+
+	PackedByteArray height_bytes;
+	height_bytes.resize(static_cast<int>(total));
+	PackedByteArray biome_bytes;
+	biome_bytes.resize(static_cast<int>(total));
+	uint8_t *height_write = height_bytes.ptrw();
+	uint8_t *biome_write = biome_bytes.ptrw();
+	const double half_world_size = double(world_size) * 0.5;
+	const double sample_scale = double(world_size) / double(map_size);
+
+	for (int z = 0; z < map_size; ++z) {
+		const float world_z = static_cast<float>(double(z) * sample_scale - half_world_size);
+		const int row_offset = z * map_size;
+		for (int x = 0; x < map_size; ++x) {
+			const float world_x = static_cast<float>(double(x) * sample_scale - half_world_size);
+			const int index = row_offset + x;
+			const double height_raw = static_cast<double>(height_noise->get_noise_2d(world_x, world_z));
+			const double height = terrain_height + (height_raw * 0.5 + 0.5) * terrain_height;
+			const double normalized_height = std::clamp(height / max_height, 0.0, 1.0);
+			const int encoded_height = static_cast<int>(std::round(normalized_height * 255.0));
+			height_write[index] = static_cast<uint8_t>(std::clamp(encoded_height, 0, 255));
+
+			const double biome_value = static_cast<double>(biome_noise->get_noise_2d(world_x, world_z));
+			int biome = grass_material_id;
+			if (biome_value < -0.2) {
+				biome = sand_material_id;
+			} else if (biome_value > 0.6) {
+				biome = snow_material_id;
+			} else if (biome_value > 0.2) {
+				biome = gravel_material_id;
+			}
+			biome_write[index] = static_cast<uint8_t>(std::clamp(biome, 0, 255));
+		}
+	}
+
+	result["height_bytes"] = height_bytes;
+	result["biome_bytes"] = biome_bytes;
+	result["pixel_count"] = static_cast<int>(total);
 	return result;
 }
 

@@ -3,6 +3,8 @@ class_name WorldPlayerV2
 ## WorldPlayerV2 - Feature-centric player coordinator
 ## Thin wrapper that wires features together. Each feature is self-contained.
 
+signal viewer_position_changed(previous_position: Vector3, current_position: Vector3)
+
 # ============================================================================
 # FEATURE REFERENCES (populated in _ready)
 # ============================================================================
@@ -21,9 +23,14 @@ var inventory_feature: Node = null
 var terrain_manager: Node = null
 var building_manager: Node = null
 var vegetation_manager: Node = null
+var _viewer_position_signal_ready: bool = false
+var _last_viewer_signal_position: Vector3 = Vector3.ZERO
 
 func _ready() -> void:
 	add_to_group("player")
+	set_notify_transform(true)
+	_last_viewer_signal_position = global_position
+	_viewer_position_signal_ready = true
 	
 	# Find features in Components node (matching player.tscn structure)
 	var components_node = get_node_or_null("Components")
@@ -75,6 +82,18 @@ func _ready() -> void:
 		terrain_feature.initialize(self, terrain_manager, inventory_feature)
 	
 	_log_initialization()
+
+
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_TRANSFORM_CHANGED or not _viewer_position_signal_ready:
+		return
+	var current_position := global_position
+	if current_position == _last_viewer_signal_position:
+		return
+	var previous_position := _last_viewer_signal_position
+	_last_viewer_signal_position = current_position
+	viewer_position_changed.emit(previous_position, current_position)
+
 
 func _log_initialization() -> void:
 	pass

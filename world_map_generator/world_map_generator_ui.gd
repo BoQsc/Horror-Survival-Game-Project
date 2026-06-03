@@ -6,7 +6,12 @@ class_name WorldMapGeneratorUI
 const WorldMapGen = preload("res://world_map_generator/world_map_generator.gd")
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
+const WorldMapPreviewBuilder = preload("res://world_performance/world_map_preview_builder.gd")
 const SAVE_BASE = "user://worlds/"
+
+@export_range(128, 1024, 64) var preview_max_size: int = 512
+@export var preview_use_full_resolution_reference: bool = false
+@export var generation_low_resolution_preview_enabled: bool = true
 
 # UI References
 @onready var canvas: TextureRect = $HSplit/CanvasPanel/Canvas
@@ -31,9 +36,14 @@ var preview_texture: ImageTexture = null
 var is_generating: bool = false
 var gen_thread: Thread = null
 var last_generation_profile: Dictionary = {}
+var last_generation_preview_profile: Dictionary = {}
 var last_save_profile: Dictionary = {}
 var last_preview_ms: float = 0.0
 var last_save_ms: float = 0.0
+var last_preview_source_size: Vector2i = Vector2i.ZERO
+var last_preview_output_size: Vector2i = Vector2i.ZERO
+var last_preview_sample_count: int = 0
+var last_preview_backend: String = ""
 
 # Terrain presets: [terrain_height, noise_freq]
 const TERRAIN_PRESETS = {
@@ -238,8 +248,24 @@ func _on_generate_pressed() -> void:
 	gen_thread.start(_threaded_generate)
 
 func _threaded_generate() -> void:
+	if generation_low_resolution_preview_enabled:
+		var preview_images := generator.generate_preview(preview_max_size)
+		if not preview_images.is_empty():
+			call_deferred("_on_generation_preview_ready", preview_images)
 	var images = generator.generate_world()
 	call_deferred("_on_generation_complete", images)
+
+
+func _on_generation_preview_ready(images: Dictionary) -> void:
+	if not is_generating:
+		return
+	var profile_variant: Variant = images.get("preview_generation_profile", {})
+	last_generation_preview_profile = profile_variant.duplicate(true) if profile_variant is Dictionary else {}
+	var preview_start_us := Time.get_ticks_usec()
+	var preview_result := WorldMapPreviewBuilder.build_preview(images, preview_max_size)
+	_apply_preview_result(preview_result, "low_resolution_generation", preview_start_us)
+	progress_label.text = "Terrain preview ready; generating full world..."
+
 
 func _on_gen_progress(percent: float, stage: String) -> void:
 	call_deferred("_update_progress", percent, stage)
@@ -281,6 +307,42 @@ func _on_generation_complete(images: Dictionary) -> void:
 # ============================================================================
 
 func _update_preview() -> void:
+	if preview_use_full_resolution_reference:
+		_update_preview_full_resolution_reference()
+		last_preview_backend = "full_resolution_reference"
+		if current_images.has("heightmap"):
+			var source_image: Image = current_images.heightmap
+			last_preview_source_size = Vector2i(source_image.get_width(), source_image.get_height())
+			last_preview_output_size = last_preview_source_size
+			last_preview_sample_count = source_image.get_width() * source_image.get_height()
+		return
+
+	var preview_start_us := Time.get_ticks_usec()
+	var preview_result := WorldMapPreviewBuilder.build_preview(current_images, preview_max_size)
+	_apply_preview_result(preview_result, "bounded", preview_start_us)
+
+
+func _apply_preview_result(preview_result: Dictionary, backend: String, preview_start_us: int = 0) -> void:
+	if preview_result.is_empty():
+		return
+	var preview: Image = preview_result.get("image")
+	if preview == null or preview.is_empty():
+		return
+
+	if preview_texture:
+		preview_texture.update(preview)
+	else:
+		preview_texture = ImageTexture.create_from_image(preview)
+	canvas.texture = preview_texture
+	var effective_start_us := preview_start_us if preview_start_us > 0 else Time.get_ticks_usec()
+	last_preview_ms = float(Time.get_ticks_usec() - effective_start_us) / 1000.0
+	last_preview_source_size = preview_result.get("source_size", Vector2i.ZERO)
+	last_preview_output_size = preview_result.get("output_size", Vector2i.ZERO)
+	last_preview_sample_count = int(preview_result.get("sample_count", 0))
+	last_preview_backend = backend
+
+
+func _update_preview_full_resolution_reference() -> void:
 	if not current_images.has("heightmap") or not current_images.has("biomes"):
 		return
 	var preview_start_us := Time.get_ticks_usec()
@@ -418,8 +480,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"is_generating": is_generating,
 		"current_image_count": current_images.size(),
 		"last_preview_ms": last_preview_ms,
+		"last_preview_backend": last_preview_backend,
+		"preview_max_size": preview_max_size,
+		"generation_low_resolution_preview_enabled": generation_low_resolution_preview_enabled,
+		"last_preview_source_size": last_preview_source_size,
+		"last_preview_output_size": last_preview_output_size,
+		"last_preview_sample_count": last_preview_sample_count,
 		"last_save_ms": last_save_ms,
 		"last_generation_profile": last_generation_profile.duplicate(true),
+		"last_generation_preview_profile": last_generation_preview_profile.duplicate(true),
 		"last_save_profile": last_save_profile.duplicate(true)
 	}
 
@@ -442,15 +511,18 @@ func _gui_input(event: InputEvent) -> void:
 func _paint_at_mouse(_mouse_pos: Vector2) -> void:
 	if not canvas or not canvas.texture:
 		return
+	if not current_images.has("heightmap"):
+		return
 	
 	var local = canvas.get_local_mouse_position()
-	var tex_size = Vector2(canvas.texture.get_width(), canvas.texture.get_height())
+	var source_image: Image = current_images.heightmap
+	var source_size = Vector2(source_image.get_width(), source_image.get_height())
 	var canvas_size = canvas.size
 	
-	var px = int(local.x / canvas_size.x * tex_size.x)
-	var py = int(local.y / canvas_size.y * tex_size.y)
+	var px = int(local.x / canvas_size.x * source_size.x)
+	var py = int(local.y / canvas_size.y * source_size.y)
 	
-	if px < 0 or py < 0 or px >= int(tex_size.x) or py >= int(tex_size.y):
+	if px < 0 or py < 0 or px >= int(source_size.x) or py >= int(source_size.y):
 		return
 	
 	match current_tool:

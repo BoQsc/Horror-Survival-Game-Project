@@ -35,6 +35,8 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(0.0, 1.0, 0.01) var dormant_respawn_update_interval: float = 0.25
 @export_range(0, 60, 1) var entity_render_prewarm_frames: int = 12
 @export_range(1, 128, 1) var deferred_spawn_chunks_per_frame: int = 32
+@export var entity_pool_enabled: bool = true
+@export_range(0, 512, 1) var entity_pool_max_size: int = 64
 
 # Procedural spawning settings
 @export var procedural_spawning_enabled: bool = true
@@ -76,6 +78,12 @@ var _last_dormant_respawn_update_ms: float = 0.0
 var _last_dormant_respawn_processed: int = 0
 var _last_dormant_respawn_raycasts: int = 0
 var _last_dormant_respawn_spawned: int = 0
+var _entity_pool_hit_count: int = 0
+var _entity_pool_miss_count: int = 0
+var _entity_pool_store_count: int = 0
+var _entity_pool_full_discard_count: int = 0
+var _entity_pool_invalid_discard_count: int = 0
+var _entity_pool_clear_count: int = 0
 var _deferred_spawn_chunk_cursor: int = 0
 var _entity_render_resource_prewarm_node: Node = null
 var _entity_render_resource_prewarm_mesh_count: int = 0
@@ -168,6 +176,14 @@ func get_telemetry_snapshot() -> Dictionary:
 		"frozen_entities": frozen_entities.size(),
 		"dormant_entities": dormant_entities.size(),
 		"entity_pool_size": entity_pool.size(),
+		"entity_pool_enabled": entity_pool_enabled,
+		"entity_pool_max_size": entity_pool_max_size,
+		"entity_pool_hit_count": _entity_pool_hit_count,
+		"entity_pool_miss_count": _entity_pool_miss_count,
+		"entity_pool_store_count": _entity_pool_store_count,
+		"entity_pool_full_discard_count": _entity_pool_full_discard_count,
+		"entity_pool_invalid_discard_count": _entity_pool_invalid_discard_count,
+		"entity_pool_clear_count": _entity_pool_clear_count,
 		"pending_spawns": pending_spawns.size(),
 		"deferred_spawn_chunks": deferred_spawn_chunks.size(),
 		"deferred_spawn_chunk_keys": deferred_spawn_chunk_keys.size(),
@@ -234,14 +250,17 @@ func get_telemetry_snapshot() -> Dictionary:
 func _get_entity_maintenance_timer_interval() -> float:
 	var interval := 999999.0
 	var found_interval := false
-	if proximity_update_interval > 0.0:
+	if not active_entities.is_empty() and proximity_update_interval > 0.0:
 		interval = minf(interval, proximity_update_interval)
 		found_interval = true
-	if spawn_queue_update_interval > 0.0:
+	if (not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()) and spawn_queue_update_interval > 0.0:
 		interval = minf(interval, spawn_queue_update_interval)
 		found_interval = true
-	if dormant_respawn_update_interval > 0.0:
+	if not dormant_entities.is_empty() and dormant_respawn_update_interval > 0.0:
 		interval = minf(interval, dormant_respawn_update_interval)
+		found_interval = true
+	if _should_run_balanced_ring_fill() and balanced_ring_fill_interval > 0.0:
+		interval = minf(interval, balanced_ring_fill_interval)
 		found_interval = true
 	if not found_interval:
 		return 0.05
@@ -249,9 +268,12 @@ func _get_entity_maintenance_timer_interval() -> float:
 
 func _entity_maintenance_requires_physics_process() -> bool:
 	return (
-		proximity_update_interval <= 0.0
-		or spawn_queue_update_interval <= 0.0
-		or dormant_respawn_update_interval <= 0.0
+		(not active_entities.is_empty() and proximity_update_interval <= 0.0)
+		or (
+			(not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty())
+			and spawn_queue_update_interval <= 0.0
+		)
+		or (not dormant_entities.is_empty() and dormant_respawn_update_interval <= 0.0)
 	)
 
 func _has_entity_maintenance_work() -> bool:
@@ -310,6 +332,7 @@ func _on_entity_maintenance_timer_timeout() -> void:
 func _exit_tree() -> void:
 	if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
 		_entity_maintenance_timer.stop()
+	_clear_entity_pool()
 
 func _ready():
 	# Register in group for lookup by other systems
@@ -359,6 +382,8 @@ func _apply_environment_overrides() -> void:
 	spawn_queue_update_interval = _get_env_float("TOWN_STALL_ENTITY_SPAWN_QUEUE_UPDATE_INTERVAL", spawn_queue_update_interval, 0.0, 10.0)
 	dormant_respawn_update_interval = _get_env_float("TOWN_STALL_ENTITY_DORMANT_RESPAWN_UPDATE_INTERVAL", dormant_respawn_update_interval, 0.0, 10.0)
 	deferred_spawn_chunks_per_frame = _get_env_int("TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME", deferred_spawn_chunks_per_frame, 1, 4096)
+	entity_pool_enabled = _get_env_bool("TOWN_STALL_ENTITY_POOL_ENABLED", entity_pool_enabled)
+	entity_pool_max_size = _get_env_int("TOWN_STALL_ENTITY_POOL_MAX_SIZE", entity_pool_max_size, 0, 4096)
 	spawn_chance_per_chunk = _get_env_float("TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK", spawn_chance_per_chunk, 0.0, 1.0)
 	min_spawn_distance_from_player = _get_env_float("TOWN_STALL_ENTITY_MIN_SPAWN_DISTANCE", min_spawn_distance_from_player, 0.0, 10000.0)
 	max_spawns_per_chunk = _get_env_int("TOWN_STALL_ENTITY_MAX_SPAWNS_PER_CHUNK", max_spawns_per_chunk, 0, 128)
@@ -716,19 +741,16 @@ func spawn_entity(world_pos: Vector3, entity_scene: PackedScene = null) -> Node3
 		return null
 	
 	var entity: Node3D
-	
-	# Only use pooling for default entity scene - custom scenes always create new instances
-	# This prevents mixing different entity types (e.g., capsules vs zombies)
-	var use_pooling = (entity_scene == null) and entity_pool.size() > 0
-	
-	if use_pooling:
-		entity = entity_pool.pop_back()
-		entity.visible = true
-		entity.process_mode = Node.PROCESS_MODE_INHERIT
-	else:
+	var pool_key := _get_entity_pool_key(scene_to_use)
+	if not pool_key.is_empty():
+		entity = _take_pooled_entity(pool_key)
+
+	if entity == null:
 		# Create new instance
 		entity = scene_to_use.instantiate()
 		add_child(entity)
+		if not pool_key.is_empty():
+			entity.set_meta("entity_pool_key", pool_key)
 	
 	# Set position
 	entity.global_position = world_pos
@@ -777,11 +799,73 @@ func despawn_entity(entity: Node3D, permanent: bool = false):
 	if entity.has_method("on_despawn"):
 		entity.on_despawn()
 	
-	# Free the entity (we'll recreate from stored data)
-	entity.queue_free()
+	# Reuse non-permanent entities when their packed-scene identity is known.
+	# Permanent despawns can have delayed death cleanup or other terminal state.
+	if permanent or not _return_entity_to_pool(entity):
+		entity.queue_free()
 	
 	entity_despawned.emit(entity)
 	_sync_entity_maintenance_driver()
+
+
+func _get_entity_pool_key(scene: PackedScene) -> String:
+	if scene == null:
+		return ""
+	return str(scene.resource_path)
+
+
+func _take_pooled_entity(pool_key: String) -> Node3D:
+	if not entity_pool_enabled or entity_pool_max_size <= 0 or pool_key.is_empty():
+		return null
+	for index in range(entity_pool.size() - 1, -1, -1):
+		var candidate: Node3D = entity_pool[index]
+		if not is_instance_valid(candidate):
+			entity_pool.remove_at(index)
+			_entity_pool_invalid_discard_count += 1
+			continue
+		if str(candidate.get_meta("entity_pool_key", "")) != pool_key:
+			continue
+		entity_pool.remove_at(index)
+		add_child(candidate)
+		candidate.visible = true
+		candidate.process_mode = Node.PROCESS_MODE_INHERIT
+		_entity_pool_hit_count += 1
+		return candidate
+	_entity_pool_miss_count += 1
+	return null
+
+
+func _return_entity_to_pool(entity: Node3D) -> bool:
+	if not entity_pool_enabled or entity_pool_max_size <= 0:
+		return false
+	var pool_key := str(entity.get_meta("entity_pool_key", ""))
+	if pool_key.is_empty():
+		_entity_pool_invalid_discard_count += 1
+		return false
+	if entity_pool.size() >= entity_pool_max_size:
+		_entity_pool_full_discard_count += 1
+		return false
+	if entity.get_parent():
+		entity.get_parent().remove_child(entity)
+	entity.visible = false
+	entity.process_mode = Node.PROCESS_MODE_DISABLED
+	if entity is CharacterBody3D:
+		entity.velocity = Vector3.ZERO
+	entity_pool.append(entity)
+	_entity_pool_store_count += 1
+	return true
+
+
+func _clear_entity_pool() -> void:
+	if entity_pool.is_empty():
+		return
+	var cleared := 0
+	for entity in entity_pool:
+		if is_instance_valid(entity):
+			entity.free()
+			cleared += 1
+	entity_pool.clear()
+	_entity_pool_clear_count += cleared
 
 ## Spawn an entity at a random position around the player on terrain surface
 ## Adds to spawn queue - actual spawning happens in _process_spawn_queue
@@ -1217,6 +1301,7 @@ func clear_all_entities():
 	# Clear tracking arrays since we already freed the entities
 	active_entities.clear()
 	frozen_entities.clear()
+	_clear_entity_pool()
 	_sync_entity_maintenance_driver()
 
 func clear_for_shutdown() -> void:
@@ -1236,6 +1321,7 @@ func clear_for_shutdown() -> void:
 	debug_entities_cleared.emit(zombies_cleared)
 	active_entities.clear()
 	frozen_entities.clear()
+	_clear_entity_pool()
 	_sync_entity_maintenance_driver()
 
 func load_save_data(data: Dictionary):

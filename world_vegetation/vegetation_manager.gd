@@ -87,7 +87,12 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(0, 120, 1) var vegetation_global_render_stream_flush_interval_frames: int = 12
 @export var vegetation_defer_initial_global_render_flush: bool = true
 @export_range(0.05, 1.0, 0.05) var vegetation_collider_update_interval: float = 0.20
+@export var vegetation_viewer_position_signal_enabled: bool = true
+@export_range(0.1, 5.0, 0.1) var vegetation_viewer_position_signal_fallback_interval: float = 1.0
 @export var prioritize_nearby_vegetation_chunks: bool = true
+@export var vegetation_chunk_placement_cache_enabled: bool = true
+@export_range(0, 4096, 1) var vegetation_chunk_placement_cache_max_chunks: int = 256
+@export_range(0, 1000000, 1000) var vegetation_chunk_placement_cache_max_instances: int = 250000
 
 # Grass settings
 @export var grass_model_path: String = "res://models/grass/2/grass_lowpoly.glb"
@@ -183,6 +188,10 @@ var _collider_update_deferred_pending: bool = false
 var _collider_update_timer_tick_count: int = 0
 var _collider_update_deferred_tick_count: int = 0
 var _collider_refresh_tick_count: int = 0
+var _viewer_position_signal_source: Node = null
+var _viewer_position_signal_connected: bool = false
+var _viewer_position_signal_count: int = 0
+var _viewer_position_signal_refresh_count: int = 0
 var _shutdown_clear_started: bool = false
 var _global_tree_render_mmi: MultiMeshInstance3D = null
 var _global_grass_render_mmi: MultiMeshInstance3D = null
@@ -269,6 +278,19 @@ var _last_vegetation_generation_reason: String = ""
 var _last_vegetation_generation_ms: float = 0.0
 var _last_vegetation_generation_instance_count: int = 0
 var _max_vegetation_generation_ms: float = 0.0
+var _vegetation_chunk_placement_cache: Dictionary = {}
+var _vegetation_chunk_placement_cache_lru: Array[Vector2i] = []
+var _vegetation_chunk_placement_cache_instance_count: int = 0
+var _vegetation_chunk_placement_cache_hits: int = 0
+var _vegetation_chunk_placement_cache_misses: int = 0
+var _vegetation_chunk_placement_cache_stores: int = 0
+var _vegetation_chunk_placement_cache_evictions: int = 0
+var _vegetation_chunk_placement_cache_invalidations: int = 0
+var _vegetation_chunk_placement_cache_oversize_skips: int = 0
+var _vegetation_chunk_placement_cache_restored_instances: int = 0
+var _vegetation_chunk_placement_cache_invalidation_reasons: Dictionary = {}
+var _last_vegetation_chunk_placement_cache_restore_ms: float = 0.0
+var _last_vegetation_chunk_placement_cache_restore_coord: Vector2i = Vector2i.ZERO
 
 # QuickLoad vegetation regeneration - deferred until terrain is ready
 var pending_vegetation_regen: bool = false
@@ -361,6 +383,21 @@ func get_telemetry_snapshot() -> Dictionary:
 		"chopped_trees_count": chopped_trees.size(),
 		"placed_grass_count": placed_grass.size(),
 		"placed_rocks_count": placed_rocks.size(),
+		"vegetation_chunk_placement_cache_enabled": vegetation_chunk_placement_cache_enabled,
+		"vegetation_chunk_placement_cache_max_chunks": vegetation_chunk_placement_cache_max_chunks,
+		"vegetation_chunk_placement_cache_max_instances": vegetation_chunk_placement_cache_max_instances,
+		"vegetation_chunk_placement_cache_chunks": _vegetation_chunk_placement_cache.size(),
+		"vegetation_chunk_placement_cache_instances": _vegetation_chunk_placement_cache_instance_count,
+		"vegetation_chunk_placement_cache_hits": _vegetation_chunk_placement_cache_hits,
+		"vegetation_chunk_placement_cache_misses": _vegetation_chunk_placement_cache_misses,
+		"vegetation_chunk_placement_cache_stores": _vegetation_chunk_placement_cache_stores,
+		"vegetation_chunk_placement_cache_evictions": _vegetation_chunk_placement_cache_evictions,
+		"vegetation_chunk_placement_cache_invalidations": _vegetation_chunk_placement_cache_invalidations,
+		"vegetation_chunk_placement_cache_oversize_skips": _vegetation_chunk_placement_cache_oversize_skips,
+		"vegetation_chunk_placement_cache_restored_instances": _vegetation_chunk_placement_cache_restored_instances,
+		"vegetation_chunk_placement_cache_invalidation_reasons": _vegetation_chunk_placement_cache_invalidation_reasons.duplicate(true),
+		"last_vegetation_chunk_placement_cache_restore_ms": _last_vegetation_chunk_placement_cache_restore_ms,
+		"last_vegetation_chunk_placement_cache_restore_coord": str(_last_vegetation_chunk_placement_cache_restore_coord),
 		"collider_refresh_dirty": _collider_refresh_dirty,
 		"dense_grass_mode": dense_grass_mode,
 		"grass_sample_step": grass_sample_step,
@@ -396,6 +433,11 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_queued_collider_update_ms": _last_queued_collider_update_ms,
 		"last_pending_placements_ms": _last_pending_placements_ms,
 		"vegetation_collider_update_interval": vegetation_collider_update_interval,
+		"vegetation_viewer_position_signal_enabled": vegetation_viewer_position_signal_enabled,
+		"vegetation_viewer_position_signal_fallback_interval": vegetation_viewer_position_signal_fallback_interval,
+		"viewer_position_signal_connected": _viewer_position_signal_connected,
+		"viewer_position_signal_count": _viewer_position_signal_count,
+		"viewer_position_signal_refresh_count": _viewer_position_signal_refresh_count,
 		"collider_update_timer_active": _collider_update_timer != null and is_instance_valid(_collider_update_timer) and not _collider_update_timer.is_stopped(),
 		"collider_update_timer_tick_count": _collider_update_timer_tick_count,
 		"collider_update_deferred_tick_count": _collider_update_deferred_tick_count,
@@ -797,13 +839,13 @@ func _start_collider_update_timer() -> void:
 	if not vegetation_colliders_enabled:
 		return
 	if _collider_update_timer and is_instance_valid(_collider_update_timer):
-		_collider_update_timer.wait_time = maxf(vegetation_collider_update_interval, 0.05)
+		_collider_update_timer.wait_time = _get_collider_update_timer_interval()
 		if _collider_update_timer.is_stopped():
 			_collider_update_timer.start()
 		return
 	var timer := Timer.new()
 	timer.name = "VegetationColliderUpdateTimer"
-	timer.wait_time = maxf(vegetation_collider_update_interval, 0.05)
+	timer.wait_time = _get_collider_update_timer_interval()
 	timer.one_shot = false
 	timer.autostart = false
 	timer.process_callback = Timer.TIMER_PROCESS_PHYSICS
@@ -817,6 +859,65 @@ func _on_collider_update_timer_timeout() -> void:
 		return
 	_collider_update_timer_tick_count += 1
 	_run_collider_refresh_tick()
+
+
+func _get_collider_update_timer_interval() -> float:
+	if _viewer_position_signal_connected:
+		return maxf(vegetation_viewer_position_signal_fallback_interval, 0.1)
+	return maxf(vegetation_collider_update_interval, 0.05)
+
+
+func _connect_viewer_position_signal() -> void:
+	_disconnect_viewer_position_signal()
+	if not vegetation_viewer_position_signal_enabled or not player or not is_instance_valid(player):
+		_update_collider_update_timer_interval()
+		return
+	_viewer_position_signal_source = player
+	if not player.has_signal("viewer_position_changed"):
+		_update_collider_update_timer_interval()
+		return
+	var callback := Callable(self, "_on_viewer_position_changed")
+	player.connect("viewer_position_changed", callback)
+	_viewer_position_signal_connected = true
+	_update_collider_update_timer_interval()
+
+
+func _update_collider_update_timer_interval() -> void:
+	if _collider_update_timer and is_instance_valid(_collider_update_timer):
+		_collider_update_timer.wait_time = _get_collider_update_timer_interval()
+
+
+func _disconnect_viewer_position_signal() -> void:
+	if _viewer_position_signal_source and is_instance_valid(_viewer_position_signal_source):
+		var callback := Callable(self, "_on_viewer_position_changed")
+		if _viewer_position_signal_source.has_signal("viewer_position_changed"):
+			if _viewer_position_signal_source.is_connected("viewer_position_changed", callback):
+				_viewer_position_signal_source.disconnect("viewer_position_changed", callback)
+	_viewer_position_signal_source = null
+	_viewer_position_signal_connected = false
+
+
+func _on_viewer_position_changed(_previous_position: Vector3, _current_position: Vector3) -> void:
+	_viewer_position_signal_count += 1
+	if not terrain_manager or not is_instance_valid(terrain_manager):
+		return
+	var current_viewer_pos := get_viewer_position()
+	var chunk_stride: float = float(terrain_manager.CHUNK_STRIDE)
+	var current_viewer_chunk := Vector2i(
+		int(floor(current_viewer_pos.x / chunk_stride)),
+		int(floor(current_viewer_pos.z / chunk_stride))
+	)
+	var collider_refresh_distance: float = max(4.0, collider_distance * 0.25)
+	var collider_refresh_distance_sq: float = collider_refresh_distance * collider_refresh_distance
+	if (
+		current_viewer_chunk == _last_collider_update_chunk
+		and current_viewer_pos.distance_squared_to(_last_collider_update_pos) < collider_refresh_distance_sq
+	):
+		return
+	_collider_refresh_dirty = true
+	_viewer_position_signal_refresh_count += 1
+	_request_collider_update_soon()
+
 
 func _request_collider_update_soon() -> void:
 	if _shutdown_clear_started:
@@ -2432,6 +2533,7 @@ func _ready():
 
 	# Find player
 	player = get_tree().get_first_node_in_group("player")
+	_connect_viewer_position_signal()
 	_start_collider_update_timer()
 
 
@@ -2444,6 +2546,9 @@ func get_viewer_position() -> Vector3:
 
 	if not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
+		_connect_viewer_position_signal()
+	elif vegetation_viewer_position_signal_enabled and player != _viewer_position_signal_source:
+		_connect_viewer_position_signal()
 	if is_instance_valid(player):
 		return player.global_position
 	return global_position
@@ -2457,8 +2562,231 @@ func _get_vehicle_manager() -> Node:
 	return _cached_vehicle_manager
 
 
+func _get_vegetation_terrain_signature_value(property_name: String, fallback: Variant) -> Variant:
+	if is_instance_valid(terrain_manager) and property_name in terrain_manager:
+		return terrain_manager.get(property_name)
+	return fallback
+
+
+func _get_vegetation_chunk_stride() -> int:
+	if is_instance_valid(terrain_manager):
+		return int(terrain_manager.CHUNK_STRIDE)
+	return 0
+
+
+func _get_vegetation_chunk_placement_cache_signature() -> String:
+	return "|".join([
+		str(_get_vegetation_terrain_signature_value("world_seed", 12345)),
+		str(_get_vegetation_terrain_signature_value("world_definition_path", "")),
+		str(_get_vegetation_terrain_signature_value("world_map_active", false)),
+		str(_get_vegetation_terrain_signature_value("water_level", 0.0)),
+		str(_get_vegetation_terrain_signature_value("procedural_roads_enabled", false)),
+		str(_get_vegetation_terrain_signature_value("procedural_road_spacing", 0.0)),
+		str(_get_vegetation_terrain_signature_value("procedural_road_width", 0.0)),
+		str(_get_vegetation_terrain_signature_value("_terrain_artifact_settings_signature", "")),
+		str(_get_vegetation_chunk_stride()),
+		tree_model_path,
+		str(tree_scale),
+		str(tree_y_offset),
+		str(tree_rotation_fix),
+		grass_model_path,
+		str(grass_scale),
+		str(grass_y_offset),
+		str(dense_grass_mode),
+		str(grass_sample_step),
+		str(grass_noise_threshold),
+		rock_model_path,
+		str(rock_scale),
+		str(rock_y_offset),
+		str(rock_sample_step),
+		str(rock_noise_threshold),
+		str(road_clearance),
+		str(forest_noise.seed if forest_noise else 0),
+		str(forest_noise.frequency if forest_noise else 0.0),
+		str(grass_noise.seed if grass_noise else 0),
+		str(grass_noise.frequency if grass_noise else 0.0),
+		str(rock_noise.seed if rock_noise else 0),
+		str(rock_noise.frequency if rock_noise else 0.0)
+	])
+
+
+func _terrain_has_modifications_at_vegetation_coord(coord: Vector2i) -> bool:
+	return terrain_manager \
+		and terrain_manager.has_method("has_modifications_at_xz") \
+		and terrain_manager.has_modifications_at_xz(coord.x, coord.y)
+
+
+func _get_vegetation_chunk_placement_cache_entry_instance_count(entry: Dictionary) -> int:
+	return int(entry.get("instance_count", 0))
+
+
+func _remove_vegetation_chunk_placement_cache_entry(coord: Vector2i, removal_kind: String = "", reason: String = "") -> bool:
+	if not _vegetation_chunk_placement_cache.has(coord):
+		return false
+
+	var entry: Dictionary = _vegetation_chunk_placement_cache[coord]
+	_vegetation_chunk_placement_cache_instance_count = maxi(
+		_vegetation_chunk_placement_cache_instance_count - _get_vegetation_chunk_placement_cache_entry_instance_count(entry),
+		0
+	)
+	_vegetation_chunk_placement_cache.erase(coord)
+	_vegetation_chunk_placement_cache_lru.erase(coord)
+
+	match removal_kind:
+		"eviction":
+			_vegetation_chunk_placement_cache_evictions += 1
+		"invalidation":
+			_vegetation_chunk_placement_cache_invalidations += 1
+			if not reason.is_empty():
+				_vegetation_chunk_placement_cache_invalidation_reasons[reason] = int(
+					_vegetation_chunk_placement_cache_invalidation_reasons.get(reason, 0)
+				) + 1
+	return true
+
+
+func _trim_vegetation_chunk_placement_cache() -> void:
+	while not _vegetation_chunk_placement_cache_lru.is_empty():
+		var over_chunk_budget := _vegetation_chunk_placement_cache.size() > vegetation_chunk_placement_cache_max_chunks
+		var over_instance_budget := _vegetation_chunk_placement_cache_instance_count > vegetation_chunk_placement_cache_max_instances
+		if not over_chunk_budget and not over_instance_budget:
+			break
+		_remove_vegetation_chunk_placement_cache_entry(
+			_vegetation_chunk_placement_cache_lru[0],
+			"eviction",
+			"budget"
+		)
+
+
+func _invalidate_vegetation_chunk_placement_cache_coord(coord: Vector2i, reason: String) -> void:
+	_remove_vegetation_chunk_placement_cache_entry(coord, "invalidation", reason)
+
+
+func clear_vegetation_chunk_placement_cache(reason: String = "manual") -> void:
+	var cached_coords: Array = _vegetation_chunk_placement_cache.keys()
+	for coord_variant in cached_coords:
+		var coord: Vector2i = coord_variant
+		_remove_vegetation_chunk_placement_cache_entry(coord, "invalidation", reason)
+
+
+func _cache_vegetation_chunk_placement(coord: Vector2i) -> bool:
+	if not vegetation_chunk_placement_cache_enabled \
+			or vegetation_chunk_placement_cache_max_chunks <= 0 \
+			or vegetation_chunk_placement_cache_max_instances <= 0:
+		return false
+	if _terrain_has_modifications_at_vegetation_coord(coord):
+		_invalidate_vegetation_chunk_placement_cache_coord(coord, "terrain_modified")
+		return false
+	if not chunk_tree_data.has(coord) or not chunk_grass_data.has(coord) or not chunk_rock_data.has(coord):
+		return false
+
+	var tree_data: Dictionary = chunk_tree_data[coord]
+	var grass_data: Dictionary = chunk_grass_data[coord]
+	var rock_data: Dictionary = chunk_rock_data[coord]
+	var trees: Array = tree_data.get("trees", [])
+	var grass_list: Array = grass_data.get("grass_list", [])
+	var rock_list: Array = rock_data.get("rock_list", [])
+	var instance_count := trees.size() + grass_list.size() + rock_list.size()
+	if instance_count > vegetation_chunk_placement_cache_max_instances:
+		_vegetation_chunk_placement_cache_oversize_skips += 1
+		_invalidate_vegetation_chunk_placement_cache_coord(coord, "oversize")
+		return false
+
+	_remove_vegetation_chunk_placement_cache_entry(coord)
+	_vegetation_chunk_placement_cache[coord] = {
+		"signature": _get_vegetation_chunk_placement_cache_signature(),
+		"trees": trees,
+		"grass_list": grass_list,
+		"rock_list": rock_list,
+		"instance_count": instance_count
+	}
+	_vegetation_chunk_placement_cache_lru.append(coord)
+	_vegetation_chunk_placement_cache_instance_count += instance_count
+	_vegetation_chunk_placement_cache_stores += 1
+	_trim_vegetation_chunk_placement_cache()
+	return _vegetation_chunk_placement_cache.has(coord)
+
+
+func _rebase_cached_vegetation_entries(entries: Array, chunk_world_position: Vector3) -> void:
+	for entry_variant in entries:
+		if not (entry_variant is Dictionary):
+			continue
+		var entry: Dictionary = entry_variant
+		var world_pos: Vector3 = entry.get("world_pos", Vector3.ZERO)
+		var local_pos := world_pos - chunk_world_position
+		entry["local_pos"] = local_pos
+		var transform_variant = entry.get("transform", Transform3D.IDENTITY)
+		if typeof(transform_variant) == TYPE_TRANSFORM3D:
+			var transform: Transform3D = transform_variant
+			transform.origin = local_pos
+			entry["transform"] = transform
+
+
+func _restore_vegetation_chunk_placement(coord: Vector2i, chunk_node: Node3D) -> bool:
+	if not vegetation_chunk_placement_cache_enabled:
+		return false
+	if not _vegetation_chunk_placement_cache.has(coord):
+		_vegetation_chunk_placement_cache_misses += 1
+		return false
+	if _terrain_has_modifications_at_vegetation_coord(coord):
+		_invalidate_vegetation_chunk_placement_cache_coord(coord, "terrain_modified")
+		_vegetation_chunk_placement_cache_misses += 1
+		return false
+
+	var entry: Dictionary = _vegetation_chunk_placement_cache[coord]
+	if str(entry.get("signature", "")) != _get_vegetation_chunk_placement_cache_signature():
+		_invalidate_vegetation_chunk_placement_cache_coord(coord, "settings_changed")
+		_vegetation_chunk_placement_cache_misses += 1
+		return false
+
+	var restore_start_us := Time.get_ticks_usec()
+	var trees: Array = entry.get("trees", [])
+	var grass_list: Array = entry.get("grass_list", [])
+	var rock_list: Array = entry.get("rock_list", [])
+	_remove_vegetation_chunk_placement_cache_entry(coord)
+
+	_rebase_cached_vegetation_entries(trees, chunk_node.global_position)
+	_rebase_cached_vegetation_entries(grass_list, chunk_node.global_position)
+	_rebase_cached_vegetation_entries(rock_list, chunk_node.global_position)
+
+	var chunk_stride := _get_vegetation_chunk_stride()
+	var tree_mmi = _create_chunk_multimesh_handle("tree", coord, tree_mesh)
+	if not trees.is_empty():
+		_attach_chunk_multimesh(tree_mmi, chunk_node)
+	_sync_multimesh_from_instances(tree_mmi, trees, chunk_stride)
+	chunk_tree_data[coord] = {
+		"multimesh": tree_mmi,
+		"trees": trees,
+		"chunk_node": chunk_node
+	}
+
+	var grass_mmi = _create_chunk_multimesh_handle("grass", coord, grass_mesh)
+	_attach_chunk_multimesh(grass_mmi, chunk_node)
+	_sync_multimesh_from_instances(grass_mmi, grass_list, chunk_stride)
+	chunk_grass_data[coord] = {
+		"multimesh": grass_mmi,
+		"grass_list": grass_list,
+		"chunk_node": chunk_node
+	}
+
+	var rock_mmi = _create_chunk_multimesh_handle("rock", coord, rock_mesh)
+	_attach_chunk_multimesh(rock_mmi, chunk_node)
+	_sync_multimesh_from_instances(rock_mmi, rock_list, chunk_stride)
+	chunk_rock_data[coord] = {
+		"multimesh": rock_mmi,
+		"rock_list": rock_list,
+		"chunk_node": chunk_node
+	}
+
+	_vegetation_chunk_placement_cache_hits += 1
+	_vegetation_chunk_placement_cache_restored_instances += trees.size() + grass_list.size() + rock_list.size()
+	_last_vegetation_chunk_placement_cache_restore_coord = coord
+	_last_vegetation_chunk_placement_cache_restore_ms = float(Time.get_ticks_usec() - restore_start_us) / 1000.0
+	return true
+
+
 ## Initialize or re-initialize noise generators based on current terrain seed
 func initialize_noise():
+	clear_vegetation_chunk_placement_cache("noise_reinitialized")
 	# Derive seed from world seed for reproducibility
 	var base_seed = terrain_manager.world_seed if terrain_manager else 12345
 
@@ -2486,6 +2814,7 @@ func _on_chunk_modified(coord: Vector3i, chunk_node: Node3D):
 
 	# Extract surface key (X,Z) - vegetation only exists on surface
 	var surface_key = Vector2i(coord.x, coord.z)
+	_invalidate_vegetation_chunk_placement_cache_coord(surface_key, "terrain_modified")
 
 	# Reparent vegetation MultiMeshInstances to the NEW chunk_node
 	# This prevents them from being deleted when old chunk_node is freed
@@ -2516,6 +2845,7 @@ func _on_chunk_unloaded(coord: Vector3i):
 		return
 
 	var surface_key = Vector2i(coord.x, coord.z)
+	_cache_vegetation_chunk_placement(surface_key)
 
 	# Clean up trees (including MultiMesh and colliders)
 	if chunk_tree_data.has(surface_key):
@@ -2580,14 +2910,15 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 	if is_instance_valid(terrain_manager) and "initial_load_phase" in terrain_manager and bool(terrain_manager.initial_load_phase):
 		_initial_chunk_stream_defer_active = true
 
+	# Extract surface key (X,Z) - vegetation only exists on surface
+	var surface_key = Vector2i(coord.x, coord.z)
+
 	# Skip vegetation for modified chunks (player-built structures)
 	# Check all Y layers at this X,Z for modifications
 	if terrain_manager and terrain_manager.has_method("has_modifications_at_xz"):
 		if terrain_manager.has_modifications_at_xz(coord.x, coord.z):
+			_invalidate_vegetation_chunk_placement_cache_coord(surface_key, "terrain_modified")
 			return # Don't spawn vegetation on player-modified terrain
-
-	# Extract surface key (X,Z) - vegetation only exists on surface
-	var surface_key = Vector2i(coord.x, coord.z)
 
 	if chunk_tree_data.has(surface_key):
 		_cleanup_chunk_trees(surface_key)
@@ -2595,6 +2926,10 @@ func _on_chunk_generated(coord: Vector3i, chunk_node: Node3D):
 		_cleanup_chunk_grass(surface_key)
 	if chunk_rock_data.has(surface_key):
 		_cleanup_chunk_rocks(surface_key)
+
+	if _restore_vegetation_chunk_placement(surface_key, chunk_node):
+		_mark_collider_refresh_dirty()
+		return
 
 	pending_chunks.append({
 		"coord": surface_key, # Use surface_key for vegetation
@@ -3542,6 +3877,7 @@ func chop_tree_at_index(coord: Vector2i, tree_index: int) -> bool:
 	if not chunk_tree_data.has(coord):
 		return false
 
+	_invalidate_vegetation_chunk_placement_cache_coord(coord, "tree_chopped")
 	var data = chunk_tree_data[coord]
 	for tree in data.trees:
 		if tree.index == tree_index and tree.alive:
@@ -3586,6 +3922,7 @@ func clear_vegetation_in_area(center: Vector3, radius: float):
 			var coord := Vector2i(chunk_x, chunk_z)
 			if not _chunk_overlaps_radius(coord, center, radius, chunk_stride):
 				continue
+			_invalidate_vegetation_chunk_placement_cache_coord(coord, "area_cleared")
 			if chunk_tree_data.has(coord):
 				var tree_data = chunk_tree_data[coord]
 				var tree_dirty := false
@@ -4074,6 +4411,7 @@ func _harvest_grass_at_index(coord: Vector2i, grass_index: int) -> bool:
 	if not chunk_grass_data.has(coord):
 		return false
 
+	_invalidate_vegetation_chunk_placement_cache_coord(coord, "grass_harvested")
 	var data = chunk_grass_data[coord]
 
 	# Validate that data is still valid
@@ -4625,6 +4963,7 @@ func place_grass(world_pos: Vector3) -> bool:
 	# Find which chunk this position belongs to
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var coord = Vector2i(floor(world_pos.x / chunk_stride), floor(world_pos.z / chunk_stride))
+	_invalidate_vegetation_chunk_placement_cache_coord(coord, "grass_placed")
 
 	var random_scale = randf_range(0.8, 1.2)
 	var final_scale = grass_scale * random_scale
@@ -4945,6 +5284,7 @@ func _harvest_rock_at_index(coord: Vector2i, rock_index: int) -> bool:
 	if not chunk_rock_data.has(coord):
 		return false
 
+	_invalidate_vegetation_chunk_placement_cache_coord(coord, "rock_harvested")
 	var data = chunk_rock_data[coord]
 
 	# Validate that data is still valid
@@ -4984,6 +5324,7 @@ func _harvest_rock_at_index(coord: Vector2i, rock_index: int) -> bool:
 func place_rock(world_pos: Vector3) -> bool:
 	var chunk_stride = terrain_manager.CHUNK_STRIDE
 	var coord = Vector2i(int(floor(world_pos.x / chunk_stride)), int(floor(world_pos.z / chunk_stride)))
+	_invalidate_vegetation_chunk_placement_cache_coord(coord, "rock_placed")
 
 	var random_scale = randf_range(0.6, 1.4)
 	var final_scale = rock_scale * random_scale
@@ -5850,6 +6191,7 @@ func get_save_data() -> Dictionary:
 	}
 
 func load_save_data(data: Dictionary):
+	clear_vegetation_chunk_placement_cache("save_data_loaded")
 	if data.has("removed_grass"):
 		removed_grass.clear()
 		for key in data.removed_grass:
@@ -5932,6 +6274,7 @@ func _serialize_placed_list(list: Array) -> Array:
 ## Clear loaded vegetation chunk visuals/colliders without touching persistent
 ## chopped/removed/placed state. Used when terrain chunks are reset or relocated.
 func clear_loaded_chunk_data(immediate_free: bool = false):
+	clear_vegetation_chunk_placement_cache("loaded_chunk_data_cleared")
 	# Stop all pending work
 	pending_chunks.clear()
 	pending_grass_placements.clear()
@@ -6032,6 +6375,7 @@ func clear_for_shutdown() -> void:
 	_collider_update_deferred_pending = false
 	if _collider_update_timer and is_instance_valid(_collider_update_timer):
 		_collider_update_timer.stop()
+	_disconnect_viewer_position_signal()
 	_disconnect_terrain_signals_for_shutdown()
 	clear_all_data(false)
 	_release_pooled_colliders_for_shutdown()

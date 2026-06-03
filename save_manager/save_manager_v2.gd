@@ -3,6 +3,7 @@ extends Node
 ## Autoload singleton for centralized save/load operations
 
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+const WorldEventTrace = preload("res://world_performance/world_event_trace.gd")
 
 signal save_completed(success: bool, path: String)
 signal load_completed(success: bool, path: String)
@@ -12,6 +13,7 @@ signal load_step(step_name: String, step_index: int, total_steps: int)
 const SAVE_VERSION = 2
 const SAVE_DIR = "user://saves/"
 const QUICKSAVE_FILE = "quicksave.json"
+const LOAD_TRACE_EVENT_LIMIT: int = 96
 
 # References to game managers (set in _ready or via exports)
 var chunk_manager: Node = null
@@ -68,6 +70,11 @@ var _autosave_timer: Timer = null
 # Thread Management
 var _save_threads: Array[Thread] = []
 var _is_saving: bool = false # Prevent concurrent saves to avoid file corruption
+var _load_trace = WorldEventTrace.new(LOAD_TRACE_EVENT_LIMIT)
+var _load_trace_current_step: String = ""
+var _load_trace_current_step_index: int = 0
+var _load_trace_current_step_started_usec: int = 0
+var _load_trace_last_success: bool = false
 
 func _ready():
 	# Add to group for dynamic lookup by HUD
@@ -346,18 +353,124 @@ func _finalize_save(path: String):
 
 
 func _capture_load_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
-	return
+	if event_label.is_empty():
+		return
+	_load_trace.capture(event_label, details)
+
+
+func _begin_load_trace(path: String) -> void:
+	_load_trace.begin("save-load", {"path": path})
+	_load_trace_current_step = ""
+	_load_trace_current_step_index = 0
+	_load_trace_current_step_started_usec = 0
+	_load_trace_last_success = false
+	_capture_load_telemetry("load_requested", {"path": path})
+	var startup_coordinator := _get_world_startup_coordinator()
+	if startup_coordinator:
+		startup_coordinator.begin_load("save-load-%d" % Time.get_ticks_usec(), {
+			"source": "save_manager",
+			"path": path
+		})
+		startup_coordinator.start_stage(&"save_load", "Loading save data", 5.0, {
+			"message": "Loading save data..."
+		})
+
+
+func _complete_current_load_step(outcome: String = "completed") -> void:
+	if _load_trace_current_step.is_empty() or _load_trace_current_step_started_usec <= 0:
+		return
+	var duration_ms := float(Time.get_ticks_usec() - _load_trace_current_step_started_usec) / 1000.0
+	_capture_load_telemetry("load_step_%s" % outcome, {
+		"step_name": _load_trace_current_step,
+		"step_index": _load_trace_current_step_index,
+		"duration_ms": duration_ms
+	})
+	_load_trace_current_step = ""
+	_load_trace_current_step_index = 0
+	_load_trace_current_step_started_usec = 0
+
+
+func _emit_load_step(step_name: String, step_index: int, total_steps: int) -> void:
+	_complete_current_load_step()
+	_load_trace_current_step = step_name
+	_load_trace_current_step_index = step_index
+	_load_trace_current_step_started_usec = Time.get_ticks_usec()
+	load_step.emit(step_name, step_index, total_steps)
+	_capture_load_telemetry("load_step_started", {
+		"step_name": step_name,
+		"step_index": step_index,
+		"total_steps": total_steps
+	})
+	var startup_coordinator := _get_world_startup_coordinator()
+	if startup_coordinator and step_index <= 8:
+		startup_coordinator.update_stage_progress(&"save_load", step_index, 8, {
+			"message": step_name,
+			"step_index": step_index,
+			"total_steps": total_steps
+		})
+		if step_index >= 8:
+			startup_coordinator.complete_stage(&"save_load", {
+				"message": "Save data restored"
+			})
+
+
+func _complete_load_trace(success: bool, details: Dictionary = {}) -> void:
+	_complete_current_load_step("completed" if success else "failed")
+	_load_trace_last_success = success
+	var final_details := details.duplicate(true)
+	final_details["success"] = success
+	_capture_load_telemetry("load_completed", final_details)
+
+
+func _fail_load(path: String, reason: String, details: Dictionary = {}) -> bool:
+	var failure_details := details.duplicate(true)
+	failure_details["path"] = path
+	failure_details["reason"] = reason
+	_capture_load_telemetry("load_failed", failure_details)
+	_reset_load_flags()
+	_complete_load_trace(false, failure_details)
+	var startup_coordinator := _get_world_startup_coordinator()
+	if startup_coordinator:
+		startup_coordinator.fail_load(&"save_load", reason, failure_details)
+	load_completed.emit(false, path)
+	return false
+
+
+func _get_world_startup_coordinator() -> Node:
+	return get_node_or_null("/root/WorldStartupCoordinator")
+
+
+func get_telemetry_snapshot() -> Dictionary:
+	return {
+		"is_loading_game": is_loading_game,
+		"is_quickloading": is_quickloading,
+		"current_save_path": current_save_path,
+		"awaiting_terrain_ready": awaiting_terrain_ready,
+		"awaiting_vegetation_ready": awaiting_vegetation_ready,
+		"load_trace_current_step": _load_trace_current_step,
+		"load_trace_current_step_index": _load_trace_current_step_index,
+		"load_trace_last_success": _load_trace_last_success,
+		"load_trace": _load_trace.get_snapshot()
+	}
 
 ## Load game from specified path
 func load_game(path: String) -> bool:
 	# Guard against double-load (F8 pressed twice)
 	if is_loading_game:
+		_capture_load_telemetry("load_rejected", {
+			"path": path,
+			"reason": "already_loading"
+		})
 		return false
+
+	_begin_load_trace(path)
 	
 	_find_managers() # Ensure we have latest references
 	# CRITICAL: Set flag BEFORE anything else to prevent procedural spawning during reload
 	is_quickloading = true
 	current_save_path = path
+	is_loading_game = true
+	_show_loading_screen()
 	
 	# Stop autosave timer during load to prevent saving partial state
 	if _autosave_timer:
@@ -376,51 +489,56 @@ func load_game(path: String) -> bool:
 	# Open file
 	if not FileAccess.file_exists(path):
 		push_error("[SaveManager] Save file not found: " + path)
-		_reset_load_flags()
-		load_completed.emit(false, path)
-		return false
+		return _fail_load(path, "file_not_found")
 	
+	var file_read_start_usec := Time.get_ticks_usec()
 	var file = FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		push_error("[SaveManager] Failed to open file for reading: " + path)
-		_reset_load_flags()
-		load_completed.emit(false, path)
-		return false
+		return _fail_load(path, "file_open_failed", {
+			"file_error": FileAccess.get_open_error()
+		})
 	
 	var json_string = file.get_as_text()
 	file.close()
+	_capture_load_telemetry("save_file_read", {
+		"bytes": json_string.to_utf8_buffer().size(),
+		"duration_ms": float(Time.get_ticks_usec() - file_read_start_usec) / 1000.0
+	})
 	
+	var parse_start_usec := Time.get_ticks_usec()
 	var json = JSON.new()
 	var parse_result = json.parse(json_string)
 	if parse_result != OK:
 		push_error("[SaveManager] Failed to parse JSON: " + json.get_error_message())
-		_reset_load_flags()
-		load_completed.emit(false, path)
-		return false
+		return _fail_load(path, "json_parse_failed", {
+			"error": json.get_error_message(),
+			"error_line": json.get_error_line()
+		})
 	
 	var save_data = json.get_data()
+	_capture_load_telemetry("save_json_parsed", {
+		"duration_ms": float(Time.get_ticks_usec() - parse_start_usec) / 1000.0
+	})
 	
 	# Structural validation: ensure save_data is a Dictionary with minimum required keys
 	if not save_data is Dictionary:
 		push_error("[SaveManager] Save data is not a Dictionary")
-		_reset_load_flags()
-		load_completed.emit(false, path)
-		return false
+		return _fail_load(path, "save_data_not_dictionary")
 	
 	# Validate version
 	var version = save_data.get("version", 0)
 	if version > SAVE_VERSION:
 		push_error("[SaveManager] Save version %d newer than supported %d" % [version, SAVE_VERSION])
-		_reset_load_flags()
-		load_completed.emit(false, path)
-		return false
+		return _fail_load(path, "unsupported_save_version", {
+			"save_version": version,
+			"supported_version": SAVE_VERSION
+		})
 	
 	# Validate critical keys exist (prevents silent state reset from truncated files)
 	if not save_data.has("player") and not save_data.has("game_seed"):
 		push_error("[SaveManager] Save file appears truncated/corrupted - missing player and seed data")
-		_reset_load_flags()
-		load_completed.emit(false, path)
-		return false
+		return _fail_load(path, "missing_critical_keys")
 	
 	# V1 saves now use the same V2 pipeline (missing V2 keys default to empty)
 	if version == 1:
@@ -451,9 +569,7 @@ func load_game(path: String) -> bool:
 			player_terrain.set_physics_process(false)
 			player_terrain.set_process(false)
 	
-	# Set loading flag - entities will be deferred until terrain is ready
-	load_step.emit("Loading prefabs", 1, 10)
-	is_loading_game = true
+	_emit_load_step("Loading prefabs", 1, 10)
 	pending_entity_data = save_data.get("entities", {})
 	
 	# CRITICAL FIX: Disable procedural entity spawning IMMEDIATELY before terrain regenerates
@@ -465,24 +581,24 @@ func load_game(path: String) -> bool:
 	
 	# V2: Initialize all data-driven managers FIRST
 	# This ensures they have their "chopped trees", "inventory", etc. before chunks generate
-	load_step.emit("Restoring world seed", 2, 10)
+	_emit_load_step("Restoring world seed", 2, 10)
 	_load_world_seed(int(save_data.get("game_seed", 12345)))
 	
 	# CRITICAL: Clear all existing vegetation data before loading new state
 	if vegetation_manager and vegetation_manager.has_method("clear_all_data"):
 		vegetation_manager.clear_all_data()
 	
-	load_step.emit("Loading vegetation", 3, 10)
+	_emit_load_step("Loading vegetation", 3, 10)
 	_load_vegetation_data(save_data.get("vegetation", {}))
 	_load_road_data(save_data.get("roads", {}))
-	load_step.emit("Loading player data", 4, 10)
+	_emit_load_step("Loading player data", 4, 10)
 	_load_inventory_data(save_data.get("player_inventory", {}))
 	_load_hotbar_data(save_data.get("player_hotbar", {}))
 	_load_player_stats_data(save_data.get("player_stats", {}))
 	_load_player_state_data(save_data.get("player_state", {}))
 	_load_game_settings_data(save_data.get("game_settings", {}))
 	_load_world_map_baked_building_edits_data(save_data.get("world_map_baked_building_edits", {}))
-	load_step.emit("Loading containers & vehicles", 5, 10)
+	_emit_load_step("Loading containers & vehicles", 5, 10)
 	
 	# Store door/container/vehicle data as pending - loaded in _check_world_readiness
 	# when buildings have actually spawned (doors & containers live inside buildings)
@@ -492,11 +608,11 @@ func load_game(path: String) -> bool:
 	
 	# Load terrain modifications (clears world) - MUST happen before building data
 	# since clear_all_chunks destroys any meshes rebuilt prematurely
-	load_step.emit("Loading terrain", 6, 10)
+	_emit_load_step("Loading terrain", 6, 10)
 	_load_terrain_data(save_data.get("terrain_modifications", {}))
 	
 	# Load building data AFTER terrain is cleared so meshes aren't wasted
-	load_step.emit("Loading buildings", 7, 10)
+	_emit_load_step("Loading buildings", 7, 10)
 	_load_building_data(save_data.get("buildings", {}))
 	
 	# Readiness flags - set before triggering world gen
@@ -504,17 +620,14 @@ func load_game(path: String) -> bool:
 	# Only wait for vegetation if there is data to process
 	awaiting_vegetation_ready = not save_data.get("vegetation", {}).is_empty() and vegetation_manager != null
 	
-	_capture_load_telemetry("load_started", {
+	_capture_load_telemetry("world_generation_requested", {
 		"path": path,
 		"vegetation_data": not save_data.get("vegetation", {}).is_empty()
 	})
 	
-	# Show loading screen BEFORE triggering world gen (so it catches early signals)
-	_show_loading_screen()
-	
 	# Finally, trigger the world generation by requesting the player's zone
 	# This MUST be last because it triggers signals that managers above react to
-	load_step.emit("Generating terrain", 8, 10)
+	_emit_load_step("Generating terrain", 8, 10)
 	_load_player_data(save_data.get("player", {}))
 	
 	# V2 FIX: DON'T emit load_completed or print "Game loaded" here!
@@ -620,7 +733,7 @@ func _check_world_readiness():
 	
 	# CRITICAL FIX: Always call load_save_data to clear existing zombies
 	# Even if no entities are saved, we need to clean up procedural spawns
-	load_step.emit("Loading entities", 9, 10)
+	_emit_load_step("Loading entities", 9, 10)
 	if entity_manager and entity_manager.has_method("load_save_data"):
 		entity_manager.load_save_data(pending_entity_data)
 	
@@ -653,8 +766,15 @@ func _check_world_readiness():
 	call_deferred("_emit_player_loaded")
 	
 	# FINAL NOTIFICATION: Now that everything is unfrozen and ready
-	load_step.emit("Complete", 10, 10)
+	_emit_load_step("Complete", 10, 10)
+	_complete_load_trace(true, {"path": current_save_path})
 	load_completed.emit(true, current_save_path)
+	var startup_coordinator := _get_world_startup_coordinator()
+	if startup_coordinator:
+		startup_coordinator.request_load_completion({
+			"source": "save_manager",
+			"path": current_save_path
+		})
 	is_quickloading = false  # Clear the flag now that load is complete
 
 ## Get list of available save files
@@ -860,7 +980,9 @@ func _load_player_data(data: Dictionary):
 	player.velocity = Vector3.ZERO
 	
 	# Request terrain around player position (for spawn zone readiness)
-	if chunk_manager and chunk_manager.has_method("request_spawn_zone"):
+	if chunk_manager and chunk_manager.has_method("request_startup_preheat"):
+		chunk_manager.request_startup_preheat(player_pos)
+	elif chunk_manager and chunk_manager.has_method("request_spawn_zone"):
 		chunk_manager.request_spawn_zone(player_pos, 2)
 	
 

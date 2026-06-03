@@ -304,6 +304,11 @@ func _emit_scope_event(scope: String, event_name: String, payload: Dictionary) -
 
 
 func _reset_town_measurement_window(reason: String) -> void:
+	if not is_instance_valid(terrain_manager):
+		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	if is_instance_valid(terrain_manager) and terrain_manager.has_method("begin_terrain_measurement_window"):
+		terrain_manager.call("begin_terrain_measurement_window", reason)
+
 	_town_entry_samples.clear()
 	_previous_native_town_entry_sample.clear()
 	_render_diagnostic_samples.clear()
@@ -2102,6 +2107,10 @@ func _collect_system_telemetry() -> Dictionary:
 	var save_manager_node := get_node_or_null("/root/SaveManager")
 	if save_manager_node:
 		telemetry["save_manager"] = _get_node_telemetry(save_manager_node)
+
+	var loading_screen_node := get_tree().root.find_child("LoadingScreen", true, false)
+	if is_instance_valid(loading_screen_node):
+		telemetry["loading_screen"] = _get_node_telemetry(loading_screen_node)
 
 	var player_node := get_tree().get_first_node_in_group("player")
 	if is_instance_valid(player_node):
