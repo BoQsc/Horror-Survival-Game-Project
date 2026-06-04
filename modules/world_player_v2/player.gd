@@ -5,6 +5,8 @@ class_name WorldPlayerV2
 
 signal viewer_position_changed(previous_position: Vector3, current_position: Vector3)
 
+@export_range(0.0, 4.0, 0.05) var viewer_position_signal_min_distance: float = 0.25
+
 # ============================================================================
 # FEATURE REFERENCES (populated in _ready)
 # ============================================================================
@@ -87,9 +89,18 @@ func _ready() -> void:
 func _notification(what: int) -> void:
 	if what != NOTIFICATION_TRANSFORM_CHANGED or not _viewer_position_signal_ready:
 		return
+	_emit_viewer_position_signal_if_needed()
+
+
+func _emit_viewer_position_signal_if_needed() -> void:
 	var current_position := global_position
 	if current_position == _last_viewer_signal_position:
 		return
+	var min_distance := maxf(viewer_position_signal_min_distance, 0.0)
+	if min_distance > 0.0:
+		var min_distance_sq := min_distance * min_distance
+		if current_position.distance_squared_to(_last_viewer_signal_position) < min_distance_sq:
+			return
 	var previous_position := _last_viewer_signal_position
 	_last_viewer_signal_position = current_position
 	viewer_position_changed.emit(previous_position, current_position)
@@ -126,14 +137,14 @@ func take_damage(amount: int, source: Node = null) -> void:
 		stats_feature.take_damage(amount, source)
 	# Backward compat
 	elif has_node("/root/PlayerStats"):
-		PlayerStats.take_damage(amount, source)
+		get_node("/root/PlayerStats").call("take_damage", amount, source)
 
 ## Heal
 func heal(amount: int) -> void:
 	if stats_feature and stats_feature.has_method("heal"):
 		stats_feature.heal(amount)
 	elif has_node("/root/PlayerStats"):
-		PlayerStats.heal(amount)
+		get_node("/root/PlayerStats").call("heal", amount)
 
 ## Get camera component (for movement swimming)
 var camera_component: Node:

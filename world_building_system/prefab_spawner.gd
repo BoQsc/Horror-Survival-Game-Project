@@ -264,6 +264,33 @@ func has_pending_spawn_jobs() -> bool:
 func has_pending_world_map_baked_payload_jobs() -> bool:
 	return not _pending_world_map_baked_building_payload_builds.is_empty() or not _pending_world_map_baked_building_payloads.is_empty()
 
+func get_startup_readiness_snapshot() -> Dictionary:
+	var pending_spawn_count := pending_spawn_jobs.size()
+	var pending_payload_build_count := _pending_world_map_baked_building_payload_builds.size()
+	var pending_payload_apply_count := _pending_world_map_baked_building_payloads.size()
+	var pending_bootstrap := 1 if _needs_world_map_baked_bootstrap() else 0
+	var pending := pending_spawn_count \
+		+ pending_payload_build_count \
+		+ pending_payload_apply_count \
+		+ pending_bootstrap
+	var ready := pending <= 0
+	var message := "Prefab spawns ready" if ready else "Preparing prefab spawns: %d pending" % pending
+	return {
+		"ready": ready,
+		"pending": pending,
+		"completed": 1 if ready else 0,
+		"total": 1,
+		"progress": 1.0 if ready else 0.0,
+		"message": message,
+		"details": {
+			"pending_spawn_jobs": pending_spawn_count,
+			"pending_world_map_baked_payload_build_jobs": pending_payload_build_count,
+			"pending_world_map_baked_payload_jobs": pending_payload_apply_count,
+			"pending_world_map_baked_bootstrap": pending_bootstrap,
+			"process_loop_awake": is_processing()
+		}
+	}
+
 func get_telemetry_snapshot() -> Dictionary:
 	return {
 		"enabled": enabled,
@@ -392,6 +419,11 @@ func _reset_world_map_baked_building_payloads() -> void:
 	_world_map_baked_buildings_bootstrapped = false
 	_spawned_world_map_baked_terrain_chunks.clear()
 	_spawned_world_map_baked_building_keys.clear()
+
+func clear_world_map_baked_runtime_cache(_reason: String = "world_definition_changed") -> void:
+	_reset_world_map_baked_building_index()
+	_reset_world_map_baked_building_payloads()
+	_sync_process_loop()
 
 func _ensure_world_map_baked_building_index() -> void:
 	if not terrain_manager or not ("_world_map_buildings" in terrain_manager):

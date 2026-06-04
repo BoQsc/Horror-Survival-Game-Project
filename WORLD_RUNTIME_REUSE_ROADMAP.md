@@ -101,11 +101,29 @@ Out of scope:
   eligible non-permanent despawns.
 - Entity maintenance selects timer and physics-process rates only from work
   categories that are currently present.
+- Entity viewer-dependent maintenance consumes player movement signals and keeps
+  a slower fallback poll for vehicles or custom viewers without compatible
+  signals.
 - Building chunk data remains resident across visual unloads, while existing
   prefab, baked building payload, and visual payload caches avoid substantial
   repeated static work.
-- Terrain, building, and vegetation viewer refresh paths consume explicit player
-  movement signals and retain slower fallback polling for alternate viewers.
+- Terrain, building, vegetation, and entity viewer refresh paths consume
+  thresholded explicit player movement signals and retain slower fallback
+  polling for alternate viewers.
+- Terrain render-distance and collision-distance runtime setters wake sleeping
+  terrain coordination immediately and expose setting-change telemetry, reducing
+  reliance on idle fallback polling for these setting changes.
+- Terrain world-definition changes flow through a public setter that clears stale
+  terrain artifacts and queued generation, reloads world-map GPU buffers, and
+  notifies building, prefab, and vegetation caches during save-load world
+  switches.
+- `WorldPerformanceMonitors` exposes cached live custom monitors for runtime
+  process awake state, aggregate pending work, awake-process count, and a
+  runtime idle verdict, so idle/revisit proof can inspect these values without
+  per-query scene-tree scans.
+- Terrain, prefab, building, vegetation, and entity managers expose stable
+  startup readiness snapshots, so startup and fallback loading UI can report
+  real pending work without polling manager-private arrays.
 
 The next requirement is runtime proof: revisit, memory-pressure, render-distance,
 and dirty-edit sweeps must show the work-count and frame-time effect for each

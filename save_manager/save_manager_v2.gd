@@ -676,8 +676,9 @@ func _on_load_timeout():
 
 ## Emit player_loaded signal (deferred to ensure all systems are ready)
 func _emit_player_loaded():
-	if has_node("/root/PlayerSignals"):
-		PlayerSignals.player_loaded.emit()
+	var player_signals := get_node_or_null("/root/PlayerSignals")
+	if player_signals and player_signals.has_signal("player_loaded"):
+		player_signals.player_loaded.emit()
 
 ## Called when terrain chunks around spawn positions are ready
 func _on_spawn_zones_ready(_positions: Array):
@@ -1101,6 +1102,9 @@ func _get_world_definition_path() -> String:
 
 func _load_world_definition_path(path: String):
 	if chunk_manager and "world_definition_path" in chunk_manager:
+		if chunk_manager.has_method("set_world_definition_path"):
+			chunk_manager.set_world_definition_path(path, "save_load", false)
+			return
 		if building_manager and building_manager.has_method("clear_world_map_baked_building_visuals"):
 			building_manager.clear_world_map_baked_building_visuals()
 		chunk_manager.world_definition_path = path

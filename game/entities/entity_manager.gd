@@ -33,6 +33,9 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(0.0, 1.0, 0.01) var proximity_update_interval: float = 0.10
 @export_range(0.0, 1.0, 0.01) var spawn_queue_update_interval: float = 0.10
 @export_range(0.0, 1.0, 0.01) var dormant_respawn_update_interval: float = 0.25
+@export var entity_viewer_position_signal_enabled: bool = true
+@export_range(0.1, 5.0, 0.1) var entity_viewer_position_signal_fallback_interval: float = 1.0
+@export_range(1.0, 64.0, 1.0) var entity_viewer_position_signal_min_distance: float = 8.0
 @export_range(0, 60, 1) var entity_render_prewarm_frames: int = 12
 @export_range(1, 128, 1) var deferred_spawn_chunks_per_frame: int = 32
 @export var entity_pool_enabled: bool = true
@@ -92,7 +95,15 @@ var _entity_maintenance_timer: Timer = null
 var _entity_maintenance_timer_tick_count: int = 0
 var _entity_maintenance_physics_tick_count: int = 0
 var _entity_maintenance_tick_count: int = 0
+var _entity_maintenance_deferred_pending: bool = false
+var _entity_maintenance_deferred_tick_count: int = 0
 var _last_entity_maintenance_tick_msec: int = 0
+var _viewer_position_signal_source: Node = null
+var _viewer_position_signal_connected: bool = false
+var _viewer_position_signal_count: int = 0
+var _viewer_position_signal_wake_count: int = 0
+var _last_viewer_position_signal_wake_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _last_viewer_position_signal_wake_chunk: Vector2i = Vector2i(2147483647, 2147483647)
 var _balanced_ring_fill_accumulator: float = 0.0
 var _balanced_ring_fill_cursor: int = 0
 var _last_balanced_ring_fill_queued: int = 0
@@ -222,6 +233,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"proximity_update_interval": proximity_update_interval,
 		"spawn_queue_update_interval": spawn_queue_update_interval,
 		"dormant_respawn_update_interval": dormant_respawn_update_interval,
+		"entity_viewer_position_signal_enabled": entity_viewer_position_signal_enabled,
+		"entity_viewer_position_signal_fallback_interval": entity_viewer_position_signal_fallback_interval,
+		"entity_viewer_position_signal_min_distance": entity_viewer_position_signal_min_distance,
 		"deferred_spawn_chunks_per_frame": deferred_spawn_chunks_per_frame,
 		"last_proximity_update_ms": _last_proximity_update_ms,
 		"last_proximity_processed": _last_proximity_processed,
@@ -242,9 +256,43 @@ func get_telemetry_snapshot() -> Dictionary:
 		"entity_maintenance_timer_tick_count": _entity_maintenance_timer_tick_count,
 		"entity_maintenance_physics_tick_count": _entity_maintenance_physics_tick_count,
 		"entity_maintenance_tick_count": _entity_maintenance_tick_count,
+		"entity_maintenance_deferred_pending": _entity_maintenance_deferred_pending,
+		"entity_maintenance_deferred_tick_count": _entity_maintenance_deferred_tick_count,
+		"viewer_position_signal_connected": _viewer_position_signal_connected,
+		"viewer_position_signal_count": _viewer_position_signal_count,
+		"viewer_position_signal_wake_count": _viewer_position_signal_wake_count,
 		"physics_process_enabled": is_physics_processing(),
 		"viewer_present": is_instance_valid(viewer),
 		"player_present": is_instance_valid(player)
+	}
+
+func get_startup_readiness_snapshot() -> Dictionary:
+	var pending_spawn_count := pending_spawns.size()
+	var deferred_chunk_count := deferred_spawn_chunks.size()
+	var deferred_plan_count := _get_deferred_spawn_plan_count()
+	var prewarm_active := _is_entity_render_resource_prewarm_active()
+	var pending := pending_spawn_count \
+		+ deferred_chunk_count \
+		+ deferred_plan_count \
+		+ (1 if prewarm_active else 0)
+	var ready := pending <= 0
+	var message := "Entities ready" if ready else "Preparing entities: %d pending" % pending
+	return {
+		"ready": ready,
+		"pending": pending,
+		"completed": 1 if ready else 0,
+		"total": 1,
+		"progress": 1.0 if ready else 0.0,
+		"message": message,
+		"details": {
+			"pending_spawns": pending_spawn_count,
+			"deferred_spawn_chunks": deferred_chunk_count,
+			"deferred_spawn_plans": deferred_plan_count,
+			"entity_render_prewarm_active": prewarm_active,
+			"entity_render_prewarm_frames_remaining": _get_entity_render_resource_prewarm_frames_remaining(),
+			"entity_maintenance_timer_active": _entity_maintenance_timer != null and is_instance_valid(_entity_maintenance_timer) and not _entity_maintenance_timer.is_stopped(),
+			"physics_process_enabled": is_physics_processing()
+		}
 	}
 
 func _get_entity_maintenance_timer_interval() -> float:
@@ -253,14 +301,17 @@ func _get_entity_maintenance_timer_interval() -> float:
 	if not active_entities.is_empty() and proximity_update_interval > 0.0:
 		interval = minf(interval, proximity_update_interval)
 		found_interval = true
-	if (not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()) and spawn_queue_update_interval > 0.0:
-		interval = minf(interval, spawn_queue_update_interval)
+	var spawn_interval := _get_viewer_dependent_maintenance_interval(spawn_queue_update_interval)
+	if (not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()) and spawn_interval > 0.0:
+		interval = minf(interval, spawn_interval)
 		found_interval = true
-	if not dormant_entities.is_empty() and dormant_respawn_update_interval > 0.0:
-		interval = minf(interval, dormant_respawn_update_interval)
+	var dormant_interval := _get_viewer_dependent_maintenance_interval(dormant_respawn_update_interval)
+	if not dormant_entities.is_empty() and dormant_interval > 0.0:
+		interval = minf(interval, dormant_interval)
 		found_interval = true
-	if _should_run_balanced_ring_fill() and balanced_ring_fill_interval > 0.0:
-		interval = minf(interval, balanced_ring_fill_interval)
+	var balanced_interval := _get_viewer_dependent_maintenance_interval(balanced_ring_fill_interval)
+	if _should_run_balanced_ring_fill() and balanced_interval > 0.0:
+		interval = minf(interval, balanced_interval)
 		found_interval = true
 	if not found_interval:
 		return 0.05
@@ -272,9 +323,24 @@ func _entity_maintenance_requires_physics_process() -> bool:
 		or (
 			(not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty())
 			and spawn_queue_update_interval <= 0.0
+			and not _viewer_position_signal_connected
 		)
-		or (not dormant_entities.is_empty() and dormant_respawn_update_interval <= 0.0)
+		or (
+			not dormant_entities.is_empty()
+			and dormant_respawn_update_interval <= 0.0
+			and not _viewer_position_signal_connected
+		)
+		or (
+			_should_run_balanced_ring_fill()
+			and balanced_ring_fill_interval <= 0.0
+			and not _viewer_position_signal_connected
+		)
 	)
+
+func _get_viewer_dependent_maintenance_interval(configured_interval: float) -> float:
+	if _viewer_position_signal_connected:
+		return maxf(maxf(configured_interval, 0.0), maxf(entity_viewer_position_signal_fallback_interval, 0.1))
+	return configured_interval
 
 func _has_entity_maintenance_work() -> bool:
 	return (
@@ -290,6 +356,7 @@ func _sync_entity_maintenance_driver() -> void:
 		if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
 			_entity_maintenance_timer.stop()
 		set_physics_process(false)
+		_entity_maintenance_deferred_pending = false
 		_last_entity_maintenance_tick_msec = 0
 		return
 	if _entity_maintenance_requires_physics_process():
@@ -329,9 +396,87 @@ func _on_entity_maintenance_timer_timeout() -> void:
 	_last_entity_maintenance_tick_msec = now_msec
 	_run_entity_maintenance_tick(elapsed_seconds)
 
+func _request_entity_maintenance_soon() -> void:
+	if not _has_entity_maintenance_work():
+		return
+	_sync_entity_maintenance_driver()
+	if _entity_maintenance_deferred_pending or not is_inside_tree():
+		return
+	_entity_maintenance_deferred_pending = true
+	call_deferred("_run_deferred_entity_maintenance_tick")
+
+func _run_deferred_entity_maintenance_tick() -> void:
+	_entity_maintenance_deferred_pending = false
+	if not _has_entity_maintenance_work():
+		return
+	_entity_maintenance_deferred_tick_count += 1
+	_run_entity_maintenance_tick(0.0)
+
+func _connect_viewer_position_signal() -> void:
+	_disconnect_viewer_position_signal()
+	if not entity_viewer_position_signal_enabled or not viewer or not is_instance_valid(viewer):
+		_update_entity_maintenance_timer_interval()
+		return
+	_viewer_position_signal_source = viewer
+	if not viewer.has_signal("viewer_position_changed"):
+		_update_entity_maintenance_timer_interval()
+		return
+	var callback := Callable(self, "_on_viewer_position_changed")
+	viewer.connect("viewer_position_changed", callback)
+	_viewer_position_signal_connected = true
+	_update_entity_maintenance_timer_interval()
+
+func _disconnect_viewer_position_signal() -> void:
+	if _viewer_position_signal_source and is_instance_valid(_viewer_position_signal_source):
+		var callback := Callable(self, "_on_viewer_position_changed")
+		if _viewer_position_signal_source.has_signal("viewer_position_changed"):
+			if _viewer_position_signal_source.is_connected("viewer_position_changed", callback):
+				_viewer_position_signal_source.disconnect("viewer_position_changed", callback)
+	_viewer_position_signal_source = null
+	_viewer_position_signal_connected = false
+
+func _update_entity_maintenance_timer_interval() -> void:
+	if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
+		_entity_maintenance_timer.wait_time = _get_entity_maintenance_timer_interval()
+
+func _on_viewer_position_changed(_previous_position: Vector3, _current_position: Vector3) -> void:
+	_viewer_position_signal_count += 1
+	if not _should_wake_entity_maintenance_for_viewer_position(_current_position):
+		return
+	_viewer_position_signal_wake_count += 1
+	_mark_viewer_dependent_maintenance_due()
+	_request_entity_maintenance_soon()
+
+func _should_wake_entity_maintenance_for_viewer_position(current_position: Vector3) -> bool:
+	var current_chunk := Vector2i(
+		int(floor(current_position.x / TERRAIN_CHUNK_STRIDE)),
+		int(floor(current_position.z / TERRAIN_CHUNK_STRIDE))
+	)
+	var min_distance := maxf(entity_viewer_position_signal_min_distance, 1.0)
+	var min_distance_sq := min_distance * min_distance
+	if (
+		current_chunk == _last_viewer_position_signal_wake_chunk
+		and current_position.distance_squared_to(_last_viewer_position_signal_wake_pos) < min_distance_sq
+	):
+		return false
+	_last_viewer_position_signal_wake_chunk = current_chunk
+	_last_viewer_position_signal_wake_pos = current_position
+	return true
+
+func _mark_viewer_dependent_maintenance_due() -> void:
+	if not active_entities.is_empty() and proximity_update_interval > 0.0:
+		_proximity_update_accumulator = maxf(_proximity_update_accumulator, proximity_update_interval)
+	if (not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()) and spawn_queue_update_interval > 0.0:
+		_spawn_queue_update_accumulator = maxf(_spawn_queue_update_accumulator, spawn_queue_update_interval)
+	if not dormant_entities.is_empty() and dormant_respawn_update_interval > 0.0:
+		_dormant_respawn_update_accumulator = maxf(_dormant_respawn_update_accumulator, dormant_respawn_update_interval)
+	if _should_run_balanced_ring_fill() and balanced_ring_fill_interval > 0.0:
+		_balanced_ring_fill_accumulator = maxf(_balanced_ring_fill_accumulator, balanced_ring_fill_interval)
+
 func _exit_tree() -> void:
 	if _entity_maintenance_timer and is_instance_valid(_entity_maintenance_timer):
 		_entity_maintenance_timer.stop()
+	_disconnect_viewer_position_signal()
 	_clear_entity_pool()
 
 func _ready():
@@ -349,6 +494,7 @@ func _ready():
 		push_warning("EntityManager: Player not found in 'player' group!")
 
 	_apply_environment_overrides()
+	_connect_viewer_position_signal()
 	_cache_procedural_entity_scenes()
 	_start_entity_render_resource_prewarm()
 	_sync_entity_maintenance_driver()
@@ -381,6 +527,9 @@ func _apply_environment_overrides() -> void:
 	proximity_update_interval = _get_env_float("TOWN_STALL_ENTITY_PROXIMITY_UPDATE_INTERVAL", proximity_update_interval, 0.0, 10.0)
 	spawn_queue_update_interval = _get_env_float("TOWN_STALL_ENTITY_SPAWN_QUEUE_UPDATE_INTERVAL", spawn_queue_update_interval, 0.0, 10.0)
 	dormant_respawn_update_interval = _get_env_float("TOWN_STALL_ENTITY_DORMANT_RESPAWN_UPDATE_INTERVAL", dormant_respawn_update_interval, 0.0, 10.0)
+	entity_viewer_position_signal_enabled = _get_env_bool("TOWN_STALL_ENTITY_VIEWER_POSITION_SIGNAL_ENABLED", entity_viewer_position_signal_enabled)
+	entity_viewer_position_signal_fallback_interval = _get_env_float("TOWN_STALL_ENTITY_VIEWER_POSITION_SIGNAL_FALLBACK_INTERVAL", entity_viewer_position_signal_fallback_interval, 0.1, 10.0)
+	entity_viewer_position_signal_min_distance = _get_env_float("TOWN_STALL_ENTITY_VIEWER_POSITION_SIGNAL_MIN_DISTANCE", entity_viewer_position_signal_min_distance, 1.0, 256.0)
 	deferred_spawn_chunks_per_frame = _get_env_int("TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME", deferred_spawn_chunks_per_frame, 1, 4096)
 	entity_pool_enabled = _get_env_bool("TOWN_STALL_ENTITY_POOL_ENABLED", entity_pool_enabled)
 	entity_pool_max_size = _get_env_int("TOWN_STALL_ENTITY_POOL_MAX_SIZE", entity_pool_max_size, 0, 4096)
@@ -434,15 +583,18 @@ func _physics_process(_delta):
 
 func _run_entity_maintenance_tick(_delta: float) -> void:
 	_entity_maintenance_tick_count += 1
-	if not player:
+	if not player or not is_instance_valid(player):
 		player = get_tree().get_first_node_in_group("player")
-		viewer = player
-		if not player:
+		if (not viewer or not is_instance_valid(viewer)) and player:
+			viewer = player
+		if not player and (not viewer or not is_instance_valid(viewer)):
 			return
 	
 	# Use viewer for position tracking (player or vehicle)
 	if not viewer or not is_instance_valid(viewer):
 		viewer = player
+	if entity_viewer_position_signal_enabled and viewer != _viewer_position_signal_source:
+		_connect_viewer_position_signal()
 
 	var entity_maintenance_start_us := Time.get_ticks_usec()
 	var entity_maintenance_budget_hit := false

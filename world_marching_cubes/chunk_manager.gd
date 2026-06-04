@@ -391,6 +391,18 @@ var _terrain_process_resume_count: int = 0
 var _terrain_process_idle_poll_count: int = 0
 var _terrain_process_last_sleep_reason: String = ""
 var _terrain_process_last_wake_reason: String = ""
+var _terrain_runtime_setting_change_count: int = 0
+var _last_terrain_runtime_setting_changed: String = ""
+var _last_terrain_runtime_setting_previous: String = ""
+var _last_terrain_runtime_setting_current: String = ""
+var _world_definition_change_count: int = 0
+var _last_world_definition_change_reason: String = ""
+var _last_world_definition_path_previous: String = ""
+var _last_world_definition_path_current: String = ""
+var _world_map_gpu_reload_request_count: int = 0
+var _world_map_gpu_reload_complete_count: int = 0
+var _last_world_map_gpu_reload_reason: String = ""
+var _last_world_map_gpu_reload_ms: float = 0.0
 var _terrain_viewer_position_signal_connected: bool = false
 var _terrain_viewer_position_signal_count: int = 0
 var _terrain_viewer_chunk_change_signal_count: int = 0
@@ -1058,6 +1070,18 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_process_idle_poll_count": _terrain_process_idle_poll_count,
 		"terrain_process_last_sleep_reason": _terrain_process_last_sleep_reason,
 		"terrain_process_last_wake_reason": _terrain_process_last_wake_reason,
+		"terrain_runtime_setting_change_count": _terrain_runtime_setting_change_count,
+		"last_terrain_runtime_setting_changed": _last_terrain_runtime_setting_changed,
+		"last_terrain_runtime_setting_previous": _last_terrain_runtime_setting_previous,
+		"last_terrain_runtime_setting_current": _last_terrain_runtime_setting_current,
+		"world_definition_change_count": _world_definition_change_count,
+		"last_world_definition_change_reason": _last_world_definition_change_reason,
+		"last_world_definition_path_previous": _last_world_definition_path_previous,
+		"last_world_definition_path_current": _last_world_definition_path_current,
+		"world_map_gpu_reload_request_count": _world_map_gpu_reload_request_count,
+		"world_map_gpu_reload_complete_count": _world_map_gpu_reload_complete_count,
+		"last_world_map_gpu_reload_reason": _last_world_map_gpu_reload_reason,
+		"last_world_map_gpu_reload_ms": _last_world_map_gpu_reload_ms,
 		"terrain_viewer_position_signal_connected": _terrain_viewer_position_signal_connected,
 		"terrain_viewer_position_signal_count": _terrain_viewer_position_signal_count,
 		"terrain_viewer_chunk_change_signal_count": _terrain_viewer_chunk_change_signal_count,
@@ -3310,7 +3334,7 @@ func _find_urgent_background_gpu_task_index(queue: Array[Dictionary]) -> int:
 	for i in range(queue.size() - 1, -1, -1):
 		var queued_task: Dictionary = queue[i]
 		var task_type := str(queued_task.get("type", ""))
-		if task_type == "free" or task_type == "free_many" or task_type == "modify":
+		if task_type == "free" or task_type == "free_many" or task_type == "modify" or task_type == "reload_world_map":
 			return i
 	return -1
 
@@ -3388,7 +3412,7 @@ func _keep_only_gpu_free_tasks(queue: Array[Dictionary]) -> void:
 	while i >= 0:
 		var task: Dictionary = queue[i]
 		var task_type := str(task.get("type", ""))
-		if task_type != "free" and task_type != "free_many":
+		if task_type != "free" and task_type != "free_many" and task_type != "reload_world_map":
 			queue.remove_at(i)
 		i -= 1
 
@@ -4417,6 +4441,215 @@ func _record_terrain_stream_update_key() -> void:
 	_last_terrain_stream_update_center_chunk = _get_viewer_chunk_coord()
 	_last_terrain_stream_update_render_distance = render_distance
 	_last_terrain_stream_update_loading_paused = loading_paused
+
+
+func set_render_distance(value: int) -> void:
+	var next_value := maxi(value, 0)
+	if render_distance == next_value:
+		return
+	var previous_value := render_distance
+	render_distance = next_value
+	_record_terrain_runtime_setting_changed("render_distance", previous_value, next_value)
+
+
+func set_collision_distance(value: int) -> void:
+	var next_value := maxi(value, 0)
+	if collision_distance == next_value:
+		return
+	var previous_value := collision_distance
+	collision_distance = next_value
+	_record_terrain_runtime_setting_changed("collision_distance", previous_value, next_value)
+
+
+func set_world_definition_path(
+	path: String,
+	reason: String = "manual",
+	reset_runtime: bool = true
+) -> void:
+	var next_path := path.strip_edges()
+	if world_definition_path == next_path:
+		return
+	var previous_path := world_definition_path
+	if reset_runtime:
+		clear_all_chunks(false, false)
+	world_definition_path = next_path
+	world_map_active = not world_definition_path.is_empty()
+	if world_map_active:
+		world_map_max_height = terrain_height * 2.5
+	_prepare_world_definition_cpu_state(reason)
+	_refresh_terrain_artifact_settings_signature()
+	_record_world_definition_changed(previous_path, world_definition_path, reason, reset_runtime)
+	_record_terrain_runtime_setting_changed("world_definition_path", previous_path, world_definition_path)
+	_notify_world_definition_changed_dependencies(reason)
+	_queue_world_map_gpu_reload(reason)
+
+
+func _record_terrain_runtime_setting_changed(setting_name: String, previous_value: Variant, current_value: Variant) -> void:
+	_terrain_runtime_setting_change_count += 1
+	_last_terrain_runtime_setting_changed = setting_name
+	_last_terrain_runtime_setting_previous = str(previous_value)
+	_last_terrain_runtime_setting_current = str(current_value)
+	if setting_name == "render_distance":
+		_last_terrain_stream_update_render_distance = -1
+	_capture_terrain_telemetry("terrain_runtime_setting_changed", {
+		"setting": setting_name,
+		"previous": str(previous_value),
+		"current": str(current_value)
+	})
+	_wake_terrain_process_loop("terrain_setting_changed_%s" % setting_name)
+
+
+func _record_world_definition_changed(previous_path: String, current_path: String, reason: String, reset_runtime: bool) -> void:
+	_world_definition_change_count += 1
+	_last_world_definition_change_reason = reason
+	_last_world_definition_path_previous = previous_path
+	_last_world_definition_path_current = current_path
+	_capture_terrain_telemetry("world_definition_changed", {
+		"reason": reason,
+		"previous_path": previous_path,
+		"current_path": current_path,
+		"reset_runtime": reset_runtime,
+		"world_map_active": world_map_active
+	})
+
+
+func _notify_world_definition_changed_dependencies(reason: String) -> void:
+	if not is_inside_tree():
+		return
+	var building_manager = _get_building_manager()
+	if building_manager and building_manager.has_method("clear_world_map_baked_building_visuals"):
+		building_manager.clear_world_map_baked_building_visuals()
+
+	var prefab_spawner = _get_prefab_spawner()
+	if prefab_spawner and prefab_spawner.has_method("clear_world_map_baked_runtime_cache"):
+		prefab_spawner.clear_world_map_baked_runtime_cache(reason)
+
+	var vegetation_manager := get_tree().get_first_node_in_group("vegetation_manager")
+	if vegetation_manager and vegetation_manager.has_method("clear_vegetation_chunk_placement_cache"):
+		vegetation_manager.clear_vegetation_chunk_placement_cache("world_definition_changed")
+
+
+func _queue_world_map_gpu_reload(reason: String) -> void:
+	_world_map_gpu_reload_request_count += 1
+	_last_world_map_gpu_reload_reason = reason
+	if not mutex or not semaphore:
+		return
+	_clear_gpu_task_queues(false)
+	mutex.lock()
+	priority_task_queue.append({
+		"type": "reload_world_map",
+		"reason": reason
+	})
+	mutex.unlock()
+	semaphore.post()
+	_wake_terrain_process_loop("world_map_gpu_reload_queued")
+
+
+func _prepare_world_definition_cpu_state(reason: String) -> void:
+	_reset_world_map_cpu_state()
+	WorldMapData.set_cache_enabled(world_map_data_cache_enabled)
+	if world_definition_path.is_empty():
+		world_map_active = false
+		_apply_world_map_material_state()
+		return
+
+	world_map_active = true
+	world_map_max_height = terrain_height * 2.5
+	var load_profile: Dictionary = {}
+	var loaded := WorldMapData.load_world(
+		world_definition_path,
+		world_map_data_cache_enabled,
+		false,
+		load_profile,
+		["heightmap", "biomes", "roads", "water"]
+	)
+	_startup_world_map_data = loaded
+	_startup_world_map_load_profile = load_profile
+	_last_world_map_load_profile = load_profile
+	_capture_terrain_telemetry("world_map_data_loaded", {
+		"path": world_definition_path,
+		"reason": reason,
+		"cache_hit": bool(load_profile.get("cache_hit", false)),
+		"disk_cache_hit": bool(load_profile.get("disk_cache_hit", false)),
+		"total_ms": float(load_profile.get("load_total_us", 0.0)) / 1000.0,
+		"uncached_load_ms": float(load_profile.get("uncached_load_us", 0.0)) / 1000.0
+	})
+
+	if loaded.has("metadata"):
+		var meta: Dictionary = loaded.metadata
+		_world_content_signature = str(meta.get(WorldMapData.get_world_meta_cache_signature_key(), ""))
+		var meta_terrain_height := float(meta.get("terrain_height", terrain_height))
+		world_map_size = float(meta.get("map_size", 2048))
+		world_map_half = world_map_size / 2.0
+		world_map_max_height = meta_terrain_height * 2.5
+		water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
+	if loaded.has("heightmap"):
+		var heightmap: Image = loaded.heightmap
+		_world_map_heightmap_data = heightmap.get_data()
+		_world_map_heightmap_width = heightmap.get_width()
+		_world_map_heightmap_height = heightmap.get_height()
+	if loaded.has("biomes"):
+		_world_map_biome_image = loaded.biomes
+		gpu_biome_map = _world_map_biome_image.get_data()
+		_world_map_biome_texture = ImageTexture.create_from_image(_world_map_biome_image)
+	if loaded.has("roads"):
+		_world_map_road_image = loaded.roads
+		_world_map_road_data = _world_map_road_image.get_data()
+		_world_map_road_texture = ImageTexture.create_from_image(_world_map_road_image)
+	if loaded.has("water"):
+		_world_map_water_image = loaded.water
+		_world_map_water_data = _world_map_water_image.get_data()
+	if loaded.has("buildings"):
+		_world_map_buildings = loaded.buildings
+	if loaded.has("terrain_modifications"):
+		_cache_world_map_terrain_modifications(loaded.terrain_modifications)
+	if loaded.has("building_map"):
+		_world_map_building_map = loaded.building_map
+
+	if not (loaded.has("heightmap") and loaded.has("biomes") and loaded.has("roads")):
+		world_map_active = false
+	_apply_world_map_material_state()
+
+
+func _reset_world_map_cpu_state() -> void:
+	_startup_world_map_data = {}
+	_startup_world_map_load_profile = {}
+	_last_world_map_load_profile = {}
+	_world_content_signature = ""
+	_world_map_buildings = []
+	_world_map_building_map = null
+	_world_map_heightmap_data = PackedByteArray()
+	_world_map_heightmap_width = 0
+	_world_map_heightmap_height = 0
+	_world_map_biome_image = null
+	_world_map_biome_texture = null
+	_world_map_road_image = null
+	_world_map_road_data = PackedByteArray()
+	_world_map_road_texture = null
+	_world_map_water_image = null
+	_world_map_water_data = PackedByteArray()
+	_world_map_road_block_sample_backend_counts.clear()
+	_world_map_water_block_sample_backend_counts.clear()
+	_height_map_sample_backend_counts.clear()
+	_world_map_terrain_modifications.clear()
+	_world_map_excavation_masks.clear()
+	_mark_modification_coord_cache_dirty()
+	gpu_biome_map = PackedByteArray()
+
+
+func _apply_world_map_material_state() -> void:
+	if material_terrain == null:
+		return
+	material_terrain.set_shader_parameter("use_world_map", world_map_active)
+	material_terrain.set_shader_parameter("procedural_road_enabled", false if world_map_active else procedural_roads_enabled)
+	if _world_map_biome_texture:
+		material_terrain.set_shader_parameter("world_map_biome_map", _world_map_biome_texture)
+	if _world_map_road_texture:
+		material_terrain.set_shader_parameter("world_map_road_map", _world_map_road_texture)
+	if world_map_size > 0.0:
+		material_terrain.set_shader_parameter("world_map_texture_scale", 1.0 / world_map_size)
+	_world_map_lod_material = null
+
 
 func _skip_terrain_stream_update() -> void:
 	_terrain_stream_update_idle_skip_count += 1
@@ -5638,6 +5871,53 @@ func get_pending_nodes_count() -> int:
 	var count = pending_nodes.size()
 	pending_nodes_mutex.unlock()
 	return count
+
+func get_startup_readiness_snapshot() -> Dictionary:
+	var pending_node_count := get_pending_nodes_count()
+	var task_queue_count := _get_task_queue_count()
+	var cpu_task_queue_count := _get_cpu_task_queue_count()
+	var completed_generation_count := _get_completed_generation_queue_count()
+	var pending_spawn_zone_count := pending_spawn_zones.size()
+	var pending := pending_node_count \
+		+ task_queue_count \
+		+ cpu_task_queue_count \
+		+ completed_generation_count \
+		+ pending_spawn_zone_count
+	var ready := is_initial_load_complete()
+	if not ready and pending <= 0:
+		pending = 1
+	var progress := 1.0 if ready else get_loading_progress()
+	var message := "Terrain loaded"
+	if not ready:
+		if pending_node_count > 0:
+			message = "Rendering terrain... (%d pending)" % pending_node_count
+		elif task_queue_count + cpu_task_queue_count + completed_generation_count > 0:
+			message = "Generating terrain... (%d queued)" % (task_queue_count + cpu_task_queue_count + completed_generation_count)
+		elif startup_require_preheat_before_play and not is_startup_preheat_ready():
+			message = "Preheating terrain..."
+		elif pending_spawn_zone_count > 0:
+			message = "Preparing spawn zones... (%d pending)" % pending_spawn_zone_count
+		else:
+			message = "Loading terrain..."
+	return {
+		"ready": ready,
+		"pending": pending,
+		"completed": int(round(progress * 1000.0)),
+		"total": 1000,
+		"progress": progress,
+		"message": message,
+		"details": {
+			"pending_nodes": pending_node_count,
+			"task_queue_count": task_queue_count,
+			"cpu_task_queue_count": cpu_task_queue_count,
+			"completed_generation_queue_count": completed_generation_count,
+			"pending_spawn_zone_count": pending_spawn_zone_count,
+			"initial_load_phase": initial_load_phase,
+			"startup_preheat_ready": is_startup_preheat_ready(),
+			"startup_require_preheat_before_play": startup_require_preheat_before_play,
+			"terrain_process_loop_awake": is_processing()
+		}
+	}
 
 func _get_world_map_pixel(global_x: float, global_z: float, image: Image) -> Vector2i:
 	if image == null or world_map_size <= 0.0:
@@ -7941,6 +8221,9 @@ func _thread_function():
 			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"], buffer_slots[0]["index_buffer_terrain"], modify_mesh_builder)
 		elif task.type == "restore_artifact":
 			_restore_terrain_artifact_buffers(rd, task)
+		elif task.type == "reload_world_map":
+			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
+			_reload_world_map_gpu_state(rd, sid_gen, sid_gen_water, str(task.get("reason", "world_definition_changed")))
 		elif task.type == "generate":
 			var task_has_stored_mods := _get_stored_modification_count(task.coord) > 0
 			if task_has_stored_mods and not in_flight.is_empty():
@@ -7998,13 +8281,135 @@ func _thread_function():
 	rd.free_rid(sid_mesh)
 
 	# Free world map buffers
-	if _world_map_heightmap_buf.is_valid(): rd.free_rid(_world_map_heightmap_buf)
-	if _world_map_biome_buf.is_valid(): rd.free_rid(_world_map_biome_buf)
-	if _world_map_road_buf.is_valid(): rd.free_rid(_world_map_road_buf)
-	if _world_map_water_buf.is_valid(): rd.free_rid(_world_map_water_buf)
-	_free_world_map_excavation_buffers(rd)
+	_free_world_map_gpu_state(rd)
 
 	rd.free()
+
+
+func _reload_world_map_gpu_state(rd: RenderingDevice, sid_gen: RID, sid_gen_water: RID, reason: String = "world_definition_changed") -> void:
+	var reload_start_us := Time.get_ticks_usec()
+	_free_world_map_gpu_state(rd)
+
+	if world_map_active and world_definition_path != "":
+		if _world_map_heightmap_data.is_empty() or _world_map_biome_image == null or _world_map_road_image == null:
+			var load_profile: Dictionary = {}
+			var loaded := WorldMapData.load_world(world_definition_path, world_map_data_cache_enabled, false, load_profile, ["heightmap", "biomes", "roads", "water"])
+			_last_world_map_load_profile = load_profile
+			if loaded.has("metadata"):
+				var meta: Dictionary = loaded.metadata
+				_world_content_signature = str(meta.get(WorldMapData.get_world_meta_cache_signature_key(), ""))
+				var meta_terrain_height := float(meta.get("terrain_height", terrain_height))
+				world_map_size = float(meta.get("map_size", 2048))
+				world_map_half = world_map_size / 2.0
+				world_map_max_height = meta_terrain_height * 2.5
+				water_level = float(meta.get("water_level", meta_terrain_height + 3.0))
+			if loaded.has("heightmap"):
+				var hmap: Image = loaded.heightmap
+				_world_map_heightmap_data = hmap.get_data()
+				_world_map_heightmap_width = hmap.get_width()
+				_world_map_heightmap_height = hmap.get_height()
+			if loaded.has("biomes"):
+				_world_map_biome_image = loaded.biomes
+				gpu_biome_map = _world_map_biome_image.get_data()
+			if loaded.has("roads"):
+				_world_map_road_image = loaded.roads
+				_world_map_road_data = _world_map_road_image.get_data()
+			if loaded.has("water"):
+				_world_map_water_image = loaded.water
+				_world_map_water_data = _world_map_water_image.get_data()
+			if loaded.has("buildings"):
+				_world_map_buildings = loaded.buildings
+			if loaded.has("terrain_modifications"):
+				_cache_world_map_terrain_modifications(loaded.terrain_modifications)
+			if loaded.has("building_map"):
+				_world_map_building_map = loaded.building_map
+
+		if _world_map_heightmap_data.is_empty() or _world_map_biome_image == null or _world_map_road_image == null:
+			push_error("[ChunkManager] World map at %s missing required PNGs during GPU reload" % world_definition_path)
+			world_map_active = false
+
+	if world_map_active and world_definition_path != "":
+		var h_bytes: PackedByteArray = _world_map_heightmap_data.duplicate()
+		var b_bytes: PackedByteArray = _world_map_biome_image.get_data()
+		var r_bytes: PackedByteArray = _world_map_road_data.duplicate()
+		while h_bytes.size() % 4 != 0: h_bytes.append(0)
+		while b_bytes.size() % 4 != 0: b_bytes.append(0)
+		while r_bytes.size() % 4 != 0: r_bytes.append(0)
+		_world_map_heightmap_buf = rd.storage_buffer_create(h_bytes.size(), h_bytes)
+		_world_map_biome_buf = rd.storage_buffer_create(b_bytes.size(), b_bytes)
+		_world_map_road_buf = rd.storage_buffer_create(r_bytes.size(), r_bytes)
+		if _world_map_water_image != null and not _world_map_water_data.is_empty():
+			var w_bytes: PackedByteArray = _world_map_water_data.duplicate()
+			while w_bytes.size() % 4 != 0: w_bytes.append(0)
+			_world_map_water_buf = rd.storage_buffer_create(w_bytes.size(), w_bytes)
+
+	_rebuild_world_map_excavation_buffers(rd)
+	_create_world_map_uniform_sets(rd, sid_gen, sid_gen_water)
+	_world_map_gpu_reload_complete_count += 1
+	_last_world_map_gpu_reload_reason = reason
+	_last_world_map_gpu_reload_ms = float(Time.get_ticks_usec() - reload_start_us) / 1000.0
+	_capture_terrain_telemetry("world_map_gpu_reloaded", {
+		"reason": reason,
+		"duration_ms": _last_world_map_gpu_reload_ms,
+		"world_map_active": world_map_active
+	})
+
+
+func _free_world_map_gpu_state(rd: RenderingDevice) -> void:
+	if _world_map_set1.is_valid():
+		rd.free_rid(_world_map_set1)
+		_world_map_set1 = RID()
+	if _world_map_water_set1.is_valid():
+		rd.free_rid(_world_map_water_set1)
+		_world_map_water_set1 = RID()
+	if _world_map_heightmap_buf.is_valid():
+		rd.free_rid(_world_map_heightmap_buf)
+		_world_map_heightmap_buf = RID()
+	if _world_map_biome_buf.is_valid():
+		rd.free_rid(_world_map_biome_buf)
+		_world_map_biome_buf = RID()
+	if _world_map_road_buf.is_valid():
+		rd.free_rid(_world_map_road_buf)
+		_world_map_road_buf = RID()
+	if _world_map_water_buf.is_valid():
+		rd.free_rid(_world_map_water_buf)
+		_world_map_water_buf = RID()
+	_free_world_map_excavation_buffers(rd)
+
+
+func _create_world_map_uniform_sets(rd: RenderingDevice, sid_gen: RID, sid_gen_water: RID) -> void:
+	if not _world_map_heightmap_buf.is_valid():
+		var dummy = PackedByteArray()
+		dummy.resize(4)
+		_world_map_heightmap_buf = rd.storage_buffer_create(4, dummy)
+		_world_map_biome_buf = rd.storage_buffer_create(4, dummy)
+		_world_map_road_buf = rd.storage_buffer_create(4, dummy)
+	if not _world_map_water_buf.is_valid():
+		var dummy = PackedByteArray()
+		dummy.resize(4)
+		_world_map_water_buf = rd.storage_buffer_create(4, dummy)
+
+	var u_hmap = RDUniform.new()
+	u_hmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_hmap.binding = 0
+	u_hmap.add_id(_world_map_heightmap_buf)
+
+	var u_bmap = RDUniform.new()
+	u_bmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_bmap.binding = 1
+	u_bmap.add_id(_world_map_biome_buf)
+
+	var u_rmap = RDUniform.new()
+	u_rmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_rmap.binding = 2
+	u_rmap.add_id(_world_map_road_buf)
+	_world_map_set1 = rd.uniform_set_create([u_hmap, u_bmap, u_rmap], sid_gen, 1)
+
+	var u_wmap = RDUniform.new()
+	u_wmap.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
+	u_wmap.binding = 0
+	u_wmap.add_id(_world_map_water_buf)
+	_world_map_water_set1 = rd.uniform_set_create([u_wmap], sid_gen_water, 1)
 
 
 func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pipe_mesh, buffer_slots: Array) -> void:

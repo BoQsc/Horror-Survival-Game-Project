@@ -62,6 +62,9 @@ Implemented:
   stage monitoring, completion, failure, cancellation, and supersession state
 - loading UI driven by the coordinator contract, including late attachment,
   visible failure, and visible cancellation state
+- stable startup readiness snapshots for terrain, prefab spawning, building
+  application, vegetation, and entities, with coordinator-first consumption and
+  loading-screen fallback support
 - bounded world-map preview colorization and progressive low-resolution
   full-world preview generation
 - native GDExtension height/biome generation with focused reference-output and
@@ -74,13 +77,28 @@ Implemented:
   terrain edits, visual batch work, collision work, spawn-zone requests, and
   explicit player movement signals, with low-rate fallback polling retained for
   vehicles and custom viewers
+- terrain runtime render-distance and collision-distance setters wake sleeping
+  terrain immediately, invalidate stale stream keys where needed, and expose
+  bounded setting-change telemetry
+- terrain world-definition changes now use a public setter that clears stale
+  terrain artifacts and queued generation, reloads world-map CPU/GPU state,
+  wakes terrain work, and notifies dependent building, prefab, and vegetation
+  caches
+- player movement signal source has a small configurable threshold so downstream
+  terrain, building, vegetation, and entity listeners do not receive sub-frame
+  movement jitter
 - terrain process sleep, resume, idle-frame, and idle-poll telemetry
+- `WorldPerformanceMonitors` autoload with cached Godot custom monitors for
+  startup state, terrain artifact caches, disk-write backlog, GPU sync/readback,
+  runtime process wake state, aggregate pending work, awake-process count, and
+  a cached runtime idle verdict
 - bounded vegetation placement artifact reuse with settings signatures and dirty
   terrain invalidation
 - bounded scene-keyed entity pooling for non-permanent despawns
 - work-aware entity maintenance timer and physics-process selection so inactive
   work categories do not force their faster update rate
-- building and vegetation movement-signal wake paths with slower fallback polling
+- building, vegetation, and entity movement-signal wake paths with slower
+  fallback polling for viewer-dependent work
 
 ## Validation
 
@@ -93,14 +111,20 @@ Godot `4.6.3` validation:
 - `addons/tests/terrain_artifact_disk_store_test.gd`: pass
 - `addons/tests/terrain_artifact_disk_write_queue_test.gd`: pass
 - `addons/tests/terrain_generation_telemetry_test.gd`: pass
+- `addons/tests/world_performance_monitors_test.gd`: pass
+- `addons/tests/terrain_runtime_setting_wake_test.gd`: pass
+- `addons/tests/terrain_world_definition_change_test.gd`: pass
 - `addons/tests/terrain_process_sleep_test.gd`: pass
+- `addons/tests/player_viewer_signal_test.gd`: pass
 - `addons/tests/terrain_startup_preheat_test.gd`: pass
 - `addons/tests/world_startup_coordinator_test.gd`: pass
+- `addons/tests/world_startup_readiness_snapshot_test.gd`: pass
 - `addons/tests/world_map_preview_builder_test.gd`: pass
 - `addons/tests/world_map_height_biome_native_test.gd`: pass
 - `addons/tests/vegetation_chunk_placement_cache_test.gd`: pass
 - `addons/tests/entity_pool_reuse_test.gd`: pass
 - `addons/tests/entity_maintenance_driver_test.gd`: pass
+- `addons/tests/entity_viewer_signal_test.gd`: pass
 - `addons/tests/building_viewer_signal_test.gd`: pass
 - `addons/tests/vegetation_viewer_signal_test.gd`: pass
 - `addons/tests/vegetation_generation_timing_telemetry_test.gd`: pass
@@ -190,6 +214,10 @@ The telemetry now answers:
 - SaveManager stage duration and failure state through `load_trace`
 - startup stage, readiness, failure, cancellation, and supersession state through
   `WorldStartupCoordinator`
+- manager-specific startup readiness through stable
+  `get_startup_readiness_snapshot()` snapshots consumed by the coordinator
+- live debugger/test-harness visibility through cached
+  `WorldPerformanceMonitors` custom monitors
 - true GPU cache-miss batch, synchronization, and readback cost through aggregate
   and maximum terrain telemetry
 - dependent-system reuse and movement wake behavior through vegetation, entity,
@@ -213,9 +241,12 @@ budget and bandwidth sweeps, and tuning the production preheat policy.
 
 Priority 3 is in progress. `WorldStartupCoordinator` now owns weighted monotonic
 progress, monitored manager stages, completion, failure, cancellation, and
-supersession state, and the loading UI consumes that contract. Remaining work is
-expanding stable readiness APIs across every startup manager and proving the
-production cold, warm, failure, and world-switch flows.
+supersession state, the loading UI consumes that contract, and
+`WorldPerformanceMonitors` exposes cached custom monitors for live startup and
+runtime work state. Terrain, prefab, building, vegetation, and entity managers
+now expose stable startup readiness snapshots consumed by the coordinator and
+loading-screen fallback path. Remaining work is proving the production cold,
+warm, failure, and world-switch flows.
 
 Priority 4 is in progress. Preview colorization is bounded, a progressive
 low-resolution full-world preview exists, and height/biome generation has a
@@ -230,9 +261,16 @@ increase latency and buffer-lifetime complexity without reducing transfer cost.
 
 Priority 6 is in progress. Terrain can sleep its per-frame process loop and wake
 from internal work or explicit player movement. Buildings and vegetation also
-use player movement signals for their relevant refresh paths. Fallback polling
-remains intentionally available for vehicles and custom viewers. Remaining work
-is stationary gameplay idle proof and broader region/settings event coverage.
+use player movement signals for their relevant refresh paths, and entities use
+the same signal to wake viewer-dependent spawn, dormant-respawn, and balanced
+fill maintenance. Terrain render-distance and collision-distance changes also
+wake the terrain process directly and are counted in telemetry. Save-load world
+definition changes now flow through the terrain setter, clear stale queued work,
+reload world-map GPU state, and notify dependent caches. `WorldPerformanceMonitors`
+now exposes aggregate pending work, awake-process count, and a cached idle verdict
+for stationary proof runs. Fallback polling remains intentionally available for
+vehicles and custom viewers. Remaining work is production stationary gameplay
+idle proof and broader save-load/settings coverage.
 
 Priority 7 is in progress. Vegetation placement has bounded chunk reuse and
 dirty invalidation, entities have bounded scene-keyed pooling, and the existing

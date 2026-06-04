@@ -334,6 +334,26 @@ func _monitor_terrain_stage(token: int, terrain_manager: Node) -> bool:
 		if not is_instance_valid(terrain_manager):
 			fail_load(&"terrain", "Terrain manager was removed during startup")
 			return false
+		var terrain_snapshot := _get_manager_startup_readiness_snapshot(terrain_manager)
+		if not terrain_snapshot.is_empty():
+			var pending := _get_snapshot_pending(terrain_snapshot)
+			var progress := clampf(float(terrain_snapshot.get("progress", 0.0)), 0.0, 1.0)
+			var total := maxi(int(terrain_snapshot.get("total", 1000)), 1)
+			var completed := int(terrain_snapshot.get("completed", round(progress * float(total))))
+			completed = clampi(completed, 0, total)
+			var details := _build_stage_details_from_readiness_snapshot(terrain_snapshot, "Loading terrain...")
+			if not details.has("pending_nodes"):
+				details["pending_nodes"] = pending
+			update_stage_progress(&"terrain", completed, total, details)
+			if bool(terrain_snapshot.get("ready", pending <= 0)):
+				complete_stage(&"terrain", {"message": "Terrain loaded"})
+				mark_playable_ready({"stage": "terrain"})
+				return true
+			if _stage_timeout_reached(stage_start_msec):
+				fail_load(&"terrain", "Terrain startup timed out", details)
+				return false
+			await get_tree().create_timer(terrain_poll_interval_s).timeout
+			continue
 		var complete := false
 		if terrain_manager.has_method("is_initial_load_complete"):
 			complete = bool(terrain_manager.is_initial_load_complete())
@@ -366,22 +386,25 @@ func _monitor_world_content_stage(token: int) -> bool:
 	var building_generator := get_tree().root.find_child("BuildingGenerator", true, false)
 	var prefab_spawner := get_tree().get_first_node_in_group("prefab_spawner")
 	var building_manager := get_tree().get_first_node_in_group("building_manager")
-	var initial_pending := _get_pending_world_content_count(building_generator, prefab_spawner, building_manager)
+	var entity_manager := get_tree().get_first_node_in_group("entity_manager")
+	var initial_readiness := _get_world_content_readiness_snapshot(building_generator, prefab_spawner, building_manager, entity_manager)
+	var initial_pending := int(initial_readiness.get("pending", 0))
 	var total := maxi(initial_pending, 1)
 	var stage_start_msec := Time.get_ticks_msec()
 	while _monitor_is_current(token):
-		var pending := _get_pending_world_content_count(building_generator, prefab_spawner, building_manager)
+		var readiness := _get_world_content_readiness_snapshot(building_generator, prefab_spawner, building_manager, entity_manager)
+		var pending := int(readiness.get("pending", 0))
 		total = maxi(total, pending)
 		var completed := maxi(total - pending, 0)
-		update_stage_progress(&"world_content", completed, total, {
-			"message": "Spawning world content: %d pending" % pending,
-			"pending": pending
-		})
-		if pending <= 0:
+		var details: Dictionary = readiness.get("details", {})
+		details["message"] = str(readiness.get("message", "Spawning world content: %d pending" % pending))
+		details["pending"] = pending
+		update_stage_progress(&"world_content", completed, total, details)
+		if bool(readiness.get("ready", pending <= 0)) and pending <= 0:
 			complete_stage(&"world_content", {"message": "World content ready"})
 			return true
 		if _stage_timeout_reached(stage_start_msec):
-			fail_load(&"world_content", "World content startup timed out", {"pending": pending})
+			fail_load(&"world_content", "World content startup timed out", details)
 			return false
 		await get_tree().create_timer(world_content_poll_interval_s).timeout
 	return false
@@ -400,6 +423,24 @@ func _monitor_vegetation_stage(token: int) -> bool:
 		if not is_instance_valid(vegetation_manager):
 			complete_stage(&"vegetation", {"message": "Vegetation manager removed"})
 			return true
+		var vegetation_snapshot := _get_manager_startup_readiness_snapshot(vegetation_manager)
+		if not vegetation_snapshot.is_empty():
+			var pending := _get_snapshot_pending(vegetation_snapshot)
+			total = maxi(total, pending)
+			var completed := maxi(total - pending, 0)
+			if vegetation_snapshot.has("total") and vegetation_snapshot.has("completed"):
+				total = maxi(int(vegetation_snapshot.get("total", total)), 1)
+				completed = clampi(int(vegetation_snapshot.get("completed", completed)), 0, total)
+			var details := _build_stage_details_from_readiness_snapshot(vegetation_snapshot, "Placing vegetation...")
+			update_stage_progress(&"vegetation", completed, total, details)
+			if bool(vegetation_snapshot.get("ready", pending <= 0)) and pending <= 0:
+				complete_stage(&"vegetation", {"message": "Vegetation ready"})
+				return true
+			if _stage_timeout_reached(stage_start_msec):
+				fail_load(&"vegetation", "Vegetation startup timed out", details)
+				return false
+			await get_tree().create_timer(vegetation_poll_interval_s).timeout
+			continue
 		var ready := true
 		if vegetation_manager.has_method("is_vegetation_ready"):
 			ready = bool(vegetation_manager.is_vegetation_ready())
@@ -436,33 +477,168 @@ func _maybe_complete_load() -> void:
 		return
 	complete_load(_completion_details)
 
+func _get_manager_startup_readiness_snapshot(manager: Node) -> Dictionary:
+	if not manager or not is_instance_valid(manager) or not manager.has_method("get_startup_readiness_snapshot"):
+		return {}
+	var snapshot_variant: Variant = manager.get_startup_readiness_snapshot()
+	if not (snapshot_variant is Dictionary):
+		return {}
+	return (snapshot_variant as Dictionary).duplicate(true)
+
+
+func _get_snapshot_pending(snapshot: Dictionary) -> int:
+	var pending := maxi(int(snapshot.get("pending", 0)), 0)
+	if not bool(snapshot.get("ready", pending <= 0)) and pending <= 0:
+		pending = 1
+	return pending
+
+
+func _build_stage_details_from_readiness_snapshot(snapshot: Dictionary, fallback_message: String) -> Dictionary:
+	var details: Dictionary = {}
+	var raw_details: Variant = snapshot.get("details", {})
+	if raw_details is Dictionary:
+		details = (raw_details as Dictionary).duplicate(true)
+	var pending := _get_snapshot_pending(snapshot)
+	details["message"] = str(snapshot.get("message", fallback_message))
+	details["pending"] = pending
+	details["ready"] = bool(snapshot.get("ready", pending <= 0))
+	details["source"] = "startup_readiness_snapshot"
+	return details
+
+
+func _get_building_generator_pending_count(building_generator: Node) -> int:
+	if building_generator and is_instance_valid(building_generator) and "spawn_queue" in building_generator:
+		var queue_variant: Variant = building_generator.get("spawn_queue")
+		if queue_variant is Array:
+			return (queue_variant as Array).size()
+	return 0
+
+
+func _get_world_content_readiness_snapshot(
+	building_generator: Node,
+	prefab_spawner: Node,
+	building_manager: Node,
+	entity_manager: Node
+) -> Dictionary:
+	var components := {}
+	var pending := 0
+	var ready := true
+
+	var building_generator_pending := _get_building_generator_pending_count(building_generator)
+	components["building_generator"] = {
+		"ready": building_generator_pending <= 0,
+		"pending": building_generator_pending,
+		"source": "spawn_queue"
+	}
+	pending += building_generator_pending
+	ready = ready and building_generator_pending <= 0
+
+	var prefab_component := _get_world_content_component_readiness(prefab_spawner, _get_prefab_spawner_fallback_pending(prefab_spawner), "prefab_spawner")
+	components["prefab_spawner"] = prefab_component
+	pending += int(prefab_component.get("pending", 0))
+	ready = ready and bool(prefab_component.get("ready", true))
+
+	var building_component := _get_world_content_component_readiness(building_manager, _get_building_manager_fallback_pending(building_manager), "building_manager")
+	components["building_manager"] = building_component
+	pending += int(building_component.get("pending", 0))
+	ready = ready and bool(building_component.get("ready", true))
+
+	var entity_component := _get_world_content_component_readiness(entity_manager, _get_entity_manager_fallback_pending(entity_manager), "entity_manager")
+	components["entity_manager"] = entity_component
+	pending += int(entity_component.get("pending", 0))
+	ready = ready and bool(entity_component.get("ready", true))
+
+	ready = ready and pending <= 0
+	return {
+		"ready": ready,
+		"pending": pending,
+		"completed": 1 if ready else 0,
+		"total": 1,
+		"progress": 1.0 if ready else 0.0,
+		"message": "World content ready" if ready else "Spawning world content: %d pending" % pending,
+		"details": {
+			"components": components,
+			"source": "startup_readiness_snapshot"
+		}
+	}
+
+
+func _get_world_content_component_readiness(manager: Node, fallback_pending: int, component_name: String) -> Dictionary:
+	var snapshot := _get_manager_startup_readiness_snapshot(manager)
+	if snapshot.is_empty():
+		var pending := maxi(fallback_pending, 0)
+		return {
+			"ready": pending <= 0,
+			"pending": pending,
+			"source": "fallback",
+			"name": component_name
+		}
+	var pending := _get_snapshot_pending(snapshot)
+	var component_ready := bool(snapshot.get("ready", pending <= 0)) and pending <= 0
+	return {
+		"ready": component_ready,
+		"pending": pending,
+		"source": "startup_readiness_snapshot",
+		"name": component_name,
+		"message": str(snapshot.get("message", "")),
+		"details": (snapshot.get("details", {}) as Dictionary).duplicate(true) if snapshot.get("details", {}) is Dictionary else {}
+	}
+
 
 func _get_pending_world_content_count(
 	building_generator: Node,
 	prefab_spawner: Node,
-	building_manager: Node
+	building_manager: Node,
+	entity_manager: Node = null
 ) -> int:
+	var snapshot := _get_world_content_readiness_snapshot(building_generator, prefab_spawner, building_manager, entity_manager)
+	return int(snapshot.get("pending", 0))
+
+
+func _get_prefab_spawner_fallback_pending(prefab_spawner: Node) -> int:
 	var pending := 0
-	if building_generator and is_instance_valid(building_generator) and "spawn_queue" in building_generator:
-		var queue_variant: Variant = building_generator.get("spawn_queue")
-		if queue_variant is Array:
-			pending += (queue_variant as Array).size()
 	if prefab_spawner and is_instance_valid(prefab_spawner):
 		if prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs():
 			pending += 1
 		if prefab_spawner.has_method("has_pending_world_map_baked_payload_jobs") and prefab_spawner.has_pending_world_map_baked_payload_jobs():
 			pending += 1
+	return pending
+
+
+func _get_building_manager_fallback_pending(building_manager: Node) -> int:
+	var pending := 0
 	if building_manager and is_instance_valid(building_manager):
+		if building_manager.has_method("has_pending_world_map_baked_building_apply_phases") and building_manager.has_pending_world_map_baked_building_apply_phases():
+			pending += 1
 		if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
+			pending += 1
+		if building_manager.has_method("has_pending_visual_batch_work") and building_manager.has_pending_visual_batch_work():
 			pending += 1
 		if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
 			pending += 1
 		if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
 			pending += 1
+		if building_manager.has_method("is_object_render_prewarm_active") and building_manager.is_object_render_prewarm_active():
+			pending += 1
 	return pending
 
 
+func _get_entity_manager_fallback_pending(entity_manager: Node) -> int:
+	if entity_manager and is_instance_valid(entity_manager) and entity_manager.has_method("get_telemetry_snapshot"):
+		var telemetry_variant: Variant = entity_manager.get_telemetry_snapshot()
+		if telemetry_variant is Dictionary:
+			var telemetry := telemetry_variant as Dictionary
+			return maxi(int(telemetry.get("pending_spawns", 0)), 0) \
+				+ maxi(int(telemetry.get("deferred_spawn_chunks", 0)), 0) \
+				+ maxi(int(telemetry.get("deferred_spawn_plans", 0)), 0) \
+				+ (1 if bool(telemetry.get("entity_render_prewarm_active", false)) else 0)
+	return 0
+
+
 func _get_pending_vegetation_count(vegetation_manager: Node) -> int:
+	var snapshot := _get_manager_startup_readiness_snapshot(vegetation_manager)
+	if not snapshot.is_empty():
+		return _get_snapshot_pending(snapshot)
 	if vegetation_manager and vegetation_manager.has_method("get_pending_chunks_count"):
 		return maxi(int(vegetation_manager.get_pending_chunks_count()), 0)
 	return 0

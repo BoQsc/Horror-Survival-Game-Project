@@ -2846,6 +2846,43 @@ func has_pending_visual_batch_work() -> bool:
 func is_object_render_prewarm_active() -> bool:
 	return _is_object_render_resource_prewarm_active()
 
+func get_startup_readiness_snapshot() -> Dictionary:
+	var pending_apply_phases := _pending_world_map_baked_building_apply_phases.size()
+	var pending_object_spawns := _pending_world_map_baked_object_spawns.size()
+	var pending_collision_jobs := _pending_object_collision_tasks.size()
+	var pending_dirty_visible_chunks := _dirty_visible_chunk_count
+	var pending_global_visual_batches := _dirty_global_visual_batch_object_ids.size()
+	var pending_building_visual_batches := _world_map_baked_building_visual_batch_dirty.size()
+	var prewarm_active := _is_object_render_resource_prewarm_active()
+	var pending := pending_apply_phases \
+		+ pending_object_spawns \
+		+ pending_collision_jobs \
+		+ pending_dirty_visible_chunks \
+		+ pending_global_visual_batches \
+		+ pending_building_visual_batches \
+		+ (1 if prewarm_active else 0)
+	var ready := pending <= 0
+	var message := "Buildings ready" if ready else "Preparing buildings: %d pending" % pending
+	return {
+		"ready": ready,
+		"pending": pending,
+		"completed": 1 if ready else 0,
+		"total": 1,
+		"progress": 1.0 if ready else 0.0,
+		"message": message,
+		"details": {
+			"pending_world_map_baked_building_apply_phases": pending_apply_phases,
+			"pending_world_map_baked_object_spawns": pending_object_spawns,
+			"pending_object_collision_jobs": pending_collision_jobs,
+			"dirty_visible_chunk_count": pending_dirty_visible_chunks,
+			"pending_global_visual_batch_rebuilds": pending_global_visual_batches,
+			"pending_world_map_baked_building_visual_batch_rebuilds": pending_building_visual_batches,
+			"object_render_prewarm_active": prewarm_active,
+			"object_render_prewarm_frames_remaining": _get_object_render_resource_prewarm_frames_remaining(),
+			"process_loop_awake": is_processing()
+		}
+	}
+
 func get_voxel(global_pos: Vector3) -> int:
 	var chunk_x = floor(global_pos.x / CHUNK_SIZE)
 	var chunk_y = floor(global_pos.y / CHUNK_SIZE)

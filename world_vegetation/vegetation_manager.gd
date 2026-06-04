@@ -307,6 +307,46 @@ func is_vegetation_ready() -> bool:
 func get_pending_chunks_count() -> int:
 	return pending_chunks.size()
 
+func get_startup_readiness_snapshot() -> Dictionary:
+	var pending_chunk_count := pending_chunks.size()
+	var pending_placement_count := pending_rock_placements.size() + pending_grass_placements.size()
+	var pending_collider_count := pending_collider_adds.size() + pending_collider_removes.size()
+	var dirty_global_render := _has_dirty_global_vegetation_render_batch()
+	var prewarm_active := _is_vegetation_render_resource_prewarm_active()
+	var pending := pending_chunk_count \
+		+ pending_placement_count \
+		+ pending_collider_count \
+		+ (1 if dirty_global_render else 0) \
+		+ (1 if prewarm_active else 0)
+	var ready := is_vegetation_ready() and pending_placement_count <= 0 and pending_collider_count <= 0
+	if not ready and pending <= 0:
+		pending = 1
+	var progress := 1.0
+	if not ready and initial_load_count > 0:
+		progress = clampf(1.0 - (float(pending_chunk_count) / float(initial_load_count)), 0.0, 1.0)
+	elif not ready:
+		progress = 0.0
+	var message := "Vegetation ready" if ready else "Placing vegetation: %d pending" % pending
+	return {
+		"ready": ready,
+		"pending": pending,
+		"completed": int(round(progress * 1000.0)),
+		"total": 1000,
+		"progress": progress,
+		"message": message,
+		"details": {
+			"pending_chunks": pending_chunk_count,
+			"pending_placements": pending_placement_count,
+			"pending_collider_jobs": pending_collider_count,
+			"dirty_global_render_batch": dirty_global_render,
+			"vegetation_render_prewarm_active": prewarm_active,
+			"vegetation_render_prewarm_frames_remaining": _get_vegetation_render_resource_prewarm_frames_remaining(),
+			"initial_load_count": initial_load_count,
+			"is_initial_load_batch": is_initial_load_batch,
+			"process_loop_awake": is_processing()
+		}
+	}
+
 
 func _has_process_work_pending() -> bool:
 	return (

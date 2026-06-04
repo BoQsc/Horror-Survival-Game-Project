@@ -56,8 +56,8 @@ The recommended order is:
 | Runtime meshing | The default path reads density/material buffers back and calls the `MeshBuilder` GDExtension for marching cubes on CPU workers. | The pipeline is hybrid, and transfer/synchronization boundaries matter. |
 | Runtime finalization | Worker output is queued and materialized into meshes, shapes, nodes, materials, and collision under frame budgets. | Main-thread work is already bounded, but it still repeats on revisits. |
 | Chunk unload | `_unload_chunk()` frees live nodes and GPU buffers while eligible data-only terrain artifacts remain in bounded session or disk stores. | Unchanged revisits can restore generation output while live render and physics resources remain bounded. |
-| Runtime event handling | Terrain, buildings, and vegetation consume explicit player movement signals and retain fallback polling for vehicles or custom viewers. | Stationary coordination work can sleep without giving up correctness for alternate viewers. |
-| Loading UI | The loading screen consumes the `WorldStartupCoordinator` weighted monotonic stage contract. | Startup progress, failure, cancellation, and supersession are visible through one owner. |
+| Runtime event handling | Terrain, buildings, vegetation, and entities consume a thresholded explicit player movement signal; terrain render/collision/world-definition setters wake sleeping stream work; fallback polling remains for vehicles or custom viewers. | Stationary coordination work can sleep without giving up correctness for alternate viewers, runtime setting changes, or save-load world switches. |
+| Loading UI | The loading screen consumes the `WorldStartupCoordinator` weighted monotonic stage contract, and its fallback path understands manager readiness snapshots. | Startup progress, failure, cancellation, supersession, and real pending work are visible through one owner. |
 | Load telemetry | Save-load, terrain, startup coordinator, cache, and GPU batch traces are structured and bounded. | Production and test captures can explain startup and cache-miss work without per-frame or per-chunk spam. |
 | Prewarm | Terrain, buildings, vegetation, and entities use representative render resource prewarm, and terrain startup preheat has configurable radius and readiness policy. | Critical terrain can be prepared before player release while wider preheat remains optional background work. |
 
@@ -300,8 +300,10 @@ Telemetry must report:
 Use the implemented `WorldStartupCoordinator` as the single startup owner.
 
 The coordinator owns startup state and readiness. The loading UI consumes its
-signals. Managers expose progress and readiness through stable APIs or signals,
-but the UI does not search the tree and poll internal arrays.
+signals. Terrain, prefab, building, vegetation, and entity managers expose
+`get_startup_readiness_snapshot()` with a shared `{ ready, pending, completed,
+total, progress, message, details }` shape, so the coordinator can poll stable
+contracts instead of manager internals.
 
 ### Signal Contract
 
@@ -358,7 +360,10 @@ Recommended settings:
 ## Loading UI Contract
 
 Keep the loading display coordinator-driven instead of returning to
-manager-internal polling.
+manager-specific UI polling. The fallback path may read
+`get_startup_readiness_snapshot()` when the coordinator is absent, but the
+coordinator remains the owner of weighted progress and failure/cancellation
+state.
 
 The default loading screen should show:
 
@@ -418,23 +423,37 @@ details
 - Replace the no-op `_capture_terrain_telemetry()` hook.
 - Replace the no-op `_capture_load_telemetry()` hook.
 - Keep existing detailed terrain snapshots for test harnesses.
-- Add Godot `Performance.add_custom_monitor()` values for live cache and startup
-  state in debug builds.
+- Use the implemented `WorldPerformanceMonitors` autoload for cached
+  `Performance.add_custom_monitor()` values. Monitor callbacks return cached
+  numeric samples so debugger queries do not walk the scene tree.
 
-Suggested custom monitors:
+Implemented custom monitors include:
 
 ```text
-WorldStartup/Stage
 WorldStartup/OverallProgress
+WorldStartup/Active
+WorldStartup/Failed
+WorldStartup/Cancelled
+WorldStartup/PlayableReady
 TerrainArtifactCache/Entries
 TerrainArtifactCache/Bytes
 TerrainArtifactCache/HitRatio
 TerrainArtifactCache/DiskHits
-TerrainArtifactCache/RestoreQueue
+TerrainArtifactDiskWriteQueue/PendingBytes
+TerrainArtifactDiskWriteQueue/PendingEntries
+TerrainArtifactDiskWriteQueue/CompletedBytes
+TerrainArtifactDiskWriteQueue/RateLimitWaitMs
 TerrainGeneration/GpuSyncMs
 TerrainGeneration/ReadbackMs
-TerrainGeneration/CpuMeshMs
 TerrainFinalization/Pending
+WorldRuntime/TerrainProcessAwake
+WorldRuntime/BuildingProcessAwake
+WorldRuntime/PrefabProcessAwake
+WorldRuntime/VegetationProcessAwake
+WorldRuntime/EntityMaintenanceAwake
+WorldRuntime/AwakeProcessCount
+WorldRuntime/Idle
+WorldRuntime/PendingWork
 ```
 
 ## World Map Generator Optimization
@@ -537,7 +556,10 @@ Terrain should wake for:
 - viewer chunk change
 - terrain edit
 - save/load or world switch
-- render distance or collision distance change
+- render distance or collision distance change through the implemented terrain
+  runtime setting setters
+- world-definition changes through the implemented terrain setter, including
+  world-map GPU buffer reload and dependent cache notification
 - pending generation, restore, finalization, collision, or batch queues
 - spawn-zone readiness work
 
@@ -630,7 +652,7 @@ These are starting targets and should be recalibrated after Stage 0 traces:
 | Loading coordinator | Success, failure, cancel/world switch, save load, no-manager fallback |
 | Generator backend | Output comparison, determinism test, bake timing, export smoke test |
 | Async readback | Cancellation, world reset, buffer lifetime, frame-time A/B comparison |
-| Event-driven processing | Stationary idle work audit, movement wake test, edit wake test |
+| Event-driven processing | Stationary idle work audit, movement wake test, edit wake test, setting-change wake test, world-definition switch test |
 
 ## Risks
 

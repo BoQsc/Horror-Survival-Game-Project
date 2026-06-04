@@ -501,20 +501,46 @@ func _update_elapsed_time_label() -> void:
 	else:
 		elapsed_time_label.text = "Loaded in %.1fs" % seconds
 
+func _get_startup_readiness_snapshot(manager: Node) -> Dictionary:
+	if not manager or not is_instance_valid(manager) or not manager.has_method("get_startup_readiness_snapshot"):
+		return {}
+	var snapshot_variant: Variant = manager.get_startup_readiness_snapshot()
+	if not (snapshot_variant is Dictionary):
+		return {}
+	return (snapshot_variant as Dictionary).duplicate(true)
+
+func _get_snapshot_pending(snapshot: Dictionary) -> int:
+	var pending := maxi(int(snapshot.get("pending", 0)), 0)
+	if not bool(snapshot.get("ready", pending <= 0)) and pending <= 0:
+		pending = 1
+	return pending
+
 func _get_pending_world_content_count(prefab_spawner: Node, building_manager: Node) -> int:
 	var pending := 0
 	if prefab_spawner and is_instance_valid(prefab_spawner):
-		if prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs():
-			pending += 1
-		if prefab_spawner.has_method("has_pending_world_map_baked_payload_jobs") and prefab_spawner.has_pending_world_map_baked_payload_jobs():
-			pending += 1
+		var prefab_snapshot := _get_startup_readiness_snapshot(prefab_spawner)
+		if not prefab_snapshot.is_empty():
+			pending += _get_snapshot_pending(prefab_snapshot)
+		else:
+			if prefab_spawner.has_method("has_pending_spawn_jobs") and prefab_spawner.has_pending_spawn_jobs():
+				pending += 1
+			if prefab_spawner.has_method("has_pending_world_map_baked_payload_jobs") and prefab_spawner.has_pending_world_map_baked_payload_jobs():
+				pending += 1
 	if building_manager and is_instance_valid(building_manager):
-		if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
-			pending += 1
-		if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
-			pending += 1
-		if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
-			pending += 1
+		var building_snapshot := _get_startup_readiness_snapshot(building_manager)
+		if not building_snapshot.is_empty():
+			pending += _get_snapshot_pending(building_snapshot)
+		else:
+			if building_manager.has_method("has_pending_world_map_baked_object_spawns") and building_manager.has_pending_world_map_baked_object_spawns():
+				pending += 1
+			if building_manager.has_method("has_dirty_global_visual_batches") and building_manager.has_dirty_global_visual_batches():
+				pending += 1
+			if building_manager.has_method("has_dirty_visible_chunks") and building_manager.has_dirty_visible_chunks():
+				pending += 1
+	var entity_manager := get_tree().get_first_node_in_group("entity_manager")
+	var entity_snapshot := _get_startup_readiness_snapshot(entity_manager)
+	if not entity_snapshot.is_empty():
+		pending += _get_snapshot_pending(entity_snapshot)
 	return pending
 
 func _start_fade_out() -> void:

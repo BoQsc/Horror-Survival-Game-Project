@@ -227,13 +227,17 @@ func take_damage(amount: int) -> void:
 			current_damage_stage = i
 			break
 	
-	PlayerSignals.durability_hit.emit(current_hp, max_hp, "Door", self)
+	var player_signals := get_node_or_null("/root/PlayerSignals")
+	if player_signals and player_signals.has_signal("durability_hit"):
+		player_signals.durability_hit.emit(current_hp, max_hp, "Door", self)
 	
 	if current_hp <= 0:
 		_on_destroyed()
 
 func _on_destroyed() -> void:
-	PlayerSignals.durability_cleared.emit()
+	var player_signals := get_node_or_null("/root/PlayerSignals")
+	if player_signals and player_signals.has_signal("durability_cleared"):
+		player_signals.durability_cleared.emit()
 	
 	if has_meta("anchor") and has_meta("chunk"):
 		var anchor = get_meta("anchor")
