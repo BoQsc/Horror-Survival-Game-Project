@@ -31,6 +31,12 @@ func _run() -> int:
 	manager.terrain_event_driven_idle_sleep_frames = 2
 	manager.active_chunks[Vector3i.ZERO] = {}
 	manager._modification_coord_cache_dirty = false
+	if not _expect(int(manager.runtime_power_active_max_fps) == 60, "runtime power active default should be 60 FPS"):
+		return 1
+	if not _expect(int(manager.runtime_power_idle_max_fps) == 30, "runtime power idle default should be 30 FPS"):
+		return 1
+	if not _expect(int(manager.runtime_power_deep_idle_max_fps) == 15, "runtime power deep-idle default should be 15 FPS"):
+		return 1
 	manager._connect_terrain_viewer_activity_source()
 	manager._record_terrain_stream_update_key()
 	if not _expect(bool(manager._terrain_viewer_position_signal_connected), "viewer activity signal should connect"):
@@ -76,6 +82,23 @@ func _run() -> int:
 		return 1
 	if not _expect(str(manager._terrain_process_last_wake_reason).begins_with("idle_poll_viewer_chunk_changed"), "wake reason should include viewer movement"):
 		return 1
+
+	manager.pending_nodes.append({"type": "final_terrain", "coord": Vector3i.ZERO})
+	if not _expect(manager._runtime_power_terrain_busy(), "pending terrain nodes should count as terrain work"):
+		return 1
+	if not _expect(manager._runtime_power_foreground_terrain_busy(true), "pending terrain nodes should keep runtime power foreground-active"):
+		return 1
+	manager.pending_nodes.clear()
+	manager.pending_terrain_collision_creates[Vector3i.ZERO] = true
+	if not _expect(manager._runtime_power_foreground_terrain_busy(true), "pending terrain collision should keep runtime power foreground-active"):
+		return 1
+	manager.pending_terrain_collision_creates.clear()
+	manager._terrain_visual_batch_dirty[Vector3i.ZERO] = true
+	if not _expect(manager._runtime_power_terrain_busy(), "dirty visual batches should still count as terrain work"):
+		return 1
+	if not _expect(not manager._runtime_power_foreground_terrain_busy(true), "dirty visual batches alone should remain background work"):
+		return 1
+	manager._terrain_visual_batch_dirty.clear()
 
 	manager.viewer.free()
 	manager.free()

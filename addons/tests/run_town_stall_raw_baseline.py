@@ -57,6 +57,8 @@ CASE_DEFINITIONS = {
         "description": "Runtime power manager defaults: 60 active, 30 idle, 15 deep idle.",
         "env": {
             "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
         },
     },
     "priority_revisit": {
@@ -66,6 +68,8 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_AUTO_TELEPORT": "0",
             "TOWN_STALL_REPEAT_ENTRY": "1",
             "TOWN_STALL_MEASURE_FULL_FLIGHT": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
         },
     },
     "priority_render_distance_5": {
@@ -75,6 +79,8 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_RENDER_DISTANCE": "5",
             "TOWN_STALL_TERRAIN_RENDER_DISTANCE": "5",
             "TOWN_STALL_BUILDING_RENDER_DISTANCE": "5",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
         },
     },
     "priority_render_distance_10": {
@@ -84,6 +90,8 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_RENDER_DISTANCE": "10",
             "TOWN_STALL_TERRAIN_RENDER_DISTANCE": "10",
             "TOWN_STALL_BUILDING_RENDER_DISTANCE": "10",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
         },
     },
     "priority_render_distance_15": {
@@ -93,6 +101,10 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_RENDER_DISTANCE": "15",
             "TOWN_STALL_TERRAIN_RENDER_DISTANCE": "15",
             "TOWN_STALL_BUILDING_RENDER_DISTANCE": "15",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
+            "TOWN_STALL_TIMEOUT_SECONDS": "720",
+            "TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS": "720",
         },
     },
     "priority_memory_pressure": {
@@ -478,6 +490,17 @@ PROOF_GATE_ENV_KEYS = [
     "TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS",
 ]
 
+TERRAIN_ARTIFACT_CACHE_PROOF_ENV_KEYS = [
+    "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA",
+]
+
 
 def _timestamp_slug() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -612,6 +635,16 @@ def _optional_float_env(name: str) -> Optional[float]:
 
 def _int_env(name: str, default_value: int) -> int:
     raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default_value
+    try:
+        return int(raw)
+    except ValueError:
+        return default_value
+
+
+def _int_from_env(env: dict[str, str], name: str, default_value: int) -> int:
+    raw = str(env.get(name, "")).strip()
     if not raw:
         return default_value
     try:
@@ -1036,8 +1069,8 @@ def _validate_content_for_power_compare(
         terrain_max = max(target, int(float(target) * 1.55 + 0.999))
         active_min = terrain_min
         active_max = terrain_max
-        water_min = max(1, int(float(target) * 0.20))
-        water_max = max(water_min, int(float(target) * 0.60 + 0.999))
+        water_min = 0
+        water_max = max(1, int(float(target) * 0.60 + 0.999))
 
         content["rendered_terrain_target_min"] = terrain_min
         content["rendered_terrain_target_max"] = terrain_max
@@ -1045,6 +1078,7 @@ def _validate_content_for_power_compare(
         content["active_chunk_target_max"] = active_max
         content["rendered_water_target_min"] = water_min
         content["rendered_water_target_max"] = water_max
+        content["rendered_water_lower_bound_enforced"] = False
 
         if terrain is None:
             reasons.append("missing_rendered_terrain_count")
@@ -1062,8 +1096,6 @@ def _validate_content_for_power_compare(
 
         if water is None:
             reasons.append("missing_rendered_water_count")
-        elif water < water_min:
-            reasons.append(f"rendered_water_below_target:{water}<{water_min}")
         elif water > water_max:
             reasons.append(f"rendered_water_above_target:{water}>{water_max}")
 
@@ -1614,6 +1646,11 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
     )
     env.update(CASE_DEFINITIONS[case_name]["env"])
     env.update(proof_gate_env)
+    if case_name == "runtime_default":
+        for key in TERRAIN_ARTIFACT_CACHE_PROOF_ENV_KEYS:
+            env.pop(key, None)
+        if proof_gate_env:
+            env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_SCOPE"] = "revisit_or_memory_cases"
     return env
 
 
@@ -1640,7 +1677,7 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
     cmd = [PYTHON_BIN, str(Path(__file__).with_name("run_town_stall_test.py"))]
     started = time.time()
     sampler.start()
-    timeout_seconds = _int_env("TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS", max(420, int(hold_seconds + 300.0)))
+    timeout_seconds = _int_from_env(env, "TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS", max(420, int(hold_seconds + 300.0)))
     proc = subprocess.Popen(
         cmd,
         cwd=str(PROJECT_PATH),

@@ -173,6 +173,33 @@ def main() -> int:
     _expect(proof_env["TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS"] == "300", "child preflight retry timeout should propagate")
     _expect(proof_env["TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS"] == "15", "child preflight retry poll should propagate")
 
+    dry_content = raw_runner._validate_content_for_power_compare(
+        {
+            "terrain_stream_min_chunk_target": 10,
+            "active_chunk_count": 10,
+            "rendered_terrain_chunk_count": 10,
+            "rendered_water_chunk_count": 0,
+            "pending_node_count": 0,
+            "task_queue_count": 0,
+            "cpu_task_queue_count": 0,
+            "completed_generation_queue_count": 0,
+            "render_distance": 3,
+            "terrain_stream_under_target": False,
+        },
+        {"last_terrain_stream_update_gate_reason": "idle_same_chunk"},
+    )
+    _expect(dry_content["content_valid_for_power_compare"] is True, "dry complete terrain stream should not fail water lower bound")
+    _expect(dry_content["rendered_water_lower_bound_enforced"] is False, "water lower bound should stay disabled")
+
+    excessive_water_content = dict(dry_content)
+    excessive_water_content["rendered_water_chunk_count"] = 20
+    excessive_water_content = raw_runner._validate_content_for_power_compare(
+        excessive_water_content,
+        {"last_terrain_stream_update_gate_reason": "idle_same_chunk"},
+    )
+    _expect(excessive_water_content["content_valid_for_power_compare"] is False, "excessive water should still fail content sanity")
+    _expect("rendered_water_above_target" in "\n".join(excessive_water_content["content_validation_reasons"]), "excessive water failure should be explicit")
+
     original_collect_machine_state = raw_runner.town_runner._collect_machine_state
     original_run_idle_sample = raw_runner._run_idle_sample
     original_sleep = raw_runner.time.sleep
@@ -225,14 +252,23 @@ def main() -> int:
         env = raw_runner._build_case_env("runtime_default", 30.0, False, proof_env)
         _expect(env["TOWN_STALL_REQUIRE_RUNTIME_IDLE_PROOF"] == "1", "explicit proof env should reach child run")
         _expect(env["TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS"] == "300", "child run should receive preflight retry timeout")
+        _expect("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF" not in env, "cold runtime default should not enforce cache-hit proof")
+        _expect(env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_SCOPE"] == "revisit_or_memory_cases", "cold cache proof scope should be explicit")
+        _expect(env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB"] == "1024", "runtime default should use production cache budget")
         revisit_env = raw_runner._build_case_env("priority_revisit", 30.0, False, proof_env)
         _expect(revisit_env["TOWN_STALL_REPEAT_ENTRY"] == "1", "priority revisit case should enable repeat entry")
         _expect(revisit_env["TOWN_STALL_AUTO_TELEPORT"] == "0", "priority revisit case should use auto-fly phases")
         _expect(revisit_env["TOWN_STALL_ENABLE_RUNTIME_POWER_MODE"] == "1", "priority revisit case should keep runtime power mode")
+        _expect(revisit_env["TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF"] == "1", "priority revisit should enforce cache-hit proof")
+        _expect(revisit_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB"] == "1024", "priority revisit should use production cache budget")
         render_env = raw_runner._build_case_env("priority_render_distance_15", 30.0, False, proof_env)
         _expect(render_env["TOWN_STALL_RENDER_DISTANCE"] == "15", "render-distance case should set global render distance")
         _expect(render_env["TOWN_STALL_TERRAIN_RENDER_DISTANCE"] == "15", "render-distance case should set terrain distance")
         _expect(render_env["TOWN_STALL_BUILDING_RENDER_DISTANCE"] == "15", "render-distance case should set building distance")
+        _expect(render_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB"] == "1024", "render-distance cases should use production cache budget")
+        _expect(render_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT"] == "2048", "render-distance cases should use production cache entries")
+        _expect(render_env["TOWN_STALL_TIMEOUT_SECONDS"] == "720", "render-distance 15 should extend child timeout")
+        _expect(render_env["TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS"] == "720", "render-distance 15 should extend raw watchdog timeout")
         memory_env = raw_runner._build_case_env("priority_memory_pressure", 30.0, False, proof_env)
         _expect(memory_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB"] == "64", "memory-pressure case should reduce memory budget")
         _expect(memory_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT"] == "128", "memory-pressure case should reduce memory entries")

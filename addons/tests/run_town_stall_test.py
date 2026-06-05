@@ -1839,6 +1839,8 @@ def _startup_readiness_verdict_from_snapshot(data: dict) -> dict:
     system_telemetry = _as_dict(data.get("system_telemetry"))
     loading_screen = _as_dict(system_telemetry.get("loading_screen"))
     coordinator = _as_dict(loading_screen.get("startup_coordinator"))
+    if not coordinator:
+        coordinator = _as_dict(system_telemetry.get("startup_coordinator"))
     stage_summary = _startup_stage_summary_from_snapshot(coordinator)
     trace = _as_dict(coordinator.get("trace"))
     loading_screen_available = bool(loading_screen)
@@ -1878,7 +1880,7 @@ def _startup_readiness_verdict_from_snapshot(data: dict) -> dict:
     coordinator_stage_details = _as_dict(coordinator.get("current_stage_details"))
     if coordinator_stage_details:
         current_stage_details = coordinator_stage_details
-    completed = loading_screen_available and not loading_active and not failed and not cancelled
+    completed = (loading_screen_available or coordinator_available) and not loading_active and not failed and not cancelled
     if coordinator_available:
         completed = (
             completed

@@ -104,6 +104,14 @@ func _run() -> int:
 	if not _expect(str(startup_stage_details.get("blocking_component", "")) == "entity_manager", "startup verdict should preserve current stage details"):
 		return _fail(harness)
 
+	var direct_startup_verdict: Dictionary = harness._build_startup_readiness_verdict(_make_direct_startup_system_telemetry())
+	if not _expect(bool(direct_startup_verdict.get("completed", false)), "startup verdict should complete from direct coordinator telemetry"):
+		return _fail(harness)
+	if not _expect(not bool(direct_startup_verdict.get("loading_screen_available", true)), "direct startup verdict should not require loading screen telemetry"):
+		return _fail(harness)
+	if not _expect(bool(direct_startup_verdict.get("startup_coordinator_available", false)), "direct startup verdict should preserve coordinator availability"):
+		return _fail(harness)
+
 	var empty_window: Dictionary = harness._build_empty_native_town_entry_window()
 	if not _expect(empty_window.has("world_runtime_monitor_available_samples"), "empty window should preserve monitor schema"):
 		return _fail(harness)
@@ -167,6 +175,14 @@ func _make_startup_system_telemetry() -> Dictionary:
 				"trace": {"event_count": 12}
 			}
 		}
+	}
+
+
+func _make_direct_startup_system_telemetry() -> Dictionary:
+	var telemetry := _make_startup_system_telemetry()
+	var loading_screen: Dictionary = telemetry.get("loading_screen", {})
+	return {
+		"startup_coordinator": loading_screen.get("startup_coordinator", {})
 	}
 
 

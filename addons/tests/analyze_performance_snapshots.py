@@ -407,6 +407,8 @@ def _startup_readiness_verdict_summary(snapshot: dict[str, Any], telemetry: dict
 
     loading_screen = _dict(telemetry.get("loading_screen"))
     coordinator = _dict(loading_screen.get("startup_coordinator"))
+    if not coordinator:
+        coordinator = _dict(telemetry.get("startup_coordinator"))
     stage_summary = _startup_stage_summary_from_snapshot(coordinator)
     trace = _dict(coordinator.get("trace"))
     loading_screen_available = bool(loading_screen)
@@ -447,7 +449,7 @@ def _startup_readiness_verdict_summary(snapshot: dict[str, Any], telemetry: dict
     elapsed_ms = _float(coordinator.get("elapsed_ms"))
     if elapsed_ms <= 0.0:
         elapsed_ms = _float(loading_screen.get("elapsed_seconds")) * 1000.0
-    completed = loading_screen_available and not loading_active and not failed and not cancelled
+    completed = (loading_screen_available or coordinator_available) and not loading_active and not failed and not cancelled
     if coordinator_available:
         completed = (
             completed

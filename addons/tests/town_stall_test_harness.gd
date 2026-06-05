@@ -30,6 +30,7 @@ const HOLD_SETTLE_STABLE_FRAMES := 30
 const HOLD_SETTLE_MAX_SECONDS := 8.0
 const HOLD_SETTLE_POSITION_EPSILON := 0.05
 const HOLD_SETTLE_VELOCITY_EPSILON := 0.15
+const HOLD_RUNTIME_IDLE_STABLE_FRAMES := 300
 const DIRECTIONAL_RENDER_SAMPLE_SECONDS := 4.0
 const DIRECTIONAL_RENDER_SETTLE_SECONDS := 0.75
 const STARTUP_PROOF_STAGE_IDS: Array[String] = [
@@ -198,6 +199,7 @@ var pending_town_teleport_pos: Vector3 = Vector3.ZERO
 var town_spawn_ready_settle_frames: int = 0
 var town_terrain_stable_frames: int = 0
 var town_terrain_stability_signature: String = ""
+var town_runtime_idle_stable_frames: int = 0
 
 func _get_town_stall_seed() -> int:
 	var seed_text := OS.get_environment("TOWN_STALL_SEED")
@@ -2355,6 +2357,12 @@ func _collect_system_telemetry() -> Dictionary:
 	if is_instance_valid(loading_screen_node):
 		telemetry["loading_screen"] = _get_node_telemetry(loading_screen_node)
 
+	var startup_coordinator_node := get_node_or_null("/root/WorldStartupCoordinator")
+	if not is_instance_valid(startup_coordinator_node):
+		startup_coordinator_node = get_tree().get_first_node_in_group("world_startup_coordinator")
+	if is_instance_valid(startup_coordinator_node):
+		telemetry["startup_coordinator"] = _get_node_telemetry(startup_coordinator_node)
+
 	var player_node := get_tree().get_first_node_in_group("player")
 	if is_instance_valid(player_node):
 		var player_interaction_node := player_node.get_node_or_null("Components/Interaction")
@@ -2458,6 +2466,8 @@ func _build_startup_stage_summary(coordinator_snapshot: Dictionary) -> Dictionar
 func _build_startup_readiness_verdict(system_telemetry: Dictionary) -> Dictionary:
 	var loading_screen_snapshot: Dictionary = system_telemetry.get("loading_screen", {})
 	var coordinator_snapshot: Dictionary = loading_screen_snapshot.get("startup_coordinator", {})
+	if coordinator_snapshot.is_empty():
+		coordinator_snapshot = system_telemetry.get("startup_coordinator", {})
 	var coordinator_available := not coordinator_snapshot.is_empty()
 	var loading_screen_available := not loading_screen_snapshot.is_empty()
 	var stage_summary := _build_startup_stage_summary(coordinator_snapshot)
@@ -2501,7 +2511,7 @@ func _build_startup_readiness_verdict(system_telemetry: Dictionary) -> Dictionar
 		if coordinator_stage_details_variant is Dictionary and not (coordinator_stage_details_variant as Dictionary).is_empty():
 			current_stage_details = (coordinator_stage_details_variant as Dictionary).duplicate(true)
 
-	var completed := loading_screen_available and not loading_active and not failed and not cancelled
+	var completed := (loading_screen_available or coordinator_available) and not loading_active and not failed and not cancelled
 	if coordinator_available:
 		completed = (
 			completed
@@ -3709,7 +3719,7 @@ func _teleport_into_town() -> void:
 	_reset_town_measurement_window("auto_teleport_entry")
 	player.global_position = teleport_pos
 	player.velocity = Vector3.ZERO
-	_set_player_movement_enabled(true)
+	_lock_player_for_hold()
 	hold_started_logged = false
 	pending_town_spawn_requested = false
 	town_spawn_ready_settle_frames = 0
@@ -3755,6 +3765,7 @@ func _get_town_spawn_ready_blockers(position: Vector3) -> Array[String]:
 	blockers.append_array(_get_town_building_stream_blockers())
 	blockers.append_array(_get_town_vegetation_stream_blockers())
 	blockers.append_array(_get_town_entity_stream_blockers())
+	blockers.append_array(_get_town_runtime_idle_blockers())
 	return blockers
 
 
@@ -3915,11 +3926,43 @@ func _get_town_entity_stream_blockers() -> Array[String]:
 	var telemetry: Dictionary = entity_manager.get_telemetry_snapshot()
 	if bool(telemetry.get("entity_render_prewarm_active", false)):
 		blockers.append("entity_prewarm=%d" % int(telemetry.get("entity_render_prewarm_frames_remaining", 0)))
+	var startup_pending := int(telemetry.get("startup_pending_total", 0))
+	if startup_pending > 0:
+		blockers.append("entity_startup_pending=%d" % startup_pending)
+	elif bool(telemetry.get("spawn_queue_maintenance_work", false)):
+		blockers.append("entity_spawn_queue_active")
+	return blockers
+
+
+func _get_town_runtime_idle_blockers() -> Array[String]:
+	var blockers: Array[String] = []
+	var monitor_snapshot := _collect_world_performance_monitor_snapshot()
+	if monitor_snapshot.is_empty():
+		return blockers
+	var pending_work := float(monitor_snapshot.get("world_runtime_pending_work", 0.0))
+	var awake_processes := float(monitor_snapshot.get("world_runtime_awake_process_count", 0.0))
+	var idle := float(monitor_snapshot.get("world_runtime_idle", 0.0))
+	if pending_work > 0.0:
+		blockers.append("runtime_pending_work=%.1f" % pending_work)
+	if awake_processes > 0.0:
+		blockers.append("runtime_awake_processes=%.1f" % awake_processes)
+	if idle < 0.5 and blockers.is_empty():
+		blockers.append("runtime_idle=%.1f" % idle)
+	if not blockers.is_empty():
+		town_runtime_idle_stable_frames = 0
+		return blockers
+	if town_runtime_idle_stable_frames < HOLD_RUNTIME_IDLE_STABLE_FRAMES:
+		blockers.append("runtime_idle_stabilizing=%d/%d" % [
+			town_runtime_idle_stable_frames,
+			HOLD_RUNTIME_IDLE_STABLE_FRAMES
+		])
+		town_runtime_idle_stable_frames += 1
 	return blockers
 
 
 func _reset_town_stream_stability() -> void:
 	_reset_town_terrain_stability()
+	town_runtime_idle_stable_frames = 0
 
 
 func _reset_town_terrain_stability() -> void:
@@ -3937,6 +3980,22 @@ func _set_player_movement_enabled(enabled: bool) -> void:
 			movement_component.set_physics_process(enabled)
 		if movement_component.has_method("set_process"):
 			movement_component.set_process(enabled)
+	player.velocity = Vector3.ZERO
+
+
+func _lock_player_for_hold() -> void:
+	if not is_instance_valid(player):
+		return
+	if movement_component == null or not is_instance_valid(movement_component):
+		movement_component = player.get_node_or_null("Components/Movement")
+	if mode_editor == null or not is_instance_valid(mode_editor):
+		mode_editor = player.get_node_or_null("Modes/ModeEditor")
+	_set_player_movement_enabled(false)
+	if mode_editor:
+		if mode_editor.has_method("set_physics_process"):
+			mode_editor.set_physics_process(false)
+		if mode_editor.has_method("set_process"):
+			mode_editor.set_process(false)
 	player.velocity = Vector3.ZERO
 
 
@@ -4190,7 +4249,7 @@ func _fly_to_town(_delta: float) -> void:
 	if absf(descent_delta) <= 1.5:
 		player.velocity = Vector3.ZERO
 		print("[TOWN_STALL_TEST] Auto fly reached target, starting hold")
-		_restore_player_control()
+		_lock_player_for_hold()
 		match phase:
 			Phase.FLY_TO_TOWN:
 				current_hold_seconds = REPEAT_ENTRY_FIRST_HOLD_SECONDS if repeat_entry_enabled else configured_hold_seconds
@@ -4253,6 +4312,7 @@ func _maybe_log_hold_stream_blockers(blockers: Array[String]) -> void:
 
 
 func _hold_in_town(_delta: float) -> void:
+	_lock_player_for_hold()
 	if not hold_started_logged:
 		if not _is_hold_stream_ready():
 			_reset_hold_settle_progress()

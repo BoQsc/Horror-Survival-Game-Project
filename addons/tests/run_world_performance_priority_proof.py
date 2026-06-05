@@ -390,8 +390,6 @@ def build_production_steps(args: argparse.Namespace) -> list[ProofStep]:
         str(args.analysis_town_count),
         "--gpu-telemetry-count",
         str(args.analysis_gpu_telemetry_count),
-        "--raw-baseline-count",
-        str(args.analysis_raw_baseline_count),
         "--output",
         str(args.analysis_output),
         "--require-latest-raw-baseline-startup-readiness-proof",
@@ -650,7 +648,6 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--max-terrain-artifact-disk-cache-eviction-delta", type=float, default=None)
     parser.add_argument("--analysis-town-count", type=int, default=3)
     parser.add_argument("--analysis-gpu-telemetry-count", type=int, default=3)
-    parser.add_argument("--analysis-raw-baseline-count", type=int, default=3)
     parser.add_argument("--analysis-timeout-seconds", type=float, default=300.0)
     return parser.parse_args(argv)
 

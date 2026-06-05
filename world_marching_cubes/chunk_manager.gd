@@ -319,8 +319,8 @@ var loading_paused: bool = false
 @export_range(1, 128, 1) var retired_chunk_node_cleanup_budget_per_frame: int = 24
 @export var runtime_power_mode_enabled: bool = true
 @export_range(30, 240, 1) var runtime_power_active_max_fps: int = 60
-@export_range(30, 120, 1) var runtime_power_idle_max_fps: int = 60
-@export_range(30, 120, 1) var runtime_power_deep_idle_max_fps: int = 30
+@export_range(15, 120, 1) var runtime_power_idle_max_fps: int = 30
+@export_range(15, 120, 1) var runtime_power_deep_idle_max_fps: int = 15
 @export_range(0.1, 10.0, 0.1) var runtime_power_idle_enter_delay_s: float = 1.25
 @export_range(1.0, 60.0, 0.5) var runtime_power_deep_idle_enter_delay_s: float = 10.0
 @export_range(0.0, 5.0, 0.1) var runtime_power_active_grace_s: float = 0.75
@@ -4206,7 +4206,12 @@ func _runtime_power_foreground_terrain_busy(terrain_busy: bool) -> bool:
 	if initial_load_phase or active_chunks.is_empty() or not pending_spawn_zones.is_empty():
 		return true
 	var min_loaded_chunk_count := _get_min_loaded_stream_chunk_count()
-	return min_loaded_chunk_count > 0 and active_chunks.size() < min_loaded_chunk_count
+	return (min_loaded_chunk_count > 0 and active_chunks.size() < min_loaded_chunk_count) \
+		or not pending_nodes.is_empty() \
+		or _get_completed_generation_queue_count() > 0 \
+		or _get_task_queue_count() > 0 \
+		or _get_cpu_task_queue_count() > 0 \
+		or not pending_terrain_collision_creates.is_empty()
 
 func _get_cached_runtime_power_node(group_name: String, fallback_name: String, cached_node: Node) -> Node:
 	if cached_node and is_instance_valid(cached_node):

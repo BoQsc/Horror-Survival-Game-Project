@@ -254,6 +254,26 @@ def main() -> int:
             expect_clean_snapshot_passes,
         )
 
+        direct_startup_payload = _snapshot_payload(top_level_verdicts=False)
+        direct_system = direct_startup_payload["system_telemetry"]
+        direct_loading_screen = direct_system.pop("loading_screen")
+        direct_system["startup_coordinator"] = direct_loading_screen["startup_coordinator"]
+        direct_startup_snapshot = _write_snapshot(root, direct_startup_payload)
+
+        def expect_direct_startup_snapshot_passes() -> None:
+            failures = runner._snapshot_proof_gate_failures(direct_startup_snapshot)
+            _expect(failures == [], f"direct startup coordinator proof should pass, got {failures}")
+
+        _with_gate_env(
+            {
+                "TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF": "1",
+                "TOWN_STALL_MAX_STARTUP_ELAPSED_MS": "1500",
+                "TOWN_STALL_MAX_STARTUP_STAGE_MS": "100",
+                "TOWN_STALL_MIN_STARTUP_TRACE_EVENTS": "8",
+            },
+            expect_direct_startup_snapshot_passes,
+        )
+
         startup_busy_payload = _snapshot_payload()
         startup_busy_payload["startup_readiness_verdict"] = {
             "available": True,

@@ -373,6 +373,17 @@ def main() -> int:
         _expect(analyzer._float(fallback_cache.get("end_hit_ratio")) == 0.9, "artifact cache fallback should use window fields")
         _expect(analyzer._float(fallback_cache.get("eviction_delta")) == 1.0, "artifact cache eviction fallback should use window fields")
 
+        direct_startup_payload = _snapshot_payload(False)
+        direct_system = direct_startup_payload["system_telemetry"]
+        direct_loading_screen = direct_system.pop("loading_screen")
+        direct_system["startup_coordinator"] = direct_loading_screen["startup_coordinator"]
+        direct_startup_path = _write_snapshot(Path(temp_dir), direct_startup_payload)
+        direct_startup_summary = analyzer._summarize_town_snapshot(direct_startup_path, 1000.0 / 60.0)
+        direct_startup = analyzer._dict(direct_startup_summary.get("startup_readiness_verdict"))
+        _expect(direct_startup.get("completed") is True, "startup fallback should complete from direct coordinator telemetry")
+        _expect(direct_startup.get("loading_screen_available") is False, "direct startup fallback should not require loading screen telemetry")
+        _expect(direct_startup.get("startup_coordinator_available") is True, "direct startup fallback should preserve coordinator availability")
+
     print("[ANALYZE_PERFORMANCE_SNAPSHOT_VERDICT_TEST] PASS")
     return 0
 

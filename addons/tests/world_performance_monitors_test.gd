@@ -178,6 +178,32 @@ func _run() -> int:
 
 	for node in fake_nodes:
 		if node is SnapshotNode:
+			if node.is_in_group("terrain_manager"):
+				(node as SnapshotNode).snapshot = {
+					"terrain_process_loop_awake": true
+				}
+			elif node.is_in_group("building_manager") or node.is_in_group("prefab_spawner") or node.is_in_group("vegetation_manager"):
+				(node as SnapshotNode).snapshot = {
+					"process_loop_awake": true
+				}
+			elif node.is_in_group("entity_manager"):
+				(node as SnapshotNode).snapshot = {
+					"physics_process_enabled": false,
+					"entity_maintenance_timer_active": true,
+					"active_entities": 34,
+					"startup_pending_total": 0,
+					"spawn_queue_maintenance_work": false
+				}
+	monitor._refresh_cached_values()
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/PendingWork"), 0.0), "timer/process loops without pending work should not count as runtime pending work"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/AwakeProcessCount"), 0.0), "timer/process loops without pending work should not count as awake runtime managers"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/Idle"), 1.0), "timer/process loops without pending work should still allow idle verdict"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+
+	for node in fake_nodes:
+		if node is SnapshotNode:
 			(node as SnapshotNode).snapshot = {}
 	monitor._refresh_cached_values()
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/PendingWork"), 0.0), "idle runtime should report zero aggregate pending work"):

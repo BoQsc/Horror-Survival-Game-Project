@@ -138,7 +138,15 @@ func _capture_terrain_values() -> void:
 	)
 	_values[&"TerrainGeneration/ReadbackMs"] = _number_from_keys(snapshot, ["last_gpu_mesh_readback_ms"], 0.0)
 	_values[&"TerrainFinalization/Pending"] = _number_from_keys(snapshot, ["pending_node_count", "pending_nodes"], 0.0)
-	_values[&"WorldRuntime/TerrainProcessAwake"] = _bool_to_float(bool(snapshot.get("terrain_process_loop_awake", snapshot.get("process_loop_awake", false))))
+	var terrain_pending_work: float = _values[&"TerrainFinalization/Pending"] \
+		+ _number_from_keys(snapshot, ["task_queue_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["cpu_task_queue_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["completed_generation_queue_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_batch_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_spawn_zone_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["world_map_lod_pending_candidate_count"], 0.0) \
+		+ _bool_to_float(bool(snapshot.get("initial_load_phase", false))) \
+		+ _bool_to_float(bool(snapshot.get("render_resource_prewarm_active", false)))
 
 	var write_queue := _get_dictionary(snapshot, "terrain_artifact_disk_write_queue")
 	if not write_queue.is_empty():
@@ -146,14 +154,12 @@ func _capture_terrain_values() -> void:
 		_values[&"TerrainArtifactDiskWriteQueue/PendingEntries"] = _number_from_keys(write_queue, ["pending_entries"], 0.0)
 		_values[&"TerrainArtifactDiskWriteQueue/CompletedBytes"] = _number_from_keys(write_queue, ["completed_bytes"], 0.0)
 		_values[&"TerrainArtifactDiskWriteQueue/RateLimitWaitMs"] = _number_from_keys(write_queue, ["rate_limit_total_wait_ms"], 0.0)
-	_add_pending_work(_values[&"TerrainFinalization/Pending"])
-	_add_pending_work(_values[&"TerrainArtifactDiskWriteQueue/PendingEntries"])
-	_add_pending_work(_number_from_keys(snapshot, ["task_queue_count"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["cpu_task_queue_count"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["completed_generation_queue_count"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_batch_count"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_spawn_zone_count"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["world_map_lod_pending_candidate_count"], 0.0))
+		terrain_pending_work += _values[&"TerrainArtifactDiskWriteQueue/PendingEntries"]
+	_values[&"WorldRuntime/TerrainProcessAwake"] = _bool_to_float(
+		bool(snapshot.get("terrain_process_loop_awake", snapshot.get("process_loop_awake", false)))
+		and terrain_pending_work > 0.0
+	)
+	_add_pending_work(terrain_pending_work)
 
 
 func _capture_building_values() -> void:
@@ -161,13 +167,14 @@ func _capture_building_values() -> void:
 	var snapshot := _get_snapshot(building_manager)
 	if snapshot.is_empty():
 		return
-	_values[&"WorldRuntime/BuildingProcessAwake"] = _bool_to_float(bool(snapshot.get("process_loop_awake", false)))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_world_map_baked_building_apply_phases"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_object_collision_jobs"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_world_map_baked_object_spawns"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_visual_batch_rebuilds"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["dirty_visible_chunk_count", "dirty_chunk_count"], 0.0))
-	_add_pending_work(_bool_to_float(bool(snapshot.get("object_render_prewarm_active", false))))
+	var building_pending_work: float = _number_from_keys(snapshot, ["pending_world_map_baked_building_apply_phases"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_object_collision_jobs"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_world_map_baked_object_spawns"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_visual_batch_rebuilds"], 0.0) \
+		+ _number_from_keys(snapshot, ["dirty_visible_chunk_count", "dirty_chunk_count"], 0.0) \
+		+ _bool_to_float(bool(snapshot.get("object_render_prewarm_active", false)))
+	_values[&"WorldRuntime/BuildingProcessAwake"] = _bool_to_float(bool(snapshot.get("process_loop_awake", false)) and building_pending_work > 0.0)
+	_add_pending_work(building_pending_work)
 
 
 func _capture_prefab_values() -> void:
@@ -175,10 +182,11 @@ func _capture_prefab_values() -> void:
 	var snapshot := _get_snapshot(prefab_spawner)
 	if snapshot.is_empty():
 		return
-	_values[&"WorldRuntime/PrefabProcessAwake"] = _bool_to_float(bool(snapshot.get("process_loop_awake", false)))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_spawn_jobs"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_world_map_baked_payload_build_jobs"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_world_map_baked_payload_jobs"], 0.0))
+	var prefab_pending_work: float = _number_from_keys(snapshot, ["pending_spawn_jobs"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_world_map_baked_payload_build_jobs"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_world_map_baked_payload_jobs"], 0.0)
+	_values[&"WorldRuntime/PrefabProcessAwake"] = _bool_to_float(bool(snapshot.get("process_loop_awake", false)) and prefab_pending_work > 0.0)
+	_add_pending_work(prefab_pending_work)
 
 
 func _capture_vegetation_values() -> void:
@@ -186,12 +194,13 @@ func _capture_vegetation_values() -> void:
 	var snapshot := _get_snapshot(vegetation_manager)
 	if snapshot.is_empty():
 		return
-	_values[&"WorldRuntime/VegetationProcessAwake"] = _bool_to_float(bool(snapshot.get("process_loop_awake", false)))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_chunks_count", "pending_chunks"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_collider_adds"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["pending_collider_removes"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["global_render_dirty_cluster_count"], 0.0))
-	_add_pending_work(_bool_to_float(bool(snapshot.get("vegetation_render_prewarm_active", false))))
+	var vegetation_pending_work: float = _number_from_keys(snapshot, ["pending_chunks_count", "pending_chunks"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_collider_adds"], 0.0) \
+		+ _number_from_keys(snapshot, ["pending_collider_removes"], 0.0) \
+		+ _number_from_keys(snapshot, ["global_render_dirty_cluster_count"], 0.0) \
+		+ _bool_to_float(bool(snapshot.get("vegetation_render_prewarm_active", false)))
+	_values[&"WorldRuntime/VegetationProcessAwake"] = _bool_to_float(bool(snapshot.get("process_loop_awake", false)) and vegetation_pending_work > 0.0)
+	_add_pending_work(vegetation_pending_work)
 
 
 func _capture_entity_values() -> void:
@@ -199,14 +208,19 @@ func _capture_entity_values() -> void:
 	var snapshot := _get_snapshot(entity_manager)
 	if snapshot.is_empty():
 		return
-	var awake := bool(snapshot.get("physics_process_enabled", false)) or bool(snapshot.get("entity_maintenance_timer_active", false))
-	_values[&"WorldRuntime/EntityMaintenanceAwake"] = _bool_to_float(awake)
+	var entity_pending_work: float = 0.0
 	if snapshot.has("startup_pending_total"):
-		_add_pending_work(_number_from_keys(snapshot, ["startup_pending_total"], 0.0))
+		entity_pending_work = _number_from_keys(snapshot, ["startup_pending_total"], 0.0)
 	else:
-		_add_pending_work(_number_from_keys(snapshot, ["pending_spawns"], 0.0))
-		_add_pending_work(_number_from_keys(snapshot, ["deferred_spawn_chunks"], 0.0))
-		_add_pending_work(_number_from_keys(snapshot, ["deferred_spawn_plans"], 0.0))
+		entity_pending_work = _number_from_keys(snapshot, ["pending_spawns"], 0.0) \
+			+ _number_from_keys(snapshot, ["deferred_spawn_chunks"], 0.0) \
+			+ _number_from_keys(snapshot, ["deferred_spawn_plans"], 0.0)
+	entity_pending_work += _bool_to_float(bool(snapshot.get("entity_render_prewarm_active", false)))
+	var awake := bool(snapshot.get("physics_process_enabled", false)) \
+		or entity_pending_work > 0.0 \
+		or bool(snapshot.get("spawn_queue_maintenance_work", false))
+	_values[&"WorldRuntime/EntityMaintenanceAwake"] = _bool_to_float(awake)
+	_add_pending_work(entity_pending_work)
 
 
 func _capture_pending_work_value() -> void:

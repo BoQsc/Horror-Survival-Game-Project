@@ -78,6 +78,8 @@ var _last_spawn_queue_update_ms: float = 0.0
 var _last_spawn_queue_processed: int = 0
 var _last_spawn_queue_raycasts: int = 0
 var _last_spawn_queue_spawned: int = 0
+var _last_spawn_queue_non_terrain_hits: int = 0
+var _last_spawn_queue_timed_out: int = 0
 var _last_dormant_respawn_update_ms: float = 0.0
 var _last_dormant_respawn_processed: int = 0
 var _last_dormant_respawn_raycasts: int = 0
@@ -264,6 +266,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_spawn_queue_processed": _last_spawn_queue_processed,
 		"last_spawn_queue_raycasts": _last_spawn_queue_raycasts,
 		"last_spawn_queue_spawned": _last_spawn_queue_spawned,
+		"last_spawn_queue_non_terrain_hits": _last_spawn_queue_non_terrain_hits,
+		"last_spawn_queue_timed_out": _last_spawn_queue_timed_out,
 		"last_dormant_respawn_update_ms": _last_dormant_respawn_update_ms,
 		"last_dormant_respawn_processed": _last_dormant_respawn_processed,
 		"last_dormant_respawn_raycasts": _last_dormant_respawn_raycasts,
@@ -727,6 +731,8 @@ func _run_entity_maintenance_tick(_delta: float) -> void:
 		_last_spawn_queue_processed = 0
 		_last_spawn_queue_raycasts = 0
 		_last_spawn_queue_spawned = 0
+		_last_spawn_queue_non_terrain_hits = 0
+		_last_spawn_queue_timed_out = 0
 
 	var has_dormant_entities := not dormant_entities.is_empty()
 	_dormant_respawn_update_accumulator += _delta
@@ -1144,6 +1150,8 @@ func _process_spawn_queue():
 	_last_spawn_queue_processed = 0
 	_last_spawn_queue_raycasts = 0
 	_last_spawn_queue_spawned = 0
+	_last_spawn_queue_non_terrain_hits = 0
+	_last_spawn_queue_timed_out = 0
 	if pending_spawns.is_empty() or not viewer:
 		_last_spawn_queue_update_ms = 0.0
 		return
@@ -1193,6 +1201,7 @@ func _process_spawn_queue():
 				spawn_data["wait_start"] = current_time
 			elif current_time - spawn_data.wait_start > 10.0:
 				completed.append(i)
+				_last_spawn_queue_timed_out += 1
 			continue
 		
 		# Use RAYCAST to check if terrain collision is ready - spawn immediately when hit
@@ -1212,6 +1221,7 @@ func _process_spawn_queue():
 			elif current_time - spawn_data.wait_start > 10.0:
 				# Waited too long (10s), give up on this spawn
 				completed.append(i)
+				_last_spawn_queue_timed_out += 1
 			continue
 		
 		# Terrain found! Verify it's actually terrain (in "terrain" group)
@@ -1227,9 +1237,12 @@ func _process_spawn_queue():
 				_last_spawn_queue_spawned += 1
 			completed.append(i)
 		else:
-			# Hit something that's not terrain - keep waiting for actual terrain
-			# Don't mark as completed - keep trying
-				pass
+			_last_spawn_queue_non_terrain_hits += 1
+			if not spawn_data.has("wait_start"):
+				spawn_data["wait_start"] = current_time
+			elif current_time - spawn_data.wait_start > 10.0:
+				completed.append(i)
+				_last_spawn_queue_timed_out += 1
 
 	if prioritize_nearby_spawns or balance_spawn_distance_rings:
 		_pending_spawn_scan_cursor = 0
