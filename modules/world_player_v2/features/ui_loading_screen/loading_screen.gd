@@ -20,6 +20,7 @@ signal terrain_ready  # Emitted when terrain/collision is safe for player physic
 @onready var panel: PanelContainer = $Panel
 @onready var progress_bar: ProgressBar = $Panel/VBox/ProgressBar
 @onready var status_label: Label = $Panel/VBox/StatusLabel
+@onready var stage_detail_label: Label = $Panel/VBox/StageDetailLabel
 @onready var elapsed_time_label: Label = $Panel/VBox/ElapsedTimeLabel
 
 var is_loading: bool = true
@@ -34,6 +35,12 @@ var save_manager_step_index: int = 0
 var save_manager_total_steps: int = 10
 var max_progress_percent: float = 0.0
 var last_progress_message: String = "Initializing..."
+var current_stage_label: String = "Loading save data"
+var current_stage_progress_percent: float = 0.0
+var current_stage_completed: int = 0
+var current_stage_total: int = 0
+var current_stage_details: Dictionary = {}
+var current_stage_detail_text: String = ""
 var failure_message: String = ""
 var cancellation_message: String = ""
 var _loading_trace = WorldEventTrace.new(LOADING_TRACE_EVENT_LIMIT)
@@ -89,6 +96,7 @@ func _on_startup_load_started(_load_id: String) -> void:
 	is_loading = true
 	current_stage = Stage.SAVE_LOAD
 	max_progress_percent = 0.0
+	_reset_stage_status()
 	failure_message = ""
 	cancellation_message = ""
 	has_emitted_terrain_ready = false
@@ -103,6 +111,12 @@ func _on_startup_load_started(_load_id: String) -> void:
 
 func _on_startup_stage_started(_load_id: String, stage_id: StringName, label: String, _weight: float) -> void:
 	current_stage = _stage_from_id(stage_id)
+	_apply_stage_status(current_stage, label, 0.0, 0, 0, {})
+	_capture_loading_event("coordinator_stage_started", {
+		"stage": str(stage_id),
+		"label": label,
+		"progress_percent": max_progress_percent
+	})
 	update_progress(max_progress_percent, label)
 
 
@@ -117,7 +131,13 @@ func _on_startup_stage_progress(
 	var message := str(details.get("message", "Loading..."))
 	if startup_coordinator:
 		var snapshot: Dictionary = startup_coordinator.get_snapshot()
+		_sync_stage_status_from_coordinator_snapshot(snapshot, stage_id, details)
 		update_progress(float(snapshot.get("overall_progress_percent", max_progress_percent)), message)
+	else:
+		var stage_percent := 0.0
+		if _total > 0:
+			stage_percent = clampf(float(_completed) / float(_total), 0.0, 1.0) * 100.0
+		_apply_stage_status(current_stage, _stage_label(current_stage), stage_percent, _completed, _total, details)
 
 
 func _on_startup_playable_ready(_load_id: String, _duration_ms: float) -> void:
@@ -130,6 +150,7 @@ func _on_startup_playable_ready(_load_id: String, _duration_ms: float) -> void:
 func _on_startup_load_completed(load_id: String, _duration_ms: float) -> void:
 	if not is_loading:
 		return
+	_apply_stage_status(Stage.COMPLETE, _stage_label(Stage.COMPLETE), 100.0, 1, 1, {"message": "World ready!"})
 	update_progress(100.0, "World ready!")
 	_finish_after_startup_complete.call_deferred(load_id)
 
@@ -163,6 +184,7 @@ func _sync_from_startup_coordinator() -> void:
 		return
 	var stage_id := StringName(str(snapshot.get("current_stage_id", "save_load")))
 	current_stage = _stage_from_id(stage_id)
+	_sync_stage_status_from_coordinator_snapshot(snapshot, stage_id, {})
 	update_progress(
 		float(snapshot.get("overall_progress_percent", max_progress_percent)),
 		str(snapshot.get("message", last_progress_message))
@@ -219,6 +241,19 @@ func _on_load_step(step_name: String, step_index: int, total_steps: int) -> void
 		var step_percent := 0.0
 		if total_steps > 0:
 			step_percent = clampf(float(step_index) / float(total_steps), 0.0, 1.0) * SAVE_LOAD_STAGE_WEIGHT
+		_apply_stage_status(
+			Stage.SAVE_LOAD,
+			_stage_label(Stage.SAVE_LOAD),
+			step_percent / maxf(SAVE_LOAD_STAGE_WEIGHT, 0.001) * 100.0,
+			step_index,
+			total_steps,
+			{
+				"message": step_name,
+				"step_name": step_name,
+				"step_index": step_index,
+				"total_steps": total_steps
+			}
+		)
 		update_progress(step_percent, "%s (%d/%d)" % [step_name, step_index, total_steps])
 
 func _start_loading_sequence() -> void:
@@ -339,6 +374,7 @@ func _start_loading_sequence() -> void:
 		_set_stage(Stage.COMPLETE)
 	
 	# Complete
+	_apply_stage_status(Stage.COMPLETE, _stage_label(Stage.COMPLETE), 100.0, 1, 1, {"message": "World ready!"})
 	update_progress(100.0, "World ready!")
 	await get_tree().create_timer(0.3).timeout
 	_start_fade_out()
@@ -361,6 +397,7 @@ func _set_stage(stage: Stage) -> void:
 	if current_stage == stage:
 		return
 	current_stage = stage
+	_apply_stage_status(stage, _stage_label(stage), 0.0, 0, 0, {})
 	_capture_loading_event("stage_started", {
 		"stage": _stage_name(stage),
 		"progress_percent": max_progress_percent
@@ -368,6 +405,7 @@ func _set_stage(stage: Stage) -> void:
 
 func _update_stage_progress(stage: Stage, stage_percent: float, message: String) -> void:
 	var absolute_percent := _stage_start(stage) + _stage_weight(stage) * clampf(stage_percent, 0.0, 100.0) / 100.0
+	_apply_stage_status(stage, _stage_label(stage), stage_percent, int(round(stage_percent)), 100, {"message": message})
 	update_progress(absolute_percent, message)
 
 func _stage_start(stage: Stage) -> float:
@@ -418,10 +456,175 @@ func _stage_name(stage: Stage) -> String:
 			return "cancelled"
 	return "unknown"
 
+
+func _stage_label(stage: Stage) -> String:
+	match stage:
+		Stage.SAVE_LOAD:
+			return "Loading save data"
+		Stage.TERRAIN:
+			return "Preparing terrain"
+		Stage.WORLD_CONTENT:
+			return "Preparing world content"
+		Stage.VEGETATION:
+			return "Placing vegetation"
+		Stage.COMPLETE:
+			return "World ready"
+		Stage.FAILED:
+			return "Loading failed"
+		Stage.CANCELLED:
+			return "Loading cancelled"
+	return "Loading"
+
+
+func _reset_stage_status() -> void:
+	current_stage_label = _stage_label(current_stage)
+	current_stage_progress_percent = 0.0
+	current_stage_completed = 0
+	current_stage_total = 0
+	current_stage_details.clear()
+	current_stage_detail_text = _build_stage_detail_text(current_stage_label, 0.0, 0, 0, {})
+	_update_stage_detail_label()
+
+
+func _sync_stage_status_from_coordinator_snapshot(
+	snapshot: Dictionary,
+	stage_id: StringName,
+	fallback_details: Dictionary = {}
+) -> void:
+	var label := str(snapshot.get("current_stage_label", ""))
+	if label.is_empty():
+		label = _stage_label(_stage_from_id(stage_id))
+	var details: Dictionary = {}
+	var details_variant: Variant = snapshot.get("current_stage_details", {})
+	if details_variant is Dictionary and not (details_variant as Dictionary).is_empty():
+		details = (details_variant as Dictionary).duplicate(true)
+	elif not fallback_details.is_empty():
+		details = fallback_details.duplicate(true)
+	_apply_stage_status(
+		_stage_from_id(stage_id),
+		label,
+		float(snapshot.get("current_stage_progress_percent", 0.0)),
+		int(snapshot.get("current_stage_completed", 0)),
+		int(snapshot.get("current_stage_total", 0)),
+		details
+	)
+
+
+func _apply_stage_status(
+	stage: Stage,
+	label: String,
+	stage_percent: float,
+	completed: int,
+	total: int,
+	details: Dictionary
+) -> void:
+	current_stage = stage
+	current_stage_label = label if not label.is_empty() else _stage_label(stage)
+	current_stage_progress_percent = clampf(stage_percent, 0.0, 100.0)
+	current_stage_completed = maxi(completed, 0)
+	current_stage_total = maxi(total, 0)
+	current_stage_details = details.duplicate(true)
+	current_stage_detail_text = _build_stage_detail_text(
+		current_stage_label,
+		current_stage_progress_percent,
+		current_stage_completed,
+		current_stage_total,
+		current_stage_details
+	)
+	_update_stage_detail_label()
+
+
+func _build_stage_detail_text(
+	label: String,
+	stage_percent: float,
+	completed: int,
+	total: int,
+	details: Dictionary
+) -> String:
+	var base := ""
+	if total > 0:
+		base = "%s %.0f%% (%d/%d)" % [label, stage_percent, completed, total]
+	else:
+		base = "%s %.0f%%" % [label, stage_percent]
+	var summary := _build_stage_details_summary(details)
+	if summary.is_empty():
+		return base
+	return "%s | %s" % [base, summary]
+
+
+func _build_stage_details_summary(details: Dictionary) -> String:
+	var parts: Array[String] = []
+	var pending := int(details.get("pending", -1))
+	var blocking_pending := int(details.get("blocking_component_pending", 0))
+	var blocking_component := str(details.get("blocking_component", ""))
+	if blocking_pending > 0 and not blocking_component.is_empty():
+		_append_stage_detail_part(parts, "blocked by %s (%d)" % [blocking_component, blocking_pending])
+	elif pending > 0:
+		_append_stage_detail_part(parts, "pending %d" % pending)
+	var artifact_restore_queue := int(details.get("artifact_restore_queue_count", 0)) \
+		+ int(details.get("completed_artifact_restore_count", 0))
+	if artifact_restore_queue > 0:
+		_append_stage_detail_part(parts, "restoring artifacts %d" % artifact_restore_queue)
+	var generation_queue := int(details.get("generation_queue_count", 0)) \
+		+ int(details.get("completed_generated_count", 0))
+	if generation_queue > 0:
+		_append_stage_detail_part(parts, "generating misses %d" % generation_queue)
+	var cpu_mesh_queue := int(details.get("cpu_mesh_queue_count", 0))
+	if cpu_mesh_queue > 0:
+		_append_stage_detail_part(parts, "meshing %d" % cpu_mesh_queue)
+	var cache_hits := int(details.get("artifact_cache_hit_count", 0))
+	var cache_misses := int(details.get("artifact_cache_miss_count", 0))
+	if cache_hits > 0 or cache_misses > 0:
+		_append_stage_detail_part(parts, "cache H/M %d/%d" % [cache_hits, cache_misses])
+	var restored_artifacts := int(details.get("artifact_cache_restore_count", 0))
+	if restored_artifacts > 0:
+		_append_stage_detail_part(parts, "restored %d" % restored_artifacts)
+	var disk_hits := int(details.get("artifact_disk_cache_hit_count", 0))
+	if disk_hits > 0:
+		_append_stage_detail_part(parts, "disk hits %d" % disk_hits)
+	var pending_nodes := int(details.get("pending_nodes", 0))
+	if pending_nodes > 0:
+		_append_stage_detail_part(parts, "terrain nodes %d" % pending_nodes)
+	var pending_spawn_zones := int(details.get("pending_spawn_zone_count", 0))
+	if pending_spawn_zones > 0:
+		_append_stage_detail_part(parts, "spawn zones %d" % pending_spawn_zones)
+	var pending_entries := int(details.get("artifact_disk_write_pending_entries", details.get("pending_entries", 0)))
+	if pending_entries > 0:
+		_append_stage_detail_part(parts, "artifact writes %d" % pending_entries)
+	var pending_bytes := int(details.get("artifact_disk_write_pending_bytes", details.get("pending_bytes", 0)))
+	if pending_bytes > 0:
+		_append_stage_detail_part(parts, "artifact queue %s" % _format_short_bytes(pending_bytes))
+	var step_index := int(details.get("step_index", 0))
+	var total_steps := int(details.get("total_steps", 0))
+	if total_steps > 0:
+		_append_stage_detail_part(parts, "step %d/%d" % [step_index, total_steps])
+	return ", ".join(parts)
+
+
+func _append_stage_detail_part(parts: Array[String], text: String) -> void:
+	if text.is_empty() or parts.size() >= 3:
+		return
+	parts.append(text)
+
+
+func _format_short_bytes(byte_count: int) -> String:
+	if byte_count >= 1024 * 1024:
+		return "%.1f MiB" % (float(byte_count) / float(1024 * 1024))
+	if byte_count >= 1024:
+		return "%.1f KiB" % (float(byte_count) / 1024.0)
+	return "%d B" % byte_count
+
+
+func _update_stage_detail_label() -> void:
+	if stage_detail_label:
+		stage_detail_label.text = current_stage_detail_text
+
+
 func _mark_failed(message: String) -> void:
 	failure_message = message if not message.is_empty() else "Loading failed"
 	cancellation_message = ""
 	current_stage = Stage.FAILED
+	_apply_stage_status(Stage.FAILED, _stage_label(Stage.FAILED), current_stage_progress_percent, 0, 0, {"message": failure_message})
 	is_loading = false
 	completed_elapsed_seconds = _get_elapsed_seconds()
 	update_progress(max_progress_percent, failure_message)
@@ -436,6 +639,7 @@ func _mark_cancelled(reason: String) -> void:
 	cancellation_message = reason if not reason.is_empty() else "Loading cancelled"
 	failure_message = ""
 	current_stage = Stage.CANCELLED
+	_apply_stage_status(Stage.CANCELLED, _stage_label(Stage.CANCELLED), current_stage_progress_percent, 0, 0, {"message": cancellation_message})
 	is_loading = false
 	completed_elapsed_seconds = _get_elapsed_seconds()
 	update_progress(max_progress_percent, cancellation_message)
@@ -457,14 +661,23 @@ func _maybe_trace_progress(percent: float, message: String) -> void:
 	_last_progress_trace_percent = percent
 	_capture_loading_event("progress", {
 		"stage": _stage_name(current_stage),
+		"stage_label": current_stage_label,
+		"stage_progress_percent": current_stage_progress_percent,
 		"progress_percent": percent,
-		"message": message
+		"message": message,
+		"stage_detail": current_stage_detail_text
 	})
 
 func get_loading_progress_snapshot() -> Dictionary:
 	return {
 		"is_loading": is_loading,
 		"stage": _stage_name(current_stage),
+		"stage_label": current_stage_label,
+		"stage_progress_percent": current_stage_progress_percent,
+		"stage_completed": current_stage_completed,
+		"stage_total": current_stage_total,
+		"stage_details": current_stage_details.duplicate(true),
+		"stage_detail_text": current_stage_detail_text,
 		"progress_percent": max_progress_percent,
 		"message": last_progress_message,
 		"failure_message": failure_message,
@@ -547,6 +760,7 @@ func _start_fade_out() -> void:
 	is_loading = false
 	completed_elapsed_seconds = _get_elapsed_seconds()
 	_set_stage(Stage.COMPLETE)
+	_apply_stage_status(Stage.COMPLETE, _stage_label(Stage.COMPLETE), 100.0, 1, 1, {"message": "World ready!"})
 	_update_elapsed_time_label()
 	fade_timer = FADE_DURATION
 	_capture_loading_event("complete", {

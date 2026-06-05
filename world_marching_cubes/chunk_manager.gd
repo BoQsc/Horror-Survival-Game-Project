@@ -3304,17 +3304,83 @@ func _clear_vegetation_runtime_chunks_for_world_reset() -> bool:
 
 
 func _get_task_queue_count() -> int:
+	if not mutex:
+		return 0
 	mutex.lock()
 	var count := task_queue.size() + priority_task_queue.size()
 	mutex.unlock()
 	return count
 
 
+func _get_task_queue_type_counts() -> Dictionary:
+	var counts := {
+		"total": 0,
+		"generate": 0,
+		"restore_artifact": 0,
+		"modify": 0,
+		"other": 0
+	}
+	if not mutex:
+		return counts
+	mutex.lock()
+	for queued_task_variant in priority_task_queue:
+		_count_gpu_task_type(counts, queued_task_variant)
+	for queued_task_variant in task_queue:
+		_count_gpu_task_type(counts, queued_task_variant)
+	mutex.unlock()
+	return counts
+
+
+func _count_gpu_task_type(counts: Dictionary, queued_task_variant: Variant) -> void:
+	if not (queued_task_variant is Dictionary):
+		counts["other"] = int(counts.get("other", 0)) + 1
+		counts["total"] = int(counts.get("total", 0)) + 1
+		return
+	var queued_task: Dictionary = queued_task_variant
+	var task_type := str(queued_task.get("type", "generate"))
+	if counts.has(task_type):
+		counts[task_type] = int(counts.get(task_type, 0)) + 1
+	else:
+		counts["other"] = int(counts.get("other", 0)) + 1
+	counts["total"] = int(counts.get("total", 0)) + 1
+
+
 func _get_cpu_task_queue_count() -> int:
+	if not cpu_mutex:
+		return 0
 	cpu_mutex.lock()
 	var count := cpu_task_queue.size()
 	cpu_mutex.unlock()
 	return count
+
+
+func _get_cpu_task_queue_type_counts() -> Dictionary:
+	var counts := {
+		"total": 0,
+		"mesh": 0,
+		"native_mesh": 0,
+		"gpu_mesh": 0,
+		"terrain_visual_batch": 0
+	}
+	if not cpu_mutex:
+		return counts
+	cpu_mutex.lock()
+	for queued_task_variant in cpu_task_queue:
+		if not (queued_task_variant is Dictionary):
+			counts["total"] = int(counts.get("total", 0)) + 1
+			continue
+		var queued_task: Dictionary = queued_task_variant
+		if str(queued_task.get("type", "")) == "terrain_visual_batch":
+			counts["terrain_visual_batch"] = int(counts.get("terrain_visual_batch", 0)) + 1
+		else:
+			counts["mesh"] = int(counts.get("mesh", 0)) + 1
+			if bool(queued_task.get("native_cpu_meshing", false)):
+				counts["native_mesh"] = int(counts.get("native_mesh", 0)) + 1
+			else:
+				counts["gpu_mesh"] = int(counts.get("gpu_mesh", 0)) + 1
+		counts["total"] = int(counts.get("total", 0)) + 1
+	cpu_mutex.unlock()
+	return counts
 
 
 func _has_pending_gpu_tasks() -> bool:
@@ -3547,6 +3613,25 @@ func _get_completed_generation_queue_count() -> int:
 	var count := completed_generation_queue.size()
 	completed_generation_mutex.unlock()
 	return count
+
+
+func _get_completed_generation_queue_type_counts() -> Dictionary:
+	var counts := {
+		"total": 0,
+		"artifact_restore": 0,
+		"generated": 0
+	}
+	if not completed_generation_mutex:
+		return counts
+	completed_generation_mutex.lock()
+	for item_variant in completed_generation_queue:
+		if item_variant is Dictionary and bool((item_variant as Dictionary).get("artifact_restore", false)):
+			counts["artifact_restore"] = int(counts.get("artifact_restore", 0)) + 1
+		else:
+			counts["generated"] = int(counts.get("generated", 0)) + 1
+		counts["total"] = int(counts.get("total", 0)) + 1
+	completed_generation_mutex.unlock()
+	return counts
 
 
 func _pop_completed_generation_item() -> Dictionary:
@@ -4461,6 +4546,68 @@ func set_collision_distance(value: int) -> void:
 	_record_terrain_runtime_setting_changed("collision_distance", previous_value, next_value)
 
 
+func set_terrain_height(value: float, reset_runtime: bool = true) -> void:
+	var next_value := maxf(value, 0.0)
+	if is_equal_approx(terrain_height, next_value):
+		return
+	var previous_value := terrain_height
+	terrain_height = next_value
+	world_map_max_height = terrain_height * 2.5
+	_apply_signed_terrain_generation_setting_changed("terrain_height", previous_value, next_value, reset_runtime)
+
+
+func set_water_level(value: float, reset_runtime: bool = true) -> void:
+	var next_value := value
+	if is_equal_approx(water_level, next_value):
+		return
+	var previous_value := water_level
+	water_level = next_value
+	_apply_signed_terrain_generation_setting_changed("water_level", previous_value, next_value, reset_runtime)
+
+
+func set_noise_frequency(value: float, reset_runtime: bool = true) -> void:
+	var next_value := maxf(value, 0.0)
+	if is_equal_approx(noise_frequency, next_value):
+		return
+	var previous_value := noise_frequency
+	noise_frequency = next_value
+	_apply_signed_terrain_generation_setting_changed("noise_frequency", previous_value, next_value, reset_runtime)
+
+
+func set_procedural_roads_enabled(enabled: bool, reset_runtime: bool = true) -> void:
+	if procedural_roads_enabled == enabled:
+		return
+	var previous_value := procedural_roads_enabled
+	procedural_roads_enabled = enabled
+	_apply_signed_terrain_generation_setting_changed("procedural_roads_enabled", previous_value, enabled, reset_runtime)
+
+
+func set_procedural_road_wide_shoulders(enabled: bool, reset_runtime: bool = true) -> void:
+	if procedural_road_wide_shoulders == enabled:
+		return
+	var previous_value := procedural_road_wide_shoulders
+	procedural_road_wide_shoulders = enabled
+	_apply_signed_terrain_generation_setting_changed("procedural_road_wide_shoulders", previous_value, enabled, reset_runtime)
+
+
+func set_procedural_road_spacing(value: float, reset_runtime: bool = true) -> void:
+	var next_value := maxf(value, 0.0)
+	if is_equal_approx(procedural_road_spacing, next_value):
+		return
+	var previous_value := procedural_road_spacing
+	procedural_road_spacing = next_value
+	_apply_signed_terrain_generation_setting_changed("procedural_road_spacing", previous_value, next_value, reset_runtime)
+
+
+func set_procedural_road_width(value: float, reset_runtime: bool = true) -> void:
+	var next_value := maxf(value, 0.0)
+	if is_equal_approx(procedural_road_width, next_value):
+		return
+	var previous_value := procedural_road_width
+	procedural_road_width = next_value
+	_apply_signed_terrain_generation_setting_changed("procedural_road_width", previous_value, next_value, reset_runtime)
+
+
 func set_world_definition_path(
 	path: String,
 	reason: String = "manual",
@@ -4482,6 +4629,35 @@ func set_world_definition_path(
 	_record_terrain_runtime_setting_changed("world_definition_path", previous_path, world_definition_path)
 	_notify_world_definition_changed_dependencies(reason)
 	_queue_world_map_gpu_reload(reason)
+
+
+func _apply_signed_terrain_generation_setting_changed(
+	setting_name: String,
+	previous_value: Variant,
+	current_value: Variant,
+	reset_runtime: bool
+) -> void:
+	if reset_runtime:
+		clear_all_chunks(false, false)
+	_apply_terrain_generation_material_state()
+	_refresh_terrain_artifact_settings_signature()
+	_notify_terrain_generation_setting_changed_dependencies("terrain_setting_changed_%s" % setting_name)
+	_capture_terrain_telemetry("terrain_generation_setting_changed", {
+		"setting": setting_name,
+		"previous": str(previous_value),
+		"current": str(current_value),
+		"reset_runtime": reset_runtime,
+		"settings_signature": _terrain_artifact_settings_signature
+	})
+	_record_terrain_runtime_setting_changed(setting_name, previous_value, current_value)
+
+
+func _notify_terrain_generation_setting_changed_dependencies(reason: String) -> void:
+	if not is_inside_tree():
+		return
+	var vegetation_manager := get_tree().get_first_node_in_group("vegetation_manager")
+	if vegetation_manager and vegetation_manager.has_method("clear_vegetation_chunk_placement_cache"):
+		vegetation_manager.clear_vegetation_chunk_placement_cache(reason)
 
 
 func _record_terrain_runtime_setting_changed(setting_name: String, previous_value: Variant, current_value: Variant) -> void:
@@ -4640,8 +4816,8 @@ func _reset_world_map_cpu_state() -> void:
 func _apply_world_map_material_state() -> void:
 	if material_terrain == null:
 		return
+	_apply_terrain_generation_material_state()
 	material_terrain.set_shader_parameter("use_world_map", world_map_active)
-	material_terrain.set_shader_parameter("procedural_road_enabled", false if world_map_active else procedural_roads_enabled)
 	if _world_map_biome_texture:
 		material_terrain.set_shader_parameter("world_map_biome_map", _world_map_biome_texture)
 	if _world_map_road_texture:
@@ -4649,6 +4825,17 @@ func _apply_world_map_material_state() -> void:
 	if world_map_size > 0.0:
 		material_terrain.set_shader_parameter("world_map_texture_scale", 1.0 / world_map_size)
 	_world_map_lod_material = null
+
+
+func _apply_terrain_generation_material_state() -> void:
+	if material_terrain == null:
+		return
+	material_terrain.set_shader_parameter("procedural_road_enabled", procedural_roads_enabled and not world_map_active)
+	material_terrain.set_shader_parameter("procedural_road_spacing", procedural_road_spacing if procedural_roads_enabled and not world_map_active else 0.0)
+	material_terrain.set_shader_parameter("procedural_road_width", procedural_road_width)
+	material_terrain.set_shader_parameter("terrain_height", terrain_height)
+	material_terrain.set_shader_parameter("noise_frequency", noise_frequency)
+	material_terrain.set_shader_parameter("debug_show_road_zones", debug_show_road_zones)
 
 
 func _skip_terrain_stream_update() -> void:
@@ -5867,17 +6054,54 @@ func get_loading_progress() -> float:
 
 ## Get count of pending nodes waiting to be finalized (for loading screen)
 func get_pending_nodes_count() -> int:
+	if not pending_nodes_mutex:
+		return 0
 	pending_nodes_mutex.lock()
 	var count = pending_nodes.size()
 	pending_nodes_mutex.unlock()
 	return count
 
+func _get_pending_node_type_counts() -> Dictionary:
+	var counts := {
+		"total": 0,
+		"artifact_restore": 0,
+		"generated": 0
+	}
+	if not pending_nodes_mutex:
+		return counts
+	pending_nodes_mutex.lock()
+	for item_variant in pending_nodes:
+		if item_variant is Dictionary and bool((item_variant as Dictionary).get("artifact_restore", false)):
+			counts["artifact_restore"] = int(counts.get("artifact_restore", 0)) + 1
+		else:
+			counts["generated"] = int(counts.get("generated", 0)) + 1
+		counts["total"] = int(counts.get("total", 0)) + 1
+	pending_nodes_mutex.unlock()
+	return counts
+
 func get_startup_readiness_snapshot() -> Dictionary:
-	var pending_node_count := get_pending_nodes_count()
-	var task_queue_count := _get_task_queue_count()
-	var cpu_task_queue_count := _get_cpu_task_queue_count()
-	var completed_generation_count := _get_completed_generation_queue_count()
+	var pending_node_counts := _get_pending_node_type_counts()
+	var pending_node_count := int(pending_node_counts.get("total", 0))
+	var task_queue_counts := _get_task_queue_type_counts()
+	var task_queue_count := int(task_queue_counts.get("total", 0))
+	var cpu_task_queue_counts := _get_cpu_task_queue_type_counts()
+	var cpu_task_queue_count := int(cpu_task_queue_counts.get("total", 0))
+	var completed_generation_counts := _get_completed_generation_queue_type_counts()
+	var completed_generation_count := int(completed_generation_counts.get("total", 0))
 	var pending_spawn_zone_count := pending_spawn_zones.size()
+	var disk_write_snapshot := _terrain_artifact_disk_write_queue.get_snapshot()
+	var disk_write_pending_entries := int(disk_write_snapshot.get("pending_entries", 0))
+	var disk_write_pending_bytes := int(disk_write_snapshot.get("pending_bytes", 0))
+	var artifact_cache_snapshot := _terrain_artifact_cache.get_snapshot()
+	var artifact_disk_cache_snapshot := _terrain_artifact_disk_store.get_snapshot()
+	var generation_queue_count := int(task_queue_counts.get("generate", 0))
+	var artifact_restore_queue_count := int(task_queue_counts.get("restore_artifact", 0))
+	var cpu_mesh_queue_count := int(cpu_task_queue_counts.get("mesh", 0))
+	var visual_batch_cpu_queue_count := int(cpu_task_queue_counts.get("terrain_visual_batch", 0))
+	var completed_artifact_restore_count := int(completed_generation_counts.get("artifact_restore", 0))
+	var completed_generated_count := int(completed_generation_counts.get("generated", 0))
+	var pending_artifact_restore_nodes := int(pending_node_counts.get("artifact_restore", 0))
+	var pending_generated_nodes := int(pending_node_counts.get("generated", 0))
 	var pending := pending_node_count \
 		+ task_queue_count \
 		+ cpu_task_queue_count \
@@ -5889,10 +6113,14 @@ func get_startup_readiness_snapshot() -> Dictionary:
 	var progress := 1.0 if ready else get_loading_progress()
 	var message := "Terrain loaded"
 	if not ready:
-		if pending_node_count > 0:
-			message = "Rendering terrain... (%d pending)" % pending_node_count
-		elif task_queue_count + cpu_task_queue_count + completed_generation_count > 0:
-			message = "Generating terrain... (%d queued)" % (task_queue_count + cpu_task_queue_count + completed_generation_count)
+		if pending_artifact_restore_nodes > 0:
+			message = "Finalizing restored terrain artifacts... (%d pending)" % pending_artifact_restore_nodes
+		elif pending_generated_nodes > 0:
+			message = "Rendering generated terrain... (%d pending)" % pending_generated_nodes
+		elif artifact_restore_queue_count + completed_artifact_restore_count > 0:
+			message = "Restoring terrain artifacts... (%d queued)" % (artifact_restore_queue_count + completed_artifact_restore_count)
+		elif generation_queue_count + cpu_mesh_queue_count + completed_generated_count > 0:
+			message = "Generating terrain misses... (%d queued)" % (generation_queue_count + cpu_mesh_queue_count + completed_generated_count)
 		elif startup_require_preheat_before_play and not is_startup_preheat_ready():
 			message = "Preheating terrain..."
 		elif pending_spawn_zone_count > 0:
@@ -5911,6 +6139,37 @@ func get_startup_readiness_snapshot() -> Dictionary:
 			"task_queue_count": task_queue_count,
 			"cpu_task_queue_count": cpu_task_queue_count,
 			"completed_generation_queue_count": completed_generation_count,
+			"generation_queue_count": generation_queue_count,
+			"artifact_restore_queue_count": artifact_restore_queue_count,
+			"cpu_mesh_queue_count": cpu_mesh_queue_count,
+			"native_cpu_mesh_queue_count": int(cpu_task_queue_counts.get("native_mesh", 0)),
+			"gpu_cpu_mesh_queue_count": int(cpu_task_queue_counts.get("gpu_mesh", 0)),
+			"terrain_visual_batch_cpu_queue_count": visual_batch_cpu_queue_count,
+			"completed_artifact_restore_count": completed_artifact_restore_count,
+			"completed_generated_count": completed_generated_count,
+			"pending_artifact_restore_node_count": pending_artifact_restore_nodes,
+			"pending_generated_node_count": pending_generated_nodes,
+			"artifact_disk_write_pending_entries": disk_write_pending_entries,
+			"artifact_disk_write_pending_bytes": disk_write_pending_bytes,
+			"pending_entries": disk_write_pending_entries,
+			"pending_bytes": disk_write_pending_bytes,
+			"artifact_cache_entry_count": int(artifact_cache_snapshot.get("entry_count", 0)),
+			"artifact_cache_total_bytes": int(artifact_cache_snapshot.get("total_bytes", 0)),
+			"artifact_cache_byte_budget_ratio": float(artifact_cache_snapshot.get("byte_budget_used_ratio", 0.0)),
+			"artifact_cache_hit_count": int(artifact_cache_snapshot.get("hit_count", 0)),
+			"artifact_cache_miss_count": int(artifact_cache_snapshot.get("miss_count", 0)),
+			"artifact_cache_hit_ratio": float(artifact_cache_snapshot.get("hit_ratio", 0.0)),
+			"artifact_cache_store_count": int(artifact_cache_snapshot.get("store_count", 0)),
+			"artifact_cache_restore_count": int(artifact_cache_snapshot.get("restore_count", 0)),
+			"artifact_cache_restore_discarded_count": int(artifact_cache_snapshot.get("restore_discarded_count", 0)),
+			"artifact_cache_eviction_count": int(artifact_cache_snapshot.get("eviction_count", 0)),
+			"artifact_disk_cache_hit_count": int(artifact_disk_cache_snapshot.get("hit_count", 0)),
+			"artifact_disk_cache_miss_count": int(artifact_disk_cache_snapshot.get("miss_count", 0)),
+			"artifact_disk_cache_hit_ratio": float(artifact_disk_cache_snapshot.get("hit_ratio", 0.0)),
+			"artifact_disk_cache_store_count": int(artifact_disk_cache_snapshot.get("store_count", 0)),
+			"artifact_disk_cache_last_signature_bytes": int(artifact_disk_cache_snapshot.get("last_signature_bytes", 0)),
+			"artifact_disk_cache_byte_budget_ratio": float(artifact_disk_cache_snapshot.get("last_signature_byte_budget_used_ratio", 0.0)),
+			"artifact_disk_cache_eviction_count": int(artifact_disk_cache_snapshot.get("eviction_count", 0)),
 			"pending_spawn_zone_count": pending_spawn_zone_count,
 			"initial_load_phase": initial_load_phase,
 			"startup_preheat_ready": is_startup_preheat_ready(),
@@ -9612,7 +9871,9 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"cpu_dens": cpu_dens_t,
 		"height_map": height_map_t,
 		"cpu_mat": cpu_mat_t,
-		"stored_mod_version": stored_mod_version
+		"stored_mod_version": stored_mod_version,
+		"artifact_restore": restored_from_artifact,
+		"artifact_source": str(artifact_payload.get("artifact_source", ""))
 	})
 
 	# Task 2: Water (Lighter - ~2ms)
@@ -9623,7 +9884,9 @@ func complete_generation(coord: Vector3i, result_t: Dictionary, dens_t: RID, res
 		"dens": dens_w,
 		"cpu_dens": cpu_dens_w,
 		"generated_density": bool(result_w.get("generated_density", false)),
-		"stored_mod_version": stored_mod_version
+		"stored_mod_version": stored_mod_version,
+		"artifact_restore": restored_from_artifact,
+		"artifact_source": str(artifact_payload.get("artifact_source", ""))
 	})
 	pending_nodes_needs_sort = true
 

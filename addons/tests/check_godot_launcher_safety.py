@@ -9,6 +9,7 @@ DIRECT_GODOT_LAUNCHERS = {
     Path("addons/tests/run_movement_test.py"): {"requires_cwd": True},
     Path("addons/tests/run_procedural_power_test.py"): {"requires_cwd": True},
     Path("addons/tests/run_town_stall_test.py"): {"requires_cwd": True},
+    Path("addons/tests/run_world_performance_priority_proof.py"): {"requires_cwd": True},
     Path("scripts/auto_fix.py"): {"requires_cwd": True},
     Path("scripts/prefab_builder.py"): {"requires_cwd": True},
 }

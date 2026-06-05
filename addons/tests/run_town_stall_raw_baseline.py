@@ -59,6 +59,54 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
         },
     },
+    "priority_revisit": {
+        "description": "Priority proof revisit path: runtime defaults, auto-fly to town, leave, and return to measure unchanged revisit reuse.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_AUTO_TELEPORT": "0",
+            "TOWN_STALL_REPEAT_ENTRY": "1",
+            "TOWN_STALL_MEASURE_FULL_FLIGHT": "0",
+        },
+    },
+    "priority_render_distance_5": {
+        "description": "Priority proof render-distance sweep at distance 5 with runtime power manager defaults.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RENDER_DISTANCE": "5",
+            "TOWN_STALL_TERRAIN_RENDER_DISTANCE": "5",
+            "TOWN_STALL_BUILDING_RENDER_DISTANCE": "5",
+        },
+    },
+    "priority_render_distance_10": {
+        "description": "Priority proof render-distance sweep at distance 10 with runtime power manager defaults.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RENDER_DISTANCE": "10",
+            "TOWN_STALL_TERRAIN_RENDER_DISTANCE": "10",
+            "TOWN_STALL_BUILDING_RENDER_DISTANCE": "10",
+        },
+    },
+    "priority_render_distance_15": {
+        "description": "Priority proof render-distance sweep at distance 15 with runtime power manager defaults.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RENDER_DISTANCE": "15",
+            "TOWN_STALL_TERRAIN_RENDER_DISTANCE": "15",
+            "TOWN_STALL_BUILDING_RENDER_DISTANCE": "15",
+        },
+    },
+    "priority_memory_pressure": {
+        "description": "Priority proof memory-pressure sweep with reduced terrain artifact memory/disk budgets.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "64",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "128",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_CACHE_BUDGET_MB": "512",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_CACHE_ENTRIES_PER_WORLD": "512",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_WRITE_QUEUE_BUDGET_MB": "64",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_WRITE_QUEUE_MAX_ENTRIES": "64",
+        },
+    },
     "runtime_deepidle60": {
         "description": "Runtime power manager with active/idle/deep-idle all capped at 60 FPS for clean gameplay render A/B.",
         "env": {
@@ -337,6 +385,12 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_VISUAL_BATCHING",
     "TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE",
     "TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES",
+    "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB",
+    "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT",
+    "TOWN_STALL_TERRAIN_ARTIFACT_DISK_CACHE_BUDGET_MB",
+    "TOWN_STALL_TERRAIN_ARTIFACT_DISK_CACHE_ENTRIES_PER_WORLD",
+    "TOWN_STALL_TERRAIN_ARTIFACT_DISK_WRITE_QUEUE_BUDGET_MB",
+    "TOWN_STALL_TERRAIN_ARTIFACT_DISK_WRITE_QUEUE_MAX_ENTRIES",
     "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES",
     "TOWN_STALL_SHARED_TERRAIN_COLLISION_BODY",
     "TOWN_STALL_DISABLE_GLOW",
@@ -392,6 +446,36 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_ENTITY_BALANCED_RING_FILL_CANDIDATES_PER_TICK",
     "TOWN_STALL_ENTITY_BALANCED_RING_FILL_AREA_WEIGHTED",
     "TOWN_STALL_ENTITY_BALANCED_RING_FILL_RECENTER_DISTANCE",
+]
+
+PROOF_GATE_ENV_KEYS = [
+    "TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF",
+    "TOWN_STALL_MIN_STARTUP_COMPLETED_STAGES",
+    "TOWN_STALL_MAX_STARTUP_ELAPSED_MS",
+    "TOWN_STALL_MAX_STARTUP_STAGE_MS",
+    "TOWN_STALL_MIN_STARTUP_TRACE_EVENTS",
+    "TOWN_STALL_REQUIRE_WORLD_BAKE_PROOF",
+    "TOWN_STALL_REQUIRE_WORLD_BAKE_EXPORT_SIGNATURE",
+    "TOWN_STALL_REQUIRE_WORLD_BAKE_HEIGHT_BIOME_BACKEND",
+    "TOWN_STALL_MIN_WORLD_BAKE_LAYERS",
+    "TOWN_STALL_MAX_WORLD_BAKE_MS",
+    "TOWN_STALL_MAX_WORLD_BAKE_HASH_MS",
+    "TOWN_STALL_MAX_WORLD_BAKE_UNACCOUNTED_MS",
+    "TOWN_STALL_REQUIRE_RUNTIME_IDLE_PROOF",
+    "TOWN_STALL_MIN_RUNTIME_IDLE_PROOF_SAMPLES",
+    "TOWN_STALL_MIN_RUNTIME_IDLE_RATIO",
+    "TOWN_STALL_MAX_RUNTIME_PENDING_WORK",
+    "TOWN_STALL_MAX_RUNTIME_AWAKE_PROCESS_COUNT",
+    "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO",
+    "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA",
+    "TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS",
+    "TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS",
 ]
 
 
@@ -516,6 +600,16 @@ def _float_env(name: str, default_value: float) -> float:
         return default_value
 
 
+def _optional_float_env(name: str) -> Optional[float]:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
 def _int_env(name: str, default_value: int) -> int:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -524,6 +618,13 @@ def _int_env(name: str, default_value: int) -> int:
         return int(raw)
     except ValueError:
         return default_value
+
+
+def _bool_env(name: str, default_value: bool = False) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default_value
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _idle_contamination_thresholds() -> dict[str, Any]:
@@ -665,6 +766,72 @@ def _wait_for_preflight_gpu_temperature(
     result["summary"] = _summarize_samples(result["samples"])
     result["duration_s"] = max(0.0, time.time() - (deadline - max(0.0, timeout_seconds)))
     return result
+
+
+def _collect_initial_idle_until_clean(
+    idle_seconds: float,
+    sample_interval: float,
+    thresholds: dict[str, Any],
+    timeout_seconds: float,
+    poll_seconds: float,
+) -> dict[str, Any]:
+    started = time.time()
+    deadline = started + max(0.0, timeout_seconds)
+    poll_seconds = max(1.0, poll_seconds)
+    retry_enabled = timeout_seconds > 0.0
+    attempts: list[dict[str, Any]] = []
+
+    while True:
+        attempt_started = time.time()
+        machine_state = town_runner._collect_machine_state()
+        idle_sample = _run_idle_sample("initial_idle", idle_seconds, sample_interval)
+        reasons = _idle_contamination_reasons(idle_sample, machine_state, thresholds)
+        attempt = {
+            "attempt": len(attempts) + 1,
+            "started_at_epoch": attempt_started,
+            "ended_at_epoch": time.time(),
+            "duration_s": time.time() - attempt_started,
+            "machine_state": machine_state,
+            "idle": idle_sample,
+            "reasons": reasons,
+            "clean": not reasons,
+        }
+        attempts.append(attempt)
+        if not reasons:
+            return {
+                "enabled": retry_enabled,
+                "timeout_seconds": timeout_seconds,
+                "poll_seconds": poll_seconds,
+                "attempt_count": len(attempts),
+                "attempts": attempts,
+                "selected_attempt": len(attempts),
+                "machine_state": machine_state,
+                "idle": idle_sample,
+                "reasons": [],
+                "clean": True,
+                "duration_s": time.time() - started,
+            }
+
+        print(f"Initial idle contaminated: {', '.join(reasons)}")
+        if not retry_enabled or time.time() >= deadline:
+            return {
+                "enabled": retry_enabled,
+                "timeout_seconds": timeout_seconds,
+                "poll_seconds": poll_seconds,
+                "attempt_count": len(attempts),
+                "attempts": attempts,
+                "selected_attempt": len(attempts),
+                "machine_state": machine_state,
+                "idle": idle_sample,
+                "reasons": reasons,
+                "clean": False,
+                "duration_s": time.time() - started,
+            }
+
+        sleep_seconds = min(poll_seconds, max(0.0, deadline - time.time()))
+        print(f"Retrying initial idle preflight in {sleep_seconds:.1f}s")
+        if sleep_seconds > 0.0:
+            time.sleep(sleep_seconds)
 
 
 def _summarize_time_window(
@@ -1053,6 +1220,10 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     stationary_hold_window = snapshot.get("stationary_hold_window", {})
     moving_peak_sample = moving_entry_window.get("peak_entry_sample", {})
     stationary_peak_sample = stationary_hold_window.get("peak_entry_sample", {})
+    startup_readiness_verdict = town_runner._startup_readiness_verdict_from_snapshot(snapshot)
+    world_bake_proof = town_runner._world_bake_proof_verdict_from_snapshot(snapshot)
+    stationary_runtime_idle_verdict = town_runner._stationary_runtime_idle_verdict_from_snapshot(snapshot)
+    stationary_terrain_artifact_cache_verdict = town_runner._stationary_terrain_artifact_cache_verdict_from_snapshot(snapshot)
     telemetry = snapshot.get("system_telemetry", {}).get("terrain_manager", {})
     vegetation_telemetry = snapshot.get("system_telemetry", {}).get("vegetation_manager", {})
     runtime_power = {
@@ -1285,6 +1456,10 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
             "stable_top_bucket": stationary_hold_window.get("stable_top_bucket"),
             "peak_generation": _extract_generation_peak(stationary_peak_sample),
         },
+        "startup_readiness_verdict": startup_readiness_verdict,
+        "world_bake_proof": world_bake_proof,
+        "stationary_runtime_idle_verdict": stationary_runtime_idle_verdict,
+        "stationary_terrain_artifact_cache_verdict": stationary_terrain_artifact_cache_verdict,
         "runtime_power": runtime_power,
         "terrain_gpu": terrain_gpu,
         "collision": collision,
@@ -1368,9 +1543,56 @@ def _write_payload(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bool) -> dict[str, str]:
+def _set_optional_env(env: dict[str, str], key: str, value: Optional[float]) -> None:
+    if value is not None:
+        env[key] = f"{float(value):.6g}"
+
+
+def _proof_gate_env_from_args(args: argparse.Namespace) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if bool(args.require_startup_readiness_proof):
+        env["TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF"] = "1"
+        env["TOWN_STALL_MIN_STARTUP_COMPLETED_STAGES"] = str(max(1, int(args.min_startup_completed_stages)))
+    _set_optional_env(env, "TOWN_STALL_MAX_STARTUP_ELAPSED_MS", args.max_startup_elapsed_ms)
+    _set_optional_env(env, "TOWN_STALL_MAX_STARTUP_STAGE_MS", args.max_startup_stage_ms)
+    _set_optional_env(env, "TOWN_STALL_MIN_STARTUP_TRACE_EVENTS", args.min_startup_trace_events)
+
+    if bool(args.require_world_bake_proof):
+        env["TOWN_STALL_REQUIRE_WORLD_BAKE_PROOF"] = "1"
+        env["TOWN_STALL_MIN_WORLD_BAKE_LAYERS"] = str(max(1, int(args.min_world_bake_layers)))
+    if bool(args.require_world_bake_export_signature):
+        env["TOWN_STALL_REQUIRE_WORLD_BAKE_EXPORT_SIGNATURE"] = "1"
+    backend = str(args.require_world_bake_height_biome_backend or "").strip()
+    if backend:
+        env["TOWN_STALL_REQUIRE_WORLD_BAKE_HEIGHT_BIOME_BACKEND"] = backend
+    _set_optional_env(env, "TOWN_STALL_MAX_WORLD_BAKE_MS", args.max_world_bake_ms)
+    _set_optional_env(env, "TOWN_STALL_MAX_WORLD_BAKE_HASH_MS", args.max_world_bake_hash_ms)
+    _set_optional_env(env, "TOWN_STALL_MAX_WORLD_BAKE_UNACCOUNTED_MS", args.max_world_bake_unaccounted_ms)
+
+    if bool(args.require_runtime_idle_proof):
+        env["TOWN_STALL_REQUIRE_RUNTIME_IDLE_PROOF"] = "1"
+        env["TOWN_STALL_MIN_RUNTIME_IDLE_PROOF_SAMPLES"] = str(max(1, int(args.min_runtime_idle_proof_samples)))
+    _set_optional_env(env, "TOWN_STALL_MIN_RUNTIME_IDLE_RATIO", args.min_runtime_idle_ratio)
+    _set_optional_env(env, "TOWN_STALL_MAX_RUNTIME_PENDING_WORK", args.max_runtime_pending_work)
+    _set_optional_env(env, "TOWN_STALL_MAX_RUNTIME_AWAKE_PROCESS_COUNT", args.max_runtime_awake_process_count)
+
+    if bool(args.require_terrain_artifact_cache_proof):
+        env["TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF"] = "1"
+        env["TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES"] = str(max(1, int(args.min_terrain_artifact_cache_proof_samples)))
+    _set_optional_env(env, "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO", args.min_terrain_artifact_cache_hit_ratio)
+    _set_optional_env(env, "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA", args.min_terrain_artifact_cache_disk_hit_delta)
+    _set_optional_env(env, "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO", args.max_terrain_artifact_cache_byte_budget_ratio)
+    _set_optional_env(env, "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA", args.max_terrain_artifact_cache_eviction_delta)
+    _set_optional_env(env, "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO", args.max_terrain_artifact_disk_cache_byte_budget_ratio)
+    _set_optional_env(env, "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA", args.max_terrain_artifact_disk_cache_eviction_delta)
+    _set_optional_env(env, "TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS", args.preflight_idle_retry_timeout_seconds)
+    _set_optional_env(env, "TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS", args.preflight_idle_retry_poll_seconds)
+    return env
+
+
+def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bool, proof_gate_env: dict[str, str]) -> dict[str, str]:
     env = os.environ.copy()
-    for key in RESET_ENV_KEYS:
+    for key in RESET_ENV_KEYS + PROOF_GATE_ENV_KEYS:
         env.pop(key, None)
     default_timeout_seconds = max(420, int(hold_seconds + 300.0))
     env.update(
@@ -1391,6 +1613,7 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
         }
     )
     env.update(CASE_DEFINITIONS[case_name]["env"])
+    env.update(proof_gate_env)
     return env
 
 
@@ -1408,11 +1631,11 @@ def _drain_process_stream(stream: Any, sink: list[str], echo_town_progress: bool
         sink.append(f"\n[stream-drain-error] {exc}\n")
 
 
-def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, interval_seconds: float, measure_full_flight: bool, max_gpu_temp_c: Optional[float]) -> dict[str, Any]:
+def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, interval_seconds: float, measure_full_flight: bool, max_gpu_temp_c: Optional[float], proof_gate_env: dict[str, str]) -> dict[str, Any]:
     _assert_no_godot_processes()
     print(f"Town run: {case_name} repeat {repeat_index}")
     run_start_mtime = time.time()
-    env = _build_case_env(case_name, hold_seconds, measure_full_flight)
+    env = _build_case_env(case_name, hold_seconds, measure_full_flight, proof_gate_env)
     sampler = GpuSampler(f"{case_name}_{repeat_index}", interval_seconds, max_gpu_temp_c)
     cmd = [PYTHON_BIN, str(Path(__file__).with_name("run_town_stall_test.py"))]
     started = time.time()
@@ -1523,16 +1746,21 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
         "repeat_index": repeat_index,
         "description": CASE_DEFINITIONS[case_name]["description"],
         "env_overrides": {key: env.get(key, "") for key in sorted(set(RESET_ENV_KEYS + [
+            "TOWN_STALL_AUTO_TELEPORT",
             "TOWN_STALL_HOLD_SECONDS",
             "TOWN_STALL_MEASURE_FULL_FLIGHT",
             "TOWN_STALL_REPEAT_ENTRY",
+            "TOWN_STALL_RENDER_DISTANCE",
+            "TOWN_STALL_TERRAIN_RENDER_DISTANCE",
+            "TOWN_STALL_BUILDING_RENDER_DISTANCE",
             "TOWN_STALL_DIRECTIONAL_RENDER_SAMPLING",
             "TOWN_STALL_DIRECTIONAL_RENDER_SAMPLE_SECONDS",
             "TOWN_STALL_DIRECTIONAL_RENDER_SETTLE_SECONDS",
             "TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS",
             "TOWN_STALL_PERIODIC_PREHOLD_SNAPSHOTS",
             "TOWN_STALL_PREHOLD_SNAPSHOT_INTERVAL_SECONDS",
-        ]))},
+        ] + PROOF_GATE_ENV_KEYS))},
+        "proof_gate_env": dict(proof_gate_env),
         "started_at_epoch": started,
         "ended_at_epoch": ended,
         "duration_s": ended - started,
@@ -1600,6 +1828,14 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     stream = run.get("snapshot", {}).get("stream_gate", {})
     vegetation = run.get("snapshot", {}).get("vegetation_render", {})
     render_pressure = run.get("snapshot", {}).get("render_pressure", {})
+    startup = run.get("snapshot", {}).get("startup_readiness_verdict", {})
+    world_bake = run.get("snapshot", {}).get("world_bake_proof", {})
+    runtime_idle = run.get("snapshot", {}).get("stationary_runtime_idle_verdict", {})
+    artifact_cache = run.get("snapshot", {}).get("stationary_terrain_artifact_cache_verdict", {})
+    startup = startup if isinstance(startup, dict) else {}
+    world_bake = world_bake if isinstance(world_bake, dict) else {}
+    runtime_idle = runtime_idle if isinstance(runtime_idle, dict) else {}
+    artifact_cache = artifact_cache if isinstance(artifact_cache, dict) else {}
     power = hold.get("avg_power_w")
     last20_power = last20.get("avg_power_w")
     moving_power = moving_gpu.get("avg_power_w") if isinstance(moving_gpu, dict) else None
@@ -1622,6 +1858,32 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     pressure_text = ""
     if isinstance(pressure_contributors, list) and pressure_contributors:
         pressure_text = " pressure=" + ",".join(str(value) for value in pressure_contributors[:4])
+    proof_text = ""
+    if startup or world_bake or runtime_idle or artifact_cache:
+        proof_parts: list[str] = []
+        if startup:
+            proof_parts.append(
+                f"startup{int(startup.get('completed_stage_count', 0) or 0)}/"
+                f"{'ok' if startup.get('completed', False) else 'no'}"
+            )
+        if world_bake:
+            proof_parts.append(
+                f"bake{float(world_bake.get('generation_total_ms', 0.0) or 0.0):.0f}ms/"
+                f"{world_bake.get('height_biome_backend', '') or 'unknown'}/"
+                f"{'ok' if world_bake.get('success', False) else 'no'}"
+            )
+        if runtime_idle:
+            proof_parts.append(
+                f"idle{float(runtime_idle.get('idle_sample_ratio', 0.0) or 0.0):.2f}/"
+                f"busy{int(runtime_idle.get('busy_samples', 0) or 0)}"
+            )
+        if artifact_cache:
+            proof_parts.append(
+                f"cache{float(artifact_cache.get('end_hit_ratio', 0.0) or 0.0):.2f}/"
+                f"mem{float(artifact_cache.get('max_byte_budget_ratio', 0.0) or 0.0):.2f}/"
+                f"evict{float(artifact_cache.get('eviction_delta', 0.0) or 0.0):.0f}"
+            )
+        proof_text = " proof=" + ",".join(proof_parts)
     valid = content.get("content_valid_for_power_compare")
     reasons = content.get("content_validation_reasons")
     gate = stream.get("last_terrain_stream_update_gate_reason")
@@ -1647,7 +1909,7 @@ def _case_summary_line(run: dict[str, Any]) -> str:
         f"moving_over40={moving_over_40} terrain={terrain} water={water} "
         f"terrain_prims={terrain_primitives} tree_prims={tree_primitives} "
         f"alpha_empty={alpha_empty} tree_avg_bounds_area={tree_bounds} "
-        f"valid={valid} gate={gate}{directional_text}{pressure_text}{reason_text}"
+        f"valid={valid} gate={gate}{directional_text}{pressure_text}{proof_text}{reason_text}"
     )
 
 
@@ -1709,6 +1971,120 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             for run in comparison_runs
             if isinstance(run.get("efficiency", {}).get("stationary_hold_wpf60"), (int, float))
         ]
+        runtime_idle_ratios = [
+            float(run["snapshot"]["stationary_runtime_idle_verdict"]["idle_sample_ratio"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("stationary_runtime_idle_verdict", {}).get("idle_sample_ratio"),
+                (int, float),
+            )
+        ]
+        runtime_busy_samples = [
+            float(run["snapshot"]["stationary_runtime_idle_verdict"]["busy_samples"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("stationary_runtime_idle_verdict", {}).get("busy_samples"),
+                (int, float),
+            )
+        ]
+        startup_elapsed_ms_values = [
+            float(run["snapshot"]["startup_readiness_verdict"]["elapsed_ms"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("startup_readiness_verdict", {}).get("elapsed_ms"),
+                (int, float),
+            )
+        ]
+        startup_stage_ms_values = [
+            float(run["snapshot"]["startup_readiness_verdict"]["max_stage_duration_ms"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("startup_readiness_verdict", {}).get("max_stage_duration_ms"),
+                (int, float),
+            )
+        ]
+        startup_completed_stage_counts = [
+            float(run["snapshot"]["startup_readiness_verdict"]["completed_stage_count"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("startup_readiness_verdict", {}).get("completed_stage_count"),
+                (int, float),
+            )
+        ]
+        startup_incomplete_stage_counts = [
+            float(run["snapshot"]["startup_readiness_verdict"]["incomplete_stage_count"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("startup_readiness_verdict", {}).get("incomplete_stage_count"),
+                (int, float),
+            )
+        ]
+        world_bake_generation_ms_values = [
+            float(run["snapshot"]["world_bake_proof"]["generation_total_ms"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("world_bake_proof", {}).get("generation_total_ms"),
+                (int, float),
+            )
+        ]
+        world_bake_hash_ms_values = [
+            float(run["snapshot"]["world_bake_proof"]["total_hash_ms"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("world_bake_proof", {}).get("total_hash_ms"),
+                (int, float),
+            )
+        ]
+        world_bake_unaccounted_ms_values = [
+            float(run["snapshot"]["world_bake_proof"]["generation_unaccounted_ms"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("world_bake_proof", {}).get("generation_unaccounted_ms"),
+                (int, float),
+            )
+        ]
+        world_bake_layer_counts = [
+            float(run["snapshot"]["world_bake_proof"]["baked_layer_count"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("world_bake_proof", {}).get("baked_layer_count"),
+                (int, float),
+            )
+        ]
+        world_bake_success_count = sum(
+            1
+            for run in comparison_runs
+            if bool(run.get("snapshot", {}).get("world_bake_proof", {}).get("success", False))
+        )
+        world_bake_backends = Counter(
+            str(run.get("snapshot", {}).get("world_bake_proof", {}).get("height_biome_backend", "") or "unknown")
+            for run in comparison_runs
+            if run.get("snapshot", {}).get("world_bake_proof")
+        )
+        artifact_cache_hit_ratios = [
+            float(run["snapshot"]["stationary_terrain_artifact_cache_verdict"]["end_hit_ratio"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("stationary_terrain_artifact_cache_verdict", {}).get("end_hit_ratio"),
+                (int, float),
+            )
+        ]
+        artifact_cache_budget_ratios = [
+            float(run["snapshot"]["stationary_terrain_artifact_cache_verdict"]["max_byte_budget_ratio"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("stationary_terrain_artifact_cache_verdict", {}).get("max_byte_budget_ratio"),
+                (int, float),
+            )
+        ]
+        artifact_cache_eviction_deltas = [
+            float(run["snapshot"]["stationary_terrain_artifact_cache_verdict"]["eviction_delta"])
+            for run in comparison_runs
+            if isinstance(
+                run.get("snapshot", {}).get("stationary_terrain_artifact_cache_verdict", {}).get("eviction_delta"),
+                (int, float),
+            )
+        ]
         aggregate[case] = {
             "run_count": len(case_runs),
             "valid_run_count": len(comparison_runs),
@@ -1729,6 +2105,22 @@ def _aggregate_case_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "avg_hold_wpf60": _avg(hold_wpf60_values),
             "avg_moving_wpf60": _avg(moving_wpf60_values),
             "avg_stationary_hold_wpf60": _avg(stationary_hold_wpf60_values),
+            "max_startup_elapsed_ms": max(startup_elapsed_ms_values) if startup_elapsed_ms_values else None,
+            "max_startup_stage_ms": max(startup_stage_ms_values) if startup_stage_ms_values else None,
+            "min_startup_completed_stage_count": min(startup_completed_stage_counts) if startup_completed_stage_counts else None,
+            "max_startup_incomplete_stage_count": max(startup_incomplete_stage_counts) if startup_incomplete_stage_counts else None,
+            "world_bake_proof_run_count": sum(world_bake_backends.values()),
+            "world_bake_success_count": world_bake_success_count,
+            "world_bake_backend_counts": dict(world_bake_backends),
+            "max_world_bake_generation_ms": max(world_bake_generation_ms_values) if world_bake_generation_ms_values else None,
+            "max_world_bake_hash_ms": max(world_bake_hash_ms_values) if world_bake_hash_ms_values else None,
+            "max_world_bake_unaccounted_ms": max(world_bake_unaccounted_ms_values) if world_bake_unaccounted_ms_values else None,
+            "min_world_bake_layer_count": min(world_bake_layer_counts) if world_bake_layer_counts else None,
+            "avg_runtime_idle_sample_ratio": _avg(runtime_idle_ratios),
+            "max_runtime_busy_samples": max(runtime_busy_samples) if runtime_busy_samples else None,
+            "avg_artifact_cache_end_hit_ratio": _avg(artifact_cache_hit_ratios),
+            "max_artifact_cache_byte_budget_ratio": max(artifact_cache_budget_ratios) if artifact_cache_budget_ratios else None,
+            "max_artifact_cache_eviction_delta": max(artifact_cache_eviction_deltas) if artifact_cache_eviction_deltas else None,
         }
     return aggregate
 
@@ -1747,6 +2139,33 @@ def main() -> int:
     parser.add_argument("--preflight-max-gpu-temp-c", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_MAX_GPU_TEMP_C", 0.0), help="Wait before launching until raw nvidia-smi GPU temperature is at or below this value. Use 0 to disable.")
     parser.add_argument("--preflight-cooldown-timeout-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_COOLDOWN_TIMEOUT_SECONDS", 0.0), help="Maximum seconds to wait for the preflight GPU cooldown gate.")
     parser.add_argument("--preflight-cooldown-poll-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_COOLDOWN_POLL_SECONDS", 10.0), help="Polling interval for the preflight GPU cooldown gate.")
+    parser.add_argument("--preflight-idle-retry-timeout-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS", 0.0), help="Retry the initial idle contamination sample until clean or this timeout is reached. Use 0 to disable.")
+    parser.add_argument("--preflight-idle-retry-poll-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS", 10.0), help="Seconds to wait between contaminated initial idle retry attempts.")
+    parser.add_argument("--require-startup-readiness-proof", action="store_true", default=_bool_env("TOWN_STALL_RAW_REQUIRE_STARTUP_READINESS_PROOF"), help="Pass startup-readiness proof gates to each town run.")
+    parser.add_argument("--min-startup-completed-stages", type=int, default=_int_env("TOWN_STALL_RAW_MIN_STARTUP_COMPLETED_STAGES", len(town_runner.STARTUP_PROOF_STAGE_IDS)))
+    parser.add_argument("--max-startup-elapsed-ms", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_STARTUP_ELAPSED_MS"))
+    parser.add_argument("--max-startup-stage-ms", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_STARTUP_STAGE_MS"))
+    parser.add_argument("--min-startup-trace-events", type=float, default=_optional_float_env("TOWN_STALL_RAW_MIN_STARTUP_TRACE_EVENTS"))
+    parser.add_argument("--require-world-bake-proof", action="store_true", default=_bool_env("TOWN_STALL_RAW_REQUIRE_WORLD_BAKE_PROOF"), help="Pass world-bake proof gates to each town run.")
+    parser.add_argument("--require-world-bake-export-signature", action="store_true", default=_bool_env("TOWN_STALL_RAW_REQUIRE_WORLD_BAKE_EXPORT_SIGNATURE"))
+    parser.add_argument("--require-world-bake-height-biome-backend", default=os.environ.get("TOWN_STALL_RAW_REQUIRE_WORLD_BAKE_HEIGHT_BIOME_BACKEND", ""))
+    parser.add_argument("--min-world-bake-layers", type=int, default=_int_env("TOWN_STALL_RAW_MIN_WORLD_BAKE_LAYERS", 5))
+    parser.add_argument("--max-world-bake-ms", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_WORLD_BAKE_MS"))
+    parser.add_argument("--max-world-bake-hash-ms", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_WORLD_BAKE_HASH_MS"))
+    parser.add_argument("--max-world-bake-unaccounted-ms", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_WORLD_BAKE_UNACCOUNTED_MS"))
+    parser.add_argument("--require-runtime-idle-proof", action="store_true", default=_bool_env("TOWN_STALL_RAW_REQUIRE_RUNTIME_IDLE_PROOF"), help="Pass runtime-idle proof gates to each town run.")
+    parser.add_argument("--min-runtime-idle-proof-samples", type=int, default=_int_env("TOWN_STALL_RAW_MIN_RUNTIME_IDLE_PROOF_SAMPLES", 1))
+    parser.add_argument("--min-runtime-idle-ratio", type=float, default=_optional_float_env("TOWN_STALL_RAW_MIN_RUNTIME_IDLE_RATIO"))
+    parser.add_argument("--max-runtime-pending-work", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_RUNTIME_PENDING_WORK"))
+    parser.add_argument("--max-runtime-awake-process-count", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_RUNTIME_AWAKE_PROCESS_COUNT"))
+    parser.add_argument("--require-terrain-artifact-cache-proof", action="store_true", default=_bool_env("TOWN_STALL_RAW_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF"), help="Pass terrain artifact cache proof gates to each town run.")
+    parser.add_argument("--min-terrain-artifact-cache-proof-samples", type=int, default=_int_env("TOWN_STALL_RAW_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES", 1))
+    parser.add_argument("--min-terrain-artifact-cache-hit-ratio", type=float, default=_optional_float_env("TOWN_STALL_RAW_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO"))
+    parser.add_argument("--min-terrain-artifact-cache-disk-hit-delta", type=float, default=_optional_float_env("TOWN_STALL_RAW_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA"))
+    parser.add_argument("--max-terrain-artifact-cache-byte-budget-ratio", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO"))
+    parser.add_argument("--max-terrain-artifact-cache-eviction-delta", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA"))
+    parser.add_argument("--max-terrain-artifact-disk-cache-byte-budget-ratio", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO"))
+    parser.add_argument("--max-terrain-artifact-disk-cache-eviction-delta", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA"))
     args = parser.parse_args()
 
     case_names = [case.strip() for case in args.cases.split(",") if case.strip()]
@@ -1759,6 +2178,7 @@ def main() -> int:
         return 2
     if args.allow_contaminated_idle:
         os.environ["TOWN_STALL_ALLOW_CONTAMINATED_IDLE"] = "1"
+    proof_gate_env = _proof_gate_env_from_args(args)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -1787,6 +2207,7 @@ def main() -> int:
             "allow_contaminated_idle": args.allow_contaminated_idle,
             "max_gpu_temp_c": args.max_gpu_temp_c,
             "preflight_max_gpu_temp_c": args.preflight_max_gpu_temp_c,
+            "proof_gate_env": proof_gate_env,
             "preflight_cooldown": preflight_cooldown,
             "aborted_reason": "preflight_gpu_temp_not_cooled",
             "runs": [],
@@ -1796,10 +2217,17 @@ def main() -> int:
         print(f"Wrote {output_path}")
         return 4
 
-    preflight_machine_state = town_runner._collect_machine_state()
-    initial_idle = _run_idle_sample("initial_idle", args.idle_seconds, args.sample_interval)
     contamination_thresholds = _idle_contamination_thresholds()
-    initial_contamination_reasons = _idle_contamination_reasons(initial_idle, preflight_machine_state, contamination_thresholds)
+    preflight_idle = _collect_initial_idle_until_clean(
+        args.idle_seconds,
+        args.sample_interval,
+        contamination_thresholds,
+        args.preflight_idle_retry_timeout_seconds,
+        args.preflight_idle_retry_poll_seconds,
+    )
+    preflight_machine_state = preflight_idle.get("machine_state", {})
+    initial_idle = preflight_idle.get("idle", {})
+    initial_contamination_reasons = list(preflight_idle.get("reasons", []))
 
     payload: dict[str, Any] = {
         "started_at_epoch": started,
@@ -1813,7 +2241,9 @@ def main() -> int:
         "allow_contaminated_idle": args.allow_contaminated_idle,
         "max_gpu_temp_c": args.max_gpu_temp_c,
         "preflight_max_gpu_temp_c": args.preflight_max_gpu_temp_c,
+        "proof_gate_env": proof_gate_env,
         "preflight_cooldown": preflight_cooldown,
+        "preflight_idle": preflight_idle,
         "preflight_machine_state": preflight_machine_state,
         "initial_idle": initial_idle,
         "contamination": {
@@ -1856,7 +2286,7 @@ def main() -> int:
                     _write_payload(output_path, payload)
                     print(f"Stopping matrix before {case_name}: GPU did not cool to <= {args.preflight_max_gpu_temp_c:.1f}C")
                     break
-            run = _run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight, args.max_gpu_temp_c)
+            run = _run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight, args.max_gpu_temp_c, proof_gate_env)
             case_run_index += 1
             payload["runs"].append(run)
             print(_case_summary_line(run))

@@ -62,6 +62,10 @@ func _test_terrain_world_definition_setter() -> bool:
 	if not _expect(int(manager._terrain_artifact_cache.get_snapshot().get("entry_count", 0)) == 1, "test artifact should be stored before world switch"):
 		manager.free()
 		return false
+	_inject_pending_disk_write(manager, artifact_coord, manager._terrain_artifact_settings_signature)
+	if not _expect(int(manager._terrain_artifact_disk_write_queue.get_snapshot().get("pending_entries", 0)) == 1, "test disk write should be pending before world switch"):
+		manager.free()
+		return false
 
 	manager.task_queue.append({"type": "generate", "coord": Vector3i.ZERO})
 	manager.priority_task_queue.append({"type": "free", "rid": RID()})
@@ -74,6 +78,14 @@ func _test_terrain_world_definition_setter() -> bool:
 		manager.free()
 		return false
 	if not _expect(int(manager._terrain_artifact_cache.get_snapshot().get("entry_count", 0)) == 0, "world definition signature change should clear session artifacts"):
+		manager.free()
+		return false
+	var disk_write_snapshot: Dictionary = manager._terrain_artifact_disk_write_queue.get_snapshot()
+	if not _expect(int(disk_write_snapshot.get("pending_entries", 0)) == 0, "world definition signature change should clear pending disk artifact writes"):
+		manager.free()
+		return false
+	var disk_write_drop_reasons: Dictionary = disk_write_snapshot.get("drop_reasons", {})
+	if not _expect(int(disk_write_drop_reasons.get("settings_changed", 0)) == 1, "world definition signature change should report stale disk write drop reason"):
 		manager.free()
 		return false
 	if not _expect(manager.task_queue.is_empty(), "stale generation tasks should be dropped on world switch"):
@@ -145,6 +157,23 @@ func _has_reload_task(queue: Array) -> bool:
 		if task_variant is Dictionary and str(task_variant.get("type", "")) == "reload_world_map":
 			return true
 	return false
+
+
+func _inject_pending_disk_write(manager: Node, coord: Vector3i, signature: String) -> void:
+	var key := "test|%s|%d|%d|%d" % [signature.sha256_text(), coord.x, coord.y, coord.z]
+	manager._terrain_artifact_disk_write_queue._pending_by_key[key] = {
+		"coord": coord,
+		"settings_signature": signature,
+		"artifact": {
+			"settings_signature": signature,
+			"stored_mod_version": 0,
+			"byte_size": 16
+		},
+		"byte_size": 16,
+		"queued_at_usec": Time.get_ticks_usec()
+	}
+	manager._terrain_artifact_disk_write_queue._pending_order.append(key)
+	manager._terrain_artifact_disk_write_queue._pending_bytes += 16
 
 
 func _expect(condition: bool, message: String) -> bool:

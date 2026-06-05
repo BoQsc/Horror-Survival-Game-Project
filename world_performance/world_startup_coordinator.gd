@@ -277,6 +277,8 @@ func start_world_startup_monitoring() -> void:
 
 
 func get_snapshot() -> Dictionary:
+	var current_stage_state := _get_current_stage_state_snapshot()
+	var current_stage_progress := clampf(float(current_stage_state.get("progress", 0.0)), 0.0, 1.0)
 	return {
 		"load_id": _load_id,
 		"active": _active,
@@ -287,6 +289,12 @@ func get_snapshot() -> Dictionary:
 		"world_monitor_completed": _world_monitor_completed,
 		"external_completion_requested": _external_completion_requested,
 		"current_stage_id": str(_current_stage_id),
+		"current_stage_label": str(current_stage_state.get("label", "")),
+		"current_stage_progress": current_stage_progress,
+		"current_stage_progress_percent": current_stage_progress * 100.0,
+		"current_stage_completed": int(current_stage_state.get("completed_count", 0)),
+		"current_stage_total": int(current_stage_state.get("total_count", 0)),
+		"current_stage_details": (current_stage_state.get("last_details", {}) as Dictionary).duplicate(true) if current_stage_state.get("last_details", {}) is Dictionary else {},
 		"overall_progress_percent": _overall_progress_percent,
 		"message": _last_message,
 		"failure_message": _failure_message,
@@ -549,18 +557,56 @@ func _get_world_content_readiness_snapshot(
 	ready = ready and bool(entity_component.get("ready", true))
 
 	ready = ready and pending <= 0
+	var blocking_summary := _get_world_content_blocking_summary(components)
+	var message := "World content ready" if ready else _get_world_content_pending_message(pending, blocking_summary)
 	return {
 		"ready": ready,
 		"pending": pending,
 		"completed": 1 if ready else 0,
 		"total": 1,
 		"progress": 1.0 if ready else 0.0,
-		"message": "World content ready" if ready else "Spawning world content: %d pending" % pending,
+		"message": message,
 		"details": {
 			"components": components,
+			"blocking_component": str(blocking_summary.get("name", "")),
+			"blocking_component_pending": int(blocking_summary.get("pending", 0)),
+			"blocking_component_message": str(blocking_summary.get("message", "")),
 			"source": "startup_readiness_snapshot"
 		}
 	}
+
+
+func _get_world_content_blocking_summary(components: Dictionary) -> Dictionary:
+	var summary := {
+		"name": "",
+		"pending": 0,
+		"message": ""
+	}
+	for component_name_variant in components.keys():
+		var component_variant: Variant = components.get(component_name_variant, {})
+		if not (component_variant is Dictionary):
+			continue
+		var component: Dictionary = component_variant
+		var component_pending := maxi(int(component.get("pending", 0)), 0)
+		if component_pending <= int(summary.get("pending", 0)):
+			continue
+		summary["name"] = str(component_name_variant)
+		summary["pending"] = component_pending
+		summary["message"] = str(component.get("message", ""))
+	return summary
+
+
+func _get_world_content_pending_message(pending: int, blocking_summary: Dictionary) -> String:
+	var component_message := str(blocking_summary.get("message", "")).strip_edges()
+	var component_pending := int(blocking_summary.get("pending", 0))
+	var component_name := str(blocking_summary.get("name", ""))
+	if not component_message.is_empty():
+		if component_pending > 0 and component_pending != pending:
+			return "%s; world content total: %d" % [component_message, pending]
+		return component_message
+	if component_pending > 0 and not component_name.is_empty():
+		return "Preparing %s: %d pending" % [component_name, component_pending]
+	return "Spawning world content: %d pending" % pending
 
 
 func _get_world_content_component_readiness(manager: Node, fallback_pending: int, component_name: String) -> Dictionary:
@@ -628,6 +674,8 @@ func _get_entity_manager_fallback_pending(entity_manager: Node) -> int:
 		var telemetry_variant: Variant = entity_manager.get_telemetry_snapshot()
 		if telemetry_variant is Dictionary:
 			var telemetry := telemetry_variant as Dictionary
+			if telemetry.has("startup_pending_total"):
+				return maxi(int(telemetry.get("startup_pending_total", 0)), 0)
 			return maxi(int(telemetry.get("pending_spawns", 0)), 0) \
 				+ maxi(int(telemetry.get("deferred_spawn_chunks", 0)), 0) \
 				+ maxi(int(telemetry.get("deferred_spawn_plans", 0)), 0) \
@@ -666,6 +714,15 @@ func _get_or_create_stage_state(stage_id: StringName) -> Dictionary:
 	}
 	_stage_states[stage_id] = state
 	return state
+
+
+func _get_current_stage_state_snapshot() -> Dictionary:
+	if _current_stage_id == &"":
+		return {}
+	var state_variant: Variant = _stage_states.get(_current_stage_id, {})
+	if not (state_variant is Dictionary):
+		return {}
+	return (state_variant as Dictionary).duplicate(true)
 
 
 func _reset_stage_states() -> void:

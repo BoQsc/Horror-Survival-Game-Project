@@ -104,30 +104,136 @@ Out of scope:
 - Entity viewer-dependent maintenance consumes player movement signals and keeps
   a slower fallback poll for vehicles or custom viewers without compatible
   signals.
+- Entity startup readiness now reports collision-relevant pending spawn work
+  separately from distant procedural spawn backlog, so background spawn planning
+  remains event-driven runtime work instead of a startup blocker.
+- Background-only entity spawn backlog no longer keeps the maintenance timer or
+  physics process awake when a viewer movement signal is connected; moving into
+  the relevant area wakes the deferred spawn queue.
 - Building chunk data remains resident across visual unloads, while existing
   prefab, baked building payload, and visual payload caches avoid substantial
   repeated static work.
 - Terrain, building, vegetation, and entity viewer refresh paths consume
   thresholded explicit player movement signals and retain slower fallback
   polling for alternate viewers.
-- Terrain render-distance and collision-distance runtime setters wake sleeping
-  terrain coordination immediately and expose setting-change telemetry, reducing
-  reliance on idle fallback polling for these setting changes.
+- Terrain render-distance, collision-distance, terrain-height, water-level,
+  noise-frequency, and procedural-road runtime setters wake sleeping terrain
+  coordination immediately, expose setting-change telemetry, and invalidate
+  signed artifact cache state where generation output can change.
 - Terrain world-definition changes flow through a public setter that clears stale
   terrain artifacts and queued generation, reloads world-map GPU buffers, and
   notifies building, prefab, and vegetation caches during save-load world
   switches.
+- Signed terrain setting changes and world-definition switches also clear
+  pending async disk artifact writes, so artifacts queued under an old signature
+  cannot be written after the runtime definition changes.
 - `WorldPerformanceMonitors` exposes cached live custom monitors for runtime
   process awake state, aggregate pending work, awake-process count, and a
   runtime idle verdict, so idle/revisit proof can inspect these values without
   per-query scene-tree scans.
+- The town-stall harness records those monitor values in proof snapshots,
+  including `stationary_runtime_idle_verdict` and window-level idle ratio,
+  pending-work, awake-process, and subsystem-blocker fields.
+- It also records `stationary_terrain_artifact_cache_verdict` so warm/revisit
+  proof can compare artifact hit ratio, cache entries, byte-budget ratios,
+  eviction deltas, and disk-hit delta without manual telemetry parsing.
+- The same snapshots record `startup_readiness_verdict` from loading-screen and
+  coordinator telemetry, so proof runs can assert gameplay measurement starts
+  only after startup readiness completes.
+- The snapshot analyzer summarizes those verdicts and can fail latest production
+  captures when startup readiness is incomplete, stationary runtime work remains
+  awake, terrain artifact reuse is not visible, budget pressure is too high, or
+  eviction churn exceeds the proof threshold.
+- The town-stall runner prints the same proof summaries and can enforce them
+  during opt-in production proof runs, so failed idle/reuse proof no longer
+  depends on manual snapshot inspection.
+- The raw town-stall baseline wrapper can pass those proof gates to child runs
+  and aggregate proof verdicts per case, so repeated production/reuse sweeps can
+  fail on incomplete startup readiness, runtime work, cache budget pressure, or
+  eviction churn automatically.
+- The snapshot analyzer preserves and gates the same raw-baseline proof verdicts
+  from repeated run JSON, so proof review can use one analyzer report.
+- World-map bake proof now travels through the same snapshot, runner, analyzer,
+  and raw-baseline flow, so runtime comparisons can also prove which baked world
+  content signature, backend, export signature, and bake timing they used.
+- `addons/tests/run_world_performance_priority_proof.py` provides one executable
+  entry point for the fast reuse/startup/bake proof contracts and the optional
+  heavy raw production proof run with those gates enabled.
+- The same fast suite now includes the foundational reuse contracts for session
+  artifact cache eviction/invalidation, disk artifact stale/corrupt fallback,
+  startup preheat readiness policy, terrain process sleep/wake, signed runtime
+  setting invalidation, vegetation placement cache reuse, entity pool reuse,
+  work-aware entity maintenance cadence, and player/building/vegetation/entity
+  viewer-position wake signals.
+- It also includes focused native/helper contracts for building grouped mesh
+  merge, vegetation cluster render payloads, vegetation native record append,
+  vegetation noise sampling, pending chunk scheduling, removed-entry filtering,
+  and generation timing telemetry, so native reuse helpers stay covered without
+  requiring a gameplay run.
+- The proof wrapper validates its planned steps before execution, rejecting
+  bot/gameplay harness scripts and raw town launchers from the fast suite while
+  still allowing explicit heavy production proof steps.
+- Proof reports include `completion_audit`, which separates raw-case coverage
+  from contract-only coverage and keeps the roadmap incomplete until accepted
+  heavy production proof, threshold tuning, GPU sync/readback A/B evidence, and
+  rollout/test-hook cleanup are resolved.
+- `addons/tests/audit_world_performance_priority_readiness.py` records the
+  non-game production-readiness state and source-side cleanup candidates, so
+  rollout/test-hook cleanup now has a concrete post-evidence queue instead of
+  an informal note. The queue now separates removal/review hooks from tuning
+  overrides that should become stable defaults or documented project settings
+  once accepted captures identify the winning values.
+- Its default heavy `priority_full` production suite now expands to runtime
+  default, unchanged-revisit, render-distance 5/10/15, and memory-pressure raw
+  baseline cases, and its JSON output records which roadmap scenarios are
+  covered versus still missing or externally prepared.
+- Low-resolution preview is counted as contract-covered by the same proof plan
+  when the bounded preview-builder Godot contract is included.
+- Warm startup is counted as contract-covered when the terrain warm-startup
+  preheat Godot contract is included; it verifies a disk-seeded startup preheat
+  queues spawn terrain as artifact restores with no generation misses.
+- World-switch cache isolation is counted as contract-covered when the terrain
+  world-definition change Godot contract is included; it verifies stale terrain
+  artifacts, pending disk writes, and queued generation are cleared across world
+  changes.
+- Dirty edit revisit is counted as contract-covered when the terrain generation
+  telemetry Godot contract is included; it verifies completed edits refresh the
+  session artifact and that the edited chunk revisits through artifact restore.
+- Modified-terrain save/reload is counted as contract-covered when the
+  SaveManager terrain modifications Godot contract is included; it verifies
+  terrain load clears live chunks before restoring saved edit payloads.
+- The town-stall harness can apply terrain artifact memory/disk budget overrides
+  to `TerrainManager`, so cache memory-pressure proof has an explicit case
+  instead of relying on ad hoc project setting edits.
 - Terrain, prefab, building, vegetation, and entity managers expose stable
   startup readiness snapshots, so startup and fallback loading UI can report
   real pending work without polling manager-private arrays.
+- The coordinator and loading-screen snapshots now expose current stage label,
+  stage-local progress, completed/total counts, details, and compact
+  pending/blocking summaries so production proof can explain startup stalls
+  without unbounded per-manager logging.
+- Startup readiness verdicts and analyzer summaries preserve those current-stage
+  fields, so a failed production run carries the active loading blocker into the
+  report instead of requiring manual raw snapshot inspection.
+- Startup analyzer gates and town-stall runner proof gates append the same
+  active-stage context to startup-readiness failures, so proof output names the
+  current stage, progress, work counts, and blocking detail directly.
+- Terrain startup readiness details now separate artifact restore work from
+  generation misses, CPU mesh queues, finalization nodes, visual batch worker
+  tasks, preheat zones, and disk write backlog, so warm/revisit proof can show
+  whether startup is reusing artifacts or still generating terrain.
+- Those details also carry session and disk artifact cache hit/miss/store,
+  restore, byte-budget, and disk-hit counters, giving loading/proof output a
+  direct cache-state summary instead of requiring raw terrain telemetry lookup.
 
-The next requirement is runtime proof: revisit, memory-pressure, render-distance,
-and dirty-edit sweeps must show the work-count and frame-time effect for each
-subsystem separately.
+The next requirement is production runtime proof: the current dry-run plan has
+no missing roadmap scenarios, but revisit, memory-pressure, render-distance,
+frame-time, idle-power, cold startup, cold bake, and warm startup still need
+fresh heavy captures before they count as accepted production evidence. Warm
+startup, dirty edit, and save/reload now have focused contracts, but no real
+gameplay capture has been accepted as production evidence. The proof JSON now
+states this directly through `completion_audit.complete=false` and lists the
+remaining blockers.
 
 ## Decision Rules
 

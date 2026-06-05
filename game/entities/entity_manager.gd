@@ -38,6 +38,7 @@ signal debug_load_complete(zombies_in_group: int, active_entities: int)
 @export_range(1.0, 64.0, 1.0) var entity_viewer_position_signal_min_distance: float = 8.0
 @export_range(0, 60, 1) var entity_render_prewarm_frames: int = 12
 @export_range(1, 128, 1) var deferred_spawn_chunks_per_frame: int = 32
+@export var block_startup_on_deferred_spawn_backlog: bool = false
 @export var entity_pool_enabled: bool = true
 @export_range(0, 512, 1) var entity_pool_max_size: int = 64
 
@@ -181,6 +182,18 @@ func _get_pending_spawn_distance_ring_counts() -> Array[int]:
 
 func get_telemetry_snapshot() -> Dictionary:
 	var effective_freeze_radius := _get_effective_freeze_radius()
+	var deferred_plan_count := _get_deferred_spawn_plan_count()
+	var startup_pending_spawn_count := _get_startup_blocking_pending_spawn_count()
+	var startup_deferred_chunk_count := _get_startup_blocking_deferred_spawn_chunk_count()
+	var spawn_queue_maintenance_work := _has_spawn_queue_maintenance_work()
+	var startup_deferred_plan_count := deferred_plan_count if block_startup_on_deferred_spawn_backlog else 0
+	var startup_pending_total := startup_pending_spawn_count \
+		+ startup_deferred_chunk_count \
+		+ startup_deferred_plan_count \
+		+ (1 if _is_entity_render_resource_prewarm_active() else 0)
+	var background_spawn_backlog := maxi(0, pending_spawns.size() - startup_pending_spawn_count) \
+		+ maxi(0, deferred_spawn_chunks.size() - startup_deferred_chunk_count) \
+		+ maxi(0, deferred_plan_count - startup_deferred_plan_count)
 	return {
 		"active_entities": active_entities.size(),
 		"active_entity_distance_ring_counts": _get_active_entity_distance_ring_counts(),
@@ -198,7 +211,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"pending_spawns": pending_spawns.size(),
 		"deferred_spawn_chunks": deferred_spawn_chunks.size(),
 		"deferred_spawn_chunk_keys": deferred_spawn_chunk_keys.size(),
-		"deferred_spawn_plans": _get_deferred_spawn_plan_count(),
+		"deferred_spawn_plans": deferred_plan_count,
+		"startup_pending_spawns": startup_pending_spawn_count,
+		"startup_deferred_spawn_chunks": startup_deferred_chunk_count,
+		"startup_deferred_spawn_plans": startup_deferred_plan_count,
+		"startup_pending_total": startup_pending_total,
+		"background_spawn_backlog": background_spawn_backlog,
+		"spawn_queue_maintenance_work": spawn_queue_maintenance_work,
+		"spawn_queue_background_only": (pending_spawns.size() > 0 or deferred_spawn_chunks.size() > 0) and not spawn_queue_maintenance_work,
+		"block_startup_on_deferred_spawn_backlog": block_startup_on_deferred_spawn_backlog,
 		"spawned_chunks": spawned_chunks.size(),
 		"max_entities": max_entities,
 		"spawn_radius": spawn_radius,
@@ -270,13 +291,23 @@ func get_startup_readiness_snapshot() -> Dictionary:
 	var pending_spawn_count := pending_spawns.size()
 	var deferred_chunk_count := deferred_spawn_chunks.size()
 	var deferred_plan_count := _get_deferred_spawn_plan_count()
+	var startup_pending_spawn_count := _get_startup_blocking_pending_spawn_count()
+	var startup_deferred_chunk_count := _get_startup_blocking_deferred_spawn_chunk_count()
+	var startup_deferred_plan_count := deferred_plan_count if block_startup_on_deferred_spawn_backlog else 0
 	var prewarm_active := _is_entity_render_resource_prewarm_active()
-	var pending := pending_spawn_count \
-		+ deferred_chunk_count \
-		+ deferred_plan_count \
+	var pending := startup_pending_spawn_count \
+		+ startup_deferred_chunk_count \
+		+ startup_deferred_plan_count \
 		+ (1 if prewarm_active else 0)
 	var ready := pending <= 0
-	var message := "Entities ready" if ready else "Preparing entities: %d pending" % pending
+	var background_pending := maxi(0, pending_spawn_count - startup_pending_spawn_count) \
+		+ maxi(0, deferred_chunk_count - startup_deferred_chunk_count) \
+		+ maxi(0, deferred_plan_count - startup_deferred_plan_count)
+	var message := "Entities ready"
+	if not ready:
+		message = "Preparing entities: %d startup pending" % pending
+	elif background_pending > 0:
+		message = "Entities ready; %d background spawn backlog" % background_pending
 	return {
 		"ready": ready,
 		"pending": pending,
@@ -285,6 +316,11 @@ func get_startup_readiness_snapshot() -> Dictionary:
 		"progress": 1.0 if ready else 0.0,
 		"message": message,
 		"details": {
+			"startup_pending_spawns": startup_pending_spawn_count,
+			"startup_deferred_spawn_chunks": startup_deferred_chunk_count,
+			"startup_deferred_spawn_plans": startup_deferred_plan_count,
+			"background_spawn_backlog": background_pending,
+			"block_startup_on_deferred_spawn_backlog": block_startup_on_deferred_spawn_backlog,
 			"pending_spawns": pending_spawn_count,
 			"deferred_spawn_chunks": deferred_chunk_count,
 			"deferred_spawn_plans": deferred_plan_count,
@@ -295,6 +331,54 @@ func get_startup_readiness_snapshot() -> Dictionary:
 		}
 	}
 
+func _get_startup_blocking_pending_spawn_count() -> int:
+	if pending_spawns.is_empty():
+		return 0
+	if not viewer or not is_instance_valid(viewer):
+		return pending_spawns.size()
+
+	var player_pos := viewer.global_position
+	var collision_range_sq := _get_collision_range_squared()
+	var blocking_count := 0
+	for spawn_data_variant in pending_spawns:
+		if not (spawn_data_variant is Dictionary):
+			blocking_count += 1
+			continue
+		var spawn_data: Dictionary = spawn_data_variant
+		var position_variant: Variant = spawn_data.get("position", Vector3.ZERO)
+		if typeof(position_variant) != TYPE_VECTOR3:
+			blocking_count += 1
+			continue
+		var position: Vector3 = position_variant
+		if _planar_distance_squared(position, player_pos) <= collision_range_sq:
+			blocking_count += 1
+	return blocking_count
+
+
+func _get_startup_blocking_deferred_spawn_chunk_count() -> int:
+	if deferred_spawn_chunks.is_empty():
+		return 0
+	if block_startup_on_deferred_spawn_backlog:
+		return deferred_spawn_chunks.size()
+	if not viewer or not is_instance_valid(viewer):
+		return deferred_spawn_chunks.size()
+
+	var blocking_count := 0
+	for deferred_data_variant in deferred_spawn_chunks.values():
+		if typeof(deferred_data_variant) != TYPE_DICTIONARY:
+			blocking_count += 1
+			continue
+		var deferred_data: Dictionary = deferred_data_variant
+		var coord_variant: Variant = deferred_data.get("coord", Vector3i.ZERO)
+		if typeof(coord_variant) != TYPE_VECTOR3I:
+			blocking_count += 1
+			continue
+		var coord: Vector3i = coord_variant
+		if _is_procedural_spawn_chunk_near_viewer(coord):
+			blocking_count += 1
+	return blocking_count
+
+
 func _get_entity_maintenance_timer_interval() -> float:
 	var interval := 999999.0
 	var found_interval := false
@@ -302,7 +386,7 @@ func _get_entity_maintenance_timer_interval() -> float:
 		interval = minf(interval, proximity_update_interval)
 		found_interval = true
 	var spawn_interval := _get_viewer_dependent_maintenance_interval(spawn_queue_update_interval)
-	if (not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()) and spawn_interval > 0.0:
+	if _has_spawn_queue_maintenance_work() and spawn_interval > 0.0:
 		interval = minf(interval, spawn_interval)
 		found_interval = true
 	var dormant_interval := _get_viewer_dependent_maintenance_interval(dormant_respawn_update_interval)
@@ -322,6 +406,7 @@ func _entity_maintenance_requires_physics_process() -> bool:
 		(not active_entities.is_empty() and proximity_update_interval <= 0.0)
 		or (
 			(not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty())
+			and _has_spawn_queue_maintenance_work()
 			and spawn_queue_update_interval <= 0.0
 			and not _viewer_position_signal_connected
 		)
@@ -345,11 +430,18 @@ func _get_viewer_dependent_maintenance_interval(configured_interval: float) -> f
 func _has_entity_maintenance_work() -> bool:
 	return (
 		not active_entities.is_empty()
-		or not pending_spawns.is_empty()
-		or not deferred_spawn_chunks.is_empty()
+		or _has_spawn_queue_maintenance_work()
 		or not dormant_entities.is_empty()
 		or _should_run_balanced_ring_fill()
 	)
+
+
+func _has_spawn_queue_maintenance_work() -> bool:
+	if pending_spawns.is_empty() and deferred_spawn_chunks.is_empty():
+		return false
+	if not _viewer_position_signal_connected:
+		return true
+	return _get_startup_blocking_pending_spawn_count() > 0 or _get_startup_blocking_deferred_spawn_chunk_count() > 0
 
 func _sync_entity_maintenance_driver() -> void:
 	if not _has_entity_maintenance_work():
@@ -531,6 +623,7 @@ func _apply_environment_overrides() -> void:
 	entity_viewer_position_signal_fallback_interval = _get_env_float("TOWN_STALL_ENTITY_VIEWER_POSITION_SIGNAL_FALLBACK_INTERVAL", entity_viewer_position_signal_fallback_interval, 0.1, 10.0)
 	entity_viewer_position_signal_min_distance = _get_env_float("TOWN_STALL_ENTITY_VIEWER_POSITION_SIGNAL_MIN_DISTANCE", entity_viewer_position_signal_min_distance, 1.0, 256.0)
 	deferred_spawn_chunks_per_frame = _get_env_int("TOWN_STALL_ENTITY_DEFERRED_SPAWN_CHUNKS_PER_FRAME", deferred_spawn_chunks_per_frame, 1, 4096)
+	block_startup_on_deferred_spawn_backlog = _get_env_bool("TOWN_STALL_ENTITY_BLOCK_STARTUP_ON_DEFERRED_SPAWNS", block_startup_on_deferred_spawn_backlog)
 	entity_pool_enabled = _get_env_bool("TOWN_STALL_ENTITY_POOL_ENABLED", entity_pool_enabled)
 	entity_pool_max_size = _get_env_int("TOWN_STALL_ENTITY_POOL_MAX_SIZE", entity_pool_max_size, 0, 4096)
 	spawn_chance_per_chunk = _get_env_float("TOWN_STALL_ENTITY_SPAWN_CHANCE_PER_CHUNK", spawn_chance_per_chunk, 0.0, 1.0)
@@ -622,7 +715,7 @@ func _run_entity_maintenance_tick(_delta: float) -> void:
 		_last_balanced_ring_fill_queued = 0
 
 	# Process spawn queue - spawns when terrain is ready
-	var has_pending_spawns := not pending_spawns.is_empty() or not deferred_spawn_chunks.is_empty()
+	var has_pending_spawns := _has_spawn_queue_maintenance_work()
 	_spawn_queue_update_accumulator += _delta
 	if not entity_maintenance_budget_hit and _should_run_interval(_spawn_queue_update_accumulator, spawn_queue_update_interval, has_pending_spawns):
 		_spawn_queue_update_accumulator = 0.0

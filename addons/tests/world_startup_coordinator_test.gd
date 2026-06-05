@@ -41,6 +41,17 @@ func _run() -> int:
 	coordinator.update_stage_progress(&"save_load", 1, 4, {"message": "quarter"})
 	var quarter_snapshot: Dictionary = coordinator.get_snapshot()
 	var quarter_progress := float(quarter_snapshot.get("overall_progress_percent", 0.0))
+	if not _expect(str(quarter_snapshot.get("current_stage_label", "")) == "Loading save data", "snapshot should expose current stage label"):
+		return 1
+	if not _expect(is_equal_approx(float(quarter_snapshot.get("current_stage_progress_percent", 0.0)), 25.0), "snapshot should expose current stage-local progress"):
+		return 1
+	if not _expect(int(quarter_snapshot.get("current_stage_completed", 0)) == 1, "snapshot should expose current stage completed count"):
+		return 1
+	if not _expect(int(quarter_snapshot.get("current_stage_total", 0)) == 4, "snapshot should expose current stage total count"):
+		return 1
+	var quarter_details: Dictionary = quarter_snapshot.get("current_stage_details", {})
+	if not _expect(str(quarter_details.get("message", "")) == "quarter", "snapshot should expose current stage details"):
+		return 1
 	coordinator.update_stage_progress(&"save_load", 0, 4, {"message": "stale"})
 	if not _expect(float(coordinator.get_snapshot().get("overall_progress_percent", 0.0)) == quarter_progress, "overall progress should be monotonic"):
 		return 1
@@ -101,6 +112,22 @@ func _run() -> int:
 	if not _expect(coordinator.ensure_load("late_loading_screen") == "coordinator-failure-test", "late UI attachment should retain the failed load"):
 		return 1
 	if not _expect(bool(coordinator.get_snapshot().get("failed", false)), "ensure_load should not clear a visible failure"):
+		return 1
+
+	var blocking_summary: Dictionary = coordinator._get_world_content_blocking_summary({
+		"prefab_spawner": {
+			"pending": 2,
+			"message": "Preparing prefab spawns: 2 pending"
+		},
+		"entity_manager": {
+			"pending": 7,
+			"message": "Preparing entities: 7 startup pending"
+		}
+	})
+	if not _expect(str(blocking_summary.get("name", "")) == "entity_manager", "world-content message should identify the largest blocking component"):
+		return 1
+	var pending_message := coordinator._get_world_content_pending_message(9, blocking_summary)
+	if not _expect(pending_message == "Preparing entities: 7 startup pending; world content total: 9", "world-content message should preserve component message and total"):
 		return 1
 
 	coordinator.queue_free()

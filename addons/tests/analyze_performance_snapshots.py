@@ -26,6 +26,13 @@ DEFAULT_IDLE_GPU_MIN_SAMPLES = 3
 DEFAULT_PRODUCTION_MIN_HOLD_SECONDS = 20.0
 FRAME_BUDGET_EPSILON_MS = 0.05
 MOVEMENT_CAPTURE_REASONS = {"full_flight", "auto_fly_entry", "repeat_entry_second"}
+STARTUP_PROOF_STAGE_IDS = [
+    "save_load",
+    "terrain",
+    "world_content",
+    "vegetation",
+    "complete",
+]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -138,6 +145,35 @@ def _window_summary(window: dict[str, Any], target_frame_ms: float) -> dict[str,
         "stable_60_average": _float(window.get("avg_total_ms")) <= target_frame_ms,
         "render_loop_suspended_samples": _int(window.get("terrain_runtime_power_render_loop_suspended_samples")),
         "world_work_suspended_samples": _int(window.get("terrain_runtime_power_world_work_suspended_samples")),
+        "world_runtime_monitor_available_samples": _int(window.get("world_runtime_monitor_available_samples")),
+        "world_runtime_idle_samples": _int(window.get("world_runtime_idle_samples")),
+        "world_runtime_busy_samples": _int(window.get("world_runtime_busy_samples")),
+        "world_runtime_idle_sample_ratio": _round(_float(window.get("world_runtime_idle_sample_ratio"))),
+        "world_runtime_all_idle": bool(window.get("world_runtime_all_idle", False)),
+        "avg_world_runtime_pending_work": _round(_float(window.get("avg_world_runtime_pending_work"))),
+        "max_world_runtime_pending_work": _round(_float(window.get("max_world_runtime_pending_work"))),
+        "avg_world_runtime_awake_process_count": _round(_float(window.get("avg_world_runtime_awake_process_count"))),
+        "max_world_runtime_awake_process_count": _round(_float(window.get("max_world_runtime_awake_process_count"))),
+        "world_runtime_terrain_process_awake_samples": _int(window.get("world_runtime_terrain_process_awake_samples")),
+        "world_runtime_building_process_awake_samples": _int(window.get("world_runtime_building_process_awake_samples")),
+        "world_runtime_prefab_process_awake_samples": _int(window.get("world_runtime_prefab_process_awake_samples")),
+        "world_runtime_vegetation_process_awake_samples": _int(window.get("world_runtime_vegetation_process_awake_samples")),
+        "world_runtime_entity_maintenance_awake_samples": _int(window.get("world_runtime_entity_maintenance_awake_samples")),
+        "avg_terrain_artifact_cache_hit_ratio": _round(_float(window.get("avg_terrain_artifact_cache_hit_ratio"))),
+        "end_terrain_artifact_cache_hit_ratio": _round(_float(window.get("end_terrain_artifact_cache_hit_ratio"))),
+        "max_terrain_artifact_cache_entries": _round(_float(window.get("max_terrain_artifact_cache_entries"))),
+        "end_terrain_artifact_cache_entries": _round(_float(window.get("end_terrain_artifact_cache_entries"))),
+        "max_terrain_artifact_cache_bytes": _round(_float(window.get("max_terrain_artifact_cache_bytes"))),
+        "end_terrain_artifact_cache_bytes": _round(_float(window.get("end_terrain_artifact_cache_bytes"))),
+        "max_terrain_artifact_cache_byte_budget_ratio": _round(_float(window.get("max_terrain_artifact_cache_byte_budget_ratio"))),
+        "end_terrain_artifact_cache_byte_budget_ratio": _round(_float(window.get("end_terrain_artifact_cache_byte_budget_ratio"))),
+        "terrain_artifact_cache_eviction_delta": _round(_float(window.get("terrain_artifact_cache_eviction_delta"))),
+        "max_terrain_artifact_disk_cache_bytes": _round(_float(window.get("max_terrain_artifact_disk_cache_bytes"))),
+        "end_terrain_artifact_disk_cache_bytes": _round(_float(window.get("end_terrain_artifact_disk_cache_bytes"))),
+        "max_terrain_artifact_disk_cache_byte_budget_ratio": _round(_float(window.get("max_terrain_artifact_disk_cache_byte_budget_ratio"))),
+        "end_terrain_artifact_disk_cache_byte_budget_ratio": _round(_float(window.get("end_terrain_artifact_disk_cache_byte_budget_ratio"))),
+        "terrain_artifact_cache_disk_hit_delta": _round(_float(window.get("terrain_artifact_cache_disk_hit_delta"))),
+        "terrain_artifact_disk_cache_eviction_delta": _round(_float(window.get("terrain_artifact_disk_cache_eviction_delta"))),
     }
 
 
@@ -162,6 +198,372 @@ def _phase_gpu_summary(window: dict[str, Any]) -> dict[str, Any]:
         "p0_count": p0_count,
         "p0_fraction": _round(float(p0_count) / float(raw_gpu_count)) if raw_gpu_count > 0 else 0.0,
         "pstates": pstates,
+    }
+
+
+def _stationary_runtime_idle_verdict_summary(snapshot: dict[str, Any], stationary_hold: dict[str, Any]) -> dict[str, Any]:
+    direct = _dict(snapshot.get("stationary_runtime_idle_verdict"))
+    sample_count = _int(
+        direct.get("monitor_available_samples"),
+        _int(stationary_hold.get("world_runtime_monitor_available_samples")),
+    )
+    idle_samples = _int(direct.get("idle_samples"), _int(stationary_hold.get("world_runtime_idle_samples")))
+    busy_samples = _int(direct.get("busy_samples"), _int(stationary_hold.get("world_runtime_busy_samples")))
+    max_pending_work = _float(
+        direct.get("max_pending_work"),
+        _float(stationary_hold.get("max_world_runtime_pending_work")),
+    )
+    max_awake_process_count = _float(
+        direct.get("max_awake_process_count"),
+        _float(stationary_hold.get("max_world_runtime_awake_process_count")),
+    )
+    idle_sample_ratio = _float(
+        direct.get("idle_sample_ratio"),
+        _float(stationary_hold.get("world_runtime_idle_sample_ratio")),
+    )
+    return {
+        "available": sample_count > 0,
+        "monitor_available_samples": sample_count,
+        "idle_samples": idle_samples,
+        "busy_samples": busy_samples,
+        "idle_sample_ratio": _round(idle_sample_ratio),
+        "all_idle": bool(direct.get("all_idle", stationary_hold.get("world_runtime_all_idle", False))),
+        "max_pending_work": _round(max_pending_work),
+        "max_awake_process_count": _round(max_awake_process_count),
+        "terrain_awake_samples": _int(
+            direct.get("terrain_awake_samples"),
+            _int(stationary_hold.get("world_runtime_terrain_process_awake_samples")),
+        ),
+        "building_awake_samples": _int(
+            direct.get("building_awake_samples"),
+            _int(stationary_hold.get("world_runtime_building_process_awake_samples")),
+        ),
+        "prefab_awake_samples": _int(
+            direct.get("prefab_awake_samples"),
+            _int(stationary_hold.get("world_runtime_prefab_process_awake_samples")),
+        ),
+        "vegetation_awake_samples": _int(
+            direct.get("vegetation_awake_samples"),
+            _int(stationary_hold.get("world_runtime_vegetation_process_awake_samples")),
+        ),
+        "entity_awake_samples": _int(
+            direct.get("entity_awake_samples"),
+            _int(stationary_hold.get("world_runtime_entity_maintenance_awake_samples")),
+        ),
+    }
+
+
+def _stationary_terrain_artifact_cache_verdict_summary(snapshot: dict[str, Any], stationary_hold: dict[str, Any]) -> dict[str, Any]:
+    direct = _dict(snapshot.get("stationary_terrain_artifact_cache_verdict"))
+    sample_count = _int(
+        direct.get("monitor_available_samples"),
+        _int(stationary_hold.get("world_runtime_monitor_available_samples")),
+    )
+    avg_hit_ratio = _float(
+        direct.get("avg_hit_ratio"),
+        _float(stationary_hold.get("avg_terrain_artifact_cache_hit_ratio")),
+    )
+    end_hit_ratio = _float(
+        direct.get("end_hit_ratio"),
+        _float(stationary_hold.get("end_terrain_artifact_cache_hit_ratio")),
+    )
+    max_entries = _float(
+        direct.get("max_entries"),
+        _float(stationary_hold.get("max_terrain_artifact_cache_entries")),
+    )
+    end_entries = _float(
+        direct.get("end_entries"),
+        _float(stationary_hold.get("end_terrain_artifact_cache_entries")),
+    )
+    disk_hit_delta = _float(
+        direct.get("disk_hit_delta"),
+        _float(stationary_hold.get("terrain_artifact_cache_disk_hit_delta")),
+    )
+    max_byte_budget_ratio = _float(
+        direct.get("max_byte_budget_ratio"),
+        _float(stationary_hold.get("max_terrain_artifact_cache_byte_budget_ratio")),
+    )
+    end_byte_budget_ratio = _float(
+        direct.get("end_byte_budget_ratio"),
+        _float(stationary_hold.get("end_terrain_artifact_cache_byte_budget_ratio")),
+    )
+    eviction_delta = _float(
+        direct.get("eviction_delta"),
+        _float(stationary_hold.get("terrain_artifact_cache_eviction_delta")),
+    )
+    disk_max_byte_budget_ratio = _float(
+        direct.get("disk_max_byte_budget_ratio"),
+        _float(stationary_hold.get("max_terrain_artifact_disk_cache_byte_budget_ratio")),
+    )
+    disk_end_byte_budget_ratio = _float(
+        direct.get("disk_end_byte_budget_ratio"),
+        _float(stationary_hold.get("end_terrain_artifact_disk_cache_byte_budget_ratio")),
+    )
+    disk_eviction_delta = _float(
+        direct.get("disk_eviction_delta"),
+        _float(stationary_hold.get("terrain_artifact_disk_cache_eviction_delta")),
+    )
+    return {
+        "available": sample_count > 0,
+        "monitor_available_samples": sample_count,
+        "avg_hit_ratio": _round(avg_hit_ratio),
+        "end_hit_ratio": _round(end_hit_ratio),
+        "max_entries": _round(max_entries),
+        "end_entries": _round(end_entries),
+        "max_bytes": _round(_float(direct.get("max_bytes"), _float(stationary_hold.get("max_terrain_artifact_cache_bytes")))),
+        "end_bytes": _round(_float(direct.get("end_bytes"), _float(stationary_hold.get("end_terrain_artifact_cache_bytes")))),
+        "max_byte_budget_ratio": _round(max_byte_budget_ratio),
+        "end_byte_budget_ratio": _round(end_byte_budget_ratio),
+        "eviction_delta": _round(eviction_delta),
+        "disk_hit_delta": _round(disk_hit_delta),
+        "disk_max_bytes": _round(_float(direct.get("disk_max_bytes"), _float(stationary_hold.get("max_terrain_artifact_disk_cache_bytes")))),
+        "disk_end_bytes": _round(_float(direct.get("disk_end_bytes"), _float(stationary_hold.get("end_terrain_artifact_disk_cache_bytes")))),
+        "disk_max_byte_budget_ratio": _round(disk_max_byte_budget_ratio),
+        "disk_end_byte_budget_ratio": _round(disk_end_byte_budget_ratio),
+        "disk_eviction_delta": _round(disk_eviction_delta),
+    }
+
+
+def _stage_duration_ms_from_snapshot(stage_state: dict[str, Any]) -> float:
+    started_usec = _int(stage_state.get("started_usec"))
+    completed_usec = _int(stage_state.get("completed_usec"))
+    if started_usec <= 0 or completed_usec <= started_usec:
+        return 0.0
+    return float(completed_usec - started_usec) / 1000.0
+
+
+def _startup_stage_summary_from_snapshot(coordinator: dict[str, Any]) -> dict[str, Any]:
+    stage_states = _dict(coordinator.get("stage_states"))
+    if not stage_states:
+        return {
+            "stage_count": 0,
+            "completed_stage_count": 0,
+            "incomplete_stage_count": len(STARTUP_PROOF_STAGE_IDS),
+            "missing_stage_count": len(STARTUP_PROOF_STAGE_IDS),
+            "max_stage_duration_ms": 0.0,
+            "slowest_stage_id": "",
+        }
+
+    completed_count = 0
+    incomplete_count = 0
+    missing_count = 0
+    max_duration_ms = 0.0
+    slowest_stage_id = ""
+    for stage_id in STARTUP_PROOF_STAGE_IDS:
+        stage_state = _dict(stage_states.get(stage_id))
+        if not stage_state:
+            missing_count += 1
+            incomplete_count += 1
+            continue
+        if bool(stage_state.get("completed", False)):
+            completed_count += 1
+        else:
+            incomplete_count += 1
+        duration_ms = _stage_duration_ms_from_snapshot(stage_state)
+        if duration_ms > max_duration_ms:
+            max_duration_ms = duration_ms
+            slowest_stage_id = stage_id
+
+    return {
+        "stage_count": len(stage_states),
+        "completed_stage_count": completed_count,
+        "incomplete_stage_count": incomplete_count,
+        "missing_stage_count": missing_count,
+        "max_stage_duration_ms": max_duration_ms,
+        "slowest_stage_id": slowest_stage_id,
+    }
+
+
+def _startup_readiness_verdict_summary(snapshot: dict[str, Any], telemetry: dict[str, Any]) -> dict[str, Any]:
+    direct = _dict(snapshot.get("startup_readiness_verdict"))
+    if direct:
+        return {
+            "available": bool(direct.get("available", False)),
+            "completed": bool(direct.get("completed", False)),
+            "loading_screen_available": bool(direct.get("loading_screen_available", False)),
+            "startup_coordinator_available": bool(direct.get("startup_coordinator_available", False)),
+            "loading_active": bool(direct.get("loading_active", False)),
+            "failed": bool(direct.get("failed", False)),
+            "cancelled": bool(direct.get("cancelled", False)),
+            "playable_ready": bool(direct.get("playable_ready", False)),
+            "world_monitor_completed": bool(direct.get("world_monitor_completed", False)),
+            "progress_percent": _round(_float(direct.get("progress_percent"))),
+            "elapsed_ms": _round(_float(direct.get("elapsed_ms"))),
+            "completed_stage_count": _int(direct.get("completed_stage_count")),
+            "incomplete_stage_count": _int(direct.get("incomplete_stage_count")),
+            "missing_stage_count": _int(direct.get("missing_stage_count")),
+            "max_stage_duration_ms": _round(_float(direct.get("max_stage_duration_ms"))),
+            "trace_event_count": _int(direct.get("trace_event_count")),
+            "stage": str(direct.get("stage", "")),
+            "current_stage_id": str(direct.get("current_stage_id", "")),
+            "current_stage_label": str(direct.get("current_stage_label", "")),
+            "current_stage_progress_percent": _round(_float(direct.get("current_stage_progress_percent"))),
+            "current_stage_completed": _int(direct.get("current_stage_completed")),
+            "current_stage_total": _int(direct.get("current_stage_total")),
+            "stage_detail_text": str(direct.get("stage_detail_text", "")),
+            "current_stage_details": _dict(direct.get("current_stage_details")),
+            "slowest_stage_id": str(direct.get("slowest_stage_id", "")),
+        }
+
+    loading_screen = _dict(telemetry.get("loading_screen"))
+    coordinator = _dict(loading_screen.get("startup_coordinator"))
+    stage_summary = _startup_stage_summary_from_snapshot(coordinator)
+    trace = _dict(coordinator.get("trace"))
+    loading_screen_available = bool(loading_screen)
+    coordinator_available = bool(coordinator)
+    loading_active = bool(loading_screen.get("is_loading", False))
+    failed = bool(str(loading_screen.get("failure_message", "")))
+    cancelled = bool(str(loading_screen.get("cancellation_message", "")))
+    if coordinator_available:
+        loading_active = loading_active or bool(coordinator.get("active", False)) or bool(coordinator.get("world_monitor_running", False))
+        failed = failed or bool(coordinator.get("failed", False))
+        cancelled = cancelled or bool(coordinator.get("cancelled", False))
+    playable_ready = bool(loading_screen.get("terrain_ready_emitted", False))
+    if coordinator_available:
+        playable_ready = bool(coordinator.get("playable_ready", playable_ready))
+    progress_percent = max(
+        _float(loading_screen.get("progress_percent")),
+        _float(coordinator.get("overall_progress_percent")),
+    )
+    current_stage_label = str(loading_screen.get("stage_label", ""))
+    if str(coordinator.get("current_stage_label", "")):
+        current_stage_label = str(coordinator.get("current_stage_label", ""))
+    current_stage_progress_percent = max(
+        _float(loading_screen.get("stage_progress_percent")),
+        _float(coordinator.get("current_stage_progress_percent")),
+    )
+    current_stage_completed = max(
+        _int(loading_screen.get("stage_completed")),
+        _int(coordinator.get("current_stage_completed")),
+    )
+    current_stage_total = max(
+        _int(loading_screen.get("stage_total")),
+        _int(coordinator.get("current_stage_total")),
+    )
+    current_stage_details = _dict(loading_screen.get("stage_details"))
+    coordinator_stage_details = _dict(coordinator.get("current_stage_details"))
+    if coordinator_stage_details:
+        current_stage_details = coordinator_stage_details
+    elapsed_ms = _float(coordinator.get("elapsed_ms"))
+    if elapsed_ms <= 0.0:
+        elapsed_ms = _float(loading_screen.get("elapsed_seconds")) * 1000.0
+    completed = loading_screen_available and not loading_active and not failed and not cancelled
+    if coordinator_available:
+        completed = (
+            completed
+            and playable_ready
+            and bool(coordinator.get("world_monitor_completed", False))
+            and _int(stage_summary.get("incomplete_stage_count")) == 0
+            and _int(stage_summary.get("missing_stage_count")) == 0
+        )
+    return {
+        "available": loading_screen_available or coordinator_available,
+        "completed": completed,
+        "loading_screen_available": loading_screen_available,
+        "startup_coordinator_available": coordinator_available,
+        "loading_active": loading_active,
+        "failed": failed,
+        "cancelled": cancelled,
+        "playable_ready": playable_ready,
+        "world_monitor_completed": bool(coordinator.get("world_monitor_completed", False)),
+        "progress_percent": _round(progress_percent),
+        "elapsed_ms": _round(elapsed_ms),
+        "completed_stage_count": _int(stage_summary.get("completed_stage_count")),
+        "incomplete_stage_count": _int(stage_summary.get("incomplete_stage_count")),
+        "missing_stage_count": _int(stage_summary.get("missing_stage_count")),
+        "max_stage_duration_ms": _round(_float(stage_summary.get("max_stage_duration_ms"))),
+        "trace_event_count": _int(trace.get("event_count")),
+        "stage": str(loading_screen.get("stage", "")),
+        "current_stage_id": str(coordinator.get("current_stage_id", "")),
+        "current_stage_label": current_stage_label,
+        "current_stage_progress_percent": _round(current_stage_progress_percent),
+        "current_stage_completed": current_stage_completed,
+        "current_stage_total": current_stage_total,
+        "stage_detail_text": str(loading_screen.get("stage_detail_text", "")),
+        "current_stage_details": current_stage_details,
+        "slowest_stage_id": str(stage_summary.get("slowest_stage_id", "")),
+    }
+
+
+def _world_bake_proof_from_snapshot(snapshot: dict[str, Any], telemetry: dict[str, Any]) -> dict[str, Any]:
+    direct = _dict(snapshot.get("world_bake_proof"))
+    if direct:
+        return direct
+    generation_telemetry = _dict(snapshot.get("world_generation_telemetry"))
+    proof = _dict(generation_telemetry.get("last_bake_proof"))
+    if proof:
+        return proof
+    telemetry_generator = _dict(_dict(telemetry.get("world_generator")).get("last_bake_proof"))
+    if telemetry_generator:
+        return telemetry_generator
+    for event in _list(snapshot.get("recent_scope_events")):
+        event_dict = _dict(event)
+        if str(event_dict.get("scope", "")) != "town_stall_test":
+            continue
+        if str(event_dict.get("label", "")) != "generation_complete":
+            continue
+        event_proof = _dict(_dict(event_dict.get("details")).get("bake_proof"))
+        if event_proof:
+            return event_proof
+    return {}
+
+
+def _world_bake_proof_summary(snapshot: dict[str, Any], telemetry: dict[str, Any]) -> dict[str, Any]:
+    proof = _world_bake_proof_from_snapshot(snapshot, telemetry)
+    if not proof:
+        return {
+            "available": False,
+            "success": False,
+            "save_success": False,
+            "baked_layer_count": 0,
+            "expected_baked_layer_count": 0,
+            "missing_layer_count": 0,
+            "invalid_layer_count": 0,
+            "generation_total_ms": 0.0,
+            "save_total_ms": 0.0,
+            "total_hash_ms": 0.0,
+        }
+
+    generation_profile = _dict(proof.get("generation_profile"))
+    save_profile = _dict(proof.get("save_profile"))
+    missing_layers = _list(proof.get("missing_layers"))
+    invalid_layers = _list(proof.get("invalid_layers"))
+    return {
+        "available": bool(proof.get("available", True)),
+        "success": bool(proof.get("success", False)),
+        "world_seed": _int(proof.get("world_seed")),
+        "map_size": _int(proof.get("map_size")),
+        "layout_mode": str(proof.get("layout_mode", "")),
+        "height_biome_backend": str(proof.get("height_biome_backend", generation_profile.get("height_biome_backend", ""))),
+        "baked_layer_count": _int(proof.get("baked_layer_count")),
+        "expected_baked_layer_count": _int(proof.get("expected_baked_layer_count")),
+        "missing_layer_count": len(missing_layers),
+        "invalid_layer_count": len(invalid_layers),
+        "missing_layers": missing_layers,
+        "invalid_layers": invalid_layers,
+        "image_byte_count": _int(proof.get("image_byte_count")),
+        "image_pixel_count": _int(proof.get("image_pixel_count")),
+        "content_signature": str(proof.get("content_signature", "")),
+        "image_signature": str(proof.get("image_signature", "")),
+        "metadata_signature": str(proof.get("metadata_signature", "")),
+        "generation_total_ms": _round(_float(proof.get("generation_total_ms", generation_profile.get("total_ms")))),
+        "height_biome_ms": _round(_float(generation_profile.get("height_biome_ms"))),
+        "layout_ms": _round(_float(generation_profile.get("layout_ms"))),
+        "lakes_ms": _round(_float(generation_profile.get("lakes_ms"))),
+        "finalize_ms": _round(_float(generation_profile.get("finalize_ms"))),
+        "generation_stage_total_ms": _round(_float(proof.get("generation_stage_total_ms"))),
+        "generation_unaccounted_ms": _round(_float(proof.get("generation_unaccounted_ms"))),
+        "image_hash_ms": _round(_float(proof.get("image_hash_ms"))),
+        "metadata_hash_ms": _round(_float(proof.get("metadata_hash_ms"))),
+        "total_hash_ms": _round(_float(proof.get("total_hash_ms"))),
+        "save_success": bool(save_profile.get("success", False)),
+        "save_total_ms": _round(_float(save_profile.get("total_ms"))),
+        "png_write_ms": _round(_float(save_profile.get("png_write_ms"))),
+        "meta_write_ms": _round(_float(save_profile.get("meta_write_ms"))),
+        "export_cache_signature": str(save_profile.get("cache_signature", "")),
+        "export_signature_file_written": bool(save_profile.get("world_cache_signature_file_written", False)),
+        "world_meta_schema_version": _int(save_profile.get("world_meta_schema_version")),
+        "world_cache_version": _int(save_profile.get("world_cache_version")),
     }
 
 
@@ -281,6 +683,10 @@ def _summarize_town_snapshot(path: Path, target_frame_ms: float) -> dict[str, An
             ),
         },
         "stationary_hold": _window_summary(stationary_hold, target_frame_ms),
+        "startup_readiness_verdict": _startup_readiness_verdict_summary(snapshot, telemetry),
+        "world_bake_proof": _world_bake_proof_summary(snapshot, telemetry),
+        "stationary_runtime_idle_verdict": _stationary_runtime_idle_verdict_summary(snapshot, stationary_hold),
+        "stationary_terrain_artifact_cache_verdict": _stationary_terrain_artifact_cache_verdict_summary(snapshot, stationary_hold),
         "moving_entry": _window_summary(moving_entry, target_frame_ms),
         "moving_entry_gpu": _phase_gpu_summary(_dict(phase_windows.get("moving_entry"))),
         "stationary_hold_gpu": _phase_gpu_summary(_dict(phase_windows.get("stationary_hold"))),
@@ -670,6 +1076,10 @@ def _summarize_gpu_run(run: dict[str, Any]) -> dict[str, Any]:
         "last_20s_gpu": _gpu_window_summary(_dict(run.get("last_20s_gpu"))),
         "last_30s_gpu": _gpu_window_summary(_dict(run.get("last_30s_gpu"))),
         "all_run_gpu": _gpu_window_summary(_dict(run.get("all_run_gpu"))),
+        "startup_readiness_verdict": _dict(snapshot.get("startup_readiness_verdict")),
+        "world_bake_proof": _dict(snapshot.get("world_bake_proof")),
+        "stationary_runtime_idle_verdict": _dict(snapshot.get("stationary_runtime_idle_verdict")),
+        "stationary_terrain_artifact_cache_verdict": _dict(snapshot.get("stationary_terrain_artifact_cache_verdict")),
     }
 
 
@@ -690,6 +1100,8 @@ def _summarize_gpu_telemetry(path: Path) -> dict[str, Any]:
         "run_count": len(runs),
         "invalid_run_count": len(invalid_runs),
         "invalid_runs": invalid_runs,
+        "proof_gate_env": _dict(telemetry.get("proof_gate_env")),
+        "aggregate": _dict(telemetry.get("aggregate")),
         "initial_idle_gpu": _gpu_window_summary(_dict(_dict(telemetry.get("initial_idle")).get("gpu"))),
         "final_idle_gpu": _gpu_window_summary(_dict(_dict(telemetry.get("final_idle")).get("gpu"))),
         "runs": runs,
@@ -771,6 +1183,267 @@ def _gpu_thermal_threshold_requested(args: argparse.Namespace) -> bool:
         or args.max_latest_gpu_hold_avg_temp_c is not None
         or args.max_latest_gpu_hold_peak_temp_c is not None
     )
+
+
+def _raw_baseline_proof_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_raw_baseline_startup_readiness_proof
+        or args.max_latest_raw_baseline_startup_elapsed_ms is not None
+        or args.max_latest_raw_baseline_startup_stage_ms is not None
+        or args.require_latest_raw_baseline_world_bake_proof
+        or args.require_latest_raw_baseline_world_bake_export_signature
+        or bool(str(args.require_latest_raw_baseline_world_bake_height_biome_backend or "").strip())
+        or args.max_latest_raw_baseline_world_bake_ms is not None
+        or args.max_latest_raw_baseline_world_bake_hash_ms is not None
+        or args.max_latest_raw_baseline_world_bake_unaccounted_ms is not None
+        or args.require_latest_raw_baseline_runtime_idle_proof
+        or args.min_latest_raw_baseline_runtime_idle_ratio is not None
+        or args.max_latest_raw_baseline_runtime_busy_samples is not None
+        or args.require_latest_raw_baseline_terrain_artifact_cache_proof
+        or args.min_latest_raw_baseline_terrain_artifact_cache_hit_ratio is not None
+        or args.max_latest_raw_baseline_terrain_artifact_cache_byte_budget_ratio is not None
+        or args.max_latest_raw_baseline_terrain_artifact_cache_eviction_delta is not None
+    )
+
+
+def _raw_baseline_proof_observed(latest_gpu: dict[str, Any]) -> dict[str, Any]:
+    startup_elapsed_ms_values: list[float] = []
+    startup_stage_ms_values: list[float] = []
+    startup_completed_stage_counts: list[float] = []
+    startup_incomplete_stage_counts: list[float] = []
+    runtime_idle_ratios: list[float] = []
+    runtime_busy_samples: list[float] = []
+    world_bake_generation_ms_values: list[float] = []
+    world_bake_hash_ms_values: list[float] = []
+    world_bake_unaccounted_ms_values: list[float] = []
+    world_bake_layer_counts: list[float] = []
+    cache_hit_ratios: list[float] = []
+    cache_byte_budget_ratios: list[float] = []
+    cache_eviction_deltas: list[float] = []
+    proof_run_count = 0
+    startup_proof_run_count = 0
+    world_bake_proof_run_count = 0
+    world_bake_success_count = 0
+    world_bake_export_signature_count = 0
+    world_bake_backend_counts: dict[str, int] = {}
+    for run in _list(latest_gpu.get("runs")):
+        if not isinstance(run, dict):
+            continue
+        startup = _dict(run.get("startup_readiness_verdict"))
+        world_bake = _dict(run.get("world_bake_proof"))
+        runtime_idle = _dict(run.get("stationary_runtime_idle_verdict"))
+        artifact_cache = _dict(run.get("stationary_terrain_artifact_cache_verdict"))
+        if startup or world_bake or runtime_idle or artifact_cache:
+            proof_run_count += 1
+        if startup:
+            startup_proof_run_count += 1
+            startup_elapsed_ms_values.append(_float(startup.get("elapsed_ms")))
+            startup_stage_ms_values.append(_float(startup.get("max_stage_duration_ms")))
+            startup_completed_stage_counts.append(_float(startup.get("completed_stage_count")))
+            startup_incomplete_stage_counts.append(_float(startup.get("incomplete_stage_count")))
+        if world_bake:
+            world_bake_proof_run_count += 1
+            if bool(world_bake.get("success", False)):
+                world_bake_success_count += 1
+            if str(world_bake.get("export_cache_signature", "")):
+                world_bake_export_signature_count += 1
+            backend = str(world_bake.get("height_biome_backend", "") or "unknown")
+            world_bake_backend_counts[backend] = int(world_bake_backend_counts.get(backend, 0)) + 1
+            world_bake_generation_ms_values.append(_float(world_bake.get("generation_total_ms")))
+            world_bake_hash_ms_values.append(_float(world_bake.get("total_hash_ms")))
+            world_bake_unaccounted_ms_values.append(_float(world_bake.get("generation_unaccounted_ms")))
+            world_bake_layer_counts.append(_float(world_bake.get("baked_layer_count")))
+        if runtime_idle:
+            runtime_idle_ratios.append(_float(runtime_idle.get("idle_sample_ratio")))
+            runtime_busy_samples.append(_float(runtime_idle.get("busy_samples")))
+        if artifact_cache:
+            cache_hit_ratios.append(_float(artifact_cache.get("end_hit_ratio")))
+            cache_byte_budget_ratios.append(_float(artifact_cache.get("max_byte_budget_ratio")))
+            cache_eviction_deltas.append(_float(artifact_cache.get("eviction_delta")))
+
+    return {
+        "proof_run_count": proof_run_count,
+        "startup_proof_run_count": startup_proof_run_count,
+        "world_bake_proof_run_count": world_bake_proof_run_count,
+        "world_bake_success_count": world_bake_success_count,
+        "world_bake_export_signature_count": world_bake_export_signature_count,
+        "world_bake_backend_counts": world_bake_backend_counts,
+        "max_startup_elapsed_ms": _round(max(startup_elapsed_ms_values, default=0.0)),
+        "max_startup_stage_ms": _round(max(startup_stage_ms_values, default=0.0)),
+        "min_startup_completed_stage_count": _round(min(startup_completed_stage_counts, default=0.0)),
+        "max_startup_incomplete_stage_count": _round(max(startup_incomplete_stage_counts, default=0.0)),
+        "max_world_bake_generation_ms": _round(max(world_bake_generation_ms_values, default=0.0)),
+        "max_world_bake_hash_ms": _round(max(world_bake_hash_ms_values, default=0.0)),
+        "max_world_bake_unaccounted_ms": _round(max(world_bake_unaccounted_ms_values, default=0.0)),
+        "min_world_bake_layer_count": _round(min(world_bake_layer_counts, default=0.0)),
+        "min_runtime_idle_ratio": _round(min(runtime_idle_ratios, default=0.0)),
+        "max_runtime_busy_samples": _round(max(runtime_busy_samples, default=0.0)),
+        "min_artifact_cache_hit_ratio": _round(min(cache_hit_ratios, default=0.0)),
+        "max_artifact_cache_byte_budget_ratio": _round(max(cache_byte_budget_ratios, default=0.0)),
+        "max_artifact_cache_eviction_delta": _round(max(cache_eviction_deltas, default=0.0)),
+    }
+
+
+def _raw_baseline_proof_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_gpu = _dict(report.get("latest_gpu_telemetry"))
+    enforced = _raw_baseline_proof_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_gpu:
+        if enforced:
+            failures.append("no raw GPU telemetry files found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    proof_gate_env = _dict(latest_gpu.get("proof_gate_env"))
+    observed = _raw_baseline_proof_observed(latest_gpu)
+    run_count = _int(latest_gpu.get("run_count"))
+    proof_run_count = _int(observed.get("proof_run_count"))
+    startup_proof_run_count = _int(observed.get("startup_proof_run_count"))
+    startup_threshold_requested = (
+        args.require_latest_raw_baseline_startup_readiness_proof
+        or args.max_latest_raw_baseline_startup_elapsed_ms is not None
+        or args.max_latest_raw_baseline_startup_stage_ms is not None
+    )
+    world_bake_threshold_requested = (
+        args.require_latest_raw_baseline_world_bake_proof
+        or args.require_latest_raw_baseline_world_bake_export_signature
+        or bool(str(args.require_latest_raw_baseline_world_bake_height_biome_backend or "").strip())
+        or args.max_latest_raw_baseline_world_bake_ms is not None
+        or args.max_latest_raw_baseline_world_bake_hash_ms is not None
+        or args.max_latest_raw_baseline_world_bake_unaccounted_ms is not None
+    )
+
+    if enforced and proof_run_count < run_count:
+        failures.append(f"raw baseline proof verdicts found for {proof_run_count}/{run_count} run(s)")
+    if startup_threshold_requested and startup_proof_run_count < run_count:
+        failures.append(f"raw baseline startup proof verdicts found for {startup_proof_run_count}/{run_count} run(s)")
+    if world_bake_threshold_requested and _int(observed.get("world_bake_proof_run_count")) < run_count:
+        failures.append(f"raw baseline world bake proof verdicts found for {_int(observed.get('world_bake_proof_run_count'))}/{run_count} run(s)")
+    if args.require_latest_raw_baseline_startup_readiness_proof and str(proof_gate_env.get("TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF", "")) != "1":
+        failures.append("latest raw baseline did not pass startup-readiness proof gate env to child runs")
+    if args.require_latest_raw_baseline_world_bake_proof and str(proof_gate_env.get("TOWN_STALL_REQUIRE_WORLD_BAKE_PROOF", "")) != "1":
+        failures.append("latest raw baseline did not pass world-bake proof gate env to child runs")
+    if (
+        args.require_latest_raw_baseline_world_bake_export_signature
+        and str(proof_gate_env.get("TOWN_STALL_REQUIRE_WORLD_BAKE_EXPORT_SIGNATURE", "")) != "1"
+    ):
+        failures.append("latest raw baseline did not pass world-bake export-signature gate env to child runs")
+    required_backend = str(args.require_latest_raw_baseline_world_bake_height_biome_backend or "").strip()
+    if required_backend and str(proof_gate_env.get("TOWN_STALL_REQUIRE_WORLD_BAKE_HEIGHT_BIOME_BACKEND", "")) != required_backend:
+        failures.append("latest raw baseline did not pass world-bake backend gate env to child runs")
+    if args.require_latest_raw_baseline_world_bake_proof and _int(observed.get("world_bake_success_count")) < run_count:
+        failures.append(
+            f"raw baseline world bake proof succeeded for {_int(observed.get('world_bake_success_count'))}/{run_count} run(s)"
+        )
+    if args.require_latest_raw_baseline_world_bake_export_signature and _int(observed.get("world_bake_export_signature_count")) < run_count:
+        failures.append(
+            "raw baseline world bake export signatures found for "
+            f"{_int(observed.get('world_bake_export_signature_count'))}/{run_count} run(s)"
+        )
+    if required_backend:
+        backend_counts = _dict(observed.get("world_bake_backend_counts"))
+        if _int(backend_counts.get(required_backend)) < run_count:
+            failures.append(
+                "raw baseline world bake backend "
+                f"'{required_backend}' found for {_int(backend_counts.get(required_backend))}/{run_count} run(s)"
+            )
+    if world_bake_threshold_requested and _float(observed.get("min_world_bake_layer_count")) < float(args.min_latest_raw_baseline_world_bake_layers):
+        failures.append(
+            "raw baseline minimum world bake layer count "
+            f"{_float(observed.get('min_world_bake_layer_count')):.0f} below {args.min_latest_raw_baseline_world_bake_layers}"
+        )
+    if (
+        args.max_latest_raw_baseline_startup_elapsed_ms is not None
+        and _float(observed.get("max_startup_elapsed_ms")) > args.max_latest_raw_baseline_startup_elapsed_ms
+    ):
+        failures.append(
+            "raw baseline maximum startup elapsed "
+            f"{_float(observed.get('max_startup_elapsed_ms')):.3f} ms exceeds {args.max_latest_raw_baseline_startup_elapsed_ms:.3f} ms"
+        )
+    if (
+        args.max_latest_raw_baseline_startup_stage_ms is not None
+        and _float(observed.get("max_startup_stage_ms")) > args.max_latest_raw_baseline_startup_stage_ms
+    ):
+        failures.append(
+            "raw baseline maximum startup stage duration "
+            f"{_float(observed.get('max_startup_stage_ms')):.3f} ms exceeds {args.max_latest_raw_baseline_startup_stage_ms:.3f} ms"
+        )
+    if (
+        args.max_latest_raw_baseline_world_bake_ms is not None
+        and _float(observed.get("max_world_bake_generation_ms")) > args.max_latest_raw_baseline_world_bake_ms
+    ):
+        failures.append(
+            "raw baseline maximum world bake generation "
+            f"{_float(observed.get('max_world_bake_generation_ms')):.3f} ms exceeds {args.max_latest_raw_baseline_world_bake_ms:.3f} ms"
+        )
+    if (
+        args.max_latest_raw_baseline_world_bake_hash_ms is not None
+        and _float(observed.get("max_world_bake_hash_ms")) > args.max_latest_raw_baseline_world_bake_hash_ms
+    ):
+        failures.append(
+            "raw baseline maximum world bake hash "
+            f"{_float(observed.get('max_world_bake_hash_ms')):.3f} ms exceeds {args.max_latest_raw_baseline_world_bake_hash_ms:.3f} ms"
+        )
+    if (
+        args.max_latest_raw_baseline_world_bake_unaccounted_ms is not None
+        and _float(observed.get("max_world_bake_unaccounted_ms")) > args.max_latest_raw_baseline_world_bake_unaccounted_ms
+    ):
+        failures.append(
+            "raw baseline maximum world bake unaccounted "
+            f"{_float(observed.get('max_world_bake_unaccounted_ms')):.3f} ms exceeds {args.max_latest_raw_baseline_world_bake_unaccounted_ms:.3f} ms"
+        )
+    if args.require_latest_raw_baseline_runtime_idle_proof and str(proof_gate_env.get("TOWN_STALL_REQUIRE_RUNTIME_IDLE_PROOF", "")) != "1":
+        failures.append("latest raw baseline did not pass runtime-idle proof gate env to child runs")
+    if args.require_latest_raw_baseline_terrain_artifact_cache_proof and str(proof_gate_env.get("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF", "")) != "1":
+        failures.append("latest raw baseline did not pass terrain-artifact-cache proof gate env to child runs")
+    if (
+        args.min_latest_raw_baseline_runtime_idle_ratio is not None
+        and _float(observed.get("min_runtime_idle_ratio")) + 0.000001 < args.min_latest_raw_baseline_runtime_idle_ratio
+    ):
+        failures.append(
+            "raw baseline minimum runtime idle ratio "
+            f"{_float(observed.get('min_runtime_idle_ratio')):.3f} below {args.min_latest_raw_baseline_runtime_idle_ratio:.3f}"
+        )
+    if (
+        args.max_latest_raw_baseline_runtime_busy_samples is not None
+        and _float(observed.get("max_runtime_busy_samples")) > args.max_latest_raw_baseline_runtime_busy_samples
+    ):
+        failures.append(
+            "raw baseline maximum runtime busy samples "
+            f"{_float(observed.get('max_runtime_busy_samples')):.3f} exceeds {args.max_latest_raw_baseline_runtime_busy_samples:.3f}"
+        )
+    if (
+        args.min_latest_raw_baseline_terrain_artifact_cache_hit_ratio is not None
+        and _float(observed.get("min_artifact_cache_hit_ratio")) + 0.000001 < args.min_latest_raw_baseline_terrain_artifact_cache_hit_ratio
+    ):
+        failures.append(
+            "raw baseline minimum terrain artifact cache hit ratio "
+            f"{_float(observed.get('min_artifact_cache_hit_ratio')):.3f} below {args.min_latest_raw_baseline_terrain_artifact_cache_hit_ratio:.3f}"
+        )
+    if (
+        args.max_latest_raw_baseline_terrain_artifact_cache_byte_budget_ratio is not None
+        and _float(observed.get("max_artifact_cache_byte_budget_ratio")) > args.max_latest_raw_baseline_terrain_artifact_cache_byte_budget_ratio
+    ):
+        failures.append(
+            "raw baseline maximum terrain artifact cache byte-budget ratio "
+            f"{_float(observed.get('max_artifact_cache_byte_budget_ratio')):.3f} exceeds {args.max_latest_raw_baseline_terrain_artifact_cache_byte_budget_ratio:.3f}"
+        )
+    if (
+        args.max_latest_raw_baseline_terrain_artifact_cache_eviction_delta is not None
+        and _float(observed.get("max_artifact_cache_eviction_delta")) > args.max_latest_raw_baseline_terrain_artifact_cache_eviction_delta
+    ):
+        failures.append(
+            "raw baseline maximum terrain artifact cache eviction delta "
+            f"{_float(observed.get('max_artifact_cache_eviction_delta')):.3f} exceeds {args.max_latest_raw_baseline_terrain_artifact_cache_eviction_delta:.3f}"
+        )
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_gpu.get("path", "")),
+        "proof_gate_env": proof_gate_env,
+        "observed": observed,
+    }
 
 
 def _freshness_threshold_requested(args: argparse.Namespace) -> bool:
@@ -1274,6 +1947,463 @@ def _idle_gpu_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str
     }
 
 
+def _startup_readiness_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_production_startup_readiness
+        or args.max_latest_production_startup_elapsed_ms is not None
+        or args.max_latest_production_startup_stage_ms is not None
+        or args.min_latest_production_startup_trace_events is not None
+    )
+
+
+def _compact_startup_stage_text(value: Any, max_len: int = 240) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
+def _startup_stage_failure_context(verdict: dict[str, Any]) -> str:
+    stage_id = str(verdict.get("current_stage_id", "") or verdict.get("stage", "") or "unknown")
+    label = _compact_startup_stage_text(verdict.get("current_stage_label", ""))
+    progress = _float(verdict.get("current_stage_progress_percent", verdict.get("progress_percent")))
+    completed = _int(verdict.get("current_stage_completed"))
+    total = _int(verdict.get("current_stage_total"))
+    detail = _compact_startup_stage_text(verdict.get("stage_detail_text", ""))
+    details = _dict(verdict.get("current_stage_details"))
+    if not detail and details:
+        message = _compact_startup_stage_text(details.get("message", ""))
+        blocker = _compact_startup_stage_text(details.get("blocking_component", ""))
+        pending = _int(details.get("blocking_component_pending"))
+        detail_parts = []
+        if message:
+            detail_parts.append(message)
+        if blocker and pending > 0:
+            detail_parts.append(f"blocked by {blocker} ({pending} pending)")
+        elif blocker:
+            detail_parts.append(f"blocked by {blocker}")
+        detail = "; ".join(detail_parts)
+
+    parts = [f"current={stage_id}"]
+    if label:
+        parts.append(f"label={label}")
+    if progress > 0.0:
+        parts.append(f"progress={progress:.1f}%")
+    if total > 0:
+        parts.append(f"items={completed}/{total}")
+    if detail:
+        parts.append(f"detail={detail}")
+    return "; ".join(parts)
+
+
+def _startup_readiness_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    enforced = _startup_readiness_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_production:
+        if enforced:
+            failures.append("no production-like town snapshots found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    verdict = _dict(latest_production.get("startup_readiness_verdict"))
+    min_completed_stages = args.min_latest_production_startup_completed_stages
+
+    if enforced and not bool(verdict.get("available", False)):
+        failures.append("startup readiness telemetry missing")
+    if args.require_latest_production_startup_readiness and not bool(verdict.get("startup_coordinator_available", False)):
+        failures.append("startup coordinator telemetry missing")
+    if args.require_latest_production_startup_readiness and not bool(verdict.get("completed", False)):
+        failures.append("startup readiness did not complete")
+    if enforced and bool(verdict.get("loading_active", False)):
+        failures.append("startup loading still active")
+    if enforced and bool(verdict.get("failed", False)):
+        failures.append("startup reported failure")
+    if enforced and bool(verdict.get("cancelled", False)):
+        failures.append("startup reported cancellation")
+    if args.require_latest_production_startup_readiness and not bool(verdict.get("playable_ready", False)):
+        failures.append("startup playable-ready signal missing")
+    if enforced and _int(verdict.get("completed_stage_count")) < min_completed_stages:
+        failures.append(
+            "startup completed stages "
+            f"{_int(verdict.get('completed_stage_count'))} below {min_completed_stages}"
+        )
+    if enforced and _int(verdict.get("missing_stage_count")) > 0:
+        failures.append(f"startup missing stage telemetry count {_int(verdict.get('missing_stage_count'))}")
+    if enforced and _int(verdict.get("incomplete_stage_count")) > 0:
+        failures.append(f"startup incomplete stage count {_int(verdict.get('incomplete_stage_count'))}")
+    if (
+        args.max_latest_production_startup_elapsed_ms is not None
+        and _float(verdict.get("elapsed_ms")) > args.max_latest_production_startup_elapsed_ms
+    ):
+        failures.append(
+            "startup elapsed "
+            f"{_float(verdict.get('elapsed_ms')):.3f} ms exceeds {args.max_latest_production_startup_elapsed_ms:.3f} ms"
+        )
+    if (
+        args.max_latest_production_startup_stage_ms is not None
+        and _float(verdict.get("max_stage_duration_ms")) > args.max_latest_production_startup_stage_ms
+    ):
+        failures.append(
+            "startup max stage duration "
+            f"{_float(verdict.get('max_stage_duration_ms')):.3f} ms exceeds {args.max_latest_production_startup_stage_ms:.3f} ms"
+        )
+    if (
+        args.min_latest_production_startup_trace_events is not None
+        and _float(verdict.get("trace_event_count")) + 0.000001 < args.min_latest_production_startup_trace_events
+    ):
+        failures.append(
+            "startup trace events "
+            f"{_int(verdict.get('trace_event_count'))} below {int(args.min_latest_production_startup_trace_events)}"
+        )
+    stage_context = _startup_stage_failure_context(verdict)
+    if failures and stage_context:
+        failures.append(f"startup active stage: {stage_context}")
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "min_completed_stages": min_completed_stages,
+        "observed": {
+            "available": bool(verdict.get("available", False)),
+            "completed": bool(verdict.get("completed", False)),
+            "loading_screen_available": bool(verdict.get("loading_screen_available", False)),
+            "startup_coordinator_available": bool(verdict.get("startup_coordinator_available", False)),
+            "loading_active": bool(verdict.get("loading_active", False)),
+            "failed": bool(verdict.get("failed", False)),
+            "cancelled": bool(verdict.get("cancelled", False)),
+            "playable_ready": bool(verdict.get("playable_ready", False)),
+            "world_monitor_completed": bool(verdict.get("world_monitor_completed", False)),
+            "progress_percent": _round(_float(verdict.get("progress_percent"))),
+            "elapsed_ms": _round(_float(verdict.get("elapsed_ms"))),
+            "completed_stage_count": _int(verdict.get("completed_stage_count")),
+            "incomplete_stage_count": _int(verdict.get("incomplete_stage_count")),
+            "missing_stage_count": _int(verdict.get("missing_stage_count")),
+            "max_stage_duration_ms": _round(_float(verdict.get("max_stage_duration_ms"))),
+            "trace_event_count": _int(verdict.get("trace_event_count")),
+            "slowest_stage_id": str(verdict.get("slowest_stage_id", "")),
+            "current_stage_id": str(verdict.get("current_stage_id", "")),
+            "current_stage_label": str(verdict.get("current_stage_label", "")),
+            "current_stage_progress_percent": _round(
+                _float(verdict.get("current_stage_progress_percent", verdict.get("progress_percent")))
+            ),
+            "current_stage_completed": _int(verdict.get("current_stage_completed")),
+            "current_stage_total": _int(verdict.get("current_stage_total")),
+            "stage_detail_text": str(verdict.get("stage_detail_text", "")),
+            "current_stage_details": _dict(verdict.get("current_stage_details")),
+        },
+    }
+
+
+def _world_bake_proof_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_production_world_bake_proof
+        or args.require_latest_production_world_bake_export_signature
+        or bool(str(args.require_latest_production_world_bake_height_biome_backend or "").strip())
+        or args.max_latest_production_world_bake_ms is not None
+        or args.max_latest_production_world_bake_hash_ms is not None
+        or args.max_latest_production_world_bake_unaccounted_ms is not None
+    )
+
+
+def _world_bake_proof_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    enforced = _world_bake_proof_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_production:
+        if enforced:
+            failures.append("no production-like town snapshots found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    proof = _dict(latest_production.get("world_bake_proof"))
+    if args.require_latest_production_world_bake_proof and not bool(proof.get("available", False)):
+        failures.append("world bake proof is unavailable")
+    if args.require_latest_production_world_bake_proof and not bool(proof.get("success", False)):
+        failures.append("world bake proof did not succeed")
+
+    layer_count = _int(proof.get("baked_layer_count"))
+    expected_layer_count = _int(proof.get("expected_baked_layer_count"), args.min_latest_production_world_bake_layers)
+    min_layers = max(int(args.min_latest_production_world_bake_layers), expected_layer_count)
+    missing_count = _int(proof.get("missing_layer_count"))
+    invalid_count = _int(proof.get("invalid_layer_count"))
+    if enforced and layer_count < min_layers:
+        failures.append(f"world bake layer count {layer_count} below {min_layers}")
+    if enforced and missing_count > 0:
+        failures.append(f"world bake has {missing_count} missing layers")
+    if enforced and invalid_count > 0:
+        failures.append(f"world bake has {invalid_count} invalid layers")
+    if enforced and not str(proof.get("content_signature", "")):
+        failures.append("world bake content signature is missing")
+
+    required_backend = str(args.require_latest_production_world_bake_height_biome_backend or "").strip()
+    observed_backend = str(proof.get("height_biome_backend", ""))
+    if required_backend and observed_backend != required_backend:
+        failures.append(
+            "world bake height/biome backend "
+            f"'{observed_backend}' does not match required '{required_backend}'"
+        )
+
+    if args.require_latest_production_world_bake_export_signature:
+        if not bool(proof.get("save_success", False)):
+            failures.append("world bake save profile did not report success")
+        if not str(proof.get("export_cache_signature", "")):
+            failures.append("world bake export cache signature is missing")
+        if not bool(proof.get("export_signature_file_written", False)):
+            failures.append("world bake export signature file was not written")
+
+    generation_total_ms = _float(proof.get("generation_total_ms"))
+    total_hash_ms = _float(proof.get("total_hash_ms"))
+    generation_unaccounted_ms = _float(proof.get("generation_unaccounted_ms"))
+    if args.max_latest_production_world_bake_ms is not None and generation_total_ms > args.max_latest_production_world_bake_ms:
+        failures.append(
+            "world bake generation total "
+            f"{generation_total_ms:.3f} ms exceeds {args.max_latest_production_world_bake_ms:.3f} ms"
+        )
+    if args.max_latest_production_world_bake_hash_ms is not None and total_hash_ms > args.max_latest_production_world_bake_hash_ms:
+        failures.append(
+            "world bake proof hash time "
+            f"{total_hash_ms:.3f} ms exceeds {args.max_latest_production_world_bake_hash_ms:.3f} ms"
+        )
+    if (
+        args.max_latest_production_world_bake_unaccounted_ms is not None
+        and generation_unaccounted_ms > args.max_latest_production_world_bake_unaccounted_ms
+    ):
+        failures.append(
+            "world bake unaccounted generation time "
+            f"{generation_unaccounted_ms:.3f} ms exceeds {args.max_latest_production_world_bake_unaccounted_ms:.3f} ms"
+        )
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "min_layers": min_layers,
+        "observed": {
+            "available": bool(proof.get("available", False)),
+            "success": bool(proof.get("success", False)),
+            "save_success": bool(proof.get("save_success", False)),
+            "map_size": _int(proof.get("map_size")),
+            "layout_mode": str(proof.get("layout_mode", "")),
+            "height_biome_backend": observed_backend,
+            "baked_layer_count": layer_count,
+            "expected_baked_layer_count": expected_layer_count,
+            "missing_layer_count": missing_count,
+            "invalid_layer_count": invalid_count,
+            "image_byte_count": _int(proof.get("image_byte_count")),
+            "image_pixel_count": _int(proof.get("image_pixel_count")),
+            "generation_total_ms": _round(generation_total_ms),
+            "height_biome_ms": _round(_float(proof.get("height_biome_ms"))),
+            "layout_ms": _round(_float(proof.get("layout_ms"))),
+            "lakes_ms": _round(_float(proof.get("lakes_ms"))),
+            "finalize_ms": _round(_float(proof.get("finalize_ms"))),
+            "generation_unaccounted_ms": _round(generation_unaccounted_ms),
+            "total_hash_ms": _round(total_hash_ms),
+            "save_total_ms": _round(_float(proof.get("save_total_ms"))),
+            "content_signature": str(proof.get("content_signature", "")),
+            "export_cache_signature": str(proof.get("export_cache_signature", "")),
+            "export_signature_file_written": bool(proof.get("export_signature_file_written", False)),
+        },
+    }
+
+
+def _stationary_runtime_idle_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_production_runtime_idle
+        or args.min_latest_production_runtime_idle_ratio is not None
+        or args.max_latest_production_runtime_pending_work is not None
+        or args.max_latest_production_runtime_awake_process_count is not None
+    )
+
+
+def _stationary_runtime_idle_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    enforced = _stationary_runtime_idle_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_production:
+        if enforced:
+            failures.append("no production-like town snapshots found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    verdict = _dict(latest_production.get("stationary_runtime_idle_verdict"))
+    sample_count = _int(verdict.get("monitor_available_samples"))
+    idle_ratio = _float(verdict.get("idle_sample_ratio"))
+    max_pending_work = _float(verdict.get("max_pending_work"))
+    max_awake_process_count = _float(verdict.get("max_awake_process_count"))
+    min_idle_ratio = (
+        float(args.min_latest_production_runtime_idle_ratio)
+        if args.min_latest_production_runtime_idle_ratio is not None
+        else 1.0
+    )
+    max_pending_limit = (
+        float(args.max_latest_production_runtime_pending_work)
+        if args.max_latest_production_runtime_pending_work is not None
+        else 0.0
+    )
+    max_awake_limit = (
+        float(args.max_latest_production_runtime_awake_process_count)
+        if args.max_latest_production_runtime_awake_process_count is not None
+        else 0.0
+    )
+
+    if enforced and sample_count < args.min_latest_production_runtime_idle_samples:
+        failures.append(
+            "runtime idle monitor samples "
+            f"{sample_count} below {args.min_latest_production_runtime_idle_samples}"
+        )
+    if enforced and idle_ratio + 0.000001 < min_idle_ratio:
+        failures.append(
+            "runtime idle sample ratio "
+            f"{idle_ratio:.3f} below {min_idle_ratio:.3f}"
+        )
+    if enforced and max_pending_work > max_pending_limit:
+        failures.append(
+            "runtime max pending work "
+            f"{max_pending_work:.3f} exceeds {max_pending_limit:.3f}"
+        )
+    if enforced and max_awake_process_count > max_awake_limit:
+        failures.append(
+            "runtime max awake process count "
+            f"{max_awake_process_count:.3f} exceeds {max_awake_limit:.3f}"
+        )
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "min_samples": args.min_latest_production_runtime_idle_samples,
+        "min_idle_ratio": min_idle_ratio,
+        "max_pending_work": max_pending_limit,
+        "max_awake_process_count": max_awake_limit,
+        "observed": {
+            "monitor_available_samples": sample_count,
+            "idle_samples": _int(verdict.get("idle_samples")),
+            "busy_samples": _int(verdict.get("busy_samples")),
+            "idle_sample_ratio": _round(idle_ratio),
+            "max_pending_work": _round(max_pending_work),
+            "max_awake_process_count": _round(max_awake_process_count),
+            "terrain_awake_samples": _int(verdict.get("terrain_awake_samples")),
+            "building_awake_samples": _int(verdict.get("building_awake_samples")),
+            "prefab_awake_samples": _int(verdict.get("prefab_awake_samples")),
+            "vegetation_awake_samples": _int(verdict.get("vegetation_awake_samples")),
+            "entity_awake_samples": _int(verdict.get("entity_awake_samples")),
+        },
+    }
+
+
+def _terrain_artifact_cache_threshold_requested(args: argparse.Namespace) -> bool:
+    return (
+        args.require_latest_production_terrain_artifact_cache_samples
+        or args.min_latest_production_terrain_artifact_cache_hit_ratio is not None
+        or args.min_latest_production_terrain_artifact_cache_disk_hit_delta is not None
+        or args.max_latest_production_terrain_artifact_cache_byte_budget_ratio is not None
+        or args.max_latest_production_terrain_artifact_cache_eviction_delta is not None
+        or args.max_latest_production_terrain_artifact_disk_cache_byte_budget_ratio is not None
+        or args.max_latest_production_terrain_artifact_disk_cache_eviction_delta is not None
+    )
+
+
+def _terrain_artifact_cache_gate(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    latest_production = _dict(report.get("latest_production_town"))
+    enforced = _terrain_artifact_cache_threshold_requested(args)
+    failures: list[str] = []
+    if not latest_production:
+        if enforced:
+            failures.append("no production-like town snapshots found")
+        return {"enforced": enforced, "passed": not failures, "failures": failures}
+
+    verdict = _dict(latest_production.get("stationary_terrain_artifact_cache_verdict"))
+    sample_count = _int(verdict.get("monitor_available_samples"))
+    end_hit_ratio = _float(verdict.get("end_hit_ratio"))
+    disk_hit_delta = _float(verdict.get("disk_hit_delta"))
+    max_byte_budget_ratio = _float(verdict.get("max_byte_budget_ratio"))
+    eviction_delta = _float(verdict.get("eviction_delta"))
+    disk_max_byte_budget_ratio = _float(verdict.get("disk_max_byte_budget_ratio"))
+    disk_eviction_delta = _float(verdict.get("disk_eviction_delta"))
+
+    if enforced and sample_count < args.min_latest_production_terrain_artifact_cache_samples:
+        failures.append(
+            "terrain artifact cache monitor samples "
+            f"{sample_count} below {args.min_latest_production_terrain_artifact_cache_samples}"
+        )
+    if (
+        args.min_latest_production_terrain_artifact_cache_hit_ratio is not None
+        and end_hit_ratio + 0.000001 < args.min_latest_production_terrain_artifact_cache_hit_ratio
+    ):
+        failures.append(
+            "terrain artifact cache ending hit ratio "
+            f"{end_hit_ratio:.3f} below {args.min_latest_production_terrain_artifact_cache_hit_ratio:.3f}"
+        )
+    if (
+        args.min_latest_production_terrain_artifact_cache_disk_hit_delta is not None
+        and disk_hit_delta + 0.000001 < args.min_latest_production_terrain_artifact_cache_disk_hit_delta
+    ):
+        failures.append(
+            "terrain artifact cache disk-hit delta "
+            f"{disk_hit_delta:.3f} below {args.min_latest_production_terrain_artifact_cache_disk_hit_delta:.3f}"
+        )
+    if (
+        args.max_latest_production_terrain_artifact_cache_byte_budget_ratio is not None
+        and max_byte_budget_ratio > args.max_latest_production_terrain_artifact_cache_byte_budget_ratio
+    ):
+        failures.append(
+            "terrain artifact memory cache max byte-budget ratio "
+            f"{max_byte_budget_ratio:.3f} exceeds {args.max_latest_production_terrain_artifact_cache_byte_budget_ratio:.3f}"
+        )
+    if (
+        args.max_latest_production_terrain_artifact_cache_eviction_delta is not None
+        and eviction_delta > args.max_latest_production_terrain_artifact_cache_eviction_delta
+    ):
+        failures.append(
+            "terrain artifact memory cache eviction delta "
+            f"{eviction_delta:.3f} exceeds {args.max_latest_production_terrain_artifact_cache_eviction_delta:.3f}"
+        )
+    if (
+        args.max_latest_production_terrain_artifact_disk_cache_byte_budget_ratio is not None
+        and disk_max_byte_budget_ratio > args.max_latest_production_terrain_artifact_disk_cache_byte_budget_ratio
+    ):
+        failures.append(
+            "terrain artifact disk cache max byte-budget ratio "
+            f"{disk_max_byte_budget_ratio:.3f} exceeds {args.max_latest_production_terrain_artifact_disk_cache_byte_budget_ratio:.3f}"
+        )
+    if (
+        args.max_latest_production_terrain_artifact_disk_cache_eviction_delta is not None
+        and disk_eviction_delta > args.max_latest_production_terrain_artifact_disk_cache_eviction_delta
+    ):
+        failures.append(
+            "terrain artifact disk cache eviction delta "
+            f"{disk_eviction_delta:.3f} exceeds {args.max_latest_production_terrain_artifact_disk_cache_eviction_delta:.3f}"
+        )
+
+    return {
+        "enforced": enforced,
+        "passed": not failures,
+        "failures": failures,
+        "latest_path": str(latest_production.get("path", "")),
+        "min_samples": args.min_latest_production_terrain_artifact_cache_samples,
+        "observed": {
+            "monitor_available_samples": sample_count,
+            "avg_hit_ratio": _round(_float(verdict.get("avg_hit_ratio"))),
+            "end_hit_ratio": _round(end_hit_ratio),
+            "max_entries": _round(_float(verdict.get("max_entries"))),
+            "end_entries": _round(_float(verdict.get("end_entries"))),
+            "max_bytes": _round(_float(verdict.get("max_bytes"))),
+            "end_bytes": _round(_float(verdict.get("end_bytes"))),
+            "max_byte_budget_ratio": _round(max_byte_budget_ratio),
+            "end_byte_budget_ratio": _round(_float(verdict.get("end_byte_budget_ratio"))),
+            "eviction_delta": _round(eviction_delta),
+            "disk_hit_delta": _round(disk_hit_delta),
+            "disk_max_bytes": _round(_float(verdict.get("disk_max_bytes"))),
+            "disk_end_bytes": _round(_float(verdict.get("disk_end_bytes"))),
+            "disk_max_byte_budget_ratio": _round(disk_max_byte_budget_ratio),
+            "disk_end_byte_budget_ratio": _round(_float(verdict.get("disk_end_byte_budget_ratio"))),
+            "disk_eviction_delta": _round(disk_eviction_delta),
+        },
+    }
+
+
 def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     generated_at_epoch = time.time()
     snapshot_dir = Path(args.snapshot_dir)
@@ -1304,7 +2434,12 @@ def _build_report(args: argparse.Namespace) -> dict[str, Any]:
     report["movement_gate"] = _movement_gate(report, args)
     report["stationary_gpu_gate"] = _stationary_gpu_gate(report, args)
     report["idle_gpu_gate"] = _idle_gpu_gate(report, args)
+    report["startup_readiness_gate"] = _startup_readiness_gate(report, args)
+    report["world_bake_proof_gate"] = _world_bake_proof_gate(report, args)
+    report["stationary_runtime_idle_gate"] = _stationary_runtime_idle_gate(report, args)
+    report["terrain_artifact_cache_gate"] = _terrain_artifact_cache_gate(report, args)
     report["gpu_thermal_gate"] = _gpu_thermal_gate(report, args)
+    report["raw_baseline_proof_gate"] = _raw_baseline_proof_gate(report, args)
     report["freshness_gate"] = _freshness_gate(report, args)
     return report
 
@@ -1501,10 +2636,30 @@ def _threshold_failures(report: dict[str, Any], args: argparse.Namespace) -> lis
         idle_gpu_gate = _dict(report.get("idle_gpu_gate"))
         for failure in idle_gpu_gate.get("failures", []):
             failures.append(f"idle GPU gate: {failure}")
+    if _startup_readiness_threshold_requested(args):
+        startup_gate = _dict(report.get("startup_readiness_gate"))
+        for failure in startup_gate.get("failures", []):
+            failures.append(f"startup readiness gate: {failure}")
+    if _world_bake_proof_threshold_requested(args):
+        world_bake_gate = _dict(report.get("world_bake_proof_gate"))
+        for failure in world_bake_gate.get("failures", []):
+            failures.append(f"world bake proof gate: {failure}")
+    if _stationary_runtime_idle_threshold_requested(args):
+        runtime_idle_gate = _dict(report.get("stationary_runtime_idle_gate"))
+        for failure in runtime_idle_gate.get("failures", []):
+            failures.append(f"runtime idle gate: {failure}")
+    if _terrain_artifact_cache_threshold_requested(args):
+        artifact_cache_gate = _dict(report.get("terrain_artifact_cache_gate"))
+        for failure in artifact_cache_gate.get("failures", []):
+            failures.append(f"terrain artifact cache gate: {failure}")
     if args.require_latest_gpu_telemetry_valid or _gpu_thermal_threshold_requested(args):
         thermal_gate = _dict(report.get("gpu_thermal_gate"))
         for failure in thermal_gate.get("failures", []):
             failures.append(f"gpu thermal gate: {failure}")
+    if _raw_baseline_proof_threshold_requested(args):
+        raw_proof_gate = _dict(report.get("raw_baseline_proof_gate"))
+        for failure in raw_proof_gate.get("failures", []):
+            failures.append(f"raw baseline proof gate: {failure}")
     if _freshness_threshold_requested(args):
         freshness_gate = _dict(report.get("freshness_gate"))
         for failure in freshness_gate.get("failures", []):
@@ -1550,6 +2705,10 @@ def _print_report(report: dict[str, Any]) -> None:
             hold_gpu = _dict(latest_production.get("stationary_hold_gpu"))
             movement = _dict(latest_production.get("moving_entry"))
             movement_gpu = _dict(latest_production.get("moving_entry_gpu"))
+            startup = _dict(latest_production.get("startup_readiness_verdict"))
+            world_bake = _dict(latest_production.get("world_bake_proof"))
+            runtime_idle = _dict(latest_production.get("stationary_runtime_idle_verdict"))
+            artifact_cache = _dict(latest_production.get("stationary_terrain_artifact_cache_verdict"))
             idle_phase_name, idle_gpu = _select_idle_gpu_phase(latest_production)
             terrain = _dict(latest_production.get("terrain"))
             render_features = _dict(latest_production.get("render_features"))
@@ -1615,6 +2774,65 @@ def _print_report(report: dict[str, Any]) -> None:
                     temp_peak=_float(idle_gpu.get("max_temp_c")),
                     p0=_float(idle_gpu.get("p0_fraction")),
                     preflight=_float(machine.get("preflight_raw_gpu_power_median_w")),
+                )
+            )
+            print(
+                "  Startup readiness: available={available} completed={completed} coordinator={coordinator} "
+                "stages={stages}/{expected} progress={progress:.1f}% elapsed={elapsed:.1f}ms "
+                "max_stage={max_stage:.1f}ms trace={trace} current={current_stage} "
+                "stage_progress={stage_progress:.1f}% detail={stage_detail}".format(
+                    available=bool(startup.get("available", False)),
+                    completed=bool(startup.get("completed", False)),
+                    coordinator=bool(startup.get("startup_coordinator_available", False)),
+                    stages=_int(startup.get("completed_stage_count")),
+                    expected=len(STARTUP_PROOF_STAGE_IDS),
+                    progress=_float(startup.get("progress_percent")),
+                    elapsed=_float(startup.get("elapsed_ms")),
+                    max_stage=_float(startup.get("max_stage_duration_ms")),
+                    trace=_int(startup.get("trace_event_count")),
+                    current_stage=str(startup.get("current_stage_id", "")) or "unknown",
+                    stage_progress=_float(startup.get("current_stage_progress_percent")),
+                    stage_detail=str(startup.get("stage_detail_text", "")) or str(startup.get("current_stage_label", "")) or "n/a",
+                )
+            )
+            print(
+                "  World bake: available={available} success={success} backend={backend} layers={layers}/{expected_layers} "
+                "gen={gen:.1f}ms save={save:.1f}ms hash={hash_ms:.1f}ms "
+                "sig={signature} export_sig={export_signature}".format(
+                    available=bool(world_bake.get("available", False)),
+                    success=bool(world_bake.get("success", False)),
+                    backend=str(world_bake.get("height_biome_backend", "")) or "unknown",
+                    layers=_int(world_bake.get("baked_layer_count")),
+                    expected_layers=_int(world_bake.get("expected_baked_layer_count")),
+                    gen=_float(world_bake.get("generation_total_ms")),
+                    save=_float(world_bake.get("save_total_ms")),
+                    hash_ms=_float(world_bake.get("total_hash_ms")),
+                    signature=str(world_bake.get("content_signature", ""))[:12],
+                    export_signature=str(world_bake.get("export_cache_signature", ""))[:12],
+                )
+            )
+            print(
+                "  Runtime idle: samples={samples} idle_ratio={idle_ratio:.3f} "
+                "max_pending={pending:.1f} max_awake={awake:.1f} busy={busy}".format(
+                    samples=_int(runtime_idle.get("monitor_available_samples")),
+                    idle_ratio=_float(runtime_idle.get("idle_sample_ratio")),
+                    pending=_float(runtime_idle.get("max_pending_work")),
+                    awake=_float(runtime_idle.get("max_awake_process_count")),
+                    busy=_int(runtime_idle.get("busy_samples")),
+                )
+            )
+            print(
+                "  Terrain artifact cache: samples={samples} end_hit={hit:.3f} "
+                "entries={entries:.0f} budget_max={budget:.3f} evict_delta={evict:.0f} "
+                "disk_delta={disk_delta:.0f} disk_budget_max={disk_budget:.3f} disk_evict_delta={disk_evict:.0f}".format(
+                    samples=_int(artifact_cache.get("monitor_available_samples")),
+                    hit=_float(artifact_cache.get("end_hit_ratio")),
+                    entries=_float(artifact_cache.get("end_entries")),
+                    budget=_float(artifact_cache.get("max_byte_budget_ratio")),
+                    evict=_float(artifact_cache.get("eviction_delta")),
+                    disk_delta=_float(artifact_cache.get("disk_hit_delta")),
+                    disk_budget=_float(artifact_cache.get("disk_max_byte_budget_ratio")),
+                    disk_evict=_float(artifact_cache.get("disk_eviction_delta")),
                 )
             )
             print(
@@ -1881,8 +3099,14 @@ def _print_report(report: dict[str, Any]) -> None:
                 hold = _dict(run.get("stationary_hold_gpu"))
                 if not _has_samples(hold):
                     hold = _dict(run.get("estimated_hold_gpu"))
+                startup = _dict(run.get("startup_readiness_verdict"))
+                world_bake = _dict(run.get("world_bake_proof"))
+                runtime_idle = _dict(run.get("stationary_runtime_idle_verdict"))
+                artifact_cache = _dict(run.get("stationary_terrain_artifact_cache_verdict"))
                 print(
-                    "    {case}#{repeat} rc={returncode} samples={samples} power={power:.1f}W temp={temp:.1f}/{peak:.1f}C failures={failures}".format(
+                    "    {case}#{repeat} rc={returncode} samples={samples} power={power:.1f}W temp={temp:.1f}/{peak:.1f}C "
+                    "startup={startup}/{stage_ms:.0f}ms bake={bake}/{bake_ms:.0f}ms/{backend} "
+                    "idle={idle:.3f} cache_hit={hit:.3f} cache_budget={budget:.3f} evict={evict:.0f} failures={failures}".format(
                         case=str(run.get("case", "")),
                         repeat=_int(run.get("repeat_index")),
                         returncode=_int(run.get("returncode"), -1),
@@ -1890,6 +3114,15 @@ def _print_report(report: dict[str, Any]) -> None:
                         power=_float(hold.get("avg_power_w")),
                         temp=_float(hold.get("avg_temp_c")),
                         peak=_float(hold.get("max_temp_c")),
+                        startup="ok" if bool(startup.get("completed", False)) else "no",
+                        stage_ms=_float(startup.get("max_stage_duration_ms")),
+                        bake="ok" if bool(world_bake.get("success", False)) else "no",
+                        bake_ms=_float(world_bake.get("generation_total_ms")),
+                        backend=str(world_bake.get("height_biome_backend", "")) or "unknown",
+                        idle=_float(runtime_idle.get("idle_sample_ratio")),
+                        hit=_float(artifact_cache.get("end_hit_ratio")),
+                        budget=_float(artifact_cache.get("max_byte_budget_ratio")),
+                        evict=_float(artifact_cache.get("eviction_delta")),
                         failures=len(_list(run.get("failure_reasons"))),
                     )
                 )
@@ -1905,6 +3138,31 @@ def _print_report(report: dict[str, Any]) -> None:
                     power=_float(observed.get("max_hold_avg_power_w")),
                     temp=_float(observed.get("max_hold_avg_temp_c")),
                     peak=_float(observed.get("max_hold_peak_temp_c")),
+                )
+            )
+        raw_proof_gate = _dict(report.get("raw_baseline_proof_gate"))
+        if raw_proof_gate:
+            observed = _dict(raw_proof_gate.get("observed"))
+            print(
+                "Raw baseline proof gate: enforced={enforced} passed={passed} proof_runs={proof_runs} "
+                "startup_runs={startup_runs} startup_elapsed_max={startup_elapsed:.1f} startup_stage_max={startup_stage:.1f} "
+                "bake_runs={bake_runs} bake_max={bake_ms:.1f} bake_hash_max={bake_hash:.1f} "
+                "idle_min={idle:.3f} busy_max={busy:.0f} cache_hit_min={hit:.3f} "
+                "cache_budget_max={budget:.3f} evict_max={evict:.0f}".format(
+                    enforced=bool(raw_proof_gate.get("enforced", False)),
+                    passed=bool(raw_proof_gate.get("passed", False)),
+                    proof_runs=_int(observed.get("proof_run_count")),
+                    startup_runs=_int(observed.get("startup_proof_run_count")),
+                    startup_elapsed=_float(observed.get("max_startup_elapsed_ms")),
+                    startup_stage=_float(observed.get("max_startup_stage_ms")),
+                    bake_runs=_int(observed.get("world_bake_proof_run_count")),
+                    bake_ms=_float(observed.get("max_world_bake_generation_ms")),
+                    bake_hash=_float(observed.get("max_world_bake_hash_ms")),
+                    idle=_float(observed.get("min_runtime_idle_ratio")),
+                    busy=_float(observed.get("max_runtime_busy_samples")),
+                    hit=_float(observed.get("min_artifact_cache_hit_ratio")),
+                    budget=_float(observed.get("max_artifact_cache_byte_budget_ratio")),
+                    evict=_float(observed.get("max_artifact_cache_eviction_delta")),
                 )
             )
     freshness_gate = _dict(report.get("freshness_gate"))
@@ -1996,10 +3254,52 @@ def main() -> int:
     parser.add_argument("--max-latest-production-idle-gpu-peak-power-w", type=float, default=None)
     parser.add_argument("--max-latest-production-idle-gpu-peak-temp-c", type=float, default=None)
     parser.add_argument("--max-latest-production-idle-gpu-p0-fraction", type=float, default=None)
+    parser.add_argument("--require-latest-production-startup-readiness", action="store_true")
+    parser.add_argument("--min-latest-production-startup-completed-stages", type=int, default=len(STARTUP_PROOF_STAGE_IDS))
+    parser.add_argument("--max-latest-production-startup-elapsed-ms", type=float, default=None)
+    parser.add_argument("--max-latest-production-startup-stage-ms", type=float, default=None)
+    parser.add_argument("--min-latest-production-startup-trace-events", type=float, default=None)
+    parser.add_argument("--require-latest-production-world-bake-proof", action="store_true")
+    parser.add_argument("--require-latest-production-world-bake-export-signature", action="store_true")
+    parser.add_argument("--require-latest-production-world-bake-height-biome-backend", default="")
+    parser.add_argument("--min-latest-production-world-bake-layers", type=int, default=5)
+    parser.add_argument("--max-latest-production-world-bake-ms", type=float, default=None)
+    parser.add_argument("--max-latest-production-world-bake-hash-ms", type=float, default=None)
+    parser.add_argument("--max-latest-production-world-bake-unaccounted-ms", type=float, default=None)
+    parser.add_argument("--require-latest-production-runtime-idle", action="store_true")
+    parser.add_argument("--min-latest-production-runtime-idle-samples", type=int, default=1)
+    parser.add_argument("--min-latest-production-runtime-idle-ratio", type=float, default=None)
+    parser.add_argument("--max-latest-production-runtime-pending-work", type=float, default=None)
+    parser.add_argument("--max-latest-production-runtime-awake-process-count", type=float, default=None)
+    parser.add_argument("--require-latest-production-terrain-artifact-cache-samples", action="store_true")
+    parser.add_argument("--min-latest-production-terrain-artifact-cache-samples", type=int, default=1)
+    parser.add_argument("--min-latest-production-terrain-artifact-cache-hit-ratio", type=float, default=None)
+    parser.add_argument("--min-latest-production-terrain-artifact-cache-disk-hit-delta", type=float, default=None)
+    parser.add_argument("--max-latest-production-terrain-artifact-cache-byte-budget-ratio", type=float, default=None)
+    parser.add_argument("--max-latest-production-terrain-artifact-cache-eviction-delta", type=float, default=None)
+    parser.add_argument("--max-latest-production-terrain-artifact-disk-cache-byte-budget-ratio", type=float, default=None)
+    parser.add_argument("--max-latest-production-terrain-artifact-disk-cache-eviction-delta", type=float, default=None)
     parser.add_argument("--require-latest-gpu-telemetry-valid", action="store_true")
     parser.add_argument("--max-latest-gpu-hold-avg-power-w", type=float, default=None)
     parser.add_argument("--max-latest-gpu-hold-avg-temp-c", type=float, default=None)
     parser.add_argument("--max-latest-gpu-hold-peak-temp-c", type=float, default=None)
+    parser.add_argument("--require-latest-raw-baseline-startup-readiness-proof", action="store_true")
+    parser.add_argument("--max-latest-raw-baseline-startup-elapsed-ms", type=float, default=None)
+    parser.add_argument("--max-latest-raw-baseline-startup-stage-ms", type=float, default=None)
+    parser.add_argument("--require-latest-raw-baseline-world-bake-proof", action="store_true")
+    parser.add_argument("--require-latest-raw-baseline-world-bake-export-signature", action="store_true")
+    parser.add_argument("--require-latest-raw-baseline-world-bake-height-biome-backend", default="")
+    parser.add_argument("--min-latest-raw-baseline-world-bake-layers", type=int, default=5)
+    parser.add_argument("--max-latest-raw-baseline-world-bake-ms", type=float, default=None)
+    parser.add_argument("--max-latest-raw-baseline-world-bake-hash-ms", type=float, default=None)
+    parser.add_argument("--max-latest-raw-baseline-world-bake-unaccounted-ms", type=float, default=None)
+    parser.add_argument("--require-latest-raw-baseline-runtime-idle-proof", action="store_true")
+    parser.add_argument("--min-latest-raw-baseline-runtime-idle-ratio", type=float, default=None)
+    parser.add_argument("--max-latest-raw-baseline-runtime-busy-samples", type=float, default=None)
+    parser.add_argument("--require-latest-raw-baseline-terrain-artifact-cache-proof", action="store_true")
+    parser.add_argument("--min-latest-raw-baseline-terrain-artifact-cache-hit-ratio", type=float, default=None)
+    parser.add_argument("--max-latest-raw-baseline-terrain-artifact-cache-byte-budget-ratio", type=float, default=None)
+    parser.add_argument("--max-latest-raw-baseline-terrain-artifact-cache-eviction-delta", type=float, default=None)
     parser.add_argument("--max-latest-production-town-age-hours", type=float, default=None)
     parser.add_argument("--max-latest-procedural-age-hours", type=float, default=None)
     parser.add_argument("--max-latest-gpu-telemetry-age-hours", type=float, default=None)

@@ -43,10 +43,15 @@ func _run() -> int:
 		"terrain_artifact_cache": {
 			"entry_count": 4,
 			"total_bytes": 2048,
-			"hit_ratio": 0.75
+			"byte_budget_used_ratio": 0.5,
+			"hit_ratio": 0.75,
+			"eviction_count": 2
 		},
 		"terrain_artifact_disk_cache": {
-			"hit_count": 3
+			"hit_count": 3,
+			"last_signature_bytes": 4096,
+			"last_signature_byte_budget_used_ratio": 0.25,
+			"eviction_count": 1
 		},
 		"terrain_artifact_disk_write_queue": {
 			"pending_bytes": 512,
@@ -114,9 +119,19 @@ func _run() -> int:
 		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactCache/Bytes"), 2048.0), "terrain memory cache bytes should come from nested telemetry"):
 		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactCache/ByteBudgetRatio"), 0.5), "terrain memory cache budget ratio should come from nested telemetry"):
+		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactCache/HitRatio"), 0.75), "terrain cache hit ratio should come from nested telemetry"):
 		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactCache/Evictions"), 2.0), "terrain memory cache evictions should come from nested telemetry"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactDiskCache/Bytes"), 4096.0), "terrain disk cache bytes should come from nested telemetry"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactDiskCache/ByteBudgetRatio"), 0.25), "terrain disk cache budget ratio should come from nested telemetry"):
+		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactCache/DiskHits"), 3.0), "terrain disk cache hits should come from nested telemetry"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactDiskCache/Evictions"), 1.0), "terrain disk cache evictions should come from nested telemetry"):
 		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactDiskWriteQueue/PendingBytes"), 512.0), "disk writer pending bytes should be cached"):
 		return _cleanup_and_fail(monitor, fake_nodes)
@@ -138,6 +153,27 @@ func _run() -> int:
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/AwakeProcessCount"), 5.0), "awake process count should aggregate awake runtime managers"):
 		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/Idle"), 0.0), "busy runtime should not report idle"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+
+	for node in fake_nodes:
+		if node is SnapshotNode:
+			if node.is_in_group("entity_manager"):
+				(node as SnapshotNode).snapshot = {
+					"physics_process_enabled": false,
+					"entity_maintenance_timer_active": false,
+					"pending_spawns": 72,
+					"deferred_spawn_chunks": 187,
+					"deferred_spawn_plans": 402,
+					"startup_pending_total": 0,
+					"background_spawn_backlog": 661,
+					"spawn_queue_background_only": true
+				}
+			else:
+				(node as SnapshotNode).snapshot = {}
+	monitor._refresh_cached_values()
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/PendingWork"), 0.0), "background-only entity backlog should not count as active runtime pending work"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/Idle"), 1.0), "background-only entity backlog should still allow idle verdict"):
 		return _cleanup_and_fail(monitor, fake_nodes)
 
 	for node in fake_nodes:

@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include <godot_cpp/classes/fast_noise_lite.hpp>
 #include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/callable.hpp>
@@ -19,6 +18,8 @@
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+
+#include "../../addons/third_party/fast_noise_lite/FastNoiseLite.h"
 
 namespace godot {
 
@@ -1442,20 +1443,20 @@ Dictionary PrefabGeometryNative::build_world_map_height_biome_bytes(
 		return result;
 	}
 
-	Ref<FastNoiseLite> height_noise;
-	height_noise.instantiate();
-	height_noise->set_seed(world_seed);
-	height_noise->set_noise_type(FastNoiseLite::TYPE_VALUE);
-	height_noise->set_frequency(static_cast<float>(noise_frequency));
+	fastnoiselite::FastNoiseLite height_noise(world_seed);
+	height_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_Value);
+	height_noise.SetFrequency(static_cast<float>(noise_frequency));
+	height_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_FBm);
+	height_noise.SetFractalOctaves(5);
+	height_noise.SetFractalLacunarity(2.0f);
+	height_noise.SetFractalGain(0.5f);
 
-	Ref<FastNoiseLite> biome_noise;
-	biome_noise.instantiate();
-	biome_noise->set_seed(world_seed + 100);
-	biome_noise->set_noise_type(FastNoiseLite::TYPE_SIMPLEX);
-	biome_noise->set_frequency(0.002f);
-	biome_noise->set_fractal_type(FastNoiseLite::FRACTAL_FBM);
-	biome_noise->set_fractal_octaves(3);
-	biome_noise->set_fractal_gain(0.5f);
+	fastnoiselite::FastNoiseLite biome_noise(world_seed + 100);
+	biome_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_OpenSimplex2);
+	biome_noise.SetFrequency(0.002f);
+	biome_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_FBm);
+	biome_noise.SetFractalOctaves(3);
+	biome_noise.SetFractalGain(0.5f);
 
 	PackedByteArray height_bytes;
 	height_bytes.resize(static_cast<int>(total));
@@ -1472,13 +1473,13 @@ Dictionary PrefabGeometryNative::build_world_map_height_biome_bytes(
 		for (int x = 0; x < map_size; ++x) {
 			const float world_x = static_cast<float>(double(x) * sample_scale - half_world_size);
 			const int index = row_offset + x;
-			const double height_raw = static_cast<double>(height_noise->get_noise_2d(world_x, world_z));
+			const double height_raw = static_cast<double>(height_noise.GetNoise(world_x, world_z));
 			const double height = terrain_height + (height_raw * 0.5 + 0.5) * terrain_height;
 			const double normalized_height = std::clamp(height / max_height, 0.0, 1.0);
 			const int encoded_height = static_cast<int>(std::round(normalized_height * 255.0));
 			height_write[index] = static_cast<uint8_t>(std::clamp(encoded_height, 0, 255));
 
-			const double biome_value = static_cast<double>(biome_noise->get_noise_2d(world_x, world_z));
+			const double biome_value = static_cast<double>(biome_noise.GetNoise(world_x, world_z));
 			int biome = grass_material_id;
 			if (biome_value < -0.2) {
 				biome = sand_material_id;

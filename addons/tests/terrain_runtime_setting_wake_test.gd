@@ -69,10 +69,55 @@ func _run() -> int:
 	if not _expect(int(manager._terrain_runtime_setting_change_count) == 2, "unchanged collision distance should not emit a setting event"):
 		return _cleanup_and_fail(manager)
 
-	var telemetry: Dictionary = manager.get_telemetry_snapshot()
-	if not _expect(int(telemetry.get("terrain_runtime_setting_change_count", 0)) == 2, "telemetry should expose runtime setting change count"):
+	manager.terrain_artifact_cache_memory_budget_mb = 1
+	manager.terrain_artifact_cache_entry_limit = 4
+	manager._sync_terrain_artifact_cache_configuration()
+	manager._refresh_terrain_artifact_settings_signature()
+	var original_signature := str(manager._terrain_artifact_settings_signature)
+	if not _expect(_store_test_artifact(manager, Vector3i(5, 0, 5), original_signature), "test artifact should store before signed setting change"):
 		return _cleanup_and_fail(manager)
-	if not _expect(str(telemetry.get("last_terrain_runtime_setting_changed", "")) == "collision_distance", "telemetry should expose last setting name"):
+	if not _expect(int(manager._terrain_artifact_cache.get_snapshot().get("entry_count", 0)) == 1, "test artifact should be present before signed setting change"):
+		return _cleanup_and_fail(manager)
+	_inject_pending_disk_write(manager, Vector3i(5, 0, 5), original_signature)
+	if not _expect(int(manager._terrain_artifact_disk_write_queue.get_snapshot().get("pending_entries", 0)) == 1, "test disk write should be pending before signed setting change"):
+		return _cleanup_and_fail(manager)
+
+	manager.set_terrain_height(12.5, false)
+	if not _expect(str(manager._last_terrain_runtime_setting_changed) == "terrain_height", "terrain height setter should record setting telemetry"):
+		return _cleanup_and_fail(manager)
+	if not _expect(str(manager._terrain_process_last_wake_reason) == "terrain_setting_changed_terrain_height", "terrain height setter should wake terrain"):
+		return _cleanup_and_fail(manager)
+	if not _expect(str(manager._terrain_artifact_settings_signature) != original_signature, "terrain height setter should refresh artifact signature"):
+		return _cleanup_and_fail(manager)
+	if not _expect(int(manager._terrain_artifact_cache.get_snapshot().get("entry_count", 0)) == 0, "signed setting change should clear stale session artifacts"):
+		return _cleanup_and_fail(manager)
+	var disk_write_snapshot: Dictionary = manager._terrain_artifact_disk_write_queue.get_snapshot()
+	if not _expect(int(disk_write_snapshot.get("pending_entries", 0)) == 0, "signed setting change should clear pending disk artifact writes"):
+		return _cleanup_and_fail(manager)
+	var disk_write_drop_reasons: Dictionary = disk_write_snapshot.get("drop_reasons", {})
+	if not _expect(int(disk_write_drop_reasons.get("settings_changed", 0)) == 1, "signed setting change should report stale disk write drop reason"):
+		return _cleanup_and_fail(manager)
+
+	var previous_change_count := int(manager._terrain_runtime_setting_change_count)
+	manager.set_terrain_height(12.5, false)
+	if not _expect(int(manager._terrain_runtime_setting_change_count) == previous_change_count, "unchanged terrain height should not emit a setting event"):
+		return _cleanup_and_fail(manager)
+
+	manager.set_water_level(14.0, false)
+	manager.set_noise_frequency(0.2, false)
+	manager.set_procedural_roads_enabled(false, false)
+	manager.set_procedural_road_wide_shoulders(true, false)
+	manager.set_procedural_road_spacing(120.0, false)
+	manager.set_procedural_road_width(10.0, false)
+	if not _expect(int(manager._terrain_runtime_setting_change_count) == previous_change_count + 6, "signed generation setters should each emit one setting event"):
+		return _cleanup_and_fail(manager)
+	if not _expect(str(manager._last_terrain_runtime_setting_changed) == "procedural_road_width", "last signed setting should be tracked"):
+		return _cleanup_and_fail(manager)
+
+	var telemetry: Dictionary = manager.get_telemetry_snapshot()
+	if not _expect(int(telemetry.get("terrain_runtime_setting_change_count", 0)) == previous_change_count + 6, "telemetry should expose runtime setting change count"):
+		return _cleanup_and_fail(manager)
+	if not _expect(str(telemetry.get("last_terrain_runtime_setting_changed", "")) == "procedural_road_width", "telemetry should expose last setting name"):
 		return _cleanup_and_fail(manager)
 
 	_cleanup(manager)
@@ -99,6 +144,31 @@ func _populate_active_chunk_disk(manager: Node, radius: int) -> void:
 		for z in range(-radius, radius + 1):
 			if x * x + z * z <= radius_sq:
 				manager.active_chunks[Vector3i(x, 0, z)] = ChunkManagerScript.ChunkData.new()
+
+
+func _store_test_artifact(manager: Node, coord: Vector3i, signature: String) -> bool:
+	return manager._terrain_artifact_cache.store(coord, {
+		"settings_signature": signature,
+		"stored_mod_version": 0,
+		"byte_size": 64
+	})
+
+
+func _inject_pending_disk_write(manager: Node, coord: Vector3i, signature: String) -> void:
+	var key := "test|%s|%d|%d|%d" % [signature.sha256_text(), coord.x, coord.y, coord.z]
+	manager._terrain_artifact_disk_write_queue._pending_by_key[key] = {
+		"coord": coord,
+		"settings_signature": signature,
+		"artifact": {
+			"settings_signature": signature,
+			"stored_mod_version": 0,
+			"byte_size": 64
+		},
+		"byte_size": 64,
+		"queued_at_usec": Time.get_ticks_usec()
+	}
+	manager._terrain_artifact_disk_write_queue._pending_order.append(key)
+	manager._terrain_artifact_disk_write_queue._pending_bytes += 64
 
 
 func _expect(condition: bool, message: String) -> bool:

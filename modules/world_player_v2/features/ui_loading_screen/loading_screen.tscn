@@ -10,7 +10,7 @@ script = ExtResource("1_script")
 offset_left = 20.0
 offset_top = 20.0
 offset_right = 320.0
-offset_bottom = 124.0
+offset_bottom = 148.0
 
 
 [node name="VBox" type="VBoxContainer" parent="Panel" unique_id=875743496]
@@ -30,6 +30,12 @@ layout_mode = 2
 layout_mode = 2
 theme_override_font_sizes/font_size = 12
 text = "Initializing..."
+horizontal_alignment = 1
+
+[node name="StageDetailLabel" type="Label" parent="Panel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 11
+text = "Loading save data 0%"
 horizontal_alignment = 1
 
 [node name="ElapsedTimeLabel" type="Label" parent="Panel/VBox"]

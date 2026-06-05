@@ -44,6 +44,13 @@ RAW_GPU_QUERY_FIELDS = [
     "memory.used",
     "memory.total",
 ]
+STARTUP_PROOF_STAGE_IDS = [
+    "save_load",
+    "terrain",
+    "world_content",
+    "vegetation",
+    "complete",
+]
 
 
 def _runtime_mode_label() -> str:
@@ -126,6 +133,24 @@ def _float_from_env(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _optional_float_from_env(name: str) -> Optional[float]:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _bool_from_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _parse_optional_float(value: Any) -> Optional[float]:
@@ -902,6 +927,63 @@ def _collect_idle_state_samples(delay_seconds: float, sample_count: int, interva
     return samples
 
 
+def _collect_preflight_idle_until_clean(
+    sample_count: int,
+    interval_seconds: float,
+    retry_timeout_seconds: float,
+    retry_poll_seconds: float,
+) -> tuple[list[dict], list[str], dict]:
+    started = time.time()
+    deadline = started + max(0.0, retry_timeout_seconds)
+    retry_enabled = retry_timeout_seconds > 0.0
+    retry_poll_seconds = max(1.0, retry_poll_seconds)
+    attempts: list[dict] = []
+
+    while True:
+        attempt_started = time.time()
+        samples = _collect_idle_state_samples(0.0, sample_count, interval_seconds)
+        summary = _summarize_preflight_idle_samples(samples)
+        reasons = _preflight_contamination_reasons_for_idle_samples(samples)
+        attempts.append({
+            "attempt": len(attempts) + 1,
+            "started_at_epoch": attempt_started,
+            "ended_at_epoch": time.time(),
+            "duration_s": time.time() - attempt_started,
+            "summary": summary,
+            "reasons": reasons,
+            "clean": not reasons,
+        })
+        if not reasons:
+            return samples, reasons, {
+                "enabled": retry_enabled,
+                "timeout_seconds": retry_timeout_seconds,
+                "poll_seconds": retry_poll_seconds,
+                "attempt_count": len(attempts),
+                "attempts": attempts,
+                "selected_attempt": len(attempts),
+                "clean": True,
+                "duration_s": time.time() - started,
+            }
+
+        print(f"Preflight idle contaminated: {', '.join(reasons)}")
+        if not retry_enabled or time.time() >= deadline:
+            return samples, reasons, {
+                "enabled": retry_enabled,
+                "timeout_seconds": retry_timeout_seconds,
+                "poll_seconds": retry_poll_seconds,
+                "attempt_count": len(attempts),
+                "attempts": attempts,
+                "selected_attempt": len(attempts),
+                "clean": False,
+                "duration_s": time.time() - started,
+            }
+
+        sleep_seconds = min(retry_poll_seconds, max(0.0, deadline - time.time()))
+        print(f"Retrying town preflight idle in {sleep_seconds:.1f}s")
+        if sleep_seconds > 0.0:
+            time.sleep(sleep_seconds)
+
+
 def _idle_state_contamination_reasons(samples: list[dict]) -> list[str]:
     return _preflight_contamination_reasons_for_idle_samples(samples)
 
@@ -1575,7 +1657,708 @@ def _print_snapshot_summary(snapshot_path: Path) -> None:
                     watts=entry.get("avg_power_w", 0.0),
                 )
             )
+    _print_snapshot_proof_summary(data)
     print("=" * 50)
+
+
+def _as_dict(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _int_value(value: Any, default: int = 0) -> int:
+    parsed = _parse_optional_float(value)
+    if parsed is None:
+        return default
+    return int(parsed)
+
+
+def _float_value(value: Any, default: float = 0.0) -> float:
+    parsed = _parse_optional_float(value)
+    if parsed is None:
+        return default
+    return float(parsed)
+
+
+def _stationary_runtime_idle_verdict_from_snapshot(data: dict) -> dict:
+    direct = _as_dict(data.get("stationary_runtime_idle_verdict"))
+    stationary_hold = _as_dict(data.get("stationary_hold_window"))
+    sample_count = _int_value(
+        direct.get("monitor_available_samples", stationary_hold.get("world_runtime_monitor_available_samples"))
+    )
+    idle_samples = _int_value(direct.get("idle_samples", stationary_hold.get("world_runtime_idle_samples")))
+    busy_samples = _int_value(direct.get("busy_samples", stationary_hold.get("world_runtime_busy_samples")))
+    return {
+        "available": sample_count > 0,
+        "monitor_available_samples": sample_count,
+        "idle_samples": idle_samples,
+        "busy_samples": busy_samples,
+        "idle_sample_ratio": _float_value(
+            direct.get("idle_sample_ratio", stationary_hold.get("world_runtime_idle_sample_ratio"))
+        ),
+        "max_pending_work": _float_value(
+            direct.get("max_pending_work", stationary_hold.get("max_world_runtime_pending_work"))
+        ),
+        "max_awake_process_count": _float_value(
+            direct.get("max_awake_process_count", stationary_hold.get("max_world_runtime_awake_process_count"))
+        ),
+    }
+
+
+def _stationary_terrain_artifact_cache_verdict_from_snapshot(data: dict) -> dict:
+    direct = _as_dict(data.get("stationary_terrain_artifact_cache_verdict"))
+    stationary_hold = _as_dict(data.get("stationary_hold_window"))
+    sample_count = _int_value(
+        direct.get("monitor_available_samples", stationary_hold.get("world_runtime_monitor_available_samples"))
+    )
+    return {
+        "available": sample_count > 0,
+        "monitor_available_samples": sample_count,
+        "avg_hit_ratio": _float_value(
+            direct.get("avg_hit_ratio", stationary_hold.get("avg_terrain_artifact_cache_hit_ratio"))
+        ),
+        "end_hit_ratio": _float_value(
+            direct.get("end_hit_ratio", stationary_hold.get("end_terrain_artifact_cache_hit_ratio"))
+        ),
+        "max_entries": _float_value(direct.get("max_entries", stationary_hold.get("max_terrain_artifact_cache_entries"))),
+        "end_entries": _float_value(direct.get("end_entries", stationary_hold.get("end_terrain_artifact_cache_entries"))),
+        "max_bytes": _float_value(direct.get("max_bytes", stationary_hold.get("max_terrain_artifact_cache_bytes"))),
+        "end_bytes": _float_value(direct.get("end_bytes", stationary_hold.get("end_terrain_artifact_cache_bytes"))),
+        "max_byte_budget_ratio": _float_value(
+            direct.get("max_byte_budget_ratio", stationary_hold.get("max_terrain_artifact_cache_byte_budget_ratio"))
+        ),
+        "end_byte_budget_ratio": _float_value(
+            direct.get("end_byte_budget_ratio", stationary_hold.get("end_terrain_artifact_cache_byte_budget_ratio"))
+        ),
+        "eviction_delta": _float_value(
+            direct.get("eviction_delta", stationary_hold.get("terrain_artifact_cache_eviction_delta"))
+        ),
+        "disk_hit_delta": _float_value(
+            direct.get("disk_hit_delta", stationary_hold.get("terrain_artifact_cache_disk_hit_delta"))
+        ),
+        "disk_max_bytes": _float_value(
+            direct.get("disk_max_bytes", stationary_hold.get("max_terrain_artifact_disk_cache_bytes"))
+        ),
+        "disk_end_bytes": _float_value(
+            direct.get("disk_end_bytes", stationary_hold.get("end_terrain_artifact_disk_cache_bytes"))
+        ),
+        "disk_max_byte_budget_ratio": _float_value(
+            direct.get("disk_max_byte_budget_ratio", stationary_hold.get("max_terrain_artifact_disk_cache_byte_budget_ratio"))
+        ),
+        "disk_end_byte_budget_ratio": _float_value(
+            direct.get("disk_end_byte_budget_ratio", stationary_hold.get("end_terrain_artifact_disk_cache_byte_budget_ratio"))
+        ),
+        "disk_eviction_delta": _float_value(
+            direct.get("disk_eviction_delta", stationary_hold.get("terrain_artifact_disk_cache_eviction_delta"))
+        ),
+    }
+
+
+def _stage_duration_ms_from_snapshot(stage_state: dict) -> float:
+    started_usec = _int_value(stage_state.get("started_usec"))
+    completed_usec = _int_value(stage_state.get("completed_usec"))
+    if started_usec <= 0 or completed_usec <= started_usec:
+        return 0.0
+    return float(completed_usec - started_usec) / 1000.0
+
+
+def _startup_stage_summary_from_snapshot(coordinator: dict) -> dict:
+    stage_states = _as_dict(coordinator.get("stage_states"))
+    if not stage_states:
+        return {
+            "stage_count": 0,
+            "completed_stage_count": 0,
+            "incomplete_stage_count": len(STARTUP_PROOF_STAGE_IDS),
+            "missing_stage_count": len(STARTUP_PROOF_STAGE_IDS),
+            "max_stage_duration_ms": 0.0,
+            "slowest_stage_id": "",
+        }
+
+    completed_count = 0
+    incomplete_count = 0
+    missing_count = 0
+    max_duration_ms = 0.0
+    slowest_stage_id = ""
+    for stage_id in STARTUP_PROOF_STAGE_IDS:
+        stage_state = _as_dict(stage_states.get(stage_id))
+        if not stage_state:
+            missing_count += 1
+            incomplete_count += 1
+            continue
+        if bool(stage_state.get("completed", False)):
+            completed_count += 1
+        else:
+            incomplete_count += 1
+        duration_ms = _stage_duration_ms_from_snapshot(stage_state)
+        if duration_ms > max_duration_ms:
+            max_duration_ms = duration_ms
+            slowest_stage_id = stage_id
+
+    return {
+        "stage_count": len(stage_states),
+        "completed_stage_count": completed_count,
+        "incomplete_stage_count": incomplete_count,
+        "missing_stage_count": missing_count,
+        "max_stage_duration_ms": max_duration_ms,
+        "slowest_stage_id": slowest_stage_id,
+    }
+
+
+def _startup_readiness_verdict_from_snapshot(data: dict) -> dict:
+    direct = _as_dict(data.get("startup_readiness_verdict"))
+    if direct:
+        return {
+            "available": bool(direct.get("available", False)),
+            "completed": bool(direct.get("completed", False)),
+            "loading_screen_available": bool(direct.get("loading_screen_available", False)),
+            "startup_coordinator_available": bool(direct.get("startup_coordinator_available", False)),
+            "loading_active": bool(direct.get("loading_active", False)),
+            "failed": bool(direct.get("failed", False)),
+            "cancelled": bool(direct.get("cancelled", False)),
+            "playable_ready": bool(direct.get("playable_ready", False)),
+            "world_monitor_completed": bool(direct.get("world_monitor_completed", False)),
+            "progress_percent": _float_value(direct.get("progress_percent")),
+            "elapsed_ms": _float_value(direct.get("elapsed_ms")),
+            "completed_stage_count": _int_value(direct.get("completed_stage_count")),
+            "incomplete_stage_count": _int_value(direct.get("incomplete_stage_count")),
+            "missing_stage_count": _int_value(direct.get("missing_stage_count")),
+            "max_stage_duration_ms": _float_value(direct.get("max_stage_duration_ms")),
+            "trace_event_count": _int_value(direct.get("trace_event_count")),
+            "stage": str(direct.get("stage", "")),
+            "current_stage_id": str(direct.get("current_stage_id", "")),
+            "current_stage_label": str(direct.get("current_stage_label", "")),
+            "current_stage_progress_percent": _float_value(
+                direct.get("current_stage_progress_percent", direct.get("progress_percent"))
+            ),
+            "current_stage_completed": _int_value(direct.get("current_stage_completed")),
+            "current_stage_total": _int_value(direct.get("current_stage_total")),
+            "stage_detail_text": str(direct.get("stage_detail_text", "")),
+            "current_stage_details": _as_dict(direct.get("current_stage_details")),
+            "slowest_stage_id": str(direct.get("slowest_stage_id", "")),
+        }
+
+    system_telemetry = _as_dict(data.get("system_telemetry"))
+    loading_screen = _as_dict(system_telemetry.get("loading_screen"))
+    coordinator = _as_dict(loading_screen.get("startup_coordinator"))
+    stage_summary = _startup_stage_summary_from_snapshot(coordinator)
+    trace = _as_dict(coordinator.get("trace"))
+    loading_screen_available = bool(loading_screen)
+    coordinator_available = bool(coordinator)
+    loading_active = bool(loading_screen.get("is_loading", False))
+    failed = bool(str(loading_screen.get("failure_message", "")))
+    cancelled = bool(str(loading_screen.get("cancellation_message", "")))
+    if coordinator_available:
+        loading_active = loading_active or bool(coordinator.get("active", False)) or bool(coordinator.get("world_monitor_running", False))
+        failed = failed or bool(coordinator.get("failed", False))
+        cancelled = cancelled or bool(coordinator.get("cancelled", False))
+
+    playable_ready = bool(loading_screen.get("terrain_ready_emitted", False))
+    if coordinator_available:
+        playable_ready = bool(coordinator.get("playable_ready", playable_ready))
+    progress_percent = max(
+        _float_value(loading_screen.get("progress_percent")),
+        _float_value(coordinator.get("overall_progress_percent")),
+    )
+    elapsed_ms = _float_value(coordinator.get("elapsed_ms"))
+    if elapsed_ms <= 0.0:
+        elapsed_ms = _float_value(loading_screen.get("elapsed_seconds")) * 1000.0
+    current_stage_label = str(coordinator.get("current_stage_label", loading_screen.get("stage_label", "")))
+    current_stage_progress_percent = max(
+        _float_value(loading_screen.get("stage_progress_percent")),
+        _float_value(coordinator.get("current_stage_progress_percent")),
+    )
+    current_stage_completed = max(
+        _int_value(loading_screen.get("stage_completed")),
+        _int_value(coordinator.get("current_stage_completed")),
+    )
+    current_stage_total = max(
+        _int_value(loading_screen.get("stage_total")),
+        _int_value(coordinator.get("current_stage_total")),
+    )
+    current_stage_details = _as_dict(loading_screen.get("stage_details"))
+    coordinator_stage_details = _as_dict(coordinator.get("current_stage_details"))
+    if coordinator_stage_details:
+        current_stage_details = coordinator_stage_details
+    completed = loading_screen_available and not loading_active and not failed and not cancelled
+    if coordinator_available:
+        completed = (
+            completed
+            and playable_ready
+            and bool(coordinator.get("world_monitor_completed", False))
+            and _int_value(stage_summary.get("incomplete_stage_count")) == 0
+            and _int_value(stage_summary.get("missing_stage_count")) == 0
+        )
+
+    return {
+        "available": loading_screen_available or coordinator_available,
+        "completed": completed,
+        "loading_screen_available": loading_screen_available,
+        "startup_coordinator_available": coordinator_available,
+        "loading_active": loading_active,
+        "failed": failed,
+        "cancelled": cancelled,
+        "playable_ready": playable_ready,
+        "world_monitor_completed": bool(coordinator.get("world_monitor_completed", False)),
+        "progress_percent": progress_percent,
+        "elapsed_ms": elapsed_ms,
+        "completed_stage_count": _int_value(stage_summary.get("completed_stage_count")),
+        "incomplete_stage_count": _int_value(stage_summary.get("incomplete_stage_count")),
+        "missing_stage_count": _int_value(stage_summary.get("missing_stage_count")),
+        "max_stage_duration_ms": _float_value(stage_summary.get("max_stage_duration_ms")),
+        "trace_event_count": _int_value(trace.get("event_count")),
+        "stage": str(loading_screen.get("stage", "")),
+        "current_stage_id": str(coordinator.get("current_stage_id", "")),
+        "current_stage_label": current_stage_label,
+        "current_stage_progress_percent": current_stage_progress_percent,
+        "current_stage_completed": current_stage_completed,
+        "current_stage_total": current_stage_total,
+        "stage_detail_text": str(loading_screen.get("stage_detail_text", "")),
+        "current_stage_details": current_stage_details,
+        "slowest_stage_id": str(stage_summary.get("slowest_stage_id", "")),
+    }
+
+
+def _compact_startup_stage_text(value: Any, max_len: int = 240) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
+def _startup_stage_failure_context(verdict: dict) -> str:
+    stage_id = str(verdict.get("current_stage_id", "") or verdict.get("stage", "") or "unknown")
+    label = _compact_startup_stage_text(verdict.get("current_stage_label", ""))
+    progress = _float_value(verdict.get("current_stage_progress_percent", verdict.get("progress_percent")))
+    completed = _int_value(verdict.get("current_stage_completed"))
+    total = _int_value(verdict.get("current_stage_total"))
+    detail = _compact_startup_stage_text(verdict.get("stage_detail_text", ""))
+    details = _as_dict(verdict.get("current_stage_details"))
+    if not detail and details:
+        message = _compact_startup_stage_text(details.get("message", ""))
+        blocker = _compact_startup_stage_text(details.get("blocking_component", ""))
+        pending = _int_value(details.get("blocking_component_pending"))
+        detail_parts = []
+        if message:
+            detail_parts.append(message)
+        if blocker and pending > 0:
+            detail_parts.append(f"blocked by {blocker} ({pending} pending)")
+        elif blocker:
+            detail_parts.append(f"blocked by {blocker}")
+        detail = "; ".join(detail_parts)
+
+    parts = [f"current={stage_id}"]
+    if label:
+        parts.append(f"label={label}")
+    if progress > 0.0:
+        parts.append(f"progress={progress:.1f}%")
+    if total > 0:
+        parts.append(f"items={completed}/{total}")
+    if detail:
+        parts.append(f"detail={detail}")
+    return "; ".join(parts)
+
+
+def _world_bake_proof_from_snapshot(data: dict) -> dict:
+    direct = _as_dict(data.get("world_bake_proof"))
+    if direct:
+        return direct
+    generation_telemetry = _as_dict(data.get("world_generation_telemetry"))
+    proof = _as_dict(generation_telemetry.get("last_bake_proof"))
+    if proof:
+        return proof
+    system_telemetry = _as_dict(data.get("system_telemetry"))
+    telemetry_proof = _as_dict(_as_dict(system_telemetry.get("world_generator")).get("last_bake_proof"))
+    if telemetry_proof:
+        return telemetry_proof
+    events = data.get("recent_scope_events", [])
+    if isinstance(events, list):
+        for event in events:
+            event_dict = _as_dict(event)
+            if str(event_dict.get("scope", "")) != "town_stall_test":
+                continue
+            if str(event_dict.get("label", "")) != "generation_complete":
+                continue
+            event_proof = _as_dict(_as_dict(event_dict.get("details")).get("bake_proof"))
+            if event_proof:
+                return event_proof
+    return {}
+
+
+def _world_bake_proof_verdict_from_snapshot(data: dict) -> dict:
+    proof = _world_bake_proof_from_snapshot(data)
+    if not proof:
+        return {
+            "available": False,
+            "success": False,
+            "save_success": False,
+            "height_biome_backend": "",
+            "baked_layer_count": 0,
+            "expected_baked_layer_count": 0,
+            "missing_layer_count": 0,
+            "invalid_layer_count": 0,
+            "content_signature": "",
+            "export_cache_signature": "",
+            "export_signature_file_written": False,
+            "generation_total_ms": 0.0,
+            "total_hash_ms": 0.0,
+            "generation_unaccounted_ms": 0.0,
+            "save_total_ms": 0.0,
+        }
+    save_profile = _as_dict(proof.get("save_profile"))
+    generation_profile = _as_dict(proof.get("generation_profile"))
+    missing_layers = proof.get("missing_layers", [])
+    invalid_layers = proof.get("invalid_layers", [])
+    return {
+        "available": bool(proof.get("available", True)),
+        "success": bool(proof.get("success", False)),
+        "save_success": bool(save_profile.get("success", False)),
+        "height_biome_backend": str(proof.get("height_biome_backend", generation_profile.get("height_biome_backend", ""))),
+        "baked_layer_count": _int_value(proof.get("baked_layer_count")),
+        "expected_baked_layer_count": _int_value(proof.get("expected_baked_layer_count")),
+        "missing_layer_count": len(missing_layers) if isinstance(missing_layers, list) else 0,
+        "invalid_layer_count": len(invalid_layers) if isinstance(invalid_layers, list) else 0,
+        "content_signature": str(proof.get("content_signature", "")),
+        "export_cache_signature": str(save_profile.get("cache_signature", "")),
+        "export_signature_file_written": bool(save_profile.get("world_cache_signature_file_written", False)),
+        "generation_total_ms": _float_value(proof.get("generation_total_ms", generation_profile.get("total_ms"))),
+        "height_biome_ms": _float_value(generation_profile.get("height_biome_ms")),
+        "layout_ms": _float_value(generation_profile.get("layout_ms")),
+        "lakes_ms": _float_value(generation_profile.get("lakes_ms")),
+        "finalize_ms": _float_value(generation_profile.get("finalize_ms")),
+        "total_hash_ms": _float_value(proof.get("total_hash_ms")),
+        "generation_unaccounted_ms": _float_value(proof.get("generation_unaccounted_ms")),
+        "save_total_ms": _float_value(save_profile.get("total_ms")),
+    }
+
+
+def _print_snapshot_proof_summary(data: dict) -> None:
+    startup = _startup_readiness_verdict_from_snapshot(data)
+    world_bake = _world_bake_proof_verdict_from_snapshot(data)
+    runtime_idle = _stationary_runtime_idle_verdict_from_snapshot(data)
+    artifact_cache = _stationary_terrain_artifact_cache_verdict_from_snapshot(data)
+    print(
+        "Startup readiness proof: available={available} completed={completed} "
+        "coordinator={coordinator} stages={stages}/{expected} progress={progress:.1f}% "
+        "elapsed={elapsed:.1f}ms failed={failed} cancelled={cancelled}".format(
+            available=startup["available"],
+            completed=startup["completed"],
+            coordinator=startup["startup_coordinator_available"],
+            stages=startup["completed_stage_count"],
+            expected=len(STARTUP_PROOF_STAGE_IDS),
+            progress=startup["progress_percent"],
+            elapsed=startup["elapsed_ms"],
+            failed=startup["failed"],
+            cancelled=startup["cancelled"],
+        )
+    )
+    print(
+        "World bake proof: available={available} success={success} backend={backend} "
+        "layers={layers}/{expected} gen={generation:.1f}ms save={save:.1f}ms "
+        "hash={hash_ms:.1f}ms sig={signature} export_sig={export_signature}".format(
+            available=world_bake["available"],
+            success=world_bake["success"],
+            backend=world_bake["height_biome_backend"] or "unknown",
+            layers=world_bake["baked_layer_count"],
+            expected=world_bake["expected_baked_layer_count"],
+            generation=world_bake["generation_total_ms"],
+            save=world_bake["save_total_ms"],
+            hash_ms=world_bake["total_hash_ms"],
+            signature=world_bake["content_signature"][:12],
+            export_signature=world_bake["export_cache_signature"][:12],
+        )
+    )
+    print(
+        "Runtime idle proof: samples={samples} idle_ratio={idle_ratio:.3f} "
+        "max_pending={pending:.1f} max_awake={awake:.1f} busy={busy}".format(
+            samples=runtime_idle["monitor_available_samples"],
+            idle_ratio=runtime_idle["idle_sample_ratio"],
+            pending=runtime_idle["max_pending_work"],
+            awake=runtime_idle["max_awake_process_count"],
+            busy=runtime_idle["busy_samples"],
+        )
+    )
+    print(
+        "Terrain artifact cache proof: samples={samples} end_hit={hit:.3f} "
+        "entries={entries:.0f} budget_max={budget:.3f} evict_delta={evict:.0f} "
+        "disk_delta={disk_delta:.0f} disk_budget_max={disk_budget:.3f} disk_evict_delta={disk_evict:.0f}".format(
+            samples=artifact_cache["monitor_available_samples"],
+            hit=artifact_cache["end_hit_ratio"],
+            entries=artifact_cache["end_entries"],
+            budget=artifact_cache["max_byte_budget_ratio"],
+            evict=artifact_cache["eviction_delta"],
+            disk_delta=artifact_cache["disk_hit_delta"],
+            disk_budget=artifact_cache["disk_max_byte_budget_ratio"],
+            disk_evict=artifact_cache["disk_eviction_delta"],
+        )
+    )
+
+
+def _snapshot_startup_readiness_proof_failures(data: dict) -> list[str]:
+    enforced = (
+        _bool_from_env("TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF")
+        or os.environ.get("TOWN_STALL_MIN_STARTUP_COMPLETED_STAGES", "").strip() != ""
+        or _optional_float_from_env("TOWN_STALL_MAX_STARTUP_ELAPSED_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_STARTUP_STAGE_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_STARTUP_TRACE_EVENTS") is not None
+    )
+    if not enforced:
+        return []
+
+    verdict = _startup_readiness_verdict_from_snapshot(data)
+    failures: list[str] = []
+    min_completed_stages = _positive_int_from_env("TOWN_STALL_MIN_STARTUP_COMPLETED_STAGES", len(STARTUP_PROOF_STAGE_IDS))
+    max_elapsed_ms = _optional_float_from_env("TOWN_STALL_MAX_STARTUP_ELAPSED_MS")
+    max_stage_ms = _optional_float_from_env("TOWN_STALL_MAX_STARTUP_STAGE_MS")
+    min_trace_events = _optional_float_from_env("TOWN_STALL_MIN_STARTUP_TRACE_EVENTS")
+
+    if not bool(verdict["available"]):
+        failures.append("startup readiness telemetry missing")
+    if _bool_from_env("TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF") and not bool(verdict["startup_coordinator_available"]):
+        failures.append("startup coordinator telemetry missing")
+    if _bool_from_env("TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF") and not bool(verdict["completed"]):
+        failures.append("startup readiness did not complete")
+    if bool(verdict["loading_active"]):
+        failures.append("startup loading still active")
+    if bool(verdict["failed"]):
+        failures.append("startup reported failure")
+    if bool(verdict["cancelled"]):
+        failures.append("startup reported cancellation")
+    if _bool_from_env("TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF") and not bool(verdict["playable_ready"]):
+        failures.append("startup playable-ready signal missing")
+    if int(verdict["completed_stage_count"]) < min_completed_stages:
+        failures.append(f"startup completed stages {int(verdict['completed_stage_count'])} below {min_completed_stages}")
+    if int(verdict["missing_stage_count"]) > 0:
+        failures.append(f"startup missing stage telemetry count {int(verdict['missing_stage_count'])}")
+    if int(verdict["incomplete_stage_count"]) > 0:
+        failures.append(f"startup incomplete stage count {int(verdict['incomplete_stage_count'])}")
+    if max_elapsed_ms is not None and float(verdict["elapsed_ms"]) > max_elapsed_ms:
+        failures.append(f"startup elapsed {float(verdict['elapsed_ms']):.3f} ms exceeds {max_elapsed_ms:.3f} ms")
+    if max_stage_ms is not None and float(verdict["max_stage_duration_ms"]) > max_stage_ms:
+        failures.append(
+            "startup max stage duration "
+            f"{float(verdict['max_stage_duration_ms']):.3f} ms exceeds {max_stage_ms:.3f} ms"
+        )
+    if min_trace_events is not None and float(verdict["trace_event_count"]) + 0.000001 < min_trace_events:
+        failures.append(f"startup trace events {int(verdict['trace_event_count'])} below {int(min_trace_events)}")
+    stage_context = _startup_stage_failure_context(verdict)
+    if failures and stage_context:
+        failures.append(f"startup active stage: {stage_context}")
+    return failures
+
+
+def _snapshot_world_bake_proof_failures(data: dict) -> list[str]:
+    enforced = (
+        _bool_from_env("TOWN_STALL_REQUIRE_WORLD_BAKE_PROOF")
+        or _bool_from_env("TOWN_STALL_REQUIRE_WORLD_BAKE_EXPORT_SIGNATURE")
+        or os.environ.get("TOWN_STALL_REQUIRE_WORLD_BAKE_HEIGHT_BIOME_BACKEND", "").strip() != ""
+        or os.environ.get("TOWN_STALL_MIN_WORLD_BAKE_LAYERS", "").strip() != ""
+        or _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_HASH_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_UNACCOUNTED_MS") is not None
+    )
+    if not enforced:
+        return []
+
+    verdict = _world_bake_proof_verdict_from_snapshot(data)
+    failures: list[str] = []
+    min_layers = _positive_int_from_env(
+        "TOWN_STALL_MIN_WORLD_BAKE_LAYERS",
+        max(5, int(verdict["expected_baked_layer_count"])),
+    )
+    if _bool_from_env("TOWN_STALL_REQUIRE_WORLD_BAKE_PROOF") and not bool(verdict["available"]):
+        failures.append("world bake proof missing")
+    if _bool_from_env("TOWN_STALL_REQUIRE_WORLD_BAKE_PROOF") and not bool(verdict["success"]):
+        failures.append("world bake proof did not succeed")
+    if int(verdict["baked_layer_count"]) < min_layers:
+        failures.append(f"world bake layer count {int(verdict['baked_layer_count'])} below {min_layers}")
+    if int(verdict["missing_layer_count"]) > 0:
+        failures.append(f"world bake missing layer count {int(verdict['missing_layer_count'])}")
+    if int(verdict["invalid_layer_count"]) > 0:
+        failures.append(f"world bake invalid layer count {int(verdict['invalid_layer_count'])}")
+    if not str(verdict["content_signature"]):
+        failures.append("world bake content signature missing")
+
+    required_backend = os.environ.get("TOWN_STALL_REQUIRE_WORLD_BAKE_HEIGHT_BIOME_BACKEND", "").strip()
+    if required_backend and str(verdict["height_biome_backend"]) != required_backend:
+        failures.append(
+            "world bake height/biome backend "
+            f"{verdict['height_biome_backend']} does not match {required_backend}"
+        )
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_WORLD_BAKE_EXPORT_SIGNATURE"):
+        if not bool(verdict["save_success"]):
+            failures.append("world bake save profile did not report success")
+        if not str(verdict["export_cache_signature"]):
+            failures.append("world bake export cache signature missing")
+        if not bool(verdict["export_signature_file_written"]):
+            failures.append("world bake export signature file was not written")
+
+    max_generation_ms = _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_MS")
+    if max_generation_ms is not None and float(verdict["generation_total_ms"]) > max_generation_ms:
+        failures.append(
+            "world bake generation total "
+            f"{float(verdict['generation_total_ms']):.3f} ms exceeds {max_generation_ms:.3f} ms"
+        )
+    max_hash_ms = _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_HASH_MS")
+    if max_hash_ms is not None and float(verdict["total_hash_ms"]) > max_hash_ms:
+        failures.append(
+            "world bake proof hash time "
+            f"{float(verdict['total_hash_ms']):.3f} ms exceeds {max_hash_ms:.3f} ms"
+        )
+    max_unaccounted_ms = _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_UNACCOUNTED_MS")
+    if max_unaccounted_ms is not None and float(verdict["generation_unaccounted_ms"]) > max_unaccounted_ms:
+        failures.append(
+            "world bake unaccounted generation time "
+            f"{float(verdict['generation_unaccounted_ms']):.3f} ms exceeds {max_unaccounted_ms:.3f} ms"
+        )
+    return failures
+
+
+def _snapshot_runtime_idle_proof_failures(data: dict) -> list[str]:
+    enforced = (
+        _bool_from_env("TOWN_STALL_REQUIRE_RUNTIME_IDLE_PROOF")
+        or _optional_float_from_env("TOWN_STALL_MIN_RUNTIME_IDLE_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_PENDING_WORK") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_AWAKE_PROCESS_COUNT") is not None
+    )
+    if not enforced:
+        return []
+
+    verdict = _stationary_runtime_idle_verdict_from_snapshot(data)
+    failures: list[str] = []
+    sample_count = int(verdict["monitor_available_samples"])
+    min_samples = _positive_int_from_env("TOWN_STALL_MIN_RUNTIME_IDLE_PROOF_SAMPLES", 1)
+    min_idle_ratio = _optional_float_from_env("TOWN_STALL_MIN_RUNTIME_IDLE_RATIO")
+    if min_idle_ratio is None:
+        min_idle_ratio = 1.0
+    max_pending_work = _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_PENDING_WORK")
+    if max_pending_work is None:
+        max_pending_work = 0.0
+    max_awake_process_count = _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_AWAKE_PROCESS_COUNT")
+    if max_awake_process_count is None:
+        max_awake_process_count = 0.0
+
+    if sample_count < min_samples:
+        failures.append(f"runtime idle monitor samples {sample_count} below {min_samples}")
+    if float(verdict["idle_sample_ratio"]) + 0.000001 < min_idle_ratio:
+        failures.append(
+            "runtime idle sample ratio "
+            f"{float(verdict['idle_sample_ratio']):.3f} below {min_idle_ratio:.3f}"
+        )
+    if float(verdict["max_pending_work"]) > max_pending_work:
+        failures.append(
+            "runtime max pending work "
+            f"{float(verdict['max_pending_work']):.3f} exceeds {max_pending_work:.3f}"
+        )
+    if float(verdict["max_awake_process_count"]) > max_awake_process_count:
+        failures.append(
+            "runtime max awake process count "
+            f"{float(verdict['max_awake_process_count']):.3f} exceeds {max_awake_process_count:.3f}"
+        )
+    return failures
+
+
+def _snapshot_terrain_artifact_cache_proof_failures(data: dict) -> list[str]:
+    enforced = (
+        _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF")
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA") is not None
+    )
+    if not enforced:
+        return []
+
+    verdict = _stationary_terrain_artifact_cache_verdict_from_snapshot(data)
+    failures: list[str] = []
+    sample_count = int(verdict["monitor_available_samples"])
+    min_samples = _positive_int_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES", 1)
+    min_hit_ratio = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO")
+    min_disk_hit_delta = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA")
+    max_byte_budget_ratio = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO")
+    max_eviction_delta = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA")
+    max_disk_byte_budget_ratio = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO")
+    max_disk_eviction_delta = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA")
+
+    if sample_count < min_samples:
+        failures.append(f"terrain artifact cache monitor samples {sample_count} below {min_samples}")
+    if min_hit_ratio is not None and float(verdict["end_hit_ratio"]) + 0.000001 < min_hit_ratio:
+        failures.append(
+            "terrain artifact cache ending hit ratio "
+            f"{float(verdict['end_hit_ratio']):.3f} below {min_hit_ratio:.3f}"
+        )
+    if min_disk_hit_delta is not None and float(verdict["disk_hit_delta"]) + 0.000001 < min_disk_hit_delta:
+        failures.append(
+            "terrain artifact cache disk-hit delta "
+            f"{float(verdict['disk_hit_delta']):.3f} below {min_disk_hit_delta:.3f}"
+        )
+    if max_byte_budget_ratio is not None and float(verdict["max_byte_budget_ratio"]) > max_byte_budget_ratio:
+        failures.append(
+            "terrain artifact memory cache max byte-budget ratio "
+            f"{float(verdict['max_byte_budget_ratio']):.3f} exceeds {max_byte_budget_ratio:.3f}"
+        )
+    if max_eviction_delta is not None and float(verdict["eviction_delta"]) > max_eviction_delta:
+        failures.append(
+            "terrain artifact memory cache eviction delta "
+            f"{float(verdict['eviction_delta']):.3f} exceeds {max_eviction_delta:.3f}"
+        )
+    if max_disk_byte_budget_ratio is not None and float(verdict["disk_max_byte_budget_ratio"]) > max_disk_byte_budget_ratio:
+        failures.append(
+            "terrain artifact disk cache max byte-budget ratio "
+            f"{float(verdict['disk_max_byte_budget_ratio']):.3f} exceeds {max_disk_byte_budget_ratio:.3f}"
+        )
+    if max_disk_eviction_delta is not None and float(verdict["disk_eviction_delta"]) > max_disk_eviction_delta:
+        failures.append(
+            "terrain artifact disk cache eviction delta "
+            f"{float(verdict['disk_eviction_delta']):.3f} exceeds {max_disk_eviction_delta:.3f}"
+        )
+    return failures
+
+
+def _snapshot_proof_gates_requested() -> bool:
+    return (
+        _bool_from_env("TOWN_STALL_REQUIRE_STARTUP_READINESS_PROOF")
+        or os.environ.get("TOWN_STALL_MIN_STARTUP_COMPLETED_STAGES", "").strip() != ""
+        or _optional_float_from_env("TOWN_STALL_MAX_STARTUP_ELAPSED_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_STARTUP_STAGE_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_STARTUP_TRACE_EVENTS") is not None
+        or _bool_from_env("TOWN_STALL_REQUIRE_WORLD_BAKE_PROOF")
+        or _bool_from_env("TOWN_STALL_REQUIRE_WORLD_BAKE_EXPORT_SIGNATURE")
+        or os.environ.get("TOWN_STALL_REQUIRE_WORLD_BAKE_HEIGHT_BIOME_BACKEND", "").strip() != ""
+        or os.environ.get("TOWN_STALL_MIN_WORLD_BAKE_LAYERS", "").strip() != ""
+        or _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_HASH_MS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_WORLD_BAKE_UNACCOUNTED_MS") is not None
+        or _bool_from_env("TOWN_STALL_REQUIRE_RUNTIME_IDLE_PROOF")
+        or _optional_float_from_env("TOWN_STALL_MIN_RUNTIME_IDLE_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_PENDING_WORK") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_AWAKE_PROCESS_COUNT") is not None
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF")
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA") is not None
+    )
+
+
+def _snapshot_proof_gate_failures(snapshot_path: Path) -> list[str]:
+    if not _snapshot_proof_gates_requested():
+        return []
+
+    try:
+        data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [f"could not parse snapshot proof verdicts: {exc}"]
+
+    failures: list[str] = []
+    failures.extend(_snapshot_startup_readiness_proof_failures(data))
+    failures.extend(_snapshot_world_bake_proof_failures(data))
+    failures.extend(_snapshot_runtime_idle_proof_failures(data))
+    failures.extend(_snapshot_terrain_artifact_cache_proof_failures(data))
+    return failures
 
 
 def _snapshot_rendering_failures(snapshot_path: Path) -> list[str]:
@@ -1741,11 +2524,14 @@ def main() -> int:
     postrun_idle_settle_timeout_seconds = _float_from_env("TOWN_STALL_POSTRUN_IDLE_SETTLE_TIMEOUT_SECONDS", 30.0)
     preflight_idle_sample_count = _positive_int_from_env("TOWN_STALL_PREFLIGHT_IDLE_SAMPLE_COUNT", 3)
     preflight_idle_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_PREFLIGHT_IDLE_SAMPLE_INTERVAL_SECONDS", 1.0)
+    preflight_idle_retry_timeout_seconds = _float_from_env("TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS", 0.0)
+    preflight_idle_retry_poll_seconds = _positive_float_from_env("TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS", 10.0)
 
-    preflight_idle_samples = _collect_idle_state_samples(
-        0.0,
+    preflight_idle_samples, preflight_reasons, preflight_idle_retry = _collect_preflight_idle_until_clean(
         preflight_idle_sample_count,
         preflight_idle_sample_interval_seconds,
+        preflight_idle_retry_timeout_seconds,
+        preflight_idle_retry_poll_seconds,
     )
     raw_gpu_preflight: dict = {}
     preflight_idle_summary = _summarize_preflight_idle_samples(preflight_idle_samples)
@@ -1767,6 +2553,7 @@ def main() -> int:
     else:
         raw_gpu_preflight = _collect_raw_gpu_state()
     machine_state["preflight_idle_summary"] = preflight_idle_summary
+    machine_state["preflight_idle_retry"] = preflight_idle_retry
     env["TOWN_STALL_MACHINE_STATE_JSON"] = json.dumps(machine_state)
 
     print("\nMachine state probe:")
@@ -1774,7 +2561,6 @@ def main() -> int:
     print(f"Raw GPU preflight: {_raw_gpu_state_summary(raw_gpu_preflight)}")
     _print_preflight_idle_sample_summary(preflight_idle_summary)
 
-    preflight_reasons = _preflight_contamination_reasons_for_idle_samples(preflight_idle_samples)
     allow_contaminated_idle = os.environ.get("TOWN_STALL_ALLOW_CONTAMINATED_IDLE", "0") == "1"
     if preflight_reasons and not allow_contaminated_idle:
         print("ERROR: Preflight idle state is contaminated; refusing to launch town benchmark.")
@@ -1920,6 +2706,7 @@ def main() -> int:
             _print_phase_system_sample_summary(system_sample_summary)
         _print_snapshot_summary(snapshot)
         failure_reasons.extend(_snapshot_rendering_failures(snapshot))
+        failure_reasons.extend(_snapshot_proof_gate_failures(snapshot))
     else:
         print("No performance snapshot found.")
         failure_reasons.append("no performance snapshot found")

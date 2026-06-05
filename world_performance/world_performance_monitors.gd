@@ -12,8 +12,13 @@ const MONITOR_IDS: Array[StringName] = [
 	&"WorldStartup/PlayableReady",
 	&"TerrainArtifactCache/Entries",
 	&"TerrainArtifactCache/Bytes",
+	&"TerrainArtifactCache/ByteBudgetRatio",
 	&"TerrainArtifactCache/HitRatio",
+	&"TerrainArtifactCache/Evictions",
+	&"TerrainArtifactDiskCache/Bytes",
+	&"TerrainArtifactDiskCache/ByteBudgetRatio",
 	&"TerrainArtifactCache/DiskHits",
+	&"TerrainArtifactDiskCache/Evictions",
 	&"TerrainArtifactDiskWriteQueue/PendingBytes",
 	&"TerrainArtifactDiskWriteQueue/PendingEntries",
 	&"TerrainArtifactDiskWriteQueue/CompletedBytes",
@@ -118,8 +123,13 @@ func _capture_terrain_values() -> void:
 	var disk_cache := _get_dictionary(snapshot, "terrain_artifact_disk_cache")
 	_values[&"TerrainArtifactCache/Entries"] = _number_from_keys(memory_cache, ["entry_count"], _number_from_keys(snapshot, ["terrain_artifact_cache_entries", "artifact_cache_entries"], 0.0))
 	_values[&"TerrainArtifactCache/Bytes"] = _number_from_keys(memory_cache, ["total_bytes"], _number_from_keys(snapshot, ["terrain_artifact_cache_bytes", "artifact_cache_bytes"], 0.0))
+	_values[&"TerrainArtifactCache/ByteBudgetRatio"] = clampf(_number_from_keys(memory_cache, ["byte_budget_used_ratio"], _number_from_keys(snapshot, ["terrain_artifact_cache_byte_budget_used_ratio", "artifact_cache_byte_budget_used_ratio"], 0.0)), 0.0, 1.0)
 	_values[&"TerrainArtifactCache/HitRatio"] = clampf(_number_from_keys(memory_cache, ["hit_ratio"], _number_from_keys(snapshot, ["terrain_artifact_cache_hit_ratio", "artifact_cache_hit_ratio"], 0.0)), 0.0, 1.0)
+	_values[&"TerrainArtifactCache/Evictions"] = _number_from_keys(memory_cache, ["eviction_count"], _number_from_keys(snapshot, ["terrain_artifact_cache_evictions", "artifact_cache_evictions"], 0.0))
+	_values[&"TerrainArtifactDiskCache/Bytes"] = _number_from_keys(disk_cache, ["last_signature_bytes"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_bytes", "disk_artifact_cache_bytes"], 0.0))
+	_values[&"TerrainArtifactDiskCache/ByteBudgetRatio"] = clampf(_number_from_keys(disk_cache, ["last_signature_byte_budget_used_ratio"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_byte_budget_used_ratio", "disk_artifact_cache_byte_budget_used_ratio"], 0.0)), 0.0, 1.0)
 	_values[&"TerrainArtifactCache/DiskHits"] = _number_from_keys(disk_cache, ["hit_count"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_hits", "disk_artifact_restores"], 0.0))
+	_values[&"TerrainArtifactDiskCache/Evictions"] = _number_from_keys(disk_cache, ["eviction_count"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_evictions", "disk_artifact_cache_evictions"], 0.0))
 	_values[&"TerrainGeneration/GpuSyncMs"] = (
 		_number_from_keys(snapshot, ["last_gpu_generation_mod_sync_ms"], 0.0)
 		+ _number_from_keys(snapshot, ["last_gpu_generation_sync_ms"], 0.0)
@@ -191,9 +201,12 @@ func _capture_entity_values() -> void:
 		return
 	var awake := bool(snapshot.get("physics_process_enabled", false)) or bool(snapshot.get("entity_maintenance_timer_active", false))
 	_values[&"WorldRuntime/EntityMaintenanceAwake"] = _bool_to_float(awake)
-	_add_pending_work(_number_from_keys(snapshot, ["pending_spawns"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["deferred_spawn_chunks"], 0.0))
-	_add_pending_work(_number_from_keys(snapshot, ["deferred_spawn_plans"], 0.0))
+	if snapshot.has("startup_pending_total"):
+		_add_pending_work(_number_from_keys(snapshot, ["startup_pending_total"], 0.0))
+	else:
+		_add_pending_work(_number_from_keys(snapshot, ["pending_spawns"], 0.0))
+		_add_pending_work(_number_from_keys(snapshot, ["deferred_spawn_chunks"], 0.0))
+		_add_pending_work(_number_from_keys(snapshot, ["deferred_spawn_plans"], 0.0))
 
 
 func _capture_pending_work_value() -> void:

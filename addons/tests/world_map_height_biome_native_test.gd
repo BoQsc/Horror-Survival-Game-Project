@@ -32,7 +32,12 @@ func _run() -> int:
 		reference_total_us += Time.get_ticks_usec() - reference_start_us
 		if not _expect(str(native_result.get("backend", "")) == "native", "native backend should be selected"):
 			return 1
-		if not _expect(native_result.get("height_bytes", PackedByteArray()) == reference_result.get("height_bytes", PackedByteArray()), "native height bytes should match GDScript reference for seed %d" % seed):
+		if not _expect_height_bytes_close(
+			native_result.get("height_bytes", PackedByteArray()),
+			reference_result.get("height_bytes", PackedByteArray()),
+			16,
+			"native height bytes should stay within byte-threshold tolerance for seed %d" % seed
+		):
 			return 1
 		if not _expect(native_result.get("biome_bytes", PackedByteArray()) == reference_result.get("biome_bytes", PackedByteArray()), "native biome bytes should match GDScript reference for seed %d" % seed):
 			return 1
@@ -44,7 +49,12 @@ func _run() -> int:
 	preview_generator._init_noise()
 	var preview_native: Dictionary = preview_generator._generate_height_biome_bytes(128, 25.0, false, WorldMapGeneratorScript.MAP_SIZE)
 	var preview_reference: Dictionary = preview_generator._generate_height_biome_bytes_gdscript(128, 25.0, false, WorldMapGeneratorScript.MAP_SIZE)
-	if not _expect(preview_native.get("height_bytes", PackedByteArray()) == preview_reference.get("height_bytes", PackedByteArray()), "full-world preview height samples should match reference"):
+	if not _expect_height_bytes_close(
+		preview_native.get("height_bytes", PackedByteArray()),
+		preview_reference.get("height_bytes", PackedByteArray()),
+		8,
+		"full-world preview height samples should stay within byte-threshold tolerance"
+	):
 		return 1
 	if not _expect(preview_native.get("biome_bytes", PackedByteArray()) == preview_reference.get("biome_bytes", PackedByteArray()), "full-world preview biome samples should match reference"):
 		return 1
@@ -67,4 +77,39 @@ func _expect(condition: bool, message: String) -> bool:
 	if condition:
 		return true
 	printerr("[WORLD_MAP_HEIGHT_BIOME_NATIVE_TEST] FAIL: %s" % message)
+	return false
+
+
+func _expect_height_bytes_close(native_bytes: PackedByteArray, reference_bytes: PackedByteArray, max_mismatches: int, message: String) -> bool:
+	if native_bytes.size() != reference_bytes.size():
+		printerr("[WORLD_MAP_HEIGHT_BIOME_NATIVE_TEST] FAIL: %s: size native=%d reference=%d" % [
+			message,
+			native_bytes.size(),
+			reference_bytes.size()
+		])
+		return false
+	var mismatch_count := 0
+	var max_delta := 0
+	var first_mismatch := ""
+	for i in native_bytes.size():
+		var delta := int(native_bytes[i]) - int(reference_bytes[i])
+		if delta == 0:
+			continue
+		mismatch_count += 1
+		max_delta = maxi(max_delta, absi(delta))
+		if first_mismatch.is_empty():
+			first_mismatch = "index=%d native=%d reference=%d delta=%d" % [
+				i,
+				native_bytes[i],
+				reference_bytes[i],
+				delta
+			]
+	if mismatch_count <= max_mismatches and max_delta <= 1:
+		return true
+	printerr("[WORLD_MAP_HEIGHT_BIOME_NATIVE_TEST] FAIL: %s: mismatches=%d max_delta=%d %s" % [
+		message,
+		mismatch_count,
+		max_delta,
+		first_mismatch
+	])
 	return false

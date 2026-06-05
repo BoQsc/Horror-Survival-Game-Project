@@ -71,6 +71,7 @@ var progress_callback: Callable = Callable()
 var last_generation_profile: Dictionary = {}
 var last_preview_generation_profile: Dictionary = {}
 var last_save_profile: Dictionary = {}
+var last_bake_proof_profile: Dictionary = {}
 var native_height_biome_enabled: bool = true
 var _native_helper: Object = null
 
@@ -120,12 +121,16 @@ func _native_height_biome_available() -> bool:
 	return native != null and native.has_method("build_world_map_height_biome_bytes")
 
 
+func _native_height_biome_can_run_now() -> bool:
+	return native_height_biome_enabled and _native_height_biome_available()
+
+
 func _generate_height_biome_bytes(map_size: int, max_h: float, report_progress: bool = false, world_size: int = -1) -> Dictionary:
 	if map_size <= 0 or max_h <= 0.0:
 		return {}
 	var sample_world_size := map_size if world_size <= 0 else world_size
-	var native := _get_native_helper()
-	if native_height_biome_enabled and native and native.has_method("build_world_map_height_biome_bytes"):
+	var native := _get_native_helper() if _native_height_biome_can_run_now() else null
+	if native:
 		var native_result: Dictionary = native.build_world_map_height_biome_bytes(
 			map_size,
 			sample_world_size,
@@ -231,6 +236,184 @@ func generate_preview(preview_size: int = 512) -> Dictionary:
 		"biomes": biome_map,
 		"preview_generation_profile": last_preview_generation_profile.duplicate(true)
 	}
+
+
+static func _hash_update_string(ctx: HashingContext, text: String) -> void:
+	ctx.update(text.to_utf8_buffer())
+	ctx.update(PackedByteArray([0]))
+
+
+static func _canonicalize_for_hash(value: Variant) -> Variant:
+	if value is Dictionary:
+		var source: Dictionary = value
+		var key_entries: Array[Dictionary] = []
+		for key in source.keys():
+			key_entries.append({
+				"key_text": str(key),
+				"key": key
+			})
+		key_entries.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			return str(a.get("key_text", "")) < str(b.get("key_text", ""))
+		)
+		var canonical: Dictionary = {}
+		for entry in key_entries:
+			var key_text := str(entry.get("key_text", ""))
+			var source_key: Variant = entry.get("key", key_text)
+			canonical[key_text] = _canonicalize_for_hash(source[source_key])
+		return canonical
+	if value is Array:
+		var canonical_array: Array = []
+		for item in value:
+			canonical_array.append(_canonicalize_for_hash(item))
+		return canonical_array
+	if value is Vector2:
+		return {"x": value.x, "y": value.y}
+	if value is Vector2i:
+		return {"x": value.x, "y": value.y}
+	if value is Vector3:
+		return {"x": value.x, "y": value.y, "z": value.z}
+	if value is Vector3i:
+		return {"x": value.x, "y": value.y, "z": value.z}
+	return value
+
+
+func _build_world_metadata(images: Dictionary, include_created: bool) -> Dictionary:
+	var schema_version := WorldMapData.get_world_meta_schema_version()
+	var meta = {
+		WorldMapData.get_world_meta_schema_version_key(): schema_version,
+		WorldMapData.get_world_meta_version_key(): schema_version,
+		"map_size": MAP_SIZE,
+		"noise_freq": noise_freq,
+		"terrain_height": terrain_height,
+		"water_level": water_level,
+		"road_spacing": road_spacing,
+		"road_width": road_width,
+		"world_seed": world_seed,
+		"use_grid_roads": use_grid_roads,
+		"deep_lakes_enabled": deep_lakes_enabled,
+		WorldMapData.get_world_meta_building_placement_schema_key(): WorldMapData.get_world_meta_default_building_placement_schema(),
+		WorldMapData.get_world_meta_biome_material_schema_key(): WorldMapData.get_world_meta_default_biome_material_schema()
+	}
+	if include_created:
+		meta["created"] = Time.get_datetime_string_from_system()
+	if images.has("buildings"):
+		meta["buildings"] = images.buildings
+	if images.has("towns"):
+		meta["towns"] = images.towns
+	if images.has("terrain_modifications"):
+		meta["terrain_modifications"] = images.terrain_modifications
+	return meta
+
+
+func build_world_bake_proof(images: Dictionary, save_profile: Dictionary = {}) -> Dictionary:
+	var proof_start_us := Time.get_ticks_usec()
+	var image_hash_start_us := proof_start_us
+	var image_ctx := HashingContext.new()
+	var image_hash_ready := image_ctx.start(HashingContext.HASH_SHA256) == OK
+	var baked_image_names := WorldMapData.get_baked_image_names()
+	var layer_profiles: Array[Dictionary] = []
+	var missing_layers: Array[String] = []
+	var invalid_layers: Array[String] = []
+	var total_bytes := 0
+	var total_pixels := 0
+
+	for key in baked_image_names:
+		if not images.has(key):
+			missing_layers.append(key)
+			continue
+		if not (images[key] is Image):
+			invalid_layers.append(key)
+			continue
+		var image: Image = images[key]
+		var image_data: PackedByteArray = image.get_data()
+		var layer_profile: Dictionary = {
+			"name": key,
+			"width": image.get_width(),
+			"height": image.get_height(),
+			"format": int(image.get_format()),
+			"has_mipmaps": image.has_mipmaps(),
+			"byte_count": image_data.size(),
+			"pixel_count": image.get_width() * image.get_height()
+		}
+		layer_profiles.append(layer_profile)
+		total_bytes += image_data.size()
+		total_pixels += int(layer_profile.get("pixel_count", 0))
+		if image_hash_ready:
+			_hash_update_string(image_ctx, key)
+			_hash_update_string(image_ctx, "%d:%d:%d:%s" % [
+				image.get_width(),
+				image.get_height(),
+				int(image.get_format()),
+				"1" if image.has_mipmaps() else "0"
+			])
+			image_ctx.update(image_data)
+
+	var image_signature := ""
+	if image_hash_ready:
+		image_signature = image_ctx.finish().hex_encode()
+	var image_hash_ms := float(Time.get_ticks_usec() - image_hash_start_us) / 1000.0
+
+	var metadata_hash_start_us := Time.get_ticks_usec()
+	var metadata_signature := ""
+	var stable_meta := _build_world_metadata(images, false)
+	stable_meta[WorldMapData.get_world_meta_cache_version_key()] = WorldMapData.get_world_meta_current_cache_version()
+	var metadata_ctx := HashingContext.new()
+	if metadata_ctx.start(HashingContext.HASH_SHA256) == OK:
+		var canonical_meta: Variant = _canonicalize_for_hash(stable_meta)
+		metadata_ctx.update(JSON.stringify(canonical_meta).to_utf8_buffer())
+		metadata_signature = metadata_ctx.finish().hex_encode()
+	var metadata_hash_ms := float(Time.get_ticks_usec() - metadata_hash_start_us) / 1000.0
+
+	var content_signature := ""
+	var content_ctx := HashingContext.new()
+	if content_ctx.start(HashingContext.HASH_SHA256) == OK:
+		_hash_update_string(content_ctx, image_signature)
+		_hash_update_string(content_ctx, metadata_signature)
+		content_signature = content_ctx.finish().hex_encode()
+
+	var stage_total_ms := (
+		float(last_generation_profile.get("height_biome_ms", 0.0))
+		+ float(last_generation_profile.get("layout_ms", 0.0))
+		+ float(last_generation_profile.get("lakes_ms", 0.0))
+		+ float(last_generation_profile.get("finalize_ms", 0.0))
+	)
+	var reported_total_ms := float(last_generation_profile.get("total_ms", 0.0))
+	var unaccounted_generation_ms := maxf(reported_total_ms - stage_total_ms, 0.0)
+	var success := (
+		missing_layers.is_empty()
+		and invalid_layers.is_empty()
+		and not image_signature.is_empty()
+		and not metadata_signature.is_empty()
+		and not content_signature.is_empty()
+	)
+	var proof := {
+		"available": true,
+		"success": success,
+		"world_seed": world_seed,
+		"map_size": MAP_SIZE,
+		"layout_mode": "grid" if use_grid_roads else "town",
+		"height_biome_backend": str(last_generation_profile.get("height_biome_backend", "")),
+		"expected_baked_layer_count": baked_image_names.size(),
+		"baked_layer_count": layer_profiles.size(),
+		"missing_layers": missing_layers,
+		"invalid_layers": invalid_layers,
+		"layer_profiles": layer_profiles,
+		"image_byte_count": total_bytes,
+		"image_pixel_count": total_pixels,
+		"image_signature": image_signature,
+		"metadata_signature": metadata_signature,
+		"content_signature": content_signature,
+		"image_hash_ms": image_hash_ms,
+		"metadata_hash_ms": metadata_hash_ms,
+		"total_hash_ms": float(Time.get_ticks_usec() - proof_start_us) / 1000.0,
+		"generation_total_ms": reported_total_ms,
+		"generation_stage_total_ms": stage_total_ms,
+		"generation_unaccounted_ms": unaccounted_generation_ms,
+		"generation_profile": last_generation_profile.duplicate(true),
+		"save_profile": save_profile.duplicate(true) if not save_profile.is_empty() else {}
+	}
+	last_bake_proof_profile = proof.duplicate(true)
+	return proof
 
 # ============================================================================
 # MAIN GENERATION
@@ -371,6 +554,8 @@ func generate_world() -> Dictionary:
 		"terrain_modifications": terrain_modifications,
 		"generation_profile": generation_profile.duplicate(true)
 	}
+	last_bake_proof_profile = build_world_bake_proof(result)
+	result["bake_proof"] = last_bake_proof_profile.duplicate(true)
 	return result
 
 # ============================================================================
@@ -3020,38 +3205,23 @@ func save_world(path: String, images: Dictionary) -> bool:
 		save_profile["baked_layer_count"] = int(save_profile.get("baked_layer_count", 0)) + 1
 	
 	var schema_version := WorldMapData.get_world_meta_schema_version()
-	var meta = {
-		WorldMapData.get_world_meta_schema_version_key(): schema_version,
-		WorldMapData.get_world_meta_version_key(): schema_version,
-		"map_size": MAP_SIZE,
-		"noise_freq": noise_freq,
-		"terrain_height": terrain_height,
-		"water_level": water_level,
-		"road_spacing": road_spacing,
-		"road_width": road_width,
-		"world_seed": world_seed,
-		"use_grid_roads": use_grid_roads,
-		"deep_lakes_enabled": deep_lakes_enabled,
-		WorldMapData.get_world_meta_building_placement_schema_key(): WorldMapData.get_world_meta_default_building_placement_schema(),
-		WorldMapData.get_world_meta_biome_material_schema_key(): WorldMapData.get_world_meta_default_biome_material_schema(),
-		"created": Time.get_datetime_string_from_system(),
-	}
-	if images.has("buildings"):
-		meta["buildings"] = images.buildings
-	if images.has("towns"):
-		meta["towns"] = images.towns
-	if images.has("terrain_modifications"):
-		meta["terrain_modifications"] = images.terrain_modifications
+	var meta := _build_world_metadata(images, true)
 
 	if cache_signature_ready:
-		var stable_meta := meta.duplicate(true)
-		stable_meta.erase("created")
+		var stable_meta := _build_world_metadata(images, false)
 		stable_meta[WorldMapData.get_world_meta_cache_version_key()] = WorldMapData.get_world_meta_current_cache_version()
 		var meta_bytes := JSON.stringify(stable_meta).to_utf8_buffer()
 		cache_signature_ctx.update(meta_bytes)
 		var cache_signature := cache_signature_ctx.finish().hex_encode()
 		meta[WorldMapData.get_world_meta_cache_version_key()] = WorldMapData.get_world_meta_current_cache_version()
 		meta[WorldMapData.get_world_meta_cache_signature_key()] = cache_signature
+		save_profile["cache_signature"] = cache_signature
+		save_profile["world_cache_version"] = WorldMapData.get_world_meta_current_cache_version()
+		save_profile["world_meta_schema_version"] = schema_version
+	else:
+		save_profile["cache_signature"] = ""
+		save_profile["world_cache_version"] = WorldMapData.get_world_meta_current_cache_version()
+		save_profile["world_meta_schema_version"] = schema_version
 	
 	var meta_path := save_dir.path_join("world_meta.json")
 	var meta_start_us := Time.get_ticks_usec()
@@ -3073,10 +3243,16 @@ func save_world(path: String, images: Dictionary) -> bool:
 		if signature_file:
 			signature_file.store_line(str(meta.get(WorldMapData.get_world_meta_cache_signature_key(), "")))
 			signature_file.close()
+			save_profile["world_cache_signature_file_written"] = true
+		else:
+			save_profile["world_cache_signature_file_written"] = false
+	else:
+		save_profile["world_cache_signature_file_written"] = false
 
 	save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 	save_profile["success"] = true
 	last_save_profile = save_profile.duplicate(true)
+	last_bake_proof_profile = build_world_bake_proof(images, last_save_profile)
 	return true
 
 func get_telemetry_snapshot() -> Dictionary:
@@ -3091,9 +3267,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"deep_lakes_enabled": deep_lakes_enabled,
 		"native_height_biome_enabled": native_height_biome_enabled,
 		"native_height_biome_available": _native_height_biome_available(),
+		"native_height_biome_main_thread_only": false,
+		"native_height_biome_worker_safe": true,
+		"native_height_biome_can_run_now": _native_height_biome_can_run_now(),
 		"last_generation_profile": last_generation_profile.duplicate(true),
 		"last_preview_generation_profile": last_preview_generation_profile.duplicate(true),
-		"last_save_profile": last_save_profile.duplicate(true)
+		"last_save_profile": last_save_profile.duplicate(true),
+		"last_bake_proof": last_bake_proof_profile.duplicate(true)
 	}
 
 func _get_available_prefabs() -> Array[String]:

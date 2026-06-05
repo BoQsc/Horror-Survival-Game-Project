@@ -17,17 +17,65 @@ func _run() -> int:
 	var save_load_snapshot: Dictionary = screen.get_loading_progress_snapshot()
 	if not _expect(float(save_load_snapshot.get("progress_percent", 0.0)) == 0.5, "save-load step should use its small weighted range"):
 		return 1
+	if not _expect(float(save_load_snapshot.get("stage_progress_percent", 0.0)) == 10.0, "save-load snapshot should expose stage-local progress"):
+		return 1
+	if not _expect(str(save_load_snapshot.get("stage_detail_text", "")).contains("step 1/10"), "save-load detail text should expose step counts"):
+		return 1
 
 	screen._set_stage(screen.Stage.TERRAIN)
 	screen._update_stage_progress(screen.Stage.TERRAIN, 50.0, "terrain half")
 	var terrain_snapshot: Dictionary = screen.get_loading_progress_snapshot()
 	if not _expect(float(terrain_snapshot.get("progress_percent", 0.0)) == 35.0, "terrain should map to weighted progress"):
 		return 1
+	if not _expect(str(terrain_snapshot.get("stage_label", "")) == "Preparing terrain", "terrain snapshot should expose a stage label"):
+		return 1
+	if not _expect(float(terrain_snapshot.get("stage_progress_percent", 0.0)) == 50.0, "terrain snapshot should expose stage-local progress"):
+		return 1
+	var terrain_detail_summary := screen._build_stage_details_summary({
+		"artifact_restore_queue_count": 2,
+		"generation_queue_count": 3,
+		"cpu_mesh_queue_count": 4,
+		"artifact_disk_write_pending_entries": 1
+	})
+	if not _expect(terrain_detail_summary.contains("restoring artifacts 2"), "terrain detail summary should expose artifact restores"):
+		return 1
+	if not _expect(terrain_detail_summary.contains("generating misses 3"), "terrain detail summary should expose generation misses"):
+		return 1
+	if not _expect(terrain_detail_summary.contains("meshing 4"), "terrain detail summary should expose CPU mesh queue"):
+		return 1
+	var terrain_cache_summary := screen._build_stage_details_summary({
+		"artifact_cache_hit_count": 5,
+		"artifact_cache_miss_count": 2,
+		"artifact_cache_restore_count": 4,
+		"artifact_disk_cache_hit_count": 3
+	})
+	if not _expect(terrain_cache_summary.contains("cache H/M 5/2"), "terrain detail summary should expose artifact cache hit/miss counts"):
+		return 1
+	if not _expect(terrain_cache_summary.contains("restored 4"), "terrain detail summary should expose restored artifact count"):
+		return 1
+	if not _expect(terrain_cache_summary.contains("disk hits 3"), "terrain detail summary should expose disk artifact hits"):
+		return 1
 
 	screen._set_stage(screen.Stage.WORLD_CONTENT)
 	screen._update_stage_progress(screen.Stage.WORLD_CONTENT, 0.0, "world content start")
 	var content_snapshot: Dictionary = screen.get_loading_progress_snapshot()
 	if not _expect(float(content_snapshot.get("progress_percent", 0.0)) == 70.0, "world content should start at weighted boundary"):
+		return 1
+	screen._sync_stage_status_from_coordinator_snapshot({
+		"current_stage_label": "Preparing world content",
+		"current_stage_progress_percent": 40.0,
+		"current_stage_completed": 4,
+		"current_stage_total": 10,
+		"current_stage_details": {
+			"message": "Preparing entities: 6 startup pending",
+			"blocking_component": "entity_manager",
+			"blocking_component_pending": 6
+		}
+	}, &"world_content")
+	var coordinator_stage_snapshot: Dictionary = screen.get_loading_progress_snapshot()
+	if not _expect(int(coordinator_stage_snapshot.get("stage_completed", 0)) == 4, "coordinator stage snapshot should expose completed count"):
+		return 1
+	if not _expect(str(coordinator_stage_snapshot.get("stage_detail_text", "")).contains("blocked by entity_manager (6)"), "coordinator stage detail should expose blocking subsystem"):
 		return 1
 
 	screen.update_progress(10.0, "stale lower progress")

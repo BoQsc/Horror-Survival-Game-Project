@@ -49,17 +49,21 @@ The recommended order is:
 
 | Area | Confirmed behavior | Consequence |
 |---|---|---|
-| World definition bake | `world_map_generator/world_map_generator.gd` generates a 2048 x 2048 map in GDScript and writes versioned PNG layers plus metadata. | The 4,194,304-pixel height and biome pass is a clear bake-time optimization candidate. |
+| World definition bake | `world_map_generator/world_map_generator.gd` writes versioned PNG layers plus metadata, and the height/biome pass can run through a worker-safe native GDExtension backend. | The 4,194,304-pixel height and biome pass is now removed from the slow GDScript loop on native-capable builds; remaining bake hotspots should still be measured before adding compute paths. |
 | Generator UI | `world_map_generator/world_map_generator_ui.gd` uses a bounded preview builder and supports progressive low-resolution full-world previews. | Preview work is no longer required to colorize the authoritative full-resolution map on the main thread. |
+| Native bake dependency | The worker-safe native height/biome path uses the same header-only FastNoiseLite implementation that Godot wraps, isolated under `addons/third_party/fast_noise_lite` with its MIT notice retained. | This is a narrow third-party exception; project-owned code remains CC0 and additional third-party code should not be added unless a measured roadmap need justifies it. |
 | World definition load | `world_map_data/world_map_data.gd` has a versioned in-memory LRU and disk cache. Runtime callers can share read-only data. | Baked map decode and duplicate work are already addressed. |
 | Runtime density generation | `world_marching_cubes/chunk_manager.gd` creates a local `RenderingDevice`, compute pipelines, and per-chunk density/material buffers. | GPU compute is already used where it fits. |
 | Runtime meshing | The default path reads density/material buffers back and calls the `MeshBuilder` GDExtension for marching cubes on CPU workers. | The pipeline is hybrid, and transfer/synchronization boundaries matter. |
 | Runtime finalization | Worker output is queued and materialized into meshes, shapes, nodes, materials, and collision under frame budgets. | Main-thread work is already bounded, but it still repeats on revisits. |
 | Chunk unload | `_unload_chunk()` frees live nodes and GPU buffers while eligible data-only terrain artifacts remain in bounded session or disk stores. | Unchanged revisits can restore generation output while live render and physics resources remain bounded. |
-| Runtime event handling | Terrain, buildings, vegetation, and entities consume a thresholded explicit player movement signal; terrain render/collision/world-definition setters wake sleeping stream work; fallback polling remains for vehicles or custom viewers. | Stationary coordination work can sleep without giving up correctness for alternate viewers, runtime setting changes, or save-load world switches. |
-| Loading UI | The loading screen consumes the `WorldStartupCoordinator` weighted monotonic stage contract, and its fallback path understands manager readiness snapshots. | Startup progress, failure, cancellation, supersession, and real pending work are visible through one owner. |
+| Artifact write safety | Signed terrain setting changes and world-definition switches clear pending async disk artifact writes. | Disk persistence cannot quietly write stale artifacts after a signature-changing runtime event. |
+| Runtime event handling | Terrain, buildings, vegetation, and entities consume a thresholded explicit player movement signal; terrain render, collision, signed generation-setting, and world-definition setters wake sleeping stream work; fallback polling remains for vehicles or custom viewers. | Stationary coordination work can sleep without giving up correctness for alternate viewers, runtime setting changes, or save-load world switches. |
+| Loading UI | The loading screen consumes the `WorldStartupCoordinator` weighted monotonic stage contract, exposes active stage label/progress/counts/details, and its fallback path understands manager readiness snapshots. Terrain readiness snapshots break pending work into artifact restores, generation misses, CPU mesh work, finalization, visual-batch worker work, preheat, async disk write backlog, and terrain artifact cache hit/miss/store/restore state. | Startup progress, failure, cancellation, supersession, stage-local work, cache reuse state, and real pending/blocking work are visible through one owner without extra manager polling. |
 | Load telemetry | Save-load, terrain, startup coordinator, cache, and GPU batch traces are structured and bounded. | Production and test captures can explain startup and cache-miss work without per-frame or per-chunk spam. |
 | Prewarm | Terrain, buildings, vegetation, and entities use representative render resource prewarm, and terrain startup preheat has configurable radius and readiness policy. | Critical terrain can be prepared before player release while wider preheat remains optional background work. |
+| Entity startup readiness | Entity readiness snapshots separate collision-relevant startup spawn work from distant procedural spawn backlog. | The loading UI can release the player when immediate play is ready while still exposing background spawn backlog telemetry. |
+| Entity runtime idle | Distant spawn backlog is background-only when the viewer movement signal is connected and the backlog is outside the collision-relevant area. | Stationary gameplay does not keep entity maintenance awake just to recheck far spawn plans. |
 
 ## Measured Starting Point
 
@@ -112,6 +116,11 @@ fraction of a millisecond.
 - Invalidate the smallest correct region.
 - Loading progress must be based on owned work counts or measured sub-progress,
   not guessed text transitions.
+- Background spawn backlog must be visible but should not block player release
+  unless it is within the collision-relevant startup area or strict proof mode
+  intentionally asks for full spawn backlog completion.
+- Background spawn backlog also should not count as active runtime pending work
+  while the movement signal can wake it when the viewer approaches.
 - Production logs must summarize stages and slow outliers, not print every chunk.
 
 ## Target Architecture
@@ -120,6 +129,7 @@ fraction of a millisecond.
 World Map Generator
   -> versioned world definition artifact
      -> PNG layers + metadata + world content signature
+     -> bake proof: stage timings + backend + deterministic content/export signatures
 
 World Startup Coordinator
   -> resolves world and save
@@ -156,6 +166,9 @@ This already exists and should remain authoritative:
 - metadata
 - baked buildings, towns, and terrain modifications
 - world content signature
+- world-bake proof with layer validation, image signature, metadata signature,
+  combined content signature, generation stage timings, hash timing, backend,
+  save/export timing, and export cache signature
 
 `WorldMapData` remains the owner of decoded world definition caching.
 
@@ -221,6 +234,9 @@ stored_modification_version_or_hash
 The world content signature already exists in the world map bake. Add explicit
 terrain generator and mesher version constants so shader, GDExtension, or format
 changes can invalidate old artifacts without guessing.
+The generator also exposes `world_bake_proof` so production snapshots can
+verify the bake backend, deterministic content signature, layer set, stage
+timings, and export signature before gameplay measurements begin.
 
 ### Initial Persistence Policy
 
@@ -426,6 +442,100 @@ details
 - Use the implemented `WorldPerformanceMonitors` autoload for cached
   `Performance.add_custom_monitor()` values. Monitor callbacks return cached
   numeric samples so debugger queries do not walk the scene tree.
+- Town-stall proof snapshots consume the same cached monitor values and expose
+  `stationary_runtime_idle_verdict` plus window-level `world_runtime_*` fields
+  for idle ratio, pending work, awake-process count, per-subsystem wake
+  blockers, GPU sync, readback, and pending finalization.
+- Warm and revisit proof snapshots also expose
+  `stationary_terrain_artifact_cache_verdict` for ending artifact hit ratio,
+  cache entries, memory/disk byte-budget ratios, eviction deltas, and disk-hit
+  delta over the stationary window.
+- Startup proof snapshots expose `startup_readiness_verdict` for loading-screen
+  and coordinator availability, completion, active/failure/cancellation state,
+  playable-ready state, completed/missing/incomplete stage counts, startup
+  elapsed time, slowest stage duration, trace event count, current stage
+  label/progress/counts, and compact stage detail text for stall diagnosis.
+- Startup analyzer gates and town-stall runner proof gates append compact
+  active-stage context to startup-readiness failures, so failed production proof
+  names the current stage, stage-local progress, work counts, and blocking
+  detail instead of requiring raw snapshot inspection.
+- Terrain startup readiness details expose artifact restore queues, generation
+  miss queues, CPU meshing queues, pending finalization type counts, visual
+  batch worker queues, spawn-zone preheat, and async disk artifact write backlog
+  so loading-stage details can distinguish restore work from cache misses.
+- They also expose session and disk artifact cache hit/miss/store/restore
+  counters plus byte-budget state, so warm startup traces can show whether the
+  spawn radius is restoring cached terrain or generating misses.
+- World-bake proof snapshots expose `world_bake_proof` for generation stage
+  timings, height/biome backend, baked layer count and validity, stable image
+  and metadata signatures, combined content signature, hash overhead,
+  save/export timing, and export cache signature.
+- `addons/tests/analyze_performance_snapshots.py` summarizes those verdicts and
+  can enforce latest production startup-readiness, world-bake, runtime-idle,
+  and terrain-artifact-cache gates from snapshot files.
+- `addons/tests/run_town_stall_test.py` also prints those proof summaries and
+  can enforce the same snapshot verdicts in-process through opt-in environment
+  gates for production proof runs.
+- `addons/tests/run_town_stall_raw_baseline.py` can pass those gates to repeated
+  raw GPU baseline runs and stores the active proof-gate environment plus
+  aggregated proof values in its output JSON.
+- `addons/tests/analyze_performance_snapshots.py` preserves those raw-baseline
+  proof verdicts and can gate the latest repeated baseline on startup readiness,
+  world-bake proof, runtime idle, artifact hit ratio, cache budget pressure,
+  and eviction churn.
+- `addons/tests/run_world_performance_priority_proof.py` is the consolidated
+  executable proof entry point. By default it runs the fast contract suite and
+  existing-snapshot analyzer smoke; with `--run-production` it launches the raw
+  town baseline with the same startup, world-bake, runtime-idle, and
+  terrain-cache gates enabled and writes a JSON report under `.agent`.
+- The same fast suite includes foundational startup/runtime contracts for
+  session terrain artifact cache eviction/invalidation, disk artifact
+  stale/corrupt fallback, startup preheat readiness policy, terrain process
+  sleep/wake, signed runtime setting invalidation, vegetation placement cache
+  reuse, entity pool reuse, work-aware entity maintenance cadence, and
+  player/building/vegetation/entity viewer-position wake signals.
+- It also includes focused native/helper contracts for terrain height-map
+  sampling, world-map road/water mask sampling, terrain mask sample telemetry,
+  building grouped mesh merge, vegetation cluster render payloads, vegetation
+  native record append, vegetation noise sampling, pending chunk scheduling,
+  removed-entry filtering, and generation timing telemetry.
+- It validates planned proof steps before execution, so fast Godot commands must
+  remain focused `addons/tests/*_test.gd` contracts or editor parse checks; bot
+  and gameplay harness scripts are rejected from the fast suite.
+- It writes a `completion_audit` block that separates raw production case
+  coverage from contract-only coverage and keeps the roadmap incomplete until
+  accepted heavy production proof, threshold tuning, GPU sync/readback A/B
+  evidence, and rollout/test-hook cleanup are complete.
+- `addons/tests/audit_world_performance_priority_readiness.py` is the
+  non-game readiness checkpoint. It validates the `priority_full` production
+  plan without launching gameplay, records current proof-report state, and
+  writes the source-side rollout/test-hook cleanup queue that must be resolved
+  after accepted production captures. Each cleanup candidate carries an explicit
+  post-evidence action, separating removal/review hooks from tuning overrides
+  that should be promoted into defaults or documented project settings.
+- The wrapper also expands the default heavy `priority_full` production suite to
+  runtime default, unchanged-revisit, render-distance 5/10/15, and
+  memory-pressure raw baseline cases, then records covered and still-missing
+  roadmap scenarios in dry-run and production JSON reports.
+- The same plan counts the bounded world-map preview builder contract as
+  low-resolution preview coverage when Godot contract checks are included.
+- The plan counts warm startup as contract-covered when the terrain warm-startup
+  preheat contract is included; that contract verifies a disk-seeded startup
+  preheat queues spawn terrain as artifact restores with no generation misses.
+- The plan also counts terrain world-definition change coverage when the Godot
+  contract is included; that contract verifies world-switch cache isolation by
+  clearing stale terrain artifacts, pending disk writes, and queued generation
+  while routing save-load world changes through the terrain setter.
+- The plan counts dirty edit revisit as contract-covered when the terrain
+  generation telemetry contract is included; that contract verifies completed
+  terrain edits refresh their session artifact and revisit through artifact
+  restore instead of first-revisit generation.
+- The plan counts modified-terrain save/reload as contract-covered when the
+  SaveManager terrain modifications contract is included; that contract verifies
+  terrain load clears live chunks before restoring saved edit payloads.
+- The town-stall harness can apply terrain artifact memory/disk budget overrides
+  to `TerrainManager`, allowing memory-pressure proof runs to exercise bounded
+  artifact cache behavior without changing project defaults.
 
 Implemented custom monitors include:
 
@@ -437,8 +547,13 @@ WorldStartup/Cancelled
 WorldStartup/PlayableReady
 TerrainArtifactCache/Entries
 TerrainArtifactCache/Bytes
+TerrainArtifactCache/ByteBudgetRatio
 TerrainArtifactCache/HitRatio
+TerrainArtifactCache/Evictions
+TerrainArtifactDiskCache/Bytes
+TerrainArtifactDiskCache/ByteBudgetRatio
 TerrainArtifactCache/DiskHits
+TerrainArtifactDiskCache/Evictions
 TerrainArtifactDiskWriteQueue/PendingBytes
 TerrainArtifactDiskWriteQueue/PendingEntries
 TerrainArtifactDiskWriteQueue/CompletedBytes
@@ -583,11 +698,11 @@ patterns as the local implementation model.
 | 1. Session terrain artifact cache | in progress | Add a bounded data-first cache at the generation-to-finalization boundary. Restore unchanged chunks through the existing finalization path. | An unchanged revisited chunk does not run density generation or native marching cubes. |
 | 2. Disk artifacts and spawn preheat | in progress | Persist eligible base-world artifacts, restore them on warm load, and preheat a configurable spawn radius before player release. | Warm startup restores most spawn terrain from artifacts and generates only misses. |
 | 3. Startup coordinator and loading UI | in progress | Add weighted stages, readiness levels, manager progress contracts, failure reporting, and a coordinator-driven loading screen. | Progress is monotonic, stage-correct, and tied to real work. |
-| 4. Generator preview and bake optimization | in progress | Keep the implemented bounded progressive preview and native height/biome backend, then choose any additional native or compute backends only for measured generator hotspots. | Preview is responsive and full bake time is materially lower without changing output contracts. |
+| 4. Generator preview and bake optimization | in progress | Keep the implemented bounded progressive preview and worker-safe native height/biome backend, then choose any additional native or compute backends only for measured generator hotspots. | Preview is responsive and full bake time is materially lower without changing output contracts. |
 | 5. GPU sync/readback experiment | in progress | Use the implemented aggregate/max sync and readback telemetry, then A/B test asynchronous readback or in-flight buffering for remaining cache misses. | Keep only a path that improves measured gameplay frame time or load time. |
 | 6. Event-driven terrain coordination | in progress | Add viewer-region events and allow terrain processing to sleep when all queues are empty. | Stationary gameplay performs no unnecessary terrain coordination work. |
 | 7. Dependent runtime reuse | in progress | Continue the implemented vegetation placement reuse, entity pooling, and existing building/prefab cache paths from `WORLD_RUNTIME_REUSE_ROADMAP.md`. | Unchanged revisits restore dependent content instead of rebuilding it. |
-| 8. Proof sweeps and cleanup | pending | Run cold/warm/revisit/edit tests, memory sweeps, render-distance sweeps, and remove temporary rollout hooks. | One stable, measured, bounded path remains. |
+| 8. Proof sweeps and cleanup | in progress | Run cold/warm/revisit/edit tests, memory sweeps, render-distance sweeps, and remove temporary rollout hooks. | One stable, measured, bounded path remains. |
 
 ## Measurement Scenarios
 
@@ -612,14 +727,21 @@ Every major stage must compare these scenarios:
 - startup total duration
 - playable-ready duration
 - stage durations
+- startup proof completed stage count, missing/incomplete stage count, slowest
+  stage duration, loading active/failure/cancellation flags, and trace event
+  count
 - terrain artifact memory and disk hit ratio
 - terrain artifact bytes and evictions
+- terrain artifact cache ending hit ratio, byte-budget ratios, eviction deltas,
+  and disk-hit delta in proof windows
 - terrain chunks generated
 - terrain chunks restored
 - GPU generation sync aggregate and maximum
 - GPU readback aggregate and maximum
 - native CPU mesh build aggregate and maximum
 - pending finalization aggregate and maximum
+- stationary `WorldRuntime/Idle` sample ratio, maximum
+  `WorldRuntime/PendingWork`, and maximum `WorldRuntime/AwakeProcessCount`
 - main-thread finalization budget usage
 - frames over 16.67, 25, 40, and 50 ms
 - stationary FPS and power
@@ -637,6 +759,9 @@ These are starting targets and should be recalibrated after Stage 0 traces:
 - No gameplay frame exceeds 40 ms because of terrain generation or restore work.
 - Runtime terrain finalization remains within a 2 ms per-frame budget.
 - Loading progress is monotonic and stage-correct.
+- `startup_readiness_verdict` is complete before gameplay measurement begins,
+  with no active loading, failure, cancellation, missing stage, or incomplete
+  stage state.
 - Production tracing adds less than 0.1 ms per frame and emits no per-chunk spam.
 - Session cache memory and disk cache size remain within configured budgets.
 - The locked town FPS, frame-time, and power baseline does not regress.
@@ -649,10 +774,11 @@ These are starting targets and should be recalibrated after Stage 0 traces:
 | Session cache | Revisit test, eviction test, dirty invalidation test, memory budget test |
 | Disk cache | Cold/warm comparison, corrupted artifact fallback, stale version fallback |
 | Spawn preheat | Playable readiness test, collision-safe spawn test, loading progress test |
-| Loading coordinator | Success, failure, cancel/world switch, save load, no-manager fallback |
-| Generator backend | Output comparison, determinism test, bake timing, export smoke test |
+| Loading coordinator | Success, failure, cancel/world switch, save load, no-manager fallback, startup readiness analyzer and runner gates |
+| Generator backend | Output comparison, `world_bake_proof` determinism, bake timing, backend gate, export signature smoke test |
 | Async readback | Cancellation, world reset, buffer lifetime, frame-time A/B comparison |
-| Event-driven processing | Stationary idle work audit, movement wake test, edit wake test, setting-change wake test, world-definition switch test |
+| Event-driven processing | Stationary idle work audit using `stationary_runtime_idle_verdict` plus analyzer and runner gates, movement wake test, edit wake test, setting-change wake test, world-definition switch test |
+| Proof sweeps | Fast priority proof suite, heavy raw production proof with gates, cold/warm/revisit/edit/memory/render-distance reports |
 
 ## Risks
 

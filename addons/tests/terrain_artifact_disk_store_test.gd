@@ -53,6 +53,24 @@ func _run() -> int:
 	if not _expect(not FileAccess.file_exists(corrupt_path), "corrupt artifact should be removed"):
 		return 1
 
+	var stale_coord := Vector3i(10, 0, 9)
+	var stale_path: String = store._artifact_path(stale_coord, "sig")
+	DirAccess.make_dir_recursive_absolute(stale_path.get_base_dir())
+	var stale_file := FileAccess.open(stale_path, FileAccess.WRITE)
+	if stale_file:
+		stale_file.store_var({
+			"magic": TerrainArtifactDiskStore.STORE_MAGIC,
+			"version": TerrainArtifactDiskStore.STORE_VERSION - 1,
+			"coord": stale_coord,
+			"settings_signature": "sig",
+			"artifact": _artifact("sig", 0, 80)
+		}, false)
+		stale_file.close()
+	if not _expect(store.lookup(stale_coord, "sig").is_empty(), "stale-version artifact should miss"):
+		return 1
+	if not _expect(not FileAccess.file_exists(stale_path), "stale-version artifact should be removed"):
+		return 1
+
 	var snapshot: Dictionary = store.get_snapshot()
 	if not _expect(int(snapshot.get("hit_count", 0)) == 4, "disk hits should be counted"):
 		return 1
@@ -60,7 +78,7 @@ func _run() -> int:
 		return 1
 	if not _expect(int(snapshot.get("store_skipped_count", 0)) == 1, "modified store skip should be counted"):
 		return 1
-	if not _expect(int(snapshot.get("invalid_count", 0)) == 1, "corrupt artifact should be counted invalid"):
+	if not _expect(int(snapshot.get("invalid_count", 0)) == 2, "invalid artifact payloads should be counted"):
 		return 1
 
 	var byte_signature := "byte_sig"
