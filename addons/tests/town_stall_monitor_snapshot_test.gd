@@ -30,6 +30,7 @@ func _run() -> int:
 	samples[0]["terrain_artifact_disk_cache_bytes"] = 4096.0
 	samples[0]["terrain_artifact_disk_cache_byte_budget_ratio"] = 0.1
 	samples[0]["terrain_artifact_cache_disk_hits"] = 1.0
+	samples[0]["terrain_artifact_ready_resource_restores"] = 2.0
 	samples[0]["terrain_artifact_disk_cache_evictions"] = 1.0
 	samples[1]["terrain_artifact_cache_entries"] = 5.0
 	samples[1]["terrain_artifact_cache_bytes"] = 2048.0
@@ -39,6 +40,7 @@ func _run() -> int:
 	samples[1]["terrain_artifact_disk_cache_bytes"] = 8192.0
 	samples[1]["terrain_artifact_disk_cache_byte_budget_ratio"] = 0.2
 	samples[1]["terrain_artifact_cache_disk_hits"] = 4.0
+	samples[1]["terrain_artifact_ready_resource_restores"] = 7.0
 	samples[1]["terrain_artifact_disk_cache_evictions"] = 4.0
 
 	var window: Dictionary = harness._build_native_town_entry_window(samples, samples.size())
@@ -81,6 +83,8 @@ func _run() -> int:
 	if not _expect(is_equal_approx(float(window.get("end_terrain_artifact_disk_cache_byte_budget_ratio", 0.0)), 0.2), "window should expose ending disk cache budget ratio"):
 		return _fail(harness)
 	if not _expect(is_equal_approx(float(window.get("terrain_artifact_cache_disk_hit_delta", 0.0)), 3.0), "window should expose disk hit delta"):
+		return _fail(harness)
+	if not _expect(is_equal_approx(float(window.get("terrain_artifact_ready_resource_restore_delta", 0.0)), 5.0), "window should expose ready resource restore delta"):
 		return _fail(harness)
 	if not _expect(is_equal_approx(float(window.get("terrain_artifact_disk_cache_eviction_delta", 0.0)), 3.0), "window should expose disk cache eviction delta"):
 		return _fail(harness)
@@ -221,6 +225,7 @@ func _make_sample(frame: int, idle: float, pending_work: float, awake_process_co
 		"terrain_artifact_disk_cache_bytes": 0.0,
 		"terrain_artifact_disk_cache_byte_budget_ratio": 0.0,
 		"terrain_artifact_cache_disk_hits": 0.0,
+		"terrain_artifact_ready_resource_restores": 0.0,
 		"terrain_artifact_disk_cache_evictions": 0.0,
 		"terrain_generation_gpu_sync_ms": gpu_sync_ms,
 		"terrain_generation_readback_ms": readback_ms,

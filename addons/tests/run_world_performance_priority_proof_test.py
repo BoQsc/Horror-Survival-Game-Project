@@ -38,6 +38,9 @@ def main() -> int:
     _expect("terrain_artifact_disk_store_contract" in godot_contract_names, "Godot suite should include terrain artifact disk store contract")
     _expect("terrain_startup_preheat_contract" in godot_contract_names, "Godot suite should include terrain startup preheat contract")
     _expect("terrain_warm_startup_preheat_contract" in godot_contract_names, "Godot suite should include warm startup preheat contract")
+    _expect("terrain_world_artifact_path_contract" in godot_contract_names, "Godot suite should include world-local terrain artifact path contract")
+    _expect("world_terrain_artifact_baker_contract" in godot_contract_names, "Godot suite should include terrain artifact baker contract")
+    _expect("world_terrain_artifact_baker_live_smoke_contract" in godot_contract_names, "Godot suite should include live terrain artifact baker smoke contract")
     _expect("terrain_generation_telemetry_contract" in godot_contract_names, "Godot suite should include terrain generation telemetry contract")
     _expect("terrain_height_map_samples_native_contract" in godot_contract_names, "Godot suite should include terrain height-map native sample contract")
     _expect("terrain_mask_sample_telemetry_contract" in godot_contract_names, "Godot suite should include terrain mask sample telemetry contract")
@@ -47,6 +50,7 @@ def main() -> int:
     _expect("town_stall_artifact_budget_override_contract" in godot_contract_names, "Godot suite should include artifact budget override contract")
     _expect("save_manager_terrain_modifications_contract" in godot_contract_names, "Godot suite should include save-manager terrain modifications contract")
     _expect("world_map_preview_builder_contract" in godot_contract_names, "Godot suite should include preview builder contract")
+    _expect("world_map_generator_ui_progress_contract" in godot_contract_names, "Godot suite should include generator UI progress contract")
     _expect("entity_startup_readiness_contract" in godot_contract_names, "Godot suite should include entity startup readiness contract")
     _expect("building_viewer_signal_contract" in godot_contract_names, "Godot suite should include building viewer signal contract")
     _expect("vegetation_chunk_placement_cache_contract" in godot_contract_names, "Godot suite should include vegetation placement cache contract")
@@ -133,6 +137,28 @@ def main() -> int:
     _expect("--require-latest-raw-baseline-runtime-idle-proof" in analysis_command, "analysis should enforce raw runtime idle proof")
     _expect("--min-latest-raw-baseline-terrain-artifact-cache-hit-ratio 0.9" in analysis_command, "analysis should propagate cache threshold")
 
+    warm_args = proof_runner.parse_args([
+        "--skip-godot",
+        "--run-production",
+        "--production-suite",
+        "priority_warm_disk_restore",
+        "--min-terrain-artifact-cache-disk-hit-delta",
+        "1",
+        "--min-terrain-artifact-ready-resource-restore-delta",
+        "1",
+    ])
+    warm_steps = proof_runner.build_steps(warm_args)
+    warm_raw_step = next(step for step in warm_steps if step.name == "production_raw_baseline_with_priority_gates")
+    warm_command = _command_text(warm_raw_step)
+    _expect("--cases runtime_default,priority_warm_disk_restore" in warm_command, "warm disk suite should seed then prove warm restore")
+    _expect("--min-terrain-artifact-cache-disk-hit-delta 1" in warm_command, "warm disk suite should propagate disk-hit threshold")
+    _expect("--min-terrain-artifact-ready-resource-restore-delta 1" in warm_command, "warm disk suite should propagate ready-resource restore threshold")
+    _expect(warm_raw_step.env.get("TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS") == "900", "warm disk suite should extend per-case raw timeout")
+    _expect(warm_raw_step.env.get("TOWN_STALL_TIMEOUT_SECONDS") == "900", "warm disk suite should extend child harness timeout")
+    warm_plan = proof_runner._production_plan(warm_args)
+    warm_raw_covered = set(warm_plan.get("raw_case_covered_scenarios", []))
+    _expect("warm_startup" in warm_raw_covered, "warm disk suite should raw-cover warm startup")
+
     suite_args = proof_runner.parse_args([
         "--skip-godot",
         "--run-production",
@@ -143,24 +169,26 @@ def main() -> int:
     suite_raw_step = next(step for step in suite_steps if step.name == "production_raw_baseline_with_priority_gates")
     suite_command = _command_text(suite_raw_step)
     _expect(
-        "--cases runtime_default,priority_revisit,priority_render_distance_5,priority_render_distance_10,priority_render_distance_15,priority_memory_pressure" in suite_command,
-        "priority_full suite should expand to revisit, render-distance, and memory-pressure proof cases",
+        "--cases runtime_default,priority_revisit,priority_warm_disk_restore,priority_render_distance_5,priority_render_distance_10,priority_render_distance_15,priority_memory_pressure" in suite_command,
+        "priority_full suite should expand to revisit, warm restore, render-distance, and memory-pressure proof cases",
     )
     suite_plan = proof_runner._production_plan(suite_args)
     covered = set(suite_plan.get("covered_scenarios", []))
     missing = set(suite_plan.get("missing_scenarios", []))
     raw_case_covered = set(suite_plan.get("raw_case_covered_scenarios", []))
     _expect("unchanged_revisit" in covered, "priority_full plan should cover unchanged revisit")
+    _expect("warm_startup" in covered, "priority_full plan should cover warm startup through raw warm restore")
     _expect("render_distance_5" in covered, "priority_full plan should cover render distance 5")
     _expect("render_distance_10" in covered, "priority_full plan should cover render distance 10")
     _expect("render_distance_15" in covered, "priority_full plan should cover render distance 15")
     _expect("memory_pressure" in covered, "priority_full plan should cover memory pressure")
     _expect("unchanged_revisit" in raw_case_covered, "priority_full plan should mark unchanged revisit as raw-case-covered")
+    _expect("warm_startup" in raw_case_covered, "priority_full plan should mark warm startup as raw-case-covered")
     _expect("low_resolution_preview" in missing, "skip-godot plan should still flag preview contract as missing")
     _expect("world_switch_cache_isolation" in missing, "skip-godot plan should still flag world-switch contract as missing")
     _expect("edit_revisit" in missing, "skip-godot plan should still flag edit revisit contract as missing")
     _expect("save_reload_modified" in missing, "skip-godot plan should still flag save/reload modified contract as missing")
-    _expect("warm_startup" in missing, "priority_full plan should still flag warm startup as requiring external preparation")
+    _expect("warm_startup" not in missing, "priority_full plan should not require external warm startup preparation")
 
     full_plan_args = proof_runner.parse_args([
         "--run-production",
@@ -186,7 +214,7 @@ def main() -> int:
     _expect("warm_startup" not in full_external, "covered warm startup contract should not remain externally prepared")
     _expect("edit_revisit" not in full_external, "covered edit revisit contract should not remain externally prepared")
     _expect("save_reload_modified" not in full_external, "covered save/reload modified contract should not remain externally prepared")
-    _expect("warm_startup" in contract_only, "warm startup should be reported as contract-only until a raw case exists")
+    _expect("warm_startup" not in contract_only, "warm startup raw case should keep it out of contract-only coverage")
     _expect("edit_revisit" in contract_only, "edit revisit should be reported as contract-only until a raw case exists")
     _expect("unchanged_revisit" not in contract_only, "raw-case revisit should not be reported as contract-only")
 

@@ -72,6 +72,17 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
         },
     },
+    "priority_warm_disk_restore": {
+        "description": "Priority proof warm startup: require disk artifact restores during town-entry startup after a seeding run.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_AUTO_TELEPORT": "0",
+            "TOWN_STALL_MEASURE_FULL_FLIGHT": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE": "town_entry",
+        },
+    },
     "priority_render_distance_5": {
         "description": "Priority proof render-distance sweep at distance 5 with runtime power manager defaults.",
         "env": {
@@ -186,6 +197,46 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
             "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
             "TOWN_STALL_DISABLE_WATER_RENDER": "1",
+        },
+    },
+    "runtime_deepidle60_no_glow": {
+        "description": "Runtime 60 FPS power profile with glow disabled for post-process cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_DISABLE_GLOW": "1",
+        },
+    },
+    "runtime_deepidle60_no_buildings": {
+        "description": "Runtime 60 FPS power profile with buildings disabled for town-render cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_DISABLE_BUILDINGS": "1",
+        },
+    },
+    "runtime_deepidle60_no_building_visual_batches": {
+        "description": "Runtime 60 FPS power profile with building visual batches disabled for batch-render cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_DISABLE_BUILDING_VISUAL_BATCHES": "1",
+        },
+    },
+    "runtime_deepidle60_no_terrain_visuals": {
+        "description": "Runtime 60 FPS power profile with terrain manager visuals disabled for terrain-render cost isolation.",
+        "env": {
+            "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
+            "TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_IDLE_FPS": "60",
+            "TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS": "60",
+            "TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS": "1",
         },
     },
     "runtime_deepidle60_tree_clusters_1": {
@@ -403,10 +454,21 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_ARTIFACT_DISK_CACHE_ENTRIES_PER_WORLD",
     "TOWN_STALL_TERRAIN_ARTIFACT_DISK_WRITE_QUEUE_BUDGET_MB",
     "TOWN_STALL_TERRAIN_ARTIFACT_DISK_WRITE_QUEUE_MAX_ENTRIES",
+    "TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES",
+    "TOWN_STALL_TERRAIN_ARTIFACT_DISK_RESTORE_REQUIRES_MANIFEST",
+    "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS",
+    "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_RUNTIME_CHUNKS",
     "TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES",
+    "TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS",
     "TOWN_STALL_SHARED_TERRAIN_COLLISION_BODY",
+    "TOWN_STALL_DISABLE_BUILDINGS",
+    "TOWN_STALL_DISABLE_BUILDING_VISUAL_BATCHES",
     "TOWN_STALL_DISABLE_GLOW",
     "TOWN_STALL_DISABLE_WATER_RENDER",
+    "TOWN_STALL_DISABLE_VEGETATION_RENDER",
+    "TOWN_STALL_VEGETATION_RENDER_TREES",
+    "TOWN_STALL_VEGETATION_RENDER_GRASS",
+    "TOWN_STALL_VEGETATION_RENDER_ROCKS",
     "TOWN_STALL_VEGETATION_GLOBAL_RENDER_IGNORE_OCCLUSION_CULLING",
     "TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_SIZE",
     "TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_MAX_VERTICES",
@@ -479,9 +541,11 @@ PROOF_GATE_ENV_KEYS = [
     "TOWN_STALL_MAX_RUNTIME_PENDING_WORK",
     "TOWN_STALL_MAX_RUNTIME_AWAKE_PROCESS_COUNT",
     "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF",
+    "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO",
@@ -492,9 +556,11 @@ PROOF_GATE_ENV_KEYS = [
 
 TERRAIN_ARTIFACT_CACHE_PROOF_ENV_KEYS = [
     "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF",
+    "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO",
@@ -807,6 +873,8 @@ def _collect_initial_idle_until_clean(
     thresholds: dict[str, Any],
     timeout_seconds: float,
     poll_seconds: float,
+    idle_label: str = "initial_idle",
+    display_label: str = "Initial idle",
 ) -> dict[str, Any]:
     started = time.time()
     deadline = started + max(0.0, timeout_seconds)
@@ -817,7 +885,7 @@ def _collect_initial_idle_until_clean(
     while True:
         attempt_started = time.time()
         machine_state = town_runner._collect_machine_state()
-        idle_sample = _run_idle_sample("initial_idle", idle_seconds, sample_interval)
+        idle_sample = _run_idle_sample(idle_label, idle_seconds, sample_interval)
         reasons = _idle_contamination_reasons(idle_sample, machine_state, thresholds)
         attempt = {
             "attempt": len(attempts) + 1,
@@ -845,7 +913,7 @@ def _collect_initial_idle_until_clean(
                 "duration_s": time.time() - started,
             }
 
-        print(f"Initial idle contaminated: {', '.join(reasons)}")
+        print(f"{display_label} contaminated: {', '.join(reasons)}")
         if not retry_enabled or time.time() >= deadline:
             return {
                 "enabled": retry_enabled,
@@ -862,7 +930,7 @@ def _collect_initial_idle_until_clean(
             }
 
         sleep_seconds = min(poll_seconds, max(0.0, deadline - time.time()))
-        print(f"Retrying initial idle preflight in {sleep_seconds:.1f}s")
+        print(f"Retrying {display_label.lower()} in {sleep_seconds:.1f}s")
         if sleep_seconds > 0.0:
             time.sleep(sleep_seconds)
 
@@ -1256,6 +1324,8 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     world_bake_proof = town_runner._world_bake_proof_verdict_from_snapshot(snapshot)
     stationary_runtime_idle_verdict = town_runner._stationary_runtime_idle_verdict_from_snapshot(snapshot)
     stationary_terrain_artifact_cache_verdict = town_runner._stationary_terrain_artifact_cache_verdict_from_snapshot(snapshot)
+    entry_terrain_artifact_cache_verdict = town_runner._terrain_artifact_cache_verdict_from_snapshot(snapshot, "town_entry")
+    moving_entry_terrain_artifact_cache_verdict = town_runner._terrain_artifact_cache_verdict_from_snapshot(snapshot, "moving_entry")
     telemetry = snapshot.get("system_telemetry", {}).get("terrain_manager", {})
     vegetation_telemetry = snapshot.get("system_telemetry", {}).get("vegetation_manager", {})
     runtime_power = {
@@ -1492,6 +1562,8 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
         "world_bake_proof": world_bake_proof,
         "stationary_runtime_idle_verdict": stationary_runtime_idle_verdict,
         "stationary_terrain_artifact_cache_verdict": stationary_terrain_artifact_cache_verdict,
+        "entry_terrain_artifact_cache_verdict": entry_terrain_artifact_cache_verdict,
+        "moving_entry_terrain_artifact_cache_verdict": moving_entry_terrain_artifact_cache_verdict,
         "runtime_power": runtime_power,
         "terrain_gpu": terrain_gpu,
         "collision": collision,
@@ -1613,6 +1685,7 @@ def _proof_gate_env_from_args(args: argparse.Namespace) -> dict[str, str]:
         env["TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES"] = str(max(1, int(args.min_terrain_artifact_cache_proof_samples)))
     _set_optional_env(env, "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO", args.min_terrain_artifact_cache_hit_ratio)
     _set_optional_env(env, "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA", args.min_terrain_artifact_cache_disk_hit_delta)
+    _set_optional_env(env, "TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA", args.min_terrain_artifact_ready_resource_restore_delta)
     _set_optional_env(env, "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO", args.max_terrain_artifact_cache_byte_budget_ratio)
     _set_optional_env(env, "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA", args.max_terrain_artifact_cache_eviction_delta)
     _set_optional_env(env, "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO", args.max_terrain_artifact_disk_cache_byte_budget_ratio)
@@ -1622,7 +1695,7 @@ def _proof_gate_env_from_args(args: argparse.Namespace) -> dict[str, str]:
     return env
 
 
-def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bool, proof_gate_env: dict[str, str]) -> dict[str, str]:
+def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bool, proof_gate_env: dict[str, str], shared_world_name: Optional[str] = None) -> dict[str, str]:
     env = os.environ.copy()
     for key in RESET_ENV_KEYS + PROOF_GATE_ENV_KEYS:
         env.pop(key, None)
@@ -1644,6 +1717,8 @@ def _build_case_env(case_name: str, hold_seconds: float, measure_full_flight: bo
             "TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS": os.environ.get("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS", "1"),
         }
     )
+    if shared_world_name:
+        env["TOWN_STALL_WORLD_NAME"] = shared_world_name
     env.update(CASE_DEFINITIONS[case_name]["env"])
     env.update(proof_gate_env)
     if case_name == "runtime_default":
@@ -1668,11 +1743,11 @@ def _drain_process_stream(stream: Any, sink: list[str], echo_town_progress: bool
         sink.append(f"\n[stream-drain-error] {exc}\n")
 
 
-def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, interval_seconds: float, measure_full_flight: bool, max_gpu_temp_c: Optional[float], proof_gate_env: dict[str, str]) -> dict[str, Any]:
+def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, interval_seconds: float, measure_full_flight: bool, max_gpu_temp_c: Optional[float], proof_gate_env: dict[str, str], shared_world_name: Optional[str] = None) -> dict[str, Any]:
     _assert_no_godot_processes()
     print(f"Town run: {case_name} repeat {repeat_index}")
     run_start_mtime = time.time()
-    env = _build_case_env(case_name, hold_seconds, measure_full_flight, proof_gate_env)
+    env = _build_case_env(case_name, hold_seconds, measure_full_flight, proof_gate_env, shared_world_name)
     sampler = GpuSampler(f"{case_name}_{repeat_index}", interval_seconds, max_gpu_temp_c)
     cmd = [PYTHON_BIN, str(Path(__file__).with_name("run_town_stall_test.py"))]
     started = time.time()
@@ -1786,6 +1861,7 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
             "TOWN_STALL_AUTO_TELEPORT",
             "TOWN_STALL_HOLD_SECONDS",
             "TOWN_STALL_MEASURE_FULL_FLIGHT",
+            "TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS",
             "TOWN_STALL_REPEAT_ENTRY",
             "TOWN_STALL_RENDER_DISTANCE",
             "TOWN_STALL_TERRAIN_RENDER_DISTANCE",
@@ -1869,6 +1945,11 @@ def _case_summary_line(run: dict[str, Any]) -> str:
     world_bake = run.get("snapshot", {}).get("world_bake_proof", {})
     runtime_idle = run.get("snapshot", {}).get("stationary_runtime_idle_verdict", {})
     artifact_cache = run.get("snapshot", {}).get("stationary_terrain_artifact_cache_verdict", {})
+    proof_phase = str(run.get("env_overrides", {}).get("TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE", "") or "").strip().lower()
+    if proof_phase in {"town", "town_entry", "entry", "startup", "startup_entry"}:
+        artifact_cache = run.get("snapshot", {}).get("entry_terrain_artifact_cache_verdict", {})
+    elif proof_phase in {"moving", "moving_entry"}:
+        artifact_cache = run.get("snapshot", {}).get("moving_entry_terrain_artifact_cache_verdict", {})
     startup = startup if isinstance(startup, dict) else {}
     world_bake = world_bake if isinstance(world_bake, dict) else {}
     runtime_idle = runtime_idle if isinstance(runtime_idle, dict) else {}
@@ -1916,9 +1997,14 @@ def _case_summary_line(run: dict[str, Any]) -> str:
             )
         if artifact_cache:
             proof_parts.append(
-                f"cache{float(artifact_cache.get('end_hit_ratio', 0.0) or 0.0):.2f}/"
+                f"cache{str(artifact_cache.get('phase', 'stationary') or 'stationary')}="
+                f"{float(artifact_cache.get('end_hit_ratio', 0.0) or 0.0):.2f}/"
                 f"mem{float(artifact_cache.get('max_byte_budget_ratio', 0.0) or 0.0):.2f}/"
-                f"evict{float(artifact_cache.get('eviction_delta', 0.0) or 0.0):.0f}"
+                f"evict{float(artifact_cache.get('eviction_delta', 0.0) or 0.0):.0f}/"
+                f"disk{float(artifact_cache.get('disk_hit_delta', 0.0) or 0.0):.0f}/"
+                f"{float(artifact_cache.get('disk_hit_count', 0.0) or 0.0):.0f}/"
+                f"ready{float(artifact_cache.get('ready_resource_restore_delta', 0.0) or 0.0):.0f}/"
+                f"{float(artifact_cache.get('ready_resource_restore_count', 0.0) or 0.0):.0f}"
             )
         proof_text = " proof=" + ",".join(proof_parts)
     valid = content.get("content_valid_for_power_compare")
@@ -2178,6 +2264,8 @@ def main() -> int:
     parser.add_argument("--preflight-cooldown-poll-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_COOLDOWN_POLL_SECONDS", 10.0), help="Polling interval for the preflight GPU cooldown gate.")
     parser.add_argument("--preflight-idle-retry-timeout-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS", 0.0), help="Retry the initial idle contamination sample until clean or this timeout is reached. Use 0 to disable.")
     parser.add_argument("--preflight-idle-retry-poll-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS", 10.0), help="Seconds to wait between contaminated initial idle retry attempts.")
+    parser.add_argument("--postflight-idle-retry-timeout-seconds", type=float, default=_float_env("TOWN_STALL_POSTFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS", 0.0), help="Retry the final idle contamination sample until clean or this timeout is reached. Defaults to the preflight idle retry timeout when omitted.")
+    parser.add_argument("--postflight-idle-retry-poll-seconds", type=float, default=_float_env("TOWN_STALL_POSTFLIGHT_IDLE_RETRY_POLL_SECONDS", 0.0), help="Seconds to wait between contaminated final idle retry attempts. Defaults to the preflight idle retry poll when omitted.")
     parser.add_argument("--require-startup-readiness-proof", action="store_true", default=_bool_env("TOWN_STALL_RAW_REQUIRE_STARTUP_READINESS_PROOF"), help="Pass startup-readiness proof gates to each town run.")
     parser.add_argument("--min-startup-completed-stages", type=int, default=_int_env("TOWN_STALL_RAW_MIN_STARTUP_COMPLETED_STAGES", len(town_runner.STARTUP_PROOF_STAGE_IDS)))
     parser.add_argument("--max-startup-elapsed-ms", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_STARTUP_ELAPSED_MS"))
@@ -2199,11 +2287,16 @@ def main() -> int:
     parser.add_argument("--min-terrain-artifact-cache-proof-samples", type=int, default=_int_env("TOWN_STALL_RAW_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES", 1))
     parser.add_argument("--min-terrain-artifact-cache-hit-ratio", type=float, default=_optional_float_env("TOWN_STALL_RAW_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO"))
     parser.add_argument("--min-terrain-artifact-cache-disk-hit-delta", type=float, default=_optional_float_env("TOWN_STALL_RAW_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA"))
+    parser.add_argument("--min-terrain-artifact-ready-resource-restore-delta", type=float, default=_optional_float_env("TOWN_STALL_RAW_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA"))
     parser.add_argument("--max-terrain-artifact-cache-byte-budget-ratio", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO"))
     parser.add_argument("--max-terrain-artifact-cache-eviction-delta", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA"))
     parser.add_argument("--max-terrain-artifact-disk-cache-byte-budget-ratio", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO"))
     parser.add_argument("--max-terrain-artifact-disk-cache-eviction-delta", type=float, default=_optional_float_env("TOWN_STALL_RAW_MAX_TERRAIN_ARTIFACT_DISK_CACHE_EVICTION_DELTA"))
     args = parser.parse_args()
+    if args.postflight_idle_retry_timeout_seconds <= 0.0 and args.preflight_idle_retry_timeout_seconds > 0.0:
+        args.postflight_idle_retry_timeout_seconds = args.preflight_idle_retry_timeout_seconds
+    if args.postflight_idle_retry_poll_seconds <= 0.0:
+        args.postflight_idle_retry_poll_seconds = args.preflight_idle_retry_poll_seconds
 
     case_names = [case.strip() for case in args.cases.split(",") if case.strip()]
     unknown = [case for case in case_names if case not in CASE_DEFINITIONS]
@@ -2278,6 +2371,8 @@ def main() -> int:
         "allow_contaminated_idle": args.allow_contaminated_idle,
         "max_gpu_temp_c": args.max_gpu_temp_c,
         "preflight_max_gpu_temp_c": args.preflight_max_gpu_temp_c,
+        "postflight_idle_retry_timeout_seconds": args.postflight_idle_retry_timeout_seconds,
+        "postflight_idle_retry_poll_seconds": args.postflight_idle_retry_poll_seconds,
         "proof_gate_env": proof_gate_env,
         "preflight_cooldown": preflight_cooldown,
         "preflight_idle": preflight_idle,
@@ -2304,6 +2399,10 @@ def main() -> int:
     exit_code = 0
     matrix_aborted_reason: Optional[str] = None
     case_run_index = 0
+    shared_world_name: Optional[str] = None
+    if "runtime_default" in case_names and "priority_warm_disk_restore" in case_names:
+        shared_world_name = f"town_stall_warm_disk_restore_{slug}"
+        payload["shared_world_name"] = shared_world_name
     for repeat_index in range(1, args.repeats + 1):
         for case_name in case_names:
             if case_run_index > 0 and args.preflight_max_gpu_temp_c > 0:
@@ -2323,7 +2422,7 @@ def main() -> int:
                     _write_payload(output_path, payload)
                     print(f"Stopping matrix before {case_name}: GPU did not cool to <= {args.preflight_max_gpu_temp_c:.1f}C")
                     break
-            run = _run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight, args.max_gpu_temp_c, proof_gate_env)
+            run = _run_town_case(case_name, repeat_index, args.hold_seconds, args.sample_interval, args.measure_full_flight, args.max_gpu_temp_c, proof_gate_env, shared_world_name)
             case_run_index += 1
             payload["runs"].append(run)
             print(_case_summary_line(run))
@@ -2346,8 +2445,18 @@ def main() -> int:
 
     final_contamination_reasons: list[str] = []
     try:
-        payload["final_idle"] = _run_idle_sample("final_idle", args.idle_seconds, args.sample_interval)
-        final_contamination_reasons = _idle_contamination_reasons(payload["final_idle"], town_runner._collect_machine_state(), contamination_thresholds)
+        postflight_idle = _collect_initial_idle_until_clean(
+            args.idle_seconds,
+            args.sample_interval,
+            contamination_thresholds,
+            args.postflight_idle_retry_timeout_seconds,
+            args.postflight_idle_retry_poll_seconds,
+            idle_label="final_idle",
+            display_label="Final idle",
+        )
+        payload["postflight_idle"] = postflight_idle
+        payload["final_idle"] = postflight_idle.get("idle", {})
+        final_contamination_reasons = list(postflight_idle.get("reasons", []))
     except RuntimeError as exc:
         final_contamination_reasons = ["final_idle_orphaned_godot"]
         payload["final_idle"] = {

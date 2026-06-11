@@ -1,6 +1,8 @@
 extends Node
 
 const WorldMapGenScript := preload("res://world_map_generator/world_map_generator.gd")
+const WorldTerrainArtifactBaker := preload("res://world_performance/world_terrain_artifact_baker.gd")
+const WorldGenerationLoadingOverlayScript := preload("res://world_performance/world_generation_loading_overlay.gd")
 const GAME_SCENE_PATH := "res://modules/world_module/world_test_world_player_v2.tscn"
 const BUILDING_API_SCRIPT_PATH := "res://modules/world_player_v2/api/building_api.gd"
 const SAVE_BASE := "user://worlds/"
@@ -49,6 +51,7 @@ const WORLD_PERFORMANCE_SAMPLE_MONITORS: Dictionary = {
 	"terrain_artifact_disk_cache_bytes": &"TerrainArtifactDiskCache/Bytes",
 	"terrain_artifact_disk_cache_byte_budget_ratio": &"TerrainArtifactDiskCache/ByteBudgetRatio",
 	"terrain_artifact_cache_disk_hits": &"TerrainArtifactCache/DiskHits",
+	"terrain_artifact_ready_resource_restores": &"TerrainArtifactCache/ReadyResourceRestores",
 	"terrain_artifact_disk_cache_evictions": &"TerrainArtifactDiskCache/Evictions",
 	"terrain_generation_gpu_sync_ms": &"TerrainGeneration/GpuSyncMs",
 	"terrain_generation_readback_ms": &"TerrainGeneration/ReadbackMs",
@@ -87,6 +90,12 @@ var generated_towns: Array = []
 var generated_world_path: String = ""
 var generated_seed: int = 0
 var world_generation_telemetry: Dictionary = {}
+var terrain_artifact_baker: WorldTerrainArtifactBaker = null
+var terrain_artifact_bake_profile: Dictionary = {}
+var terrain_artifact_bake_last_log_msec: int = 0
+var world_generation_progress_last_log_msec: int = 0
+var world_generation_progress_last_stage: String = ""
+var startup_loading_overlay: Node = null
 var selected_town: Dictionary = {}
 var hold_started_logged: bool = false
 var town_entry_capture_started: bool = false
@@ -200,12 +209,27 @@ var town_spawn_ready_settle_frames: int = 0
 var town_terrain_stable_frames: int = 0
 var town_terrain_stability_signature: String = ""
 var town_runtime_idle_stable_frames: int = 0
+var hold_runtime_idle_stable_frames_required: int = HOLD_RUNTIME_IDLE_STABLE_FRAMES
 
 func _get_town_stall_seed() -> int:
 	var seed_text := OS.get_environment("TOWN_STALL_SEED")
 	if seed_text.is_valid_int():
 		return int(seed_text)
 	return 12345
+
+
+func _get_town_stall_world_name(seed: int) -> String:
+	var override := OS.get_environment("TOWN_STALL_WORLD_NAME").strip_edges()
+	if not override.is_empty():
+		var cleaned := override \
+			.replace("\\", "_") \
+			.replace("/", "_") \
+			.replace(":", "_") \
+			.replace("..", "_") \
+			.strip_edges()
+		if not cleaned.is_empty():
+			return cleaned
+	return "town_stall_%d_%d" % [seed, Time.get_ticks_msec()]
 
 
 func _get_dominant_bucket(bucket_counts: Dictionary) -> Dictionary:
@@ -468,6 +492,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 	var vram_mb := Performance.get_monitor(Performance.RENDER_VIDEO_MEM_USED) / (1024.0 * 1024.0)
 	var pipeline_compilations := _collect_pipeline_compilation_monitor_snapshot()
 	var world_performance_monitor_snapshot := _collect_world_performance_monitor_snapshot()
+	var terrain_artifact_ready_resource_restores := float(world_performance_monitor_snapshot.get("terrain_artifact_ready_resource_restores", 0.0))
 	var monitor_sum_ms := process_monitor_ms + physics_ms + navigation_ms
 	var other_ms := maxf(0.0, total_ms - monitor_sum_ms)
 	var top_measure := _resolve_native_top_measure(total_ms, process_monitor_ms, physics_ms, navigation_ms, other_ms, draw_calls)
@@ -656,6 +681,11 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 			terrain_runtime_power_render_loop_suspended = bool(terrain_manager._runtime_power_render_loop_suspended)
 		if "_runtime_power_world_work_suspended_frame_count" in terrain_manager:
 			terrain_runtime_power_world_work_suspended_frame_count = int(terrain_manager._runtime_power_world_work_suspended_frame_count)
+		if "_terrain_artifact_ready_resource_restore_count" in terrain_manager:
+			terrain_artifact_ready_resource_restores = maxf(
+				terrain_artifact_ready_resource_restores,
+				float(terrain_manager._terrain_artifact_ready_resource_restore_count)
+			)
 		terrain_visual_batch_node_count = int(terrain_manager._terrain_visual_batches.size())
 		terrain_visual_batch_dirty_count = int(terrain_manager._terrain_visual_batch_dirty.size())
 		terrain_last_visual_batch_rebuild_ms = float(terrain_manager._last_terrain_visual_batch_rebuild_ms)
@@ -778,6 +808,7 @@ func _build_native_town_entry_sample(delta: float) -> Dictionary:
 		"terrain_artifact_disk_cache_bytes": float(world_performance_monitor_snapshot.get("terrain_artifact_disk_cache_bytes", 0.0)),
 		"terrain_artifact_disk_cache_byte_budget_ratio": float(world_performance_monitor_snapshot.get("terrain_artifact_disk_cache_byte_budget_ratio", 0.0)),
 		"terrain_artifact_cache_disk_hits": float(world_performance_monitor_snapshot.get("terrain_artifact_cache_disk_hits", 0.0)),
+		"terrain_artifact_ready_resource_restores": terrain_artifact_ready_resource_restores,
 		"terrain_artifact_disk_cache_evictions": float(world_performance_monitor_snapshot.get("terrain_artifact_disk_cache_evictions", 0.0)),
 		"terrain_generation_gpu_sync_ms": float(world_performance_monitor_snapshot.get("terrain_generation_gpu_sync_ms", 0.0)),
 		"terrain_generation_readback_ms": float(world_performance_monitor_snapshot.get("terrain_generation_readback_ms", 0.0)),
@@ -1701,7 +1732,12 @@ func _build_empty_native_town_entry_window() -> Dictionary:
 		"end_terrain_artifact_disk_cache_bytes": 0.0,
 		"max_terrain_artifact_disk_cache_byte_budget_ratio": 0.0,
 		"end_terrain_artifact_disk_cache_byte_budget_ratio": 0.0,
+		"start_terrain_artifact_cache_disk_hits": 0.0,
+		"end_terrain_artifact_cache_disk_hits": 0.0,
 		"terrain_artifact_cache_disk_hit_delta": 0.0,
+		"start_terrain_artifact_ready_resource_restores": 0.0,
+		"end_terrain_artifact_ready_resource_restores": 0.0,
+		"terrain_artifact_ready_resource_restore_delta": 0.0,
 		"terrain_artifact_disk_cache_eviction_delta": 0.0,
 		"max_terrain_generation_gpu_sync_ms": 0.0,
 		"max_terrain_generation_readback_ms": 0.0,
@@ -1940,8 +1976,13 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 	var end_terrain_artifact_cache_hit_ratio := float(last_entry.get("terrain_artifact_cache_hit_ratio", 0.0)) if not last_entry.is_empty() else 0.0
 	var end_terrain_artifact_disk_cache_bytes := float(last_entry.get("terrain_artifact_disk_cache_bytes", 0.0)) if not last_entry.is_empty() else 0.0
 	var end_terrain_artifact_disk_cache_byte_budget_ratio := clampf(float(last_entry.get("terrain_artifact_disk_cache_byte_budget_ratio", 0.0)), 0.0, 1.0) if not last_entry.is_empty() else 0.0
+	var start_terrain_artifact_cache_disk_hits := float(first_entry.get("terrain_artifact_cache_disk_hits", 0.0)) if not first_entry.is_empty() else 0.0
+	var end_terrain_artifact_cache_disk_hits := float(last_entry.get("terrain_artifact_cache_disk_hits", 0.0)) if not last_entry.is_empty() else 0.0
+	var start_terrain_artifact_ready_resource_restores := float(first_entry.get("terrain_artifact_ready_resource_restores", 0.0)) if not first_entry.is_empty() else 0.0
+	var end_terrain_artifact_ready_resource_restores := float(last_entry.get("terrain_artifact_ready_resource_restores", 0.0)) if not last_entry.is_empty() else 0.0
 	var terrain_artifact_cache_eviction_delta := 0.0
 	var terrain_artifact_cache_disk_hit_delta := 0.0
+	var terrain_artifact_ready_resource_restore_delta := 0.0
 	var terrain_artifact_disk_cache_eviction_delta := 0.0
 	if not first_entry.is_empty() and not last_entry.is_empty():
 		terrain_artifact_cache_eviction_delta = maxf(
@@ -1950,6 +1991,10 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		)
 		terrain_artifact_cache_disk_hit_delta = maxf(
 			float(last_entry.get("terrain_artifact_cache_disk_hits", 0.0)) - float(first_entry.get("terrain_artifact_cache_disk_hits", 0.0)),
+			0.0
+		)
+		terrain_artifact_ready_resource_restore_delta = maxf(
+			float(last_entry.get("terrain_artifact_ready_resource_restores", 0.0)) - float(first_entry.get("terrain_artifact_ready_resource_restores", 0.0)),
 			0.0
 		)
 		terrain_artifact_disk_cache_eviction_delta = maxf(
@@ -2052,7 +2097,12 @@ func _build_native_town_entry_window(samples: Array[Dictionary], window_size: in
 		"end_terrain_artifact_disk_cache_bytes": end_terrain_artifact_disk_cache_bytes,
 		"max_terrain_artifact_disk_cache_byte_budget_ratio": max_terrain_artifact_disk_cache_byte_budget_ratio,
 		"end_terrain_artifact_disk_cache_byte_budget_ratio": end_terrain_artifact_disk_cache_byte_budget_ratio,
+		"start_terrain_artifact_cache_disk_hits": start_terrain_artifact_cache_disk_hits,
+		"end_terrain_artifact_cache_disk_hits": end_terrain_artifact_cache_disk_hits,
 		"terrain_artifact_cache_disk_hit_delta": terrain_artifact_cache_disk_hit_delta,
+		"start_terrain_artifact_ready_resource_restores": start_terrain_artifact_ready_resource_restores,
+		"end_terrain_artifact_ready_resource_restores": end_terrain_artifact_ready_resource_restores,
+		"terrain_artifact_ready_resource_restore_delta": terrain_artifact_ready_resource_restore_delta,
 		"terrain_artifact_disk_cache_eviction_delta": terrain_artifact_disk_cache_eviction_delta,
 		"max_terrain_generation_gpu_sync_ms": max_terrain_generation_gpu_sync_ms,
 		"max_terrain_generation_readback_ms": max_terrain_generation_readback_ms,
@@ -2818,7 +2868,12 @@ func _write_native_town_entry_snapshot() -> void:
 			"max_byte_budget_ratio": float(stationary_hold_window.get("max_terrain_artifact_cache_byte_budget_ratio", 0.0)),
 			"end_byte_budget_ratio": float(stationary_hold_window.get("end_terrain_artifact_cache_byte_budget_ratio", 0.0)),
 			"eviction_delta": float(stationary_hold_window.get("terrain_artifact_cache_eviction_delta", 0.0)),
+			"disk_hit_count": float(stationary_hold_window.get("end_terrain_artifact_cache_disk_hits", 0.0)),
+			"disk_hit_start_count": float(stationary_hold_window.get("start_terrain_artifact_cache_disk_hits", 0.0)),
 			"disk_hit_delta": float(stationary_hold_window.get("terrain_artifact_cache_disk_hit_delta", 0.0)),
+			"ready_resource_restore_count": float(stationary_hold_window.get("end_terrain_artifact_ready_resource_restores", 0.0)),
+			"ready_resource_restore_start_count": float(stationary_hold_window.get("start_terrain_artifact_ready_resource_restores", 0.0)),
+			"ready_resource_restore_delta": float(stationary_hold_window.get("terrain_artifact_ready_resource_restore_delta", 0.0)),
 			"disk_max_bytes": float(stationary_hold_window.get("max_terrain_artifact_disk_cache_bytes", 0.0)),
 			"disk_end_bytes": float(stationary_hold_window.get("end_terrain_artifact_disk_cache_bytes", 0.0)),
 			"disk_max_byte_budget_ratio": float(stationary_hold_window.get("max_terrain_artifact_disk_cache_byte_budget_ratio", 0.0)),
@@ -2900,6 +2955,7 @@ func _atomic_write_text_file(path: String, content: String) -> bool:
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_show_startup_loading("Starting town stall performance proof", 0.0, {}, true)
 	auto_teleport_enabled = OS.get_environment("TOWN_STALL_AUTO_TELEPORT") != "0"
 	disable_buildings_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDINGS") == "1"
 	disable_building_objects_enabled = OS.get_environment("TOWN_STALL_DISABLE_BUILDING_OBJECTS") == "1"
@@ -2942,6 +2998,10 @@ func _ready() -> void:
 	prehold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_PREHOLD_SNAPSHOTS") == "1"
 	prehold_snapshot_interval_seconds = _get_positive_env_float("TOWN_STALL_PREHOLD_SNAPSHOT_INTERVAL_SECONDS", PREHOLD_SNAPSHOT_INTERVAL_SECONDS)
 	hold_wait_stream_ready_enabled = OS.get_environment("TOWN_STALL_WAIT_STREAM_READY_BEFORE_HOLD") != "0"
+	hold_runtime_idle_stable_frames_required = maxi(
+		_get_positive_env_int("TOWN_STALL_HOLD_RUNTIME_IDLE_STABLE_FRAMES", HOLD_RUNTIME_IDLE_STABLE_FRAMES),
+		1
+	)
 	configured_hold_seconds = _get_positive_env_float("TOWN_STALL_HOLD_SECONDS", HOLD_SECONDS)
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
@@ -2976,6 +3036,7 @@ func _ready() -> void:
 		"ON" if prehold_periodic_snapshots_enabled else "OFF",
 		prehold_snapshot_interval_seconds
 	])
+	print("[TOWN_STALL_TEST] Hold runtime idle stable frames: %d" % hold_runtime_idle_stable_frames_required)
 	print("[TOWN_STALL_TEST] Wait stream ready before hold: %s" % ("ON" if hold_wait_stream_ready_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Runtime mode: %s" % runtime_mode)
 	print("[TOWN_STALL_TEST] Engine max FPS: %d" % Engine.max_fps)
@@ -3051,6 +3112,54 @@ func _ready() -> void:
 	_begin_generation()
 
 
+func _ensure_startup_loading_overlay() -> Node:
+	if startup_loading_overlay and is_instance_valid(startup_loading_overlay):
+		return startup_loading_overlay
+	startup_loading_overlay = WorldGenerationLoadingOverlayScript.new()
+	startup_loading_overlay.name = "TownStallStartupLoadingOverlay"
+	add_child(startup_loading_overlay)
+	if startup_loading_overlay.has_method("hide_overlay"):
+		startup_loading_overlay.call("hide_overlay")
+	return startup_loading_overlay
+
+
+func _show_startup_loading(stage: String, percent: float, details: Dictionary = {}, force_log: bool = false) -> void:
+	var overlay := _ensure_startup_loading_overlay()
+	if overlay and overlay.has_method("show_stage"):
+		overlay.call("show_stage", stage, percent, details, force_log)
+
+
+func _set_startup_loading_complete(stage: String, details: Dictionary = {}) -> void:
+	var overlay := _ensure_startup_loading_overlay()
+	if overlay and overlay.has_method("set_complete"):
+		overlay.call("set_complete", stage, details)
+
+
+func _set_startup_loading_failed(stage: String, details: Dictionary = {}) -> void:
+	var overlay := _ensure_startup_loading_overlay()
+	if overlay and overlay.has_method("set_failed"):
+		overlay.call("set_failed", stage, details)
+
+
+func _hide_startup_loading_overlay() -> void:
+	if startup_loading_overlay and is_instance_valid(startup_loading_overlay) and startup_loading_overlay.has_method("hide_overlay"):
+		startup_loading_overlay.call("hide_overlay")
+
+
+func _get_startup_loading_overlay_snapshot() -> Dictionary:
+	if startup_loading_overlay and is_instance_valid(startup_loading_overlay) and startup_loading_overlay.has_method("get_snapshot"):
+		var snapshot: Variant = startup_loading_overlay.call("get_snapshot")
+		if snapshot is Dictionary:
+			return snapshot
+	return {}
+
+
+func _hide_startup_loading_overlay_after_scene_handoff() -> void:
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_hide_startup_loading_overlay()
+
+
 func _process(delta: float) -> void:
 	phase_time += delta
 	if directional_render_sampling_enabled and hold_started_logged and (phase == Phase.HOLD_FIRST or phase == Phase.HOLD_RETURN or phase == Phase.HOLD_SECOND):
@@ -3083,9 +3192,15 @@ func _begin_generation() -> void:
 	world_generator.road_spacing = 100.0
 	world_generator.use_grid_roads = false
 	world_generator.deep_lakes_enabled = true
+	world_generator.progress_callback = Callable(self, "_on_world_generation_progress_threaded")
 	world_generation_telemetry.clear()
+	world_generation_progress_last_log_msec = 0
+	world_generation_progress_last_stage = ""
 
 	print("[TOWN_STALL_TEST] Generating world seed %d..." % generated_seed)
+	_show_startup_loading("Generating world map", 0.0, {
+		"seed": generated_seed
+	}, true)
 	_emit_scope_event("town_stall_test", "generation_start", {
 		"seed": generated_seed
 	})
@@ -3099,6 +3214,32 @@ func _begin_generation() -> void:
 func _threaded_generate_world() -> void:
 	var images: Dictionary = world_generator.generate_world()
 	call_deferred("_on_world_generated", images)
+
+
+func _on_world_generation_progress_threaded(percent: float, stage: String) -> void:
+	call_deferred("_on_world_generation_progress", percent, stage)
+
+
+func _on_world_generation_progress(percent: float, stage: String) -> void:
+	var safe_percent := clampf(percent, 0.0, 100.0)
+	_show_startup_loading("World map: %s" % stage, safe_percent, {
+		"seed": generated_seed
+	}, stage != world_generation_progress_last_stage)
+
+	var now_msec := Time.get_ticks_msec()
+	if (
+		stage == world_generation_progress_last_stage
+		and world_generation_progress_last_log_msec > 0
+		and now_msec - world_generation_progress_last_log_msec < 5000
+	):
+		return
+	world_generation_progress_last_stage = stage
+	world_generation_progress_last_log_msec = now_msec
+	print("[TOWN_STALL_TEST] World generation: %s %.1f%% seed=%d" % [
+		stage,
+		safe_percent,
+		generated_seed
+	])
 
 
 func _on_world_generated(images: Dictionary) -> void:
@@ -3117,10 +3258,20 @@ func _on_world_generated(images: Dictionary) -> void:
 		_fail("World generation completed without towns")
 		return
 
-	generated_world_path = SAVE_BASE + "town_stall_%d_%d" % [generated_seed, Time.get_ticks_msec()]
+	generated_world_path = SAVE_BASE + _get_town_stall_world_name(generated_seed)
+	_show_startup_loading("Saving generated world definition", 0.0, {
+		"seed": generated_seed,
+		"world_path": generated_world_path,
+		"town_count": generated_towns.size()
+	}, true)
 	if not world_generator.save_world(generated_world_path, generated_images):
 		_fail("Failed to save generated world to %s" % generated_world_path)
 		return
+	_show_startup_loading("Generated world saved", 100.0, {
+		"seed": generated_seed,
+		"world_path": generated_world_path,
+		"town_count": generated_towns.size()
+	}, true)
 	if world_generator.has_method("get_telemetry_snapshot"):
 		var telemetry_variant: Variant = world_generator.get_telemetry_snapshot()
 		if telemetry_variant is Dictionary:
@@ -3131,6 +3282,18 @@ func _on_world_generated(images: Dictionary) -> void:
 		_fail("No suitable town found in generated world")
 		return
 
+	if _should_bake_terrain_artifacts_before_play():
+		_start_terrain_artifact_bake_before_play()
+		return
+
+	_finish_world_generation_setup()
+
+
+func _finish_world_generation_setup() -> void:
+	if not terrain_artifact_bake_profile.is_empty():
+		world_generation_telemetry["terrain_artifact_bake_profile"] = terrain_artifact_bake_profile.duplicate(true)
+	world_generation_telemetry["startup_loading_overlay"] = _get_startup_loading_overlay_snapshot()
+
 	_emit_scope_event("town_stall_test", "generation_complete", {
 		"world_path": generated_world_path,
 		"town_count": generated_towns.size(),
@@ -3139,7 +3302,8 @@ func _on_world_generated(images: Dictionary) -> void:
 		"selected_town_buildings": int(selected_town.get("building_count", 0)),
 		"generation_profile": world_generation_telemetry.get("last_generation_profile", {}),
 		"save_profile": world_generation_telemetry.get("last_save_profile", {}),
-		"bake_proof": world_generation_telemetry.get("last_bake_proof", {})
+		"bake_proof": world_generation_telemetry.get("last_bake_proof", {}),
+		"terrain_artifact_bake_profile": terrain_artifact_bake_profile.duplicate(true)
 	})
 
 	print("[TOWN_STALL_TEST] World saved to %s" % generated_world_path)
@@ -3150,10 +3314,139 @@ func _on_world_generated(images: Dictionary) -> void:
 		float(selected_town.get("radius", 0.0))
 	])
 
+	_show_startup_loading("Loading game scene", 100.0, {
+		"world_path": generated_world_path,
+		"town_count": generated_towns.size()
+	}, true)
 	_start_game_scene()
 
 
+func _should_bake_terrain_artifacts_before_play() -> bool:
+	var override := OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY").strip_edges()
+	if not override.is_empty():
+		return override != "0"
+	return (
+		OS.get_environment("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF") == "1"
+		or _get_positive_env_float("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA", 0.0) > 0.0
+		or _get_positive_env_float("TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA", 0.0) > 0.0
+	)
+
+
+func _build_terrain_artifact_bake_origins_for_town() -> Array[Vector3]:
+	var origins: Array[Vector3] = [Vector3.ZERO]
+	if not selected_town.is_empty():
+		origins.append(Vector3(
+			float(selected_town.get("x", 0.0)),
+			float(selected_town.get("terrain_y", 0.0)),
+			float(selected_town.get("z", 0.0))
+		))
+	return origins
+
+
+func _start_terrain_artifact_bake_before_play() -> void:
+	if terrain_artifact_baker and is_instance_valid(terrain_artifact_baker):
+		terrain_artifact_baker.queue_free()
+	terrain_artifact_bake_profile = {}
+	terrain_artifact_bake_last_log_msec = 0
+
+	var render_distance_default := _get_positive_env_int(
+		"TOWN_STALL_TERRAIN_RENDER_DISTANCE",
+		_get_positive_env_int("TOWN_STALL_RENDER_DISTANCE", 10)
+	)
+	var bake_radius := _get_positive_env_int("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_RADIUS", render_distance_default)
+	var bake_origins: Array[Vector3] = _build_terrain_artifact_bake_origins_for_town()
+	terrain_artifact_baker = WorldTerrainArtifactBaker.new()
+	terrain_artifact_baker.name = "TownStallTerrainArtifactBaker"
+	terrain_artifact_baker.bake_radius_chunks = bake_radius
+	terrain_artifact_baker.store_ready_mesh_resources = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES") != "0"
+	terrain_artifact_baker.synchronous_disk_writes = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_SYNC_WRITES") != "0"
+	terrain_artifact_baker.high_throughput_budgets = true
+	terrain_artifact_baker.timeout_seconds = _get_positive_env_float("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TIMEOUT_SECONDS", 900.0)
+	add_child(terrain_artifact_baker)
+	terrain_artifact_baker.progress_changed.connect(_on_terrain_artifact_bake_progress)
+	terrain_artifact_baker.bake_completed.connect(_on_terrain_artifact_bake_completed)
+	terrain_artifact_baker.bake_failed.connect(_on_terrain_artifact_bake_failed)
+
+	print("[TOWN_STALL_TEST] Baking terrain artifacts before play: origins=%d radius=%d world=%s" % [
+		bake_origins.size(),
+		bake_radius,
+		generated_world_path
+	])
+	_show_startup_loading("Baking marching-cubes terrain artifacts before play", 0.0, {
+		"world_path": generated_world_path,
+		"origin_count": bake_origins.size(),
+		"radius_chunks": bake_radius,
+		"store_ready_mesh_resources": terrain_artifact_baker.store_ready_mesh_resources,
+		"synchronous_disk_writes": terrain_artifact_baker.synchronous_disk_writes
+	}, true)
+	_emit_scope_event("town_stall_test", "terrain_artifact_bake_start", {
+		"world_path": generated_world_path,
+		"origin_count": bake_origins.size(),
+		"radius_chunks": bake_radius
+	})
+	if not terrain_artifact_baker.start_bake(generated_world_path, bake_origins[0], bake_radius, {
+		"bake_origins": bake_origins,
+		"include_primary_origin": false,
+		"store_ready_mesh_resources": terrain_artifact_baker.store_ready_mesh_resources,
+		"synchronous_disk_writes": terrain_artifact_baker.synchronous_disk_writes,
+		"high_throughput_budgets": true
+	}):
+		_fail("Failed to start terrain artifact bake before play")
+
+
+func _on_terrain_artifact_bake_progress(profile: Dictionary) -> void:
+	terrain_artifact_bake_profile = profile.duplicate(true)
+	_show_startup_loading(
+		"Terrain artifact bake: %s" % str(profile.get("stage", "")),
+		float(profile.get("progress_percent", 0.0)),
+		profile,
+		false
+	)
+	var now_msec := Time.get_ticks_msec()
+	if terrain_artifact_bake_last_log_msec > 0 and now_msec - terrain_artifact_bake_last_log_msec < 5000:
+		return
+	terrain_artifact_bake_last_log_msec = now_msec
+	print("[TOWN_STALL_TEST] Terrain artifact bake: %s %.1f%% artifacts=%d/%d origins=%d pending=%d" % [
+		str(profile.get("stage", "")),
+		float(profile.get("progress_percent", 0.0)),
+		int(profile.get("artifact_count", 0)),
+		int(profile.get("expected_chunks", 0)),
+		int(profile.get("origin_count", 0)),
+		int(profile.get("pending_work", 0))
+	])
+
+
+func _on_terrain_artifact_bake_completed(profile: Dictionary) -> void:
+	terrain_artifact_bake_profile = profile.duplicate(true)
+	world_generation_telemetry["terrain_artifact_bake_profile"] = terrain_artifact_bake_profile.duplicate(true)
+	_set_startup_loading_complete("Terrain artifacts baked", profile)
+	print("[TOWN_STALL_TEST] Terrain artifact bake complete: artifacts=%d origins=%d manifest=%s elapsed=%.0fms" % [
+		int(profile.get("artifact_count", 0)),
+		int(profile.get("origin_count", 0)),
+		str(profile.get("manifest_path", "")),
+		float(profile.get("elapsed_ms", 0.0))
+	])
+	_emit_scope_event("town_stall_test", "terrain_artifact_bake_complete", {
+		"world_path": generated_world_path,
+		"artifact_count": int(profile.get("artifact_count", 0)),
+		"origin_count": int(profile.get("origin_count", 0)),
+		"expected_chunks": int(profile.get("expected_chunks", 0)),
+		"manifest_written": bool(profile.get("manifest_written", false)),
+		"elapsed_ms": float(profile.get("elapsed_ms", 0.0))
+	})
+	_finish_world_generation_setup()
+
+
+func _on_terrain_artifact_bake_failed(profile: Dictionary) -> void:
+	terrain_artifact_bake_profile = profile.duplicate(true)
+	_set_startup_loading_failed("Terrain artifact bake failed", profile)
+	_fail("Terrain artifact bake before play failed: %s" % str(profile.get("failure_reason", "unknown")))
+
+
 func _start_game_scene() -> void:
+	_show_startup_loading("Instancing game scene", 100.0, {
+		"world_path": generated_world_path
+	}, true)
 	var packed_scene := load(GAME_SCENE_PATH) as PackedScene
 	if packed_scene == null:
 		_fail("Failed to load game scene: %s" % GAME_SCENE_PATH)
@@ -3298,6 +3591,10 @@ func _start_game_scene() -> void:
 		"phase": "game_loaded",
 		"world_path": generated_world_path
 	})
+	_show_startup_loading("Game scene loaded; handing off to in-game loading screen", 100.0, {
+		"world_path": generated_world_path
+	}, true)
+	_hide_startup_loading_overlay_after_scene_handoff()
 	print("[TOWN_STALL_TEST] Game scene loaded, waiting for world to finish initial load...")
 
 
@@ -3951,10 +4248,10 @@ func _get_town_runtime_idle_blockers() -> Array[String]:
 	if not blockers.is_empty():
 		town_runtime_idle_stable_frames = 0
 		return blockers
-	if town_runtime_idle_stable_frames < HOLD_RUNTIME_IDLE_STABLE_FRAMES:
+	if town_runtime_idle_stable_frames < hold_runtime_idle_stable_frames_required:
 		blockers.append("runtime_idle_stabilizing=%d/%d" % [
 			town_runtime_idle_stable_frames,
-			HOLD_RUNTIME_IDLE_STABLE_FRAMES
+			hold_runtime_idle_stable_frames_required
 		])
 		town_runtime_idle_stable_frames += 1
 	return blockers
@@ -4786,6 +5083,10 @@ func _fail(message: String) -> void:
 
 	phase = Phase.FAILED
 	print("[TOWN_STALL_TEST] ERROR: %s" % message)
+	_set_startup_loading_failed("Startup failed: %s" % message, {
+		"world_path": generated_world_path,
+		"phase": str(phase)
+	})
 	_emit_scope_event("town_stall_test", "failed", {
 		"message": message
 	})

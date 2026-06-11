@@ -1704,53 +1704,84 @@ def _stationary_runtime_idle_verdict_from_snapshot(data: dict) -> dict:
     }
 
 
-def _stationary_terrain_artifact_cache_verdict_from_snapshot(data: dict) -> dict:
-    direct = _as_dict(data.get("stationary_terrain_artifact_cache_verdict"))
-    stationary_hold = _as_dict(data.get("stationary_hold_window"))
+def _terrain_artifact_cache_verdict_from_snapshot(data: dict, phase: str = "stationary") -> dict:
+    normalized_phase = str(phase or "stationary").strip().lower()
+    if normalized_phase in {"town", "town_entry", "entry", "startup", "startup_entry"}:
+        direct = _as_dict(data.get("entry_terrain_artifact_cache_verdict"))
+        window = _as_dict(data.get("town_entry_window"))
+        phase_label = "town_entry"
+    elif normalized_phase in {"moving", "moving_entry"}:
+        direct = _as_dict(data.get("moving_entry_terrain_artifact_cache_verdict"))
+        window = _as_dict(data.get("moving_entry_window"))
+        phase_label = "moving_entry"
+    else:
+        direct = _as_dict(data.get("stationary_terrain_artifact_cache_verdict"))
+        window = _as_dict(data.get("stationary_hold_window"))
+        phase_label = "stationary"
     sample_count = _int_value(
-        direct.get("monitor_available_samples", stationary_hold.get("world_runtime_monitor_available_samples"))
+        direct.get("monitor_available_samples", window.get("world_runtime_monitor_available_samples"))
     )
     return {
+        "phase": phase_label,
         "available": sample_count > 0,
         "monitor_available_samples": sample_count,
         "avg_hit_ratio": _float_value(
-            direct.get("avg_hit_ratio", stationary_hold.get("avg_terrain_artifact_cache_hit_ratio"))
+            direct.get("avg_hit_ratio", window.get("avg_terrain_artifact_cache_hit_ratio"))
         ),
         "end_hit_ratio": _float_value(
-            direct.get("end_hit_ratio", stationary_hold.get("end_terrain_artifact_cache_hit_ratio"))
+            direct.get("end_hit_ratio", window.get("end_terrain_artifact_cache_hit_ratio"))
         ),
-        "max_entries": _float_value(direct.get("max_entries", stationary_hold.get("max_terrain_artifact_cache_entries"))),
-        "end_entries": _float_value(direct.get("end_entries", stationary_hold.get("end_terrain_artifact_cache_entries"))),
-        "max_bytes": _float_value(direct.get("max_bytes", stationary_hold.get("max_terrain_artifact_cache_bytes"))),
-        "end_bytes": _float_value(direct.get("end_bytes", stationary_hold.get("end_terrain_artifact_cache_bytes"))),
+        "max_entries": _float_value(direct.get("max_entries", window.get("max_terrain_artifact_cache_entries"))),
+        "end_entries": _float_value(direct.get("end_entries", window.get("end_terrain_artifact_cache_entries"))),
+        "max_bytes": _float_value(direct.get("max_bytes", window.get("max_terrain_artifact_cache_bytes"))),
+        "end_bytes": _float_value(direct.get("end_bytes", window.get("end_terrain_artifact_cache_bytes"))),
         "max_byte_budget_ratio": _float_value(
-            direct.get("max_byte_budget_ratio", stationary_hold.get("max_terrain_artifact_cache_byte_budget_ratio"))
+            direct.get("max_byte_budget_ratio", window.get("max_terrain_artifact_cache_byte_budget_ratio"))
         ),
         "end_byte_budget_ratio": _float_value(
-            direct.get("end_byte_budget_ratio", stationary_hold.get("end_terrain_artifact_cache_byte_budget_ratio"))
+            direct.get("end_byte_budget_ratio", window.get("end_terrain_artifact_cache_byte_budget_ratio"))
         ),
         "eviction_delta": _float_value(
-            direct.get("eviction_delta", stationary_hold.get("terrain_artifact_cache_eviction_delta"))
+            direct.get("eviction_delta", window.get("terrain_artifact_cache_eviction_delta"))
+        ),
+        "disk_hit_count": _float_value(
+            direct.get("disk_hit_count", window.get("end_terrain_artifact_cache_disk_hits"))
+        ),
+        "disk_hit_start_count": _float_value(
+            direct.get("disk_hit_start_count", window.get("start_terrain_artifact_cache_disk_hits"))
         ),
         "disk_hit_delta": _float_value(
-            direct.get("disk_hit_delta", stationary_hold.get("terrain_artifact_cache_disk_hit_delta"))
+            direct.get("disk_hit_delta", window.get("terrain_artifact_cache_disk_hit_delta"))
+        ),
+        "ready_resource_restore_delta": _float_value(
+            direct.get("ready_resource_restore_delta", window.get("terrain_artifact_ready_resource_restore_delta"))
+        ),
+        "ready_resource_restore_count": _float_value(
+            direct.get("ready_resource_restore_count", window.get("end_terrain_artifact_ready_resource_restores"))
+        ),
+        "ready_resource_restore_start_count": _float_value(
+            direct.get("ready_resource_restore_start_count", window.get("start_terrain_artifact_ready_resource_restores"))
         ),
         "disk_max_bytes": _float_value(
-            direct.get("disk_max_bytes", stationary_hold.get("max_terrain_artifact_disk_cache_bytes"))
+            direct.get("disk_max_bytes", window.get("max_terrain_artifact_disk_cache_bytes"))
         ),
         "disk_end_bytes": _float_value(
-            direct.get("disk_end_bytes", stationary_hold.get("end_terrain_artifact_disk_cache_bytes"))
+            direct.get("disk_end_bytes", window.get("end_terrain_artifact_disk_cache_bytes"))
         ),
         "disk_max_byte_budget_ratio": _float_value(
-            direct.get("disk_max_byte_budget_ratio", stationary_hold.get("max_terrain_artifact_disk_cache_byte_budget_ratio"))
+            direct.get("disk_max_byte_budget_ratio", window.get("max_terrain_artifact_disk_cache_byte_budget_ratio"))
         ),
         "disk_end_byte_budget_ratio": _float_value(
-            direct.get("disk_end_byte_budget_ratio", stationary_hold.get("end_terrain_artifact_disk_cache_byte_budget_ratio"))
+            direct.get("disk_end_byte_budget_ratio", window.get("end_terrain_artifact_disk_cache_byte_budget_ratio"))
         ),
         "disk_eviction_delta": _float_value(
-            direct.get("disk_eviction_delta", stationary_hold.get("terrain_artifact_disk_cache_eviction_delta"))
+            direct.get("disk_eviction_delta", window.get("terrain_artifact_disk_cache_eviction_delta"))
         ),
     }
+
+
+def _stationary_terrain_artifact_cache_verdict_from_snapshot(data: dict) -> dict:
+    return _terrain_artifact_cache_verdict_from_snapshot(data, "stationary")
 
 
 def _stage_duration_ms_from_snapshot(stage_state: dict) -> float:
@@ -2036,7 +2067,8 @@ def _print_snapshot_proof_summary(data: dict) -> None:
     startup = _startup_readiness_verdict_from_snapshot(data)
     world_bake = _world_bake_proof_verdict_from_snapshot(data)
     runtime_idle = _stationary_runtime_idle_verdict_from_snapshot(data)
-    artifact_cache = _stationary_terrain_artifact_cache_verdict_from_snapshot(data)
+    artifact_phase = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE", "stationary")
+    artifact_cache = _terrain_artifact_cache_verdict_from_snapshot(data, artifact_phase)
     print(
         "Startup readiness proof: available={available} completed={completed} "
         "coordinator={coordinator} stages={stages}/{expected} progress={progress:.1f}% "
@@ -2079,15 +2111,19 @@ def _print_snapshot_proof_summary(data: dict) -> None:
         )
     )
     print(
-        "Terrain artifact cache proof: samples={samples} end_hit={hit:.3f} "
+        "Terrain artifact cache proof ({phase}): samples={samples} end_hit={hit:.3f} "
         "entries={entries:.0f} budget_max={budget:.3f} evict_delta={evict:.0f} "
-        "disk_delta={disk_delta:.0f} disk_budget_max={disk_budget:.3f} disk_evict_delta={disk_evict:.0f}".format(
+        "disk_delta={disk_delta:.0f} disk_end={disk_end:.0f} ready_delta={ready_delta:.0f} "
+        "disk_budget_max={disk_budget:.3f} disk_evict_delta={disk_evict:.0f}".format(
+            phase=artifact_cache["phase"],
             samples=artifact_cache["monitor_available_samples"],
             hit=artifact_cache["end_hit_ratio"],
             entries=artifact_cache["end_entries"],
             budget=artifact_cache["max_byte_budget_ratio"],
             evict=artifact_cache["eviction_delta"],
             disk_delta=artifact_cache["disk_hit_delta"],
+            disk_end=artifact_cache.get("disk_hit_count", 0.0),
+            ready_delta=artifact_cache["ready_resource_restore_delta"],
             disk_budget=artifact_cache["disk_max_byte_budget_ratio"],
             disk_evict=artifact_cache["disk_eviction_delta"],
         )
@@ -2264,6 +2300,7 @@ def _snapshot_terrain_artifact_cache_proof_failures(data: dict) -> list[str]:
         _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF")
         or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO") is not None
         or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO") is not None
@@ -2272,12 +2309,14 @@ def _snapshot_terrain_artifact_cache_proof_failures(data: dict) -> list[str]:
     if not enforced:
         return []
 
-    verdict = _stationary_terrain_artifact_cache_verdict_from_snapshot(data)
+    proof_phase = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE", "stationary")
+    verdict = _terrain_artifact_cache_verdict_from_snapshot(data, proof_phase)
     failures: list[str] = []
     sample_count = int(verdict["monitor_available_samples"])
     min_samples = _positive_int_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES", 1)
     min_hit_ratio = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO")
     min_disk_hit_delta = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA")
+    min_ready_resource_restore_delta = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA")
     max_byte_budget_ratio = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO")
     max_eviction_delta = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA")
     max_disk_byte_budget_ratio = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO")
@@ -2290,10 +2329,25 @@ def _snapshot_terrain_artifact_cache_proof_failures(data: dict) -> list[str]:
             "terrain artifact cache ending hit ratio "
             f"{float(verdict['end_hit_ratio']):.3f} below {min_hit_ratio:.3f}"
         )
-    if min_disk_hit_delta is not None and float(verdict["disk_hit_delta"]) + 0.000001 < min_disk_hit_delta:
+    disk_hit_proof_count = max(float(verdict["disk_hit_delta"]), float(verdict.get("disk_hit_count", 0.0)))
+    if min_disk_hit_delta is not None and disk_hit_proof_count + 0.000001 < min_disk_hit_delta:
         failures.append(
-            "terrain artifact cache disk-hit delta "
-            f"{float(verdict['disk_hit_delta']):.3f} below {min_disk_hit_delta:.3f}"
+            "terrain artifact cache disk-hit proof "
+            f"{disk_hit_proof_count:.3f} below {min_disk_hit_delta:.3f} "
+            f"(delta {float(verdict['disk_hit_delta']):.3f}, end {float(verdict.get('disk_hit_count', 0.0)):.3f}) "
+            f"for {str(verdict.get('phase', 'stationary'))} phase"
+        )
+    ready_resource_proof_count = max(
+        float(verdict["ready_resource_restore_delta"]),
+        float(verdict.get("ready_resource_restore_count", 0.0)),
+    )
+    if min_ready_resource_restore_delta is not None and ready_resource_proof_count + 0.000001 < min_ready_resource_restore_delta:
+        failures.append(
+            "terrain artifact ready-resource restore proof "
+            f"{ready_resource_proof_count:.3f} below {min_ready_resource_restore_delta:.3f} "
+            f"(delta {float(verdict['ready_resource_restore_delta']):.3f}, "
+            f"end {float(verdict.get('ready_resource_restore_count', 0.0)):.3f}) "
+            f"for {str(verdict.get('phase', 'stationary'))} phase"
         )
     if max_byte_budget_ratio is not None and float(verdict["max_byte_budget_ratio"]) > max_byte_budget_ratio:
         failures.append(
@@ -2339,6 +2393,7 @@ def _snapshot_proof_gates_requested() -> bool:
         or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF")
         or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO") is not None
         or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO") is not None
@@ -2489,6 +2544,7 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS"] = os.environ.get("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS", "0")
     env["TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES"] = os.environ.get("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES", "0")
     env["TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS"] = os.environ.get("TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS", "0")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_RUNTIME_CHUNKS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_RUNTIME_CHUNKS", "")
     env["TOWN_STALL_DISABLE_VEGETATION_RENDER"] = os.environ.get("TOWN_STALL_DISABLE_VEGETATION_RENDER", "0")
     env["TOWN_STALL_DISABLE_ENTITIES"] = os.environ.get("TOWN_STALL_DISABLE_ENTITIES", "0")
     env["TOWN_STALL_DISABLE_EXIT_AUTOSAVE"] = os.environ.get("TOWN_STALL_DISABLE_EXIT_AUTOSAVE", "1")

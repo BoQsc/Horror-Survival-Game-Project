@@ -100,6 +100,25 @@ func _run() -> int:
 		return 1
 	manager._terrain_visual_batch_dirty.clear()
 
+	var original_engine_max_fps := Engine.max_fps
+	manager.runtime_power_allow_unattended_render_suspend = false
+	manager.runtime_power_low_fps_requires_render_suspend = true
+	manager._apply_runtime_power_fps("deep_idle", manager.runtime_power_deep_idle_max_fps)
+	if not _expect(int(manager._runtime_power_requested_target_fps) == int(manager.runtime_power_deep_idle_max_fps), "runtime power should retain requested deep-idle cap for telemetry"):
+		return 1
+	if not _expect(int(manager._runtime_power_target_fps) == int(manager.runtime_power_active_max_fps), "visible gameplay should keep active FPS when render-loop suspension is blocked"):
+		return 1
+	if not _expect(int(Engine.max_fps) == int(manager.runtime_power_active_max_fps), "Engine max FPS should not drop to visible deep-idle FPS while render loop is active"):
+		return 1
+	if not _expect(str(manager._runtime_power_render_loop_suspend_gate) == "blocked_requires_menu_or_unattended_env", "blocked render-loop suspension should be recorded"):
+		return 1
+
+	manager.runtime_power_low_fps_requires_render_suspend = false
+	manager._apply_runtime_power_fps("deep_idle", manager.runtime_power_deep_idle_max_fps)
+	if not _expect(int(manager._runtime_power_target_fps) == int(manager.runtime_power_deep_idle_max_fps), "explicit low-FPS opt-in should still apply deep-idle cap"):
+		return 1
+	Engine.max_fps = original_engine_max_fps
+
 	manager.viewer.free()
 	manager.free()
 	print("[TERRAIN_PROCESS_SLEEP_TEST] PASS")

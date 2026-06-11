@@ -136,6 +136,8 @@ func _run() -> int:
 	manager._terrain_artifact_cache.clear("test")
 	manager._terrain_artifact_disk_store.clear_all()
 	manager.initial_load_phase = false
+	if not _expect(not manager.terrain_artifact_disk_store_runtime_chunks, "runtime disk writes should be disabled by default"):
+		return 1
 	var runtime_coord := Vector3i(5, 0, 5)
 	manager._store_terrain_artifact_from_generation(
 		runtime_coord,
@@ -154,8 +156,35 @@ func _run() -> int:
 	)
 	manager._terrain_artifact_cache.clear("test")
 	var runtime_task: Dictionary = manager._build_chunk_request_task(runtime_coord, Vector3.ZERO)
-	if not _expect(str(runtime_task.get("type", "")) == "generate", "runtime disk writes should be disabled by default"):
+	if not _expect(str(runtime_task.get("type", "")) == "generate", "runtime disk writes should not add gameplay disk work by default"):
 		return 1
+
+	manager.terrain_artifact_disk_store_runtime_chunks = true
+	manager._terrain_artifact_cache.clear("test")
+	manager._terrain_artifact_disk_store.clear_all()
+	var enabled_runtime_coord := Vector3i(8, 0, 8)
+	manager._store_terrain_artifact_from_generation(
+		enabled_runtime_coord,
+		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array()},
+		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedByteArray(),
+		0,
+		{
+			"artifact_density_bytes_terrain": artifact_bytes,
+			"artifact_density_bytes_water": artifact_bytes,
+			"artifact_material_bytes_terrain": artifact_bytes
+		}
+	)
+	manager._terrain_artifact_cache.clear("test")
+	var enabled_runtime_task: Dictionary = manager._build_chunk_request_task(enabled_runtime_coord, Vector3.ZERO)
+	if not _expect(str(enabled_runtime_task.get("type", "")) == "restore_artifact", "runtime disk writes should restore when explicitly enabled"):
+		return 1
+	if not _expect(str(enabled_runtime_task.get("artifact_source", "")) == "disk", "explicit runtime artifact restore should record disk source"):
+		return 1
+	manager.terrain_artifact_disk_store_runtime_chunks = false
 
 	manager.terrain_artifact_disk_cache_enabled = false
 	manager._terrain_artifact_cache.clear("test")
@@ -181,6 +210,123 @@ func _run() -> int:
 	if not _expect(int(edited_artifact.get("stored_mod_version", 0)) == 1, "edited artifact should retain the current modification version"):
 		return 1
 	if not _expect(int(manager._terrain_artifact_edit_refresh_count) == 1, "edit artifact refresh should be counted"):
+		return 1
+
+	var triangle_arrays := []
+	triangle_arrays.resize(Mesh.ARRAY_MAX)
+	triangle_arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([
+		Vector3.ZERO,
+		Vector3.RIGHT,
+		Vector3.FORWARD
+	])
+	triangle_arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2])
+	var session_ready_coord := Vector3i(12, 0, 12)
+	manager._store_terrain_artifact_from_generation(
+		session_ready_coord,
+		{
+			"deferred_mesh_data": true,
+			"arrays": triangle_arrays,
+			"faces": PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+		},
+		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedByteArray(),
+		0,
+		{
+			"artifact_density_bytes_terrain": artifact_bytes,
+			"artifact_density_bytes_water": artifact_bytes,
+			"artifact_material_bytes_terrain": artifact_bytes
+		}
+	)
+	var session_ready_task: Dictionary = manager._build_chunk_request_task(session_ready_coord, Vector3.ZERO)
+	var session_ready_artifact: Dictionary = session_ready_task.get("artifact", {})
+	var session_ready_result: Dictionary = session_ready_artifact.get("result_t", {})
+	if not _expect(session_ready_result.get("mesh_resource", null) is ArrayMesh, "session artifact should keep the ready mesh resource"):
+		return 1
+	if not _expect(session_ready_result.get("shape_resource", null) is ConcavePolygonShape3D, "session artifact should keep the ready collision resource"):
+		return 1
+
+	manager.terrain_artifact_disk_cache_enabled = true
+	manager.initial_load_phase = true
+	manager._terrain_artifact_disk_store.clear_all()
+	manager._terrain_artifact_cache.clear("test")
+	var disk_ready_coord := Vector3i(13, 0, 12)
+	manager._store_terrain_artifact_from_generation(
+		disk_ready_coord,
+		{
+			"deferred_mesh_data": true,
+			"arrays": triangle_arrays,
+			"faces": PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+		},
+		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedFloat32Array(),
+		PackedByteArray(),
+		0,
+		{
+			"artifact_density_bytes_terrain": artifact_bytes,
+			"artifact_density_bytes_water": artifact_bytes,
+			"artifact_material_bytes_terrain": artifact_bytes
+		}
+	)
+	manager._terrain_artifact_cache.clear("test")
+	var disk_ready_task: Dictionary = manager._build_chunk_request_task(disk_ready_coord, Vector3.ZERO)
+	if not _expect(str(disk_ready_task.get("artifact_source", "")) == "disk", "ready sidecar artifact should restore from disk after session clear"):
+		return 1
+	var disk_ready_artifact: Dictionary = disk_ready_task.get("artifact", {})
+	var disk_ready_result: Dictionary = disk_ready_artifact.get("result_t", {})
+	if not _expect(not disk_ready_result.has("mesh_resource"), "disk sidecar artifact should not embed mesh resources"):
+		return 1
+	if not _expect(ResourceLoader.exists(str(disk_ready_result.get("mesh_resource_path", ""))), "disk sidecar artifact should keep a loadable mesh path"):
+		return 1
+	if not _expect(ResourceLoader.exists(str(disk_ready_result.get("shape_resource_path", ""))), "disk sidecar artifact should keep a loadable collision path"):
+		return 1
+	var disk_ready_restore_count_before := manager._terrain_artifact_ready_resource_restore_count
+	var disk_ready_materialized := manager._materialize_deferred_mesh_result(disk_ready_result, null)
+	if not _expect(disk_ready_materialized.get("mesh", null) is ArrayMesh, "disk sidecar restore should load the ready mesh resource"):
+		return 1
+	if not _expect(disk_ready_materialized.get("shape", null) is ConcavePolygonShape3D, "disk sidecar restore should load the ready collision resource"):
+		return 1
+	if not _expect(manager._terrain_artifact_ready_resource_restore_count == disk_ready_restore_count_before + 1, "disk sidecar ready restore should be counted"):
+		return 1
+	manager.terrain_artifact_disk_cache_enabled = false
+
+	var materialized: Dictionary = manager._materialize_deferred_mesh_result(
+		{
+			"deferred_mesh_data": true,
+			"arrays": triangle_arrays,
+			"faces": PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+		},
+		null
+	)
+	var materialized_mesh := materialized.get("mesh", null) as ArrayMesh
+	if not _expect(materialized_mesh != null and materialized_mesh.get_surface_count() == 1, "deferred artifact arrays should rebuild an ArrayMesh surface"):
+		return 1
+	var materialized_shape := materialized.get("shape", null) as ConcavePolygonShape3D
+	if not _expect(materialized_shape != null and materialized_shape.get_faces().size() == 3, "deferred artifact faces should rebuild collision shape data"):
+		return 1
+
+	var ready_artifact_result := manager._mesh_result_to_artifact_data({
+		"deferred_mesh_data": true,
+		"arrays": triangle_arrays,
+		"faces": PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+	})
+	if not _expect(bool(ready_artifact_result.get("ready_mesh_resource", false)), "artifact conversion should store a ready ArrayMesh resource"):
+		return 1
+	if not _expect(ready_artifact_result.get("mesh_resource", null) is ArrayMesh, "ready artifact should carry the mesh resource"):
+		return 1
+	if not _expect(ready_artifact_result.get("shape_resource", null) is ConcavePolygonShape3D, "ready artifact should carry the collision shape resource"):
+		return 1
+	var ready_restore_count_before := manager._terrain_artifact_ready_resource_restore_count
+	var ready_materialized: Dictionary = manager._materialize_deferred_mesh_result(ready_artifact_result, null)
+	if not _expect(ready_materialized.get("mesh", null) is ArrayMesh, "ready artifact restore should reuse the ArrayMesh resource"):
+		return 1
+	if not _expect(ready_materialized.get("shape", null) is ConcavePolygonShape3D, "ready artifact restore should reuse the collision shape resource"):
+		return 1
+	if not _expect(manager._terrain_artifact_ready_resource_restore_count == ready_restore_count_before + 1, "ready resource restore path should be counted"):
 		return 1
 
 	manager._terrain_artifact_disk_store.clear_all()

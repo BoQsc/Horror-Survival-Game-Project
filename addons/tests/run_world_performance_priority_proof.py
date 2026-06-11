@@ -53,6 +53,12 @@ PRODUCTION_CASE_SCENARIOS = {
         "frame_time",
         "idle_power",
     },
+    "priority_warm_disk_restore": {
+        "warm_startup",
+        "stationary_idle",
+        "frame_time",
+        "idle_power",
+    },
     "priority_render_distance_5": {"render_distance_5", "stationary_idle", "frame_time", "idle_power"},
     "priority_render_distance_10": {"render_distance_10", "stationary_idle", "frame_time", "idle_power"},
     "priority_render_distance_15": {"render_distance_15", "stationary_idle", "frame_time", "idle_power"},
@@ -60,14 +66,19 @@ PRODUCTION_CASE_SCENARIOS = {
 }
 CONTRACT_SCENARIOS = {
     "terrain_warm_startup_preheat_contract": {"warm_startup"},
+    "terrain_world_artifact_path_contract": {"cold_world_bake", "warm_startup"},
+    "world_terrain_artifact_baker_contract": {"cold_world_bake", "warm_startup"},
+    "world_terrain_artifact_baker_live_smoke_contract": {"cold_world_bake", "warm_startup"},
     "terrain_generation_telemetry_contract": {"edit_revisit"},
     "terrain_world_definition_change_contract": {"world_switch_cache_isolation"},
     "save_manager_terrain_modifications_contract": {"save_reload_modified"},
     "world_map_preview_builder_contract": {"low_resolution_preview"},
+    "world_map_generator_ui_progress_contract": {"low_resolution_preview"},
 }
 PRODUCTION_CASE_SUITES = {
     "priority_smoke": ["runtime_default"],
     "priority_revisit": ["runtime_default", "priority_revisit"],
+    "priority_warm_disk_restore": ["runtime_default", "priority_warm_disk_restore"],
     "priority_render_distance": [
         "priority_render_distance_5",
         "priority_render_distance_10",
@@ -77,6 +88,7 @@ PRODUCTION_CASE_SUITES = {
     "priority_full": [
         "runtime_default",
         "priority_revisit",
+        "priority_warm_disk_restore",
         "priority_render_distance_5",
         "priority_render_distance_10",
         "priority_render_distance_15",
@@ -192,6 +204,9 @@ def build_smoke_steps(args: argparse.Namespace) -> list[ProofStep]:
                 _godot_step("terrain_artifact_disk_store_contract", "terrain_artifact_disk_store_test.gd", timeout_seconds=120.0),
                 _godot_step("terrain_startup_preheat_contract", "terrain_startup_preheat_test.gd", timeout_seconds=120.0),
                 _godot_step("terrain_warm_startup_preheat_contract", "terrain_warm_startup_preheat_test.gd", timeout_seconds=120.0),
+                _godot_step("terrain_world_artifact_path_contract", "terrain_world_artifact_path_test.gd", timeout_seconds=120.0),
+                _godot_step("world_terrain_artifact_baker_contract", "world_terrain_artifact_baker_contract_test.gd", timeout_seconds=120.0),
+                _godot_step("world_terrain_artifact_baker_live_smoke_contract", "world_terrain_artifact_baker_live_smoke_test.gd", timeout_seconds=180.0),
                 _godot_step("terrain_generation_telemetry_contract", "terrain_generation_telemetry_test.gd", timeout_seconds=120.0),
                 _godot_step("terrain_height_map_samples_native_contract", "terrain_height_map_samples_native_test.gd", timeout_seconds=120.0),
                 _godot_step("terrain_mask_sample_telemetry_contract", "terrain_mask_sample_telemetry_test.gd", timeout_seconds=120.0),
@@ -201,6 +216,7 @@ def build_smoke_steps(args: argparse.Namespace) -> list[ProofStep]:
                 _godot_step("town_stall_artifact_budget_override_contract", "town_stall_artifact_budget_override_test.gd", timeout_seconds=120.0),
                 _godot_step("save_manager_terrain_modifications_contract", "save_manager_terrain_modifications_test.gd", timeout_seconds=120.0),
                 _godot_step("world_map_preview_builder_contract", "world_map_preview_builder_test.gd", timeout_seconds=120.0),
+                _godot_step("world_map_generator_ui_progress_contract", "world_map_generator_ui_progress_test.gd", timeout_seconds=120.0),
                 _godot_step("world_map_bake_proof_contract", "world_map_bake_proof_test.gd", timeout_seconds=120.0),
                 _godot_step("world_map_height_biome_native_contract", "world_map_height_biome_native_test.gd", timeout_seconds=120.0),
                 _godot_step("world_map_height_biome_thread_policy_contract", "world_map_height_biome_thread_policy_test.gd", timeout_seconds=120.0),
@@ -378,10 +394,15 @@ def build_production_steps(args: argparse.Namespace) -> list[ProofStep]:
     _optional_float_arg(raw_command, "--max-runtime-awake-process-count", args.max_runtime_awake_process_count)
     _optional_float_arg(raw_command, "--min-terrain-artifact-cache-hit-ratio", args.min_terrain_artifact_cache_hit_ratio)
     _optional_float_arg(raw_command, "--min-terrain-artifact-cache-disk-hit-delta", args.min_terrain_artifact_cache_disk_hit_delta)
+    _optional_float_arg(raw_command, "--min-terrain-artifact-ready-resource-restore-delta", args.min_terrain_artifact_ready_resource_restore_delta)
     _optional_float_arg(raw_command, "--max-terrain-artifact-cache-byte-budget-ratio", args.max_terrain_artifact_cache_byte_budget_ratio)
     _optional_float_arg(raw_command, "--max-terrain-artifact-cache-eviction-delta", args.max_terrain_artifact_cache_eviction_delta)
     _optional_float_arg(raw_command, "--max-terrain-artifact-disk-cache-byte-budget-ratio", args.max_terrain_artifact_disk_cache_byte_budget_ratio)
     _optional_float_arg(raw_command, "--max-terrain-artifact-disk-cache-eviction-delta", args.max_terrain_artifact_disk_cache_eviction_delta)
+    raw_env = {
+        "TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS": str(max(420, int(args.production_case_timeout_seconds))),
+        "TOWN_STALL_TIMEOUT_SECONDS": str(max(420, int(args.production_case_timeout_seconds))),
+    }
 
     analysis_command = [
         sys.executable,
@@ -418,6 +439,7 @@ def build_production_steps(args: argparse.Namespace) -> list[ProofStep]:
             name="production_raw_baseline_with_priority_gates",
             command=raw_command,
             timeout_seconds=args.production_timeout_seconds,
+            env=raw_env,
             heavy=True,
         ),
         ProofStep(
@@ -621,6 +643,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--production-idle-seconds", type=float, default=20.0)
     parser.add_argument("--production-sample-interval", type=float, default=1.0)
     parser.add_argument("--production-timeout-seconds", type=float, default=7200.0)
+    parser.add_argument("--production-case-timeout-seconds", type=float, default=900.0)
     parser.add_argument("--allow-contaminated-idle", action="store_true")
     parser.add_argument("--max-gpu-temp-c", type=float, default=None)
     parser.add_argument("--preflight-max-gpu-temp-c", type=float, default=80.0)
@@ -642,6 +665,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--max-runtime-busy-samples", type=float, default=None)
     parser.add_argument("--min-terrain-artifact-cache-hit-ratio", type=float, default=None)
     parser.add_argument("--min-terrain-artifact-cache-disk-hit-delta", type=float, default=None)
+    parser.add_argument("--min-terrain-artifact-ready-resource-restore-delta", type=float, default=None)
     parser.add_argument("--max-terrain-artifact-cache-byte-budget-ratio", type=float, default=None)
     parser.add_argument("--max-terrain-artifact-cache-eviction-delta", type=float, default=None)
     parser.add_argument("--max-terrain-artifact-disk-cache-byte-budget-ratio", type=float, default=None)

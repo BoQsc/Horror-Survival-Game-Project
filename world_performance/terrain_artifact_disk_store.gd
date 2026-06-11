@@ -4,6 +4,7 @@ extends RefCounted
 const STORE_MAGIC: String = "terrain_artifact"
 const STORE_VERSION: int = 1
 const FILE_EXTENSION: String = ".var"
+const RESOURCE_EXTENSION: String = ".res"
 
 var enabled: bool = true
 var root_path: String = "user://terrain_artifacts"
@@ -154,13 +155,14 @@ func _store_locked(coord: Vector3i, settings_signature: String, artifact: Dictio
 	var path := _artifact_path(coord, settings_signature)
 	_last_path = path
 	var temp_path := path + ".tmp"
+	var artifact_to_store := _prepare_artifact_for_store_locked(coord, settings_signature, artifact)
 	var payload := {
 		"magic": STORE_MAGIC,
 		"version": STORE_VERSION,
 		"coord": coord,
 		"settings_signature": settings_signature,
 		"stored_at_usec": Time.get_ticks_usec(),
-		"artifact": artifact.duplicate(true)
+		"artifact": artifact_to_store
 	}
 	var file := FileAccess.open(temp_path, FileAccess.WRITE)
 	if file == null:
@@ -188,6 +190,13 @@ func record_store_skipped(reason: String) -> void:
 	_mutex.unlock()
 
 
+func prepare_artifact_for_store(coord: Vector3i, settings_signature: String, artifact: Dictionary) -> Dictionary:
+	_mutex.lock()
+	var prepared := _prepare_artifact_for_store_locked(coord, settings_signature, artifact)
+	_mutex.unlock()
+	return prepared
+
+
 func _record_store_skipped_locked(reason: String) -> void:
 	var normalized_reason := reason if not reason.is_empty() else "unknown"
 	_store_skipped_count += 1
@@ -212,6 +221,7 @@ func _get_snapshot_locked() -> Dictionary:
 	return {
 		"enabled": enabled,
 		"root_path": root_path,
+		"resolved_root_path": ProjectSettings.globalize_path(root_path),
 		"max_entries_per_signature": max_entries_per_signature,
 		"max_bytes_per_signature": max_bytes_per_signature,
 		"hit_count": _hit_count,
@@ -229,6 +239,7 @@ func _get_snapshot_locked() -> Dictionary:
 		"last_store_ms": _last_store_ms,
 		"last_signature_hash": _last_signature_hash,
 		"last_path": _last_path,
+		"resolved_last_path": ProjectSettings.globalize_path(_last_path) if not _last_path.is_empty() else "",
 		"last_signature_entry_count": _last_signature_entry_count,
 		"last_signature_bytes": _last_signature_bytes,
 		"last_signature_byte_budget_used_ratio": (
@@ -280,6 +291,122 @@ func _ensure_dir(path: String) -> bool:
 	return DirAccess.make_dir_recursive_absolute(path) == OK
 
 
+func _prepare_artifact_for_store_locked(coord: Vector3i, settings_signature: String, artifact: Dictionary) -> Dictionary:
+	var artifact_path := _artifact_path(coord, settings_signature)
+	var sanitized: Dictionary = _strip_resource_objects(artifact)
+	if not enabled or max_entries_per_signature <= 0:
+		return sanitized
+	var signature_dir := artifact_path.get_base_dir()
+	if not _ensure_dir(signature_dir):
+		return sanitized
+	if _artifact_has_resource_sidecar_objects(artifact):
+		_remove_artifact_sidecars(artifact_path)
+		_prepare_result_resource_sidecars(artifact, sanitized, artifact_path, "result_t", "terrain")
+		_prepare_result_resource_sidecars(artifact, sanitized, artifact_path, "result_w", "water")
+	elif not _artifact_has_resource_sidecar_paths(sanitized):
+		_remove_artifact_sidecars(artifact_path)
+	return sanitized
+
+
+func _artifact_has_resource_sidecar_objects(artifact: Dictionary) -> bool:
+	for result_key in ["result_t", "result_w"]:
+		var result_variant: Variant = artifact.get(result_key, {})
+		if not (result_variant is Dictionary):
+			continue
+		var result: Dictionary = result_variant
+		var mesh_variant: Variant = result.get("mesh_resource", null)
+		if mesh_variant is ArrayMesh and (mesh_variant as ArrayMesh).get_surface_count() > 0:
+			return true
+		var shape_variant: Variant = result.get("shape_resource", null)
+		if shape_variant is ConcavePolygonShape3D:
+			return true
+	return false
+
+
+func _artifact_has_resource_sidecar_paths(artifact: Dictionary) -> bool:
+	for result_key in ["result_t", "result_w"]:
+		var result_variant: Variant = artifact.get(result_key, {})
+		if not (result_variant is Dictionary):
+			continue
+		var result: Dictionary = result_variant
+		if not str(result.get("mesh_resource_path", "")).is_empty():
+			return true
+		if not str(result.get("shape_resource_path", "")).is_empty():
+			return true
+	return false
+
+
+func _prepare_result_resource_sidecars(source_artifact: Dictionary, sanitized_artifact: Dictionary, artifact_path: String, result_key: String, layer_name: String) -> void:
+	var source_variant: Variant = source_artifact.get(result_key, {})
+	var sanitized_variant: Variant = sanitized_artifact.get(result_key, {})
+	if not (source_variant is Dictionary) or not (sanitized_variant is Dictionary):
+		return
+	var source_result: Dictionary = source_variant
+	var sanitized_result: Dictionary = sanitized_variant
+	var mesh_variant: Variant = source_result.get("mesh_resource", null)
+	if mesh_variant is ArrayMesh and (mesh_variant as ArrayMesh).get_surface_count() > 0:
+		var mesh_path := _artifact_resource_sidecar_path(artifact_path, layer_name, "mesh")
+		if _save_sidecar_resource(mesh_variant as Resource, mesh_path):
+			sanitized_result["mesh_resource_path"] = mesh_path
+			sanitized_result["ready_mesh_resource"] = true
+		else:
+			sanitized_result.erase("ready_mesh_resource")
+			sanitized_result.erase("mesh_resource_path")
+	var shape_variant: Variant = source_result.get("shape_resource", null)
+	if shape_variant is ConcavePolygonShape3D:
+		var shape_path := _artifact_resource_sidecar_path(artifact_path, layer_name, "shape")
+		if _save_sidecar_resource(shape_variant as Resource, shape_path):
+			sanitized_result["shape_resource_path"] = shape_path
+			sanitized_result["ready_collision_resource"] = true
+		else:
+			sanitized_result.erase("ready_collision_resource")
+			sanitized_result.erase("shape_resource_path")
+	sanitized_artifact[result_key] = sanitized_result
+
+
+func _strip_resource_objects(value: Variant) -> Variant:
+	if value is Dictionary:
+		var source: Dictionary = value
+		var stripped := {}
+		for key in source.keys():
+			var key_text := str(key)
+			if key_text == "mesh_resource" or key_text == "shape_resource":
+				continue
+			stripped[key] = _strip_resource_objects(source[key])
+		return stripped
+	if value is Array:
+		var source_array: Array = value
+		var stripped_array: Array = []
+		for item in source_array:
+			stripped_array.append(_strip_resource_objects(item))
+		return stripped_array
+	if value is Resource:
+		return null
+	return value
+
+
+func _artifact_resource_sidecar_path(artifact_path: String, layer_name: String, resource_name: String) -> String:
+	var base_path := artifact_path
+	if base_path.ends_with(FILE_EXTENSION):
+		base_path = base_path.substr(0, base_path.length() - FILE_EXTENSION.length())
+	return "%s_%s_%s%s" % [base_path, layer_name, resource_name, RESOURCE_EXTENSION]
+
+
+func _artifact_sidecar_paths(artifact_path: String) -> Array[String]:
+	return [
+		_artifact_resource_sidecar_path(artifact_path, "terrain", "mesh"),
+		_artifact_resource_sidecar_path(artifact_path, "terrain", "shape"),
+		_artifact_resource_sidecar_path(artifact_path, "water", "mesh"),
+		_artifact_resource_sidecar_path(artifact_path, "water", "shape")
+	]
+
+
+func _save_sidecar_resource(resource: Resource, path: String) -> bool:
+	if resource == null or path.is_empty():
+		return false
+	return ResourceSaver.save(resource, path) == OK
+
+
 func _trim_signature_dir(signature_dir: String) -> void:
 	if max_entries_per_signature <= 0:
 		return
@@ -294,7 +421,7 @@ func _trim_signature_dir(signature_dir: String) -> void:
 	while not file_name.is_empty():
 		if not dir.current_is_dir() and file_name.ends_with(FILE_EXTENSION):
 			var file_path := signature_dir.path_join(file_name)
-			var file_bytes := _read_file_size(file_path)
+			var file_bytes := _read_file_size(file_path) + _read_sidecar_bytes(file_path)
 			total_bytes += file_bytes
 			files.append({
 				"name": file_name,
@@ -326,7 +453,9 @@ func _trim_signature_dir(signature_dir: String) -> void:
 			and (max_bytes_per_signature <= 0 or total_bytes <= max_bytes_per_signature):
 			break
 		var file_bytes := int(file.get("bytes", 0))
-		if dir.remove(str(file.get("name", ""))) == OK:
+		var file_path := signature_dir.path_join(str(file.get("name", "")))
+		_remove_file(file_path)
+		if not FileAccess.file_exists(file_path):
 			_eviction_count += 1
 			remaining_count -= 1
 			total_bytes = maxi(total_bytes - file_bytes, 0)
@@ -342,6 +471,13 @@ func _read_file_size(path: String) -> int:
 	var length := int(file.get_length())
 	file.close()
 	return length
+
+
+func _read_sidecar_bytes(artifact_path: String) -> int:
+	var total := 0
+	for sidecar_path in _artifact_sidecar_paths(artifact_path):
+		total += _read_file_size(sidecar_path)
+	return total
 
 
 func _remove_dir_contents(path: String) -> void:
@@ -369,6 +505,14 @@ func _remove_file(path: String) -> void:
 	if dir == null:
 		return
 	dir.remove(path.get_file())
+	_remove_artifact_sidecars(path)
+
+
+func _remove_artifact_sidecars(artifact_path: String) -> void:
+	for sidecar_path in _artifact_sidecar_paths(artifact_path):
+		var dir := DirAccess.open(sidecar_path.get_base_dir())
+		if dir:
+			dir.remove(sidecar_path.get_file())
 
 
 func _elapsed_ms(start_usec: int) -> float:

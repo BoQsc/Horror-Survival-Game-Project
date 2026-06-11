@@ -18,6 +18,7 @@ const MONITOR_IDS: Array[StringName] = [
 	&"TerrainArtifactDiskCache/Bytes",
 	&"TerrainArtifactDiskCache/ByteBudgetRatio",
 	&"TerrainArtifactCache/DiskHits",
+	&"TerrainArtifactCache/ReadyResourceRestores",
 	&"TerrainArtifactDiskCache/Evictions",
 	&"TerrainArtifactDiskWriteQueue/PendingBytes",
 	&"TerrainArtifactDiskWriteQueue/PendingEntries",
@@ -129,6 +130,7 @@ func _capture_terrain_values() -> void:
 	_values[&"TerrainArtifactDiskCache/Bytes"] = _number_from_keys(disk_cache, ["last_signature_bytes"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_bytes", "disk_artifact_cache_bytes"], 0.0))
 	_values[&"TerrainArtifactDiskCache/ByteBudgetRatio"] = clampf(_number_from_keys(disk_cache, ["last_signature_byte_budget_used_ratio"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_byte_budget_used_ratio", "disk_artifact_cache_byte_budget_used_ratio"], 0.0)), 0.0, 1.0)
 	_values[&"TerrainArtifactCache/DiskHits"] = _number_from_keys(disk_cache, ["hit_count"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_hits", "disk_artifact_restores"], 0.0))
+	_values[&"TerrainArtifactCache/ReadyResourceRestores"] = _number_from_keys(snapshot, ["terrain_artifact_ready_resource_restore_count"], 0.0)
 	_values[&"TerrainArtifactDiskCache/Evictions"] = _number_from_keys(disk_cache, ["eviction_count"], _number_from_keys(snapshot, ["terrain_artifact_disk_cache_evictions", "disk_artifact_cache_evictions"], 0.0))
 	_values[&"TerrainGeneration/GpuSyncMs"] = (
 		_number_from_keys(snapshot, ["last_gpu_generation_mod_sync_ms"], 0.0)

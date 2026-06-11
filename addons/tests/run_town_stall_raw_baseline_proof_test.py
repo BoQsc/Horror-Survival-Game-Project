@@ -30,6 +30,7 @@ def _args(**overrides) -> argparse.Namespace:
         "min_terrain_artifact_cache_proof_samples": 3,
         "min_terrain_artifact_cache_hit_ratio": 0.9,
         "min_terrain_artifact_cache_disk_hit_delta": 2.0,
+        "min_terrain_artifact_ready_resource_restore_delta": 2.0,
         "max_terrain_artifact_cache_byte_budget_ratio": 0.8,
         "max_terrain_artifact_cache_eviction_delta": 0.0,
         "max_terrain_artifact_disk_cache_byte_budget_ratio": 0.9,
@@ -60,12 +61,16 @@ def _snapshot_payload() -> dict:
         "terrain_artifact_cache_eviction_delta": 0.0,
         "max_terrain_artifact_disk_cache_byte_budget_ratio": 0.4,
         "terrain_artifact_cache_disk_hit_delta": 3.0,
+        "terrain_artifact_ready_resource_restore_delta": 3.0,
         "terrain_artifact_disk_cache_eviction_delta": 0.0,
     }
+    town_entry_window = dict(stationary_hold_window)
+    stationary_hold_window["terrain_artifact_cache_disk_hit_delta"] = 0.0
+    stationary_hold_window["terrain_artifact_ready_resource_restore_delta"] = 0.0
     return {
         "benchmark_hold_complete": True,
         "benchmark_hold_seconds": 30.0,
-        "town_entry_window": stationary_hold_window,
+        "town_entry_window": town_entry_window,
         "moving_entry_window": {"sample_count": 1, "avg_fps": 60.0},
         "stationary_hold_window": stationary_hold_window,
         "startup_readiness_verdict": {
@@ -124,7 +129,8 @@ def _snapshot_payload() -> dict:
         "stationary_terrain_artifact_cache_verdict": {
             "monitor_available_samples": 3,
             "end_hit_ratio": 0.95,
-            "disk_hit_delta": 3.0,
+            "disk_hit_delta": 0.0,
+            "ready_resource_restore_delta": 0.0,
             "max_byte_budget_ratio": 0.5,
             "eviction_delta": 0.0,
             "disk_max_byte_budget_ratio": 0.4,
@@ -169,6 +175,7 @@ def main() -> int:
     _expect(proof_env["TOWN_STALL_REQUIRE_RUNTIME_IDLE_PROOF"] == "1", "runtime proof env should be enabled")
     _expect(proof_env["TOWN_STALL_MIN_RUNTIME_IDLE_RATIO"] == "1", "runtime idle ratio should propagate")
     _expect(proof_env["TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF"] == "1", "cache proof env should be enabled")
+    _expect(proof_env["TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA"] == "2", "ready-resource restore threshold should propagate")
     _expect(proof_env["TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO"] == "0.8", "memory budget ratio should propagate")
     _expect(proof_env["TOWN_STALL_PREFLIGHT_IDLE_RETRY_TIMEOUT_SECONDS"] == "300", "child preflight retry timeout should propagate")
     _expect(proof_env["TOWN_STALL_PREFLIGHT_IDLE_RETRY_POLL_SECONDS"] == "15", "child preflight retry poll should propagate")
@@ -239,6 +246,18 @@ def main() -> int:
         _expect(preflight_idle.get("clean") is True, "preflight idle retry should accept a later clean attempt")
         _expect(preflight_idle.get("attempt_count") == 2, "preflight idle retry should record contaminated and clean attempts")
         _expect(preflight_idle.get("attempts", [])[0].get("clean") is False, "first preflight attempt should remain recorded as contaminated")
+        attempt["count"] = 0
+        postflight_idle = raw_runner._collect_initial_idle_until_clean(
+            0.0,
+            1.0,
+            raw_runner._idle_contamination_thresholds(),
+            5.0,
+            1.0,
+            idle_label="final_idle",
+            display_label="Final idle",
+        )
+        _expect(postflight_idle.get("clean") is True, "postflight idle retry should accept a later clean attempt")
+        _expect(postflight_idle.get("idle", {}).get("label") == "final_idle", "postflight retry should preserve final-idle label")
     finally:
         raw_runner.town_runner._collect_machine_state = original_collect_machine_state
         raw_runner._run_idle_sample = original_run_idle_sample
@@ -261,6 +280,11 @@ def main() -> int:
         _expect(revisit_env["TOWN_STALL_ENABLE_RUNTIME_POWER_MODE"] == "1", "priority revisit case should keep runtime power mode")
         _expect(revisit_env["TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF"] == "1", "priority revisit should enforce cache-hit proof")
         _expect(revisit_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB"] == "1024", "priority revisit should use production cache budget")
+        warm_restore_env = raw_runner._build_case_env("priority_warm_disk_restore", 30.0, False, proof_env)
+        _expect(warm_restore_env["TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF"] == "1", "warm restore should enforce cache proof")
+        _expect(warm_restore_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE"] == "town_entry", "warm restore should prove town-entry disk restores")
+        _expect(warm_restore_env["TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA"] == "2", "warm restore should enforce ready-resource restore proof")
+        _expect(warm_restore_env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB"] == "1024", "warm restore should use production cache budget")
         render_env = raw_runner._build_case_env("priority_render_distance_15", 30.0, False, proof_env)
         _expect(render_env["TOWN_STALL_RENDER_DISTANCE"] == "15", "render-distance case should set global render distance")
         _expect(render_env["TOWN_STALL_TERRAIN_RENDER_DISTANCE"] == "15", "render-distance case should set terrain distance")
@@ -286,11 +310,24 @@ def main() -> int:
         bake = summary.get("world_bake_proof", {})
         idle = summary.get("stationary_runtime_idle_verdict", {})
         cache = summary.get("stationary_terrain_artifact_cache_verdict", {})
+        entry_cache = summary.get("entry_terrain_artifact_cache_verdict", {})
         _expect(float(startup.get("elapsed_ms", 0.0)) == 1000.0, "raw summary should preserve startup verdict")
         _expect(float(bake.get("generation_total_ms", 0.0)) == 5000.0, "raw summary should preserve bake generation proof")
         _expect(str(bake.get("height_biome_backend", "")) == "native", "raw summary should preserve bake backend proof")
         _expect(float(idle.get("idle_sample_ratio", 0.0)) == 1.0, "raw summary should preserve idle verdict")
         _expect(float(cache.get("max_byte_budget_ratio", 0.0)) == 0.5, "raw summary should preserve cache budget verdict")
+        _expect(float(cache.get("disk_hit_delta", -1.0)) == 0.0, "stationary summary should preserve zero stationary disk hits")
+        _expect(float(cache.get("ready_resource_restore_delta", -1.0)) == 0.0, "stationary summary should preserve zero stationary ready restores")
+        _expect(str(entry_cache.get("phase", "")) == "town_entry", "entry summary should label town-entry phase")
+        _expect(float(entry_cache.get("disk_hit_delta", 0.0)) == 3.0, "entry summary should preserve town-entry disk restores")
+        _expect(float(entry_cache.get("ready_resource_restore_delta", 0.0)) == 3.0, "entry summary should preserve town-entry ready restores")
+        summary_line = raw_runner._case_summary_line({
+            "env_overrides": {"TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE": "town_entry"},
+            "snapshot": {"entry_terrain_artifact_cache_verdict": entry_cache},
+            "estimated_hold_gpu": {},
+            "last_20s_gpu": {},
+        })
+        _expect("ready3" in summary_line, "case summary should include ready-resource restore delta")
 
         aggregate = raw_runner._aggregate_case_runs([
             {

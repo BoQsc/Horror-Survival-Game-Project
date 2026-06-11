@@ -28,6 +28,7 @@ GATE_ENV_KEYS = [
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_PROOF_SAMPLES",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO",
     "TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA",
+    "TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_BYTE_BUDGET_RATIO",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_CACHE_EVICTION_DELTA",
     "TOWN_STALL_MAX_TERRAIN_ARTIFACT_DISK_CACHE_BYTE_BUDGET_RATIO",
@@ -390,7 +391,7 @@ def main() -> int:
             failures = runner._snapshot_proof_gate_failures(cold_cache_snapshot)
             text = "\n".join(failures)
             _expect("terrain artifact cache ending hit ratio" in text, "cold cache should fail hit-ratio proof")
-            _expect("terrain artifact cache disk-hit delta" in text, "cold cache should fail disk-hit proof")
+            _expect("terrain artifact cache disk-hit proof" in text, "cold cache should fail disk-hit proof")
             _expect("terrain artifact memory cache max byte-budget ratio" in text, "cold cache should fail memory budget proof")
             _expect("terrain artifact disk cache eviction delta" in text, "cold cache should fail disk eviction proof")
 

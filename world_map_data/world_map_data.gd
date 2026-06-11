@@ -8,6 +8,8 @@ const DISK_CACHE_MAGIC: int = 0x574D4443 # "WMDC"
 const DISK_CACHE_VERSION: int = 1
 const DISK_CACHE_DIR: String = "user://world_map_data_cache"
 const WORLD_CACHE_SIGNATURE_FILE: String = "world_cache_signature.txt"
+const WORLD_TERRAIN_ARTIFACT_DIR: String = "terrain_artifacts"
+const WORLD_TERRAIN_ARTIFACT_MANIFEST_FILE: String = "terrain_artifact_bake_manifest.json"
 const WORLD_META_SCHEMA_VERSION_KEY: String = "schema_version"
 const WORLD_META_CACHE_SIGNATURE_KEY: String = "world_cache_signature"
 const WORLD_META_CACHE_VERSION_KEY: String = "world_cache_version"
@@ -69,6 +71,18 @@ static func get_world_meta_cache_version_key() -> String:
 
 static func get_world_meta_current_cache_version() -> int:
 	return WORLD_META_CURRENT_CACHE_VERSION
+
+static func get_world_terrain_artifact_root(path: String) -> String:
+	var cache_key := _normalize_world_path(path)
+	if cache_key == "":
+		return ""
+	return cache_key.path_join(WORLD_TERRAIN_ARTIFACT_DIR)
+
+static func get_world_terrain_artifact_manifest_path(path: String) -> String:
+	var artifact_root := get_world_terrain_artifact_root(path)
+	if artifact_root == "":
+		return ""
+	return artifact_root.path_join(WORLD_TERRAIN_ARTIFACT_MANIFEST_FILE)
 
 static func get_world_meta_building_placement_schema_key() -> String:
 	return WORLD_META_BUILDING_PLACEMENT_SCHEMA_KEY

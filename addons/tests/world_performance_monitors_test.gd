@@ -53,6 +53,7 @@ func _run() -> int:
 			"last_signature_byte_budget_used_ratio": 0.25,
 			"eviction_count": 1
 		},
+		"terrain_artifact_ready_resource_restore_count": 7,
 		"terrain_artifact_disk_write_queue": {
 			"pending_bytes": 512,
 			"pending_entries": 2,
@@ -130,6 +131,8 @@ func _run() -> int:
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactDiskCache/ByteBudgetRatio"), 0.25), "terrain disk cache budget ratio should come from nested telemetry"):
 		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactCache/DiskHits"), 3.0), "terrain disk cache hits should come from nested telemetry"):
+		return _cleanup_and_fail(monitor, fake_nodes)
+	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactCache/ReadyResourceRestores"), 7.0), "ready resource restores should come from terrain telemetry"):
 		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"TerrainArtifactDiskCache/Evictions"), 1.0), "terrain disk cache evictions should come from nested telemetry"):
 		return _cleanup_and_fail(monitor, fake_nodes)

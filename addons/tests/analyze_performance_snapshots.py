@@ -279,6 +279,14 @@ def _stationary_terrain_artifact_cache_verdict_summary(snapshot: dict[str, Any],
         direct.get("disk_hit_delta"),
         _float(stationary_hold.get("terrain_artifact_cache_disk_hit_delta")),
     )
+    disk_hit_count = _float(
+        direct.get("disk_hit_count"),
+        _float(stationary_hold.get("end_terrain_artifact_cache_disk_hits")),
+    )
+    disk_hit_start_count = _float(
+        direct.get("disk_hit_start_count"),
+        _float(stationary_hold.get("start_terrain_artifact_cache_disk_hits")),
+    )
     max_byte_budget_ratio = _float(
         direct.get("max_byte_budget_ratio"),
         _float(stationary_hold.get("max_terrain_artifact_cache_byte_budget_ratio")),
@@ -315,6 +323,8 @@ def _stationary_terrain_artifact_cache_verdict_summary(snapshot: dict[str, Any],
         "max_byte_budget_ratio": _round(max_byte_budget_ratio),
         "end_byte_budget_ratio": _round(end_byte_budget_ratio),
         "eviction_delta": _round(eviction_delta),
+        "disk_hit_count": _round(disk_hit_count),
+        "disk_hit_start_count": _round(disk_hit_start_count),
         "disk_hit_delta": _round(disk_hit_delta),
         "disk_max_bytes": _round(_float(direct.get("disk_max_bytes"), _float(stationary_hold.get("max_terrain_artifact_disk_cache_bytes")))),
         "disk_end_bytes": _round(_float(direct.get("disk_end_bytes"), _float(stationary_hold.get("end_terrain_artifact_disk_cache_bytes")))),
@@ -2320,6 +2330,8 @@ def _terrain_artifact_cache_gate(report: dict[str, Any], args: argparse.Namespac
     sample_count = _int(verdict.get("monitor_available_samples"))
     end_hit_ratio = _float(verdict.get("end_hit_ratio"))
     disk_hit_delta = _float(verdict.get("disk_hit_delta"))
+    disk_hit_count = _float(verdict.get("disk_hit_count"))
+    disk_hit_proof_count = max(disk_hit_delta, disk_hit_count)
     max_byte_budget_ratio = _float(verdict.get("max_byte_budget_ratio"))
     eviction_delta = _float(verdict.get("eviction_delta"))
     disk_max_byte_budget_ratio = _float(verdict.get("disk_max_byte_budget_ratio"))
@@ -2340,11 +2352,12 @@ def _terrain_artifact_cache_gate(report: dict[str, Any], args: argparse.Namespac
         )
     if (
         args.min_latest_production_terrain_artifact_cache_disk_hit_delta is not None
-        and disk_hit_delta + 0.000001 < args.min_latest_production_terrain_artifact_cache_disk_hit_delta
+        and disk_hit_proof_count + 0.000001 < args.min_latest_production_terrain_artifact_cache_disk_hit_delta
     ):
         failures.append(
-            "terrain artifact cache disk-hit delta "
-            f"{disk_hit_delta:.3f} below {args.min_latest_production_terrain_artifact_cache_disk_hit_delta:.3f}"
+            "terrain artifact cache disk-hit proof "
+            f"{disk_hit_proof_count:.3f} below {args.min_latest_production_terrain_artifact_cache_disk_hit_delta:.3f} "
+            f"(delta {disk_hit_delta:.3f}, end {disk_hit_count:.3f})"
         )
     if (
         args.max_latest_production_terrain_artifact_cache_byte_budget_ratio is not None

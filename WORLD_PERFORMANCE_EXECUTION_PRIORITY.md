@@ -9,14 +9,70 @@ cache misses, and measure each layer before adding the next one.
 | Priority | Status | Deliverable |
 |---|---|---|
 | 0. Measurement and trace contract | complete | Structured cold, warm, revisit, and edit telemetry with bounded recent events and repeatable measurement windows. |
-| 1. Session terrain artifact cache | in progress | Restore unchanged revisited chunks without density generation or marching cubes. |
-| 2. Disk artifacts and spawn preheat | in progress | Restore eligible base-world terrain artifacts during warm startup and preheat the spawn radius. |
+| 1. Session terrain artifact cache | production proof accepted; cleanup in progress | Restore unchanged revisited chunks without density generation or marching cubes. |
+| 2. Disk artifacts and spawn preheat | warm proof accepted; map-generation bake smoke passed | Restore eligible base-world terrain artifacts during warm startup, preheat the spawn radius, and persist world-local terrain artifacts before play. |
 | 3. Startup coordinator and loading UI | in progress | Weighted startup stages, monotonic progress, readiness levels, and failure reporting. |
-| 4. Generator preview and bake optimization | in progress | Low-resolution preview plus measured native or compute backends for full-resolution bake hotspots. |
+| 4. Generator preview and bake optimization | map-generation terrain bake implemented; full sweep pending | Low-resolution preview plus measured native or compute backends for full-resolution bake hotspots. |
 | 5. GPU sync and readback experiment | in progress | A/B test asynchronous readback or in-flight buffering for remaining cache misses. |
 | 6. Event-driven terrain coordination | in progress | Wake terrain work on movement, edits, settings, and queues, then sleep when idle. |
 | 7. Dependent runtime reuse | in progress | Extend reuse to vegetation, buildings, prefabs, and entities. |
-| 8. Proof sweeps and cleanup | in progress | Validate cold, warm, revisit, edit, memory, frame-time, and idle-power behavior. |
+| 8. Proof sweeps and cleanup | production proof accepted; cleanup in progress | Validate cold, warm, revisit, edit, memory, frame-time, and idle-power behavior. |
+
+## June 7, 2026 Introspection
+
+The implementation gap was real. Earlier evidence proved world-definition
+image/metadata generation and runtime terrain-artifact restore, but it did not
+prove that map generation itself produced marching-cubes terrain artifacts
+before gameplay. That meant a generated world could still enter play without a
+world-local terrain mesh artifact manifest, and the first gameplay load could
+still do avoidable terrain generation.
+
+The corrected target is now explicit: saving a generated world starts a
+world-local terrain artifact bake, gameplay points `ChunkManager` at that
+world-local artifact directory, and generation remains reserved for
+missing/stale/edited chunks.
+
+Current implementation state:
+
+- `WorldMapData` defines `user://worlds/<world>/terrain_artifacts` and
+  `terrain_artifact_bake_manifest.json` as the persistent artifact location.
+- `WorldMapGeneratorUI` starts the terrain artifact bake after save, blocks
+  play while it runs, and replaces the gray generator wait with progress text
+  showing stage, artifact count, and disk path.
+- Map-generation terrain bakes now store ready mesh/collision sidecar resources
+  by default. This is required for the goal: gameplay should restore the baked
+  marching-cubes render/collision resources instead of rebuilding `ArrayMesh`
+  and `ConcavePolygonShape3D` from arrays on startup.
+- `WorldTerrainArtifactBaker` runs an isolated `ChunkManager` pre-game bake and
+  uses the same `request_terrain_artifact_bake()` / artifact store / signature
+  path as gameplay.
+- If Godot cannot create the local compute device in the bake runner, the baker
+  falls back to the native GDExtension `MeshBuilder` path and writes equivalent
+  binary `.var` marching-cubes artifacts instead of failing or silently doing
+  nothing.
+- `ChunkManager` now resolves world-map artifact stores to the world-local path
+  by default and exposes the effective path in telemetry/readiness snapshots.
+
+Current proof state:
+
+- Focused contracts pass for the world-local artifact path, bake manifest,
+  generator UI progress, live bake smoke, and proof-suite wiring.
+- The June 7 `priority_smoke` production proof passed and includes a live bake
+  smoke that wrote three binary `.var` artifacts plus a manifest under a
+  generated world's `terrain_artifacts` folder.
+- A later focused live smoke with ready resources enabled wrote three `.var`
+  artifacts and two `.res` sidecars, and verified that fresh startup sees disk
+  restore tasks with ready sidecar metadata and materializes at least one ready
+  mesh through the runtime restore path.
+- The low-watts target is 60 FPS gameplay. Runtime power evidence that reaches
+  lower watts by visibly capping gameplay to 30 or 15 FPS is a regression, not
+  success. Low visible FPS caps now require actual render-loop suspension
+  (game menu or explicitly unattended capture); otherwise the active 60 FPS cap
+  remains applied while idle/deep-idle requests are only recorded as telemetry.
+- The whole priority is still not complete. The current completion audit is
+  intentionally false until the missing full-suite scenarios, threshold tuning,
+  GPU sync/readback A/B decision, and temporary rollout/test-hook cleanup are
+  resolved.
 
 ## Completed Slices
 
@@ -48,14 +104,20 @@ Implemented:
 - disk-backed base terrain artifact store keyed by world/settings signature and
   chunk coordinate
 - warm disk restore path after session cache misses
+- ready terrain mesh/collision sidecar resources stored as `.res` files while
+  `.var` payloads stay object-free for worker-safe async writes
+- terrain finalization can restore sidecar `ArrayMesh` and
+  `ConcavePolygonShape3D` resources by path, with ready-resource store,
+  restore, and fallback telemetry
 - bounded per-world disk entry count and byte budget, corrupt artifact fallback,
   and disk cache telemetry
 - bounded asynchronous disk artifact write queue so eligible artifact persistence
   does not run on the gameplay-critical terrain finalization path
 - optional disk artifact write bandwidth cap with completed-byte and rate-limit
   wait telemetry
-- disk persistence limited to startup/spawn preheat by default, with an export
-  to allow runtime exploration writes when explicitly enabled
+- disk persistence remains limited to startup/spawn preheat by default, with an
+  explicit `TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_RUNTIME_CHUNKS` override for
+  runtime exploration-write A/B captures
 - signed terrain setting changes and world-definition switches clear queued
   async disk artifact writes so stale artifacts are not persisted after an
   artifact signature change
@@ -196,9 +258,17 @@ Implemented:
 - the proof-suite wrapper now includes the bounded world-map preview builder
   contract and counts low-resolution preview as contract-covered in production
   plan JSON when Godot contract checks are included
+- the proof-suite wrapper now includes the world-map generator UI progress
+  contract, which verifies the generator scene exposes a non-gray staged
+  placeholder, low-resolution preview replacement, backend status, and telemetry
 - the proof-suite wrapper now counts warm startup as contract-covered through
   `terrain_warm_startup_preheat_test.gd`, which verifies a disk-seeded startup
   preheat queues spawn terrain as artifact restores with no generation misses
+- raw town-stall baseline cases now include `priority_warm_disk_restore`, which
+  seeds the terrain artifact store with `runtime_default`, then can require
+  either the legacy disk-hit delta or the current ready-resource restore delta
+  in the town-entry phase instead of incorrectly looking for artifact loads
+  during stationary gameplay
 - the proof-suite wrapper now includes the terrain world-definition change
   contract and counts world-switch cache isolation as contract-covered when
   Godot contract checks are included; the contract verifies stale terrain
@@ -218,6 +288,10 @@ Implemented:
 - raw town-stall baseline cases now also include `priority_memory_pressure`,
   which reduces terrain artifact memory/disk budgets through explicit
   TerrainManager artifact-cache budget env overrides applied by the harness
+- raw town-stall baseline final-idle checks now use a bounded postflight retry
+  matching the preflight retry behavior, so accepted proof still requires a
+  clean idle machine state without rejecting a single transient hot post-run
+  sample
 - the proof-suite wrapper defaults heavy runs to production `proof` mode and
   rejects contaminated-idle overrides, disabled temperature gates, or non-native
   world-bake backends unless explicitly marked as `pilot`
@@ -249,6 +323,7 @@ Godot `4.6.3` validation:
 - `addons/tests/world_startup_coordinator_test.gd`: pass
 - `addons/tests/world_startup_readiness_snapshot_test.gd`: pass
 - `addons/tests/world_map_preview_builder_test.gd`: pass
+- `addons/tests/world_map_generator_ui_progress_test.gd`: pass
 - `addons/tests/world_map_bake_proof_test.gd`: pass
 - `addons/tests/world_map_height_biome_native_test.gd`: pass
 - `addons/tests/world_map_height_biome_thread_policy_test.gd`: pass
@@ -437,20 +512,26 @@ The telemetry now answers:
 
 ## Current Slice
 
-Priority 1 remains in progress. The current cache is session-only and targets
-the default native CPU meshing path. Main-thread mesh materialization still
-runs on restore, and the GPU fallback meshing path remains uncached until
-readback cost is measured. Successful edited-chunk rebuilds now refresh their
+Priority 1 has accepted production evidence for unchanged terrain reuse through
+the session artifact cache. Successful edited-chunk rebuilds refresh their
 session artifacts so later unchanged revisits do not require an additional
-generation.
+generation. Main-thread mesh/collision materialization is no longer required
+when a restored artifact has ready sidecar resources. Remaining work is cleanup,
+default tuning, and any GPU fallback/cache-miss optimization justified by the
+accepted telemetry.
 
-Priority 2 is in progress. Warm startup can restore unmodified base terrain
-artifacts from disk after a session-cache miss. Disk artifacts are bounded by
-entry count and bytes and are persisted through a bounded write queue with an
-optional bandwidth cap. Startup preheat has configurable radius and
-require-before-play policy. Remaining work is measured warm-start proof, disk
-budget and bandwidth sweeps, and tuning the production preheat policy.
-The non-game contract tests now also prove that signed setting changes and
+Priority 2 has accepted production evidence for warm disk restore and focused
+post-fix contract evidence for ready mesh/collision sidecar restore. Warm
+startup can restore unmodified base terrain artifacts from disk after a
+session-cache miss. Disk artifacts are bounded by entry count and bytes,
+persisted through a bounded write queue with an optional bandwidth cap, and
+stored as object-free `.var` payloads plus `.res` mesh/shape sidecars. Startup
+preheat has configurable radius and require-before-play policy. Remaining work
+is a clean strict sidecar-plus-disk production rerun, promoting
+production-safe defaults, disk budget and bandwidth sweeps, preheat policy
+tuning, and deciding whether the remaining GPU density/material buffer
+recreation is worth optimizing.
+The non-game contract tests also prove that signed setting changes and
 world-definition switches drop stale queued disk artifact writes before they can
 be persisted under an old signature.
 
@@ -502,8 +583,8 @@ now exposes aggregate pending work, awake-process count, and a cached idle verdi
 for stationary proof runs, and the town-stall harness records those values in
 per-sample, per-window, and top-level snapshot fields. Fallback polling remains
 intentionally available for vehicles and custom viewers. Remaining work is
-production stationary gameplay idle proof plus broader save-load and
-memory-pressure proof.
+broader save-load/world-switch coverage and memory-pressure tuning outside the
+accepted stationary idle windows.
 
 Priority 7 is in progress. Vegetation placement has bounded chunk reuse and
 dirty invalidation, entities have bounded scene-keyed pooling, and the existing
@@ -515,10 +596,62 @@ Priority 8 is in progress. The proof-suite wrapper now consolidates the fast
 contract checks and the optional heavy raw production proof run into one
 executable command. Heavy runs now default to strict proof mode; contaminated or
 fallback-backend diagnostics must be explicitly marked as pilot runs. The
-default heavy `priority_full` suite now plans runtime default, unchanged revisit,
-render-distance 5/10/15, and memory-pressure raw cases, and its dry-run JSON
+default heavy `priority_full` suite now plans runtime default, unchanged
+revisit, warm disk restore, render-distance 5/10/15, and memory-pressure raw
+cases, and its dry-run JSON
 reports which roadmap scenarios are covered by raw cases, which are covered by
 contracts, and which are still externally prepared.
+The heavy production `priority_full` suite passed on June 5, 2026 with all
+`47/47` wrapper steps complete and all `6/6` raw baseline cases accepted. The
+production evidence packet is tracked in
+`WORLD_PERFORMANCE_PRODUCTION_EVIDENCE.md`, with primary JSON artifacts at:
+
+```text
+.agent/world-performance-priority-proof-production-evidence-after-rd15-timeout.json
+.agent/gpu-telemetry/town_stall_raw_baseline_20260605_112350.json
+.agent/world-performance-priority-analysis.json
+```
+
+Accepted raw proof summary: startup proof `6/6`, native world-bake proof `6/6`,
+minimum stationary runtime idle ratio `1.000`, maximum runtime busy samples `0`,
+minimum terrain artifact cache hit ratio `0.096`, maximum cache byte-budget
+ratio `0.993`, and maximum cache eviction delta `0`.
+The focused warm disk-restore suite also passed on June 5, 2026 with all
+`48/48` wrapper steps complete and `2/2` raw baseline cases accepted. It wrote:
+
+```text
+.agent/world-performance-priority-proof-warm-disk-restore.json
+.agent/gpu-telemetry/town_stall_raw_baseline_20260605_161446.json
+.agent/world-performance-priority-analysis-warm-disk-restore.json
+.agent/world-performance-priority-smoke-analysis-warm-disk-restore.json
+```
+
+Warm proof summary: the `priority_warm_disk_restore` run used native world bake,
+reported stationary runtime idle ratio `1.000`, `0` runtime busy samples,
+`0` stationary disk-hit delta, and `85` town-entry disk-hit delta while
+enforcing `--min-terrain-artifact-cache-disk-hit-delta 1`.
+A later ready mesh/collision sidecar run also passed on June 5, 2026 with all
+`5/5` wrapper steps complete and `2/2` raw baseline cases accepted. It wrote:
+
+```text
+.agent/world-performance-priority-proof-ready-mesh-restore-accepted.json
+.agent/gpu-telemetry/town_stall_raw_baseline_20260605_174822.json
+.agent/world-performance-priority-analysis-ready-mesh-restore-accepted.json
+.agent/world-performance-priority-smoke-analysis-ready-mesh-restore-accepted.json
+```
+
+Sidecar run summary: the `priority_warm_disk_restore` run used native world
+bake, reported stationary runtime idle ratio `1.000`, `0` runtime busy samples,
+and `8` town-entry ready-resource restores while enforcing
+`--min-terrain-artifact-ready-resource-restore-delta 1`. A later code audit
+fixed an idempotency bug where preparing an already-sanitized disk artifact
+could remove sidecars, then bumped the artifact schema to `3`. Post-fix
+contracts now prove that already-prepared sidecar payloads survive store,
+session artifacts keep ready resources, and disk artifacts restore sidecar
+resources after the session cache is cleared. Strict post-fix production reruns
+with both disk-hit and ready-resource gates were rejected by machine state: one
+hit the `90 C` GPU thermal abort limit before the hold window, and the rerun
+failed preflight idle because the GPU stayed around `32-33%` utilization.
 The fast suite
 passed on June 5, 2026 and wrote:
 
@@ -550,12 +683,11 @@ scenarios: warm startup, edit revisit, modified-terrain save/reload, world
 switch, and low-resolution preview are contract-only, while cold startup, cold
 bake, revisit, render-distance, memory-pressure, frame-time, idle-power, and
 stationary-idle coverage are planned through raw production cases. The
-`completion_audit` block keeps the priority incomplete until the heavy
-production proof flow passes with fresh captures, thresholds are tuned from
-those captures, the GPU sync/readback A/B decision is made from accepted
-cache-miss data, and temporary rollout hooks are removed. The readiness audit is
-the current cleanup inventory: it validates the pre-production plan and lists
-the rollout/test-hook candidates to classify only after accepted captures. Its
-current non-game scan reports `125` cleanup candidates: `97` tuning overrides
-to promote or document after evidence, `8` isolation hooks to remove or move
-into harness-only code, and `20` `_for_test` markers to review.
+`completion_audit` block keeps the priority incomplete after accepted
+production proof until thresholds are tuned from those captures, the GPU
+sync/readback A/B decision is made from accepted cache-miss data, and temporary
+rollout hooks are removed. The readiness audit is the current cleanup inventory:
+it lists the rollout/test-hook candidates to classify after accepted captures.
+Its current non-game scan reports `125` cleanup candidates: `97` tuning
+overrides to promote or document after evidence, `8` isolation hooks to remove
+or move into harness-only code, and `20` `_for_test` markers to review.

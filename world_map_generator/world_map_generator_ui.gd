@@ -7,11 +7,25 @@ const WorldMapGen = preload("res://world_map_generator/world_map_generator.gd")
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 const WorldMapPreviewBuilder = preload("res://world_performance/world_map_preview_builder.gd")
+const WorldTerrainArtifactBaker = preload("res://world_performance/world_terrain_artifact_baker.gd")
+const WorldGenerationLoadingOverlayScript = preload("res://world_performance/world_generation_loading_overlay.gd")
 const SAVE_BASE = "user://worlds/"
+const TERRAIN_MESH_BAKE_CHUNK_STRIDE := 31.0
 
 @export_range(128, 1024, 64) var preview_max_size: int = 512
 @export var preview_use_full_resolution_reference: bool = false
 @export var generation_low_resolution_preview_enabled: bool = true
+@export_range(64, 512, 32) var generation_placeholder_size: int = 256
+@export var terrain_mesh_bake_enabled: bool = true
+@export var terrain_mesh_bake_on_save: bool = true
+@export_range(0, 16, 1) var terrain_mesh_bake_radius_chunks: int = 10
+@export var terrain_mesh_bake_store_ready_mesh_resources: bool = true
+@export var terrain_mesh_bake_synchronous_disk_writes: bool = true
+@export var terrain_mesh_bake_refresh_world_list_on_complete: bool = true
+@export var terrain_mesh_bake_origin: Vector3 = Vector3.ZERO
+@export var terrain_mesh_bake_include_origin: bool = true
+@export var terrain_mesh_bake_include_town_centers: bool = true
+@export_range(0, 12, 1) var terrain_mesh_bake_max_town_centers: int = 4
 
 # UI References
 @onready var canvas: TextureRect = $HSplit/CanvasPanel/Canvas
@@ -44,6 +58,18 @@ var last_preview_source_size: Vector2i = Vector2i.ZERO
 var last_preview_output_size: Vector2i = Vector2i.ZERO
 var last_preview_sample_count: int = 0
 var last_preview_backend: String = ""
+var last_generation_status: String = ""
+var last_generation_backend: String = ""
+var last_generation_error: String = ""
+var last_generation_preview_ready: bool = false
+var generation_started_usec: int = 0
+var is_baking_terrain: bool = false
+var terrain_baker: WorldTerrainArtifactBaker = null
+var last_terrain_bake_profile: Dictionary = {}
+var last_terrain_bake_error: String = ""
+var _last_placeholder_stage: String = ""
+var _last_placeholder_percent_bucket: int = -1
+var generation_loading_overlay: Node = null
 
 # Terrain presets: [terrain_height, noise_freq]
 const TERRAIN_PRESETS = {
@@ -86,6 +112,8 @@ func _ready() -> void:
 	progress_label.text = "Ready"
 	save_btn.disabled = true
 	play_btn.disabled = true
+	_ensure_generation_loading_overlay()
+	_set_generation_status("Ready - configure and generate world", 0.0, true)
 	
 	# Create road mode toggle (Town vs Grid)
 	var vbox = $HSplit/SettingsPanel/VBox
@@ -218,7 +246,9 @@ func _on_load_pressed() -> void:
 	play_btn.disabled = false
 	
 	_update_preview()
-	progress_label.text = "Loaded: %s (%d images)" % [world_name, current_images.size()]
+	var artifact_manifest_path := WorldMapData.get_world_terrain_artifact_manifest_path(world_path)
+	var artifact_status := "terrain artifacts ready" if FileAccess.file_exists(artifact_manifest_path) else "terrain artifacts missing"
+	progress_label.text = "Loaded: %s (%d images, %s)" % [world_name, current_images.size(), artifact_status]
 
 # ============================================================================
 # GENERATE
@@ -230,9 +260,19 @@ func _on_generate_pressed() -> void:
 	
 	is_generating = true
 	generate_btn.disabled = true
+	save_btn.disabled = true
+	play_btn.disabled = true
 	progress_bar.visible = true
 	progress_bar.value = 0
-	progress_label.text = "Generating..."
+	last_generation_profile = {}
+	last_generation_preview_profile = {}
+	last_generation_backend = ""
+	last_generation_error = ""
+	last_generation_preview_ready = false
+	last_terrain_bake_profile = {}
+	last_terrain_bake_error = ""
+	generation_started_usec = Time.get_ticks_usec()
+	_set_generation_status("Preparing world-map generation", 1.0, true)
 	
 	generator = WorldMapGen.new()
 	generator.world_seed = int(seed_input.value)
@@ -249,9 +289,14 @@ func _on_generate_pressed() -> void:
 
 func _threaded_generate() -> void:
 	if generation_low_resolution_preview_enabled:
+		_on_gen_progress(2.0, "Generating low-resolution terrain preview")
 		var preview_images := generator.generate_preview(preview_max_size)
 		if not preview_images.is_empty():
 			call_deferred("_on_generation_preview_ready", preview_images)
+		else:
+			_on_gen_progress(5.0, "Low-resolution preview unavailable; generating full world")
+	else:
+		_on_gen_progress(2.0, "Generating full world map")
 	var images = generator.generate_world()
 	call_deferred("_on_generation_complete", images)
 
@@ -264,21 +309,40 @@ func _on_generation_preview_ready(images: Dictionary) -> void:
 	var preview_start_us := Time.get_ticks_usec()
 	var preview_result := WorldMapPreviewBuilder.build_preview(images, preview_max_size)
 	_apply_preview_result(preview_result, "low_resolution_generation", preview_start_us)
-	progress_label.text = "Terrain preview ready; generating full world..."
+	last_generation_preview_ready = true
+	last_generation_backend = str(last_generation_preview_profile.get("backend", "unknown"))
+	_set_generation_status(
+		"Terrain preview ready (%s); generating full world" % last_generation_backend,
+		8.0,
+		false
+	)
 
 
 func _on_gen_progress(percent: float, stage: String) -> void:
 	call_deferred("_update_progress", percent, stage)
 
 func _update_progress(percent: float, stage: String) -> void:
-	progress_bar.value = percent
-	progress_label.text = "%s (%.0f%%)" % [stage, percent]
+	_set_generation_status(stage, percent, false)
 
 func _on_generation_complete(images: Dictionary) -> void:
 	if gen_thread and gen_thread.is_alive():
 		gen_thread.wait_to_finish()
 	gen_thread = null
 	
+	if images.is_empty():
+		current_images = {}
+		last_generation_error = "World generation returned no images"
+		is_generating = false
+		generate_btn.disabled = false
+		save_btn.disabled = true
+		play_btn.disabled = true
+		progress_bar.visible = false
+		_set_generation_status("Generation failed", 0.0, true)
+		_set_generation_loading_failed("Generation failed", {
+			"failure": last_generation_error
+		})
+		return
+
 	current_images = images
 	if images.has("generation_profile") and images.generation_profile is Dictionary:
 		last_generation_profile = images.generation_profile.duplicate(true)
@@ -286,6 +350,7 @@ func _on_generation_complete(images: Dictionary) -> void:
 		last_generation_profile = generator.last_generation_profile.duplicate(true)
 	else:
 		last_generation_profile = {}
+	last_generation_backend = str(last_generation_profile.get("height_biome_backend", "unknown"))
 	is_generating = false
 	generate_btn.disabled = false
 	progress_bar.visible = false
@@ -299,8 +364,28 @@ func _on_generation_complete(images: Dictionary) -> void:
 		_update_building_stats(images.building_stats)
 	
 	# Auto-save after generation
-	_on_save_pressed()
-	progress_label.text = "Generated & saved — %d×%d" % [WorldMapGen.MAP_SIZE, WorldMapGen.MAP_SIZE]
+	var saved := _on_save_pressed()
+	if is_baking_terrain:
+		return
+	if not saved:
+		progress_label.text = "Generated but save failed"
+		last_generation_status = progress_label.text
+		_set_generation_loading_failed(progress_label.text)
+		return
+	var total_ms := float(last_generation_profile.get("total_ms", 0.0))
+	progress_label.text = "Generated & saved - %dx%d backend=%s gen=%.0fms save=%.0fms" % [
+		WorldMapGen.MAP_SIZE,
+		WorldMapGen.MAP_SIZE,
+		last_generation_backend,
+		total_ms,
+		last_save_ms
+	]
+	last_generation_status = progress_label.text
+	_set_generation_loading_complete(progress_label.text, {
+		"backend": last_generation_backend,
+		"elapsed_ms": total_ms + last_save_ms
+	})
+	_hide_generation_loading_overlay()
 
 # ============================================================================
 # PREVIEW — colorized composite of heightmap + biomes + roads
@@ -322,6 +407,145 @@ func _update_preview() -> void:
 	_apply_preview_result(preview_result, "bounded", preview_start_us)
 
 
+func _set_generation_status(stage: String, percent: float, force_placeholder: bool = false, overlay_details: Dictionary = {}) -> void:
+	var safe_percent := clampf(percent, 0.0, 100.0)
+	var stage_changed := stage != last_generation_status
+	if progress_bar:
+		progress_bar.value = safe_percent
+	if progress_label:
+		progress_label.text = "%s (%.0f%%)" % [stage, safe_percent]
+	if stage_changed and progress_label:
+		print("[WorldMapGeneratorUI] %s" % progress_label.text)
+	last_generation_status = stage
+	if force_placeholder or not last_generation_preview_ready:
+		_show_generation_placeholder(stage, safe_percent)
+	if _should_show_generation_loading_overlay(stage):
+		_show_generation_loading_overlay(stage, safe_percent, overlay_details, stage_changed)
+	elif stage.begins_with("Ready"):
+		_hide_generation_loading_overlay()
+
+
+func _ensure_generation_loading_overlay() -> Node:
+	if generation_loading_overlay and is_instance_valid(generation_loading_overlay):
+		return generation_loading_overlay
+	generation_loading_overlay = WorldGenerationLoadingOverlayScript.new()
+	generation_loading_overlay.name = "WorldGenerationLoadingOverlay"
+	add_child(generation_loading_overlay)
+	if generation_loading_overlay.has_method("hide_overlay"):
+		generation_loading_overlay.call("hide_overlay")
+	return generation_loading_overlay
+
+
+func _should_show_generation_loading_overlay(stage: String) -> bool:
+	if is_generating or is_baking_terrain:
+		return true
+	var lower_stage := stage.to_lower()
+	return (
+		lower_stage.contains("saving")
+		or lower_stage.contains("launching")
+		or lower_stage.contains("world-map preview")
+		or lower_stage.contains("terrain mesh artifact")
+		or lower_stage.contains("world-map generation")
+	)
+
+
+func _show_generation_loading_overlay(stage: String, percent: float, details: Dictionary = {}, force_log: bool = false) -> void:
+	var overlay := _ensure_generation_loading_overlay()
+	if not overlay or not overlay.has_method("show_stage"):
+		return
+	overlay.call("show_stage", stage, percent, _build_generation_loading_details(details), force_log)
+
+
+func _set_generation_loading_complete(message: String, details: Dictionary = {}) -> void:
+	var overlay := _ensure_generation_loading_overlay()
+	if overlay and overlay.has_method("set_complete"):
+		overlay.call("set_complete", message, _build_generation_loading_details(details))
+
+
+func _set_generation_loading_failed(message: String, details: Dictionary = {}) -> void:
+	var overlay := _ensure_generation_loading_overlay()
+	if overlay and overlay.has_method("set_failed"):
+		overlay.call("set_failed", message, _build_generation_loading_details(details))
+
+
+func _hide_generation_loading_overlay() -> void:
+	if generation_loading_overlay and is_instance_valid(generation_loading_overlay) and generation_loading_overlay.has_method("hide_overlay"):
+		generation_loading_overlay.call("hide_overlay")
+
+
+func _get_generation_loading_overlay_snapshot() -> Dictionary:
+	if generation_loading_overlay and is_instance_valid(generation_loading_overlay) and generation_loading_overlay.has_method("get_snapshot"):
+		var snapshot: Variant = generation_loading_overlay.call("get_snapshot")
+		if snapshot is Dictionary:
+			return snapshot
+	return {}
+
+
+func _build_generation_loading_details(extra: Dictionary = {}) -> Dictionary:
+	var details := {}
+	if seed_input:
+		details["seed"] = int(seed_input.value)
+	if not last_generation_backend.is_empty():
+		details["backend"] = last_generation_backend
+	if not loaded_world_path.is_empty():
+		details["world_path"] = loaded_world_path
+	for key in extra.keys():
+		details[key] = extra[key]
+	return details
+
+
+func _show_generation_placeholder(stage: String, percent: float) -> void:
+	var safe_percent := clampf(percent, 0.0, 100.0)
+	var percent_bucket := int(floor(safe_percent / 5.0) * 5.0)
+	if _last_placeholder_stage == stage and _last_placeholder_percent_bucket == percent_bucket:
+		return
+	_last_placeholder_stage = stage
+	_last_placeholder_percent_bucket = percent_bucket
+
+	var size := clampi(generation_placeholder_size, 64, 512)
+	var seed_value := int(seed_input.value) if seed_input else 12345
+	var progress_x := int(float(size - 1) * safe_percent / 100.0)
+	var seed_phase := float(seed_value % 997) * 0.017
+	var denom := float(maxi(size - 1, 1))
+	var bytes := PackedByteArray()
+	bytes.resize(size * size * 3)
+
+	for y in range(size):
+		var ny := float(y) / denom
+		for x in range(size):
+			var nx := float(x) / denom
+			var ridge := 0.5 + 0.5 * sin((nx + seed_phase) * 12.0) * cos((ny - seed_phase) * 9.0)
+			var valley := 0.5 + 0.5 * sin((nx - ny + seed_phase) * 18.0)
+			var complete_boost := 1.28 if x <= progress_x else 0.78
+			var scanline: bool = safe_percent > 0.0 and safe_percent < 100.0 and abs(float(x - progress_x)) <= 1.0
+			var idx := (y * size + x) * 3
+			if scanline:
+				bytes[idx] = 235
+				bytes[idx + 1] = 245
+				bytes[idx + 2] = 255
+			else:
+				bytes[idx] = int(clampf((26.0 + ridge * 70.0 + valley * 18.0) * complete_boost, 0.0, 255.0))
+				bytes[idx + 1] = int(clampf((56.0 + ridge * 105.0) * complete_boost, 0.0, 255.0))
+				bytes[idx + 2] = int(clampf((78.0 + valley * 95.0) * complete_boost, 0.0, 255.0))
+
+	var image := Image.create_from_data(size, size, false, Image.FORMAT_RGB8, bytes)
+	_set_canvas_texture_from_image(image)
+
+
+func _set_canvas_texture_from_image(image: Image) -> void:
+	if image == null or image.is_empty():
+		return
+	if (
+		preview_texture
+		and preview_texture.get_width() == image.get_width()
+		and preview_texture.get_height() == image.get_height()
+	):
+		preview_texture.update(image)
+	else:
+		preview_texture = ImageTexture.create_from_image(image)
+	canvas.texture = preview_texture
+
+
 func _apply_preview_result(preview_result: Dictionary, backend: String, preview_start_us: int = 0) -> void:
 	if preview_result.is_empty():
 		return
@@ -329,11 +553,7 @@ func _apply_preview_result(preview_result: Dictionary, backend: String, preview_
 	if preview == null or preview.is_empty():
 		return
 
-	if preview_texture:
-		preview_texture.update(preview)
-	else:
-		preview_texture = ImageTexture.create_from_image(preview)
-	canvas.texture = preview_texture
+	_set_canvas_texture_from_image(preview)
 	var effective_start_us := preview_start_us if preview_start_us > 0 else Time.get_ticks_usec()
 	last_preview_ms = float(Time.get_ticks_usec() - effective_start_us) / 1000.0
 	last_preview_source_size = preview_result.get("source_size", Vector2i.ZERO)
@@ -405,26 +625,28 @@ func _update_preview_full_resolution_reference() -> void:
 	
 	var preview = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, preview_bytes)
 	
-	if preview_texture:
-		preview_texture.update(preview)
-	else:
-		preview_texture = ImageTexture.create_from_image(preview)
-	canvas.texture = preview_texture
+	_set_canvas_texture_from_image(preview)
 	last_preview_ms = float(Time.get_ticks_usec() - preview_start_us) / 1000.0
 
 # ============================================================================
 # SAVE
 # ============================================================================
 
-func _on_save_pressed() -> void:
+func _on_save_pressed(start_bake_after_save: bool = true) -> bool:
 	if current_images.is_empty():
-		return
+		return false
+	if is_baking_terrain:
+		progress_label.text = "Terrain mesh artifact bake is still running"
+		return false
 	
 	var world_name = world_name_input.text.strip_edges()
 	if world_name.is_empty():
 		world_name = "unnamed_world"
 	
 	var save_path = SAVE_BASE + world_name
+	_show_generation_loading_overlay("Saving world definition", 0.0, {
+		"world_path": save_path
+	}, true)
 	
 	if not generator:
 		generator = WorldMapGen.new()
@@ -443,16 +665,34 @@ func _on_save_pressed() -> void:
 		last_save_profile = generator.last_save_profile.duplicate(true)
 		WorldMapData.invalidate_world(save_path)
 		progress_label.text = "Saved: %s" % world_name
+		_show_generation_loading_overlay("World definition saved", 100.0, {
+			"world_path": save_path,
+			"elapsed_ms": last_save_ms
+		}, true)
 		_refresh_world_list()  # Update list to show new world
+		if start_bake_after_save and terrain_mesh_bake_enabled and terrain_mesh_bake_on_save:
+			_start_terrain_mesh_bake(save_path)
+		else:
+			_hide_generation_loading_overlay()
+		return true
 	else:
 		last_save_profile = generator.last_save_profile.duplicate(true)
 		progress_label.text = "Save FAILED!"
+		_set_generation_loading_failed("Save FAILED", {
+			"world_path": save_path,
+			"elapsed_ms": last_save_ms
+		})
+		return false
 
 # ============================================================================
 # PLAY — transition to game with this world loaded
 # ============================================================================
 
 func _on_play_pressed() -> void:
+	if is_baking_terrain:
+		_set_generation_status("Terrain mesh artifact bake still running", progress_bar.value if progress_bar else 0.0, false)
+		return
+
 	var world_name = world_name_input.text.strip_edges()
 	if world_name.is_empty():
 		world_name = "unnamed_world"
@@ -460,7 +700,12 @@ func _on_play_pressed() -> void:
 	var world_path = SAVE_BASE + world_name
 	
 	# Save first to ensure PNGs are on disk
-	_on_save_pressed()
+	var manifest_path := WorldMapData.get_world_terrain_artifact_manifest_path(world_path)
+	var bake_before_play := terrain_mesh_bake_enabled and not FileAccess.file_exists(manifest_path)
+	if not _on_save_pressed(bake_before_play):
+		return
+	if is_baking_terrain:
+		return
 	
 	# Set the path on SaveManager autoload (persists across scene changes)
 	var sm = get_node_or_null("/root/SaveManager")
@@ -473,11 +718,189 @@ func _on_play_pressed() -> void:
 	
 	# Transition to the game scene
 	progress_label.text = "Launching game..."
-	get_tree().change_scene_to_file.call_deferred("res://modules/world_module/world_test_world_player_v2.tscn")
+	_show_generation_loading_overlay("Launching game loading screen", 100.0, {
+		"world_path": world_path
+	}, true)
+	await get_tree().process_frame
+	get_tree().change_scene_to_file("res://modules/world_module/world_test_world_player_v2.tscn")
+
+
+func _build_terrain_mesh_bake_origins() -> Array[Vector3]:
+	var origins: Array[Vector3] = []
+	var seen := {}
+	if terrain_mesh_bake_include_origin:
+		_append_unique_terrain_mesh_bake_origin(origins, seen, terrain_mesh_bake_origin)
+	if not terrain_mesh_bake_include_town_centers or terrain_mesh_bake_max_town_centers <= 0:
+		return origins
+
+	var towns_variant: Variant = current_images.get("towns", [])
+	if not (towns_variant is Array):
+		return origins
+	var town_candidates: Array = []
+	for town_variant in towns_variant:
+		if town_variant is Dictionary and town_variant.has("x") and town_variant.has("z"):
+			town_candidates.append(town_variant)
+	town_candidates.sort_custom(func(a, b): return _terrain_mesh_bake_town_priority(a) > _terrain_mesh_bake_town_priority(b))
+
+	var added_towns := 0
+	for town in town_candidates:
+		if added_towns >= terrain_mesh_bake_max_town_centers:
+			break
+		var origin := Vector3(
+			float(town.get("x", 0.0)),
+			float(town.get("terrain_y", 0.0)),
+			float(town.get("z", 0.0))
+		)
+		if _append_unique_terrain_mesh_bake_origin(origins, seen, origin):
+			added_towns += 1
+	return origins
+
+
+func _terrain_mesh_bake_town_priority(town: Dictionary) -> float:
+	return (
+		float(town.get("building_count", 0)) * 1000.0
+		+ float(town.get("radius", 0.0)) * 10.0
+		+ float(town.get("score", 0.0))
+	)
+
+
+func _append_unique_terrain_mesh_bake_origin(origins: Array[Vector3], seen: Dictionary, origin: Vector3) -> bool:
+	var key := "%d:%d:%d" % [
+		int(floor(origin.x / TERRAIN_MESH_BAKE_CHUNK_STRIDE)),
+		int(floor(origin.y / TERRAIN_MESH_BAKE_CHUNK_STRIDE)),
+		int(floor(origin.z / TERRAIN_MESH_BAKE_CHUNK_STRIDE))
+	]
+	if seen.has(key):
+		return false
+	seen[key] = true
+	origins.append(origin)
+	return true
+
+
+func _start_terrain_mesh_bake(world_path: String) -> void:
+	if world_path.strip_edges().is_empty():
+		return
+	if is_baking_terrain:
+		return
+	if terrain_baker and is_instance_valid(terrain_baker):
+		terrain_baker.queue_free()
+
+	is_baking_terrain = true
+	last_terrain_bake_profile = {}
+	last_terrain_bake_error = ""
+	generate_btn.disabled = true
+	save_btn.disabled = true
+	play_btn.disabled = true
+	progress_bar.visible = true
+
+	terrain_baker = WorldTerrainArtifactBaker.new()
+	terrain_baker.name = "WorldTerrainArtifactBaker"
+	terrain_baker.bake_radius_chunks = terrain_mesh_bake_radius_chunks
+	terrain_baker.store_ready_mesh_resources = terrain_mesh_bake_store_ready_mesh_resources
+	terrain_baker.synchronous_disk_writes = terrain_mesh_bake_synchronous_disk_writes
+	add_child(terrain_baker)
+	terrain_baker.progress_changed.connect(_on_terrain_bake_progress)
+	terrain_baker.bake_completed.connect(_on_terrain_bake_completed)
+	terrain_baker.bake_failed.connect(_on_terrain_bake_failed)
+
+	var bake_origins: Array[Vector3] = _build_terrain_mesh_bake_origins()
+	if bake_origins.is_empty():
+		bake_origins.append(terrain_mesh_bake_origin)
+	_set_generation_status(
+		"Preparing terrain mesh artifact bake (%d origins)" % bake_origins.size(),
+		0.0,
+		false,
+		{
+			"world_path": world_path,
+			"artifact_root": WorldMapData.get_world_terrain_artifact_root(world_path),
+			"origin_count": bake_origins.size(),
+			"radius_chunks": terrain_mesh_bake_radius_chunks
+		}
+	)
+	var started := terrain_baker.start_bake(
+		world_path,
+		bake_origins[0],
+		terrain_mesh_bake_radius_chunks,
+		{
+			"bake_origins": bake_origins,
+			"include_primary_origin": false,
+			"store_ready_mesh_resources": terrain_mesh_bake_store_ready_mesh_resources,
+			"synchronous_disk_writes": terrain_mesh_bake_synchronous_disk_writes,
+			"high_throughput_budgets": true
+		}
+	)
+	if not started:
+		_on_terrain_bake_failed({
+			"failure_reason": "start_failed",
+			"world_path": world_path,
+			"artifact_root": WorldMapData.get_world_terrain_artifact_root(world_path)
+		})
+
+
+func _on_terrain_bake_progress(profile: Dictionary) -> void:
+	last_terrain_bake_profile = profile.duplicate(true)
+	var stage := str(profile.get("stage", "baking terrain mesh artifacts"))
+	var percent := float(profile.get("progress_percent", 0.0))
+	var artifact_count := int(profile.get("artifact_count", 0))
+	var expected_chunks := int(profile.get("expected_chunks", 0))
+	var origin_count := int(profile.get("origin_count", 1))
+	var artifact_root := str(profile.get("artifact_root", ""))
+	_set_generation_status(
+		"%s origins=%d chunks=%d/%d -> %s" % [stage.capitalize(), origin_count, artifact_count, expected_chunks, artifact_root],
+		percent,
+		false,
+		profile
+	)
+
+
+func _on_terrain_bake_completed(profile: Dictionary) -> void:
+	is_baking_terrain = false
+	last_terrain_bake_profile = profile.duplicate(true)
+	generate_btn.disabled = false
+	save_btn.disabled = false
+	play_btn.disabled = false
+	progress_bar.visible = false
+	if terrain_mesh_bake_refresh_world_list_on_complete:
+		_refresh_world_list()
+	var artifact_root := str(profile.get("artifact_root", ""))
+	var artifact_count := int(profile.get("artifact_count", 0))
+	var origin_count := int(profile.get("origin_count", 1))
+	var elapsed_ms := float(profile.get("elapsed_ms", 0.0))
+	progress_label.text = "Generated, saved, and baked %d terrain mesh artifacts across %d origins in %.0fms -> %s" % [
+		artifact_count,
+		origin_count,
+		elapsed_ms,
+		artifact_root
+	]
+	last_generation_status = progress_label.text
+	_set_generation_loading_complete(progress_label.text, profile)
+	_hide_generation_loading_overlay()
+
+
+func _on_terrain_bake_failed(profile: Dictionary) -> void:
+	is_baking_terrain = false
+	last_terrain_bake_profile = profile.duplicate(true)
+	last_terrain_bake_error = str(profile.get("failure_reason", "unknown"))
+	generate_btn.disabled = false
+	save_btn.disabled = false
+	play_btn.disabled = false
+	progress_bar.visible = false
+	var artifact_root := str(profile.get("artifact_root", ""))
+	progress_label.text = "Terrain mesh artifact bake FAILED (%s) -> %s" % [last_terrain_bake_error, artifact_root]
+	last_generation_status = progress_label.text
+	_set_generation_loading_failed(progress_label.text, profile)
 
 func get_telemetry_snapshot() -> Dictionary:
 	return {
 		"is_generating": is_generating,
+		"is_baking_terrain": is_baking_terrain,
+		"terrain_mesh_bake_enabled": terrain_mesh_bake_enabled,
+		"terrain_mesh_bake_radius_chunks": terrain_mesh_bake_radius_chunks,
+		"terrain_mesh_bake_store_ready_mesh_resources": terrain_mesh_bake_store_ready_mesh_resources,
+		"terrain_mesh_bake_synchronous_disk_writes": terrain_mesh_bake_synchronous_disk_writes,
+		"terrain_mesh_bake_include_origin": terrain_mesh_bake_include_origin,
+		"terrain_mesh_bake_include_town_centers": terrain_mesh_bake_include_town_centers,
+		"terrain_mesh_bake_max_town_centers": terrain_mesh_bake_max_town_centers,
 		"current_image_count": current_images.size(),
 		"last_preview_ms": last_preview_ms,
 		"last_preview_backend": last_preview_backend,
@@ -487,9 +910,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_preview_output_size": last_preview_output_size,
 		"last_preview_sample_count": last_preview_sample_count,
 		"last_save_ms": last_save_ms,
+		"last_generation_status": last_generation_status,
+		"last_generation_backend": last_generation_backend,
+		"last_generation_error": last_generation_error,
+		"last_generation_preview_ready": last_generation_preview_ready,
+		"generation_started_usec": generation_started_usec,
 		"last_generation_profile": last_generation_profile.duplicate(true),
 		"last_generation_preview_profile": last_generation_preview_profile.duplicate(true),
-		"last_save_profile": last_save_profile.duplicate(true)
+		"last_save_profile": last_save_profile.duplicate(true),
+		"last_terrain_bake_profile": last_terrain_bake_profile.duplicate(true),
+		"last_terrain_bake_error": last_terrain_bake_error,
+		"generation_loading_overlay": _get_generation_loading_overlay_snapshot()
 	}
 
 # ============================================================================
