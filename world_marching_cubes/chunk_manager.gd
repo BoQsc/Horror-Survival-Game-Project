@@ -90,6 +90,8 @@ const TERRAIN_MESHER_VERSION: int = 1
 @export_range(1, 16, 1) var distant_world_map_lod_sample_step: int = 4
 @export_range(1, 16, 1) var distant_world_map_lod_budget_per_frame: int = 2
 @export var distant_world_map_lod_defer_until_initial_viewer_move: bool = true
+@export var world_map_lod_replace_active_chunks_enabled: bool = false
+@export_range(1, 16, 1) var world_map_lod_full_res_visual_radius_chunks: int = 5
 @export var terrain_visual_batching_enabled: bool = true
 @export var procedural_terrain_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var terrain_visual_batch_size: int = 2
@@ -221,6 +223,7 @@ class ChunkData:
 	var terrain_collision_shared_shape_index: int = -1
 	var terrain_visual_mesh: ArrayMesh = null
 	var terrain_visual_batched: bool = false
+	var terrain_visual_lod_replaced: bool = false
 	var terrain_source_vertex_count: int = 0
 	var terrain_source_index_count: int = 0
 	var terrain_unique_vertex_count: int = 0
@@ -955,6 +958,8 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_visual_chunk_batched_primitive_count": int(terrain_visual_stats.get("chunk_batched_primitive_count", 0)),
 		"terrain_visual_batch_mesh_count": int(terrain_visual_stats.get("batch_mesh_count", 0)),
 		"terrain_visual_batch_primitive_count": int(terrain_visual_stats.get("batch_primitive_count", 0)),
+		"world_map_lod_mesh_count": int(terrain_visual_stats.get("world_map_lod_mesh_count", 0)),
+		"world_map_lod_primitive_count": int(terrain_visual_stats.get("world_map_lod_primitive_count", 0)),
 		"terrain_visual_visible_primitive_count": int(terrain_visual_stats.get("visible_primitive_count", 0)),
 		"terrain_visual_batch_member_count": int(terrain_visual_stats.get("batch_member_count", 0)),
 		"terrain_visual_max_chunk_primitive_count": int(terrain_visual_stats.get("max_chunk_primitive_count", 0)),
@@ -1259,6 +1264,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"world_map_lod_merged": _is_world_map_lod_merged(),
 		"distant_world_map_lod_enabled": distant_world_map_lod_enabled,
 		"distant_world_map_lod_defer_until_initial_viewer_move": distant_world_map_lod_defer_until_initial_viewer_move,
+		"world_map_lod_replace_active_chunks_enabled": world_map_lod_replace_active_chunks_enabled,
+		"world_map_lod_full_res_visual_radius_chunks": world_map_lod_full_res_visual_radius_chunks,
+		"world_map_lod_replaced_terrain_chunk_count": _count_world_map_lod_replaced_terrain_chunks(),
 		"distant_world_map_lod_deferred": _last_world_map_lod_deferred,
 		"distant_world_map_lod_throttled_update": _last_world_map_lod_throttled_update,
 		"last_world_map_lod_update_ms": _last_world_map_lod_update_ms,
@@ -1394,11 +1402,61 @@ func _world_map_lod_distance_sq(coord: Vector2i, center: Vector2i) -> int:
 	return dx * dx + dz * dz
 
 func _world_map_lod_inner_distance() -> int:
+	if world_map_active and world_map_lod_replace_active_chunks_enabled:
+		return clampi(world_map_lod_full_res_visual_radius_chunks, 1, maxi(render_distance, 1))
 	return maxi(render_distance - distant_world_map_lod_overlap, 0)
+
+func _world_map_lod_outer_distance() -> int:
+	var inner_distance := _world_map_lod_inner_distance()
+	if world_map_active and world_map_lod_replace_active_chunks_enabled:
+		return maxi(maxi(distant_world_map_lod_distance, render_distance), inner_distance)
+	return maxi(distant_world_map_lod_distance, inner_distance)
+
+func _wants_active_world_map_lod_replacement(coord: Vector3i) -> bool:
+	if not world_map_lod_replace_active_chunks_enabled:
+		return false
+	if not distant_world_map_lod_enabled or not world_map_active or coord.y != 0:
+		return false
+	if _world_map_heightmap_data.is_empty():
+		return false
+	var data = active_chunks.get(coord, null)
+	if data != null and int(data.mod_version) != 0:
+		return false
+	var p_pos := get_viewer_position()
+	var center := Vector2i(int(floor(p_pos.x / CHUNK_STRIDE)), int(floor(p_pos.z / CHUNK_STRIDE)))
+	var dist_sq := _world_map_lod_distance_sq(Vector2i(coord.x, coord.z), center)
+	var inner_distance := _world_map_lod_inner_distance()
+	var outer_distance := _world_map_lod_outer_distance()
+	return dist_sq > inner_distance * inner_distance and dist_sq <= outer_distance * outer_distance
+
+func _has_world_map_lod_visual_for_coord(coord: Vector2i) -> bool:
+	if not _world_map_lod_chunks.has(coord):
+		return false
+	var node_variant: Variant = _world_map_lod_chunks.get(coord, null)
+	if not is_instance_valid(node_variant):
+		return false
+	var node := node_variant as Node
+	return node != null and is_instance_valid(node)
+
+func _should_replace_active_world_map_chunk_with_lod(coord: Vector3i) -> bool:
+	return _wants_active_world_map_lod_replacement(coord) and _has_world_map_lod_visual_for_coord(Vector2i(coord.x, coord.z))
+
+func _count_world_map_lod_replaced_terrain_chunks() -> int:
+	var count := 0
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		if coord.y != 0:
+			continue
+		var data = active_chunks.get(coord, null)
+		if data != null and bool(data.terrain_visual_lod_replaced):
+			count += 1
+	return count
 
 func _has_visible_world_map_terrain_chunk(coord: Vector2i) -> bool:
 	var terrain_coord := Vector3i(coord.x, 0, coord.y)
 	if not active_chunks.has(terrain_coord):
+		return false
+	if _wants_active_world_map_lod_replacement(terrain_coord):
 		return false
 
 	var data = active_chunks[terrain_coord]
@@ -1453,7 +1511,7 @@ func _rebuild_world_map_lod_candidates(center: Vector2i) -> void:
 	_world_map_lod_sort_center = center
 
 	var inner_distance := _world_map_lod_inner_distance()
-	var outer_distance := maxi(distant_world_map_lod_distance, inner_distance)
+	var outer_distance := _world_map_lod_outer_distance()
 	var inner_sq := inner_distance * inner_distance
 	var outer_sq := outer_distance * outer_distance
 
@@ -1481,6 +1539,8 @@ func _rebuild_world_map_lod_candidates(center: Vector2i) -> void:
 func _clear_world_map_lod_chunks(immediate: bool = false, reset_initial_defer: bool = true) -> void:
 	var released_node_ids: Dictionary = {}
 	for node_variant in _world_map_lod_chunks.values():
+		if not is_instance_valid(node_variant):
+			continue
 		var node := node_variant as Node
 		if not node:
 			continue
@@ -1501,6 +1561,14 @@ func _clear_world_map_lod_chunks(immediate: bool = false, reset_initial_defer: b
 				_world_map_lod_merged_node.queue_free()
 	_world_map_lod_merged_node = null
 	_world_map_lod_chunks.clear()
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		if coord.y != 0:
+			continue
+		var data = active_chunks.get(coord, null)
+		if data != null and bool(data.terrain_visual_lod_replaced):
+			_set_chunk_mesh_lod_replaced(data, coord, false)
+			_mark_terrain_visual_batch_dirty(coord, true)
 	_reset_world_map_lod_candidates()
 	_last_world_map_lod_center = Vector2i(2147483647, 2147483647)
 	_last_world_map_lod_inner_distance = -1
@@ -1517,13 +1585,19 @@ func _unload_world_map_lod_chunk(coord: Vector2i, immediate: bool = false) -> bo
 	if _is_world_map_lod_merged():
 		_clear_world_map_lod_chunks(immediate)
 		return true
-	var node := _world_map_lod_chunks[coord] as Node
+	var node_variant: Variant = _world_map_lod_chunks[coord]
+	var node: Node = node_variant as Node if is_instance_valid(node_variant) else null
 	_world_map_lod_chunks.erase(coord)
 	if node:
 		if immediate:
 			node.free()
 		else:
 			node.queue_free()
+	var terrain_coord := Vector3i(coord.x, 0, coord.y)
+	var data = active_chunks.get(terrain_coord, null)
+	if data != null and bool(data.terrain_visual_lod_replaced):
+		_set_chunk_mesh_lod_replaced(data, terrain_coord, false)
+		_mark_terrain_visual_batch_dirty(terrain_coord, true)
 	return true
 
 func _load_world_map_lod_chunk(coord: Vector2i) -> bool:
@@ -1561,6 +1635,10 @@ func _load_world_map_lod_chunk(coord: Vector2i) -> bool:
 	lod_node.add_to_group("world_map_lod")
 	add_child(lod_node)
 	_world_map_lod_chunks[coord] = lod_node
+	var terrain_coord := Vector3i(coord.x, 0, coord.y)
+	if active_chunks.has(terrain_coord) and _wants_active_world_map_lod_replacement(terrain_coord):
+		_mark_terrain_visual_batch_dirty(terrain_coord, true)
+		_sync_world_map_lod_replaced_active_chunk_visuals()
 	return true
 
 func _merge_world_map_lod_chunks() -> void:
@@ -1579,7 +1657,10 @@ func _merge_world_map_lod_chunks() -> void:
 
 	for coord_variant in _world_map_lod_chunks.keys():
 		var coord: Vector2i = coord_variant
-		var mesh_instance := _world_map_lod_chunks[coord] as MeshInstance3D
+		var lod_variant: Variant = _world_map_lod_chunks[coord]
+		if not is_instance_valid(lod_variant):
+			continue
+		var mesh_instance := lod_variant as MeshInstance3D
 		if not mesh_instance or not is_instance_valid(mesh_instance):
 			continue
 		var mesh := mesh_instance.mesh as ArrayMesh
@@ -1650,6 +1731,7 @@ func _merge_world_map_lod_chunks() -> void:
 	_world_map_lod_merged_node = merged_node
 	for coord in loaded_coords:
 		_world_map_lod_chunks[coord] = merged_node
+	_sync_world_map_lod_replaced_active_chunk_visuals()
 	_last_world_map_lod_merge_ms = float(Time.get_ticks_usec() - merge_start_us) / 1000.0
 
 func _has_world_map_lod_initial_viewer_chunk() -> bool:
@@ -1691,7 +1773,8 @@ func _update_world_map_lod_chunks(throttled_background: bool = false) -> void:
 	_last_world_map_lod_throttled_update = throttled_background
 
 	var inner_distance := _world_map_lod_inner_distance()
-	if not distant_world_map_lod_enabled or not world_map_active or _world_map_heightmap_data.is_empty() or distant_world_map_lod_distance <= inner_distance:
+	var outer_distance := _world_map_lod_outer_distance()
+	if not distant_world_map_lod_enabled or not world_map_active or _world_map_heightmap_data.is_empty() or outer_distance <= inner_distance:
 		_last_world_map_lod_deferred = false
 		_last_world_map_lod_throttled_update = false
 		if not _world_map_lod_chunks.is_empty():
@@ -1705,13 +1788,16 @@ func _update_world_map_lod_chunks(throttled_background: bool = false) -> void:
 		_last_world_map_lod_throttled_update = false
 		_last_world_map_lod_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
 		return
-	if center != _last_world_map_lod_center or inner_distance != _last_world_map_lod_inner_distance or distant_world_map_lod_distance != _last_world_map_lod_outer_distance:
+	if center != _last_world_map_lod_center or inner_distance != _last_world_map_lod_inner_distance or outer_distance != _last_world_map_lod_outer_distance:
 		if _is_world_map_lod_merged():
 			_clear_world_map_lod_chunks(false, false)
 		_last_world_map_lod_center = center
 		_last_world_map_lod_inner_distance = inner_distance
-		_last_world_map_lod_outer_distance = distant_world_map_lod_distance
+		_last_world_map_lod_outer_distance = outer_distance
 		_rebuild_world_map_lod_candidates(center)
+		if world_map_lod_replace_active_chunks_enabled:
+			_mark_all_terrain_visual_batches_dirty(true)
+			_sync_world_map_lod_replaced_active_chunk_visuals()
 
 	var budget := distant_world_map_lod_budget_per_frame
 	while budget > 0 and _world_map_lod_unload_cursor < _world_map_lod_unload_candidates.size():
@@ -2180,6 +2266,25 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 			max_batch_primitive_count = batch_primitives
 			max_batch_key = str(key)
 
+	var world_map_lod_mesh_count := 0
+	var world_map_lod_primitive_count := 0
+	var counted_world_map_lod_nodes: Dictionary = {}
+	for node_variant in _world_map_lod_chunks.values():
+		if not is_instance_valid(node_variant):
+			continue
+		var lod_node := node_variant as MeshInstance3D
+		if lod_node == null or not is_instance_valid(lod_node) or not lod_node.visible:
+			continue
+		var node_id := lod_node.get_instance_id()
+		if counted_world_map_lod_nodes.has(node_id):
+			continue
+		counted_world_map_lod_nodes[node_id] = true
+		var lod_mesh := lod_node.mesh
+		if lod_mesh == null:
+			continue
+		world_map_lod_mesh_count += 1
+		world_map_lod_primitive_count += _get_mesh_surface_primitive_count(lod_mesh)
+
 	var batch_member_count := 0
 	for batch_members_variant in _terrain_visual_batch_members.values():
 		var batch_members: Dictionary = batch_members_variant
@@ -2194,7 +2299,9 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 		"chunk_batched_primitive_count": chunk_batched_primitive_count,
 		"batch_mesh_count": batch_mesh_count,
 		"batch_primitive_count": batch_primitive_count,
-		"visible_primitive_count": chunk_visible_primitive_count + batch_primitive_count,
+		"world_map_lod_mesh_count": world_map_lod_mesh_count,
+		"world_map_lod_primitive_count": world_map_lod_primitive_count,
+		"visible_primitive_count": chunk_visible_primitive_count + batch_primitive_count + world_map_lod_primitive_count,
 		"batch_member_count": batch_member_count,
 		"max_chunk_primitive_count": max_chunk_primitive_count,
 		"max_chunk_coord": max_chunk_coord,
@@ -2234,6 +2341,8 @@ func _ensure_chunk_terrain_mesh_instance(data) -> MeshInstance3D:
 
 func _is_chunk_eligible_for_terrain_visual_batch(coord: Vector3i, data) -> bool:
 	if not _is_terrain_visual_batch_active() or coord.y != 0:
+		return false
+	if _should_replace_active_world_map_chunk_with_lod(coord):
 		return false
 	if _is_chunk_near_viewer_for_visual_batch(coord, _effective_terrain_visual_batch_near_cull_radius()):
 		return false
@@ -2295,6 +2404,7 @@ func _set_chunk_mesh_visible(data, visible: bool, coord: Vector3i = Vector3i(214
 	if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):
 		return
 	if visible:
+		data.terrain_visual_lod_replaced = false
 		var mesh_instance := _ensure_chunk_terrain_mesh_instance(data)
 		if mesh_instance:
 			mesh_instance.visible = true
@@ -2308,12 +2418,53 @@ func _set_chunk_mesh_visible(data, visible: bool, coord: Vector3i = Vector3i(214
 	if coord != Vector3i(2147483647, 2147483647, 2147483647):
 		_queue_terrain_visual_mesh_retire(coord)
 
+func _set_chunk_mesh_lod_replaced(data, coord: Vector3i, replaced: bool) -> void:
+	if data == null:
+		return
+	data.terrain_visual_lod_replaced = replaced
+	if replaced:
+		_set_chunk_mesh_visible(data, false, coord)
+	else:
+		_set_chunk_mesh_visible(data, true, coord)
+
 func _show_individual_terrain_visuals_for_batch(key: Vector2i) -> void:
 	var batch_members: Dictionary = _terrain_visual_batch_members.get(key, {})
 	for coord_variant in batch_members:
 		var coord: Vector3i = coord_variant
 		var data = active_chunks.get(coord, null)
-		_set_chunk_mesh_visible(data, true, coord)
+		if _should_replace_active_world_map_chunk_with_lod(coord):
+			_set_chunk_mesh_lod_replaced(data, coord, true)
+		else:
+			_set_chunk_mesh_lod_replaced(data, coord, false)
+
+func _mark_all_terrain_visual_batches_dirty(invalidate_visible_batches: bool = false) -> void:
+	if not _is_terrain_visual_batch_active():
+		return
+	for key_variant in _terrain_visual_batch_members.keys():
+		var key: Vector2i = key_variant
+		_terrain_visual_batch_dirty[key] = true
+		if invalidate_visible_batches and _terrain_visual_batches.has(key):
+			var batch_node := _terrain_visual_batches[key] as MeshInstance3D
+			if batch_node and is_instance_valid(batch_node):
+				batch_node.visible = false
+			_show_individual_terrain_visuals_for_batch(key)
+	if not _terrain_visual_batch_dirty.is_empty():
+		_wake_terrain_process_loop("terrain_visual_batches_dirty")
+
+func _sync_world_map_lod_replaced_active_chunk_visuals() -> void:
+	if not world_map_active or not distant_world_map_lod_enabled or not world_map_lod_replace_active_chunks_enabled:
+		return
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		if coord.y != 0:
+			continue
+		var data = active_chunks.get(coord, null)
+		if data == null:
+			continue
+		if _should_replace_active_world_map_chunk_with_lod(coord):
+			_set_chunk_mesh_lod_replaced(data, coord, true)
+		elif bool(data.terrain_visual_lod_replaced):
+			_set_chunk_mesh_lod_replaced(data, coord, false)
 
 func _mark_terrain_visual_batch_dirty(coord: Vector3i, invalidate_visible_batch: bool = false) -> void:
 	if not _is_terrain_visual_batch_active() or coord.y != 0:
@@ -2662,6 +2813,9 @@ func _collect_terrain_visual_batch_inputs(key: Vector2i) -> Dictionary:
 	for coord_variant in batch_members:
 		var coord: Vector3i = coord_variant
 		var data = active_chunks.get(coord, null)
+		if _should_replace_active_world_map_chunk_with_lod(coord):
+			_set_chunk_mesh_lod_replaced(data, coord, true)
+			continue
 		if not _is_chunk_eligible_for_terrain_visual_batch(coord, data):
 			_set_chunk_mesh_visible(data, true, coord)
 			continue
@@ -2717,6 +2871,8 @@ func _apply_terrain_visual_batch_mesh(key: Vector2i, eligible_coords: Array[Vect
 	batch_node.visible = true
 	for coord in eligible_coords:
 		var data = active_chunks.get(coord, null)
+		if data != null:
+			data.terrain_visual_lod_replaced = false
 		_set_chunk_mesh_visible(data, false, coord)
 	_last_terrain_visual_batch_hidden_chunk_count = _count_hidden_terrain_visual_batch_chunks()
 
@@ -4164,6 +4320,8 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	distant_world_map_lod_sample_step = _get_runtime_power_env_int_range("TOWN_STALL_DISTANT_WORLD_MAP_LOD_SAMPLE_STEP", distant_world_map_lod_sample_step, 1, 16)
 	distant_world_map_lod_budget_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_DISTANT_WORLD_MAP_LOD_BUDGET", distant_world_map_lod_budget_per_frame, 1, 16)
 	distant_world_map_lod_defer_until_initial_viewer_move = _get_runtime_power_env_bool("TOWN_STALL_DISTANT_WORLD_MAP_LOD_DEFER_INITIAL", distant_world_map_lod_defer_until_initial_viewer_move)
+	world_map_lod_replace_active_chunks_enabled = _get_runtime_power_env_bool("TOWN_STALL_WORLD_MAP_LOD_REPLACE_ACTIVE_CHUNKS", world_map_lod_replace_active_chunks_enabled)
+	world_map_lod_full_res_visual_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_LOD_FULL_RES_RADIUS", world_map_lod_full_res_visual_radius_chunks, 1, 16)
 	var terrain_batch_size_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE").is_empty()
 	var terrain_batch_max_overridden := not OS.get_environment("TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES").is_empty()
 	var water_batch_size_overridden := not OS.get_environment("TOWN_STALL_WATER_VISUAL_BATCH_SIZE").is_empty()
@@ -8591,33 +8749,35 @@ func _thread_function():
 	u_wmap.add_id(_world_map_water_buf)
 	_world_map_water_set1 = rd.uniform_set_create([u_wmap], sid_gen_water, 1)
 
-	# Keep legacy-sized GPU buffers so stale imported shaders cannot write past
-	# the end before Godot reimports the packed-output shader.
-	# This lets a couple of chunks overlap without reusing the same GPU storage buffers
-	# before readback has completed.
+	# GPU mesh output buffers are only needed by the legacy GPU meshing path.
+	# Native CPU meshing reads density bytes and builds marching-cubes mesh data
+	# through the GDExtension, so allocating these large reusable buffers only
+	# increases startup memory pressure and can poison edit remeshing if creation
+	# fails.
 	const MAX_IN_FLIGHT = 1 # Keep gameplay frames smooth by avoiding multi-chunk GPU sync spikes.
 	var output_bytes_size = MAX_TRIANGLES * 3 * LEGACY_VERTEX_FLOATS * 4
 	var output_index_bytes_size = MAX_TRIANGLES * 3 * 4
 	var buffer_slots: Array[Dictionary] = []
-	for _slot in range(MAX_IN_FLIGHT):
-		var counter_data_t = PackedByteArray()
-		counter_data_t.resize(12)
-		counter_data_t.encode_u32(0, 0)
-		counter_data_t.encode_u32(4, 0)
-		counter_data_t.encode_u32(8, 0)
-		var counter_data_w = PackedByteArray()
-		counter_data_w.resize(12)
-		counter_data_w.encode_u32(0, 0)
-		counter_data_w.encode_u32(4, 0)
-		counter_data_w.encode_u32(8, 0)
-		buffer_slots.append({
-			"vertex_buffer_terrain": rd.storage_buffer_create(output_bytes_size),
-			"counter_buffer_terrain": rd.storage_buffer_create(12, counter_data_t),
-			"index_buffer_terrain": rd.storage_buffer_create(output_index_bytes_size),
-			"vertex_buffer_water": rd.storage_buffer_create(output_bytes_size),
-			"counter_buffer_water": rd.storage_buffer_create(12, counter_data_w),
-			"index_buffer_water": rd.storage_buffer_create(output_index_bytes_size)
-		})
+	if not terrain_native_cpu_meshing_enabled:
+		for _slot in range(MAX_IN_FLIGHT):
+			var counter_data_t = PackedByteArray()
+			counter_data_t.resize(12)
+			counter_data_t.encode_u32(0, 0)
+			counter_data_t.encode_u32(4, 0)
+			counter_data_t.encode_u32(8, 0)
+			var counter_data_w = PackedByteArray()
+			counter_data_w.resize(12)
+			counter_data_w.encode_u32(0, 0)
+			counter_data_w.encode_u32(4, 0)
+			counter_data_w.encode_u32(8, 0)
+			buffer_slots.append({
+				"vertex_buffer_terrain": rd.storage_buffer_create(output_bytes_size),
+				"counter_buffer_terrain": rd.storage_buffer_create(12, counter_data_t),
+				"index_buffer_terrain": rd.storage_buffer_create(output_index_bytes_size),
+				"vertex_buffer_water": rd.storage_buffer_create(output_bytes_size),
+				"counter_buffer_water": rd.storage_buffer_create(12, counter_data_w),
+				"index_buffer_water": rd.storage_buffer_create(output_index_bytes_size)
+			})
 
 	var modify_mesh_builder = ClassDB.instantiate("MeshBuilder")
 	if not modify_mesh_builder:
@@ -8652,7 +8812,7 @@ func _thread_function():
 		if task.type == "modify":
 			# HIGHEST PRIORITY: Process modifications immediately, sync all pending work first
 			_flush_generation_batch(rd, in_flight, sid_mesh, pipe_mesh, buffer_slots)
-			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, buffer_slots[0]["vertex_buffer_terrain"], buffer_slots[0]["counter_buffer_terrain"], buffer_slots[0]["index_buffer_terrain"], modify_mesh_builder)
+			process_modify(rd, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, RID(), RID(), RID(), modify_mesh_builder)
 		elif task.type == "restore_artifact":
 			_restore_terrain_artifact_buffers(rd, task)
 		elif task.type == "reload_world_map":
@@ -8699,12 +8859,17 @@ func _thread_function():
 	_free_gpu_cleanup_tasks_now(rd, _drain_completed_generation_free_tasks())
 	_free_gpu_cleanup_tasks_now(rd, _drain_pending_finalization_free_tasks())
 	for slot in buffer_slots:
-		rd.free_rid(slot["vertex_buffer_terrain"])
-		rd.free_rid(slot["counter_buffer_terrain"])
-		rd.free_rid(slot["index_buffer_terrain"])
-		rd.free_rid(slot["vertex_buffer_water"])
-		rd.free_rid(slot["counter_buffer_water"])
-		rd.free_rid(slot["index_buffer_water"])
+		var free_slot_rids: Array[RID] = [
+			slot["vertex_buffer_terrain"],
+			slot["counter_buffer_terrain"],
+			slot["index_buffer_terrain"],
+			slot["vertex_buffer_water"],
+			slot["counter_buffer_water"],
+			slot["index_buffer_water"]
+		]
+		for slot_rid in free_slot_rids:
+			if slot_rid.is_valid():
+				rd.free_rid(slot_rid)
 	rd.free_rid(pipe_gen)
 	rd.free_rid(pipe_gen_water)
 	rd.free_rid(pipe_mod)
@@ -8791,10 +8956,12 @@ func _reload_world_map_gpu_state(rd: RenderingDevice, sid_gen: RID, sid_gen_wate
 
 func _free_world_map_gpu_state(rd: RenderingDevice) -> void:
 	if _world_map_set1.is_valid():
-		rd.free_rid(_world_map_set1)
+		if not rd.has_method("uniform_set_is_valid") or bool(rd.uniform_set_is_valid(_world_map_set1)):
+			rd.free_rid(_world_map_set1)
 		_world_map_set1 = RID()
 	if _world_map_water_set1.is_valid():
-		rd.free_rid(_world_map_water_set1)
+		if not rd.has_method("uniform_set_is_valid") or bool(rd.uniform_set_is_valid(_world_map_water_set1)):
+			rd.free_rid(_world_map_water_set1)
 		_world_map_water_set1 = RID()
 	if _world_map_heightmap_buf.is_valid():
 		rd.free_rid(_world_map_heightmap_buf)
@@ -8868,22 +9035,40 @@ func _flush_generation_batch(rd: RenderingDevice, in_flight: Array, sid_mesh, pi
 	var synced_mesh_readbacks: Array[Dictionary] = []
 	var meshing_dispatch_start_us := Time.get_ticks_usec()
 	for flight_data in in_flight:
-		var slot_index := int(flight_data.get("buffer_slot", 0))
-		if slot_index < 0 or slot_index >= buffer_slots.size():
-			slot_index = 0
-		var slot: Dictionary = buffer_slots[slot_index]
-		var mesh_readback: Dictionary = _dispatch_chunk_meshing(
-			rd,
-			flight_data,
-			sid_mesh,
-			pipe_mesh,
-			slot["vertex_buffer_terrain"],
-			slot["counter_buffer_terrain"],
-			slot["index_buffer_terrain"],
-			slot["vertex_buffer_water"],
-			slot["counter_buffer_water"],
-			slot["index_buffer_water"]
-		)
+		var mesh_readback: Dictionary = {}
+		if terrain_native_cpu_meshing_enabled:
+			mesh_readback = _dispatch_chunk_meshing(
+				rd,
+				flight_data,
+				sid_mesh,
+				pipe_mesh,
+				RID(),
+				RID(),
+				RID(),
+				RID(),
+				RID(),
+				RID()
+			)
+		else:
+			var slot_index := int(flight_data.get("buffer_slot", 0))
+			if slot_index < 0 or slot_index >= buffer_slots.size():
+				slot_index = 0
+			if buffer_slots.is_empty():
+				push_error("[ChunkManager] GPU meshing requested without reusable output buffers.")
+				continue
+			var slot: Dictionary = buffer_slots[slot_index]
+			mesh_readback = _dispatch_chunk_meshing(
+				rd,
+				flight_data,
+				sid_mesh,
+				pipe_mesh,
+				slot["vertex_buffer_terrain"],
+				slot["counter_buffer_terrain"],
+				slot["index_buffer_terrain"],
+				slot["vertex_buffer_water"],
+				slot["counter_buffer_water"],
+				slot["index_buffer_water"]
+			)
 		if bool(mesh_readback.get("already_synced", false)):
 			synced_mesh_readbacks.append(mesh_readback)
 		else:
@@ -9714,12 +9899,47 @@ func _apply_modification_to_buffer(rd: RenderingDevice, sid_mod, pipe_mod, densi
 
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
+
+func _build_native_modified_mesh_result(builder: Object, density_bytes: PackedByteArray, material_bytes: PackedByteArray, layer: int, material_instance: Material) -> Dictionary:
+	if not builder or density_bytes.is_empty():
+		return {}
+
+	var build_start_us := Time.get_ticks_usec()
+	var result: Dictionary = {}
+	if layer == 0:
+		if builder.has_method("build_density_marching_cubes_mesh_data_height_map"):
+			result = builder.build_density_marching_cubes_mesh_data_height_map(density_bytes, material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE, CHUNK_STRIDE)
+		elif builder.has_method("build_density_marching_cubes_mesh_collision_height_map"):
+			result = builder.build_density_marching_cubes_mesh_collision_height_map(density_bytes, material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE, CHUNK_STRIDE)
+	else:
+		if builder.has_method("build_density_marching_cubes_mesh_data"):
+			result = builder.build_density_marching_cubes_mesh_data(density_bytes, material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE)
+		elif builder.has_method("build_density_marching_cubes_mesh_and_collision"):
+			result = builder.build_density_marching_cubes_mesh_and_collision(density_bytes, material_bytes, DENSITY_GRID_SIZE, CHUNK_SIZE)
+
+	if result.is_empty():
+		return {}
+
+	var mesh_variant: Variant = result.get("mesh", null)
+	if mesh_variant is ArrayMesh and material_instance:
+		var mesh := mesh_variant as ArrayMesh
+		if mesh.get_surface_count() > 0:
+			mesh.surface_set_material(0, material_instance)
+		result["mesh"] = mesh
+	result["native_cpu_edit_meshing"] = true
+	result["edit_mesh_build_ms"] = float(Time.get_ticks_usec() - build_start_us) / 1000.0
+	return result
+
+
 func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe_mesh, vertex_buffer, counter_buffer, index_buffer, builder_override: Object = null):
 	var density_buffer = task.rid
 	var material_buffer = task.get("material_rid", RID()) # Material buffer from chunk
 	var chunk_pos = task.pos
 	var layer = task.get("layer", 0)
 	var material_id = task.get("material_id", -1)
+	if not density_buffer.is_valid():
+		push_error("[ChunkManager] Terrain edit skipped: invalid density buffer for %s" % str(task.get("coord", Vector3i.ZERO)))
+		return
 
 
 	var u_density = RDUniform.new()
@@ -9737,6 +9957,9 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 		u_material.add_id(density_buffer) # Placeholder when material data is unavailable.
 
 	var set_mod = rd.uniform_set_create([u_density, u_material], sid_mod, 0)
+	if not set_mod.is_valid():
+		push_error("[ChunkManager] Terrain edit skipped: failed to create modification uniform set for %s" % str(task.get("coord", Vector3i.ZERO)))
+		return
 	var list = rd.compute_list_begin()
 	rd.compute_list_bind_compute_pipeline(list, pipe_mod)
 	rd.compute_list_bind_uniform_set(list, set_mod, 0)
@@ -9775,9 +9998,6 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 
 	if set_mod.is_valid(): rd.free_rid(set_mod)
 
-	var material = material_terrain if layer == 0 else material_water
-	var result = run_meshing(rd, sid_mesh, pipe_mesh, density_buffer, material_buffer, chunk_pos, material, vertex_buffer, counter_buffer, index_buffer, builder_override)
-
 	var density_bytes_terrain := PackedByteArray()
 	var density_bytes_water := PackedByteArray()
 	if layer == 0:
@@ -9800,6 +10020,12 @@ func process_modify(rd: RenderingDevice, task, sid_mod, sid_mesh, pipe_mod, pipe
 	var cpu_material_bytes = PackedByteArray()
 	if material_buffer.is_valid():
 		cpu_material_bytes = rd.buffer_get_data(material_buffer)
+	var mesh_material_bytes: PackedByteArray = cpu_material_bytes
+
+	var material = material_terrain if layer == 0 else material_water
+	var result := _build_native_modified_mesh_result(builder_override, cpu_density_bytes, mesh_material_bytes, layer, material)
+	if result.is_empty():
+		push_error("[ChunkManager] Native terrain edit remesh failed for %s" % str(task.get("coord", Vector3i.ZERO)))
 
 	var b_id = task.get("batch_id", -1)
 	var b_count = task.get("batch_count", 1)
@@ -10213,10 +10439,11 @@ func _finalize_chunk_creation(item: Dictionary):
 			active_chunks[coord] = data
 
 		data.node_terrain = result.node if not result.is_empty() else null
-		if coord.y == 0 and data.node_terrain:
+		if coord.y == 0 and data.node_terrain and not _wants_active_world_map_lod_replacement(coord):
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
 		data.terrain_visual_mesh = terrain_mesh_result.get("mesh", null)
 		data.terrain_visual_batched = false
+		data.terrain_visual_lod_replaced = false
 		data.terrain_source_vertex_count = _get_mesh_result_source_vertex_count(terrain_mesh_result)
 		data.terrain_source_index_count = _get_mesh_result_source_index_count(terrain_mesh_result)
 		data.terrain_unique_vertex_count = _get_mesh_result_unique_vertex_count(terrain_mesh_result)
@@ -10246,6 +10473,8 @@ func _finalize_chunk_creation(item: Dictionary):
 		_sync_terrain_collision_state(coord, data, should_have_collision, get_world_3d())
 		if not should_have_collision and _should_prewarm_terrain_collision(coord, center_chunk, collision_prewarm_distance_sq):
 			_queue_terrain_collision_create(coord)
+		if _should_replace_active_world_map_chunk_with_lod(coord):
+			_set_chunk_mesh_lod_replaced(data, coord, true)
 		_mark_terrain_visual_batch_dirty(coord)
 		_queue_stored_modifications_after(coord, data, int(item.get("stored_mod_version", 0)), 0)
 
@@ -10452,25 +10681,33 @@ func _apply_chunk_update(
 
 		# Recreate chunk material with updated 3D texture
 		var chunk_material = _create_chunk_material(chunk_pos, cpu_mat)
+		var terrain_mesh_result := _materialize_deferred_mesh_result(result, chunk_material)
 		var center_chunk = _get_terrain_collision_center_chunk()
 
-		var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, false, chunk_material, false, coord)
+		var result_node = create_chunk_node(terrain_mesh_result.get("mesh", null), terrain_mesh_result.get("shape", null), chunk_pos, false, chunk_material, false, coord)
 		data.node_terrain = result_node.node if not result_node.is_empty() else null
-		if coord.y == 0 and data.node_terrain:
+		if coord.y == 0 and data.node_terrain and not _wants_active_world_map_lod_replacement(coord):
 			_unload_world_map_lod_chunk(Vector2i(coord.x, coord.z))
-		data.terrain_visual_mesh = result.mesh
+		data.terrain_visual_mesh = terrain_mesh_result.get("mesh", null)
 		data.terrain_visual_batched = false
-		data.terrain_source_vertex_count = _get_mesh_result_source_vertex_count(result)
-		data.terrain_source_index_count = _get_mesh_result_source_index_count(result)
-		data.terrain_unique_vertex_count = _get_mesh_result_unique_vertex_count(result)
-		data.terrain_position_unique_vertex_count = _get_mesh_result_position_unique_vertex_count(result)
-		data.terrain_position_material_unique_vertex_count = _get_mesh_result_position_material_unique_vertex_count(result)
+		data.terrain_visual_lod_replaced = false
+		data.terrain_source_vertex_count = _get_mesh_result_source_vertex_count(terrain_mesh_result)
+		data.terrain_source_index_count = _get_mesh_result_source_index_count(terrain_mesh_result)
+		data.terrain_unique_vertex_count = _get_mesh_result_unique_vertex_count(terrain_mesh_result)
+		data.terrain_position_unique_vertex_count = _get_mesh_result_position_unique_vertex_count(terrain_mesh_result)
+		data.terrain_position_material_unique_vertex_count = _get_mesh_result_position_material_unique_vertex_count(terrain_mesh_result)
 		data.collision_shape_terrain = result_node.collision_shape if not result_node.is_empty() else null
 		data.chunk_material = chunk_material
-		if not cpu_dens.is_empty():
+		var result_height_map: PackedFloat32Array = terrain_mesh_result.get("height_map", PackedFloat32Array())
+		if not result_height_map.is_empty():
+			data.cpu_height_map_terrain = result_height_map
+			data.cpu_height_map_size = CHUNK_STRIDE
+		elif not cpu_dens.is_empty():
 			data.cpu_density_terrain = cpu_dens
 			data.cpu_height_map_terrain = _build_height_map_from_density(cpu_dens)
 			data.cpu_height_map_size = CHUNK_STRIDE if not data.cpu_height_map_terrain.is_empty() else 0
+		if not cpu_dens.is_empty():
+			data.cpu_density_terrain = cpu_dens
 		if not cpu_mat.is_empty():
 			data.cpu_material_terrain = cpu_mat
 		var collision_distance_sq := collision_distance * collision_distance
@@ -10479,6 +10716,8 @@ func _apply_chunk_update(
 		_sync_terrain_collision_state(coord, data, should_have_collision, get_world_3d())
 		if not should_have_collision and _should_prewarm_terrain_collision(coord, center_chunk, collision_prewarm_distance_sq):
 			_queue_terrain_collision_create(coord)
+		if _should_replace_active_world_map_chunk_with_lod(coord):
+			_set_chunk_mesh_lod_replaced(data, coord, true)
 		_mark_terrain_visual_batch_dirty(coord)
 		# Signal vegetation manager that chunk node changed (update references, don't regenerate)
 		chunk_modified.emit(coord, data.node_terrain)
@@ -10488,13 +10727,14 @@ func _apply_chunk_update(
 		data.water_visual_mesh = null
 		data.water_visual_batched = false
 		if data.node_water: data.node_water.queue_free()
+		var water_mesh_result := _materialize_deferred_mesh_result(result, material_water)
 		if water_render_enabled:
-			var result_node = create_chunk_node(result.mesh, result.shape, chunk_pos, true, null, world_map_active, coord)
+			var result_node = create_chunk_node(water_mesh_result.get("mesh", null), water_mesh_result.get("shape", null), chunk_pos, true, null, world_map_active, coord)
 			data.node_water = result_node.node if not result_node.is_empty() else null
 		else:
 			data.node_water = null
 		if data.node_water:
-			data.water_visual_mesh = result.mesh
+			data.water_visual_mesh = water_mesh_result.get("mesh", null)
 			data.water_visual_batched = false
 			_register_water_visual_batch_member(coord)
 			_mark_water_visual_batch_dirty(coord)

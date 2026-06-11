@@ -105,7 +105,9 @@ def _positive_int_from_env(name: str, default: int) -> int:
 
 def _godot_display_args_from_env() -> list[str]:
     args: list[str] = []
-    if os.environ.get("TOWN_STALL_GODOT_WINDOWED", "0") == "1":
+    if os.environ.get("TOWN_STALL_GODOT_FULLSCREEN", "0") == "1":
+        args.append("--fullscreen")
+    elif os.environ.get("TOWN_STALL_GODOT_WINDOWED", "0") == "1":
         args.append("--windowed")
 
     resolution = os.environ.get("TOWN_STALL_GODOT_RESOLUTION", "").strip().lower()
@@ -2461,7 +2463,8 @@ def _detect_run_failure(output: str, returncode: Optional[int]) -> list[str]:
         if "low-fps safety abort:" in line and " over " in line and "ms/frame" in line:
             reasons.append("low-FPS safety abort triggered")
             break
-    if "[town_stall_test] hold started" not in lowered:
+    manual_handoff_active = "[town_stall_test] manual handoff to player" in lowered
+    if "[town_stall_test] hold started" not in lowered and not manual_handoff_active:
         reasons.append("town hold never started")
     if returncode is not None and returncode != 0:
         reasons.append(f"process exited with code {returncode}")

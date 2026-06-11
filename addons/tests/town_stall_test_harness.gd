@@ -163,6 +163,7 @@ var low_fps_abort_elapsed_seconds: float = 0.0
 var low_fps_abort_sample_count: int = 0
 var low_fps_abort_peak_ms: float = 0.0
 var measure_full_flight_enabled: bool = false
+var manual_handoff_enabled: bool = false
 var world_ready_timeout_seconds: float = WORLD_READY_TIMEOUT_SECONDS
 var world_ready_status_log_interval_seconds: float = 5.0
 var world_ready_last_status_log_seconds: float = -1000000.0
@@ -1076,7 +1077,10 @@ func _parse_resolution_env(value: String) -> Vector2i:
 
 func _apply_display_mode_override_from_env() -> void:
 	var override_notes: Array[String] = []
-	if OS.get_environment("TOWN_STALL_GODOT_WINDOWED") == "1":
+	if OS.get_environment("TOWN_STALL_GODOT_FULLSCREEN") == "1":
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+		override_notes.append("fullscreen")
+	elif OS.get_environment("TOWN_STALL_GODOT_WINDOWED") == "1":
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 		override_notes.append("windowed")
 	var resolution := _parse_resolution_env(OS.get_environment("TOWN_STALL_GODOT_RESOLUTION"))
@@ -2992,6 +2996,7 @@ func _ready() -> void:
 	low_fps_abort_frame_ms = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_FRAME_MS", 120.0)
 	low_fps_abort_seconds = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_SECONDS", 8.0)
 	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
+	manual_handoff_enabled = OS.get_environment("TOWN_STALL_MANUAL_HANDOFF") == "1"
 	world_ready_timeout_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_TIMEOUT_SECONDS", WORLD_READY_TIMEOUT_SECONDS)
 	world_ready_status_log_interval_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STATUS_LOG_INTERVAL_SECONDS", 5.0)
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
@@ -3031,6 +3036,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Disable entities: %s" % ("ON" if disable_entities_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Measure full flight: %s" % ("ON" if measure_full_flight_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Manual handoff: %s" % ("ON" if manual_handoff_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Periodic hold snapshots: %s" % ("ON" if hold_periodic_snapshots_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Periodic pre-hold snapshots: %s interval=%.1fs" % [
 		"ON" if prehold_periodic_snapshots_enabled else "OFF",
@@ -4037,6 +4043,9 @@ func _teleport_into_town() -> void:
 	})
 
 	print("[TOWN_STALL_TEST] Teleported to town at (%.1f, %.1f, %.1f)" % [teleport_pos.x, teleport_pos.y, teleport_pos.z])
+	if manual_handoff_enabled:
+		_complete_manual_handoff("auto_teleport")
+		return
 	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % configured_hold_seconds)
 
 	current_hold_seconds = configured_hold_seconds
@@ -4492,6 +4501,29 @@ func _restore_player_control() -> void:
 		"phase": str(phase)
 	})
 
+func _complete_manual_handoff(reason: String) -> void:
+	_restore_player_control()
+	if _hold_started_sample_index < 0:
+		_hold_started_sample_index = _town_entry_samples.size()
+		_hold_started_epoch = Time.get_unix_time_from_system()
+	town_entry_capture_started = false
+	pending_town_spawn_requested = false
+	hold_started_logged = false
+	phase = Phase.DONE
+	phase_time = 0.0
+	_hide_startup_loading_overlay()
+	_emit_scope_state("town_stall_test", {
+		"phase": "manual_handoff",
+		"world_path": generated_world_path,
+		"reason": reason
+	})
+	_emit_scope_event("town_stall_test", "manual_handoff", {
+		"world_path": generated_world_path,
+		"reason": reason
+	})
+	_write_native_town_entry_snapshot()
+	print("[TOWN_STALL_TEST] Manual handoff to player: %s. Automation will stay open until you close the game." % reason)
+
 
 func _fly_to_town(_delta: float) -> void:
 	if phase_time >= AUTO_FLY_TIMEOUT_SECONDS:
@@ -4545,6 +4577,10 @@ func _fly_to_town(_delta: float) -> void:
 	var descent_delta := fly_target.y - current_pos.y
 	if absf(descent_delta) <= 1.5:
 		player.velocity = Vector3.ZERO
+		if manual_handoff_enabled and (phase == Phase.FLY_TO_TOWN or phase == Phase.FLY_TO_TOWN_SECOND):
+			print("[TOWN_STALL_TEST] Auto fly reached target, handing control to player")
+			_complete_manual_handoff("auto_fly_arrival")
+			return
 		print("[TOWN_STALL_TEST] Auto fly reached target, starting hold")
 		_lock_player_for_hold()
 		match phase:

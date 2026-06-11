@@ -31,6 +31,12 @@ func _run() -> int:
 	if not _expect(int(telemetry.get("tree_mesh_primitives", 0)) > 0, "telemetry should report cached tree mesh primitive count"):
 		manager.free()
 		return 1
+	if not _expect(
+			not bool(telemetry.get("vegetation_global_render_ignore_occlusion_culling", true)),
+			"global vegetation batches should allow occlusion culling by default"
+	):
+		manager.free()
+		return 1
 	var counts: Dictionary = telemetry.get("vegetation_opaque_material_optimization_counts", {})
 	if not _expect(int(counts.get("tree_scanned_surfaces", 0)) == 1, "tree scanned surface count mismatch"):
 		manager.free()
@@ -62,6 +68,21 @@ func _run() -> int:
 	if not _expect(
 			int(counts.get("tree_alpha_split_opaque_triangles", 0)) > 0,
 			"tree alpha split should find opaque tree triangles; counts=%s" % str(counts)
+	):
+		manager.free()
+		return 1
+	var default_tree_batch := manager._get_global_render_multimesh("tree", Vector2i.ZERO)
+	if not _expect(
+			default_tree_batch is MultiMeshInstance3D and not default_tree_batch.ignore_occlusion_culling,
+			"default tree render batch should participate in occlusion culling"
+	):
+		manager.free()
+		return 1
+	manager.vegetation_global_render_ignore_occlusion_culling = true
+	var override_tree_batch := manager._get_global_render_multimesh("tree", Vector2i(1, 0))
+	if not _expect(
+			override_tree_batch is MultiMeshInstance3D and override_tree_batch.ignore_occlusion_culling,
+			"explicit vegetation occlusion override should still be honored"
 	):
 		manager.free()
 		return 1

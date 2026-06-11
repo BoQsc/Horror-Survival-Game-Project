@@ -58,9 +58,10 @@ signal all_vegetation_ready # Emitted when initial load batch finishes
 @export_range(0.0, 256.0, 1.0) var rock_global_render_bounds_padding: float = GLOBAL_ROCK_RENDER_BOUNDS_PADDING
 @export var vegetation_exact_render_bounds_enabled: bool = true
 @export_range(0.0, 16.0, 0.25) var vegetation_exact_render_bounds_padding: float = 1.0
-# Do not enable vegetation occlusion culling by default until an A/B run proves
-# it improves FPS/watts without visible popping in wide town/terrain views.
-@export var vegetation_global_render_ignore_occlusion_culling: bool = true
+# Tree batches dominate submitted primitive pressure in town runs. Let the
+# renderer occlusion-cull global vegetation batches by default; the env override
+# remains available for A/B proof runs and visual regression checks.
+@export var vegetation_global_render_ignore_occlusion_culling: bool = false
 @export_range(0.25, 100.0, 0.05) var vegetation_render_lod_bias: float = 1.0
 @export var vegetation_preserve_imported_mesh_lods_enabled: bool = true
 @export var vegetation_generate_missing_mesh_lods_enabled: bool = true
