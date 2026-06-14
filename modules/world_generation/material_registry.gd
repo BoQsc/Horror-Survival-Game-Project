@@ -3,6 +3,7 @@ class_name MaterialRegistry
 
 ## Central registry of all material IDs
 ## Used by gen_density.glsl and terrain.gdshader
+const MATERIAL_REGISTRY_VERSION = 1
 
 # Surface Biomes
 const GRASS = 0

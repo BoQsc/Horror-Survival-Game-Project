@@ -21,13 +21,25 @@ static func _get_native_helper() -> Object:
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
 
+static func release_native_helper() -> void:
+	if _native_helper == null or not is_instance_valid(_native_helper):
+		_native_helper = null
+		return
+	if _native_helper is RefCounted:
+		_native_helper.unreference()
+		if is_instance_valid(_native_helper):
+			_native_helper.free()
+	else:
+		_native_helper.free()
+	_native_helper = null
+
 static func clear_cache() -> void:
 	_geometry_cache.clear()
 	_rotated_bounds_cache.clear()
 	_rotated_objects_cache.clear()
 	_rotated_precise_carve_cache.clear()
 	_rotated_excavation_segments_cache.clear()
-	_native_helper = null
+	release_native_helper()
 
 static func _resolve_prefab_json_path(prefab_name: String) -> String:
 	for dir_path in [RES_PREFAB_DIR, USER_PREFAB_DIR]:

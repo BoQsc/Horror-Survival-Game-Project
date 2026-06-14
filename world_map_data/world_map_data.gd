@@ -1,12 +1,16 @@
 extends RefCounted
 class_name WorldMapData
 ## Shared loader for baked world map data.
-## Caches decoded PNGs and metadata in memory and on disk, while returning safe copies by default.
+## Caches decoded world-map layers and metadata in memory and on disk, while
+## returning safe copies by default.
 
 const CACHE_LIMIT: int = 4
 const DISK_CACHE_MAGIC: int = 0x574D4443 # "WMDC"
 const DISK_CACHE_VERSION: int = 1
 const DISK_CACHE_DIR: String = "user://world_map_data_cache"
+const WORLD_LAYER_BINARY_MAGIC: int = 0x574D4C42 # "WMLB"
+const WORLD_LAYER_BINARY_VERSION: int = 1
+const WORLD_LAYER_BINARY_EXTENSION: String = ".wmb"
 const WORLD_CACHE_SIGNATURE_FILE: String = "world_cache_signature.txt"
 const WORLD_TERRAIN_ARTIFACT_DIR: String = "terrain_artifacts"
 const WORLD_TERRAIN_ARTIFACT_MANIFEST_FILE: String = "terrain_artifact_bake_manifest.json"
@@ -132,6 +136,8 @@ static func load_world(path: String, use_cache: bool = true, duplicate_on_return
 		"duplicate_on_return": duplicate_on_return,
 		"signature_us": 0.0,
 		"signature_hint_found": false,
+		"binary_layer_read_us": 0.0,
+		"binary_layer_hit_count": 0,
 		"image_decode_us": 0.0,
 		"image_convert_us": 0.0,
 		"metadata_parse_us": 0.0,
@@ -217,6 +223,22 @@ static func _load_world_uncached(path: String, profile: Dictionary, metadata_hin
 	var result: Dictionary = {}
 	var load_image_names := _normalize_requested_image_names(requested_image_names)
 	for image_name in load_image_names:
+		var binary_path := _resolve_world_binary_layer_path(path, image_name)
+		if FileAccess.file_exists(binary_path):
+			var binary_start_us := Time.get_ticks_usec()
+			var binary_image_variant: Variant = _load_world_binary_layer(binary_path)
+			profile["binary_layer_read_us"] = float(profile.get("binary_layer_read_us", 0.0)) + float(Time.get_ticks_usec() - binary_start_us)
+			if binary_image_variant is Image:
+				var binary_image := binary_image_variant as Image
+				profile["binary_layer_hit_count"] = int(profile.get("binary_layer_hit_count", 0)) + 1
+				profile["loaded_image_count"] = int(profile.get("loaded_image_count", 0)) + 1
+				if binary_image.get_format() != EXPECTED_IMAGE_FORMATS[image_name]:
+					var binary_convert_start_us := Time.get_ticks_usec()
+					binary_image.convert(EXPECTED_IMAGE_FORMATS[image_name])
+					profile["image_convert_us"] = float(profile.get("image_convert_us", 0.0)) + float(Time.get_ticks_usec() - binary_convert_start_us)
+				result[image_name] = binary_image
+				continue
+
 		var image_path := _resolve_world_image_path(path, image_name)
 		if not FileAccess.file_exists(image_path):
 			continue
@@ -261,6 +283,47 @@ static func _load_world_uncached(path: String, profile: Dictionary, metadata_hin
 		if metadata.has(WORLD_META_TERRAIN_MODIFICATIONS_KEY):
 			result["terrain_modifications"] = metadata.terrain_modifications
 	return result
+
+static func save_world_binary_layer(path: String, image_name: String, image: Image) -> bool:
+	if image == null:
+		return false
+	var normalized_path := _normalize_world_path(path)
+	if normalized_path.is_empty() or image_name.is_empty():
+		return false
+	if not DirAccess.dir_exists_absolute(normalized_path):
+		var make_err := DirAccess.make_dir_recursive_absolute(normalized_path)
+		if make_err != OK:
+			return false
+
+	var layer_path := get_world_binary_layer_path(normalized_path, image_name)
+	var temp_path := layer_path + ".tmp"
+	var image_data := image.get_data()
+	var file := FileAccess.open(temp_path, FileAccess.WRITE)
+	if not file:
+		return false
+
+	file.store_32(WORLD_LAYER_BINARY_MAGIC)
+	file.store_32(WORLD_LAYER_BINARY_VERSION)
+	file.store_32(image.get_width())
+	file.store_32(image.get_height())
+	file.store_32(int(image.get_format()))
+	file.store_8(1 if image.has_mipmaps() else 0)
+	file.store_32(image_data.size())
+	file.store_buffer(image_data)
+	file.flush()
+	file.close()
+
+	var dir := DirAccess.open(layer_path.get_base_dir())
+	if dir == null or dir.rename(temp_path, layer_path) != OK:
+		_remove_file(temp_path)
+		return false
+	return FileAccess.file_exists(layer_path)
+
+static func get_world_binary_layer_path(path: String, image_name: String) -> String:
+	var normalized_path := _normalize_world_path(path)
+	if normalized_path.is_empty() or image_name.is_empty():
+		return ""
+	return normalized_path.path_join(image_name + WORLD_LAYER_BINARY_EXTENSION)
 
 static func _read_world_cache_signature_hint(cache_key: String, profile: Variant = null, metadata_out: Variant = null) -> String:
 	var signature_path := cache_key.path_join(WORLD_CACHE_SIGNATURE_FILE)
@@ -458,6 +521,29 @@ static func _normalize_requested_image_names(requested_image_names: Array) -> Ar
 		normalized.append(image_name)
 	return normalized
 
+static func _load_world_binary_layer(path: String) -> Variant:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if not file:
+		return null
+	if file.get_32() != WORLD_LAYER_BINARY_MAGIC or file.get_32() != WORLD_LAYER_BINARY_VERSION:
+		file.close()
+		return null
+	var width := int(file.get_32())
+	var height := int(file.get_32())
+	var format := int(file.get_32())
+	var has_mipmaps := file.get_8() != 0
+	var data_size := int(file.get_32())
+	if width <= 0 or height <= 0 or data_size <= 0:
+		file.close()
+		return null
+	var data := file.get_buffer(data_size)
+	file.close()
+	if data.size() != data_size:
+		return null
+	var image := Image.new()
+	image.set_data(width, height, has_mipmaps, format, data)
+	return image
+
 static func _normalize_world_metadata(metadata: Dictionary) -> Dictionary:
 	var normalized := metadata.duplicate()
 	var meta_version := int(normalized.get(WORLD_META_SCHEMA_VERSION_KEY, normalized.get(WORLD_META_VERSION_KEY, 0)))
@@ -472,9 +558,21 @@ static func _build_world_signature(path: String) -> String:
 	for image_name in WORLD_IMAGE_NAMES:
 		if signature != "":
 			signature += "|"
-		signature += "%s=%s" % [image_name, _file_signature(_resolve_world_image_path(path, image_name))]
+		var binary_path := _resolve_world_binary_layer_path(path, image_name)
+		if FileAccess.file_exists(binary_path):
+			signature += "%s=bin:%s" % [image_name, _file_signature(binary_path)]
+		else:
+			signature += "%s=png:%s" % [image_name, _file_signature(_resolve_world_image_path(path, image_name))]
 	signature += "|meta=%s" % _file_signature(path.path_join("world_meta.json"))
 	return signature
+
+static func _resolve_world_binary_layer_path(path: String, image_name: String) -> String:
+	var candidates := _get_world_image_candidates(image_name)
+	for candidate_name in candidates:
+		var candidate_path := path.path_join(candidate_name + WORLD_LAYER_BINARY_EXTENSION)
+		if FileAccess.file_exists(candidate_path):
+			return candidate_path
+	return path.path_join(image_name + WORLD_LAYER_BINARY_EXTENSION)
 
 static func _resolve_world_image_path(path: String, image_name: String) -> String:
 	var candidates := _get_world_image_candidates(image_name)
@@ -500,6 +598,13 @@ static func _file_signature(file_path: String) -> String:
 	if file_path == "" or not FileAccess.file_exists(file_path):
 		return "missing"
 	return str(FileAccess.get_modified_time(file_path))
+
+static func _remove_file(path: String) -> void:
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return
+	var dir := DirAccess.open(path.get_base_dir())
+	if dir != null:
+		dir.remove(path.get_file())
 
 static func _duplicate_world_data(world_data: Dictionary) -> Dictionary:
 	var duplicated: Dictionary = {}

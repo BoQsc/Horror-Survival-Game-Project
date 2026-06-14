@@ -28,22 +28,31 @@ func _run() -> int:
 	if not _expect(cache.lookup(coord_a, "sig", 1).is_empty(), "modification version mismatch should invalidate"):
 		return 1
 
+	var coord_d := Vector3i(4, 0, 1)
+	if not _expect(cache.store(coord_d, _artifact("sig", 1, 80, "edit:1:test")), "edited artifact should store"):
+		return 1
+	if not _expect(not cache.lookup(coord_d, "sig", 1, "edit:1:test").is_empty(), "matching edited artifact should hit"):
+		return 1
+	if not _expect(cache.lookup(coord_d, "sig", 1, "edit:1:stale").is_empty(), "edit signature mismatch should invalidate"):
+		return 1
+
 	var snapshot: Dictionary = cache.get_snapshot()
-	if not _expect(int(snapshot.get("hit_count", 0)) == 1, "cache hit should be counted"):
+	if not _expect(int(snapshot.get("hit_count", 0)) == 2, "cache hits should be counted"):
 		return 1
 	if not _expect(int(snapshot.get("eviction_count", 0)) == 1, "eviction should be counted"):
 		return 1
-	if not _expect(int(snapshot.get("invalidation_count", 0)) == 1, "invalidation should be counted"):
+	if not _expect(int(snapshot.get("invalidation_count", 0)) == 2, "invalidation should be counted"):
 		return 1
 
 	print("[TERRAIN_ARTIFACT_CACHE_TEST] PASS")
 	return 0
 
 
-func _artifact(signature: String, stored_mod_version: int, byte_size: int) -> Dictionary:
+func _artifact(signature: String, stored_mod_version: int, byte_size: int, edit_signature: String = "") -> Dictionary:
 	return {
 		"settings_signature": signature,
 		"stored_mod_version": stored_mod_version,
+		"edit_signature": edit_signature if not edit_signature.is_empty() else "base",
 		"byte_size": byte_size
 	}
 

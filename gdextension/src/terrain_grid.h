@@ -81,6 +81,7 @@ public:
     PackedFloat32Array sample_cached_height_map(const PackedFloat32Array &height_map, int map_size, int chunk_stride, int step, double chunk_base_y);
     PackedFloat32Array get_world_map_road_block_samples(const PackedByteArray &road_data, int road_width, int road_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, double world_map_half, double world_map_size);
     PackedFloat32Array get_world_map_water_block_samples(const PackedByteArray &water_data, int water_width, int water_height, int chunk_origin_x, int chunk_origin_z, int chunk_stride, int step, const PackedFloat32Array &terrain_heights, double world_map_half, double water_level);
+    Dictionary build_world_map_density_payload(const PackedByteArray &heightmap_data, int heightmap_width, int heightmap_height, const PackedByteArray &biome_data, int biome_width, int biome_height, const PackedByteArray &road_data, int road_width, int road_height, const PackedByteArray &water_data, int water_width, int water_height, const PackedByteArray &excavation_mask, Vector3i coord, int grid_size, int chunk_stride, int chunk_size, double world_map_half, double world_map_max_height, double water_level);
 };
 
 }

@@ -50,6 +50,14 @@ func _run() -> int:
 		return 1
 	if not _expect(int(manager._terrain_process_sleep_count) == 1, "sleep count should increment"):
 		return 1
+	var resume_count_after_sleep := int(manager._terrain_process_resume_count)
+	manager._process(1.0 / 60.0)
+	if not _expect(bool(manager._terrain_process_sleeping), "stray process callback should not wake sleeping terrain"):
+		return 1
+	if not _expect(int(manager._terrain_process_resume_count) == resume_count_after_sleep, "stray process callback should not increment resume count"):
+		return 1
+	if not _expect(int(manager._terrain_process_sleep_process_callback_count) == 1, "stray process callback should be counted for telemetry"):
+		return 1
 
 	manager._wake_terrain_process_loop("test_work")
 	if not _expect(not bool(manager._terrain_process_sleeping), "explicit wake should resume"):
@@ -83,6 +91,7 @@ func _run() -> int:
 	if not _expect(str(manager._terrain_process_last_wake_reason).begins_with("idle_poll_viewer_chunk_changed"), "wake reason should include viewer movement"):
 		return 1
 
+	manager._record_terrain_stream_update_key()
 	manager.pending_nodes.append({"type": "final_terrain", "coord": Vector3i.ZERO})
 	if not _expect(manager._runtime_power_terrain_busy(), "pending terrain nodes should count as terrain work"):
 		return 1
@@ -93,12 +102,47 @@ func _run() -> int:
 	if not _expect(manager._runtime_power_foreground_terrain_busy(true), "pending terrain collision should keep runtime power foreground-active"):
 		return 1
 	manager.pending_terrain_collision_creates.clear()
+	manager._startup_visual_batch_gate_satisfied = true
 	manager._terrain_visual_batch_dirty[Vector3i.ZERO] = true
 	if not _expect(manager._runtime_power_terrain_busy(), "dirty visual batches should still count as terrain work"):
 		return 1
+	if not _expect(not manager._has_terrain_process_work_pending(), "dirty visual batches alone should not keep the terrain process awake"):
+		return 1
 	if not _expect(not manager._runtime_power_foreground_terrain_busy(true), "dirty visual batches alone should remain background work"):
 		return 1
+	manager._terrain_process_sleeping = false
+	manager._terrain_process_idle_frame_count = 0
+	manager._maybe_sleep_terrain_process_loop()
+	if not _expect(bool(manager._terrain_process_sleeping), "dirty visual batches alone should sleep into idle polish"):
+		return 1
 	manager._terrain_visual_batch_dirty.clear()
+	manager._wake_terrain_process_loop("test_visual_batch_cpu_queue")
+	manager.cpu_task_queue.append({"type": "terrain_visual_batch", "batch_key": Vector2i.ZERO})
+	if not _expect(manager._runtime_power_terrain_busy(), "queued visual batch CPU work should count as background terrain work"):
+		return 1
+	if not _expect(not manager._runtime_power_foreground_terrain_busy(true), "queued visual batch CPU work alone should stay background"):
+		return 1
+	if not _expect(not manager._has_terrain_process_work_pending(), "queued visual batch CPU work alone should not wake the terrain process"):
+		return 1
+	manager.cpu_task_queue.clear()
+	manager._terrain_process_sleeping = false
+	manager._terrain_process_idle_frame_count = 5
+	manager._runtime_power_world_work_suspended = true
+	manager._maybe_sleep_terrain_process_loop()
+	if not _expect(bool(manager._terrain_process_sleeping), "runtime power world-work suspension should sleep terrain process"):
+		return 1
+	if not _expect(str(manager._terrain_process_last_sleep_reason) == "runtime_power_world_work_suspended", "runtime suspension sleep reason should be recorded"):
+		return 1
+	if not _expect(int(manager._terrain_process_idle_frame_count) == 0, "runtime suspension should reset idle frame count"):
+		return 1
+	previous_position = manager.viewer.position
+	manager.viewer.position = Vector3(float(manager.CHUNK_STRIDE) * 6.0, 0.0, 0.0)
+	manager.viewer.viewer_position_changed.emit(previous_position, manager.viewer.position)
+	if not _expect(not bool(manager._terrain_process_sleeping), "viewer chunk signal should wake terrain from runtime suspension sleep"):
+		return 1
+	if not _expect(str(manager._terrain_process_last_wake_reason) == "viewer_chunk_changed_signal", "runtime suspension wake reason should be signal movement"):
+		return 1
+	manager._runtime_power_world_work_suspended = false
 
 	var original_engine_max_fps := Engine.max_fps
 	manager.runtime_power_allow_unattended_render_suspend = false

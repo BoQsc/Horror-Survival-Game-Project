@@ -35,7 +35,37 @@ func _ready() -> void:
 	_active_player = _player_a
 	
 	# Auto-start grasslands ambient
-	play_ambient(TRACK_GRASSLANDS)
+	if not _is_headless_run():
+		play_ambient(TRACK_GRASSLANDS)
+
+
+func _exit_tree() -> void:
+	if _tween:
+		_tween.kill()
+		_tween = null
+	for player in [_player_a, _player_b]:
+		if player == null:
+			continue
+		player.stop()
+		player.stream = null
+		if is_instance_valid(player):
+			player.queue_free()
+	_player_a = null
+	_player_b = null
+	_active_player = null
+	_current_track = ""
+	_is_playing = false
+
+
+func _is_headless_run() -> bool:
+	if OS.has_feature("headless"):
+		return true
+	if DisplayServer.get_name().to_lower() == "headless":
+		return true
+	for arg in OS.get_cmdline_args():
+		if str(arg).to_lower() == "--headless":
+			return true
+	return false
 
 
 ## Play an ambient track with optional fade-in

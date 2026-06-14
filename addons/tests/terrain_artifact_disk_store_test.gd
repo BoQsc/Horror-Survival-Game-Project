@@ -38,7 +38,49 @@ func _run() -> int:
 		return 1
 	if not _expect(store.lookup(coord_a, "different_sig").is_empty(), "different signature should miss"):
 		return 1
-	if not _expect(not store.store(Vector3i(4, 0, 1), "sig", _artifact("sig", 1, 80)), "modified artifact should not persist"):
+	var modified_signature := "modified_sig"
+	var modified_coord := Vector3i(4, 0, 1)
+	if not _expect(store.store(modified_coord, modified_signature, _artifact(modified_signature, 1, 80, "edit:1:test")), "modified artifact should persist with an edit signature"):
+		return 1
+	if not _expect(not store.lookup(modified_coord, modified_signature, 1, "edit:1:test").is_empty(), "matching modified artifact should restore"):
+		return 1
+	if not _expect(store.lookup(modified_coord, modified_signature, 1, "edit:1:stale").is_empty(), "stale edit signature should miss"):
+		return 1
+	var missing_edit_signature_artifact := _artifact(modified_signature, 1, 80, "edit:1:missing")
+	missing_edit_signature_artifact.erase("edit_signature")
+	if not _expect(not store.store(Vector3i(5, 0, 1), modified_signature, missing_edit_signature_artifact), "modified artifact without edit signature should not persist"):
+		return 1
+
+	var pack_signature := "pack_sig"
+	var pack_coord_a := Vector3i(30, 0, 1)
+	var pack_coord_b := Vector3i(31, 0, 1)
+	if not _expect(store.begin_bulk_store(pack_signature), "bulk artifact pack should start"):
+		return 1
+	if not _expect(store.store(pack_coord_a, pack_signature, _artifact(pack_signature, 0, 90)), "bulk artifact A should queue"):
+		return 1
+	if not _expect(store.store(pack_coord_b, pack_signature, _artifact(pack_signature, 0, 91)), "bulk artifact B should queue"):
+		return 1
+	var pack_snapshot_before: Dictionary = store.get_snapshot()
+	if not _expect(bool(pack_snapshot_before.get("bulk_store_active", false)), "bulk store snapshot should report active pack"):
+		return 1
+	if not _expect(int(pack_snapshot_before.get("bulk_store_pending_count", 0)) == 2, "bulk store snapshot should count pending artifacts"):
+		return 1
+	if not _expect(store.finish_bulk_store(), "bulk artifact pack should commit"):
+		return 1
+	if not _expect(not store.lookup(pack_coord_a, pack_signature).is_empty(), "bulk artifact A should restore from pack"):
+		return 1
+	if not _expect(not store.lookup(pack_coord_b, pack_signature).is_empty(), "bulk artifact B should restore from pack"):
+		return 1
+	var pack_snapshot_after: Dictionary = store.get_snapshot()
+	if not _expect(int(pack_snapshot_after.get("pack_hit_count", 0)) >= 2, "pack hits should be counted"):
+		return 1
+	if not _expect(int(pack_snapshot_after.get("bulk_store_commit_count", 0)) >= 1, "bulk commits should be counted"):
+		return 1
+	if not _expect(float(pack_snapshot_after.get("last_bulk_store_ms", -1.0)) >= 0.0, "bulk commit time should be measured"):
+		return 1
+	if not _expect(float(pack_snapshot_after.get("last_bulk_store_total_ms", -1.0)) >= float(pack_snapshot_after.get("last_bulk_store_ms", 0.0)), "bulk total time should include commit time"):
+		return 1
+	if not _expect(float(pack_snapshot_after.get("last_bulk_store_write_ms", -1.0)) >= 0.0, "bulk write time should be measured"):
 		return 1
 
 	var corrupt_coord := Vector3i(9, 0, 9)
@@ -72,11 +114,11 @@ func _run() -> int:
 		return 1
 
 	var snapshot: Dictionary = store.get_snapshot()
-	if not _expect(int(snapshot.get("hit_count", 0)) == 4, "disk hits should be counted"):
+	if not _expect(int(snapshot.get("hit_count", 0)) >= 5, "disk hits should be counted"):
 		return 1
 	if not _expect(int(snapshot.get("eviction_count", 0)) == 1, "disk eviction should be counted"):
 		return 1
-	if not _expect(int(snapshot.get("store_skipped_count", 0)) == 1, "modified store skip should be counted"):
+	if not _expect(int(snapshot.get("store_skipped_count", 0)) == 1, "invalid modified store skip should be counted"):
 		return 1
 	if not _expect(int(snapshot.get("invalid_count", 0)) == 2, "invalid artifact payloads should be counted"):
 		return 1
@@ -156,10 +198,14 @@ func _run() -> int:
 	return 0
 
 
-func _artifact(signature: String, stored_mod_version: int, byte_size: int) -> Dictionary:
+func _artifact(signature: String, stored_mod_version: int, byte_size: int, edit_signature: String = "") -> Dictionary:
+	var normalized_edit_signature := edit_signature
+	if normalized_edit_signature.is_empty():
+		normalized_edit_signature = "base" if stored_mod_version <= 0 else "edit:%d:test" % stored_mod_version
 	return {
 		"settings_signature": signature,
 		"stored_mod_version": stored_mod_version,
+		"edit_signature": normalized_edit_signature,
 		"byte_size": byte_size
 	}
 

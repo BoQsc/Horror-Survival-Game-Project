@@ -77,6 +77,9 @@ var _last_proximity_processed: int = 0
 var _last_spawn_queue_update_ms: float = 0.0
 var _last_spawn_queue_processed: int = 0
 var _last_spawn_queue_raycasts: int = 0
+var _last_spawn_queue_height_samples: int = 0
+var _last_spawn_queue_height_spawns: int = 0
+var _last_spawn_queue_height_misses: int = 0
 var _last_spawn_queue_spawned: int = 0
 var _last_spawn_queue_non_terrain_hits: int = 0
 var _last_spawn_queue_timed_out: int = 0
@@ -265,6 +268,9 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_spawn_queue_update_ms": _last_spawn_queue_update_ms,
 		"last_spawn_queue_processed": _last_spawn_queue_processed,
 		"last_spawn_queue_raycasts": _last_spawn_queue_raycasts,
+		"last_spawn_queue_height_samples": _last_spawn_queue_height_samples,
+		"last_spawn_queue_height_spawns": _last_spawn_queue_height_spawns,
+		"last_spawn_queue_height_misses": _last_spawn_queue_height_misses,
 		"last_spawn_queue_spawned": _last_spawn_queue_spawned,
 		"last_spawn_queue_non_terrain_hits": _last_spawn_queue_non_terrain_hits,
 		"last_spawn_queue_timed_out": _last_spawn_queue_timed_out,
@@ -730,6 +736,9 @@ func _run_entity_maintenance_tick(_delta: float) -> void:
 		_last_spawn_queue_update_ms = 0.0
 		_last_spawn_queue_processed = 0
 		_last_spawn_queue_raycasts = 0
+		_last_spawn_queue_height_samples = 0
+		_last_spawn_queue_height_spawns = 0
+		_last_spawn_queue_height_misses = 0
 		_last_spawn_queue_spawned = 0
 		_last_spawn_queue_non_terrain_hits = 0
 		_last_spawn_queue_timed_out = 0
@@ -1143,12 +1152,15 @@ func spawn_entity_near_player(entity_scene: PackedScene = null) -> Node3D:
 	# Return null - entity will spawn later via queue processing
 	return null
 
-## Process spawn queue - spawns entities immediately when terrain collision is ready via raycast
-## Event-driven: no hardcoded delays, spawn as soon as raycast hits terrain
+## Process spawn queue. Prefer terrain height because spawned entities start frozen;
+## physics raycast remains a fallback for scenes without terrain height access.
 func _process_spawn_queue():
 	var start_time := Time.get_ticks_usec()
 	_last_spawn_queue_processed = 0
 	_last_spawn_queue_raycasts = 0
+	_last_spawn_queue_height_samples = 0
+	_last_spawn_queue_height_spawns = 0
+	_last_spawn_queue_height_misses = 0
 	_last_spawn_queue_spawned = 0
 	_last_spawn_queue_non_terrain_hits = 0
 	_last_spawn_queue_timed_out = 0
@@ -1160,7 +1172,7 @@ func _process_spawn_queue():
 	var current_time = Time.get_ticks_msec() / 1000.0
 	var player_pos = viewer.global_position
 	var collision_range_sq := _get_collision_range_squared()
-	var space_state = get_world_3d().direct_space_state
+	var space_state = null
 	var total := pending_spawns.size()
 	var checks := mini(pending_spawn_checks_per_frame, total)
 	var candidate_indices := _get_spawn_queue_candidate_indices(total, checks, player_pos)
@@ -1196,6 +1208,11 @@ func _process_spawn_queue():
 				completed.append(i)
 				continue
 
+		var spawn_scene: PackedScene = spawn_data.get("scene", null)
+		if _try_spawn_queue_entity_from_terrain_height(pos, spawn_scene):
+			completed.append(i)
+			continue
+
 		if not _is_terrain_collision_ready(pos):
 			if not spawn_data.has("wait_start"):
 				spawn_data["wait_start"] = current_time
@@ -1212,6 +1229,8 @@ func _process_spawn_queue():
 		query.collision_mask = 1 # Only terrain layer
 		_bump_frame_entity_stat("spawn_queue_raycasts")
 		_last_spawn_queue_raycasts += 1
+		if space_state == null:
+			space_state = get_world_3d().direct_space_state
 		var result = space_state.intersect_ray(query)
 		
 		if result.is_empty():
@@ -1231,7 +1250,7 @@ func _process_spawn_queue():
 		# Only spawn if we hit actual terrain
 		if hit_collider and hit_collider.is_in_group("terrain"):
 			var spawn_pos = Vector3(pos.x, terrain_y + 1.5, pos.z)
-			var entity = spawn_entity(spawn_pos, spawn_data.scene)
+			var entity = spawn_entity(spawn_pos, spawn_scene)
 			if entity:
 				_bump_frame_entity_stat("spawn_queue_spawns")
 				_last_spawn_queue_spawned += 1
@@ -1256,6 +1275,26 @@ func _process_spawn_queue():
 	for i in range(completed.size() - 1, -1, -1):
 		pending_spawns.remove_at(completed[i])
 	_sync_entity_maintenance_driver()
+
+
+func _try_spawn_queue_entity_from_terrain_height(pos: Vector3, entity_scene: PackedScene = null) -> bool:
+	if not terrain_manager or not is_instance_valid(terrain_manager):
+		terrain_manager = get_tree().get_first_node_in_group("terrain_manager")
+	if not terrain_manager or not terrain_manager.has_method("get_terrain_height"):
+		return false
+
+	_last_spawn_queue_height_samples += 1
+	var terrain_y := float(terrain_manager.get_terrain_height(pos.x, pos.z))
+	if terrain_y <= -500.0:
+		_last_spawn_queue_height_misses += 1
+		return false
+
+	var entity = spawn_entity(Vector3(pos.x, terrain_y + 1.5, pos.z), entity_scene)
+	if entity:
+		_bump_frame_entity_stat("spawn_queue_height_spawns")
+		_last_spawn_queue_height_spawns += 1
+		_last_spawn_queue_spawned += 1
+	return true
 
 
 func _should_run_balanced_ring_fill() -> bool:

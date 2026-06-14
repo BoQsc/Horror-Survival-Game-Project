@@ -2,23 +2,55 @@ extends SceneTree
 
 const WorldMapGeneratorScript := preload("res://world_map_generator/world_map_generator.gd")
 
+var _native: Object = null
+var _generators: Array = []
+
 
 func _init() -> void:
 	var exit_code := _run()
+	_release_generators()
+	_release_native()
 	quit(exit_code)
+
+
+func _new_generator() -> WorldMapGenerator:
+	var generator: WorldMapGenerator = WorldMapGeneratorScript.new()
+	_generators.append(generator)
+	return generator
+
+
+func _release_generators() -> void:
+	for generator in _generators:
+		if generator != null:
+			generator.release_runtime_resources()
+	_generators.clear()
+
+
+func _release_native() -> void:
+	if _native == null or not is_instance_valid(_native):
+		_native = null
+		return
+	if _native is RefCounted:
+		_native.unreference()
+		if is_instance_valid(_native):
+			_native.free()
+	else:
+		_native.free()
+	_native = null
 
 
 func _run() -> int:
 	if not _expect(ClassDB.class_exists("PrefabGeometryNative"), "PrefabGeometryNative should be available"):
 		return 1
-	var native = ClassDB.instantiate("PrefabGeometryNative")
+	_native = ClassDB.instantiate("PrefabGeometryNative")
+	var native := _native
 	if not _expect(native != null and native.has_method("build_world_map_height_biome_bytes"), "native height/biome backend should be bound"):
 		return 1
 
 	var native_total_us := 0
 	var reference_total_us := 0
 	for seed in [12345, 77, -901]:
-		var generator: WorldMapGenerator = WorldMapGeneratorScript.new()
+		var generator := _new_generator()
 		generator.world_seed = seed
 		generator.noise_freq = 0.1
 		generator.terrain_height = 10.0
@@ -42,7 +74,7 @@ func _run() -> int:
 		if not _expect(native_result.get("biome_bytes", PackedByteArray()) == reference_result.get("biome_bytes", PackedByteArray()), "native biome bytes should match GDScript reference for seed %d" % seed):
 			return 1
 
-	var preview_generator: WorldMapGenerator = WorldMapGeneratorScript.new()
+	var preview_generator := _new_generator()
 	preview_generator.world_seed = 12345
 	preview_generator.noise_freq = 0.1
 	preview_generator.terrain_height = 10.0

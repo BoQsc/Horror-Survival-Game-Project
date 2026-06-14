@@ -11,6 +11,7 @@ const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 
 @export_range(0.05, 1.0, 0.05) var minimap_update_interval: float = 0.10
+var native_minimap_generation_enabled: bool = true
 
 var _texture_rect: TextureRect
 var _player_arrow: Polygon2D
@@ -37,9 +38,16 @@ var _fullmap_hint: Label = null
 var _fullmap_open: bool = false
 var _fullmap_zoom: float = 1.0  # 1.0 = full map, higher = zoomed in
 var _last_minimap_build_ms: float = 0.0
+var _last_minimap_backend: String = "none"
+var _last_minimap_native_ms: float = 0.0
+var _last_minimap_native_worker_count: int = 0
+var _last_minimap_pixel_count: int = 0
+var _last_minimap_native_overlay_counts: Dictionary = {}
 var _last_minimap_upload_ms: float = 0.0
 var _last_minimap_terrain_modified_ms: float = 0.0
 var _last_minimap_load_profile: Dictionary = {}
+var _native_helper: Object = null
+var _native_minimap_material_rgb_lut: PackedInt32Array = PackedInt32Array()
 var _minimap_update_timer: Timer = null
 var _minimap_update_timer_tick_count: int = 0
 var _minimap_process_tick_count: int = 0
@@ -158,6 +166,34 @@ func _connect_player_signals() -> void:
 func _exit_tree() -> void:
 	if is_instance_valid(_minimap_update_timer):
 		_minimap_update_timer.stop()
+	_release_native_helper()
+
+
+func _release_native_helper() -> void:
+	if _native_helper == null or not is_instance_valid(_native_helper):
+		_native_helper = null
+		return
+	if _native_helper is RefCounted:
+		_native_helper.unreference()
+		if is_instance_valid(_native_helper):
+			_native_helper.free()
+	else:
+		_native_helper.free()
+	_native_helper = null
+
+
+func _get_native_helper() -> Object:
+	if _native_helper != null and is_instance_valid(_native_helper):
+		return _native_helper
+	if not ClassDB.class_exists("PrefabGeometryNative"):
+		return null
+	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
+	return _native_helper
+
+
+func _native_minimap_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("build_world_map_minimap_rgb_bytes")
 
 
 func _start_minimap_update_timer() -> void:
@@ -357,6 +393,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _build_minimap_image() -> void:
 	var build_start_us := Time.get_ticks_usec()
 	_last_minimap_build_ms = 0.0
+	_last_minimap_backend = "none"
+	_last_minimap_native_ms = 0.0
+	_last_minimap_native_worker_count = 0
+	_last_minimap_pixel_count = 0
+	_last_minimap_native_overlay_counts = {}
 	_last_minimap_load_profile = {}
 	# Build map once from the authoritative baked PNGs. Runtime edits are
 	# applied later through the same terrain material query used by gameplay.
@@ -396,31 +437,124 @@ func _build_minimap_image() -> void:
 	var h_data = hmap.get_data()
 	var r_data = rmap.get_data() if rmap else PackedByteArray()
 	var w_data = wmap.get_data() if wmap else PackedByteArray()
+
+	var map_pixels := _build_minimap_pixels_native(h_data, b_data, r_data, w_data, bldg_data, w, h)
+	if map_pixels.is_empty():
+		_last_minimap_backend = "gdscript"
+		_last_minimap_pixel_count = w * h
+		map_pixels = _build_minimap_pixels_gdscript(h_data, b_data, r_data, w_data, bldg_data, w, h)
+
+	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, map_pixels)
+	_minimap_texture = ImageTexture.create_from_image(_minimap_image)
+
+	if not _minimap_atlas:
+		_minimap_atlas = AtlasTexture.new()
+		_texture_rect.texture = _minimap_atlas
+	_minimap_atlas.atlas = _minimap_texture
+
+	if not _fullmap_atlas:
+		_fullmap_atlas = AtlasTexture.new()
+		_fullmap_texture.texture = _fullmap_atlas
+	_fullmap_atlas.atlas = _minimap_texture
+	_last_minimap_build_ms = float(Time.get_ticks_usec() - build_start_us) / 1000.0
 	
+
+func _get_minimap_material_rgb_lut() -> PackedInt32Array:
+	if _native_minimap_material_rgb_lut.size() >= 256 * 3:
+		return _native_minimap_material_rgb_lut
+	var lut := PackedInt32Array()
+	lut.resize(256 * 3)
+	for material_id in range(256):
+		var rgb := MaterialRegistry.get_minimap_rgb(material_id)
+		var offset := material_id * 3
+		lut[offset] = rgb.x
+		lut[offset + 1] = rgb.y
+		lut[offset + 2] = rgb.z
+	_native_minimap_material_rgb_lut = lut
+	return _native_minimap_material_rgb_lut
+
+
+func _build_minimap_pixels_native(
+	height_data: PackedByteArray,
+	biome_data: PackedByteArray,
+	road_data: PackedByteArray,
+	water_data: PackedByteArray,
+	building_data: PackedByteArray,
+	width: int,
+	height: int
+) -> PackedByteArray:
+	if not native_minimap_generation_enabled:
+		return PackedByteArray()
+	if not _native_minimap_available():
+		return PackedByteArray()
+	var native := _get_native_helper()
+	var native_start_us := Time.get_ticks_usec()
+	var result: Dictionary = native.build_world_map_minimap_rgb_bytes(
+		height_data,
+		biome_data,
+		road_data,
+		water_data,
+		building_data,
+		width,
+		height,
+		_get_minimap_material_rgb_lut(),
+		MaterialRegistry.ROAD,
+		40,
+		80,
+		160,
+		220,
+		80,
+		40
+	)
+	_last_minimap_native_ms = float(Time.get_ticks_usec() - native_start_us) / 1000.0
+	var pixels: PackedByteArray = result.get("rgb_bytes", PackedByteArray())
+	var expected_size := width * height * 3
+	if pixels.size() != expected_size:
+		return PackedByteArray()
+	_last_minimap_backend = "native"
+	_last_minimap_pixel_count = int(result.get("pixel_count", width * height))
+	_last_minimap_native_worker_count = int(result.get("worker_count", 0))
+	_last_minimap_native_overlay_counts = {
+		"road": int(result.get("road_pixel_count", 0)),
+		"water": int(result.get("water_pixel_count", 0)),
+		"building": int(result.get("building_pixel_count", 0))
+	}
+	return pixels
+
+
+func _build_minimap_pixels_gdscript(
+	height_data: PackedByteArray,
+	biome_data: PackedByteArray,
+	road_data: PackedByteArray,
+	water_data: PackedByteArray,
+	building_data: PackedByteArray,
+	width: int,
+	height: int
+) -> PackedByteArray:
+	var total := width * height
 	var map_pixels = PackedByteArray()
-	map_pixels.resize(w * h * 3)
+	map_pixels.resize(total * 3)
 	
-	for i in range(w * h):
-		var height_val = float(h_data[i]) / 255.0
+	for i in range(total):
+		var height_val = float(height_data[i]) / 255.0
 		var shade = 0.5 + height_val * 0.5
-		var biome = b_data[i] if i < b_data.size() else 0
+		var biome = biome_data[i] if i < biome_data.size() else 0
 		
 		var rgb := MaterialRegistry.get_minimap_rgb(biome)
 		var r: int = rgb.x
 		var g: int = rgb.y
 		var b: int = rgb.z
 		
-		if r_data.size() > 0:
+		if road_data.size() > 0:
 			var ri = i * 2
-			if ri < r_data.size() and r_data[ri] > 128:
+			if ri < road_data.size() and road_data[ri] > 128:
 				rgb = MaterialRegistry.get_minimap_rgb(MaterialRegistry.ROAD)
 				r = rgb.x; g = rgb.y; b = rgb.z
 		
-		if w_data.size() > 0 and i < w_data.size() and w_data[i] > 128:
+		if water_data.size() > 0 and i < water_data.size() and water_data[i] > 128:
 			r = 40; g = 80; b = 160
 		
-		# Building overlay
-		if bldg_data.size() > 0 and i < bldg_data.size() and bldg_data[i] > 128:
+		if building_data.size() > 0 and i < building_data.size() and building_data[i] > 128:
 			r = 220; g = 80; b = 40
 		
 		var pi = i * 3
@@ -428,20 +562,8 @@ func _build_minimap_image() -> void:
 		map_pixels[pi + 1] = int(clampf(g * shade, 0, 255))
 		map_pixels[pi + 2] = int(clampf(b * shade, 0, 255))
 	
-	_minimap_image = Image.create_from_data(w, h, false, Image.FORMAT_RGB8, map_pixels)
-	_minimap_texture = ImageTexture.create_from_image(_minimap_image)
-	
-	if not _minimap_atlas:
-		_minimap_atlas = AtlasTexture.new()
-		_texture_rect.texture = _minimap_atlas
-	_minimap_atlas.atlas = _minimap_texture
-	
-	if not _fullmap_atlas:
-		_fullmap_atlas = AtlasTexture.new()
-		_fullmap_texture.texture = _fullmap_atlas
-	_fullmap_atlas.atlas = _minimap_texture
-	_last_minimap_build_ms = float(Time.get_ticks_usec() - build_start_us) / 1000.0
-	
+	return map_pixels
+
 
 ## Mark the minimap as needing a GPU texture re-upload (called by building_manager or internally)
 func mark_dirty() -> void:
@@ -629,6 +751,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"fullmap_open": _fullmap_open,
 		"fullmap_zoom": _fullmap_zoom,
 		"last_minimap_build_ms": _last_minimap_build_ms,
+		"last_minimap_backend": _last_minimap_backend,
+		"native_minimap_generation_enabled": native_minimap_generation_enabled,
+		"native_minimap_generation_available": _native_minimap_available(),
+		"last_minimap_native_ms": _last_minimap_native_ms,
+		"last_minimap_native_worker_count": _last_minimap_native_worker_count,
+		"last_minimap_pixel_count": _last_minimap_pixel_count,
+		"last_minimap_native_overlay_counts": _last_minimap_native_overlay_counts.duplicate(true),
 		"last_minimap_upload_ms": _last_minimap_upload_ms,
 		"last_minimap_terrain_modified_ms": _last_minimap_terrain_modified_ms,
 		"last_minimap_load_profile": _last_minimap_load_profile.duplicate(true)

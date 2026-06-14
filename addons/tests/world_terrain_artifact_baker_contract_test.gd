@@ -19,7 +19,11 @@ func _run() -> int:
 	baker._bake_coords = baker._build_bake_coords_for_origins(baker._origins, baker._radius)
 	baker._expected_chunks = baker._bake_coords.size()
 
-	if not _expect(baker._expected_chunks == 75, "radius-two bake should target 75 chunks"):
+	if not _expect(baker._expected_chunks == 13, "default radius-two bake should target one-layer disk coverage"):
+		baker.free()
+		return 1
+	var square_vertical_coords := baker._build_bake_coords_for_origins(baker._origins, baker._radius, 1, false)
+	if not _expect(square_vertical_coords.size() == 75, "explicit square vertical bake should still target 75 chunks"):
 		baker.free()
 		return 1
 	if not _expect(baker._count_square_preheat_chunks(5) == 363, "radius-five bake should target 363 chunks"):
@@ -30,7 +34,7 @@ func _run() -> int:
 		Vector3(31.0, 0.0, 0.0),
 		Vector3(0.0, 0.0, 0.0)
 	], 0)
-	if not _expect(multi_origin_coords.size() == 6, "multi-origin bake should deduplicate exact duplicate chunk origins"):
+	if not _expect(multi_origin_coords.size() == 2, "default multi-origin bake should deduplicate exact duplicate chunk origins"):
 		baker.free()
 		return 1
 
@@ -41,10 +45,42 @@ func _run() -> int:
 	if not _expect(str(profile.get("manifest_path", "")) == WorldMapData.get_world_terrain_artifact_manifest_path(world_path), "profile should expose artifact manifest path"):
 		baker.free()
 		return 1
+	baker._bake_coords = [Vector3i(-1, 0, -1), Vector3i(0, 0, 0), Vector3i(1, 0, 1)]
+	baker._uses_explicit_bake_coords = true
+	baker._expected_chunks = baker._bake_coords.size()
+	var explicit_profile := baker._build_profile("explicit_contract")
+	if not _expect(str(explicit_profile.get("coord_mode", "")) == "explicit", "explicit coordinate bake should report explicit coord mode"):
+		baker.free()
+		return 1
+	if not _expect(int(explicit_profile.get("explicit_coord_count", 0)) == 3, "explicit coordinate bake should report exact coord count"):
+		baker.free()
+		return 1
+	baker._uses_explicit_bake_coords = false
+	baker._bake_coords = baker._build_bake_coords_for_origins(baker._origins, baker._radius)
+	baker._expected_chunks = baker._bake_coords.size()
+
+	var manifest_ready_profile := {
+		"artifact_count": baker._expected_chunks,
+		"disk_write_pending_entries": 0,
+		"disk_write_in_flight": false,
+		"task_queue_count": 0,
+		"cpu_task_queue_count": 0,
+		"completed_generation_queue_count": 0,
+		"pending_work": 100,
+		"chunks_ready": false,
+		"require_chunk_finalization_for_manifest": false
+	}
+	if not _expect(baker._is_bake_complete(manifest_ready_profile), "production bake should complete from artifact manifest readiness without scene-node finalization"):
+		baker.free()
+		return 1
+	manifest_ready_profile["require_chunk_finalization_for_manifest"] = true
+	if not _expect(not baker._is_bake_complete(manifest_ready_profile), "developer strict bake should still wait for scene-node finalization"):
+		baker.free()
+		return 1
 
 	var completed_profile := {
-		"artifact_count": 75,
-		"stored_artifact_count": 70,
+		"artifact_count": 13,
+		"stored_artifact_count": 8,
 		"reused_disk_artifact_count": 5,
 		"elapsed_ms": 1234.0
 	}
@@ -70,17 +106,20 @@ func _run() -> int:
 	if not _expect(str(manifest.get("magic", "")) == WorldTerrainArtifactBaker.MANIFEST_MAGIC, "manifest should identify terrain artifact bakes"):
 		baker.free()
 		return 1
-	if not _expect(int(manifest.get("expected_chunks", 0)) == 75, "manifest should retain expected chunk count"):
+	if not _expect(int(manifest.get("expected_chunks", 0)) == 13, "manifest should retain expected chunk count"):
 		baker.free()
 		return 1
 	if not _expect(int(manifest.get("origin_count", 0)) == 1, "manifest should retain terrain bake origin count"):
+		baker.free()
+		return 1
+	if not _expect(str(manifest.get("coord_mode", "")) == "origins_radius", "manifest should retain terrain bake coordinate mode"):
 		baker.free()
 		return 1
 	var manifest_origins: Array = manifest.get("origins", [])
 	if not _expect(manifest_origins.size() == 1, "manifest should retain terrain bake origins"):
 		baker.free()
 		return 1
-	if not _expect(int(manifest.get("artifact_count", 0)) == 75, "manifest should retain artifact count"):
+	if not _expect(int(manifest.get("artifact_count", 0)) == 13, "manifest should retain artifact count"):
 		baker.free()
 		return 1
 	if not _expect(str(manifest.get("artifact_root", "")) == WorldMapData.get_world_terrain_artifact_root(world_path), "manifest should point at world-local artifacts"):

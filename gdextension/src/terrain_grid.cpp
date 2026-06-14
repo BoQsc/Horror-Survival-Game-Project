@@ -2,6 +2,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/core/math.hpp>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace godot {
@@ -36,6 +37,212 @@ static int sample_axis_count(int chunk_stride, int step) {
     return (chunk_stride + step - 1) / step;
 }
 
+static inline double clamp_double(double value, double min_value, double max_value) {
+    return std::max(min_value, std::min(max_value, value));
+}
+
+static inline int clamp_int(int value, int min_value, int max_value) {
+    return std::max(min_value, std::min(max_value, value));
+}
+
+static inline double lerp_double(double a, double b, double t) {
+    return a + (b - a) * t;
+}
+
+static int read_r8_pixel(const PackedByteArray &data, int width, int height, int x, int y, int channel = 0) {
+    if (data.is_empty() || width <= 0 || height <= 0) {
+        return 0;
+    }
+    x = clamp_int(x, 0, width - 1);
+    y = clamp_int(y, 0, height - 1);
+    const int64_t pixel_count = int64_t(width) * int64_t(height);
+    if (pixel_count <= 0) {
+        return 0;
+    }
+    const int bytes_per_pixel = std::max(int(data.size() / pixel_count), 1);
+    const int safe_channel = clamp_int(channel, 0, bytes_per_pixel - 1);
+    const int64_t byte_index = (int64_t(y) * int64_t(width) + int64_t(x)) * int64_t(bytes_per_pixel) + int64_t(safe_channel);
+    if (byte_index < 0 || byte_index >= data.size()) {
+        return 0;
+    }
+    return int(data[int(byte_index)]);
+}
+
+static double sample_world_map_height(const PackedByteArray &heightmap_data, int width, int height, double world_x, double world_z, double map_half, double max_height) {
+    if (heightmap_data.is_empty() || width <= 0 || height <= 0 || heightmap_data.size() < width * height) {
+        return 1.0;
+    }
+    const double px = clamp_double(world_x + map_half, 0.0, double(width - 1));
+    const double pz = clamp_double(world_z + map_half, 0.0, double(height - 1));
+    const int x0 = int(std::floor(px));
+    const int z0 = int(std::floor(pz));
+    const int x1 = std::min(x0 + 1, width - 1);
+    const int z1 = std::min(z0 + 1, height - 1);
+    const double tx = px - double(x0);
+    const double tz = pz - double(z0);
+    const double h00 = double(read_r8_pixel(heightmap_data, width, height, x0, z0)) / 255.0;
+    const double h10 = double(read_r8_pixel(heightmap_data, width, height, x1, z0)) / 255.0;
+    const double h01 = double(read_r8_pixel(heightmap_data, width, height, x0, z1)) / 255.0;
+    const double h11 = double(read_r8_pixel(heightmap_data, width, height, x1, z1)) / 255.0;
+    const double h0 = lerp_double(h00, h10, tx);
+    const double h1 = lerp_double(h01, h11, tx);
+    return clamp_double(lerp_double(h0, h1, tz) * max_height, 1.0, 28.0);
+}
+
+static bool is_boundary_wall(double world_x, double world_z, double map_half) {
+    const double dist_to_edge_x = std::min(world_x + map_half, map_half - world_x);
+    const double dist_to_edge_z = std::min(world_z + map_half, map_half - world_z);
+    return std::min(dist_to_edge_x, dist_to_edge_z) < 4.0;
+}
+
+static double material_height_at(const PackedByteArray &heightmap_data, int width, int height, double world_x, double world_z, double map_half, double max_height) {
+    if (is_boundary_wall(world_x, world_z, map_half)) {
+        return 28.0;
+    }
+    return sample_world_map_height(heightmap_data, width, height, world_x, world_z, map_half, max_height);
+}
+
+static double world_map_density(double world_x, double world_y, double world_z, double map_height, double map_half) {
+    constexpr double edge_margin = 4.0;
+    const double dist_to_edge_x = std::min(world_x + map_half, map_half - world_x);
+    const double dist_to_edge_z = std::min(world_z + map_half, map_half - world_z);
+    const double dist_to_edge = std::min(dist_to_edge_x, dist_to_edge_z);
+    if (dist_to_edge <= 0.0) {
+        return -10.0;
+    }
+    if (dist_to_edge < edge_margin) {
+        const double wall_blend = 1.0 - (dist_to_edge / edge_margin);
+        const double wall_height = lerp_double(28.0, 32.0, wall_blend);
+        if (world_y > wall_height) {
+            return world_y - wall_height;
+        }
+        return -10.0 * wall_blend;
+    }
+    return world_y - map_height;
+}
+
+static bool water_active_at(const PackedByteArray &water_data, int width, int height, double world_x, double world_z, double map_half) {
+    if (water_data.is_empty() || width <= 0 || height <= 0) {
+        return false;
+    }
+    const int px = clamp_int(int(world_x + map_half), 0, width - 1);
+    const int pz = clamp_int(int(world_z + map_half), 0, height - 1);
+    return read_r8_pixel(water_data, width, height, px, pz) > 128;
+}
+
+static bool excavation_mask_has_point(const PackedByteArray &mask, int grid_size, int local_x, int local_y, int local_z) {
+    if (mask.is_empty() || grid_size <= 0) {
+        return false;
+    }
+    const int64_t bit_index = int64_t(local_x) + int64_t(local_y) * int64_t(grid_size) + int64_t(local_z) * int64_t(grid_size) * int64_t(grid_size);
+    const int64_t byte_index = bit_index / 8;
+    if (byte_index < 0 || byte_index >= mask.size()) {
+        return false;
+    }
+    return ((int(mask[int(byte_index)]) >> int(bit_index % 8)) & 1) != 0;
+}
+
+static double fract_double(double value) {
+    return value - std::floor(value);
+}
+
+static double hash3(double x, double y, double z) {
+    double px = fract_double(x * 0.3183099 + 0.1);
+    double py = fract_double(y * 0.3183099 + 0.1);
+    double pz = fract_double(z * 0.3183099 + 0.1);
+    px *= 17.0;
+    py *= 17.0;
+    pz *= 17.0;
+    return fract_double(px * py * pz * (px + py + pz));
+}
+
+static double noise3d(double x, double y, double z) {
+    const double ix = std::floor(x);
+    const double iy = std::floor(y);
+    const double iz = std::floor(z);
+    const double fx = x - ix;
+    const double fy = y - iy;
+    const double fz = z - iz;
+    const double sx = fx * fx * (3.0 - 2.0 * fx);
+    const double sy = fy * fy * (3.0 - 2.0 * fy);
+    const double sz = fz * fz * (3.0 - 2.0 * fz);
+
+    const double x00 = lerp_double(hash3(ix, iy, iz), hash3(ix + 1.0, iy, iz), sx);
+    const double x10 = lerp_double(hash3(ix, iy + 1.0, iz), hash3(ix + 1.0, iy + 1.0, iz), sx);
+    const double y0 = lerp_double(x00, x10, sy);
+    const double x01 = lerp_double(hash3(ix, iy, iz + 1.0), hash3(ix + 1.0, iy, iz + 1.0), sx);
+    const double x11 = lerp_double(hash3(ix, iy + 1.0, iz + 1.0), hash3(ix + 1.0, iy + 1.0, iz + 1.0), sx);
+    const double y1 = lerp_double(x01, x11, sy);
+    return lerp_double(y0, y1, sz);
+}
+
+static double fbm3d(double x, double y, double z) {
+    double total = 0.0;
+    double weight = 0.5;
+    double px = x;
+    double py = y;
+    double pz = z;
+    for (int i = 0; i < 3; ++i) {
+        total += weight * noise3d(px, py, pz);
+        px *= 2.0;
+        py *= 2.0;
+        pz *= 2.0;
+        weight *= 0.5;
+    }
+    return total;
+}
+
+static int normalize_world_biome_material(int biome_id) {
+    if (biome_id == 0 || biome_id == 3 || biome_id == 4 || biome_id == 5) {
+        return biome_id;
+    }
+    return 0;
+}
+
+static int world_map_material_id(
+        const PackedByteArray &biome_data,
+        int biome_width,
+        int biome_height,
+        const PackedByteArray &road_data,
+        int road_width,
+        int road_height,
+        double world_x,
+        double world_y,
+        double world_z,
+        double terrain_height,
+        double map_half) {
+    const double depth = terrain_height - world_y;
+    if (depth > 10.0) {
+        const double ore_noise = noise3d(world_x * 0.15, world_y * 0.15, world_z * 0.15);
+        if (ore_noise > 0.75 && depth > 8.0) {
+            return 2;
+        }
+        const double stone_var = fbm3d(world_x * 0.02, world_y * 0.02, world_z * 0.02);
+        if (stone_var > 0.25) {
+            return 9;
+        }
+        return 1;
+    }
+
+    const int biome_px = clamp_int(int(world_x + map_half), 0, std::max(biome_width - 1, 0));
+    const int biome_pz = clamp_int(int(world_z + map_half), 0, std::max(biome_height - 1, 0));
+    const int biome_id = read_r8_pixel(biome_data, biome_width, biome_height, biome_px, biome_pz);
+    const int road_px = clamp_int(int(world_x + map_half), 0, std::max(road_width - 1, 0));
+    const int road_pz = clamp_int(int(world_z + map_half), 0, std::max(road_height - 1, 0));
+    const int road_primary = read_r8_pixel(road_data, road_width, road_height, road_px, road_pz, 0);
+    if ((road_primary > 128 || biome_id == 6) && depth < 2.0) {
+        return 6;
+    }
+    return normalize_world_biome_material(biome_id);
+}
+
+static void encode_u32_le(uint8_t *dst, uint32_t value) {
+    dst[0] = uint8_t(value & 0xffu);
+    dst[1] = uint8_t((value >> 8u) & 0xffu);
+    dst[2] = uint8_t((value >> 16u) & 0xffu);
+    dst[3] = uint8_t((value >> 24u) & 0xffu);
+}
+
 } // namespace
 
 void TerrainGrid::_bind_methods() {
@@ -59,6 +266,7 @@ void TerrainGrid::_bind_methods() {
     ClassDB::bind_method(D_METHOD("sample_cached_height_map", "height_map", "map_size", "chunk_stride", "step", "chunk_base_y"), &TerrainGrid::sample_cached_height_map);
     ClassDB::bind_method(D_METHOD("get_world_map_road_block_samples", "road_data", "road_width", "road_height", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "world_map_half", "world_map_size"), &TerrainGrid::get_world_map_road_block_samples);
     ClassDB::bind_method(D_METHOD("get_world_map_water_block_samples", "water_data", "water_width", "water_height", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "terrain_heights", "world_map_half", "water_level"), &TerrainGrid::get_world_map_water_block_samples);
+    ClassDB::bind_method(D_METHOD("build_world_map_density_payload", "heightmap_data", "heightmap_width", "heightmap_height", "biome_data", "biome_width", "biome_height", "road_data", "road_width", "road_height", "water_data", "water_width", "water_height", "excavation_mask", "coord", "grid_size", "chunk_stride", "chunk_size", "world_map_half", "world_map_max_height", "water_level"), &TerrainGrid::build_world_map_density_payload);
 }
 
 TerrainGrid::TerrainGrid() {}
@@ -600,6 +808,122 @@ PackedFloat32Array TerrainGrid::get_world_map_water_block_samples(const PackedBy
         samples.resize(write_index);
     }
     return samples;
+}
+
+Dictionary TerrainGrid::build_world_map_density_payload(
+        const PackedByteArray &heightmap_data,
+        int heightmap_width,
+        int heightmap_height,
+        const PackedByteArray &biome_data,
+        int biome_width,
+        int biome_height,
+        const PackedByteArray &road_data,
+        int road_width,
+        int road_height,
+        const PackedByteArray &water_data,
+        int water_width,
+        int water_height,
+        const PackedByteArray &excavation_mask,
+        Vector3i coord,
+        int grid_size,
+        int chunk_stride,
+        int chunk_size,
+        double world_map_half,
+        double world_map_max_height,
+        double water_level) {
+    Dictionary result;
+    if (grid_size <= 0 || chunk_stride <= 0 || chunk_size <= 0 || heightmap_data.is_empty() || heightmap_width <= 0 || heightmap_height <= 0) {
+        return result;
+    }
+
+    const int64_t sample_count_64 = int64_t(grid_size) * int64_t(grid_size) * int64_t(grid_size);
+    if (sample_count_64 <= 0 || sample_count_64 > 16 * 1024 * 1024) {
+        return result;
+    }
+    const int sample_count = int(sample_count_64);
+
+    PackedByteArray terrain_density_bytes;
+    PackedByteArray water_density_bytes;
+    PackedByteArray material_bytes;
+    terrain_density_bytes.resize(sample_count * int(sizeof(float)));
+    material_bytes.resize(sample_count * 4);
+
+    float *terrain_density = reinterpret_cast<float *>(terrain_density_bytes.ptrw());
+    uint8_t *materials = material_bytes.ptrw();
+
+    const int base_x = coord.x * chunk_stride;
+    const int base_y = coord.y * chunk_stride;
+    const int base_z = coord.z * chunk_stride;
+    const double chunk_min_y = double(coord.y * chunk_stride);
+    const double chunk_max_y = chunk_min_y + double(chunk_size);
+    bool water_surface_possible = false;
+    if (!water_data.is_empty() && water_width > 0 && water_height > 0 && water_level >= chunk_min_y - 0.5 && water_level <= chunk_max_y + 0.5) {
+        for (int local_x = 0; local_x < grid_size && !water_surface_possible; ++local_x) {
+            const double world_x = double(base_x + local_x);
+            for (int local_z = 0; local_z < grid_size; ++local_z) {
+                const double world_z = double(base_z + local_z);
+                if (water_active_at(water_data, water_width, water_height, world_x, world_z, world_map_half)) {
+                    water_surface_possible = true;
+                    break;
+                }
+            }
+        }
+    }
+    float *water_density = nullptr;
+    if (water_surface_possible) {
+        water_density_bytes.resize(sample_count * int(sizeof(float)));
+        water_density = reinterpret_cast<float *>(water_density_bytes.ptrw());
+    }
+
+    for (int local_z = 0; local_z < grid_size; ++local_z) {
+        const double world_z = double(base_z + local_z);
+        for (int local_y = 0; local_y < grid_size; ++local_y) {
+            const double world_y = double(base_y + local_y);
+            for (int local_x = 0; local_x < grid_size; ++local_x) {
+                const double world_x = double(base_x + local_x);
+                const int index = local_x + (local_y * grid_size) + (local_z * grid_size * grid_size);
+                const double material_height = material_height_at(
+                        heightmap_data,
+                        heightmap_width,
+                        heightmap_height,
+                        world_x,
+                        world_z,
+                        world_map_half,
+                        world_map_max_height);
+
+                double density = world_map_density(world_x, world_y, world_z, material_height, world_map_half);
+                if (excavation_mask_has_point(excavation_mask, grid_size, local_x, local_y, local_z)) {
+                    density = 10.0;
+                }
+                terrain_density[index] = float(density);
+                if (water_density != nullptr) {
+                    water_density[index] = water_active_at(water_data, water_width, water_height, world_x, world_z, world_map_half)
+                            ? float(world_y - water_level)
+                            : 100.0f;
+                }
+
+                const int material = world_map_material_id(
+                        biome_data,
+                        biome_width,
+                        biome_height,
+                        road_data,
+                        road_width,
+                        road_height,
+                        world_x,
+                        world_y,
+                        world_z,
+                        material_height,
+                        world_map_half);
+                encode_u32_le(materials + index * 4, uint32_t(material));
+            }
+        }
+    }
+
+    result["density_bytes_terrain"] = terrain_density_bytes;
+    result["density_bytes_water"] = water_density_bytes;
+    result["material_bytes_terrain"] = material_bytes;
+    result["water_surface_possible"] = water_surface_possible;
+    return result;
 }
 
 } // namespace godot

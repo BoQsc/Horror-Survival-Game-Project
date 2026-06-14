@@ -147,6 +147,11 @@ func _capture_terrain_values() -> void:
 		+ _number_from_keys(snapshot, ["pending_batch_count"], 0.0) \
 		+ _number_from_keys(snapshot, ["pending_spawn_zone_count"], 0.0) \
 		+ _number_from_keys(snapshot, ["world_map_lod_pending_candidate_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["terrain_visual_batch_dirty_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["terrain_visual_batch_async_in_flight_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["terrain_visual_batch_async_completed_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["terrain_visual_mesh_retire_queue_count"], 0.0) \
+		+ _number_from_keys(snapshot, ["water_visual_batch_dirty_count"], 0.0) \
 		+ _bool_to_float(bool(snapshot.get("initial_load_phase", false))) \
 		+ _bool_to_float(bool(snapshot.get("render_resource_prewarm_active", false)))
 

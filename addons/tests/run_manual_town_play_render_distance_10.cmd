@@ -1,9 +1,8 @@
 @echo off
 setlocal
 
-REM Manual town play launcher aligned with Baseline V1 settings.
-REM This is for play feel, movement watts, and thermal behavior.
-REM It is not the official code comparison baseline.
+REM Manual town play launcher for the current render-distance-10 priority check.
+REM This hands control to the player after world generation and town arrival.
 
 cd /d "%~dp0\..\.."
 
@@ -21,6 +20,9 @@ set TOWN_STALL_ENABLE_RUNTIME_POWER_MODE=1
 set TOWN_STALL_RUNTIME_POWER_ACTIVE_FPS=60
 set TOWN_STALL_RUNTIME_POWER_IDLE_FPS=60
 set TOWN_STALL_RUNTIME_POWER_DEEP_IDLE_FPS=60
+set TOWN_STALL_RENDER_DISTANCE=10
+set TOWN_STALL_TERRAIN_RENDER_DISTANCE=10
+set TOWN_STALL_BUILDING_RENDER_DISTANCE=10
 set TOWN_STALL_HOLD_SECONDS=900
 set TOWN_STALL_TIMEOUT_SECONDS=1250
 set TOWN_STALL_MEASURE_FULL_FLIGHT=0

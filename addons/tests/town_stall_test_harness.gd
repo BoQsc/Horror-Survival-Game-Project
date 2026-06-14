@@ -24,6 +24,7 @@ const PERFORMANCE_SNAPSHOT_DIR := "user://debug/performance"
 const RENDER_DIAGNOSTIC_DEFAULT_LIMIT := 48
 const RENDER_DIAGNOSTIC_DEFAULT_SCENE_DETAIL_LIMIT := 24
 const RENDER_DIAGNOSTIC_DEFAULT_FRAME_SCENE_SCAN_LIMIT := 4
+const TERRAIN_ARTIFACT_BAKE_CHUNK_STRIDE := 31.0
 const PEAK_ENTRY_SAMPLE_LIMIT := 12
 const HOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
 const PREHOLD_SNAPSHOT_INTERVAL_SECONDS := 5.0
@@ -164,6 +165,7 @@ var low_fps_abort_sample_count: int = 0
 var low_fps_abort_peak_ms: float = 0.0
 var measure_full_flight_enabled: bool = false
 var manual_handoff_enabled: bool = false
+var manual_handoff_pending_reason: String = ""
 var world_ready_timeout_seconds: float = WORLD_READY_TIMEOUT_SECONDS
 var world_ready_status_log_interval_seconds: float = 5.0
 var world_ready_last_status_log_seconds: float = -1000000.0
@@ -190,6 +192,8 @@ var hold_settle_stable_frames: int = 0
 var hold_settle_timed_out: bool = false
 var hold_settle_wait_logged: bool = false
 var hold_settle_last_player_position: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var hold_player_transform_locked: bool = false
+var hold_player_locked_transform: Transform3D = Transform3D.IDENTITY
 
 var game_root: Node3D = null
 var terrain_manager: Node = null
@@ -202,6 +206,7 @@ var player: WorldPlayerV2 = null
 var mode_manager: Node = null
 var mode_editor: Node = null
 var movement_component: Node = null
+var camera_component: Node = null
 var loading_screen: Node = null
 var pending_quit: bool = false
 var pending_town_spawn_requested: bool = false
@@ -222,15 +227,18 @@ func _get_town_stall_seed() -> int:
 func _get_town_stall_world_name(seed: int) -> String:
 	var override := OS.get_environment("TOWN_STALL_WORLD_NAME").strip_edges()
 	if not override.is_empty():
-		var cleaned := override \
-			.replace("\\", "_") \
-			.replace("/", "_") \
-			.replace(":", "_") \
-			.replace("..", "_") \
-			.strip_edges()
-		if not cleaned.is_empty():
-			return cleaned
+		return _sanitize_world_name(override, "town_stall_%d" % seed)
 	return "town_stall_%d_%d" % [seed, Time.get_ticks_msec()]
+
+
+func _sanitize_world_name(value: String, fallback: String) -> String:
+	var cleaned := value \
+		.replace("\\", "_") \
+		.replace("/", "_") \
+		.replace(":", "_") \
+		.replace("..", "_") \
+		.strip_edges()
+	return cleaned if not cleaned.is_empty() else fallback
 
 
 func _get_dominant_bucket(bucket_counts: Dictionary) -> Dictionary:
@@ -311,6 +319,21 @@ func _get_positive_env_float(env_name: String, default_value: float) -> float:
 	return parsed_value
 
 
+func _get_nonnegative_env_float(env_name: String, default_value: float) -> float:
+	var raw_value := OS.get_environment(env_name).strip_edges()
+	if raw_value.is_empty():
+		return default_value
+
+	if not raw_value.is_valid_float():
+		return default_value
+
+	var parsed_value := float(raw_value)
+	if parsed_value < 0.0:
+		return default_value
+
+	return parsed_value
+
+
 func _get_positive_env_int(env_name: String, default_value: int) -> int:
 	var raw_value := OS.get_environment(env_name).strip_edges()
 	if raw_value.is_empty():
@@ -321,6 +344,21 @@ func _get_positive_env_int(env_name: String, default_value: int) -> int:
 
 	var parsed_value := int(raw_value)
 	if parsed_value <= 0:
+		return default_value
+
+	return parsed_value
+
+
+func _get_nonnegative_env_int(env_name: String, default_value: int) -> int:
+	var raw_value := OS.get_environment(env_name).strip_edges()
+	if raw_value.is_empty():
+		return default_value
+
+	if not raw_value.is_valid_int():
+		return default_value
+
+	var parsed_value := int(raw_value)
+	if parsed_value < 0:
 		return default_value
 
 	return parsed_value
@@ -3011,8 +3049,9 @@ func _ready() -> void:
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
 		Engine.max_fps = max_fps_override
-	var mesh_lod_threshold_override := _get_positive_env_float("TOWN_STALL_MESH_LOD_THRESHOLD", 0.0)
-	if mesh_lod_threshold_override > 0.0:
+	var mesh_lod_threshold_env := OS.get_environment("TOWN_STALL_MESH_LOD_THRESHOLD").strip_edges()
+	if not mesh_lod_threshold_env.is_empty():
+		var mesh_lod_threshold_override := _get_nonnegative_env_float("TOWN_STALL_MESH_LOD_THRESHOLD", get_tree().root.mesh_lod_threshold)
 		get_tree().root.mesh_lod_threshold = mesh_lod_threshold_override
 	_apply_display_mode_override_from_env()
 	print("[TOWN_STALL_TEST] Harness starting")
@@ -3191,6 +3230,10 @@ func _process(delta: float) -> void:
 func _begin_generation() -> void:
 	world_generator = WorldMapGenScript.new()
 	generated_seed = _get_town_stall_seed()
+	world_generation_telemetry.clear()
+	world_generation_progress_last_log_msec = 0
+	world_generation_progress_last_stage = ""
+
 	world_generator.world_seed = generated_seed
 	world_generator.terrain_height = 10.0
 	world_generator.water_level = 13.0
@@ -3199,9 +3242,6 @@ func _begin_generation() -> void:
 	world_generator.use_grid_roads = false
 	world_generator.deep_lakes_enabled = true
 	world_generator.progress_callback = Callable(self, "_on_world_generation_progress_threaded")
-	world_generation_telemetry.clear()
-	world_generation_progress_last_log_msec = 0
-	world_generation_progress_last_stage = ""
 
 	print("[TOWN_STALL_TEST] Generating world seed %d..." % generated_seed)
 	_show_startup_loading("Generating world map", 0.0, {
@@ -3331,11 +3371,7 @@ func _should_bake_terrain_artifacts_before_play() -> bool:
 	var override := OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY").strip_edges()
 	if not override.is_empty():
 		return override != "0"
-	return (
-		OS.get_environment("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF") == "1"
-		or _get_positive_env_float("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA", 0.0) > 0.0
-		or _get_positive_env_float("TOWN_STALL_MIN_TERRAIN_ARTIFACT_READY_RESOURCE_RESTORE_DELTA", 0.0) > 0.0
-	)
+	return true
 
 
 func _build_terrain_artifact_bake_origins_for_town() -> Array[Vector3]:
@@ -3349,6 +3385,90 @@ func _build_terrain_artifact_bake_origins_for_town() -> Array[Vector3]:
 	return origins
 
 
+func _should_bake_full_map_terrain_artifacts() -> bool:
+	var override := OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_FULL_MAP").strip_edges()
+	if not override.is_empty():
+		return override != "0"
+	return false
+
+
+func _build_terrain_artifact_full_map_bake_coords(vertical_layer_radius: int) -> Array[Vector3i]:
+	var coords: Array[Vector3i] = []
+	if not _should_bake_full_map_terrain_artifacts():
+		return coords
+
+	var margin := _get_nonnegative_env_int("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_FULL_MAP_MARGIN_CHUNKS", 1)
+	vertical_layer_radius = maxi(vertical_layer_radius, 0)
+	var half_map := float(WorldMapGenScript.MAP_SIZE) * 0.5
+	var min_x := int(floor(-half_map / TERRAIN_ARTIFACT_BAKE_CHUNK_STRIDE)) - margin
+	var max_x := int(floor((half_map - 1.0) / TERRAIN_ARTIFACT_BAKE_CHUNK_STRIDE)) + margin
+	var min_z := int(floor(-half_map / TERRAIN_ARTIFACT_BAKE_CHUNK_STRIDE)) - margin
+	var max_z := int(floor((half_map - 1.0) / TERRAIN_ARTIFACT_BAKE_CHUNK_STRIDE)) + margin
+
+	for x in range(min_x, max_x + 1):
+		for z in range(min_z, max_z + 1):
+			for dy in range(-vertical_layer_radius, vertical_layer_radius + 1):
+				coords.append(Vector3i(x, dy, z))
+	return coords
+
+
+func _should_bake_travel_corridor_terrain_artifacts() -> bool:
+	var override := OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TRAVEL_CORRIDOR").strip_edges()
+	if not override.is_empty():
+		return override != "0"
+	return true
+
+
+func _append_terrain_artifact_bake_disk(
+	unique_coords: Dictionary,
+	center: Vector3i,
+	radius: int,
+	vertical_layer_radius: int,
+	use_disk_radius: bool
+) -> void:
+	radius = maxi(radius, 0)
+	vertical_layer_radius = maxi(vertical_layer_radius, 0)
+	var radius_sq := radius * radius
+	for dx in range(-radius, radius + 1):
+		for dz in range(-radius, radius + 1):
+			if use_disk_radius and dx * dx + dz * dz > radius_sq:
+				continue
+			for dy in range(-vertical_layer_radius, vertical_layer_radius + 1):
+				unique_coords[Vector3i(center.x + dx, center.y + dy, center.z + dz)] = true
+
+
+func _build_terrain_artifact_travel_corridor_bake_coords(
+	radius: int,
+	vertical_layer_radius: int,
+	use_disk_radius: bool
+) -> Array[Vector3i]:
+	var coords: Array[Vector3i] = []
+	if not _should_bake_travel_corridor_terrain_artifacts() or selected_town.is_empty():
+		return coords
+
+	var start_chunk := Vector3i.ZERO
+	var end_chunk := Vector3i(
+		int(floor(float(selected_town.get("x", 0.0)) / TERRAIN_ARTIFACT_BAKE_CHUNK_STRIDE)),
+		0,
+		int(floor(float(selected_town.get("z", 0.0)) / TERRAIN_ARTIFACT_BAKE_CHUNK_STRIDE))
+	)
+	var step_count := maxi(absi(end_chunk.x - start_chunk.x), absi(end_chunk.z - start_chunk.z))
+	var unique_coords := {}
+	for step in range(step_count + 1):
+		var t := 0.0 if step_count <= 0 else float(step) / float(step_count)
+		var center := Vector3i(
+			int(round(lerpf(float(start_chunk.x), float(end_chunk.x), t))),
+			0,
+			int(round(lerpf(float(start_chunk.z), float(end_chunk.z), t)))
+		)
+		_append_terrain_artifact_bake_disk(unique_coords, center, radius, vertical_layer_radius, use_disk_radius)
+
+	for coord_variant in unique_coords.keys():
+		if coord_variant is Vector3i:
+			coords.append(coord_variant)
+	return coords
+
+
 func _start_terrain_artifact_bake_before_play() -> void:
 	if terrain_artifact_baker and is_instance_valid(terrain_artifact_baker):
 		terrain_artifact_baker.queue_free()
@@ -3359,12 +3479,35 @@ func _start_terrain_artifact_bake_before_play() -> void:
 		"TOWN_STALL_TERRAIN_RENDER_DISTANCE",
 		_get_positive_env_int("TOWN_STALL_RENDER_DISTANCE", 10)
 	)
-	var bake_radius := _get_positive_env_int("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_RADIUS", render_distance_default)
+	var bake_radius := _get_positive_env_int(
+		"TOWN_STALL_TERRAIN_ARTIFACT_BAKE_RADIUS",
+		_get_positive_env_int("TOWN_STALL_TERRAIN_ARTIFACT_CRITICAL_BAKE_RADIUS", render_distance_default)
+	)
+	var bake_vertical_layer_radius := _get_nonnegative_env_int("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS", 0)
+	var bake_use_disk_radius_shape := OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE") != "0"
+	var bake_prefer_offline := OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE") != "0"
+	var bake_offline_chunks_per_frame := _get_positive_env_int("TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME", 16)
+	var travel_corridor_extra_radius := _get_nonnegative_env_int("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TRAVEL_CORRIDOR_EXTRA_RADIUS", 2)
+	var travel_corridor_radius := bake_radius + travel_corridor_extra_radius
 	var bake_origins: Array[Vector3] = _build_terrain_artifact_bake_origins_for_town()
+	var bake_coords: Array[Vector3i] = _build_terrain_artifact_full_map_bake_coords(bake_vertical_layer_radius)
+	var full_map_bake := not bake_coords.is_empty()
+	if bake_coords.is_empty():
+		bake_coords = _build_terrain_artifact_travel_corridor_bake_coords(
+			travel_corridor_radius,
+			bake_vertical_layer_radius,
+			bake_use_disk_radius_shape
+		)
+	var bake_coord_mode := "explicit_full_map" if full_map_bake else ("explicit_travel_corridor" if not bake_coords.is_empty() else "origins_radius")
 	terrain_artifact_baker = WorldTerrainArtifactBaker.new()
 	terrain_artifact_baker.name = "TownStallTerrainArtifactBaker"
 	terrain_artifact_baker.bake_radius_chunks = bake_radius
-	terrain_artifact_baker.store_ready_mesh_resources = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES") != "0"
+	terrain_artifact_baker.vertical_layer_radius = bake_vertical_layer_radius
+	terrain_artifact_baker.use_disk_radius_shape = bake_use_disk_radius_shape
+	terrain_artifact_baker.prefer_offline_cpu_bake = bake_prefer_offline
+	terrain_artifact_baker.offline_cpu_chunks_per_frame = bake_offline_chunks_per_frame
+	terrain_artifact_baker.store_ready_mesh_resources = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES") == "1"
+	terrain_artifact_baker.store_source_buffers = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS") == "1"
 	terrain_artifact_baker.synchronous_disk_writes = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_SYNC_WRITES") != "0"
 	terrain_artifact_baker.high_throughput_budgets = true
 	terrain_artifact_baker.timeout_seconds = _get_positive_env_float("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TIMEOUT_SECONDS", 900.0)
@@ -3373,30 +3516,57 @@ func _start_terrain_artifact_bake_before_play() -> void:
 	terrain_artifact_baker.bake_completed.connect(_on_terrain_artifact_bake_completed)
 	terrain_artifact_baker.bake_failed.connect(_on_terrain_artifact_bake_failed)
 
-	print("[TOWN_STALL_TEST] Baking terrain artifacts before play: origins=%d radius=%d world=%s" % [
+	print("[TOWN_STALL_TEST] Baking terrain artifacts before play: mode=%s origins=%d explicit_coords=%d radius=%d world=%s" % [
+		bake_coord_mode,
 		bake_origins.size(),
+		bake_coords.size(),
 		bake_radius,
 		generated_world_path
 	])
 	_show_startup_loading("Baking marching-cubes terrain artifacts before play", 0.0, {
 		"world_path": generated_world_path,
+		"coord_mode": bake_coord_mode,
+		"explicit_coord_count": bake_coords.size(),
+		"full_map_enabled": full_map_bake,
+		"travel_corridor_enabled": not full_map_bake and not bake_coords.is_empty(),
+		"travel_corridor_radius_chunks": travel_corridor_radius,
+		"travel_corridor_extra_radius_chunks": travel_corridor_extra_radius,
+		"full_map_margin_chunks": _get_nonnegative_env_int("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_FULL_MAP_MARGIN_CHUNKS", 1),
 		"origin_count": bake_origins.size(),
 		"radius_chunks": bake_radius,
+		"vertical_layer_radius": bake_vertical_layer_radius,
+		"use_disk_radius_shape": bake_use_disk_radius_shape,
+		"prefer_offline_cpu_bake": bake_prefer_offline,
+		"offline_cpu_chunks_per_frame": bake_offline_chunks_per_frame,
 		"store_ready_mesh_resources": terrain_artifact_baker.store_ready_mesh_resources,
+		"store_source_buffers": terrain_artifact_baker.store_source_buffers,
 		"synchronous_disk_writes": terrain_artifact_baker.synchronous_disk_writes
 	}, true)
 	_emit_scope_event("town_stall_test", "terrain_artifact_bake_start", {
 		"world_path": generated_world_path,
+		"coord_mode": bake_coord_mode,
+		"explicit_coord_count": bake_coords.size(),
+		"travel_corridor_enabled": not full_map_bake and not bake_coords.is_empty(),
+		"travel_corridor_radius_chunks": travel_corridor_radius,
+		"travel_corridor_extra_radius_chunks": travel_corridor_extra_radius,
 		"origin_count": bake_origins.size(),
 		"radius_chunks": bake_radius
 	})
-	if not terrain_artifact_baker.start_bake(generated_world_path, bake_origins[0], bake_radius, {
+	var bake_options := {
 		"bake_origins": bake_origins,
 		"include_primary_origin": false,
 		"store_ready_mesh_resources": terrain_artifact_baker.store_ready_mesh_resources,
+		"store_source_buffers": terrain_artifact_baker.store_source_buffers,
 		"synchronous_disk_writes": terrain_artifact_baker.synchronous_disk_writes,
-		"high_throughput_budgets": true
-	}):
+		"high_throughput_budgets": true,
+		"vertical_layer_radius": bake_vertical_layer_radius,
+		"use_disk_radius_shape": bake_use_disk_radius_shape,
+		"prefer_offline_cpu_bake": bake_prefer_offline,
+		"offline_cpu_chunks_per_frame": bake_offline_chunks_per_frame
+	}
+	if not bake_coords.is_empty():
+		bake_options["bake_coords"] = bake_coords
+	if not terrain_artifact_baker.start_bake(generated_world_path, bake_origins[0], bake_radius, bake_options):
 		_fail("Failed to start terrain artifact bake before play")
 
 
@@ -4044,7 +4214,7 @@ func _teleport_into_town() -> void:
 
 	print("[TOWN_STALL_TEST] Teleported to town at (%.1f, %.1f, %.1f)" % [teleport_pos.x, teleport_pos.y, teleport_pos.z])
 	if manual_handoff_enabled:
-		_complete_manual_handoff("auto_teleport")
+		_begin_manual_handoff_wait("auto_teleport")
 		return
 	print("[TOWN_STALL_TEST] Waiting %.1f seconds for the stall window..." % configured_hold_seconds)
 
@@ -4125,6 +4295,21 @@ func _get_town_terrain_stream_blockers() -> Array[String]:
 	var pending_collision := int(telemetry.get("pending_terrain_collision_create_count", 0))
 	if pending_collision > 0:
 		blockers.append("terrain_pending_collision=%d" % pending_collision)
+	var terrain_visual_dirty := int(telemetry.get("terrain_visual_batch_dirty_count", 0))
+	if terrain_visual_dirty > 0:
+		blockers.append("terrain_visual_batches=%d" % terrain_visual_dirty)
+	var terrain_visual_in_flight := int(telemetry.get("terrain_visual_batch_async_in_flight_count", 0))
+	if terrain_visual_in_flight > 0:
+		blockers.append("terrain_visual_batches_in_flight=%d" % terrain_visual_in_flight)
+	var terrain_visual_completed := int(telemetry.get("terrain_visual_batch_async_completed_count", 0))
+	if terrain_visual_completed > 0:
+		blockers.append("terrain_visual_batches_completed=%d" % terrain_visual_completed)
+	var terrain_visual_retiring := int(telemetry.get("terrain_visual_mesh_retire_queue_count", 0))
+	if terrain_visual_retiring > 0:
+		blockers.append("terrain_visual_retiring=%d" % terrain_visual_retiring)
+	var water_visual_dirty := int(telemetry.get("water_visual_batch_dirty_count", 0))
+	if water_visual_dirty > 0:
+		blockers.append("water_visual_batches=%d" % water_visual_dirty)
 	var last_update_loads := int(telemetry.get("last_update_loads", 0))
 	if last_update_loads > 0:
 		blockers.append("terrain_last_loads=%d" % last_update_loads)
@@ -4289,19 +4474,58 @@ func _set_player_movement_enabled(enabled: bool) -> void:
 	player.velocity = Vector3.ZERO
 
 
+func _set_player_camera_enabled(enabled: bool) -> void:
+	if not is_instance_valid(player):
+		return
+	if camera_component == null or not is_instance_valid(camera_component):
+		camera_component = player.get_node_or_null("Components/Camera")
+	if camera_component == null:
+		return
+	if "mouse_look_enabled" in camera_component:
+		camera_component.mouse_look_enabled = enabled
+	if camera_component.has_method("set_process"):
+		camera_component.set_process(enabled)
+	if camera_component.has_method("set_physics_process"):
+		camera_component.set_physics_process(enabled)
+
+
+func _release_hold_input_state() -> void:
+	var actions := ["move_forward", "move_backward", "move_left", "move_right", "sprint", "jump"]
+	for action in actions:
+		if InputMap.has_action(action) and Input.is_action_pressed(action):
+			Input.action_release(action)
+	for button in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
+		if Input.is_mouse_button_pressed(button):
+			var release_event := InputEventMouseButton.new()
+			release_event.button_index = button
+			release_event.pressed = false
+			Input.parse_input_event(release_event)
+	if Input.has_method("flush_buffered_events"):
+		Input.call("flush_buffered_events")
+
+
 func _lock_player_for_hold() -> void:
 	if not is_instance_valid(player):
 		return
+	if not hold_player_transform_locked:
+		hold_player_locked_transform = player.global_transform
+		hold_player_transform_locked = true
+	else:
+		player.global_transform = hold_player_locked_transform
 	if movement_component == null or not is_instance_valid(movement_component):
 		movement_component = player.get_node_or_null("Components/Movement")
 	if mode_editor == null or not is_instance_valid(mode_editor):
 		mode_editor = player.get_node_or_null("Modes/ModeEditor")
 	_set_player_movement_enabled(false)
+	_set_player_camera_enabled(false)
 	if mode_editor:
 		if mode_editor.has_method("set_physics_process"):
 			mode_editor.set_physics_process(false)
 		if mode_editor.has_method("set_process"):
 			mode_editor.set_process(false)
+	_release_hold_input_state()
+	if is_instance_valid(chunk_manager) and chunk_manager.has_method("reset_runtime_power_viewer_baseline"):
+		chunk_manager.reset_runtime_power_viewer_baseline()
 	player.velocity = Vector3.ZERO
 
 
@@ -4318,6 +4542,8 @@ func _reset_hold_settle_progress() -> void:
 	hold_settle_timed_out = false
 	hold_settle_wait_logged = false
 	hold_settle_last_player_position = Vector3(1.0e20, 1.0e20, 1.0e20)
+	hold_player_transform_locked = false
+	hold_player_locked_transform = Transform3D.IDENTITY
 
 
 func _get_player_velocity_length() -> float:
@@ -4376,6 +4602,7 @@ func _enter_fly_to_town() -> void:
 	mode_manager = player.get_node_or_null("Systems/ModeManager")
 	mode_editor = player.get_node_or_null("Modes/ModeEditor")
 	movement_component = player.get_node_or_null("Components/Movement")
+	camera_component = player.get_node_or_null("Components/Camera")
 
 	if mode_manager == null or mode_editor == null:
 		_fail("Failed to locate editor mode components on player")
@@ -4389,6 +4616,7 @@ func _enter_fly_to_town() -> void:
 		mode_editor.set_physics_process(false)
 	if mode_editor.has_method("set_process"):
 		mode_editor.set_process(false)
+	_set_player_camera_enabled(false)
 
 	if mode_manager.has_method("is_editor_mode") and not bool(mode_manager.is_editor_mode()):
 		mode_manager.toggle_editor_mode()
@@ -4477,6 +4705,9 @@ func _begin_flight_to_target(target: Vector3, next_phase: Phase, target_label: S
 
 
 func _restore_player_control() -> void:
+	hold_player_transform_locked = false
+	hold_player_locked_transform = Transform3D.IDENTITY
+
 	if is_instance_valid(player):
 		player.velocity = Vector3.ZERO
 
@@ -4489,6 +4720,9 @@ func _restore_player_control() -> void:
 			movement_component.set_physics_process(true)
 		if movement_component.has_method("set_process"):
 			movement_component.set_process(true)
+
+	_set_player_camera_enabled(true)
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 	if mode_editor:
 		if mode_editor.has_method("set_physics_process"):
@@ -4508,6 +4742,7 @@ func _complete_manual_handoff(reason: String) -> void:
 		_hold_started_epoch = Time.get_unix_time_from_system()
 	town_entry_capture_started = false
 	pending_town_spawn_requested = false
+	manual_handoff_pending_reason = ""
 	hold_started_logged = false
 	phase = Phase.DONE
 	phase_time = 0.0
@@ -4523,6 +4758,30 @@ func _complete_manual_handoff(reason: String) -> void:
 	})
 	_write_native_town_entry_snapshot()
 	print("[TOWN_STALL_TEST] Manual handoff to player: %s. Automation will stay open until you close the game." % reason)
+
+
+func _begin_manual_handoff_wait(reason: String) -> void:
+	manual_handoff_pending_reason = reason
+	current_hold_seconds = configured_hold_seconds
+	phase = Phase.HOLD_FIRST
+	phase_time = 0.0
+	hold_started_logged = false
+	_reset_town_stream_stability()
+	_reset_hold_settle()
+	_show_startup_loading("Preparing playable town", 0.92, {
+		"reason": reason,
+		"message": "Waiting for terrain, buildings, vegetation, entities, and runtime idle"
+	}, true)
+	_emit_scope_state("town_stall_test", {
+		"phase": "manual_handoff_wait",
+		"world_path": generated_world_path,
+		"reason": reason
+	})
+	_emit_scope_event("town_stall_test", "manual_handoff_wait_started", {
+		"world_path": generated_world_path,
+		"reason": reason
+	})
+	print("[TOWN_STALL_TEST] Manual handoff waiting for stream/prewarm/runtime-idle stability: %s" % reason)
 
 
 func _fly_to_town(_delta: float) -> void:
@@ -4578,8 +4837,8 @@ func _fly_to_town(_delta: float) -> void:
 	if absf(descent_delta) <= 1.5:
 		player.velocity = Vector3.ZERO
 		if manual_handoff_enabled and (phase == Phase.FLY_TO_TOWN or phase == Phase.FLY_TO_TOWN_SECOND):
-			print("[TOWN_STALL_TEST] Auto fly reached target, handing control to player")
-			_complete_manual_handoff("auto_fly_arrival")
+			print("[TOWN_STALL_TEST] Auto fly reached target, preparing manual handoff")
+			_begin_manual_handoff_wait("auto_fly_arrival")
 			return
 		print("[TOWN_STALL_TEST] Auto fly reached target, starting hold")
 		_lock_player_for_hold()
@@ -4651,6 +4910,9 @@ func _hold_in_town(_delta: float) -> void:
 			_reset_hold_settle_progress()
 			return
 		if not _is_hold_settled(_delta):
+			return
+		if manual_handoff_enabled and not manual_handoff_pending_reason.is_empty():
+			_complete_manual_handoff(manual_handoff_pending_reason)
 			return
 		phase_time = 0.0
 		print("[TOWN_STALL_TEST] Hold started")

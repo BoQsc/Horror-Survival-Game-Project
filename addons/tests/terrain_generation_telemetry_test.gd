@@ -64,12 +64,37 @@ func _run() -> int:
 	manager.terrain_artifact_disk_cache_path = "user://terrain_generation_telemetry_artifacts_%d" % Time.get_ticks_usec()
 	manager.terrain_artifact_disk_cache_entries_per_world = 8
 	manager._refresh_terrain_artifact_settings_signature()
+	if not _expect(not manager.terrain_artifact_store_ready_mesh_resources, "compact terrain artifacts should be the default; ready resource sidecars are opt-in"):
+		return 1
+	if not _expect(not manager.terrain_artifact_store_source_buffers, "mesh-only terrain artifacts should be the default; source buffers are opt-in"):
+		return 1
+	if not _expect(manager.terrain_artifact_disk_store_initial_load_chunks, "initial-load terrain artifacts should persist to disk by default"):
+		return 1
+	if not _expect(not manager.terrain_artifact_disk_store_runtime_chunks, "runtime disk writes should remain disabled by default"):
+		return 1
+	if not _expect(not manager.terrain_artifact_refresh_after_edit_enabled, "interactive terrain edits should not refresh artifacts by default"):
+		return 1
+	if not _expect(not manager.terrain_artifact_disk_store_edited_chunks, "edited terrain artifacts should not persist to disk by default"):
+		return 1
 	var artifact_bytes := PackedByteArray()
 	artifact_bytes.resize(manager._get_terrain_artifact_buffer_bytes())
+	var triangle_arrays := []
+	triangle_arrays.resize(Mesh.ARRAY_MAX)
+	triangle_arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([
+		Vector3.ZERO,
+		Vector3.RIGHT,
+		Vector3.FORWARD
+	])
+	triangle_arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2])
+	var triangle_faces := PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+	var triangle_mesh := ArrayMesh.new()
+	triangle_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, triangle_arrays)
+	var triangle_shape := ConcavePolygonShape3D.new()
+	triangle_shape.set_faces(triangle_faces)
 	var artifact_coord := Vector3i(4, 0, 4)
 	manager._store_terrain_artifact_from_generation(
 		artifact_coord,
-		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array()},
+		{"deferred_mesh_data": true, "arrays": triangle_arrays, "faces": triangle_faces},
 		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
 		PackedFloat32Array(),
 		PackedFloat32Array(),
@@ -91,6 +116,18 @@ func _run() -> int:
 		return 1
 	if not _expect(str(disk_restore_task.get("artifact_source", "")) == "disk", "disk restore should record its source"):
 		return 1
+	var disk_artifact: Dictionary = disk_restore_task.get("artifact", {})
+	if not _expect(not manager._artifact_has_source_buffers(disk_artifact), "default disk artifact should omit full density/material source buffers"):
+		return 1
+	if not _expect(manager._artifact_has_mesh_payload(disk_artifact), "default disk artifact should retain mesh payload for restore"):
+		return 1
+	var hydrate_tasks := []
+	if not _expect(manager._append_source_hydration_task(hydrate_tasks, artifact_coord, Vector3.ZERO, "test"), "mesh-only artifact should be able to request source hydration"):
+		return 1
+	if not _expect(hydrate_tasks.size() == 1 and str((hydrate_tasks[0] as Dictionary).get("type", "")) == "generate", "source hydration should force a generation task"):
+		return 1
+	if not _expect(bool((hydrate_tasks[0] as Dictionary).get("forced_source_hydration", false)), "source hydration task should bypass artifact restore"):
+		return 1
 	manager.terrain_artifact_cache_enabled = false
 	var disabled_task: Dictionary = manager._build_chunk_request_task(artifact_coord, Vector3.ZERO)
 	if not _expect(str(disabled_task.get("type", "")) == "restore_artifact", "disk cache should still restore when session cache is disabled"):
@@ -111,7 +148,7 @@ func _run() -> int:
 	var async_coord := Vector3i(7, 0, 7)
 	manager._store_terrain_artifact_from_generation(
 		async_coord,
-		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array()},
+		{"deferred_mesh_data": true, "arrays": triangle_arrays, "faces": triangle_faces},
 		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
 		PackedFloat32Array(),
 		PackedFloat32Array(),
@@ -136,12 +173,10 @@ func _run() -> int:
 	manager._terrain_artifact_cache.clear("test")
 	manager._terrain_artifact_disk_store.clear_all()
 	manager.initial_load_phase = false
-	if not _expect(not manager.terrain_artifact_disk_store_runtime_chunks, "runtime disk writes should be disabled by default"):
-		return 1
 	var runtime_coord := Vector3i(5, 0, 5)
 	manager._store_terrain_artifact_from_generation(
 		runtime_coord,
-		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array()},
+		{"deferred_mesh_data": true, "arrays": triangle_arrays, "faces": triangle_faces},
 		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
 		PackedFloat32Array(),
 		PackedFloat32Array(),
@@ -165,7 +200,7 @@ func _run() -> int:
 	var enabled_runtime_coord := Vector3i(8, 0, 8)
 	manager._store_terrain_artifact_from_generation(
 		enabled_runtime_coord,
-		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array()},
+		{"deferred_mesh_data": true, "arrays": triangle_arrays, "faces": triangle_faces},
 		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
 		PackedFloat32Array(),
 		PackedFloat32Array(),
@@ -187,10 +222,13 @@ func _run() -> int:
 	manager.terrain_artifact_disk_store_runtime_chunks = false
 
 	manager.terrain_artifact_disk_cache_enabled = false
+	manager.terrain_artifact_refresh_after_edit_enabled = true
 	manager._terrain_artifact_cache.clear("test")
 	var edited_coord := Vector3i(6, 0, 6)
 	manager.stored_modifications[edited_coord] = [{"layer": 0, "value": 1.0}]
 	var edited_data = ChunkManagerScript.ChunkData.new()
+	edited_data.terrain_visual_mesh = triangle_mesh
+	edited_data.terrain_shape = triangle_shape
 	if not _expect(
 		manager._store_terrain_artifact_after_edit(
 			edited_coord,
@@ -209,24 +247,59 @@ func _run() -> int:
 	var edited_artifact: Dictionary = edited_restore_task.get("artifact", {})
 	if not _expect(int(edited_artifact.get("stored_mod_version", 0)) == 1, "edited artifact should retain the current modification version"):
 		return 1
+	if not _expect(str(edited_artifact.get("edit_signature", "")).begins_with("edit:1:"), "edited artifact should retain its edit signature"):
+		return 1
 	if not _expect(int(manager._terrain_artifact_edit_refresh_count) == 1, "edit artifact refresh should be counted"):
 		return 1
 
-	var triangle_arrays := []
-	triangle_arrays.resize(Mesh.ARRAY_MAX)
-	triangle_arrays[Mesh.ARRAY_VERTEX] = PackedVector3Array([
-		Vector3.ZERO,
-		Vector3.RIGHT,
-		Vector3.FORWARD
-	])
-	triangle_arrays[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2])
+	manager.terrain_artifact_disk_cache_enabled = true
+	manager.terrain_artifact_disk_store_edited_chunks = true
+	manager._sync_terrain_artifact_disk_store_configuration()
+	manager._terrain_artifact_disk_store.clear_all()
+	manager._terrain_artifact_cache.clear("test")
+	var edited_disk_coord := Vector3i(9, 0, 9)
+	manager.stored_modifications[edited_disk_coord] = [{"brush_pos": Vector3.ONE, "radius": 2.0, "value": -1.0, "shape": 0, "layer": 0}]
+	var edited_disk_data = ChunkManagerScript.ChunkData.new()
+	edited_disk_data.terrain_visual_mesh = triangle_mesh
+	edited_disk_data.terrain_shape = triangle_shape
+	if not _expect(
+		manager._store_terrain_artifact_after_edit(
+			edited_disk_coord,
+			edited_disk_data,
+			1,
+			artifact_bytes,
+			artifact_bytes,
+			artifact_bytes
+		),
+		"completed edit should persist its revisioned disk artifact"
+	):
+		return 1
+	manager._terrain_artifact_cache.clear("test")
+	var edited_disk_restore_task: Dictionary = manager._build_chunk_request_task(edited_disk_coord, Vector3.ZERO)
+	if not _expect(str(edited_disk_restore_task.get("type", "")) == "restore_artifact", "edited chunk should restore from disk after session cache clear"):
+		return 1
+	if not _expect(str(edited_disk_restore_task.get("artifact_source", "")) == "disk", "edited chunk disk restore should record disk source"):
+		return 1
+	var edited_disk_artifact: Dictionary = edited_disk_restore_task.get("artifact", {})
+	if not _expect(int(edited_disk_artifact.get("stored_mod_version", 0)) == 1, "edited disk artifact should restore the current modification version"):
+		return 1
+
+	var compact_artifact_result := manager._mesh_result_to_artifact_data({
+		"deferred_mesh_data": true,
+		"arrays": triangle_arrays,
+		"faces": triangle_faces
+	})
+	if not _expect(not bool(compact_artifact_result.get("ready_mesh_resource", false)), "compact artifact conversion should not store a ready ArrayMesh resource by default"):
+		return 1
+
+	manager.terrain_artifact_store_ready_mesh_resources = true
 	var session_ready_coord := Vector3i(12, 0, 12)
 	manager._store_terrain_artifact_from_generation(
 		session_ready_coord,
 		{
 			"deferred_mesh_data": true,
 			"arrays": triangle_arrays,
-			"faces": PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+			"faces": triangle_faces
 		},
 		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
 		PackedFloat32Array(),
@@ -258,7 +331,7 @@ func _run() -> int:
 		{
 			"deferred_mesh_data": true,
 			"arrays": triangle_arrays,
-			"faces": PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+			"faces": triangle_faces
 		},
 		{"deferred_mesh_data": true, "arrays": [], "faces": PackedVector3Array(), "generated_density": true},
 		PackedFloat32Array(),
@@ -298,7 +371,7 @@ func _run() -> int:
 		{
 			"deferred_mesh_data": true,
 			"arrays": triangle_arrays,
-			"faces": PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.FORWARD])
+			"faces": triangle_faces
 		},
 		null
 	)

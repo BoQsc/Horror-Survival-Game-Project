@@ -54,14 +54,24 @@ func _run() -> int:
 		return _cleanup(manager, 1)
 
 	var queued: int = manager.request_terrain_artifact_bake(Vector3.ZERO, 1, &"contract")
-	if not _expect(queued == 27, "radius-one terrain artifact bake should target 27 startup chunks"):
+	if not _expect(queued == 5, "default terrain artifact bake should use one-layer disk coverage"):
 		return _cleanup(manager, 1)
 	var task_counts: Dictionary = manager._get_task_queue_type_counts()
-	if not _expect(int(task_counts.get("generate", 0)) == 27, "cold artifact bake should queue generation for missing chunks"):
+	if not _expect(int(task_counts.get("generate", 0)) == 5, "cold default artifact bake should queue only efficient missing chunks"):
 		return _cleanup(manager, 1)
 	if not _expect(int(task_counts.get("restore_artifact", 0)) == 0, "cold artifact bake should not claim disk restores"):
 		return _cleanup(manager, 1)
-	if not _expect(manager.initial_load_target_chunks == 27, "artifact bake should set an explicit initial-load target"):
+	if not _expect(manager.initial_load_target_chunks == 5, "artifact bake should set an efficient initial-load target"):
+		return _cleanup(manager, 1)
+
+	manager.active_chunks.clear()
+	manager.task_queue.clear()
+	manager.priority_task_queue.clear()
+	manager.clear_terrain_artifact_bake_pins()
+	var efficient_queued: int = manager.request_terrain_artifact_bake(Vector3.ZERO, 2, &"efficient_contract", 0, true)
+	if not _expect(efficient_queued == 13, "efficient world-map bake should use one-layer disk coverage matching startup render radius"):
+		return _cleanup(manager, 1)
+	if not _expect(manager.initial_load_target_chunks == 13, "efficient artifact bake should set the disk-shaped initial-load target"):
 		return _cleanup(manager, 1)
 
 	manager.terrain_artifact_use_world_local_disk_cache = false

@@ -35,6 +35,9 @@ const MAX_POOL_SIZE = 32 # Keep up to 32 chunks in pool
 @export var world_map_baked_building_visual_batching_enabled: bool = true
 @export_range(1, 16, 1) var world_map_baked_building_visual_batch_size: int = 8
 @export_range(1, 8, 1) var world_map_baked_building_visual_batch_rebuilds_per_frame: int = 2
+@export var world_map_global_visual_spatial_batches_enabled: bool = true
+@export_range(1, 16, 1) var world_map_global_visual_batch_cluster_size_chunks: int = 4
+@export_range(1, 512, 1) var world_map_global_visual_spatial_batch_min_instances_per_object: int = 96
 @export_range(1, 32, 1) var dirty_chunk_flush_budget: int = 4
 @export_range(0, 60, 1) var object_render_prewarm_frames: int = 12
 @export_range(0.025, 1.0, 0.025) var viewer_chunk_update_interval: float = 0.10
@@ -53,7 +56,8 @@ var _object_spawn_profile_cache: Dictionary = {}
 # Global world-map visual batching for repeated props
 var _global_visual_batch_instances: Dictionary = {} # Vector3i anchor -> { object_id, transform, mesh }
 var _global_visual_batch_entries: Dictionary = {} # int object_id -> Array[{ anchor, transform }]
-var _global_visual_batch_nodes: Dictionary = {} # int object_id -> MultiMeshInstance3D
+var _global_visual_batch_nodes: Dictionary = {} # String batch_key -> MultiMeshInstance3D
+var _global_visual_batch_node_keys_by_object_id: Dictionary = {} # int object_id -> Dictionary[String batch_key] = true
 var _dirty_global_visual_batch_object_ids: Dictionary = {} # int object_id -> true
 var _world_map_baked_building_visual_nodes: Dictionary = {} # String building_key -> Node3D
 var _world_map_baked_building_visual_payloads_by_key: Dictionary = {} # String building_key -> Dictionary visual payload
@@ -210,7 +214,7 @@ func _process(delta):
 
 func _start_viewer_chunk_update_timer() -> void:
 	if _viewer_chunk_update_timer and is_instance_valid(_viewer_chunk_update_timer):
-		_viewer_chunk_update_timer.wait_time = _get_viewer_chunk_update_timer_interval()
+		_sync_viewer_chunk_update_timer_state()
 		return
 	var timer := Timer.new()
 	timer.name = "ViewerChunkUpdateTimer"
@@ -221,9 +225,12 @@ func _start_viewer_chunk_update_timer() -> void:
 	add_child(timer)
 	_viewer_chunk_update_timer = timer
 	timer.timeout.connect(_on_viewer_chunk_update_timer_timeout)
-	timer.start()
+	_sync_viewer_chunk_update_timer_state()
 
 func _on_viewer_chunk_update_timer_timeout() -> void:
+	if not _should_run_viewer_chunk_update_timer():
+		_sync_viewer_chunk_update_timer_state()
+		return
 	_viewer_chunk_fallback_poll_count += 1
 	_sync_viewer_chunk()
 
@@ -234,23 +241,55 @@ func _get_viewer_chunk_update_timer_interval() -> float:
 	return maxf(viewer_chunk_update_interval, 0.025)
 
 
+func _should_run_viewer_chunk_update_timer() -> bool:
+	if not viewer_position_signal_enabled:
+		return true
+	if not _viewer_position_signal_connected:
+		return true
+	return _viewer_position_signal_source == null or not is_instance_valid(_viewer_position_signal_source)
+
+
+func _sync_viewer_chunk_update_timer_state() -> void:
+	if not _viewer_chunk_update_timer or not is_instance_valid(_viewer_chunk_update_timer):
+		return
+	_viewer_chunk_update_timer.wait_time = _get_viewer_chunk_update_timer_interval()
+	if _should_run_viewer_chunk_update_timer():
+		if is_inside_tree() and _viewer_chunk_update_timer.is_stopped():
+			_viewer_chunk_update_timer.start()
+	else:
+		if not _viewer_chunk_update_timer.is_stopped():
+			_viewer_chunk_update_timer.stop()
+
+
 func _connect_viewer_position_signal() -> void:
 	var callback := Callable(self, "_on_viewer_position_changed")
+	var exit_callback := Callable(self, "_on_viewer_signal_source_exited")
 	if _viewer_position_signal_source and is_instance_valid(_viewer_position_signal_source):
 		if _viewer_position_signal_source.has_signal("viewer_position_changed"):
 			if _viewer_position_signal_source.is_connected("viewer_position_changed", callback):
 				_viewer_position_signal_source.disconnect("viewer_position_changed", callback)
+		if _viewer_position_signal_source.is_connected("tree_exiting", exit_callback):
+			_viewer_position_signal_source.disconnect("tree_exiting", exit_callback)
 	_viewer_position_signal_source = null
 	_viewer_position_signal_connected = false
 	if not viewer_position_signal_enabled or not viewer or not is_instance_valid(viewer):
+		_sync_viewer_chunk_update_timer_state()
 		return
 	_viewer_position_signal_source = viewer
 	if not viewer.has_signal("viewer_position_changed"):
+		_sync_viewer_chunk_update_timer_state()
 		return
 	viewer.connect("viewer_position_changed", callback)
+	if not viewer.is_connected("tree_exiting", exit_callback):
+		viewer.connect("tree_exiting", exit_callback)
 	_viewer_position_signal_connected = true
-	if _viewer_chunk_update_timer and is_instance_valid(_viewer_chunk_update_timer):
-		_viewer_chunk_update_timer.wait_time = _get_viewer_chunk_update_timer_interval()
+	_sync_viewer_chunk_update_timer_state()
+
+
+func _on_viewer_signal_source_exited() -> void:
+	_viewer_position_signal_source = null
+	_viewer_position_signal_connected = false
+	_sync_viewer_chunk_update_timer_state()
 
 
 func _on_viewer_position_changed(_previous_position: Vector3, _current_position: Vector3) -> void:
@@ -644,10 +683,15 @@ func register_global_visual_batch(anchor: Vector3i, object_id: int, transform: T
 		"transform": transform
 	})
 	_global_visual_batch_entries[object_id] = entries
-	var batch_node: MultiMeshInstance3D = _global_visual_batch_nodes.get(object_id, null)
+	var batch_key := _get_global_visual_batch_key(
+		object_id,
+		anchor,
+		not _should_use_global_visual_spatial_batching_for_entries(entries)
+	)
+	var batch_node: MultiMeshInstance3D = _global_visual_batch_nodes.get(batch_key, null)
 	var can_append := batch_node and is_instance_valid(batch_node) and not _dirty_global_visual_batch_object_ids.has(object_id)
 	if can_append and _is_global_visual_batch_anchor_in_range(anchor, _last_global_visual_batch_center_chunk, 2):
-		_append_global_visual_batch_instance(object_id, transform, mesh)
+		_append_global_visual_batch_instance(object_id, anchor, transform, mesh)
 	elif defer_rebuild:
 		_dirty_global_visual_batch_object_ids[object_id] = true
 		_wake_process_loop()
@@ -677,11 +721,7 @@ func remove_global_visual_batch(anchor: Vector3i) -> bool:
 
 	if filtered.is_empty():
 		_global_visual_batch_entries.erase(object_id)
-		if _global_visual_batch_nodes.has(object_id):
-			var node = _global_visual_batch_nodes[object_id]
-			if node and is_instance_valid(node):
-				node.queue_free()
-			_global_visual_batch_nodes.erase(object_id)
+		_remove_global_visual_batch_nodes_for_object(object_id)
 		return true
 
 	_global_visual_batch_entries[object_id] = filtered
@@ -695,6 +735,7 @@ func clear_global_visual_batches() -> void:
 	_global_visual_batch_instances.clear()
 	_global_visual_batch_entries.clear()
 	_global_visual_batch_nodes.clear()
+	_global_visual_batch_node_keys_by_object_id.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
 	_sync_process_loop()
@@ -707,6 +748,19 @@ func _get_native_helper() -> Object:
 		return null
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
+
+
+func _release_native_helper() -> void:
+	if _native_helper == null or not is_instance_valid(_native_helper):
+		_native_helper = null
+		return
+	if _native_helper is RefCounted:
+		_native_helper.unreference()
+		if is_instance_valid(_native_helper):
+			_native_helper.free()
+	else:
+		_native_helper.free()
+	_native_helper = null
 
 func _is_global_visual_batch_center_valid() -> bool:
 	return _last_global_visual_batch_center_chunk.x != 2147483647
@@ -724,6 +778,66 @@ func _get_global_visual_batch_anchor_chunk(anchor: Vector3i) -> Vector3i:
 		floor(float(anchor.y) / float(CHUNK_SIZE)),
 		floor(float(anchor.z) / float(CHUNK_SIZE))
 	)
+
+
+func _get_global_visual_batch_cluster(anchor: Vector3i) -> Vector3i:
+	var anchor_chunk := _get_global_visual_batch_anchor_chunk(anchor)
+	var cluster_size := maxi(world_map_global_visual_batch_cluster_size_chunks, 1)
+	return Vector3i(
+		floor(float(anchor_chunk.x) / float(cluster_size)),
+		floor(float(anchor_chunk.y) / float(cluster_size)),
+		floor(float(anchor_chunk.z) / float(cluster_size))
+	)
+
+
+func _get_global_visual_batch_key(object_id: int, anchor: Vector3i, force_legacy: bool = false) -> String:
+	if force_legacy or not world_map_global_visual_spatial_batches_enabled:
+		return str(object_id)
+	var cluster := _get_global_visual_batch_cluster(anchor)
+	return "%d:%d:%d:%d" % [object_id, cluster.x, cluster.y, cluster.z]
+
+
+func _should_use_global_visual_spatial_batching_for_entries(entries: Array) -> bool:
+	return world_map_global_visual_spatial_batches_enabled \
+		and entries.size() >= maxi(world_map_global_visual_spatial_batch_min_instances_per_object, 1)
+
+
+func _register_global_visual_batch_node_key(object_id: int, batch_key: String) -> void:
+	var node_keys: Dictionary = _global_visual_batch_node_keys_by_object_id.get(object_id, {})
+	node_keys[batch_key] = true
+	_global_visual_batch_node_keys_by_object_id[object_id] = node_keys
+
+
+func _remove_global_visual_batch_nodes_for_object(object_id: int, keep_keys: Dictionary = {}) -> void:
+	var node_keys: Dictionary = _global_visual_batch_node_keys_by_object_id.get(object_id, {})
+	for key_variant in node_keys.keys():
+		var batch_key := str(key_variant)
+		if keep_keys.has(batch_key):
+			continue
+		var node := _global_visual_batch_nodes.get(batch_key, null) as Node
+		if node and is_instance_valid(node):
+			node.queue_free()
+		_global_visual_batch_nodes.erase(batch_key)
+		node_keys.erase(batch_key)
+
+	if node_keys.is_empty():
+		_global_visual_batch_node_keys_by_object_id.erase(object_id)
+	else:
+		_global_visual_batch_node_keys_by_object_id[object_id] = node_keys
+
+
+func _group_global_visual_batch_entries(object_id: int, entries: Array, force_legacy: bool = false) -> Dictionary:
+	var grouped: Dictionary = {}
+	for entry_variant in entries:
+		if typeof(entry_variant) != TYPE_DICTIONARY:
+			continue
+		var entry: Dictionary = entry_variant
+		var anchor: Vector3i = entry.get("anchor", Vector3i.ZERO)
+		var batch_key := _get_global_visual_batch_key(object_id, anchor, force_legacy)
+		var batch_entries: Array = grouped.get(batch_key, [])
+		batch_entries.append(entry)
+		grouped[batch_key] = batch_entries
+	return grouped
 
 
 func _is_global_visual_batch_anchor_in_range(anchor: Vector3i, center_chunk: Vector3i, extra_distance: int = 0) -> bool:
@@ -1628,7 +1742,7 @@ func clear_for_shutdown() -> void:
 	_dirty_chunks.clear()
 	_object_spawn_profile_cache.clear()
 	_cached_vehicle_manager = null
-	_native_helper = null
+	_release_native_helper()
 
 
 func clear_immediate_for_shutdown() -> void:
@@ -1653,11 +1767,12 @@ func clear_immediate_for_shutdown() -> void:
 	_global_visual_batch_instances.clear()
 	_global_visual_batch_entries.clear()
 	_global_visual_batch_nodes.clear()
+	_global_visual_batch_node_keys_by_object_id.clear()
 	_dirty_global_visual_batch_object_ids.clear()
 	_last_global_visual_batch_center_chunk = Vector3i(2147483647, 2147483647, 2147483647)
 	_object_spawn_profile_cache.clear()
 	_cached_vehicle_manager = null
-	_native_helper = null
+	_release_native_helper()
 
 
 func _release_node_for_shutdown(node: Node, immediate: bool = false) -> void:
@@ -2378,18 +2493,19 @@ func _apply_world_map_baked_building_visual(building_key: String, visual_payload
 func has_dirty_global_visual_batches() -> bool:
 	return not _dirty_global_visual_batch_object_ids.is_empty()
 
-func _get_global_visual_batch_node(object_id: int, mesh: Mesh) -> MultiMeshInstance3D:
-	if _global_visual_batch_nodes.has(object_id):
-		var existing: MultiMeshInstance3D = _global_visual_batch_nodes[object_id]
+func _get_global_visual_batch_node(object_id: int, batch_key: String, mesh: Mesh) -> MultiMeshInstance3D:
+	if _global_visual_batch_nodes.has(batch_key):
+		var existing: MultiMeshInstance3D = _global_visual_batch_nodes[batch_key]
 		if existing and is_instance_valid(existing):
 			existing.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 			return existing
 
 	var batch_node := MultiMeshInstance3D.new()
-	batch_node.name = "GlobalVisualBatch_%d" % object_id
+	batch_node.name = "GlobalVisualBatch_%s" % batch_key.replace(":", "_")
 	batch_node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	add_child(batch_node)
-	_global_visual_batch_nodes[object_id] = batch_node
+	_global_visual_batch_nodes[batch_key] = batch_node
+	_register_global_visual_batch_node_key(object_id, batch_key)
 
 	var multimesh := MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_3D
@@ -2398,8 +2514,14 @@ func _get_global_visual_batch_node(object_id: int, mesh: Mesh) -> MultiMeshInsta
 	batch_node.multimesh = multimesh
 	return batch_node
 
-func _append_global_visual_batch_instance(object_id: int, transform: Transform3D, mesh: Mesh) -> void:
-	var batch_node := _get_global_visual_batch_node(object_id, mesh)
+func _append_global_visual_batch_instance(object_id: int, anchor: Vector3i, transform: Transform3D, mesh: Mesh) -> void:
+	var entries: Array = _global_visual_batch_entries.get(object_id, [])
+	var batch_key := _get_global_visual_batch_key(
+		object_id,
+		anchor,
+		not _should_use_global_visual_spatial_batching_for_entries(entries)
+	)
+	var batch_node := _get_global_visual_batch_node(object_id, batch_key, mesh)
 	if not batch_node:
 		return
 
@@ -2418,21 +2540,13 @@ func _append_global_visual_batch_instance(object_id: int, transform: Transform3D
 
 func _rebuild_global_visual_batch(object_id: int, mesh: Mesh = null) -> void:
 	if not _global_visual_batch_entries.has(object_id):
-		if _global_visual_batch_nodes.has(object_id):
-			var node = _global_visual_batch_nodes[object_id]
-			if node and is_instance_valid(node):
-				node.queue_free()
-			_global_visual_batch_nodes.erase(object_id)
+		_remove_global_visual_batch_nodes_for_object(object_id)
 		return
 
 	var entries: Array = _global_visual_batch_entries[object_id]
 	if entries.is_empty():
 		_global_visual_batch_entries.erase(object_id)
-		if _global_visual_batch_nodes.has(object_id):
-			var empty_node = _global_visual_batch_nodes[object_id]
-			if empty_node and is_instance_valid(empty_node):
-				empty_node.queue_free()
-			_global_visual_batch_nodes.erase(object_id)
+		_remove_global_visual_batch_nodes_for_object(object_id)
 		return
 
 	if mesh == null:
@@ -2443,19 +2557,30 @@ func _rebuild_global_visual_batch(object_id: int, mesh: Mesh = null) -> void:
 	if not mesh:
 		return
 
-	var batch_node := _get_global_visual_batch_node(object_id, mesh)
-	var multimesh: MultiMesh = batch_node.multimesh
-	if not multimesh:
-		multimesh = MultiMesh.new()
-		multimesh.transform_format = MultiMesh.TRANSFORM_3D
-		multimesh.mesh = mesh
-		batch_node.multimesh = multimesh
-	else:
-		multimesh.mesh = mesh
-
 	var visible_entries := _get_visible_global_visual_batch_entries(entries)
-	multimesh.instance_count = visible_entries.size()
-	multimesh.buffer = _pack_global_visual_batch_transform_buffer(visible_entries)
+	var force_legacy := not _should_use_global_visual_spatial_batching_for_entries(visible_entries)
+	var grouped_entries := _group_global_visual_batch_entries(object_id, visible_entries, force_legacy)
+	var keep_keys: Dictionary = {}
+	for key_variant in grouped_entries.keys():
+		var batch_key := str(key_variant)
+		var batch_entries: Array = grouped_entries[batch_key]
+		if batch_entries.is_empty():
+			continue
+		var batch_node := _get_global_visual_batch_node(object_id, batch_key, mesh)
+		var multimesh: MultiMesh = batch_node.multimesh
+		if not multimesh:
+			multimesh = MultiMesh.new()
+			multimesh.transform_format = MultiMesh.TRANSFORM_3D
+			multimesh.mesh = mesh
+			batch_node.multimesh = multimesh
+		else:
+			multimesh.mesh = mesh
+
+		multimesh.instance_count = batch_entries.size()
+		multimesh.buffer = _pack_global_visual_batch_transform_buffer(batch_entries)
+		keep_keys[batch_key] = true
+
+	_remove_global_visual_batch_nodes_for_object(object_id, keep_keys)
 
 func _pack_global_visual_batch_transform_buffer(entries: Array) -> PackedFloat32Array:
 	var native := _get_native_helper()
@@ -2596,6 +2721,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"total_chunk_static_proxy_shapes": total_chunk_static_proxy_shapes,
 		"total_virtual_container_nodes": total_virtual_container_nodes,
 		"total_visual_batches": total_visual_batches,
+		"world_map_global_visual_spatial_batches_enabled": world_map_global_visual_spatial_batches_enabled,
+		"world_map_global_visual_batch_cluster_size_chunks": world_map_global_visual_batch_cluster_size_chunks,
+		"world_map_global_visual_spatial_batch_min_instances_per_object": world_map_global_visual_spatial_batch_min_instances_per_object,
+		"total_global_visual_object_types": _global_visual_batch_entries.size(),
 		"total_global_visual_batches": _global_visual_batch_nodes.size(),
 		"total_global_visual_instances": _global_visual_batch_instances.size(),
 		"visible_global_visual_instances": _count_visible_global_visual_batch_instances(),

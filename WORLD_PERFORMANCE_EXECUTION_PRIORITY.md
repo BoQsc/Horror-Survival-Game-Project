@@ -6,6 +6,117 @@ This file tracks the implementation order for
 The order is deliberate: eliminate repeated work before optimizing the remaining
 cache misses, and measure each layer before adding the next one.
 
+## June 13, 2026 Generator Bake Acceleration Update
+
+The current generator bottleneck was not solved by reducing map size, render
+distance, building count, or quality. The code now removes avoidable work while
+keeping the same 2048 world-map flow:
+
+- full-resolution height/biome generation and lake carving run in GDExtension
+  native code with row-parallel workers on full-size maps, writing the same
+  byte layers used by the existing save pipeline;
+- road and building-path rasterization run in GDExtension native code instead
+  of per-pixel GDScript loops over the same `height/biome/road` byte arrays;
+- building support road rejection now uses a packed GDExtension native
+  predicate. Road segment geometry and clearance radii are packed once during
+  road-index build, then each candidate footprint checks the same
+  segment-to-rectangle rule without GDScript dictionary/candidate-array
+  overhead. The old indexed GDScript path remains as fallback/reference, and
+  focused contracts verify both paths match the old all-segment scan.
+- prefab catalog and per-rotation placement metadata are precomputed once per
+  generation pass. Building placement and append paths now reuse cached surface
+  bounds, reservation bounds, grade offsets, door offsets, and excavation
+  segments instead of repeatedly re-reading prefab geometry metadata.
+- building foundation support resolving now has a GDExtension native backend
+  for the same sample-grid and candidate-level scoring algorithm used by
+  `FoundationSupport`, avoiding GDScript Callable/sample/scoring overhead in
+  town placement.
+- building pad flattening now uses a GDExtension native sparse-patch backend:
+  native code computes changed heightmap indices/values and GDScript applies
+  only those changed pixels, avoiding the rejected full-heightmap copy design
+  and avoiding the old per-cell blend math in GDScript.
+- building road-connection lookup now reuses the road spatial index with a
+  conservative fallback to the full scan, and the spatial-index contract compares
+  indexed connection results against the old full-scan result.
+- excavation modification payload assembly now has a native backend that emits
+  the same dictionary-shaped brush modifications required by the current world
+  metadata and `ChunkManager` consumer path.
+- generated excavation metadata now uses compact `excavation_columns_v1`
+  payloads: one metadata entry with a flat column array replaces 11k+ brush
+  dictionaries. `ChunkManager` accepts both this compact format and legacy
+  dictionary arrays, and the compact-format contract proves chunk keys and
+  excavation masks match the legacy representation.
+
+Latest focused evidence:
+
+```text
+.agent/world-map-generation-native-lakes-profile.json
+```
+
+The latest full generation smoke reports `elapsed_ms=1266.068`,
+`profile_total_ms=947.303`, `height_biome_ms=299.858`,
+`height_biome_worker_count=4`, `layout_ms=549.578`,
+`town_buildings_ms=260.520`, `building_append_ms=88.142`,
+`building_connection_ms=17.745`, `building_flatten_ms=18.102`,
+`building_flatten_native_calls=157`, `building_flatten_gdscript_calls=0`,
+`building_support_road_ms=24.024`,
+`building_support_road_native_calls=408`,
+`building_support_road_gdscript_calls=0`,
+`building_excavation_ms=23.744`, `building_excavation_compact_calls=157`,
+`building_excavation_native_calls=0`, `building_excavation_gdscript_calls=0`,
+`terrain_modification_format=excavation_columns_v1`,
+`terrain_modification_storage_entry_count=1`,
+`terrain_modification_column_value_count=46472`,
+`building_support_foundation_ms=19.594`,
+`building_support_native_calls=382`, `building_support_gdscript_calls=0`,
+`road_rasterize_ms=94.699`, `path_rasterize_ms=16.721`,
+`lakes_ms=85.491`, and `lakes_worker_count=4`. The immediately previous
+accepted focused smoke before packed native road-footprint rejection reported
+`elapsed_ms=1536.007`, `profile_total_ms=1137.710`,
+`town_buildings_ms=349.093`, and `building_support_road_ms=74.408`. The
+rejected dictionary-native road-footprint pass reported
+`building_support_road_ms=92.786`, proving that native code without packed
+data was not sufficient. The immediately earlier
+accepted focused smoke with dictionary-shaped native excavation assembly
+reported `elapsed_ms=2048.789`, `profile_total_ms=842.589`,
+`town_buildings_ms=300.772`, and `building_excavation_ms=75.067`; whole-run
+profile totals vary between focused runs, but compact excavation reduces the
+specific metadata assembly hotspot and removes the 11k+ dictionary payload. The
+focused smoke before native excavation modification assembly reported
+`elapsed_ms=2498.570`, `profile_total_ms=1125.081`,
+`town_buildings_ms=399.931`, `building_append_ms=162.782`, and
+`building_connection_ms=24.281`. The focused
+smoke before indexed building road-connection lookup reported `elapsed_ms=2591.770`,
+`profile_total_ms=1176.854`, `height_biome_ms=343.097`,
+`lakes_ms=89.825`, `town_buildings_ms=405.893`, and
+`building_connection_ms=60.617`. The focused smoke before row-parallel
+full-map native height/biome and lake passes reported `elapsed_ms=3371.386`,
+`profile_total_ms=1881.340`, `height_biome_ms=926.857`,
+`lakes_ms=201.361`, `town_buildings_ms=397.004`, and
+`building_flatten_ms=19.261`. The focused
+smoke before native sparse-patch pad flattening reported
+`elapsed_ms=3354.469`, `profile_total_ms=2089.785`,
+`layout_ms=915.637`, `town_buildings_ms=615.644`,
+`building_flatten_ms=275.066`, and `building_append_ms=404.197`. The focused
+smoke before native building support resolving reported `elapsed_ms=3378.121`,
+`profile_total_ms=2090.775`, `layout_ms=1003.575`,
+`town_buildings_ms=753.119`, and `building_support_foundation_ms=144.213`.
+The prior focused smoke, before prefab rotation metadata caching, reported
+`elapsed_ms=5599.788`,
+`profile_total_ms=3942.889`, `layout_ms=2296.114`,
+`town_buildings_ms=1970.643`, `road_rasterize_ms=157.519`,
+`path_rasterize_ms=18.594`, and `lakes_ms=331.916`. The earlier focused smoke
+before native road/path rasterization and road spatial indexing reported
+`profile_total_ms=8546.199`, `layout_ms=6825.164`, and `lakes_ms=256.280` after
+native lakes only. The older valid strict snapshot before native lakes reported
+`lakes_ms` around `16762 ms`, which made lake generation the dominant full-bake
+blocker.
+
+This is still not final 16 W / 60 FPS production proof. The next generator-side
+target is the remaining road/path rasterization cost and the remaining
+building-placement append/catalog overhead. Runtime FPS/power still needs a
+separate strict gameplay run after focused code checks pass.
+
 | Priority | Status | Deliverable |
 |---|---|---|
 | 0. Measurement and trace contract | complete | Structured cold, warm, revisit, and edit telemetry with bounded recent events and repeatable measurement windows. |
@@ -691,3 +802,60 @@ it lists the rollout/test-hook candidates to classify after accepted captures.
 Its current non-game scan reports `125` cleanup candidates: `97` tuning
 overrides to promote or document after evidence, `8` isolation hooks to remove
 or move into harness-only code, and `20` `_for_test` markers to review.
+
+## June 13, 2026 Clean-Exit / Native Generation Checkpoint
+
+Status: partial checkpoint only. This records the current clean-exit and native
+world-map generation state; it does not close the full 16W/60fps gameplay
+priority.
+
+Fixed in this checkpoint:
+
+- Headless Godot exits no longer leak the ambient MP3 playback resource in the
+  focused world-map/native test path.
+- `PrefabGeometryNative` is treated as an explicitly owned native `Object`.
+  The world-map generator, static prefab geometry cache, building manager,
+  vegetation manager, and focused native tests now release it instead of
+  dropping the reference.
+- World-map bake-proof and full native lakes profile tests now explicitly
+  release generated image/native resources before quitting.
+- Raw `generate_world()` no longer performs full bake-proof hashing by default;
+  bake proof remains available through explicit proof calls and `save_world()`.
+
+Focused verification accepted:
+
+```text
+addons/tests/world_map_bake_proof_test.gd
+addons/tests/world_map_generation_native_lakes_profile_test.gd
+addons/tests/world_map_lake_native_test.gd
+addons/tests/world_map_road_footprint_native_test.gd
+addons/tests/world_map_building_support_native_test.gd
+addons/tests/world_map_rasterization_native_test.gd
+addons/tests/world_map_height_biome_native_test.gd
+addons/tests/world_map_height_biome_thread_policy_test.gd
+addons/tests/world_map_building_pad_flatten_native_test.gd
+addons/tests/world_map_excavation_native_test.gd
+addons/tests/vegetation_cluster_payload_native_test.gd
+addons/tests/vegetation_native_record_append_test.gd
+addons/tests/vegetation_pending_chunk_scheduler_native_test.gd
+addons/tests/vegetation_removed_filter_native_test.gd
+python addons/tests/run_world_performance_priority_proof_test.py
+git diff --check
+```
+
+All listed focused Godot runs passed without `ObjectDB instances leaked`,
+`Leaked instance`, or `Resource still in use` output. The latest focused full
+native world-map profile wrote
+`.agent/world-map-generation-native-lakes-profile.json` with `elapsed_ms`
+`1250.691`, native height/biome, native road/path rasterization, native lake
+generation, native road-footprint rejection, and compact
+`excavation_columns_v1` terrain modifications.
+
+Still open after this checkpoint:
+
+- Production gameplay evidence is still required before calling the priority
+  complete.
+- Terrain artifact bake time, runtime terrain edit/remesh cost, and real
+  player-visible FPS/watt behavior remain the blocking performance questions.
+- The low-level RenderingDevice/RenderingServer terrain renderer decision is
+  still unresolved.

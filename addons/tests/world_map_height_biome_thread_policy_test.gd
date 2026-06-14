@@ -2,10 +2,19 @@ extends SceneTree
 
 const WorldMapGeneratorScript := preload("res://world_map_generator/world_map_generator.gd")
 
+var _main_generator: WorldMapGenerator = null
+
 
 func _init() -> void:
 	var exit_code := _run()
+	_release_main_generator()
 	quit(exit_code)
+
+
+func _release_main_generator() -> void:
+	if _main_generator != null:
+		_main_generator.release_runtime_resources()
+		_main_generator = null
 
 
 func _run() -> int:
@@ -14,7 +23,8 @@ func _run() -> int:
 	if not _expect(Thread.is_main_thread(), "test should start on the main thread"):
 		return 1
 
-	var main_generator: WorldMapGenerator = WorldMapGeneratorScript.new()
+	_main_generator = WorldMapGeneratorScript.new()
+	var main_generator := _main_generator
 	main_generator.world_seed = 12345
 	main_generator.noise_freq = 0.1
 	main_generator.terrain_height = 10.0
@@ -65,7 +75,7 @@ func _threaded_height_biome_probe() -> Dictionary:
 	var telemetry := generator.get_telemetry_snapshot()
 	var height_bytes: PackedByteArray = result.get("height_bytes", PackedByteArray())
 	var biome_bytes: PackedByteArray = result.get("biome_bytes", PackedByteArray())
-	return {
+	var response := {
 		"is_main_thread": Thread.is_main_thread(),
 		"backend": str(result.get("backend", "")),
 		"height_byte_count": height_bytes.size(),
@@ -75,6 +85,8 @@ func _threaded_height_biome_probe() -> Dictionary:
 		"biome_matches_reference": biome_bytes == reference.get("biome_bytes", PackedByteArray()),
 		"can_run_native": bool(telemetry.get("native_height_biome_can_run_now", true))
 	}
+	generator.release_runtime_resources()
+	return response
 
 
 func _expect(condition: bool, message: String) -> bool:

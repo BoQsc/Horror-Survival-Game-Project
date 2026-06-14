@@ -18,8 +18,17 @@ const TERRAIN_MESH_BAKE_CHUNK_STRIDE := 31.0
 @export_range(64, 512, 32) var generation_placeholder_size: int = 256
 @export var terrain_mesh_bake_enabled: bool = true
 @export var terrain_mesh_bake_on_save: bool = true
-@export_range(0, 16, 1) var terrain_mesh_bake_radius_chunks: int = 10
+@export var terrain_mesh_bake_auto_start_on_play: bool = true
+@export var terrain_mesh_bake_block_play_until_ready: bool = true
+@export_range(0, 16, 1) var terrain_mesh_bake_radius_chunks: int = 3
+@export_range(0, 8, 1) var terrain_mesh_bake_vertical_layer_radius: int = 0
+@export var terrain_mesh_bake_use_disk_radius_shape: bool = true
+@export var terrain_mesh_bake_full_map_enabled: bool = false
+@export_range(0, 4, 1) var terrain_mesh_bake_full_map_margin_chunks: int = 1
+@export var terrain_mesh_bake_prefer_offline_cpu: bool = true
+@export_range(1, 64, 1) var terrain_mesh_bake_offline_cpu_chunks_per_frame: int = 16
 @export var terrain_mesh_bake_store_ready_mesh_resources: bool = true
+@export var terrain_mesh_bake_store_source_buffers: bool = false
 @export var terrain_mesh_bake_synchronous_disk_writes: bool = true
 @export var terrain_mesh_bake_refresh_world_list_on_complete: bool = true
 @export var terrain_mesh_bake_origin: Vector3 = Vector3.ZERO
@@ -243,11 +252,12 @@ func _on_load_pressed() -> void:
 	
 	loaded_world_path = world_path
 	save_btn.disabled = false
-	play_btn.disabled = false
 	
 	_update_preview()
-	var artifact_manifest_path := WorldMapData.get_world_terrain_artifact_manifest_path(world_path)
-	var artifact_status := "terrain artifacts ready" if FileAccess.file_exists(artifact_manifest_path) else "terrain artifacts missing"
+	var artifact_manifest_status := _get_terrain_artifact_manifest_status(world_path)
+	var artifacts_ready := bool(artifact_manifest_status.get("ready", false))
+	play_btn.disabled = terrain_mesh_bake_enabled and terrain_mesh_bake_block_play_until_ready and not artifacts_ready and not terrain_mesh_bake_auto_start_on_play
+	var artifact_status := "terrain artifacts ready" if artifacts_ready else "terrain artifacts missing"
 	progress_label.text = "Loaded: %s (%d images, %s)" % [world_name, current_images.size(), artifact_status]
 
 # ============================================================================
@@ -688,6 +698,54 @@ func _on_save_pressed(start_bake_after_save: bool = true) -> bool:
 # PLAY — transition to game with this world loaded
 # ============================================================================
 
+func _get_terrain_artifact_manifest_status(world_path: String) -> Dictionary:
+	var manifest_path := WorldMapData.get_world_terrain_artifact_manifest_path(world_path)
+	var status := {
+		"manifest_path": manifest_path,
+		"exists": false,
+		"ready": false,
+		"magic": "",
+		"expected_chunks": 0,
+		"artifact_count": 0,
+		"origin_count": 0,
+		"radius_chunks": 0,
+		"vertical_layer_radius": 0,
+		"use_disk_radius_shape": false,
+		"store_ready_mesh_resources": false,
+		"prefer_offline_cpu_bake": false
+	}
+	if manifest_path.is_empty() or not FileAccess.file_exists(manifest_path):
+		return status
+	status["exists"] = true
+	var file := FileAccess.open(manifest_path, FileAccess.READ)
+	if file == null:
+		status["read_error"] = true
+		return status
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
+	if not (parsed is Dictionary):
+		status["parse_error"] = true
+		return status
+	var manifest: Dictionary = parsed
+	var expected_chunks := int(manifest.get("expected_chunks", 0))
+	var artifact_count := int(manifest.get("artifact_count", 0))
+	status["magic"] = str(manifest.get("magic", ""))
+	status["expected_chunks"] = expected_chunks
+	status["artifact_count"] = artifact_count
+	status["origin_count"] = int(manifest.get("origin_count", 0))
+	status["radius_chunks"] = int(manifest.get("radius_chunks", 0))
+	status["vertical_layer_radius"] = int(manifest.get("vertical_layer_radius", 0))
+	status["use_disk_radius_shape"] = bool(manifest.get("use_disk_radius_shape", false))
+	status["store_ready_mesh_resources"] = bool(manifest.get("store_ready_mesh_resources", false))
+	status["prefer_offline_cpu_bake"] = bool(manifest.get("prefer_offline_cpu_bake", false))
+	status["ready"] = (
+		str(status.get("magic", "")) == WorldTerrainArtifactBaker.MANIFEST_MAGIC
+		and expected_chunks > 0
+		and artifact_count >= expected_chunks
+	)
+	return status
+
+
 func _on_play_pressed() -> void:
 	if is_baking_terrain:
 		_set_generation_status("Terrain mesh artifact bake still running", progress_bar.value if progress_bar else 0.0, false)
@@ -699,13 +757,26 @@ func _on_play_pressed() -> void:
 	
 	var world_path = SAVE_BASE + world_name
 	
-	# Save first to ensure PNGs are on disk
-	var manifest_path := WorldMapData.get_world_terrain_artifact_manifest_path(world_path)
-	var bake_before_play := terrain_mesh_bake_enabled and not FileAccess.file_exists(manifest_path)
-	if not _on_save_pressed(bake_before_play):
+	var manifest_status := _get_terrain_artifact_manifest_status(world_path)
+	var artifacts_ready := bool(manifest_status.get("ready", false))
+	var bake_before_play := terrain_mesh_bake_enabled and not artifacts_ready and terrain_mesh_bake_auto_start_on_play
+
+	# Save first to ensure PNGs are on disk. Play-triggered bakes are started
+	# explicitly below so the save-only step cannot hide a missing manifest.
+	if not _on_save_pressed(false):
+		return
+	if bake_before_play:
+		_start_terrain_mesh_bake(world_path)
 		return
 	if is_baking_terrain:
 		return
+	if terrain_mesh_bake_enabled and terrain_mesh_bake_block_play_until_ready:
+		manifest_status = _get_terrain_artifact_manifest_status(world_path)
+		artifacts_ready = bool(manifest_status.get("ready", false))
+		if not artifacts_ready:
+			_set_generation_status("Terrain mesh artifacts missing; bake before play", 0.0, false, manifest_status)
+			play_btn.disabled = not terrain_mesh_bake_auto_start_on_play
+			return
 	
 	# Set the path on SaveManager autoload (persists across scene changes)
 	var sm = get_node_or_null("/root/SaveManager")
@@ -756,6 +827,27 @@ func _build_terrain_mesh_bake_origins() -> Array[Vector3]:
 	return origins
 
 
+func _build_terrain_mesh_full_map_bake_coords() -> Array[Vector3i]:
+	var coords: Array[Vector3i] = []
+	if not terrain_mesh_bake_full_map_enabled:
+		return coords
+
+	var margin := maxi(terrain_mesh_bake_full_map_margin_chunks, 0)
+	var vertical_radius := maxi(terrain_mesh_bake_vertical_layer_radius, 0)
+	var half_map := float(WorldMapGen.MAP_SIZE) * 0.5
+	var min_x := int(floor(-half_map / TERRAIN_MESH_BAKE_CHUNK_STRIDE)) - margin
+	var max_x := int(floor((half_map - 1.0) / TERRAIN_MESH_BAKE_CHUNK_STRIDE)) + margin
+	var min_z := int(floor(-half_map / TERRAIN_MESH_BAKE_CHUNK_STRIDE)) - margin
+	var max_z := int(floor((half_map - 1.0) / TERRAIN_MESH_BAKE_CHUNK_STRIDE)) + margin
+	var base_y := int(floor(terrain_mesh_bake_origin.y / TERRAIN_MESH_BAKE_CHUNK_STRIDE))
+
+	for x in range(min_x, max_x + 1):
+		for z in range(min_z, max_z + 1):
+			for dy in range(-vertical_radius, vertical_radius + 1):
+				coords.append(Vector3i(x, base_y + dy, z))
+	return coords
+
+
 func _terrain_mesh_bake_town_priority(town: Dictionary) -> float:
 	return (
 		float(town.get("building_count", 0)) * 1000.0
@@ -796,7 +888,12 @@ func _start_terrain_mesh_bake(world_path: String) -> void:
 	terrain_baker = WorldTerrainArtifactBaker.new()
 	terrain_baker.name = "WorldTerrainArtifactBaker"
 	terrain_baker.bake_radius_chunks = terrain_mesh_bake_radius_chunks
+	terrain_baker.vertical_layer_radius = terrain_mesh_bake_vertical_layer_radius
+	terrain_baker.use_disk_radius_shape = terrain_mesh_bake_use_disk_radius_shape
+	terrain_baker.prefer_offline_cpu_bake = terrain_mesh_bake_prefer_offline_cpu
+	terrain_baker.offline_cpu_chunks_per_frame = terrain_mesh_bake_offline_cpu_chunks_per_frame
 	terrain_baker.store_ready_mesh_resources = terrain_mesh_bake_store_ready_mesh_resources
+	terrain_baker.store_source_buffers = terrain_mesh_bake_store_source_buffers
 	terrain_baker.synchronous_disk_writes = terrain_mesh_bake_synchronous_disk_writes
 	add_child(terrain_baker)
 	terrain_baker.progress_changed.connect(_on_terrain_bake_progress)
@@ -806,28 +903,51 @@ func _start_terrain_mesh_bake(world_path: String) -> void:
 	var bake_origins: Array[Vector3] = _build_terrain_mesh_bake_origins()
 	if bake_origins.is_empty():
 		bake_origins.append(terrain_mesh_bake_origin)
+	var bake_coords: Array[Vector3i] = _build_terrain_mesh_full_map_bake_coords()
+	var coord_mode := "explicit_full_map" if not bake_coords.is_empty() else "origins_radius"
+	var target_label := "chunks" if not bake_coords.is_empty() else "origins"
+	var target_count := bake_coords.size() if not bake_coords.is_empty() else bake_origins.size()
 	_set_generation_status(
-		"Preparing terrain mesh artifact bake (%d origins)" % bake_origins.size(),
+		"Preparing terrain mesh artifact bake (%s, %d %s)" % [coord_mode, target_count, target_label],
 		0.0,
 		false,
 		{
 			"world_path": world_path,
 			"artifact_root": WorldMapData.get_world_terrain_artifact_root(world_path),
+			"coord_mode": coord_mode,
+			"explicit_coord_count": bake_coords.size(),
+			"full_map_enabled": terrain_mesh_bake_full_map_enabled,
+			"full_map_margin_chunks": terrain_mesh_bake_full_map_margin_chunks,
 			"origin_count": bake_origins.size(),
-			"radius_chunks": terrain_mesh_bake_radius_chunks
+			"radius_chunks": terrain_mesh_bake_radius_chunks,
+			"vertical_layer_radius": terrain_mesh_bake_vertical_layer_radius,
+			"use_disk_radius_shape": terrain_mesh_bake_use_disk_radius_shape,
+			"prefer_offline_cpu_bake": terrain_mesh_bake_prefer_offline_cpu,
+			"offline_cpu_chunks_per_frame": terrain_mesh_bake_offline_cpu_chunks_per_frame,
+			"store_ready_mesh_resources": terrain_mesh_bake_store_ready_mesh_resources,
+			"store_source_buffers": terrain_mesh_bake_store_source_buffers,
+			"synchronous_disk_writes": terrain_mesh_bake_synchronous_disk_writes
 		}
 	)
+	var bake_options := {
+		"bake_origins": bake_origins,
+		"include_primary_origin": false,
+		"store_ready_mesh_resources": terrain_mesh_bake_store_ready_mesh_resources,
+		"store_source_buffers": terrain_mesh_bake_store_source_buffers,
+		"synchronous_disk_writes": terrain_mesh_bake_synchronous_disk_writes,
+		"high_throughput_budgets": true,
+		"vertical_layer_radius": terrain_mesh_bake_vertical_layer_radius,
+		"use_disk_radius_shape": terrain_mesh_bake_use_disk_radius_shape,
+		"prefer_offline_cpu_bake": terrain_mesh_bake_prefer_offline_cpu,
+		"offline_cpu_chunks_per_frame": terrain_mesh_bake_offline_cpu_chunks_per_frame
+	}
+	if not bake_coords.is_empty():
+		bake_options["bake_coords"] = bake_coords
 	var started := terrain_baker.start_bake(
 		world_path,
 		bake_origins[0],
 		terrain_mesh_bake_radius_chunks,
-		{
-			"bake_origins": bake_origins,
-			"include_primary_origin": false,
-			"store_ready_mesh_resources": terrain_mesh_bake_store_ready_mesh_resources,
-			"synchronous_disk_writes": terrain_mesh_bake_synchronous_disk_writes,
-			"high_throughput_budgets": true
-		}
+		bake_options
 	)
 	if not started:
 		_on_terrain_bake_failed({
@@ -844,9 +964,12 @@ func _on_terrain_bake_progress(profile: Dictionary) -> void:
 	var artifact_count := int(profile.get("artifact_count", 0))
 	var expected_chunks := int(profile.get("expected_chunks", 0))
 	var origin_count := int(profile.get("origin_count", 1))
+	var coord_mode := str(profile.get("coord_mode", "origins_radius"))
+	var explicit_coord_count := int(profile.get("explicit_coord_count", 0))
+	var target_summary := "coords=%d" % explicit_coord_count if explicit_coord_count > 0 else "origins=%d" % origin_count
 	var artifact_root := str(profile.get("artifact_root", ""))
 	_set_generation_status(
-		"%s origins=%d chunks=%d/%d -> %s" % [stage.capitalize(), origin_count, artifact_count, expected_chunks, artifact_root],
+		"%s %s %s chunks=%d/%d -> %s" % [stage.capitalize(), coord_mode, target_summary, artifact_count, expected_chunks, artifact_root],
 		percent,
 		false,
 		profile
@@ -865,10 +988,14 @@ func _on_terrain_bake_completed(profile: Dictionary) -> void:
 	var artifact_root := str(profile.get("artifact_root", ""))
 	var artifact_count := int(profile.get("artifact_count", 0))
 	var origin_count := int(profile.get("origin_count", 1))
+	var coord_mode := str(profile.get("coord_mode", "origins_radius"))
+	var explicit_coord_count := int(profile.get("explicit_coord_count", 0))
+	var target_summary := "%d explicit coords" % explicit_coord_count if explicit_coord_count > 0 else "%d origins" % origin_count
 	var elapsed_ms := float(profile.get("elapsed_ms", 0.0))
-	progress_label.text = "Generated, saved, and baked %d terrain mesh artifacts across %d origins in %.0fms -> %s" % [
+	progress_label.text = "Generated, saved, and baked %d terrain mesh artifacts (%s, %s) in %.0fms -> %s" % [
 		artifact_count,
-		origin_count,
+		coord_mode,
+		target_summary,
 		elapsed_ms,
 		artifact_root
 	]
@@ -895,8 +1022,18 @@ func get_telemetry_snapshot() -> Dictionary:
 		"is_generating": is_generating,
 		"is_baking_terrain": is_baking_terrain,
 		"terrain_mesh_bake_enabled": terrain_mesh_bake_enabled,
+		"terrain_mesh_bake_on_save": terrain_mesh_bake_on_save,
+		"terrain_mesh_bake_auto_start_on_play": terrain_mesh_bake_auto_start_on_play,
+		"terrain_mesh_bake_block_play_until_ready": terrain_mesh_bake_block_play_until_ready,
 		"terrain_mesh_bake_radius_chunks": terrain_mesh_bake_radius_chunks,
+		"terrain_mesh_bake_vertical_layer_radius": terrain_mesh_bake_vertical_layer_radius,
+		"terrain_mesh_bake_use_disk_radius_shape": terrain_mesh_bake_use_disk_radius_shape,
+		"terrain_mesh_bake_full_map_enabled": terrain_mesh_bake_full_map_enabled,
+		"terrain_mesh_bake_full_map_margin_chunks": terrain_mesh_bake_full_map_margin_chunks,
+		"terrain_mesh_bake_prefer_offline_cpu": terrain_mesh_bake_prefer_offline_cpu,
+		"terrain_mesh_bake_offline_cpu_chunks_per_frame": terrain_mesh_bake_offline_cpu_chunks_per_frame,
 		"terrain_mesh_bake_store_ready_mesh_resources": terrain_mesh_bake_store_ready_mesh_resources,
+		"terrain_mesh_bake_store_source_buffers": terrain_mesh_bake_store_source_buffers,
 		"terrain_mesh_bake_synchronous_disk_writes": terrain_mesh_bake_synchronous_disk_writes,
 		"terrain_mesh_bake_include_origin": terrain_mesh_bake_include_origin,
 		"terrain_mesh_bake_include_town_centers": terrain_mesh_bake_include_town_centers,

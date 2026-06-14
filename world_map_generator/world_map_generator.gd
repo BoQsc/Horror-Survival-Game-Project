@@ -65,6 +65,8 @@ const PATH_ROAD_LINK_MAX_SLOPE: float = 0.16
 const PATH_FRONTAGE_MAX_RISE: float = 1.5
 const PATH_FRONTAGE_MAX_SLOPE: float = 0.12
 const LAKE_ROAD_BLOCK_THRESHOLD: int = 240
+const ROAD_SEGMENT_SPATIAL_CELL_SIZE: float = 96.0
+const TERRAIN_MODIFICATION_FORMAT_EXCAVATION_COLUMNS_V1: String = "excavation_columns_v1"
 
 # Progress callback
 var progress_callback: Callable = Callable()
@@ -73,13 +75,51 @@ var last_preview_generation_profile: Dictionary = {}
 var last_save_profile: Dictionary = {}
 var last_bake_proof_profile: Dictionary = {}
 var native_height_biome_enabled: bool = true
+var native_lake_generation_enabled: bool = true
+var native_road_rasterization_enabled: bool = true
+var native_road_footprint_enabled: bool = true
+var build_bake_proof_on_generate: bool = false
 var _native_helper: Object = null
+var _road_segment_spatial_index: Dictionary = {}
+var _prefab_catalog_cache: Dictionary = {}
+var _prefab_rotation_cache: Dictionary = {}
 
 # Noise instances
 var _height_noise: FastNoiseLite
 var _biome_noise: FastNoiseLite
 var _road_height_noise: FastNoiseLite
 var _lake_noise: FastNoiseLite
+
+
+func release_native_helper() -> void:
+	if _native_helper == null or not is_instance_valid(_native_helper):
+		_native_helper = null
+		return
+	if _native_helper is RefCounted:
+		_native_helper.unreference()
+		if is_instance_valid(_native_helper):
+			_native_helper.free()
+	else:
+		_native_helper.free()
+	_native_helper = null
+
+
+func release_runtime_resources() -> void:
+	release_native_helper()
+	PrefabGeometry.release_native_helper()
+	_road_segment_spatial_index.clear()
+	_prefab_catalog_cache.clear()
+	_prefab_rotation_cache.clear()
+	last_generation_profile.clear()
+	last_preview_generation_profile.clear()
+	last_save_profile.clear()
+	last_bake_proof_profile.clear()
+	progress_callback = Callable()
+	_height_noise = null
+	_biome_noise = null
+	_road_height_noise = null
+	_lake_noise = null
+
 
 func _init_noise() -> void:
 	_height_noise = FastNoiseLite.new()
@@ -125,6 +165,48 @@ func _native_height_biome_can_run_now() -> bool:
 	return native_height_biome_enabled and _native_height_biome_available()
 
 
+func _native_lake_generation_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("apply_world_map_lakes")
+
+
+func _native_lake_generation_can_run_now() -> bool:
+	return native_lake_generation_enabled and _native_lake_generation_available()
+
+
+func _native_road_rasterization_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("rasterize_world_map_segments")
+
+
+func _native_road_rasterization_can_run_now() -> bool:
+	return native_road_rasterization_enabled and _native_road_rasterization_available()
+
+
+func _native_road_footprint_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("footprint_hits_packed_world_map_road_segments")
+
+
+func _native_road_footprint_can_run_now() -> bool:
+	return native_road_footprint_enabled and _native_road_footprint_available()
+
+
+func _native_building_support_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("resolve_world_map_building_support")
+
+
+func _native_building_pad_flatten_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("flatten_world_map_building_pad")
+
+
+func _native_excavation_modifications_available() -> bool:
+	var native := _get_native_helper()
+	return native != null and native.has_method("build_world_map_excavation_modifications")
+
+
 func _generate_height_biome_bytes(map_size: int, max_h: float, report_progress: bool = false, world_size: int = -1) -> Dictionary:
 	if map_size <= 0 or max_h <= 0.0:
 		return {}
@@ -153,7 +235,8 @@ func _generate_height_biome_bytes(map_size: int, max_h: float, report_progress: 
 				"height_bytes": native_height_bytes,
 				"biome_bytes": native_biome_bytes,
 				"backend": "native",
-				"pixel_count": expected_size
+				"pixel_count": expected_size,
+				"worker_count": int(native_result.get("worker_count", 1))
 			}
 	return _generate_height_biome_bytes_gdscript(map_size, max_h, report_progress, sample_world_size)
 
@@ -351,6 +434,7 @@ func build_world_bake_proof(images: Dictionary, save_profile: Dictionary = {}) -
 	var image_signature := ""
 	if image_hash_ready:
 		image_signature = image_ctx.finish().hex_encode()
+	image_ctx = null
 	var image_hash_ms := float(Time.get_ticks_usec() - image_hash_start_us) / 1000.0
 
 	var metadata_hash_start_us := Time.get_ticks_usec()
@@ -362,6 +446,7 @@ func build_world_bake_proof(images: Dictionary, save_profile: Dictionary = {}) -
 		var canonical_meta: Variant = _canonicalize_for_hash(stable_meta)
 		metadata_ctx.update(JSON.stringify(canonical_meta).to_utf8_buffer())
 		metadata_signature = metadata_ctx.finish().hex_encode()
+	metadata_ctx = null
 	var metadata_hash_ms := float(Time.get_ticks_usec() - metadata_hash_start_us) / 1000.0
 
 	var content_signature := ""
@@ -370,6 +455,7 @@ func build_world_bake_proof(images: Dictionary, save_profile: Dictionary = {}) -
 		_hash_update_string(content_ctx, image_signature)
 		_hash_update_string(content_ctx, metadata_signature)
 		content_signature = content_ctx.finish().hex_encode()
+	content_ctx = null
 
 	var stage_total_ms := (
 		float(last_generation_profile.get("height_biome_ms", 0.0))
@@ -427,7 +513,31 @@ func generate_world() -> Dictionary:
 		"layout_mode": "grid" if use_grid_roads else "town",
 		"height_biome_backend": "",
 		"height_biome_ms": 0.0,
+		"height_biome_worker_count": 0,
+		"lakes_backend": "",
+		"lakes_worker_count": 0,
+		"lake_water_pixel_count": 0,
+		"lake_height_carve_count": 0,
+		"lake_road_blocked_pixel_count": 0,
+		"lake_near_road_blocked_pixel_count": 0,
 		"layout_ms": 0.0,
+		"town_place_ms": 0.0,
+		"road_build_ms": 0.0,
+		"road_rasterize_ms": 0.0,
+		"road_rasterize_backend": "",
+		"road_rasterize_segment_count": 0,
+		"road_rasterize_touched_pixel_count": 0,
+		"road_spatial_index_ms": 0.0,
+		"road_spatial_index_cell_count": 0,
+		"road_spatial_index_segment_refs": 0,
+		"prefab_catalog_cache_ms": 0.0,
+		"prefab_catalog_entry_count": 0,
+		"prefab_rotation_cache_entry_count": 0,
+		"town_buildings_ms": 0.0,
+		"path_rasterize_ms": 0.0,
+		"path_rasterize_backend": "",
+		"path_rasterize_segment_count": 0,
+		"path_rasterize_touched_pixel_count": 0,
 		"lakes_ms": 0.0,
 		"finalize_ms": 0.0,
 		"total_ms": 0.0,
@@ -436,6 +546,8 @@ func generate_world() -> Dictionary:
 		"building_count": 0,
 		"path_segment_count": 0,
 		"terrain_modification_count": 0,
+		"terrain_modification_storage_entry_count": 0,
+		"terrain_modification_column_value_count": 0,
 	}
 	if terrain_height > 15.0:
 		terrain_height = 15.0
@@ -458,6 +570,7 @@ func generate_world() -> Dictionary:
 	var height_bytes: PackedByteArray = height_biome_result.get("height_bytes", PackedByteArray())
 	var biome_bytes: PackedByteArray = height_biome_result.get("biome_bytes", PackedByteArray())
 	generation_profile["height_biome_backend"] = str(height_biome_result.get("backend", "unknown"))
+	generation_profile["height_biome_worker_count"] = int(height_biome_result.get("worker_count", 0))
 	generation_profile["height_biome_ms"] = float(Time.get_ticks_usec() - height_biome_start_us) / 1000.0
 
 	# Branch: TOWN mode or GRID mode
@@ -465,13 +578,37 @@ func generate_world() -> Dictionary:
 	var towns: Array = []
 	var road_segments: Array = []  # [{from: Vector2, to: Vector2}]
 	var path_segments: Array = []
-	var terrain_modifications: Array = []
+	var terrain_modifications: Array = _make_compact_terrain_modifications()
+	_road_segment_spatial_index = {}
+	_prefab_catalog_cache = {}
+	_prefab_rotation_cache = {}
 	var bldg_stats = {
 		"attempted": 0, "placed": 0,
 		"rejected_chance": 0, "rejected_bounds": 0, "rejected_water": 0,
 		"rejected_slope": 0, "rejected_forest": 0, "rejected_height": 0,
 		"rejected_road": 0, "rejected_float": 0, "rejected_embed": 0,
-		"rejected_cover": 0
+		"rejected_cover": 0,
+		"support_calls": 0,
+		"support_total_us": 0,
+		"support_sample_us": 0,
+		"support_road_us": 0,
+		"support_road_native_calls": 0,
+		"support_road_gdscript_calls": 0,
+		"support_road_checked_segments": 0,
+		"support_foundation_us": 0,
+		"support_native_calls": 0,
+		"support_gdscript_calls": 0,
+		"append_building_us": 0,
+		"building_connection_us": 0,
+		"building_flatten_us": 0,
+		"building_flatten_native_calls": 0,
+		"building_flatten_gdscript_calls": 0,
+		"building_flatten_changed_pixels": 0,
+		"building_door_path_us": 0,
+		"building_excavation_us": 0,
+		"building_excavation_compact_calls": 0,
+		"building_excavation_native_calls": 0,
+		"building_excavation_gdscript_calls": 0
 	}
 	
 	var layout_start_us := Time.get_ticks_usec()
@@ -483,31 +620,109 @@ func generate_world() -> Dictionary:
 		# TOWN MODE
 		if progress_callback.is_valid():
 			progress_callback.call(30.0, "Placing towns")
+		var town_place_start_us := Time.get_ticks_usec()
 		towns = _place_towns(height_bytes, water_bytes, max_h, half)
+		generation_profile["town_place_ms"] = float(Time.get_ticks_usec() - town_place_start_us) / 1000.0
 		var catalog = _build_prefab_catalog(_get_available_prefabs())
+		var catalog_cache_start_us := Time.get_ticks_usec()
+		_prepare_prefab_catalog_cache(catalog)
+		generation_profile["prefab_catalog_cache_ms"] = float(Time.get_ticks_usec() - catalog_cache_start_us) / 1000.0
+		generation_profile["prefab_catalog_entry_count"] = int(_prefab_catalog_cache.get("catalog_size", 0))
+		generation_profile["prefab_rotation_cache_entry_count"] = _prefab_rotation_cache.size()
 		
 		if progress_callback.is_valid():
 			progress_callback.call(40.0, "Building road network")
+		var road_build_start_us := Time.get_ticks_usec()
 		road_segments = _build_settlement_roads(towns, catalog)
-		_rasterize_roads(road_segments, height_bytes, biome_bytes, road_bytes, max_h, half, road_width)
+		generation_profile["road_build_ms"] = float(Time.get_ticks_usec() - road_build_start_us) / 1000.0
+		var road_rasterize_start_us := Time.get_ticks_usec()
+		var road_rasterize_result := _rasterize_world_map_segments(road_segments, height_bytes, biome_bytes, road_bytes, max_h, road_width, false)
+		if road_rasterize_result.get("height_bytes", null) is PackedByteArray:
+			height_bytes = road_rasterize_result.get("height_bytes", height_bytes)
+		if road_rasterize_result.get("biome_bytes", null) is PackedByteArray:
+			biome_bytes = road_rasterize_result.get("biome_bytes", biome_bytes)
+		if road_rasterize_result.get("road_bytes", null) is PackedByteArray:
+			road_bytes = road_rasterize_result.get("road_bytes", road_bytes)
+		generation_profile["road_rasterize_ms"] = float(Time.get_ticks_usec() - road_rasterize_start_us) / 1000.0
+		generation_profile["road_rasterize_backend"] = str(road_rasterize_result.get("backend", "unknown"))
+		generation_profile["road_rasterize_segment_count"] = int(road_rasterize_result.get("segment_count", 0))
+		generation_profile["road_rasterize_touched_pixel_count"] = int(road_rasterize_result.get("touched_pixel_count", 0))
+		var road_spatial_index_start_us := Time.get_ticks_usec()
+		_road_segment_spatial_index = _build_road_segment_spatial_index(road_segments)
+		generation_profile["road_spatial_index_ms"] = float(Time.get_ticks_usec() - road_spatial_index_start_us) / 1000.0
+		generation_profile["road_spatial_index_cell_count"] = int(_road_segment_spatial_index.get("cell_count", 0))
+		generation_profile["road_spatial_index_segment_refs"] = int(_road_segment_spatial_index.get("segment_ref_count", 0))
 		
 		if progress_callback.is_valid():
 			progress_callback.call(55.0, "Placing buildings in towns")
+		var town_buildings_start_us := Time.get_ticks_usec()
 		_generate_town_buildings(towns, road_segments, path_segments, height_bytes, water_bytes, road_bytes, catalog, max_h, half, buildings, terrain_modifications, bldg_stats)
+		generation_profile["town_buildings_ms"] = float(Time.get_ticks_usec() - town_buildings_start_us) / 1000.0
 		if not path_segments.is_empty():
-			_rasterize_paths(path_segments, height_bytes, biome_bytes, road_bytes, max_h, half)
+			var path_rasterize_start_us := Time.get_ticks_usec()
+			var path_rasterize_result := _rasterize_world_map_segments(path_segments, height_bytes, biome_bytes, road_bytes, max_h, building_path_width, true)
+			if path_rasterize_result.get("height_bytes", null) is PackedByteArray:
+				height_bytes = path_rasterize_result.get("height_bytes", height_bytes)
+			if path_rasterize_result.get("biome_bytes", null) is PackedByteArray:
+				biome_bytes = path_rasterize_result.get("biome_bytes", biome_bytes)
+			if path_rasterize_result.get("road_bytes", null) is PackedByteArray:
+				road_bytes = path_rasterize_result.get("road_bytes", road_bytes)
+			generation_profile["path_rasterize_ms"] = float(Time.get_ticks_usec() - path_rasterize_start_us) / 1000.0
+			generation_profile["path_rasterize_backend"] = str(path_rasterize_result.get("backend", "unknown"))
+			generation_profile["path_rasterize_segment_count"] = int(path_rasterize_result.get("segment_count", 0))
+			generation_profile["path_rasterize_touched_pixel_count"] = int(path_rasterize_result.get("touched_pixel_count", 0))
 	generation_profile["layout_ms"] = float(Time.get_ticks_usec() - layout_start_us) / 1000.0
 	generation_profile["town_count"] = towns.size()
 	generation_profile["road_segment_count"] = road_segments.size()
 	generation_profile["building_count"] = buildings.size()
 	generation_profile["path_segment_count"] = path_segments.size()
-	generation_profile["terrain_modification_count"] = terrain_modifications.size()
+	generation_profile["terrain_modification_count"] = _terrain_modification_count(terrain_modifications)
+	generation_profile["terrain_modification_format"] = str(_get_compact_excavation_payload(terrain_modifications).get("format", "legacy"))
+	generation_profile["terrain_modification_storage_entry_count"] = terrain_modifications.size()
+	var compact_terrain_modifications := _get_compact_excavation_payload(terrain_modifications)
+	var compact_column_value_count := 0
+	if not compact_terrain_modifications.is_empty():
+		var compact_columns: Array = compact_terrain_modifications.get("columns", [])
+		compact_column_value_count = compact_columns.size()
+	generation_profile["terrain_modification_column_value_count"] = compact_column_value_count
+	generation_profile["building_attempt_count"] = int(bldg_stats.get("attempted", 0))
+	generation_profile["building_support_calls"] = int(bldg_stats.get("support_calls", 0))
+	generation_profile["building_support_ms"] = float(bldg_stats.get("support_total_us", 0)) / 1000.0
+	generation_profile["building_support_sample_ms"] = float(bldg_stats.get("support_sample_us", 0)) / 1000.0
+	generation_profile["building_support_road_ms"] = float(bldg_stats.get("support_road_us", 0)) / 1000.0
+	generation_profile["building_support_road_native_calls"] = int(bldg_stats.get("support_road_native_calls", 0))
+	generation_profile["building_support_road_gdscript_calls"] = int(bldg_stats.get("support_road_gdscript_calls", 0))
+	generation_profile["building_support_road_checked_segments"] = int(bldg_stats.get("support_road_checked_segments", 0))
+	generation_profile["building_support_foundation_ms"] = float(bldg_stats.get("support_foundation_us", 0)) / 1000.0
+	generation_profile["building_support_native_calls"] = int(bldg_stats.get("support_native_calls", 0))
+	generation_profile["building_support_gdscript_calls"] = int(bldg_stats.get("support_gdscript_calls", 0))
+	generation_profile["building_append_ms"] = float(bldg_stats.get("append_building_us", 0)) / 1000.0
+	generation_profile["building_connection_ms"] = float(bldg_stats.get("building_connection_us", 0)) / 1000.0
+	generation_profile["building_flatten_ms"] = float(bldg_stats.get("building_flatten_us", 0)) / 1000.0
+	generation_profile["building_flatten_native_calls"] = int(bldg_stats.get("building_flatten_native_calls", 0))
+	generation_profile["building_flatten_gdscript_calls"] = int(bldg_stats.get("building_flatten_gdscript_calls", 0))
+	generation_profile["building_flatten_changed_pixels"] = int(bldg_stats.get("building_flatten_changed_pixels", 0))
+	generation_profile["building_door_path_ms"] = float(bldg_stats.get("building_door_path_us", 0)) / 1000.0
+	generation_profile["building_excavation_ms"] = float(bldg_stats.get("building_excavation_us", 0)) / 1000.0
+	generation_profile["building_excavation_compact_calls"] = int(bldg_stats.get("building_excavation_compact_calls", 0))
+	generation_profile["building_excavation_native_calls"] = int(bldg_stats.get("building_excavation_native_calls", 0))
+	generation_profile["building_excavation_gdscript_calls"] = int(bldg_stats.get("building_excavation_gdscript_calls", 0))
 	
 	# PASS: Lakes
 	var lakes_start_us := Time.get_ticks_usec()
 	if progress_callback.is_valid():
 		progress_callback.call(80.0, "Generating lakes")
-	_generate_lakes(water_bytes, road_bytes, height_bytes, half, max_h)
+	var lakes_result := _generate_lakes(water_bytes, road_bytes, height_bytes, half, max_h)
+	if lakes_result.get("water_bytes", null) is PackedByteArray:
+		water_bytes = lakes_result.get("water_bytes", water_bytes)
+	if lakes_result.get("height_bytes", null) is PackedByteArray:
+		height_bytes = lakes_result.get("height_bytes", height_bytes)
+	generation_profile["lakes_backend"] = str(lakes_result.get("backend", "unknown"))
+	generation_profile["lakes_worker_count"] = int(lakes_result.get("worker_count", 0))
+	generation_profile["lake_water_pixel_count"] = int(lakes_result.get("water_pixel_count", 0))
+	generation_profile["lake_height_carve_count"] = int(lakes_result.get("height_carve_count", 0))
+	generation_profile["lake_road_blocked_pixel_count"] = int(lakes_result.get("road_blocked_pixel_count", 0))
+	generation_profile["lake_near_road_blocked_pixel_count"] = int(lakes_result.get("near_road_blocked_pixel_count", 0))
 	generation_profile["lakes_ms"] = float(Time.get_ticks_usec() - lakes_start_us) / 1000.0
 	
 	# PASS: Building footprint map
@@ -526,7 +741,7 @@ func generate_world() -> Dictionary:
 		)
 		if footprint.x <= 0 or footprint.y <= 0:
 			var rot = int(bldg.get("rotation", 0))
-			footprint = PrefabGeometry.get_rotated_surface_footprint(str(bldg.get("type", "small_house")), rot)
+			footprint = _get_prefab_surface_footprint(str(bldg.get("type", "small_house")), rot)
 		for fx in range(footprint.x):
 			for fz in range(footprint.y):
 				var fpx = px + fx
@@ -554,8 +769,18 @@ func generate_world() -> Dictionary:
 		"terrain_modifications": terrain_modifications,
 		"generation_profile": generation_profile.duplicate(true)
 	}
-	last_bake_proof_profile = build_world_bake_proof(result)
-	result["bake_proof"] = last_bake_proof_profile.duplicate(true)
+	if build_bake_proof_on_generate:
+		last_bake_proof_profile = build_world_bake_proof(result)
+		result["bake_proof"] = last_bake_proof_profile.duplicate(true)
+	else:
+		last_bake_proof_profile = {
+			"available": false,
+			"reason": "disabled_on_generate",
+			"world_seed": world_seed,
+			"map_size": MAP_SIZE,
+			"layout_mode": "grid" if use_grid_roads else "town",
+			"generation_total_ms": float(last_generation_profile.get("total_ms", 0.0))
+		}
 	return result
 
 # ============================================================================
@@ -809,8 +1034,8 @@ func _uf_find(parent: Array, x: int) -> int:
 func _get_civic_parcel_requirements(catalog: Dictionary) -> Vector2:
 	var max_surface_footprint = Vector2i.ZERO
 	for prefab_name in catalog:
-		var surface_fp := PrefabGeometry.get_rotated_surface_footprint(prefab_name, 1)
-		var reservation_fp := PrefabGeometry.get_rotated_reservation_footprint(prefab_name, 1)
+		var surface_fp := _get_prefab_surface_footprint(prefab_name, 1)
+		var reservation_fp := _get_prefab_reservation_footprint_rotated(prefab_name, 1)
 		max_surface_footprint.x = maxi(max_surface_footprint.x, maxi(surface_fp.x, reservation_fp.x))
 		max_surface_footprint.y = maxi(max_surface_footprint.y, maxi(surface_fp.y, reservation_fp.y))
 	if max_surface_footprint == Vector2i.ZERO:
@@ -1359,10 +1584,56 @@ func _generate_town_internal_roads(town: Dictionary, catalog: Dictionary) -> Arr
 # ROAD RASTERIZATION
 # ============================================================================
 
+func _rasterize_world_map_segments(segments: Array, height_bytes: PackedByteArray, biome_bytes: PackedByteArray,
+		road_bytes: PackedByteArray, max_h: float, default_width: float, path_mode: bool) -> Dictionary:
+	if segments.is_empty():
+		return {
+			"backend": "none",
+			"height_bytes": height_bytes,
+			"biome_bytes": biome_bytes,
+			"road_bytes": road_bytes,
+			"segment_count": 0,
+			"touched_pixel_count": 0
+		}
+	var native := _get_native_helper() if _native_road_rasterization_can_run_now() else null
+	if native:
+		var native_result: Dictionary = native.rasterize_world_map_segments(
+			segments,
+			height_bytes,
+			biome_bytes,
+			road_bytes,
+			MAP_SIZE,
+			world_seed,
+			ROAD_BLEND_MARGIN,
+			default_width,
+			max_h,
+			MaterialRegistry.ROAD,
+			path_mode
+		)
+		var native_height: PackedByteArray = native_result.get("height_bytes", PackedByteArray())
+		var native_biome: PackedByteArray = native_result.get("biome_bytes", PackedByteArray())
+		var native_road: PackedByteArray = native_result.get("road_bytes", PackedByteArray())
+		if native_height.size() == height_bytes.size() and native_biome.size() == biome_bytes.size() and native_road.size() == road_bytes.size():
+			native_result["backend"] = "native"
+			return native_result
+
+	var fallback_half := int(MAP_SIZE / 2)
+	var fallback_result := _rasterize_paths(segments, height_bytes, biome_bytes, road_bytes, max_h, fallback_half) if path_mode else _rasterize_roads(segments, height_bytes, biome_bytes, road_bytes, max_h, fallback_half, default_width)
+	fallback_result["backend"] = "gdscript"
+	fallback_result["height_bytes"] = height_bytes
+	fallback_result["biome_bytes"] = biome_bytes
+	fallback_result["road_bytes"] = road_bytes
+	return fallback_result
+
+
 func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_bytes: PackedByteArray,
-		road_bytes: PackedByteArray, max_h: float, half: int, r_width: float) -> void:
+		road_bytes: PackedByteArray, max_h: float, half: int, r_width: float) -> Dictionary:
 	var half_w = r_width * 0.5
 	var flatten_w = r_width + ROAD_BLEND_MARGIN  # Match the same shoulder width used for building clearance
+	var valid_segments := 0
+	var touched_pixels := 0
+	var surface_pixels := 0
+	var blend_pixels := 0
 	
 	for seg in segments:
 		var from_v: Vector2 = seg["from"]
@@ -1371,6 +1642,7 @@ func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_byte
 		var seg_len = from_v.distance_to(to_v)
 		if seg_len < 1.0:
 			continue
+		valid_segments += 1
 		var dir = (to_v - from_v) / seg_len  # Normalized direction
 		
 		# Bounding box of segment, expanded by flatten_w
@@ -1400,6 +1672,7 @@ func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_byte
 				
 				if dist > flatten_local:
 					continue
+				touched_pixels += 1
 				
 				# Road height at the closest point on the segment
 				var r_height = _get_road_height_at(closest.x, closest.y)
@@ -1414,15 +1687,28 @@ func _rasterize_roads(segments: Array, height_bytes: PackedByteArray, biome_byte
 					road_bytes[ridx + 1] = r_height_byte
 					biome_bytes[idx] = MaterialRegistry.ROAD
 					height_bytes[idx] = h_byte
+					surface_pixels += 1
 				else:
 					# Blend zone — smooth lerp from road height to terrain height
 					var blend_t = clampf((dist - half_w_local) / (flatten_local - half_w_local), 0.0, 1.0)
 					var orig_h = float(height_bytes[idx]) / 255.0 * max_h
 					var blended = lerp(r_height, orig_h, blend_t)
 					height_bytes[idx] = _encode_height_byte(blended, max_h)
+					blend_pixels += 1
+
+	return {
+		"segment_count": valid_segments,
+		"touched_pixel_count": touched_pixels,
+		"surface_pixel_count": surface_pixels,
+		"blend_pixel_count": blend_pixels
+	}
 
 func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_bytes: PackedByteArray,
-		road_bytes: PackedByteArray, max_h: float, half: int) -> void:
+		road_bytes: PackedByteArray, max_h: float, half: int) -> Dictionary:
+	var valid_segments := 0
+	var touched_pixels := 0
+	var surface_pixels := 0
+	var blend_pixels := 0
 	for seg in segments:
 		var from_v: Vector2 = seg["from"]
 		var to_v: Vector2 = seg["to"]
@@ -1432,6 +1718,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 		var seg_len = from_v.distance_to(to_v)
 		if seg_len < 0.5:
 			continue
+		valid_segments += 1
 		var dir = (to_v - from_v) / seg_len
 		var half_w_local = seg_width * 0.5
 		var rise = abs(to_y - from_y)
@@ -1451,6 +1738,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 				var dist = point.distance_to(closest)
 				if dist > flatten_local:
 					continue
+				touched_pixels += 1
 				var path_u = t / seg_len
 				var eased_u = path_u * path_u * (3.0 - 2.0 * path_u)
 				var idx = pz * MAP_SIZE + px
@@ -1463,6 +1751,7 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 					road_bytes[ridx + 1] = max(road_bytes[ridx + 1], r_height_byte)
 					biome_bytes[idx] = MaterialRegistry.ROAD
 					height_bytes[idx] = h_byte
+					surface_pixels += 1
 				else:
 					var blend_t = clampf((dist - half_w_local) / max(0.001, flatten_local - half_w_local), 0.0, 1.0)
 					var smooth_t = blend_t * blend_t * (3.0 - 2.0 * blend_t)
@@ -1470,6 +1759,14 @@ func _rasterize_paths(segments: Array, height_bytes: PackedByteArray, biome_byte
 					var orig_h = float(height_bytes[idx]) / 255.0 * max_h
 					var blended = lerp(path_y, orig_h, smooth_t)
 					height_bytes[idx] = _encode_height_byte(blended, max_h)
+					blend_pixels += 1
+
+	return {
+		"segment_count": valid_segments,
+		"touched_pixel_count": touched_pixels,
+		"surface_pixel_count": surface_pixels,
+		"blend_pixel_count": blend_pixels
+	}
 
 func _get_road_height_at(wx: float, wz: float) -> float:
 	# Same formula as chunk_manager gen_density shader
@@ -1492,17 +1789,16 @@ func _get_road_height_at(wx: float, wz: float) -> float:
 
 ## Get the footprint (width, depth) of a prefab by name. Reads JSON if available.
 func _get_prefab_footprint(prefab_name: String) -> Vector2i:
-	return PrefabGeometry.get_rotated_surface_footprint(prefab_name, 0)
+	return _get_prefab_surface_footprint(prefab_name, 0)
 
 func _get_prefab_reservation_footprint(prefab_name: String) -> Vector2i:
-	return PrefabGeometry.get_rotated_reservation_footprint(prefab_name, 0)
+	return _get_prefab_reservation_footprint_rotated(prefab_name, 0)
 
 func _get_prefab_reservation_rect(prefab_name: String, rotation: int, surface_x: float, surface_z: float) -> Dictionary:
-	var surface_bounds := PrefabGeometry.get_rotated_surface_bounds(prefab_name, rotation)
-	var reservation_bounds := PrefabGeometry.get_rotated_reservation_bounds(prefab_name, rotation)
-	var surface_min: Vector2i = surface_bounds.get("min", Vector2i.ZERO)
-	var reservation_min: Vector2i = reservation_bounds.get("min", Vector2i.ZERO)
-	var reservation_fp: Vector2i = reservation_bounds.get("footprint", Vector2i.ONE)
+	var info := _get_prefab_rotation_info(prefab_name, rotation)
+	var surface_min: Vector2i = info.get("surface_min", Vector2i.ZERO)
+	var reservation_min: Vector2i = info.get("reservation_min", Vector2i.ZERO)
+	var reservation_fp: Vector2i = info.get("reservation_footprint", Vector2i.ONE)
 	return {
 		"x": surface_x + float(reservation_min.x - surface_min.x),
 		"z": surface_z + float(reservation_min.y - surface_min.y),
@@ -1682,13 +1978,61 @@ func _append_path_segment(path_segments: Array, from_v: Vector2, to_v: Vector2, 
 		"to_y": to_y
 	})
 
+
+func _make_compact_terrain_modifications() -> Array:
+	return [{
+		"format": TERRAIN_MODIFICATION_FORMAT_EXCAVATION_COLUMNS_V1,
+		"shape": 2,
+		"radius": 0.6,
+		"value": 10.0,
+		"layer": 0,
+		"material_id": -1,
+		"columns": []
+	}]
+
+
+func _get_compact_excavation_payload(terrain_modifications: Array) -> Dictionary:
+	if terrain_modifications.size() != 1:
+		return {}
+	var payload_variant = terrain_modifications[0]
+	if not (payload_variant is Dictionary):
+		return {}
+	var payload: Dictionary = payload_variant
+	if str(payload.get("format", "")) != TERRAIN_MODIFICATION_FORMAT_EXCAVATION_COLUMNS_V1:
+		return {}
+	return payload
+
+
+func _terrain_modification_count(terrain_modifications: Array) -> int:
+	var compact := _get_compact_excavation_payload(terrain_modifications)
+	if compact.is_empty():
+		return terrain_modifications.size()
+	var columns: Array = compact.get("columns", [])
+	return int(columns.size() / 4)
+
+
+func _append_compact_excavation_column(terrain_modifications: Array, world_x: int, world_z: int, world_y_min: float, world_y_max: float) -> bool:
+	var compact := _get_compact_excavation_payload(terrain_modifications)
+	if compact.is_empty():
+		return false
+	var columns: Array = compact.get("columns", [])
+	columns.append(world_x)
+	columns.append(world_z)
+	columns.append(world_y_min)
+	columns.append(world_y_max)
+	compact["columns"] = columns
+	terrain_modifications[0] = compact
+	return true
+
+
 func _append_door_path_segment(path_segments: Array, frontage_target: Vector2, road_target: Vector2, road_is_vertical: bool, prefab_name: String,
 		spawn_origin: Vector3, rotation: int, bldg_x: float, bldg_z: float, footprint: Vector2i, road_y: float,
 		bldg_y: float, height_bytes: PackedByteArray, max_h: float, half: int) -> void:
-	var door_center_var = PrefabGeometry.get_primary_door_world_center(prefab_name, spawn_origin, rotation)
-	if door_center_var == null:
+	var prefab_info := _get_prefab_rotation_info(prefab_name, rotation)
+	if not bool(prefab_info.get("has_door_offset", false)):
 		return
-	var door_center: Vector3 = door_center_var
+	var door_offset: Vector3 = prefab_info.get("door_offset", Vector3.ZERO)
+	var door_center := spawn_origin + door_offset
 	var door_target = _clip_segment_to_footprint_edge(frontage_target, Vector2(door_center.x, door_center.z), bldg_x, bldg_z, footprint)
 	var door_to_frontage = frontage_target - door_target
 	if door_to_frontage.length() < 0.5 and road_target.distance_to(frontage_target) < 0.75:
@@ -1716,8 +2060,42 @@ func _append_door_path_segment(path_segments: Array, frontage_target: Vector2, r
 	_append_path_segment(path_segments, frontage_target, road_bend, building_path_width, frontage_y, connector_mid_y)
 	_append_path_segment(path_segments, road_bend, road_target, building_path_width, connector_mid_y, road_y)
 
-func _append_baked_excavation_modifications(terrain_modifications: Array, prefab_name: String, spawn_origin: Vector3, rotation: int) -> void:
-	var segments := PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation)
+func _append_baked_excavation_modifications(terrain_modifications: Array, prefab_name: String, spawn_origin: Vector3, rotation: int) -> Dictionary:
+	var segments: Array = _get_prefab_rotation_info(prefab_name, rotation).get("excavation_segments", [])
+	var compact_count := 0
+	var compact := _get_compact_excavation_payload(terrain_modifications)
+	if not compact.is_empty():
+		var columns: Array = compact.get("columns", [])
+		var base_x := int(floor(spawn_origin.x))
+		var base_z := int(floor(spawn_origin.z))
+		for segment in segments:
+			var world_y_min := spawn_origin.y + float(segment.get("min_y", 0))
+			var world_y_max := spawn_origin.y + float(segment.get("max_y", -1)) + 1.0
+			if world_y_max <= world_y_min:
+				continue
+			var world_x := base_x + int(segment.get("x", 0))
+			var world_z := base_z + int(segment.get("z", 0))
+			columns.append(world_x)
+			columns.append(world_z)
+			columns.append(world_y_min)
+			columns.append(world_y_max)
+			compact_count += 1
+		compact["columns"] = columns
+		terrain_modifications[0] = compact
+		return {
+			"backend": "compact",
+			"count": compact_count
+		}
+	var native := _get_native_helper() if _native_excavation_modifications_available() else null
+	if native:
+		var native_modifications: Array = native.build_world_map_excavation_modifications(segments, spawn_origin)
+		if native_modifications.size() > 0 or segments.is_empty():
+			terrain_modifications.append_array(native_modifications)
+			return {
+				"backend": "native",
+				"count": native_modifications.size()
+			}
+	var count := 0
 	for segment in segments:
 		var world_y_min := spawn_origin.y + float(segment.get("min_y", 0))
 		var world_y_max := spawn_origin.y + float(segment.get("max_y", -1)) + 1.0
@@ -1739,23 +2117,53 @@ func _append_baked_excavation_modifications(terrain_modifications: Array, prefab
 			"y_max": world_y_max,
 			"material_id": -1
 		})
+		count += 1
+	return {
+		"backend": "gdscript",
+		"count": count
+	}
 
 func _append_baked_building(buildings: Array, terrain_modifications: Array, path_segments: Array, height_bytes: PackedByteArray, max_h: float, half: int,
 		road_segments: Array, prefab_name: String, bldg_x: float, bldg_y: float, bldg_z: float, footprint: Vector2i,
-		rot: int, road_target: Vector2, district: String, road_kind: String, support_info: Dictionary = {}) -> void:
-	var spawn_origin = PrefabGeometry.get_spawn_origin_for_surface_min(
+		rot: int, road_target: Vector2, district: String, road_kind: String, support_info: Dictionary = {}, bldg_stats: Dictionary = {}) -> void:
+	var append_start_us := Time.get_ticks_usec()
+	var spawn_origin = _get_spawn_origin_for_surface_min_cached(
 		prefab_name,
 		Vector3(bldg_x, bldg_y, bldg_z),
 		rot
 	)
 	var protected_excavation_columns := _get_off_footprint_excavation_columns(prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint)
+	var connection_start_us := Time.get_ticks_usec()
 	var connection = _find_best_road_connection(road_target, road_segments, road_kind)
+	if not bldg_stats.is_empty():
+		bldg_stats.building_connection_us += Time.get_ticks_usec() - connection_start_us
 	var road_point: Vector2 = connection.get("point", road_target)
 	var road_is_vertical: bool = bool(connection.get("is_vertical", false))
 	var road_y = floor(_get_road_height_at(road_point.x, road_point.y))
-	_flatten_building_pad(height_bytes, bldg_x, bldg_z, footprint, bldg_y, max_h, half, support_info, protected_excavation_columns)
+	var flatten_start_us := Time.get_ticks_usec()
+	var flatten_result := _flatten_building_pad(height_bytes, bldg_x, bldg_z, footprint, bldg_y, max_h, half, support_info, protected_excavation_columns)
+	if not bldg_stats.is_empty():
+		bldg_stats.building_flatten_us += Time.get_ticks_usec() - flatten_start_us
+		if str(flatten_result.get("backend", "")) == "native":
+			bldg_stats.building_flatten_native_calls += 1
+		else:
+			bldg_stats.building_flatten_gdscript_calls += 1
+		bldg_stats.building_flatten_changed_pixels += int(flatten_result.get("changed_pixel_count", 0))
+	var door_path_start_us := Time.get_ticks_usec()
 	_append_door_path_segment(path_segments, road_target, road_point, road_is_vertical, prefab_name, spawn_origin, rot, bldg_x, bldg_z, footprint, road_y, bldg_y, height_bytes, max_h, half)
-	_append_baked_excavation_modifications(terrain_modifications, prefab_name, spawn_origin, rot)
+	if not bldg_stats.is_empty():
+		bldg_stats.building_door_path_us += Time.get_ticks_usec() - door_path_start_us
+	var excavation_start_us := Time.get_ticks_usec()
+	var excavation_result := _append_baked_excavation_modifications(terrain_modifications, prefab_name, spawn_origin, rot)
+	if not bldg_stats.is_empty():
+		bldg_stats.building_excavation_us += Time.get_ticks_usec() - excavation_start_us
+		var excavation_backend := str(excavation_result.get("backend", ""))
+		if excavation_backend == "compact":
+			bldg_stats.building_excavation_compact_calls += 1
+		elif excavation_backend == "native":
+			bldg_stats.building_excavation_native_calls += 1
+		else:
+			bldg_stats.building_excavation_gdscript_calls += 1
 	buildings.append({
 		"x": bldg_x, "y": bldg_y, "z": bldg_z,
 		"anchor_mode": "occupied_min",
@@ -1770,6 +2178,8 @@ func _append_baked_building(buildings: Array, terrain_modifications: Array, path
 		"district": district,
 		"road_kind": road_kind
 	})
+	if not bldg_stats.is_empty():
+		bldg_stats.append_building_us += Time.get_ticks_usec() - append_start_us
 
 func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferred_prefabs: Array, road_segments: Array, path_segments: Array, height_bytes: PackedByteArray, water_bytes: PackedByteArray, max_h: float, half: int, buildings: Array, terrain_modifications: Array, bldg_stats: Dictionary, occupied: Array, desired_count: int) -> int:
 	var center = Vector2(float(town.x), float(town.z))
@@ -1790,7 +2200,7 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 		var rot = _rotation_for_frontage_side(side)
 		for prefab_name in preferred_prefabs:
 			bldg_stats.attempted += 1
-			var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
+			var footprint = _get_prefab_surface_footprint(prefab_name, rot)
 			var bldg_x = center.x - float(footprint.x) * 0.5
 			var bldg_z = center.y - float(footprint.y) * 0.5
 			match side:
@@ -1824,7 +2234,7 @@ func _place_forced_core_landmarks(town: Dictionary, layout: Dictionary, preferre
 			placed += 1
 			_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 				prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(slot.road_target),
-				"core_landmark", "main", support)
+				"core_landmark", "main", support, bldg_stats)
 			break
 	return placed
 
@@ -1845,7 +2255,7 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 			if placed > 0 and used_prefabs.has(prefab_name) and preferred_prefabs.size() > 1:
 				continue
 			bldg_stats.attempted += 1
-			var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
+			var footprint = _get_prefab_surface_footprint(prefab_name, rot)
 			var fitted_positions = _fit_footprint_variants_in_parcel(parcel, footprint)
 			if fitted_positions.is_empty():
 				continue
@@ -1874,7 +2284,7 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 				used_prefabs[prefab_name] = true
 				_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 					prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(parcel.frontage_target),
-					"core_landmark", str(parcel.get("road_kind", "main")), support)
+					"core_landmark", str(parcel.get("road_kind", "main")), support, bldg_stats)
 				break
 			if used_parcels.has(parcel_idx):
 				break
@@ -1882,15 +2292,18 @@ func _place_landmarks_from_parcel_candidates(parcel_candidates: Array, preferred
 
 func _get_town_required_prefabs(catalog: Dictionary) -> Array[String]:
 	var entries: Array = []
-	for prefab_name in catalog:
-		entries.append(catalog[prefab_name])
-	entries.sort_custom(func(a, b):
-		var area_a := int(a.get("area", 0))
-		var area_b := int(b.get("area", 0))
-		if area_a == area_b:
-			return str(a.get("name", "")) < str(b.get("name", ""))
-		return area_a > area_b
-	)
+	if _catalog_cache_matches(catalog):
+		entries = _prefab_catalog_cache.get("entries_desc", [])
+	if entries.is_empty():
+		for prefab_name in catalog:
+			entries.append(catalog[prefab_name])
+		entries.sort_custom(func(a, b):
+			var area_a := int(a.get("area", 0))
+			var area_b := int(b.get("area", 0))
+			if area_a == area_b:
+				return str(a.get("name", "")) < str(b.get("name", ""))
+			return area_a > area_b
+		)
 	var required: Array[String] = []
 	for entry in entries:
 		required.append(str(entry.get("name", "")))
@@ -1913,7 +2326,7 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 			continue
 		var rot = _rotation_for_frontage_side(str(parcel.get("frontage_side", "north")))
 		bldg_stats.attempted += 1
-		var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
+		var footprint = _get_prefab_surface_footprint(prefab_name, rot)
 		var fitted_positions = _fit_footprint_variants_in_parcel(parcel, footprint)
 		if fitted_positions.is_empty():
 			if not failure_reasons.has("no parcel fit"):
@@ -1949,7 +2362,7 @@ func _try_place_required_prefab_in_parcels(prefab_name: String, parcel_candidate
 			bldg_stats.placed += 1
 			_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 				prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(parcel.frontage_target),
-				str(parcel.get("district", "residential")), str(parcel.get("road_kind", "secondary")), support)
+				str(parcel.get("district", "residential")), str(parcel.get("road_kind", "secondary")), support, bldg_stats)
 			return {"placed": true, "reason": ""}
 	return {
 		"placed": false,
@@ -1974,7 +2387,7 @@ func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: D
 		var side = str(slot.side)
 		var rot = _rotation_for_frontage_side(side)
 		bldg_stats.attempted += 1
-		var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, rot)
+		var footprint = _get_prefab_surface_footprint(prefab_name, rot)
 		var bldg_x = center.x - float(footprint.x) * 0.5
 		var bldg_z = center.y - float(footprint.y) * 0.5
 		match side:
@@ -2014,7 +2427,7 @@ func _try_place_required_prefab_in_forced_core_slots(town: Dictionary, layout: D
 		bldg_stats.placed += 1
 		_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 			prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, Vector2(slot.road_target),
-			"core_landmark", "main", support)
+			"core_landmark", "main", support, bldg_stats)
 		return {"placed": true, "reason": ""}
 	return {
 		"placed": false,
@@ -2122,7 +2535,7 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				var footprint = Vector2i.ZERO
 				var fitted = Vector2(INF, INF)
 				for prefab_candidate in _get_prefab_candidates_for_parcel(catalog, district, rng):
-					var trial_footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_candidate, rot)
+					var trial_footprint = _get_prefab_surface_footprint(prefab_candidate, rot)
 					var trial_fit = _fit_footprint_in_parcel(candidate, trial_footprint)
 					if trial_fit.x == INF:
 						continue
@@ -2159,7 +2572,7 @@ func _generate_town_buildings(towns: Array, road_segments: Array, path_segments:
 				placed_in_town += 1
 				_append_baked_building(buildings, terrain_modifications, path_segments, height_bytes, max_h, half, road_segments,
 					prefab_name, bldg_x, bldg_y, bldg_z, footprint, rot, road_target,
-					district, str(candidate.get("road_kind", "secondary")), support)
+					district, str(candidate.get("road_kind", "secondary")), support, bldg_stats)
 
 			if placed_in_town >= target:
 				continue
@@ -2214,11 +2627,18 @@ func _place_town_landmarks(town: Dictionary, layout: Dictionary, catalog: Dictio
 		if catalog.has(candidate) and not preferred_prefabs.has(candidate):
 			preferred_prefabs.append(candidate)
 	var remaining_prefabs: Array = []
-	for pname in catalog:
-		if preferred_prefabs.has(pname):
-			continue
-		remaining_prefabs.append(catalog[pname])
-	remaining_prefabs.sort_custom(func(a, b): return int(a.area) > int(b.area))
+	var cached_entries: Array = _prefab_catalog_cache.get("entries_desc", []) if _catalog_cache_matches(catalog) else []
+	if not cached_entries.is_empty():
+		for entry in cached_entries:
+			if preferred_prefabs.has(str(entry.get("name", ""))):
+				continue
+			remaining_prefabs.append(entry)
+	else:
+		for pname in catalog:
+			if preferred_prefabs.has(pname):
+				continue
+			remaining_prefabs.append(catalog[pname])
+		remaining_prefabs.sort_custom(func(a, b): return int(a.area) > int(b.area))
 	for entry in remaining_prefabs:
 		if int(entry.area) >= 24:
 			preferred_prefabs.append(str(entry.name))
@@ -2233,6 +2653,94 @@ func _place_town_landmarks(town: Dictionary, layout: Dictionary, catalog: Dictio
 		placed += _place_forced_core_landmarks(town, layout, preferred_prefabs, road_segments, path_segments, height_bytes, water_bytes, max_h, half, buildings, terrain_modifications, bldg_stats, occupied, desired_count - placed)
 
 	return placed
+
+func _catalog_cache_matches(catalog: Dictionary) -> bool:
+	return not _prefab_catalog_cache.is_empty() and int(_prefab_catalog_cache.get("catalog_size", -1)) == catalog.size()
+
+
+func _prefab_rotation_key(prefab_name: String, rotation: int) -> String:
+	var normalized := rotation % 4
+	if normalized < 0:
+		normalized += 4
+	return "%s:%d" % [prefab_name, normalized]
+
+
+func _get_prefab_rotation_info(prefab_name: String, rotation: int) -> Dictionary:
+	var key := _prefab_rotation_key(prefab_name, rotation)
+	if _prefab_rotation_cache.has(key):
+		return _prefab_rotation_cache[key]
+	var normalized := rotation % 4
+	if normalized < 0:
+		normalized += 4
+	var surface_bounds := PrefabGeometry.get_rotated_surface_bounds(prefab_name, normalized)
+	var reservation_bounds := PrefabGeometry.get_rotated_reservation_bounds(prefab_name, normalized)
+	var placement := PrefabGeometry.get_placement_profile(prefab_name)
+	var door_center_var = PrefabGeometry.get_primary_door_world_center(prefab_name, Vector3.ZERO, normalized)
+	var info := {
+		"surface_min": surface_bounds.get("min", Vector2i.ZERO),
+		"surface_footprint": surface_bounds.get("footprint", Vector2i.ONE),
+		"reservation_min": reservation_bounds.get("min", Vector2i.ZERO),
+		"reservation_footprint": reservation_bounds.get("footprint", Vector2i.ONE),
+		"grade_y": float(placement.get("grade_y", 0)),
+		"excavation_segments": PrefabGeometry.get_rotated_excavation_segments(prefab_name, normalized),
+		"door_offset": door_center_var if door_center_var is Vector3 else Vector3.ZERO,
+		"has_door_offset": door_center_var is Vector3
+	}
+	_prefab_rotation_cache[key] = info
+	return info
+
+
+func _get_prefab_surface_footprint(prefab_name: String, rotation: int) -> Vector2i:
+	return _get_prefab_rotation_info(prefab_name, rotation).get("surface_footprint", Vector2i.ONE)
+
+
+func _get_prefab_reservation_footprint_rotated(prefab_name: String, rotation: int) -> Vector2i:
+	return _get_prefab_rotation_info(prefab_name, rotation).get("reservation_footprint", Vector2i.ONE)
+
+
+func _get_spawn_origin_for_surface_min_cached(prefab_name: String, surface_min: Vector3, rotation: int) -> Vector3:
+	var info := _get_prefab_rotation_info(prefab_name, rotation)
+	var min_offset: Vector2i = info.get("surface_min", Vector2i.ZERO)
+	var grade_y := float(info.get("grade_y", 0.0))
+	return surface_min - Vector3(float(min_offset.x), grade_y, float(min_offset.y))
+
+
+func _prepare_prefab_catalog_cache(catalog: Dictionary) -> void:
+	var entries: Array = []
+	for pname in catalog:
+		entries.append(catalog[pname])
+	entries.sort_custom(func(a, b):
+		var area_a := int(a.get("area", 0))
+		var area_b := int(b.get("area", 0))
+		if area_a == area_b:
+			return str(a.get("name", "")) < str(b.get("name", ""))
+		return area_a > area_b
+	)
+	var large_entries: Array = []
+	var medium_entries: Array = []
+	var small_entries: Array = []
+	for entry in entries:
+		var area := int(entry.get("area", 0))
+		if area >= 80:
+			large_entries.append(entry)
+		elif area >= 24:
+			medium_entries.append(entry)
+		else:
+			small_entries.append(entry)
+	_prefab_catalog_cache = {
+		"catalog_size": catalog.size(),
+		"entries_desc": entries,
+		"large_entries": large_entries,
+		"medium_entries": medium_entries,
+		"small_entries": small_entries
+	}
+	for entry in entries:
+		var prefab_name := str(entry.get("name", ""))
+		if prefab_name.is_empty():
+			continue
+		for rotation in range(4):
+			_get_prefab_rotation_info(prefab_name, rotation)
+
 
 func _build_prefab_catalog(available_prefabs: Array[String]) -> Dictionary:
 	var catalog: Dictionary = {}
@@ -2273,22 +2781,26 @@ func _get_prefab_candidates_for_parcel(catalog: Dictionary, district: String, rn
 	if catalog.is_empty():
 		return []
 
-	var entries: Array = []
-	for pname in catalog:
-		entries.append(catalog[pname])
-	entries.sort_custom(func(a, b): return a.area > b.area)
-
 	var small_entries: Array = []
 	var medium_entries: Array = []
 	var large_entries: Array = []
-	for entry in entries:
-		var area = int(entry["area"])
-		if area >= 80:
-			large_entries.append(entry)
-		elif area >= 24:
-			medium_entries.append(entry)
-		else:
-			small_entries.append(entry)
+	if _catalog_cache_matches(catalog):
+		large_entries = _prefab_catalog_cache.get("large_entries", [])
+		medium_entries = _prefab_catalog_cache.get("medium_entries", [])
+		small_entries = _prefab_catalog_cache.get("small_entries", [])
+	else:
+		var entries: Array = []
+		for pname in catalog:
+			entries.append(catalog[pname])
+		entries.sort_custom(func(a, b): return int(a.get("area", 0)) > int(b.get("area", 0)))
+		for entry in entries:
+			var area = int(entry["area"])
+			if area >= 80:
+				large_entries.append(entry)
+			elif area >= 24:
+				medium_entries.append(entry)
+			else:
+				small_entries.append(entry)
 
 	var ordered: Array = []
 	match district:
@@ -2489,12 +3001,16 @@ func _validate_town_building_spot(bldg_x: float, bldg_z: float, footprint: Vecto
 func _resolve_town_building_support(bldg_x: float, bldg_z: float, footprint: Vector2i, road_segments: Array,
 		height_bytes: PackedByteArray, water_bytes: PackedByteArray, forest_noise: FastNoiseLite,
 		max_h: float, half: int, bldg_stats: Dictionary) -> Dictionary:
+	var support_start_us := Time.get_ticks_usec()
+	bldg_stats.support_calls += 1
 	var px = int(bldg_x + half)
 	var pz = int(bldg_z + half)
 	if px < 2 or px >= MAP_SIZE - 2 or pz < 2 or pz >= MAP_SIZE - 2:
 		bldg_stats.rejected_bounds += 1
+		bldg_stats.support_total_us += Time.get_ticks_usec() - support_start_us
 		return {}
 	
+	var sample_start_us := Time.get_ticks_usec()
 	var margin = 1
 	var sample_min_x = clampi(int(bldg_x) - margin, 0, MAP_SIZE - 1)
 	var sample_max_x = clampi(int(bldg_x + footprint.x) + margin, 0, MAP_SIZE - 1)
@@ -2508,17 +3024,25 @@ func _resolve_town_building_support(bldg_x: float, bldg_z: float, footprint: Vec
 			var idx = cz * MAP_SIZE + cx
 			if water_bytes[idx] > 128:
 				bldg_stats.rejected_water += 1
+				bldg_stats.support_sample_us += Time.get_ticks_usec() - sample_start_us
+				bldg_stats.support_total_us += Time.get_ticks_usec() - support_start_us
 				return {}
 			var sh = clampf(float(height_bytes[idx]) / 255.0 * max_h, 1.0, 28.0)
 			min_h_local = min(min_h_local, sh)
 			max_h_local = max(max_h_local, sh)
+	bldg_stats.support_sample_us += Time.get_ticks_usec() - sample_start_us
 	
-	if _footprint_hits_road_segments(bldg_x, bldg_z, footprint, road_segments):
+	var road_start_us := Time.get_ticks_usec()
+	if _footprint_hits_road_segments(bldg_x, bldg_z, footprint, road_segments, bldg_stats):
 		bldg_stats.rejected_road += 1
+		bldg_stats.support_road_us += Time.get_ticks_usec() - road_start_us
+		bldg_stats.support_total_us += Time.get_ticks_usec() - support_start_us
 		return {}
+	bldg_stats.support_road_us += Time.get_ticks_usec() - road_start_us
 	
 	if max_h_local - min_h_local > 5.0:
 		bldg_stats.rejected_slope += 1
+		bldg_stats.support_total_us += Time.get_ticks_usec() - support_start_us
 		return {}
 
 	if forest_noise != null:
@@ -2526,9 +3050,12 @@ func _resolve_town_building_support(bldg_x: float, bldg_z: float, footprint: Vec
 			for dz in range(0, footprint.y + 1, max(1, int(ceil(float(footprint.y) / 2.0)))):
 				if forest_noise.get_noise_2d(bldg_x + float(dx), bldg_z + float(dz)) >= 0.45:
 					bldg_stats.rejected_forest += 1
+					bldg_stats.support_total_us += Time.get_ticks_usec() - support_start_us
 					return {}
 
-	var support = _resolve_building_support(bldg_x, bldg_z, footprint, height_bytes, max_h, half)
+	var foundation_start_us := Time.get_ticks_usec()
+	var support = _resolve_building_support(bldg_x, bldg_z, footprint, height_bytes, max_h, half, bldg_stats)
+	bldg_stats.support_foundation_us += Time.get_ticks_usec() - foundation_start_us
 	if not bool(support.get("valid", false)):
 		if float(support.get("max_float_gap", 0.0)) > building_support_max_float:
 			bldg_stats.rejected_float += 1
@@ -2536,16 +3063,18 @@ func _resolve_town_building_support(bldg_x: float, bldg_z: float, footprint: Vec
 			bldg_stats.rejected_embed += 1
 		else:
 			bldg_stats.rejected_slope += 1
+		bldg_stats.support_total_us += Time.get_ticks_usec() - support_start_us
 		return {}
 
+	bldg_stats.support_total_us += Time.get_ticks_usec() - support_start_us
 	return support
 
 func _has_sufficient_excavation_cover(prefab_name: String, bldg_x: float, bldg_y: float, bldg_z: float, footprint: Vector2i,
 		rotation: int, height_bytes: PackedByteArray, max_h: float, half: int) -> bool:
-	var segments := PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation)
+	var segments: Array = _get_prefab_rotation_info(prefab_name, rotation).get("excavation_segments", [])
 	if segments.is_empty():
 		return true
-	var spawn_origin := PrefabGeometry.get_spawn_origin_for_surface_min(
+	var spawn_origin := _get_spawn_origin_for_surface_min_cached(
 		prefab_name,
 		Vector3(bldg_x, bldg_y, bldg_z),
 		rotation
@@ -2581,7 +3110,44 @@ func _sample_building_pad_height(bldg_x: float, bldg_z: float, footprint: Vector
 		return 12.0
 	return height_sum / float(sample_count)
 
-func _resolve_building_support(bldg_x: float, bldg_z: float, footprint: Vector2i, height_bytes: PackedByteArray, max_h: float, half: int) -> Dictionary:
+func _get_building_support_config() -> Dictionary:
+	return {
+		"sample_stride": building_support_sample_stride,
+		"edge_inset": 0.18,
+		"max_samples_per_axis": 5,
+		"search_radius": building_support_search_radius,
+		"max_float_gap": building_support_max_float,
+		"max_embed_depth": building_support_max_embed,
+		"max_height_range": 5.0,
+		"float_weight": 8.0,
+		"embed_weight": 3.0,
+		"float_peak_weight": 6.0,
+		"embed_peak_weight": 4.0,
+		"preferred_weight": 0.3,
+		"balance_weight": 0.85
+	}
+
+
+func _resolve_building_support(bldg_x: float, bldg_z: float, footprint: Vector2i, height_bytes: PackedByteArray, max_h: float, half: int, bldg_stats: Dictionary = {}) -> Dictionary:
+	var support_config := _get_building_support_config()
+	var native := _get_native_helper() if _native_building_support_available() else null
+	if native:
+		var native_result: Dictionary = native.resolve_world_map_building_support(
+			height_bytes,
+			MAP_SIZE,
+			bldg_x,
+			bldg_z,
+			footprint,
+			max_h,
+			half,
+			support_config
+		)
+		if not native_result.is_empty():
+			if not bldg_stats.is_empty():
+				bldg_stats.support_native_calls += 1
+			return native_result
+	if not bldg_stats.is_empty():
+		bldg_stats.support_gdscript_calls += 1
 	var preferred_y = _sample_building_pad_height(bldg_x, bldg_z, footprint, height_bytes, max_h, half)
 	return FoundationSupport.resolve_footprint_support(
 		func(wx: float, wz: float) -> float:
@@ -2589,21 +3155,7 @@ func _resolve_building_support(bldg_x: float, bldg_z: float, footprint: Vector2i
 		Vector2(bldg_x, bldg_z),
 		footprint,
 		preferred_y,
-		{
-			"sample_stride": building_support_sample_stride,
-			"edge_inset": 0.18,
-			"max_samples_per_axis": 5,
-			"search_radius": building_support_search_radius,
-			"max_float_gap": building_support_max_float,
-			"max_embed_depth": building_support_max_embed,
-			"max_height_range": 5.0,
-			"float_weight": 8.0,
-			"embed_weight": 3.0,
-			"float_peak_weight": 6.0,
-			"embed_peak_weight": 4.0,
-			"preferred_weight": 0.3,
-			"balance_weight": 0.85
-		}
+		support_config
 	)
 
 func _sample_support_height(wx: float, wz: float, height_bytes: PackedByteArray, max_h: float, half: int) -> float:
@@ -2611,15 +3163,37 @@ func _sample_support_height(wx: float, wz: float, height_bytes: PackedByteArray,
 	var pz = clampi(int(floor(wz)) + half, 0, MAP_SIZE - 1)
 	return clampf(float(height_bytes[pz * MAP_SIZE + px]) / 255.0 * max_h, 1.0, 28.0)
 
-func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z: float, footprint: Vector2i, bldg_y: float, max_h: float, half: int, support_info: Dictionary = {}, protected_columns: Dictionary = {}) -> void:
+func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z: float, footprint: Vector2i, bldg_y: float, max_h: float, half: int, support_info: Dictionary = {}, protected_columns: Dictionary = {}) -> Dictionary:
 	var flat_h_byte = _encode_height_byte(bldg_y, max_h)
 	var longest_side = max(float(footprint.x), float(footprint.y))
 	var support_range = float(support_info.get("height_range", 0.0))
+	var native := _get_native_helper() if _native_building_pad_flatten_available() else null
+	if native:
+		var native_result: Dictionary = native.flatten_world_map_building_pad(
+			height_bytes,
+			MAP_SIZE,
+			bldg_x,
+			bldg_z,
+			footprint,
+			bldg_y,
+			max_h,
+			half,
+			support_range,
+			protected_columns
+		)
+		var height_indices: PackedInt32Array = native_result.get("height_indices", PackedInt32Array())
+		var height_values: PackedByteArray = native_result.get("height_values", PackedByteArray())
+		if height_indices.size() == height_values.size():
+			for i in height_indices.size():
+				height_bytes[height_indices[i]] = height_values[i]
+			native_result["backend"] = "native"
+			return native_result
 	var pad = max(6, int(ceil(longest_side * 0.5 + support_range * 1.25)))
 	var base_world_x := int(floor(bldg_x))
 	var base_world_z := int(floor(bldg_z))
 	var width = footprint.x + pad * 2
 	var depth = footprint.y + pad * 2
+	var changed_pixels := 0
 	for fz in range(-pad, depth - pad + 1):
 		for fx in range(-pad, width - pad + 1):
 			var fpx = clampi(int(bldg_x + half) + fx, 0, MAP_SIZE - 1)
@@ -2635,11 +3209,20 @@ func _flatten_building_pad(height_bytes: PackedByteArray, bldg_x: float, bldg_z:
 			var dist = sqrt(dx * dx + dz * dz)
 			var inner_flat = 1.25 + min(1.5, support_range * 0.3)
 			if dist <= inner_flat:
+				if height_bytes[h_idx] != flat_h_byte:
+					changed_pixels += 1
 				height_bytes[h_idx] = flat_h_byte
 			elif dist < float(pad):
 				var blend_t = (dist - inner_flat) / max(0.001, float(pad) - inner_flat)
 				var smooth_t = blend_t * blend_t * (3.0 - 2.0 * blend_t)
-				height_bytes[h_idx] = int(lerp(float(flat_h_byte), float(orig_h_byte), smooth_t))
+				var blended := int(lerp(float(flat_h_byte), float(orig_h_byte), smooth_t))
+				if height_bytes[h_idx] != blended:
+					changed_pixels += 1
+				height_bytes[h_idx] = blended
+	return {
+		"backend": "gdscript",
+		"changed_pixel_count": changed_pixels
+	}
 
 func _get_off_footprint_excavation_columns(prefab_name: String, spawn_origin: Vector3, rotation: int, bldg_x: float, bldg_z: float, footprint: Vector2i) -> Dictionary:
 	var direct_columns: Dictionary = {}
@@ -2647,7 +3230,7 @@ func _get_off_footprint_excavation_columns(prefab_name: String, spawn_origin: Ve
 	var min_z := int(floor(bldg_z))
 	var max_x := min_x + footprint.x - 1
 	var max_z := min_z + footprint.y - 1
-	for segment in PrefabGeometry.get_rotated_excavation_segments(prefab_name, rotation):
+	for segment in _get_prefab_rotation_info(prefab_name, rotation).get("excavation_segments", []):
 		var world_x := int(floor(spawn_origin.x)) + int(segment.get("x", 0))
 		var world_z := int(floor(spawn_origin.z)) + int(segment.get("z", 0))
 		if world_x >= min_x and world_x <= max_x and world_z >= min_z and world_z <= max_z:
@@ -2675,14 +3258,141 @@ func _front_center_for_rotation(bldg_x: float, bldg_z: float, footprint: Vector2
 			return Vector2(bldg_x, bldg_z + float(footprint.y) * 0.5)
 	return Vector2(bldg_x + float(footprint.x) * 0.5, bldg_z + float(footprint.y) * 0.5)
 
-func _footprint_hits_road_segments(bldg_x: float, bldg_z: float, footprint: Vector2i, road_segments: Array) -> bool:
-	var rect_min = Vector2(bldg_x, bldg_z)
-	var rect_max = Vector2(bldg_x + float(footprint.x), bldg_z + float(footprint.y))
-	for seg in road_segments:
+func _road_segment_clearance_radius(seg: Dictionary) -> float:
+	return float(seg.get("width", settlement_road_width)) * 0.5 + ROAD_BLEND_MARGIN + 0.75
+
+
+func _road_spatial_cell(value: float, cell_size: float) -> int:
+	return int(floor(value / maxf(1.0, cell_size)))
+
+
+func _build_road_segment_spatial_index(road_segments: Array) -> Dictionary:
+	var cells: Dictionary = {}
+	var packed_segments := PackedFloat32Array()
+	packed_segments.resize(road_segments.size() * 5)
+	var cell_size := ROAD_SEGMENT_SPATIAL_CELL_SIZE
+	var max_clearance := 0.0
+	var segment_ref_count := 0
+	for i in range(road_segments.size()):
+		var seg: Dictionary = road_segments[i]
 		var from_v: Vector2 = seg["from"]
 		var to_v: Vector2 = seg["to"]
-		var seg_width = float(seg.get("width", settlement_road_width))
-		var clearance_radius = seg_width * 0.5 + ROAD_BLEND_MARGIN + 0.75
+		var clearance := _road_segment_clearance_radius(seg)
+		var packed_base := i * 5
+		packed_segments[packed_base] = from_v.x
+		packed_segments[packed_base + 1] = from_v.y
+		packed_segments[packed_base + 2] = to_v.x
+		packed_segments[packed_base + 3] = to_v.y
+		packed_segments[packed_base + 4] = clearance
+		max_clearance = maxf(max_clearance, clearance)
+		var min_x := minf(from_v.x, to_v.x) - clearance
+		var max_x := maxf(from_v.x, to_v.x) + clearance
+		var min_z := minf(from_v.y, to_v.y) - clearance
+		var max_z := maxf(from_v.y, to_v.y) + clearance
+		var min_cx := _road_spatial_cell(min_x, cell_size)
+		var max_cx := _road_spatial_cell(max_x, cell_size)
+		var min_cz := _road_spatial_cell(min_z, cell_size)
+		var max_cz := _road_spatial_cell(max_z, cell_size)
+		for cz in range(min_cz, max_cz + 1):
+			for cx in range(min_cx, max_cx + 1):
+				var key := Vector2i(cx, cz)
+				var bucket: Array = cells.get(key, [])
+				bucket.append(i)
+				cells[key] = bucket
+				segment_ref_count += 1
+	return {
+		"cell_size": cell_size,
+		"max_clearance": max_clearance,
+		"segments": road_segments,
+		"packed_segments": packed_segments,
+		"cells": cells,
+		"cell_count": cells.size(),
+		"segment_ref_count": segment_ref_count
+	}
+
+
+func _query_road_segments_for_rect(bldg_x: float, bldg_z: float, footprint: Vector2i, fallback_segments: Array) -> Array:
+	if _road_segment_spatial_index.is_empty():
+		return fallback_segments
+	var cells: Dictionary = _road_segment_spatial_index.get("cells", {})
+	var indexed_segments: Array = _road_segment_spatial_index.get("segments", fallback_segments)
+	if cells.is_empty() or indexed_segments.is_empty():
+		return fallback_segments
+	var cell_size := float(_road_segment_spatial_index.get("cell_size", ROAD_SEGMENT_SPATIAL_CELL_SIZE))
+	var query_margin := float(_road_segment_spatial_index.get("max_clearance", 0.0)) + 1.0
+	var min_cx := _road_spatial_cell(bldg_x - query_margin, cell_size)
+	var max_cx := _road_spatial_cell(bldg_x + float(footprint.x) + query_margin, cell_size)
+	var min_cz := _road_spatial_cell(bldg_z - query_margin, cell_size)
+	var max_cz := _road_spatial_cell(bldg_z + float(footprint.y) + query_margin, cell_size)
+	var seen: Dictionary = {}
+	var result: Array = []
+	for cz in range(min_cz, max_cz + 1):
+		for cx in range(min_cx, max_cx + 1):
+			var key := Vector2i(cx, cz)
+			var bucket: Array = cells.get(key, [])
+			for idx_variant in bucket:
+				var idx := int(idx_variant)
+				if seen.has(idx) or idx < 0 or idx >= indexed_segments.size():
+					continue
+				seen[idx] = true
+				result.append(indexed_segments[idx])
+	return result
+
+
+func _query_road_segments_for_point(point: Vector2, fallback_segments: Array, query_radius: float = ROAD_SEGMENT_SPATIAL_CELL_SIZE * 2.0) -> Array:
+	if _road_segment_spatial_index.is_empty():
+		return fallback_segments
+	var cells: Dictionary = _road_segment_spatial_index.get("cells", {})
+	var indexed_segments: Array = _road_segment_spatial_index.get("segments", fallback_segments)
+	if cells.is_empty() or indexed_segments.is_empty():
+		return fallback_segments
+	var cell_size := float(_road_segment_spatial_index.get("cell_size", ROAD_SEGMENT_SPATIAL_CELL_SIZE))
+	var query_margin := maxf(query_radius, float(_road_segment_spatial_index.get("max_clearance", 0.0)) + 1.0)
+	var min_cx := _road_spatial_cell(point.x - query_margin, cell_size)
+	var max_cx := _road_spatial_cell(point.x + query_margin, cell_size)
+	var min_cz := _road_spatial_cell(point.y - query_margin, cell_size)
+	var max_cz := _road_spatial_cell(point.y + query_margin, cell_size)
+	var seen: Dictionary = {}
+	var result: Array = []
+	for cz in range(min_cz, max_cz + 1):
+		for cx in range(min_cx, max_cx + 1):
+			var key := Vector2i(cx, cz)
+			var bucket: Array = cells.get(key, [])
+			for idx_variant in bucket:
+				var idx := int(idx_variant)
+				if seen.has(idx) or idx < 0 or idx >= indexed_segments.size():
+					continue
+				seen[idx] = true
+				result.append(indexed_segments[idx])
+	return fallback_segments if result.is_empty() else result
+
+
+func _footprint_hits_road_segments(bldg_x: float, bldg_z: float, footprint: Vector2i, road_segments: Array, bldg_stats: Dictionary = {}) -> bool:
+	var native := _get_native_helper() if _native_road_footprint_can_run_now() else null
+	var packed_segments: PackedFloat32Array = _road_segment_spatial_index.get("packed_segments", PackedFloat32Array())
+	if native and packed_segments.size() >= 5:
+		var native_result: Dictionary = native.footprint_hits_packed_world_map_road_segments(
+			packed_segments,
+			bldg_x,
+			bldg_z,
+			footprint
+		)
+		if native_result.has("hit"):
+			if not bldg_stats.is_empty():
+				bldg_stats["support_road_native_calls"] = int(bldg_stats.get("support_road_native_calls", 0)) + 1
+				bldg_stats["support_road_checked_segments"] = int(bldg_stats.get("support_road_checked_segments", 0)) + int(native_result.get("checked_segment_count", 0))
+			return bool(native_result.get("hit", false))
+
+	var rect_min = Vector2(bldg_x, bldg_z)
+	var rect_max = Vector2(bldg_x + float(footprint.x), bldg_z + float(footprint.y))
+	var candidate_segments := _query_road_segments_for_rect(bldg_x, bldg_z, footprint, road_segments)
+	if not bldg_stats.is_empty():
+		bldg_stats["support_road_gdscript_calls"] = int(bldg_stats.get("support_road_gdscript_calls", 0)) + 1
+		bldg_stats["support_road_checked_segments"] = int(bldg_stats.get("support_road_checked_segments", 0)) + candidate_segments.size()
+	for seg in candidate_segments:
+		var from_v: Vector2 = seg["from"]
+		var to_v: Vector2 = seg["to"]
+		var clearance_radius = _road_segment_clearance_radius(seg)
 		if _distance_segment_to_rect(from_v, to_v, rect_min, rect_max) <= clearance_radius:
 			return true
 	return false
@@ -2741,6 +3451,17 @@ func _distance_segment_to_rect(a: Vector2, b: Vector2, rect_min: Vector2, rect_m
 	return dist
 
 func _find_best_road_connection(probe: Vector2, road_segments: Array, preferred_kind: String = "") -> Dictionary:
+	var connection_query_radius := ROAD_SEGMENT_SPATIAL_CELL_SIZE * 2.0
+	var candidate_segments := _query_road_segments_for_point(probe, road_segments, connection_query_radius)
+	var result := _find_best_road_connection_in_segments(probe, candidate_segments, preferred_kind)
+	if candidate_segments.size() == road_segments.size():
+		return result
+	if result.is_empty() or float(result.get("score", INF)) >= connection_query_radius - 8.0:
+		return _find_best_road_connection_in_segments(probe, road_segments, preferred_kind)
+	return result
+
+
+func _find_best_road_connection_in_segments(probe: Vector2, road_segments: Array, preferred_kind: String = "") -> Dictionary:
 	var best: Dictionary = {}
 	var best_score = INF
 	for seg in road_segments:
@@ -2762,6 +3483,7 @@ func _find_best_road_connection(probe: Vector2, road_segments: Array, preferred_
 				"width": width,
 				"kind": kind,
 				"distance": dist,
+				"score": score,
 				"from": from_v,
 				"to": to_v,
 				"is_vertical": absf(from_v.x - to_v.x) <= 0.001
@@ -2828,7 +3550,7 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 				continue
 
 			var prefab_name = available_prefabs[cell_rng.randi() % available_prefabs.size()]
-			var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, 0)
+			var footprint = _get_prefab_surface_footprint(prefab_name, 0)
 			var support = _resolve_town_building_support(sx, sz, footprint, road_segments, height_bytes, water_bytes, forest_noise, max_h, half, bldg_stats)
 			if support.is_empty():
 				wz += spacing
@@ -2848,7 +3570,7 @@ func _generate_wilderness_buildings(towns: Array, road_segments: Array,
 				_rasterize_roads(path_seg, height_bytes, biome_bytes, road_bytes, max_h, half, access_path_width)
 			
 			var road_y = _get_road_height_at(sx, sz)
-			var spawn_origin = PrefabGeometry.get_spawn_origin_for_surface_min(
+			var spawn_origin = _get_spawn_origin_for_surface_min_cached(
 				prefab_name,
 				Vector3(sx, floor(terrain_y), sz),
 				0
@@ -2945,12 +3667,41 @@ func _validate_building_spot(sx: float, sz: float, height_bytes: PackedByteArray
 # ============================================================================
 
 func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
-		height_bytes: PackedByteArray, half: int, max_h: float) -> void:
+		height_bytes: PackedByteArray, half: int, max_h: float) -> Dictionary:
+	var native := _get_native_helper() if _native_lake_generation_can_run_now() else null
+	if native:
+		var native_result: Dictionary = native.apply_world_map_lakes(
+			water_bytes,
+			road_bytes,
+			height_bytes,
+			MAP_SIZE,
+			MAP_SIZE,
+			world_seed,
+			lake_threshold,
+			road_width,
+			ROAD_BLEND_MARGIN,
+			LAKE_ROAD_BLOCK_THRESHOLD,
+			terrain_height,
+			water_level,
+			max_h,
+			deep_lakes_enabled
+		)
+		if (
+			native_result.get("water_bytes", null) is PackedByteArray
+			and native_result.get("height_bytes", null) is PackedByteArray
+		):
+			native_result["backend"] = "native"
+			return native_result
+
 	# Keep the shore off the road shoulder, but do not leave a huge dry corridor.
 	var water_road_buffer = road_width * 0.5 + ROAD_BLEND_MARGIN
 	var lake_cutoff = lake_threshold - 0.05
 	var shore_submerge = 1.25
 	var basin_depth_max = clampf(terrain_height * 0.65, 2.5, 8.0)
+	var water_pixel_count := 0
+	var height_carve_count := 0
+	var road_blocked_pixel_count := 0
+	var near_road_blocked_pixel_count := 0
 	for z in MAP_SIZE:
 		var wz = float(z - half)
 		var row_offset = z * MAP_SIZE
@@ -2962,6 +3713,7 @@ func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 			# push the shoreline back by themselves.
 			var ridx = idx * 2
 			if road_bytes[ridx] >= LAKE_ROAD_BLOCK_THRESHOLD:
+				road_blocked_pixel_count += 1
 				continue
 			# Also skip if there are road pixels nearby (simple check)
 			var near_road = false
@@ -2981,6 +3733,7 @@ func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 						near_road = true
 						break
 			if near_road:
+				near_road_blocked_pixel_count += 1
 				continue
 			
 			var lake_val = _lake_noise.get_noise_2d(wx, wz)
@@ -2988,6 +3741,7 @@ func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 				continue
 
 			water_bytes[idx] = 255
+			water_pixel_count += 1
 			if not deep_lakes_enabled:
 				continue
 
@@ -2997,6 +3751,14 @@ func _generate_lakes(water_bytes: PackedByteArray, road_bytes: PackedByteArray,
 			var target_h = water_level - shore_submerge - basin_depth_max * depth_t
 			if current_h > target_h:
 				height_bytes[idx] = _encode_height_byte(target_h, max_h)
+				height_carve_count += 1
+	return {
+		"backend": "gdscript",
+		"water_pixel_count": water_pixel_count,
+		"height_carve_count": height_carve_count,
+		"road_blocked_pixel_count": road_blocked_pixel_count,
+		"near_road_blocked_pixel_count": near_road_blocked_pixel_count
+	}
 
 # ============================================================================
 # LEGACY GRID ROADS (fallback)
@@ -3116,8 +3878,8 @@ func _generate_grid_buildings(height_bytes: PackedByteArray, water_bytes: Packed
 				var road_y = _get_road_height_at(road_cell_x, road_cell_z)
 				
 				var prefab_name = available_prefabs[rng.randi() % available_prefabs.size()]
-				var footprint = PrefabGeometry.get_rotated_surface_footprint(prefab_name, 0)
-				var spawn_origin = PrefabGeometry.get_spawn_origin_for_surface_min(
+				var footprint = _get_prefab_surface_footprint(prefab_name, 0)
+				var spawn_origin = _get_spawn_origin_for_surface_min_cached(
 					prefab_name,
 					Vector3(spawn_x, floor(terrain_y), spawn_z),
 					0
@@ -3145,9 +3907,13 @@ func save_world(path: String, images: Dictionary) -> bool:
 	var save_profile := {
 		"world_path": path,
 		"baked_layer_count": 0,
+		"baked_binary_layer_count": 0,
+		"baked_png_layer_count": 0,
+		"binary_write_ms": 0.0,
 		"png_write_ms": 0.0,
 		"meta_write_ms": 0.0,
 		"total_ms": 0.0,
+		"legacy_png_export_enabled": false,
 		"success": false
 	}
 	var save_dir := path if path.ends_with("/") else path + "/"
@@ -3163,6 +3929,8 @@ func save_world(path: String, images: Dictionary) -> bool:
 	var cache_signature_ctx := HashingContext.new()
 	var cache_signature_ready := cache_signature_ctx.start(HashingContext.HASH_SHA256) == OK
 	var baked_image_names := WorldMapData.get_baked_image_names()
+	var export_legacy_pngs := OS.get_environment("WORLD_MAP_SAVE_LEGACY_PNGS") == "1"
+	save_profile["legacy_png_export_enabled"] = export_legacy_pngs
 	for key in baked_image_names:
 		if not images.has(key):
 			push_error("[WorldMapGen] Missing required baked image layer %s" % key)
@@ -3178,41 +3946,69 @@ func save_world(path: String, images: Dictionary) -> bool:
 			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 			last_save_profile = save_profile.duplicate(true)
 			return false
-		var layer_start_us := Time.get_ticks_usec()
-		var png_bytes: PackedByteArray = (images[key] as Image).save_png_to_buffer()
-		if png_bytes.is_empty():
-			push_error("[WorldMapGen] Failed to encode %s" % key)
-			save_profile["error"] = "encode_failed"
-			save_profile["failed_layer"] = key
-			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
-			last_save_profile = save_profile.duplicate(true)
-			return false
+		var image: Image = images[key] as Image
+		var image_data := image.get_data()
 		if cache_signature_ready:
 			cache_signature_ctx.update(key.to_utf8_buffer())
-			cache_signature_ctx.update(png_bytes)
-		var png_path := save_dir.path_join(key + ".png")
-		var png_file = FileAccess.open(png_path, FileAccess.WRITE)
-		if not png_file:
-			push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [png_path, FileAccess.get_open_error()])
-			save_profile["error"] = "open_failed"
+			_hash_update_string(cache_signature_ctx, "%d:%d:%d:%s" % [
+				image.get_width(),
+				image.get_height(),
+				int(image.get_format()),
+				"1" if image.has_mipmaps() else "0"
+			])
+			cache_signature_ctx.update(image_data)
+
+		var binary_layer_start_us := Time.get_ticks_usec()
+		if not WorldMapData.save_world_binary_layer(save_dir, key, image):
+			push_error("[WorldMapGen] Failed to write binary baked layer %s" % key)
+			save_profile["error"] = "binary_write_failed"
 			save_profile["failed_layer"] = key
 			save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
 			last_save_profile = save_profile.duplicate(true)
 			return false
-		png_file.store_buffer(png_bytes)
-		png_file.close()
-		save_profile["png_write_ms"] = float(save_profile.get("png_write_ms", 0.0)) + float(Time.get_ticks_usec() - layer_start_us) / 1000.0
+		save_profile["binary_write_ms"] = float(save_profile.get("binary_write_ms", 0.0)) + float(Time.get_ticks_usec() - binary_layer_start_us) / 1000.0
+		save_profile["baked_binary_layer_count"] = int(save_profile.get("baked_binary_layer_count", 0)) + 1
+
+		if export_legacy_pngs:
+			var png_layer_start_us := Time.get_ticks_usec()
+			var png_bytes: PackedByteArray = image.save_png_to_buffer()
+			if png_bytes.is_empty():
+				push_error("[WorldMapGen] Failed to encode %s" % key)
+				save_profile["error"] = "encode_failed"
+				save_profile["failed_layer"] = key
+				save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+				last_save_profile = save_profile.duplicate(true)
+				return false
+			var png_path := save_dir.path_join(key + ".png")
+			var png_file = FileAccess.open(png_path, FileAccess.WRITE)
+			if not png_file:
+				push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [png_path, FileAccess.get_open_error()])
+				save_profile["error"] = "open_failed"
+				save_profile["failed_layer"] = key
+				save_profile["total_ms"] = float(Time.get_ticks_usec() - save_start_us) / 1000.0
+				last_save_profile = save_profile.duplicate(true)
+				return false
+			png_file.store_buffer(png_bytes)
+			png_file.close()
+			png_file = null
+			save_profile["png_write_ms"] = float(save_profile.get("png_write_ms", 0.0)) + float(Time.get_ticks_usec() - png_layer_start_us) / 1000.0
+			save_profile["baked_png_layer_count"] = int(save_profile.get("baked_png_layer_count", 0)) + 1
 		save_profile["baked_layer_count"] = int(save_profile.get("baked_layer_count", 0)) + 1
 	
 	var schema_version := WorldMapData.get_world_meta_schema_version()
 	var meta := _build_world_metadata(images, true)
+	meta["world_layer_storage"] = "binary_raw_v1"
+	meta["legacy_png_layers"] = export_legacy_pngs
 
 	if cache_signature_ready:
 		var stable_meta := _build_world_metadata(images, false)
 		stable_meta[WorldMapData.get_world_meta_cache_version_key()] = WorldMapData.get_world_meta_current_cache_version()
+		stable_meta["world_layer_storage"] = "binary_raw_v1"
+		stable_meta["legacy_png_layers"] = export_legacy_pngs
 		var meta_bytes := JSON.stringify(stable_meta).to_utf8_buffer()
 		cache_signature_ctx.update(meta_bytes)
 		var cache_signature := cache_signature_ctx.finish().hex_encode()
+		cache_signature_ctx = null
 		meta[WorldMapData.get_world_meta_cache_version_key()] = WorldMapData.get_world_meta_current_cache_version()
 		meta[WorldMapData.get_world_meta_cache_signature_key()] = cache_signature
 		save_profile["cache_signature"] = cache_signature
@@ -3229,6 +4025,7 @@ func save_world(path: String, images: Dictionary) -> bool:
 	if file:
 		file.store_string(JSON.stringify(meta, "\t"))
 		file.close()
+		file = null
 	else:
 		push_error("[WorldMapGen] Failed to open %s for writing (err %d)" % [meta_path, FileAccess.get_open_error()])
 		save_profile["error"] = "meta_open_failed"
@@ -3243,6 +4040,7 @@ func save_world(path: String, images: Dictionary) -> bool:
 		if signature_file:
 			signature_file.store_line(str(meta.get(WorldMapData.get_world_meta_cache_signature_key(), "")))
 			signature_file.close()
+			signature_file = null
 			save_profile["world_cache_signature_file_written"] = true
 		else:
 			save_profile["world_cache_signature_file_written"] = false
@@ -3270,6 +4068,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"native_height_biome_main_thread_only": false,
 		"native_height_biome_worker_safe": true,
 		"native_height_biome_can_run_now": _native_height_biome_can_run_now(),
+		"native_lake_generation_enabled": native_lake_generation_enabled,
+		"native_lake_generation_available": _native_lake_generation_available(),
+		"native_lake_generation_worker_safe": true,
+		"native_lake_generation_can_run_now": _native_lake_generation_can_run_now(),
 		"last_generation_profile": last_generation_profile.duplicate(true),
 		"last_preview_generation_profile": last_preview_generation_profile.duplicate(true),
 		"last_save_profile": last_save_profile.duplicate(true),

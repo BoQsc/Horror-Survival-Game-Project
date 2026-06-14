@@ -6,6 +6,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -16,8 +17,10 @@
 #include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/variant/vector2.hpp>
 
 #include "../../addons/third_party/fast_noise_lite/FastNoiseLite.h"
 
@@ -90,6 +93,242 @@ static int normalize_rotation(int rotation) {
 		normalized += 4;
 	}
 	return normalized;
+}
+
+static uint8_t encode_height_byte_native(double height, double max_height) {
+	if (max_height <= 0.0) {
+		return 0;
+	}
+	const double normalized = std::clamp(height / max_height, 0.0, 1.0);
+	const int encoded = static_cast<int>(std::round(normalized * 255.0));
+	return static_cast<uint8_t>(std::clamp(encoded, 0, 255));
+}
+
+static int native_row_worker_count(int row_count) {
+	if (row_count <= 1) {
+		return 1;
+	}
+	if (row_count < 512) {
+		return 1;
+	}
+	const unsigned int hardware_workers = std::thread::hardware_concurrency();
+	const int detected_workers = hardware_workers > 0 ? static_cast<int>(hardware_workers) : 1;
+	return std::clamp(detected_workers, 1, row_count);
+}
+
+static bool variant_to_vector2(const Variant &value, Vector2 &out) {
+	if (value.get_type() != Variant::VECTOR2) {
+		return false;
+	}
+	out = value;
+	return true;
+}
+
+static bool variant_to_vector2i(const Variant &value, Vector2i &out) {
+	if (value.get_type() != Variant::VECTOR2I) {
+		return false;
+	}
+	out = value;
+	return true;
+}
+
+static double smoothstep01(double value) {
+	const double t = std::clamp(value, 0.0, 1.0);
+	return t * t * (3.0 - 2.0 * t);
+}
+
+static double lerp_double(double from, double to, double weight) {
+	return from + (to - from) * weight;
+}
+
+static void lookup_minimap_lut_rgb(const int32_t *lut, int lut_size, int material_id, int &r, int &g, int &b) {
+	int normalized_id = material_id;
+	if (normalized_id < 0) {
+		normalized_id = 0;
+	}
+	const int lut_index = normalized_id * 3;
+	if (lut != nullptr && lut_index >= 0 && lut_index + 2 < lut_size) {
+		r = std::clamp(static_cast<int>(lut[lut_index]), 0, 255);
+		g = std::clamp(static_cast<int>(lut[lut_index + 1]), 0, 255);
+		b = std::clamp(static_cast<int>(lut[lut_index + 2]), 0, 255);
+		return;
+	}
+	if (lut != nullptr && lut_size >= 3) {
+		r = std::clamp(static_cast<int>(lut[0]), 0, 255);
+		g = std::clamp(static_cast<int>(lut[1]), 0, 255);
+		b = std::clamp(static_cast<int>(lut[2]), 0, 255);
+		return;
+	}
+	r = 80;
+	g = 160;
+	b = 60;
+}
+
+static uint8_t encode_shaded_rgb_byte(int value, double shade) {
+	const int shaded = static_cast<int>(static_cast<double>(value) * shade);
+	return static_cast<uint8_t>(std::clamp(shaded, 0, 255));
+}
+
+static double clamp_support_height_byte(uint8_t encoded_height, double max_height) {
+	return std::clamp(double(encoded_height) / 255.0 * max_height, 1.0, 28.0);
+}
+
+static double sample_world_map_support_height(const uint8_t *height_read, int map_size, double wx, double wz, double max_height, int half) {
+	const int px = std::clamp(static_cast<int>(std::floor(wx)) + half, 0, map_size - 1);
+	const int pz = std::clamp(static_cast<int>(std::floor(wz)) + half, 0, map_size - 1);
+	return clamp_support_height_byte(height_read[pz * map_size + px], max_height);
+}
+
+static std::vector<double> dedupe_sorted_doubles(std::vector<double> values, double epsilon) {
+	std::sort(values.begin(), values.end());
+	std::vector<double> result;
+	result.reserve(values.size());
+	bool has_last = false;
+	double last_value = 0.0;
+	for (const double value : values) {
+		if (!has_last || std::abs(value - last_value) > epsilon) {
+			result.push_back(value);
+			last_value = value;
+			has_last = true;
+		}
+	}
+	return result;
+}
+
+static std::vector<double> build_support_axis_positions(double span, double stride, double edge_inset, int max_samples) {
+	if (span <= 1.05) {
+		return {edge_inset, span * 0.5, span - edge_inset};
+	}
+
+	const int desired = std::clamp(static_cast<int>(std::ceil(span / stride)) + 1, 3, max_samples);
+	const double min_pos = std::min(edge_inset, span * 0.3);
+	const double max_pos = std::max(min_pos, span - min_pos);
+	std::vector<double> values;
+	values.reserve(desired + 1);
+	for (int i = 0; i < desired; ++i) {
+		const double t = desired <= 1 ? 0.0 : double(i) / double(desired - 1);
+		values.push_back(lerp_double(min_pos, max_pos, t));
+	}
+	values.push_back(span * 0.5);
+	return dedupe_sorted_doubles(std::move(values), 0.04);
+}
+
+static std::vector<Vector2> dedupe_support_points(const std::vector<Vector2> &points, double epsilon) {
+	const double epsilon_sq = epsilon * epsilon;
+	std::vector<Vector2> result;
+	result.reserve(points.size());
+	for (const Vector2 &point : points) {
+		bool duplicate = false;
+		for (const Vector2 &existing : result) {
+			const double dx = double(point.x - existing.x);
+			const double dy = double(point.y - existing.y);
+			if (dx * dx + dy * dy <= epsilon_sq) {
+				duplicate = true;
+				break;
+			}
+		}
+		if (!duplicate) {
+			result.push_back(point);
+		}
+	}
+	return result;
+}
+
+static std::vector<Vector2> build_support_sample_points(const Vector2i &footprint, const Dictionary &config) {
+	const double stride = std::max(0.45, double(config.get("sample_stride", 1.0)));
+	const double edge_inset = std::clamp(double(config.get("edge_inset", 0.18)), 0.0, 0.49);
+	const int max_samples = std::max(3, int(config.get("max_samples_per_axis", 5)));
+	const double span_x = std::max(1.0, double(footprint.x));
+	const double span_z = std::max(1.0, double(footprint.y));
+	const std::vector<double> xs = build_support_axis_positions(span_x, stride, edge_inset, max_samples);
+	const std::vector<double> zs = build_support_axis_positions(span_z, stride, edge_inset, max_samples);
+
+	std::vector<Vector2> points;
+	points.reserve(xs.size() * zs.size() + 1);
+	for (const double z : zs) {
+		for (const double x : xs) {
+			points.emplace_back(float(x), float(z));
+		}
+	}
+	points.emplace_back(float(span_x * 0.5), float(span_z * 0.5));
+	return dedupe_support_points(points, 0.04);
+}
+
+static double stepped_road_height_native(fastnoiselite::FastNoiseLite &road_noise, double wx, double wz) {
+	const double height = double(road_noise.GetNoise(float(wx), float(wz))) * 3.0 + 12.0;
+	const double base_level = std::floor(height);
+	const double frac_value = height - base_level;
+	if (frac_value < 0.45) {
+		return base_level;
+	}
+	if (frac_value > 0.55) {
+		return base_level + 1.0;
+	}
+	return base_level + smoothstep01((frac_value - 0.45) / 0.1);
+}
+
+static double cross_2d(const Vector2 &a, const Vector2 &b) {
+	return double(a.x) * double(b.y) - double(a.y) * double(b.x);
+}
+
+static bool point_in_rect_2d(const Vector2 &point, const Vector2 &rect_min, const Vector2 &rect_max) {
+	return point.x >= rect_min.x && point.x <= rect_max.x && point.y >= rect_min.y && point.y <= rect_max.y;
+}
+
+static double distance_point_to_segment_2d(const Vector2 &point, const Vector2 &a, const Vector2 &b) {
+	const Vector2 ab = b - a;
+	const double ab_len_sq = double(ab.length_squared());
+	if (ab_len_sq <= 0.000001) {
+		return std::sqrt(double(point.distance_squared_to(a)));
+	}
+	const double t = std::clamp(double((point - a).dot(ab)) / ab_len_sq, 0.0, 1.0);
+	const Vector2 closest = a + ab * float(t);
+	return std::sqrt(double(point.distance_squared_to(closest)));
+}
+
+static bool segments_intersect_2d(const Vector2 &a1, const Vector2 &a2, const Vector2 &b1, const Vector2 &b2) {
+	const double d1 = cross_2d(a2 - a1, b1 - a1);
+	const double d2 = cross_2d(a2 - a1, b2 - a1);
+	const double d3 = cross_2d(b2 - b1, a1 - b1);
+	const double d4 = cross_2d(b2 - b1, a2 - b1);
+	const double eps = 0.0001;
+	if (std::abs(d1) < eps && std::abs(d2) < eps && std::abs(d3) < eps && std::abs(d4) < eps) {
+		const double a_min_x = std::min(double(a1.x), double(a2.x));
+		const double a_max_x = std::max(double(a1.x), double(a2.x));
+		const double a_min_y = std::min(double(a1.y), double(a2.y));
+		const double a_max_y = std::max(double(a1.y), double(a2.y));
+		const double b_min_x = std::min(double(b1.x), double(b2.x));
+		const double b_max_x = std::max(double(b1.x), double(b2.x));
+		const double b_min_y = std::min(double(b1.y), double(b2.y));
+		const double b_max_y = std::max(double(b1.y), double(b2.y));
+		return !(a_max_x < b_min_x || b_max_x < a_min_x || a_max_y < b_min_y || b_max_y < a_min_y);
+	}
+	return (d1 * d2 <= 0.0) && (d3 * d4 <= 0.0);
+}
+
+static double distance_segment_to_segment_2d(const Vector2 &a1, const Vector2 &a2, const Vector2 &b1, const Vector2 &b2) {
+	if (segments_intersect_2d(a1, a2, b1, b2)) {
+		return 0.0;
+	}
+	return std::min(
+			std::min(distance_point_to_segment_2d(a1, b1, b2), distance_point_to_segment_2d(a2, b1, b2)),
+			std::min(distance_point_to_segment_2d(b1, a1, a2), distance_point_to_segment_2d(b2, a1, a2)));
+}
+
+static double distance_segment_to_rect_2d(const Vector2 &a, const Vector2 &b, const Vector2 &rect_min, const Vector2 &rect_max) {
+	if (point_in_rect_2d(a, rect_min, rect_max) || point_in_rect_2d(b, rect_min, rect_max)) {
+		return 0.0;
+	}
+	const Vector2 c1(rect_min.x, rect_min.y);
+	const Vector2 c2(rect_max.x, rect_min.y);
+	const Vector2 c3(rect_max.x, rect_max.y);
+	const Vector2 c4(rect_min.x, rect_max.y);
+	double dist = std::numeric_limits<double>::infinity();
+	dist = std::min(dist, distance_segment_to_segment_2d(a, b, c1, c2));
+	dist = std::min(dist, distance_segment_to_segment_2d(a, b, c2, c3));
+	dist = std::min(dist, distance_segment_to_segment_2d(a, b, c3, c4));
+	dist = std::min(dist, distance_segment_to_segment_2d(a, b, c4, c1));
+	return dist;
 }
 
 static Vector3i rotate_offset_impl(const Vector3i &offset, int rotation) {
@@ -707,6 +946,14 @@ void PrefabGeometryNative::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("find_nearest_tree_visual_bounds_ray_hit", "chunk_data", "list_key", "origin", "direction", "max_distance", "mesh_bounds", "base_transform", "rotation_fix", "bounds_padding"), &PrefabGeometryNative::find_nearest_tree_visual_bounds_ray_hit);
 	ClassDB::bind_method(D_METHOD("resolve_tree_body_collision", "chunk_tree_data", "body_origin", "body_radius", "body_height", "chunk_stride", "collision_radius", "collision_height"), &PrefabGeometryNative::resolve_tree_body_collision);
 	ClassDB::bind_method(D_METHOD("build_world_map_height_biome_bytes", "map_size", "world_size", "world_seed", "noise_frequency", "terrain_height", "max_height", "grass_material_id", "sand_material_id", "snow_material_id", "gravel_material_id"), &PrefabGeometryNative::build_world_map_height_biome_bytes);
+	ClassDB::bind_method(D_METHOD("apply_world_map_lakes", "water_data", "road_data", "height_data", "map_size", "world_size", "world_seed", "lake_threshold", "road_width", "road_blend_margin", "road_block_threshold", "terrain_height", "water_level", "max_height", "deep_lakes_enabled"), &PrefabGeometryNative::apply_world_map_lakes);
+	ClassDB::bind_method(D_METHOD("rasterize_world_map_segments", "segments", "height_data", "biome_data", "road_data", "map_size", "world_seed", "road_blend_margin", "default_width", "max_height", "road_material_id", "path_mode"), &PrefabGeometryNative::rasterize_world_map_segments);
+	ClassDB::bind_method(D_METHOD("footprint_hits_world_map_road_segments", "segments", "bldg_x", "bldg_z", "footprint", "default_width", "road_blend_margin"), &PrefabGeometryNative::footprint_hits_world_map_road_segments);
+	ClassDB::bind_method(D_METHOD("footprint_hits_packed_world_map_road_segments", "segment_data", "bldg_x", "bldg_z", "footprint"), &PrefabGeometryNative::footprint_hits_packed_world_map_road_segments);
+	ClassDB::bind_method(D_METHOD("resolve_world_map_building_support", "height_data", "map_size", "bldg_x", "bldg_z", "footprint", "max_height", "half", "config"), &PrefabGeometryNative::resolve_world_map_building_support);
+	ClassDB::bind_method(D_METHOD("flatten_world_map_building_pad", "height_data", "map_size", "bldg_x", "bldg_z", "footprint", "bldg_y", "max_height", "half", "support_height_range", "protected_columns"), &PrefabGeometryNative::flatten_world_map_building_pad);
+	ClassDB::bind_method(D_METHOD("build_world_map_excavation_modifications", "segments", "spawn_origin"), &PrefabGeometryNative::build_world_map_excavation_modifications);
+	ClassDB::bind_method(D_METHOD("build_world_map_minimap_rgb_bytes", "height_data", "biome_data", "road_data", "water_data", "building_data", "width", "height", "material_rgb_lut", "road_material_id", "water_r", "water_g", "water_b", "building_r", "building_g", "building_b"), &PrefabGeometryNative::build_world_map_minimap_rgb_bytes);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances", "config", "height_map"), &PrefabGeometryNative::build_vegetation_instances);
 	ClassDB::bind_method(D_METHOD("build_vegetation_instances_with_render_payload", "config", "height_map", "render_space_inverse", "mesh_bounds"), &PrefabGeometryNative::build_vegetation_instances_with_render_payload);
 	ClassDB::bind_method(D_METHOD("build_noise_samples", "noise_sampler", "chunk_origin_x", "chunk_origin_z", "chunk_stride", "step", "use_noise"), &PrefabGeometryNative::build_noise_samples);
@@ -1443,21 +1690,6 @@ Dictionary PrefabGeometryNative::build_world_map_height_biome_bytes(
 		return result;
 	}
 
-	fastnoiselite::FastNoiseLite height_noise(world_seed);
-	height_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_Value);
-	height_noise.SetFrequency(static_cast<float>(noise_frequency));
-	height_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_FBm);
-	height_noise.SetFractalOctaves(5);
-	height_noise.SetFractalLacunarity(2.0f);
-	height_noise.SetFractalGain(0.5f);
-
-	fastnoiselite::FastNoiseLite biome_noise(world_seed + 100);
-	biome_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_OpenSimplex2);
-	biome_noise.SetFrequency(0.002f);
-	biome_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_FBm);
-	biome_noise.SetFractalOctaves(3);
-	biome_noise.SetFractalGain(0.5f);
-
 	PackedByteArray height_bytes;
 	height_bytes.resize(static_cast<int>(total));
 	PackedByteArray biome_bytes;
@@ -1467,34 +1699,943 @@ Dictionary PrefabGeometryNative::build_world_map_height_biome_bytes(
 	const double half_world_size = double(world_size) * 0.5;
 	const double sample_scale = double(world_size) / double(map_size);
 
-	for (int z = 0; z < map_size; ++z) {
-		const float world_z = static_cast<float>(double(z) * sample_scale - half_world_size);
-		const int row_offset = z * map_size;
-		for (int x = 0; x < map_size; ++x) {
-			const float world_x = static_cast<float>(double(x) * sample_scale - half_world_size);
-			const int index = row_offset + x;
-			const double height_raw = static_cast<double>(height_noise.GetNoise(world_x, world_z));
-			const double height = terrain_height + (height_raw * 0.5 + 0.5) * terrain_height;
-			const double normalized_height = std::clamp(height / max_height, 0.0, 1.0);
-			const int encoded_height = static_cast<int>(std::round(normalized_height * 255.0));
-			height_write[index] = static_cast<uint8_t>(std::clamp(encoded_height, 0, 255));
+	const auto fill_rows = [&](int start_z, int end_z) {
+		fastnoiselite::FastNoiseLite height_noise(world_seed);
+		height_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_Value);
+		height_noise.SetFrequency(static_cast<float>(noise_frequency));
+		height_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_FBm);
+		height_noise.SetFractalOctaves(5);
+		height_noise.SetFractalLacunarity(2.0f);
+		height_noise.SetFractalGain(0.5f);
 
-			const double biome_value = static_cast<double>(biome_noise.GetNoise(world_x, world_z));
-			int biome = grass_material_id;
-			if (biome_value < -0.2) {
-				biome = sand_material_id;
-			} else if (biome_value > 0.6) {
-				biome = snow_material_id;
-			} else if (biome_value > 0.2) {
-				biome = gravel_material_id;
+		fastnoiselite::FastNoiseLite biome_noise(world_seed + 100);
+		biome_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_OpenSimplex2);
+		biome_noise.SetFrequency(0.002f);
+		biome_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_FBm);
+		biome_noise.SetFractalOctaves(3);
+		biome_noise.SetFractalGain(0.5f);
+
+		for (int z = start_z; z < end_z; ++z) {
+			const float world_z = static_cast<float>(double(z) * sample_scale - half_world_size);
+			const int row_offset = z * map_size;
+			for (int x = 0; x < map_size; ++x) {
+				const float world_x = static_cast<float>(double(x) * sample_scale - half_world_size);
+				const int index = row_offset + x;
+				const double height_raw = static_cast<double>(height_noise.GetNoise(world_x, world_z));
+				const double height = terrain_height + (height_raw * 0.5 + 0.5) * terrain_height;
+				const double normalized_height = std::clamp(height / max_height, 0.0, 1.0);
+				const int encoded_height = static_cast<int>(std::round(normalized_height * 255.0));
+				height_write[index] = static_cast<uint8_t>(std::clamp(encoded_height, 0, 255));
+
+				const double biome_value = static_cast<double>(biome_noise.GetNoise(world_x, world_z));
+				int biome = grass_material_id;
+				if (biome_value < -0.2) {
+					biome = sand_material_id;
+				} else if (biome_value > 0.6) {
+					biome = snow_material_id;
+				} else if (biome_value > 0.2) {
+					biome = gravel_material_id;
+				}
+				biome_write[index] = static_cast<uint8_t>(std::clamp(biome, 0, 255));
 			}
-			biome_write[index] = static_cast<uint8_t>(std::clamp(biome, 0, 255));
+		}
+	};
+
+	const int worker_count = native_row_worker_count(map_size);
+	if (worker_count <= 1) {
+		fill_rows(0, map_size);
+	} else {
+		std::vector<std::thread> workers;
+		workers.reserve(worker_count);
+		for (int worker = 0; worker < worker_count; ++worker) {
+			const int start_z = worker * map_size / worker_count;
+			const int end_z = (worker + 1) * map_size / worker_count;
+			workers.emplace_back(fill_rows, start_z, end_z);
+		}
+		for (std::thread &worker_thread : workers) {
+			worker_thread.join();
 		}
 	}
 
 	result["height_bytes"] = height_bytes;
 	result["biome_bytes"] = biome_bytes;
 	result["pixel_count"] = static_cast<int>(total);
+	result["worker_count"] = worker_count;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::apply_world_map_lakes(
+		const PackedByteArray &water_data,
+		const PackedByteArray &road_data,
+		const PackedByteArray &height_data,
+		int map_size,
+		int world_size,
+		int world_seed,
+		double lake_threshold,
+		double road_width,
+		double road_blend_margin,
+		int road_block_threshold,
+		double terrain_height,
+		double water_level,
+		double max_height,
+		bool deep_lakes_enabled) const {
+	Dictionary result;
+	if (map_size <= 0 || world_size <= 0 || max_height <= 0.0) {
+		return result;
+	}
+
+	const int64_t pixel_count_64 = static_cast<int64_t>(map_size) * static_cast<int64_t>(map_size);
+	const int64_t road_byte_count_64 = pixel_count_64 * 2;
+	if (
+			pixel_count_64 <= 0 ||
+			pixel_count_64 > std::numeric_limits<int32_t>::max() ||
+			water_data.size() < pixel_count_64 ||
+			height_data.size() < pixel_count_64 ||
+			road_data.size() < road_byte_count_64) {
+		return result;
+	}
+
+	PackedByteArray water_bytes = water_data;
+	PackedByteArray height_bytes = height_data;
+	uint8_t *water_write = water_bytes.ptrw();
+	uint8_t *height_write = height_bytes.ptrw();
+	const uint8_t *road_read = road_data.ptr();
+
+	const double water_road_buffer = road_width * 0.5 + road_blend_margin;
+	const int road_buffer_pixels = static_cast<int>(water_road_buffer);
+	const double lake_cutoff = lake_threshold - 0.05;
+	const double shore_submerge = 1.25;
+	const double basin_depth_max = std::clamp(terrain_height * 0.65, 2.5, 8.0);
+	const double half_world_size = double(world_size) * 0.5;
+	const double sample_scale = double(world_size) / double(map_size);
+	const int threshold = std::clamp(road_block_threshold, 0, 255);
+
+	struct LakeWorkerCounts {
+		int water_pixels = 0;
+		int carved_pixels = 0;
+		int road_blocked_pixels = 0;
+		int near_road_blocked_pixels = 0;
+	};
+
+	const auto process_rows = [&](int start_z, int end_z, LakeWorkerCounts &counts) {
+		fastnoiselite::FastNoiseLite lake_noise(world_seed + 300);
+		lake_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_OpenSimplex2);
+		lake_noise.SetFrequency(0.0008f);
+		lake_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_None);
+
+		for (int z = start_z; z < end_z; ++z) {
+			const float world_z = static_cast<float>(double(z) * sample_scale - half_world_size);
+			const int row_offset = z * map_size;
+			for (int x = 0; x < map_size; ++x) {
+				const float world_x = static_cast<float>(double(x) * sample_scale - half_world_size);
+				const int index = row_offset + x;
+				const int road_index = index * 2;
+
+				if (road_read[road_index] >= threshold) {
+					counts.road_blocked_pixels += 1;
+					continue;
+				}
+
+				bool near_road = false;
+				for (int dr = -road_buffer_pixels; dr <= road_buffer_pixels; dr += 4) {
+					const int check_x = x + dr;
+					if (check_x >= 0 && check_x < map_size) {
+						const int check_road_index = (z * map_size + check_x) * 2;
+						if (road_read[check_road_index] >= threshold) {
+							near_road = true;
+							break;
+						}
+					}
+
+					const int check_z = z + dr;
+					if (check_z >= 0 && check_z < map_size) {
+						const int check_road_index = (check_z * map_size + x) * 2;
+						if (road_read[check_road_index] >= threshold) {
+							near_road = true;
+							break;
+						}
+					}
+				}
+				if (near_road) {
+					counts.near_road_blocked_pixels += 1;
+					continue;
+				}
+
+				const double lake_value = static_cast<double>(lake_noise.GetNoise(world_x, world_z));
+				if (lake_value <= lake_cutoff) {
+					continue;
+				}
+
+				water_write[index] = 255;
+				counts.water_pixels += 1;
+				if (!deep_lakes_enabled) {
+					continue;
+				}
+
+				double depth_t = std::clamp((lake_value - lake_cutoff) / std::max(0.001, 1.0 - lake_cutoff), 0.0, 1.0);
+				depth_t = depth_t * depth_t * (3.0 - 2.0 * depth_t);
+				const double current_height = double(height_write[index]) / 255.0 * max_height;
+				const double target_height = water_level - shore_submerge - basin_depth_max * depth_t;
+				if (current_height > target_height) {
+					height_write[index] = encode_height_byte_native(target_height, max_height);
+					counts.carved_pixels += 1;
+				}
+			}
+		}
+	};
+
+	const int worker_count = native_row_worker_count(map_size);
+	std::vector<LakeWorkerCounts> worker_counts(worker_count);
+	if (worker_count <= 1) {
+		process_rows(0, map_size, worker_counts[0]);
+	} else {
+		std::vector<std::thread> workers;
+		workers.reserve(worker_count);
+		for (int worker = 0; worker < worker_count; ++worker) {
+			const int start_z = worker * map_size / worker_count;
+			const int end_z = (worker + 1) * map_size / worker_count;
+			workers.emplace_back(process_rows, start_z, end_z, std::ref(worker_counts[worker]));
+		}
+		for (std::thread &worker_thread : workers) {
+			worker_thread.join();
+		}
+	}
+
+	int water_pixels = 0;
+	int carved_pixels = 0;
+	int road_blocked_pixels = 0;
+	int near_road_blocked_pixels = 0;
+	for (const LakeWorkerCounts &counts : worker_counts) {
+		water_pixels += counts.water_pixels;
+		carved_pixels += counts.carved_pixels;
+		road_blocked_pixels += counts.road_blocked_pixels;
+		near_road_blocked_pixels += counts.near_road_blocked_pixels;
+	}
+
+	result["water_bytes"] = water_bytes;
+	result["height_bytes"] = height_bytes;
+	result["pixel_count"] = static_cast<int>(pixel_count_64);
+	result["water_pixel_count"] = water_pixels;
+	result["height_carve_count"] = carved_pixels;
+	result["road_blocked_pixel_count"] = road_blocked_pixels;
+	result["near_road_blocked_pixel_count"] = near_road_blocked_pixels;
+	result["worker_count"] = worker_count;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::build_world_map_minimap_rgb_bytes(
+		const PackedByteArray &height_data,
+		const PackedByteArray &biome_data,
+		const PackedByteArray &road_data,
+		const PackedByteArray &water_data,
+		const PackedByteArray &building_data,
+		int width,
+		int height,
+		const PackedInt32Array &material_rgb_lut,
+		int road_material_id,
+		int water_r,
+		int water_g,
+		int water_b,
+		int building_r,
+		int building_g,
+		int building_b) const {
+	Dictionary result;
+	if (width <= 0 || height <= 0) {
+		return result;
+	}
+
+	const int64_t pixel_count_64 = static_cast<int64_t>(width) * static_cast<int64_t>(height);
+	if (
+			pixel_count_64 <= 0 ||
+			pixel_count_64 > std::numeric_limits<int32_t>::max() ||
+			pixel_count_64 > std::numeric_limits<int32_t>::max() / 3 ||
+			height_data.size() < pixel_count_64 ||
+			biome_data.size() < pixel_count_64) {
+		return result;
+	}
+
+	const int pixel_count = static_cast<int>(pixel_count_64);
+	PackedByteArray rgb_bytes;
+	rgb_bytes.resize(pixel_count * 3);
+
+	const uint8_t *height_read = height_data.ptr();
+	const uint8_t *biome_read = biome_data.ptr();
+	const uint8_t *road_read = road_data.ptr();
+	const uint8_t *water_read = water_data.ptr();
+	const uint8_t *building_read = building_data.ptr();
+	const int32_t *lut_read = material_rgb_lut.ptr();
+	const int lut_size = material_rgb_lut.size();
+	uint8_t *rgb_write = rgb_bytes.ptrw();
+
+	const int road_size = road_data.size();
+	const int water_size = water_data.size();
+	const int building_size = building_data.size();
+	const int clamped_water_r = std::clamp(water_r, 0, 255);
+	const int clamped_water_g = std::clamp(water_g, 0, 255);
+	const int clamped_water_b = std::clamp(water_b, 0, 255);
+	const int clamped_building_r = std::clamp(building_r, 0, 255);
+	const int clamped_building_g = std::clamp(building_g, 0, 255);
+	const int clamped_building_b = std::clamp(building_b, 0, 255);
+
+	struct MinimapWorkerCounts {
+		int road_pixels = 0;
+		int water_pixels = 0;
+		int building_pixels = 0;
+	};
+
+	const auto process_rows = [&](int start_y, int end_y, MinimapWorkerCounts &counts) {
+		for (int y = start_y; y < end_y; ++y) {
+			const int row_offset = y * width;
+			for (int x = 0; x < width; ++x) {
+				const int index = row_offset + x;
+				const double shade = 0.5 + (static_cast<double>(height_read[index]) / 255.0) * 0.5;
+				int r = 80;
+				int g = 160;
+				int b = 60;
+				lookup_minimap_lut_rgb(lut_read, lut_size, static_cast<int>(biome_read[index]), r, g, b);
+
+				const int road_index = index * 2;
+				if (road_index < road_size && road_read[road_index] > 128) {
+					lookup_minimap_lut_rgb(lut_read, lut_size, road_material_id, r, g, b);
+					counts.road_pixels += 1;
+				}
+
+				if (index < water_size && water_read[index] > 128) {
+					r = clamped_water_r;
+					g = clamped_water_g;
+					b = clamped_water_b;
+					counts.water_pixels += 1;
+				}
+
+				if (index < building_size && building_read[index] > 128) {
+					r = clamped_building_r;
+					g = clamped_building_g;
+					b = clamped_building_b;
+					counts.building_pixels += 1;
+				}
+
+				const int rgb_index = index * 3;
+				rgb_write[rgb_index] = encode_shaded_rgb_byte(r, shade);
+				rgb_write[rgb_index + 1] = encode_shaded_rgb_byte(g, shade);
+				rgb_write[rgb_index + 2] = encode_shaded_rgb_byte(b, shade);
+			}
+		}
+	};
+
+	const int worker_count = native_row_worker_count(height);
+	std::vector<MinimapWorkerCounts> worker_counts(worker_count);
+	if (worker_count <= 1) {
+		process_rows(0, height, worker_counts[0]);
+	} else {
+		std::vector<std::thread> workers;
+		workers.reserve(worker_count);
+		for (int worker = 0; worker < worker_count; ++worker) {
+			const int start_y = worker * height / worker_count;
+			const int end_y = (worker + 1) * height / worker_count;
+			workers.emplace_back(process_rows, start_y, end_y, std::ref(worker_counts[worker]));
+		}
+		for (std::thread &worker_thread : workers) {
+			worker_thread.join();
+		}
+	}
+
+	int road_pixels = 0;
+	int water_pixels = 0;
+	int building_pixels = 0;
+	for (const MinimapWorkerCounts &counts : worker_counts) {
+		road_pixels += counts.road_pixels;
+		water_pixels += counts.water_pixels;
+		building_pixels += counts.building_pixels;
+	}
+
+	result["rgb_bytes"] = rgb_bytes;
+	result["pixel_count"] = pixel_count;
+	result["worker_count"] = worker_count;
+	result["road_pixel_count"] = road_pixels;
+	result["water_pixel_count"] = water_pixels;
+	result["building_pixel_count"] = building_pixels;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::rasterize_world_map_segments(
+		const Array &segments,
+		const PackedByteArray &height_data,
+		const PackedByteArray &biome_data,
+		const PackedByteArray &road_data,
+		int map_size,
+		int world_seed,
+		double road_blend_margin,
+		double default_width,
+		double max_height,
+		int road_material_id,
+		bool path_mode) const {
+	Dictionary result;
+	if (map_size <= 0 || max_height <= 0.0 || default_width <= 0.0) {
+		return result;
+	}
+
+	const int64_t pixel_count_64 = static_cast<int64_t>(map_size) * static_cast<int64_t>(map_size);
+	const int64_t road_byte_count_64 = pixel_count_64 * 2;
+	if (
+			pixel_count_64 <= 0 ||
+			pixel_count_64 > std::numeric_limits<int32_t>::max() ||
+			height_data.size() < pixel_count_64 ||
+			biome_data.size() < pixel_count_64 ||
+			road_data.size() < road_byte_count_64) {
+		return result;
+	}
+
+	PackedByteArray height_bytes = height_data;
+	PackedByteArray biome_bytes = biome_data;
+	PackedByteArray road_bytes = road_data;
+	uint8_t *height_write = height_bytes.ptrw();
+	uint8_t *biome_write = biome_bytes.ptrw();
+	uint8_t *road_write = road_bytes.ptrw();
+
+	fastnoiselite::FastNoiseLite road_noise(world_seed + 200);
+	road_noise.SetNoiseType(fastnoiselite::FastNoiseLite::NoiseType_ValueCubic);
+	road_noise.SetFrequency(0.008f);
+	road_noise.SetFractalType(fastnoiselite::FastNoiseLite::FractalType_FBm);
+	road_noise.SetFractalOctaves(5);
+	road_noise.SetFractalLacunarity(2.0f);
+	road_noise.SetFractalGain(0.5f);
+
+	const int half = map_size / 2;
+	const uint8_t road_material = static_cast<uint8_t>(std::clamp(road_material_id, 0, 255));
+	int valid_segments = 0;
+	int scanned_pixels = 0;
+	int touched_pixels = 0;
+	int surface_pixels = 0;
+	int blend_pixels = 0;
+
+	for (int segment_index = 0; segment_index < segments.size(); ++segment_index) {
+		const Variant segment_variant = segments[segment_index];
+		if (segment_variant.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		const Dictionary segment = segment_variant;
+		Vector2 from_v;
+		Vector2 to_v;
+		if (!variant_to_vector2(segment.get("from", Vector2()), from_v) ||
+				!variant_to_vector2(segment.get("to", Vector2()), to_v)) {
+			continue;
+		}
+
+		const double seg_width = std::max(0.001, double(segment.get("width", default_width)));
+		const Vector2 delta = to_v - from_v;
+		const double seg_len = std::sqrt(double(delta.length_squared()));
+		if (seg_len < (path_mode ? 0.5 : 1.0)) {
+			continue;
+		}
+		valid_segments += 1;
+
+		const Vector2 dir = delta / float(seg_len);
+		const double half_width = seg_width * 0.5;
+		const double from_y = double(segment.get("from_y", 12.0));
+		const double to_y = double(segment.get("to_y", from_y));
+		const double rise = std::abs(to_y - from_y);
+		const double flatten_width = path_mode
+				? (seg_width * 2.5 + road_blend_margin + rise * 0.85)
+				: (seg_width + road_blend_margin);
+
+		const int min_x = std::clamp(static_cast<int>(std::min(from_v.x, to_v.x) - flatten_width) + half, 0, map_size - 1);
+		const int max_x = std::clamp(static_cast<int>(std::max(from_v.x, to_v.x) + flatten_width) + half, 0, map_size - 1);
+		const int min_z = std::clamp(static_cast<int>(std::min(from_v.y, to_v.y) - flatten_width) + half, 0, map_size - 1);
+		const int max_z = std::clamp(static_cast<int>(std::max(from_v.y, to_v.y) + flatten_width) + half, 0, map_size - 1);
+
+		for (int pz = min_z; pz <= max_z; ++pz) {
+			const double wz = double(pz - half);
+			const int row_offset = pz * map_size;
+			for (int px = min_x; px <= max_x; ++px) {
+				scanned_pixels += 1;
+				const double wx = double(px - half);
+				const Vector2 point{float(wx), float(wz)};
+				const Vector2 ap = point - from_v;
+				const double projection = std::clamp(double(ap.dot(dir)), 0.0, seg_len);
+				const Vector2 closest = from_v + dir * float(projection);
+				const double dist = std::sqrt(double((point - closest).length_squared()));
+				if (dist > flatten_width) {
+					continue;
+				}
+
+				const int pixel_index = row_offset + px;
+				const int road_index = pixel_index * 2;
+				touched_pixels += 1;
+
+				if (path_mode) {
+					const double path_u = projection / seg_len;
+					const double eased_u = smoothstep01(path_u);
+					const double path_y = lerp_double(from_y, to_y, eased_u);
+					if (dist < half_width) {
+						const int road_height_byte = static_cast<int>(std::clamp(path_y / 64.0, 0.0, 1.0) * 255.0);
+						road_write[road_index] = static_cast<uint8_t>(std::max<int>(road_write[road_index], 196));
+						road_write[road_index + 1] = static_cast<uint8_t>(std::max<int>(road_write[road_index + 1], road_height_byte));
+						biome_write[pixel_index] = road_material;
+						height_write[pixel_index] = encode_height_byte_native(path_y, max_height);
+						surface_pixels += 1;
+					} else {
+						const double blend_t = std::clamp((dist - half_width) / std::max(0.001, flatten_width - half_width), 0.0, 1.0);
+						const double smooth_t = smoothstep01(smoothstep01(blend_t));
+						const double original_height = double(height_write[pixel_index]) / 255.0 * max_height;
+						height_write[pixel_index] = encode_height_byte_native(lerp_double(path_y, original_height, smooth_t), max_height);
+						blend_pixels += 1;
+					}
+					continue;
+				}
+
+				const double road_height = stepped_road_height_native(road_noise, closest.x, closest.y);
+				if (dist < half_width) {
+					const int road_height_byte = static_cast<int>(std::clamp(road_height / 64.0, 0.0, 1.0) * 255.0);
+					road_write[road_index] = 255;
+					road_write[road_index + 1] = static_cast<uint8_t>(std::clamp(road_height_byte, 0, 255));
+					biome_write[pixel_index] = road_material;
+					height_write[pixel_index] = encode_height_byte_native(road_height, max_height);
+					surface_pixels += 1;
+				} else {
+					const double blend_t = std::clamp((dist - half_width) / std::max(0.001, flatten_width - half_width), 0.0, 1.0);
+					const double original_height = double(height_write[pixel_index]) / 255.0 * max_height;
+					height_write[pixel_index] = encode_height_byte_native(lerp_double(road_height, original_height, blend_t), max_height);
+					blend_pixels += 1;
+				}
+			}
+		}
+	}
+
+	result["height_bytes"] = height_bytes;
+	result["biome_bytes"] = biome_bytes;
+	result["road_bytes"] = road_bytes;
+	result["segment_count"] = valid_segments;
+	result["scanned_pixel_count"] = scanned_pixels;
+	result["touched_pixel_count"] = touched_pixels;
+	result["surface_pixel_count"] = surface_pixels;
+	result["blend_pixel_count"] = blend_pixels;
+	result["path_mode"] = path_mode;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::footprint_hits_world_map_road_segments(
+		const Array &segments,
+		double bldg_x,
+		double bldg_z,
+		const Vector2i &footprint,
+		double default_width,
+		double road_blend_margin) const {
+	Dictionary result;
+	if (footprint.x <= 0 || footprint.y <= 0 || default_width <= 0.0) {
+		return result;
+	}
+
+	const Vector2 rect_min{float(bldg_x), float(bldg_z)};
+	const Vector2 rect_max{float(bldg_x + double(footprint.x)), float(bldg_z + double(footprint.y))};
+	bool hit = false;
+	int checked_segments = 0;
+	int valid_segments = 0;
+
+	for (int segment_index = 0; segment_index < segments.size(); ++segment_index) {
+		const Variant segment_variant = segments[segment_index];
+		if (segment_variant.get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		const Dictionary segment = segment_variant;
+		Vector2 from_v;
+		Vector2 to_v;
+		if (!variant_to_vector2(segment.get("from", Vector2()), from_v) ||
+				!variant_to_vector2(segment.get("to", Vector2()), to_v)) {
+			continue;
+		}
+		valid_segments += 1;
+		checked_segments += 1;
+		const double width = std::max(0.001, double(segment.get("width", default_width)));
+		const double clearance_radius = width * 0.5 + road_blend_margin + 0.75;
+		if (distance_segment_to_rect_2d(from_v, to_v, rect_min, rect_max) <= clearance_radius) {
+			hit = true;
+			break;
+		}
+	}
+
+	result["hit"] = hit;
+	result["checked_segment_count"] = checked_segments;
+	result["valid_segment_count"] = valid_segments;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::footprint_hits_packed_world_map_road_segments(
+		const PackedFloat32Array &segment_data,
+		double bldg_x,
+		double bldg_z,
+		const Vector2i &footprint) const {
+	Dictionary result;
+	if (footprint.x <= 0 || footprint.y <= 0 || segment_data.size() < 5) {
+		return result;
+	}
+
+	const int segment_count = segment_data.size() / 5;
+	const float *segment_read = segment_data.ptr();
+	const Vector2 rect_min{float(bldg_x), float(bldg_z)};
+	const Vector2 rect_max{float(bldg_x + double(footprint.x)), float(bldg_z + double(footprint.y))};
+	bool hit = false;
+	int checked_segments = 0;
+
+	for (int segment_index = 0; segment_index < segment_count; ++segment_index) {
+		const int base = segment_index * 5;
+		const Vector2 from_v{segment_read[base], segment_read[base + 1]};
+		const Vector2 to_v{segment_read[base + 2], segment_read[base + 3]};
+		const double clearance_radius = std::max(0.0, double(segment_read[base + 4]));
+		checked_segments += 1;
+		if (distance_segment_to_rect_2d(from_v, to_v, rect_min, rect_max) <= clearance_radius) {
+			hit = true;
+			break;
+		}
+	}
+
+	result["hit"] = hit;
+	result["checked_segment_count"] = checked_segments;
+	result["valid_segment_count"] = segment_count;
+	return result;
+}
+
+Dictionary PrefabGeometryNative::resolve_world_map_building_support(
+		const PackedByteArray &height_data,
+		int map_size,
+		double bldg_x,
+		double bldg_z,
+		const Vector2i &footprint,
+		double max_height,
+		int half,
+		const Dictionary &config) const {
+	Dictionary empty;
+	if (map_size <= 0 || max_height <= 0.0 || footprint.x <= 0 || footprint.y <= 0) {
+		return empty;
+	}
+
+	const int64_t pixel_count_64 = static_cast<int64_t>(map_size) * static_cast<int64_t>(map_size);
+	if (pixel_count_64 <= 0 || pixel_count_64 > std::numeric_limits<int32_t>::max() || height_data.size() < pixel_count_64) {
+		return empty;
+	}
+
+	const uint8_t *height_read = height_data.ptr();
+	const int min_x = std::clamp(static_cast<int>(std::floor(bldg_x)) + half, 0, map_size - 1);
+	const int min_z = std::clamp(static_cast<int>(std::floor(bldg_z)) + half, 0, map_size - 1);
+	const int max_x = std::clamp(static_cast<int>(std::ceil(bldg_x + double(footprint.x) - 1.0)) + half, 0, map_size - 1);
+	const int max_z = std::clamp(static_cast<int>(std::ceil(bldg_z + double(footprint.y) - 1.0)) + half, 0, map_size - 1);
+
+	double height_sum = 0.0;
+	int preferred_sample_count = 0;
+	for (int z = min_z; z <= max_z; z += 2) {
+		const int row_offset = z * map_size;
+		for (int x = min_x; x <= max_x; x += 2) {
+			height_sum += clamp_support_height_byte(height_read[row_offset + x], max_height);
+			preferred_sample_count += 1;
+		}
+	}
+	const double preferred_y = preferred_sample_count > 0 ? height_sum / double(preferred_sample_count) : 12.0;
+
+	const std::vector<Vector2> sample_points = build_support_sample_points(footprint, config);
+	if (sample_points.empty()) {
+		Dictionary result;
+		result["valid"] = false;
+		result["reason"] = "no_samples";
+		return result;
+	}
+
+	std::vector<double> heights;
+	heights.reserve(sample_points.size());
+	double min_h = std::numeric_limits<double>::infinity();
+	double max_h = -std::numeric_limits<double>::infinity();
+	double sum_h = 0.0;
+	for (const Vector2 &offset : sample_points) {
+		const double sampled = sample_world_map_support_height(height_read, map_size, bldg_x + double(offset.x), bldg_z + double(offset.y), max_height, half);
+		if (std::isnan(sampled) || sampled <= -900.0) {
+			Dictionary result;
+			result["valid"] = false;
+			result["reason"] = "missing_height";
+			return result;
+		}
+		heights.push_back(sampled);
+		min_h = std::min(min_h, sampled);
+		max_h = std::max(max_h, sampled);
+		sum_h += sampled;
+	}
+	if (heights.empty()) {
+		Dictionary result;
+		result["valid"] = false;
+		result["reason"] = "no_heights";
+		return result;
+	}
+
+	std::vector<double> sorted = heights;
+	std::sort(sorted.begin(), sorted.end());
+	const double mean_h = sum_h / double(heights.size());
+	double median_h = sorted[sorted.size() / 2];
+	if (sorted.size() % 2 == 0 && sorted.size() > 1) {
+		const int upper_idx = int(sorted.size() / 2);
+		const int lower_idx = std::max(0, upper_idx - 1);
+		median_h = (sorted[lower_idx] + sorted[upper_idx]) * 0.5;
+	}
+
+	const int search_radius = std::max(1, int(config.get("search_radius", 3)));
+	const double seed_values[] = {
+		std::floor(min_h), std::round(min_h), std::ceil(min_h),
+		std::floor(mean_h), std::round(mean_h), std::ceil(mean_h),
+		std::floor(median_h), std::round(median_h), std::ceil(median_h),
+		std::floor(max_h), std::round(max_h), std::ceil(max_h),
+		std::floor(preferred_y), std::round(preferred_y), std::ceil(preferred_y)
+	};
+	std::unordered_set<int> unique_levels;
+	unique_levels.reserve(64);
+	for (const double seed : seed_values) {
+		const int seed_int = int(seed);
+		for (int delta = -search_radius; delta <= search_radius; ++delta) {
+			unique_levels.insert(seed_int + delta);
+		}
+	}
+	std::vector<int> candidate_levels(unique_levels.begin(), unique_levels.end());
+	std::sort(candidate_levels.begin(), candidate_levels.end());
+	if (candidate_levels.empty()) {
+		Dictionary result;
+		result["valid"] = false;
+		result["reason"] = "no_candidates";
+		return result;
+	}
+
+	const double float_weight = double(config.get("float_weight", 7.0));
+	const double embed_weight = double(config.get("embed_weight", 3.5));
+	const double float_peak_weight = double(config.get("float_peak_weight", 5.5));
+	const double embed_peak_weight = double(config.get("embed_peak_weight", 4.0));
+	const double preferred_weight = double(config.get("preferred_weight", 0.35));
+	const double balance_weight = double(config.get("balance_weight", 0.75));
+	const double count = std::max(1.0, double(heights.size()));
+
+	bool has_best = false;
+	double best_level = 0.0;
+	double best_avg_float = 0.0;
+	double best_avg_embed = 0.0;
+	double best_max_float = 0.0;
+	double best_max_embed = 0.0;
+	double best_score = 0.0;
+
+	for (const int level_int : candidate_levels) {
+		const double level_y = double(level_int);
+		double total_float = 0.0;
+		double total_embed = 0.0;
+		double max_float = 0.0;
+		double max_embed = 0.0;
+		for (const double height : heights) {
+			const double delta = level_y - height;
+			if (delta >= 0.0) {
+				total_float += delta;
+				max_float = std::max(max_float, delta);
+			} else {
+				const double embed = -delta;
+				total_embed += embed;
+				max_embed = std::max(max_embed, embed);
+			}
+		}
+
+		const double avg_float = total_float / count;
+		const double avg_embed = total_embed / count;
+		const double score = (
+				total_float * float_weight +
+				total_embed * embed_weight +
+				max_float * max_float * float_peak_weight +
+				max_embed * max_embed * embed_peak_weight +
+				std::abs(level_y - preferred_y) * preferred_weight +
+				std::abs(avg_float - avg_embed) * balance_weight);
+		if (!has_best || score < best_score) {
+			has_best = true;
+			best_level = level_y;
+			best_avg_float = avg_float;
+			best_avg_embed = avg_embed;
+			best_max_float = max_float;
+			best_max_embed = max_embed;
+			best_score = score;
+		}
+	}
+
+	const double max_float_gap = double(config.get("max_float_gap", 0.75));
+	const double max_embed_depth = double(config.get("max_embed_depth", 1.5));
+	const double max_height_range = double(config.get("max_height_range", 0.0));
+	const double height_range = max_h - min_h;
+
+	Dictionary result;
+	result["resolved_y"] = best_level;
+	result["avg_float_gap"] = best_avg_float;
+	result["avg_embed_depth"] = best_avg_embed;
+	result["max_float_gap"] = best_max_float;
+	result["max_embed_depth"] = best_max_embed;
+	result["score"] = best_score;
+	result["preferred_y"] = preferred_y;
+	result["mean_height"] = mean_h;
+	result["median_height"] = median_h;
+	result["min_height"] = min_h;
+	result["max_height"] = max_h;
+	result["height_range"] = height_range;
+	result["valid"] = (
+			best_max_float <= max_float_gap &&
+			best_max_embed <= max_embed_depth &&
+			(max_height_range <= 0.0 || height_range <= max_height_range));
+	result["origin"] = Vector2(float(bldg_x), float(bldg_z));
+	result["footprint"] = footprint;
+	result["sample_count"] = int(heights.size());
+	result["preferred_sample_count"] = preferred_sample_count;
+	result["backend"] = "native";
+	return result;
+}
+
+Dictionary PrefabGeometryNative::flatten_world_map_building_pad(
+		const PackedByteArray &height_data,
+		int map_size,
+		double bldg_x,
+		double bldg_z,
+		const Vector2i &footprint,
+		double bldg_y,
+		double max_height,
+		int half,
+		double support_height_range,
+		const Dictionary &protected_columns) const {
+	Dictionary result;
+	if (map_size <= 0 || max_height <= 0.0 || footprint.x <= 0 || footprint.y <= 0) {
+		return result;
+	}
+
+	const int64_t pixel_count_64 = static_cast<int64_t>(map_size) * static_cast<int64_t>(map_size);
+	if (pixel_count_64 <= 0 || pixel_count_64 > std::numeric_limits<int32_t>::max() || height_data.size() < pixel_count_64) {
+		return result;
+	}
+
+	std::unordered_set<Vector2i, Vector2iHash> protected_set;
+	if (!protected_columns.is_empty()) {
+		const Array keys = protected_columns.keys();
+		protected_set.reserve(keys.size());
+		for (int i = 0; i < keys.size(); ++i) {
+			Vector2i key;
+			if (variant_to_vector2i(keys[i], key)) {
+				protected_set.insert(key);
+			}
+		}
+	}
+
+	const uint8_t *height_read = height_data.ptr();
+	PackedInt32Array changed_indices;
+	PackedByteArray changed_values;
+	const uint8_t flat_height_byte = encode_height_byte_native(bldg_y, max_height);
+	const double longest_side = std::max(double(footprint.x), double(footprint.y));
+	const double support_range = support_height_range;
+	const int pad = std::max(6, static_cast<int>(std::ceil(longest_side * 0.5 + support_range * 1.25)));
+	const int base_world_x = static_cast<int>(std::floor(bldg_x));
+	const int base_world_z = static_cast<int>(std::floor(bldg_z));
+	const int map_base_x = static_cast<int>(bldg_x + double(half));
+	const int map_base_z = static_cast<int>(bldg_z + double(half));
+	const int width = footprint.x + pad * 2;
+	const int depth = footprint.y + pad * 2;
+	const double inner_flat = 1.25 + std::min(1.5, support_range * 0.3);
+	const double pad_double = double(pad);
+
+	int scanned_pixels = 0;
+	int changed_pixels = 0;
+	int protected_skip_count = 0;
+	changed_indices.resize((width + 1) * (depth + 1));
+	changed_values.resize((width + 1) * (depth + 1));
+	int write_index = 0;
+
+	for (int fz = -pad; fz < depth - pad + 1; ++fz) {
+		const int fpz = std::clamp(map_base_z + fz, 0, map_size - 1);
+		const int row_offset = fpz * map_size;
+		const int world_z = base_world_z + fz;
+		const bool inside_z = fz >= 0 && fz < footprint.y;
+		const double fz_double = double(fz);
+		const double dz = std::max(0.0, std::max(0.0 - fz_double, fz_double - double(footprint.y)));
+		for (int fx = -pad; fx < width - pad + 1; ++fx) {
+			const bool inside_surface = inside_z && fx >= 0 && fx < footprint.x;
+			if (!inside_surface && !protected_set.empty()) {
+				const Vector2i world_col(base_world_x + fx, world_z);
+				if (protected_set.find(world_col) != protected_set.end()) {
+					protected_skip_count += 1;
+					continue;
+				}
+			}
+
+			const int fpx = std::clamp(map_base_x + fx, 0, map_size - 1);
+			const int height_index = row_offset + fpx;
+			const uint8_t original_height_byte = height_read[height_index];
+			const double fx_double = double(fx);
+			const double dx = std::max(0.0, std::max(0.0 - fx_double, fx_double - double(footprint.x)));
+			const double dist = std::sqrt(dx * dx + dz * dz);
+			scanned_pixels += 1;
+			bool should_write = false;
+			uint8_t target_height_byte = original_height_byte;
+			if (dist <= inner_flat) {
+				target_height_byte = flat_height_byte;
+				should_write = true;
+			} else if (dist < pad_double) {
+				const double blend_t = (dist - inner_flat) / std::max(0.001, pad_double - inner_flat);
+				const double smooth_t = smoothstep01(blend_t);
+				const int blended = static_cast<int>(lerp_double(double(flat_height_byte), double(original_height_byte), smooth_t));
+				target_height_byte = static_cast<uint8_t>(std::clamp(blended, 0, 255));
+				should_write = true;
+			}
+			if (should_write && target_height_byte != original_height_byte) {
+				if (write_index >= changed_indices.size()) {
+					changed_indices.resize(write_index + 128);
+					changed_values.resize(write_index + 128);
+				}
+				changed_indices.set(write_index, height_index);
+				changed_values.set(write_index, target_height_byte);
+				write_index += 1;
+					changed_pixels += 1;
+			}
+		}
+	}
+	changed_indices.resize(write_index);
+	changed_values.resize(write_index);
+
+	result["height_indices"] = changed_indices;
+	result["height_values"] = changed_values;
+	result["backend"] = "native";
+	result["pad"] = pad;
+	result["scanned_pixel_count"] = scanned_pixels;
+	result["changed_pixel_count"] = changed_pixels;
+	result["protected_skip_count"] = protected_skip_count;
+	return result;
+}
+
+Array PrefabGeometryNative::build_world_map_excavation_modifications(const Array &segments, const Vector3 &spawn_origin) const {
+	Array result;
+	result.resize(segments.size());
+	int write_index = 0;
+	const int base_x = static_cast<int>(std::floor(double(spawn_origin.x)));
+	const int base_z = static_cast<int>(std::floor(double(spawn_origin.z)));
+	for (int i = 0; i < segments.size(); ++i) {
+		if (segments[i].get_type() != Variant::DICTIONARY) {
+			continue;
+		}
+		const Dictionary segment = segments[i];
+		const double world_y_min = double(spawn_origin.y) + double(segment.get("min_y", 0));
+		const double world_y_max = double(spawn_origin.y) + double(segment.get("max_y", -1)) + 1.0;
+		if (world_y_max <= world_y_min) {
+			continue;
+		}
+		const int world_x = base_x + int(segment.get("x", 0));
+		const int world_z = base_z + int(segment.get("z", 0));
+
+		Array brush_pos;
+		brush_pos.resize(3);
+		brush_pos[0] = double(world_x) + 0.5;
+		brush_pos[1] = (world_y_min + world_y_max) * 0.5;
+		brush_pos[2] = double(world_z) + 0.5;
+
+		Dictionary modification;
+		modification["brush_pos"] = brush_pos;
+		modification["radius"] = 0.6;
+		modification["value"] = 10.0;
+		modification["shape"] = 2;
+		modification["layer"] = 0;
+		modification["y_min"] = world_y_min;
+		modification["y_max"] = world_y_max;
+		modification["material_id"] = -1;
+		result[write_index++] = modification;
+	}
+	result.resize(write_index);
 	return result;
 }
 

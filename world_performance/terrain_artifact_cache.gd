@@ -34,7 +34,7 @@ func configure(cache_enabled: bool, cache_byte_budget: int, cache_entry_limit: i
 	_trim_to_budget()
 
 
-func lookup(coord: Vector3i, settings_signature: String, stored_mod_version: int) -> Dictionary:
+func lookup(coord: Vector3i, settings_signature: String, stored_mod_version: int, edit_signature: String = "") -> Dictionary:
 	if not enabled or byte_budget <= 0 or entry_limit <= 0:
 		_disabled_lookup_count += 1
 		return {}
@@ -43,11 +43,14 @@ func lookup(coord: Vector3i, settings_signature: String, stored_mod_version: int
 		return {}
 
 	var artifact: Dictionary = _entries[coord]
+	var expected_edit_signature := _expected_edit_signature(stored_mod_version, edit_signature)
 	var invalid_reason := ""
 	if str(artifact.get("settings_signature", "")) != settings_signature:
 		invalid_reason = "settings_signature"
 	elif int(artifact.get("stored_mod_version", -1)) != stored_mod_version:
 		invalid_reason = "stored_mod_version"
+	elif not _matches_edit_signature(artifact, stored_mod_version, expected_edit_signature):
+		invalid_reason = "edit_signature"
 	elif int(artifact.get("byte_size", 0)) <= 0:
 		invalid_reason = "invalid_byte_size"
 
@@ -192,6 +195,23 @@ func _invalidate_existing(coord: Vector3i, reason: String) -> void:
 	var normalized_reason := reason if not reason.is_empty() else "unknown"
 	_invalidation_count += 1
 	_invalidation_reasons[normalized_reason] = int(_invalidation_reasons.get(normalized_reason, 0)) + 1
+
+
+func _expected_edit_signature(stored_mod_version: int, edit_signature: String) -> String:
+	if not edit_signature.is_empty():
+		return edit_signature
+	if stored_mod_version <= 0:
+		return "base"
+	return ""
+
+
+func _matches_edit_signature(artifact: Dictionary, stored_mod_version: int, expected_edit_signature: String) -> bool:
+	var artifact_edit_signature := str(artifact.get("edit_signature", "base" if stored_mod_version <= 0 else ""))
+	if stored_mod_version <= 0:
+		return artifact_edit_signature == expected_edit_signature
+	if expected_edit_signature.is_empty():
+		return false
+	return artifact_edit_signature == expected_edit_signature
 
 
 func _erase_entry(coord: Vector3i) -> void:

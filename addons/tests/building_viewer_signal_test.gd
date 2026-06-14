@@ -29,6 +29,9 @@ func _run() -> int:
 	manager._connect_viewer_position_signal()
 	if not _expect(manager._viewer_position_signal_connected, "viewer signal should connect"):
 		return 1
+	manager._start_viewer_chunk_update_timer()
+	if not _expect(manager._viewer_chunk_update_timer != null and manager._viewer_chunk_update_timer.is_stopped(), "connected viewer signal should keep fallback timer stopped"):
+		return 1
 
 	var previous_position := viewer.position
 	viewer.position = Vector3(17.0, 0.0, 0.0)
@@ -40,13 +43,24 @@ func _run() -> int:
 
 	viewer.position = Vector3(33.0, 0.0, 0.0)
 	manager._on_viewer_chunk_update_timer_timeout()
-	if not _expect(manager._last_building_viewer_chunk == Vector3i(2, 0, 0), "fallback poll should retain custom-viewer correctness"):
+	if not _expect(manager._last_building_viewer_chunk == Vector3i(1, 0, 0), "connected viewer signal should not use fallback polling"):
 		return 1
-	if not _expect(manager._viewer_chunk_fallback_poll_count == 1, "fallback polls should be counted"):
+	if not _expect(manager._viewer_chunk_fallback_poll_count == 0, "connected viewer signal should not count fallback polls"):
+		return 1
+	manager.viewer_position_signal_enabled = false
+	manager._connect_viewer_position_signal()
+	if not _expect(not manager._viewer_position_signal_connected, "signal tracking should disconnect when disabled"):
+		return 1
+	if not _expect(manager._should_run_viewer_chunk_update_timer(), "disabled signal tracking should allow fallback polling"):
+		return 1
+	manager._on_viewer_chunk_update_timer_timeout()
+	if not _expect(manager._last_building_viewer_chunk == Vector3i(2, 0, 0), "fallback poll should retain custom-viewer correctness when signals are disabled"):
+		return 1
+	if not _expect(manager._viewer_chunk_fallback_poll_count == 1, "active fallback polls should be counted"):
 		return 1
 
 	var telemetry: Dictionary = manager.get_telemetry_snapshot()
-	if not _expect(bool(telemetry.get("viewer_position_signal_connected", false)), "telemetry should expose signal connection"):
+	if not _expect(not bool(telemetry.get("viewer_position_signal_connected", true)), "telemetry should expose disconnected signal state"):
 		return 1
 	if not _expect(int(telemetry.get("viewer_position_signal_count", 0)) == 1, "telemetry should expose signal count"):
 		return 1

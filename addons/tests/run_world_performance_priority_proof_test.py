@@ -51,6 +51,7 @@ def main() -> int:
     _expect("save_manager_terrain_modifications_contract" in godot_contract_names, "Godot suite should include save-manager terrain modifications contract")
     _expect("world_map_preview_builder_contract" in godot_contract_names, "Godot suite should include preview builder contract")
     _expect("world_map_generator_ui_progress_contract" in godot_contract_names, "Godot suite should include generator UI progress contract")
+    _expect("world_map_road_footprint_native_contract" in godot_contract_names, "Godot suite should include native road-footprint predicate contract")
     _expect("entity_startup_readiness_contract" in godot_contract_names, "Godot suite should include entity startup readiness contract")
     _expect("building_viewer_signal_contract" in godot_contract_names, "Godot suite should include building viewer signal contract")
     _expect("vegetation_chunk_placement_cache_contract" in godot_contract_names, "Godot suite should include vegetation placement cache contract")

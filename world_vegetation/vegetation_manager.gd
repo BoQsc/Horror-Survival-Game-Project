@@ -666,6 +666,19 @@ func _get_native_helper() -> Object:
 	_native_helper = ClassDB.instantiate("PrefabGeometryNative")
 	return _native_helper
 
+
+func _release_native_helper() -> void:
+	if _native_helper == null or not is_instance_valid(_native_helper):
+		_native_helper = null
+		return
+	if _native_helper is RefCounted:
+		_native_helper.unreference()
+		if is_instance_valid(_native_helper):
+			_native_helper.free()
+	else:
+		_native_helper.free()
+	_native_helper = null
+
 func _native_vegetation_generation_skip_reason(
 		batch_heights: PackedFloat32Array,
 		road_block_values: PackedFloat32Array = PackedFloat32Array(),
@@ -987,7 +1000,7 @@ func _exit_tree() -> void:
 	_vegetation_render_resource_prewarm_node = null
 	if _collider_update_timer and is_instance_valid(_collider_update_timer):
 		_collider_update_timer.stop()
-	_native_helper = null
+	_release_native_helper()
 
 
 func _make_hidden_transform(local_pos: Vector3) -> Transform3D:
@@ -6421,7 +6434,7 @@ func clear_for_shutdown() -> void:
 	clear_all_data(false)
 	_release_pooled_colliders_for_shutdown()
 	_vegetation_render_resource_prewarm_node = null
-	_native_helper = null
+	_release_native_helper()
 
 func _disconnect_terrain_signals_for_shutdown() -> void:
 	if not terrain_manager or not is_instance_valid(terrain_manager):

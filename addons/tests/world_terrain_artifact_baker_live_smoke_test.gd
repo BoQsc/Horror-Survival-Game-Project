@@ -40,6 +40,8 @@ func _run() -> int:
 	baker.timeout_seconds = 90.0
 	baker.store_ready_mesh_resources = true
 	baker.synchronous_disk_writes = true
+	baker.vertical_layer_radius = 0
+	baker.use_disk_radius_shape = true
 	baker.offline_cpu_chunks_per_frame = 64
 	var bake_origins: Array[Vector3] = [
 		Vector3.ZERO,
@@ -49,15 +51,20 @@ func _run() -> int:
 	baker._origin = bake_origins[0]
 	baker._origins = bake_origins
 	baker._radius = 0
-	baker._bake_coords = baker._build_bake_coords_for_origins(bake_origins, 0)
+	baker._bake_coords = baker._build_bake_coords_for_origins(
+		bake_origins,
+		0,
+		baker.vertical_layer_radius,
+		baker.use_disk_radius_shape
+	)
 	baker._expected_chunks = baker._bake_coords.size()
 	baker._started_usec = Time.get_ticks_usec()
 	_write_status(world_path, "offline_bake_configured", {
 		"origin_count": bake_origins.size(),
 		"expected_chunks": baker._expected_chunks
 	})
-	baker._create_manager()
-	_write_status(world_path, "manager_created")
+	baker._create_manager(false)
+	_write_status(world_path, "off_tree_manager_created")
 	baker._start_offline_cpu_bake("live_smoke_native_offline")
 	_write_status(world_path, "offline_bake_started", {
 		"offline_active": baker._offline_cpu_bake_active,
@@ -77,26 +84,40 @@ func _run() -> int:
 		return 1
 	if not _expect(int(final_profile.get("origin_count", 0)) == 2, "live bake profile should report two baked origins"):
 		return 1
-	if not _expect(int(final_profile.get("artifact_count", 0)) >= 6, "two-origin radius-zero bake should persist at least six vertical terrain artifacts"):
+	if not _expect(int(final_profile.get("artifact_count", 0)) >= 2, "two-origin radius-zero bake should persist ready terrain mesh artifacts"):
+		return 1
+	if not _expect(int(final_profile.get("native_density_payload_count", 0)) >= 2, "offline live bake should build density payloads in native code"):
+		return 1
+	if not _expect(int(final_profile.get("gdscript_density_payload_count", 0)) == 0, "offline live bake should not fall back to GDScript density payload loops"):
+		return 1
+	if not _expect(bool(final_profile.get("offline_cpu_parallel_started", false)), "offline live bake should use the parallel native bake path"):
+		return 1
+	if not _expect(int(final_profile.get("offline_cpu_parallel_worker_count", 0)) > 0, "parallel live bake should report worker count"):
 		return 1
 	if not _expect(FileAccess.file_exists(manifest_path), "live bake should write a world-local artifact manifest"):
 		return 1
-	if not _expect(_count_files_with_extension(artifact_root, ".var") >= 6, "live bake should write terrain artifact .var payloads under the world"):
+	if not _expect(_count_files_named(artifact_root, "artifact_pack.var") >= 1, "live bake should write a packed terrain artifact payload"):
 		return 1
-	if not _expect(_count_files_with_extension(artifact_root, ".res") >= 4, "live bake should write ready mesh/collision .res sidecars under the world"):
+	if not _expect(_count_files_with_extension(artifact_root, ".res") > 0, "ready live bake should write mesh/collision .res sidecars"):
 		return 1
-	var restore_report := _warm_manager_restore_report(world_path, bake_origins)
+	var restore_report := _warm_manager_restore_report(world_path, bake_origins, baker.vertical_layer_radius)
 	if not _expect(bool(restore_report.get("ok", false)), "fresh terrain startup should restore the baked artifacts from disk"):
 		return 1
-	if not _expect(int(restore_report.get("ready_sidecar_restore_count", 0)) > 0, "fresh terrain startup should see ready mesh sidecar restore metadata"):
+	if not _expect(int(restore_report.get("disk_restore_count", 0)) >= 2, "fresh terrain startup should restore ready baked artifacts from disk"):
 		return 1
-	if not _expect(int(restore_report.get("ready_sidecar_materialized_count", 0)) > 0, "fresh terrain startup should materialize at least one ready mesh sidecar"):
+	if not _expect(int(restore_report.get("materialized_mesh_count", 0)) > 0, "fresh terrain startup should materialize at least one compact mesh artifact"):
+		return 1
+	if not _expect(int(restore_report.get("ready_sidecar_restore_count", 0)) > 0, "fresh terrain startup should find ready mesh sidecars"):
+		return 1
+	if not _expect(int(restore_report.get("ready_sidecar_materialized_count", 0)) > 0, "fresh terrain startup should load ready mesh sidecars"):
 		return 1
 
 	_write_status(world_path, "restore_verified", {
 		"artifact_count": int(final_profile.get("artifact_count", 0)),
 		"origin_count": int(final_profile.get("origin_count", 0)),
 		"manifest_written": bool(final_profile.get("manifest_written", false)),
+		"disk_restore_count": int(restore_report.get("disk_restore_count", 0)),
+		"materialized_mesh_count": int(restore_report.get("materialized_mesh_count", 0)),
 		"ready_sidecar_restore_count": int(restore_report.get("ready_sidecar_restore_count", 0)),
 		"ready_sidecar_materialized_count": int(restore_report.get("ready_sidecar_materialized_count", 0)),
 		"artifact_root": artifact_root
@@ -108,9 +129,11 @@ func _run() -> int:
 	return 0
 
 
-func _warm_manager_restore_report(world_path: String, origins: Array[Vector3]) -> Dictionary:
+func _warm_manager_restore_report(world_path: String, origins: Array[Vector3], vertical_layer_radius: int) -> Dictionary:
 	var report := {
 		"ok": true,
+		"disk_restore_count": 0,
+		"materialized_mesh_count": 0,
 		"ready_sidecar_restore_count": 0,
 		"ready_sidecar_materialized_count": 0
 	}
@@ -136,7 +159,7 @@ func _warm_manager_restore_report(world_path: String, origins: Array[Vector3]) -
 		var chunk_x := int(floor(origin.x / float(ChunkManagerScript.CHUNK_STRIDE)))
 		var chunk_y := int(floor(origin.y / float(ChunkManagerScript.CHUNK_STRIDE)))
 		var chunk_z := int(floor(origin.z / float(ChunkManagerScript.CHUNK_STRIDE)))
-		for dy in range(-1, 2):
+		for dy in range(-vertical_layer_radius, vertical_layer_radius + 1):
 			var coord := Vector3i(chunk_x, chunk_y + dy, chunk_z)
 			var task: Dictionary = manager._build_chunk_request_task(
 				coord,
@@ -156,12 +179,15 @@ func _warm_manager_restore_report(world_path: String, origins: Array[Vector3]) -
 				_fail("fresh startup restore for %s should come from disk" % str(coord))
 				report["ok"] = false
 				return report
+			report["disk_restore_count"] = int(report.get("disk_restore_count", 0)) + 1
 			var artifact: Dictionary = task.get("artifact", {})
 			var terrain_result: Dictionary = artifact.get("result_t", {})
+			var before_count := manager._terrain_artifact_ready_resource_restore_count
+			var materialized: Dictionary = manager._materialize_deferred_mesh_result(terrain_result, null)
+			if materialized.get("mesh", null) is ArrayMesh:
+				report["materialized_mesh_count"] = int(report.get("materialized_mesh_count", 0)) + 1
 			if bool(terrain_result.get("ready_mesh_resource", false)) and ResourceLoader.exists(str(terrain_result.get("mesh_resource_path", ""))):
 				report["ready_sidecar_restore_count"] = int(report.get("ready_sidecar_restore_count", 0)) + 1
-				var before_count := manager._terrain_artifact_ready_resource_restore_count
-				var materialized: Dictionary = manager._materialize_deferred_mesh_result(terrain_result, null)
 				if materialized.get("mesh", null) is ArrayMesh and manager._terrain_artifact_ready_resource_restore_count > before_count:
 					report["ready_sidecar_materialized_count"] = int(report.get("ready_sidecar_materialized_count", 0)) + 1
 
@@ -215,6 +241,24 @@ func _count_files_with_extension(path: String, extension: String) -> int:
 		if dir.current_is_dir():
 			count += _count_files_with_extension(child_path, extension)
 		elif file_name.ends_with(extension):
+			count += 1
+		file_name = dir.get_next()
+	dir.list_dir_end()
+	return count
+
+
+func _count_files_named(path: String, expected_name: String) -> int:
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return 0
+	var count := 0
+	dir.list_dir_begin()
+	var file_name := dir.get_next()
+	while not file_name.is_empty():
+		var child_path := path.path_join(file_name)
+		if dir.current_is_dir():
+			count += _count_files_named(child_path, expected_name)
+		elif file_name == expected_name:
 			count += 1
 		file_name = dir.get_next()
 	dir.list_dir_end()

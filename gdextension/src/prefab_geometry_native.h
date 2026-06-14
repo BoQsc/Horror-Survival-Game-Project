@@ -1,7 +1,7 @@
 #ifndef PREFAB_GEOMETRY_NATIVE_H
 #define PREFAB_GEOMETRY_NATIVE_H
 
-#include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/array.hpp>
@@ -9,6 +9,7 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/variant.hpp>
@@ -18,8 +19,8 @@
 
 namespace godot {
 
-class PrefabGeometryNative : public RefCounted {
-	GDCLASS(PrefabGeometryNative, RefCounted)
+class PrefabGeometryNative : public Object {
+	GDCLASS(PrefabGeometryNative, Object)
 
 protected:
 	static void _bind_methods();
@@ -51,6 +52,14 @@ public:
 	Dictionary find_nearest_tree_visual_bounds_ray_hit(const Dictionary &chunk_data, const String &list_key, const Vector3 &origin, const Vector3 &direction, double max_distance, const AABB &mesh_bounds, const Transform3D &base_transform, const Vector3 &rotation_fix, double bounds_padding) const;
 	Dictionary resolve_tree_body_collision(const Dictionary &chunk_tree_data, const Vector3 &body_origin, double body_radius, double body_height, int chunk_stride, double collision_radius, double collision_height) const;
 	Dictionary build_world_map_height_biome_bytes(int map_size, int world_size, int world_seed, double noise_frequency, double terrain_height, double max_height, int grass_material_id, int sand_material_id, int snow_material_id, int gravel_material_id) const;
+	Dictionary apply_world_map_lakes(const PackedByteArray &water_data, const PackedByteArray &road_data, const PackedByteArray &height_data, int map_size, int world_size, int world_seed, double lake_threshold, double road_width, double road_blend_margin, int road_block_threshold, double terrain_height, double water_level, double max_height, bool deep_lakes_enabled) const;
+	Dictionary build_world_map_minimap_rgb_bytes(const PackedByteArray &height_data, const PackedByteArray &biome_data, const PackedByteArray &road_data, const PackedByteArray &water_data, const PackedByteArray &building_data, int width, int height, const PackedInt32Array &material_rgb_lut, int road_material_id, int water_r, int water_g, int water_b, int building_r, int building_g, int building_b) const;
+	Dictionary rasterize_world_map_segments(const Array &segments, const PackedByteArray &height_data, const PackedByteArray &biome_data, const PackedByteArray &road_data, int map_size, int world_seed, double road_blend_margin, double default_width, double max_height, int road_material_id, bool path_mode) const;
+	Dictionary footprint_hits_world_map_road_segments(const Array &segments, double bldg_x, double bldg_z, const Vector2i &footprint, double default_width, double road_blend_margin) const;
+	Dictionary footprint_hits_packed_world_map_road_segments(const PackedFloat32Array &segment_data, double bldg_x, double bldg_z, const Vector2i &footprint) const;
+	Dictionary resolve_world_map_building_support(const PackedByteArray &height_data, int map_size, double bldg_x, double bldg_z, const Vector2i &footprint, double max_height, int half, const Dictionary &config) const;
+	Dictionary flatten_world_map_building_pad(const PackedByteArray &height_data, int map_size, double bldg_x, double bldg_z, const Vector2i &footprint, double bldg_y, double max_height, int half, double support_height_range, const Dictionary &protected_columns) const;
+	Array build_world_map_excavation_modifications(const Array &segments, const Vector3 &spawn_origin) const;
 
 	Array build_vegetation_instances(const Dictionary &config, const PackedFloat32Array &height_map) const;
 	Dictionary build_vegetation_instances_with_render_payload(const Dictionary &config, const PackedFloat32Array &height_map, const Transform3D &render_space_inverse, const AABB &mesh_bounds) const;

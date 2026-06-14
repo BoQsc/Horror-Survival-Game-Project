@@ -73,6 +73,56 @@ func _run() -> int:
 	if not _expect(manager.is_initial_load_complete(), "optional background preheat should not gate playable readiness after safety is ready"):
 		return 1
 
+	manager.pending_spawn_zones.clear()
+	manager.priority_task_queue.clear()
+	manager.task_queue.clear()
+	manager.cpu_task_queue.clear()
+	manager.completed_generation_queue.clear()
+	manager.pending_nodes.clear()
+	manager.initial_load_target_chunks = 0
+	manager.startup_require_preheat_before_play = false
+	manager.initial_load_phase = false
+	manager._startup_visual_batch_gate_satisfied = false
+	manager._terrain_visual_batch_dirty[Vector2i.ZERO] = true
+	var optional_visual_snapshot: Dictionary = manager.get_startup_readiness_snapshot()
+	var optional_visual_details: Dictionary = optional_visual_snapshot.get("details", {})
+	if not _expect(bool(optional_visual_snapshot.get("ready", false)), "optional startup should not wait for visual batch polish"):
+		return 1
+	if not _expect(int(optional_visual_details.get("terrain_visual_batch_dirty_count", 0)) == 1, "optional readiness details should still expose dirty visual batches"):
+		return 1
+
+	manager._terrain_visual_batch_dirty.clear()
+	manager.startup_require_preheat_before_play = true
+	manager._startup_visual_batch_gate_satisfied = false
+	manager._terrain_visual_batch_dirty[Vector2i.ZERO] = true
+	var strict_visual_snapshot: Dictionary = manager.get_startup_readiness_snapshot()
+	var strict_visual_details: Dictionary = strict_visual_snapshot.get("details", {})
+	if not _expect(not bool(strict_visual_snapshot.get("ready", true)), "strict startup should wait for visual batch preparation"):
+		return 1
+	if not _expect(str(strict_visual_snapshot.get("message", "")).begins_with("Preparing terrain visual batches"), "strict startup message should name visual batch preparation"):
+		return 1
+	if not _expect(int(strict_visual_snapshot.get("pending", 0)) == 1, "strict startup should count one pending visual batch"):
+		return 1
+	if not _expect(int(strict_visual_details.get("startup_visual_batch_pending_count", 0)) == 1, "strict startup details should count pending visual batches"):
+		return 1
+	if not _expect(bool(strict_visual_details.get("startup_visual_batch_gate_pending", false)), "strict startup details should expose visual batch gate"):
+		return 1
+	if not _expect(manager._has_terrain_process_work_pending(), "strict startup visual batch gate should keep terrain process work active"):
+		return 1
+
+	manager._terrain_visual_batch_dirty.clear()
+	var strict_visual_ready_snapshot: Dictionary = manager.get_startup_readiness_snapshot()
+	var strict_visual_ready_details: Dictionary = strict_visual_ready_snapshot.get("details", {})
+	if not _expect(bool(strict_visual_ready_snapshot.get("ready", false)), "strict startup should become ready after visual batch preparation finishes"):
+		return 1
+	if not _expect(bool(strict_visual_ready_details.get("startup_visual_batch_gate_satisfied", false)), "strict startup should mark visual batch gate satisfied"):
+		return 1
+
+	manager._terrain_visual_batch_dirty[Vector2i(1, 0)] = true
+	var runtime_visual_snapshot: Dictionary = manager.get_startup_readiness_snapshot()
+	if not _expect(bool(runtime_visual_snapshot.get("ready", false)), "post-handoff dirty visual batches should not regress startup readiness"):
+		return 1
+
 	manager.free()
 	print("[TERRAIN_STARTUP_PREHEAT_TEST] PASS")
 	return 0

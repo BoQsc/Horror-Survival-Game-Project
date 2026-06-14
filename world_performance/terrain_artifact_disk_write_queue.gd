@@ -97,7 +97,7 @@ func enqueue(coord: Vector3i, settings_signature: String, artifact: Dictionary) 
 		_mutex.unlock()
 		return false
 
-	var key := _task_key(coord, settings_signature)
+	var key := _task_key(coord, settings_signature, artifact)
 	var is_new := not _pending_by_key.has(key)
 	if not is_new:
 		var previous: Dictionary = _pending_by_key[key]
@@ -320,5 +320,14 @@ func _record_drop_locked(reason: String, bytes: int) -> void:
 	_drop_reasons[normalized_reason] = int(_drop_reasons.get(normalized_reason, 0)) + 1
 
 
-func _task_key(coord: Vector3i, settings_signature: String) -> String:
-	return "%s|%d|%d|%d" % [settings_signature.sha256_text(), coord.x, coord.y, coord.z]
+func _task_key(coord: Vector3i, settings_signature: String, artifact: Dictionary) -> String:
+	var stored_mod_version := int(artifact.get("stored_mod_version", 0))
+	var edit_signature := str(artifact.get("edit_signature", "base" if stored_mod_version <= 0 else ""))
+	return "%s|%d|%d|%d|%d|%s" % [
+		settings_signature.sha256_text(),
+		coord.x,
+		coord.y,
+		coord.z,
+		stored_mod_version,
+		edit_signature.sha256_text()
+	]

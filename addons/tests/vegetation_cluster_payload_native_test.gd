@@ -1,17 +1,33 @@
 extends SceneTree
 
+var _native: Object = null
+
 func _init() -> void:
 	call_deferred("_run_and_quit")
 
 func _run_and_quit() -> void:
 	var exit_code := _run()
+	_release_native()
 	quit(exit_code)
+
+func _release_native() -> void:
+	if _native == null or not is_instance_valid(_native):
+		_native = null
+		return
+	if _native is RefCounted:
+		_native.unreference()
+		if is_instance_valid(_native):
+			_native.free()
+	else:
+		_native.free()
+	_native = null
 
 func _run() -> int:
 	if not ClassDB.class_exists("PrefabGeometryNative"):
 		return _fail("PrefabGeometryNative is not registered")
 
-	var native := PrefabGeometryNative.new()
+	_native = PrefabGeometryNative.new()
+	var native := _native
 	if native == null or not native.has_method("build_global_vegetation_cluster_render_payload"):
 		return _fail("native cluster payload merge method is missing")
 	if not native.has_method("build_global_vegetation_render_payload"):
@@ -91,7 +107,6 @@ func _run() -> int:
 	chunk_result.clear()
 	result.clear()
 	payloads.clear()
-	native = null
 	print("[VEGETATION_CLUSTER_PAYLOAD_NATIVE_TEST] PASS")
 	return 0
 

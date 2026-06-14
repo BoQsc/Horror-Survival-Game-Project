@@ -13,6 +13,7 @@ const DENSITY_GRID_SIZE = 33 # 0..32
 const EXCAVATION_MASK_POINT_COUNT = DENSITY_GRID_SIZE * DENSITY_GRID_SIZE * DENSITY_GRID_SIZE
 const EXCAVATION_MASK_UINT_COUNT = int(ceil(float(EXCAVATION_MASK_POINT_COUNT) / 32.0))
 const EXCAVATION_MASK_BYTE_COUNT = EXCAVATION_MASK_UINT_COUNT * 4
+const WORLD_MAP_TERRAIN_MODIFICATION_FORMAT_EXCAVATION_COLUMNS_V1: String = "excavation_columns_v1"
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
 const MaterialRegistry = preload("res://modules/world_generation/material_registry.gd")
 const BuildingVisuals = preload("res://world_building_system/building_visuals.gd")
@@ -37,9 +38,10 @@ const TERRAIN_TRACE_EVENT_LIMIT: int = 96
 const TERRAIN_GENERATION_SEEN_COORD_LIMIT: int = 32768
 const TERRAIN_MEASUREMENT_WINDOW_HISTORY_LIMIT: int = 16
 const TERRAIN_SLOW_EVENT_THRESHOLD_MS: float = 5.0
-const TERRAIN_ARTIFACT_SCHEMA_VERSION: int = 3
+const TERRAIN_ARTIFACT_SCHEMA_VERSION: int = 5
 const TERRAIN_GENERATOR_VERSION: int = 1
 const TERRAIN_MESHER_VERSION: int = 1
+const TERRAIN_ARTIFACT_LOD_LEVEL: int = 0
 
 @export var viewer: Node3D
 @export var render_distance: int = 5 # Visual range
@@ -67,16 +69,22 @@ const TERRAIN_MESHER_VERSION: int = 1
 @export var terrain_artifact_cache_enabled: bool = true
 @export_range(0, 2048, 16) var terrain_artifact_cache_memory_budget_mb: int = 512
 @export_range(0, 4096, 1) var terrain_artifact_cache_entry_limit: int = 2048
-@export var terrain_artifact_refresh_after_edit_enabled: bool = true
+@export var terrain_artifact_refresh_after_edit_enabled: bool = false
 @export var terrain_artifact_disk_cache_enabled: bool = true
 @export var terrain_artifact_disk_cache_path: String = "user://terrain_artifacts"
 @export var terrain_artifact_use_world_local_disk_cache: bool = true
+@export var terrain_artifact_cache_disk_restore_results: bool = false
 @export_range(0, 32768, 1) var terrain_artifact_disk_cache_entries_per_world: int = 8192
 @export_range(0, 65536, 64) var terrain_artifact_disk_cache_budget_mb: int = 4096
 @export var terrain_artifact_store_ready_mesh_resources: bool = false
+@export var terrain_artifact_store_source_buffers: bool = false
+@export var terrain_artifact_store_collision_faces: bool = false
+var terrain_artifact_store_configuration_locked: bool = false
+@export var terrain_artifact_hydrate_source_on_edit: bool = true
 @export var terrain_artifact_disk_restore_requires_manifest: bool = true
 @export var terrain_artifact_disk_store_runtime_chunks: bool = false
-@export var terrain_artifact_disk_store_initial_load_chunks: bool = false
+@export var terrain_artifact_disk_store_initial_load_chunks: bool = true
+@export var terrain_artifact_disk_store_edited_chunks: bool = false
 @export var terrain_artifact_disk_async_writes_enabled: bool = true
 @export_range(0, 4096, 1) var terrain_artifact_disk_write_queue_max_entries: int = 256
 @export_range(0, 4096, 16) var terrain_artifact_disk_write_queue_budget_mb: int = 512
@@ -112,7 +120,13 @@ const TERRAIN_MESHER_VERSION: int = 1
 @export_range(0, 200000, 1000) var terrain_visual_batch_max_vertices: int = 48000
 @export_range(0, 200000, 1000) var world_map_terrain_visual_batch_max_vertices: int = 200000
 @export_range(0, 8, 1) var procedural_terrain_visual_batch_near_cull_radius_chunks: int = 0
-@export var terrain_shadow_lod_enabled: bool = true
+@export var terrain_render_server_batches_enabled: bool = true
+@export var terrain_render_visibility_culling_enabled: bool = true
+@export var terrain_render_visibility_frustum_culling_enabled: bool = true
+@export_range(0, 16, 1) var terrain_render_visibility_near_keep_radius_chunks: int = 2
+@export_range(1.0, 180.0, 1.0) var terrain_render_visibility_half_angle_degrees: float = 95.0
+@export_range(0, 60, 1) var terrain_render_visibility_update_interval_frames: int = 2
+@export var terrain_shadow_lod_enabled: bool = false
 @export_range(0, 32, 1) var terrain_shadow_lod_radius_chunks: int = 2
 @export_range(0, 2048, 16) var terrain_visual_batch_mesh_cache_limit: int = 512
 @export var terrain_visual_batch_idle_polish_enabled: bool = true
@@ -318,6 +332,7 @@ var loading_paused: bool = false
 @export var terrain_stream_loads_before_unloads: bool = true
 @export var terrain_stream_prioritize_candidates: bool = true
 @export_range(0, 5, 1) var terrain_hot_frame_backoff_frames: int = 2
+@export_range(0.0, 5.0, 0.1) var terrain_finalization_starvation_force_seconds: float = 0.5
 @export var terrain_event_driven_process_sleep_enabled: bool = true
 @export var terrain_event_driven_viewer_signal_enabled: bool = true
 @export_range(0, 600, 1) var terrain_event_driven_idle_sleep_frames: int = 120
@@ -399,6 +414,7 @@ var _terrain_process_idle_frame_count: int = 0
 var _terrain_process_sleep_count: int = 0
 var _terrain_process_resume_count: int = 0
 var _terrain_process_idle_poll_count: int = 0
+var _terrain_process_sleep_process_callback_count: int = 0
 var _terrain_process_last_sleep_reason: String = ""
 var _terrain_process_last_wake_reason: String = ""
 var _terrain_runtime_setting_change_count: int = 0
@@ -489,6 +505,11 @@ var _terrain_artifact_edit_refresh_skipped_reasons: Dictionary = {}
 var _terrain_artifact_ready_resource_store_count: int = 0
 var _terrain_artifact_ready_resource_restore_count: int = 0
 var _terrain_artifact_ready_resource_fallback_count: int = 0
+var _terrain_artifact_mesh_only_store_count: int = 0
+var _terrain_artifact_mesh_only_restore_count: int = 0
+var _terrain_artifact_source_buffer_store_count: int = 0
+var _terrain_artifact_source_hydrate_request_count: int = 0
+var _terrain_artifact_source_hydrate_skipped_count: int = 0
 var _terrain_artifact_manifest_checked_world_path: String = ""
 var _terrain_artifact_manifest_available: bool = false
 var _world_content_signature: String = ""
@@ -586,6 +607,20 @@ var _last_terrain_visual_batch_hot_rebuild: bool = false
 var _last_effective_terrain_visual_batch_size: int = -1
 var _last_effective_terrain_visual_batch_max_vertices: int = -1
 var _last_effective_terrain_visual_batch_near_cull_radius: int = -1
+var _terrain_render_visibility_frame_counter: int = 0
+var _terrain_render_visibility_last_camera_pos: Vector3 = Vector3(1.0e20, 1.0e20, 1.0e20)
+var _terrain_render_visibility_last_camera_forward: Vector3 = Vector3.ZERO
+var _terrain_render_visibility_last_active_chunk_count: int = -1
+var _terrain_render_visibility_last_batch_count: int = -1
+var _last_terrain_render_visibility_update_ms: float = 0.0
+var _last_terrain_render_visibility_batch_visible_count: int = 0
+var _last_terrain_render_visibility_batch_hidden_count: int = 0
+var _last_terrain_render_visibility_chunk_visible_count: int = 0
+var _last_terrain_render_visibility_chunk_hidden_count: int = 0
+var _last_terrain_render_visibility_skipped_reason: String = ""
+var _terrain_render_server_batch_create_count: int = 0
+var _terrain_render_server_batch_update_count: int = 0
+var _terrain_render_server_batch_fallback_count: int = 0
 var _terrain_visual_mesh_retire_queue: Array[Vector3i] = []
 var _terrain_visual_mesh_retire_queued: Dictionary = {}
 @export_range(1, 64, 1) var terrain_visual_mesh_retire_budget_per_frame: int = 16
@@ -611,7 +646,7 @@ var _last_terrain_shadow_lod_ms: float = 0.0
 var _last_terrain_shadow_lod_viewer_chunk: Vector2i = Vector2i(2147483647, 2147483647)
 var _last_terrain_shadow_lod_active_chunk_count: int = -1
 var _last_terrain_shadow_lod_batch_count: int = -1
-var _last_terrain_shadow_lod_enabled_setting: bool = true
+var _last_terrain_shadow_lod_enabled_setting: bool = false
 var _last_terrain_shadow_lod_radius_setting: int = -1
 var _render_resource_prewarm_started: bool = false
 var _render_resource_prewarm_node: Node = null
@@ -634,6 +669,7 @@ var _startup_preheat_ready_count: int = 0
 var _last_startup_preheat_position: Vector3 = Vector3.ZERO
 var _last_startup_preheat_radius_chunks: int = 0
 var _last_startup_preheat_pending_chunks: int = 0
+var _startup_visual_batch_gate_satisfied: bool = false
 
 func _ready():
 	_terrain_trace.begin("terrain-session", {
@@ -934,6 +970,10 @@ func get_telemetry_snapshot() -> Dictionary:
 		"procedural_terrain_visual_batch_near_cull_radius_chunks": procedural_terrain_visual_batch_near_cull_radius_chunks,
 		"effective_terrain_visual_batch_near_cull_radius_chunks": _effective_terrain_visual_batch_near_cull_radius(),
 		"terrain_visual_batch_near_cull_chunk_count": _count_near_cull_visual_batch_chunks(_effective_terrain_visual_batch_near_cull_radius()),
+		"terrain_render_server_batches_enabled": terrain_render_server_batches_enabled,
+		"terrain_render_server_batch_create_count": _terrain_render_server_batch_create_count,
+		"terrain_render_server_batch_update_count": _terrain_render_server_batch_update_count,
+		"terrain_render_server_batch_fallback_count": _terrain_render_server_batch_fallback_count,
 		"terrain_shadow_lod_enabled": terrain_shadow_lod_enabled,
 		"terrain_shadow_lod_radius_chunks": terrain_shadow_lod_radius_chunks,
 		"last_terrain_shadow_lod_enabled_count": _last_terrain_shadow_lod_enabled_count,
@@ -999,6 +1039,17 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_terrain_visual_batch_async_apply_count": _last_terrain_visual_batch_async_apply_count,
 		"last_terrain_visual_batch_async_apply_ms": _last_terrain_visual_batch_async_apply_ms,
 		"last_terrain_visual_batch_async_stale_count": _last_terrain_visual_batch_async_stale_count,
+		"terrain_render_visibility_culling_enabled": terrain_render_visibility_culling_enabled,
+		"terrain_render_visibility_frustum_culling_enabled": terrain_render_visibility_frustum_culling_enabled,
+		"terrain_render_visibility_near_keep_radius_chunks": terrain_render_visibility_near_keep_radius_chunks,
+		"terrain_render_visibility_half_angle_degrees": terrain_render_visibility_half_angle_degrees,
+		"terrain_render_visibility_update_interval_frames": terrain_render_visibility_update_interval_frames,
+		"last_terrain_render_visibility_update_ms": _last_terrain_render_visibility_update_ms,
+		"last_terrain_render_visibility_batch_visible_count": _last_terrain_render_visibility_batch_visible_count,
+		"last_terrain_render_visibility_batch_hidden_count": _last_terrain_render_visibility_batch_hidden_count,
+		"last_terrain_render_visibility_chunk_visible_count": _last_terrain_render_visibility_chunk_visible_count,
+		"last_terrain_render_visibility_chunk_hidden_count": _last_terrain_render_visibility_chunk_hidden_count,
+		"last_terrain_render_visibility_skipped_reason": _last_terrain_render_visibility_skipped_reason,
 		"terrain_visual_batch_total_heavy_skips": _terrain_visual_batch_total_heavy_skips,
 		"terrain_visual_batch_stream_idle_frames": _terrain_visual_batch_stream_idle_frames,
 		"terrain_visual_mesh_retire_queue_count": _terrain_visual_mesh_retire_queue.size(),
@@ -1086,6 +1137,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_process_sleep_count": _terrain_process_sleep_count,
 		"terrain_process_resume_count": _terrain_process_resume_count,
 		"terrain_process_idle_poll_count": _terrain_process_idle_poll_count,
+		"terrain_process_sleep_process_callback_count": _terrain_process_sleep_process_callback_count,
 		"terrain_process_last_sleep_reason": _terrain_process_last_sleep_reason,
 		"terrain_process_last_wake_reason": _terrain_process_last_wake_reason,
 		"terrain_runtime_setting_change_count": _terrain_runtime_setting_change_count,
@@ -1106,6 +1158,7 @@ func get_telemetry_snapshot() -> Dictionary:
 		"last_terrain_viewer_signal_chunk": str(_last_terrain_viewer_signal_chunk),
 		"terrain_collision_ground_center_for_test": terrain_collision_ground_center_for_test,
 		"terrain_force_pending_node_finalization_for_test": terrain_force_pending_node_finalization_for_test,
+		"terrain_finalization_starvation_force_seconds": terrain_finalization_starvation_force_seconds,
 		"terrain_force_stream_progress_for_test": terrain_force_stream_progress_for_test,
 		"last_stream_bounds_unloads": _last_stream_bounds_unloads,
 		"last_fallback_unloads": _last_fallback_unloads,
@@ -1172,8 +1225,12 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_artifact_settings_signature": _terrain_artifact_settings_signature,
 		"terrain_artifact_refresh_after_edit_enabled": terrain_artifact_refresh_after_edit_enabled,
 		"terrain_artifact_store_ready_mesh_resources": terrain_artifact_store_ready_mesh_resources,
+		"terrain_artifact_store_source_buffers": terrain_artifact_store_source_buffers,
+		"terrain_artifact_store_collision_faces": terrain_artifact_store_collision_faces,
+		"terrain_artifact_hydrate_source_on_edit": terrain_artifact_hydrate_source_on_edit,
 		"terrain_artifact_disk_restore_requires_manifest": terrain_artifact_disk_restore_requires_manifest,
 		"terrain_artifact_use_world_local_disk_cache": terrain_artifact_use_world_local_disk_cache,
+		"terrain_artifact_cache_disk_restore_results": terrain_artifact_cache_disk_restore_results,
 		"terrain_artifact_disk_cache_path": terrain_artifact_disk_cache_path,
 		"terrain_artifact_effective_disk_cache_path": get_effective_terrain_artifact_disk_cache_path(),
 		"terrain_artifact_manifest_available": _has_world_local_terrain_artifact_manifest(),
@@ -1183,9 +1240,15 @@ func get_telemetry_snapshot() -> Dictionary:
 		"terrain_artifact_ready_resource_store_count": _terrain_artifact_ready_resource_store_count,
 		"terrain_artifact_ready_resource_restore_count": _terrain_artifact_ready_resource_restore_count,
 		"terrain_artifact_ready_resource_fallback_count": _terrain_artifact_ready_resource_fallback_count,
+		"terrain_artifact_mesh_only_store_count": _terrain_artifact_mesh_only_store_count,
+		"terrain_artifact_mesh_only_restore_count": _terrain_artifact_mesh_only_restore_count,
+		"terrain_artifact_source_buffer_store_count": _terrain_artifact_source_buffer_store_count,
+		"terrain_artifact_source_hydrate_request_count": _terrain_artifact_source_hydrate_request_count,
+		"terrain_artifact_source_hydrate_skipped_count": _terrain_artifact_source_hydrate_skipped_count,
 		"terrain_artifact_disk_cache_budget_mb": terrain_artifact_disk_cache_budget_mb,
 		"terrain_artifact_disk_store_runtime_chunks": terrain_artifact_disk_store_runtime_chunks,
 		"terrain_artifact_disk_store_initial_load_chunks": terrain_artifact_disk_store_initial_load_chunks,
+		"terrain_artifact_disk_store_edited_chunks": terrain_artifact_disk_store_edited_chunks,
 		"terrain_artifact_disk_async_writes_enabled": terrain_artifact_disk_async_writes_enabled,
 		"terrain_artifact_disk_write_queue_max_entries": terrain_artifact_disk_write_queue_max_entries,
 		"terrain_artifact_disk_write_queue_budget_mb": terrain_artifact_disk_write_queue_budget_mb,
@@ -1918,6 +1981,126 @@ func _set_mesh_shadow_casting(mesh_instance: MeshInstance3D, enabled: bool) -> b
 	mesh_instance.cast_shadow = target
 	return true
 
+func _terrain_visual_batch_entry_is_server(entry: Variant) -> bool:
+	if not (entry is Dictionary):
+		return false
+	var entry_dict: Dictionary = entry
+	return str(entry_dict.get("backend", "")) == "rendering_server"
+
+func _terrain_visual_batch_entry_is_valid(entry: Variant) -> bool:
+	if _terrain_visual_batch_entry_is_server(entry):
+		var entry_dict: Dictionary = entry
+		var instance_rid: RID = entry_dict.get("instance_rid", RID())
+		var mesh: Mesh = entry_dict.get("mesh", null)
+		return instance_rid.is_valid() and mesh != null
+	var node := entry as MeshInstance3D
+	return node != null and is_instance_valid(node)
+
+func _terrain_visual_batch_entry_mesh(entry: Variant) -> Mesh:
+	if _terrain_visual_batch_entry_is_server(entry):
+		var entry_dict: Dictionary = entry
+		return entry_dict.get("mesh", null) as Mesh
+	var node := entry as MeshInstance3D
+	if node == null or not is_instance_valid(node):
+		return null
+	return node.mesh
+
+func _terrain_visual_batch_entry_visible(entry: Variant) -> bool:
+	if _terrain_visual_batch_entry_is_server(entry):
+		var entry_dict: Dictionary = entry
+		return bool(entry_dict.get("visible", true))
+	var node := entry as MeshInstance3D
+	return node != null and is_instance_valid(node) and node.visible
+
+func _set_terrain_visual_batch_entry_visible(entry: Variant, visible: bool) -> void:
+	if _terrain_visual_batch_entry_is_server(entry):
+		var entry_dict: Dictionary = entry
+		var instance_rid: RID = entry_dict.get("instance_rid", RID())
+		if instance_rid.is_valid():
+			RenderingServer.instance_set_visible(instance_rid, visible)
+		entry_dict["visible"] = visible
+		return
+	var node := entry as MeshInstance3D
+	if node != null and is_instance_valid(node):
+		node.visible = visible
+
+func _set_terrain_visual_batch_entry_shadow(entry: Variant, enabled: bool) -> bool:
+	if _terrain_visual_batch_entry_is_server(entry):
+		var entry_dict: Dictionary = entry
+		if bool(entry_dict.get("shadow_enabled", true)) == enabled:
+			return false
+		var instance_rid: RID = entry_dict.get("instance_rid", RID())
+		if instance_rid.is_valid():
+			var target := RenderingServer.SHADOW_CASTING_SETTING_ON if enabled else RenderingServer.SHADOW_CASTING_SETTING_OFF
+			RenderingServer.instance_geometry_set_cast_shadows_setting(instance_rid, target)
+		entry_dict["shadow_enabled"] = enabled
+		return true
+	var node := entry as MeshInstance3D
+	return _set_mesh_shadow_casting(node, enabled)
+
+func _free_terrain_visual_batch_entry(entry: Variant, immediate: bool = false) -> void:
+	if _terrain_visual_batch_entry_is_server(entry):
+		var entry_dict: Dictionary = entry
+		var instance_rid: RID = entry_dict.get("instance_rid", RID())
+		if instance_rid.is_valid():
+			RenderingServer.free_rid(instance_rid)
+		entry_dict["instance_rid"] = RID()
+		entry_dict["mesh"] = null
+		return
+	var node := entry as Node
+	if node == null or not is_instance_valid(node):
+		return
+	if immediate:
+		node.free()
+	else:
+		node.queue_free()
+
+func _create_terrain_visual_server_batch_entry(key: Vector2i, mesh: ArrayMesh) -> Dictionary:
+	if not terrain_render_server_batches_enabled or mesh == null:
+		return {}
+	var mesh_rid := mesh.get_rid()
+	var world := get_world_3d()
+	if world == null or not mesh_rid.is_valid() or not world.scenario.is_valid():
+		_terrain_render_server_batch_fallback_count += 1
+		return {}
+	var instance_rid := RenderingServer.instance_create()
+	if not instance_rid.is_valid():
+		_terrain_render_server_batch_fallback_count += 1
+		return {}
+	RenderingServer.instance_set_base(instance_rid, mesh_rid)
+	RenderingServer.instance_set_scenario(instance_rid, world.scenario)
+	RenderingServer.instance_set_transform(instance_rid, Transform3D.IDENTITY)
+	if material_terrain != null:
+		RenderingServer.instance_geometry_set_material_override(instance_rid, material_terrain.get_rid())
+	var shadow_enabled := _should_terrain_cast_shadow(_terrain_batch_shadow_coord(key))
+	var shadow_setting := RenderingServer.SHADOW_CASTING_SETTING_ON if shadow_enabled else RenderingServer.SHADOW_CASTING_SETTING_OFF
+	RenderingServer.instance_geometry_set_cast_shadows_setting(instance_rid, shadow_setting)
+	RenderingServer.instance_set_visible(instance_rid, true)
+	_terrain_render_server_batch_create_count += 1
+	return {
+		"backend": "rendering_server",
+		"instance_rid": instance_rid,
+		"mesh": mesh,
+		"key": key,
+		"visible": true,
+		"shadow_enabled": shadow_enabled
+	}
+
+func _update_terrain_visual_server_batch_entry(entry: Dictionary, key: Vector2i, mesh: ArrayMesh) -> bool:
+	var instance_rid: RID = entry.get("instance_rid", RID())
+	if not instance_rid.is_valid() or mesh == null or not mesh.get_rid().is_valid():
+		return false
+	RenderingServer.instance_set_base(instance_rid, mesh.get_rid())
+	RenderingServer.instance_set_transform(instance_rid, Transform3D.IDENTITY)
+	if material_terrain != null:
+		RenderingServer.instance_geometry_set_material_override(instance_rid, material_terrain.get_rid())
+	_set_terrain_visual_batch_entry_shadow(entry, _should_terrain_cast_shadow(_terrain_batch_shadow_coord(key)))
+	_set_terrain_visual_batch_entry_visible(entry, true)
+	entry["mesh"] = mesh
+	entry["key"] = key
+	_terrain_render_server_batch_update_count += 1
+	return true
+
 func _sync_terrain_node_shadow_lod(coord: Vector3i, data) -> bool:
 	if data == null or data.node_terrain == null or not is_instance_valid(data.node_terrain):
 		return false
@@ -1967,11 +2150,11 @@ func _sync_terrain_shadow_lod() -> void:
 
 	for key_variant in _terrain_visual_batches.keys():
 		var key: Vector2i = key_variant
-		var batch_node := _terrain_visual_batches.get(key, null) as MeshInstance3D
-		if batch_node == null or not is_instance_valid(batch_node):
+		var batch_entry: Variant = _terrain_visual_batches.get(key, null)
+		if not _terrain_visual_batch_entry_is_valid(batch_entry):
 			continue
 		var should_batch_cast := _should_terrain_cast_shadow(_terrain_batch_shadow_coord(key))
-		if _set_mesh_shadow_casting(batch_node, should_batch_cast):
+		if _set_terrain_visual_batch_entry_shadow(batch_entry, should_batch_cast):
 			updated_count += 1
 
 	_last_terrain_shadow_lod_enabled_count = enabled_count
@@ -1983,6 +2166,214 @@ func _sync_terrain_shadow_lod() -> void:
 	_last_terrain_shadow_lod_batch_count = batch_count
 	_last_terrain_shadow_lod_enabled_setting = terrain_shadow_lod_enabled
 	_last_terrain_shadow_lod_radius_setting = terrain_shadow_lod_radius_chunks
+
+func _get_terrain_render_visibility_camera() -> Camera3D:
+	var viewport := get_viewport()
+	if viewport == null:
+		return null
+	return viewport.get_camera_3d()
+
+func _terrain_render_visibility_forward_xz(camera: Camera3D) -> Vector3:
+	if camera == null:
+		return Vector3.ZERO
+	var forward := -camera.global_transform.basis.z
+	forward.y = 0.0
+	if forward.length_squared() <= 0.0001:
+		return Vector3.ZERO
+	return forward.normalized()
+
+func _terrain_render_visibility_coord_center(coord: Vector3i) -> Vector3:
+	return Vector3(
+		(float(coord.x) + 0.5) * float(CHUNK_STRIDE),
+		0.0,
+		(float(coord.z) + 0.5) * float(CHUNK_STRIDE)
+	)
+
+func _terrain_render_visibility_coord_aabb(coord: Vector3i, span_chunks: int = 1) -> AABB:
+	var span := maxi(span_chunks, 1)
+	var size_xz := float(CHUNK_STRIDE * span)
+	var min_y := float(coord.y * CHUNK_STRIDE) - float(CHUNK_STRIDE)
+	var max_y := min_y + float(CHUNK_STRIDE * 3)
+	if world_map_active:
+		min_y = -float(CHUNK_STRIDE)
+		max_y = maxf(world_map_max_height + float(CHUNK_STRIDE), water_level + float(CHUNK_STRIDE))
+	return AABB(
+		Vector3(float(coord.x * CHUNK_STRIDE), min_y, float(coord.z * CHUNK_STRIDE)),
+		Vector3(size_xz, maxf(max_y - min_y, float(CHUNK_STRIDE)), size_xz)
+	)
+
+func _terrain_render_visibility_aabb_in_frustum(camera: Camera3D, bounds: AABB) -> bool:
+	if camera == null or not is_instance_valid(camera):
+		return false
+	var position := bounds.position
+	var end := bounds.position + bounds.size
+	if bounds.has_point(camera.global_position):
+		return true
+	var center := bounds.get_center()
+	if camera.is_position_in_frustum(center):
+		return true
+	var sample_points := [
+		Vector3(position.x, position.y, position.z),
+		Vector3(end.x, position.y, position.z),
+		Vector3(position.x, end.y, position.z),
+		Vector3(end.x, end.y, position.z),
+		Vector3(position.x, position.y, end.z),
+		Vector3(end.x, position.y, end.z),
+		Vector3(position.x, end.y, end.z),
+		Vector3(end.x, end.y, end.z),
+		Vector3(center.x, position.y, center.z),
+		Vector3(center.x, end.y, center.z),
+		Vector3(position.x, center.y, center.z),
+		Vector3(end.x, center.y, center.z),
+		Vector3(center.x, center.y, position.z),
+		Vector3(center.x, center.y, end.z)
+	]
+	for point in sample_points:
+		if camera.is_position_in_frustum(point):
+			return true
+	return false
+
+func _terrain_render_visibility_coord_visible(
+	coord: Vector3i,
+	camera: Camera3D,
+	camera_pos: Vector3,
+	camera_forward_xz: Vector3,
+	viewer_chunk: Vector2i,
+	min_dot: float,
+	span_chunks: int = 1
+) -> bool:
+	var keep_radius := maxi(terrain_render_visibility_near_keep_radius_chunks, 0)
+	if keep_radius > 0 and maxi(absi(coord.x - viewer_chunk.x), absi(coord.z - viewer_chunk.y)) <= keep_radius:
+		return true
+	if terrain_render_visibility_frustum_culling_enabled:
+		return _terrain_render_visibility_aabb_in_frustum(
+			camera,
+			_terrain_render_visibility_coord_aabb(coord, span_chunks)
+		)
+	var to_coord := _terrain_render_visibility_coord_center(coord) - camera_pos
+	to_coord.y = 0.0
+	if to_coord.length_squared() <= 0.0001:
+		return true
+	return camera_forward_xz.dot(to_coord.normalized()) >= min_dot
+
+func _show_all_terrain_render_visuals() -> void:
+	for key_variant in _terrain_visual_batches.keys():
+		var batch_entry: Variant = _terrain_visual_batches.get(key_variant, null)
+		_set_terrain_visual_batch_entry_visible(batch_entry, true)
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		var data = active_chunks.get(coord, null)
+		if data == null or bool(data.terrain_visual_batched) or bool(data.terrain_visual_lod_replaced):
+			continue
+		if data.node_terrain == null or not is_instance_valid(data.node_terrain):
+			continue
+		var mesh_instance := _get_chunk_mesh_instance(data.node_terrain)
+		if mesh_instance:
+			mesh_instance.visible = true
+
+func _sync_terrain_render_visibility() -> void:
+	if not terrain_render_visibility_culling_enabled:
+		if _last_terrain_render_visibility_skipped_reason != "disabled":
+			_show_all_terrain_render_visuals()
+		_last_terrain_render_visibility_update_ms = 0.0
+		_last_terrain_render_visibility_batch_visible_count = _terrain_visual_batches.size()
+		_last_terrain_render_visibility_batch_hidden_count = 0
+		_last_terrain_render_visibility_chunk_hidden_count = 0
+		_last_terrain_render_visibility_skipped_reason = "disabled"
+		return
+
+	var camera := _get_terrain_render_visibility_camera()
+	if camera == null:
+		_last_terrain_render_visibility_update_ms = 0.0
+		_last_terrain_render_visibility_skipped_reason = "missing_camera"
+		return
+	var camera_pos := camera.global_position
+	var camera_forward_xz := _terrain_render_visibility_forward_xz(camera)
+	if camera_forward_xz == Vector3.ZERO:
+		_last_terrain_render_visibility_update_ms = 0.0
+		_last_terrain_render_visibility_skipped_reason = "missing_camera_forward"
+		return
+
+	var interval := maxi(terrain_render_visibility_update_interval_frames, 0)
+	_terrain_render_visibility_frame_counter += 1
+	var active_chunk_count := active_chunks.size()
+	var batch_count := _terrain_visual_batches.size()
+	var first_update := _terrain_render_visibility_last_active_chunk_count < 0
+	var camera_moved := camera_pos.distance_squared_to(_terrain_render_visibility_last_camera_pos) > 1.0
+	var camera_turned := camera_forward_xz.dot(_terrain_render_visibility_last_camera_forward) < 0.999
+	var terrain_changed := active_chunk_count != _terrain_render_visibility_last_active_chunk_count \
+		or batch_count != _terrain_render_visibility_last_batch_count
+	if not first_update and not terrain_changed and not camera_moved and not camera_turned and interval > 0 and _terrain_render_visibility_frame_counter < interval:
+		_last_terrain_render_visibility_update_ms = 0.0
+		_last_terrain_render_visibility_skipped_reason = "interval"
+		return
+
+	_terrain_render_visibility_frame_counter = 0
+	_terrain_render_visibility_last_camera_pos = camera_pos
+	_terrain_render_visibility_last_camera_forward = camera_forward_xz
+	_terrain_render_visibility_last_active_chunk_count = active_chunk_count
+	_terrain_render_visibility_last_batch_count = batch_count
+
+	var start_us := Time.get_ticks_usec()
+	var viewer_chunk := _viewer_visual_batch_chunk()
+	var min_dot := cos(deg_to_rad(clampf(terrain_render_visibility_half_angle_degrees, 1.0, 180.0)))
+	var batch_visible := 0
+	var batch_hidden := 0
+	var chunk_visible := 0
+	var chunk_hidden := 0
+
+	for key_variant in _terrain_visual_batches.keys():
+		var key: Vector2i = key_variant
+		var batch_entry: Variant = _terrain_visual_batches.get(key, null)
+		if not _terrain_visual_batch_entry_is_valid(batch_entry):
+			continue
+		var visible := _terrain_render_visibility_coord_visible(
+			_terrain_batch_shadow_coord(key),
+			camera,
+			camera_pos,
+			camera_forward_xz,
+			viewer_chunk,
+			min_dot,
+			_effective_terrain_visual_batch_size()
+		)
+		_set_terrain_visual_batch_entry_visible(batch_entry, visible)
+		if visible:
+			batch_visible += 1
+		else:
+			batch_hidden += 1
+
+	for coord_variant in active_chunks.keys():
+		var coord: Vector3i = coord_variant
+		if coord.y != 0:
+			continue
+		var data = active_chunks.get(coord, null)
+		if data == null or bool(data.terrain_visual_batched) or bool(data.terrain_visual_lod_replaced):
+			continue
+		if data.node_terrain == null or not is_instance_valid(data.node_terrain):
+			continue
+		var mesh_instance := _get_chunk_mesh_instance(data.node_terrain)
+		if mesh_instance == null:
+			continue
+		var chunk_is_visible := _terrain_render_visibility_coord_visible(
+			coord,
+			camera,
+			camera_pos,
+			camera_forward_xz,
+			viewer_chunk,
+			min_dot
+		)
+		mesh_instance.visible = chunk_is_visible
+		if chunk_is_visible:
+			chunk_visible += 1
+		else:
+			chunk_hidden += 1
+
+	_last_terrain_render_visibility_batch_visible_count = batch_visible
+	_last_terrain_render_visibility_batch_hidden_count = batch_hidden
+	_last_terrain_render_visibility_chunk_visible_count = chunk_visible
+	_last_terrain_render_visibility_chunk_hidden_count = chunk_hidden
+	_last_terrain_render_visibility_update_ms = float(Time.get_ticks_usec() - start_us) / 1000.0
+	_last_terrain_render_visibility_skipped_reason = ""
 
 func _terrain_visual_batch_key(coord: Vector3i) -> Vector2i:
 	var batch_size := _effective_terrain_visual_batch_size()
@@ -2253,10 +2644,10 @@ func _collect_terrain_visual_telemetry() -> Dictionary:
 	var max_batch_key := ""
 	for key_variant in _terrain_visual_batches.keys():
 		var key: Vector2i = key_variant
-		var batch_node := _terrain_visual_batches.get(key, null) as MeshInstance3D
-		if batch_node == null or not is_instance_valid(batch_node) or not batch_node.visible:
+		var batch_entry: Variant = _terrain_visual_batches.get(key, null)
+		if not _terrain_visual_batch_entry_is_valid(batch_entry) or not _terrain_visual_batch_entry_visible(batch_entry):
 			continue
-		var batch_mesh := batch_node.mesh
+		var batch_mesh := _terrain_visual_batch_entry_mesh(batch_entry)
 		if batch_mesh == null:
 			continue
 		var batch_primitives := _get_mesh_surface_primitive_count(batch_mesh)
@@ -2444,9 +2835,7 @@ func _mark_all_terrain_visual_batches_dirty(invalidate_visible_batches: bool = f
 		var key: Vector2i = key_variant
 		_terrain_visual_batch_dirty[key] = true
 		if invalidate_visible_batches and _terrain_visual_batches.has(key):
-			var batch_node := _terrain_visual_batches[key] as MeshInstance3D
-			if batch_node and is_instance_valid(batch_node):
-				batch_node.visible = false
+			_set_terrain_visual_batch_entry_visible(_terrain_visual_batches[key], false)
 			_show_individual_terrain_visuals_for_batch(key)
 	if not _terrain_visual_batch_dirty.is_empty():
 		_wake_terrain_process_loop("terrain_visual_batches_dirty")
@@ -2473,9 +2862,7 @@ func _mark_terrain_visual_batch_dirty(coord: Vector3i, invalidate_visible_batch:
 	_terrain_visual_batch_dirty[key] = true
 	_wake_terrain_process_loop("terrain_visual_batch_dirty")
 	if invalidate_visible_batch and _terrain_visual_batches.has(key):
-		var batch_node := _terrain_visual_batches[key] as MeshInstance3D
-		if batch_node and is_instance_valid(batch_node):
-			batch_node.visible = false
+		_set_terrain_visual_batch_entry_visible(_terrain_visual_batches[key], false)
 		_show_individual_terrain_visuals_for_batch(key)
 
 func _clear_terrain_visual_batches(immediate: bool = false) -> void:
@@ -2483,13 +2870,7 @@ func _clear_terrain_visual_batches(immediate: bool = false) -> void:
 		var key: Vector2i = batch_variant
 		_show_individual_terrain_visuals_for_batch(key)
 	for batch_variant in _terrain_visual_batches.values():
-		var batch_node := batch_variant as Node
-		if not batch_node:
-			continue
-		if immediate:
-			batch_node.free()
-		else:
-			batch_node.queue_free()
+		_free_terrain_visual_batch_entry(batch_variant, immediate)
 	_terrain_visual_batches.clear()
 	_terrain_visual_batch_dirty.clear()
 	_terrain_visual_mesh_retire_queue.clear()
@@ -2512,6 +2893,8 @@ func _terrain_visual_batch_rebuild_busy(_hot_frame: bool) -> bool:
 	return _last_update_loads > 0 or _last_update_unloads > 0 or not pending_nodes.is_empty() or _get_completed_generation_queue_count() > 0 or _get_task_queue_count() > 0 or _get_cpu_task_queue_count() > 0
 
 func _terrain_visual_batch_paused_for_active_gameplay() -> bool:
+	if _is_startup_visual_batch_gate_pending():
+		return false
 	return runtime_power_mode_enabled and (_runtime_power_viewer_moved_last or _runtime_power_foreground_terrain_busy_last)
 
 func _has_terrain_visual_batch_polish_work() -> bool:
@@ -2852,23 +3235,39 @@ func _collect_terrain_visual_batch_inputs(key: Vector2i) -> Dictionary:
 	}
 
 func _apply_terrain_visual_batch_mesh(key: Vector2i, eligible_coords: Array[Vector3i], merged_mesh: ArrayMesh) -> void:
-	var batch_node: MeshInstance3D = null
-	if _terrain_visual_batches.has(key):
-		batch_node = _terrain_visual_batches[key] as MeshInstance3D
-		if not is_instance_valid(batch_node):
-			batch_node = null
-	if batch_node == null:
-		batch_node = MeshInstance3D.new()
-		batch_node.name = "TerrainBatch_%d_%d" % [key.x, key.y]
-		batch_node.material_override = material_terrain
-		batch_node.add_to_group("terrain_visual_batch")
-		_get_terrain_visual_batch_root().add_child(batch_node)
-		_terrain_visual_batches[key] = batch_node
+	var batch_entry: Variant = _terrain_visual_batches.get(key, null)
+	var using_server := false
+	if terrain_render_server_batches_enabled:
+		if _terrain_visual_batch_entry_is_server(batch_entry):
+			var server_entry: Dictionary = batch_entry
+			using_server = _update_terrain_visual_server_batch_entry(server_entry, key, merged_mesh)
+			if using_server:
+				_terrain_visual_batches[key] = server_entry
+		else:
+			_free_terrain_visual_batch_entry(batch_entry)
+			var new_server_entry := _create_terrain_visual_server_batch_entry(key, merged_mesh)
+			if not new_server_entry.is_empty():
+				_terrain_visual_batches[key] = new_server_entry
+				using_server = true
 
-	batch_node.position = Vector3.ZERO
-	batch_node.mesh = merged_mesh
-	_set_mesh_shadow_casting(batch_node, _should_terrain_cast_shadow(_terrain_batch_shadow_coord(key)))
-	batch_node.visible = true
+	if not using_server:
+		if _terrain_visual_batch_entry_is_server(batch_entry):
+			_free_terrain_visual_batch_entry(batch_entry)
+			batch_entry = null
+		var batch_node := batch_entry as MeshInstance3D
+		if batch_node == null or not is_instance_valid(batch_node):
+			batch_node = MeshInstance3D.new()
+			batch_node.name = "TerrainBatch_%d_%d" % [key.x, key.y]
+			batch_node.material_override = material_terrain
+			batch_node.add_to_group("terrain_visual_batch")
+			_get_terrain_visual_batch_root().add_child(batch_node)
+			_terrain_visual_batches[key] = batch_node
+
+		batch_node.position = Vector3.ZERO
+		batch_node.mesh = merged_mesh
+		_set_mesh_shadow_casting(batch_node, _should_terrain_cast_shadow(_terrain_batch_shadow_coord(key)))
+		batch_node.visible = true
+
 	for coord in eligible_coords:
 		var data = active_chunks.get(coord, null)
 		if data != null:
@@ -2894,7 +3293,8 @@ func _queue_terrain_visual_batch_build(key: Vector2i, cache_key: String, merge_i
 	cpu_mutex.unlock()
 	cpu_semaphore.post()
 	_last_terrain_visual_batch_async_queued_count += 1
-	_wake_terrain_process_loop("terrain_visual_batch_async_queued")
+	if not _terrain_visual_batch_idle_polish_processing:
+		_wake_terrain_process_loop("terrain_visual_batch_async_queued")
 	return true
 
 func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object, cache_only: bool = false) -> bool:
@@ -2909,10 +3309,9 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object, cache_only: b
 
 	if merge_inputs.is_empty():
 		if _terrain_visual_batches.has(key):
-			var old_node := _terrain_visual_batches[key] as Node
+			var old_entry: Variant = _terrain_visual_batches[key]
 			_terrain_visual_batches.erase(key)
-			if old_node:
-				old_node.queue_free()
+			_free_terrain_visual_batch_entry(old_entry)
 		return true
 
 	var terrain_batch_max_vertices := _effective_terrain_visual_batch_max_vertices()
@@ -2920,10 +3319,9 @@ func _rebuild_terrain_visual_batch(key: Vector2i, builder: Object, cache_only: b
 		if cache_only:
 			return false
 		if _terrain_visual_batches.has(key):
-			var heavy_old_node := _terrain_visual_batches[key] as Node
+			var heavy_old_entry: Variant = _terrain_visual_batches[key]
 			_terrain_visual_batches.erase(key)
-			if heavy_old_node:
-				heavy_old_node.queue_free()
+			_free_terrain_visual_batch_entry(heavy_old_entry)
 		_show_individual_terrain_visuals_for_batch(key)
 		_last_terrain_visual_batch_skipped_heavy_count += 1
 		_terrain_visual_batch_total_heavy_skips += 1
@@ -3565,6 +3963,22 @@ func _get_cpu_task_queue_count() -> int:
 	return count
 
 
+func _get_required_cpu_task_queue_count() -> int:
+	if not cpu_mutex:
+		return 0
+	var count := 0
+	cpu_mutex.lock()
+	for queued_task_variant in cpu_task_queue:
+		if not (queued_task_variant is Dictionary):
+			count += 1
+			continue
+		var queued_task: Dictionary = queued_task_variant
+		if str(queued_task.get("type", "")) != "terrain_visual_batch":
+			count += 1
+	cpu_mutex.unlock()
+	return count
+
+
 func _get_cpu_task_queue_type_counts() -> Dictionary:
 	var counts := {
 		"total": 0,
@@ -4067,7 +4481,10 @@ func _process(delta):
 	if not viewer:
 		return
 	if _terrain_process_sleeping:
-		_wake_terrain_process_loop("process_called_while_sleeping")
+		_terrain_process_sleep_process_callback_count += 1
+		if is_inside_tree() and is_processing():
+			set_process(false)
+		return
 
 	# Track FPS
 	_update_fps_tracking(delta)
@@ -4078,6 +4495,7 @@ func _process(delta):
 
 	_update_runtime_power_mode(delta)
 	_sync_visual_batch_profile()
+	_sync_terrain_render_visibility()
 
 	if skip_terrain_chunk_updates_for_test:
 		return
@@ -4091,12 +4509,17 @@ func _process(delta):
 		# Dirty batches stay queued and resume when world work is active again.
 		_last_terrain_visual_batch_idle_polish = false
 		_sync_terrain_shadow_lod()
+		_maybe_sleep_terrain_process_loop()
 		return
 
 	_process_retired_chunk_node_cleanup()
 
 	var spawn_zone_work_pending := _has_pending_spawn_zone_work()
-	var force_pending_node_progress := terrain_force_pending_node_finalization_for_test and not pending_nodes.is_empty()
+	var force_starved_finalization := _is_terrain_finalization_starved()
+	var force_pending_node_progress := (
+		(terrain_force_pending_node_finalization_for_test and not pending_nodes.is_empty())
+		or force_starved_finalization
+	)
 	var defer_terrain_finalization := false
 	var terrain_defer_reason := ""
 	if not initial_load_phase and not force_pending_node_progress:
@@ -4117,7 +4540,7 @@ func _process(delta):
 			_skip_terrain_stream_update()
 
 		_drain_completed_generation_queue()
-		process_pending_nodes()
+		process_pending_nodes(force_pending_node_progress)
 	else:
 		if _terrain_stream_update_needed():
 			update_chunk_unloads_only()
@@ -4126,7 +4549,7 @@ func _process(delta):
 			_skip_terrain_stream_update()
 		if spawn_zone_work_pending or force_pending_node_progress:
 			_drain_completed_generation_queue()
-			process_pending_nodes(spawn_zone_work_pending)
+			process_pending_nodes(spawn_zone_work_pending or force_pending_node_progress)
 
 	update_collision_proximity() # Enable/disable collision based on player distance
 	process_pending_terrain_collision_creates()
@@ -4138,12 +4561,15 @@ func _process(delta):
 	_process_terrain_visual_batch_rebuilds()
 	_process_terrain_visual_mesh_retire_queue()
 	_process_water_visual_batch_rebuilds()
+	_sync_terrain_render_visibility()
 	_sync_terrain_shadow_lod()
 	_maybe_sleep_terrain_process_loop()
 
 var debug_chunk_bounds: bool = false
 
 func _unhandled_input(_event):
+	if terrain_render_visibility_culling_enabled:
+		_wake_terrain_process_loop("input_visibility")
 	if runtime_power_mode_enabled and (_runtime_power_world_work_suspended or _runtime_power_render_loop_suspended):
 		_runtime_power_idle_seconds = 0.0
 		_runtime_power_active_grace_remaining_s = runtime_power_active_grace_s
@@ -4183,8 +4609,12 @@ func _adjust_adaptive_loading():
 	# to ensure world generates as fast as possible regardless of temporary FPS dips
 	if initial_load_phase:
 		loading_paused = false
-		adaptive_frame_budget_ms = 4.0 # High budget for speed
-		chunks_per_frame_limit = 4    # Force multiple chunks per frame
+		if terrain_force_pending_node_finalization_for_test:
+			adaptive_frame_budget_ms = maxf(adaptive_frame_budget_ms, 24.0)
+			chunks_per_frame_limit = maxi(chunks_per_frame_limit, 64)
+		else:
+			adaptive_frame_budget_ms = 4.0 # High budget for speed
+			chunks_per_frame_limit = 4    # Force multiple chunks per frame
 		return
 
 	if terrain_force_pending_node_finalization_for_test and not pending_nodes.is_empty():
@@ -4226,6 +4656,19 @@ func _should_use_movement_stream_chunk_limit() -> bool:
 	if active_chunks.size() < _get_min_loaded_stream_chunk_count():
 		return true
 	return _get_viewer_chunk_coord() != _last_terrain_stream_update_center_chunk
+
+
+func _is_terrain_finalization_starved() -> bool:
+	if initial_load_phase:
+		return false
+	if terrain_finalization_starvation_force_seconds <= 0.0:
+		return false
+	if pending_nodes.is_empty() and _get_completed_generation_queue_count() <= 0:
+		return false
+	var now_ms := Time.get_ticks_msec()
+	if last_finalization_time_ms <= 0:
+		return true
+	return now_ms - last_finalization_time_ms >= int(terrain_finalization_starvation_force_seconds * 1000.0)
 
 func _get_runtime_power_env_int(name: String, default_value: int) -> int:
 	var raw := OS.get_environment(name).strip_edges()
@@ -4300,9 +4743,14 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	terrain_stream_prioritize_candidates = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_PRIORITIZE_STREAM_CANDIDATES", terrain_stream_prioritize_candidates)
 	terrain_skip_dry_water_density_dispatch = _get_runtime_power_env_bool("TOWN_STALL_SKIP_DRY_WATER_DENSITY_DISPATCH", terrain_skip_dry_water_density_dispatch)
 	terrain_artifact_store_ready_mesh_resources = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES", terrain_artifact_store_ready_mesh_resources)
+	terrain_artifact_store_source_buffers = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS", terrain_artifact_store_source_buffers)
+	terrain_artifact_hydrate_source_on_edit = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_HYDRATE_SOURCE_ON_EDIT", terrain_artifact_hydrate_source_on_edit)
+	terrain_artifact_refresh_after_edit_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_REFRESH_AFTER_EDIT", terrain_artifact_refresh_after_edit_enabled)
+	terrain_artifact_cache_disk_restore_results = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS", terrain_artifact_cache_disk_restore_results)
 	terrain_artifact_disk_restore_requires_manifest = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_DISK_RESTORE_REQUIRES_MANIFEST", terrain_artifact_disk_restore_requires_manifest)
 	terrain_artifact_disk_store_runtime_chunks = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_RUNTIME_CHUNKS", terrain_artifact_disk_store_runtime_chunks)
 	terrain_artifact_disk_store_initial_load_chunks = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS", terrain_artifact_disk_store_initial_load_chunks)
+	terrain_artifact_disk_store_edited_chunks = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_EDITED_CHUNKS", terrain_artifact_disk_store_edited_chunks)
 	water_screen_refraction_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_SCREEN_REFRACTION", water_screen_refraction_enabled)
 	if OS.get_environment("TOWN_STALL_DISABLE_WATER_RENDER") == "1":
 		water_render_enabled = false
@@ -4334,12 +4782,18 @@ func _configure_terrain_gpu_mode_from_env() -> void:
 	world_map_terrain_visual_batch_max_vertices = _get_runtime_power_env_int_range("TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_MAX_VERTICES", world_map_terrain_visual_batch_max_vertices, 0, 200000)
 	if terrain_batch_max_overridden and OS.get_environment("TOWN_STALL_WORLD_MAP_TERRAIN_VISUAL_BATCH_MAX_VERTICES").is_empty():
 		world_map_terrain_visual_batch_max_vertices = terrain_visual_batch_max_vertices
+	terrain_render_server_batches_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_RENDER_SERVER_BATCHES", terrain_render_server_batches_enabled)
 	terrain_visual_batch_async_during_streaming = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC", terrain_visual_batch_async_during_streaming)
 	terrain_visual_batch_streaming_async_queue_per_frame = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_STREAMING_ASYNC_QUEUE", terrain_visual_batch_streaming_async_queue_per_frame, 0, 8)
 	terrain_visual_batch_idle_polish_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH", terrain_visual_batch_idle_polish_enabled)
 	terrain_visual_batch_idle_polish_ignore_hot_frame = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH_IGNORE_HOT_FRAME", terrain_visual_batch_idle_polish_ignore_hot_frame)
 	terrain_visual_batch_idle_polish_min_idle_frames = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_BATCH_IDLE_POLISH_MIN_IDLE_FRAMES", terrain_visual_batch_idle_polish_min_idle_frames, 0, 60)
 	procedural_terrain_visual_batch_near_cull_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_PROCEDURAL_TERRAIN_VISUAL_BATCH_NEAR_CULL_RADIUS", procedural_terrain_visual_batch_near_cull_radius_chunks, 0, 8)
+	terrain_render_visibility_culling_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_RENDER_VISIBILITY_CULLING", terrain_render_visibility_culling_enabled)
+	terrain_render_visibility_frustum_culling_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_RENDER_VISIBILITY_FRUSTUM", terrain_render_visibility_frustum_culling_enabled)
+	terrain_render_visibility_near_keep_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_RENDER_VISIBILITY_NEAR_KEEP_RADIUS", terrain_render_visibility_near_keep_radius_chunks, 0, 16)
+	terrain_render_visibility_half_angle_degrees = clampf(_get_runtime_power_env_float("TOWN_STALL_TERRAIN_RENDER_VISIBILITY_HALF_ANGLE", terrain_render_visibility_half_angle_degrees), 1.0, 180.0)
+	terrain_render_visibility_update_interval_frames = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_RENDER_VISIBILITY_UPDATE_INTERVAL_FRAMES", terrain_render_visibility_update_interval_frames, 0, 60)
 	terrain_shadow_lod_enabled = _get_runtime_power_env_bool("TOWN_STALL_TERRAIN_SHADOW_LOD", terrain_shadow_lod_enabled)
 	terrain_shadow_lod_radius_chunks = _get_runtime_power_env_int_range("TOWN_STALL_TERRAIN_SHADOW_LOD_RADIUS", terrain_shadow_lod_radius_chunks, 0, 32)
 	water_visual_batching_enabled = _get_runtime_power_env_bool("TOWN_STALL_WATER_VISUAL_BATCHING", water_visual_batching_enabled)
@@ -4403,6 +4857,18 @@ func _runtime_power_viewer_moved() -> bool:
 
 	return first_position_sample or first_orientation_sample or position_changed or orientation_changed
 
+func reset_runtime_power_viewer_baseline() -> void:
+	_runtime_power_last_viewer_pos = get_viewer_position()
+	var view_forward := _get_runtime_power_view_forward()
+	if view_forward == Vector3.ZERO:
+		_runtime_power_last_view_forward = Vector3(1.0e20, 1.0e20, 1.0e20)
+	else:
+		_runtime_power_last_view_forward = view_forward
+	_runtime_power_viewer_moved_last = false
+	if _runtime_power_active_reason == "viewer_moved":
+		_runtime_power_active_reason = "viewer_baseline_reset"
+	_runtime_power_active_grace_remaining_s = 0.0
+
 func _runtime_power_terrain_busy() -> bool:
 	return initial_load_phase \
 		or _last_update_loads > 0 \
@@ -4423,12 +4889,14 @@ func _runtime_power_foreground_terrain_busy(terrain_busy: bool) -> bool:
 		return false
 	if initial_load_phase or active_chunks.is_empty() or not pending_spawn_zones.is_empty():
 		return true
+	if _is_startup_visual_batch_gate_pending():
+		return true
 	var min_loaded_chunk_count := _get_min_loaded_stream_chunk_count()
 	return (min_loaded_chunk_count > 0 and active_chunks.size() < min_loaded_chunk_count) \
 		or not pending_nodes.is_empty() \
 		or _get_completed_generation_queue_count() > 0 \
 		or _get_task_queue_count() > 0 \
-		or _get_cpu_task_queue_count() > 0 \
+		or _get_required_cpu_task_queue_count() > 0 \
 		or not pending_terrain_collision_creates.is_empty()
 
 func _get_cached_runtime_power_node(group_name: String, fallback_name: String, cached_node: Node) -> Node:
@@ -5134,10 +5602,22 @@ func _ensure_terrain_process_idle_timer() -> void:
 	add_child(_terrain_process_idle_timer)
 
 
-func _has_terrain_process_work_pending() -> bool:
-	return _runtime_power_terrain_busy() \
+func _has_required_terrain_process_work_pending() -> bool:
+	return initial_load_phase \
+		or _last_update_loads > 0 \
+		or _last_update_unloads > 0 \
+		or not pending_nodes.is_empty() \
+		or _get_completed_generation_queue_count() > 0 \
+		or _get_task_queue_count() > 0 \
+		or _get_required_cpu_task_queue_count() > 0 \
+		or not pending_terrain_collision_creates.is_empty() \
 		or not pending_spawn_zones.is_empty() \
+		or _is_startup_visual_batch_gate_pending() \
 		or active_chunks.is_empty()
+
+
+func _has_terrain_process_work_pending() -> bool:
+	return _has_required_terrain_process_work_pending()
 
 
 func _wake_terrain_process_loop(reason: String = "work_queued") -> void:
@@ -5180,12 +5660,16 @@ func _maybe_sleep_terrain_process_loop() -> void:
 		return
 	if _runtime_power_world_work_suspended:
 		_terrain_process_idle_frame_count = 0
+		_sleep_terrain_process_loop("runtime_power_world_work_suspended")
 		return
 	if _has_terrain_process_work_pending():
 		_terrain_process_idle_frame_count = 0
 		return
 	if _terrain_stream_update_needed():
 		_terrain_process_idle_frame_count = 0
+		return
+	if _has_terrain_visual_batch_polish_work():
+		_sleep_terrain_process_loop("visual_polish_only")
 		return
 	_terrain_process_idle_frame_count += 1
 	if _terrain_process_idle_frame_count >= terrain_event_driven_idle_sleep_frames:
@@ -5201,6 +5685,9 @@ func _on_terrain_process_idle_poll_timeout() -> void:
 		return
 	if _terrain_stream_update_needed():
 		_wake_terrain_process_loop("idle_poll_%s" % _last_terrain_stream_update_gate_reason)
+		return
+	if _has_terrain_visual_batch_polish_work():
+		_process_idle_terrain_visual_batch_polish()
 
 
 func is_world_work_suspended() -> bool:
@@ -5366,6 +5853,24 @@ func _ensure_shared_terrain_collision_cluster_body(cluster_coord: Vector3i, worl
 	_shared_terrain_collision_space = world.space
 	return body_rid
 
+func _ensure_terrain_shape_from_mesh(data) -> bool:
+	if data == null:
+		return false
+	if data.terrain_shape:
+		return true
+	if not (data.terrain_visual_mesh is ArrayMesh):
+		return false
+	var mesh := data.terrain_visual_mesh as ArrayMesh
+	if mesh.get_surface_count() <= 0:
+		return false
+	var faces := mesh.get_faces()
+	if faces.is_empty():
+		return false
+	var shape := ConcavePolygonShape3D.new()
+	shape.set_faces(faces)
+	data.terrain_shape = shape
+	return true
+
 func _add_shared_terrain_collision_shape_for_chunk(coord: Vector3i, data: ChunkData, world: World3D) -> bool:
 	if data == null:
 		return false
@@ -5376,6 +5881,8 @@ func _add_shared_terrain_collision_shape_for_chunk(coord: Vector3i, data: ChunkD
 		_mark_terrain_collision_space_attached(coord, true)
 		_set_terrain_collision_ready(coord, data, true)
 		return true
+	if data.node_terrain and not data.terrain_shape:
+		_ensure_terrain_shape_from_mesh(data)
 	if not data.node_terrain or not data.terrain_shape:
 		return false
 	var cluster_coord := _shared_terrain_collision_cluster_coord(coord)
@@ -5519,6 +6026,8 @@ func update_collision_proximity():
 	for coord_variant in proximity_update.get("prewarm", []):
 		var coord: Vector3i = coord_variant
 		var data = active_chunks.get(coord, null)
+		if data != null and data.node_terrain and not data.terrain_shape:
+			_ensure_terrain_shape_from_mesh(data)
 		if data == null or _has_terrain_collision_server_shape(data) or not data.node_terrain or not data.terrain_shape:
 			continue
 		var was_pending := pending_terrain_collision_creates.has(coord)
@@ -5740,6 +6249,8 @@ func _sync_terrain_collision_state(coord: Vector3i, data, should_have_collision:
 			_set_terrain_body_collision_enabled(coord, data, world, true)
 			pending_terrain_collision_creates.erase(coord)
 			return
+		if data.node_terrain and not data.terrain_shape:
+			_ensure_terrain_shape_from_mesh(data)
 		if not data.node_terrain or not data.terrain_shape:
 			_set_terrain_collision_ready(coord, data, false)
 			return
@@ -5834,6 +6345,8 @@ func process_pending_terrain_collision_creates():
 			_set_terrain_body_collision_enabled(coord, data, world, should_have_collision)
 			pending_terrain_collision_creates.erase(coord)
 			continue
+		if data.node_terrain and not data.terrain_shape:
+			_ensure_terrain_shape_from_mesh(data)
 		if not data.node_terrain or not data.terrain_shape:
 			_set_terrain_collision_ready(coord, data, false)
 			pending_terrain_collision_creates.erase(coord)
@@ -5878,6 +6391,8 @@ func _create_terrain_body_rid_for_chunk(coord: Vector3i, data: ChunkData, world:
 		return true
 	if data.body_rid_terrain.is_valid():
 		return true
+	if data.node_terrain and not data.terrain_shape:
+		_ensure_terrain_shape_from_mesh(data)
 	if not data.node_terrain or not data.terrain_shape:
 		return false
 	if _can_use_shared_terrain_collision_body(data):
@@ -6288,9 +6803,17 @@ func is_initial_load_complete() -> bool:
 		return false
 	if startup_require_preheat_before_play and not is_startup_preheat_ready():
 		return false
+	var startup_visual_batch_counts := {}
+	if startup_require_preheat_before_play and not _startup_visual_batch_gate_satisfied:
+		startup_visual_batch_counts = _get_startup_visual_batch_pending_counts()
+		if not bool(startup_visual_batch_counts.get("ready", true)):
+			return false
 	if viewer:
 		if not ensure_collision_ready_at(viewer.global_position, 1):
 			return false
+	if startup_require_preheat_before_play and not _startup_visual_batch_gate_satisfied:
+		_startup_visual_batch_gate_satisfied = true
+		_capture_terrain_telemetry("startup_visual_batches_ready", startup_visual_batch_counts)
 	return true
 
 ## Progress: 0.0-1.0 based on chunks loaded during initial phase
@@ -6307,6 +6830,43 @@ func get_pending_nodes_count() -> int:
 	var count = pending_nodes.size()
 	pending_nodes_mutex.unlock()
 	return count
+
+func _get_startup_visual_batch_pending_counts() -> Dictionary:
+	var terrain_dirty := 0
+	var terrain_in_flight := 0
+	var terrain_completed := 0
+	var terrain_retiring := 0
+	if _is_terrain_visual_batch_active():
+		terrain_dirty = _terrain_visual_batch_dirty.size()
+		terrain_in_flight = _terrain_visual_batch_builds_in_flight.size()
+		terrain_retiring = _terrain_visual_mesh_retire_queue.size()
+		if _completed_terrain_visual_batch_mutex:
+			_completed_terrain_visual_batch_mutex.lock()
+			terrain_completed = _completed_terrain_visual_batch_builds.size()
+			_completed_terrain_visual_batch_mutex.unlock()
+		else:
+			terrain_completed = _completed_terrain_visual_batch_builds.size()
+	var water_dirty := 0
+	if _is_water_visual_batch_active():
+		water_dirty = _water_visual_batch_dirty.size()
+	var total := terrain_dirty + terrain_in_flight + terrain_completed + terrain_retiring + water_dirty
+	return {
+		"total": total,
+		"terrain_dirty": terrain_dirty,
+		"terrain_in_flight": terrain_in_flight,
+		"terrain_completed": terrain_completed,
+		"terrain_retiring": terrain_retiring,
+		"water_dirty": water_dirty,
+		"ready": total <= 0
+	}
+
+func _is_startup_visual_batch_gate_pending(pending_counts: Dictionary = {}) -> bool:
+	if not startup_require_preheat_before_play or _startup_visual_batch_gate_satisfied:
+		return false
+	var counts := pending_counts
+	if counts.is_empty():
+		counts = _get_startup_visual_batch_pending_counts()
+	return int(counts.get("total", 0)) > 0
 
 func _get_pending_node_type_counts() -> Dictionary:
 	var counts := {
@@ -6349,11 +6909,18 @@ func get_startup_readiness_snapshot() -> Dictionary:
 	var completed_generated_count := int(completed_generation_counts.get("generated", 0))
 	var pending_artifact_restore_nodes := int(pending_node_counts.get("artifact_restore", 0))
 	var pending_generated_nodes := int(pending_node_counts.get("generated", 0))
+	var visual_batch_pending_counts := _get_startup_visual_batch_pending_counts()
+	var startup_visual_batch_pending_count := int(visual_batch_pending_counts.get("total", 0))
+	var startup_visual_batch_gate_pending := startup_require_preheat_before_play \
+		and not _startup_visual_batch_gate_satisfied \
+		and startup_visual_batch_pending_count > 0
 	var pending := pending_node_count \
 		+ task_queue_count \
 		+ cpu_task_queue_count \
 		+ completed_generation_count \
 		+ pending_spawn_zone_count
+	if startup_visual_batch_gate_pending:
+		pending += startup_visual_batch_pending_count
 	var ready := is_initial_load_complete()
 	if not ready and pending <= 0:
 		pending = 1
@@ -6370,6 +6937,8 @@ func get_startup_readiness_snapshot() -> Dictionary:
 			message = "Generating terrain misses... (%d queued)" % (generation_queue_count + cpu_mesh_queue_count + completed_generated_count)
 		elif startup_require_preheat_before_play and not is_startup_preheat_ready():
 			message = "Preheating terrain..."
+		elif startup_visual_batch_gate_pending:
+			message = "Preparing terrain visual batches... (%d pending)" % startup_visual_batch_pending_count
 		elif pending_spawn_zone_count > 0:
 			message = "Preparing spawn zones... (%d pending)" % pending_spawn_zone_count
 		else:
@@ -6396,6 +6965,15 @@ func get_startup_readiness_snapshot() -> Dictionary:
 			"completed_generated_count": completed_generated_count,
 			"pending_artifact_restore_node_count": pending_artifact_restore_nodes,
 			"pending_generated_node_count": pending_generated_nodes,
+			"terrain_visual_batch_dirty_count": int(visual_batch_pending_counts.get("terrain_dirty", 0)),
+			"terrain_visual_batch_in_flight_count": int(visual_batch_pending_counts.get("terrain_in_flight", 0)),
+			"terrain_visual_batch_completed_count": int(visual_batch_pending_counts.get("terrain_completed", 0)),
+			"terrain_visual_batch_retiring_count": int(visual_batch_pending_counts.get("terrain_retiring", 0)),
+			"water_visual_batch_dirty_count": int(visual_batch_pending_counts.get("water_dirty", 0)),
+			"startup_visual_batch_pending_count": startup_visual_batch_pending_count,
+			"startup_visual_batch_gate_pending": startup_visual_batch_gate_pending,
+			"startup_visual_batch_gate_satisfied": _startup_visual_batch_gate_satisfied,
+			"startup_visual_batches_ready": bool(visual_batch_pending_counts.get("ready", true)) or _startup_visual_batch_gate_satisfied,
 			"artifact_disk_write_pending_entries": disk_write_pending_entries,
 			"artifact_disk_write_pending_bytes": disk_write_pending_bytes,
 			"pending_entries": disk_write_pending_entries,
@@ -6887,6 +7465,18 @@ func _get_stored_modification_count(coord: Vector3i) -> int:
 	stored_modifications_mutex.unlock()
 	return stored_count
 
+
+func _get_stored_modification_signature(coord: Vector3i, stored_mod_version: int) -> String:
+	if stored_mod_version <= 0:
+		return "base"
+	stored_modifications_mutex.lock()
+	var coord_mods: Array = stored_modifications.get(coord, []).duplicate(true)
+	stored_modifications_mutex.unlock()
+	if coord_mods.size() != stored_mod_version:
+		return "stale:%d:%d" % [stored_mod_version, coord_mods.size()]
+	return "edit:%d:%s" % [stored_mod_version, var_to_str(coord_mods).sha256_text()]
+
+
 func _get_stored_modifications_after(coord: Vector3i, after_version: int) -> Array:
 	var mods_after: Array = []
 	stored_modifications_mutex.lock()
@@ -6897,10 +7487,14 @@ func _get_stored_modifications_after(coord: Vector3i, after_version: int) -> Arr
 	stored_modifications_mutex.unlock()
 	return mods_after
 
-func _cache_world_map_terrain_modifications(raw_mods: Array) -> void:
+func _cache_world_map_terrain_modifications(raw_mods: Variant) -> void:
 	_world_map_terrain_modifications.clear()
 	_world_map_excavation_masks.clear()
 	_mark_modification_coord_cache_dirty()
+	if _cache_compact_world_map_terrain_modifications(raw_mods):
+		return
+	if not (raw_mods is Array):
+		return
 	for raw_mod in raw_mods:
 		var mod := _normalize_world_map_modification(raw_mod)
 		if mod.is_empty():
@@ -6910,6 +7504,38 @@ func _cache_world_map_terrain_modifications(raw_mods: Array) -> void:
 				_world_map_terrain_modifications[coord] = []
 			_world_map_terrain_modifications[coord].append(mod)
 		_cache_world_map_excavation_mask_from_mod(mod)
+
+func _cache_compact_world_map_terrain_modifications(raw_mods: Variant) -> bool:
+	var payload := _read_compact_world_map_terrain_modification_payload(raw_mods)
+	if payload.is_empty():
+		return false
+	var columns: Array = payload.get("columns", [])
+	var column_count := int(columns.size() / 4)
+	for column_index in range(column_count):
+		var base_index := column_index * 4
+		var world_x := int(columns[base_index])
+		var world_z := int(columns[base_index + 1])
+		var world_y_min := float(columns[base_index + 2])
+		var world_y_max := float(columns[base_index + 3])
+		if world_y_max <= world_y_min:
+			continue
+		for coord in _get_excavation_column_covered_chunk_coords(world_x, world_z, world_y_min, world_y_max):
+			if not _world_map_terrain_modifications.has(coord):
+				_world_map_terrain_modifications[coord] = []
+		_cache_world_map_excavation_mask_from_column(world_x, world_z, world_y_min, world_y_max)
+	return true
+
+func _read_compact_world_map_terrain_modification_payload(raw_mods: Variant) -> Dictionary:
+	var payload: Dictionary = {}
+	if raw_mods is Dictionary:
+		payload = raw_mods
+	elif raw_mods is Array and raw_mods.size() == 1 and raw_mods[0] is Dictionary:
+		payload = raw_mods[0]
+	if payload.is_empty():
+		return {}
+	if str(payload.get("format", "")) != WORLD_MAP_TERRAIN_MODIFICATION_FORMAT_EXCAVATION_COLUMNS_V1:
+		return {}
+	return payload
 
 func _normalize_world_map_modification(raw_mod: Variant) -> Dictionary:
 	if not (raw_mod is Dictionary):
@@ -6991,6 +7617,59 @@ func _cache_world_map_excavation_mask_from_mod(mod: Dictionary) -> void:
 	if sample_x_max < sample_x_min or sample_y_max < sample_y_min or sample_z_max < sample_z_min:
 		return
 
+	var chunk_xs := _get_density_sample_axis_chunks(sample_x_min, sample_x_max)
+	var chunk_ys := _get_density_sample_axis_chunks(sample_y_min, sample_y_max)
+	var chunk_zs := _get_density_sample_axis_chunks(sample_z_min, sample_z_max)
+	for chunk_x in chunk_xs:
+		var local_x_min := maxi(0, sample_x_min - chunk_x * CHUNK_STRIDE)
+		var local_x_max := mini(DENSITY_GRID_SIZE - 1, sample_x_max - chunk_x * CHUNK_STRIDE)
+		if local_x_max < local_x_min:
+			continue
+		for chunk_y in chunk_ys:
+			var local_y_min := maxi(0, sample_y_min - chunk_y * CHUNK_STRIDE)
+			var local_y_max := mini(DENSITY_GRID_SIZE - 1, sample_y_max - chunk_y * CHUNK_STRIDE)
+			if local_y_max < local_y_min:
+				continue
+			for chunk_z in chunk_zs:
+				var local_z_min := maxi(0, sample_z_min - chunk_z * CHUNK_STRIDE)
+				var local_z_max := mini(DENSITY_GRID_SIZE - 1, sample_z_max - chunk_z * CHUNK_STRIDE)
+				if local_z_max < local_z_min:
+					continue
+				var coord := Vector3i(chunk_x, chunk_y, chunk_z)
+				var mask: PackedByteArray = _world_map_excavation_masks.get(coord, PackedByteArray())
+				if mask.size() != EXCAVATION_MASK_BYTE_COUNT:
+					mask = _create_empty_excavation_mask_bytes()
+				_mark_excavation_mask_box(mask, local_x_min, local_x_max, local_y_min, local_y_max, local_z_min, local_z_max)
+				_world_map_excavation_masks[coord] = mask
+
+func _get_excavation_column_covered_chunk_coords(world_x: int, world_z: int, world_y_min: float, world_y_max: float) -> Array:
+	var coords: Array = []
+	var seen: Dictionary = {}
+	var min_x := float(world_x) - 0.5
+	var max_x := float(world_x) + 1.5
+	var min_y := world_y_min
+	var max_y := world_y_max
+	var min_z := float(world_z) - 0.5
+	var max_z := float(world_z) + 1.5
+	for chunk_x in range(int(floor(min_x / CHUNK_STRIDE)), int(floor(max_x / CHUNK_STRIDE)) + 1):
+		for chunk_y in range(int(floor(min_y / CHUNK_STRIDE)), int(floor(max_y / CHUNK_STRIDE)) + 1):
+			for chunk_z in range(int(floor(min_z / CHUNK_STRIDE)), int(floor(max_z / CHUNK_STRIDE)) + 1):
+				var coord := Vector3i(chunk_x, chunk_y, chunk_z)
+				if seen.has(coord):
+					continue
+				seen[coord] = true
+				coords.append(coord)
+	return coords
+
+func _cache_world_map_excavation_mask_from_column(world_x: int, world_z: int, world_y_min: float, world_y_max: float) -> void:
+	var sample_x_min := int(ceil(float(world_x)))
+	var sample_x_max := int(floor(float(world_x) + 1.0))
+	var sample_z_min := int(ceil(float(world_z)))
+	var sample_z_max := int(floor(float(world_z) + 1.0))
+	var sample_y_min := int(ceil(world_y_min))
+	var sample_y_max := int(floor(world_y_max))
+	if sample_x_max < sample_x_min or sample_y_max < sample_y_min or sample_z_max < sample_z_min:
+		return
 	var chunk_xs := _get_density_sample_axis_chunks(sample_x_min, sample_x_max)
 	var chunk_ys := _get_density_sample_axis_chunks(sample_y_min, sample_y_max)
 	var chunk_zs := _get_density_sample_axis_chunks(sample_z_min, sample_z_max)
@@ -7255,6 +7934,41 @@ func get_chunk_surface_height(coord: Vector3i, local_x: int, local_z: int) -> fl
 var _last_modify_time_ms: int = 0
 const MODIFY_COOLDOWN_MS: int = 100  # Max 10 modifications per second
 
+func _append_source_hydration_task(tasks_to_add: Array, coord: Vector3i, chunk_pos: Vector3, reason: String) -> bool:
+	if not terrain_artifact_hydrate_source_on_edit:
+		_terrain_artifact_source_hydrate_skipped_count += 1
+		return false
+	tasks_to_add.append(_build_chunk_request_task(coord, chunk_pos, false))
+	_terrain_artifact_source_hydrate_request_count += 1
+	_capture_terrain_telemetry("terrain_artifact_source_hydration_requested", {
+		"coord": str(coord),
+		"reason": reason
+	})
+	return true
+
+
+func _queue_priority_chunk_generation_tasks(tasks_to_add: Array, wake_reason: String) -> int:
+	if tasks_to_add.is_empty():
+		return 0
+	var queued := 0
+	mutex.lock()
+	for gen_task_variant in tasks_to_add:
+		if not (gen_task_variant is Dictionary):
+			continue
+		var gen_task: Dictionary = gen_task_variant
+		var coord: Vector3i = gen_task.get("coord", Vector3i.ZERO)
+		if _is_chunk_request_task_queued_unlocked(coord):
+			continue
+		priority_task_queue.append(gen_task)
+		queued += 1
+	mutex.unlock()
+	for i in range(queued):
+		semaphore.post()
+	if queued > 0:
+		_wake_terrain_process_loop(wake_reason)
+	return queued
+
+
 func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, layer: int = 0, material_id: int = -1):
 	# RATE LIMITING: Skip if called too quickly (prevents 60 GPU ops/sec when holding mouse)
 	var now_ms = Time.get_ticks_msec()
@@ -7324,6 +8038,9 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 							}
 							_configure_modify_task_artifact_refresh(task, data)
 							tasks_to_add.append(task)
+						else:
+							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+							_append_source_hydration_task(chunks_to_generate, coord, chunk_pos, "edit_missing_density_buffer")
 				else:
 					# Chunk not loaded - trigger immediate generation
 					# This handles digging into underground layers (Y=-1, etc.)
@@ -7335,14 +8052,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 						chunks_to_generate.append(_build_chunk_request_task(coord, chunk_pos))
 
 	# Queue chunk generations with high priority (before other generates but after modifies)
-	if chunks_to_generate.size() > 0:
-		mutex.lock()
-		for gen_task in chunks_to_generate:
-			priority_task_queue.append(gen_task)
-		mutex.unlock()
-		for i in range(chunks_to_generate.size()):
-			semaphore.post()
-		_wake_terrain_process_loop("modify_generate_queued")
+	_queue_priority_chunk_generation_tasks(chunks_to_generate, "modify_generate_queued")
 
 	if tasks_to_add.size() > 0:
 		modification_batch_id += 1
@@ -7422,6 +8132,9 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 							}
 							_configure_modify_task_artifact_refresh(task, data)
 							tasks_to_add.append(task)
+						else:
+							var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
+							_append_source_hydration_task(chunks_to_generate, coord, chunk_pos, "fill_column_missing_density_buffer")
 				else:
 					active_chunks[coord] = null
 					_register_active_chunk_with_grid(coord)
@@ -7429,14 +8142,7 @@ func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, l
 					var chunk_pos = Vector3(coord.x * CHUNK_STRIDE, coord.y * CHUNK_STRIDE, coord.z * CHUNK_STRIDE)
 					chunks_to_generate.append(_build_chunk_request_task(coord, chunk_pos))
 
-	if chunks_to_generate.size() > 0:
-		mutex.lock()
-		for gen_task in chunks_to_generate:
-			priority_task_queue.append(gen_task)
-		mutex.unlock()
-		for i in range(chunks_to_generate.size()):
-			semaphore.post()
-		_wake_terrain_process_loop("fill_column_generate_queued")
+	_queue_priority_chunk_generation_tasks(chunks_to_generate, "fill_column_generate_queued")
 
 	if tasks_to_add.size() > 0:
 		modification_batch_id += 1
@@ -7714,6 +8420,8 @@ func _refresh_terrain_artifact_settings_signature() -> void:
 		str(TERRAIN_ARTIFACT_SCHEMA_VERSION),
 		str(TERRAIN_GENERATOR_VERSION),
 		str(TERRAIN_MESHER_VERSION),
+		str(TERRAIN_ARTIFACT_LOD_LEVEL),
+		str(MaterialRegistry.MATERIAL_REGISTRY_VERSION),
 		world_signature,
 		str(CHUNK_SIZE),
 		str(CHUNK_STRIDE),
@@ -7834,19 +8542,29 @@ func _should_lookup_terrain_artifact_on_disk() -> bool:
 
 
 func _should_store_terrain_artifact_to_disk(stored_mod_version: int) -> bool:
-	if not terrain_artifact_disk_cache_enabled or stored_mod_version != 0:
+	if not terrain_artifact_disk_cache_enabled or stored_mod_version < 0:
 		return false
+	if stored_mod_version > 0:
+		return terrain_artifact_disk_store_edited_chunks and terrain_artifact_refresh_after_edit_enabled
 	if terrain_artifact_disk_store_runtime_chunks:
 		return true
 	return terrain_artifact_disk_store_initial_load_chunks and initial_load_phase
 
 
-func _build_chunk_request_task(coord: Vector3i, chunk_pos: Vector3) -> Dictionary:
+func _build_chunk_request_task(coord: Vector3i, chunk_pos: Vector3, allow_artifact_restore: bool = true) -> Dictionary:
 	_sync_terrain_artifact_cache_configuration()
 	_sync_terrain_artifact_disk_store_configuration()
 	_refresh_terrain_artifact_settings_signature()
+	if not allow_artifact_restore:
+		return {
+			"type": "generate",
+			"coord": coord,
+			"pos": chunk_pos,
+			"forced_source_hydration": true
+		}
 	var stored_mod_version := _get_stored_modification_count(coord)
-	var artifact := _terrain_artifact_cache.lookup(coord, _terrain_artifact_settings_signature, stored_mod_version)
+	var edit_signature := _get_stored_modification_signature(coord, stored_mod_version)
+	var artifact := _terrain_artifact_cache.lookup(coord, _terrain_artifact_settings_signature, stored_mod_version, edit_signature)
 	if not artifact.is_empty():
 		return {
 			"type": "restore_artifact",
@@ -7856,10 +8574,11 @@ func _build_chunk_request_task(coord: Vector3i, chunk_pos: Vector3) -> Dictionar
 			"artifact_source": "session",
 			"restore_requested_usec": Time.get_ticks_usec()
 		}
-	if stored_mod_version == 0 and _should_lookup_terrain_artifact_on_disk():
-		var disk_artifact := _terrain_artifact_disk_store.lookup(coord, _terrain_artifact_settings_signature)
+	if _should_lookup_terrain_artifact_on_disk():
+		var disk_artifact := _terrain_artifact_disk_store.lookup(coord, _terrain_artifact_settings_signature, stored_mod_version, edit_signature)
 		if not disk_artifact.is_empty():
-			_terrain_artifact_cache.store(coord, disk_artifact)
+			if terrain_artifact_cache_disk_restore_results:
+				_terrain_artifact_cache.store(coord, disk_artifact)
 			return {
 				"type": "restore_artifact",
 				"coord": coord,
@@ -7901,17 +8620,20 @@ func _mesh_result_to_artifact_data(mesh_result: Dictionary) -> Dictionary:
 		if mesh.get_surface_count() > 0:
 			arrays = mesh.surface_get_arrays(0)
 
-	var faces: PackedVector3Array = mesh_result.get("faces", PackedVector3Array())
-	if faces.is_empty():
-		if shape_variant is ConcavePolygonShape3D:
-			faces = (shape_variant as ConcavePolygonShape3D).get_faces()
-		elif mesh_variant is ArrayMesh:
-			faces = (mesh_variant as ArrayMesh).get_faces()
+	var faces := PackedVector3Array()
+	if terrain_artifact_store_collision_faces:
+		faces = mesh_result.get("faces", PackedVector3Array())
+		if faces.is_empty():
+			if shape_variant is ConcavePolygonShape3D:
+				faces = (shape_variant as ConcavePolygonShape3D).get_faces()
+			elif mesh_variant is ArrayMesh:
+				faces = (mesh_variant as ArrayMesh).get_faces()
 
 	var artifact_result := {
 		"deferred_mesh_data": true,
 		"arrays": arrays.duplicate(false),
-		"faces": faces
+		"faces": faces,
+		"collision_faces_stored": not faces.is_empty()
 	}
 	if terrain_artifact_store_ready_mesh_resources:
 		if mesh_variant is ArrayMesh and (mesh_variant as ArrayMesh).get_surface_count() > 0:
@@ -7932,6 +8654,39 @@ func _mesh_result_to_artifact_data(mesh_result: Dictionary) -> Dictionary:
 		if mesh_result.has(key):
 			artifact_result[key] = mesh_result[key]
 	return artifact_result
+
+
+func _artifact_result_has_mesh_payload(result: Dictionary) -> bool:
+	if result.is_empty():
+		return false
+	if result.get("mesh_resource", null) is ArrayMesh:
+		var mesh := result.get("mesh_resource", null) as ArrayMesh
+		if mesh.get_surface_count() > 0:
+			return true
+	if not str(result.get("mesh_resource_path", "")).is_empty():
+		return true
+	var arrays: Array = result.get("arrays", [])
+	if arrays.size() > Mesh.ARRAY_VERTEX and arrays[Mesh.ARRAY_VERTEX] is PackedVector3Array:
+		return not (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).is_empty()
+	return false
+
+
+func _artifact_has_mesh_payload(artifact: Dictionary) -> bool:
+	var terrain_result: Dictionary = artifact.get("result_t", {})
+	if _artifact_result_has_mesh_payload(terrain_result):
+		return true
+	var water_result: Dictionary = artifact.get("result_w", {})
+	return _artifact_result_has_mesh_payload(water_result)
+
+
+func _artifact_has_source_buffers(artifact: Dictionary) -> bool:
+	var expected_buffer_bytes := _get_terrain_artifact_buffer_bytes()
+	var density_bytes_terrain: PackedByteArray = artifact.get("density_bytes_terrain", PackedByteArray())
+	var density_bytes_water: PackedByteArray = artifact.get("density_bytes_water", PackedByteArray())
+	var material_bytes_terrain: PackedByteArray = artifact.get("material_bytes_terrain", PackedByteArray())
+	return density_bytes_terrain.size() == expected_buffer_bytes \
+		and density_bytes_water.size() == expected_buffer_bytes \
+		and material_bytes_terrain.size() == expected_buffer_bytes
 
 
 func _estimate_packed_variant_bytes(value: Variant) -> int:
@@ -8075,9 +8830,13 @@ func _store_terrain_artifact_from_generation(
 	stored_mod_version: int,
 	artifact_payload: Dictionary
 ) -> bool:
-	_sync_terrain_artifact_cache_configuration()
-	_sync_terrain_artifact_disk_store_configuration()
-	_refresh_terrain_artifact_settings_signature()
+	if terrain_artifact_store_configuration_locked:
+		if _terrain_artifact_settings_signature.is_empty():
+			_refresh_terrain_artifact_settings_signature()
+	else:
+		_sync_terrain_artifact_cache_configuration()
+		_sync_terrain_artifact_disk_store_configuration()
+		_refresh_terrain_artifact_settings_signature()
 	if _get_stored_modification_count(coord) != stored_mod_version:
 		_terrain_artifact_cache.record_store_skipped("stale_modification_version")
 		if terrain_artifact_disk_cache_enabled:
@@ -8088,53 +8847,73 @@ func _store_terrain_artifact_from_generation(
 	var density_bytes_water: PackedByteArray = artifact_payload.get("artifact_density_bytes_water", PackedByteArray())
 	var material_bytes_terrain: PackedByteArray = artifact_payload.get("artifact_material_bytes_terrain", PackedByteArray())
 	var expected_buffer_bytes := _get_terrain_artifact_buffer_bytes()
-	if density_bytes_terrain.size() != expected_buffer_bytes or density_bytes_water.size() != expected_buffer_bytes or material_bytes_terrain.size() != expected_buffer_bytes:
+	var has_source_buffers := density_bytes_terrain.size() == expected_buffer_bytes \
+		and density_bytes_water.size() == expected_buffer_bytes \
+		and material_bytes_terrain.size() == expected_buffer_bytes
+	if terrain_artifact_store_source_buffers and not has_source_buffers:
 		_terrain_artifact_cache.record_store_skipped("missing_native_bytes")
 		if terrain_artifact_disk_cache_enabled:
 			_terrain_artifact_disk_store.record_store_skipped("missing_native_bytes")
 		return false
 
+	var edit_signature := _get_stored_modification_signature(coord, stored_mod_version)
 	var terrain_result := _mesh_result_to_artifact_data(result_t)
 	var water_result := _mesh_result_to_artifact_data(result_w)
+	var artifact_stores_source_buffers := terrain_artifact_store_source_buffers and has_source_buffers
 	var artifact := {
 		"schema_version": TERRAIN_ARTIFACT_SCHEMA_VERSION,
 		"generator_version": TERRAIN_GENERATOR_VERSION,
 		"mesher_version": TERRAIN_MESHER_VERSION,
+		"artifact_lod_level": TERRAIN_ARTIFACT_LOD_LEVEL,
+		"material_registry_version": MaterialRegistry.MATERIAL_REGISTRY_VERSION,
 		"settings_signature": _terrain_artifact_settings_signature,
 		"stored_mod_version": stored_mod_version,
+		"edit_signature": edit_signature,
 		"result_t": terrain_result,
 		"result_w": water_result,
-		"density_bytes_terrain": density_bytes_terrain,
-		"density_bytes_water": density_bytes_water,
-		"material_bytes_terrain": material_bytes_terrain,
-		"cpu_dens_w": cpu_dens_w,
-		"cpu_dens_t": cpu_dens_t,
 		"height_map_t": height_map_t,
-		"cpu_mat_t": cpu_mat_t
+		"source_buffers_stored": artifact_stores_source_buffers
 	}
+	if artifact_stores_source_buffers:
+		artifact["density_bytes_terrain"] = density_bytes_terrain
+		artifact["density_bytes_water"] = density_bytes_water
+		artifact["material_bytes_terrain"] = material_bytes_terrain
+		artifact["cpu_dens_w"] = cpu_dens_w
+		artifact["cpu_dens_t"] = cpu_dens_t
+		artifact["cpu_mat_t"] = cpu_mat_t
 	artifact["byte_size"] = (
-		density_bytes_terrain.size()
-		+ density_bytes_water.size()
-		+ material_bytes_terrain.size()
-		+ cpu_dens_w.size() * 4
-		+ cpu_dens_t.size() * 4
-		+ height_map_t.size() * 4
-		+ cpu_mat_t.size()
+		height_map_t.size() * 4
 		+ _estimate_mesh_artifact_result_bytes(terrain_result)
 		+ _estimate_mesh_artifact_result_bytes(water_result)
 	)
+	if artifact_stores_source_buffers:
+		artifact["byte_size"] += (
+			density_bytes_terrain.size()
+			+ density_bytes_water.size()
+			+ material_bytes_terrain.size()
+			+ cpu_dens_w.size() * 4
+			+ cpu_dens_t.size() * 4
+			+ cpu_mat_t.size()
+		)
+		_terrain_artifact_source_buffer_store_count += 1
+	else:
+		_terrain_artifact_mesh_only_store_count += 1
 	var should_store_to_disk := _should_store_terrain_artifact_to_disk(stored_mod_version)
 	var stored_in_session := false
+	var stored_on_disk := false
 	if terrain_artifact_cache_enabled:
 		stored_in_session = _terrain_artifact_cache.store(coord, artifact)
 	if should_store_to_disk:
-		var disk_artifact := _terrain_artifact_disk_store.prepare_artifact_for_store(coord, _terrain_artifact_settings_signature, artifact)
+		var disk_artifact := artifact
+		if terrain_artifact_store_ready_mesh_resources:
+			disk_artifact = _terrain_artifact_disk_store.prepare_artifact_for_store(coord, _terrain_artifact_settings_signature, artifact)
 		if terrain_artifact_disk_async_writes_enabled and _terrain_artifact_disk_write_queue.is_started():
-			if not _terrain_artifact_disk_write_queue.enqueue(coord, _terrain_artifact_settings_signature, disk_artifact):
+			stored_on_disk = _terrain_artifact_disk_write_queue.enqueue(coord, _terrain_artifact_settings_signature, disk_artifact)
+			if not stored_on_disk:
 				_terrain_artifact_disk_store.record_store_skipped("async_queue_rejected")
 		else:
-			_terrain_artifact_disk_store.store(coord, _terrain_artifact_settings_signature, disk_artifact)
-	return stored_in_session
+			stored_on_disk = _terrain_artifact_disk_store.store(coord, _terrain_artifact_settings_signature, disk_artifact)
+	return stored_in_session or stored_on_disk
 
 
 func _load_chunk(coord: Vector3i):
@@ -8540,10 +9319,32 @@ func _restore_terrain_artifact_buffers(rd: RenderingDevice, task: Dictionary) ->
 	var density_bytes_water: PackedByteArray = artifact.get("density_bytes_water", PackedByteArray())
 	var material_bytes_terrain: PackedByteArray = artifact.get("material_bytes_terrain", PackedByteArray())
 	var expected_buffer_bytes := _get_terrain_artifact_buffer_bytes()
-	if density_bytes_terrain.size() != expected_buffer_bytes or density_bytes_water.size() != expected_buffer_bytes or material_bytes_terrain.size() != expected_buffer_bytes:
-		_queue_artifact_restore_fallback(task, "restore_missing_bytes")
+	var has_source_buffers := density_bytes_terrain.size() == expected_buffer_bytes \
+		and density_bytes_water.size() == expected_buffer_bytes \
+		and material_bytes_terrain.size() == expected_buffer_bytes
+	if not has_source_buffers:
+		if not _artifact_has_mesh_payload(artifact):
+			_queue_artifact_restore_fallback(task, "restore_missing_mesh_payload")
+			return
+		_terrain_artifact_mesh_only_restore_count += 1
+		_enqueue_completed_generation({
+			"coord": task.get("coord", Vector3i.ZERO),
+			"result_t": (artifact.get("result_t", {}) as Dictionary).duplicate(true),
+			"dens_t": RID(),
+			"result_w": (artifact.get("result_w", {}) as Dictionary).duplicate(true),
+			"dens_w": RID(),
+			"cpu_dens_w": PackedFloat32Array(),
+			"cpu_dens_t": PackedFloat32Array(),
+			"height_map_t": artifact.get("height_map_t", PackedFloat32Array()),
+			"mat_t": RID(),
+			"cpu_mat_t": PackedByteArray(),
+			"stored_mod_version": int(artifact.get("stored_mod_version", 0)),
+			"artifact_restore": true,
+			"artifact_source": str(task.get("artifact_source", "session")),
+			"mesh_only_artifact_restore": true,
+			"restore_requested_usec": int(task.get("restore_requested_usec", 0))
+		})
 		return
-
 	var dens_t := rd.storage_buffer_create(density_bytes_terrain.size(), density_bytes_terrain)
 	var dens_w := rd.storage_buffer_create(density_bytes_water.size(), density_bytes_water)
 	var mat_t := rd.storage_buffer_create(material_bytes_terrain.size(), material_bytes_terrain)
@@ -10437,6 +11238,22 @@ func _finalize_chunk_creation(item: Dictionary):
 		if data == null:
 			data = ChunkData.new()
 			active_chunks[coord] = data
+		else:
+			_mark_terrain_visual_batch_dirty(coord, true)
+			_set_terrain_collision_ready(coord, data, false)
+			pending_terrain_collision_creates.erase(coord)
+			_free_chunk_body_rid(data, coord)
+			if data.node_terrain and is_instance_valid(data.node_terrain):
+				data.node_terrain.queue_free()
+				data.node_terrain = null
+			var old_terrain_tasks: Array[Dictionary] = []
+			if data.density_buffer_terrain.is_valid():
+				old_terrain_tasks.append({"type": "free", "rid": data.density_buffer_terrain})
+				data.density_buffer_terrain = RID()
+			if data.material_buffer_terrain.is_valid():
+				old_terrain_tasks.append({"type": "free", "rid": data.material_buffer_terrain})
+				data.material_buffer_terrain = RID()
+			_queue_gpu_free_tasks(old_terrain_tasks)
 
 		data.node_terrain = result.node if not result.is_empty() else null
 		if coord.y == 0 and data.node_terrain and not _wants_active_world_map_lod_replacement(coord):
@@ -10514,6 +11331,9 @@ func _finalize_chunk_creation(item: Dictionary):
 		if data.node_water:
 			data.node_water.queue_free()
 			data.node_water = null
+		if data.density_buffer_water.is_valid():
+			_queue_gpu_free_tasks([{"type": "free", "rid": data.density_buffer_water}])
+			data.density_buffer_water = RID()
 
 		var water_mesh_result := {}
 		if create_water_node:
@@ -10824,25 +11644,39 @@ func create_chunk_node(mesh: ArrayMesh, shape: Shape3D, position: Vector3, is_wa
 # ============ SPAWN ZONE API ============
 # These methods enable save/load to wait for terrain before spawning players/entities
 
-func _build_terrain_artifact_bake_coords(position: Vector3, radius: int) -> Array[Vector3i]:
+func _build_terrain_artifact_bake_coords(
+	position: Vector3,
+	radius: int,
+	vertical_layer_radius: int = 0,
+	use_disk_radius: bool = true
+) -> Array[Vector3i]:
 	var coords: Array[Vector3i] = []
 	radius = maxi(radius, 0)
+	vertical_layer_radius = maxi(vertical_layer_radius, 0)
+	var radius_sq := radius * radius
 	var chunk_x := int(floor(position.x / CHUNK_STRIDE))
 	var chunk_y := int(floor(position.y / CHUNK_STRIDE))
 	var chunk_z := int(floor(position.z / CHUNK_STRIDE))
 	for dx in range(-radius, radius + 1):
-		for dy in range(-1, 2):
-			for dz in range(-radius, radius + 1):
+		for dz in range(-radius, radius + 1):
+			if use_disk_radius and dx * dx + dz * dz > radius_sq:
+				continue
+			for dy in range(-vertical_layer_radius, vertical_layer_radius + 1):
 				coords.append(Vector3i(chunk_x + dx, chunk_y + dy, chunk_z + dz))
 	return coords
 
 
-func _build_terrain_artifact_bake_coords_for_origins(origins: Array, radius: int) -> Array[Vector3i]:
+func _build_terrain_artifact_bake_coords_for_origins(
+	origins: Array,
+	radius: int,
+	vertical_layer_radius: int = 0,
+	use_disk_radius: bool = true
+) -> Array[Vector3i]:
 	var unique_coords := {}
 	for origin_variant in origins:
 		if not (origin_variant is Vector3):
 			continue
-		for coord in _build_terrain_artifact_bake_coords(origin_variant, radius):
+		for coord in _build_terrain_artifact_bake_coords(origin_variant, radius, vertical_layer_radius, use_disk_radius):
 			unique_coords[coord] = true
 	var coords: Array[Vector3i] = []
 	for coord_variant in unique_coords.keys():
@@ -10851,17 +11685,32 @@ func _build_terrain_artifact_bake_coords_for_origins(origins: Array, radius: int
 	return coords
 
 
-## Queue a controlled pre-game terrain artifact bake without adding spawn-zone
-## collision gates. This is the map-generation path: generate/restore the target
-## chunk set, persist base artifacts, then gameplay can load from disk.
-func request_terrain_artifact_bake_many(
-	origins: Array,
-	radius: int = 2,
-	purpose: StringName = &"terrain_artifact_bake"
-) -> int:
-	radius = maxi(radius, 0)
+func _normalize_terrain_artifact_bake_coords(coord_variants: Array) -> Array[Vector3i]:
+	var unique_coords := {}
+	for coord_variant in coord_variants:
+		var coord := Vector3i.ZERO
+		if coord_variant is Vector3i:
+			coord = coord_variant
+		elif coord_variant is Vector3:
+			var position: Vector3 = coord_variant
+			coord = Vector3i(
+				int(floor(position.x / CHUNK_STRIDE)),
+				int(floor(position.y / CHUNK_STRIDE)),
+				int(floor(position.z / CHUNK_STRIDE))
+			)
+		else:
+			continue
+		unique_coords[coord] = true
+
+	var coords: Array[Vector3i] = []
+	for coord_variant in unique_coords.keys():
+		if coord_variant is Vector3i:
+			coords.append(coord_variant)
+	return coords
+
+
+func _queue_terrain_artifact_bake_coords(coords: Array[Vector3i], purpose: StringName, telemetry_details: Dictionary) -> int:
 	_wake_terrain_process_loop(str(purpose))
-	var coords := _build_terrain_artifact_bake_coords_for_origins(origins, radius)
 	var target_chunks := coords.size()
 
 	initial_load_phase = true
@@ -10895,25 +11744,58 @@ func request_terrain_artifact_bake_many(
 			queued_now += 1
 		queued_or_resident += 1
 
-	_capture_terrain_telemetry("terrain_artifact_bake_requested", {
+	var event_details := telemetry_details.duplicate(true)
+	event_details["purpose"] = str(purpose)
+	event_details["target_chunks"] = target_chunks
+	event_details["queued_or_resident"] = queued_or_resident
+	event_details["queued_now"] = queued_now
+	event_details["already_pending"] = already_pending
+	event_details["artifact_path"] = get_effective_terrain_artifact_disk_cache_path()
+	_capture_terrain_telemetry("terrain_artifact_bake_requested", event_details)
+	return queued_or_resident
+
+
+## Queue a controlled pre-game terrain artifact bake without adding spawn-zone
+## collision gates. This is the map-generation path: generate/restore the target
+## chunk set, persist base artifacts, then gameplay can load from disk.
+func request_terrain_artifact_bake_many(
+	origins: Array,
+	radius: int = 2,
+	purpose: StringName = &"terrain_artifact_bake",
+	vertical_layer_radius: int = 0,
+	use_disk_radius: bool = true
+) -> int:
+	radius = maxi(radius, 0)
+	vertical_layer_radius = maxi(vertical_layer_radius, 0)
+	var coords := _build_terrain_artifact_bake_coords_for_origins(origins, radius, vertical_layer_radius, use_disk_radius)
+	return _queue_terrain_artifact_bake_coords(coords, purpose, {
+		"coord_mode": "origins_radius",
 		"origin_count": origins.size(),
 		"radius": radius,
-		"purpose": str(purpose),
-		"target_chunks": target_chunks,
-		"queued_or_resident": queued_or_resident,
-		"queued_now": queued_now,
-		"already_pending": already_pending,
-		"artifact_path": get_effective_terrain_artifact_disk_cache_path()
+		"vertical_layer_radius": vertical_layer_radius,
+		"use_disk_radius": use_disk_radius
 	})
-	return queued_or_resident
+
+
+func request_terrain_artifact_bake_coords(
+	coord_variants: Array,
+	purpose: StringName = &"terrain_artifact_bake"
+) -> int:
+	var coords := _normalize_terrain_artifact_bake_coords(coord_variants)
+	return _queue_terrain_artifact_bake_coords(coords, purpose, {
+		"coord_mode": "explicit",
+		"explicit_coord_count": coords.size()
+	})
 
 
 func request_terrain_artifact_bake(
 	position: Vector3,
 	radius: int = 2,
-	purpose: StringName = &"terrain_artifact_bake"
+	purpose: StringName = &"terrain_artifact_bake",
+	vertical_layer_radius: int = 0,
+	use_disk_radius: bool = true
 ) -> int:
-	return request_terrain_artifact_bake_many([position], radius, purpose)
+	return request_terrain_artifact_bake_many([position], radius, purpose, vertical_layer_radius, use_disk_radius)
 
 
 ## Request priority loading of chunks around a spawn position
@@ -10967,6 +11849,7 @@ func request_spawn_zone(
 		initial_load_phase = true
 		initial_load_target_chunks = (radius * 2 + 1) * (radius * 2 + 1) * 3
 		chunks_loaded_initial = 0
+		_startup_visual_batch_gate_satisfied = false
 
 	var pending_coords: Array[Vector3i] = []
 

@@ -96,6 +96,19 @@ func _run() -> int:
 	if not _expect(bake_origins[1].x == 310.0 and bake_origins[1].z == -155.0, "terrain bake origins should prioritize the largest generated towns"):
 		ui.free()
 		return 1
+	var default_full_map_coords: Array[Vector3i] = ui._build_terrain_mesh_full_map_bake_coords()
+	if not _expect(default_full_map_coords.is_empty(), "full-map terrain bake should be opt-in, not the default startup gate"):
+		ui.free()
+		return 1
+	var full_map_snapshot: Dictionary = ui.get_telemetry_snapshot()
+	if not _expect(not bool(full_map_snapshot.get("terrain_mesh_bake_full_map_enabled", true)), "UI telemetry should expose startup-scope terrain bake mode"):
+		ui.free()
+		return 1
+	ui.terrain_mesh_bake_full_map_enabled = true
+	var full_map_coords: Array[Vector3i] = ui._build_terrain_mesh_full_map_bake_coords()
+	if not _expect(full_map_coords.size() >= 4000, "explicit full-map terrain bake should still cover thousands of map chunks"):
+		ui.free()
+		return 1
 
 	ui.generate_btn = ui.get_node_or_null("TopBar/GenerateBtn")
 	ui.save_btn = ui.get_node_or_null("TopBar/SaveBtn")
@@ -109,13 +122,15 @@ func _run() -> int:
 		"progress_percent": 25.0,
 		"artifact_count": 9,
 		"expected_chunks": 27,
+		"coord_mode": "explicit",
+		"explicit_coord_count": 4096,
 		"origin_count": 3,
 		"artifact_root": "user://worlds/test_world/terrain_artifacts"
 	})
 	if not _expect(str(ui.progress_label.text).contains("Terrain Mesh Artifacts"), "terrain bake progress should describe the active mesh-artifact stage"):
 		ui.free()
 		return 1
-	if not _expect(str(ui.progress_label.text).contains("origins=3"), "terrain bake progress should report origin coverage"):
+	if not _expect(str(ui.progress_label.text).contains("coords=4096"), "terrain bake progress should report explicit full-map coordinate coverage"):
 		ui.free()
 		return 1
 	var bake_progress_snapshot: Dictionary = ui.get_telemetry_snapshot()
@@ -139,6 +154,8 @@ func _run() -> int:
 	ui._on_terrain_bake_completed({
 		"artifact_root": "user://worlds/test_world/terrain_artifacts",
 		"artifact_count": 27,
+		"coord_mode": "explicit",
+		"explicit_coord_count": 4096,
 		"origin_count": 3,
 		"elapsed_ms": 123.0
 	})

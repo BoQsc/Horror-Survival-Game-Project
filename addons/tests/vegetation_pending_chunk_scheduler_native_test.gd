@@ -2,6 +2,8 @@ extends SceneTree
 
 const VegetationManagerScript = preload("res://world_vegetation/vegetation_manager.gd")
 
+var _native: Object = null
+
 class FakeTerrainManager:
 	extends Node3D
 	const CHUNK_STRIDE := 16
@@ -15,13 +17,27 @@ func _init() -> void:
 
 func _run_and_quit() -> void:
 	var exit_code := _run()
+	_release_native()
 	quit(exit_code)
+
+func _release_native() -> void:
+	if _native == null or not is_instance_valid(_native):
+		_native = null
+		return
+	if _native is RefCounted:
+		_native.unreference()
+		if is_instance_valid(_native):
+			_native.free()
+	else:
+		_native.free()
+	_native = null
 
 func _run() -> int:
 	if not ClassDB.class_exists("PrefabGeometryNative"):
 		return _fail("PrefabGeometryNative is not registered")
 
-	var native := ClassDB.instantiate("PrefabGeometryNative")
+	_native = ClassDB.instantiate("PrefabGeometryNative")
+	var native := _native
 	if native == null or not native.has_method("pick_nearest_pending_vegetation_chunk"):
 		return _fail("native pending chunk selector is unavailable")
 

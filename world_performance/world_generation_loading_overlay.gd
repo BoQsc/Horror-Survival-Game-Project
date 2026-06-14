@@ -214,6 +214,7 @@ func _format_details(details: Dictionary) -> String:
 	_append_detail(parts, details, "origin_count", "origins")
 	_append_detail(parts, details, "radius_chunks", "radius")
 	_append_detail(parts, details, "store_ready_mesh_resources", "ready_mesh")
+	_append_detail(parts, details, "store_source_buffers", "source_buffers")
 	_append_detail(parts, details, "synchronous_disk_writes", "sync_writes")
 	_append_detail(parts, details, "artifact_count", "artifacts")
 	_append_detail(parts, details, "expected_chunks", "chunks")

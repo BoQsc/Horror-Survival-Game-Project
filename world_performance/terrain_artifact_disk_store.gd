@@ -1,8 +1,11 @@
 extends RefCounted
-## Disk-backed store for base terrain artifacts.
+## Disk-backed store for revisioned terrain chunk artifacts.
 
 const STORE_MAGIC: String = "terrain_artifact"
-const STORE_VERSION: int = 1
+const STORE_VERSION: int = 2
+const PACK_MAGIC: String = "terrain_artifact_pack"
+const PACK_VERSION: int = 1
+const PACK_FILE_NAME: String = "artifact_pack.var"
 const FILE_EXTENSION: String = ".var"
 const RESOURCE_EXTENSION: String = ".res"
 
@@ -29,6 +32,25 @@ var _last_signature_entry_count: int = 0
 var _last_signature_bytes: int = 0
 var _max_observed_signature_bytes: int = 0
 var _last_trim_removed_bytes: int = 0
+var _bulk_store_active: bool = false
+var _bulk_store_signature: String = ""
+var _bulk_store_payloads: Dictionary = {}
+var _bulk_store_started_usec: int = 0
+var _bulk_store_commit_count: int = 0
+var _last_bulk_store_ms: float = 0.0
+var _last_bulk_store_total_ms: float = 0.0
+var _last_bulk_store_write_ms: float = 0.0
+var _last_bulk_store_path: String = ""
+var _loaded_pack_signature: String = ""
+var _loaded_pack_payloads: Dictionary = {}
+var _loaded_pack_path: String = ""
+var _loaded_pack_bytes: int = 0
+var _pack_hit_count: int = 0
+var _pack_miss_count: int = 0
+var _pack_load_count: int = 0
+var _pack_load_error_count: int = 0
+var _signature_entry_estimates: Dictionary = {}
+var _signature_byte_estimates: Dictionary = {}
 var _mutex: Mutex = Mutex.new()
 
 
@@ -54,28 +76,145 @@ func _configure_locked(
 	store_max_entries_per_signature: int,
 	store_max_bytes_per_signature: int
 ) -> void:
+	var previous_root_path := root_path
 	enabled = store_enabled
 	root_path = store_root_path if not store_root_path.is_empty() else "user://terrain_artifacts"
 	max_entries_per_signature = maxi(store_max_entries_per_signature, 0)
 	max_bytes_per_signature = maxi(store_max_bytes_per_signature, 0)
+	if root_path != previous_root_path:
+		_signature_entry_estimates.clear()
+		_signature_byte_estimates.clear()
+		_loaded_pack_signature = ""
+		_loaded_pack_payloads.clear()
+		_loaded_pack_path = ""
+		_loaded_pack_bytes = 0
 
 
-func lookup(coord: Vector3i, settings_signature: String) -> Dictionary:
+func begin_bulk_store(settings_signature: String) -> bool:
 	_mutex.lock()
-	var artifact := _lookup_locked(coord, settings_signature)
+	var started := _begin_bulk_store_locked(settings_signature)
+	_mutex.unlock()
+	return started
+
+
+func _begin_bulk_store_locked(settings_signature: String) -> bool:
+	if not enabled or max_entries_per_signature <= 0 or settings_signature.is_empty():
+		return false
+	var signature_dir := _signature_dir(settings_signature)
+	if not _ensure_dir(signature_dir):
+		return false
+	_bulk_store_active = true
+	_bulk_store_signature = settings_signature
+	_bulk_store_payloads.clear()
+	_bulk_store_started_usec = Time.get_ticks_usec()
+	return true
+
+
+func finish_bulk_store() -> bool:
+	_mutex.lock()
+	var finished := _finish_bulk_store_locked()
+	_mutex.unlock()
+	return finished
+
+
+func _finish_bulk_store_locked() -> bool:
+	if not _bulk_store_active:
+		return true
+	var total_start_usec := _bulk_store_started_usec
+	var commit_start_usec := Time.get_ticks_usec()
+	var settings_signature := _bulk_store_signature
+	var payloads := _bulk_store_payloads.duplicate(false)
+	_bulk_store_active = false
+	_bulk_store_signature = ""
+	_bulk_store_payloads.clear()
+	if settings_signature.is_empty():
+		return false
+	if payloads.is_empty():
+		_last_bulk_store_ms = _elapsed_ms(commit_start_usec)
+		_last_bulk_store_total_ms = _elapsed_ms(total_start_usec)
+		_last_bulk_store_write_ms = 0.0
+		return true
+
+	var signature_dir := _signature_dir(settings_signature)
+	if not _ensure_dir(signature_dir):
+		_write_error_count += 1
+		_last_bulk_store_ms = _elapsed_ms(commit_start_usec)
+		_last_bulk_store_total_ms = _elapsed_ms(total_start_usec)
+		_last_bulk_store_write_ms = 0.0
+		return false
+	var path := _pack_path(settings_signature)
+	var temp_path := path + ".tmp"
+	var pack_payload := {
+		"magic": PACK_MAGIC,
+		"version": PACK_VERSION,
+		"store_version": STORE_VERSION,
+		"settings_signature": settings_signature,
+		"stored_at_usec": Time.get_ticks_usec(),
+		"artifact_count": payloads.size(),
+		"artifacts": payloads
+	}
+	var file := FileAccess.open(temp_path, FileAccess.WRITE)
+	if file == null:
+		_write_error_count += 1
+		_last_bulk_store_ms = _elapsed_ms(commit_start_usec)
+		_last_bulk_store_total_ms = _elapsed_ms(total_start_usec)
+		_last_bulk_store_write_ms = 0.0
+		return false
+	var write_start_usec := Time.get_ticks_usec()
+	file.store_var(pack_payload, false)
+	file.close()
+	_last_bulk_store_write_ms = _elapsed_ms(write_start_usec)
+	var dir := DirAccess.open(path.get_base_dir())
+	if dir == null or dir.rename(temp_path, path) != OK:
+		_write_error_count += 1
+		_remove_file(temp_path)
+		_last_bulk_store_ms = _elapsed_ms(commit_start_usec)
+		_last_bulk_store_total_ms = _elapsed_ms(total_start_usec)
+		return false
+	_last_bulk_store_path = path
+	_last_bulk_store_ms = _elapsed_ms(commit_start_usec)
+	_last_bulk_store_total_ms = _elapsed_ms(total_start_usec)
+	_bulk_store_commit_count += 1
+	var pack_bytes := _read_file_size(path)
+	_signature_entry_estimates[signature_dir] = payloads.size()
+	_signature_byte_estimates[signature_dir] = pack_bytes
+	_last_signature_entry_count = payloads.size()
+	_last_signature_bytes = pack_bytes
+	_max_observed_signature_bytes = maxi(_max_observed_signature_bytes, pack_bytes)
+	_loaded_pack_signature = settings_signature
+	_loaded_pack_payloads = payloads
+	_loaded_pack_path = path
+	_loaded_pack_bytes = pack_bytes
+	return FileAccess.file_exists(path)
+
+
+func lookup(coord: Vector3i, settings_signature: String, stored_mod_version: int = 0, edit_signature: String = "") -> Dictionary:
+	_mutex.lock()
+	var artifact := _lookup_locked(coord, settings_signature, stored_mod_version, edit_signature)
 	_mutex.unlock()
 	return artifact
 
 
-func _lookup_locked(coord: Vector3i, settings_signature: String) -> Dictionary:
+func _lookup_locked(coord: Vector3i, settings_signature: String, stored_mod_version: int, edit_signature: String) -> Dictionary:
 	var start_usec := Time.get_ticks_usec()
 	if not enabled or max_entries_per_signature <= 0:
 		_disabled_lookup_count += 1
 		_last_lookup_ms = _elapsed_ms(start_usec)
 		return {}
 
-	var path := _artifact_path(coord, settings_signature)
+	var expected_edit_signature := _normalized_edit_signature(stored_mod_version, edit_signature)
+	if expected_edit_signature.is_empty():
+		_miss_count += 1
+		_last_lookup_ms = _elapsed_ms(start_usec)
+		return {}
+
+	var path := _artifact_path(coord, settings_signature, stored_mod_version, expected_edit_signature)
 	_last_path = path
+	var packed_artifact := _lookup_pack_artifact_locked(coord, settings_signature, stored_mod_version, expected_edit_signature)
+	if not packed_artifact.is_empty():
+		_hit_count += 1
+		_last_lookup_ms = _elapsed_ms(start_usec)
+		return packed_artifact
 	if not FileAccess.file_exists(path):
 		_miss_count += 1
 		_last_lookup_ms = _elapsed_ms(start_usec)
@@ -96,7 +235,7 @@ func _lookup_locked(coord: Vector3i, settings_signature: String) -> Dictionary:
 		return {}
 
 	var payload: Dictionary = payload_variant
-	if not _is_valid_payload(payload, coord, settings_signature):
+	if not _is_valid_payload(payload, coord, settings_signature, stored_mod_version, expected_edit_signature):
 		_invalid_count += 1
 		_remove_file(path)
 		_last_lookup_ms = _elapsed_ms(start_usec)
@@ -128,8 +267,14 @@ func _store_locked(coord: Vector3i, settings_signature: String, artifact: Dictio
 		_record_store_skipped_locked("disabled")
 		_last_store_ms = _elapsed_ms(start_usec)
 		return false
-	if int(artifact.get("stored_mod_version", -1)) != 0:
-		_record_store_skipped_locked("modified_chunk")
+	var stored_mod_version := int(artifact.get("stored_mod_version", -1))
+	if stored_mod_version < 0:
+		_record_store_skipped_locked("invalid_modification_version")
+		_last_store_ms = _elapsed_ms(start_usec)
+		return false
+	var edit_signature := _artifact_edit_signature(artifact)
+	if edit_signature.is_empty():
+		_record_store_skipped_locked("missing_edit_signature")
 		_last_store_ms = _elapsed_ms(start_usec)
 		return false
 	if str(artifact.get("settings_signature", "")) != settings_signature:
@@ -152,7 +297,7 @@ func _store_locked(coord: Vector3i, settings_signature: String, artifact: Dictio
 		_last_store_ms = _elapsed_ms(start_usec)
 		return false
 
-	var path := _artifact_path(coord, settings_signature)
+	var path := _artifact_path(coord, settings_signature, stored_mod_version, edit_signature)
 	_last_path = path
 	var temp_path := path + ".tmp"
 	var artifact_to_store := _prepare_artifact_for_store_locked(coord, settings_signature, artifact)
@@ -161,9 +306,19 @@ func _store_locked(coord: Vector3i, settings_signature: String, artifact: Dictio
 		"version": STORE_VERSION,
 		"coord": coord,
 		"settings_signature": settings_signature,
+		"stored_mod_version": stored_mod_version,
+		"edit_signature": edit_signature,
 		"stored_at_usec": Time.get_ticks_usec(),
 		"artifact": artifact_to_store
 	}
+	if _bulk_store_active and _bulk_store_signature == settings_signature:
+		var key := _artifact_pack_key(coord, stored_mod_version, edit_signature)
+		_bulk_store_payloads[key] = payload
+		_store_count += 1
+		_last_store_ms = _elapsed_ms(start_usec)
+		return true
+	var was_existing := FileAccess.file_exists(path)
+	var previous_file_bytes := _read_file_size(path) + _read_sidecar_bytes(path) if was_existing else 0
 	var file := FileAccess.open(temp_path, FileAccess.WRITE)
 	if file == null:
 		_write_error_count += 1
@@ -179,7 +334,10 @@ func _store_locked(coord: Vector3i, settings_signature: String, artifact: Dictio
 		_last_store_ms = _elapsed_ms(start_usec)
 		return false
 	_store_count += 1
-	_trim_signature_dir(signature_dir)
+	var stored_file_bytes := _read_file_size(path) + _read_sidecar_bytes(path)
+	_note_signature_store_locked(signature_dir, was_existing, previous_file_bytes, stored_file_bytes)
+	if _signature_dir_over_budget(signature_dir):
+		_trim_signature_dir(signature_dir)
 	_last_store_ms = _elapsed_ms(start_usec)
 	return FileAccess.file_exists(path)
 
@@ -248,11 +406,33 @@ func _get_snapshot_locked() -> Dictionary:
 			else 0.0
 		),
 		"max_observed_signature_bytes": _max_observed_signature_bytes,
-		"last_trim_removed_bytes": _last_trim_removed_bytes
+		"last_trim_removed_bytes": _last_trim_removed_bytes,
+		"bulk_store_active": _bulk_store_active,
+		"bulk_store_pending_count": _bulk_store_payloads.size(),
+		"bulk_store_commit_count": _bulk_store_commit_count,
+		"last_bulk_store_ms": _last_bulk_store_ms,
+		"last_bulk_store_total_ms": _last_bulk_store_total_ms,
+		"last_bulk_store_write_ms": _last_bulk_store_write_ms,
+		"last_bulk_store_path": _last_bulk_store_path,
+		"resolved_last_bulk_store_path": ProjectSettings.globalize_path(_last_bulk_store_path) if not _last_bulk_store_path.is_empty() else "",
+		"loaded_pack_signature": _loaded_pack_signature,
+		"loaded_pack_path": _loaded_pack_path,
+		"loaded_pack_bytes": _loaded_pack_bytes,
+		"loaded_pack_entry_count": _loaded_pack_payloads.size(),
+		"pack_hit_count": _pack_hit_count,
+		"pack_miss_count": _pack_miss_count,
+		"pack_load_count": _pack_load_count,
+		"pack_load_error_count": _pack_load_error_count
 	}
 
 
-func _is_valid_payload(payload: Dictionary, coord: Vector3i, settings_signature: String) -> bool:
+func _is_valid_payload(
+	payload: Dictionary,
+	coord: Vector3i,
+	settings_signature: String,
+	stored_mod_version: int,
+	edit_signature: String
+) -> bool:
 	if str(payload.get("magic", "")) != STORE_MAGIC:
 		return false
 	if int(payload.get("version", 0)) != STORE_VERSION:
@@ -261,6 +441,10 @@ func _is_valid_payload(payload: Dictionary, coord: Vector3i, settings_signature:
 		return false
 	if str(payload.get("settings_signature", "")) != settings_signature:
 		return false
+	if int(payload.get("stored_mod_version", -1)) != stored_mod_version:
+		return false
+	if str(payload.get("edit_signature", "")) != edit_signature:
+		return false
 
 	var artifact_variant: Variant = payload.get("artifact", {})
 	if not (artifact_variant is Dictionary):
@@ -268,13 +452,116 @@ func _is_valid_payload(payload: Dictionary, coord: Vector3i, settings_signature:
 	var artifact: Dictionary = artifact_variant
 	return (
 		str(artifact.get("settings_signature", "")) == settings_signature
-		and int(artifact.get("stored_mod_version", -1)) == 0
+		and int(artifact.get("stored_mod_version", -1)) == stored_mod_version
+		and str(artifact.get("edit_signature", "")) == edit_signature
 		and int(artifact.get("byte_size", 0)) > 0
 	)
 
 
-func _artifact_path(coord: Vector3i, settings_signature: String) -> String:
-	return _signature_dir(settings_signature).path_join("%d_%d_%d%s" % [coord.x, coord.y, coord.z, FILE_EXTENSION])
+func _lookup_pack_artifact_locked(
+	coord: Vector3i,
+	settings_signature: String,
+	stored_mod_version: int,
+	edit_signature: String
+) -> Dictionary:
+	if not _ensure_pack_loaded_locked(settings_signature):
+		_pack_miss_count += 1
+		return {}
+	var key := _artifact_pack_key(coord, stored_mod_version, edit_signature)
+	if not _loaded_pack_payloads.has(key):
+		_pack_miss_count += 1
+		return {}
+	var payload_variant: Variant = _loaded_pack_payloads.get(key, {})
+	if not (payload_variant is Dictionary):
+		_pack_load_error_count += 1
+		return {}
+	var payload: Dictionary = payload_variant
+	if not _is_valid_payload(payload, coord, settings_signature, stored_mod_version, edit_signature):
+		_pack_load_error_count += 1
+		return {}
+	var artifact_variant: Variant = payload.get("artifact", {})
+	if not (artifact_variant is Dictionary):
+		_pack_load_error_count += 1
+		return {}
+	_pack_hit_count += 1
+	var artifact: Dictionary = artifact_variant
+	return artifact.duplicate(true)
+
+
+func _ensure_pack_loaded_locked(settings_signature: String) -> bool:
+	if settings_signature.is_empty():
+		return false
+	if _loaded_pack_signature == settings_signature:
+		return not _loaded_pack_payloads.is_empty()
+	var path := _pack_path(settings_signature)
+	_loaded_pack_signature = settings_signature
+	_loaded_pack_payloads.clear()
+	_loaded_pack_path = path
+	_loaded_pack_bytes = 0
+	if not FileAccess.file_exists(path):
+		return false
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		_pack_load_error_count += 1
+		return false
+	var pack_variant: Variant = file.get_var(false)
+	file.close()
+	if not (pack_variant is Dictionary):
+		_pack_load_error_count += 1
+		_remove_file(path)
+		return false
+	var pack: Dictionary = pack_variant
+	if str(pack.get("magic", "")) != PACK_MAGIC:
+		_pack_load_error_count += 1
+		_remove_file(path)
+		return false
+	if int(pack.get("version", 0)) != PACK_VERSION:
+		_pack_load_error_count += 1
+		_remove_file(path)
+		return false
+	if int(pack.get("store_version", 0)) != STORE_VERSION:
+		_pack_load_error_count += 1
+		_remove_file(path)
+		return false
+	if str(pack.get("settings_signature", "")) != settings_signature:
+		_pack_load_error_count += 1
+		_remove_file(path)
+		return false
+	var payloads_variant: Variant = pack.get("artifacts", {})
+	if not (payloads_variant is Dictionary):
+		_pack_load_error_count += 1
+		_remove_file(path)
+		return false
+	var payloads: Dictionary = payloads_variant
+	_loaded_pack_payloads = payloads
+	_loaded_pack_bytes = _read_file_size(path)
+	_pack_load_count += 1
+	return not _loaded_pack_payloads.is_empty()
+
+
+func _artifact_path(coord: Vector3i, settings_signature: String, stored_mod_version: int = 0, edit_signature: String = "") -> String:
+	var revision_suffix := _artifact_revision_suffix(stored_mod_version, edit_signature)
+	return _signature_dir(settings_signature).path_join("%d_%d_%d%s%s" % [
+		coord.x,
+		coord.y,
+		coord.z,
+		revision_suffix,
+		FILE_EXTENSION
+	])
+
+
+func _pack_path(settings_signature: String) -> String:
+	return _signature_dir(settings_signature).path_join(PACK_FILE_NAME)
+
+
+func _artifact_pack_key(coord: Vector3i, stored_mod_version: int, edit_signature: String) -> String:
+	return "%d:%d:%d:%d:%s" % [
+		coord.x,
+		coord.y,
+		coord.z,
+		stored_mod_version,
+		edit_signature
+	]
 
 
 func _signature_dir(settings_signature: String) -> String:
@@ -292,8 +579,12 @@ func _ensure_dir(path: String) -> bool:
 
 
 func _prepare_artifact_for_store_locked(coord: Vector3i, settings_signature: String, artifact: Dictionary) -> Dictionary:
-	var artifact_path := _artifact_path(coord, settings_signature)
+	var stored_mod_version := int(artifact.get("stored_mod_version", 0))
+	var edit_signature := _artifact_edit_signature(artifact)
+	var artifact_path := _artifact_path(coord, settings_signature, stored_mod_version, edit_signature)
 	var sanitized: Dictionary = _strip_resource_objects(artifact)
+	sanitized["stored_mod_version"] = stored_mod_version
+	sanitized["edit_signature"] = edit_signature
 	if not enabled or max_entries_per_signature <= 0:
 		return sanitized
 	var signature_dir := artifact_path.get_base_dir()
@@ -392,6 +683,28 @@ func _artifact_resource_sidecar_path(artifact_path: String, layer_name: String, 
 	return "%s_%s_%s%s" % [base_path, layer_name, resource_name, RESOURCE_EXTENSION]
 
 
+func _artifact_edit_signature(artifact: Dictionary) -> String:
+	return _normalized_edit_signature(
+		int(artifact.get("stored_mod_version", 0)),
+		str(artifact.get("edit_signature", ""))
+	)
+
+
+func _normalized_edit_signature(stored_mod_version: int, edit_signature: String) -> String:
+	if not edit_signature.is_empty():
+		return edit_signature
+	if stored_mod_version <= 0:
+		return "base"
+	return ""
+
+
+func _artifact_revision_suffix(stored_mod_version: int, edit_signature: String) -> String:
+	if stored_mod_version <= 0:
+		return ""
+	var signature_hash := edit_signature.sha256_text().substr(0, 16)
+	return "_mod_%d_%s" % [stored_mod_version, signature_hash]
+
+
 func _artifact_sidecar_paths(artifact_path: String) -> Array[String]:
 	return [
 		_artifact_resource_sidecar_path(artifact_path, "terrain", "mesh"),
@@ -438,6 +751,8 @@ func _trim_signature_dir(signature_dir: String) -> void:
 	if not over_entry_budget and not over_byte_budget:
 		_last_signature_entry_count = files.size()
 		_last_signature_bytes = total_bytes
+		_signature_entry_estimates[signature_dir] = _last_signature_entry_count
+		_signature_byte_estimates[signature_dir] = _last_signature_bytes
 		return
 
 	files.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
@@ -462,6 +777,29 @@ func _trim_signature_dir(signature_dir: String) -> void:
 			_last_trim_removed_bytes += file_bytes
 	_last_signature_entry_count = remaining_count
 	_last_signature_bytes = total_bytes
+	_signature_entry_estimates[signature_dir] = _last_signature_entry_count
+	_signature_byte_estimates[signature_dir] = _last_signature_bytes
+
+
+func _note_signature_store_locked(signature_dir: String, was_existing: bool, previous_file_bytes: int, stored_file_bytes: int) -> void:
+	var entry_count := int(_signature_entry_estimates.get(signature_dir, 0))
+	var total_bytes := int(_signature_byte_estimates.get(signature_dir, 0))
+	if not was_existing:
+		entry_count += 1
+	total_bytes = maxi(total_bytes - previous_file_bytes + stored_file_bytes, 0)
+	_signature_entry_estimates[signature_dir] = entry_count
+	_signature_byte_estimates[signature_dir] = total_bytes
+	_last_signature_entry_count = entry_count
+	_last_signature_bytes = total_bytes
+	_max_observed_signature_bytes = maxi(_max_observed_signature_bytes, total_bytes)
+	_last_trim_removed_bytes = 0
+
+
+func _signature_dir_over_budget(signature_dir: String) -> bool:
+	var entry_count := int(_signature_entry_estimates.get(signature_dir, 0))
+	var total_bytes := int(_signature_byte_estimates.get(signature_dir, 0))
+	return entry_count > max_entries_per_signature \
+		or (max_bytes_per_signature > 0 and total_bytes > max_bytes_per_signature)
 
 
 func _read_file_size(path: String) -> int:

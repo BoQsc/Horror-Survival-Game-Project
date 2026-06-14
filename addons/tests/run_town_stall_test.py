@@ -1786,6 +1786,70 @@ def _stationary_terrain_artifact_cache_verdict_from_snapshot(data: dict) -> dict
     return _terrain_artifact_cache_verdict_from_snapshot(data, "stationary")
 
 
+def _terrain_manager_from_snapshot(data: dict) -> dict:
+    system_telemetry = _as_dict(data.get("system_telemetry"))
+    terrain = _as_dict(system_telemetry.get("terrain_manager"))
+    if terrain:
+        return terrain
+    return _as_dict(data.get("terrain_manager"))
+
+
+def _terrain_runtime_startup_verdict_from_snapshot(data: dict) -> dict:
+    terrain = _terrain_manager_from_snapshot(data)
+    initial_window = _as_dict(terrain.get("terrain_initial_load_measurement"))
+    current_window = _as_dict(terrain.get("terrain_measurement_window"))
+    window = initial_window if initial_window else current_window
+    terrain_disk_cache = _as_dict(terrain.get("terrain_artifact_disk_cache"))
+    return {
+        "available": bool(window),
+        "label": str(window.get("label", "")),
+        "source": str(window.get("source", "")),
+        "generation_complete_count": _int_value(window.get("generation_complete_count")),
+        "generation_repeat_count": _int_value(window.get("generation_repeat_count")),
+        "generation_discarded_count": _int_value(window.get("generation_discarded_count")),
+        "generation_with_modifications_count": _int_value(window.get("generation_with_modifications_count")),
+        "artifact_hit_count": _int_value(window.get("artifact_hit_count")),
+        "artifact_miss_count": _int_value(window.get("artifact_miss_count")),
+        "artifact_restore_count": _int_value(window.get("artifact_restore_count")),
+        "artifact_restore_discarded_count": _int_value(window.get("artifact_restore_discarded_count")),
+        "gpu_generation_batch_count": _int_value(window.get("gpu_generation_batch_count")),
+        "gpu_generation_batch_chunk_count": _int_value(window.get("gpu_generation_batch_chunk_count")),
+        "gpu_generation_sync_total_ms": _float_value(window.get("gpu_generation_sync_total_ms")),
+        "gpu_meshing_sync_total_ms": _float_value(window.get("gpu_meshing_sync_total_ms")),
+        "gpu_mesh_readback_total_ms": _float_value(window.get("gpu_mesh_readback_total_ms")),
+        "manifest_available": bool(terrain.get("terrain_artifact_manifest_available", False)),
+        "disk_restore_requires_manifest": bool(terrain.get("terrain_artifact_disk_restore_requires_manifest", False)),
+        "disk_hit_count": _int_value(terrain_disk_cache.get("hit_count")),
+        "terrain_render_server_batches_enabled": bool(terrain.get("terrain_render_server_batches_enabled", False)),
+        "terrain_render_server_batch_create_count": _int_value(terrain.get("terrain_render_server_batch_create_count")),
+        "terrain_render_server_batch_update_count": _int_value(terrain.get("terrain_render_server_batch_update_count")),
+        "terrain_render_server_batch_fallback_count": _int_value(terrain.get("terrain_render_server_batch_fallback_count")),
+        "terrain_render_visibility_batch_visible_count": _int_value(terrain.get("last_terrain_render_visibility_batch_visible_count")),
+        "terrain_render_visibility_batch_hidden_count": _int_value(terrain.get("last_terrain_render_visibility_batch_hidden_count")),
+    }
+
+
+def _terrain_runtime_gameplay_verdict_from_snapshot(data: dict) -> dict:
+    terrain = _terrain_manager_from_snapshot(data)
+    window = _as_dict(terrain.get("terrain_measurement_window"))
+    return {
+        "available": bool(window),
+        "label": str(window.get("label", "")),
+        "generation_complete_count": _int_value(window.get("generation_complete_count")),
+        "generation_with_modifications_count": _int_value(window.get("generation_with_modifications_count")),
+        "artifact_restore_count": _int_value(window.get("artifact_restore_count")),
+        "artifact_miss_count": _int_value(window.get("artifact_miss_count")),
+        "gpu_generation_batch_count": _int_value(window.get("gpu_generation_batch_count")),
+        "gpu_generation_batch_chunk_count": _int_value(window.get("gpu_generation_batch_chunk_count")),
+        "terrain_render_server_batches_enabled": bool(terrain.get("terrain_render_server_batches_enabled", False)),
+        "terrain_render_server_batch_create_count": _int_value(terrain.get("terrain_render_server_batch_create_count")),
+        "terrain_render_server_batch_update_count": _int_value(terrain.get("terrain_render_server_batch_update_count")),
+        "terrain_render_server_batch_fallback_count": _int_value(terrain.get("terrain_render_server_batch_fallback_count")),
+        "terrain_render_visibility_batch_visible_count": _int_value(terrain.get("last_terrain_render_visibility_batch_visible_count")),
+        "terrain_render_visibility_batch_hidden_count": _int_value(terrain.get("last_terrain_render_visibility_batch_hidden_count")),
+    }
+
+
 def _stage_duration_ms_from_snapshot(stage_state: dict) -> float:
     started_usec = _int_value(stage_state.get("started_usec"))
     completed_usec = _int_value(stage_state.get("completed_usec"))
@@ -2065,9 +2129,61 @@ def _world_bake_proof_verdict_from_snapshot(data: dict) -> dict:
     }
 
 
+def _terrain_artifact_bake_profile_from_snapshot(data: dict) -> dict:
+    generation_telemetry = _as_dict(data.get("world_generation_telemetry"))
+    profile = _as_dict(generation_telemetry.get("terrain_artifact_bake_profile"))
+    if profile:
+        return profile
+    events = data.get("recent_scope_events", [])
+    if isinstance(events, list):
+        for event in events:
+            event_dict = _as_dict(event)
+            if str(event_dict.get("scope", "")) != "town_stall_test":
+                continue
+            if str(event_dict.get("label", "")) != "generation_complete":
+                continue
+            event_profile = _as_dict(_as_dict(event_dict.get("details")).get("terrain_artifact_bake_profile"))
+            if event_profile:
+                return event_profile
+    return {}
+
+
+def _terrain_artifact_bake_verdict_from_snapshot(data: dict) -> dict:
+    profile = _terrain_artifact_bake_profile_from_snapshot(data)
+    telemetry = _as_dict(profile.get("manager_telemetry"))
+    gpu_batch_count = _int_value(profile.get("gpu_generation_batch_count", telemetry.get("gpu_generation_batch_count")))
+    gpu_chunk_count = _int_value(profile.get("gpu_generation_batch_chunk_total", telemetry.get("gpu_generation_batch_chunk_total")))
+    return {
+        "available": bool(profile),
+        "completed": bool(profile.get("completed", False)),
+        "failed": bool(profile.get("failed", False)),
+        "failure_reason": str(profile.get("failure_reason", "")),
+        "stage": str(profile.get("stage", "")),
+        "progress_percent": _float_value(profile.get("progress_percent")),
+        "artifact_count": _int_value(profile.get("artifact_count")),
+        "stored_artifact_count": _int_value(profile.get("stored_artifact_count")),
+        "reused_disk_artifact_count": _int_value(profile.get("reused_disk_artifact_count")),
+        "expected_chunks": _int_value(profile.get("expected_chunks")),
+        "manifest_written": bool(profile.get("manifest_written", False)),
+        "elapsed_ms": _float_value(profile.get("elapsed_ms")),
+        "coord_mode": str(profile.get("coord_mode", "")),
+        "explicit_coord_count": _int_value(profile.get("explicit_coord_count")),
+        "prefer_offline_cpu_bake": bool(profile.get("prefer_offline_cpu_bake", False)),
+        "store_ready_mesh_resources": bool(profile.get("store_ready_mesh_resources", False)),
+        "store_source_buffers": bool(profile.get("store_source_buffers", False)),
+        "native_density_payload_count": _int_value(profile.get("native_density_payload_count")),
+        "gdscript_density_payload_count": _int_value(profile.get("gdscript_density_payload_count")),
+        "gpu_generation_batch_count": gpu_batch_count,
+        "gpu_generation_batch_chunk_total": gpu_chunk_count,
+    }
+
+
 def _print_snapshot_proof_summary(data: dict) -> None:
     startup = _startup_readiness_verdict_from_snapshot(data)
     world_bake = _world_bake_proof_verdict_from_snapshot(data)
+    terrain_bake = _terrain_artifact_bake_verdict_from_snapshot(data)
+    terrain_runtime = _terrain_runtime_startup_verdict_from_snapshot(data)
+    terrain_gameplay = _terrain_runtime_gameplay_verdict_from_snapshot(data)
     runtime_idle = _stationary_runtime_idle_verdict_from_snapshot(data)
     artifact_phase = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE", "stationary")
     artifact_cache = _terrain_artifact_cache_verdict_from_snapshot(data, artifact_phase)
@@ -2100,6 +2216,66 @@ def _print_snapshot_proof_summary(data: dict) -> None:
             hash_ms=world_bake["total_hash_ms"],
             signature=world_bake["content_signature"][:12],
             export_signature=world_bake["export_cache_signature"][:12],
+        )
+    )
+    print(
+        "Terrain artifact bake proof: available={available} completed={completed} "
+        "mode={mode} explicit_coords={explicit_coords} artifacts={artifacts}/{expected} manifest={manifest} elapsed={elapsed:.1f}ms "
+        "compute_batches={gpu_batches} compute_chunks={gpu_chunks} offline_preferred={offline} "
+        "density_native={density_native} density_gdscript={density_gdscript} "
+        "ready_sidecars={ready_sidecars} source_buffers={source_buffers} failed={failed} reason={reason}".format(
+            available=terrain_bake["available"],
+            completed=terrain_bake["completed"],
+            mode=terrain_bake["coord_mode"] or "unknown",
+            explicit_coords=terrain_bake["explicit_coord_count"],
+            artifacts=terrain_bake["artifact_count"],
+            expected=terrain_bake["expected_chunks"],
+            manifest=terrain_bake["manifest_written"],
+            elapsed=terrain_bake["elapsed_ms"],
+            gpu_batches=terrain_bake["gpu_generation_batch_count"],
+            gpu_chunks=terrain_bake["gpu_generation_batch_chunk_total"],
+            offline=terrain_bake["prefer_offline_cpu_bake"],
+            density_native=terrain_bake["native_density_payload_count"],
+            density_gdscript=terrain_bake["gdscript_density_payload_count"],
+            ready_sidecars=terrain_bake["store_ready_mesh_resources"],
+            source_buffers=terrain_bake["store_source_buffers"],
+            failed=terrain_bake["failed"],
+            reason=terrain_bake["failure_reason"] or "none",
+        )
+    )
+    print(
+        "Terrain runtime artifact-use proof: available={available} label={label} source={source} "
+        "generated={generated} restored={restored} session_misses={misses} gpu_batches={gpu_batches} "
+        "gpu_chunks={gpu_chunks} manifest={manifest} disk_hits={disk_hits} "
+        "render_server_batches={render_server} render_server_creates={render_server_creates} "
+        "render_server_fallbacks={render_server_fallbacks} visible_batches={visible_batches} hidden_batches={hidden_batches}".format(
+            available=terrain_runtime["available"],
+            label=terrain_runtime["label"] or "unknown",
+            source=terrain_runtime["source"] or "unknown",
+            generated=terrain_runtime["generation_complete_count"],
+            restored=terrain_runtime["artifact_restore_count"],
+            misses=terrain_runtime["artifact_miss_count"],
+            gpu_batches=terrain_runtime["gpu_generation_batch_count"],
+            gpu_chunks=terrain_runtime["gpu_generation_batch_chunk_count"],
+            manifest=terrain_runtime["manifest_available"],
+            disk_hits=terrain_runtime["disk_hit_count"],
+            render_server=terrain_runtime["terrain_render_server_batches_enabled"],
+            render_server_creates=terrain_runtime["terrain_render_server_batch_create_count"],
+            render_server_fallbacks=terrain_runtime["terrain_render_server_batch_fallback_count"],
+            visible_batches=terrain_runtime["terrain_render_visibility_batch_visible_count"],
+            hidden_batches=terrain_runtime["terrain_render_visibility_batch_hidden_count"],
+        )
+    )
+    print(
+        "Terrain gameplay no-generation proof: available={available} label={label} "
+        "generated={generated} modified_generated={modified} restored={restored} gpu_batches={gpu_batches} gpu_chunks={gpu_chunks}".format(
+            available=terrain_gameplay["available"],
+            label=terrain_gameplay["label"] or "unknown",
+            generated=terrain_gameplay["generation_complete_count"],
+            modified=terrain_gameplay["generation_with_modifications_count"],
+            restored=terrain_gameplay["artifact_restore_count"],
+            gpu_batches=terrain_gameplay["gpu_generation_batch_count"],
+            gpu_chunks=terrain_gameplay["gpu_generation_batch_chunk_count"],
         )
     )
     print(
@@ -2297,6 +2473,194 @@ def _snapshot_runtime_idle_proof_failures(data: dict) -> list[str]:
     return failures
 
 
+def _snapshot_terrain_artifact_bake_proof_failures(data: dict) -> list[str]:
+    enforced = (
+        _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_PROOF")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_COMPUTE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_OFFLINE_NATIVE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_NATIVE_DENSITY")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_MANIFEST")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_COMPACT_BAKE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_READY_MESH_BAKE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_FULL_MAP_BAKE")
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_BAKE_ARTIFACTS") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_BAKE_GPU_BATCHES") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_FULL_MAP_COORDS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_BAKE_MS") is not None
+    )
+    if not enforced:
+        return []
+
+    verdict = _terrain_artifact_bake_verdict_from_snapshot(data)
+    failures: list[str] = []
+    if not verdict["available"]:
+        return ["terrain artifact bake proof missing"]
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_PROOF"):
+        if not verdict["completed"]:
+            failures.append(
+                "terrain artifact bake did not complete "
+                f"(stage={verdict['stage']!r}, failed={verdict['failed']}, reason={verdict['failure_reason']!r})"
+            )
+        if verdict["artifact_count"] < max(verdict["expected_chunks"], 1):
+            failures.append(
+                "terrain artifact bake artifacts "
+                f"{verdict['artifact_count']} below expected {verdict['expected_chunks']}"
+            )
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_MANIFEST") and not verdict["manifest_written"]:
+        failures.append("terrain artifact bake manifest was not written")
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_COMPACT_BAKE") and verdict["store_ready_mesh_resources"]:
+        failures.append("terrain artifact bake stored ready mesh sidecars instead of compact artifacts")
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_MESH_ONLY_BAKE") and verdict["store_source_buffers"]:
+        failures.append("terrain artifact bake stored full source buffers instead of mesh-only artifacts")
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_SOURCE_BUFFER_BAKE") and not verdict["store_source_buffers"]:
+        failures.append("terrain artifact bake used mesh-only artifacts instead of full source buffers")
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_READY_MESH_BAKE") and not verdict["store_ready_mesh_resources"]:
+        failures.append("terrain artifact bake used compact artifacts instead of ready mesh sidecars")
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_FULL_MAP_BAKE"):
+        if verdict["coord_mode"] != "explicit":
+            failures.append(f"terrain artifact bake used coord mode {verdict['coord_mode']!r}, expected explicit full-map coordinates")
+    min_full_map_coords = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_FULL_MAP_COORDS")
+    if min_full_map_coords is not None and verdict["explicit_coord_count"] + 0.000001 < min_full_map_coords:
+        failures.append(
+            "terrain artifact full-map explicit coord count "
+            f"{verdict['explicit_coord_count']} below {min_full_map_coords:.0f}"
+        )
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_COMPUTE"):
+        if verdict["prefer_offline_cpu_bake"]:
+            failures.append("terrain artifact bake preferred offline CPU/native path instead of compute-first path")
+        if verdict["gpu_generation_batch_count"] <= 0:
+            failures.append("terrain artifact bake reported zero GPU/compute generation batches")
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_OFFLINE_NATIVE") and not verdict["prefer_offline_cpu_bake"]:
+        failures.append("terrain artifact bake used live compute-first path instead of offline native path")
+
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_NATIVE_DENSITY"):
+        required_native_density = max(verdict["stored_artifact_count"], 1 if verdict["artifact_count"] > 0 else 0)
+        if verdict["native_density_payload_count"] < required_native_density:
+            failures.append(
+                "terrain artifact bake native-density payload count "
+                f"{verdict['native_density_payload_count']} below stored artifacts {required_native_density}"
+            )
+
+    min_artifacts = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_BAKE_ARTIFACTS")
+    if min_artifacts is not None and verdict["artifact_count"] + 0.000001 < min_artifacts:
+        failures.append(
+            "terrain artifact bake artifact count "
+            f"{verdict['artifact_count']} below {min_artifacts:.0f}"
+        )
+
+    min_gpu_batches = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_BAKE_GPU_BATCHES")
+    if min_gpu_batches is not None and verdict["gpu_generation_batch_count"] + 0.000001 < min_gpu_batches:
+        failures.append(
+            "terrain artifact bake GPU batch count "
+            f"{verdict['gpu_generation_batch_count']} below {min_gpu_batches:.0f}"
+        )
+
+    max_elapsed_ms = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_BAKE_MS")
+    if max_elapsed_ms is not None and verdict["elapsed_ms"] > max_elapsed_ms:
+        failures.append(
+            "terrain artifact bake elapsed time "
+            f"{verdict['elapsed_ms']:.1f}ms exceeds {max_elapsed_ms:.1f}ms"
+        )
+
+    return failures
+
+
+def _snapshot_terrain_runtime_artifact_use_proof_failures(data: dict) -> list[str]:
+    enforced = (
+        _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_RUNTIME_USE")
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_GENERATIONS_AFTER_BAKE") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_STARTUP_ARTIFACT_RESTORES") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_ARTIFACT_MISSES") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_GPU_BATCHES_AFTER_BAKE") is not None
+    )
+    if not enforced:
+        return []
+
+    verdict = _terrain_runtime_startup_verdict_from_snapshot(data)
+    if not verdict["available"]:
+        return ["terrain runtime artifact-use proof missing startup measurement"]
+
+    failures: list[str] = []
+    if _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_RUNTIME_USE"):
+        if not verdict["manifest_available"]:
+            failures.append("terrain runtime did not report a terrain artifact manifest")
+        if bool(verdict["disk_restore_requires_manifest"]) and not verdict["manifest_available"]:
+            failures.append("terrain runtime required a manifest but none was available")
+
+    max_generations = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_GENERATIONS_AFTER_BAKE")
+    if max_generations is not None and verdict["generation_complete_count"] > max_generations:
+        failures.append(
+            "terrain startup generated chunks after artifact bake "
+            f"({verdict['generation_complete_count']} > {max_generations:.0f})"
+        )
+
+    min_restores = _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_STARTUP_ARTIFACT_RESTORES")
+    if min_restores is not None and verdict["artifact_restore_count"] + 0.000001 < min_restores:
+        failures.append(
+            "terrain startup artifact restores "
+            f"{verdict['artifact_restore_count']} below {min_restores:.0f}"
+        )
+
+    max_misses = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_ARTIFACT_MISSES")
+    if max_misses is not None and verdict["artifact_miss_count"] > max_misses:
+        failures.append(
+            "terrain startup artifact misses "
+            f"{verdict['artifact_miss_count']} exceeds {max_misses:.0f}"
+        )
+
+    max_gpu_batches = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_GPU_BATCHES_AFTER_BAKE")
+    if max_gpu_batches is not None and verdict["gpu_generation_batch_count"] > max_gpu_batches:
+        failures.append(
+            "terrain startup GPU generation batches after artifact bake "
+            f"({verdict['gpu_generation_batch_count']} > {max_gpu_batches:.0f})"
+        )
+
+    return failures
+
+
+def _snapshot_terrain_gameplay_no_generation_proof_failures(data: dict) -> list[str]:
+    enforced = (
+        _bool_from_env("TOWN_STALL_REQUIRE_NO_TERRAIN_GAMEPLAY_GENERATION_AFTER_BAKE")
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_GAMEPLAY_GENERATIONS_AFTER_BAKE") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_GAMEPLAY_GPU_BATCHES_AFTER_BAKE") is not None
+    )
+    if not enforced:
+        return []
+
+    verdict = _terrain_runtime_gameplay_verdict_from_snapshot(data)
+    if not verdict["available"]:
+        return ["terrain gameplay no-generation proof missing measurement window"]
+
+    failures: list[str] = []
+    generated = verdict["generation_complete_count"]
+    modified_generated = verdict["generation_with_modifications_count"]
+    unmodified_generated = max(generated - modified_generated, 0)
+    max_generations = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_GAMEPLAY_GENERATIONS_AFTER_BAKE")
+    if max_generations is not None and unmodified_generated > max_generations:
+        failures.append(
+            "terrain gameplay generated unmodified chunks after artifact bake "
+            f"({unmodified_generated} > {max_generations:.0f}, total={generated}, modified={modified_generated})"
+        )
+
+    max_gpu_batches = _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_GAMEPLAY_GPU_BATCHES_AFTER_BAKE")
+    if max_gpu_batches is not None and verdict["gpu_generation_batch_count"] > max_gpu_batches:
+        failures.append(
+            "terrain gameplay GPU generation batches after artifact bake "
+            f"({verdict['gpu_generation_batch_count']} > {max_gpu_batches:.0f})"
+        )
+
+    return failures
+
+
 def _snapshot_terrain_artifact_cache_proof_failures(data: dict) -> list[str]:
     enforced = (
         _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF")
@@ -2392,6 +2756,26 @@ def _snapshot_proof_gates_requested() -> bool:
         or _optional_float_from_env("TOWN_STALL_MIN_RUNTIME_IDLE_RATIO") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_PENDING_WORK") is not None
         or _optional_float_from_env("TOWN_STALL_MAX_RUNTIME_AWAKE_PROCESS_COUNT") is not None
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_PROOF")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_COMPUTE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_OFFLINE_NATIVE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_NATIVE_DENSITY")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_MANIFEST")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_COMPACT_BAKE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_READY_MESH_BAKE")
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_FULL_MAP_BAKE")
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_BAKE_ARTIFACTS") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_BAKE_GPU_BATCHES") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_FULL_MAP_COORDS") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_ARTIFACT_BAKE_MS") is not None
+        or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_RUNTIME_USE")
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_GENERATIONS_AFTER_BAKE") is not None
+        or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_STARTUP_ARTIFACT_RESTORES") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_ARTIFACT_MISSES") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_STARTUP_GPU_BATCHES_AFTER_BAKE") is not None
+        or _bool_from_env("TOWN_STALL_REQUIRE_NO_TERRAIN_GAMEPLAY_GENERATION_AFTER_BAKE")
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_GAMEPLAY_GENERATIONS_AFTER_BAKE") is not None
+        or _optional_float_from_env("TOWN_STALL_MAX_TERRAIN_GAMEPLAY_GPU_BATCHES_AFTER_BAKE") is not None
         or _bool_from_env("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_CACHE_PROOF")
         or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_HIT_RATIO") is not None
         or _optional_float_from_env("TOWN_STALL_MIN_TERRAIN_ARTIFACT_CACHE_DISK_HIT_DELTA") is not None
@@ -2416,6 +2800,9 @@ def _snapshot_proof_gate_failures(snapshot_path: Path) -> list[str]:
     failures.extend(_snapshot_startup_readiness_proof_failures(data))
     failures.extend(_snapshot_world_bake_proof_failures(data))
     failures.extend(_snapshot_runtime_idle_proof_failures(data))
+    failures.extend(_snapshot_terrain_artifact_bake_proof_failures(data))
+    failures.extend(_snapshot_terrain_runtime_artifact_use_proof_failures(data))
+    failures.extend(_snapshot_terrain_gameplay_no_generation_proof_failures(data))
     failures.extend(_snapshot_terrain_artifact_cache_proof_failures(data))
     return failures
 
@@ -2547,6 +2934,51 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS"] = os.environ.get("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS", "0")
     env["TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES"] = os.environ.get("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES", "0")
     env["TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS"] = os.environ.get("TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS", "0")
+    render_distance_default = os.environ.get("TOWN_STALL_RENDER_DISTANCE", "3")
+    terrain_render_distance_default = os.environ.get("TOWN_STALL_TERRAIN_RENDER_DISTANCE", render_distance_default)
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY", "1")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_RADIUS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_RADIUS", terrain_render_distance_default)
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS", "0")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE", "1")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_FULL_MAP"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_FULL_MAP", "0")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_FULL_MAP_MARGIN_CHUNKS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_FULL_MAP_MARGIN_CHUNKS", "1")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TRAVEL_CORRIDOR"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TRAVEL_CORRIDOR", "1")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TRAVEL_CORRIDOR_EXTRA_RADIUS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TRAVEL_CORRIDOR_EXTRA_RADIUS", "2")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE", "1")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME", "16")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES", "1")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS", "0")
+    env["TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_MESH_ONLY_BAKE"] = os.environ.get("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_MESH_ONLY_BAKE", "1")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_REFRESH_AFTER_EDIT"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_REFRESH_AFTER_EDIT", "0")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_EDITED_CHUNKS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_EDITED_CHUNKS", "0")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS", "0")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS", "1")
+    env["TOWN_STALL_RENDER_DISTANCE"] = render_distance_default
+    env["TOWN_STALL_TERRAIN_RENDER_DISTANCE"] = terrain_render_distance_default
+    env["TOWN_STALL_MESH_LOD_THRESHOLD"] = os.environ.get("TOWN_STALL_MESH_LOD_THRESHOLD", "0")
+    env["TOWN_STALL_DISTANT_WORLD_MAP_LOD"] = os.environ.get("TOWN_STALL_DISTANT_WORLD_MAP_LOD", "0")
+    env["TOWN_STALL_WORLD_MAP_LOD_REPLACE_ACTIVE_CHUNKS"] = os.environ.get("TOWN_STALL_WORLD_MAP_LOD_REPLACE_ACTIVE_CHUNKS", "0")
+    env["TOWN_STALL_WORLD_MAP_LOD_FULL_RES_RADIUS"] = os.environ.get("TOWN_STALL_WORLD_MAP_LOD_FULL_RES_RADIUS", "3")
+    env["TOWN_STALL_DISTANT_WORLD_MAP_LOD_DISTANCE"] = os.environ.get("TOWN_STALL_DISTANT_WORLD_MAP_LOD_DISTANCE", "10")
+    env["TOWN_STALL_DISTANT_WORLD_MAP_LOD_DEFER_INITIAL"] = os.environ.get("TOWN_STALL_DISTANT_WORLD_MAP_LOD_DEFER_INITIAL", "0")
+    env["TOWN_STALL_TERRAIN_SHADOW_LOD"] = os.environ.get("TOWN_STALL_TERRAIN_SHADOW_LOD", "0")
+    env["TOWN_STALL_TERRAIN_RENDER_SERVER_BATCHES"] = os.environ.get("TOWN_STALL_TERRAIN_RENDER_SERVER_BATCHES", "1")
+    terrain_artifact_bake_proof_defaults = {
+        "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_PROOF": "1",
+        "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_OFFLINE_NATIVE": "1",
+        "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_NATIVE_DENSITY": "1",
+        "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_BAKE_MANIFEST": "1",
+        "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_COMPACT_BAKE": "0",
+        "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_READY_MESH_BAKE": "1",
+        "TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_RUNTIME_USE": "1",
+        "TOWN_STALL_MAX_TERRAIN_STARTUP_GENERATIONS_AFTER_BAKE": "0",
+        "TOWN_STALL_MIN_TERRAIN_STARTUP_ARTIFACT_RESTORES": "1",
+        "TOWN_STALL_MAX_TERRAIN_STARTUP_GPU_BATCHES_AFTER_BAKE": "0",
+    }
+    for key, default_value in terrain_artifact_bake_proof_defaults.items():
+        proof_value = os.environ.get(key, default_value)
+        env[key] = proof_value
+        os.environ[key] = proof_value
     env["TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_RUNTIME_CHUNKS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_RUNTIME_CHUNKS", "")
     env["TOWN_STALL_DISABLE_VEGETATION_RENDER"] = os.environ.get("TOWN_STALL_DISABLE_VEGETATION_RENDER", "0")
     env["TOWN_STALL_DISABLE_ENTITIES"] = os.environ.get("TOWN_STALL_DISABLE_ENTITIES", "0")

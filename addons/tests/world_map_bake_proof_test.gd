@@ -3,14 +3,28 @@ extends SceneTree
 const WorldMapGeneratorScript := preload("res://world_map_generator/world_map_generator.gd")
 const WorldMapData := preload("res://world_map_data/world_map_data.gd")
 
+var _generator: WorldMapGenerator = null
+var _image_sets: Array[Dictionary] = []
+
 
 func _init() -> void:
 	var exit_code := _run()
+	_cleanup()
 	quit(exit_code)
 
 
+func _cleanup() -> void:
+	for images in _image_sets:
+		images.clear()
+	_image_sets.clear()
+	if _generator != null:
+		_generator.release_runtime_resources()
+		_generator = null
+
+
 func _run() -> int:
-	var generator: WorldMapGenerator = WorldMapGeneratorScript.new()
+	_generator = WorldMapGeneratorScript.new()
+	var generator := _generator
 	generator.world_seed = 4242
 	generator.noise_freq = 0.1
 	generator.terrain_height = 10.0
@@ -47,11 +61,13 @@ func _run() -> int:
 	if not _expect(float(proof_a.get("generation_unaccounted_ms", 0.0)) > 0.0, "proof should expose unaccounted generation time"):
 		return 1
 
-	var proof_b: Dictionary = generator.build_world_bake_proof(_build_test_images(false))
+	var images_b := _build_test_images(false)
+	var proof_b: Dictionary = generator.build_world_bake_proof(images_b)
 	if not _expect(str(proof_a.get("content_signature", "")) == str(proof_b.get("content_signature", "")), "identical baked content should keep the same signature"):
 		return 1
 
-	var proof_mutated: Dictionary = generator.build_world_bake_proof(_build_test_images(true))
+	var mutated_images := _build_test_images(true)
+	var proof_mutated: Dictionary = generator.build_world_bake_proof(mutated_images)
 	if not _expect(str(proof_a.get("content_signature", "")) != str(proof_mutated.get("content_signature", "")), "mutated baked content should change the signature"):
 		return 1
 
@@ -61,9 +77,22 @@ func _run() -> int:
 	var save_profile: Dictionary = generator.last_save_profile
 	if not _expect(bool(save_profile.get("success", false)), "save profile should report success"):
 		return 1
+	if not _expect(int(save_profile.get("baked_binary_layer_count", 0)) == WorldMapData.get_baked_image_names().size(), "save_world should write every baked layer as binary"):
+		return 1
+	if not _expect(float(save_profile.get("binary_write_ms", 0.0)) > 0.0, "save profile should measure binary layer writes"):
+		return 1
+	if not _expect(int(save_profile.get("baked_png_layer_count", 0)) == 0, "legacy PNG export should be opt-in for fast generated worlds"):
+		return 1
 	if not _expect(str(save_profile.get("cache_signature", "")).length() > 0, "save profile should expose export cache signature"):
 		return 1
 	if not _expect(bool(save_profile.get("world_cache_signature_file_written", false)), "save profile should report signature-file write"):
+		return 1
+	var load_profile := {}
+	var loaded := WorldMapData.load_world(save_path, false, true, load_profile)
+	for image_name in WorldMapData.get_baked_image_names():
+		if not _expect(loaded.has(image_name), "binary-saved world should load baked layer %s" % image_name):
+			return 1
+	if not _expect(int(load_profile.get("binary_layer_hit_count", 0)) == WorldMapData.get_baked_image_names().size(), "WorldMapData should load saved binary layers without PNG fallback"):
 		return 1
 
 	var telemetry: Dictionary = generator.get_telemetry_snapshot()
@@ -107,7 +136,7 @@ func _build_test_images(mutated: bool) -> Dictionary:
 	if mutated:
 		height_bytes[0] = 7
 
-	return {
+	var images := {
 		"heightmap": Image.create_from_data(size, size, false, Image.FORMAT_R8, height_bytes),
 		"biomes": Image.create_from_data(size, size, false, Image.FORMAT_R8, biome_bytes),
 		"roads": Image.create_from_data(size, size, false, Image.FORMAT_RG8, road_bytes),
@@ -136,6 +165,8 @@ func _build_test_images(mutated: bool) -> Dictionary:
 			"z": 3
 		}]
 	}
+	_image_sets.append(images)
+	return images
 
 
 func _expect(condition: bool, message: String) -> bool:

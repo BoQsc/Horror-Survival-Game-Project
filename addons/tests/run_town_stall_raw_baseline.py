@@ -59,6 +59,14 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_ENABLE_RUNTIME_POWER_MODE": "1",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME": "16",
+            "TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS": "1",
         },
     },
     "priority_revisit": {
@@ -70,6 +78,14 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_MEASURE_FULL_FLIGHT": "0",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME": "16",
+            "TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS": "1",
         },
     },
     "priority_warm_disk_restore": {
@@ -81,6 +97,14 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE": "town_entry",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME": "16",
+            "TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS": "1",
             "TOWN_STALL_GODOT_FULLSCREEN": "1",
             "TOWN_STALL_DISTANT_WORLD_MAP_LOD": "0",
             "TOWN_STALL_WORLD_MAP_LOD_REPLACE_ACTIVE_CHUNKS": "0",
@@ -95,6 +119,14 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_BUILDING_RENDER_DISTANCE": "5",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME": "16",
+            "TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS": "1",
         },
     },
     "priority_render_distance_10": {
@@ -106,6 +138,14 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_BUILDING_RENDER_DISTANCE": "10",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME": "16",
+            "TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS": "1",
         },
     },
     "priority_render_distance_15": {
@@ -117,6 +157,14 @@ CASE_DEFINITIONS = {
             "TOWN_STALL_BUILDING_RENDER_DISTANCE": "15",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB": "1024",
             "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT": "2048",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_VERTICAL_RADIUS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_DISK_SHAPE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME": "16",
+            "TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES": "1",
+            "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_DISK_RESTORE_RESULTS": "0",
+            "TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS": "1",
             "TOWN_STALL_TIMEOUT_SECONDS": "720",
             "TOWN_STALL_RAW_RUN_TIMEOUT_SECONDS": "720",
         },
@@ -454,6 +502,7 @@ RESET_ENV_KEYS = [
     "TOWN_STALL_TERRAIN_VISUAL_BATCHING",
     "TOWN_STALL_TERRAIN_VISUAL_BATCH_SIZE",
     "TOWN_STALL_TERRAIN_VISUAL_BATCH_MAX_VERTICES",
+    "TOWN_STALL_TERRAIN_RENDER_VISIBILITY_FRUSTUM",
     "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_MEMORY_BUDGET_MB",
     "TOWN_STALL_TERRAIN_ARTIFACT_CACHE_ENTRY_LIMIT",
     "TOWN_STALL_TERRAIN_ARTIFACT_DISK_CACHE_BUDGET_MB",
@@ -1116,6 +1165,13 @@ def _sum_numeric(values: list[Any]) -> float:
     return sum(float(value) for value in values if isinstance(value, (int, float)) and not isinstance(value, bool))
 
 
+def _first_numeric(values: list[Any]) -> Optional[float]:
+    for value in values:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
 def _wpf60(power_w: Any, fps: Any) -> Optional[float]:
     """60 FPS equivalent watts; lower is better, target is <= 16 at sustained 60 FPS."""
     if not isinstance(power_w, (int, float)) or isinstance(power_w, bool):
@@ -1218,7 +1274,13 @@ def _build_render_pressure_summary(
     avg_primitives = _as_float(town_window.get("avg_primitives"))
     end_engine_max_fps = _as_float(town_window.get("end_engine_max_fps"))
 
-    terrain_primitives = _as_float(terrain_batch.get("terrain_visual_batch_primitive_count"))
+    terrain_primitives = _first_numeric([
+        terrain_batch.get("terrain_visual_visible_primitive_count"),
+        terrain_batch.get("terrain_visual_batch_primitive_count"),
+        terrain_batch.get("terrain_visual_chunk_visible_primitive_count"),
+        terrain_batch.get("terrain_visual_chunk_primitive_count"),
+        terrain_batch.get("terrain_visual_source_primitive_count"),
+    ])
     vegetation_primitives = _as_float(vegetation_render.get("global_render_estimated_primitives"))
     tree_primitives = _as_float(vegetation_render.get("global_tree_render_estimated_primitives"))
     grass_primitives = _as_float(vegetation_render.get("global_grass_render_estimated_primitives"))

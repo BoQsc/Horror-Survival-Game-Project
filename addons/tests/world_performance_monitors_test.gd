@@ -72,7 +72,12 @@ func _run() -> int:
 		"completed_generation_queue_count": 13,
 		"pending_batch_count": 17,
 		"pending_spawn_zone_count": 19,
-		"world_map_lod_pending_candidate_count": 23
+		"world_map_lod_pending_candidate_count": 23,
+		"terrain_visual_batch_dirty_count": 29,
+		"terrain_visual_batch_async_in_flight_count": 31,
+		"terrain_visual_batch_async_completed_count": 37,
+		"terrain_visual_mesh_retire_queue_count": 41,
+		"water_visual_batch_dirty_count": 43
 	})
 	_add_fake_manager(fake_nodes, &"building_manager", {
 		"process_loop_awake": true,
@@ -151,7 +156,7 @@ func _run() -> int:
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/EntityMaintenanceAwake"), 1.0), "entity maintenance awake state should be cached"):
 		return _cleanup_and_fail(monitor, fake_nodes)
 	var pending_work_value := monitor.get_cached_monitor_value(&"WorldRuntime/PendingWork")
-	if not _expect(is_equal_approx(pending_work_value, 261.0), "pending work should aggregate manager queues and awake flags, got %.2f" % pending_work_value):
+	if not _expect(is_equal_approx(pending_work_value, 442.0), "pending work should aggregate manager queues, visual batch backlog, and awake flags, got %.2f" % pending_work_value):
 		return _cleanup_and_fail(monitor, fake_nodes)
 	if not _expect(is_equal_approx(monitor.get_cached_monitor_value(&"WorldRuntime/AwakeProcessCount"), 5.0), "awake process count should aggregate awake runtime managers"):
 		return _cleanup_and_fail(monitor, fake_nodes)
