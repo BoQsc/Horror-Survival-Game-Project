@@ -3,7 +3,16 @@ name: "Continuous Smart Asset Release"
 on:
   push:
     branches: [ "**" ]
-  workflow_dispatch: # This enables the "Run workflow" button in the GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      release_profile:
+        description: "Choose the release target"
+        required: false
+        default: latest
+        type: choice
+        options:
+          - latest
+          - 4090vulkan
 
 jobs:
   build-and-release:
@@ -88,11 +97,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: latest
-          name: "Latest Pre-Imported Build"
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_profile == '4090vulkan' && '4090vulkan' || 'latest' }}
+          name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_profile == '4090vulkan' && '4090 Vulkan Custom Build' || 'Latest Pre-Imported Build' }}
+          prerelease: true
           body: |
             **Automated Build Details:**
             - **Trigger Type:** ${{ github.event_name }}
+            - **Release Profile:** ${{ github.event_name == 'workflow_dispatch' && inputs.release_profile || 'latest' }}
             - **Shaders:** Pre-compiled SPIR-V (Compute) binaries included in `.godot/`.
             - **Renderer:** Forced to **Forward+ (Vulkan)** for compute compatibility.
             - **CI Method:** Xvfb-GUI (with fix for missing X11 libs).
