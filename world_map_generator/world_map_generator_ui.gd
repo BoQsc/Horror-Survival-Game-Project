@@ -961,15 +961,13 @@ func _on_terrain_bake_progress(profile: Dictionary) -> void:
 	last_terrain_bake_profile = profile.duplicate(true)
 	var stage := str(profile.get("stage", "baking terrain mesh artifacts"))
 	var percent := float(profile.get("progress_percent", 0.0))
-	var artifact_count := int(profile.get("artifact_count", 0))
-	var expected_chunks := int(profile.get("expected_chunks", 0))
 	var origin_count := int(profile.get("origin_count", 1))
 	var coord_mode := str(profile.get("coord_mode", "origins_radius"))
 	var explicit_coord_count := int(profile.get("explicit_coord_count", 0))
 	var target_summary := "coords=%d" % explicit_coord_count if explicit_coord_count > 0 else "origins=%d" % origin_count
 	var artifact_root := str(profile.get("artifact_root", ""))
 	_set_generation_status(
-		"%s %s %s chunks=%d/%d -> %s" % [stage.capitalize(), coord_mode, target_summary, artifact_count, expected_chunks, artifact_root],
+		"%s %s %s %s -> %s" % [stage.capitalize(), coord_mode, target_summary, _format_terrain_artifact_bake_counts(profile), artifact_root],
 		percent,
 		false,
 		profile
@@ -992,10 +990,11 @@ func _on_terrain_bake_completed(profile: Dictionary) -> void:
 	var explicit_coord_count := int(profile.get("explicit_coord_count", 0))
 	var target_summary := "%d explicit coords" % explicit_coord_count if explicit_coord_count > 0 else "%d origins" % origin_count
 	var elapsed_ms := float(profile.get("elapsed_ms", 0.0))
-	progress_label.text = "Generated, saved, and baked %d terrain mesh artifacts (%s, %s) in %.0fms -> %s" % [
+	progress_label.text = "Generated, saved, and baked %d terrain mesh artifacts (%s, %s, %s) in %.0fms -> %s" % [
 		artifact_count,
 		coord_mode,
 		target_summary,
+		_format_terrain_artifact_bake_counts(profile),
 		elapsed_ms,
 		artifact_root
 	]
@@ -1016,6 +1015,21 @@ func _on_terrain_bake_failed(profile: Dictionary) -> void:
 	progress_label.text = "Terrain mesh artifact bake FAILED (%s) -> %s" % [last_terrain_bake_error, artifact_root]
 	last_generation_status = progress_label.text
 	_set_generation_loading_failed(progress_label.text, profile)
+
+
+func _format_terrain_artifact_bake_counts(profile: Dictionary) -> String:
+	var parts: Array[String] = []
+	var artifact_count := int(profile.get("artifact_count", 0))
+	var expected_chunks := int(profile.get("expected_chunks", 0))
+	if expected_chunks > 0:
+		parts.append("terrain_artifacts=%d/%d" % [artifact_count, expected_chunks])
+	else:
+		parts.append("terrain_artifacts=%d" % artifact_count)
+	if profile.has("stored_artifact_count"):
+		parts.append("stored_new=%d" % int(profile.get("stored_artifact_count", 0)))
+	if profile.has("reused_disk_artifact_count"):
+		parts.append("reused_disk=%d" % int(profile.get("reused_disk_artifact_count", 0)))
+	return " ".join(parts)
 
 func get_telemetry_snapshot() -> Dictionary:
 	return {

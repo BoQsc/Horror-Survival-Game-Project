@@ -106,6 +106,7 @@ func get_snapshot() -> Dictionary:
 		"stage": last_stage,
 		"percent": last_percent,
 		"details": last_details.duplicate(true),
+		"detail_text": detail_label.text if detail_label else "",
 		"elapsed_seconds": _elapsed_seconds(),
 		"log_lines": log_lines.duplicate()
 	}
@@ -210,17 +211,40 @@ func _format_details(details: Dictionary) -> String:
 	_append_detail(parts, details, "seed", "seed")
 	_append_detail(parts, details, "town_count", "towns")
 	_append_detail(parts, details, "world_path", "world")
-	_append_detail(parts, details, "artifact_root", "artifacts")
+	_append_detail(parts, details, "artifact_root", "artifact_root")
+	_append_detail(parts, details, "manifest_path", "manifest")
+	_append_detail(parts, details, "exists", "manifest_exists")
+	_append_detail(parts, details, "ready", "artifacts_ready")
+	_append_detail(parts, details, "coord_mode", "bake_scope")
 	_append_detail(parts, details, "origin_count", "origins")
+	_append_detail(parts, details, "explicit_coord_count", "explicit_coords")
 	_append_detail(parts, details, "radius_chunks", "radius")
-	_append_detail(parts, details, "store_ready_mesh_resources", "ready_mesh")
-	_append_detail(parts, details, "store_source_buffers", "source_buffers")
+	_append_detail(parts, details, "vertical_layer_radius", "vertical_radius")
+	_append_detail(parts, details, "store_ready_mesh_resources", "ready_mesh_sidecars")
+	_append_detail(parts, details, "store_source_buffers", "editable_source_buffers")
+	_append_detail(parts, details, "prefer_offline_cpu_bake", "offline_native_bake")
 	_append_detail(parts, details, "synchronous_disk_writes", "sync_writes")
-	_append_detail(parts, details, "artifact_count", "artifacts")
-	_append_detail(parts, details, "expected_chunks", "chunks")
+	_append_terrain_artifact_details(parts, details)
 	_append_detail(parts, details, "pending_work", "pending")
+	_append_detail(parts, details, "artifact_disk_write_pending_entries", "pending_writes")
 	_append_detail(parts, details, "elapsed_ms", "stage_ms")
 	return " | ".join(parts)
+
+
+func _append_terrain_artifact_details(parts: Array[String], details: Dictionary) -> void:
+	var has_artifact_count := details.has("artifact_count")
+	var has_expected_chunks := details.has("expected_chunks")
+	if has_artifact_count or has_expected_chunks:
+		var artifact_count := int(details.get("artifact_count", 0))
+		var expected_chunks := int(details.get("expected_chunks", 0))
+		if expected_chunks > 0:
+			parts.append("terrain_artifacts=%d/%d" % [artifact_count, expected_chunks])
+		else:
+			parts.append("terrain_artifacts=%d" % artifact_count)
+	if details.has("stored_artifact_count"):
+		parts.append("stored_new=%d" % int(details.get("stored_artifact_count", 0)))
+	if details.has("reused_disk_artifact_count"):
+		parts.append("reused_disk=%d" % int(details.get("reused_disk_artifact_count", 0)))
 
 
 func _append_detail(parts: Array[String], details: Dictionary, key: String, label: String) -> void:

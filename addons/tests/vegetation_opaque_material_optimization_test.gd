@@ -2,6 +2,10 @@ extends SceneTree
 
 const VegetationManagerScript = preload("res://world_vegetation/vegetation_manager.gd")
 
+class FakeTerrainManager:
+	extends Node3D
+	var world_map_active: bool = false
+
 func _init() -> void:
 	call_deferred("_run_and_quit")
 
@@ -86,7 +90,49 @@ func _run() -> int:
 	):
 		manager.free()
 		return 1
+	if not _expect(is_equal_approx(default_tree_batch.lod_bias, 1.0), "default non-world-map tree render batch should use default LOD bias"):
+		manager.free()
+		return 1
 
+	var terrain := FakeTerrainManager.new()
+	terrain.world_map_active = true
+	root.add_child(terrain)
+	manager.terrain_manager = terrain
+	manager.vegetation_global_render_ignore_occlusion_culling = false
+	if not _expect(
+			manager.world_map_vegetation_render_cluster_size == 1
+			and manager._effective_vegetation_render_cluster_size("tree") == 1,
+			"world-map tree render batches should default to one terrain chunk for tighter culling/LOD"
+	):
+		manager.free()
+		terrain.free()
+		return 1
+	var world_map_tree_batch := manager._get_global_render_multimesh("tree", Vector2i.ZERO)
+	if not _expect(
+			world_map_tree_batch is MultiMeshInstance3D and is_equal_approx(world_map_tree_batch.lod_bias, manager.world_map_tree_render_lod_bias),
+			"world-map tree render batch should use the tree-specific LOD bias"
+	):
+		manager.free()
+		terrain.free()
+		return 1
+	var world_map_grass_batch := manager._get_global_render_multimesh("grass", Vector2i(2, 0))
+	if not _expect(
+			world_map_grass_batch is MultiMeshInstance3D and is_equal_approx(world_map_grass_batch.lod_bias, manager.vegetation_render_lod_bias),
+			"world-map grass render batch should keep the general vegetation LOD bias"
+	):
+		manager.free()
+		terrain.free()
+		return 1
+	var world_map_telemetry := manager.get_telemetry_snapshot()
+	if not _expect(
+			is_equal_approx(float(world_map_telemetry.get("effective_vegetation_tree_render_lod_bias", -1.0)), manager.world_map_tree_render_lod_bias),
+			"telemetry should expose the effective world-map tree LOD bias"
+	):
+		manager.free()
+		terrain.free()
+		return 1
+
+	terrain.free()
 	manager.free()
 	print("[VEGETATION_OPAQUE_MATERIAL_OPTIMIZATION_TEST] PASS")
 	return 0

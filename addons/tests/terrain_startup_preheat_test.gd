@@ -122,6 +122,42 @@ func _run() -> int:
 	var runtime_visual_snapshot: Dictionary = manager.get_startup_readiness_snapshot()
 	if not _expect(bool(runtime_visual_snapshot.get("ready", false)), "post-handoff dirty visual batches should not regress startup readiness"):
 		return 1
+	manager.runtime_power_mode_enabled = true
+	manager._runtime_power_viewer_moved_last = true
+	manager.world_map_active = false
+	if not _expect(manager._terrain_visual_batch_paused_for_active_gameplay(), "procedural terrain visual polish should pause during active player movement"):
+		return 1
+	manager.world_map_active = true
+	if not _expect(not manager._terrain_visual_batch_paused_for_active_gameplay(), "world-map visual batches should keep catching up during active player movement"):
+		return 1
+	manager._terrain_visual_batch_dirty.clear()
+	if not _expect(manager._terrain_visual_batch_paused_for_active_gameplay(), "world-map visual batching should pause once no catch-up work remains"):
+		return 1
+
+	manager.pending_spawn_zones.clear()
+	manager.priority_task_queue.clear()
+	manager.task_queue.clear()
+	manager.cpu_task_queue.clear()
+	manager.completed_generation_queue.clear()
+	manager.pending_nodes.clear()
+	manager.active_chunks.clear()
+	manager.world_map_active = true
+	manager.startup_require_preheat_before_play = true
+	manager.startup_preheat_radius_chunks = 1
+	manager.initial_load_phase = false
+	var world_map_pending_count: int = manager.request_startup_preheat(Vector3(0.0, 8.0, 0.0))
+	if not _expect(world_map_pending_count == 9, "world-map above-ground preheat should request only the baked Y=0 layer"):
+		return 1
+	if not _expect(int(manager.initial_load_target_chunks) == 9, "world-map initial load target should match the requested Y=0 layer"):
+		return 1
+	var world_map_zone: Dictionary = manager.pending_spawn_zones[0]
+	var world_map_coords: Array = world_map_zone.get("pending_coords", [])
+	for coord_variant in world_map_coords:
+		if not (coord_variant is Vector3i):
+			return 1
+		var coord: Vector3i = coord_variant
+		if not _expect(coord.y == 0, "world-map preheat should not queue unbaked vertical terrain layers"):
+			return 1
 
 	manager.free()
 	print("[TERRAIN_STARTUP_PREHEAT_TEST] PASS")

@@ -135,6 +135,15 @@ func _run() -> int:
 		return 1
 	if not _expect(int(manager._terrain_process_idle_frame_count) == 0, "runtime suspension should reset idle frame count"):
 		return 1
+	manager._wake_runtime_power_for_foreground_terrain_work("test_terrain_edit")
+	if not _expect(not bool(manager._runtime_power_world_work_suspended), "foreground terrain edit wake should clear runtime world-work suspension"):
+		return 1
+	if not _expect(not bool(manager._terrain_process_sleeping), "foreground terrain edit wake should resume sleeping terrain process"):
+		return 1
+	if not _expect(str(manager._terrain_process_last_wake_reason) == "test_terrain_edit", "foreground terrain edit wake reason should be recorded"):
+		return 1
+	manager._runtime_power_world_work_suspended = true
+	manager._terrain_process_sleeping = true
 	previous_position = manager.viewer.position
 	manager.viewer.position = Vector3(float(manager.CHUNK_STRIDE) * 6.0, 0.0, 0.0)
 	manager.viewer.viewer_position_changed.emit(previous_position, manager.viewer.position)

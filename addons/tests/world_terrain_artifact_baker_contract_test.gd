@@ -2,6 +2,7 @@ extends SceneTree
 
 const WorldTerrainArtifactBaker = preload("res://world_performance/world_terrain_artifact_baker.gd")
 const WorldMapData = preload("res://world_map_data/world_map_data.gd")
+const ChunkManagerScript = preload("res://world_marching_cubes/chunk_manager.gd")
 
 
 func _init() -> void:
@@ -123,6 +124,36 @@ func _run() -> int:
 		baker.free()
 		return 1
 	if not _expect(str(manifest.get("artifact_root", "")) == WorldMapData.get_world_terrain_artifact_root(world_path), "manifest should point at world-local artifacts"):
+		baker.free()
+		return 1
+
+	var expected_buffer_bytes := ChunkManagerScript.DENSITY_GRID_SIZE * ChunkManagerScript.DENSITY_GRID_SIZE * ChunkManagerScript.DENSITY_GRID_SIZE * 4
+	var density_bytes := PackedByteArray()
+	density_bytes.resize(expected_buffer_bytes)
+	var water_density_bytes := PackedByteArray()
+	water_density_bytes.resize(expected_buffer_bytes)
+	var material_bytes := PackedByteArray()
+	material_bytes.resize(expected_buffer_bytes)
+	baker.store_source_buffers = false
+	var mesh_only_artifact := baker._build_parallel_worker_artifact({}, {}, PackedFloat32Array(), density_bytes, water_density_bytes, material_bytes)
+	if not _expect(not bool(mesh_only_artifact.get("source_buffers_stored", true)), "mesh-only artifact should not store source buffers by default"):
+		baker.free()
+		return 1
+	if not _expect(not mesh_only_artifact.has("density_bytes_terrain"), "mesh-only artifact should omit terrain density bytes"):
+		baker.free()
+		return 1
+	baker.store_source_buffers = true
+	var editable_artifact := baker._build_parallel_worker_artifact({}, {}, PackedFloat32Array(), density_bytes, water_density_bytes, material_bytes)
+	if not _expect(bool(editable_artifact.get("source_buffers_stored", false)), "editable artifact should report stored source buffers"):
+		baker.free()
+		return 1
+	if not _expect((editable_artifact.get("density_bytes_terrain", PackedByteArray()) as PackedByteArray).size() == expected_buffer_bytes, "editable artifact should store terrain density bytes"):
+		baker.free()
+		return 1
+	if not _expect((editable_artifact.get("density_bytes_water", PackedByteArray()) as PackedByteArray).size() == expected_buffer_bytes, "editable artifact should store water density bytes"):
+		baker.free()
+		return 1
+	if not _expect((editable_artifact.get("material_bytes_terrain", PackedByteArray()) as PackedByteArray).size() == expected_buffer_bytes, "editable artifact should store material bytes"):
 		baker.free()
 		return 1
 

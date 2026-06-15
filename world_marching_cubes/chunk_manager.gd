@@ -2182,11 +2182,12 @@ func _terrain_render_visibility_forward_xz(camera: Camera3D) -> Vector3:
 		return Vector3.ZERO
 	return forward.normalized()
 
-func _terrain_render_visibility_coord_center(coord: Vector3i) -> Vector3:
+func _terrain_render_visibility_coord_center(coord: Vector3i, span_chunks: int = 1) -> Vector3:
+	var span := maxi(span_chunks, 1)
 	return Vector3(
-		(float(coord.x) + 0.5) * float(CHUNK_STRIDE),
+		(float(coord.x) + float(span) * 0.5) * float(CHUNK_STRIDE),
 		0.0,
-		(float(coord.z) + 0.5) * float(CHUNK_STRIDE)
+		(float(coord.z) + float(span) * 0.5) * float(CHUNK_STRIDE)
 	)
 
 func _terrain_render_visibility_coord_aabb(coord: Vector3i, span_chunks: int = 1) -> AABB:
@@ -2201,6 +2202,26 @@ func _terrain_render_visibility_coord_aabb(coord: Vector3i, span_chunks: int = 1
 		Vector3(float(coord.x * CHUNK_STRIDE), min_y, float(coord.z * CHUNK_STRIDE)),
 		Vector3(size_xz, maxf(max_y - min_y, float(CHUNK_STRIDE)), size_xz)
 	)
+
+func _terrain_render_visibility_span_near_viewer(coord: Vector3i, span_chunks: int, viewer_chunk: Vector2i, keep_radius: int) -> bool:
+	if keep_radius <= 0:
+		return false
+	var span := maxi(span_chunks, 1)
+	var min_x := coord.x
+	var max_x := coord.x + span - 1
+	var min_z := coord.z
+	var max_z := coord.z + span - 1
+	var dx := 0
+	if viewer_chunk.x < min_x:
+		dx = min_x - viewer_chunk.x
+	elif viewer_chunk.x > max_x:
+		dx = viewer_chunk.x - max_x
+	var dz := 0
+	if viewer_chunk.y < min_z:
+		dz = min_z - viewer_chunk.y
+	elif viewer_chunk.y > max_z:
+		dz = viewer_chunk.y - max_z
+	return maxi(dx, dz) <= keep_radius
 
 func _terrain_render_visibility_aabb_in_frustum(camera: Camera3D, bounds: AABB) -> bool:
 	if camera == null or not is_instance_valid(camera):
@@ -2243,18 +2264,22 @@ func _terrain_render_visibility_coord_visible(
 	span_chunks: int = 1
 ) -> bool:
 	var keep_radius := maxi(terrain_render_visibility_near_keep_radius_chunks, 0)
-	if keep_radius > 0 and maxi(absi(coord.x - viewer_chunk.x), absi(coord.z - viewer_chunk.y)) <= keep_radius:
+	if _terrain_render_visibility_span_near_viewer(coord, span_chunks, viewer_chunk, keep_radius):
 		return true
 	if terrain_render_visibility_frustum_culling_enabled:
 		return _terrain_render_visibility_aabb_in_frustum(
 			camera,
 			_terrain_render_visibility_coord_aabb(coord, span_chunks)
 		)
-	var to_coord := _terrain_render_visibility_coord_center(coord) - camera_pos
+	var to_coord := _terrain_render_visibility_coord_center(coord, span_chunks) - camera_pos
 	to_coord.y = 0.0
 	if to_coord.length_squared() <= 0.0001:
 		return true
 	return camera_forward_xz.dot(to_coord.normalized()) >= min_dot
+
+func _terrain_visual_batch_origin_coord(key: Vector2i) -> Vector3i:
+	var batch_size := _effective_terrain_visual_batch_size()
+	return Vector3i(key.x * batch_size, 0, key.y * batch_size)
 
 func _show_all_terrain_render_visuals() -> void:
 	for key_variant in _terrain_visual_batches.keys():
@@ -2327,14 +2352,15 @@ func _sync_terrain_render_visibility() -> void:
 		var batch_entry: Variant = _terrain_visual_batches.get(key, null)
 		if not _terrain_visual_batch_entry_is_valid(batch_entry):
 			continue
+		var batch_span := _effective_terrain_visual_batch_size()
 		var visible := _terrain_render_visibility_coord_visible(
-			_terrain_batch_shadow_coord(key),
+			_terrain_visual_batch_origin_coord(key),
 			camera,
 			camera_pos,
 			camera_forward_xz,
 			viewer_chunk,
 			min_dot,
-			_effective_terrain_visual_batch_size()
+			batch_span
 		)
 		_set_terrain_visual_batch_entry_visible(batch_entry, visible)
 		if visible:
@@ -2894,6 +2920,14 @@ func _terrain_visual_batch_rebuild_busy(_hot_frame: bool) -> bool:
 
 func _terrain_visual_batch_paused_for_active_gameplay() -> bool:
 	if _is_startup_visual_batch_gate_pending():
+		return false
+	if world_map_active and (
+		not _terrain_visual_batch_dirty.is_empty()
+		or not _terrain_visual_batch_builds_in_flight.is_empty()
+		or not _completed_terrain_visual_batch_builds.is_empty()
+		or not _terrain_visual_mesh_retire_queue.is_empty()
+		or not _water_visual_batch_dirty.is_empty()
+	):
 		return false
 	return runtime_power_mode_enabled and (_runtime_power_viewer_moved_last or _runtime_power_foreground_terrain_busy_last)
 
@@ -4571,11 +4605,7 @@ func _unhandled_input(_event):
 	if terrain_render_visibility_culling_enabled:
 		_wake_terrain_process_loop("input_visibility")
 	if runtime_power_mode_enabled and (_runtime_power_world_work_suspended or _runtime_power_render_loop_suspended):
-		_runtime_power_idle_seconds = 0.0
-		_runtime_power_active_grace_remaining_s = runtime_power_active_grace_s
-		_runtime_power_active_reason = "input_event"
-		_set_runtime_power_world_work_suspended(false, "input_event")
-		_apply_runtime_power_fps("active", runtime_power_active_max_fps)
+		_wake_runtime_power_for_foreground_terrain_work("input_event")
 
 func set_debug_chunk_bounds(enabled: bool) -> void:
 	debug_chunk_bounds = enabled
@@ -4883,6 +4913,16 @@ func _runtime_power_terrain_busy() -> bool:
 		or not _completed_terrain_visual_batch_builds.is_empty() \
 		or not _terrain_visual_mesh_retire_queue.is_empty() \
 		or not _water_visual_batch_dirty.is_empty()
+
+func _wake_runtime_power_for_foreground_terrain_work(reason: String) -> void:
+	if not runtime_power_mode_enabled:
+		return
+	_runtime_power_idle_seconds = 0.0
+	_runtime_power_active_grace_remaining_s = runtime_power_active_grace_s
+	_runtime_power_active_reason = reason
+	_set_runtime_power_world_work_suspended(false, reason)
+	_apply_runtime_power_fps("active", runtime_power_active_max_fps)
+	_wake_terrain_process_loop(reason)
 
 func _runtime_power_foreground_terrain_busy(terrain_busy: bool) -> bool:
 	if not terrain_busy:
@@ -6476,10 +6516,11 @@ func process_pending_nodes(force_spawn_zone_progress: bool = false):
 	var process_start_us := Time.get_ticks_usec()
 	var use_spawn_zone_budget := force_spawn_zone_progress and not initial_load_phase
 	var budget_ms := spawn_zone_pending_node_finalize_budget_ms if use_spawn_zone_budget else maxf(adaptive_frame_budget_ms, 0.1)
-	var max_items := pending_node_initial_finalize_max_per_frame if initial_load_phase else pending_node_finalize_max_per_frame
-	if not initial_load_phase:
+	var use_startup_finalize_budget := _use_startup_pending_node_finalize_budget()
+	var max_items := pending_node_initial_finalize_max_per_frame if use_startup_finalize_budget else pending_node_finalize_max_per_frame
+	if not use_startup_finalize_budget:
 		max_items = mini(max_items, pending_node_runtime_render_commits_per_frame)
-	if terrain_force_pending_node_finalization_for_test and not initial_load_phase:
+	if terrain_force_pending_node_finalization_for_test and not use_startup_finalize_budget:
 		# This test guard exists to prevent starvation at 100% terrain loading,
 		# not to burst-commit many chunks during gameplay measurements.
 		max_items = maxi(max_items, 1)
@@ -6868,6 +6909,13 @@ func _is_startup_visual_batch_gate_pending(pending_counts: Dictionary = {}) -> b
 		counts = _get_startup_visual_batch_pending_counts()
 	return int(counts.get("total", 0)) > 0
 
+func _use_startup_pending_node_finalize_budget() -> bool:
+	if initial_load_phase:
+		return true
+	if not startup_require_preheat_before_play:
+		return false
+	return not _startup_visual_batch_gate_satisfied
+
 func _get_pending_node_type_counts() -> Dictionary:
 	var counts := {
 		"total": 0,
@@ -6925,6 +6973,8 @@ func get_startup_readiness_snapshot() -> Dictionary:
 	if not ready and pending <= 0:
 		pending = 1
 	var progress := 1.0 if ready else get_loading_progress()
+	if not ready:
+		progress = minf(progress, 0.99)
 	var message := "Terrain loaded"
 	if not ready:
 		if pending_artifact_restore_nodes > 0:
@@ -7976,6 +8026,7 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 		_last_modify_terrain_ms = 0.0
 		return  # Skip this call, too soon after last one
 	_last_modify_time_ms = now_ms
+	_wake_runtime_power_for_foreground_terrain_work("terrain_edit")
 	var modify_start_us := Time.get_ticks_usec()
 	# Calculate bounds of the modification sphere/box
 	# Add extra margin (1.0) to account for material radius extension and shader sampling
@@ -8074,6 +8125,8 @@ func modify_terrain(pos: Vector3, radius: float, value: float, shape: int = 0, l
 ## Fill a 1x1 vertical column of terrain from y_from to y_to
 ## Uses Column shape (type=2) for precise vertical fills
 func fill_column(x: float, z: float, y_from: float, y_to: float, value: float, layer: int = 0):
+	_wake_runtime_power_for_foreground_terrain_work("terrain_column_edit")
+
 	# Calculate center position (mid-point of column)
 	var pos = Vector3(x, (y_from + y_to) / 2.0, z)
 
@@ -11829,13 +11882,15 @@ func request_spawn_zone(
 	position: Vector3,
 	radius: int = 2,
 	purpose: StringName = &"spawn",
-	reset_initial_load_phase: bool = true
+	reset_initial_load_phase: bool = true,
+	vertical_layer_radius: int = -1
 ) -> int:
 	radius = maxi(radius, 0)
 	_wake_terrain_process_loop("spawn_zone_requested")
 	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
 	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
 	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
+	var y_layers := _build_spawn_zone_y_layers(chunk_y, vertical_layer_radius)
 	if distant_world_map_lod_enabled and distant_world_map_lod_defer_until_initial_viewer_move:
 		# Spawn-zone loads can be teleports/save-loads. If a world already exists,
 		# do not let this reset become a new permanent "initial viewer" LOD defer.
@@ -11844,10 +11899,10 @@ func request_spawn_zone(
 	_reset_far_chunks_before_spawn_zone(chunk_x, chunk_y, chunk_z)
 
 	if reset_initial_load_phase:
-		# Reset loading phase for save/load tracking. The spawn zone checks
-		# Y-1, 0, +1 layers, so the target includes three vertical layers.
+		# Reset loading phase for save/load tracking. World-map above-ground
+		# spawns use the same Y=0 render layer that map-generation bakes.
 		initial_load_phase = true
-		initial_load_target_chunks = (radius * 2 + 1) * (radius * 2 + 1) * 3
+		initial_load_target_chunks = (radius * 2 + 1) * (radius * 2 + 1) * y_layers.size()
 		chunks_loaded_initial = 0
 		_startup_visual_batch_gate_satisfied = false
 
@@ -11855,9 +11910,9 @@ func request_spawn_zone(
 
 	# Collect chunks in radius and request generation for any not loaded
 	for dx in range(-radius, radius + 1):
-		for dy in range(-1, 2): # Only check Y layers -1, 0, +1 around spawn
+		for y in y_layers:
 			for dz in range(-radius, radius + 1):
-				var coord = Vector3i(chunk_x + dx, chunk_y + dy, chunk_z + dz)
+				var coord = Vector3i(chunk_x + dx, y, chunk_z + dz)
 
 				# Skip if already loaded with data
 				if active_chunks.has(coord) and active_chunks[coord] != null:
@@ -11889,6 +11944,8 @@ func request_spawn_zone(
 			"position": position,
 			"radius": radius,
 			"purpose": purpose,
+			"vertical_layer_radius": vertical_layer_radius,
+			"y_layers": y_layers.duplicate(),
 			"pending_coords": pending_coords
 		})
 		call_deferred("_check_spawn_zone_readiness", Vector3i(2147483647, 2147483647, 2147483647))
@@ -11898,6 +11955,8 @@ func request_spawn_zone(
 			"position": position,
 			"radius": radius,
 			"purpose": purpose,
+			"vertical_layer_radius": vertical_layer_radius,
+			"y_layers": y_layers.duplicate(),
 			"pending_coords": pending_coords
 		})
 		_capture_terrain_telemetry("spawn_zone_requested", {
@@ -11905,9 +11964,33 @@ func request_spawn_zone(
 			"radius": radius,
 			"purpose": str(purpose),
 			"reset_initial_load_phase": reset_initial_load_phase,
+			"y_layers": y_layers.duplicate(),
 			"pending_coords": pending_coords.size()
 		})
 	return pending_coords.size()
+
+
+func _build_spawn_zone_y_layers(chunk_y: int, vertical_layer_radius: int = -1) -> Array[int]:
+	var layer_radius := vertical_layer_radius
+	if layer_radius < 0:
+		layer_radius = 0 if world_map_active and chunk_y >= 0 else 1
+	layer_radius = maxi(layer_radius, 0)
+
+	var layers: Array[int] = []
+	if world_map_active and chunk_y >= 0 and layer_radius == 0:
+		layers.append(0)
+		return layers
+
+	for dy in range(-layer_radius, layer_radius + 1):
+		var y := chunk_y + dy
+		if y < MIN_Y_LAYER or y > MAX_Y_LAYER:
+			continue
+		if not layers.has(y):
+			layers.append(y)
+
+	if world_map_active and not layers.has(0):
+		layers.append(0)
+	return layers
 
 
 func _reset_far_chunks_before_spawn_zone(chunk_x: int, _chunk_y: int, chunk_z: int) -> void:
@@ -11948,23 +12031,24 @@ func _reset_far_chunks_before_spawn_zone(chunk_x: int, _chunk_y: int, chunk_z: i
 	})
 
 ## Check if chunks around a position are ready (loaded with data)
-func are_chunks_ready_around(position: Vector3, radius: int = 2) -> bool:
+func are_chunks_ready_around(position: Vector3, radius: int = 2, vertical_layer_radius: int = -1) -> bool:
 	var chunk_x = int(floor(position.x / CHUNK_STRIDE))
 	var chunk_y = int(floor(position.y / CHUNK_STRIDE))
 	var chunk_z = int(floor(position.z / CHUNK_STRIDE))
+	var y_layers := _build_spawn_zone_y_layers(chunk_y, vertical_layer_radius)
 
 	for dx in range(-radius, radius + 1):
-		for dy in range(-1, 2):
+		for y in y_layers:
 			for dz in range(-radius, radius + 1):
-				var coord = Vector3i(chunk_x + dx, chunk_y + dy, chunk_z + dz)
+				var coord = Vector3i(chunk_x + dx, y, chunk_z + dz)
 				# Not loaded or still pending (null)
 				if not active_chunks.has(coord) or active_chunks[coord] == null:
 					return false
 	return true
 
 
-func is_spawn_zone_ready(position: Vector3, radius: int = 2) -> bool:
-	if not are_chunks_ready_around(position, radius):
+func is_spawn_zone_ready(position: Vector3, radius: int = 2, vertical_layer_radius: int = -1) -> bool:
+	if not are_chunks_ready_around(position, radius, vertical_layer_radius):
 		return false
 	return ensure_collision_ready_at(position, 1)
 
@@ -12013,7 +12097,8 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 
 		if zone.pending_coords.is_empty():
 			var zone_radius := int(zone.get("radius", 2))
-			if not is_spawn_zone_ready(zone.position, zone_radius):
+			var vertical_layer_radius := int(zone.get("vertical_layer_radius", -1))
+			if not is_spawn_zone_ready(zone.position, zone_radius, vertical_layer_radius):
 				continue
 			zones_to_remove.append(i)
 			ready_positions.append(zone.position)
@@ -12042,6 +12127,6 @@ func _check_spawn_zone_readiness(completed_coord: Vector3i):
 		spawn_zones_ready.emit(ready_positions)
 
 ## Request multiple spawn zones at once (for batch loading player + entities)
-func request_spawn_zones(positions: Array[Vector3], radius: int = 2):
+func request_spawn_zones(positions: Array[Vector3], radius: int = 2, vertical_layer_radius: int = -1):
 	for pos in positions:
-		request_spawn_zone(pos, radius)
+		request_spawn_zone(pos, radius, &"spawn", true, vertical_layer_radius)

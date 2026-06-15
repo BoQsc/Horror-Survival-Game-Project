@@ -155,6 +155,26 @@ def _bool_from_env(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _default_render_distance() -> str:
+    return os.environ.get("TOWN_STALL_RENDER_DISTANCE", "10")
+
+
+def _default_terrain_artifact_source_buffers() -> str:
+    if "TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS" in os.environ:
+        return os.environ["TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS"]
+    return "1" if os.environ.get("TOWN_STALL_MANUAL_HANDOFF", "0") == "1" else "0"
+
+
+def _default_auto_teleport() -> str:
+    if "TOWN_STALL_AUTO_TELEPORT" in os.environ:
+        return os.environ["TOWN_STALL_AUTO_TELEPORT"]
+    return "1" if os.environ.get("TOWN_STALL_MANUAL_HANDOFF", "0") == "1" else "0"
+
+
+def _default_mesh_lod_threshold() -> str:
+    return os.environ.get("TOWN_STALL_MESH_LOD_THRESHOLD", "")
+
+
 def _parse_optional_float(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
@@ -1794,6 +1814,20 @@ def _terrain_manager_from_snapshot(data: dict) -> dict:
     return _as_dict(data.get("terrain_manager"))
 
 
+def _rendering_telemetry_from_snapshot(data: dict) -> dict:
+    system_telemetry = _as_dict(data.get("system_telemetry"))
+    rendering = _as_dict(system_telemetry.get("rendering"))
+    return {
+        "available": bool(rendering),
+        "engine_max_fps": _int_value(rendering.get("engine_max_fps")),
+        "mesh_lod_threshold": _float_value(rendering.get("mesh_lod_threshold")),
+        "mesh_lod_threshold_env": str(rendering.get("mesh_lod_threshold_env", "")),
+        "mesh_lod_threshold_overridden": bool(rendering.get("mesh_lod_threshold_overridden", False)),
+        "viewport_width": _int_value(rendering.get("viewport_width")),
+        "viewport_height": _int_value(rendering.get("viewport_height")),
+    }
+
+
 def _terrain_runtime_startup_verdict_from_snapshot(data: dict) -> dict:
     terrain = _terrain_manager_from_snapshot(data)
     initial_window = _as_dict(terrain.get("terrain_initial_load_measurement"))
@@ -2185,8 +2219,22 @@ def _print_snapshot_proof_summary(data: dict) -> None:
     terrain_runtime = _terrain_runtime_startup_verdict_from_snapshot(data)
     terrain_gameplay = _terrain_runtime_gameplay_verdict_from_snapshot(data)
     runtime_idle = _stationary_runtime_idle_verdict_from_snapshot(data)
+    rendering = _rendering_telemetry_from_snapshot(data)
     artifact_phase = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_CACHE_PROOF_PHASE", "stationary")
     artifact_cache = _terrain_artifact_cache_verdict_from_snapshot(data, artifact_phase)
+    print(
+        "Rendering telemetry: available={available} engine_max_fps={max_fps} "
+        "mesh_lod_threshold={threshold:.2f} overridden={overridden} env={env_value} "
+        "viewport={width}x{height}".format(
+            available=rendering["available"],
+            max_fps=rendering["engine_max_fps"],
+            threshold=rendering["mesh_lod_threshold"],
+            overridden=rendering["mesh_lod_threshold_overridden"],
+            env_value=rendering["mesh_lod_threshold_env"] or "default",
+            width=rendering["viewport_width"],
+            height=rendering["viewport_height"],
+        )
+    )
     print(
         "Startup readiness proof: available={available} completed={completed} "
         "coordinator={coordinator} stages={stages}/{expected} progress={progress:.1f}% "
@@ -2920,7 +2968,7 @@ def main() -> int:
     env = os.environ.copy()
     env["APPDATA"] = str(TOWN_STALL_APPDATA_DIR)
     env["TOWN_STALL_SEED"] = os.environ.get("TOWN_STALL_SEED", "12345")
-    env["TOWN_STALL_AUTO_TELEPORT"] = os.environ.get("TOWN_STALL_AUTO_TELEPORT", "0")
+    env["TOWN_STALL_AUTO_TELEPORT"] = _default_auto_teleport()
     default_measure_full_flight = "0" if env["TOWN_STALL_AUTO_TELEPORT"] != "0" else "1"
     env["TOWN_STALL_REPEAT_ENTRY"] = os.environ.get("TOWN_STALL_REPEAT_ENTRY", "0")
     env["TOWN_STALL_DISABLE_BUILDINGS"] = os.environ.get("TOWN_STALL_DISABLE_BUILDINGS", "0")
@@ -2934,7 +2982,7 @@ def main() -> int:
     env["TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS"] = os.environ.get("TOWN_STALL_DISABLE_BUILDING_CHUNK_COLLISIONS", "0")
     env["TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES"] = os.environ.get("TOWN_STALL_DISABLE_TERRAIN_CHUNK_UPDATES", "0")
     env["TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS"] = os.environ.get("TOWN_STALL_DISABLE_TERRAIN_MANAGER_VISUALS", "0")
-    render_distance_default = os.environ.get("TOWN_STALL_RENDER_DISTANCE", "3")
+    render_distance_default = _default_render_distance()
     terrain_render_distance_default = os.environ.get("TOWN_STALL_TERRAIN_RENDER_DISTANCE", render_distance_default)
     env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_BEFORE_PLAY", "1")
     env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_RADIUS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_RADIUS", terrain_render_distance_default)
@@ -2947,7 +2995,7 @@ def main() -> int:
     env["TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_PREFER_OFFLINE", "1")
     env["TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_OFFLINE_CHUNKS_PER_FRAME", "16")
     env["TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES", "1")
-    env["TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS", "0")
+    env["TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS"] = _default_terrain_artifact_source_buffers()
     env["TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_MESH_ONLY_BAKE"] = os.environ.get("TOWN_STALL_REQUIRE_TERRAIN_ARTIFACT_MESH_ONLY_BAKE", "1")
     env["TOWN_STALL_TERRAIN_ARTIFACT_REFRESH_AFTER_EDIT"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_REFRESH_AFTER_EDIT", "0")
     env["TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_EDITED_CHUNKS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_EDITED_CHUNKS", "0")
@@ -2955,7 +3003,7 @@ def main() -> int:
     env["TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS"] = os.environ.get("TOWN_STALL_TERRAIN_ARTIFACT_DISK_STORE_INITIAL_LOAD_CHUNKS", "1")
     env["TOWN_STALL_RENDER_DISTANCE"] = render_distance_default
     env["TOWN_STALL_TERRAIN_RENDER_DISTANCE"] = terrain_render_distance_default
-    env["TOWN_STALL_MESH_LOD_THRESHOLD"] = os.environ.get("TOWN_STALL_MESH_LOD_THRESHOLD", "0")
+    env["TOWN_STALL_MESH_LOD_THRESHOLD"] = _default_mesh_lod_threshold()
     env["TOWN_STALL_DISTANT_WORLD_MAP_LOD"] = os.environ.get("TOWN_STALL_DISTANT_WORLD_MAP_LOD", "0")
     env["TOWN_STALL_WORLD_MAP_LOD_REPLACE_ACTIVE_CHUNKS"] = os.environ.get("TOWN_STALL_WORLD_MAP_LOD_REPLACE_ACTIVE_CHUNKS", "0")
     env["TOWN_STALL_WORLD_MAP_LOD_FULL_RES_RADIUS"] = os.environ.get("TOWN_STALL_WORLD_MAP_LOD_FULL_RES_RADIUS", "3")

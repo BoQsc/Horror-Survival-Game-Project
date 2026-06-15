@@ -564,24 +564,31 @@ func _build_stage_details_summary(details: Dictionary) -> String:
 	var artifact_restore_queue := int(details.get("artifact_restore_queue_count", 0)) \
 		+ int(details.get("completed_artifact_restore_count", 0))
 	if artifact_restore_queue > 0:
-		_append_stage_detail_part(parts, "restoring artifacts %d" % artifact_restore_queue)
+		_append_stage_detail_part(parts, "restoring baked terrain %d" % artifact_restore_queue)
 	var generation_queue := int(details.get("generation_queue_count", 0)) \
 		+ int(details.get("completed_generated_count", 0))
 	if generation_queue > 0:
-		_append_stage_detail_part(parts, "generating misses %d" % generation_queue)
+		_append_stage_detail_part(parts, "generating terrain misses %d" % generation_queue)
 	var cpu_mesh_queue := int(details.get("cpu_mesh_queue_count", 0))
 	if cpu_mesh_queue > 0:
 		_append_stage_detail_part(parts, "meshing %d" % cpu_mesh_queue)
 	var cache_hits := int(details.get("artifact_cache_hit_count", 0))
 	var cache_misses := int(details.get("artifact_cache_miss_count", 0))
 	if cache_hits > 0 or cache_misses > 0:
-		_append_stage_detail_part(parts, "cache H/M %d/%d" % [cache_hits, cache_misses])
+		_append_stage_detail_part(parts, "memory artifact H/M %d/%d" % [cache_hits, cache_misses])
+	var cache_stores := int(details.get("artifact_cache_store_count", 0))
+	if cache_stores > 0:
+		_append_stage_detail_part(parts, "memory artifact stores %d" % cache_stores)
 	var restored_artifacts := int(details.get("artifact_cache_restore_count", 0))
 	if restored_artifacts > 0:
-		_append_stage_detail_part(parts, "restored %d" % restored_artifacts)
+		_append_stage_detail_part(parts, "restored baked artifacts %d" % restored_artifacts)
 	var disk_hits := int(details.get("artifact_disk_cache_hit_count", 0))
-	if disk_hits > 0:
-		_append_stage_detail_part(parts, "disk hits %d" % disk_hits)
+	var disk_misses := int(details.get("artifact_disk_cache_miss_count", 0))
+	if disk_hits > 0 or disk_misses > 0:
+		_append_stage_detail_part(parts, "disk artifact H/M %d/%d" % [disk_hits, disk_misses])
+	var disk_stores := int(details.get("artifact_disk_cache_store_count", 0))
+	if disk_stores > 0:
+		_append_stage_detail_part(parts, "disk artifact stores %d" % disk_stores)
 	var pending_nodes := int(details.get("pending_nodes", 0))
 	if pending_nodes > 0:
 		_append_stage_detail_part(parts, "terrain nodes %d" % pending_nodes)
@@ -602,7 +609,7 @@ func _build_stage_details_summary(details: Dictionary) -> String:
 
 
 func _append_stage_detail_part(parts: Array[String], text: String) -> void:
-	if text.is_empty() or parts.size() >= 3:
+	if text.is_empty() or parts.size() >= 6:
 		return
 	parts.append(text)
 

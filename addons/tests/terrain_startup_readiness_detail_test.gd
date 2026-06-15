@@ -17,9 +17,10 @@ func _run() -> int:
 	manager.pending_nodes_mutex = Mutex.new()
 	manager.completed_generation_mutex = Mutex.new()
 	manager.stored_modifications_mutex = Mutex.new()
-	manager.initial_load_phase = true
+	manager.initial_load_phase = false
 	manager.initial_load_target_chunks = 10
-	manager.chunks_loaded_initial = 2
+	manager.chunks_loaded_initial = 10
+	manager.startup_require_preheat_before_play = true
 	var cache_signature := "startup-detail-cache"
 	var cache_artifact := _artifact(cache_signature)
 	manager._terrain_artifact_cache.configure(true, 1024, 8)
@@ -46,6 +47,12 @@ func _run() -> int:
 	var snapshot: Dictionary = manager.get_startup_readiness_snapshot()
 	var details: Dictionary = snapshot.get("details", {})
 	if not _expect(not bool(snapshot.get("ready", true)), "seeded startup work should not be ready"):
+		return 1
+	if not _expect(float(snapshot.get("progress", 1.0)) < 1.0, "progress must stay below 100% while startup work is pending"):
+		return 1
+	if not _expect(int(snapshot.get("completed", 1000)) < int(snapshot.get("total", 1000)), "completed count must stay below total while startup work is pending"):
+		return 1
+	if not _expect(bool(manager._use_startup_pending_node_finalize_budget()), "startup finalization should keep startup node budget after chunk target is reached"):
 		return 1
 	if not _expect(str(snapshot.get("message", "")).begins_with("Finalizing restored terrain artifacts"), "message should prefer artifact finalization when restore nodes are pending"):
 		return 1

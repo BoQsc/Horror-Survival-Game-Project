@@ -165,7 +165,10 @@ var low_fps_abort_sample_count: int = 0
 var low_fps_abort_peak_ms: float = 0.0
 var measure_full_flight_enabled: bool = false
 var manual_handoff_enabled: bool = false
+var manual_handoff_wait_for_idle_enabled: bool = false
 var manual_handoff_pending_reason: String = ""
+var mesh_lod_threshold_env: String = ""
+var mesh_lod_threshold_overridden: bool = false
 var world_ready_timeout_seconds: float = WORLD_READY_TIMEOUT_SECONDS
 var world_ready_status_log_interval_seconds: float = 5.0
 var world_ready_last_status_log_seconds: float = -1000000.0
@@ -2405,6 +2408,16 @@ func _find_manager_node(group_name: String, fallback_name: String) -> Node:
 
 func _collect_system_telemetry() -> Dictionary:
 	var telemetry: Dictionary = {}
+	var root_viewport := get_tree().root
+	var viewport_size := root_viewport.get_visible_rect().size
+	telemetry["rendering"] = {
+		"engine_max_fps": Engine.max_fps,
+		"mesh_lod_threshold": root_viewport.mesh_lod_threshold,
+		"mesh_lod_threshold_env": mesh_lod_threshold_env,
+		"mesh_lod_threshold_overridden": mesh_lod_threshold_overridden,
+		"viewport_width": int(viewport_size.x),
+		"viewport_height": int(viewport_size.y)
+	}
 
 	if not world_generation_telemetry.is_empty():
 		telemetry["world_generator"] = world_generation_telemetry.duplicate(true)
@@ -3035,6 +3048,7 @@ func _ready() -> void:
 	low_fps_abort_seconds = _get_positive_env_float("TOWN_STALL_LOW_FPS_ABORT_SECONDS", 8.0)
 	measure_full_flight_enabled = OS.get_environment("TOWN_STALL_MEASURE_FULL_FLIGHT") == "1"
 	manual_handoff_enabled = OS.get_environment("TOWN_STALL_MANUAL_HANDOFF") == "1"
+	manual_handoff_wait_for_idle_enabled = OS.get_environment("TOWN_STALL_MANUAL_HANDOFF_WAIT_FOR_IDLE") == "1"
 	world_ready_timeout_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_TIMEOUT_SECONDS", WORLD_READY_TIMEOUT_SECONDS)
 	world_ready_status_log_interval_seconds = _get_positive_env_float("TOWN_STALL_WORLD_READY_STATUS_LOG_INTERVAL_SECONDS", 5.0)
 	hold_periodic_snapshots_enabled = OS.get_environment("TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS") == "1"
@@ -3049,8 +3063,9 @@ func _ready() -> void:
 	var max_fps_override := _get_positive_env_int("TOWN_STALL_MAX_FPS", 0)
 	if max_fps_override > 0:
 		Engine.max_fps = max_fps_override
-	var mesh_lod_threshold_env := OS.get_environment("TOWN_STALL_MESH_LOD_THRESHOLD").strip_edges()
-	if not mesh_lod_threshold_env.is_empty():
+	mesh_lod_threshold_env = OS.get_environment("TOWN_STALL_MESH_LOD_THRESHOLD").strip_edges()
+	mesh_lod_threshold_overridden = not mesh_lod_threshold_env.is_empty()
+	if mesh_lod_threshold_overridden:
 		var mesh_lod_threshold_override := _get_nonnegative_env_float("TOWN_STALL_MESH_LOD_THRESHOLD", get_tree().root.mesh_lod_threshold)
 		get_tree().root.mesh_lod_threshold = mesh_lod_threshold_override
 	_apply_display_mode_override_from_env()
@@ -3076,6 +3091,7 @@ func _ready() -> void:
 	print("[TOWN_STALL_TEST] Repeat entry: %s" % ("ON" if repeat_entry_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Measure full flight: %s" % ("ON" if measure_full_flight_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Manual handoff: %s" % ("ON" if manual_handoff_enabled else "OFF"))
+	print("[TOWN_STALL_TEST] Manual handoff wait for idle: %s" % ("ON" if manual_handoff_wait_for_idle_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Periodic hold snapshots: %s" % ("ON" if hold_periodic_snapshots_enabled else "OFF"))
 	print("[TOWN_STALL_TEST] Periodic pre-hold snapshots: %s interval=%.1fs" % [
 		"ON" if prehold_periodic_snapshots_enabled else "OFF",
@@ -3507,7 +3523,8 @@ func _start_terrain_artifact_bake_before_play() -> void:
 	terrain_artifact_baker.prefer_offline_cpu_bake = bake_prefer_offline
 	terrain_artifact_baker.offline_cpu_chunks_per_frame = bake_offline_chunks_per_frame
 	terrain_artifact_baker.store_ready_mesh_resources = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_STORE_READY_MESH_RESOURCES") == "1"
-	terrain_artifact_baker.store_source_buffers = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS") == "1"
+	var source_buffer_env := OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_STORE_SOURCE_BUFFERS").strip_edges()
+	terrain_artifact_baker.store_source_buffers = source_buffer_env == "1" or (source_buffer_env.is_empty() and manual_handoff_enabled)
 	terrain_artifact_baker.synchronous_disk_writes = OS.get_environment("TOWN_STALL_TERRAIN_ARTIFACT_SYNC_WRITES") != "0"
 	terrain_artifact_baker.high_throughput_budgets = true
 	terrain_artifact_baker.timeout_seconds = _get_positive_env_float("TOWN_STALL_TERRAIN_ARTIFACT_BAKE_TIMEOUT_SECONDS", 900.0)
@@ -4592,6 +4609,26 @@ func _is_hold_settled(delta: float) -> bool:
 	return false
 
 
+func _force_player_play_mode() -> void:
+	if not is_instance_valid(player):
+		return
+	if mode_manager == null or not is_instance_valid(mode_manager):
+		mode_manager = player.get_node_or_null("Systems/ModeManager")
+	if not is_instance_valid(mode_manager):
+		return
+	if "is_flying" in mode_manager:
+		mode_manager.set("is_flying", false)
+	if "previous_mode" in mode_manager:
+		mode_manager.set("previous_mode", 0)
+	if mode_manager.has_method("set_mode"):
+		mode_manager.call("set_mode", 0)
+	elif mode_manager.has_method("is_editor_mode") and bool(mode_manager.call("is_editor_mode")):
+		if mode_manager.has_method("toggle_editor_mode"):
+			mode_manager.call("toggle_editor_mode")
+	if "is_flying" in mode_manager:
+		mode_manager.set("is_flying", false)
+
+
 func _enter_fly_to_town() -> void:
 	if not is_instance_valid(game_root) or not is_instance_valid(player):
 		_fail("Game scene references vanished before fly-to-town setup")
@@ -4711,9 +4748,7 @@ func _restore_player_control() -> void:
 	if is_instance_valid(player):
 		player.velocity = Vector3.ZERO
 
-	if is_instance_valid(mode_manager) and mode_manager.has_method("is_editor_mode") and bool(mode_manager.is_editor_mode()):
-		if mode_manager.has_method("toggle_editor_mode"):
-			mode_manager.toggle_editor_mode()
+	_force_player_play_mode()
 
 	if movement_component:
 		if movement_component.has_method("set_physics_process"):
@@ -4724,11 +4759,13 @@ func _restore_player_control() -> void:
 	_set_player_camera_enabled(true)
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
+	if is_instance_valid(player) and (mode_editor == null or not is_instance_valid(mode_editor)):
+		mode_editor = player.get_node_or_null("Modes/ModeEditor")
 	if mode_editor:
 		if mode_editor.has_method("set_physics_process"):
-			mode_editor.set_physics_process(true)
+			mode_editor.set_physics_process(false)
 		if mode_editor.has_method("set_process"):
-			mode_editor.set_process(true)
+			mode_editor.set_process(false)
 
 	_emit_scope_event("town_stall_test", "manual_control_restored", {
 		"world_path": generated_world_path,
@@ -4761,6 +4798,16 @@ func _complete_manual_handoff(reason: String) -> void:
 
 
 func _begin_manual_handoff_wait(reason: String) -> void:
+	if not manual_handoff_wait_for_idle_enabled:
+		_emit_scope_event("town_stall_test", "manual_handoff_wait_skipped", {
+			"world_path": generated_world_path,
+			"reason": reason,
+			"policy": "player_control_immediate"
+		})
+		print("[TOWN_STALL_TEST] Manual handoff wait skipped: player control restored immediately (%s)." % reason)
+		_complete_manual_handoff(reason)
+		return
+
 	manual_handoff_pending_reason = reason
 	current_hold_seconds = configured_hold_seconds
 	phase = Phase.HOLD_FIRST

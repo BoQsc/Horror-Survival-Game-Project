@@ -121,6 +121,8 @@ func _run() -> int:
 		"stage": "baking terrain mesh artifacts",
 		"progress_percent": 25.0,
 		"artifact_count": 9,
+		"stored_artifact_count": 7,
+		"reused_disk_artifact_count": 2,
 		"expected_chunks": 27,
 		"coord_mode": "explicit",
 		"explicit_coord_count": 4096,
@@ -131,6 +133,15 @@ func _run() -> int:
 		ui.free()
 		return 1
 	if not _expect(str(ui.progress_label.text).contains("coords=4096"), "terrain bake progress should report explicit full-map coordinate coverage"):
+		ui.free()
+		return 1
+	if not _expect(str(ui.progress_label.text).contains("terrain_artifacts=9/27"), "terrain bake progress should separate baked chunk progress from cache reuse"):
+		ui.free()
+		return 1
+	if not _expect(str(ui.progress_label.text).contains("stored_new=7"), "terrain bake progress should report newly stored artifacts"):
+		ui.free()
+		return 1
+	if not _expect(str(ui.progress_label.text).contains("reused_disk=2"), "terrain bake progress should report reused disk artifacts separately"):
 		ui.free()
 		return 1
 	var bake_progress_snapshot: Dictionary = ui.get_telemetry_snapshot()
@@ -150,10 +161,23 @@ func _run() -> int:
 	if not _expect(int(bake_overlay_details.get("artifact_count", 0)) == 9, "loading overlay should expose terrain artifact count"):
 		ui.free()
 		return 1
+	var bake_overlay_detail_text := str(bake_overlay_snapshot.get("detail_text", ""))
+	if not _expect(bake_overlay_detail_text.contains("terrain_artifacts=9/27"), "loading overlay should label terrain artifact progress explicitly"):
+		ui.free()
+		return 1
+	if not _expect(bake_overlay_detail_text.contains("stored_new=7"), "loading overlay should label new artifact stores explicitly"):
+		ui.free()
+		return 1
+	if not _expect(bake_overlay_detail_text.contains("reused_disk=2"), "loading overlay should label disk artifact reuse explicitly"):
+		ui.free()
+		return 1
 
 	ui._on_terrain_bake_completed({
 		"artifact_root": "user://worlds/test_world/terrain_artifacts",
 		"artifact_count": 27,
+		"expected_chunks": 27,
+		"stored_artifact_count": 24,
+		"reused_disk_artifact_count": 3,
 		"coord_mode": "explicit",
 		"explicit_coord_count": 4096,
 		"origin_count": 3,
@@ -166,6 +190,12 @@ func _run() -> int:
 		ui.free()
 		return 1
 	if not _expect(str(ui.progress_label.text).contains("baked 27 terrain mesh artifacts"), "completion label should report baked mesh artifacts"):
+		ui.free()
+		return 1
+	if not _expect(str(ui.progress_label.text).contains("stored_new=24"), "completion label should report newly stored artifacts"):
+		ui.free()
+		return 1
+	if not _expect(str(ui.progress_label.text).contains("reused_disk=3"), "completion label should report reused disk artifacts separately"):
 		ui.free()
 		return 1
 	var bake_complete_overlay_snapshot: Dictionary = ui.get_telemetry_snapshot().get("generation_loading_overlay", {})

@@ -75,6 +75,24 @@ func _run() -> int:
 	if not _expect(manager._last_terrain_render_visibility_batch_hidden_count == 1, "visibility telemetry should count hidden batches"):
 		return 1
 
+	manager.world_map_active = true
+	manager.world_map_visual_batch_profile_enabled = true
+	manager.world_map_terrain_visual_batch_size = 2
+	var batch_origin := manager._terrain_visual_batch_origin_coord(Vector2i(-1, -1))
+	if not _expect(batch_origin == Vector3i(-2, 0, -2), "batch visibility should use the real batch origin, not the center chunk"):
+		return 1
+	var batch_bounds := manager._terrain_render_visibility_coord_aabb(batch_origin, manager._effective_terrain_visual_batch_size())
+	if not _expect(is_equal_approx(batch_bounds.position.x, -2.0 * float(manager.CHUNK_STRIDE)), "batch visibility AABB x origin should cover the full batch"):
+		return 1
+	if not _expect(is_equal_approx(batch_bounds.position.z, -2.0 * float(manager.CHUNK_STRIDE)), "batch visibility AABB z origin should cover the full batch"):
+		return 1
+	if not _expect(is_equal_approx(batch_bounds.size.x, 2.0 * float(manager.CHUNK_STRIDE)), "batch visibility AABB x size should cover all member chunks"):
+		return 1
+	if not _expect(is_equal_approx(batch_bounds.size.z, 2.0 * float(manager.CHUNK_STRIDE)), "batch visibility AABB z size should cover all member chunks"):
+		return 1
+	if not _expect(manager._terrain_render_visibility_span_near_viewer(Vector3i(2, 0, 2), 2, Vector2i(3, 3), 1), "visibility near-keep should treat any viewer chunk inside a batch span as near"):
+		return 1
+
 	manager.queue_free()
 	camera.queue_free()
 	return 0

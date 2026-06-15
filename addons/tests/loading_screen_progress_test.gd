@@ -37,23 +37,30 @@ func _run() -> int:
 		"cpu_mesh_queue_count": 4,
 		"artifact_disk_write_pending_entries": 1
 	})
-	if not _expect(terrain_detail_summary.contains("restoring artifacts 2"), "terrain detail summary should expose artifact restores"):
+	if not _expect(terrain_detail_summary.contains("restoring baked terrain 2"), "terrain detail summary should expose baked artifact restores"):
 		return 1
-	if not _expect(terrain_detail_summary.contains("generating misses 3"), "terrain detail summary should expose generation misses"):
+	if not _expect(terrain_detail_summary.contains("generating terrain misses 3"), "terrain detail summary should expose generation misses"):
 		return 1
 	if not _expect(terrain_detail_summary.contains("meshing 4"), "terrain detail summary should expose CPU mesh queue"):
 		return 1
 	var terrain_cache_summary := screen._build_stage_details_summary({
 		"artifact_cache_hit_count": 5,
 		"artifact_cache_miss_count": 2,
+		"artifact_cache_store_count": 6,
 		"artifact_cache_restore_count": 4,
-		"artifact_disk_cache_hit_count": 3
+		"artifact_disk_cache_hit_count": 3,
+		"artifact_disk_cache_miss_count": 1,
+		"artifact_disk_cache_store_count": 7
 	})
-	if not _expect(terrain_cache_summary.contains("cache H/M 5/2"), "terrain detail summary should expose artifact cache hit/miss counts"):
+	if not _expect(terrain_cache_summary.contains("memory artifact H/M 5/2"), "terrain detail summary should expose memory artifact hit/miss counts"):
 		return 1
-	if not _expect(terrain_cache_summary.contains("restored 4"), "terrain detail summary should expose restored artifact count"):
+	if not _expect(terrain_cache_summary.contains("memory artifact stores 6"), "terrain detail summary should expose memory artifact stores"):
 		return 1
-	if not _expect(terrain_cache_summary.contains("disk hits 3"), "terrain detail summary should expose disk artifact hits"):
+	if not _expect(terrain_cache_summary.contains("restored baked artifacts 4"), "terrain detail summary should expose restored artifact count"):
+		return 1
+	if not _expect(terrain_cache_summary.contains("disk artifact H/M 3/1"), "terrain detail summary should expose disk artifact hit/miss counts"):
+		return 1
+	if not _expect(terrain_cache_summary.contains("disk artifact stores 7"), "terrain detail summary should expose disk artifact stores"):
 		return 1
 
 	screen._set_stage(screen.Stage.WORLD_CONTENT)
