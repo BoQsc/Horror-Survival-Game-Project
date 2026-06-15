@@ -107,6 +107,11 @@ vec2 sample_world_road(vec2 world_xz) {
 }
 
 uint normalize_world_biome_material(uint biome_id) {
+    // World-map biome layers should never use ore IDs. In this context,
+    // category byte 2 means snow compatibility; ore is generated underground.
+    if (biome_id == 2u) {
+        return 5u;
+    }
     if (biome_id == 0u || biome_id == 3u || biome_id == 4u || biome_id == 5u) {
         return biome_id;
     }

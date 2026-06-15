@@ -257,6 +257,11 @@ vec3 sample_exact_material_color(int mat_id, vec3 weights, vec3 uv_pos) {
 }
 
 int normalize_world_map_biome_id(int biome_id) {
+	// World-map biome layers should never use ore IDs. This function only
+	// normalizes biome-map samples, not underground ore material IDs.
+	if (biome_id == 2) {
+		return 5;
+	}
 	if (biome_id == 0 || biome_id == 3 || biome_id == 4 || biome_id == 5) {
 		return biome_id;
 	}

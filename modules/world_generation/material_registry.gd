@@ -71,6 +71,10 @@ static func is_world_map_surface_material_id(id: int) -> bool:
 			return false
 
 static func normalize_world_map_biome_id(id: int) -> int:
+	# World-map biome layers should never use ore IDs. If a biome layer
+	# contains category byte 2, preserve snow instead of rendering ore/stone.
+	if id == ORE_GENERIC:
+		return SNOW
 	if is_world_map_surface_material_id(id):
 		return id
 	return DEFAULT_SURFACE_MATERIAL
