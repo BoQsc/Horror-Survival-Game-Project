@@ -1711,6 +1711,26 @@ def main() -> int:
     env["TOWN_STALL_MAX_FPS"] = os.environ.get("TOWN_STALL_MAX_FPS", "")
     env["TOWN_STALL_MEASURE_FULL_FLIGHT"] = os.environ.get("TOWN_STALL_MEASURE_FULL_FLIGHT", default_measure_full_flight)
     env["TOWN_STALL_RUNTIME_MODE"] = _runtime_mode_label()
+    requested_render_distance = _positive_int_from_env("TOWN_STALL_RENDER_DISTANCE", 10)
+    if requested_render_distance > 30:
+        terrain_core_render_distance = min(requested_render_distance, 30)
+        print(
+            "[TOWN_STALL_TEST] High render-distance profile: "
+            f"requested={requested_render_distance} core_terrain={terrain_core_render_distance} "
+            f"far_world_lod={requested_render_distance}"
+        )
+        _set_env_default(env, "TOWN_STALL_TERRAIN_RENDER_DISTANCE", str(terrain_core_render_distance))
+        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD", "1")
+        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_DISTANCE", str(requested_render_distance))
+        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_OVERLAP", "2")
+        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_SAMPLE_STEP", "8")
+        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_BUDGET", "16")
+        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_DEFER_INITIAL", "0")
+        _set_env_default(env, "TOWN_STALL_TERRAIN_STREAM_MOVEMENT_CHUNK_LIMIT", "4")
+        _set_env_default(env, "TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS", "1")
+        _set_env_default(env, "TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION", "1")
+        _set_env_default(env, "TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE", "1")
+        _set_env_default(env, "TOWN_STALL_MESH_LOD_THRESHOLD", "4.0")
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
     machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)

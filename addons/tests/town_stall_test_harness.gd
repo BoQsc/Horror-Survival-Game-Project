@@ -3250,6 +3250,15 @@ func _get_town_terrain_stream_blockers() -> Array[String]:
 	if not chunk_manager.has_method("get_telemetry_snapshot"):
 		return blockers
 	var telemetry: Dictionary = chunk_manager.get_telemetry_snapshot()
+	if str(telemetry.get("native_render_device_bootstrap_status", "")) == "failed":
+		var bootstrap_step := str(telemetry.get("native_render_device_bootstrap_step", ""))
+		var bootstrap_error := str(telemetry.get("native_render_device_bootstrap_error", ""))
+		var bootstrap_blocker := "terrain_native_rd_failed"
+		if not bootstrap_step.is_empty():
+			bootstrap_blocker += ":%s" % bootstrap_step
+		if not bootstrap_error.is_empty():
+			bootstrap_blocker += " -> %s" % bootstrap_error
+		blockers.append(bootstrap_blocker)
 	var render_distance := int(telemetry.get("render_distance", 0))
 	var min_loaded_chunks := int(ceil(PI * float(render_distance * render_distance)))
 	var loaded_chunk_count := int(telemetry.get("loaded_chunk_count", 0))

@@ -310,6 +310,10 @@ var terrain_force_pending_node_finalization_for_test: bool = false
 var terrain_force_stream_progress_for_test: bool = false
 var terrain_grid = null
 var _native_backends_ready: bool = false
+var _native_render_device_ready: bool = false
+var _native_render_device_bootstrap_status: String = "not_started"
+var _native_render_device_bootstrap_step: String = ""
+var _native_render_device_bootstrap_error: String = ""
 var _runtime_power_mode: String = "active"
 var _runtime_power_target_fps: int = 0
 var _runtime_power_idle_seconds: float = 0.0
@@ -369,6 +373,8 @@ var _last_gpu_mesh_readback_ms: float = 0.0
 var _last_gpu_mesh_readback_chunk_count: int = 0
 var _last_gpu_mesh_readback_terrain_vertices: int = 0
 var _last_gpu_mesh_readback_water_vertices: int = 0
+var _last_gpu_mesh_readback_stage: String = "idle"
+var _last_gpu_mesh_readback_detail: String = ""
 var _last_gpu_mesh_slice_count: int = 0
 var _last_gpu_mesh_slice_max_sync_ms: float = 0.0
 var _last_gpu_water_density_dispatched: bool = false
@@ -1032,7 +1038,13 @@ func get_telemetry_snapshot() -> Dictionary:
 		"render_resource_prewarm_started": _render_resource_prewarm_started,
 		"render_resource_prewarm_active": _is_render_resource_prewarm_active(),
 		"render_resource_prewarm_frames_remaining": _get_render_resource_prewarm_frames_remaining(),
-		"native_backends_ready": _native_backends_ready
+		"native_backends_ready": _native_backends_ready,
+		"native_render_device_ready": _native_render_device_ready,
+		"native_render_device_bootstrap_status": _native_render_device_bootstrap_status,
+		"native_render_device_bootstrap_step": _native_render_device_bootstrap_step,
+		"native_render_device_bootstrap_error": _native_render_device_bootstrap_error,
+		"last_gpu_mesh_readback_stage": _last_gpu_mesh_readback_stage,
+		"last_gpu_mesh_readback_detail": _last_gpu_mesh_readback_detail
 	}
 
 func _start_render_resource_prewarm() -> void:
@@ -3399,6 +3411,23 @@ func _remove_pending_generate_tasks_from_queue(queue: Array[Dictionary], coord: 
 
 func _capture_terrain_telemetry(event_label: String = "", details: Dictionary = {}) -> void:
 	return
+
+
+func _set_native_render_device_bootstrap_state(ready: bool, status: String, step: String, error_message: String = "") -> void:
+	_native_render_device_ready = ready
+	_native_render_device_bootstrap_status = status
+	_native_render_device_bootstrap_step = step
+	_native_render_device_bootstrap_error = error_message
+
+
+func _fail_native_render_device_bootstrap(rd: Variant, step: String, error_message: String, resources: Array = []) -> void:
+	_set_native_render_device_bootstrap_state(false, "failed", step, error_message)
+	push_error("[ChunkManager] Native terrain bootstrap failed at %s: %s" % [step, error_message])
+	for resource in resources:
+		if resource.is_valid():
+			rd.free_rid(resource)
+	if rd:
+		rd.free()
 
 
 func _process(delta):
@@ -6839,19 +6868,73 @@ func _interruptible_delay(total_ms: int):
 		elapsed += sleep_time
 
 func _thread_function():
+	_set_native_render_device_bootstrap_state(false, "initializing", "create_local_rendering_device")
+	print("[ChunkManager] Native terrain bootstrap: create_local_rendering_device()")
 	var rd = RenderingServer.create_local_rendering_device()
 	if not rd:
+		_fail_native_render_device_bootstrap(rd, "create_local_rendering_device", "RenderingServer.create_local_rendering_device() returned null")
+		return
+	print("[ChunkManager] Native terrain bootstrap: local rendering device created")
+
+	var sid_gen = RID()
+	var sid_gen_water = RID()
+	var sid_mod = RID()
+	var sid_mesh = RID()
+	var pipe_gen = RID()
+	var pipe_gen_water = RID()
+	var pipe_mod = RID()
+	var pipe_mesh = RID()
+
+	_set_native_render_device_bootstrap_state(false, "initializing", "shader_create_from_spirv:gen_density")
+	sid_gen = rd.shader_create_from_spirv(shader_gen_spirv)
+	if not sid_gen.is_valid():
+		_fail_native_render_device_bootstrap(rd, "shader_create_from_spirv:gen_density", "Failed to compile gen_density shader")
 		return
 
-	var sid_gen = rd.shader_create_from_spirv(shader_gen_spirv)
-	var sid_gen_water = rd.shader_create_from_spirv(shader_gen_water_spirv)
-	var sid_mod = rd.shader_create_from_spirv(shader_mod_spirv)
-	var sid_mesh = rd.shader_create_from_spirv(shader_mesh_spirv)
+	_set_native_render_device_bootstrap_state(false, "initializing", "shader_create_from_spirv:gen_water_density")
+	sid_gen_water = rd.shader_create_from_spirv(shader_gen_water_spirv)
+	if not sid_gen_water.is_valid():
+		_fail_native_render_device_bootstrap(rd, "shader_create_from_spirv:gen_water_density", "Failed to compile gen_water_density shader", [sid_gen])
+		return
 
-	var pipe_gen = rd.compute_pipeline_create(sid_gen)
-	var pipe_gen_water = rd.compute_pipeline_create(sid_gen_water)
-	var pipe_mod = rd.compute_pipeline_create(sid_mod)
-	var pipe_mesh = rd.compute_pipeline_create(sid_mesh)
+	_set_native_render_device_bootstrap_state(false, "initializing", "shader_create_from_spirv:modify_density")
+	sid_mod = rd.shader_create_from_spirv(shader_mod_spirv)
+	if not sid_mod.is_valid():
+		_fail_native_render_device_bootstrap(rd, "shader_create_from_spirv:modify_density", "Failed to compile modify_density shader", [sid_gen, sid_gen_water])
+		return
+
+	_set_native_render_device_bootstrap_state(false, "initializing", "shader_create_from_spirv:marching_cubes")
+	sid_mesh = rd.shader_create_from_spirv(shader_mesh_spirv)
+	if not sid_mesh.is_valid():
+		_fail_native_render_device_bootstrap(rd, "shader_create_from_spirv:marching_cubes", "Failed to compile marching_cubes shader", [sid_gen, sid_gen_water, sid_mod])
+		return
+
+	_set_native_render_device_bootstrap_state(false, "initializing", "compute_pipeline_create:gen_density")
+	pipe_gen = rd.compute_pipeline_create(sid_gen)
+	if not pipe_gen.is_valid():
+		_fail_native_render_device_bootstrap(rd, "compute_pipeline_create:gen_density", "Failed to create gen_density compute pipeline", [sid_gen, sid_gen_water, sid_mod, sid_mesh])
+		return
+
+	_set_native_render_device_bootstrap_state(false, "initializing", "compute_pipeline_create:gen_water_density")
+	pipe_gen_water = rd.compute_pipeline_create(sid_gen_water)
+	if not pipe_gen_water.is_valid():
+		_fail_native_render_device_bootstrap(rd, "compute_pipeline_create:gen_water_density", "Failed to create gen_water_density compute pipeline", [sid_gen, sid_gen_water, sid_mod, sid_mesh, pipe_gen])
+		return
+
+	_set_native_render_device_bootstrap_state(false, "initializing", "compute_pipeline_create:modify_density")
+	pipe_mod = rd.compute_pipeline_create(sid_mod)
+	if not pipe_mod.is_valid():
+		_fail_native_render_device_bootstrap(rd, "compute_pipeline_create:modify_density", "Failed to create modify_density compute pipeline", [sid_gen, sid_gen_water, sid_mod, sid_mesh, pipe_gen, pipe_gen_water])
+		return
+
+	_set_native_render_device_bootstrap_state(false, "initializing", "compute_pipeline_create:marching_cubes")
+	pipe_mesh = rd.compute_pipeline_create(sid_mesh)
+	if not pipe_mesh.is_valid():
+		_fail_native_render_device_bootstrap(rd, "compute_pipeline_create:marching_cubes", "Failed to create marching_cubes compute pipeline", [sid_gen, sid_gen_water, sid_mod, sid_mesh, pipe_gen, pipe_gen_water, pipe_mod])
+		return
+
+	_set_native_render_device_bootstrap_state(true, "ok", "ready")
+	print("[ChunkManager] Native terrain bootstrap OK: local rendering device, shaders, and compute pipelines are ready")
 
 	# Use the baked biome bytes already loaded with the world map.
 	# The minimap only needs the byte values, so there is no need to spend
@@ -7700,8 +7783,12 @@ func run_gpu_meshing_dispatch(rd: RenderingDevice, sid_mesh, pipe_mesh, density_
 # Readback packed mesh data AFTER sync has been called.
 func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer, index_buffer, set_mesh: RID) -> Dictionary:
 	# Read back vertex data
+	_last_gpu_mesh_readback_stage = "counter_buffer_get_data"
+	_last_gpu_mesh_readback_detail = "set_mesh_valid=%s" % ("yes" if set_mesh.is_valid() else "no")
 	var count_bytes = rd.buffer_get_data(counter_buffer)
 	if count_bytes.size() < 4:
+		_last_gpu_mesh_readback_stage = "counter_buffer_short_read"
+		_last_gpu_mesh_readback_detail = "size=%d" % count_bytes.size()
 		if set_mesh.is_valid(): rd.free_rid(set_mesh)
 		return {
 			"bytes": PackedByteArray(),
@@ -7732,18 +7819,33 @@ func run_gpu_meshing_readback(rd: RenderingDevice, vertex_buffer, counter_buffer
 	if tri_count > 0:
 		if indexed:
 			if vertex_count > 0:
+				_last_gpu_mesh_readback_stage = "indexed_vertex_buffer_get_data"
+				_last_gpu_mesh_readback_detail = "tri_count=%d vertex_count=%d index_count=%d" % [tri_count, vertex_count, index_count]
 				var total_vertex_bytes = vertex_count * PACKED_VERTEX_UINTS * 4
 				var total_index_bytes = index_count * 4
 				vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, total_vertex_bytes)
+				_last_gpu_mesh_readback_stage = "indexed_index_buffer_get_data"
+				_last_gpu_mesh_readback_detail = "tri_count=%d vertex_count=%d index_count=%d index_bytes=%d" % [tri_count, vertex_count, index_count, total_index_bytes]
 				index_bytes = rd.buffer_get_data(index_buffer, 0, total_index_bytes)
 		elif output_format_magic == PACKED_OUTPUT_MAGIC:
+			_last_gpu_mesh_readback_stage = "packed_vertex_buffer_get_data"
+			_last_gpu_mesh_readback_detail = "tri_count=%d vertex_count=%d" % [tri_count, vertex_count]
 			var total_bytes = vertex_count * PACKED_VERTEX_UINTS * 4
 			vertex_bytes = rd.buffer_get_data(vertex_buffer, 0, total_bytes)
 		else:
+			_last_gpu_mesh_readback_stage = "legacy_vertex_buffer_get_data"
+			_last_gpu_mesh_readback_detail = "tri_count=%d vertex_count=%d" % [tri_count, vertex_count]
 			var total_float_bytes = vertex_count * LEGACY_VERTEX_FLOATS * 4
 			vert_floats = rd.buffer_get_data(vertex_buffer, 0, total_float_bytes).to_float32_array()
 
 	if set_mesh.is_valid(): rd.free_rid(set_mesh)
+	_last_gpu_mesh_readback_stage = "complete"
+	_last_gpu_mesh_readback_detail = "tri_count=%d vertex_count=%d index_count=%d indexed=%s" % [
+		tri_count,
+		vertex_count,
+		index_count,
+		"yes" if indexed else "no"
+	]
 
 	return {
 		"bytes": vertex_bytes,
