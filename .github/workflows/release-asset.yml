@@ -30,6 +30,11 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Prepare Update Metadata
+        run: |
+          python3 scripts/write_project_update_metadata.py
+          cat project_update_state.json
+
       - name: Smart Shader Importer Assignment
         # Identifies Compute Shaders and forces the rd_shader importer metadata
         run: |
@@ -88,7 +93,8 @@ jobs:
         run: |
           apt-get update && apt-get install -y zip
           
-          # Zip the primary HSG asset only
+          # Zip the primary HSG asset only. Git metadata is intentionally not
+          # included; project_update_state.json carries updater identity.
           zip -r hsg-pre_imported_asset.zip . .godot \
           -x "*.git*" ".github/*"
 
@@ -104,8 +110,11 @@ jobs:
             **Automated Build Details:**
             - **Trigger Type:** ${{ github.event_name }}
             - **Release Profile:** ${{ github.event_name == 'workflow_dispatch' && inputs.release_profile || 'latest' }}
+            - **Branch:** ${{ github.ref_name }}
+            - **Commit:** ${{ github.sha }}
             - **Shaders:** Pre-compiled SPIR-V (Compute) binaries included in `.godot/`.
             - **Renderer:** Forced to **Forward+ (Vulkan)** for compute compatibility.
+            - **Updater:** `project_update_state.json` included for in-game update identity.
             - **CI Method:** Xvfb-GUI (with fix for missing X11 libs).
           files: |
             hsg-pre_imported_asset.zip

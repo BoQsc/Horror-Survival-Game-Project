@@ -21,6 +21,7 @@ mono_crash.*.json
 __pycache__/
 *.pyc
 .agent/*.lock
+project_update_state.json
 
 
 
