@@ -54,7 +54,7 @@
       <h1>Town Stall Vulkan Runbook</h1>
       <p>
         This branch keeps the project on Forward+ Vulkan and uses the existing GDExtension DLLs.
-        The x5 profile is tuned so the far ring uses world-map LOD instead of brute-forcing full-resolution terrain.
+        The x5 profile caps near terrain at 30 and pushes streaming progress harder without enabling the experimental terrain LOD path.
       </p>
 
       <div class="callout">
@@ -63,17 +63,17 @@
 
       <h2>1. Prerequisites</h2>
       <ol>
-        <li>Run from the repo root: <code>C:\Users\Windows10_new\Documents\gpu-marching-cubes</code>.</li>
+        <li>Run from the repo root: <code>C:\Users\Feder\Documents\Best Game 4 (Horror Survival Sandbox)</code>.</li>
         <li>Use the Godot tools binary at <code>C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe</code>.</li>
         <li>Keep the existing DLLs in <code>gdextension\bin\</code>.</li>
       </ol>
 
       <h2>2. Build native DLLs if needed</h2>
-      <pre><code>cd C:\Users\Windows10_new\Documents\gpu-marching-cubes\gdextension
+      <pre><code>cd C:\Users\Feder\Documents\Best Game 4 (Horror Survival Sandbox)\gdextension
 python build.py</code></pre>
 
       <h2>3. Run the test</h2>
-      <pre><code>cd C:\Users\Windows10_new\Documents\gpu-marching-cubes
+      <pre><code>cd C:\Users\Feder\Documents\Best Game 4 (Horror Survival Sandbox)
 $env:TOWN_STALL_RENDER_DISTANCE='50'
 python .\addons\tests\run_town_stall_test.py</code></pre>
 
@@ -82,25 +82,21 @@ python .\addons\tests\run_town_stall_test.py</code></pre>
         When <code>TOWN_STALL_RENDER_DISTANCE</code> is above 30, the launcher automatically:
       </p>
       <pre><code>TOWN_STALL_TERRAIN_RENDER_DISTANCE=30
-TOWN_STALL_DISTANT_WORLD_MAP_LOD=1
-TOWN_STALL_DISTANT_WORLD_MAP_LOD_DISTANCE=50
-TOWN_STALL_DISTANT_WORLD_MAP_LOD_OVERLAP=2
-TOWN_STALL_DISTANT_WORLD_MAP_LOD_SAMPLE_STEP=8
-TOWN_STALL_DISTANT_WORLD_MAP_LOD_BUDGET=16
-TOWN_STALL_DISTANT_WORLD_MAP_LOD_DEFER_INITIAL=0
 TOWN_STALL_TERRAIN_STREAM_MOVEMENT_CHUNK_LIMIT=4
 TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS=1
 TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION=1
-TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE=1
-TOWN_STALL_MESH_LOD_THRESHOLD=4.0</code></pre>
+TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE=1</code></pre>
 
       <h2>5. Success criteria</h2>
       <ol>
-        <li>The launcher prints the high render-distance profile line.</li>
+        <li>The launcher prints the high render-distance profile line with the terrain cap.</li>
         <li>Godot starts with <code>--rendering-driver vulkan --rendering-method forward_plus</code>.</li>
         <li>The log shows <code>Vulkan 1.4.341 - Forward+ - Using Device #0: NVIDIA GeForce RTX 4090</code>.</li>
         <li>The harness reaches <code>Hold started</code> and writes a performance snapshot.</li>
       </ol>
+      <p>
+        This keeps the test on the stable terrain streaming path and avoids flipping the experimental terrain LOD toggles that were causing confusion.
+      </p>
     </section>
   </main>
 </body>

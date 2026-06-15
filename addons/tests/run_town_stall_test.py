@@ -14,7 +14,7 @@ from windows_error_dialogs import suppress_windows_error_dialogs
 # Configuration
 DEFAULT_GODOT_BIN = r"C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe"
 GODOT_BIN = os.environ.get("TOWN_STALL_GODOT_BIN", DEFAULT_GODOT_BIN)
-PROJECT_PATH = r"C:\Users\Windows10_new\Documents\gpu-marching-cubes"
+PROJECT_PATH = str(Path(__file__).resolve().parents[2])
 MAIN_SCENE = "res://addons/tests/town_stall_test_harness.tscn"
 GODOT_RENDERING_DRIVER = "vulkan"
 GODOT_RENDERING_METHOD = "forward_plus"
@@ -94,6 +94,12 @@ def _positive_int_from_env(name: str, default: int) -> int:
         return default
 
     return value if value > 0 else default
+
+
+def _set_env_default(env: dict[str, str], name: str, value: str) -> None:
+    if os.environ.get(name, "").strip():
+        return
+    env[name] = value
 
 
 def _godot_display_args_from_env() -> list[str]:
@@ -219,7 +225,7 @@ def _acquire_run_lock() -> bool:
 
 def _find_running_town_stall_processes() -> list[dict]:
     command = r"""
-$projectPath = "C:\Users\Windows10_new\Documents\gpu-marching-cubes"
+$projectPath = '__PROJECT_PATH__'
 $sceneName = "town_stall_test_harness.tscn"
 Get-CimInstance Win32_Process | Where-Object {
   $_.Name -ieq "godot.windows.opt.tools.64.exe" -and
@@ -227,7 +233,7 @@ Get-CimInstance Win32_Process | Where-Object {
   $_.CommandLine -like ("*" + $sceneName + "*") -and
   $_.CommandLine -like ("*" + $projectPath + "*")
 } | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress -Depth 3
-""".strip()
+""".strip().replace("__PROJECT_PATH__", PROJECT_PATH)
 
     payload = _run_powershell_json(command)
     if not payload:
@@ -1716,21 +1722,13 @@ def main() -> int:
         terrain_core_render_distance = min(requested_render_distance, 30)
         print(
             "[TOWN_STALL_TEST] High render-distance profile: "
-            f"requested={requested_render_distance} core_terrain={terrain_core_render_distance} "
-            f"far_world_lod={requested_render_distance}"
+            f"requested={requested_render_distance} core_terrain={terrain_core_render_distance}"
         )
         _set_env_default(env, "TOWN_STALL_TERRAIN_RENDER_DISTANCE", str(terrain_core_render_distance))
-        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD", "1")
-        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_DISTANCE", str(requested_render_distance))
-        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_OVERLAP", "2")
-        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_SAMPLE_STEP", "8")
-        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_BUDGET", "16")
-        _set_env_default(env, "TOWN_STALL_DISTANT_WORLD_MAP_LOD_DEFER_INITIAL", "0")
         _set_env_default(env, "TOWN_STALL_TERRAIN_STREAM_MOVEMENT_CHUNK_LIMIT", "4")
         _set_env_default(env, "TOWN_STALL_TERRAIN_FORCE_STREAM_PROGRESS", "1")
         _set_env_default(env, "TOWN_STALL_TERRAIN_FORCE_PENDING_NODE_FINALIZATION", "1")
         _set_env_default(env, "TOWN_STALL_WORLD_MAP_VISUAL_BATCH_PROFILE", "1")
-        _set_env_default(env, "TOWN_STALL_MESH_LOD_THRESHOLD", "4.0")
     machine_warmup_disabled = os.environ.get("TOWN_STALL_MACHINE_WARMUP_DISABLED", "1") == "1"
     machine_warmup_required_consecutive_samples = _positive_int_from_env("TOWN_STALL_MACHINE_WARMUP_REQUIRED_CONSECUTIVE_SAMPLES", 3)
     machine_warmup_sample_interval_seconds = _positive_float_from_env("TOWN_STALL_MACHINE_WARMUP_SAMPLE_INTERVAL_SECONDS", 15.0)
