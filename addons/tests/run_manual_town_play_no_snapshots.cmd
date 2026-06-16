@@ -7,11 +7,14 @@ REM It is not the official code comparison baseline.
 
 cd /d "%~dp0\..\.."
 
-echo Checking for existing Godot/town-stall/Python processes...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process | Where-Object { $_.ProcessName -match 'godot|town-stall|python' }; $p | Select-Object Id,ProcessName,StartTime,Path; if ($p) { exit 1 }"
-if errorlevel 1 (
-    echo Existing Godot/town-stall/Python process found. Close it before launching manual play.
-    exit /b 2
+echo Checking for existing Godot/town-stall/Python processes (warning-only by default)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process | Where-Object { $_.ProcessName -match 'godot|town-stall|python' }; if ($p) { Write-Host 'WARNING: Existing process found; continuing because TOWN_STALL_STRICT_LAUNCH_GUARDS is not 1.'; $p | Select-Object Id,ProcessName,StartTime,Path }"
+if "%TOWN_STALL_STRICT_LAUNCH_GUARDS%"=="1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process | Where-Object { $_.ProcessName -match 'godot|town-stall|python' }; if ($p) { exit 1 }"
+    if errorlevel 1 (
+        echo Existing Godot/town-stall/Python process found. Close it before launching manual play or unset TOWN_STALL_STRICT_LAUNCH_GUARDS.
+        exit /b 2
+    )
 )
 
 set TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1

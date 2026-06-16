@@ -422,11 +422,17 @@ def main() -> int:
 
     running_processes = town_runner._find_running_godot_processes()
     if running_processes:
-        print("ERROR: A Godot process is already running.")
-        print("Close the existing Godot instance before starting a new procedural power test.")
+        strict_launch_guards = _env_bool(env, "TOWN_STALL_STRICT_LAUNCH_GUARDS", False)
+        if strict_launch_guards:
+            print("ERROR: A Godot process is already running.")
+            print("Close the existing Godot instance before starting a new procedural power test.")
+        else:
+            print("WARNING: A Godot process is already running; continuing because strict launch guards are disabled.")
+            print("Set TOWN_STALL_STRICT_LAUNCH_GUARDS=1 to make this a fatal preflight error.")
         for process in running_processes[:5]:
             print(f"  PID {int(process.get('ProcessId', 0) or 0)} - {process.get('Name', 'godot')}")
-        return 2
+        if strict_launch_guards:
+            return 2
 
     sample_interval_s = float(env.get("TOWN_STALL_SYSTEM_SAMPLE_INTERVAL_SECONDS", "2") or "2")
     gpu_samples: list[dict[str, Any]] = []

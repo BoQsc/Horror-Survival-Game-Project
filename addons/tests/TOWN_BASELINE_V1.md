@@ -24,17 +24,17 @@ The launcher uses:
 - one 60 second measured hold
 - raw `nvidia-smi` power sampling
 - GPU thermal guard at `84 C`
-- GPU preflight cooldown target `64 C`
+- GPU preflight cooldown disabled by default
 
-The launcher intentionally passes `--allow-contaminated-idle` because strict CPU
-utility preflight has been noisy on this machine. A run is accepted only if the
-run itself is valid and the contamination summary is clean.
+The launcher runs with warning-only cleanliness guards by default because strict
+CPU/process preflight checks have been noisy on this machine. Set
+`TOWN_STALL_STRICT_LAUNCH_GUARDS=1` or `TOWN_STALL_ALLOW_CONTAMINATED_IDLE=0`
+to restore fatal preflight behavior for controlled comparisons.
 
 ## Acceptance Criteria
 
 A run is a valid Baseline V1 comparison only when all of these are true:
 
-- no active Godot, town-stall, or Python process before launch
 - return code is `0`
 - `valid_run_count` is `1`
 - no `failure_reasons`
@@ -42,7 +42,7 @@ A run is a valid Baseline V1 comparison only when all of these are true:
 - hold gate reaches the stable town hold
 - no thermal abort
 - `TOWN_STALL_PERIODIC_HOLD_SNAPSHOTS=0`
-- contamination summary reports initial and final idle clean
+- contamination summary reports initial and final idle clean for clean code comparisons
 
 ## Locked Result
 

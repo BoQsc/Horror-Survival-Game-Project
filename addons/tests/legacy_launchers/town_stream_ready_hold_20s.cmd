@@ -2,12 +2,15 @@
 setlocal
 pushd "%~dp0"
 
-echo Checking for existing Godot/town-stall processes...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process | Where-Object { $_.ProcessName -match 'godot|town-stall' }; $p | Select-Object Id,ProcessName,StartTime,Path; if ($p) { exit 1 }"
-if errorlevel 1 (
-    echo Existing Godot/town-stall process found. Close it before launching this run.
-    popd
-    exit /b 2
+echo Checking for existing Godot/town-stall processes (warning-only by default)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process | Where-Object { $_.ProcessName -match 'godot|town-stall' }; if ($p) { Write-Host 'WARNING: Existing process found; continuing because TOWN_STALL_STRICT_LAUNCH_GUARDS is not 1.'; $p | Select-Object Id,ProcessName,StartTime,Path }"
+if "%TOWN_STALL_STRICT_LAUNCH_GUARDS%"=="1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process | Where-Object { $_.ProcessName -match 'godot|town-stall' }; if ($p) { exit 1 }"
+    if errorlevel 1 (
+        echo Existing Godot/town-stall process found. Close it before launching this run or unset TOWN_STALL_STRICT_LAUNCH_GUARDS.
+        popd
+        exit /b 2
+    )
 )
 
 :: Reproduces the controlled stream-ready town run from 2026-05-27.

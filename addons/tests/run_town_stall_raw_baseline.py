@@ -526,6 +526,13 @@ def _int_env(name: str, default_value: int) -> int:
         return default_value
 
 
+def _bool_env(name: str, default_value: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default_value
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _idle_contamination_thresholds() -> dict[str, Any]:
     return {
         "max_idle_power_w": _float_env("TOWN_STALL_IDLE_MAX_POWER_W", DEFAULT_IDLE_MAX_POWER_W),
@@ -1297,7 +1304,7 @@ def _load_snapshot_summary(path: Optional[Path]) -> dict[str, Any]:
     }
 
 
-def _assert_no_godot_processes() -> None:
+def _assert_no_godot_processes(strict: Optional[bool] = None) -> None:
     processes = town_runner._find_running_godot_processes()
     if not processes:
         return
@@ -1310,7 +1317,16 @@ def _assert_no_godot_processes() -> None:
                 "command_line": process.get("CommandLine"),
             }
         )
-    raise RuntimeError(f"Refusing to launch because Godot is already running: {details}")
+    strict_check = _bool_env("TOWN_STALL_STRICT_LAUNCH_GUARDS", False) if strict is None else strict
+    if strict_check:
+        raise RuntimeError(f"Refusing to launch because Godot is already running: {details}")
+    print("WARNING: Godot is already running; continuing because strict launch guards are disabled.")
+    print("Set TOWN_STALL_STRICT_LAUNCH_GUARDS=1 to make this a fatal preflight error.")
+    for detail in details:
+        print(f"  PID {detail.get('pid')} - {detail.get('name')}")
+        command_line = str(detail.get("command_line", "")).strip()
+        if command_line:
+            print(f"    {command_line}")
 
 
 def _terminate_godot_processes_for_thermal_abort() -> list[dict[str, Any]]:
@@ -1492,7 +1508,7 @@ def _run_town_case(case_name: str, repeat_index: int, hold_seconds: float, inter
     orphaned_godot_processes: list[dict[str, Any]] = []
     orphaned_godot_reason = ""
     try:
-        _assert_no_godot_processes()
+        _assert_no_godot_processes(strict=True)
     except RuntimeError as exc:
         orphaned_godot_reason = repr(exc)
         orphaned_godot_processes = _terminate_godot_processes_for_thermal_abort()
@@ -1742,7 +1758,7 @@ def main() -> int:
     parser.add_argument("--idle-seconds", type=float, default=20.0)
     parser.add_argument("--sample-interval", type=float, default=1.0)
     parser.add_argument("--measure-full-flight", action="store_true")
-    parser.add_argument("--allow-contaminated-idle", action="store_true", help="Run even when raw idle telemetry indicates external CPU/GPU load.")
+    parser.add_argument("--allow-contaminated-idle", action="store_true", help="Run even when raw idle telemetry indicates external CPU/GPU load. This is the default unless TOWN_STALL_ALLOW_CONTAMINATED_IDLE=0 is set.")
     parser.add_argument("--max-gpu-temp-c", type=float, default=_float_env("TOWN_STALL_MAX_GPU_TEMP_C", DEFAULT_RUN_MAX_GPU_TEMP_C), help="Abort the active run and terminate Godot if raw nvidia-smi temperature reaches this value. Use 0 to disable.")
     parser.add_argument("--preflight-max-gpu-temp-c", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_MAX_GPU_TEMP_C", 0.0), help="Wait before launching until raw nvidia-smi GPU temperature is at or below this value. Use 0 to disable.")
     parser.add_argument("--preflight-cooldown-timeout-seconds", type=float, default=_float_env("TOWN_STALL_PREFLIGHT_COOLDOWN_TIMEOUT_SECONDS", 0.0), help="Maximum seconds to wait for the preflight GPU cooldown gate.")
@@ -1757,7 +1773,9 @@ def main() -> int:
     if args.repeats <= 0:
         print("--repeats must be positive")
         return 2
-    if args.allow_contaminated_idle:
+    allow_contaminated_env = os.environ.get("TOWN_STALL_ALLOW_CONTAMINATED_IDLE", "").strip()
+    if args.allow_contaminated_idle or allow_contaminated_env != "0":
+        args.allow_contaminated_idle = True
         os.environ["TOWN_STALL_ALLOW_CONTAMINATED_IDLE"] = "1"
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

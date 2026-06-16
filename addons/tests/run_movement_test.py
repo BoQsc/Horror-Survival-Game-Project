@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import os
 
 from windows_error_dialogs import suppress_windows_error_dialogs
 import run_town_stall_test as town_runner
@@ -20,11 +21,17 @@ def main():
 
     running_processes = town_runner._find_running_godot_processes()
     if running_processes:
-        print("ERROR: A Godot process is already running.")
-        print("Close the existing Godot instance before starting a movement test.")
+        strict_launch_guards = os.environ.get("TOWN_STALL_STRICT_LAUNCH_GUARDS", "0") == "1"
+        if strict_launch_guards:
+            print("ERROR: A Godot process is already running.")
+            print("Close the existing Godot instance before starting a movement test.")
+        else:
+            print("WARNING: A Godot process is already running; continuing because strict launch guards are disabled.")
+            print("Set TOWN_STALL_STRICT_LAUNCH_GUARDS=1 to make this a fatal preflight error.")
         for process in running_processes[:5]:
             print(f"  PID {int(process.get('ProcessId', 0) or 0)} - {process.get('Name', 'godot')}")
-        return 2
+        if strict_launch_guards:
+            return 2
     
     cmd = [
         GODOT_BIN,

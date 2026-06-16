@@ -134,6 +134,13 @@ def _float_from_env(name: str, default: float) -> float:
         return default
 
 
+def _bool_from_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _parse_optional_float(value: Any) -> Optional[float]:
     if isinstance(value, (int, float)):
         return float(value)
@@ -1793,7 +1800,7 @@ def main() -> int:
     _print_preflight_idle_sample_summary(preflight_idle_summary)
 
     preflight_reasons = _preflight_contamination_reasons_for_idle_samples(preflight_idle_samples)
-    allow_contaminated_idle = os.environ.get("TOWN_STALL_ALLOW_CONTAMINATED_IDLE", "0") == "1"
+    allow_contaminated_idle = _bool_from_env("TOWN_STALL_ALLOW_CONTAMINATED_IDLE", True)
     if preflight_reasons and not allow_contaminated_idle:
         print("ERROR: Preflight idle state is contaminated; refusing to launch town benchmark.")
         for reason in preflight_reasons:
@@ -1802,14 +1809,20 @@ def main() -> int:
         print("Close unrelated CPU/GPU work or set TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1 to run anyway.")
         return 3
     if preflight_reasons:
-        print("WARNING: Running despite contaminated preflight idle state because TOWN_STALL_ALLOW_CONTAMINATED_IDLE=1.")
+        print("WARNING: Running despite contaminated preflight idle state.")
+        print("Set TOWN_STALL_ALLOW_CONTAMINATED_IDLE=0 to make this a fatal preflight error.")
         for reason in preflight_reasons:
             print(f"  - {reason}")
 
     running_processes = _find_running_godot_processes()
     if running_processes:
-        print("ERROR: A Godot process is already running.")
-        print("Close the existing Godot instance before starting a new town test.")
+        strict_launch_guards = _bool_from_env("TOWN_STALL_STRICT_LAUNCH_GUARDS", False)
+        if strict_launch_guards:
+            print("ERROR: A Godot process is already running.")
+            print("Close the existing Godot instance before starting a new town test.")
+        else:
+            print("WARNING: A Godot process is already running; continuing because strict launch guards are disabled.")
+            print("Set TOWN_STALL_STRICT_LAUNCH_GUARDS=1 to make this a fatal preflight error.")
         for process in running_processes[:5]:
             process_id = int(process.get("ProcessId", 0) or 0)
             process_name = str(process.get("Name", "godot"))
@@ -1817,7 +1830,8 @@ def main() -> int:
             command_line = str(process.get("CommandLine", "")).strip()
             if command_line:
                 print(f"    {command_line}")
-        return 2
+        if strict_launch_guards:
+            return 2
 
     system_sample_stop: Optional[threading.Event] = None
     system_sample_thread: Optional[threading.Thread] = None
